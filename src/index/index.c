@@ -75,7 +75,7 @@ static void _Index_ConstructStructure
 
 		if(field->type & INDEX_FLD_VECTOR) {
 			fieldID = RediSearch_CreateVectorField(rsIdx, field->name);
-			//RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
+			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
 			continue;
 		}
 
@@ -169,19 +169,18 @@ RSDoc *Index_IndexGraphEntity
 	size_t key_len,
 	uint *doc_field_count
 ) {
-	ASSERT(idx              !=  NULL);
-	ASSERT(e                !=  NULL);
-	ASSERT(key              !=  NULL);
-	ASSERT(doc_field_count  !=  NULL);
-	ASSERT(key_len          >   0);
+	ASSERT(idx             != NULL);
+	ASSERT(e               != NULL);
+	ASSERT(key             != NULL);
+	ASSERT(doc_field_count != NULL);
+	ASSERT(key_len         >  0);
 
 	double     score       = 1;     // default score
 	IndexField *field      = NULL;  // current indexed field
 	SIValue    *v          = NULL;  // current indexed value
-	EntityID   id          = ENTITY_GET_ID(e);
 	uint       field_count = array_len(idx->fields);
 
-	*doc_field_count = 0;
+	*doc_field_count = 0;  // number of indexed fields
 
 	// list of none indexable fields
 	uint none_indexable_fields_count = 0; // number of none indexed fields
@@ -191,16 +190,20 @@ RSDoc *Index_IndexGraphEntity
 	RSDoc *doc = RediSearch_CreateDocument2(key, key_len, NULL, score,
 			idx->language);
 
-	// add document field for each indexed property
-	if(idx->type == IDX_FULLTEXT) {
-		for(uint i = 0; i < field_count; i++) {
-			field = idx->fields + i;
-			const char *field_name = field->name;
-			v = GraphEntity_GetProperty(e, field->id);
-			if(v == ATTRIBUTE_NOTFOUND) continue;
+	// add document field for each indexed attribute
+	for(uint i = 0; i < field_count; i++) {
+		field = idx->fields + i;
+		const char *field_name = field->name;
+		v = GraphEntity_GetProperty(e, field->id);
+		if(v == ATTRIBUTE_NOTFOUND) continue;
 
-			SIType t = SI_TYPE(*v);
+		SIType t = SI_TYPE(*v);
 
+		//----------------------------------------------------------------------
+		// fulltext field
+		//----------------------------------------------------------------------
+
+		if(field->type & INDEX_FLD_FULLTEXT) {
 			// value must be of type string
 			if(t == T_STRING) {
 				*doc_field_count += 1;
@@ -208,15 +211,12 @@ RSDoc *Index_IndexGraphEntity
 						strlen(v->stringval), RSFLDTYPE_FULLTEXT);
 			}
 		}
-	} else {
-		for(uint i = 0; i < field_count; i++) {
-			field = idx->fields + i;
-			const char *field_name = field->name;
-			v = GraphEntity_GetProperty(e, field->id);
-			if(v == ATTRIBUTE_NOTFOUND) continue;
 
-			SIType t = SI_TYPE(*v);
+		//----------------------------------------------------------------------
+		// exact match field
+		//----------------------------------------------------------------------
 
+		if(field->type & (INDEX_FLD_STR | INDEX_FLD_NUMERIC | INDEX_FLD_GEO)) {
 			*doc_field_count += 1;
 			if(t == T_STRING) {
 				RediSearch_DocumentAddFieldString(doc, field_name, v->stringval,
@@ -237,33 +237,41 @@ RSDoc *Index_IndexGraphEntity
 			}
 		}
 
-		// index name of none index fields
-		if(none_indexable_fields_count > 0) {
-			// concat all none indexable field names
-			size_t len = none_indexable_fields_count - 1; // seperators
-			for(uint i = 0; i < none_indexable_fields_count; i++) {
-				len += strlen(none_indexable_fields[i]);
-			}
+		//----------------------------------------------------------------------
+		// vector field
+		//----------------------------------------------------------------------
 
-			// add room for \0
-			len++;
-
-			char *s = NULL;
-			if(len < 512) s = alloca(len); // stack base
-			else s = rm_malloc(sizeof(char) * len); // heap base
-
-			// concat
-			len = sprintf(s, "%s", none_indexable_fields[0]);
-			for(uint i = 1; i < none_indexable_fields_count; i++) {
-				len += sprintf(s + len, "%c%s", INDEX_SEPARATOR, none_indexable_fields[i]);
-			}
-
-			RediSearch_DocumentAddFieldString(doc, INDEX_FIELD_NONE_INDEXED,
-						s, len, RSFLDTYPE_TAG);
-
-			// free if heap based
-			if(len >= 512) rm_free(s);
+		if(field->type & INDEX_FLD_VECTOR) {
+			// value must be of type array
 		}
+	}
+
+	// index name of none index fields
+	if(none_indexable_fields_count > 0) {
+		// concat all none indexable field names
+		size_t len = none_indexable_fields_count - 1; // seperators
+		for(uint i = 0; i < none_indexable_fields_count; i++) {
+			len += strlen(none_indexable_fields[i]);
+		}
+
+		// add room for \0
+		len++;
+
+		char *s = NULL;
+		if(len < 512) s = alloca(len); // stack base
+		else s = rm_malloc(sizeof(char) * len); // heap base
+
+		// concat
+		len = sprintf(s, "%s", none_indexable_fields[0]);
+		for(uint i = 1; i < none_indexable_fields_count; i++) {
+			len += sprintf(s + len, "%c%s", INDEX_SEPARATOR, none_indexable_fields[i]);
+		}
+
+		RediSearch_DocumentAddFieldString(doc, INDEX_FIELD_NONE_INDEXED,
+				s, len, RSFLDTYPE_TAG);
+
+		// free if heap based
+		if(len >= 512) rm_free(s);
 	}
 
 	return doc;

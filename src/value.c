@@ -93,6 +93,12 @@ SIValue SI_Map(u_int64_t initialCapacity) {
 	return Map_New(initialCapacity);
 }
 
+SIValue SI_Vector(GrB_Vector v) {
+	return (SIValue) {
+		.ptrval = v, .type = T_VECTOR, .allocation = M_SELF
+	};
+}
+
 SIValue SI_DuplicateStringVal(const char *s) {
 	return (SIValue) {
 		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF

@@ -361,17 +361,19 @@ class testProcedures(FlowTestsBase):
         # Yield results of procedure in a non-default sequence
         actual_resultset = redis_graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
 
-        expected_result = [["READ", "algo.BFS"],
-                           ['READ', 'algo.SPpaths'],
-                           ['READ', 'algo.SSpaths'],
-                           ["READ", "algo.pageRank"],
-                           ['READ', 'db.constraints'],
+        expected_result = [["READ",  "algo.BFS"],
+                           ['READ',  'algo.SPpaths'],
+                           ['READ',  'algo.SSpaths'],
+                           ["READ",  "algo.pageRank"],
+                           ['READ',  'db.constraints'],
                            ["WRITE", "db.idx.fulltext.createNodeIndex"],
                            ["WRITE", "db.idx.fulltext.drop"],
-                           ["READ", "db.idx.fulltext.queryNodes"],
-                           ["READ", "db.indexes"],
-                           ["READ", "db.labels"],
-                           ["READ", "db.propertyKeys"],
-                           ["READ", "db.relationshipTypes"],
-                           ["READ", "dbms.procedures"]]
+                           ["READ",  "db.idx.fulltext.queryNodes"],
+                           ["WRITE", "db.idx.vector.createIndex"],
+                           ["READ",  "db.indexes"],
+                           ["READ",  "db.labels"],
+                           ["READ",  "db.propertyKeys"],
+                           ["READ",  "db.relationshipTypes"],
+                           ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
+

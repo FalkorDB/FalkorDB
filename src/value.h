@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include "xxhash.h"
+#include "GraphBLAS.h"
 
 /* Type defines the supported types by the system. The types are powers
  * of 2 so they can be used in bitmasks of matching types.
@@ -32,12 +33,13 @@ typedef enum {
 	T_LOCALTIME = (1 << 9),
 	T_DURATION = (1 << 10),
 	T_STRING = (1 << 11),
-	T_BOOL = (1 << 12), // shares 'longval' representation in SIValue union
+	T_BOOL = (1 << 12),   // shares 'longval' representation in SIValue union
 	T_INT64 = (1 << 13),
 	T_DOUBLE = (1 << 14),
 	T_NULL = (1 << 15),
 	T_PTR = (1 << 16),
-	T_POINT = (1 << 17), // TODO: verify type order of point
+	T_POINT = (1 << 17),  // TODO: verify type order of point
+	T_VECTOR = (1 << 18),
 } SIType;
 
 typedef enum {
@@ -51,9 +53,9 @@ typedef enum {
 #define SI_ALLOCATION(value) (value)->allocation
 #define SI_NUMERIC (T_INT64 | T_DOUBLE)
 #define SI_GRAPHENTITY (T_NODE | T_EDGE)
-#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT)
-#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE)
-#define SI_INDEXABLE (SI_NUMERIC | T_BOOL | T_STRING | T_POINT)
+#define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
+#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
+#define SI_INDEXABLE (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)
 
 /* Any values (except durations) are comparable with other values of the same type.
  * Integer and floating-point values are also comparable with each other. */
@@ -101,7 +103,7 @@ typedef struct SIValue {
 	SIAllocation allocation;
 } SIValue;
 
-/* Functions to construct an SIValue from a specific input type. */
+// functions to construct an SIValue from a specific input type
 SIValue SI_EmptyMap();
 SIValue SI_EmptyArray();
 SIValue SI_Node(void *n);
@@ -112,6 +114,7 @@ SIValue SI_BoolVal(int b);
 SIValue SI_PtrVal(void *v);
 SIValue SI_LongVal(int64_t i);
 SIValue SI_DoubleVal(double d);
+SIValue SI_Vector(GrB_Vector v);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);
