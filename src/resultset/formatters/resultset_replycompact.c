@@ -16,6 +16,7 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path);
 static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
 static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
+static void _ResultSet_CompactReplyWithVector(RedisModuleCtx *ctx, SIValue vec);
 
 static inline ValueType _mapValueType(const SIValue v) {
 	switch(SI_TYPE(v)) {
@@ -30,6 +31,8 @@ static inline ValueType _mapValueType(const SIValue v) {
 	case T_DOUBLE:
 		return VALUE_DOUBLE;
 	case T_ARRAY:
+	case T_VECTOR32F:
+	case T_VECTOR64F:
 		return VALUE_ARRAY;
 	case T_NODE:
 		return VALUE_NODE;
@@ -50,8 +53,12 @@ static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, const SIVa
 	RedisModule_ReplyWithLongLong(ctx, _mapValueType(v));
 }
 
-static void _ResultSet_CompactReplyWithSIValue(RedisModuleCtx *ctx, GraphContext *gc,
-											   const SIValue v) {
+static void _ResultSet_CompactReplyWithSIValue
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	const SIValue v
+) {
 	// Emit the value type, then the actual value (to facilitate client-side parsing)
 	_ResultSet_ReplyWithValueType(ctx, v);
 
@@ -71,6 +78,10 @@ static void _ResultSet_CompactReplyWithSIValue(RedisModuleCtx *ctx, GraphContext
 		return;
 	case T_ARRAY:
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
+		break;
+	case T_VECTOR32F:
+	case T_VECTOR64F:
+		_ResultSet_CompactReplyWithVector(ctx, v);
 		break;
 	case T_NULL:
 		RedisModule_ReplyWithNull(ctx);
@@ -193,6 +204,48 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 		RedisModule_ReplyWithArray(ctx, 2); // Reply with array with space for type and value
 		_ResultSet_CompactReplyWithSIValue(ctx, gc, SIArray_Get(array, i));
 	}
+}
+
+static void _ResultSet_CompactReplyWithVector
+(
+	RedisModuleCtx *ctx,
+	SIValue vec
+) {
+	// compact vector reply format:
+	// [
+	//   v0
+	//   v1
+	//   .
+	//   .
+	//   .
+	//   vn
+	// ]
+
+	ASSERT(SI_TYPE(vec) & T_VECTOR);
+
+	// construct arrry of vector elements
+	uint64_t dim = SIVector_Dim(vec);
+	RedisModule_ReplyWithArray(ctx, dim);
+
+	// unpack vector
+	size_t vx_size;
+	void *vs = SIVector_Unpack(&vec, &vx_size);
+
+	// reply with vector elements
+	if(SI_TYPE(vec) == T_VECTOR32F) {
+		float *vx = (float*)vs;
+		for(uint i = 0; i < dim; i++) {
+			RedisModule_ReplyWithDouble(ctx, (double)vx[i]);
+		}
+	} else {
+		double *vx = (double*)vs;
+		for(uint i = 0; i < dim; i++) {
+			RedisModule_ReplyWithDouble(ctx, vx[i]);
+		}
+	}
+
+	// pack vector back
+	SIVector_Pack(&vec, &vs, vx_size);
 }
 
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path) {

@@ -24,7 +24,8 @@ SIValue AR_VECTOR32F
 	SIValue elements = argv[0];
 
 	// return NULL if input is NULL
-	if(SI_TYPE(elements) == T_NULL) {
+	SIType t = SI_TYPE(elements);
+	if(t == T_NULL) {
 		return SI_NullVal();
 	}
 
@@ -41,7 +42,7 @@ SIValue AR_VECTOR32F
 		// encountered a non-double value
 		if(SI_TYPE(v) != T_DOUBLE) {
 			rm_free(values);
-			ErrorCtx_RaiseRuntimeException("vector32f expects an array of doubles");
+			ErrorCtx_RaiseRuntimeException("vector32f expects an array of floats");
 			return SI_NullVal();
 		}
 
@@ -65,7 +66,7 @@ SIValue AR_VECTOR32F
 	info = GxB_Vector_pack_Full(v, (void**)&values, sizeof(float) * n, false, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
-	return SI_Vector(v);
+	return SI_Vector32f(v);
 }
 
 void Register_VectorFuncs() {
@@ -85,3 +86,4 @@ void Register_VectorFuncs() {
 	//func_desc = AR_FuncDescNew("vector64f", AR_DISTANCE64F, 1, 1, types, ret_type, false, true);
 	//AR_RegFunc(func_desc);
 }
+

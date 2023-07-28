@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "../query_ctx.h"
+#include "../datatypes/vector.h"
 
 // determine block available space 
 #define BLOCK_AVAILABLE_SPACE(b) (b->cap - BLOCK_USED_SPACE(b))
@@ -31,9 +32,18 @@ struct _EffectsBuffer {
 };
 
 // forward declarations
+
+// write array to effects buffer
 static void EffectsBuffer_WriteSIArray
 (
 	const SIValue *arr,  // array
+	EffectsBuffer *buff  // effect buffer
+);
+
+// write vector to effects buffer
+static void EffectsBuffer_WriteSIVector
+(
+	const SIValue *v,    // vector
 	EffectsBuffer *buff  // effect buffer
 );
 
@@ -175,6 +185,10 @@ static void EffectsBuffer_WriteSIValue
 		case T_NULL:
 			// no additional data is required to represent NULL
 			break;
+		case T_VECTOR32F:
+		case T_VECTOR64F:
+			EffectsBuffer_WriteSIVector(v, buff);
+			break;
 		default:
 			assert(false && "unknown SIValue type");
 	}
@@ -200,6 +214,31 @@ static void EffectsBuffer_WriteSIArray
 	for (uint32_t i = 0; i < len; i++) {
 		EffectsBuffer_WriteSIValue(elements + i, buff);
 	}
+}
+
+// write vector to effects buffer
+static void EffectsBuffer_WriteSIVector
+(
+	const SIValue *v,    // vector
+	EffectsBuffer *buff  // effect buffer
+) {
+	// format:
+	// number of elements
+	// elements
+
+	// write vector dimension
+	uint64_t dim = SIVector_Dim(*v);
+	EffectsBuffer_WriteBytes(&dim, sizeof(uint64_t), buff);
+
+	// get direct access vector's elements
+	size_t vx_size;
+	void *vx = SIVector_Unpack((SIValue*)v, &vx_size);
+	ASSERT(vx != NULL);
+
+	EffectsBuffer_WriteBytes(vx, vx_size, buff);
+
+	// return elements to vector
+	SIVector_Pack((SIValue*)v, &vx, vx_size);
 }
 
 // dump attributes to stream

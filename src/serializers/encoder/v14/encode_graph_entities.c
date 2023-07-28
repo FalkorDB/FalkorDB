@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v13.h"
+#include "encode_v14.h"
 #include "../../../datatypes/datatypes.h"
 
 // forword decleration
@@ -19,20 +19,46 @@ static void _RdbSaveSIArray
 	RedisModuleIO *rdb,
 	const SIValue list
 ) {
-	/* saves array as
-	   unsigned : array legnth
-	   array[0]
-	   .
-	   .
-	   .
-	   array[array length -1]
-	 */
+	// saves array as
+	// unsigned : array legnth
+	// array[0]
+	// .
+	// .
+	// .
+	// array[array length -1]
+
 	uint arrayLen = SIArray_Length(list);
 	RedisModule_SaveUnsigned(rdb, arrayLen);
 	for(uint i = 0; i < arrayLen; i ++) {
 		SIValue value = SIArray_Get(list, i);
 		_RdbSaveSIValue(rdb, &value);
 	}
+}
+
+static void _RdbSaveSIVector
+(
+	RedisModuleIO *rdb, 
+	SIValue v
+) {
+	// saves a vector
+	// unsigned : vector dimension
+	// vector[0]
+	// .
+	// .
+	// .
+	// vector[vector dimension -1]
+
+	uint64_t dim = SIVector_Dim(v);
+	RedisModule_SaveUnsigned(rdb, dim);
+
+	// get direct access vector's elements
+	size_t vx_size;
+	void *vx = SIVector_Unpack(&v, &vx_size);
+
+	RedisModule_SaveStringBuffer(rdb, (char*)vx, vx_size);
+
+	// return elements to vector
+	SIVector_Pack(&v, &vx, vx_size);
 }
 
 static void _RdbSaveSIValue
@@ -43,26 +69,34 @@ static void _RdbSaveSIValue
 	// Format:
 	// SIType
 	// Value
+
 	RedisModule_SaveUnsigned(rdb, v->type);
+
 	switch(v->type) {
 		case T_BOOL:
 		case T_INT64:
 			RedisModule_SaveSigned(rdb, v->longval);
-			return;
+			break;
 		case T_DOUBLE:
 			RedisModule_SaveDouble(rdb, v->doubleval);
-			return;
+			break;
 		case T_STRING:
-			RedisModule_SaveStringBuffer(rdb, v->stringval, strlen(v->stringval) + 1);
-			return;
+			RedisModule_SaveStringBuffer(rdb, v->stringval,
+					strlen(v->stringval) + 1);
+			break;
 		case T_ARRAY:
 			_RdbSaveSIArray(rdb, *v);
-			return;
+			break;
 		case T_POINT:
 			RedisModule_SaveDouble(rdb, Point_lat(*v));
 			RedisModule_SaveDouble(rdb, Point_lon(*v));
+			break;
+		case T_VECTOR32F:
+		case T_VECTOR64F:
+			_RdbSaveSIVector(rdb, *v);
+			break;
 		case T_NULL:
-			return; // No data beyond the type needs to be encoded for a NULL value.
+			break;  // no data beyond type needs to be encoded for NULL
 		default:
 			ASSERT(0 && "Attempted to serialize value of invalid type.");
 	}
@@ -119,7 +153,7 @@ static void _RdbSaveEdge
 	_RdbSaveEntity(rdb, (GraphEntity *)e);
 }
 
-static void _RdbSaveNode_v13
+static void _RdbSaveNode_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -149,7 +183,7 @@ static void _RdbSaveNode_v13
 	_RdbSaveEntity(rdb, (GraphEntity *)n);
 }
 
-static void _RdbSaveDeletedEntities_v13
+static void _RdbSaveDeletedEntities_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -165,7 +199,7 @@ static void _RdbSaveDeletedEntities_v13
 	}
 }
 
-void RdbSaveDeletedNodes_v13
+void RdbSaveDeletedNodes_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -177,10 +211,10 @@ void RdbSaveDeletedNodes_v13
 	if(deleted_nodes_to_encode == 0) return;
 	// get deleted nodes list
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
-	_RdbSaveDeletedEntities_v13(rdb, gc, deleted_nodes_to_encode, deleted_nodes_list);
+	_RdbSaveDeletedEntities_v14(rdb, gc, deleted_nodes_to_encode, deleted_nodes_list);
 }
 
-void RdbSaveDeletedEdges_v13
+void RdbSaveDeletedEdges_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -193,10 +227,10 @@ void RdbSaveDeletedEdges_v13
 
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
-	_RdbSaveDeletedEntities_v13(rdb, gc, deleted_edges_to_encode, deleted_edges_list);
+	_RdbSaveDeletedEntities_v14(rdb, gc, deleted_edges_to_encode, deleted_edges_list);
 }
 
-void RdbSaveNodes_v13
+void RdbSaveNodes_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -227,7 +261,7 @@ void RdbSaveNodes_v13
 	for(uint64_t i = 0; i < nodes_to_encode; i++) {
 		GraphEntity e;
 		e.attributes = (AttributeSet *)DataBlockIterator_Next(iter, &e.id);
-		_RdbSaveNode_v13(rdb, gc, &e);
+		_RdbSaveNode_v14(rdb, gc, &e);
 	}
 
 	// check if done encodeing nodes
@@ -276,7 +310,7 @@ static void _RdbSaveMultipleEdges
 	*multiple_edges_current_index = i;
 }
 
-void RdbSaveEdges_v13
+void RdbSaveEdges_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

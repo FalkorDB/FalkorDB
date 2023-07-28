@@ -39,7 +39,8 @@ typedef enum {
 	T_NULL = (1 << 15),
 	T_PTR = (1 << 16),
 	T_POINT = (1 << 17),  // TODO: verify type order of point
-	T_VECTOR = (1 << 18),
+	T_VECTOR32F = (1 << 18),
+	T_VECTOR64F = (1 << 19),
 } SIType;
 
 typedef enum {
@@ -49,6 +50,7 @@ typedef enum {
 	M_CONST = (1 << 2)      // SIValue does not own its allocation, but its access is safe
 } SIAllocation;
 
+#define T_VECTOR (T_VECTOR32F | T_VECTOR64F)
 #define SI_TYPE(value) (value).type
 #define SI_ALLOCATION(value) (value)->allocation
 #define SI_NUMERIC (T_INT64 | T_DOUBLE)
@@ -91,16 +93,17 @@ typedef struct Point {
 
 typedef struct SIValue {
 	union {
-		int64_t longval;
-		double doubleval;
-		char *stringval;
-		void *ptrval;
-		struct Pair *map;
-		struct SIValue *array;
-		Point point;
+		int64_t longval;        // integer value
+		double doubleval;       // floating point value
+		char *stringval;        // string value
+		void *ptrval;           // pointer value
+		struct Pair *map;       // map value
+		struct SIValue *array;  // array value
+		Point point;            // point value
+		GrB_Vector vector;      // vector value
 	};
-	SIType type;
-	SIAllocation allocation;
+	SIType type;                // type of value
+	SIAllocation allocation;    // allocation type
 } SIValue;
 
 // functions to construct an SIValue from a specific input type
@@ -114,7 +117,8 @@ SIValue SI_BoolVal(int b);
 SIValue SI_PtrVal(void *v);
 SIValue SI_LongVal(int64_t i);
 SIValue SI_DoubleVal(double d);
-SIValue SI_Vector(GrB_Vector v);
+SIValue SI_Vector32f(GrB_Vector v);
+SIValue SI_Vector64f(GrB_Vector v);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);

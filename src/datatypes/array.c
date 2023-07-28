@@ -137,11 +137,18 @@ SIValue SIArray_Clone(SIValue siarray) {
 	return newArray;
 }
 
-void SIArray_ToString(SIValue list, char **buf, size_t *bufferLen, size_t *bytesWritten) {
+void SIArray_ToString
+(
+	SIValue list,
+	char **buf,
+	size_t *bufferLen,
+	size_t *bytesWritten
+) {
 	if(*bufferLen - *bytesWritten < 64) {
 		*bufferLen += 64;
 		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
 	}
+
 	// open array with "["
 	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "[");
 	uint arrayLen = SIArray_Length(list);
@@ -157,10 +164,12 @@ void SIArray_ToString(SIValue list, char **buf, size_t *bufferLen, size_t *bytes
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, ", ");
 		}
 	}
+
 	if(*bufferLen - *bytesWritten < 2) {
 		*bufferLen += 2;
 		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
 	}
+
 	// close array with "]"
 	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "]");
 }
