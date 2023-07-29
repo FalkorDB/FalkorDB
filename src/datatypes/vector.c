@@ -35,7 +35,7 @@ uint64_t SIVector_Dim
 (
 	SIValue vector  // vector to get dimension of
 ) {
-	ASSERT(SI_TYPE(vector) == T_VECTOR);
+	ASSERT(SI_TYPE(vector) & T_VECTOR);
 
 	GrB_Index n;
 	GrB_Vector v = vector.vector;
@@ -96,7 +96,7 @@ void SIVector_ToString
 	ASSERT(buf          != NULL);
 	ASSERT(bufferLen    != NULL);
 	ASSERT(bytesWritten != NULL);
-	ASSERT(SI_TYPE(vector) == T_VECTOR);
+	ASSERT(SI_TYPE(vector) & T_VECTOR);
 
 	// compute required buffer size
 	// each element is represented by 24 characters
