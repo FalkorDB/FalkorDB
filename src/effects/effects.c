@@ -227,18 +227,17 @@ static void EffectsBuffer_WriteSIVector
 	// elements
 
 	// write vector dimension
-	uint64_t dim = SIVector_Dim(*v);
-	EffectsBuffer_WriteBytes(&dim, sizeof(uint64_t), buff);
+	uint32_t dim = SIVector_Dim(*v);
+	EffectsBuffer_WriteBytes(&dim, sizeof(uint32_t), buff);
 
-	// get direct access vector's elements
-	size_t vx_size;
-	void *vx = SIVector_Unpack((SIValue*)v, &vx_size);
-	ASSERT(vx != NULL);
+	// write vector elements
+	void *elements   = SIVector_Elements(*v);
+	size_t elem_size = (SI_TYPE(*v) == T_VECTOR32F)
+		? sizeof(float)
+		: sizeof(double);
+	size_t n = dim * elem_size;
 
-	EffectsBuffer_WriteBytes(vx, vx_size, buff);
-
-	// return elements to vector
-	SIVector_Pack((SIValue*)v, &vx, vx_size);
+	EffectsBuffer_WriteBytes(elements, n, buff);
 }
 
 // dump attributes to stream

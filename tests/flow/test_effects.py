@@ -168,7 +168,8 @@ class testEffects():
                 n.a = 1,
                 n.b = 'str',
                 n.c = True,
-                n.d = [1, [2], '3']
+                n.d = [1, [2], '3'],
+                n.v = vector32f([1.0, 2.0, 3.0])
             """
 
         res = self.query_master_and_wait(q)
@@ -185,7 +186,8 @@ class testEffects():
                 SET
                 e.e = point({latitude: 51, longitude: 0}),
                 e.f=3.14,
-                e.empty_string = ''
+                e.empty_string = '',
+                e.v = vector32f([1.0, 2.0, 3.0])
             """
 
         res = self.query_master_and_wait(q)
@@ -215,7 +217,8 @@ class testEffects():
                             a:[1, [2], '3'],
                             p:point({latitude: 51, longitude: 0}),
                             f:3.14,
-                            empty_string: ''
+                            empty_string: '',
+                            v: vector32f([1.0, 2.0, 3.0])
                         })"""
 
         # labeled node without attributes
@@ -229,7 +232,8 @@ class testEffects():
                             a:[1, [2], '3'],
                             p:point({latitude: 51, longitude: 0}),
                             f:3.14,
-                            empty_string: ''
+                            empty_string: '',
+                            v: vector32f([1.0, 2.0, 3.0])
                         })"""
 
         queries = [q0, q1, q2, q3]
@@ -261,7 +265,8 @@ class testEffects():
                                       a:[1, [2], '3'],
                                       ep:point({latitude: 51, longitude: 0}),
                                       f:3.14,
-                                      empty_string: ''}
+                                      empty_string: '',
+                                      v: vector32f([1.0, 2.0, 3.0])}
                             ]->()"""
 
         # edge between an existing node and a new node
@@ -298,7 +303,8 @@ class testEffects():
                     n.d = [[2], 1, '3'],
                     n.xe = point({latitude: 41, longitude: 2}),
                     n.f=6.28,
-                    n.xempty_string = ''"""
+                    n.xempty_string = '',
+                    n.v = vector32f([-1.0, -2.0, -3.0])"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -321,7 +327,8 @@ class testEffects():
                 d:[['3'], 2, 1],
                 e:point({latitude: 2, longitude: 41}),
                 f:2.68,
-                empty_string:''}"""
+                empty_string:'',
+                v: vector32f([-1.1, 2.2, -3.3])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -345,7 +352,8 @@ class testEffects():
                 d:[['1'], 3, 2.0],
                 e:point({latitude: 3, longitude: 40}),
                 f:8.26,
-                empty_string:''}"""
+                empty_string:'',
+                v: vector32f([-1.2, 2.4, -3.6])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -401,7 +409,8 @@ class testEffects():
                     e.d = [[2], 1, '3'],
                     e.e = point({latitude: 41, longitude: 2}),
                     e.f=6.28,
-                    e.empty_string = ''"""
+                    e.empty_string = '',
+                    v: vector32f([-1.0, -2.0, -3.0])"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -424,7 +433,8 @@ class testEffects():
                 d:[['3'], 2, 1],
                 e:point({latitude: 2, longitude: 41}),
                 f:2.68,
-                empty_string:''}"""
+                empty_string:'',
+                v: vector32f([-1.1, 2.2, -3.3])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -448,7 +458,8 @@ class testEffects():
                 d:[['1'], 3, 2.0],
                 e:point({latitude: 3, longitude: 40}),
                 f:8.26,
-                empty_string:''}"""
+                empty_string:'',
+                v: vector32f([-1.2, 2.4, -3.6])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)

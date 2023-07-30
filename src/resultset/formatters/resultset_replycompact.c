@@ -224,28 +224,24 @@ static void _ResultSet_CompactReplyWithVector
 	ASSERT(SI_TYPE(vec) & T_VECTOR);
 
 	// construct arrry of vector elements
-	uint64_t dim = SIVector_Dim(vec);
+	uint32_t dim = SIVector_Dim(vec);
 	RedisModule_ReplyWithArray(ctx, dim);
 
-	// unpack vector
-	size_t vx_size;
-	void *vs = SIVector_Unpack(&vec, &vx_size);
+	// get vector elements
+	void *elements = SIVector_Elements(vec);
 
 	// reply with vector elements
 	if(SI_TYPE(vec) == T_VECTOR32F) {
-		float *vx = (float*)vs;
+		float *values = (float*)elements;
 		for(uint i = 0; i < dim; i++) {
-			RedisModule_ReplyWithDouble(ctx, (double)vx[i]);
+			RedisModule_ReplyWithDouble(ctx, (double)values[i]);
 		}
 	} else {
-		double *vx = (double*)vs;
+		double *values = (double*)elements;
 		for(uint i = 0; i < dim; i++) {
-			RedisModule_ReplyWithDouble(ctx, vx[i]);
+			RedisModule_ReplyWithDouble(ctx, values[i]);
 		}
 	}
-
-	// pack vector back
-	SIVector_Pack(&vec, &vs, vx_size);
 }
 
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path) {

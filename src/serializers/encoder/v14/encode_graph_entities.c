@@ -48,17 +48,24 @@ static void _RdbSaveSIVector
 	// .
 	// vector[vector dimension -1]
 
-	uint64_t dim = SIVector_Dim(v);
+	uint32_t dim = SIVector_Dim(v);
 	RedisModule_SaveUnsigned(rdb, dim);
 
-	// get direct access vector's elements
-	size_t vx_size;
-	void *vx = SIVector_Unpack(&v, &vx_size);
+	// get vector elements
+	void *elements = SIVector_Elements(v);
 
-	RedisModule_SaveStringBuffer(rdb, (char*)vx, vx_size);
-
-	// return elements to vector
-	SIVector_Pack(&v, &vx, vx_size);
+	// save individual elements
+	if(SI_TYPE(v) == T_VECTOR32F) {
+		float *values = (float*)elements;
+		for(uint32_t i = 0; i < dim; i ++) {
+			RedisModule_SaveFloat(rdb, values[i]);
+		}
+	} else {
+		double *values = (double*)elements;
+		for(uint32_t i = 0; i < dim; i ++) {
+			RedisModule_SaveDouble(rdb, values[i]);
+		}
+	}
 }
 
 static void _RdbSaveSIValue

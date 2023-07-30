@@ -12,7 +12,6 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include "xxhash.h"
-#include "GraphBLAS.h"
 
 /* Type defines the supported types by the system. The types are powers
  * of 2 so they can be used in bitmasks of matching types.
@@ -100,7 +99,6 @@ typedef struct SIValue {
 		struct Pair *map;       // map value
 		struct SIValue *array;  // array value
 		Point point;            // point value
-		GrB_Vector vector;      // vector value
 	};
 	SIType type;                // type of value
 	SIAllocation allocation;    // allocation type
@@ -117,8 +115,8 @@ SIValue SI_BoolVal(int b);
 SIValue SI_PtrVal(void *v);
 SIValue SI_LongVal(int64_t i);
 SIValue SI_DoubleVal(double d);
-SIValue SI_Vector32f(GrB_Vector v);
-SIValue SI_Vector64f(GrB_Vector v);
+SIValue SI_Vector32f(uint32_t dim);
+SIValue SI_Vector64f(uint32_t dim);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);

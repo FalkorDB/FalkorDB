@@ -7,31 +7,58 @@
 
 #include "../value.h"
 
+// creates a new float32 vector
+SIValue SIVector32f_New
+(
+	uint32_t dim  // vector's dimension
+);
+
+// creates a new float64 vector
+SIValue SIVector64f_New
+(
+	uint32_t dim  // vector's dimension
+);
+
 // clones vector
 SIValue SIVector_Clone
 (
 	SIValue vector // vector to clone
 );
 
-// returns vector's dimension
-uint64_t SIVector_Dim
+// creates a vector from its binary representation
+SIValue SIVector_FromBinary
 (
-	SIValue vector // vector to get dimension of
+	FILE *stream, // binary stream
+	SIType t      // vector type
+);
+
+// compares two vectors
+// return values:
+// 0 - vectors are equal
+// >0 - a > b
+// <0 - a < b
+int SIVector_Compare
+(
+	SIValue a, // first vector to compare
+	SIValue b  // second vector to compare
+);
+
+// compute vector hashcode
+XXH64_hash_t SIVector_HashCode
+(
+	SIValue v  // vector to compute hashcode for
 );
 
 // returns vector's elements
-void *SIVector_Unpack
+void *SIVector_Elements
 (
-	SIValue *vector,  // vector to unpack
-	size_t *vx_size   // size of output in bytes
+	SIValue vector // vector to get elements of
 );
 
-// packs elements into vector
-void SIVector_Pack
+// returns vector's dimension
+uint32_t SIVector_Dim
 (
-	SIValue *vector,  // vector to pack
-	void **elements,  // elements to pack
-	size_t vx_size    // size of elements in bytes
+	SIValue vector // vector to get dimension of
 );
 
 // write a string representation of vector to buf

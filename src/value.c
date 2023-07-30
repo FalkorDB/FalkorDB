@@ -92,32 +92,16 @@ SIValue SI_Map(u_int64_t initialCapacity) {
 
 SIValue SI_Vector32f
 (
-	GrB_Vector v
+	uint32_t dim  // vector's dimension
 ) {
-#ifdef RG_DEBUG
-	GrB_Type t;
-	GxB_Vector_type(&t, v);
-	ASSERT(t == GrB_FP32);
-#endif
-
-	return (SIValue) {
-		.vector = v, .type = T_VECTOR32F, .allocation = M_SELF
-	};
+	return SIVector32f_New(dim);
 }
 
 SIValue SI_Vector64f
 (
-	GrB_Vector v
+	uint32_t dim  // vector's dimension
 ) {
-#ifdef RG_DEBUG
-	GrB_Type t;
-	GxB_Vector_type(&t, v);
-	ASSERT(t == GrB_FP64);
-#endif
-
-	return (SIValue) {
-		.vector = v, .type = T_VECTOR64F, .allocation = M_SELF
-	};
+	return SIVector64f_New(dim);
 }
 
 SIValue SI_DuplicateStringVal(const char *s) {
@@ -629,13 +613,18 @@ int SIArray_Compare(SIValue arrayA, SIValue arrayB, int *disjointOrNull) {
 	return lenDiff;
 }
 
-int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull) {
-
-	/* No special case (null or disjoint comparison) happened yet.
-	 * If indication for such cases is required, first set the indication value to zero (not happen). */
+int SIValue_Compare
+(
+	const SIValue a,
+	const SIValue b,
+	int *disjointOrNull
+) {
+	// no special case (null or disjoint comparison) happened yet
+	// if indication for such cases is required
+	// first set the indication value to zero (not happen)
 	if(disjointOrNull) *disjointOrNull = 0;
 
-	/* In order to be comparable, both SIValues must be from the same type. */
+	// in order to be comparable, both SIValues must be from the same type
 	if(a.type == b.type) {
 		switch(a.type) {
 		case T_INT64:
@@ -667,15 +656,19 @@ int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull) {
 				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
 			return lon_diff;
 		}
+		case T_VECTOR32F:
+		case T_VECTOR64F:
+		return SIVector_Compare(a, b);
 		default:
-			// Both inputs were of an incomparable type, like a pointer, or not implemented comparison yet.
+			// both inputs were of an incomparable type, like a pointer
+			// or not implemented comparison yet
 			ASSERT(false);
 			break;
 		}
 	}
 
-	/* The inputs have different SITypes - compare them if they
-	 * are both numerics of differing types. */
+	// the inputs have different SITypes - compare them if they
+	// are both numerics of differing types
 	if(SI_TYPE(a) & SI_NUMERIC && SI_TYPE(b) & SI_NUMERIC) {
 		if(isnan(SI_GET_NUMERIC(a)) || isnan(SI_GET_NUMERIC(b))) {
 			if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
@@ -685,16 +678,16 @@ int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull) {
 		return SAFE_COMPARISON_RESULT(diff);
 	}
 
-	// Check if either type is null.
+	// check if either type is null
 	if(a.type == T_NULL || b.type == T_NULL) {
-		// Check if indication is required and inform about null comparison.
+		// check if indication is required and inform about null comparison
 		if(disjointOrNull) *disjointOrNull = COMPARED_NULL;
 	} else {
-		// Check if indication is required, and inform about disjoint comparison.
+		// check if indication is required, and inform about disjoint comparison
 		if(disjointOrNull) *disjointOrNull = DISJOINT;
 	}
 
-	// In case of disjoint or null comparison, return value type difference.
+	// in case of disjoint or null comparison, return value type difference
 	return a.type - b.type;
 }
 
@@ -791,6 +784,11 @@ void SIValue_HashUpdate(SIValue v, XXH64_state_t *state) {
 			inner_hash = SIPath_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+		case T_VECTOR32F:
+		case T_VECTOR64F:
+			inner_hash = SIVector_HashCode(v);
+			XXH64_update(state, &inner_hash, sizeof(inner_hash));
+			return;
 			// TODO: Implement for temporal types once we support them.
 		default:
 			ASSERT(false);
@@ -865,6 +863,10 @@ SIValue SIValue_FromBinary
 			// read double from stream
 			fread_assert(&d, sizeof(d), stream);
 			v = SI_DoubleVal(d);
+			break;
+		case T_VECTOR32F:
+		case T_VECTOR64F:
+			v = SIVector_FromBinary(stream, t);
 			break;
 		case T_NULL:
 			v = SI_NullVal();

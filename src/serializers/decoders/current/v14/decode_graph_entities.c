@@ -9,6 +9,7 @@
 // forward declarations
 static SIValue _RdbLoadPoint(RedisModuleIO *rdb);
 static SIValue _RdbLoadSIArray(RedisModuleIO *rdb);
+static SIValue _RdbLoadVector(RedisModuleIO *rdb, SIType t);
 
 static SIValue _RdbLoadSIValue
 (
@@ -33,6 +34,9 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
 		return _RdbLoadPoint(rdb);
+	case T_VECTOR32F:
+	case T_VECTOR64F:
+		return _RdbLoadVector(rdb, t);
 	case T_NULL:
 	default: // currently impossible
 		return SI_NullVal();
@@ -68,6 +72,44 @@ static SIValue _RdbLoadSIArray
 		SIValue_Free(elem);
 	}
 	return list;
+}
+
+static SIValue _RdbLoadVector
+(
+	RedisModuleIO *rdb,
+	SIType t
+) {
+	ASSERT(t & T_VECTOR);
+
+	// loads vector
+	// unsigned : vector length
+	// vector[0]
+	// .
+	// .
+	// .
+	// vector[vector length -1]
+
+	SIValue vector;
+
+	uint32_t dim = RedisModule_LoadUnsigned(rdb);
+
+	if(t == T_VECTOR32F) {
+		vector = SI_Vector32f(dim);
+		float *values = SIVector_Elements(vector);
+
+		for(uint32_t i = 0; i < dim; i++) {
+			values[i] = RedisModule_LoadFloat(rdb);
+		}
+	} else { // T_VECTOR64F
+		vector = SI_Vector64f(dim);
+		double *values = SIVector_Elements(vector);
+
+		for(uint32_t i = 0; i < dim; i++) {
+			values[i] = RedisModule_LoadDouble(rdb);
+		}
+	}
+
+	return vector;
 }
 
 static void _RdbLoadEntity
