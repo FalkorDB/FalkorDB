@@ -168,7 +168,6 @@ void BoltRequestHandler
 				db_len = bolt_value_get_string_size(db);
 			}
 			char *query = bolt_value_get_structure_value(client->read_buffer, 0);
-			RedisModule_Log(NULL, "notice", "Query: %.*s", bolt_value_get_string_size(query), bolt_value_get_string(query));
 			char *parameters = bolt_value_get_structure_value(client->read_buffer, 1);
 			uint32_t params_count = bolt_value_get_map_size(parameters);
 			char *parameters_str = rm_malloc(512);
