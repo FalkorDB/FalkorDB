@@ -234,11 +234,8 @@ void BoltRequestHandler
 ) {
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	int nread = socket_read(fd, client->read_buffer, 2);
-	if(nread == -1) {
-		RedisModule_Log(NULL, "warning", "Socket read error");
-		return;
-	}
 	if(nread == 0) {
+		rm_free(client);
 		socket_close(fd);
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		return;
@@ -247,15 +244,12 @@ void BoltRequestHandler
 	uint16_t size = bswap_16(*(uint16_t*)client->read_buffer);
 
 	nread = socket_read(fd, client->read_buffer, size + 2);
-	if(nread == -1) {
-		RedisModule_Log(NULL, "warning", "Socket read error");
-		return;
-	}
-
 	if(client->read_buffer[size] != 0x00 || client->read_buffer[size + 1] != 0x00) {
 		RedisModule_Log(NULL, "warning", "Socket read error");
 		return;
 	}
+
+	array_append(client->commands, bolt_value_get_structure_type(client->read_buffer));
 
 	switch (bolt_value_get_structure_type(client->read_buffer))
 	{

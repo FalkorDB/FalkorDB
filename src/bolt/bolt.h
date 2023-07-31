@@ -43,9 +43,23 @@ typedef enum bolt_structure_type {
     BST_POINT2D = 0x58
 } bolt_structure_type;
 
+typedef enum bolt_state {
+    BS_NEGOTIATION,
+    BS_AUTHENTICATION,
+    BS_READY,
+    BS_STREAMING,
+    BS_TX_READY,
+    BS_TX_STREAMING,
+    BS_FAILED,
+    BS_INTERRUPTED,
+    BS_DEFUNCT,
+} bolt_state;
+
 typedef struct bolt_client_t {
     socket_t socket;
+    bolt_state state;
     uint32_t write_index;
+    bolt_structure_type *commands;
     char write_buffer[1024];
     char read_buffer[1024];
 } bolt_client_t;
@@ -53,6 +67,11 @@ typedef struct bolt_client_t {
 bolt_client_t *bolt_client_new
 (
     socket_t socket
+);
+
+void bolt_change_client_state
+(
+    bolt_client_t *client   
 );
 
 void bolt_client_send

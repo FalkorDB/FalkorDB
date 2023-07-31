@@ -247,7 +247,7 @@ void ResultSet_Reply
 			bolt_reply_structure(client, BST_FAILURE, 1);
 			bolt_reply_map(client, 2);
 			bolt_reply_string(client, "code");
-			bolt_reply_string(client, "Neo.ClientError.Statement.SyntaxError");
+			bolt_reply_string(client, "SyntaxError");
 			bolt_reply_string(client, "message");
 			bolt_reply_string(client, "Invalid input");
 			bolt_client_send(client);

@@ -1,6 +1,7 @@
 #include "RG.h"
 #include "bolt.h"
 #include "string.h"
+#include "util/arr.h"
 #include "util/rmalloc.h"
 #include <byteswap.h>
 
@@ -10,20 +11,493 @@ bolt_client_t *bolt_client_new
 ) {
     bolt_client_t *client = rm_malloc(sizeof(bolt_client_t));
     client->socket = socket;
+    client->state = BS_NEGOTIATION;
+    client->commands = array_new(bolt_structure_type, 10);
     client->write_index = 2;
     return client;
+}
+
+void bolt_change_negotiation_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_NEGOTIATION && client->commands[0] == BST_HELLO);
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (response_type)
+    {
+        case BST_SUCCESS:
+            client->state = BS_AUTHENTICATION;
+            break;
+        case BST_FAILURE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_authentication_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_AUTHENTICATION && client->commands[0] == BST_LOGON);
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (response_type)
+    {
+        case BST_SUCCESS:
+            client->state = BS_READY;
+            break;
+        case BST_FAILURE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_ready_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_READY);
+    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (request_type)
+    {
+        case BST_LOGOFF:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_AUTHENTICATION;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RUN:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_STREAMING;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_BEGIN:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_TX_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_ROUTE:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RESET:
+            client->state = BS_INTERRUPTED;
+            break;
+        case BST_GOODBYE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_streaming_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_STREAMING);
+    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (request_type)
+    {
+        case BST_PULL:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_DISCARD:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RESET:
+            client->state = BS_INTERRUPTED;
+            break;
+        case BST_GOODBYE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_txready_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_TX_READY);
+    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (request_type)
+    {
+        case BST_RUN:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_TX_STREAMING;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_COMMIT:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_ROLLBACK:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RESET:
+            client->state = BS_INTERRUPTED;
+            break;
+        case BST_GOODBYE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_txstreaming_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_TX_STREAMING);
+    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (request_type)
+    {
+        case BST_RUN:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_TX_STREAMING;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_PULL:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_TX_STREAMING;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_COMMIT:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_DISCARD:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_TX_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RESET:
+            client->state = BS_INTERRUPTED;
+            break;
+        case BST_GOODBYE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_failed_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_FAILED);
+    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (request_type)
+    {
+        case BST_RUN:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_PULL:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_DISCARD:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RESET:
+            client->state = BS_READY;
+            break;
+        case BST_GOODBYE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_interrupted_state
+(
+    bolt_client_t *client   
+) {
+    ASSERT(client->state == BS_INTERRUPTED);
+    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    switch (request_type)
+    {
+        case BST_RUN:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_PULL:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_DISCARD:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_BEGIN:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_COMMIT:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_ROLLBACK:
+            switch (response_type)
+            {
+                case BST_IGNORED:
+                    client->state = BS_FAILED;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_RESET:
+            switch (response_type)
+            {
+                case BST_SUCCESS:
+                    client->state = BS_READY;
+                    break;
+                case BST_FAILURE:
+                    client->state = BS_DEFUNCT;
+                    break;
+                default:
+                    ASSERT(false);
+            }
+            break;
+        case BST_GOODBYE:
+            client->state = BS_DEFUNCT;
+            break;
+        default:
+            ASSERT(false);
+    }
+}
+
+void bolt_change_client_state
+(
+    bolt_client_t *client   
+) {
+    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    if(response_type == BST_RECORD) {
+        return;
+    }
+    switch (client->state)
+	{
+        case BS_NEGOTIATION:
+            bolt_change_negotiation_state(client);
+            break;
+        case BS_AUTHENTICATION:
+            bolt_change_authentication_state(client);
+            break;
+        case BS_READY:
+            bolt_change_ready_state(client);
+            break;
+        case BS_STREAMING:
+            bolt_change_streaming_state(client);
+            break;
+        case BS_TX_READY:
+            bolt_change_txready_state(client);
+            break;
+        case BS_TX_STREAMING:
+            bolt_change_txstreaming_state(client);
+            break;
+        case BS_FAILED:
+            bolt_change_failed_state(client);
+            break;
+        case BS_INTERRUPTED:
+            bolt_change_interrupted_state(client);
+            break;
+        default:
+            ASSERT(false);
+            break;
+    }
+    array_del(client->commands, 0);
 }
 
 void bolt_client_send
 (
     bolt_client_t *client
 ) {
+    if(client->state == BS_FAILED) {
+        client->write_index = 2;
+		bolt_reply_structure(client, BST_IGNORED, 0);
+	}
+
     uint16_t n = client->write_index - 2;
     *(u_int16_t *)client->write_buffer = bswap_16(n);
     client->write_buffer[n + 2] = 0x00;
 	client->write_buffer[n + 3] = 0x00;
     socket_write(client->socket, client->write_buffer, n + 4);
     client->write_index = 2;
+    bolt_change_client_state(client);
 }
 
 void bolt_reply_null
