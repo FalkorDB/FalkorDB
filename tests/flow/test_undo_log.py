@@ -82,11 +82,25 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 1)
 
     def test05_undo_update_node(self):
-        self.graph.query("CREATE (:N {a: 1, b:'str', c:[1, 'str', point({latitude:1, longitude:2})], d:point({latitude:1, longitude:2})})")
-        property_keys = self.graph.query("CALL db.propertyKeys").result_set
+        # create a node with various attributes
+        res = self.graph.query("""CREATE (n:N {
+            a: 1,
+            b:'str',
+            c:[1, 'str', point({latitude:1, longitude:2})],
+            d:point({latitude:1, longitude:2}),
+            e:vector32f([1, 2])
+        })
+        RETURN n""")
+
+        # save the original node and property keys
+        n_v0 = res.result_set[0][0]
+        property_keys_v0 = self.graph.query("CALL db.propertyKeys").result_set
+
         try:
             self.graph.query("""MATCH (n:N {a: 1})
-                                SET n.a = 2, n.b = '', n.c = null, n.d = point({latitude:2, longitude:1})
+                                SET n.a = 2, n.b = '', n.c = null,
+                                n.d = point({latitude:2, longitude:1}),
+                                n.e = vector32f([2, 1])
                                 WITH n
                                 RETURN 1 * n""")
             # we're not supposed to be here, expecting query to fail
@@ -95,20 +109,19 @@ class testUndoLog():
             pass
 
         # expecting the original attributes to be restored
-        result = self.graph.query("MATCH (n:N) RETURN n.a, n.b, n.c, n.d")
-        self.env.assertEquals(result.result_set[0][0], 1)
-        self.env.assertEquals(result.result_set[0][1], 'str')
-        self.env.assertEquals(result.result_set[0][2], [1, 'str', {'latitude':1, 'longitude':2}])
-        self.env.assertEquals(result.result_set[0][3], {'latitude':1, 'longitude':2})
+        result = self.graph.query(f"MATCH (n:N) WHERE ID(n) = {n_v0.id} RETURN n")
+        n_v1 = result.result_set[0][0]
+        self.env.assertEquals(n_v0, n_v1)
 
         # no new properties should have been created
-        new_property_keys = self.graph.query("CALL db.propertyKeys").result_set
-        self.env.assertEquals(property_keys, new_property_keys)
+        property_keys_v1 = self.graph.query("CALL db.propertyKeys").result_set
+        self.env.assertEquals(property_keys_v0, property_keys_v1)
 
-        # introduce a new attribute `n.e`
+        # introduce a new attribute `n.f`
         try:
-            self.graph.query("""MATCH (n:N {a: 1})
-                                SET n.e = 1
+            self.graph.query(f"""MATCH (n:N)
+                                WHERE ID(n) = {n_v0.id}
+                                SET n.f = 1
                                 WITH n
                                 RETURN 1 * n""")
             # we're not supposed to be here, expecting query to fail
@@ -117,12 +130,13 @@ class testUndoLog():
             pass
 
         # expecting the original attributes to be deleted
-        result = self.graph.query("MATCH (n:N) RETURN n.e")
-        self.env.assertEquals(result.result_set[0][0], None)
+        result = self.graph.query(f"MATCH (n:N) WHERE ID(n) = {n_v0.id} RETURN n")
+        n_v2 = result.result_set[0][0]
+        self.env.assertEquals(n_v0, n_v2)
 
         # no new properties should have been created
-        new_property_keys = self.graph.query("CALL db.propertyKeys").result_set
-        self.env.assertEquals(property_keys, new_property_keys)
+        property_keys_v2 = self.graph.query("CALL db.propertyKeys").result_set
+        self.env.assertEquals(property_keys_v0, property_keys_v2)
 
         # introduce a new Label `n:M`
         try:
@@ -141,8 +155,9 @@ class testUndoLog():
 
         # clear all attributes of `n`
         try:
-            self.graph.query("""MATCH (n:N {a: 1})
-                                SET n = {}
+            self.graph.query(f"""MATCH (n:N {a: 1})
+                                WHERE ID(n) = {n_v0.id}
+                                SET n = {{}}
                                 WITH n
                                 RETURN n * 1""")
             # we're not supposed to be here, expecting query to fail
@@ -151,17 +166,17 @@ class testUndoLog():
             pass
 
         # expecting the original attributes to be restored
-        result = self.graph.query("MATCH (n:N) RETURN n.a, n.b, n.c, n.d")
-        self.env.assertEquals(result.result_set[0][0], 1)
-        self.env.assertEquals(result.result_set[0][1], 'str')
-        self.env.assertEquals(result.result_set[0][2], [1, 'str', {'latitude':1, 'longitude':2}])
-        self.env.assertEquals(result.result_set[0][3], {'latitude':1, 'longitude':2})
-        new_property_keys = self.graph.query("CALL db.propertyKeys").result_set
-        self.env.assertEquals(property_keys, new_property_keys)
+        result = self.graph.query(f"MATCH (n:N) WHERE ID(n) = {n_v0.id} RETURN n")
+        n_v3 = result.result_set[0][0]
+        self.env.assertEquals(n_v0, n_v3)
+
+        property_keys_v3 = self.graph.query("CALL db.propertyKeys").result_set
+        self.env.assertEquals(property_keys_v0, property_keys_v3)
 
         try:
-            self.graph.query("""MATCH (n:N {a: 1})
-                                SET n += {e: 1}
+            self.graph.query(f"""MATCH (n:N)
+                                WHERE ID(n) = {n_v0.id}
+                                SET n += {f: 1}
                                 WITH n
                                 RETURN n * 1""")
             # we're not supposed to be here, expecting query to fail
@@ -170,14 +185,13 @@ class testUndoLog():
             pass
 
         # expecting the original attributes to be restored
-        result = self.graph.query("MATCH (n:N) RETURN n.a, n.b, n.c, n.d, n.e")
-        self.env.assertEquals(result.result_set[0][0], 1)
-        self.env.assertEquals(result.result_set[0][1], 'str')
-        self.env.assertEquals(result.result_set[0][2], [1, 'str', {'latitude':1, 'longitude':2}])
-        self.env.assertEquals(result.result_set[0][3], {'latitude':1, 'longitude':2})
-        self.env.assertEquals(result.result_set[0][4], None)
-        new_property_keys = self.graph.query("CALL db.propertyKeys").result_set
-        self.env.assertEquals(property_keys, new_property_keys)
+        result = self.graph.query(f"MATCH (n:N) WHERE ID(n) = {n_v0.id} RETURN n")
+        n_v4 = result.result_set[0][0]
+
+        self.env.assertEquals(n_v0, n_v4)
+
+        property_keys_v4 = self.graph.query("CALL db.propertyKeys").result_set
+        self.env.assertEquals(property_keys_v0, property_keys_v4)
 
     def test06_undo_update_edge(self):
         self.graph.query("CREATE (:N)-[:R {v: 1}]->(:N)")

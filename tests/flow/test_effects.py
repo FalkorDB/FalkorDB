@@ -173,7 +173,7 @@ class testEffects():
             """
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 4)
+        self.env.assertEquals(res.properties_set, 5)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -191,7 +191,7 @@ class testEffects():
             """
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 3)
+        self.env.assertEquals(res.properties_set, 4)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -410,7 +410,7 @@ class testEffects():
                     e.e = point({latitude: 41, longitude: 2}),
                     e.f=6.28,
                     e.empty_string = '',
-                    v: vector32f([-1.0, -2.0, -3.0])"""
+                    e.v = vector32f([-1.0, -2.0, -3.0])"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)

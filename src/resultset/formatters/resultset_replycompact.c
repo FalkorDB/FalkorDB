@@ -31,9 +31,10 @@ static inline ValueType _mapValueType(const SIValue v) {
 	case T_DOUBLE:
 		return VALUE_DOUBLE;
 	case T_ARRAY:
+		return VALUE_ARRAY;
 	case T_VECTOR32F:
 	case T_VECTOR64F:
-		return VALUE_ARRAY;
+		return VALUE_VECTOR;
 	case T_NODE:
 		return VALUE_NODE;
 	case T_EDGE:
