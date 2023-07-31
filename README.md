@@ -1,5 +1,16 @@
 # FalkorDB
 
+> **Note**
+> The team behind RedisGraph decided to take a stab at bringing this disruptive technology back to market.
+>
+> We plan to rebrand it and release it as a stand alone product, following the same guidelines we have followed for the last 6 years:
+> 
+> * Working in the open with the community
+> * Always provide superior performance.
+> * Easy to adapt
+
+
+
 ---
 
 FalkorBD is the first queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to use [sparse matrices](https://en.wikipedia.org/wiki/Sparse_matrix) to represent the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](http://faculty.cse.tamu.edu/davis/GraphBLAS.html) to query the graph.
