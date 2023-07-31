@@ -57,6 +57,8 @@ void Globals_ClearGraphs(
 // Command context tracking
 //------------------------------------------------------------------------------
 
+CommandCtx *Globals_GetCommandCtx();
+
 // track CommandCtx
 void Globals_TrackCommandCtx
 (

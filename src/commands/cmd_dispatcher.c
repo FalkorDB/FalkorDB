@@ -27,7 +27,9 @@ static int _read_flags
 	long long *timeout,         // query level timeout
   	bool *timeout_rw,           // apply timeout on both read and write queries
   	uint *graph_version,        // graph version [UNUSED]
-  	char **errmsg               // reported error message
+  	char **errmsg,              // reported error message
+	bool *bolt,                 // is this a BOLT request
+	bolt_client_t **bolt_client // BOLT client
 ) {
 	ASSERT(compact != NULL);
 	ASSERT(timeout != NULL);
@@ -35,6 +37,7 @@ static int _read_flags
 	long long max_timeout;
 
 	// set defaults
+	*bolt = false;
 	*compact = false;  // verbose
 	*graph_version = GRAPH_VERSION_MISSING;
 	Config_Option_get(Config_TIMEOUT_DEFAULT, timeout);
@@ -62,6 +65,11 @@ static int _read_flags
 		if(!strcasecmp(arg, "--compact")) {
 			// compact result-set
 			*compact = true;
+		} else if(!strcasecmp(arg, "--bolt")) {
+			*bolt = true;
+			long long v;
+			RedisModule_StringToLongLong(argv[++i], &v);
+			*bolt_client = (bolt_client_t *)v;
 		} else if(!strcasecmp(arg, "timeout")) {
 			// query timeout
 			int err = REDISMODULE_ERR;
@@ -179,6 +187,8 @@ int CommandDispatch
 ) {
 	char *errmsg;
 	uint version;
+	bool bolt;
+	bolt_client_t *bolt_client;
 	bool compact;
 	bool timeout_rw;
 	long long timeout;
@@ -197,7 +207,7 @@ int CommandDispatch
 
 	// parse additional arguments
 	int res = _read_flags(argv, argc, &compact, &timeout, &timeout_rw, &version,
-			&errmsg);
+			&errmsg, &bolt, &bolt_client);
 	if(res == REDISMODULE_ERR) {
 		// emit error and exit if argument parsing failed
 		RedisModule_ReplyWithError(ctx, errmsg);
@@ -243,14 +253,14 @@ int CommandDispatch
 		// run query on Redis main thread
 		context = CommandCtx_New(ctx, NULL, argv[0], query, gc, exec_thread,
 								 is_replicated, compact, timeout, timeout_rw,
-								 received_ts, timer);
+								 received_ts, timer, bolt, bolt_client);
 		handler(context);
 	} else {
 		// run query on a dedicated thread
-		RedisModuleBlockedClient *bc = RedisGraph_BlockClient(ctx);
+		RedisModuleBlockedClient *bc = bolt ? NULL : RedisGraph_BlockClient(ctx);
 		context = CommandCtx_New(NULL, bc, argv[0], query, gc, exec_thread,
 								 is_replicated, compact, timeout, timeout_rw,
-								 received_ts, timer);
+								 received_ts, timer, bolt, bolt_client);
 
 		if(ThreadPools_AddWorkReader(handler, context, false) ==
 				THPOOL_QUEUE_FULL) {

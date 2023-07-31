@@ -11,11 +11,20 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../bolt/bolt.h"
+#include "../bolt/socket.h"
+#include "../globals.h"
+#include "../commands/cmd_context.h"
 
 static void _ResultSet_ReplyWithPreamble
 (
 	ResultSet *set
 ) {
+	if(set->format == FORMATTER_BOLT) {
+		set->formatter->EmitHeader(set->ctx, set->columns,
+				set->columns_record_map);
+		return;
+	}
 	if(set->column_count > 0) {
 		// prepare a response containing a header, records, and statistics
 		RedisModule_ReplyWithArray(set->ctx, 3);
@@ -233,6 +242,18 @@ void ResultSet_Reply
 	// check to see if we've encountered a run-time error
 	// if so, emit it as the only response
 	if(ErrorCtx_EncounteredError()) {
+		if(set->format == FORMATTER_BOLT) {
+			bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
+			bolt_reply_structure(client, BST_FAILURE, 1);
+			bolt_reply_map(client, 2);
+			bolt_reply_string(client, "code");
+			bolt_reply_string(client, "Neo.ClientError.Statement.SyntaxError");
+			bolt_reply_string(client, "message");
+			bolt_reply_string(client, "Invalid input");
+			bolt_client_send(client);
+			ErrorCtx_Clear();
+			return;
+		}
 		ErrorCtx_EmitException();
 		return;
 	}
@@ -256,6 +277,13 @@ void ResultSet_Reply
 		}
 	}
 
+	if(set->format == FORMATTER_BOLT) {
+		bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
+		bolt_reply_structure(client, BST_SUCCESS, 1);
+		bolt_reply_map(client, 0);
+		bolt_client_send(client);
+		return;
+	}
 	ResultSetStat_emit(set->ctx, &set->stats); // response with statistics
 }
 

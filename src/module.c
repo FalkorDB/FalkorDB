@@ -29,6 +29,9 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "bolt/socket.h"
+#include "bolt/bolt.h"
+#include <byteswap.h>
 
 // minimal supported Redis version
 #define MIN_REDIS_VERION_MAJOR 6
@@ -91,6 +94,174 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	GxB_set(GxB_FORMAT, GxB_BY_ROW);
 
 	return REDISMODULE_OK;
+}
+
+void BoltRequestHandler
+(
+	int fd,
+	void *user_data,
+	int mask
+) {
+	bolt_client_t *client = (bolt_client_t*)user_data;
+	int nread = socket_read(fd, client->read_buffer, 2);
+	if(nread == -1) {
+		RedisModule_Log(NULL, "warning", "Socket read error");
+		return;
+	}
+	if(nread == 0) {
+		socket_close(fd);
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		return;
+	}
+
+	uint16_t size = bswap_16(*(uint16_t*)client->read_buffer);
+
+	nread = socket_read(fd, client->read_buffer, size + 2);
+	if(nread == -1) {
+		RedisModule_Log(NULL, "warning", "Socket read error");
+		return;
+	}
+
+	if(client->read_buffer[size] != 0x00 || client->read_buffer[size + 1] != 0x00) {
+		RedisModule_Log(NULL, "warning", "Socket read error");
+		return;
+	}
+
+	switch (bolt_value_get_structure_type(client->read_buffer))
+	{
+		case BST_HELLO: {
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 1);
+			bolt_reply_string(client, "server");
+			bolt_reply_string(client, "Neo4j/5.7.0");
+			bolt_client_send(client);
+			break;
+		}
+		case BST_LOGON: {
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			bolt_client_send(client);
+			break;
+		}
+		case BST_LOGOFF:
+			break;
+		case BST_GOODBYE:
+			break;
+		case BST_RESET: {
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			bolt_client_send(client);
+			break;
+		}
+		case BST_RUN: {
+			RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+			RedisModuleString *args[5];
+			char *db = bolt_value_get_structure_value(client->read_buffer, 2);
+			char *db_str;
+			size_t db_len;
+			if(bolt_value_get_map_size(db) == 0) {
+				db_str = "x";
+				db_len = 1;
+			} else {
+				db = bolt_value_get_map_value(db, 0);
+				db_str = bolt_value_get_string(db);
+				db_len = bolt_value_get_string_size(db);
+			}
+			char *query = bolt_value_get_structure_value(client->read_buffer, 0);
+			RedisModule_Log(NULL, "notice", "Query: %.*s", bolt_value_get_string_size(query), bolt_value_get_string(query));
+			char *parameters = bolt_value_get_structure_value(client->read_buffer, 1);
+			uint32_t params_count = bolt_value_get_map_size(parameters);
+			char *parameters_str = rm_malloc(512);
+			sprintf(parameters_str, "CYPHER");
+			args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
+			args[1] = RedisModule_CreateString(ctx, db_str, db_len);
+			if(params_count > 0) {
+				for (uint i = 0; i < params_count; i++) {
+					char *key = bolt_value_get_map_key(parameters, i);
+					char *value = bolt_value_get_map_value(parameters, i);
+					switch (bolt_value_get_type(value))
+					{
+					case BVT_STRING:
+						sprintf(parameters_str, "%s %.*s='%.*s'", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
+						break;
+					case BVT_STRUCTURE:
+						if(bolt_value_get_structure_type(value) == BST_POINT2D) {
+							// value = bolt_value_get_structure_value(value, 0);
+							// sprintf(parameters_str, "%s %.*s=POINT({latitude: %f, longitude: %f})", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
+							break;
+						}
+						ASSERT(false);
+						break;
+					default:
+						ASSERT(false);
+						break;
+					}
+				}
+				sprintf(parameters_str, "%s %.*s", parameters_str, bolt_value_get_string_size(query), bolt_value_get_string(query));
+				args[2] = RedisModule_CreateString(ctx, parameters_str, strlen(parameters_str));
+			} else {
+				args[2] = RedisModule_CreateString(ctx, bolt_value_get_string(query), bolt_value_get_string_size(query));
+			}
+			args[3] = RedisModule_CreateString(ctx, "--bolt", 6);
+			args[4] = RedisModule_CreateStringFromLongLong(ctx, (long long)client);
+
+			CommandDispatch(ctx, args, 5);
+			break;
+		}
+		case BST_DISCARD:
+			break;
+		case BST_PULL: {
+			break;
+		}
+		case BST_BEGIN: {
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			bolt_client_send(client);
+			break;
+		}
+		case BST_COMMIT:{
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			bolt_client_send(client);
+			break;
+		}
+		case BST_ROLLBACK:{
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			bolt_client_send(client);
+			break;
+		}
+		case BST_ROUTE:
+			break;
+		default:
+			break;
+	}
+}
+
+void BoltAcceptHandler
+(
+	int fd,
+	void *user_data,
+	int mask
+) {
+	socket_t client = socket_accept(fd);
+	if(client == -1) return;
+
+	if(!bolt_check_handshake(client)) {
+		socket_close(client);
+		return;
+	}
+
+	bolt_version_t version = bolt_read_supported_version(client);
+
+	char data[4];
+	data[0] = 0x00;
+	data[1] = 0x00;
+	data[2] = version.minor;
+	data[3] = version.major;
+	socket_write(client, data, 4);
+
+	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltRequestHandler, bolt_client_new(client));
 }
 
 int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
@@ -217,6 +388,18 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 				1, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
+
+	socket_t bolt = socket_bind(7687);
+	if(bolt == -1) {
+		RedisModule_Log(NULL, "warning", "Failed to bind to port 7687");
+		return REDISMODULE_ERR;
+	}
+
+	if(RedisModule_EventLoopAdd(bolt, REDISMODULE_EVENTLOOP_READABLE, BoltAcceptHandler, NULL) == REDISMODULE_ERR) {
+		RedisModule_Log(NULL, "warning", "Failed to register socket accept handler");
+		return REDISMODULE_ERR;
+	}
+	RedisModule_Log(NULL, "notice", "bolt server initialized");
 
 	// set up global variables scoped to the entire module
 	Globals_Init();

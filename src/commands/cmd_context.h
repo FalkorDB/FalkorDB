@@ -10,6 +10,7 @@
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
+#include "../bolt/bolt.h"
 
 #include <stdatomic.h>
 
@@ -35,6 +36,8 @@ typedef struct {
 	bool timeout_rw;               // apply timeout on both read and write queries
 	uint64_t received_ts;          // command received at this UNIX timestamp
 	simple_timer_t timer;          // stopwatch started upon command received
+	bool bolt;                     // is this a BOLT request
+	bolt_client_t *bolt_client;    // BOLT client
 } CommandCtx;
 
 // create a new command context
@@ -51,7 +54,9 @@ CommandCtx *CommandCtx_New
 	long long timeout,             // the query timeout, if specified
 	bool timeout_rw,               // apply timeout on both read and write queries
 	uint64_t received_ts,          // command received at this  UNIX timestamp
-	simple_timer_t timer           // stopwatch started upon command received
+	simple_timer_t timer,          // stopwatch started upon command received
+	bool bolt,                     // is this a BOLT request
+	bolt_client_t *bolt_client     // BOLT client
 );
 
 // increment command context reference count

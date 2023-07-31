@@ -179,6 +179,18 @@ void Globals_ClearGraphs
 // Command context tracking
 //------------------------------------------------------------------------------
 
+CommandCtx *Globals_GetCommandCtx() {
+	ASSERT(_globals.command_ctxs != NULL);
+
+	int tid = ThreadPools_GetThreadID();
+
+	// expecting slot to be empty
+	ASSERT(_globals.command_ctxs[tid] != NULL);
+
+	// return ctx at the current thread entry
+	return _globals.command_ctxs[tid];
+}
+
 // track CommandCtx
 void Globals_TrackCommandCtx
 (
