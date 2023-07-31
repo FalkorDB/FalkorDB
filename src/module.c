@@ -96,6 +96,136 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	return REDISMODULE_OK;
 }
 
+void BoltHelloCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "server");
+	bolt_reply_string(client, "Neo4j/5.11.0");
+	bolt_client_send(client);
+}
+
+void BoltLogonCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_send(client);
+}
+
+void BoltResetCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_send(client);
+}
+
+RedisModuleString *get_db
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *client
+) {
+	char *db = bolt_value_get_structure_value(client->read_buffer, 2);
+	char *db_str;
+	size_t db_len;
+	if(bolt_value_get_map_size(db) == 0) {
+		db_str = "falkordb";
+		db_len = 8;
+	} else {
+		db = bolt_value_get_map_value(db, 0);
+		db_str = bolt_value_get_string(db);
+		db_len = bolt_value_get_string_size(db);
+	}
+	return RedisModule_CreateString(ctx, db_str, db_len);
+}
+
+RedisModuleString *get_query
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *client
+) {
+	char *query = bolt_value_get_structure_value(client->read_buffer, 0);
+	char *parameters = bolt_value_get_structure_value(client->read_buffer, 1);
+	uint32_t params_count = bolt_value_get_map_size(parameters);
+	char parameters_str[1024];
+	if(params_count > 0) {
+		sprintf(parameters_str, "CYPHER");
+		for (int i = 0; i < params_count; i++) {
+			char *key = bolt_value_get_map_key(parameters, i);
+			char *value = bolt_value_get_map_value(parameters, i);
+			switch (bolt_value_get_type(value))
+			{
+			case BVT_STRING:
+				sprintf(parameters_str, "%s %.*s='%.*s'", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
+				break;
+			case BVT_STRUCTURE:
+				if(bolt_value_get_structure_type(value) == BST_POINT2D) {
+					// value = bolt_value_get_structure_value(value, 0);
+					// sprintf(parameters_str, "%s %.*s=POINT({latitude: %f, longitude: %f})", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
+					break;
+				}
+				ASSERT(false);
+				break;
+			default:
+				ASSERT(false);
+				break;
+			}
+		}
+		sprintf(parameters_str, "%s %.*s", parameters_str, bolt_value_get_string_size(query), bolt_value_get_string(query));
+		return RedisModule_CreateString(ctx, parameters_str, strlen(parameters_str));
+	}
+
+	return RedisModule_CreateString(ctx, bolt_value_get_string(query), bolt_value_get_string_size(query));
+}
+
+void BoltRunCommand
+(
+	bolt_client_t *client
+) {
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+	RedisModuleString *args[5];
+
+	args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
+	args[1] = get_db(ctx, client);
+	args[2] = get_query(ctx, client);
+	args[3] = RedisModule_CreateString(ctx, "--bolt", 6);
+	args[4] = RedisModule_CreateStringFromLongLong(ctx, (long long)client);
+
+	CommandDispatch(ctx, args, 5);
+}
+
+void BoltBeginCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_send(client);
+}
+
+void BoltCommitCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_send(client);
+}
+
+void BoltRollbackCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_send(client);
+}
+
 void BoltRequestHandler
 (
 	int fd,
@@ -129,107 +259,36 @@ void BoltRequestHandler
 
 	switch (bolt_value_get_structure_type(client->read_buffer))
 	{
-		case BST_HELLO: {
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 1);
-			bolt_reply_string(client, "server");
-			bolt_reply_string(client, "Neo4j/5.7.0");
-			bolt_client_send(client);
+		case BST_HELLO:
+			BoltHelloCommand(client);
 			break;
-		}
-		case BST_LOGON: {
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 0);
-			bolt_client_send(client);
+		case BST_LOGON:
+			BoltLogonCommand(client);
 			break;
-		}
 		case BST_LOGOFF:
 			break;
 		case BST_GOODBYE:
 			break;
-		case BST_RESET: {
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 0);
-			bolt_client_send(client);
+		case BST_RESET:
+			BoltResetCommand(client);
 			break;
-		}
-		case BST_RUN: {
-			RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
-			RedisModuleString *args[5];
-			char *db = bolt_value_get_structure_value(client->read_buffer, 2);
-			char *db_str;
-			size_t db_len;
-			if(bolt_value_get_map_size(db) == 0) {
-				db_str = "x";
-				db_len = 1;
-			} else {
-				db = bolt_value_get_map_value(db, 0);
-				db_str = bolt_value_get_string(db);
-				db_len = bolt_value_get_string_size(db);
-			}
-			char *query = bolt_value_get_structure_value(client->read_buffer, 0);
-			char *parameters = bolt_value_get_structure_value(client->read_buffer, 1);
-			uint32_t params_count = bolt_value_get_map_size(parameters);
-			char parameters_str[1024];
-			sprintf(parameters_str, "CYPHER");
-			args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
-			args[1] = RedisModule_CreateString(ctx, db_str, db_len);
-			if(params_count > 0) {
-				for (uint i = 0; i < params_count; i++) {
-					char *key = bolt_value_get_map_key(parameters, i);
-					char *value = bolt_value_get_map_value(parameters, i);
-					switch (bolt_value_get_type(value))
-					{
-					case BVT_STRING:
-						sprintf(parameters_str, "%s %.*s='%.*s'", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
-						break;
-					case BVT_STRUCTURE:
-						if(bolt_value_get_structure_type(value) == BST_POINT2D) {
-							// value = bolt_value_get_structure_value(value, 0);
-							// sprintf(parameters_str, "%s %.*s=POINT({latitude: %f, longitude: %f})", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
-							break;
-						}
-						ASSERT(false);
-						break;
-					default:
-						ASSERT(false);
-						break;
-					}
-				}
-				sprintf(parameters_str, "%s %.*s", parameters_str, bolt_value_get_string_size(query), bolt_value_get_string(query));
-				args[2] = RedisModule_CreateString(ctx, parameters_str, strlen(parameters_str));
-			} else {
-				args[2] = RedisModule_CreateString(ctx, bolt_value_get_string(query), bolt_value_get_string_size(query));
-			}
-			args[3] = RedisModule_CreateString(ctx, "--bolt", 6);
-			args[4] = RedisModule_CreateStringFromLongLong(ctx, (long long)client);
-
-			CommandDispatch(ctx, args, 5);
+		case BST_RUN:
+			BoltRunCommand(client);
 			break;
-		}
 		case BST_DISCARD:
 			break;
 		case BST_PULL: {
 			break;
 		}
-		case BST_BEGIN: {
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 0);
-			bolt_client_send(client);
+		case BST_BEGIN:
+			BoltBeginCommand(client);
 			break;
-		}
-		case BST_COMMIT:{
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 0);
-			bolt_client_send(client);
+		case BST_COMMIT:
+			BoltCommitCommand(client);
 			break;
-		}
-		case BST_ROLLBACK:{
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 0);
-			bolt_client_send(client);
+		case BST_ROLLBACK:
+			BoltRollbackCommand(client);
 			break;
-		}
 		case BST_ROUTE:
 			break;
 		default:
