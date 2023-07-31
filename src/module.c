@@ -170,7 +170,7 @@ void BoltRequestHandler
 			char *query = bolt_value_get_structure_value(client->read_buffer, 0);
 			char *parameters = bolt_value_get_structure_value(client->read_buffer, 1);
 			uint32_t params_count = bolt_value_get_map_size(parameters);
-			char *parameters_str = rm_malloc(512);
+			char parameters_str[1024];
 			sprintf(parameters_str, "CYPHER");
 			args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
 			args[1] = RedisModule_CreateString(ctx, db_str, db_len);
