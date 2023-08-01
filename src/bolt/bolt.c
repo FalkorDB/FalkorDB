@@ -114,7 +114,7 @@ void bolt_change_ready_state
             }
             break;
         case BST_RESET:
-            client->state = BS_INTERRUPTED;
+            client->state = BS_READY;
             break;
         case BST_GOODBYE:
             client->state = BS_DEFUNCT;
@@ -160,7 +160,7 @@ void bolt_change_streaming_state
             }
             break;
         case BST_RESET:
-            client->state = BS_INTERRUPTED;
+            client->state = BS_READY;
             break;
         case BST_GOODBYE:
             client->state = BS_DEFUNCT;
@@ -219,7 +219,7 @@ void bolt_change_txready_state
             }
             break;
         case BST_RESET:
-            client->state = BS_INTERRUPTED;
+            client->state = BS_READY;
             break;
         case BST_GOODBYE:
             client->state = BS_DEFUNCT;
@@ -291,7 +291,7 @@ void bolt_change_txstreaming_state
             }
             break;
         case BST_RESET:
-            client->state = BS_INTERRUPTED;
+            client->state = BS_READY;
             break;
         case BST_GOODBYE:
             client->state = BS_DEFUNCT;
@@ -486,7 +486,7 @@ void bolt_client_send
 (
     bolt_client_t *client
 ) {
-    if(client->state == BS_FAILED) {
+    if(client->state == BS_FAILED && client->commands[0] != BST_RESET) {
         client->write_index = 2;
 		bolt_reply_structure(client, BST_IGNORED, 0);
 	}
@@ -760,7 +760,7 @@ char *bolt_value_read
         case 0xD0:
             return data + 2 + *(uint8_t *)(data + 1);
         case 0xD1:
-            return data + 3 + *(uint16_t *)(data + 1);
+            return data + 3 + bswap_16(*(uint16_t *)(data + 1));
         case 0xD2:
             return data + 5 + *(uint32_t *)(data + 1);
         case 0xD4: {

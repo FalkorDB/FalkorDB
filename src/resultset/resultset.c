@@ -252,6 +252,10 @@ void ResultSet_Reply
 			bolt_reply_string(client, "Invalid input");
 			bolt_client_send(client);
 			ErrorCtx_Clear();
+
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			bolt_client_send(client);
 			return;
 		}
 		ErrorCtx_EmitException();
@@ -279,6 +283,9 @@ void ResultSet_Reply
 
 	if(set->format == FORMATTER_BOLT) {
 		bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
+		while (client->commands[0] != BST_PULL) {
+		}
+
 		bolt_reply_structure(client, BST_SUCCESS, 1);
 		bolt_reply_map(client, 0);
 		bolt_client_send(client);
