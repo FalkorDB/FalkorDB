@@ -385,6 +385,7 @@ static void _ExecuteQuery(void *args) {
 	} else {
 		// replicate if graph was modified
 		if(ResultSetStat_IndicateModification(&result_set->stats)) {
+			Graph_ResetReservedNode(gc->g);
 			// determine rather or not to replicate via effects
 			if(EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) > 0 &&
 			   _should_replicate_effects()) {
