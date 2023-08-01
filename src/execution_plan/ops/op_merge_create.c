@@ -118,6 +118,8 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	UNUSED(res);
 	ASSERT(res != XXH_ERROR);
 
+
+	uint already_created_nodes = array_len(op->pending.created_nodes);
 	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
@@ -125,7 +127,6 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 
 		// create a new node
 		Node newNode = GE_NEW_NODE();
-		Graph_ReserveNode(gc->g, &newNode);
 
 		// add new node to Record and save a reference to it
 		Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
@@ -215,7 +216,13 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	bool should_create_entities = raxTryInsert(op->unique_entities, (unsigned char *)&hash,
 											   sizeof(hash), NULL, NULL);
 	// If no entity to be created is unique, roll back all the creations that have just been prepared.
-	if(!should_create_entities) _RollbackPendingCreations(op);
+	if(!should_create_entities) {
+		_RollbackPendingCreations(op);
+	} else {
+		for(uint i = 0; i < nodes_to_create_count; i++) {
+			Graph_ReserveNode(gc->g, op->pending.created_nodes[already_created_nodes + i]);
+		}
+	}
 
 	return should_create_entities;
 }
