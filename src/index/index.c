@@ -11,6 +11,7 @@
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../datatypes/point.h"
+#include "../datatypes/vector.h"
 #include "../graph/graphcontext.h"
 #include "../graph/entities/node.h"
 #include "../graph/rg_matrix/rg_matrix_iter.h"
@@ -241,8 +242,15 @@ RSDoc *Index_IndexGraphEntity
 		// vector field
 		//----------------------------------------------------------------------
 
-		if(field->type & INDEX_FLD_VECTOR) {
+		if(field->type & INDEX_FLD_VECTOR && (t & T_VECTOR)) {
+			*doc_field_count += 1;
+
+			size_t   n        = SIVector_ElementsByteSize(*v);
+			uint32_t dim      = SIVector_Dim(*v);
+			void*    elements = SIVector_Elements(*v);
+
 			// value must be of type array
+			RediSearch_DocumentAddFieldVector(doc, field_name, elements, dim, n);
 		}
 	}
 

@@ -161,7 +161,7 @@ ProcedureResult Proc_VectorCreateIdxFree
 // 
 // procedure call example
 // CALL db.idx.vector.createIndex(
-//     {type:'NODE', label:'Person', attribute:'embeddings', length:538})
+//     {type:'NODE', label:'Person', attribute:'embeddings', dim:538})
 //
 ProcedureCtx *Proc_VectorCreateIdxGen(void) {
 	return ProcCtxNew("db.idx.vector.createIndex", 1, NULL,
