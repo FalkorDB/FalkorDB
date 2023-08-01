@@ -548,11 +548,7 @@ cleanup:
 			bolt_reply_string(client, "SyntaxError");
 			bolt_reply_string(client, "message");
 			bolt_reply_string(client, "Invalid input");
-			bolt_client_send(client);
-
-			bolt_reply_structure(client, BST_SUCCESS, 1);
-			bolt_reply_map(client, 0);
-			bolt_client_send(client);
+			bolt_client_finish_write(client);
 		} else {
 			ErrorCtx_EmitException();
 		}

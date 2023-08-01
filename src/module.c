@@ -104,7 +104,7 @@ void BoltHelloCommand
 	bolt_reply_map(client, 1);
 	bolt_reply_string(client, "server");
 	bolt_reply_string(client, "Neo4j/5.11.0");
-	bolt_client_send(client);
+	bolt_client_finish_write(client);
 }
 
 void BoltLogonCommand
@@ -113,7 +113,7 @@ void BoltLogonCommand
 ) {
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
-	bolt_client_send(client);
+	bolt_client_finish_write(client);
 }
 
 void BoltResetCommand
@@ -122,7 +122,7 @@ void BoltResetCommand
 ) {
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
-	bolt_client_send(client);
+	bolt_client_finish_write(client);
 }
 
 RedisModuleString *get_db
@@ -199,13 +199,22 @@ void BoltRunCommand
 	CommandDispatch(ctx, args, 5);
 }
 
+void BoltPullCommand
+(
+	bolt_client_t *client
+) {
+	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_finish_write(client);
+}
+
 void BoltBeginCommand
 (
 	bolt_client_t *client
 ) {
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
-	bolt_client_send(client);
+	bolt_client_finish_write(client);
 }
 
 void BoltCommitCommand
@@ -214,7 +223,7 @@ void BoltCommitCommand
 ) {
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
-	bolt_client_send(client);
+	bolt_client_finish_write(client);
 }
 
 void BoltRollbackCommand
@@ -223,7 +232,7 @@ void BoltRollbackCommand
 ) {
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
-	bolt_client_send(client);
+	bolt_client_finish_write(client);
 }
 
 void BoltRequestHandler
@@ -232,12 +241,13 @@ void BoltRequestHandler
 	void *user_data,
 	int mask
 ) {
+	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	int nread = socket_read(fd, client->read_buffer, 2);
 	if(nread == 0) {
 		rm_free(client);
 		socket_close(fd);
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		return;
 	}
 
@@ -248,8 +258,6 @@ void BoltRequestHandler
 		RedisModule_Log(NULL, "warning", "Socket read error");
 		return;
 	}
-
-	array_append(client->commands, bolt_value_get_structure_type(client->read_buffer));
 
 	switch (bolt_value_get_structure_type(client->read_buffer))
 	{
@@ -271,9 +279,9 @@ void BoltRequestHandler
 			break;
 		case BST_DISCARD:
 			break;
-		case BST_PULL: {
+		case BST_PULL:
+			BoltPullCommand(client);
 			break;
-		}
 		case BST_BEGIN:
 			BoltBeginCommand(client);
 			break;
@@ -288,6 +296,18 @@ void BoltRequestHandler
 		default:
 			break;
 	}
+}
+
+void BoltResponseHandler
+(
+	int fd,
+	void *user_data,
+	int mask
+) {
+	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
+	bolt_client_t *client = (bolt_client_t*)user_data;
+	bolt_client_send(client);
+	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltRequestHandler, client);
 }
 
 void BoltAcceptHandler
@@ -313,7 +333,8 @@ void BoltAcceptHandler
 	data[3] = version.major;
 	socket_write(client, data, 4);
 
-	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltRequestHandler, bolt_client_new(client));
+	bolt_client_t *bolt_client = bolt_client_new(client, BoltResponseHandler);
+	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltRequestHandler, bolt_client);
 }
 
 int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {

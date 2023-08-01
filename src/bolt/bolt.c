@@ -1,18 +1,18 @@
 #include "RG.h"
 #include "bolt.h"
 #include "string.h"
-#include "util/arr.h"
 #include "util/rmalloc.h"
 #include <byteswap.h>
 
 bolt_client_t *bolt_client_new
 (
-    socket_t socket
+    socket_t socket,
+    RedisModuleEventLoopFunc on_write
 ) {
     bolt_client_t *client = rm_malloc(sizeof(bolt_client_t));
     client->socket = socket;
     client->state = BS_NEGOTIATION;
-    client->commands = array_new(bolt_structure_type, 10);
+    client->on_write = on_write;
     client->write_index = 2;
     return client;
 }
@@ -21,7 +21,7 @@ void bolt_change_negotiation_state
 (
     bolt_client_t *client   
 ) {
-    ASSERT(client->state == BS_NEGOTIATION && client->commands[0] == BST_HELLO);
+    ASSERT(client->state == BS_NEGOTIATION && bolt_value_get_structure_type(client->read_buffer) == BST_HELLO);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (response_type)
     {
@@ -40,7 +40,7 @@ void bolt_change_authentication_state
 (
     bolt_client_t *client   
 ) {
-    ASSERT(client->state == BS_AUTHENTICATION && client->commands[0] == BST_LOGON);
+    ASSERT(client->state == BS_AUTHENTICATION && bolt_value_get_structure_type(client->read_buffer) == BST_LOGON);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (response_type)
     {
@@ -60,7 +60,7 @@ void bolt_change_ready_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_READY);
-    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
@@ -129,7 +129,7 @@ void bolt_change_streaming_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_STREAMING);
-    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
@@ -175,7 +175,7 @@ void bolt_change_txready_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_TX_READY);
-    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
@@ -234,7 +234,7 @@ void bolt_change_txstreaming_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_TX_STREAMING);
-    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
@@ -306,7 +306,7 @@ void bolt_change_failed_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_FAILED);
-    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
@@ -356,7 +356,7 @@ void bolt_change_interrupted_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_INTERRUPTED);
-    bolt_structure_type request_type = client->commands[0];
+    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
     bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
@@ -479,19 +479,28 @@ void bolt_change_client_state
             ASSERT(false);
             break;
     }
-    array_del(client->commands, 0);
+}
+
+void bolt_client_finish_write
+(
+    bolt_client_t *client
+) {
+    RedisModule_EventLoopAdd(client->socket, REDISMODULE_EVENTLOOP_WRITABLE, client->on_write, client);
 }
 
 void bolt_client_send
 (
     bolt_client_t *client
 ) {
-    if(client->state == BS_FAILED && client->commands[0] != BST_RESET) {
+    if(client->state == BS_FAILED && bolt_value_get_structure_type(client->read_buffer) != BST_RESET) {
         client->write_index = 2;
 		bolt_reply_structure(client, BST_IGNORED, 0);
 	}
 
     uint16_t n = client->write_index - 2;
+    if(n == 0) {
+        return;
+    }
     *(u_int16_t *)client->write_buffer = bswap_16(n);
     client->write_buffer[n + 2] = 0x00;
 	client->write_buffer[n + 3] = 0x00;
