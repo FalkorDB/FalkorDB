@@ -14,6 +14,7 @@ bolt_client_t *bolt_client_new
     client->state = BS_NEGOTIATION;
     client->on_write = on_write;
     client->write_index = 2;
+    client->read_index = 0;
     return client;
 }
 

@@ -60,6 +60,7 @@ typedef struct bolt_client_t {
     bolt_state state;
     RedisModuleEventLoopFunc on_write;
     uint32_t write_index;
+    uint32_t read_index;
     char write_buffer[1024];
     char read_buffer[1024];
 } bolt_client_t;
