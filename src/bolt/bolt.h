@@ -62,7 +62,7 @@ typedef struct bolt_client_t {
     uint32_t write_index;
     uint32_t read_index;
     char write_buffer[1024];
-    char read_buffer[1024];
+    char read_buffer[65536];
 } bolt_client_t;
 
 bolt_client_t *bolt_client_new
