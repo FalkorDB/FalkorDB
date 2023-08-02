@@ -242,8 +242,7 @@ void BoltRequestHandler
 	int mask
 ) {
 	bolt_client_t *client = (bolt_client_t*)user_data;
-	int nread = socket_read(fd, client->read_buffer + client->read_index, 2);
-	if(nread == 0) {
+	if(!socket_read(fd, client->read_buffer + client->read_index, 2)) {
 		rm_free(client);
 		socket_close(fd);
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
@@ -253,9 +252,13 @@ void BoltRequestHandler
 	uint16_t size = bswap_16(*(uint16_t*)(client->read_buffer + client->read_index));
 
 	if(size > 0) {
-		nread = socket_read(fd, client->read_buffer + client->read_index, size);
-		client->read_index += nread;
-		ASSERT(nread == size);
+		if(socket_read(fd, client->read_buffer + client->read_index, size)) {
+			client->read_index += size;
+		} else {
+			rm_free(client);
+			socket_close(fd);
+			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		}
 		return;
 	}
 

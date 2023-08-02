@@ -1385,8 +1385,7 @@ bool bolt_check_handshake
     socket_t socket
 ) {
     char data[4];
-    int nread = socket_read(socket, data, 4);
-    return nread == 4 && data[0] == 0x60 && data[1] == 0x60 && data[2] == (char)0xB0 && data[3] == 0x17;
+    return socket_read(socket, data, 4) && data[0] == 0x60 && data[1] == 0x60 && data[2] == (char)0xB0 && data[3] == 0x17;
 }
 
 bolt_version_t bolt_read_supported_version
@@ -1394,7 +1393,8 @@ bolt_version_t bolt_read_supported_version
     socket_t socket
 ) {
     char data[16];
-    socket_read(socket, data, 16);
+    bool res = socket_read(socket, data, 16);
+    ASSERT(res);
     bolt_version_t version;
     version.minor = data[2];
     version.major = data[3];

@@ -12,9 +12,14 @@ socket_t socket_bind
     uint16_t port
 );
 
-#define socket_accept(socket) accept(socket, NULL, NULL)
+bool socket_read
+(
+    socket_t socket,
+    char* buff,
+    size_t size
+);
 
-#define socket_read(socket, buff, size) recv(socket, buff, size, 0)
+#define socket_accept(socket) accept(socket, NULL, NULL)
 
 #define socket_write(socket, buff, size) send(socket, buff, size, 0)
 
