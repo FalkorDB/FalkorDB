@@ -419,8 +419,8 @@ cleanup:
 	array_free(filters);
 }
 
-// try to replace given Conditional Traverse operation and a set of Filter operations with
-// a single Index Scan operation
+// try to replace given Conditional Traverse operation and a set of Filters
+// into a single Index Scan operation
 void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 	// make sure there's an index for scanned label
 	const char *edge = AlgebraicExpression_Edge(cond->ae);
@@ -455,12 +455,13 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		ExecutionPlan_RemoveOp(plan, allNodeScan);
 		OpBase_Free(allNodeScan);
 	}
-
 	
-	const char *other_alias  =  AlgebraicExpression_Dest(cond->ae);
-	QGNode     *other_node   =  QueryGraph_GetNodeByAlias(cond->op.plan->query_graph, other_alias);
+	const char *other_alias = AlgebraicExpression_Dest(cond->ae);
+	QGNode *other_node  = QueryGraph_GetNodeByAlias( cond->op.plan->query_graph,
+			other_alias);
+
 	ASSERT(other_node != NULL);
-	uint other_label_count   =  QGNode_LabelCount(other_node);
+	uint other_label_count = QGNode_LabelCount(other_node);
 	if(other_label_count > 0) {
 		// create func expression
 		const char *func_name = "hasLabels";
@@ -484,7 +485,8 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		FT_FilterNode *ft = FilterTree_CreateExpressionFilter(op);
 		OpBase *filter = NewFilterOp(plan, ft);
 
-		// replace the redundant scan op with the newly-constructed filter op and add Index Scan as child
+		// replace the redundant scan op with the newly-constructed filter op
+		// and add Index Scan as child
 		ExecutionPlan_ReplaceOp(plan, (OpBase *)cond, indexOp);
 		ExecutionPlan_PushBelow(indexOp, filter);
 	} else {
@@ -508,14 +510,32 @@ cleanup:
 	array_free(filters);
 }
 
-void utilizeIndices
+static void traversalToIndexScan
 (
-	ExecutionPlan *plan
+	ExecutionPlan *plan,
+	GraphContext *gc
 ) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	// return immediately if the graph has no indices
-	if(!GraphContext_HasIndices(gc)) return;
+	// collect all conditional traverse
+	OpBase **condOps = ExecutionPlan_CollectOps(plan->root,
+			OPType_CONDITIONAL_TRAVERSE);
 
+	uint condOpCount = array_len(condOps);
+	for(uint i = 0; i < condOpCount; i++) {
+		OpCondTraverse *condOp = (OpCondTraverse *)condOps[i];
+		// try to reduce conditional travers + filter(s)
+		// to a single IndexScan operation
+		reduce_cond_op(plan, condOp);
+	}
+
+	// cleanup
+	array_free(condOps);
+}
+
+static void labelScanToIndexScan
+(
+	ExecutionPlan *plan,
+	GraphContext *gc
+) {
 	// collect all label scans
 	OpBase **scanOps = ExecutionPlan_CollectOps(plan->root,
 			OPType_NODE_BY_LABEL_SCAN);
@@ -535,19 +555,26 @@ void utilizeIndices
 		reduce_scan_op(plan, scanOp);
 	}
 
-	// collect all conditional traverse
-	OpBase **condOps = ExecutionPlan_CollectOps(plan->root,
-			OPType_CONDITIONAL_TRAVERSE);
-
-	uint condOpCount = array_len(condOps);
-	for(uint i = 0; i < condOpCount; i++) {
-		OpCondTraverse *condOp = (OpCondTraverse *)condOps[i];
-		// try to reduce conditional travers + filter(s) to a single IndexScan operation
-		reduce_cond_op(plan, condOp);
-	}
-
-	// cleanup
 	array_free(scanOps);
-	array_free(condOps);
+}
+
+void utilizeIndices
+(
+	ExecutionPlan *plan
+) {
+	// return immediately if the graph has no indices
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	if(!GraphContext_HasIndices(gc)) return;
+
+	// indices are utilized in three sections:
+	// 1. label scan followed by filter(s)
+	// 2. traversal followed by filter(s)
+	// 3. vector similarity KNN search
+
+	// convert label scan into a index scan
+	labelScanToIndexScan(plan, gc);
+
+	// convert traversal into a index scan
+	traversalToIndexScan(plan, gc);
 }
 

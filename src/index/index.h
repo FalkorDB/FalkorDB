@@ -168,6 +168,14 @@ const IndexField *Index_GetFields
 	const Index idx  // index to query
 );
 
+// returns indexed field type
+// if field is not indexed, INDEX_FLD_UNKNOWN is returned
+IndexFieldType Index_GetFieldType
+(
+	const Index idx,      // index to query
+	Attribute_ID attr_id  // field to retrieve type of
+);
+
 // checks if given attribute is indexed
 bool Index_ContainsAttribute
 (

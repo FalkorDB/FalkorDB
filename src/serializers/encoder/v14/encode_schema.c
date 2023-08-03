@@ -25,6 +25,47 @@ static void _RdbSaveAttributeKeys
 	}
 }
 
+// encode index field
+static void _RdbSaveIndexField
+(
+	RedisModuleIO *rdb,  // redis io
+	const IndexField *f  // index field to encode
+) {
+	// format:
+	// name
+	// type
+	// options:
+	//   weight
+	//   nostem
+	//   phonetic
+	//   dimension
+
+	ASSERT(f != NULL);
+
+	// encode field name
+	RedisModule_SaveStringBuffer(rdb, f->name, strlen(f->name) + 1);
+
+	// encode field type
+	RedisModule_SaveUnsigned(rdb, f->type);
+
+	//--------------------------------------------------------------------------
+	// encode field options
+	//--------------------------------------------------------------------------
+
+	// encode field weight
+	RedisModule_SaveDouble(rdb, f->options.weight);
+
+	// encode field nostem
+	RedisModule_SaveUnsigned(rdb, f->options.nostem);
+
+	// encode field phonetic
+	RedisModule_SaveStringBuffer(rdb, f->options.phonetic,
+			strlen(f->options.phonetic) + 1);
+
+	// encode field dimension
+	RedisModule_SaveUnsigned(rdb, f->options.dimension);
+}
+
 static inline void _RdbSaveFullTextIndexData
 (
 	RedisModuleIO *rdb,
@@ -54,17 +95,12 @@ static inline void _RdbSaveFullTextIndexData
 
 	// encode field count
 	uint fields_count = Index_FieldsCount(idx);
-	const IndexField *fields = Index_GetFields(idx);
-
 	RedisModule_SaveUnsigned(rdb, fields_count);
+
+	// encode fields
+	const IndexField *fields = Index_GetFields(idx);
 	for(uint i = 0; i < fields_count; i++) {
-		// encode field
-		const IndexField *f = fields + i;
-		RedisModule_SaveStringBuffer(rdb, f->name, strlen(f->name) + 1);
-		RedisModule_SaveDouble(rdb, f->options.weight);
-		RedisModule_SaveUnsigned(rdb, f->options.nostem);
-		RedisModule_SaveStringBuffer(rdb, f->options.phonetic,
-				strlen(f->options.phonetic) + 1);
+		_RdbSaveIndexField(rdb, fields + i);
 	}
 }
 
@@ -78,16 +114,14 @@ static inline void _RdbSaveExactMatchIndex
 	 * #properties - M
 	 * M * property */
 
-	uint fields_count = Index_FieldsCount(idx);
-	const IndexField *fields = Index_GetFields(idx);
-
 	// encode field count
+	uint fields_count = Index_FieldsCount(idx);
 	RedisModule_SaveUnsigned(rdb, fields_count);
-	for(uint i = 0; i < fields_count; i++) {
-		char *field_name = fields[i].name;
 
-		// encode field
-		RedisModule_SaveStringBuffer(rdb, field_name, strlen(field_name) + 1);
+	// encode fields
+	const IndexField *fields = Index_GetFields(idx);
+	for(uint i = 0; i < fields_count; i++) {
+		_RdbSaveIndexField(rdb, fields + i);
 	}
 }
 

@@ -50,10 +50,10 @@ static bool _parseArgs
 		return false;
 	}
 
-	// make sure type is either NODE or EDGE
+	// make sure type is either NODE or RELATIONSHIP
 	if(strcasecmp(val.stringval, "NODE") == 0) {
 		*type = GETYPE_NODE;
-	} else if(strcasecmp(val.stringval, "EDGE") == 0) {
+	} else if(strcasecmp(val.stringval, "RELATIONSHIP") == 0) {
 		*type = GETYPE_EDGE;
 	} else {
 		return false;
@@ -150,22 +150,18 @@ SIValue *Proc_VectorCreateIdxStep
 	return NULL;
 }
 
-ProcedureResult Proc_VectorCreateIdxFree
-(
-	ProcedureCtx *ctx
-) {
-	return PROCEDURE_OK;
-}
-
 // procedure context for the vector index creation
 // 
 // procedure call example
 // CALL db.idx.vector.createIndex(
-//     {type:'NODE', label:'Person', attribute:'embeddings', dim:538})
+//     {type:'NODE'/'RELATIONSHIP',
+//     label:'Person',
+//     attribute:'embeddings',
+//     dim:538})
 //
 ProcedureCtx *Proc_VectorCreateIdxGen(void) {
 	return ProcCtxNew("db.idx.vector.createIndex", 1, NULL,
-			Proc_VectorCreateIdxStep, Proc_VectorCreateIdxInvoke,
-			Proc_VectorCreateIdxFree, NULL, false);
+			Proc_VectorCreateIdxStep, Proc_VectorCreateIdxInvoke, NULL, NULL,
+			false);
 }
 

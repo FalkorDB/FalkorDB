@@ -480,6 +480,26 @@ const IndexField *Index_GetFields
 	return (const IndexField *)idx->fields;
 }
 
+// returns indexed field type
+// if field is not indexed, INDEX_FLD_UNKNOWN is returned
+IndexFieldType Index_GetFieldType
+(
+	const Index idx,      // index to query
+	Attribute_ID attr_id  // field to retrieve type of
+) {
+	ASSERT(idx != NULL);
+
+	uint fields_count = array_len(idx->fields);
+	for(uint i = 0; i < fields_count; i++) {
+		IndexField *field = idx->fields + i;
+		if(field->id == attr_id) {
+			return field->type;
+		}
+	}
+
+	return INDEX_FLD_UNKNOWN;
+}
+
 bool Index_ContainsAttribute
 (
 	const Index idx,

@@ -370,6 +370,7 @@ class testProcedures(FlowTestsBase):
                            ["WRITE", "db.idx.fulltext.drop"],
                            ["READ",  "db.idx.fulltext.queryNodes"],
                            ["WRITE", "db.idx.vector.createIndex"],
+                           ["READ",  "db.idx.vector.knn"],
                            ["READ",  "db.indexes"],
                            ["READ",  "db.labels"],
                            ["READ",  "db.propertyKeys"],

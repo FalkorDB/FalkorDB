@@ -286,15 +286,11 @@ SIValue *Proc_FulltextCreateNodeIdxStep(ProcedureCtx *ctx) {
 	return NULL;
 }
 
-ProcedureResult Proc_FulltextCreateNodeIdxFree(ProcedureCtx *ctx) {
-	return PROCEDURE_OK;
-}
-
 ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
 	ProcedureOutput *output = array_new(ProcedureOutput, 0);
 	return ProcCtxNew("db.idx.fulltext.createNodeIndex",
 			PROCEDURE_VARIABLE_ARG_COUNT, output,
 			Proc_FulltextCreateNodeIdxStep, Proc_FulltextCreateNodeIdxInvoke,
-			Proc_FulltextCreateNodeIdxFree, NULL, false);
+			NULL, NULL, false);
 }
 

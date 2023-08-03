@@ -54,14 +54,6 @@ SIValue *Proc_FulltextDropIndexStep
 	return NULL;
 }
 
-ProcedureResult Proc_FulltextDropIndexFree
-(
-	ProcedureCtx *ctx
-) {
-	// clean up
-	return PROCEDURE_OK;
-}
-
 ProcedureCtx *Proc_FulltextDropIdxGen() {
 	void *privateData = NULL;
 	ProcedureOutput *output = array_new(ProcedureOutput, 0);
@@ -70,7 +62,7 @@ ProcedureCtx *Proc_FulltextDropIdxGen() {
 								   output,
 								   Proc_FulltextDropIndexStep,
 								   Proc_FulltextDropIndexInvoke,
-								   Proc_FulltextDropIndexFree,
+								   NULL,
 								   privateData,
 								   false);
 

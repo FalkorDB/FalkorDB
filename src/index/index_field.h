@@ -15,12 +15,15 @@
 // type of index field
 // multiple types can be combined via bitwise OR
 typedef enum {
+	INDEX_FLD_UNKNOWN  = 0x00,  // unknown field type
 	INDEX_FLD_FULLTEXT = 0x01,  // full text field
 	INDEX_FLD_NUMERIC  = 0x02,  // numeric field
 	INDEX_FLD_GEO      = 0x04,  // geo field
 	INDEX_FLD_STR      = 0x08,  // string field
 	INDEX_FLD_VECTOR   = 0x10,  // vector field
 } IndexFieldType;
+
+#define INDEX_FLD_EXACTMATCH (INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR)
 
 typedef struct {
 	char *name;              // field name
@@ -38,7 +41,26 @@ typedef struct {
 // index field creation
 //------------------------------------------------------------------------------
 
-// create a new exact match index field
+// initialize index field
+void IndexField_Init
+(
+	IndexField *field,   // field to initialize
+	const char *name,    // field name
+	Attribute_ID id,     // attribute ID
+	IndexFieldType type  // field type
+);
+
+// set index field options
+// note not all options are applicable to all field types
+void IndexField_SetOptions
+(
+	IndexField *field,  // field to update
+	double weight,      // field's weight
+	bool nostem,        // field's stemming
+	char *phonetic,     // field's phonetic
+	uint32_t dimension  // field's vector dimension
+);
+
 void IndexField_NewExactMatchField
 (
 	IndexField *field,   // field to initialize

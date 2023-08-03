@@ -46,6 +46,7 @@ void Proc_Register() {
 
 	// register vector search generator
 	_procRegister("db.idx.vector.createIndex", Proc_VectorCreateIdxGen);
+	_procRegister("db.idx.vector.knn", Proc_VectorKNNGen);
 }
 
 ProcedureCtx *ProcCtxNew(const char *name,
@@ -158,7 +159,9 @@ void Proc_Free(ProcedureCtx *proc) {
 		return;
 	}
 
-	proc->Free(proc);
+	if(proc->Free != NULL) {
+		proc->Free(proc);
+	}
 
 	if(proc->output != NULL) {
 		array_free(proc->output);

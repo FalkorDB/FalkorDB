@@ -11,7 +11,8 @@
 // index field creation
 //------------------------------------------------------------------------------
 
-static void IndexField_New
+// initialize index field
+void IndexField_Init
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
@@ -27,6 +28,45 @@ static void IndexField_New
 	field->id   = id;
 	field->name = rm_strdup(name);
 	field->type = type;
+
+	// set default options
+	field->options.weight    = INDEX_FIELD_DEFAULT_WEIGHT;
+	field->options.nostem    = INDEX_FIELD_DEFAULT_NOSTEM;
+	field->options.dimension = 0;
+
+	field->options.phonetic = rm_malloc(strlen(INDEX_FIELD_DEFAULT_PHONETIC)+1);
+	strcpy(field->options.phonetic, INDEX_FIELD_DEFAULT_PHONETIC);
+}
+
+// set index field options
+// note not all options are applicable to all field types
+void IndexField_SetOptions
+(
+	IndexField *field,  // field to update
+	double weight,      // field's weight
+	bool nostem,        // field's stemming
+	char *phonetic,     // field's phonetic
+	uint32_t dimension  // field's vector dimension
+) {
+	ASSERT(field != NULL);
+	ASSERT(phonetic != NULL);
+
+	// default options
+	ASSERT(field->options.dimension == 0);
+	ASSERT(field->options.weight    == INDEX_FIELD_DEFAULT_WEIGHT);
+	ASSERT(field->options.nostem    == INDEX_FIELD_DEFAULT_NOSTEM);
+	ASSERT(strcmp(field->options.phonetic, INDEX_FIELD_DEFAULT_PHONETIC) == 0);
+
+	// set options
+	field->options.weight    = weight;
+	field->options.nostem    = nostem;
+	field->options.dimension = dimension;
+
+	if(phonetic != NULL) {
+		rm_free(field->options.phonetic);
+		field->options.phonetic	= rm_malloc(strlen(phonetic)+1);
+		strcpy(field->options.phonetic, phonetic);
+	}
 }
 
 // create a new exact match index field
@@ -36,8 +76,8 @@ void IndexField_NewExactMatchField
 	const char *name,    // field name
 	Attribute_ID id      // field id
 ) {
-	IndexFieldType t = INDEX_FLD_NUMERIC | INDEX_FLD_STR | INDEX_FLD_GEO;
-	IndexField_New(field, name, id, t);
+	IndexFieldType t = INDEX_FLD_EXACTMATCH;
+	IndexField_Init(field, name, id, t);
 }
 
 // create a new full text index field
@@ -48,11 +88,7 @@ void IndexField_NewFullTextField
 	Attribute_ID id      // field id
 ) {
 	IndexFieldType t = INDEX_FLD_FULLTEXT;
-	IndexField_New(field, name, id, t);
-
-	IndexField_SetWeight(field,   INDEX_FIELD_DEFAULT_WEIGHT);
-	IndexField_SetStemming(field, INDEX_FIELD_DEFAULT_NOSTEM);
-	IndexField_SetPhonetic(field, INDEX_FIELD_DEFAULT_PHONETIC);
+	IndexField_Init(field, name, id, t);
 }
 
 // create a new vector index field
@@ -63,7 +99,7 @@ void IndexField_NewVectorField
 	Attribute_ID id,     // field id
 	uint32_t dimension   // vector dimension
 ) {
-	IndexField_New(field, name, id, INDEX_FLD_VECTOR);
+	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);
 	IndexField_SetDimension(field, dimension);
 }
 
@@ -139,9 +175,6 @@ void IndexField_Free
 	ASSERT(field != NULL);
 
 	rm_free(field->name);
-
-	if(field->options.phonetic != NULL) {
-		rm_free(field->options.phonetic);
-	}
+	rm_free(field->options.phonetic);
 }
 
