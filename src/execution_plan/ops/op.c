@@ -16,10 +16,12 @@ Record ExecutionPlan_BorrowRecord(struct ExecutionPlan *plan);
 rax *ExecutionPlan_GetMappings(const struct ExecutionPlan *plan);
 void ExecutionPlan_ReturnRecord(const struct ExecutionPlan *plan, Record r);
 
-OpResult _OpBase_Reset_NOOP
+// default reset function for operations
+OpResult _OpBase_reset_noop
 (
-	struct OpBase *op
+	OpBase *op
 ) {
+	ASSERT(op != NULL);
 	return OP_OK;
 }
 
@@ -53,7 +55,7 @@ void OpBase_Init
 	op->init     = init;
 	op->free     = free;
 	op->clone    = clone;
-	op->reset    = reset == NULL ? _OpBase_Reset_NOOP : reset;
+	op->reset    = (reset) ? reset : _OpBase_reset_noop;
 	op->profile  = NULL;
 	op->consume  = consume;
 	op->toString = toString;

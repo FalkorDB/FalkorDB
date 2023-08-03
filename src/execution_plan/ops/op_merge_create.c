@@ -118,7 +118,6 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	UNUSED(res);
 	ASSERT(res != XXH_ERROR);
 
-
 	uint already_created_nodes = array_len(op->pending.created_nodes);
 	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
@@ -153,6 +152,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 		array_append(op->pending.node_labels, n->labelsId);
 	}
 
+	uint already_created_edges = array_len(op->pending.created_edges);
 	uint edges_to_create_count = array_len(op->pending.edges_to_create);
 	for(uint i = 0; i < edges_to_create_count; i++) {
 		// get specified edge to create
@@ -216,12 +216,27 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	bool should_create_entities = raxTryInsert(op->unique_entities, (unsigned char *)&hash,
 											   sizeof(hash), NULL, NULL);
 	// If no entity to be created is unique, roll back all the creations that have just been prepared.
-	if(!should_create_entities) {
-		_RollbackPendingCreations(op);
-	} else {
+	if(should_create_entities) {
+		// reserve node ids for edges creation
 		for(uint i = 0; i < nodes_to_create_count; i++) {
-			Graph_ReserveNode(gc->g, op->pending.created_nodes[already_created_nodes + i]);
+			Node *n = op->pending.created_nodes[already_created_nodes + i];
+			Graph_ReserveNode(gc->g, n);
 		}
+
+		// updated edges with reserved node ids
+		for(uint i = 0; i < edges_to_create_count; i++) {
+			EdgeCreateCtx *ctx = op->pending.edges_to_create + i;
+
+			// retrieve source and dest nodes
+			Node *src_node = Record_GetNode(r, ctx->src_idx);
+			Node *dest_node = Record_GetNode(r, ctx->dest_idx);
+
+			Edge *e = op->pending.created_edges[already_created_edges + i];
+			Edge_SetSrcNodeID(e, ENTITY_GET_ID(src_node));
+			Edge_SetDestNodeID(e, ENTITY_GET_ID(dest_node));
+		}
+	} else {
+		_RollbackPendingCreations(op);
 	}
 
 	return should_create_entities;
