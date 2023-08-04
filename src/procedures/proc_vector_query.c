@@ -42,6 +42,8 @@ static VectorKNNCtx *_create_private_data
 	ctx->idx  = idx;
 	ctx->iter = RediSearch_GetResultsIterator(root, idx);
 
+	ASSERT(ctx->iter != NULL);
+
 	return ctx;
 }
 
@@ -142,8 +144,7 @@ static SIValue *Proc_NodeStep
 ) {
 	VectorKNNCtx *pdata = (VectorKNNCtx *)ctx->privateData;
 
-	ASSERT(pdata       != NULL);
-	ASSERT(pdata->iter != NULL);
+	ASSERT(pdata != NULL);
 
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
@@ -183,8 +184,7 @@ static SIValue *Proc_EdgeStep
 ) {
 	VectorKNNCtx *pdata = (VectorKNNCtx *)ctx->privateData;
 
-	ASSERT(pdata       != NULL);
-	ASSERT(pdata->iter != NULL);
+	ASSERT(pdata != NULL);
 
 	// try to get a result out of the iterator
 	// NULL is returned if iterator id depleted
@@ -297,11 +297,12 @@ ProcedureResult Proc_VectorKNNInvoke
 	//--------------------------------------------------------------------------
 
 	// create a query vector
-	float *vec = SIVector_Elements(query_vector);
+	float  *vec   = SIVector_Elements(query_vector);
+	size_t nbytes = SIVector_ElementsByteSize(query_vector);
 
 	// create a redisearch query node
 	RSQNode *root = RediSearch_CreateVecSimNode(rsIdx, attribute, (char*)vec,
-			sizeof(float) * 2, k);
+			nbytes, k);
 
 	// create procedure private data
 	ctx->privateData = _create_private_data(gc, rsIdx, root, et);

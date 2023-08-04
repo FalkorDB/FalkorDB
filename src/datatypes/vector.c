@@ -207,7 +207,7 @@ size_t SIVector_ElementsByteSize
 (
 	SIValue vector // vector to get binary size of
 ) {
-	return SIVector_Dim(vector) * (SI_TYPE(vector) & T_VECTOR32F ? 4 : 8);
+	return SIVector_Dim(vector) * ((SI_TYPE(vector) & T_VECTOR32F) ? 4 : 8);
 }
 
 // write a string representation of vector to buf
