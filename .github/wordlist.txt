@@ -88,3 +88,5 @@ Quickstart
 queryable
 RSALv
 SSPLv
+FalkorDB
+FalkorDB's

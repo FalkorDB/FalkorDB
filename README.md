@@ -13,7 +13,7 @@
 
 ---
 
-FalkorBD is the first queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to use [sparse matrices](https://en.wikipedia.org/wiki/Sparse_matrix) to represent the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](http://faculty.cse.tamu.edu/davis/GraphBLAS.html) to query the graph.
+FalkorDB is the first queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to use [sparse matrices](https://en.wikipedia.org/wiki/Sparse_matrix) to represent the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](http://faculty.cse.tamu.edu/davis/GraphBLAS.html) to query the graph.
 
 Primary features:
 * Adopting the [Property Graph Model](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc)
@@ -28,13 +28,19 @@ To see FalkorDB in action, visit [Demos](https://github.com/FalkorDB/FalkorDB/tr
 
 ## Quickstart
 
-1. [Trying FalkorDB](#trying-falkordb)
-2. [Docker](#docker)
-3. [Build](#building)
-4. [Start](#loading-falkordb-into-redis)
-5. [Use from any client](#using-falkordb)
+1. [Trying FalkorDB](#give-it-a-try)
+2. [Build](#building)
+3. [Start](#loading-falkordb-into-redis)
+4. [Use from any client](#using-falkordb)
+5. [Documentation](https://docs.falkordb.com/)
 
-### Give it a try
+## Give it a try
+
+To quickly try out FalkorDB, launch an instance using docker:
+
+```
+docker run -p 6379:6379 -it --rm falkordb/falkordb:edge
+```
 
 Once loaded you can interact with FalkorDB using redis-cli.
 

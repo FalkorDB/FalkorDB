@@ -7,11 +7,11 @@ REDIS_PATH_ENVVAR = 'REDIS_PATH'
 REDIS_PORT_ENVVAR = 'REDIS_PORT'
 
 
-def execute_query(redis_graph, query_desc, query):
+def execute_query(graph, query_desc, query):
     print(query_desc)
     print("query: {query}".format(query=query))
-    print("execution plan:\n{plan}".format(plan=redis_graph.execution_plan(query)))
-    query_res = redis_graph.query(query)
+    print("execution plan:\n{plan}".format(plan=graph.execution_plan(query)))
+    query_res = graph.query(query)
     query_res.pretty_print()
     print("\n")
 
@@ -23,7 +23,7 @@ def _redis():
 
     if module_path is None:
         print("Undeclared environment variable {}".format(REDIS_MODULE_PATH_ENVVAR))
-        print("run: export {}=../../src/redisgraph.so".format(REDIS_MODULE_PATH_ENVVAR))
+        print("run: export {}=../../src/falkordb.so".format(REDIS_MODULE_PATH_ENVVAR))
         return None
 
     if redis_path is None:
