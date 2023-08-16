@@ -9,13 +9,13 @@ if (NOT DEFINED UNIT_TESTS)
 	set(UNIT_TESTS OFF)
 endif()
 
-project(redisgraph)
+project(falkordb)
 
 setup_cc_options()
 
 file(GLOB_RECURSE SOURCES "src/*.c")
 
-add_library(redisgraph SHARED ${SOURCES})
+add_library(falkordb SHARED ${SOURCES})
 
 include_directories(
 	${root}/src
@@ -44,22 +44,22 @@ if (MEMCHECK)
 	add_compile_definitions(MEMCHECK)
 endif()
 
-setup_shared_object_target(redisgraph "")
+setup_shared_object_target(falkordb "")
 
-set_target_properties(redisgraph PROPERTIES LINKER_LANGUAGE CXX)
+set_target_properties(falkordb PROPERTIES LINKER_LANGUAGE CXX)
 
-set(REDISGRAPH_OBJECTS $<TARGET_OBJECTS:redisgraph>)
+set(FALKORDB_OBJECTS $<TARGET_OBJECTS:falkordb>)
 
 lists_from_env(GRAPHBLAS LIBXXHASH RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA)
-set(REDISGRAPH_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA})
+set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA})
 
-target_link_options(redisgraph PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(redisgraph PRIVATE ${REDISGRAPH_LIBS} ${CMAKE_LD_LIBS})
+target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
+target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
-extract_debug_symbols(redisgraph)
+extract_debug_symbols(falkordb)
 
 if (APPLE)
-	add_library(redisgraph_static STATIC $<TARGET_OBJECTS:redisgraph>)
+	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
 endif()
 
 if (UNIT_TESTS)

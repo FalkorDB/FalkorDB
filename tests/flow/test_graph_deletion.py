@@ -430,3 +430,22 @@ class testGraphDeletionFlow(FlowTestsBase):
 
         # validate that the nodes were deleted
         self.env.assertEquals(res.nodes_deleted, 2)
+
+    def test20_not_existed_label(self):
+        # clean the db
+        self.env.flush()
+        redis_graph = Graph(self.env.getConnection(), GRAPH_ID)
+        
+        res = redis_graph.query("CREATE (n:Foo:Bar)")
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(res.labels_added, 2)
+
+        res = redis_graph.query("MATCH (n) REMOVE n:Bar")
+        self.env.assertEquals(res.labels_removed, 1)
+
+        res = redis_graph.query("MATCH (n) REMOVE n:Bar")
+        self.env.assertEquals(res.labels_removed, 0)
+
+        res = redis_graph.query("MATCH (n:Bar) RETURN count(n)")
+        self.env.assertEquals(res.result_set[0][0], 0)
+        

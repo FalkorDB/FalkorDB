@@ -2,7 +2,7 @@
 
 1. Set the following environment variables:
 
-- REDIS_MODULE_PATH - Relative path to compiled redisgraph.so
+- REDIS_MODULE_PATH - Relative path to compiled falkordb.so
 
   ```sh
   export REDIS_MODULE_PATH=<ABSOLUTE_PATH_TO_MODULE.SO>
@@ -16,7 +16,7 @@
 
 2. Install requirements:
 
-  From either <REDISGRAPH_ROOT>/demo/imdb or <REDISGRAPH_ROOT>/demo/social, Run:
+  From either <FALKORDB_ROOT>/demo/imdb or <FALKORDB_ROOT>/demo/social, Run:
 
   ```sh
   pip install -r requirements.txt

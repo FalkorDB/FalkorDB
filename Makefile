@@ -28,7 +28,7 @@ MK_ALL_TARGETS=bindirs deps build
 MK_CUSTOM_CLEAN=1
 
 BINDIR=$(BINROOT)/src
-export TARGET=$(BINROOT)/src/redisgraph.so
+export TARGET=$(BINROOT)/src/falkordb.so
 
 #----------------------------------------------------------------------------------------------
 
@@ -48,7 +48,7 @@ make clean          # Clean build products
   DEPS=1              # Also clean dependant modules
   AUTOGEN=1           # Remove autogen-generated files
 make pack|package   # Build RAMP packages
-make run            # Run redis-server with RedisGraph
+make run            # Run redis-server with falkordb
   GDB=1               # Run with debugger
 
 make test         # Run tests

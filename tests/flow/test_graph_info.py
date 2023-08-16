@@ -74,7 +74,7 @@ class testGraphInfo(FlowTestsBase):
         self.conn = self.env.getConnection()
         self.graph = Graph(self.conn, GRAPH_ID)
 
-    def consumeStream(self, stream, drop=True):
+    def consumeStream(self, stream, drop=True, n_items=1):
         # wait for telemetry stream to be created
         t = 'none' # type of stream_key
 
@@ -83,15 +83,33 @@ class testGraphInfo(FlowTestsBase):
 
         self.env.assertEquals(t, "stream")
 
-        # consume entire stream
-        events = self.conn.xrevrange(stream, '+', '-')
-
         # convert stream events to LoggedQueries
-        logged_queries = [LoggedQuery(e[1]) for e in events]
+        logged_queries = []
+        streams = {stream: '0-0'}
+
+        elapsed = 10
+        while len(logged_queries) < n_items and elapsed > 0:
+            # read messages from the stream
+            messages = self.conn.xread(streams, block=0)
+
+            if len(messages) > 0:
+                # process each message received
+                stream_messages = messages[0][1]
+                for message_id, message_payload in stream_messages:
+                    logged_queries.append(LoggedQuery(message_payload))
+
+                # update stream last ID
+                streams[stream] = stream_messages[-1][0]
+
+            time.sleep(0.2)
+            elapsed -= 0.2
 
         # drop stream
         if drop:
             self.conn.delete(stream)
+
+        # reverse order to match expected order of events
+        logged_queries.reverse()
 
         return logged_queries
 
@@ -114,7 +132,7 @@ class testGraphInfo(FlowTestsBase):
             self.graph.query(q)
 
         # read stream
-        logged_queries = self.consumeStream(StreamName(self.graph))
+        logged_queries = self.consumeStream(StreamName(self.graph), n_items=3)
 
         # validate events
         self.env.assertEquals(len(logged_queries), 3)
@@ -132,7 +150,7 @@ class testGraphInfo(FlowTestsBase):
                 self.graph.query(q)
 
         # read stream
-        logged_queries = self.consumeStream(StreamName(self.graph))
+        logged_queries = self.consumeStream(StreamName(self.graph), n_items=6)
 
         # validate events
         self.env.assertEquals(len(logged_queries), 6)

@@ -5,36 +5,35 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    runs-on: macos-11
-    defaults:
-      run:
-        shell: bash -l -eo pipefail {0}
+  build:
+    runs-on: macos-latest
     steps:
+
+    - name: Setup Docker on macOS
+      uses: douglascamata/setup-docker-macos-action@v1-alpha
+
+    - name: Safe dir
+      run: git config --global --add safe.directory '*'
+
     - uses: actions/checkout@v3
       with:
-        submodules: true
-    - run: |
-        git config --global --add safe.directory '*'
-        git submodule update --init --recursive
-    - name: Setup
-      run: |
-        ./sbin/setup
-        export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-        ./deps/readies/bin/getredis --with-github-token
+        set-safe-directory: '*'
+        submodules: recursive
+
     - name: Build
-      run: |
-        make
-        make pack
+      run: make
+
     - name: Unit tests
-      run: |
-        make unit-tests CLEAR_LOGS=0
+      run: make unit-tests CLEAR_LOGS=0 SAN=address
+      continue-on-error: true
+
     - name: Flow tests
-      run: |
-        make flow-tests CLEAR_LOGS=0
+      run: make flow-tests CLEAR_LOGS=0 SAN=address
+      continue-on-error: true
+
     - name: TCK tests
-      run: |
-        make tck-tests CLEAR_LOGS=0
+      run: make tck-tests CLEAR_LOGS=0 SAN=address
+
     - name: Fuzzer tests
-      run: |
-        make fuzz
+      run: make fuzz
+

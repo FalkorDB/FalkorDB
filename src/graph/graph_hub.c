@@ -370,7 +370,7 @@ void UpdateNodeLabels
 			}
 
 			int  schema_id = Schema_GetID(s);
-			bool node_labeled = Graph_IsNodeLabeled(gc->g, node->id, schema_id);
+			bool node_labeled = Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(node), schema_id);
 
 			if(!node_labeled) {
 				// sync matrix
@@ -387,7 +387,7 @@ void UpdateNodeLabels
 
 		if(add_labels_index > 0) {
 			// update node's labels
-			Graph_LabelNode(gc->g, node->id ,add_labels_ids, add_labels_index);
+			Graph_LabelNode(gc->g, ENTITY_GET_ID(node) ,add_labels_ids, add_labels_index);
 			if(log == true) {
 				UndoLog_AddLabels(undo_log, node, add_labels_ids,
 						add_labels_index);
@@ -408,6 +408,11 @@ void UpdateNodeLabels
 			// get or create label matrix
 			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
+				// skip removal of none existing label
+				continue;
+			}
+
+			if(!Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(node), Schema_GetID(s))) {
 				// skip removal of none existing label
 				continue;
 			}
