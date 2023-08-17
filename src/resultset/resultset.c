@@ -21,7 +21,7 @@ static void _ResultSet_ReplyWithPreamble
 	ResultSet *set
 ) {
 	if(set->format == FORMATTER_BOLT) {
-		set->formatter->EmitHeader(set->ctx, set->columns,
+		set->formatter->EmitHeader(set->ctx, set->bolt_client, set->columns,
 				set->columns_record_map);
 		return;
 	}
@@ -29,7 +29,7 @@ static void _ResultSet_ReplyWithPreamble
 		// prepare a response containing a header, records, and statistics
 		RedisModule_ReplyWithArray(set->ctx, 3);
 		// emit the table header using the appropriate formatter
-		set->formatter->EmitHeader(set->ctx, set->columns,
+		set->formatter->EmitHeader(set->ctx, set->bolt_client, set->columns,
 				set->columns_record_map);
 	} else {
 		// prepare a response containing only statistics
@@ -69,6 +69,7 @@ static void _ResultSet_SetColumns
 ResultSet *NewResultSet
 (
 	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
 	ResultSetFormatterType format  // resultset format
 ) {
 	ResultSet *set = rm_malloc(sizeof(ResultSet));
@@ -79,6 +80,7 @@ ResultSet *NewResultSet
 	set->format              =  format;
 	set->columns             =  NULL;
 	set->formatter           =  ResultSetFormatter_GetFormatter(format);
+	set->bolt_client         =  bolt_client;
 	set->column_count        =  0;
 	set->cells_allocation    =  M_NONE;
 	set->columns_record_map  =  NULL;
@@ -242,18 +244,6 @@ void ResultSet_Reply
 	// check to see if we've encountered a run-time error
 	// if so, emit it as the only response
 	if(ErrorCtx_EncounteredError()) {
-		if(set->format == FORMATTER_BOLT) {
-			bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
-			bolt_reply_structure(client, BST_FAILURE, 1);
-			bolt_reply_map(client, 2);
-			bolt_reply_string(client, "code");
-			bolt_reply_string(client, "SyntaxError");
-			bolt_reply_string(client, "message");
-			bolt_reply_string(client, "Invalid input");
-			bolt_client_finish_write(client);
-			ErrorCtx_Clear();
-			return;
-		}
 		ErrorCtx_EmitException();
 		return;
 	}
@@ -273,13 +263,12 @@ void ResultSet_Reply
 				row[j] = DataBlock_GetItem(set->cells, i + j);
 			}
 
-			set->formatter->EmitRow(set->ctx, set->gc, row, set->column_count);
+			set->formatter->EmitRow(set->ctx, set->bolt_client, set->gc, row, set->column_count);
 		}
 	}
 
 	if(set->format == FORMATTER_BOLT) {
-		bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
-		bolt_client_finish_write(client);
+		bolt_client_finish_write(set->bolt_client);
 	}
 
 	ResultSetStat_emit(set->ctx, &set->stats); // response with statistics

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "socket.h"
+#include "../redismodule.h"
 
 typedef enum bolt_value_type {
     BVT_NULL,

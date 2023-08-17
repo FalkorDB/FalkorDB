@@ -7,8 +7,20 @@
 #pragma once
 
 // Formatter for verbose (human-readable) replies
-void ResultSet_ReplyWithVerboseHeader(RedisModuleCtx *ctx, const char **columns, uint *col_rec_map);
+void ResultSet_ReplyWithVerboseHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+);
 
-void ResultSet_EmitVerboseRow(RedisModuleCtx *ctx, GraphContext *gc,
-		SIValue **row, uint numcols);
+void ResultSet_EmitVerboseRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+);
 

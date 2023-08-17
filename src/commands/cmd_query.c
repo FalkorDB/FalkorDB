@@ -308,7 +308,7 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	// instantiate the query ResultSet
-	bool bolt    = command_ctx->bolt;
+	bool bolt    = command_ctx->bolt_client != NULL;
 	bool compact = command_ctx->compact;
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
@@ -319,7 +319,7 @@ static void _ExecuteQuery(void *args) {
 			: (compact)
 				? FORMATTER_COMPACT
 				: FORMATTER_VERBOSE;
-	ResultSet *result_set = NewResultSet(rm_ctx, resultset_format);
+	ResultSet *result_set = NewResultSet(rm_ctx, command_ctx->bolt_client, resultset_format);
 	if(exec_ctx->cached) {
 		ResultSet_CachedExecution(result_set); // indicate a cached execution
 	}
@@ -542,18 +542,7 @@ void _query
 cleanup:
 	// if there were any query compile time errors, report them
 	if(ErrorCtx_EncounteredError()) {
-		if(command_ctx->bolt) {
-			bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
-			bolt_reply_structure(client, BST_FAILURE, 1);
-			bolt_reply_map(client, 2);
-			bolt_reply_string(client, "code");
-			bolt_reply_string(client, "SyntaxError");
-			bolt_reply_string(client, "message");
-			bolt_reply_string(client, "Invalid input");
-			bolt_client_finish_write(client);
-		} else {
-			ErrorCtx_EmitException();
-		}
+		ErrorCtx_EmitException();
 	}
 
 	// Cleanup routine invoked after encountering errors in this function.

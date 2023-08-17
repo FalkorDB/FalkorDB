@@ -767,9 +767,6 @@ void Graph_RemoveNodeLabels
 	RG_Matrix nl = Graph_GetNodeLabelMatrix(g);
 	for(uint i = 0; i < lbl_count; i++) {
 		LabelID   l = lbls[i];
-		if(!Graph_IsNodeLabeled(g, id, l)) {
-			continue;
-		}
 		RG_Matrix M = Graph_GetLabelMatrix(g, l);
 
 		// remove matrix at position [id, id]

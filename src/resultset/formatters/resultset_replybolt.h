@@ -7,8 +7,20 @@
 #pragma once
 
 // Formatter for bolt replies
-void ResultSet_ReplyWithBoltHeader(RedisModuleCtx *ctx, const char **columns, uint *col_rec_map);
+void ResultSet_ReplyWithBoltHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+);
 
-void ResultSet_EmitBoltRow(RedisModuleCtx *ctx, GraphContext *gc,
-		SIValue **row, uint numcols);
+void ResultSet_EmitBoltRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+);
 

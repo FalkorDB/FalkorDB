@@ -175,6 +175,7 @@ void QueryCtx_SetGlobalExecutionCtx
 	ctx->query_data.query             = CommandCtx_GetQuery(cmd_ctx);
 	ctx->global_exec_ctx.bc           = CommandCtx_GetBlockingClient(cmd_ctx);
 	ctx->global_exec_ctx.redis_ctx    = CommandCtx_GetRedisCtx(cmd_ctx);
+	ctx->global_exec_ctx.bolt_client  = CommandCtx_GetBoltClient(cmd_ctx);
 	ctx->global_exec_ctx.command_name = CommandCtx_GetCommandName(cmd_ctx);
 
 	// copy command's timer
@@ -273,6 +274,13 @@ RedisModuleCtx *QueryCtx_GetRedisModuleCtx(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 	return ctx->global_exec_ctx.redis_ctx;
+}
+
+// retrieve the bolt client
+bolt_client_t *QueryCtx_GetBoltClient(void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	ASSERT(ctx != NULL);
+	return ctx->global_exec_ctx.bolt_client;
 }
 
 // retrive the resultset

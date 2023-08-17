@@ -36,7 +36,6 @@ typedef struct {
 	bool timeout_rw;               // apply timeout on both read and write queries
 	uint64_t received_ts;          // command received at this UNIX timestamp
 	simple_timer_t timer;          // stopwatch started upon command received
-	bool bolt;                     // is this a BOLT request
 	bolt_client_t *bolt_client;    // BOLT client
 } CommandCtx;
 
@@ -55,7 +54,6 @@ CommandCtx *CommandCtx_New
 	bool timeout_rw,               // apply timeout on both read and write queries
 	uint64_t received_ts,          // command received at this  UNIX timestamp
 	simple_timer_t timer,          // stopwatch started upon command received
-	bool bolt,                     // is this a BOLT request
 	bolt_client_t *bolt_client     // BOLT client
 );
 
@@ -67,6 +65,12 @@ void CommandCtx_Incref
 
 // get Redis module context
 RedisModuleCtx *CommandCtx_GetRedisCtx
+(
+	CommandCtx *command_ctx
+);
+
+// get BOLT client
+bolt_client_t *CommandCtx_GetBoltClient
 (
 	CommandCtx *command_ctx
 );

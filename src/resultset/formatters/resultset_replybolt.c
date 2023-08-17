@@ -119,31 +119,40 @@ void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SI
 	}
 }
 
-void ResultSet_EmitBoltRow(RedisModuleCtx *ctx, GraphContext *gc,
-							  SIValue **row, uint numcols) {
-	bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
-	bolt_reply_structure(client, BST_RECORD, 1);
-	bolt_reply_list(client, numcols);
+void ResultSet_EmitBoltRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+) {
+	bolt_reply_structure(bolt_client, BST_RECORD, 1);
+	bolt_reply_list(bolt_client, numcols);
 	for(int i = 0; i < numcols; i++) {
-		_ResultSet_BoltReplyWithSIValue(client, gc, *row[i]);
+		_ResultSet_BoltReplyWithSIValue(bolt_client, gc, *row[i]);
 	}
-	bolt_client_send(client);
+	bolt_client_send(bolt_client);
 }
 
 // Emit the alias or descriptor for each column in the header.
-void ResultSet_ReplyWithBoltHeader(RedisModuleCtx *ctx, const char **columns,
-									  uint *col_rec_map) {
-	bolt_client_t *client = Globals_GetCommandCtx()->bolt_client;
-	bolt_reply_structure(client, BST_SUCCESS, 1);
-	bolt_reply_map(client, 3);
-	bolt_reply_string(client, "t_first");
-	bolt_reply_int8(client, 2);
-	bolt_reply_string(client, "fields");
-	bolt_reply_list(client, array_len(columns));
+void ResultSet_ReplyWithBoltHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+) {
+	bolt_reply_structure(bolt_client, BST_SUCCESS, 1);
+	bolt_reply_map(bolt_client, 3);
+	bolt_reply_string(bolt_client, "t_first");
+	bolt_reply_int8(bolt_client, 2);
+	bolt_reply_string(bolt_client, "fields");
+	bolt_reply_list(bolt_client, array_len(columns));
 	for(int i = 0; i < array_len(columns); i++) {
-		bolt_reply_string(client, columns[i]);
+		bolt_reply_string(bolt_client, columns[i]);
 	}
-	bolt_reply_string(client, "qid");
-	bolt_reply_int8(client, 0);
-	bolt_client_send(client);
+	bolt_reply_string(bolt_client, "qid");
+	bolt_reply_int8(bolt_client, 0);
+	bolt_client_send(bolt_client);
 }

@@ -101,6 +101,16 @@ void ErrorCtx_EmitException(void) {
 	ASSERT(ctx != NULL);
 
 	if(ctx->error != NULL) {
+		bolt_client_t *bolt_client = QueryCtx_GetBoltClient();
+		if(bolt_client != NULL) {
+			bolt_reply_structure(bolt_client, BST_FAILURE, 1);
+			bolt_reply_map(bolt_client, 2);
+			bolt_reply_string(bolt_client, "code");
+			bolt_reply_string(bolt_client, "SyntaxError");
+			bolt_reply_string(bolt_client, "message");
+			bolt_reply_string(bolt_client, ctx->error);
+			bolt_client_finish_write(bolt_client);
+		}
 		RedisModuleCtx *rm_ctx = QueryCtx_GetRedisModuleCtx();
 		RedisModule_ReplyWithError(rm_ctx, ctx->error);
 	}

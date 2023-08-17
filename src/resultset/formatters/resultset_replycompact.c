@@ -275,8 +275,14 @@ static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *
 	_ResultSet_ReplyWithRoundedDouble(ctx, Point_lon(v));
 }
 
-void ResultSet_EmitCompactRow(RedisModuleCtx *ctx, GraphContext *gc,
-							  SIValue **row, uint numcols) {
+void ResultSet_EmitCompactRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+) {
 	// Prepare return array sized to the number of RETURN entities
 	RedisModule_ReplyWithArray(ctx, numcols);
 
@@ -289,14 +295,19 @@ void ResultSet_EmitCompactRow(RedisModuleCtx *ctx, GraphContext *gc,
 
 // For every column in the header, emit a 2-array containing the ColumnType enum
 // followed by the column alias.
-void ResultSet_ReplyWithCompactHeader(RedisModuleCtx *ctx, const char **columns,
-									  uint *col_rec_map) {
+void ResultSet_ReplyWithCompactHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+) {
 	uint columns_len = array_len(columns);
 	RedisModule_ReplyWithArray(ctx, columns_len);
 	for(uint i = 0; i < columns_len; i++) {
 		RedisModule_ReplyWithArray(ctx, 2);
-		/* Because the types found in the first Record do not necessarily inform the types
-		 * in subsequent records, we will always set the column type as scalar. */
+		// because the types found in the first Record do not necessarily inform the types
+		// in subsequent records, we will always set the column type as scalar
 		ColumnType t = COLUMN_SCALAR;
 		RedisModule_ReplyWithLongLong(ctx, t);
 
