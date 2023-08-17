@@ -110,9 +110,10 @@ void ErrorCtx_EmitException(void) {
 			bolt_reply_string(bolt_client, "message");
 			bolt_reply_string(bolt_client, ctx->error);
 			bolt_client_finish_write(bolt_client);
+		} else {
+			RedisModuleCtx *rm_ctx = QueryCtx_GetRedisModuleCtx();
+			RedisModule_ReplyWithError(rm_ctx, ctx->error);
 		}
-		RedisModuleCtx *rm_ctx = QueryCtx_GetRedisModuleCtx();
-		RedisModule_ReplyWithError(rm_ctx, ctx->error);
 	}
 
 	// clear error context once error emitted
