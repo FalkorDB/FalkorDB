@@ -64,7 +64,7 @@ static sds _JsonEncoder_Edge(Edge *e, sds s) {
 	s = sdscatfmt(s, "\"id\": %U", ENTITY_GET_ID(e));
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	// Retrieve reltype data.
-	int id = Graph_GetEdgeRelation(gc->g, e);
+	int id = Edge_GetRelationID(e);
 	Schema *schema = GraphContext_GetSchemaByID(gc, id, SCHEMA_EDGE);
 	ASSERT(schema);
 	const char *relationship = Schema_GetName(schema);

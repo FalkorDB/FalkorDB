@@ -160,7 +160,7 @@ static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *g
 	RedisModule_ReplyWithLongLong(ctx, id);
 
 	// reltype string index, retrieve reltype.
-	int reltype_id = Graph_GetEdgeRelation(gc->g, e);
+	int reltype_id = Edge_GetRelationID(e);
 	ASSERT(reltype_id != GRAPH_NO_RELATION);
 	RedisModule_ReplyWithLongLong(ctx, reltype_id);
 

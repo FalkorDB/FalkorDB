@@ -94,7 +94,7 @@ void CommitUpdates
 				label_count = Graph_GetNodeLabels(gc->g, (Node*)update->ge, labels,
 						label_count);
 			} else {
-				labels[0] = EDGE_GET_RELATION_ID((Edge*)update->ge, gc->g);
+				labels[0] = Edge_GetRelationID((Edge*)update->ge);
 			}
 
 			SchemaType stype = type == ENTITY_NODE ? SCHEMA_NODE : SCHEMA_EDGE;

@@ -376,7 +376,7 @@ static void _ExecuteQuery(void *args) {
 
 	// in case of an error, rollback any modifications
 	if(ErrorCtx_EncounteredError()) {
-		UndoLog_Rollback(*QueryCtx_GetUndoLog());
+		QueryCtx_Rollback();
 		// clear resultset statistics, avoiding commnad being replicated
 		ResultSet_Clear(result_set);
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {

@@ -22,27 +22,29 @@ jobs:
       id: cache_graphblas
       uses: actions/cache@v3
       with:
-        path: ./bin/linux-x64-release/GraphBLAS
+        path: /FalkorDB/bin/linux-x64-release/GraphBLAS
         key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}    
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v3
       with:
-        path: ./bin/linux-x64-release/libcypher-parser
+        path: /FalkorDB/bin/linux-x64-release/libcypher-parser
         key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@v3
       with:
-        path: ./bin/linux-x64-release/search-static
+        path: /FalkorDB/bin/linux-x64-release/search-static
         key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
+    # Make sure the working directory is static between runs 
+    # and always the same for the CMake cache
     - name: Relocate source
       run: |
-        mv $GITHUB_WORKSPACE /FalkorDB
-        mkdir $GITHUB_WORKSPACE
+        mkdir -p /FalkorDB
+        mv $GITHUB_WORKSPACE/* /FalkorDB
 
     - name: Build
       working-directory: /FalkorDB
@@ -63,7 +65,7 @@ jobs:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         push: true
-        tags: falkordb/falkordb:${{ github.ref_name }}
+        tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name  }}
 
   unit-tests:
     runs-on: ubuntu-latest

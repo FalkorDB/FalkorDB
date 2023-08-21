@@ -10,8 +10,10 @@ READIES=$ROOT/deps/readies
 
 export PYTHONUNBUFFERED=1
 
-VALGRIND_REDIS_VER=6.2
-SAN_REDIS_VER=6.2
+VG_REDIS_VER=7.2-rc3
+VG_REDIS_SUFFIX=7.2
+SAN_REDIS_VER=7.2-rc3
+SAN_REDIS_SUFFIX=7.2
 
 cd $HERE
 
@@ -68,6 +70,7 @@ help() {
 		STATFILE=file         Write test status (0|1) into `file`
 
 		LIST=1                List all tests and exit
+		ENV_ONLY=1            Just start environment, run no tests
 		V|VERBOSE=1           Print commands and Redis output
 		LOG=1                 Send results to log (even on single-test mode)
 		KEEP=1                Do not remove intermediate files
@@ -134,6 +137,8 @@ setup_rltest() {
 		fi
 	fi
 	
+	RLTEST_ARGS+=" --enable-debug-command"
+
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
 		RLTEST_ARGS+=" -v"
 	fi
@@ -167,11 +172,11 @@ setup_clang_sanitizer() {
 	RLTEST_SAN_ARGS="--sanitizer $SAN"
 
 	if [[ $SAN == addr || $SAN == address ]]; then
-		REDIS_SERVER=${REDIS_SERVER:-redis-server-asan-$SAN_REDIS_VER}
+		REDIS_SERVER=${REDIS_SERVER:-redis-server-asan-$SAN_REDIS_SUFFIX}
 		if ! command -v $REDIS_SERVER > /dev/null; then
 			echo Building Redis for clang-asan ...
-			$READIES/bin/getredis --force -v $SAN_REDIS_VER --own-openssl --no-run \
-				--suffix asan --clang-asan --clang-san-blacklist $ignorelist
+			V="$VERBOSE" runn $READIES/bin/getredis --force -v $SAN_REDIS_VER --own-openssl --no-run \
+				--suffix asan-${SAN_REDIS_SUFFIX} --clang-asan --clang-san-blacklist $ignorelist
 		fi
 
 		export ASAN_OPTIONS="detect_odr_violation=0:halt_on_error=0:detect_leaks=1"
@@ -202,14 +207,23 @@ setup_redis_server() {
 #----------------------------------------------------------------------------------------------
 
 setup_valgrind() {
-	REDIS_SERVER=${REDIS_SERVER:-redis-server-vg}
+	REDIS_SERVER=${REDIS_SERVER:-redis-server-vg-$VG_REDIS_SUFFIX}
 	if ! is_command $REDIS_SERVER; then
 		echo Building Redis for Valgrind ...
-		$READIES/bin/getredis -v $VALGRIND_REDIS_VER --valgrind --suffix vg
+		V="$VERBOSE" runn $READIES/bin/getredis -v ${VG_REDIS_VER} --valgrind --suffix vg-${VG_REDIS_VER}
 	fi
 
+	if [[ $VG_LEAKS == 0 ]]; then
+		VG_LEAK_CHECK=no
+		RLTEST_VG_NOLEAKS="--vg-no-leakcheck"
+	else
+		VG_LEAK_CHECK=full
+		RLTEST_VG_NOLEAKS=""
+	fi
 	# RLTest reads this
 	VG_OPTIONS="\
+		-q \
+		--leak-check=$VG_LEAK_CHECK \
 		--show-reachable=no \
 		--track-origins=yes \
 		--show-possibly-lost=no"
@@ -217,18 +231,12 @@ setup_valgrind() {
 	# To generate supressions and/or log to file
 	# --gen-suppressions=all --log-file=valgrind.log
 
-	if [[ $VG_LEAKS == 0 ]]; then
-		RLTEST_VG_ARGS+=" --vg-no-leakcheck"
-		VG_OPTIONS+=" --leak-check=no"
-	else
-		VG_OPTIONS+=" --leak-check=full"
-	fi
-
 	VALGRIND_SUPRESSIONS=$ROOT/tests/memcheck/valgrind.supp
 
 	RLTEST_VG_ARGS+="\
 		--use-valgrind \
 		--vg-verbose \
+		$RLTEST_VG_NOLEAKS \
 		--vg-no-fail-on-errors \
 		--vg-suppressions $VALGRIND_SUPRESSIONS"
 
@@ -250,6 +258,48 @@ setup_coverage() {
 
 #----------------------------------------------------------------------------------------------
 
+run_env() {
+	rltest_config=$(mktemp "${TMPDIR:-/tmp}/rltest.XXXXXXX")
+	rm -f $rltest_config
+	cat <<-EOF > $rltest_config
+		--env-only
+		--oss-redis-path=$REDIS_SERVER
+		--module $MODULE
+		--module-args '$MODARGS'
+		$RLTEST_ARGS
+		$RLTEST_TEST_ARGS
+		$RLTEST_PARALLEL_ARG
+		$RLTEST_VG_ARGS
+		$RLTEST_SAN_ARGS
+		$RLTEST_COV_ARGS
+
+		EOF
+
+	# Use configuration file in the current directory if it exists
+	if [[ -n $CONFIG_FILE && -e $CONFIG_FILE ]]; then
+		cat $CONFIG_FILE >> $rltest_config
+	fi
+
+	if [[ $VERBOSE == 1 || $NOP == 1 ]]; then
+		echo "RLTest configuration:"
+		cat $rltest_config
+		[[ -n $VG_OPTIONS ]] && { echo "VG_OPTIONS: $VG_OPTIONS"; echo; }
+	fi
+
+	local E=0
+	if [[ $NOP != 1 ]]; then
+		{ $OP python3 -m RLTest @$rltest_config; (( E |= $? )); } || true
+	else
+		$OP python3 -m RLTest @$rltest_config
+	fi
+
+	[[ $KEEP != 1 ]] && rm -f $rltest_config
+
+	return $E
+}
+
+#----------------------------------------------------------------------------------------------
+
 run_tests() {
 	local title="$1"
 	shift
@@ -257,7 +307,7 @@ run_tests() {
 		if [[ -n $GITHUB_ACTIONS ]]; then
 			echo "::group::$title"
 		else
-			$READIES/bin/sep -0
+			$READIES/bin/sep1 -0
 			printf "Running $title:\n\n"
 		fi
 	fi
@@ -275,6 +325,7 @@ run_tests() {
 				$RLTEST_PARALLEL_ARG
 				$RLTEST_VG_ARGS
 				$RLTEST_SAN_ARGS
+				$RLTEST_COV_ARGS
 
 				EOF
 		else
@@ -322,6 +373,11 @@ run_tests() {
 
 				EOF
 		fi
+	fi
+
+	# Use configuration file in the current directory if it exists
+	if [[ -n $CONFIG_FILE && -e $CONFIG_FILE ]]; then
+		cat $CONFIG_FILE >> $rltest_config
 	fi
 
 	if [[ $VERBOSE == 1 || $NOP == 1 ]]; then
@@ -374,6 +430,8 @@ EXT_PORT=${EXT_PORT:-6379}
 
 PID=$$
 OS=$($READIES/bin/platform --os)
+ARCH=$($READIES/bin/platform --arch)
+OSNICK=$($READIES/bin/platform --osnick)
 
 #---------------------------------------------------------------------------------- Tests scope
 
@@ -421,8 +479,8 @@ if [[ $PLATFORM_MODE == 1 ]]; then
 	CLEAR_LOGS=0
 	COLLECT_LOGS=1
 	NOFAIL=1
-	STATFILE=$ROOT/bin/artifacts/tests/status
 fi
+STATFILE=${STATFILE:-$ROOT/bin/artifacts/tests/status}
 
 #---------------------------------------------------------------------------------- Parallelism
 
@@ -474,10 +532,14 @@ if [[ $VERBOSE == 1 ]]; then
 fi
 
 RLTEST_LOG=${RLTEST_LOG:-$LOG}
-#if [[ $LOG == 1 ]]; then
-#	echo "Log=1!"
-#	RLTEST_LOG=1
-#fi
+
+if [[ $COV == 1 ]]; then
+	setup_coverage
+fi
+
+if [[ -n $REDIS_PORT ]]; then
+	RLTEST_ARGS+="--redis-port $REDIS_PORT"
+fi
 
 [[ $UNIX == 1 ]] && RLTEST_ARGS+=" --unix"
 [[ $RANDPORTS == 1 ]] && RLTEST_ARGS+=" --randomize-ports"
@@ -498,8 +560,11 @@ if [[ $RLEC != 1 ]]; then
 	setup_redis_server
 fi
 
-if [[ $COV == 1 ]]; then
-	setup_coverage
+#------------------------------------------------------------------------------------- Env only
+
+if [[ $ENV_ONLY == 1 ]]; then
+	run_env
+	exit 0
 fi
 
 #-------------------------------------------------------------------------------- Running tests
@@ -555,8 +620,6 @@ if [[ $NOP != 1 ]]; then
 fi
 
 if [[ $COLLECT_LOGS == 1 ]]; then
-	ARCH=$($READIES/bin/platform --arch)
-	OSNICK=$($READIES/bin/platform --osnick)
 	cd $ROOT
 	mkdir -p bin/artifacts/tests
 	if [[ $GEN == 1 || $AOF == 1 ]]; then
@@ -568,7 +631,7 @@ if [[ $COLLECT_LOGS == 1 ]]; then
 fi
 
 if [[ -n $STATFILE ]]; then
-	mkdir -p $(dirname $STATFILE)
+	mkdir -p "$(dirname "$STATFILE")"
 	if [[ -f $STATFILE ]]; then
 		(( E |= $(cat $STATFILE || echo 1) )) || true
 	fi

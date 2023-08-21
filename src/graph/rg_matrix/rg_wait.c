@@ -22,76 +22,97 @@ static inline void _SetUndirty
 	}
 }
 
-static GrB_Info RG_Matrix_sync
+static void RG_Matrix_sync_deletions
 (
 	RG_Matrix C
 ) {
 	ASSERT(C != NULL);
 
-	GrB_Matrix      m     =  RG_MATRIX_M(C);
-	GrB_Matrix      dp    =  RG_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix      dm    =  RG_MATRIX_DELTA_MINUS(C);
-	GrB_Descriptor  desc  =  GrB_NULL;
-	GrB_Matrix      mask  =  GrB_NULL;
+	GrB_Matrix m  = RG_MATRIX_M(C);
+	GrB_Matrix dm = RG_MATRIX_DELTA_MINUS(C);
 
 	GrB_Info info;
-	GrB_Index dp_nvals;
-	GrB_Index dm_nvals;
 
-	//--------------------------------------------------------------------------
-	// determin change set
-	//--------------------------------------------------------------------------
+	info = GrB_transpose(m, dm, GrB_NULL, m, GrB_DESC_RSCT0);
+	ASSERT(info == GrB_SUCCESS);
 
-	GrB_Matrix_nvals(&dp_nvals, dp);
-	GrB_Matrix_nvals(&dm_nvals, dm);
+	// clear delta minus
+	info = GrB_Matrix_clear(dm);
+	ASSERT(info == GrB_SUCCESS);
+}
 
-	bool  additions  =  dp_nvals  >  0;
-	bool  deletions  =  dm_nvals  >  0;
+static void RG_Matrix_sync_additions
+(
+	RG_Matrix C
+) {
+	ASSERT(C != NULL);
 
-	//--------------------------------------------------------------------------
-	// perform deletions
-	//--------------------------------------------------------------------------
+	GrB_Matrix m  = RG_MATRIX_M(C);
+	GrB_Matrix dp = RG_MATRIX_DELTA_PLUS(C);
 
-	if(deletions) {
-		info = GrB_transpose(m, dm, GrB_NULL, m, GrB_DESC_RSCT0);
-		ASSERT(info == GrB_SUCCESS);
+	GrB_Info info;
+	GrB_Index nrows;
+	GrB_Index ncols;
 
-		// clear delta minus
-		info = GrB_Matrix_clear(dm);
-		ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_nrows(&nrows, m);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_ncols(&ncols, m);
+	ASSERT(info == GrB_SUCCESS);
+
+	info = GrB_Matrix_assign(m, dp, NULL, dp, GrB_ALL, nrows, GrB_ALL, ncols,
+		GrB_DESC_S);
+	ASSERT(info == GrB_SUCCESS);
+
+	// clear delta plus
+	info = GrB_Matrix_clear(dp);
+	ASSERT(info == GrB_SUCCESS);
+}
+
+static void RG_Matrix_sync
+(
+	RG_Matrix C,
+	bool force_sync,
+	uint64_t delta_max_pending_changes
+) {
+	ASSERT(C != NULL);
+
+	GrB_Matrix m  = RG_MATRIX_M(C);
+	GrB_Matrix dp = RG_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix dm = RG_MATRIX_DELTA_MINUS(C);
+
+	if(force_sync) {
+		RG_Matrix_sync_deletions(C);
+		RG_Matrix_sync_additions(C);
+	} else {
+		GrB_Index dp_nvals;
+		GrB_Index dm_nvals;
+
+		//----------------------------------------------------------------------
+		// determin change set
+		//----------------------------------------------------------------------
+
+		GrB_Matrix_nvals(&dp_nvals, dp);
+		GrB_Matrix_nvals(&dm_nvals, dm);
+
+		//----------------------------------------------------------------------
+		// perform deletions
+		//----------------------------------------------------------------------
+
+		if(dm_nvals >= delta_max_pending_changes) {
+			RG_Matrix_sync_deletions(C);
+		}
+
+		//----------------------------------------------------------------------
+		// perform additions
+		//----------------------------------------------------------------------
+
+		if(dp_nvals >= delta_max_pending_changes) {
+			RG_Matrix_sync_additions(C);
+		}
 	}
-
-	//--------------------------------------------------------------------------
-	// perform additions
-	//--------------------------------------------------------------------------
-
-	if(additions) {
-		GrB_Type t;
-		GrB_Semiring s;
-		info = GxB_Matrix_type(&t, m);
-		ASSERT(info == GrB_SUCCESS);
-
-		s = (t == GrB_BOOL) ? GxB_ANY_PAIR_BOOL : GxB_ANY_PAIR_UINT64;
-		info = GrB_Matrix_eWiseAdd_Semiring(m, NULL, NULL, s, m, dp, NULL);
-		ASSERT(info == GrB_SUCCESS);
-
-		// clear delta plus
-		info = GrB_Matrix_clear(dp);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	//--------------------------------------------------------------------------
-	// validate that both delta-plus and delta-minus are cleared
-	//--------------------------------------------------------------------------
-
-	GrB_Index nvals;
-	GrB_Matrix_nvals(&nvals, dp);
-	ASSERT(nvals == 0);
-	GrB_Matrix_nvals(&nvals, dm);
-	ASSERT(nvals == 0);
 
 	// wait on all 3 matrices
-	info = GrB_wait(m,  GrB_MATERIALIZE);
+	GrB_Info info = GrB_wait(m, GrB_MATERIALIZE);
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GrB_wait(dm, GrB_MATERIALIZE);
@@ -99,8 +120,6 @@ static GrB_Info RG_Matrix_sync
 
 	info = GrB_wait(dp, GrB_MATERIALIZE);
 	ASSERT(info == GrB_SUCCESS);
-
-	return info;
 }
 
 GrB_Info RG_Matrix_wait
@@ -112,40 +131,15 @@ GrB_Info RG_Matrix_wait
 	if(RG_MATRIX_MAINTAIN_TRANSPOSE(A)) {
 		RG_Matrix_wait(A->transposed, force_sync);
 	}
-	
-	GrB_Info   info        = GrB_SUCCESS;
-	GrB_Matrix m           = RG_MATRIX_M(A);
-	GrB_Matrix delta_plus  = RG_MATRIX_DELTA_PLUS(A);
-	GrB_Matrix delta_minus = RG_MATRIX_DELTA_MINUS(A);
-
-	// check if merge is required
-	GrB_Index delta_plus_nvals;
-	GrB_Index delta_minus_nvals;
-	GrB_Matrix_nvals(&delta_plus_nvals, delta_plus);
-	GrB_Matrix_nvals(&delta_minus_nvals, delta_minus);
 
 	uint64_t delta_max_pending_changes;
 	Config_Option_get(Config_DELTA_MAX_PENDING_CHANGES,
 			&delta_max_pending_changes);
 
-	if(force_sync ||
-	   delta_plus_nvals + delta_minus_nvals >= delta_max_pending_changes) {
-		info = RG_Matrix_sync(A);
-	} else {
-		// wait on 'm', in most cases 'm' won't contain any pending work
-		// but it might need to build its internal hyper-hash
-		info = GrB_wait(m, GrB_MATERIALIZE);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_wait(delta_plus, GrB_MATERIALIZE);
-		ASSERT(info == GrB_SUCCESS);
-
-		info = GrB_wait(delta_minus, GrB_MATERIALIZE);
-		ASSERT(info == GrB_SUCCESS);
-	}
+	RG_Matrix_sync(A, force_sync, delta_max_pending_changes);
 
 	_SetUndirty(A);
 
-	return info;
+	return GrB_SUCCESS;
 }
 

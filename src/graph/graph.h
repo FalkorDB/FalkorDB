@@ -44,18 +44,18 @@ typedef struct Graph Graph;
 typedef void (*SyncMatrixFunc)(const Graph *, RG_Matrix);
 
 struct Graph {
-	uint reserved_node_count;           // number of nodes not commited yet
-	DataBlock *nodes;                   // graph nodes stored in blocks
-	DataBlock *edges;                   // graph edges stored in blocks
-	RG_Matrix adjacency_matrix;         // adjacency matrix, holds all graph connections
-	RG_Matrix *labels;                  // label matrices
-	RG_Matrix node_labels;              // mapping of all node IDs to all labels possessed by each node
-	RG_Matrix *relations;               // relation matrices
-	RG_Matrix _zero_matrix;             // zero matrix
-	pthread_rwlock_t _rwlock;           // read-write lock scoped to this specific graph
-	bool _writelocked;                  // true if the read-write lock was acquired by a writer
-	SyncMatrixFunc SynchronizeMatrix;   // function pointer to matrix synchronization routine
-	GraphStatistics stats;              // graph related statistics
+	int reserved_node_count;           // number of nodes not commited yet
+	DataBlock *nodes;                  // graph nodes stored in blocks
+	DataBlock *edges;                  // graph edges stored in blocks
+	RG_Matrix adjacency_matrix;        // adjacency matrix, holds all graph connections
+	RG_Matrix *labels;                 // label matrices
+	RG_Matrix node_labels;             // mapping of all node IDs to all labels possessed by each node
+	RG_Matrix *relations;              // relation matrices
+	RG_Matrix _zero_matrix;            // zero matrix
+	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
+	bool _writelocked;                 // true if the read-write lock was acquired by a writer
+	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
+	GraphStatistics stats;             // graph related statistics
 };
 
 // graph synchronization functions
@@ -79,13 +79,6 @@ void Graph_ReleaseLock
 	Graph *g
 );
 
-// choose the current matrix synchronization policy
-void Graph_SetMatrixPolicy
-(
-	Graph *g,
-	MATRIX_POLICY policy
-);
-
 // synchronize and resize all matrices in graph
 void Graph_ApplyAllPending
 (
@@ -100,7 +93,7 @@ MATRIX_POLICY Graph_GetMatrixPolicy
 );
 
 // choose the current matrix synchronization policy
-void Graph_SetMatrixPolicy
+MATRIX_POLICY Graph_SetMatrixPolicy
 (
 	Graph *g,
 	MATRIX_POLICY policy
@@ -190,10 +183,9 @@ void Graph_ResetReservedNode
 	Graph *g
 );
 
-void Graph_ReserveNode
+Node Graph_ReserveNode
 (
-	Graph *g,               // graph for which nodes will be added
-	Node *n                 // node to reserve
+	Graph *g  // graph for which nodes will be added
 );
 
 // Create a single node and labels it accordingly.

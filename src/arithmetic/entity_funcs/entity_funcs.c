@@ -93,7 +93,7 @@ SIValue AR_TYPE(SIValue *argv, int argc, void *private_data) {
 	char *type = "";
 	Edge *e = argv[0].ptrval;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	int id = Graph_GetEdgeRelation(gc->g, e);
+	int id = Edge_GetRelationID(e);
 	if(id != GRAPH_NO_RELATION) type = gc->relation_schemas[id]->name;
 	return SI_ConstStringVal(type);
 }

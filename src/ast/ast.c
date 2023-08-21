@@ -192,10 +192,11 @@ static bool _clause_is_eager
 	const cypher_astnode_t *clause
 ) {
 	// -------------------------------------------------------------------------
-	// check if clause type is one of: CREATE, MERGE, SET or REMOVE
+	// check if clause type is one of: CREATE, DELETE, MERGE, SET or REMOVE
 	// -------------------------------------------------------------------------
 	cypher_astnode_type_t type = cypher_astnode_type(clause);
 	if(type == CYPHER_AST_CREATE ||
+	   type == CYPHER_AST_DELETE ||
 	   type == CYPHER_AST_MERGE  ||
 	   type == CYPHER_AST_SET    ||
 	   type == CYPHER_AST_REMOVE ||

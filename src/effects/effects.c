@@ -68,7 +68,7 @@ static void EffectsBuffer_AddBlock
 // if buffer isn't large enough only a portion of the bytes will be written
 static size_t EffectsBufferBlock_WriteBytes
 (
-	const void *ptr,              // data to write
+	const unsigned char *ptr,     // data to write
 	size_t n,                     // number of bytes to write
 	struct EffectsBufferBlock *b  // block to write to
 ) {
@@ -103,6 +103,10 @@ static void EffectsBuffer_WriteBytes
 	while(n > 0) {
 		struct EffectsBufferBlock *b = eb->current;
 		size_t written = EffectsBufferBlock_WriteBytes(ptr, n, b);
+
+		// advance ptr
+		ptr += written;
+
 		if(written == 0) {
 			// no bytes written block is full, create a new block
 			EffectsBuffer_AddBlock(eb);
@@ -273,7 +277,7 @@ uint64_t EffectsBuffer_Length
 	return buff->n;
 }
 
-// get a copy of effectspbuffer internal buffer
+// get a copy of effects-buffer internal buffer
 unsigned char *EffectsBuffer_Buffer
 (
 	const EffectsBuffer *eb,  // effects-buffer
@@ -553,8 +557,7 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	// write relation ID
 	//--------------------------------------------------------------------------
 
-	Graph *g = QueryCtx_GetGraph();
-	RelationID r = EDGE_GET_RELATION_ID(edge, g);
+	RelationID r = Edge_GetRelationID(edge);
 	EffectsBuffer_WriteBytes(&r, sizeof(RelationID), buff);
 
 	//--------------------------------------------------------------------------
@@ -796,7 +799,7 @@ void EffectsBuffer_Free
 (
 	EffectsBuffer *eb
 ) {
-	ASSERT(eb != NULL);
+	if(eb == NULL) return;
 
 	// free blocks
 	struct EffectsBufferBlock *b = eb->head;
