@@ -14,7 +14,7 @@ PLEASE DO NOT POST GENERAL QUESTIONS that are not about bugs or suspected
 bugs in the Github issues system. We'll be very happy to help you and provide
 all the support in the [Discussions](https://github.com/orgs/FalkorDB/discussions).
 
-Issues and pull requests for documentation belong on the FalkorDB documentation repo:
+Issues and pull requests for documentation belong on the FalkorDB documentation repository:
 
     https://github.com/FalkorDB/falkordb.github.io
 

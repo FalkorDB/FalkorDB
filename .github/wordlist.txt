@@ -88,5 +88,11 @@ Quickstart
 queryable
 RSALv
 SSPLv
+SSPL
+falkordb
 FalkorDB
 FalkorDB's
+CVSS
+md
+Github
+txt
