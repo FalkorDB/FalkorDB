@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "../errors.h"
 #include "../ast/ast.h"
 #include "cmd_context.h"
 #include "../util/arr.h"
@@ -15,6 +14,7 @@
 #include "execution_ctx.h"
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../index/indexer.h"
 #include "../effects/effects.h"
 #include "../util/cache/cache.h"
@@ -118,7 +118,7 @@ static bool abort_and_check_timeout
 	// it will also flag the aborted queries.
 	const bool has_timed_out = ExecutionPlan_Drained(plan);
 	if (has_timed_out) {
-		ErrorCtx_SetError("Query timed out");
+		ErrorCtx_SetError(EMSG_QUERY_TIMEOUT);
 	}
 
 	return has_timed_out;
@@ -164,8 +164,7 @@ static bool _index_operation_delete
 	}
 
 	// no matching index
-	ErrorCtx_SetError("ERR Unable to drop index on :%s(%s): no such index.",
-			label, attr);
+	ErrorCtx_SetError(EMSG_UNABLE_TO_DROP_INDEX, label, attr);
 
 	return false;
 }
@@ -255,7 +254,7 @@ static void _index_operation
 			_index_operation_delete(gc, ast);
 			break;
 		default:
-			ErrorCtx_SetError("ERR Encountered unknown query execution type.");
+			ErrorCtx_SetError(EMSG_UNKNOWN_EXECUTION_TYPE);
 	}
 }
 
@@ -373,7 +372,7 @@ static void _ExecuteQuery(void *args) {
 
 	// in case of an error, rollback any modifications
 	if(ErrorCtx_EncounteredError()) {
-		UndoLog_Rollback(*QueryCtx_GetUndoLog());
+		QueryCtx_Rollback();
 		// clear resultset statistics, avoiding commnad being replicated
 		ResultSet_Clear(result_set);
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
@@ -497,7 +496,7 @@ void _query
 
 	// write query executing via GRAPH.RO_QUERY isn't allowed
 	if(!profile && !readonly && _readonly_cmd_mode(command_ctx)) {
-		ErrorCtx_SetError("graph.RO_QUERY is to be executed only on read-only queries");
+		ErrorCtx_SetError(EMSG_MISUSE_GRAPH_ROQUERY);
 		goto cleanup;
 	}
 

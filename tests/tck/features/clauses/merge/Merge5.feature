@@ -389,7 +389,6 @@ Feature: Merge5 - Merge relationships
     And the side effects should be:
       | +relationships | 1 |
 
-  @skip
   Scenario: [20] Do not match on deleted entities
     Given an empty graph
     And having executed:
@@ -418,7 +417,6 @@ Feature: Merge5 - Merge relationships
       | +relationships | 2 |
       | -relationships | 4 |
       | +properties    | 1 |
-      | -properties    | 2 |
 
   @skip
   Scenario: [21] Do not match on deleted relationships

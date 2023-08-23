@@ -13,6 +13,22 @@
 #include "redismodule.h"
 
 //------------------------------------------------------------------------------
+// common bitwise operations
+//------------------------------------------------------------------------------
+
+// Mask with most significant bit on 10000...
+#define MSB_MASK (1UL << (sizeof(uint64_t) * 8 - 1))
+
+// Mask complement 01111...
+#define MSB_MASK_CMP ~MSB_MASK
+
+// Set X's most significant bit on.
+#define SET_MSB(x) (x) | MSB_MASK
+
+// Clear X's most significant bit.
+#define CLEAR_MSB(x) (x) & MSB_MASK_CMP
+
+//------------------------------------------------------------------------------
 // code development settings
 //------------------------------------------------------------------------------
 

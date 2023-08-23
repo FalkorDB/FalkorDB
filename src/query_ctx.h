@@ -181,7 +181,10 @@ GraphContext *QueryCtx_GetGraphCtx(void);
 Graph *QueryCtx_GetGraph(void);
 
 // retrieve undo log
-UndoLog *QueryCtx_GetUndoLog(void);
+UndoLog QueryCtx_GetUndoLog(void);
+
+// rollback the current command
+void QueryCtx_Rollback(void);
 
 // retrieve effects-buffer
 EffectsBuffer *QueryCtx_GetEffectsBuffer(void);

@@ -434,7 +434,7 @@ void GraphContext_RemoveSchema(GraphContext *gc, int schema_id, SchemaType t) {
 }
 
 const char *GraphContext_GetEdgeRelationType(const GraphContext *gc, Edge *e) {
-	int reltype_id = Graph_GetEdgeRelation(gc->g, e);
+	int reltype_id = Edge_GetRelationID(e);
 	ASSERT(reltype_id != GRAPH_NO_RELATION);
 	return gc->relation_schemas[reltype_id]->name;
 }

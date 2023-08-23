@@ -351,8 +351,7 @@ cleanup:
 
 	// operation failed perform clean up
 	if(res == false) {
-		UndoLog *undolog = QueryCtx_GetUndoLog();
-		UndoLog_Rollback(*undolog);
+		QueryCtx_Rollback();
 	}
 
 	// release graph R/W lock

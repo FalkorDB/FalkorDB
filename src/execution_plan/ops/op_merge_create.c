@@ -5,9 +5,9 @@
  */
 
 #include "op_merge_create.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 
 /* Forward declarations. */
 static Record MergeCreateConsume(OpBase *opBase);
@@ -49,18 +49,19 @@ static void _IncrementalHashEntity(XXH64_state_t *state, const char **labels,
 	}
 }
 
-// Revert the most recent set of buffered creations and free any allocations.
-static void _RollbackPendingCreations(OpMergeCreate *op) {
+// revert the most recent set of buffered creations and free any allocations.
+static void _RollbackPendingCreations
+(
+	OpMergeCreate *op
+) {
 	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
-		array_pop(op->pending.created_nodes);
 		AttributeSet props = array_pop(op->pending.node_attributes);
 		AttributeSet_Free(&props);
 	}
 
 	uint edges_to_create_count = array_len(op->pending.edges_to_create);
 	for(uint i = 0; i < edges_to_create_count; i++) {
-		array_pop(op->pending.created_edges);
 		AttributeSet props = array_pop(op->pending.edge_attributes);
 		AttributeSet_Free(&props);
 	}
@@ -118,19 +119,17 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	UNUSED(res);
 	ASSERT(res != XXH_ERROR);
 
-	uint already_created_nodes = array_len(op->pending.created_nodes);
+	//--------------------------------------------------------------------------
+	// hash nodes
+	//--------------------------------------------------------------------------
+
 	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
+
 	for(uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
 		NodeCreateCtx *n = op->pending.nodes_to_create + i;
 
-		// create a new node
-		Node newNode = GE_NEW_NODE();
-
-		// add new node to Record and save a reference to it
-		Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
-
-		// convert query-level properties
+		// convert properties
 		PropertyMap *map = n->properties;
 		AttributeSet converted_attr = NULL;
 		if(map != NULL) {
@@ -142,18 +141,20 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 		_IncrementalHashEntity(op->hash_state, n->labels, label_count,
 				&converted_attr);
 
-		// Save node for later insertion
-		array_append(op->pending.created_nodes, node_ref);
-
-		// Save attributes to insert with node
+		// save attributes
 		array_append(op->pending.node_attributes, converted_attr);
 
-		// save labels to assigned to node
+		// save labels
 		array_append(op->pending.node_labels, n->labelsId);
 	}
 
-	uint already_created_edges = array_len(op->pending.created_edges);
+
+	//--------------------------------------------------------------------------
+	// hash edges
+	//--------------------------------------------------------------------------
+
 	uint edges_to_create_count = array_len(op->pending.edges_to_create);
+
 	for(uint i = 0; i < edges_to_create_count; i++) {
 		// get specified edge to create
 		EdgeCreateCtx *e = op->pending.edges_to_create + i;
@@ -162,19 +163,6 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 		Node *src_node = Record_GetNode(r, e->src_idx);
 		Node *dest_node = Record_GetNode(r, e->dest_idx);
 
-		// verify that the endpoints of the new edge resolved properly; fail otherwise
-		if(!src_node || !dest_node) {
-			ErrorCtx_RaiseRuntimeException("Failed to create relationship; endpoint was not found.");
-		}
-
-		// create the actual edge
-		Edge newEdge = {0};
-		newEdge.relationship = e->relation;
-		Edge_SetSrcNodeID(&newEdge, ENTITY_GET_ID(src_node));
-		Edge_SetDestNodeID(&newEdge, ENTITY_GET_ID(dest_node));
-
-		Edge *edge_ref = Record_AddEdge(r, e->edge_idx, newEdge);
-
 		// convert query-level properties
 		PropertyMap *map = e->properties;
 		AttributeSet converted_attr = NULL;
@@ -182,45 +170,60 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			ConvertPropertyMap(gc, &converted_attr, r, map, true);
 		}
 
-		// Update the hash code with this entity, an edge is represented by its
+		// update the hash code with this entity, an edge is represented by its
 		// relation, properties, source and destination nodes.
 		// note: unbounded nodes were already presented to the hash.
-		// incase node has its internal attribute-set, this means the node has been retrieved from the graph
+		// incase node has its internal attribute-set
+		// this means the node has been retrieved from the graph
 		// i.e. bounded node
+
 		_IncrementalHashEntity(op->hash_state, &e->relation, 1, &converted_attr);
-		if(src_node->attributes != NULL) {
+
+		// hash source node
+		if(src_node != NULL) {
 			EntityID id = ENTITY_GET_ID(src_node);
+			ASSERT(id != INVALID_ENTITY_ID);
 			void *data = &id;
 			size_t len = sizeof(id);
 			res = XXH64_update(op->hash_state, data, len);
 			ASSERT(res != XXH_ERROR);
 		}
-		if(dest_node->attributes != NULL) {
+
+		// hash dest node
+		if(dest_node != NULL) {
 			EntityID id = ENTITY_GET_ID(dest_node);
+			ASSERT(id != INVALID_ENTITY_ID);
 			void *data = &id;
 			size_t len = sizeof(id);
 			res = XXH64_update(op->hash_state, data, len);
 			ASSERT(res != XXH_ERROR);
 		}
 
-		/* Save edge for later insertion. */
-		array_append(op->pending.created_edges, edge_ref);
-
-		/* Save attributes to insert with node. */
+		// save attributes
 		array_append(op->pending.edge_attributes, converted_attr);
 	}
 
-	// Finalize the hash value for all processed creations.
+	// finalize the hash value for all processed creations
 	XXH64_hash_t const hash = XXH64_digest(op->hash_state);
-	// Check if any creations are unique.
-	bool should_create_entities = raxTryInsert(op->unique_entities, (unsigned char *)&hash,
-											   sizeof(hash), NULL, NULL);
-	// If no entity to be created is unique, roll back all the creations that have just been prepared.
+
+	// check if any creations are unique
+	bool should_create_entities = raxTryInsert(op->unique_entities,
+			(unsigned char *)&hash, sizeof(hash), NULL, NULL);
+
+	// if no entity to be created is unique
+	// roll back all the creations that have just been prepared
 	if(should_create_entities) {
 		// reserve node ids for edges creation
 		for(uint i = 0; i < nodes_to_create_count; i++) {
-			Node *n = op->pending.created_nodes[already_created_nodes + i];
-			Graph_ReserveNode(gc->g, n);
+			NodeCreateCtx *n = op->pending.nodes_to_create + i;
+
+			Node newNode = Graph_ReserveNode(gc->g);
+
+			// add new node to Record and save a reference to it
+			Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
+
+			// save node for later insertion
+			array_append(op->pending.created_nodes, node_ref);
 		}
 
 		// updated edges with reserved node ids
@@ -228,12 +231,24 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			EdgeCreateCtx *ctx = op->pending.edges_to_create + i;
 
 			// retrieve source and dest nodes
-			Node *src_node = Record_GetNode(r, ctx->src_idx);
+			Node *src_node  = Record_GetNode(r, ctx->src_idx);
 			Node *dest_node = Record_GetNode(r, ctx->dest_idx);
 
-			Edge *e = op->pending.created_edges[already_created_edges + i];
+			if(!src_node || !dest_node) {
+				ErrorCtx_RaiseRuntimeException(
+						"Failed to create relationship; endpoint was not found."
+				);
+			}
+
+			// create edge
+			Edge newEdge = {0};
+			newEdge.relationship = ctx->relation;
+			Edge *e = Record_AddEdge(r, ctx->edge_idx, newEdge);
 			Edge_SetSrcNodeID(e, ENTITY_GET_ID(src_node));
 			Edge_SetDestNodeID(e, ENTITY_GET_ID(dest_node));
+
+			// save edge for later insertion
+			array_append(op->pending.created_edges, e);
 		}
 	} else {
 		_RollbackPendingCreations(op);

@@ -76,11 +76,32 @@ class testEffects():
 
     # asserts that master and replica have the same view over the graph
     def assert_graph_eq(self):
+        #validate schema:
+        # labels
+        q = "CALL db.labels()"
+        master_labels = self.master_graph.query(q).result_set
+        replica_labels = self.replica_graph.query(q, read_only=True).result_set
+        self.env.assertEquals(master_labels, replica_labels)
+
+        # relationship-types
+        q = "CALL db.relationshiptypes()"
+        master_relations = self.master_graph.query(q).result_set
+        replica_relations = self.replica_graph.query(q, read_only=True).result_set
+        self.env.assertEquals(master_relations, replica_relations)
+
+        # properties
+        q = "CALL db.propertyKeys()"
+        master_props = self.master_graph.query(q).result_set
+        replica_props = self.replica_graph.query(q, read_only=True).result_set
+        self.env.assertEquals(master_props, replica_props)
+
+        # validate nodes
         q = "MATCH (n) RETURN n ORDER BY(n)"
         master_resultset = self.master_graph.query(q).result_set
         replica_resultset = self.replica_graph.query(q, read_only=True).result_set
         self.env.assertEquals(master_resultset, replica_resultset)
 
+        # validate relationships
         q = "MATCH ()-[e]->() RETURN e ORDER BY(e)"
         master_resultset = self.master_graph.query(q).result_set
         replica_resultset = self.replica_graph.query(q, read_only=True).result_set
@@ -93,6 +114,10 @@ class testEffects():
         self.replica = self.env.getSlaveConnection()
         self.master_graph = Graph(self.master, GRAPH_ID)
         self.replica_graph = Graph(self.replica, GRAPH_ID)
+
+        # create indices
+        self.master_graph.query("CREATE INDEX FOR (n:L) ON (n.a, n.b, n.c)")
+        self.master_graph.query("CREATE INDEX FOR ()-[e:R]->() ON (e.a, e.b, e.c)")
 
         # wait for replica and master to sync
         self.master.wait(1, 0)
@@ -120,7 +145,6 @@ class testEffects():
         # introduce a new label which in turn creates a new schema
         q = "CREATE (:L)"
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.labels_added, 1)
         self.env.assertEquals(res.nodes_created, 1)
 
         if(expect_effect):
@@ -146,7 +170,6 @@ class testEffects():
         # introduce a new relationship-type which in turn creates a new schema
         q = "CREATE ()-[:R]->()"
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.relationships_created, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -258,7 +281,7 @@ class testEffects():
         q1 = """CREATE ()-[:R]->()"""
 
         # edge with attributes
-        q2 = """CREATE ()-[:connect {
+        q2 = """CREATE ()-[:CONNECT {
                                       ei:1,
                                       s:'str',
                                       eb:True,
@@ -308,6 +331,24 @@ class testEffects():
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
+        # update the same attribute multiple times
+        q = """MATCH (n:L)
+               WITH n
+               LIMIT 1
+               UNWIND range(0, 10) AS i
+               SET
+                    n.xa = n.xa + 1"""
+
+        res = self.query_master_and_wait(q)
+        self.env.assertEquals(res.properties_set, 11)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -393,6 +434,43 @@ class testEffects():
 
         self.assert_graph_eq()
 
+        # add attribute, remove all attributes and add again
+        q = """MATCH (n:L)
+               WITH n
+               LIMIT 1
+               SET n.v = 'value'
+               WITH n
+               SET n = {}
+               WITH n
+               SET n.v = 'value2'"""
+
+        res = self.query_master_and_wait(q)
+        self.env.assertGreater(res.properties_removed, 0)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
+        # remove attribute via map addition
+        q = """MATCH (n:L)
+               WITH n
+               LIMIT 1
+               SET n += {x:1, v:NULL, y:2}"""
+
+        res = self.query_master_and_wait(q)
+        self.env.assertGreater(res.properties_set, 0)
+        self.env.assertGreater(res.properties_removed, 0)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
     def test07_update_edge_effect(self, expect_effect=True):
 
         # no leftovers from previous test
@@ -414,6 +492,24 @@ class testEffects():
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
+        # update the same attribute multiple times
+        q = """MATCH ()-[e]->()
+               WITH e
+               LIMIT 1
+               UNWIND range(0, 10) AS i
+               SET
+                    e.a = e.a + 1"""
+
+        res = self.query_master_and_wait(q)
+        self.env.assertEquals(res.properties_set, 11)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -490,6 +586,43 @@ class testEffects():
         q = "MATCH ()-[e]->() WITH e LIMIT 1 SET e = {}"
 
         res = self.query_master_and_wait(q)
+        self.env.assertGreater(res.properties_removed, 0)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
+        # add attribute, remove all attributes and add again
+        q = """MATCH ()-[e]->()
+               WITH e
+               LIMIT 1
+               SET e.v = 'value'
+               WITH e
+               SET e = {}
+               WITH e
+               SET e.v = 'value2'"""
+
+        res = self.query_master_and_wait(q)
+        self.env.assertGreater(res.properties_removed, 0)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
+        # remove attribute via map addition
+        q = """MATCH ()-[e]->()
+               WITH e
+               LIMIT 1
+               SET e += {x:1, v:NULL, y:2}"""
+
+        res = self.query_master_and_wait(q)
+        self.env.assertGreater(res.properties_set, 0)
         self.env.assertGreater(res.properties_removed, 0)
 
         if(expect_effect):
@@ -687,4 +820,30 @@ class testEffects():
 
         # make sure no effects had been recieved
         self.env.assertFalse(self.monitor_containt_effect())
+
+    def test_15_random_ops(self):
+        # update graph key
+        global GRAPH_ID
+        GRAPH_ID = "random_graph"
+
+        # update graph objects to use new graph key
+        self.master_graph = Graph(self.master, GRAPH_ID)
+        self.replica_graph = Graph(self.replica, GRAPH_ID)
+
+        # enable effects replication
+        self.effects_enable()
+
+        from random_graph import create_random_schema, create_random_graph, run_random_graph_ops, ALL_OPS
+        nodes, edges = create_random_schema()
+        create_random_graph(self.master_graph, nodes, edges)
+
+        # wait for replica and master to sync
+        self.master.wait(1, 0)
+        self.assert_graph_eq()
+
+        run_random_graph_ops(self.master_graph, nodes, edges, ALL_OPS)
+
+        # wait for replica and master to sync
+        self.master.wait(1, 0)
+        self.assert_graph_eq()
 

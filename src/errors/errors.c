@@ -135,7 +135,7 @@ void Error_InvalidFilterPlacement(rax *entitiesRax) {
 	memcpy(invalid_entity, it.key, it.key_len);
 	invalid_entity[it.key_len] = 0;
 	// Emit compile-time error.
-	ErrorCtx_SetError("Unable to resolve filtered alias '%s'", invalid_entity);
+	ErrorCtx_SetError(EMSG_UNABLE_TO_RESOLVE_FILTER_ALIAS, invalid_entity);
 	raxFree(entitiesRax);
 }
 
@@ -144,7 +144,7 @@ void Error_SITypeMismatch(SIValue received, SIType expected) {
 	char buf[bufferLen];
 
 	SIType_ToMultipleTypeString(expected, buf, bufferLen);
-	ErrorCtx_SetError("Type mismatch: expected %s but was %s", buf,
+	ErrorCtx_SetError(EMSG_TYPE_MISMATCH, buf,
 					  SIType_ToString(SI_TYPE(received)));
 }
 
@@ -153,20 +153,20 @@ void Error_UnsupportedASTNodeType(const cypher_astnode_t *node) {
 
 	cypher_astnode_type_t type = cypher_astnode_type(node);
 	const char *type_str = cypher_astnode_typestr(type);
-	ErrorCtx_SetError("RedisGraph does not currently support %s", type_str);
+	ErrorCtx_SetError(EMSG_REDISGRAPH_SUPPORT, type_str);
 }
 
 void Error_UnsupportedASTOperator(const cypher_operator_t *op) {
 	ASSERT(op != NULL);
 
-	ErrorCtx_SetError("RedisGraph does not currently support %s", op->str);
+	ErrorCtx_SetError(EMSG_REDISGRAPH_SUPPORT, op->str);
 }
 
 inline void Error_InvalidPropertyValue(void) {
-	ErrorCtx_SetError("Property values can only be of primitive types or arrays of primitive types");
+	ErrorCtx_SetError(EMSG_INVALID_PROPERTY_VALUE);
 }
 
 void Error_DivisionByZero(void) {
-	ErrorCtx_SetError("Division by zero");
+	ErrorCtx_SetError(EMSG_DIVISION_BY_ZERO);
 }
 

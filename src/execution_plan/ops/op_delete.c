@@ -5,9 +5,9 @@
  */
 
 #include "./op_delete.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 #include "../../graph/graph_hub.h"
 #include "datatypes/path/sipath.h"
 #include "../../arithmetic/arithmetic_expression.h"
@@ -17,7 +17,6 @@
 // forward declarations
 static Record DeleteConsume(OpBase *opBase);
 static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase);
-static OpResult DeleteReset(OpBase *opBase);
 static void DeleteFree(OpBase *opBase);
 
 static int entity_cmp
@@ -132,7 +131,7 @@ static void _DeleteEntities
 }
 
 OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
-	OpDelete *op = rm_malloc(sizeof(OpDelete));
+	OpDelete *op = rm_calloc(1, sizeof(OpDelete));
 
 	op->gc = QueryCtx_GetGraphCtx();
 	op->exps = exps;
@@ -140,38 +139,31 @@ OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
 	op->deleted_nodes = array_new(Node, 32);
 	op->deleted_edges = array_new(Edge, 32);
 
-	// Set our Op operations
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_DELETE, "Delete", NULL, DeleteConsume,
-				DeleteReset, NULL, DeleteClone, DeleteFree, true, plan);
+				NULL, NULL, DeleteClone, DeleteFree, true, plan);
 
 	return (OpBase *)op;
 }
 
-static Record DeleteConsume(OpBase *opBase) {
+// collect nodes and edges to be deleted
+static inline void _CollectDeletedEntities(Record r, OpBase *opBase) {
 	OpDelete *op = (OpDelete *)opBase;
-	OpBase *child = op->op.children[0];
 
-	Record r = OpBase_Consume(child);
-	if(!r) return NULL;
-
-	// Expression should be evaluated to either a node, an edge or a path
+	// expression should be evaluated to either a node, an edge or a path
 	// which will be marked for deletion, if an expression is evaluated
-	// to a different value type e.g. Numeric a run-time exception is thrown. */
+	// to a different value type e.g. Numeric a run-time exception is thrown.
 	for(int i = 0; i < op->exp_count; i++) {
 		AR_ExpNode *exp = op->exps[i];
 		SIValue value = AR_EXP_Evaluate(exp, r);
 		SIType type = SI_TYPE(value);
-		/* Enqueue entities for deletion. */
+		// enqueue entities for deletion
 		if(type & T_NODE) {
 			Node *n = (Node *)value.ptrval;
 			array_append(op->deleted_nodes, *n);
-			// If evaluating the expression allocated any memory, free it.
-			SIValue_Free(value);
 		} else if(type & T_EDGE) {
 			Edge *e = (Edge *)value.ptrval;
 			array_append(op->deleted_edges, *e);
-			// If evaluating the expression allocated any memory, free it.
-			SIValue_Free(value);
 		} else if(type & T_PATH) {
 			Path *p = (Path *)value.ptrval;
 			size_t nodeCount = Path_NodeCount(p);
@@ -186,53 +178,81 @@ static Record DeleteConsume(OpBase *opBase) {
 				Edge *e = Path_GetEdge(p, i);
 				array_append(op->deleted_edges, *e);
 			}
-
-			SIValue_Free(value);
 		} else if(!(type & T_NULL)) {
-			/* Expression evaluated to a non-graph entity type
-			 * clear pending deletions and raise an exception. */
-			array_clear(op->deleted_nodes);
-			array_clear(op->deleted_edges);
-			// If evaluating the expression allocated any memory, free it.
+			// if evaluating the expression allocated any memory, free it.
 			SIValue_Free(value);
-			// free the Record this operation acted on
-			OpBase_DeleteRecord(r);
 			ErrorCtx_RaiseRuntimeException("Delete type mismatch, expecting either Node or Relationship.");
 			break;
 		}
+
+		// if evaluating the expression allocated any memory, free it.
+		SIValue_Free(value);
+	}
+}
+
+static inline Record _handoff(OpDelete *op) {
+	return array_pop(op->records);
+}
+
+static Record DeleteConsume(OpBase *opBase) {
+	OpDelete *op = (OpDelete *)opBase;
+	Record r;
+	ASSERT(op->op.childCount > 0);
+
+	// return mode, all data was consumed
+	if(op->records) return _handoff(op);
+
+	// consume mode
+	op->records = array_new(Record, 32);
+	// initialize the records array with NULL
+	// which will terminate execution upon depletion
+	array_append(op->records, NULL);
+
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	// pull data until child is depleted
+	OpBase *child = op->op.children[0];
+	while((r = OpBase_Consume(child))) {
+		// persist scalars from previous ops before storing the record
+		// as those ops will be freed before the records are handed off
+		Record_PersistScalars(r);
+
+		// save record for later use
+		array_append(op->records, r);
+
+		// collect entities to be deleted
+		_CollectDeletedEntities(r, opBase);
 	}
 
-	return r;
+	// done reading, we're not going to call consume any longer
+	// there might be operations e.g. index scan that need to free
+	// index R/W lock, as such reset all execution plan operation up the chain
+	OpBase_PropagateReset(child);
+
+	// delete entities
+	_DeleteEntities(op);
+
+	// return record
+	return _handoff(op);
 }
 
 static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	ASSERT(opBase->type == OPType_DELETE);
+
 	OpDelete *op = (OpDelete *)opBase;
 	AR_ExpNode **exps;
 	array_clone_with_cb(exps, op->exps, AR_EXP_Clone);
 	return NewDeleteOp(plan, exps);
 }
 
-static OpResult DeleteReset(OpBase *opBase) {
-	OpDelete *op = (OpDelete *)opBase;
-
-	_DeleteEntities(op);
-
-	if(op->deleted_nodes) {
-		array_clear(op->deleted_nodes);
-	}
-
-	if(op->deleted_edges) {
-		array_clear(op->deleted_edges);
-	}
-
-	return OP_OK;
-}
-
 static void DeleteFree(OpBase *opBase) {
 	OpDelete *op = (OpDelete *)opBase;
 
-	_DeleteEntities(op);
+	if(op->records) {
+		uint rec_count = array_len(op->records);
+		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(op->records[i]);
+		array_free(op->records);
+		op->records = NULL;
+	}
 
 	if(op->deleted_nodes) {
 		array_free(op->deleted_nodes);

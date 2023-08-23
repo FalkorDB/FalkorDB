@@ -4,11 +4,11 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include "ast_build_filter_tree.h"
 #include "ast_shared.h"
-#include "../RG.h"
-#include "../errors.h"
 #include "../util/arr.h"
+#include "../errors/errors.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
 
 // Forward declaration
@@ -105,7 +105,7 @@ static FT_FilterNode *_convertBinaryOperator(const cypher_astnode_t *op_node) {
 		rhs = cypher_ast_binary_operator_get_argument2(op_node);
 		return _CreateFilterSubtree(op, lhs, rhs);
 	case OP_NOT:
-		ErrorCtx_SetError("Invalid usage of 'NOT' filter with expressions on left and right sides.");
+		ErrorCtx_SetError(EMSG_INVALIDE_NOT_USAGE);
 		return NULL;
 	default:
 		return FilterTree_CreateExpressionFilter(AR_EXP_FromASTNode(op_node));

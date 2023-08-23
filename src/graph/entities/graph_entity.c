@@ -5,10 +5,10 @@
  */
 
 #include "graph_entity.h"
-#include "../../errors.h"
 #include "../../query_ctx.h"
 #include "../graphcontext.h"
 #include "../../util/rmalloc.h"
+#include "../../errors/errors.h"
 #include "../../datatypes/map.h"
 #include "../../datatypes/array.h"
 
@@ -37,23 +37,11 @@ SIValue *GraphEntity_GetProperty
 	// one which didn't had its attribute-set allocated within the graph datablock.
 	if(e->attributes == NULL) {
  		// note that this exception may cause memory to be leaked in the caller
- 		ErrorCtx_SetError("Attempted to access undefined attribute");
+ 		ErrorCtx_SetError(EMSG_ACCESS_UNDEFINED_ATTRIBUTE);
  		return ATTRIBUTE_NOTFOUND;
  	}
 
 	return AttributeSet_Get(*e->attributes, attr_id);
-}
-
-// updates existing property value
-bool GraphEntity_SetProperty
-(
-	const GraphEntity *e,
-	Attribute_ID attr_id,
-	SIValue value
-) {
-	ASSERT(e);
-
-	return AttributeSet_Update(e->attributes, attr_id, value);
 }
 
 // returns an SIArray of all keys in graph entity properties
@@ -63,7 +51,7 @@ SIValue GraphEntity_Keys
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
-	int prop_count = ATTRIBUTE_SET_COUNT(set);
+	int prop_count = AttributeSet_Count(set);
 	SIValue keys = SIArray_New(prop_count);
 	for(int i = 0; i < prop_count; i++) {
 		Attribute_ID attr_id;
@@ -81,7 +69,7 @@ SIValue GraphEntity_Properties
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
-	int propCount = ATTRIBUTE_SET_COUNT(set);
+	int propCount = AttributeSet_Count(set);
 	SIValue map = SI_Map(propCount);
 	for(int i = 0; i < propCount; i++) {
 		Attribute_ID attr_id;
@@ -109,7 +97,7 @@ size_t GraphEntity_PropertiesToString
 	*bytesWritten += snprintf(*buffer, *bufferLen, "{");
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
-	int propCount = ATTRIBUTE_SET_COUNT(set);
+	int propCount = AttributeSet_Count(set);
 	for(int i = 0; i < propCount; i++) {
 		Attribute_ID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
@@ -249,7 +237,7 @@ inline int GraphEntity_ClearAttributes
 ) {
 	ASSERT(e != NULL);
 
-	int count = ATTRIBUTE_SET_COUNT(*e->attributes);
+	int count = AttributeSet_Count(*e->attributes);
 
 	AttributeSet_Free(e->attributes);
 

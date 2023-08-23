@@ -5,9 +5,9 @@
  */
 
 #include "../../RG.h"
-#include "../../errors.h"
 #include "../../query_ctx.h"
 #include "../ops/op_filter.h"
+#include "../../errors/errors.h"
 #include "../../filter_tree/filter_tree.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 

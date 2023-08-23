@@ -9,6 +9,7 @@
 
 #include "RG.h"
 #include "edge.h"
+#include "../graph.h"
 #include "graph_entity.h"
 
 NodeID Edge_GetSrcNodeID
@@ -32,6 +33,8 @@ int Edge_GetRelationID
 	const Edge *edge
 ) {
 	ASSERT(edge);
+	ASSERT(edge->relationID != GRAPH_NO_RELATION);
+	ASSERT(edge->relationID != GRAPH_UNKNOWN_RELATION);
 	return edge->relationID;
 }
 

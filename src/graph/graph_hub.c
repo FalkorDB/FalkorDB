@@ -43,7 +43,7 @@ static void _DeleteEdgeFromIndices
 	Schema  *s  =  NULL;
 	Graph   *g  =  gc->g;
 
-	int relation_id = EDGE_GET_RELATION_ID(e, g);
+	int relation_id = Edge_GetRelationID(e);
 
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
 
@@ -81,7 +81,7 @@ static void _AddEdgeToIndices(GraphContext *gc, Edge *e) {
 	Schema  *s  =  NULL;
 	Graph   *g  =  gc->g;
 
-	int relation_id = EDGE_GET_RELATION_ID(e, g);
+	int relation_id = Edge_GetRelationID(e);
 
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
 	ASSERT(s != NULL);
@@ -113,7 +113,7 @@ void CreateNode
 
 	// add node creation operation to undo log
 	if(log == true) {
-		UndoLog *undo_log = QueryCtx_GetUndoLog();
+		UndoLog undo_log = QueryCtx_GetUndoLog();
 		UndoLog_CreateNode(undo_log, n);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateNodeEffect(eb, n, labels, label_count);
@@ -143,7 +143,7 @@ void CreateEdge
 
 	// add edge creation operation to undo log
 	if(log == true) {
-		UndoLog *undo_log = QueryCtx_GetUndoLog();
+		UndoLog undo_log = QueryCtx_GetUndoLog();
 		UndoLog_CreateEdge(undo_log, e);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateEdgeEffect(eb, e);
@@ -164,23 +164,21 @@ void DeleteNodes
 	ASSERT(gc != NULL);
 	ASSERT(nodes != NULL);
 
-	UndoLog *undo_log = (log == true) ? QueryCtx_GetUndoLog() : NULL;
-	EffectsBuffer *eb = (log == true) ? QueryCtx_GetEffectsBuffer() : NULL;
 	bool has_indices = GraphContext_HasIndices(gc);
 
-	if(log == true || has_indices) {
-		for(uint i = 0; i < n; i++) {
-			Node *n = nodes + i;
+	UndoLog undo_log  = (log) ? QueryCtx_GetUndoLog() : NULL;
+	EffectsBuffer *eb = (log) ? QueryCtx_GetEffectsBuffer() : NULL;
+	for(uint i = 0; i < n; i++) {
+		Node *n = nodes + i;
 
-			if(log == true) {
-				// add node deletion operation to undo log
-				UndoLog_DeleteNode(undo_log, n);
-				EffectsBuffer_AddDeleteNodeEffect(eb, n);
-			}
+		if(log) {
+			// add node deletion operation to undo log
+			UndoLog_DeleteNode(undo_log, n);
+			EffectsBuffer_AddDeleteNodeEffect(eb, n);
+		}
 
-			if(has_indices) {
-				_DeleteNodeFromIndices(gc, n);
-			}
+		if(has_indices) {
+			_DeleteNodeFromIndices(gc, n);
 		}
 	}
 
@@ -201,7 +199,7 @@ void DeleteEdges
 	// add edge deletion operation to undo log
 	bool has_indecise = GraphContext_HasIndices(gc);
 
-	UndoLog *undo_log = (log == true) ? QueryCtx_GetUndoLog() : NULL;
+	UndoLog undo_log  = (log == true) ? QueryCtx_GetUndoLog() : NULL;
 	EffectsBuffer *eb = (log == true) ? QueryCtx_GetEffectsBuffer() : NULL;
 
 	if(has_indecise == true || log == true) {
@@ -236,7 +234,7 @@ void UpdateEntityProperties
 	AttributeSet old_set = GraphEntity_GetAttributes(ge);
 
 	if(log == true) {
-		UndoLog *log = QueryCtx_GetUndoLog();
+		UndoLog log = QueryCtx_GetUndoLog();
 		UndoLog_UpdateEntity(log, ge, old_set, entity_type);
 	}
 
@@ -348,7 +346,7 @@ void UpdateNodeLabels
 		   (remove_labels == NULL && n_remove_labels == 0));
 
 	EffectsBuffer *eb = NULL; 
-	UndoLog *undo_log = NULL;
+	UndoLog undo_log  = NULL;
 
 	if(log == true) {
 		eb = QueryCtx_GetEffectsBuffer();
@@ -370,7 +368,8 @@ void UpdateNodeLabels
 			}
 
 			int  schema_id = Schema_GetID(s);
-			bool node_labeled = Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(node), schema_id);
+			bool node_labeled = Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(node),
+					schema_id);
 
 			if(!node_labeled) {
 				// sync matrix
@@ -387,7 +386,8 @@ void UpdateNodeLabels
 
 		if(add_labels_index > 0) {
 			// update node's labels
-			Graph_LabelNode(gc->g, ENTITY_GET_ID(node) ,add_labels_ids, add_labels_index);
+			Graph_LabelNode(gc->g, ENTITY_GET_ID(node), add_labels_ids,
+					add_labels_index);
 			if(log == true) {
 				UndoLog_AddLabels(undo_log, node, add_labels_ids,
 						add_labels_index);
@@ -449,7 +449,7 @@ Schema *AddSchema
 	Schema *s = GraphContext_AddSchema(gc, label, t);
 
 	if(log == true) {
-		UndoLog *undo_log = QueryCtx_GetUndoLog();
+		UndoLog undo_log = QueryCtx_GetUndoLog();
 		UndoLog_AddSchema(undo_log, s->id, s->type);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddNewSchemaEffect(eb, Schema_GetName(s), s->type);
@@ -468,14 +468,17 @@ Attribute_ID FindOrAddAttribute
 	ASSERT(attribute != NULL);
 
 	bool created;
-	Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attribute, &created);
+	Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attribute,
+			&created);
+
 	// in case there was an append, the latest id should be tracked
 	if(created == true && log == true) {
-		UndoLog *undo_log = QueryCtx_GetUndoLog();
+		UndoLog undo_log = QueryCtx_GetUndoLog();
 		UndoLog_AddAttribute(undo_log, attr_id);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddNewAttributeEffect(eb, attribute);
 	}
+
 	return attr_id;
 }
 

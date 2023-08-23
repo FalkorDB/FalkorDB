@@ -181,7 +181,7 @@ static inline void _buildDeleteOp(ExecutionPlan *plan, const cypher_astnode_t *c
 	if(plan->root == NULL) {
 		// delete must operate on child data, prepare an error if there
 		// is no child op
-		ErrorCtx_SetError("Delete was constructed without a child operation");
+		ErrorCtx_SetError(EMSG_DELETE_OPERATE_ON_CHILD);
 	}
 	AR_ExpNode **exps = AST_PrepareDeleteOp(clause);
 	OpBase *op = NewDeleteOp(plan, exps);

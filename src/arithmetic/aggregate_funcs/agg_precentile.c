@@ -7,8 +7,8 @@
 #include "RG.h"
 #include "agg_funcs.h"
 #include "../func_desc.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
+#include "../../errors/errors.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -40,8 +40,7 @@ AggregateResult AGG_PERC(SIValue *argv, int argc, void *private_data) {
 		// need to apply on the first function invocation
 		SIValue_ToDouble(&argv[1], &perc_ctx->percentile);
 		if(perc_ctx->percentile < 0 || perc_ctx->percentile > 1) {
-			ErrorCtx_SetError("Invalid input - '%f' is not a valid argument, must be a number in the range 0.0 to 1.0",
-							  perc_ctx->percentile);
+			ErrorCtx_SetError(EMSG_PREC_INPUT_RANGE, perc_ctx->percentile);
 		}
 		perc_ctx->values = array_new(double, 1024);
 	}

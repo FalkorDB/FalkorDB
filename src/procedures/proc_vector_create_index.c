@@ -4,10 +4,10 @@
  */
 
 #include "../value.h"
-#include "../errors.h"
 #include "../query_ctx.h"
 #include "../index/indexer.h"
 #include "../datatypes/map.h"
+#include "../errors/errors.h"
 #include "../graph/graphcontext.h"
 #include "proc_vector_create_index.h"
 
@@ -110,7 +110,7 @@ ProcedureResult Proc_VectorCreateIdxInvoke
 	//--------------------------------------------------------------------------
 
 	if(!_parseArgs(args, &entity_type, &label, &attribute, &dimension)) {
-		ErrorCtx_SetError("Invalid call to db.idx.vector.createIndex");
+		ErrorCtx_SetError(EMSG_VECTOR_IDX_CREATE_INVALID_CALL);
 		res = PROCEDURE_ERR;
 		goto cleanup;
 	}
@@ -124,7 +124,7 @@ ProcedureResult Proc_VectorCreateIdxInvoke
 
 	if(GraphContext_AddVectorIndex(&idx, gc, entity_type, label, attribute,
 				dimension) == false) {
-		ErrorCtx_SetError("Failed to create vector index");
+		ErrorCtx_SetError(EMSG_VECTOR_IDX_CREATE_FAIL);
 		res = PROCEDURE_ERR;
 		goto cleanup;
 	}

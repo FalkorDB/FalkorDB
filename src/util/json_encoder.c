@@ -9,8 +9,8 @@
 #include "rmalloc.h"
 #include "strutil.h"
 #include "../value.h"
-#include "../errors.h"
 #include "../query_ctx.h"
+#include "../errors/errors.h"
 #include "../graph/graphcontext.h"
 #include "../graph/entities/node.h"
 #include "../graph/entities/edge.h"
@@ -26,7 +26,7 @@ static inline sds _JsonEncoder_String(SIValue v, sds s) {
 static sds _JsonEncoder_Properties(const GraphEntity *ge, sds s) {
 	s = sdscat(s, "\"properties\": {");
 	const AttributeSet set = GraphEntity_GetAttributes(ge);
-	uint prop_count = ATTRIBUTE_SET_COUNT(set);
+	uint prop_count = AttributeSet_Count(set);
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	for(uint i = 0; i < prop_count; i ++) {
 		Attribute_ID attr_id;
@@ -64,7 +64,7 @@ static sds _JsonEncoder_Edge(Edge *e, sds s) {
 	s = sdscatfmt(s, "\"id\": %U", ENTITY_GET_ID(e));
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	// Retrieve reltype data.
-	int id = Graph_GetEdgeRelation(gc->g, e);
+	int id = Edge_GetRelationID(e);
 	Schema *schema = GraphContext_GetSchemaByID(gc, id, SCHEMA_EDGE);
 	ASSERT(schema);
 	const char *relationship = Schema_GetName(schema);

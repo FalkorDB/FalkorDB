@@ -61,7 +61,8 @@ static Record ProjectConsume(OpBase *opBase) {
 		AR_ExpNode *exp = op->exps[i];
 		SIValue v = AR_EXP_Evaluate(exp, op->r);
 		int rec_idx = op->record_offsets[i];
-		// persisting a value is only necessary here if
+
+		// persisting a value is only necessary when
 		// 'v' refers to a scalar held in Record 'r'
 		// graph entities don't need to be persisted here as
 		// Record_Add will copy them internally
@@ -80,7 +81,9 @@ static Record ProjectConsume(OpBase *opBase) {
 		// as with a query like:
 		// MATCH p = (src) RETURN nodes(p)[0]
 		// ensure that the allocation is freed here
-		if((v.type & SI_GRAPHENTITY)) SIValue_Free(v);
+		if((v.type & SI_GRAPHENTITY)) {
+			SIValue_Free(v);
+		}
 	}
 
 	OpBase_DeleteRecord(op->r);

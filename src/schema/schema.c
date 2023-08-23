@@ -5,10 +5,10 @@
  */
 
 #include "schema.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../index/indexer.h"
 #include "../graph/graphcontext.h"
 #include "../constraint/constraint.h"
@@ -162,7 +162,7 @@ static int _Schema_RemoveExactMatchIndex
 		if(Constraint_GetStatus(c) != CT_FAILED &&
 		   Constraint_GetType(c) == CT_UNIQUE   &&
 		   Constraint_ContainsAttribute(c, attr_id)) {
-			ErrorCtx_SetError("Index supports constraint");
+			ErrorCtx_SetError(EMSG_INDEX_SUPPORT_CONSTRAINTS);
 			return INDEX_FAIL;
 		}
 	}

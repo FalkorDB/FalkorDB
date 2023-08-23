@@ -7,10 +7,10 @@
 #include "resultset.h"
 #include "RG.h"
 #include "../value.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 
 static void _ResultSet_ReplyWithPreamble
 (

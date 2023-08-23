@@ -6,12 +6,12 @@
 
 #include "string_funcs.h"
 #include "../func_desc.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../util/uuid.h"
 #include "utf8proc/utf8proc.h"
 #include "../../util/rmalloc.h"
 #include "../../util/strutil.h"
+#include "../../errors/errors.h"
 #include "../../datatypes/array.h"
 #include "../../util/json_encoder.h"
 #include "../deps/oniguruma/src/oniguruma.h"
@@ -29,7 +29,7 @@ SIValue AR_LEFT(SIValue *argv, int argc, void *private_data) {
 		newlen = argv[1].longval;
 	} 
 	if(newlen < 0) {
-		ErrorCtx_SetError("length must be a non-negative integer");
+		ErrorCtx_SetError(EMSG_MUST_BE_NON_NEGATIVE, "length");
 		return SI_NullVal();
 	}
 
@@ -75,7 +75,7 @@ SIValue AR_RIGHT(SIValue *argv, int argc, void *private_data) {
 		newlen = argv[1].longval;
 	}
 	if(newlen < 0) {
-		ErrorCtx_SetError("length must be a non-negative integer");
+		ErrorCtx_SetError(EMSG_MUST_BE_NON_NEGATIVE, "length");
 		return SI_NullVal();
 	}
 
@@ -165,7 +165,7 @@ SIValue AR_SUBSTRING(SIValue *argv, int argc, void *private_data) {
 
 	/* Make sure start doesn't overreach. */
 	if(start < 0) {
-		ErrorCtx_SetError("start must be a non-negative integer");
+		ErrorCtx_SetError(EMSG_MUST_BE_NON_NEGATIVE, "start");
 		return SI_NullVal();
 	}
 
@@ -179,7 +179,7 @@ SIValue AR_SUBSTRING(SIValue *argv, int argc, void *private_data) {
 	} else {
 		length = argv[2].longval;
 		if(length < 0) {
-			ErrorCtx_SetError("length must be a non-negative integer");
+			ErrorCtx_SetError(EMSG_MUST_BE_NON_NEGATIVE, "length");
 			return SI_ConstStringVal("");
 		}
 
@@ -298,7 +298,7 @@ SIValue AR_MATCHREGEX(SIValue *argv, int argc, void *private_data) {
 	if(rv != ONIG_NORMAL) {
 		char s[ONIG_MAX_ERROR_MESSAGE_LEN];
 		onig_error_code_to_str((UChar* )s, rv, &einfo);
-		ErrorCtx_SetError("Invalid regex, err=%s", s);
+		ErrorCtx_SetError(EMSG_INVALID_REGEX, s);
 		onig_free(regex);
 		onig_region_free(region, 1);
 		SIValue_Free(list);
@@ -316,7 +316,7 @@ SIValue AR_MATCHREGEX(SIValue *argv, int argc, void *private_data) {
 	if(rv < 0) {
 		char s[ONIG_MAX_ERROR_MESSAGE_LEN];
 		onig_error_code_to_str((OnigUChar* )s, rv);
-		ErrorCtx_SetError("Invalid regex, err=%s", s);
+		ErrorCtx_SetError(EMSG_INVALID_REGEX, s);
 		onig_free(regex);
 		onig_region_free(region, 1);
 		SIValue_Free(list);
@@ -392,7 +392,7 @@ SIValue AR_REPLACEREGEX(SIValue *argv, int argc, void *private_data) {
 	if(rv != ONIG_NORMAL) {
 		char s[ONIG_MAX_ERROR_MESSAGE_LEN];
 		onig_error_code_to_str((UChar* )s, rv, &einfo);
-		ErrorCtx_SetError("Invalid regex, err=%s", s);
+		ErrorCtx_SetError(EMSG_INVALID_REGEX, s);
 		onig_free(regex);
 		onig_region_free(region, 1);
 		return SI_NullVal();
@@ -413,7 +413,7 @@ SIValue AR_REPLACEREGEX(SIValue *argv, int argc, void *private_data) {
 	if(rv < 0) {
 		char s[ONIG_MAX_ERROR_MESSAGE_LEN];
 		onig_error_code_to_str((OnigUChar* )s, rv);
-		ErrorCtx_SetError("Invalid regex, err=%s", s);
+		ErrorCtx_SetError(EMSG_INVALID_REGEX, s);
 		onig_free(regex);
 		onig_region_free(region, 1);
 		return SI_NullVal();

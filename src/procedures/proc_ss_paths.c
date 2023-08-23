@@ -7,10 +7,10 @@
 #include "RG.h"
 #include "proc_ss_paths.h"
 #include "../value.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 
@@ -202,18 +202,18 @@ static ProcedureResult validate_config
 	
 
 	if(!start_exists) {
-		ErrorCtx_SetError("sourceNode is required");
+		ErrorCtx_SetError(EMSG_SSPATH_REQUIRED);
 		return false;
 	}
 	if(SI_TYPE(start) != T_NODE) {
-		ErrorCtx_SetError("sourceNode must be of type Node");
+		ErrorCtx_SetError(EMSG_SSPATH_INVALID_TYPE);
 		return false;
 	}
 
 	GRAPH_EDGE_DIR direction = GRAPH_EDGE_DIR_OUTGOING;
 	if(dir_exists) {
 		if(SI_TYPE(dir) != T_STRING) {
-			ErrorCtx_SetError("relDirection values must be 'incoming', 'outgoing' or 'both'");
+			ErrorCtx_SetError(EMSG_REL_DIRECTION);
 			return false;
 		}
 		if(strcasecmp(dir.stringval, "incoming") == 0) {
@@ -223,7 +223,7 @@ static ProcedureResult validate_config
 		} else if(strcasecmp(dir.stringval, "both") == 0) {
 			direction = GRAPH_EDGE_DIR_BOTH;
 		} else {
-			ErrorCtx_SetError("relDirection values must be 'incoming', 'outgoing' or 'both'");
+			ErrorCtx_SetError(EMSG_REL_DIRECTION);
 			return false;
 		}
 	}
@@ -231,7 +231,7 @@ static ProcedureResult validate_config
 	int64_t max_length_val = LONG_MAX - 1;
 	if(max_length_exists) {
 		if(SI_TYPE(max_length) != T_INT64) {
-			ErrorCtx_SetError("maxLen must be integer");
+			ErrorCtx_SetError(EMSG_MUST_BE, "maxLen", "integer");
 			return false;
 		}
 		max_length_val = SI_GET_NUMERIC(max_length);
@@ -244,7 +244,7 @@ static ProcedureResult validate_config
 	if(relationships_exists) {
 		if(SI_TYPE(relationships) != T_ARRAY ||
 			!SIArray_AllOfType(relationships, T_STRING)) {
-			ErrorCtx_SetError("relTypes must be array of strings");
+			ErrorCtx_SetError(EMSG_MUST_BE, "relTypes", "array of strings");
 			return false;
 		}
 		types_count = SIArray_Length(relationships);
@@ -275,7 +275,7 @@ static ProcedureResult validate_config
 
 	if(weight_prop_exists) {
 		if(SI_TYPE(weight_prop) != T_STRING) {
-			ErrorCtx_SetError("weightProp must be a string");
+			ErrorCtx_SetError(EMSG_MUST_BE, "weightProp", "string");
 			return false;
 		}
 		ctx->weight_prop = GraphContext_GetAttributeID(gc, weight_prop.stringval);
@@ -283,7 +283,7 @@ static ProcedureResult validate_config
 
 	if(cost_prop_exists) {
 		if(SI_TYPE(cost_prop) != T_STRING) {
-			ErrorCtx_SetError("costProp must be a string");
+			ErrorCtx_SetError(EMSG_MUST_BE, "costProp", "string");
 			return false;
 		}
 		ctx->cost_prop = GraphContext_GetAttributeID(gc, cost_prop.stringval);
@@ -291,7 +291,7 @@ static ProcedureResult validate_config
 
 	if(max_cost_exists) {
 		if(SI_TYPE(max_cost) != T_INT64 && SI_TYPE(max_cost) != T_DOUBLE) {
-			ErrorCtx_SetError("maxCost must be numeric");
+			ErrorCtx_SetError(EMSG_MUST_BE, "maxCost", "numeric");
 			return false;
 		}
 		ctx->max_cost = SI_GET_NUMERIC(max_cost);
@@ -299,11 +299,11 @@ static ProcedureResult validate_config
 
 	if(path_count_exists) {
 		if(SI_TYPE(path_count) != T_INT64) {
-				ErrorCtx_SetError("pathCount must be integer");
+				ErrorCtx_SetError(EMSG_MUST_BE, "pathCount", "integer");
 				return false;
 		}
 		if(path_count.longval < 0) {
-				ErrorCtx_SetError("pathCount must be greater than or equal to 0");
+				ErrorCtx_SetError(EMSG_MUST_BE_NON_NEGATIVE, "pathCount");
 				return false;
 		}
 		ctx->path_count = SI_GET_NUMERIC(path_count);

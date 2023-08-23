@@ -7,10 +7,10 @@
 #include "filter_tree.h"
 #include "RG.h"
 #include "../value.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../ast/ast_shared.h"
 #include "../datatypes/array.h"
 
@@ -660,7 +660,7 @@ static inline bool _FilterTree_ValidExpressionNode
 	const FT_FilterNode *root
 ) {
 	bool valid = AR_EXP_ReturnsBoolean(root->exp.exp);
-	if(!valid) ErrorCtx_SetError("Expected boolean predicate.");
+	if(!valid) ErrorCtx_SetError(EMSG_EXPECTED_BOOLEAN_PREDICATE);
 	return valid;
 }
 
@@ -678,7 +678,7 @@ bool FilterTree_Valid
 		case FT_N_PRED:
 			// Empty or semi empty predicate, invalid structure.
 			if((!root->pred.lhs || !root->pred.rhs)) {
-				ErrorCtx_SetError("Filter predicate did not compare two expressions.");
+				ErrorCtx_SetError(EMSG_FILTER_INVALID_COMPARISON);
 				return false;
 			}
 			break;
@@ -687,11 +687,11 @@ bool FilterTree_Valid
 			// OR, AND should utilize both left and right children
 			// NOT utilize only the left child.
 			if(!root->cond.left && !root->cond.right) {
-				ErrorCtx_SetError("Empty filter condition.");
+				ErrorCtx_SetError(EMSG_EMPTY_FILTER);
 				return false;
 			}
 			if(root->cond.op == OP_NOT && root->cond.right) {
-				ErrorCtx_SetError("Invalid usage of 'NOT' filter.");
+				ErrorCtx_SetError(EMSG_INVALID_NOT_USAGE);
 				return false;
 			}
 			if(!FilterTree_Valid(root->cond.left)) return false;

@@ -4,13 +4,13 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "../errors.h"
 #include "cmd_context.h"
 #include "../globals.h"
 #include "../query_ctx.h"
 #include "execution_ctx.h"
 #include "../index/index.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../execution_plan/execution_plan.h"
 
 // builds an execution plan but does not execute it

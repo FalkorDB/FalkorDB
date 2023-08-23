@@ -6,7 +6,7 @@
 
 #include "RG.h"
 #include "record.h"
-#include "../errors.h"
+#include "../errors/errors.h"
 #include "../util/rmalloc.h"
 
 // migrate the entry at the given index in the source Record to the same index

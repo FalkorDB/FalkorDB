@@ -5,10 +5,10 @@
  */
 
 #include "boolean_funcs.h"
-#include "../../errors.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 #include "../../datatypes/map.h"
 #include "../../datatypes/array.h"
 

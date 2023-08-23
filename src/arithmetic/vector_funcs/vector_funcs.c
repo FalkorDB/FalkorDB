@@ -6,8 +6,8 @@
 #include "RG.h"
 #include "../../value.h"
 #include "../func_desc.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
+#include "../../errors/errors.h"
 #include "../../datatypes/array.h"
 #include "../../datatypes/vector.h"
 
@@ -45,7 +45,7 @@ SIValue AR_VECTOR32F
 		// encountered a non-numeric value
 		if(!(SI_TYPE(v) & SI_NUMERIC)) {
 			SIValue_Free(v);
-			ErrorCtx_RaiseRuntimeException("vector32f expects an array of numbers");
+			ErrorCtx_RaiseRuntimeException(EMSG_VECTOR_TYPE_ERROR, 32);
 			return SI_NullVal();
 		}
 
@@ -90,7 +90,7 @@ SIValue AR_VECTOR64F
 		// encountered a non-numeric value
 		if(!(SI_TYPE(v) & SI_NUMERIC)) {
 			SIValue_Free(v);
-			ErrorCtx_RaiseRuntimeException("vector64f numbers");
+			ErrorCtx_RaiseRuntimeException("vectorf numbers", 64);
 			return SI_NullVal();
 		}
 

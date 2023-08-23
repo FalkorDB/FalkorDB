@@ -4,10 +4,10 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "src/errors.h"
 #include "src/query_ctx.h"
 #include "src/util/arr.h"
 #include "src/util/rmalloc.h"
+#include "src/errors/errors.h"
 #include "src/filter_tree/filter_tree.h"
 #include "src/ast/ast_build_filter_tree.h"
 #include "src/arithmetic/funcs.h"

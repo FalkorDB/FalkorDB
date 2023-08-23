@@ -25,8 +25,9 @@ static inline QueryCtx *_QueryCtx_GetCreateCtx(void) {
 		// set a new thread-local QueryCtx if one has not been created
 		ctx = rm_calloc(1, sizeof(QueryCtx));
 
-		ctx->undo_log       = UndoLog_New();
-		ctx->effects_buffer = EffectsBuffer_New();
+		// created lazily only when needed
+		ctx->undo_log       = NULL;
+		ctx->effects_buffer = NULL;
 		ctx->stage          = QueryStage_WAITING;  // initial query stage
 
 		pthread_setspecific(_tlsQueryCtxKey, ctx);
@@ -253,17 +254,36 @@ Graph *QueryCtx_GetGraph(void) {
 }
 
 // retrieve undo log
-UndoLog *QueryCtx_GetUndoLog(void) {
+UndoLog QueryCtx_GetUndoLog(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL && ctx->undo_log != NULL);
+	ASSERT(ctx != NULL);
 	
-	return &ctx->undo_log;
+	if(ctx->undo_log == NULL) {
+		ctx->undo_log = UndoLog_New();
+	}
+	return ctx->undo_log;
+}
+
+// rollback the current command
+void QueryCtx_Rollback(void) {
+	QueryCtx *ctx = _QueryCtx_GetCtx();
+	ASSERT(ctx != NULL);
+
+	Graph_ResetReservedNode(ctx->gc->g);
+
+	if(ctx->undo_log == NULL) return;
+	
+	UndoLog_Rollback(&ctx->undo_log);
 }
 
 // retrieve effects-buffer
 EffectsBuffer *QueryCtx_GetEffectsBuffer(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
-	ASSERT(ctx != NULL && ctx->effects_buffer != NULL);
+	ASSERT(ctx != NULL);
+
+	if(ctx->effects_buffer == NULL) {
+		ctx->effects_buffer = EffectsBuffer_New();
+	}
 	
 	return ctx->effects_buffer;
 }
@@ -337,16 +357,16 @@ bool QueryCtx_LockForCommit(void) {
 	RedisModuleKey *key = RedisModule_OpenKey(redis_ctx, graphID, REDISMODULE_WRITE);
 	RedisModule_FreeString(redis_ctx, graphID);
 	if(RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_EMPTY) {
-		ErrorCtx_SetError("Encountered an empty key when opened key %s", ctx->gc->graph_name);
+		ErrorCtx_SetError(EMSG_EMPTY_KEY, ctx->gc->graph_name);
 		goto clean_up;
 	}
 	if(RedisModule_ModuleTypeGetType(key) != GraphContextRedisModuleType) {
-		ErrorCtx_SetError("Encountered a non-graph value type when opened key %s", ctx->gc->graph_name);
+		ErrorCtx_SetError(EMSG_NON_GRAPH_KEY, ctx->gc->graph_name);
 		goto clean_up;
 
 	}
 	if(gc != RedisModule_ModuleTypeGetValue(key)) {
-		ErrorCtx_SetError("Encountered different graph value when opened key %s", ctx->gc->graph_name);
+		ErrorCtx_SetError(EMSG_DIFFERENT_VALUE, ctx->gc->graph_name);
 		goto clean_up;
 	}
 	ctx->internal_exec_ctx.key = key;
@@ -434,7 +454,7 @@ void QueryCtx_Free(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 
-	UndoLog_Free(ctx->undo_log);
+	UndoLog_Free(&ctx->undo_log);
 	EffectsBuffer_Free(ctx->effects_buffer);
 
 	if(ctx->query_data.params != NULL) {

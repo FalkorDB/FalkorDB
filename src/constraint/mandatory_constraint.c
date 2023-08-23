@@ -31,10 +31,10 @@ struct _MandatoryConstraint {
 typedef struct _MandatoryConstraint* MandatoryConstraint;
 
 static const char *_node_violation_err_msg =
-	"mandatory constraint violation: node with label %s missing property %s";
+	EMSG_MANDATORY_CONSTRAINT_VIOLATION_NODE;
 
 static const char *_edge_violation_err_msg =
-	"mandatory constraint violation: edge with relationship-type %s missing property %s";
+	EMSG_MANDATORY_CONSTRAINT_VIOLATION_EDGE;
 
 // enforces mandatory constraint on given entity
 bool Constraint_EnforceMandatory

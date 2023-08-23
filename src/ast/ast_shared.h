@@ -7,7 +7,7 @@
 #pragma once
 
 #include "ast.h"
-#include "../errors.h"
+#include "../errors/errors.h"
 #include "../arithmetic/arithmetic_expression.h"
 
 struct AR_ExpNode;
@@ -84,13 +84,13 @@ typedef struct {
 	PropertyMap *properties;    // edge properties set
 } EdgeCreateCtx;
 
-// Context describing a relationship in a CREATE or MERGE clause
+// context describing a relationship in a CREATE or MERGE clause
 typedef struct {
-	int node_idx;               // node record index
-	int *labelsId;              // array of node labels id
-	const char *alias;          // node alias
-	const char **labels;        // node labels
-	PropertyMap *properties;    // node properties set
+	int node_idx;             // node record index
+	int *labelsId;            // array of node labels id
+	const char *alias;        // node alias
+	const char **labels;      // node labels
+	PropertyMap *properties;  // node properties set
 } NodeCreateCtx;
 
 AST_Operator AST_ConvertOperatorNode(const cypher_operator_t *op);

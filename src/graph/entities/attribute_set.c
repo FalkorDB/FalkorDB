@@ -9,12 +9,15 @@
 #include "RG.h"
 #include "attribute_set.h"
 #include "../../util/rmalloc.h"
+#include "../../errors/errors.h"
 
 // compute size of attribute set in bytes
-#define ATTRIBUTESET_BYTE_SIZE(set) ((set) == NULL ? sizeof(_AttributeSet) : sizeof(_AttributeSet) + sizeof(Attribute) * (set)->attr_count)
+#define ATTRIBUTESET_BYTE_SIZE(set) ((set) == NULL ? \
+		sizeof(_AttributeSet) :                      \
+		sizeof(_AttributeSet) + sizeof(Attribute) * (set)->attr_count)
 
-// determine if set is empty
-#define ATTRIBUTESET_EMPTY(set) (set) == NULL
+// mark attribute-set as mutable
+#define ATTRIBUTE_SET_CLEAR_MSB(set) (CLEAR_MSB((intptr_t)set))
 
 // returned value for a missing attribute
 SIValue *ATTRIBUTE_NOTFOUND = &(SIValue) {
@@ -29,6 +32,9 @@ static bool _AttributeSet_Remove
 ) {
 	AttributeSet _set = *set;
 	const uint16_t attr_count = _set->attr_count;
+
+	// attribute-set can't be read-only
+	ASSERT(ATTRIBUTE_SET_IS_READONLY(_set) == false);
 
 	// locate attribute position
 	for (uint16_t i = 0; i < attr_count; ++i) {
@@ -65,24 +71,42 @@ static bool _AttributeSet_Remove
 	return false;
 }
 
+// returns number of attributes within the set
+uint16_t AttributeSet_Count
+(
+	const AttributeSet set  // set to query
+) {
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
+
+	return (_set == NULL) ? 0 : _set->attr_count;
+}
+
 // retrieves a value from set
 // NOTE: if the key does not exist
-//       we return the special constant value ATTRIBUTE_NOTFOUND
+// we return the special constant value ATTRIBUTE_NOTFOUND
 SIValue *AttributeSet_Get
 (
 	const AttributeSet set,  // set to retieve attribute from
 	Attribute_ID attr_id     // attribute identifier
 ) {
-	if(set == NULL) return ATTRIBUTE_NOTFOUND;
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
 
-	if(attr_id == ATTRIBUTE_ID_NONE) return ATTRIBUTE_NOTFOUND;
+	if(_set == NULL) {
+		return ATTRIBUTE_NOTFOUND;
+	}
+
+	if(attr_id == ATTRIBUTE_ID_NONE) {
+		return ATTRIBUTE_NOTFOUND;
+	}
 
 	// TODO: benchmark, consider alternatives:
 	// sorted set
 	// array divided in two:
 	// [attr_id_0, attr_id_1, attr_id_2, value_0, value_1, value_2]
-	for (uint16_t i = 0; i < set->attr_count; ++i) {
-		Attribute *attr = set->attributes + i;
+	for (uint16_t i = 0; i < _set->attr_count; ++i) {
+		Attribute *attr = _set->attributes + i;
 		if(attr_id == attr->id) {
 			// note, unsafe as attribute-set can get reallocated
 			// TODO: why do we return a pointer to value instead of a copy ?
@@ -102,11 +126,16 @@ SIValue AttributeSet_GetIdx
 	uint16_t i,              // index of the property
 	Attribute_ID *attr_id    // attribute identifier
 ) {
-	ASSERT(set != NULL);
-	ASSERT(i < set->attr_count);
 	ASSERT(attr_id != NULL);
 
-	Attribute *attr = set->attributes + i;
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
+
+	ASSERT(_set != NULL);
+
+	ASSERT(i < _set->attr_count);
+
+	Attribute *attr = _set->attributes + i;
 	*attr_id = attr->id;
 
 	return attr->value;
@@ -120,6 +149,9 @@ static AttributeSet AttributeSet_AddPrepare
 	ASSERT(set != NULL);
 
 	AttributeSet _set = *set;
+
+	// attribute-set can't be read-only
+	ASSERT(ATTRIBUTE_SET_IS_READONLY(_set) == false);
 
 	// allocate room for new attribute
 	if(_set == NULL) {
@@ -142,6 +174,13 @@ void AttributeSet_AddNoClone
 	ushort n,           // number of values to add
 	bool allowNull		// accept NULLs
 ) {
+	ASSERT(set != NULL);
+
+	// return if set is read-only
+	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
+		return;
+	}
+
 	// validate value type
 	// value must be a valid property type
 #ifdef RG_DEBUG
@@ -159,7 +198,7 @@ void AttributeSet_AddNoClone
 	}
 #endif
 
-	ushort prev_count = ATTRIBUTE_SET_COUNT(*set);
+	ushort prev_count = AttributeSet_Count(*set);
 	AttributeSet _set = AttributeSet_AddPrepare(set, n);
 	Attribute *attrs  = _set->attributes + prev_count;
 
@@ -181,6 +220,13 @@ void AttributeSet_Add
 	Attribute_ID attr_id,  // attribute identifier
 	SIValue value          // attribute value
 ) {
+	ASSERT(set != NULL);
+
+	// return if set is read-only
+	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
+		return;
+	}
+
 #ifdef RG_DEBUG
 	// value must be a valid property type
 	ASSERT(SI_TYPE(value) & SI_VALID_PROPERTY_VALUE);
@@ -212,6 +258,11 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
 	AttributeSet _set = *set;
+
+	// return if set is read-only
+	if(unlikely(ATTRIBUTE_SET_IS_READONLY(_set))) {
+		return CT_NONE;
+	}
 
 	// validate value type
 	ASSERT(SI_TYPE(value) & (SI_VALID_PROPERTY_VALUE | T_NULL));
@@ -258,6 +309,11 @@ bool AttributeSet_UpdateNoClone
 	ASSERT(set != NULL);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
+	// return if set is read-only
+	if(unlikely(ATTRIBUTE_SET_IS_READONLY(*set))) {
+		return false;
+	}
+
 	// setting an attribute value to NULL removes that attribute
 	if(unlikely(SIValue_IsNull(value))) {
 		return _AttributeSet_Remove(set, attr_id);
@@ -284,12 +340,21 @@ bool AttributeSet_Update
 	ASSERT(set != NULL);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
+	AttributeSet _set = *set;
+
+	// return if set is read-only
+	if(unlikely(ATTRIBUTE_SET_IS_READONLY(_set))) {
+		return false;
+	}
+
+	ASSERT(_set != NULL);
+
 	// setting an attribute value to NULL removes that attribute
 	if(unlikely(SIValue_IsNull(value))) {
 		return _AttributeSet_Remove(set, attr_id);
 	}
 
-	SIValue *current = AttributeSet_Get(*set, attr_id);
+	SIValue *current = AttributeSet_Get(_set, attr_id);
 	ASSERT(current != ATTRIBUTE_NOTFOUND);
 
 	// compare current value to new value, only update if current != new
@@ -304,41 +369,22 @@ bool AttributeSet_Update
 	return true;
 }
 
-// clones attribute set
-AttributeSet AttributeSet_Clone
-(
-	const AttributeSet set  // set to clone
-) {
-	if(set == NULL) return NULL;
-
-	size_t n = ATTRIBUTESET_BYTE_SIZE(set);
-	AttributeSet clone  = rm_malloc(n);
-	clone->attr_count   = set->attr_count;
-
-	for (uint16_t i = 0; i < set->attr_count; ++i) {
-		Attribute *attr        = set->attributes   + i;
-		Attribute *clone_attr  = clone->attributes + i;
-
-		clone_attr->id = attr->id;
-		clone_attr->value = SI_CloneValue(attr->value);
-	}
-
-    return clone;
-}
-
-// clones attribute set without si values
+// clones attribute-set without SI values
 AttributeSet AttributeSet_ShallowClone
 (
 	const AttributeSet set  // set to clone
 ) {
-	if(set == NULL) return NULL;
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
+
+	if(_set == NULL) return NULL;
 
 	size_t n = ATTRIBUTESET_BYTE_SIZE(set);
-	AttributeSet clone  = rm_malloc(n);
-	clone->attr_count   = set->attr_count;
+	AttributeSet clone = rm_malloc(n);
+	clone->attr_count  = _set->attr_count;
 
-	for (uint16_t i = 0; i < set->attr_count; ++i) {
-		Attribute *attr       = set->attributes   + i;
+	for(uint16_t i = 0; i < _set->attr_count; ++i) {
+		Attribute *attr       = _set->attributes  + i;
 		Attribute *clone_attr = clone->attributes + i;
 
 		clone_attr->id = attr->id;
@@ -353,6 +399,9 @@ void AttributeSet_PersistValues
 (
 	const AttributeSet set  // set to persist
 ) {
+	// return if set is read-only
+	ASSERT(ATTRIBUTE_SET_IS_READONLY(set) == false);
+
 	if(set == NULL) return;
 
 	for (uint16_t i = 0; i < set->attr_count; ++i) {
@@ -371,7 +420,15 @@ void AttributeSet_Free
 
 	AttributeSet _set = *set;
 
-	if(_set == NULL) return;
+	// return if set is read-only
+	if(unlikely(ATTRIBUTE_SET_IS_READONLY(_set))) {
+		return;
+	}
+
+	// return if set is NULL
+	if(_set == NULL) {
+		return;
+	}
 
 	// free all allocated properties
 	for(uint16_t i = 0; i < _set->attr_count; ++i) {

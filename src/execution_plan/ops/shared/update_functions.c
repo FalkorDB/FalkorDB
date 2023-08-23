@@ -5,9 +5,9 @@
  */
 
 #include "update_functions.h"
-#include "../../../errors.h"
 #include "../../../query_ctx.h"
 #include "../../../datatypes/map.h"
+#include "../../../errors/errors.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
 #include "../../../graph/entities/node.h"
@@ -94,7 +94,7 @@ void CommitUpdates
 				label_count = Graph_GetNodeLabels(gc->g, (Node*)update->ge, labels,
 						label_count);
 			} else {
-				labels[0] = EDGE_GET_RELATION_ID((Edge*)update->ge, gc->g);
+				labels[0] = Edge_GetRelationID((Edge*)update->ge);
 			}
 
 			SchemaType stype = type == ENTITY_NODE ? SCHEMA_NODE : SCHEMA_EDGE;
@@ -138,22 +138,29 @@ void EvalEntityUpdates
 	// get the type of the entity to update
 	// if the expected entity was not found, make no updates but do not error
 	RecordEntryType t = Record_GetType(r, ctx->record_idx);
-	if(t == REC_TYPE_UNKNOWN) {
+	if(unlikely(t == REC_TYPE_UNKNOWN)) {
 		return;
 	}
 
 	// make sure we're updating either a node or an edge
-	if(t != REC_TYPE_NODE && t != REC_TYPE_EDGE) {
+	if(unlikely(t != REC_TYPE_NODE && t != REC_TYPE_EDGE)) {
 		ErrorCtx_RaiseRuntimeException(
 			"Update error: alias '%s' did not resolve to a graph entity",
 			ctx->alias);
 	}
 
 	// label(s) update can only be performed on nodes
-	if((ctx->add_labels != NULL || ctx->remove_labels != NULL) &&
-			t != REC_TYPE_NODE) {
+	if(unlikely((ctx->add_labels != NULL || ctx->remove_labels != NULL) &&
+			t != REC_TYPE_NODE)) {
 		ErrorCtx_RaiseRuntimeException(
 				"Type mismatch: expected Node but was Relationship");
+	}
+
+	GraphEntity *entity = Record_GetGraphEntity(r, ctx->record_idx);
+
+	// if the entity is marked as deleted, make no updates but do not error
+	if(unlikely(Graph_EntityIsDeleted(entity))) {
+		return;
 	}
 
 	dict *updates;
@@ -165,8 +172,6 @@ void EvalEntityUpdates
 		updates = edge_updates;
 		entity_type = GETYPE_EDGE;
 	}
-
-	GraphEntity *entity = Record_GetGraphEntity(r, ctx->record_idx);
 
 	PendingUpdateCtx *update;
 	dictEntry *entry = HashTableFind(updates, (void *)ENTITY_GET_ID(entity));
@@ -263,7 +268,11 @@ void EvalEntityUpdates
 					EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
 							attr_id, v, entity_type);
 					break;
+				case CT_NONE:
+					// no change
+					break;
 				default:
+					assert("unknown change type value" && false);
 					break;
 			}
 			SIValue_Free(v);
@@ -328,7 +337,11 @@ void EvalEntityUpdates
 						EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
 								attr_id, value, entity_type);
 						break;
+					case CT_NONE:
+						// no change
+						break;
 					default:
+						assert("unknown change type value" && false);
 						break;
 				}
 			}
@@ -350,7 +363,7 @@ void EvalEntityUpdates
 		// iterate over all entity properties to build updates
 		const AttributeSet set = GraphEntity_GetAttributes(ge);
 
-		for(uint j = 0; j < ATTRIBUTE_SET_COUNT(set); j++) {
+		for(uint j = 0; j < AttributeSet_Count(set); j++) {
 			Attribute_ID attr_id;
 			SIValue v = AttributeSet_GetIdx(set, j, &attr_id);
 

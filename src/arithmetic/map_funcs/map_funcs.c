@@ -7,9 +7,9 @@
 #include "map_funcs.h"
 #include "RG.h"
 #include "../func_desc.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../datatypes/map.h"
+#include "../../errors/errors.h"
 #include "../../datatypes/array.h"
 #include "../../graph/entities/graph_entity.h"
 

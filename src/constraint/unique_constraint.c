@@ -33,10 +33,10 @@ struct _UniqueConstraint {
 typedef struct _UniqueConstraint* UniqueConstraint;
 
 static const char *_node_violation_err_msg =
-	"unique constraint violation on node of type %s";
+	EMSG_UNIQUE_CONSTRAINT_VIOLATION_NODE;
 
 static const char *_edge_violation_err_msg =
-	"unique constraint violation, on edge of relationship-type %s";
+	EMSG_UNIQUE_CONSTRAINT_VIOLATION_EDGE;
 
 // sets constraint private data
 static void _SetPrivateData

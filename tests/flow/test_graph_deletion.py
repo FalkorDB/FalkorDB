@@ -431,7 +431,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         # validate that the nodes were deleted
         self.env.assertEquals(res.nodes_deleted, 2)
 
-    def test20_not_existed_label(self):
+    def test21_not_existed_label(self):
         # clean the db
         self.env.flush()
         redis_graph = Graph(self.env.getConnection(), GRAPH_ID)
@@ -448,4 +448,39 @@ class testGraphDeletionFlow(FlowTestsBase):
 
         res = redis_graph.query("MATCH (n:Bar) RETURN count(n)")
         self.env.assertEquals(res.result_set[0][0], 0)
-        
+
+    def test22_delete_reserve_id(self):
+        # clean the db
+        self.env.flush()
+        redis_graph = Graph(self.env.getConnection(), GRAPH_ID)
+
+        res = redis_graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
+        self.env.assertEquals(res.nodes_created, 11)
+
+        # expecting IDs to be reused
+        res = redis_graph.query("MATCH (a:A) DELETE a CREATE (b:A) RETURN id(b)")
+        self.env.assertEquals(res.nodes_deleted, 11)
+        self.env.assertEquals(res.nodes_created, 11)
+        self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+
+        res = redis_graph.query("MATCH (a:A) DELETE a CREATE (b:A) RETURN id(b)")
+        self.env.assertEquals(res.nodes_deleted, 11)
+        self.env.assertEquals(res.nodes_created, 11)
+        self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+
+        # clean the db
+        self.env.flush()
+        redis_graph = Graph(self.env.getConnection(), GRAPH_ID)
+
+        res = redis_graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
+        self.env.assertEquals(res.nodes_created, 11)
+
+        res = redis_graph.query("MATCH (a:A) WITH a, a.id as id DELETE a MERGE (b:A {id: id}) RETURN id(b), b.id")
+        self.env.assertEquals(res.nodes_deleted, 11)
+        self.env.assertEquals(res.nodes_created, 11)
+        self.env.assertEquals(res.result_set, [[10, 0], [9, 1], [8, 2], [7, 3], [6, 4], [5, 5], [4, 6], [3, 7], [2, 8], [1, 9], [0, 10]])
+
+        res = redis_graph.query("MATCH (a:A) WITH a, a.id as id DELETE a MERGE (b:A {id: id}) RETURN id(b), b.id")
+        self.env.assertEquals(res.nodes_deleted, 11)
+        self.env.assertEquals(res.nodes_created, 11)
+        self.env.assertEquals(res.result_set, [[10, 10], [9, 9], [8, 8], [7, 7], [6, 6], [5, 5], [4, 4], [3, 3], [2, 2], [1, 1], [0, 0]])

@@ -24,15 +24,6 @@ int Graph_Effect
 	GraphContext *gc = GraphContext_Retrieve(ctx, argv[1], false, true);
 	ASSERT(gc != NULL);
 
-	// get graph
-	Graph *g = GraphContext_GetGraph(gc);
-
-	// backup graph sync policy
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy(g);
-
-	// update graph sync policy
-	Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
-
 	//--------------------------------------------------------------------------
 	// process effects
 	//--------------------------------------------------------------------------
@@ -42,9 +33,6 @@ int Graph_Effect
 
 	// apply effects
 	Effects_Apply(gc, effects_buff, l);
-
-	// restore graph sync policy
-	Graph_SetMatrixPolicy(g, policy);
 
 	// release GraphContext
 	GraphContext_DecreaseRefCount(gc);
