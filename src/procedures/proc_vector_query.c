@@ -88,7 +88,7 @@ static bool _extractArgs
 	//     type: 'NODE'/'RELATIONSHIP'
 	//     label: 'Person'
 	//     attribute: 'name'
-	//     query_vector: vector32f([1,2])
+	//     query: vector32f([1,2])
 	//     k:3
 	// }
 
@@ -122,8 +122,8 @@ static bool _extractArgs
 	}
 	*attribute = v.stringval;
 
-	// extract "query_vector"
-	if(!MAP_GET(map, "query_vector", v) && SI_TYPE(v) != T_VECTOR32F) {
+	// extract "query"
+	if(!MAP_GET(map, "query", v) && SI_TYPE(v) != T_VECTOR32F) {
 		return false;
 	}
 	*query_vector = v;
@@ -338,11 +338,11 @@ ProcedureResult Proc_VectorKNNFree
 //
 // usage:
 //
-// CALL db.idx.vector.knn( {
+// CALL db.idx.vector.query( {
 // type: 'NODE'/'RELATIONSHIP',
 // label: 'Person',
 // attribute: 'name',
-// query_vector: vector32f([1,2]),
+// query: vector32f([1,2]),
 // k:3 } ) YIELD entity
 
 ProcedureCtx *Proc_VectorKNNGen() {
@@ -352,7 +352,7 @@ ProcedureCtx *Proc_VectorKNNGen() {
 	array_append(output, out_entity);
 	array_append(output, out_score);
 
-	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.knn",
+	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.query",
 								   1,
 								   output,
 								   NULL, // step func is determined by invoke

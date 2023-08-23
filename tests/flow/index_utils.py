@@ -47,6 +47,22 @@ def create_fulltext_index(graph, label, *properties, sync=False):
     q += ")"
     return _create_index(graph, q, label, "full-text", sync)
 
+def create_vector_index(graph, entity_type, label, attribute, dim, similarity_function="euclidean", sync=False):
+    q = f"""CALL db.idx.vector.createIndex({{
+                type:'{entity_type}',
+                label:'{label}',
+                attribute:'{attribute}',
+                dim:{dim},
+                similarityFunction:'{similarity_function}'
+            }})"""
+    return _create_index(graph, q, label, "exact-match", sync)
+
+def create_node_vector_index(graph, label, attribute, dim, similarity_function="euclidean", sync=False):
+    return create_vector_index(graph, "NODE", label, attribute, dim, similarity_function, sync)
+
+def create_edge_vector_index(graph, relation, attribute, dim, similarity_function="euclidean", sync=False):
+    return create_vector_index(graph, "RELATIONSHIP", relation, attribute, dim, similarity_function, sync)
+
 def drop_exact_match_index(graph, label, attribute):
     q = f"DROP INDEX ON :{label}({attribute})"
     return graph.query(q)
@@ -70,4 +86,20 @@ def wait_for_indices_to_sync(graph):
         if result.result_set[0][0] == 0:
             break
         time.sleep(0.5) # sleep 500ms
+
+def query_vector_index(graph, entity_type, label, attribute, k, q):
+    params = {'type': entity_type, 'label': label, 'attribute': attribute, 'k': k, 'query': q}
+
+    return graph.query("""CALL db.idx.vector.query({
+            type: $type,
+            label: $label,
+            attribute: $attribute,
+            query: vector32f($query),
+            k:$k})""", params=params)
+
+def query_node_vector_index(graph, label, attribute, k, q):
+    return query_vector_index(graph, "NODE", label, attribute, k, q)
+
+def query_edge_vector_index(graph, relation, attribute, k, q):
+    return query_vector_index(graph, "RELATIONSHIP", relation, attribute, k, q)
 

@@ -46,7 +46,7 @@ void Proc_Register() {
 
 	// register vector search generator
 	_procRegister("db.idx.vector.createIndex", Proc_VectorCreateIdxGen);
-	_procRegister("db.idx.vector.knn", Proc_VectorKNNGen);
+	_procRegister("db.idx.vector.query", Proc_VectorKNNGen);
 }
 
 ProcedureCtx *ProcCtxNew(const char *name,

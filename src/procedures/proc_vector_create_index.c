@@ -36,7 +36,8 @@ static bool _parseArgs
 	//     type:'NODE',
 	//     label:'Person',
 	//     attribute:'embeddings',
-	//     length:538
+	//     length:538,
+	//     similarityFunction:'euclidean'
 	//  }
 
 	// extract fields from the map
@@ -85,6 +86,19 @@ static bool _parseArgs
 		return false;
 	}
 	*dimension = val.longval;
+
+	//--------------------------------------------------------------------------
+	// extract similarity function
+	//--------------------------------------------------------------------------
+
+	if(!MAP_GET(arg, "similarityFunction", val) || SI_TYPE(val) != T_STRING) {
+		return false;
+	}
+
+	// at the moment only euclidean distance is supported
+	if(strcasecmp(val.stringval, "euclidean") != 0) {
+		return false;
+	}
 
 	return true;
 }
@@ -157,7 +171,8 @@ SIValue *Proc_VectorCreateIdxStep
 //     {type:'NODE'/'RELATIONSHIP',
 //     label:'Person',
 //     attribute:'embeddings',
-//     dim:538})
+//     dim:538,
+//     similarityFunction:'euclidean'})
 //
 ProcedureCtx *Proc_VectorCreateIdxGen(void) {
 	return ProcCtxNew("db.idx.vector.createIndex", 1, NULL,
