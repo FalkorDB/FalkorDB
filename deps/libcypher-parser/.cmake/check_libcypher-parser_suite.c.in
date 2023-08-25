@@ -1,0 +1,28 @@
+#include <check.h>
+
+#ifdef WIN32
+
+#include <string.h>
+#include <stdlib.h>
+
+char *strndup(char const *s, size_t n)
+{
+	size_t len = strnlen(s, n);
+	char *new = malloc(len + 1);
+
+	if (new == NULL)
+		return NULL;
+
+	new[len] = '\0';
+	return memcpy(new, s, len);
+}
+#endif
+
+@cases@;
+
+Suite *libcypher_parser_suite(void)
+{
+	Suite *s = suite_create("libcypher-parser");
+	@add_cases@;
+	return s;
+}
