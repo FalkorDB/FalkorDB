@@ -1,3 +1,8 @@
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
+
 #include "RG.h"
 #include "bolt.h"
 #include "string.h"
@@ -22,8 +27,8 @@ void bolt_change_negotiation_state
 (
     bolt_client_t *client   
 ) {
-    ASSERT(client->state == BS_NEGOTIATION && bolt_value_get_structure_type(client->read_buffer) == BST_HELLO);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    ASSERT(client->state == BS_NEGOTIATION && bolt_read_structure_type(client->read_buffer) == BST_HELLO);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (response_type)
     {
         case BST_SUCCESS:
@@ -41,8 +46,8 @@ void bolt_change_authentication_state
 (
     bolt_client_t *client   
 ) {
-    ASSERT(client->state == BS_AUTHENTICATION && bolt_value_get_structure_type(client->read_buffer) == BST_LOGON);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    ASSERT(client->state == BS_AUTHENTICATION && bolt_read_structure_type(client->read_buffer) == BST_LOGON);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (response_type)
     {
         case BST_SUCCESS:
@@ -61,8 +66,8 @@ void bolt_change_ready_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_READY);
-    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
         case BST_LOGOFF:
@@ -130,8 +135,8 @@ void bolt_change_streaming_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_STREAMING);
-    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
         case BST_PULL:
@@ -176,8 +181,8 @@ void bolt_change_txready_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_TX_READY);
-    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
         case BST_RUN:
@@ -235,8 +240,8 @@ void bolt_change_txstreaming_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_TX_STREAMING);
-    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
         case BST_RUN:
@@ -307,8 +312,8 @@ void bolt_change_failed_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_FAILED);
-    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
         case BST_RUN:
@@ -357,8 +362,8 @@ void bolt_change_interrupted_state
     bolt_client_t *client   
 ) {
     ASSERT(client->state == BS_INTERRUPTED);
-    bolt_structure_type request_type = bolt_value_get_structure_type(client->read_buffer);
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     switch (request_type)
     {
         case BST_RUN:
@@ -446,7 +451,7 @@ void bolt_change_client_state
 (
     bolt_client_t *client   
 ) {
-    bolt_structure_type response_type = bolt_value_get_structure_type(client->write_buffer + 2);
+    bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
     if(response_type == BST_RECORD) {
         return;
     }
@@ -493,7 +498,7 @@ void bolt_client_send
 (
     bolt_client_t *client
 ) {
-    if(client->state == BS_FAILED && bolt_value_get_structure_type(client->read_buffer) != BST_RESET) {
+    if(client->state == BS_FAILED && bolt_read_structure_type(client->read_buffer) != BST_RESET) {
         client->write_index = 2;
 		bolt_reply_structure(client, BST_IGNORED, 0);
 	}
@@ -806,7 +811,7 @@ char *bolt_value_read
     }
 }
 
-bolt_value_type bolt_value_get_type
+bolt_value_type bolt_read_type
 (
     char *data
 ) {
@@ -885,7 +890,7 @@ bolt_value_type bolt_value_get_type
     }
 }
 
-bool bolt_value_get_bool
+bool bolt_read_bool
 (
     char *data
 ) {
@@ -902,7 +907,7 @@ bool bolt_value_get_bool
     }
 }
 
-int8_t bolt_value_get_int8
+int8_t bolt_read_int8
 (
     char *data
 ) {
@@ -917,7 +922,7 @@ int8_t bolt_value_get_int8
     }
 }
 
-int16_t bolt_value_get_int16
+int16_t bolt_read_int16
 (
     char *data
 ) {
@@ -932,7 +937,7 @@ int16_t bolt_value_get_int16
     }
 }
 
-int32_t bolt_value_get_int32
+int32_t bolt_read_int32
 (
     char *data
 ) {
@@ -947,7 +952,7 @@ int32_t bolt_value_get_int32
     }
 }
 
-int64_t bolt_value_get_int64
+int64_t bolt_read_int64
 (
     char *data
 ) {
@@ -962,7 +967,7 @@ int64_t bolt_value_get_int64
     }
 }
 
-double bolt_value_get_float
+double bolt_read_float
 (
     char *data
 ) {
@@ -977,7 +982,7 @@ double bolt_value_get_float
     }
 }
 
-uint32_t bolt_value_get_string_size
+uint32_t bolt_read_string_size
 (
     char *data
 ) {
@@ -1013,7 +1018,7 @@ uint32_t bolt_value_get_string_size
     }
 }
 
-char *bolt_value_get_string
+char *bolt_read_string
 (
     char *data
 ) {
@@ -1049,7 +1054,7 @@ char *bolt_value_get_string
     }
 }
 
-uint32_t bolt_value_get_list_size
+uint32_t bolt_read_list_size
 (
     char *data
 ) {
@@ -1085,7 +1090,7 @@ uint32_t bolt_value_get_list_size
     }
 }
 
-char *bolt_value_get_list_item
+char *bolt_read_list_item
 (
     char *data,
     uint32_t index
@@ -1138,7 +1143,7 @@ char *bolt_value_get_list_item
     }
 }
 
-uint32_t bolt_value_get_map_size
+uint32_t bolt_read_map_size
 (
     char *data
 ) {
@@ -1174,7 +1179,7 @@ uint32_t bolt_value_get_map_size
     }
 }
 
-char *bolt_value_get_map_key
+char *bolt_read_map_key
 (
     char *data,
     uint32_t index
@@ -1231,7 +1236,7 @@ char *bolt_value_get_map_key
     }
 }
 
-char *bolt_value_get_map_value
+char *bolt_read_map_value
 (
     char *data,
     uint32_t index
@@ -1292,7 +1297,7 @@ char *bolt_value_get_map_value
     }
 }
 
-bolt_structure_type bolt_value_get_structure_type
+bolt_structure_type bolt_read_structure_type
 (
     char *data
 ) {
@@ -1315,7 +1320,7 @@ bolt_structure_type bolt_value_get_structure_type
     }
 }
 
-uint32_t bolt_value_get_structure_size
+uint32_t bolt_read_structure_size
 (
     char *data
 ) {
@@ -1345,7 +1350,7 @@ uint32_t bolt_value_get_structure_size
     }
 }
 
-char *bolt_value_get_structure_value
+char *bolt_read_structure_value
 (
     char *data,
     uint32_t index

@@ -96,6 +96,13 @@ size_t SIPath_Length(SIValue p);
 size_t SIPath_NodeCount(SIValue p);
 
 /**
+ * @brief  Returns the number or edges in the path.
+ * @param  p: SIPath
+ * @retval Number or nodes in the path..
+ */
+size_t SIPath_EdgeCount(SIValue p);
+
+/**
  * @brief  Returns 64 bit hash code of the path.
  * @param  p: SIPath.
  * @retval 64 bit hash code.

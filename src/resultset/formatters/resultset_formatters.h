@@ -42,7 +42,7 @@ static ResultSetFormatter ResultSetFormatterVerbose __attribute__((used)) = {
 	.EmitHeader = ResultSet_ReplyWithVerboseHeader
 };
 
-/* Bolt reply formatter, used when querying via CLI. */
+/* Bolt reply formatter, used when querying via bolt driver. */
 static ResultSetFormatter ResultSetFormatterBolt __attribute__((used)) = {
 	.EmitRow = ResultSet_EmitBoltRow,
 	.EmitHeader = ResultSet_ReplyWithBoltHeader

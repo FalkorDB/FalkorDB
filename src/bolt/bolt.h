@@ -1,3 +1,8 @@
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
+
 #pragma once
 
 #include <stdint.h>
@@ -158,90 +163,90 @@ typedef struct bolt_version_t {
     uint32_t minor;
 } bolt_version_t;
 
-bolt_value_type bolt_value_get_type
+bolt_value_type bolt_read_type
 (
     char *data
 );
 
-bool bolt_value_get_bool
+bool bolt_read_bool
 (
     char *data
 );
 
-int8_t bolt_value_get_int8
+int8_t bolt_read_int8
 (
     char *data
 );
 
-int16_t bolt_value_get_int16
+int16_t bolt_read_int16
 (
     char *data
 );
 
-int32_t bolt_value_get_int32
+int32_t bolt_read_int32
 (
     char *data
 );
 
-int64_t bolt_value_get_int64
+int64_t bolt_read_int64
 (
     char *data
 );
 
-double bolt_value_get_float
+double bolt_read_float
 (
     char *data
 );
 
-uint32_t bolt_value_get_string_size
+uint32_t bolt_read_string_size
 (
     char *data
 );
 
-char *bolt_value_get_string
+char *bolt_read_string
 (
     char *data
 );
 
-uint32_t bolt_value_get_list_size
+uint32_t bolt_read_list_size
 (
     char *data
 );
 
-char *bolt_value_get_list_item
+char *bolt_read_list_item
 (
     char *data,
     uint32_t index
 );
 
-uint32_t bolt_value_get_map_size
+uint32_t bolt_read_map_size
 (
     char *data
 );
 
-char *bolt_value_get_map_key
+char *bolt_read_map_key
 (
     char *data,
     uint32_t index
 );
 
-char *bolt_value_get_map_value
+char *bolt_read_map_value
 (
     char *data,
     uint32_t index
 );
 
-bolt_structure_type bolt_value_get_structure_type
+bolt_structure_type bolt_read_structure_type
 (
     char *data
 );
 
-uint32_t bolt_value_get_structure_size
+uint32_t bolt_read_structure_size
 (
     char *data
 );
 
-char *bolt_value_get_structure_value
+char *bolt_read_structure_value
 (
     char *data,
     uint32_t index

@@ -1,3 +1,8 @@
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
+
 #pragma one
 
 #include <stdint.h>
@@ -6,6 +11,12 @@
 #include <unistd.h>
 
 typedef int socket_t;
+
+#define socket_accept(socket) accept(socket, NULL, NULL)
+
+#define socket_write(socket, buff, size) send(socket, buff, size, 0)
+
+#define socket_close(socket) close(socket)
 
 socket_t socket_bind
 (
@@ -18,9 +29,3 @@ bool socket_read
     char* buff,
     size_t size
 );
-
-#define socket_accept(socket) accept(socket, NULL, NULL)
-
-#define socket_write(socket, buff, size) send(socket, buff, size, 0)
-
-#define socket_close(socket) close(socket)

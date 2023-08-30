@@ -130,16 +130,16 @@ RedisModuleString *get_db
 	RedisModuleCtx *ctx,
 	bolt_client_t *client
 ) {
-	char *db = bolt_value_get_structure_value(client->read_buffer, 2);
+	char *db = bolt_read_structure_value(client->read_buffer, 2);
 	char *db_str;
 	size_t db_len;
-	if(bolt_value_get_map_size(db) == 0) {
+	if(bolt_read_map_size(db) == 0) {
 		db_str = "falkordb";
 		db_len = 8;
 	} else {
-		db = bolt_value_get_map_value(db, 0);
-		db_str = bolt_value_get_string(db);
-		db_len = bolt_value_get_string_size(db);
+		db = bolt_read_map_value(db, 0);
+		db_str = bolt_read_string(db);
+		db_len = bolt_read_string_size(db);
 	}
 	return RedisModule_CreateString(ctx, db_str, db_len);
 }
@@ -149,24 +149,24 @@ RedisModuleString *get_query
 	RedisModuleCtx *ctx,
 	bolt_client_t *client
 ) {
-	char *query = bolt_value_get_structure_value(client->read_buffer, 0);
-	char *parameters = bolt_value_get_structure_value(client->read_buffer, 1);
-	uint32_t params_count = bolt_value_get_map_size(parameters);
+	char *query = bolt_read_structure_value(client->read_buffer, 0);
+	char *parameters = bolt_read_structure_value(client->read_buffer, 1);
+	uint32_t params_count = bolt_read_map_size(parameters);
 	char parameters_str[1024];
 	if(params_count > 0) {
 		sprintf(parameters_str, "CYPHER");
 		for (int i = 0; i < params_count; i++) {
-			char *key = bolt_value_get_map_key(parameters, i);
-			char *value = bolt_value_get_map_value(parameters, i);
-			switch (bolt_value_get_type(value))
+			char *key = bolt_read_map_key(parameters, i);
+			char *value = bolt_read_map_value(parameters, i);
+			switch (bolt_read_type(value))
 			{
 			case BVT_STRING:
-				sprintf(parameters_str, "%s %.*s='%.*s'", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
+				sprintf(parameters_str, "%s %.*s='%.*s'", parameters_str, bolt_read_string_size(key), bolt_read_string(key), bolt_read_string_size(value), bolt_read_string(value));
 				break;
 			case BVT_STRUCTURE:
-				if(bolt_value_get_structure_type(value) == BST_POINT2D) {
-					// value = bolt_value_get_structure_value(value, 0);
-					// sprintf(parameters_str, "%s %.*s=POINT({latitude: %f, longitude: %f})", parameters_str, bolt_value_get_string_size(key), bolt_value_get_string(key), bolt_value_get_string_size(value), bolt_value_get_string(value));
+				if(bolt_read_structure_type(value) == BST_POINT2D) {
+					// value = bolt_read_structure_value(value, 0);
+					// sprintf(parameters_str, "%s %.*s=POINT({latitude: %f, longitude: %f})", parameters_str, bolt_read_string_size(key), bolt_read_string(key), bolt_read_string_size(value), bolt_read_string(value));
 					break;
 				}
 				ASSERT(false);
@@ -176,11 +176,11 @@ RedisModuleString *get_query
 				break;
 			}
 		}
-		sprintf(parameters_str, "%s %.*s", parameters_str, bolt_value_get_string_size(query), bolt_value_get_string(query));
+		sprintf(parameters_str, "%s %.*s", parameters_str, bolt_read_string_size(query), bolt_read_string(query));
 		return RedisModule_CreateString(ctx, parameters_str, strlen(parameters_str));
 	}
 
-	return RedisModule_CreateString(ctx, bolt_value_get_string(query), bolt_value_get_string_size(query));
+	return RedisModule_CreateString(ctx, bolt_read_string(query), bolt_read_string_size(query));
 }
 
 void BoltRunCommand
@@ -265,7 +265,7 @@ void BoltRequestHandler
 	client->read_index = 0;
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 
-	switch (bolt_value_get_structure_type(client->read_buffer))
+	switch (bolt_read_structure_type(client->read_buffer))
 	{
 		case BST_HELLO:
 			BoltHelloCommand(client);

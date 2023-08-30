@@ -1,18 +1,39 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "resultset_formatters.h"
-#include "../../util/arr.h"
 #include "../../datatypes/datatypes.h"
-#include "../../bolt/bolt.h"
-#include "../../bolt/socket.h"
-#include "../../commands/cmd_context.h"
-#include "../../globals.h"
 
-void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SIValue v) {
+static void _ResultSet_BoltReplyWithNode
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	Node *n
+);
+
+static void _ResultSet_BoltReplyWithEdge
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	Edge *e,
+	bool is_bounded
+);
+
+static void _ResultSet_BoltReplyWithPath
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	SIValue path
+);
+
+void _ResultSet_BoltReplyWithSIValue
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	SIValue v
+) {
 	switch(SI_TYPE(v)) {
 	case T_STRING:
 		bolt_reply_string(client, v.stringval);
@@ -39,61 +60,12 @@ void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SI
 	case T_NULL:
 		bolt_reply_null(client);
 		break;
-	case T_NODE: {
-		Node *n = v.ptrval;
-		bolt_reply_structure(client, BST_NODE, 4);
-		bolt_reply_int64(client, n->id);
-		uint lbls_count;
-		NODE_GET_LABELS(gc->g, n, lbls_count);
-		bolt_reply_list(client, lbls_count);
-		for(int i = 0; i < lbls_count; i++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
-			const char *lbl_name = Schema_GetName(s);
-			bolt_reply_string(client, lbl_name);
-		}
-		const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)n);
-		int prop_count = AttributeSet_Count(set);
-		bolt_reply_map(client, prop_count);
-		// Iterate over all properties stored on entity
-		for(int i = 0; i < prop_count; i ++) {
-			Attribute_ID attr_id;
-			SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-			// Emit the actual string
-			const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
-			bolt_reply_string(client, prop_str);
-			// Emit the value
-			_ResultSet_BoltReplyWithSIValue(client, gc, value);
-		}
-		bolt_reply_string(client, "node_0");
+	case T_NODE:
+		_ResultSet_BoltReplyWithNode(client, gc, v.ptrval);
 		break;
-	}
-	case T_EDGE: {
-		Edge *e = v.ptrval;
-		bolt_reply_structure(client, BST_RELATIONSHIP, 8);
-		bolt_reply_int64(client, e->id);
-		bolt_reply_int64(client, e->src_id);
-		bolt_reply_int64(client, e->dest_id);
-		Schema *s = GraphContext_GetSchemaByID(gc, Edge_GetRelationID(e), SCHEMA_EDGE);
-		const char *reltype = Schema_GetName(s);
-		bolt_reply_string(client, reltype);
-		const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)e);
-		int prop_count = AttributeSet_Count(set);
-		bolt_reply_map(client, prop_count);
-		// Iterate over all properties stored on entity
-		for(int i = 0; i < prop_count; i ++) {
-			Attribute_ID attr_id;
-			SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-			// Emit the actual string
-			const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
-			bolt_reply_string(client, prop_str);
-			// Emit the value
-			_ResultSet_BoltReplyWithSIValue(client, gc, value);
-		}
-		bolt_reply_string(client, "relationship_0");
-		bolt_reply_string(client, "node_0");
-		bolt_reply_string(client, "node_0");
+	case T_EDGE:
+		_ResultSet_BoltReplyWithEdge(client, gc, v.ptrval, true);
 		break;
-	}
 	case T_ARRAY:
 		bolt_reply_list(client, SIArray_Length(v));
 		for(int i = 0; i < SIArray_Length(v); i++) {
@@ -101,7 +73,7 @@ void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SI
 		}
 		break;
 	case T_PATH:
-		bolt_reply_null(client);
+		_ResultSet_BoltReplyWithPath(client, gc, v);
 		break;
 	case T_MAP:
 		bolt_reply_map(client, Map_KeyCount(v));
@@ -112,10 +84,129 @@ void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SI
 		}
 		break;
 	case T_POINT:
+		// Point2D::Structure(
+		//     srid::Integer,
+		//     x::Float,
+		//     y::Float,
+		// )
+		bolt_reply_structure(client, BST_POINT2D, 3);
+		bolt_reply_int64(client, 4326);
+		bolt_reply_float(client, v.point.longitude);
+		bolt_reply_float(client, v.point.latitude);
 		bolt_reply_null(client);
 		break;
 	default:
 		RedisModule_Assert("Unhandled value type" && false);
+	}
+}
+
+static void _ResultSet_BoltReplyWithNode
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	Node *n
+) {
+	bolt_reply_structure(client, BST_NODE, 4);
+	bolt_reply_int64(client, n->id);
+	uint lbls_count;
+	NODE_GET_LABELS(gc->g, n, lbls_count);
+	bolt_reply_list(client, lbls_count);
+	for(int i = 0; i < lbls_count; i++) {
+		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		const char *lbl_name = Schema_GetName(s);
+		bolt_reply_string(client, lbl_name);
+	}
+	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)n);
+	int prop_count = AttributeSet_Count(set);
+	bolt_reply_map(client, prop_count);
+	// Iterate over all properties stored on entity
+	for(int i = 0; i < prop_count; i ++) {
+		Attribute_ID attr_id;
+		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		// Emit the actual string
+		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
+		bolt_reply_string(client, prop_str);
+		// Emit the value
+		_ResultSet_BoltReplyWithSIValue(client, gc, value);
+	}
+	bolt_reply_string(client, "node_0");
+}
+
+static void _ResultSet_BoltReplyWithEdge
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	Edge *e,
+	bool is_bounded
+) {
+	// Relationship::Structure(
+	//     id::Integer,
+	//     startNodeId::Integer,
+	//     endNodeId::Integer,
+	//     type::String,
+	//     properties::Dictionary,
+	//     element_id::String,
+	//     start_node_element_id::String,
+	//     end_node_element_id::String,
+	// )
+
+	// UnboundRelationship::Structure(
+	//     id::Integer,
+	//     type::String,
+	//     properties::Dictionary,
+	//     element_id::String,
+	// )
+	bolt_reply_structure(client, is_bounded ? BST_RELATIONSHIP : BST_UNBOUND_RELATIONSHIP, 8);
+	bolt_reply_int64(client, e->id);
+	if(is_bounded) {
+		bolt_reply_int64(client, e->src_id);
+		bolt_reply_int64(client, e->dest_id);
+	}
+	Schema *s = GraphContext_GetSchemaByID(gc, Edge_GetRelationID(e), SCHEMA_EDGE);
+	const char *reltype = Schema_GetName(s);
+	bolt_reply_string(client, reltype);
+	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)e);
+	int prop_count = AttributeSet_Count(set);
+	bolt_reply_map(client, prop_count);
+	// Iterate over all properties stored on entity
+	for(int i = 0; i < prop_count; i ++) {
+		Attribute_ID attr_id;
+		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		// Emit the actual string
+		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
+		bolt_reply_string(client, prop_str);
+		// Emit the value
+		_ResultSet_BoltReplyWithSIValue(client, gc, value);
+	}
+	bolt_reply_string(client, "relationship_0");
+	if(is_bounded) {
+		bolt_reply_string(client, "node_0");
+		bolt_reply_string(client, "node_0");
+	}
+}
+
+static void _ResultSet_BoltReplyWithPath
+(
+	bolt_client_t *client,
+	GraphContext *gc,
+	SIValue path
+) {
+	bolt_reply_structure(client, BST_PATH, 3);
+	size_t node_count = SIPath_NodeCount(path);
+	bolt_reply_list(client, node_count);
+	for(int i = 0; i < node_count; i++) {
+		_ResultSet_BoltReplyWithNode(client, gc, SIPath_GetNode(path, i).ptrval);
+	}
+	size_t edge_count = SIPath_EdgeCount(path);
+	bolt_reply_list(client, edge_count);
+	for(int i = 0; i < edge_count; i++) {
+		_ResultSet_BoltReplyWithEdge(client, gc, SIPath_GetRelationship(path, i).ptrval, false);
+	}
+
+	size_t indices = node_count + edge_count - 1;
+	bolt_reply_list(client, indices);
+	for(int i = 0; i < indices; i++) {
+		bolt_reply_int8(client, 1); // TODO: Support path indices
 	}
 }
 
