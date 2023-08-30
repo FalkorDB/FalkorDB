@@ -259,12 +259,12 @@ uint64_t GraphContext_EdgeIndexCount
 // attempt to retrieve an index on the given label and attribute IDs
 Index GraphContext_GetIndexByID
 (
-	const GraphContext *gc,        // graph context
-	int lbl_id,                    // label / rel-type ID
-	const Attribute_ID *attrs,     // attributes
-	uint n,                        // attributes count
-	IndexType idx_type,            // index type
-	GraphEntityType entity_type    // schema type NODE / EDGE
+	const GraphContext *gc,      // graph context
+	int lbl_id,                  // label / rel-type ID
+	const Attribute_ID *attrs,   // attributes
+	uint n,                      // attributes count
+	IndexFieldType t,            // all index attributes must be of this type
+	GraphEntityType entity_type  // schema type NODE / EDGE
 );
 
 // attempt to retrieve an index on the given label and attribute
@@ -274,11 +274,11 @@ Index GraphContext_GetIndex
 	const char *label,
 	Attribute_ID *attrs,
 	uint n,
-	IndexType type,
+	IndexFieldType type,
 	SchemaType schema_type
 );
 
-bool GraphContext_AddExactMatchIndex
+bool GraphContext_AddRangeIndex
 (
 	Index *idx,              // [input/output] index created
 	GraphContext *gc,        // graph context
@@ -321,7 +321,7 @@ int GraphContext_DeleteIndex
 	SchemaType schema_type,
 	const char *label,
 	const char *field,
-	IndexType type
+	IndexFieldType t
 );
 
 // remove a single node from all indices that refer to it

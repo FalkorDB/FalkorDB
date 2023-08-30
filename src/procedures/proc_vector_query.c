@@ -278,19 +278,12 @@ ProcedureResult Proc_VectorKNNInvoke
 		return PROCEDURE_ERR;
 	}
 
-	Index idx = GraphContext_GetIndex(gc, label, &attr_id, 1, IDX_EXACT_MATCH,
+	Index idx = GraphContext_GetIndex(gc, label, &attr_id, 1, INDEX_FLD_VECTOR,
 			st);
 
 	if(idx == NULL) {
 		return PROCEDURE_ERR;
 	}
-
-	// make sure we're dealing with a vector index
-	if(!(Index_GetFieldType(idx, attr_id) & INDEX_FLD_VECTOR)) {
-		return PROCEDURE_ERR;
-	}
-
-	RSIndex *rsIdx = Index_RSIndex(idx);
 
 	//--------------------------------------------------------------------------
 	// construct a vector query
@@ -301,10 +294,10 @@ ProcedureResult Proc_VectorKNNInvoke
 	size_t nbytes = SIVector_ElementsByteSize(query_vector);
 
 	// create a redisearch query node
-	RSQNode *root = RediSearch_CreateVecSimNode(rsIdx, attribute, (char*)vec,
-			nbytes, k);
+	RSQNode *root = Index_BuildVectorQueryTree(idx, attribute, vec, nbytes, k);
 
 	// create procedure private data
+	RSIndex *rsIdx = Index_RSIndex(idx);
 	ctx->privateData = _create_private_data(gc, rsIdx, root, et);
 
 	// process yield

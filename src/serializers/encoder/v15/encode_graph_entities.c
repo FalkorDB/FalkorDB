@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v14.h"
+#include "encode_v15.h"
 #include "../../../datatypes/datatypes.h"
 
 // forword decleration
@@ -161,7 +161,7 @@ static void _RdbSaveEdge
 	_RdbSaveEntity(rdb, (GraphEntity *)e);
 }
 
-static void _RdbSaveNode_v14
+static void _RdbSaveNode_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -191,7 +191,7 @@ static void _RdbSaveNode_v14
 	_RdbSaveEntity(rdb, (GraphEntity *)n);
 }
 
-static void _RdbSaveDeletedEntities_v14
+static void _RdbSaveDeletedEntities_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -207,7 +207,7 @@ static void _RdbSaveDeletedEntities_v14
 	}
 }
 
-void RdbSaveDeletedNodes_v14
+void RdbSaveDeletedNodes_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -219,10 +219,10 @@ void RdbSaveDeletedNodes_v14
 	if(deleted_nodes_to_encode == 0) return;
 	// get deleted nodes list
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
-	_RdbSaveDeletedEntities_v14(rdb, gc, deleted_nodes_to_encode, deleted_nodes_list);
+	_RdbSaveDeletedEntities_v15(rdb, gc, deleted_nodes_to_encode, deleted_nodes_list);
 }
 
-void RdbSaveDeletedEdges_v14
+void RdbSaveDeletedEdges_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -235,10 +235,10 @@ void RdbSaveDeletedEdges_v14
 
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
-	_RdbSaveDeletedEntities_v14(rdb, gc, deleted_edges_to_encode, deleted_edges_list);
+	_RdbSaveDeletedEntities_v15(rdb, gc, deleted_edges_to_encode, deleted_edges_list);
 }
 
-void RdbSaveNodes_v14
+void RdbSaveNodes_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -269,7 +269,7 @@ void RdbSaveNodes_v14
 	for(uint64_t i = 0; i < nodes_to_encode; i++) {
 		GraphEntity e;
 		e.attributes = (AttributeSet *)DataBlockIterator_Next(iter, &e.id);
-		_RdbSaveNode_v14(rdb, gc, &e);
+		_RdbSaveNode_v15(rdb, gc, &e);
 	}
 
 	// check if done encodeing nodes
@@ -318,7 +318,7 @@ static void _RdbSaveMultipleEdges
 	*multiple_edges_current_index = i;
 }
 
-void RdbSaveEdges_v14
+void RdbSaveEdges_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

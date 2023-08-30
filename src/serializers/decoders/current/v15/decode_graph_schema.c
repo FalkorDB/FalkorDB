@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v14.h"
+#include "decode_v15.h"
 #include "../../../../schema/schema.h"
 
 static void _RdbDecodeIndexField
@@ -49,7 +49,7 @@ static void _RdbDecodeIndexField
 	*dimension = RedisModule_LoadUnsigned(rdb);
 }
 
-static void _RdbLoadFullTextIndex
+static void _RdbLoadIndex
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -61,7 +61,7 @@ static void _RdbLoadFullTextIndex
 	 * #stopwords - N
 	 * N * stopword
 	 * #properties - M
-	 * M * property: {name, weight, nostem, phonetic} */
+	 * M * property: {options} */
 
 	Index idx        = NULL;
 	char *language   = RedisModule_LoadStringBuffer(rdb, NULL);
@@ -100,7 +100,7 @@ static void _RdbLoadFullTextIndex
 			IndexField_SetOptions(&field, weight, nostem, phonetic, dimension);
 
 			// add field to index
-			Schema_AddIndex(&idx, s, &field, IDX_FULLTEXT);
+			Schema_AddIndex(&idx, s, &field);
 		}
 
 		RedisModule_Free(field_name);
@@ -109,8 +109,10 @@ static void _RdbLoadFullTextIndex
 
 	if(!already_loaded) {
 		ASSERT(idx != NULL);
-		Index_SetLanguage(idx, language);
-		Index_SetStopwords(idx, stopwords);
+
+		if(language  != NULL) Index_SetLanguage(idx, language);
+		if(stopwords != NULL) Index_SetStopwords(idx, &stopwords);
+
 		// disable and create index structure
 		// must be enabled once the graph is fully loaded
 		Index_Disable(idx);
@@ -118,53 +120,6 @@ static void _RdbLoadFullTextIndex
 	
 	// free language
 	RedisModule_Free(language);
-}
-
-static void _RdbLoadExactMatchIndex
-(
-	RedisModuleIO *rdb,
-	GraphContext *gc,
-	Schema *s,
-	bool already_loaded
-) {
-	/* Format:
-	 * #properties - M
-	 * M * property */
-
-	Index idx = NULL;
-	uint fields_count = RedisModule_LoadUnsigned(rdb);
-	for(uint i = 0; i < fields_count; i++) {
-		IndexFieldType type;
-		double         weight;
-		bool           nostem;
-		char*          phonetic;
-		char*          field_name;
-		uint32_t       dimension;
-
-		_RdbDecodeIndexField(rdb, &field_name, &type, &weight, &nostem,
-				&phonetic, &dimension);
-
-		if(!already_loaded) {
-			IndexField field;
-			Attribute_ID field_id = GraphContext_GetAttributeID(gc, field_name);
-
-			// create new index field
-			IndexField_Init(&field, field_name, field_id, type);
-
-			// set field options
-			IndexField_SetOptions(&field, weight, nostem, phonetic, dimension);
-
-			// add field to index
-			Schema_AddIndex(&idx, s, &field, IDX_EXACT_MATCH);
-		}
-		RedisModule_Free(field_name);
-	}
-
-	if(!already_loaded) {
-		// disable index, internally creates the RediSearch index structure
-		// must be enabled once the graph is fully loaded
-		Index_Disable(idx);
-	}
 }
 
 static void _RdbLoadConstaint
@@ -253,7 +208,7 @@ static void _RdbLoadSchema
 	 * id
 	 * name
 	 * #indices
-	 * (index type, indexed property) X M 
+	 * (indexed property) X M 
 	 * #constraints 
 	 * (constraint type, constraint fields) X N
 	 */
@@ -281,19 +236,7 @@ static void _RdbLoadSchema
 
 	uint index_count = RedisModule_LoadUnsigned(rdb);
 	for(uint index = 0; index < index_count; index++) {
-		IndexType index_type = RedisModule_LoadUnsigned(rdb);
-
-		switch(index_type) {
-			case IDX_FULLTEXT:
-				_RdbLoadFullTextIndex(rdb, gc, s, already_loaded);
-				break;
-			case IDX_EXACT_MATCH:
-				_RdbLoadExactMatchIndex(rdb, gc, s, already_loaded);
-				break;
-			default:
-				ASSERT(false);
-				break;
-		}
+		_RdbLoadIndex(rdb, gc, s, already_loaded);
 	}
 
 	//--------------------------------------------------------------------------
@@ -317,7 +260,7 @@ static void _RdbLoadAttributeKeys(RedisModuleIO *rdb, GraphContext *gc) {
 	}
 }
 
-void RdbLoadGraphSchema_v14
+void RdbLoadGraphSchema_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

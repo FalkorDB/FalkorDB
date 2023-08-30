@@ -45,9 +45,12 @@ void Index_IndexEdge
 
 	// add document to active RediSearch index
 	// add src_node and dest_node fields
-	RediSearch_DocumentAddFieldNumber(doc, "_src_id", src_id, RSFLDTYPE_NUMERIC);
-	RediSearch_DocumentAddFieldNumber(doc, "_dest_id", dest_id, RSFLDTYPE_NUMERIC);
-	RediSearch_SpecAddDocument(rsIdx, doc);
+	RediSearch_DocumentAddFieldNumber(doc, "range:_src_id",
+			src_id, RSFLDTYPE_NUMERIC);
+	RediSearch_DocumentAddFieldNumber(doc, "range:_dest_id",
+			dest_id, RSFLDTYPE_NUMERIC);
+	int res = RediSearch_SpecAddDocument(rsIdx, doc);
+	ASSERT(res == REDISMODULE_OK);
 }
 
 void Index_RemoveEdge

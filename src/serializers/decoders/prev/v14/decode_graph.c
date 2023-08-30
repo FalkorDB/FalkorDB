@@ -229,16 +229,10 @@ GraphContext *RdbLoadGraphContext_v14
 
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
-			idx = PENDING_EXACTMATCH_IDX(s);
+			idx = PENDING_IDX(s);
 			if(idx != NULL) {
 				Index_Enable(idx);
-				Schema_ActivateIndex(s, idx);
-			}
-
-			idx = PENDING_FULLTEXT_IDX(s);
-			if(idx != NULL) {
-				Index_Enable(idx);
-				Schema_ActivateIndex(s, idx);
+				Schema_ActivateIndex(s);
 			}
 		}
 
@@ -246,10 +240,10 @@ GraphContext *RdbLoadGraphContext_v14
 		for(uint i = 0; i < rel_count; i++) {
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
-			idx = PENDING_EXACTMATCH_IDX(s);
+			idx = PENDING_IDX(s);
 			if(idx != NULL) {
 				Index_Enable(idx);
-				Schema_ActivateIndex(s, idx);
+				Schema_ActivateIndex(s);
 			}
 		}
 

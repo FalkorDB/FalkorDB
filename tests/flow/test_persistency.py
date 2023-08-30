@@ -131,10 +131,9 @@ class testGraphPersistency():
                 # Verify indices exists
                 indices = graph.query("""CALL db.indexes()""").result_set
                 expected_indices = [
-                        ['exact-match', 'country', ['name', 'population'], 'english', [], 'NODE'],
-                        ['exact-match', 'person', ['name', 'height'], 'english', [], 'NODE'],
-                        ['full-text', 'person', ['text'], 'english', ['a', 'b'], 'NODE'],
-                        ['exact-match', 'visit', ['_src_id', '_dest_id', 'purpose'], 'english', [], 'RELATIONSHIP']
+                        ['country', ['name', 'population'], 'english', [], 'NODE'],
+                        ['person', ['name', 'height', 'text'], 'english', ['a', 'b'], 'NODE'],
+                        ['visit', ['_src_id', '_dest_id', 'purpose'], 'english', [], 'RELATIONSHIP']
                 ]
 
                 self.env.assertEquals(len(indices), len(expected_indices))

@@ -4,15 +4,22 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "ft_to_rsq.h"
 #include "RG.h"
+#include "index.h"
 #include "../util/arr.h"
 #include "../index/index.h"
-#include "filter_tree_utils.h"
 #include "../datatypes/point.h"
 #include "../datatypes/array.h"
 #include "../util/range/string_range.h"
 #include "../util/range/numeric_range.h"
+#include "../filter_tree/filter_tree_utils.h"
+
+extern void Index_TypedFieldName
+(
+	char *type_aware_name,  // [out] type aware name
+	IndexFieldType t,       // field type
+	const char *name        // field name
+);
 
 //------------------------------------------------------------------------------
 // forward declarations
@@ -37,9 +44,13 @@ static RSQNode *_NumericRangeToQueryNode
 	const char *field,         // queried field
 	const NumericRange *range  // range to query
 ) {
+	char type_aware_field_name[512];
+	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+
 	double max = (range->max == INFINITY) ? RSRANGE_INF : range->max;
 	double min = (range->min == -INFINITY) ? RSRANGE_NEG_INF : range->min;
-	return RediSearch_CreateNumericNode(idx, field, max, min, range->include_max, range->include_min);
+	return RediSearch_CreateNumericNode(idx, type_aware_field_name, max, min,
+			range->include_max, range->include_min);
 }
 
 // create a RediSearch query node out of a string range object
@@ -49,7 +60,9 @@ static RSQNode *_StringRangeToQueryNode
 	const char *field,        // queried field
 	const StringRange *range  // range to query
 ) {
-	RSQNode *root = RediSearch_CreateTagNode(idx, field);
+	char type_aware_field_name[512];
+	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	RSQNode *root = RediSearch_CreateTagNode(idx, type_aware_field_name);
 	RSQNode *child = NULL;
 	const char *max = range->max;
 	const char *min = range->min;
@@ -82,8 +95,11 @@ static RSQNode *_FilterTreeToDistanceQueryNode
 
 	extractOriginAndRadius(filter, &origin, &radius, &field);
 
-	return RediSearch_CreateGeoNode(idx, field, Point_lat(origin),
-									Point_lon(origin), SI_GET_NUMERIC(radius), RS_GEO_DISTANCE_M);
+	char type_aware_field_name[512];
+	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	return RediSearch_CreateGeoNode(idx, type_aware_field_name,
+			Point_lat(origin), Point_lon(origin), SI_GET_NUMERIC(radius),
+			RS_GEO_DISTANCE_M);
 }
 
 // creates a RediSearch query node out of given IN filter
@@ -119,13 +135,17 @@ static RSQNode *_FilterTreeToInQueryNode
 	RSQNode *parent = NULL;
 	RSQNode *U = RediSearch_CreateUnionNode(idx);
 
+	char type_aware_field_name[512];
+	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+
 	for(uint i = 0; i < list_len; i ++) {
 		double d;
 		SIValue v = SIArray_Get(list, i);
 		switch(SI_TYPE(v)) {
 		case T_STRING:
-			parent = RediSearch_CreateTagNode(idx, field);
-			node = RediSearch_CreateTokenNode(idx, field, v.stringval);
+			parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
+			node = RediSearch_CreateTokenNode(idx, type_aware_field_name,
+					v.stringval);
 			RediSearch_QueryNodeAddChild(parent, node);
 			node = parent;
 			break;
@@ -133,7 +153,8 @@ static RSQNode *_FilterTreeToInQueryNode
 		case T_INT64:
 		case T_BOOL:
 			d = SI_GET_NUMERIC(v);
-			node = RediSearch_CreateNumericNode(idx, field, d, d, true, true);
+			node = RediSearch_CreateNumericNode(idx, type_aware_field_name, d,
+					d, true, true);
 			break;
 		default:
 			ASSERT(false && "unexpected conditional operation");
@@ -249,9 +270,9 @@ static RSQNode *_ranges_to_query_nodes
 	raxSeek(&it, "^", NULL, 0);
 
 	while(raxNext(&it)) {
-		/* make sure each property is bound to either numeric or string type
-		 * but not to both, e.g. a.v = 1 AND a.v = 'a'
-		 * in which case use an empty RSQueryNode. */
+		// make sure each property is bound to either numeric or string type
+		// but not to both, e.g. a.v = 1 AND a.v = 'a'
+		// in which case use an empty RSQueryNode
 		char *field = (char *)it.key;
 		if(raxFind(numeric_ranges, (unsigned char *)field, (int)it.key_len) != raxNotFound) {
 			valid = false;
@@ -438,28 +459,36 @@ static bool _FilterTreePredicateToQueryNode
 		   op == OP_GE ||
 		   op == OP_EQUAL);
 
+	char type_aware_field_name[512];
+	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+
 	if(t == T_STRING) {
 		switch(tree->pred.op) {
 			case OP_LT:    // <
-				node = RediSearch_CreateLexRangeNode(idx, field, RSLEXRANGE_NEG_INF, v.stringval, 0, 0);
+				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
+						RSLEXRANGE_NEG_INF, v.stringval, 0, 0);
 				break;
 			case OP_LE:    // <=
-				node = RediSearch_CreateLexRangeNode(idx, field, RSLEXRANGE_NEG_INF, v.stringval, 0, 1);
+				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
+						RSLEXRANGE_NEG_INF, v.stringval, 0, 1);
 				break;
 			case OP_GT:    // >
-				node = RediSearch_CreateLexRangeNode(idx, field, v.stringval, RSLECRANGE_INF, 0, 0);
+				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
+						v.stringval, RSLECRANGE_INF, 0, 0);
 				break;
 			case OP_GE:    // >=
-				node = RediSearch_CreateLexRangeNode(idx, field, v.stringval, RSLECRANGE_INF, 1, 0);
+				node = RediSearch_CreateLexRangeNode(idx, type_aware_field_name,
+						v.stringval, RSLECRANGE_INF, 1, 0);
 				break;
 			case OP_EQUAL:  // ==
-				node = RediSearch_CreateTokenNode(idx, field, v.stringval);
+				node = RediSearch_CreateTokenNode(idx, type_aware_field_name,
+						v.stringval);
 				break;
 			default:
 				ASSERT(false && "unexpected operation");
 		}
 
-		RSQNode *parent = RediSearch_CreateTagNode(idx, field);
+		RSQNode *parent = RediSearch_CreateTagNode(idx, type_aware_field_name);
 		RediSearch_QueryNodeAddChild(parent, node);
 		node = parent;
 	} else {
@@ -467,19 +496,24 @@ static bool _FilterTreePredicateToQueryNode
 		double d = SI_GET_NUMERIC(v);
 		switch(tree->pred.op) {
 			case OP_LT:    // <
-				node = RediSearch_CreateNumericNode(idx, field, d, RSRANGE_NEG_INF, false, false);
+				node = RediSearch_CreateNumericNode(idx, type_aware_field_name,
+						d, RSRANGE_NEG_INF, false, false);
 				break;
 			case OP_LE:    // <=
-				node = RediSearch_CreateNumericNode(idx, field, d, RSRANGE_NEG_INF, true, false);
+				node = RediSearch_CreateNumericNode(idx, type_aware_field_name,
+						d, RSRANGE_NEG_INF, true, false);
 				break;
 			case OP_GT:    // >
-				node = RediSearch_CreateNumericNode(idx, field, RSRANGE_INF, d, false, false);
+				node = RediSearch_CreateNumericNode(idx, type_aware_field_name,
+						RSRANGE_INF, d, false, false);
 				break;
 			case OP_GE:    // >=
-				node = RediSearch_CreateNumericNode(idx, field, RSRANGE_INF, d, false, true);
+				node = RediSearch_CreateNumericNode(idx, type_aware_field_name,
+						RSRANGE_INF, d, false, true);
 				break;
 			case OP_EQUAL:  // ==
-				node = RediSearch_CreateNumericNode(idx, field, d, d, true, true);
+				node = RediSearch_CreateNumericNode(idx, type_aware_field_name,
+						d, d, true, true);
 				// TODO: remove when RediSearch INT64 indexing bug fixed
 				if(t == T_INT64 && v.longval & 0x7FF0000000000000) {
 					res = false;
@@ -535,19 +569,20 @@ static bool _FilterTreeToQueryNode
 	}
 }
 
-// creates a RediSearch query node out of given filter tree
-RSQNode *FilterTreeToQueryNode
+// construct a query tree from a filter tree
+RSQNode *Index_BuildQueryTree
 (
-	FT_FilterNode **none_converted_filters, // [output] none convertable filters
-	const FT_FilterNode *tree,              // filter tree to convert
-	RSIndex *idx                            // index to query
+	FT_FilterNode **none_converted_filters,  // [out] none converted filters
+	const Index idx,                         // index to query
+	const FT_FilterNode *tree                // filter tree to convert
 ) {
-	ASSERT(idx != NULL);
+	ASSERT(idx  != NULL);
 	ASSERT(tree != NULL);
 	ASSERT(none_converted_filters != NULL);
 
-	RSQNode              **nodes = array_new(RSQNode*, 1);     // intermidate nodes
-	const FT_FilterNode  **trees = FilterTree_SubTrees(tree);  // individual subtrees
+	RSIndex             *rsIdx  = Index_RSIndex(idx);
+	RSQNode             **nodes = array_new(RSQNode*, 1);     // intermidate nodes
+	const FT_FilterNode **trees = FilterTree_SubTrees(tree);  // individual subtrees
 
 	//--------------------------------------------------------------------------
 	// convert filters to numeric and string ranges
@@ -557,7 +592,7 @@ RSQNode *FilterTreeToQueryNode
 	rax *numeric_ranges = raxNew();
 	_compose_ranges(trees, string_ranges, numeric_ranges);
 	if(raxSize(string_ranges) > 0 || raxSize(numeric_ranges) > 0) {
-		RSQNode *ranges = _ranges_to_query_nodes(idx, string_ranges, numeric_ranges);
+		RSQNode *ranges = _ranges_to_query_nodes(rsIdx, string_ranges, numeric_ranges);
 		// TODO: check for empty node RediSearch_CreateEmptyNode
 		array_append(nodes, ranges);
 	}
@@ -569,7 +604,7 @@ RSQNode *FilterTreeToQueryNode
 	uint tree_count = array_len(trees);
 	for(uint i = 0; i < tree_count; i++) {
 		RSQNode *node = NULL;
-		bool resolved_filter = _FilterTreeToQueryNode(&node, trees[i], idx);
+		bool resolved_filter = _FilterTreeToQueryNode(&node, trees[i], rsIdx);
 		if(node != NULL) array_append(nodes, node);
 		if(resolved_filter) {
 			// remove converted filter from filters array
@@ -589,11 +624,11 @@ RSQNode *FilterTreeToQueryNode
 	// none indexable type e.g. array
 	*none_converted_filters = FilterTree_Combine(trees, tree_count);
 
-	RSQNode  *root       =  NULL;
-	uint     node_count  =  array_len(nodes);
+	RSQNode *root      = NULL;
+	uint    node_count = array_len(nodes);
 
 	// compose root query node by intersecting individual query nodes
-	root = _concat_query_nodes(idx, nodes, node_count);
+	root = _concat_query_nodes(rsIdx, nodes, node_count);
 
 	//--------------------------------------------------------------------------
 	// clean up
@@ -603,6 +638,98 @@ RSQNode *FilterTreeToQueryNode
 	array_free(trees);
 	raxFreeWithCallback(string_ranges, (void(*)(void *))StringRange_Free);
 	raxFreeWithCallback(numeric_ranges, (void(*)(void *))NumericRange_Free);
+
+	return root;
+}
+
+// construct a vector query tree
+RSQNode *Index_BuildVectorQueryTree
+(
+	const Index idx,    // index to query
+	const char *field,  // field to query
+	const float *vec,   // query vector
+	size_t nbytes,      // vector size in bytes
+	int k			    // number of results to return
+) {
+	ASSERT(k      > 0);
+	ASSERT(nbytes > 0);
+	ASSERT(vec    != NULL);
+	ASSERT(idx    != NULL);
+	ASSERT(field  != NULL);
+
+	// create a redisearch query node
+	RSIndex *rsIdx = Index_RSIndex(idx);
+
+	char type_aware_field_name[512];
+	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_VECTOR, field);
+
+	RSQNode *root = RediSearch_CreateVecSimNode(rsIdx, type_aware_field_name,
+			(char*)vec, nbytes, k);
+	
+	return root;
+}
+
+// construct a unique constraint query tree
+RSQNode *Index_BuildUniqueConstraintQuery
+(
+	const Index idx,       // index to query
+	const GraphEntity *e,  // entity being validated
+	Attribute_ID *attrs,   // constraint attributes
+	uint8_t n              // number of constraint attributes
+) {
+	RSQNode *node;
+	RSQNode *nodes[n];
+	RSIndex *rsIdx = Index_RSIndex(idx);
+	AttributeSet attr_set = GraphEntity_GetAttributes(e);
+
+	//--------------------------------------------------------------------------
+	// construct query nodes
+	//--------------------------------------------------------------------------
+
+	for(uint8_t i = 0; i < n; i++) {
+		Attribute_ID attr_id = attrs[i];
+		const IndexField *f = Index_GetField(NULL, idx, attr_id);
+
+		// field must exist and be of type INDEX_FLD_RANGE
+		ASSERT(f != NULL);
+		ASSERT(IndexField_GetType(f) & INDEX_FLD_RANGE);
+
+		// use internal range field name
+		const char *field = f->range_name;
+
+		// get current attribute from entity
+		SIValue *v = AttributeSet_Get(attr_set, attr_id);
+		ASSERT(v != NULL);
+
+		// create RediSearch query node according to entity attr type
+		SIType t = SI_TYPE(*v);
+		ASSERT(t == T_STRING || t & (SI_NUMERIC | T_BOOL));
+
+		if(t == T_STRING) {
+			node  = RediSearch_CreateTagNode(rsIdx, field);
+			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
+			RediSearch_QueryNodeAddChild(node, child);
+		} else {
+			double d = SI_GET_NUMERIC((*v));
+			node = RediSearch_CreateNumericNode(rsIdx, field, d, d, true, true);
+		}
+
+		ASSERT(node != NULL);
+		nodes[i] = node;
+	}
+
+	//--------------------------------------------------------------------------
+	// cancat filters
+	//--------------------------------------------------------------------------
+
+	RSQNode *root = node;
+	if(n > 1) {
+		// intersection query node
+		root = RediSearch_CreateIntersectNode(rsIdx, false);
+		for(uint8_t i = 0; i < n; i++) {
+			RediSearch_QueryNodeAddChild(root, nodes[i]);
+		}
+	}
 
 	return root;
 }

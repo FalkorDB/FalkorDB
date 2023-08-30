@@ -38,9 +38,11 @@ static uint64_t _count_indices_from_schemas(const Schema** schemas) {
 
 	const uint32_t length = array_len(schemas);
 	for (uint32_t i = 0; i < length; ++i) {
-		const Schema *schema = schemas[i];
-		ASSERT(schema);
-		count += Schema_IndexCount(schema);
+		const Schema *s = schemas[i];
+		ASSERT(s != NULL);
+		if(Schema_HasIndices(s)) {
+			count++;
+		}
 	}
 
 	return count;
@@ -576,12 +578,12 @@ uint64_t GraphContext_EdgeIndexCount
 // attempt to retrieve an index on the given label and attribute IDs
 Index GraphContext_GetIndexByID
 (
-	const GraphContext *gc,        // graph context
-	int lbl_id,                    // label / rel-type ID
-	const Attribute_ID *attrs,     // attributes
-	uint n,                        // attributes count
-	IndexType idx_type,            // index type
-	GraphEntityType entity_type    // schema type NODE / EDGE
+	const GraphContext *gc,      // graph context
+	int lbl_id,                  // label / rel-type ID
+	const Attribute_ID *attrs,   // attributes
+	uint n,                      // attributes count
+	IndexFieldType t,            // all index attributes must be of this type
+	GraphEntityType entity_type  // schema type NODE / EDGE
 ) {
 	// validations
 	ASSERT(gc != NULL);
@@ -594,7 +596,7 @@ Index GraphContext_GetIndexByID
 		return NULL;
 	}
 
-	return Schema_GetIndex(s, attrs, n, idx_type, false);
+	return Schema_GetIndex(s, attrs, n, t, false);
 }
 
 // attempt to retrieve an index on the given label and attribute
@@ -604,7 +606,7 @@ Index GraphContext_GetIndex
 	const char *label,
 	Attribute_ID *attrs,
 	uint n,
-	IndexType type,
+	IndexFieldType type,
 	SchemaType schema_type
 ) {
 	ASSERT(gc    != NULL);
@@ -618,7 +620,7 @@ Index GraphContext_GetIndex
 }
 
 // create an exact match index for the given label and attribute
-bool GraphContext_AddExactMatchIndex
+bool GraphContext_AddRangeIndex
 (
 	Index *idx,              // [input/output] index created
 	GraphContext *gc,        // graph context
@@ -649,9 +651,9 @@ bool GraphContext_AddExactMatchIndex
 		const char *attr = attrs[i];
 		Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
 
-		IndexField_NewExactMatchField(&field, attr, attr_id);
+		IndexField_NewRangeField(&field, attr, attr_id);
 
-		if(Schema_AddIndex(idx, s, &field, IDX_EXACT_MATCH) == INDEX_OK) {
+		if(Schema_AddIndex(idx, s, &field) == INDEX_OK) {
 			index_changed = true;
 			// update result-set
 			ResultSet_IndexCreated(result_set, INDEX_OK);
@@ -714,7 +716,7 @@ bool GraphContext_AddFullTextIndex
 		IndexField_SetStemming(&field, nostem);
 		IndexField_SetPhonetic(&field, phonetic);
 
-		if(Schema_AddIndex(idx, s, &field, IDX_FULLTEXT) == INDEX_OK) {
+		if(Schema_AddIndex(idx, s, &field) == INDEX_OK) {
 			index_changed = true;
 			// update result-set
 			ResultSet_IndexCreated(result_set, INDEX_OK);
@@ -722,7 +724,7 @@ bool GraphContext_AddFullTextIndex
 	}
 
 	if(stopwords != NULL) {
-		Index_SetStopwords(*idx, stopwords);
+		Index_SetStopwords(*idx, &stopwords);
 	}
 
 	if(language != NULL) {
@@ -769,7 +771,7 @@ bool GraphContext_AddVectorIndex
 	Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
 	IndexField_NewVectorField(&field, attr, attr_id, dimension);
 
-	if(Schema_AddIndex(idx, s, &field, IDX_EXACT_MATCH) == INDEX_OK) {
+	if(Schema_AddIndex(idx, s, &field) == INDEX_OK) {
 		index_changed = true;
 		Index_Disable(*idx);
 		// update result-set
@@ -785,7 +787,7 @@ int GraphContext_DeleteIndex
 	SchemaType schema_type,
 	const char *label,
 	const char *field,
-	IndexType type
+	IndexFieldType t
 ) {
 	ASSERT(gc    != NULL);
 	ASSERT(label != NULL);
@@ -795,7 +797,7 @@ int GraphContext_DeleteIndex
 	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
 
 	if(s != NULL) {
-		res = Schema_RemoveIndex(s, field, type);
+		res = Schema_RemoveIndex(s, field, t);
 		if(res == INDEX_OK) {
 			// update resultset statistics
 			ResultSet *result_set = QueryCtx_GetResultSet();

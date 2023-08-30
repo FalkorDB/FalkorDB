@@ -4,11 +4,12 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v12.h"
+#include "decode_v14.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(RedisModuleIO *rdb);
 static SIValue _RdbLoadSIArray(RedisModuleIO *rdb);
+static SIValue _RdbLoadVector(RedisModuleIO *rdb, SIType t);
 
 static SIValue _RdbLoadSIValue
 (
@@ -33,6 +34,9 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
 		return _RdbLoadPoint(rdb);
+	case T_VECTOR32F:
+	case T_VECTOR64F:
+		return _RdbLoadVector(rdb, t);
 	case T_NULL:
 	default: // currently impossible
 		return SI_NullVal();
@@ -70,6 +74,44 @@ static SIValue _RdbLoadSIArray
 	return list;
 }
 
+static SIValue _RdbLoadVector
+(
+	RedisModuleIO *rdb,
+	SIType t
+) {
+	ASSERT(t & T_VECTOR);
+
+	// loads vector
+	// unsigned : vector length
+	// vector[0]
+	// .
+	// .
+	// .
+	// vector[vector length -1]
+
+	SIValue vector;
+
+	uint32_t dim = RedisModule_LoadUnsigned(rdb);
+
+	if(t == T_VECTOR32F) {
+		vector = SI_Vector32f(dim);
+		float *values = SIVector_Elements(vector);
+
+		for(uint32_t i = 0; i < dim; i++) {
+			values[i] = RedisModule_LoadFloat(rdb);
+		}
+	} else { // T_VECTOR64F
+		vector = SI_Vector64f(dim);
+		double *values = SIVector_Elements(vector);
+
+		for(uint32_t i = 0; i < dim; i++) {
+			values[i] = RedisModule_LoadDouble(rdb);
+		}
+	}
+
+	return vector;
+}
+
 static void _RdbLoadEntity
 (
 	RedisModuleIO *rdb,
@@ -92,7 +134,7 @@ static void _RdbLoadEntity
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
 }
 
-void RdbLoadNodes_v12
+void RdbLoadNodes_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -126,12 +168,13 @@ void RdbLoadNodes_v12
 		for (int i = 0; i < nodeLabelCount; i++) {
 			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 			ASSERT(s != NULL);
+
 			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
 		}
 	}
 }
 
-void RdbLoadDeletedNodes_v12
+void RdbLoadDeletedNodes_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -145,7 +188,7 @@ void RdbLoadDeletedNodes_v12
 	}
 }
 
-void RdbLoadEdges_v12
+void RdbLoadEdges_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -163,10 +206,11 @@ void RdbLoadEdges_v12
 	// construct connections
 	for(uint64_t i = 0; i < edge_count; i++) {
 		Edge e;
-		EdgeID    edgeId    =  RedisModule_LoadUnsigned(rdb);
-		NodeID    srcId     =  RedisModule_LoadUnsigned(rdb);
-		NodeID    destId    =  RedisModule_LoadUnsigned(rdb);
-		uint64_t  relation  =  RedisModule_LoadUnsigned(rdb);
+		EdgeID    edgeId   = RedisModule_LoadUnsigned(rdb);
+		NodeID    srcId    = RedisModule_LoadUnsigned(rdb);
+		NodeID    destId   = RedisModule_LoadUnsigned(rdb);
+		uint64_t  relation = RedisModule_LoadUnsigned(rdb);
+
 		Serializer_Graph_SetEdge(gc->g,
 				gc->decoding_context->multi_edge[relation], edgeId, srcId,
 				destId, relation, &e);
@@ -175,11 +219,12 @@ void RdbLoadEdges_v12
 		// index edge
 		Schema *s = GraphContext_GetSchemaByID(gc, relation, SCHEMA_EDGE);
 		ASSERT(s != NULL);
+
 		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
 	}
 }
 
-void RdbLoadDeletedEdges_v12
+void RdbLoadDeletedEdges_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

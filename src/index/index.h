@@ -7,30 +7,33 @@
 #pragma once
 
 #include "index_field.h"
+#include "redisearch_api.h"
+#include "../graph/graph.h"
 #include "../graph/entities/node.h"
 #include "../graph/entities/edge.h"
+#include "../filter_tree/filter_tree.h"
 #include "../graph/entities/graph_entity.h"
-#include "../graph/graph.h"
-#include "redisearch_api.h"
 
-#define INDEX_OK 1
-#define INDEX_FAIL 0
+#define INDEX_OK   1  // index operation succeeded
+#define INDEX_FAIL 0  // index operation failed
 #define INDEX_SEPARATOR '\1'  // can't use '\0', RediSearch will terminate on \0
 
 // forward declaration
 typedef struct _Index _Index;
 typedef _Index *Index;
 
+// deprecated
 typedef enum {
-	IDX_ANY          =  0,
-	IDX_EXACT_MATCH  =  1,
-	IDX_FULLTEXT     =  2,
+	IDX_ANY         = 0,
+	IDX_EXACT_MATCH = 1,
+	IDX_FULLTEXT    = 2,
 } IndexType;
 
+// edge document key
 typedef struct {
-	EntityID src_id;
-	EntityID dest_id;
-	EntityID edge_id;
+	EntityID src_id;   // edge source node ID
+	EntityID dest_id;  // edge destination node ID
+	EntityID edge_id;  // edge ID
 } EdgeIndexKey;
 
 // create a new index
@@ -38,7 +41,6 @@ Index Index_New
 (
 	const char *label,           // indexed label
 	int label_id,                // indexed label id
-	IndexType type,              // exact match or full text
 	GraphEntityType entity_type  // entity type been indexed
 );
 
@@ -104,8 +106,9 @@ void Index_AddField
 // removes field from index
 void Index_RemoveField
 (
-	Index idx,            // index modified
-	Attribute_ID attr_id  // field to remove
+	Index idx,             // index modified
+	Attribute_ID attr_id,  // field to remove
+	IndexFieldType t       // field type
 );
 
 // index node
@@ -136,18 +139,43 @@ void Index_RemoveEdge
 	const Edge *e  // edge to remove from index
 );
 
+//------------------------------------------------------------------------------
+// index query API
+//------------------------------------------------------------------------------
+
+// construct a query tree from a filter tree
+RSQNode *Index_BuildQueryTree
+(
+	FT_FilterNode **none_converted_filters,  // [out] none converted filters
+	const Index idx,                         // index to query
+	const FT_FilterNode *tree                // filter tree to convert
+);
+
+// construct a vector query tree
+RSQNode *Index_BuildVectorQueryTree
+(
+	const Index idx,    // index to query
+	const char *field,  // field to query
+	const float *vec,   // query vector
+	size_t nbytes,      // vector size in bytes
+	int k			    // number of results to return
+);
+
+// construct a unique constraint query tree
+RSQNode *Index_BuildUniqueConstraintQuery
+(
+	const Index idx,       // index to query
+	const GraphEntity *e,  // entity being validated
+	Attribute_ID *attrs,   // constraint attributes
+	uint8_t n              // number of constraint attributes
+);
+
 // query an index
 RSResultsIterator *Index_Query
 (
 	const Index idx,    // index to query
 	const char *query,  // query to execute
 	char **err          // [optional] report back error
-);
-
-// returns index type
-IndexType Index_Type
-(
-	const Index idx
 );
 
 // returns index graph entity type
@@ -168,6 +196,15 @@ const IndexField *Index_GetFields
 	const Index idx  // index to query
 );
 
+// retrieve field by id
+// returns NULL if field does not exist
+IndexField *Index_GetField
+(
+	int *pos,         // [optional out] field index
+	const Index idx,  // index to get field from
+	Attribute_ID id   // field attribute id
+);
+
 // returns indexed field type
 // if field is not indexed, INDEX_FLD_UNKNOWN is returned
 IndexFieldType Index_GetFieldType
@@ -176,11 +213,13 @@ IndexFieldType Index_GetFieldType
 	Attribute_ID attr_id  // field to retrieve type of
 );
 
-// checks if given attribute is indexed
-bool Index_ContainsAttribute
+// checks if index contains field
+// returns true if field is indexed, false otherwise
+bool Index_ContainsField
 (
-	const Index idx,           // index to query
-	Attribute_ID attribute_id  // attribute id to search
+	const Index idx,     // index to query
+	Attribute_ID id,     // field to look for
+	IndexFieldType type  // field type to look for
 );
 
 // returns indexed label
@@ -216,13 +255,13 @@ void Index_SetLanguage
 );
 
 // set indexed stopwords
-void Index_SetStopwords
+bool Index_SetStopwords
 (
-	Index idx,        // index modified
-	char **stopwords  // stopwords
+	Index idx,         // index modified
+	char ***stopwords  // stopwords
 );
 
-// free fulltext index
+// free index
 void Index_Free
 (
 	Index idx  // index being freed

@@ -42,15 +42,16 @@ static ProcedureResult _validateIndexConfigMap
 		return PROCEDURE_ERR;
 	}
 
-	if(multi_config) {
-		GraphContext *gc = QueryCtx_GetGraphCtx();
-		Index idx = GraphContext_GetIndex(gc, label.stringval, NULL, 0,
-				IDX_FULLTEXT, SCHEMA_NODE);
-		if(idx != NULL) {
-			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-			return PROCEDURE_ERR;
-		}
-	}
+	// TODO: error later on when trying to overwrite stopwords or language
+//	if(multi_config) {
+//		GraphContext *gc = QueryCtx_GetGraphCtx();
+//		Index idx = GraphContext_GetIndex(gc, label.stringval, NULL, 0,
+//				IDX_FULLTEXT, SCHEMA_NODE);
+//		if(idx != NULL) {
+//			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
+//			return PROCEDURE_ERR;
+//		}
+//	}
 
 	//--------------------------------------------------------------------------
 	// validate stopwords
@@ -106,11 +107,11 @@ static ProcedureResult _validateFieldConfigMap
 	SIValue nostem;
 	SIValue phonetic;
 
-	bool  multi_config     = Map_KeyCount(config) > 1;
-	bool  field_exists     =  MAP_GET(config,  "field",     field);
-	bool  weight_exists    =  MAP_GET(config,  "weight",    weight);
-	bool  nostem_exists    =  MAP_GET(config,  "nostem",    nostem);
-	bool  phonetic_exists  =  MAP_GET(config,  "phonetic",  phonetic);
+	bool  multi_config    = Map_KeyCount(config) > 1;
+	bool  field_exists    = MAP_GET(config, "field",    field);
+	bool  weight_exists   = MAP_GET(config, "weight",   weight);
+	bool  nostem_exists   = MAP_GET(config, "nostem",   nostem);
+	bool  phonetic_exists = MAP_GET(config, "phonetic", phonetic);
 
 	// field name is mandatory
 	if(!field_exists) {
@@ -150,9 +151,9 @@ static ProcedureResult _validateFieldConfigMap
 		// isn't supported
 		GraphContext *gc = QueryCtx_GetGraphCtx();
 		Attribute_ID fieldID = GraphContext_GetAttributeID(gc, field.stringval);
-		Index idx = GraphContext_GetIndex(gc, label, &fieldID, 1, IDX_FULLTEXT,
-				SCHEMA_NODE);
-		if(idx != NULL) {
+
+		if(GraphContext_GetIndex(gc, label, &fieldID, 1, INDEX_FLD_FULLTEXT,
+					SCHEMA_NODE)) {
 			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
 			return PROCEDURE_ERR;
 		}

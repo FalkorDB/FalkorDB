@@ -29,7 +29,7 @@ static void _index_node
 		Schema *s = GraphContext_GetSchemaByID(ctx->gc, labels[j], SCHEMA_NODE);
 		ASSERT(s);
 
-		if(Schema_HasIndices(s)) Schema_AddNodeToIndices(s, n);
+		Schema_AddNodeToIndex(s, n);
 	}
 }
 
@@ -44,9 +44,7 @@ static void _index_node_with_labels
 		Schema *s = GraphContext_GetSchemaByID(ctx->gc, labels[i], SCHEMA_NODE);
 		ASSERT(s != NULL);
 
-		if(Schema_HasIndices(s)) {
-			Schema_AddNodeToIndices(s, n);
-		}
+		Schema_AddNodeToIndex(s, n);
 	}
 }
 
@@ -55,10 +53,11 @@ static void _index_edge
 	QueryCtx *ctx,
 	Edge *e
 ) {
-	Schema *s = GraphContext_GetSchemaByID(ctx->gc, Edge_GetRelationID(e), SCHEMA_EDGE);
+	Schema *s = GraphContext_GetSchemaByID(ctx->gc, Edge_GetRelationID(e),
+			SCHEMA_EDGE);
 	ASSERT(s);
 
-	if(Schema_HasIndices(s)) Schema_AddEdgeToIndices(s, e);
+	Schema_AddEdgeToIndex(s, e);
 }
 
 static void _index_delete_node_with_labels
@@ -72,8 +71,8 @@ static void _index_delete_node_with_labels
 		Schema *s = GraphContext_GetSchemaByID(ctx->gc, labels[i], SCHEMA_NODE);
 		ASSERT(s != NULL);
 
-		// update any indices this entity is represented in
-		Schema_RemoveNodeFromIndices(s, n);
+		// update index
+		Schema_RemoveNodeFromIndex(s, n);
 	}
 }
 
@@ -88,8 +87,8 @@ static void _index_delete_node
 		Schema *s = GraphContext_GetSchemaByID(ctx->gc, labels[j], SCHEMA_NODE);
 		ASSERT(s);
 
-		// update any indices this entity is represented in
-		Schema_RemoveNodeFromIndices(s, n);
+		// update index
+		Schema_RemoveNodeFromIndex(s, n);
 	}
 }
 
@@ -101,8 +100,8 @@ static void _index_delete_edge
 	Schema *s = GraphContext_GetSchemaByID(ctx->gc, Edge_GetRelationID(e), SCHEMA_EDGE);
 	ASSERT(s);
 
-	// update any indices this entity is represented in
-	Schema_RemoveEdgeFromIndices(s, e);
+	// update index
+	Schema_RemoveEdgeFromIndex(s, e);
 }
 
 static void _UndoLog_Restore_Entity_Property
@@ -140,12 +139,20 @@ static void _UndoLog_Rollback_Update_Entity
 		if(update_op->entity_type == GETYPE_NODE) {
 			// free current entity attribute-set
 			AttributeSet_Free(update_op->n.attributes);
+
 			// restore entity original attribute-set
 			*update_op->n.attributes = update_op->set;
+
+			// update indices
 			_index_node(ctx, &update_op->n);
 		} else {
+			// free current entity attribute-set
 			AttributeSet_Free(update_op->e.attributes);
+
+			// restore entity original attribute-set
 			*update_op->e.attributes = update_op->set;
+
+			// update indices
 			_index_edge(ctx, &update_op->e);
 		}
 	}

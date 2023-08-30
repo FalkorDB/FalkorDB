@@ -185,18 +185,6 @@ static bool _EmitIndex
 	}
 
 	//--------------------------------------------------------------------------
-	// index type
-	//--------------------------------------------------------------------------
-
-	if(ctx->yield_type != NULL) {
-		if(Index_Type(idx) == IDX_EXACT_MATCH) {
-			*ctx->yield_type = SI_ConstStringVal("exact-match");
-		} else {
-			*ctx->yield_type = SI_ConstStringVal("full-text");
-		}
-	}
-
-	//--------------------------------------------------------------------------
 	// index label
 	//--------------------------------------------------------------------------
 
@@ -270,7 +258,6 @@ static bool _EmitIndex
 			SIValue field = SI_Map(6);
 			Map_Add(&field, SI_ConstStringVal("path"),             SI_ConstStringVal(f.path));
 			Map_Add(&field, SI_ConstStringVal("name"),             SI_ConstStringVal(f.name));
-			Map_Add(&field, SI_ConstStringVal("types"),            SI_LongVal(f.types));
 			Map_Add(&field, SI_ConstStringVal("options"),          SI_LongVal(f.options));
 			Map_Add(&field, SI_ConstStringVal("textWeight"),       SI_DoubleVal(f.textWeight));
 			Map_Add(&field, SI_ConstStringVal("tagCaseSensitive"), SI_BoolVal(f.tagCaseSensitive));
@@ -346,13 +333,7 @@ ProcedureResult Proc_IndexesFree
 ProcedureCtx *Proc_IndexesCtx(void) {
 	void *privateData = NULL;
 	ProcedureOutput output;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 8);
-
-	// index type (exact-match / fulltext)
-	output = (ProcedureOutput) {
-		.name = "type", .type = T_STRING
-	};
-	array_append(outputs, output);
+	ProcedureOutput *outputs = array_new(ProcedureOutput, 7);
 
 	// indexed label
 	output = (ProcedureOutput) {

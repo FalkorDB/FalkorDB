@@ -33,7 +33,7 @@ static Schema *_RdbLoadSchema
 				NULL);
 
 		if(type == IDX_EXACT_MATCH) {
-			IndexField_NewExactMatchField(&field, field_name, field_id);
+			IndexField_NewRangeField(&field, field_name, field_id);
 		} else if(type == IDX_FULLTEXT) {
 			IndexField_NewFullTextField(&field, field_name, field_id);
 		} else {
@@ -42,16 +42,12 @@ static Schema *_RdbLoadSchema
 			assert(false);
 		}
 
-		Schema_AddIndex(&idx, s, &field, type);
+		Schema_AddIndex(&idx, s, &field);
 		RedisModule_Free(field_name);
 	}
 
-	if(PENDING_EXACTMATCH_IDX(s) != NULL) {
-		Index_Disable(PENDING_EXACTMATCH_IDX(s));
-	}
-
-	if(PENDING_FULLTEXT_IDX(s) != NULL) {
-		Index_Disable(PENDING_FULLTEXT_IDX(s));
+	if(PENDING_IDX(s) != NULL) {
+		Index_Disable(PENDING_IDX(s));
 	}
 
 	return s;

@@ -1,8 +1,8 @@
 import time
 
 def _wait_on_index(graph, label, t):
-    q = f"""CALL db.indexes() YIELD type, label, status
-    WHERE type = '{t}' AND label = '{label}' AND status <> 'OPERATIONAL'
+    q = f"""CALL db.indexes() YIELD label, status
+    WHERE label = '{label}' AND status <> 'OPERATIONAL'
     RETURN count(1)"""
 
     while True:
@@ -18,18 +18,14 @@ def _create_index(graph, q, label=None, t=None, sync=False):
 
     return res
 
-def list_indicies(graph, label=None, t=None):
+def list_indicies(graph, label=None):
     q = "CALL db.indexes()"
+    q += " YIELD label, properties, language, stopwords, entitytype, info, status"
     
-    if label is not None or t is not None:
-        q += " YIELD type, label, properties, language, stopwords, entitytype, info, status"
-        if label is None and t is not None:
-            q += f" WHERE label = '{label}' AND type = '{t}'"
-        elif label is not None:
-            q += f" WHERE label = '{label}'"
-        elif t is not None:
-            q += f" WHERE type = '{t}'"
-        q += " RETURN type, label, properties, language, stopwords, entitytype, info, status"
+    if label is not None:
+        q += f" WHERE label = '{label}'"
+
+    q += " RETURN label, properties, language, stopwords, entitytype, info, status"
 
     return graph.query(q, read_only=True)
 
@@ -72,9 +68,9 @@ def drop_fulltext_index(graph, label):
     return graph.query(q)
 
 # validate index is being populated
-def index_under_construction(graph, label, t):
-    params = {'lbl': label, 'typ': t}
-    q = "CALL db.indexes() YIELD type, label, status WHERE label = $lbl AND type = $typ RETURN status"
+def index_under_construction(graph, label):
+    params = {'lbl': label}
+    q = "CALL db.indexes() YIELD label, status WHERE label = $lbl RETURN status"
     res = graph.query(q, params, read_only=True)
     return "UNDER CONSTRUCTION" in res.result_set[0][0]
 

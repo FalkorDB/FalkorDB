@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v14.h"
+#include "encode_v15.h"
 #include "../../../util/arr.h"
 
 static void _RdbSaveAttributeKeys
@@ -66,17 +66,20 @@ static void _RdbSaveIndexField
 	RedisModule_SaveUnsigned(rdb, f->options.dimension);
 }
 
-static inline void _RdbSaveFullTextIndexData
+static inline void _RdbSaveIndexData
 (
 	RedisModuleIO *rdb,
+	SchemaType type,
 	Index idx
 ) {
+	if(idx == NULL) return;
+
 	/* Format:
 	 * language
 	 * #stopwords - N
 	 * N * stopword
 	 * #properties - M
-	 * M * property {name, weight, nostem, phonetic} */
+	 * M * property {options} */
 
 	// encode language
 	const char *language = Index_GetLanguage(idx);
@@ -101,52 +104,6 @@ static inline void _RdbSaveFullTextIndexData
 	const IndexField *fields = Index_GetFields(idx);
 	for(uint i = 0; i < fields_count; i++) {
 		_RdbSaveIndexField(rdb, fields + i);
-	}
-}
-
-static inline void _RdbSaveExactMatchIndex
-(
-	RedisModuleIO *rdb,
-	SchemaType type,
-	Index idx
-) {
-	/* Format:
-	 * #properties - M
-	 * M * property */
-
-	// encode field count
-	uint fields_count = Index_FieldsCount(idx);
-	RedisModule_SaveUnsigned(rdb, fields_count);
-
-	// encode fields
-	const IndexField *fields = Index_GetFields(idx);
-	for(uint i = 0; i < fields_count; i++) {
-		_RdbSaveIndexField(rdb, fields + i);
-	}
-}
-
-static inline void _RdbSaveIndexData
-(
-	RedisModuleIO *rdb,
-	SchemaType type,
-	Index idx
-) {
-	/* Format:
-	 * type
-	 * index data */
-
-	if(!idx) return;
-
-	// index type
-	IndexType t = Index_Type(idx);
-	ASSERT(t == IDX_EXACT_MATCH || t == IDX_FULLTEXT);
-
-	RedisModule_SaveUnsigned(rdb, t);
-
-	if(t == IDX_FULLTEXT) {
-		_RdbSaveFullTextIndexData(rdb, idx);
-	} else {
-		_RdbSaveExactMatchIndex(rdb, type, idx);
 	}
 }
 
@@ -223,7 +180,7 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 	 * id
 	 * name
 	 * #indices
-	 * (index type, indexed property) X M 
+	 * (indexed property) X M 
 	 * #constraints 
 	 * (constraint type, constraint fields) X N
 	 */
@@ -235,26 +192,20 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 	RedisModule_SaveStringBuffer(rdb, s->name, strlen(s->name) + 1);
 
 	// Number of indices.
-	RedisModule_SaveUnsigned(rdb, Schema_IndexCount(s));
+	RedisModule_SaveUnsigned(rdb, Schema_HasIndices(s));
 
-	// Exact match index, prefer pending over active
-	Index idx = PENDING_EXACTMATCH_IDX(s)
-		? PENDING_EXACTMATCH_IDX(s)
-		: ACTIVE_EXACTMATCH_IDX(s);
+	// index, prefer pending over active
+	Index idx = PENDING_IDX(s)
+		? PENDING_IDX(s)
+		: ACTIVE_IDX(s);
 
 	_RdbSaveIndexData(rdb, s->type, idx);
 
-	// Fulltext indices.
-	idx = PENDING_FULLTEXT_IDX(s)
-		? PENDING_FULLTEXT_IDX(s)
-		: ACTIVE_FULLTEXT_IDX(s);
-	_RdbSaveIndexData(rdb, s->type, idx);
-
-	// Constraints.
+	// constraints
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
+void RdbSaveGraphSchema_v15(RedisModuleIO *rdb, GraphContext *gc) {
 	/* Format:
 	 * attribute keys (unified schema)
 	 * #node schemas

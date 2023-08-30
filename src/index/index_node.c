@@ -41,7 +41,8 @@ void Index_IndexNode
 	}
 
 	// add document to RediSearch index
-	RediSearch_SpecAddDocument(rsIdx, doc);
+	int res = RediSearch_SpecAddDocument(rsIdx, doc);
+	ASSERT(res == REDISMODULE_OK);
 }
 
 void Index_RemoveNode

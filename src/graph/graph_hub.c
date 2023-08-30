@@ -31,7 +31,7 @@ static void _DeleteNodeFromIndices
 		ASSERT(s != NULL);
 
 		// update any indices this entity is represented in
-		Schema_RemoveNodeFromIndices(s, n);
+		Schema_RemoveNodeFromIndex(s, n);
 	}
 }
 
@@ -48,7 +48,7 @@ static void _DeleteEdgeFromIndices
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
 
 	// update any indices this entity is represented in
-	Schema_RemoveEdgeFromIndices(s, e);
+	Schema_RemoveEdgeFromIndex(s, e);
 }
 
 // add node to any relevant index
@@ -72,7 +72,7 @@ static void _AddNodeToIndices
 		int label_id = labels[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
-		Schema_AddNodeToIndices(s, n);
+		Schema_AddNodeToIndex(s, n);
 	}
 }
 
@@ -86,7 +86,7 @@ static void _AddEdgeToIndices(GraphContext *gc, Edge *e) {
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
-	Schema_AddEdgeToIndices(s, e);
+	Schema_AddEdgeToIndex(s, e);
 }
 
 void CreateNode
@@ -108,7 +108,7 @@ void CreateNode
 	for(uint i = 0; i < label_count; i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		ASSERT(s);
-		Schema_AddNodeToIndices(s, n);
+		Schema_AddNodeToIndex(s, n);
 	}
 
 	// add node creation operation to undo log
@@ -139,7 +139,7 @@ void CreateEdge
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	// all schemas have been created in the edge blueprint loop or earlier
 	ASSERT(s != NULL);
-	Schema_AddEdgeToIndices(s, e);
+	Schema_AddEdgeToIndex(s, e);
 
 	// add edge creation operation to undo log
 	if(log == true) {
@@ -278,7 +278,7 @@ void UpdateNodeProperty
 		int label_id = labels[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
-		Schema_AddNodeToIndices(s, &n);
+		Schema_AddNodeToIndex(s, &n);
 	}
 }
 
@@ -316,7 +316,7 @@ void UpdateEdgeProperty
 
 	Schema *schema = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
 	ASSERT(schema != NULL);
-	Schema_AddEdgeToIndices(schema, &e);
+	Schema_AddEdgeToIndex(schema, &e);
 }
 
 void UpdateNodeLabels
@@ -380,7 +380,7 @@ void UpdateNodeLabels
 				// append label id
 				add_labels_ids[add_labels_index++] = schema_id;
 				// add to index
-				Schema_AddNodeToIndices(s, node);
+				Schema_AddNodeToIndex(s, node);
 			}
 		}
 
@@ -420,7 +420,7 @@ void UpdateNodeLabels
 			// append label id
 			remove_labels_ids[remove_labels_index++] = Schema_GetID(s);
 			// remove node from index
-			Schema_RemoveNodeFromIndices(s, node);
+			Schema_RemoveNodeFromIndex(s, node);
 		}
 
 		if(remove_labels_index > 0) {

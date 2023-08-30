@@ -4,11 +4,15 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v9.h"
+#include "decode_v15.h"
+#include "../../../../index/indexer.h"
 
-static GraphContext *_GetOrCreateGraphContext(char *graph_name) {
+static GraphContext *_GetOrCreateGraphContext
+(
+	char *graph_name
+) {
 	GraphContext *gc = GraphContext_UnsafeGetGraphContext(graph_name);
-	if(!gc) {
+	if(gc == NULL) {
 		// new graph is being decoded
 		// inform the module and create new graph context
 		gc = GraphContext_New(graph_name);
@@ -16,63 +20,86 @@ static GraphContext *_GetOrCreateGraphContext(char *graph_name) {
 		// minimize matrix realloc and synchronization calls
 		Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
 	}
+
 	// free the name string, as it either not in used or copied
 	RedisModule_Free(graph_name);
 
 	return gc;
 }
 
-/* The first initialization of the graph data structure guarantees that there will be no further re-allocation
- * of data blocks and matrices since they are all in the appropriate size. */
-static void _InitGraphDataStructure(Graph *g, uint64_t node_count, uint64_t edge_count,
-									uint64_t label_count,  uint64_t relation_count) {
-	Graph_AllocateNodes(g, node_count);
-	Graph_AllocateEdges(g, edge_count);
+// the first initialization of the graph data structure guarantees that
+// there will be no further re-allocation of data blocks and matrices
+// since they are all in the appropriate size
+static void _InitGraphDataStructure
+(
+	Graph *g,
+	uint64_t node_count,
+	uint64_t edge_count,
+	uint64_t deleted_node_count,
+	uint64_t deleted_edge_count,
+	uint64_t label_count,
+	uint64_t relation_count
+) {
+	Graph_AllocateNodes(g, node_count + deleted_node_count);
+	Graph_AllocateEdges(g, edge_count + deleted_edge_count);
 	for(uint64_t i = 0; i < label_count; i++) Graph_AddLabel(g);
 	for(uint64_t i = 0; i < relation_count; i++) Graph_AddRelationType(g);
-	// flush all matrices, guarantee matrix dimensions matches graph's nodes count
+	// flush all matrices
+	// guarantee matrix dimensions matches graph's nodes count
 	Graph_ApplyAllPending(g, true);
 }
 
-static GraphContext *_DecodeHeader(RedisModuleIO *rdb) {
-	/* Header format:
-	 * Graph name
-	 * Node count
-	 * Edge count
-	 * Label matrix count
-	 * Relation matrix count - N
-	 * Does relationship matrix Ri holds mutiple edges under a single entry X N
-	 * Number of graph keys (graph context key + meta keys)
-	 */
-
+static GraphContext *_DecodeHeader
+(
+	RedisModuleIO *rdb
+) {
+	// Header format:
 	// Graph name
+	// Node count
+	// Edge count
+	// Deleted node count
+	// Deleted edge count
+	// Label matrix count
+	// Relation matrix count - N
+	// Does relationship matrix Ri holds mutiple edges under a single entry X N
+	// Number of graph keys (graph context key + meta keys)
+	// Schema
+
+	// graph name
 	char *graph_name = RedisModule_LoadStringBuffer(rdb, NULL);
 
-	// Each key header contains the following: #nodes, #edges, #labels matrices, #relation matrices
-	uint64_t node_count = RedisModule_LoadUnsigned(rdb);
-	uint64_t edge_count = RedisModule_LoadUnsigned(rdb);
-	uint64_t label_count = RedisModule_LoadUnsigned(rdb);
-	uint64_t relation_count = RedisModule_LoadUnsigned(rdb);
-	uint64_t multi_edge[relation_count];
+	// each key header contains the following:
+	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
+	uint64_t  node_count          =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  edge_count          =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  deleted_node_count  =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  deleted_edge_count  =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  label_count         =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  relation_count      =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
 		multi_edge[i] = RedisModule_LoadUnsigned(rdb);
 	}
 
-	// Total keys representing the graph.
+	// total keys representing the graph
 	uint64_t key_number = RedisModule_LoadUnsigned(rdb);
 
 	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
 	Graph *g = gc->g;
 
-	// If it is the first key of this graph, allocate all the data structures,
-	// with the appropriate dimensions
-	if(GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0) {
-		_InitGraphDataStructure(g, node_count, edge_count, label_count, relation_count);
+	// if it is the first key of this graph,
+	// allocate all the data structures, with the appropriate dimensions
+	bool first_vkey =
+		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0;
+
+	if(first_vkey == true) {
+		_InitGraphDataStructure(gc->g, node_count, edge_count,
+			deleted_node_count, deleted_edge_count, label_count, relation_count);
 
 		gc->decoding_context->multi_edge = array_new(uint64_t, relation_count);
 		for(uint i = 0; i < relation_count; i++) {
-			// Enable/Disable support for multi-edge
+			// enable/Disable support for multi-edge
 			// we will enable support for multi-edge on all relationship
 			// matrices once we finish loading the graph
 			array_append(gc->decoding_context->multi_edge,  multi_edge[i]);
@@ -81,22 +108,28 @@ static GraphContext *_DecodeHeader(RedisModuleIO *rdb) {
 		GraphDecodeContext_SetKeyCount(gc->decoding_context, key_number);
 	}
 
+	// decode graph schemas
+	RdbLoadGraphSchema_v15(rdb, gc, !first_vkey);
+
 	return gc;
 }
 
-static PayloadInfo *_RdbLoadKeySchema(RedisModuleIO *rdb) {
-	/* Format:
-	*  #Number of payloads info - N
-	*  N * Payload info:
-	*      Encode state
-	*      Number of entities encoded in this state.
-	*/
+static PayloadInfo *_RdbLoadKeySchema
+(
+	RedisModuleIO *rdb
+) {
+	// Format:
+	// #Number of payloads info - N
+	// N * Payload info:
+	//     Encode state
+	//     Number of entities encoded in this state.
 
 	uint64_t payloads_count = RedisModule_LoadUnsigned(rdb);
 	PayloadInfo *payloads = array_new(PayloadInfo, payloads_count);
 
 	for(uint i = 0; i < payloads_count; i++) {
-		// For each payload, load its type and the number of entities it contains.
+		// for each payload
+		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
 		payload_info.state =  RedisModule_LoadUnsigned(rdb);
 		payload_info.entities_count =  RedisModule_LoadUnsigned(rdb);
@@ -105,65 +138,59 @@ static PayloadInfo *_RdbLoadKeySchema(RedisModuleIO *rdb) {
 	return payloads;
 }
 
-GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
+GraphContext *RdbLoadGraphContext_v15
+(
+	RedisModuleIO *rdb
+) {
 
-	/* Key format:
-	 *  Header
-	 *  Payload(s) count: N
-	 *  Key content X N:
-	 *      Payload type (Nodes / Edges / Deleted nodes/ Deleted edges/ Graph schema)
-	 *      Entities in payload
-	 *  Payload(s) X N
-	 * */
+	// Key format:
+	//  Header
+	//  Payload(s) count: N
+	//  Key content X N:
+	//      Payload type (Nodes / Edges / Deleted nodes/ Deleted edges/ Graph schema)
+	//      Entities in payload
+	//  Payload(s) X N
 
 	GraphContext *gc = _DecodeHeader(rdb);
+
 	// load the key schema
 	PayloadInfo *key_schema = _RdbLoadKeySchema(rdb);
 
-	// the decode process contains the decode operation of many meta keys
-	// representing independent parts of the graph
-	//
-	// each key contains data on one or more of the following:
-	// 1. nodes - The nodes that are currently valid in the graph
-	//
-	// 2. deleted nodes - Nodes that were deleted and there ids can be re-used
-	//    used for exact replication of data block state
-	//
-	// 3. edges - The edges that are currently valid in the graph
-	//
-	// 4. deleted edges - edges that were deleted and there ids can be re-used
-	//    used for exact replication of data block state
-	//
-	// 5. graph schema - properties, indices
-	//
-	// the following switch checks which part of the graph the current key holds
-	// and decodes it accordingly
+	// The decode process contains the decode operation of many meta keys, representing independent parts of the graph
+	// Each key contains data on one or more of the following:
+	// 1. Nodes - The nodes that are currently valid in the graph
+	// 2. Deleted nodes - Nodes that were deleted and there ids can be re-used. Used for exact replication of data block state
+	// 4. Edges - The edges that are currently valid in the graph
+	// 4. Deleted edges - Edges that were deleted and there ids can be re-used. Used for exact replication of data block state
+	// 5. Graph schema - Properties, indices
+	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
 	uint payloads_count = array_len(key_schema);
 	for(uint i = 0; i < payloads_count; i++) {
 		PayloadInfo payload = key_schema[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v9(rdb, gc, payload.entities_count);
+				RdbLoadNodes_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v9(rdb, gc, payload.entities_count);
+				RdbLoadDeletedNodes_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v9(rdb, gc, payload.entities_count);
+				RdbLoadEdges_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v9(rdb, gc, payload.entities_count);
+				RdbLoadDeletedEdges_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_GRAPH_SCHEMA:
-				RdbLoadGraphSchema_v9(rdb, gc);
+				// skip, handled in _DecodeHeader
 				break;
 			default:
 				ASSERT(false && "Unknown encoding");
 				break;
 		}
 	}
+
 	array_free(key_schema);
 
 	// update decode context
@@ -172,6 +199,7 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 	// before finalizing keep encountered meta keys names, for future deletion
 	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
 	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
+
 	// the virtual key name is not equal the graph name
 	if(strcmp(key_name, gc->graph_name) != 0) {
 		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
@@ -183,20 +211,12 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 		// set the node label matrix
 		Serializer_Graph_SetNodeLabels(g);
 
+		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
-		uint node_schemas_count = array_len(gc->node_schemas);
-		// update the node statistics
-		for(uint i = 0; i < node_schemas_count; i++) {
-			GrB_Index nvals;
-			RG_Matrix L = g->labels[i];
-			RG_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
-		}
-		
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
@@ -211,7 +231,6 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
 			if(idx != NULL) {
-				Index_Populate(idx, g);
 				Index_Enable(idx);
 				Schema_ActivateIndex(s);
 			}
@@ -223,7 +242,6 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
 			if(idx != NULL) {
-				Index_Populate(idx, g);
 				Index_Enable(idx);
 				Schema_ActivateIndex(s);
 			}

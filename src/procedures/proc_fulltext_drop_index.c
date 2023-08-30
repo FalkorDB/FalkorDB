@@ -17,9 +17,6 @@
 // fulltext dropNodeIndex
 //------------------------------------------------------------------------------
 
-// CALL db.idx.fulltext.drop(label)
-// CALL db.idx.fulltext.drop('books')
-
 ProcedureResult Proc_FulltextDropIndexInvoke
 (
 	ProcedureCtx *ctx,
@@ -27,21 +24,41 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 	const char **yield
 ) {
 	// argument validations
+	int argc = array_len((SIValue *)args);
+	ASSERT(argc == 1);
+
 	// expecting arg[0] to be a string
-	if(array_len((SIValue *)args) != 1) {
+	SIValue arg = args[0];
+	if(!(SI_TYPE(arg) & T_STRING)) {
 		return PROCEDURE_ERR;
 	}
 
-	if(!(SI_TYPE(args[0]) & T_STRING)) {
-		return PROCEDURE_ERR;
-	}
-
-	const char *l = args[0].stringval;
+	// try to get relevant index
+	const char *lbl = arg.stringval;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	int res = GraphContext_DeleteIndex(gc, SCHEMA_NODE, l, NULL, IDX_FULLTEXT);
+	Schema *s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
 
-	if(res != INDEX_OK) {
-		ErrorCtx_SetError(EMSG_FULLTEXT_DROP_INDEX, l);
+	if(s == NULL) {
+		ErrorCtx_SetError(EMSG_FULLTEXT_DROP_INDEX, lbl);
+		return PROCEDURE_ERR;
+	}
+
+	Index idx = Schema_GetIndex(s, NULL, 0, INDEX_FLD_ANY, true);
+	if(idx == NULL) {
+		ErrorCtx_SetError(EMSG_FULLTEXT_DROP_INDEX, lbl);
+		return PROCEDURE_ERR;
+	}
+
+	const IndexField *fields = Index_GetFields(idx);
+	int n = array_len((IndexField*)fields);
+	// drop only fulltext fields
+	for(int i = 0; i < n; i++) {
+		const IndexField *f = fields + i;
+		if(IndexField_GetType(f) & INDEX_FLD_FULLTEXT) {
+			int res = GraphContext_DeleteIndex(gc, SCHEMA_NODE, lbl,
+					IndexField_GetName(f), INDEX_FLD_FULLTEXT);
+			ASSERT(res == INDEX_OK);
+		}
 	}
 
 	return PROCEDURE_OK;
@@ -54,6 +71,9 @@ SIValue *Proc_FulltextDropIndexStep
 	return NULL;
 }
 
+// deprecated
+// CALL db.idx.fulltext.drop(label)
+// CALL db.idx.fulltext.drop('books')
 ProcedureCtx *Proc_FulltextDropIdxGen() {
 	void *privateData = NULL;
 	ProcedureOutput *output = array_new(ProcedureOutput, 0);

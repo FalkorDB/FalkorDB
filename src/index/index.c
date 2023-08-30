@@ -12,12 +12,41 @@
 #include "../util/rmalloc.h"
 #include "../datatypes/point.h"
 #include "../datatypes/vector.h"
-#include "../graph/graphcontext.h"
-#include "../graph/entities/node.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
 
 #include <stdatomic.h>
 
+// returns a type aware name for a given field
+// e.g.
+// "range:age" for a range field named "age"
+// "vector:location" for a vector field named "location"
+// "name" for a full text field named "name"
+void Index_TypedFieldName
+(
+	char *type_aware_name,  // [out] type aware name
+	IndexFieldType t,       // field type
+	const char *name        // field name
+) {
+	ASSERT(name != NULL);
+	ASSERT(type_aware_name != NULL);
+	ASSERT(t == INDEX_FLD_FULLTEXT ||
+		   t == INDEX_FLD_RANGE    ||
+		   t == INDEX_FLD_VECTOR);
+
+	if(t == INDEX_FLD_FULLTEXT) {
+		// maintain original name for full text fields
+		strcpy(type_aware_name, name);
+	} else if(t == INDEX_FLD_RANGE) {
+		// prefix range field name with "range:"
+		sprintf(type_aware_name, "range:%s", name);
+	} else if(t == INDEX_FLD_VECTOR) {
+		// prefix vector field name with "vector:"
+		sprintf(type_aware_name, "vector:%s", name);
+	} else {
+		assert(false && "unexpected field type");
+	}
+}
+
+// index structure
 struct _Index {
 	char *label;                   // indexed label
 	int label_id;                  // indexed label ID
@@ -25,10 +54,38 @@ struct _Index {
 	char *language;                // language
 	char **stopwords;              // stopwords
 	GraphEntityType entity_type;   // entity type (node/edge) indexed
-	IndexType type;                // index type exact-match / fulltext
 	RSIndex *rsIdx;                // RediSearch index
 	uint _Atomic pending_changes;  // number of pending changes
 };
+
+// merge field 'b' into 'a'
+static void _Index_MergeFields
+(
+	IndexField *a,
+	const IndexField *b
+) {
+	ASSERT(a != NULL);
+	ASSERT(b != NULL);
+	ASSERT((a->type & b->type) == 0);
+
+	// merge type
+	a->type |= b->type;
+
+	// merge options
+	if(b->type & INDEX_FLD_FULLTEXT) {
+		a->options.weight   = b->options.weight;
+		a->options.nostem   = b->options.nostem;
+		a->options.phonetic = rm_strdup(b->options.phonetic);
+		a->fulltext_name    = rm_strdup(b->fulltext_name);
+	} else if(b->type & INDEX_FLD_RANGE) {
+		a->options.dimension = b->options.dimension;
+		a->range_name        = rm_strdup(b->range_name);
+	} else if(b->type & INDEX_FLD_VECTOR) {
+		a->vector_name = rm_strdup(b->vector_name);
+	} else {
+		assert(false && "unexpected field type");
+	}
+}
 
 static void _Index_ConstructStructure
 (
@@ -49,7 +106,6 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_FULLTEXT) {
-
 			// introduce text field
 			unsigned options = RSFLDOPT_NONE;
 
@@ -62,12 +118,10 @@ static void _Index_ConstructStructure
 				options |= RSFLDOPT_TXTPHONETIC;
 			}
 
-			fieldID = RediSearch_CreateField(rsIdx, field->name,
+			fieldID = RediSearch_CreateField(rsIdx, field->fulltext_name,
 					RSFLDTYPE_FULLTEXT, options);
 
 			RediSearch_TextFieldSetWeight(rsIdx, fieldID, field->options.weight);
-
-			continue;
 		}
 
 		//----------------------------------------------------------------------
@@ -75,26 +129,23 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR) {
-			fieldID = RediSearch_CreateVectorField(rsIdx, field->name);
+			fieldID = RediSearch_CreateVectorField(rsIdx, field->vector_name);
 			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
-			continue;
 		}
 
 		//----------------------------------------------------------------------
 		// numeric, string and geo fields
 		//----------------------------------------------------------------------
 
-		if(field->type & (INDEX_FLD_NUMERIC | INDEX_FLD_STR | INDEX_FLD_GEO)) {
-
+		if(field->type & INDEX_FLD_RANGE) {
+			// introduce both text, numeric and geo fields
 			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
 
-			// introduce both text, numeric and geo fields
-			fieldID = RediSearch_CreateField(rsIdx, field->name, types,
+			fieldID = RediSearch_CreateField(rsIdx, field->range_name, types,
 					RSFLDOPT_NONE);
+
 			RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
 			RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
-
-			continue;
 		}
 	}
 
@@ -116,9 +167,9 @@ static void _Index_ConstructStructure
 
 	// introduce edge src and dest node ids as additional index fields
 	if(idx->entity_type == GETYPE_EDGE) {
-		RediSearch_CreateField(rsIdx, "_src_id", RSFLDTYPE_NUMERIC,
+		RediSearch_CreateField(rsIdx, "range:_src_id", RSFLDTYPE_NUMERIC,
 				RSFLDOPT_NONE);
-		RediSearch_CreateField(rsIdx, "_dest_id", RSFLDTYPE_NUMERIC,
+		RediSearch_CreateField(rsIdx, "range:_dest_id", RSFLDTYPE_NUMERIC,
 				RSFLDOPT_NONE);
 	}
 }
@@ -144,12 +195,15 @@ void Index_ConstructStructure
 	RediSearch_IndexOptionsSetGCPolicy(idx_options, GC_POLICY_FORK);
 	#endif
 
+	// TODO: handle stopwordsa
+	RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
 	if(idx->stopwords) {
 		RediSearch_IndexOptionsSetStopwords(idx_options,
 				(const char**)idx->stopwords, array_len(idx->stopwords));
-	} else if(idx->type == IDX_EXACT_MATCH) {
-		RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
 	}
+//	} else if(idx->type == IDX_EXACT_MATCH) {
+//		RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
+//	}
 
 	rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
 	RediSearch_FreeIndexOptions(idx_options);
@@ -162,16 +216,17 @@ void Index_ConstructStructure
 	idx->rsIdx = rsIdx;
 }
 
+// index a graph entity
 RSDoc *Index_IndexGraphEntity
 (
-	Index idx,
-	const GraphEntity *e,
-	const void *key,
-	size_t key_len,
-	uint *doc_field_count
+	Index idx,             // index to populate
+	const GraphEntity *e,  // entity to index
+	const void *key,       // index document key
+	size_t key_len,        // index document key length
+	uint *doc_field_count  // number of indexed fields
 ) {
-	ASSERT(idx             != NULL);
 	ASSERT(e               != NULL);
+	ASSERT(idx             != NULL);
 	ASSERT(key             != NULL);
 	ASSERT(doc_field_count != NULL);
 	ASSERT(key_len         >  0);
@@ -194,9 +249,14 @@ RSDoc *Index_IndexGraphEntity
 	// add document field for each indexed attribute
 	for(uint i = 0; i < field_count; i++) {
 		field = idx->fields + i;
-		const char *field_name = field->name;
+
+		// try to get attribute value
 		v = GraphEntity_GetProperty(e, field->id);
-		if(v == ATTRIBUTE_NOTFOUND) continue;
+
+		// entity does not have this attribute
+		if(v == ATTRIBUTE_NOTFOUND) {
+			continue;
+		}
 
 		SIType t = SI_TYPE(*v);
 
@@ -208,33 +268,34 @@ RSDoc *Index_IndexGraphEntity
 			// value must be of type string
 			if(t == T_STRING) {
 				*doc_field_count += 1;
-				RediSearch_DocumentAddFieldString(doc, field_name, v->stringval,
-						strlen(v->stringval), RSFLDTYPE_FULLTEXT);
+
+				RediSearch_DocumentAddFieldString(doc, field->fulltext_name,
+						v->stringval, strlen(v->stringval), RSFLDTYPE_FULLTEXT);
 			}
 		}
 
 		//----------------------------------------------------------------------
-		// exact match field
+		// range field
 		//----------------------------------------------------------------------
 
-		if(field->type & (INDEX_FLD_STR | INDEX_FLD_NUMERIC | INDEX_FLD_GEO)) {
+		if(field->type & INDEX_FLD_RANGE) {
 			*doc_field_count += 1;
 			if(t == T_STRING) {
-				RediSearch_DocumentAddFieldString(doc, field_name, v->stringval,
-						strlen(v->stringval), RSFLDTYPE_TAG);
+				RediSearch_DocumentAddFieldString(doc, field->range_name,
+						v->stringval, strlen(v->stringval), RSFLDTYPE_TAG);
 			} else if(t & (SI_NUMERIC | T_BOOL)) {
 				double d = SI_GET_NUMERIC(*v);
-				RediSearch_DocumentAddFieldNumber(doc, field_name, d,
+				RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
 						RSFLDTYPE_NUMERIC);
 			} else if(t == T_POINT) {
 				double lat = (double)Point_lat(*v);
 				double lon = (double)Point_lon(*v);
-				RediSearch_DocumentAddFieldGeo(doc, field_name, lat, lon,
+				RediSearch_DocumentAddFieldGeo(doc, field->range_name, lat, lon,
 						RSFLDTYPE_GEO);
 			} else {
 				// none indexable field
 				none_indexable_fields[none_indexable_fields_count++] =
-					field_name;
+					field->name;
 			}
 		}
 
@@ -250,7 +311,8 @@ RSDoc *Index_IndexGraphEntity
 			void*    elements = SIVector_Elements(*v);
 
 			// value must be of type array
-			RediSearch_DocumentAddFieldVector(doc, field_name, elements, dim, n);
+			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,
+					dim, n);
 		}
 	}
 
@@ -290,14 +352,12 @@ Index Index_New
 (
 	const char *label,           // indexed label
 	int label_id,                // indexed label id
-	IndexType type,              // exact match or full text
 	GraphEntityType entity_type  // entity type been indexed
 ) {
 	ASSERT(label != NULL);
 
 	Index idx = rm_malloc(sizeof(_Index));
 
-	idx->type            = type;
 	idx->label           = rm_strdup(label);
 	idx->rsIdx           = NULL;
 	idx->fields          = array_new(IndexField, 1);
@@ -400,31 +460,47 @@ void Index_AddField
 ) {
 	ASSERT(idx   != NULL);
 	ASSERT(field != NULL);
-	ASSERT(!Index_ContainsAttribute(idx, field->id));
+	ASSERT(!Index_ContainsField(idx, field->id, field->type));
 
-	array_append(idx->fields, *field);
+	// see if index already contains field
+	IndexField *existing_field = Index_GetField(NULL, idx, field->id);
+
+	if(existing_field == NULL) {
+		// first time field is introduced
+		array_append(idx->fields, *field);
+	} else {
+		// field exists, merge fields
+		_Index_MergeFields(existing_field, field);
+		IndexField_Free(field);
+	}
 }
 
 // removes fields from index
 void Index_RemoveField
 (
-	Index idx,            // index modified
-	Attribute_ID attr_id  // field to remove
+	Index idx,             // index modified
+	Attribute_ID attr_id,  // field to remove
+	IndexFieldType t       // field type
 ) {
 	ASSERT(idx != NULL);
+	ASSERT(t & (INDEX_FLD_RANGE | INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR));
 
-	uint fields_count = array_len(idx->fields);
-	for(uint i = 0; i < fields_count; i++) {
-		IndexField *field = idx->fields + i;
-		if(field->id == attr_id) {
-			// free field
-			IndexField_Free(field);
-			array_del_fast(idx->fields, i);
+	int pos = -1;
+	IndexField *f = Index_GetField(&pos, idx, attr_id);
+	ASSERT(f   != NULL);
+	ASSERT(pos != -1);
 
-			Index_Disable(idx);
-			break;
-		}
+	// remove type from field
+	IndexField_RemoveType(f, t);
+
+	// if field is typeless, remove it from index
+	if(f->type == INDEX_FLD_UNKNOWN) {
+		// free field
+		IndexField_Free(f);
+		array_del_fast(idx->fields, pos);
 	}
+
+	Index_Disable(idx);
 }
 
 // query index
@@ -438,16 +514,6 @@ RSResultsIterator *Index_Query
 	ASSERT(query != NULL);
 
 	return RediSearch_IterateQuery(idx->rsIdx, query, strlen(query), err);
-}
-
-// returns index type
-IndexType Index_Type
-(
-	const Index idx
-) {
-	ASSERT(idx != NULL);
-
-	return idx->type;
 }
 
 // returns index graph entity type
@@ -480,42 +546,64 @@ const IndexField *Index_GetFields
 	return (const IndexField *)idx->fields;
 }
 
+// retrieve field by id
+// returns NULL if field does not exist
+IndexField *Index_GetField
+(
+	int *pos,         // [optional out] field index
+	const Index idx,  // index to get field from
+	Attribute_ID id   // field attribute id
+) {
+	ASSERT(idx     != NULL);
+	ASSERT(id != ATTRIBUTE_ID_NONE && id != ATTRIBUTE_ID_ALL);
+
+	// set field index to -1
+	if(pos != NULL) *pos = -1;
+
+	IndexField *f = NULL;
+	uint n = array_len(idx->fields);
+
+	for(uint i = 0; i < n; i++) {
+		IndexField *field = idx->fields + i;
+		if(field->id == id) {
+			f = field;
+			// if required, set field index
+			if(pos != NULL) *pos = i;
+			break;
+		}
+	}
+
+	return f;
+}
+
 // returns indexed field type
 // if field is not indexed, INDEX_FLD_UNKNOWN is returned
 IndexFieldType Index_GetFieldType
 (
-	const Index idx,      // index to query
-	Attribute_ID attr_id  // field to retrieve type of
+	const Index idx,  // index to query
+	Attribute_ID id   // field to retrieve type of
 ) {
 	ASSERT(idx != NULL);
 
-	uint fields_count = array_len(idx->fields);
-	for(uint i = 0; i < fields_count; i++) {
-		IndexField *field = idx->fields + i;
-		if(field->id == attr_id) {
-			return field->type;
-		}
-	}
-
-	return INDEX_FLD_UNKNOWN;
+	IndexField *f = Index_GetField(NULL, idx, id);
+	return (f == NULL) ? INDEX_FLD_UNKNOWN : f->type;
 }
 
-bool Index_ContainsAttribute
+// checks if index contains field
+// returns true if field is indexed, false otherwise
+bool Index_ContainsField
 (
-	const Index idx,
-	Attribute_ID attribute_id
+	const Index idx,     // index to query
+	Attribute_ID id,     // field to look for
+	IndexFieldType type  // field type to look for
 ) {
 	ASSERT(idx != NULL);
 
-	if(attribute_id == ATTRIBUTE_ID_NONE) return false;
-	
-	uint fields_count = array_len(idx->fields);
-	for(uint i = 0; i < fields_count; i++) {
-		IndexField *field = idx->fields + i;
-		if(field->id == attribute_id) return true;
+	if(id == ATTRIBUTE_ID_NONE) {
+		return false;
 	}
 
-	return false;
+	return Index_GetFieldType(idx, id) & type;
 }
 
 // returns indexed label
@@ -559,11 +647,7 @@ char **Index_GetStopwords
 	RSIndex *_idx = Index_RSIndex(idx);
 	ASSERT(_idx != NULL);
 
-	if(idx->type == IDX_FULLTEXT) {
-		return RediSearch_IndexGetStopwords(_idx, size);
-	}
-
-	return NULL;
+	return RediSearch_IndexGetStopwords(_idx, size);
 }
 
 // set indexed language
@@ -580,16 +664,23 @@ void Index_SetLanguage
 }
 
 // set indexed stopwords
-void Index_SetStopwords
+bool Index_SetStopwords
 (
 	Index idx,
-	char **stopwords
+	char ***stopwords
 ) {
 	ASSERT(idx != NULL);
-	ASSERT(stopwords != NULL);
 	ASSERT(idx->stopwords == NULL);
+	ASSERT(stopwords != NULL && *stopwords != NULL);
 
-	idx->stopwords = stopwords;
+	if(idx->stopwords != NULL) {
+		// can't set stopwords twice
+		return false;
+	}
+
+	idx->stopwords = *stopwords;
+	*stopwords = NULL;
+	return true;
 }
 
 // returns true if index doesn't contains any pending changes
@@ -623,7 +714,7 @@ void Index_Free
 		RediSearch_DropIndex(idx->rsIdx);
 	}
 
-	if(idx->language) {
+	if(idx->language != NULL) {
 		rm_free(idx->language);
 	}
 
@@ -633,7 +724,7 @@ void Index_Free
 	}
 	array_free(idx->fields);
 
-	if(idx->stopwords) {
+	if(idx->stopwords != NULL) {
 		uint stopwords_count = array_len(idx->stopwords);
 		for(uint i = 0; i < stopwords_count; i++) {
 			rm_free(idx->stopwords[i]);

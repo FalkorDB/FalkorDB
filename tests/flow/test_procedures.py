@@ -327,8 +327,8 @@ class testProcedures(FlowTestsBase):
 
     def test11_procedure_indexes(self):
         # Verify that the full-text index is reported properly.
-        actual_resultset = redis_graph.query("CALL db.indexes() YIELD type, label, properties").result_set
-        expected_results = [["full-text", "fruit", ["name"]]]
+        actual_resultset = redis_graph.query("CALL db.indexes() YIELD label, properties").result_set
+        expected_results = [["fruit", ["name"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
@@ -336,9 +336,8 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
-        actual_resultset = redis_graph.query("CALL db.indexes() YIELD type, label, properties RETURN type, label, properties ORDER BY type").result_set
-        expected_results = [["exact-match", "fruit", ["other_property"]],
-                            ["full-text", "fruit", ["name"]]]
+        actual_resultset = redis_graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
+        expected_results = [["fruit", ["name", "other_property"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to the full-text indexed property on the same label..
@@ -346,15 +345,13 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
-        actual_resultset = redis_graph.query("CALL db.indexes() YIELD type, label, properties RETURN type, label, properties ORDER BY type").result_set
-        expected_results = [["exact-match", "fruit", ["other_property", "name"]],
-                            ["full-text", "fruit", ["name"]]]
+        actual_resultset = redis_graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
+        expected_results = [["fruit", ["name", "other_property"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Validate the results when yielding only one element.
         actual_resultset = redis_graph.query("CALL db.indexes() YIELD label").result_set
-        expected_results = [["fruit"],
-                            ["fruit"]]
+        expected_results = [["fruit"]]
         self.env.assertEquals(actual_resultset, expected_results)
 
     def test12_procedure_reordered_yields(self):
@@ -370,7 +367,7 @@ class testProcedures(FlowTestsBase):
                            ["WRITE", "db.idx.fulltext.drop"],
                            ["READ",  "db.idx.fulltext.queryNodes"],
                            ["WRITE", "db.idx.vector.createIndex"],
-                           ["READ",  "db.idx.vector.knn"],
+                           ["READ",  "db.idx.vector.query"],
                            ["READ",  "db.indexes"],
                            ["READ",  "db.labels"],
                            ["READ",  "db.propertyKeys"],

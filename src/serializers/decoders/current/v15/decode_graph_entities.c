@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v14.h"
+#include "decode_v15.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(RedisModuleIO *rdb);
@@ -134,7 +134,7 @@ static void _RdbLoadEntity
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
 }
 
-void RdbLoadNodes_v14
+void RdbLoadNodes_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -169,13 +169,12 @@ void RdbLoadNodes_v14
 			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 			ASSERT(s != NULL);
 
-			if(PENDING_FULLTEXT_IDX(s)) Index_IndexNode(PENDING_FULLTEXT_IDX(s), &n);
-			if(PENDING_EXACTMATCH_IDX(s)) Index_IndexNode(PENDING_EXACTMATCH_IDX(s), &n);
+			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
 		}
 	}
 }
 
-void RdbLoadDeletedNodes_v14
+void RdbLoadDeletedNodes_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -189,7 +188,7 @@ void RdbLoadDeletedNodes_v14
 	}
 }
 
-void RdbLoadEdges_v14
+void RdbLoadEdges_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -221,11 +220,11 @@ void RdbLoadEdges_v14
 		Schema *s = GraphContext_GetSchemaByID(gc, relation, SCHEMA_EDGE);
 		ASSERT(s != NULL);
 
-		if(PENDING_EXACTMATCH_IDX(s)) Index_IndexEdge(PENDING_EXACTMATCH_IDX(s), &e);
+		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
 	}
 }
 
-void RdbLoadDeletedEdges_v14
+void RdbLoadDeletedEdges_v15
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

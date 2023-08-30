@@ -148,18 +148,20 @@ static bool _index_operation_delete
 
 	s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 	if(s != NULL) {
-		if(Schema_GetIndex(s, &attr_id, 1, IDX_EXACT_MATCH, true) != NULL) {
+		if(Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_RANGE, true) != NULL) {
 			// try deleting an exact match node index
-			return GraphContext_DeleteIndex(gc, SCHEMA_NODE, label, attr, IDX_EXACT_MATCH);
+			return GraphContext_DeleteIndex(gc, SCHEMA_NODE, label, attr,
+					INDEX_FLD_RANGE);
 		}
 	}
 
 	// try removing from an edge schema
 	s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
 	if(s != NULL) {
-		if(Schema_GetIndex(s, &attr_id, 1, IDX_EXACT_MATCH, true) != NULL) {
+		if(Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_RANGE, true) != NULL) {
 			// try deleting an exact match edge index
-			return GraphContext_DeleteIndex(gc, SCHEMA_EDGE, label, attr, IDX_EXACT_MATCH);
+			return GraphContext_DeleteIndex(gc, SCHEMA_EDGE, label, attr,
+					INDEX_FLD_RANGE);
 		}
 	}
 
@@ -230,7 +232,7 @@ static void _index_operation_create
 
 	Index idx;
 	// add fields to index
-	if(GraphContext_AddExactMatchIndex(&idx, gc, schema_type, label, fields,
+	if(GraphContext_AddRangeIndex(&idx, gc, schema_type, label, fields,
 				nprops)) {
 		Schema *s = GraphContext_GetSchema(gc, label, schema_type);
 		Indexer_PopulateIndex(gc, s, idx);

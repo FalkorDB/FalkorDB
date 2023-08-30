@@ -23,7 +23,8 @@ typedef enum {
 	INDEX_FLD_VECTOR   = 0x10,  // vector field
 } IndexFieldType;
 
-#define INDEX_FLD_EXACTMATCH (INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR)
+#define INDEX_FLD_RANGE (INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR)
+#define INDEX_FLD_ANY (INDEX_FLD_FULLTEXT | INDEX_FLD_RANGE | INDEX_FLD_VECTOR)
 
 typedef struct {
 	char *name;              // field name
@@ -35,6 +36,9 @@ typedef struct {
 		char *phonetic;      // phonetic search of text
 		uint32_t dimension;  // vector dimension
 	} options;
+	char *range_name;        // 'range:'  + field name
+	char *vector_name;       // 'vector:' + field name
+	char *fulltext_name;     // field name
 } IndexField;
 
 //------------------------------------------------------------------------------
@@ -50,18 +54,15 @@ void IndexField_Init
 	IndexFieldType type  // field type
 );
 
-// set index field options
-// note not all options are applicable to all field types
-void IndexField_SetOptions
+// clone index field
+void IndexField_Clone
 (
-	IndexField *field,  // field to update
-	double weight,      // field's weight
-	bool nostem,        // field's stemming
-	char *phonetic,     // field's phonetic
-	uint32_t dimension  // field's vector dimension
+	const IndexField *src,  // field to clone
+	IndexField *dest        // cloned field
 );
 
-void IndexField_NewExactMatchField
+// create a new range index field
+void IndexField_NewRangeField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
@@ -85,16 +86,37 @@ void IndexField_NewVectorField
 	uint32_t dimension   // vector dimension
 );
 
-// clone index field
-void IndexField_Clone
+IndexFieldType IndexField_GetType
 (
-	const IndexField *src,  // field to clone
-	IndexField *dest        // cloned field
+	const IndexField *f  // field to get type
+);
+
+const char *IndexField_GetName
+(
+	const IndexField *f  // field to get name
+);
+
+// remove type from field
+void IndexField_RemoveType
+(
+	IndexField *f,    // field to update
+	IndexFieldType t  // type to remove
 );
 
 //------------------------------------------------------------------------------
 // index field options
 //------------------------------------------------------------------------------
+
+// set index field options
+// note not all options are applicable to all field types
+void IndexField_SetOptions
+(
+	IndexField *field,  // field to update
+	double weight,      // field's weight
+	bool nostem,        // field's stemming
+	char *phonetic,     // field's phonetic
+	uint32_t dimension  // field's vector dimension
+);
 
 // set index field weight
 void IndexField_SetWeight
@@ -129,3 +151,4 @@ void IndexField_Free
 (
 	IndexField *field  // index field to be freed
 );
+

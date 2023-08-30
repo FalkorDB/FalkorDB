@@ -11,6 +11,28 @@
 // index field creation
 //------------------------------------------------------------------------------
 
+static void _ResetFulltextOptions
+(
+	IndexField *f
+) {
+	ASSERT(f != NULL);
+
+	rm_free(f->options.phonetic);
+
+	f->options.weight   = INDEX_FIELD_DEFAULT_WEIGHT;
+	f->options.nostem   = INDEX_FIELD_DEFAULT_NOSTEM;
+	f->options.phonetic = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
+}
+
+static void _ResetVectorOptions
+(
+	IndexField *f
+) {
+	ASSERT(f != NULL);
+
+	f->options.dimension = 0;
+}
+
 // initialize index field
 void IndexField_Init
 (
@@ -32,10 +54,18 @@ void IndexField_Init
 	// set default options
 	field->options.weight    = INDEX_FIELD_DEFAULT_WEIGHT;
 	field->options.nostem    = INDEX_FIELD_DEFAULT_NOSTEM;
+	field->options.phonetic  = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
 	field->options.dimension = 0;
 
-	field->options.phonetic = rm_malloc(strlen(INDEX_FIELD_DEFAULT_PHONETIC)+1);
-	strcpy(field->options.phonetic, INDEX_FIELD_DEFAULT_PHONETIC);
+	if(type & INDEX_FLD_FULLTEXT) {
+		field->fulltext_name = field->name;
+	}
+	if(type & INDEX_FLD_RANGE) {
+		asprintf(&field->range_name, "range:%s", name);
+	}
+	if(type & INDEX_FLD_VECTOR) {
+		asprintf(&field->vector_name, "vector:%s", name);
+	}
 }
 
 // set index field options
@@ -69,14 +99,14 @@ void IndexField_SetOptions
 	}
 }
 
-// create a new exact match index field
-void IndexField_NewExactMatchField
+// create a new range index field
+void IndexField_NewRangeField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
 	Attribute_ID id      // field id
 ) {
-	IndexFieldType t = INDEX_FLD_EXACTMATCH;
+	IndexFieldType t = INDEX_FLD_RANGE;
 	IndexField_Init(field, name, id, t);
 }
 
@@ -119,6 +149,70 @@ void IndexField_Clone
 	if(src->options.phonetic != NULL) {
 		dest->options.phonetic = rm_strdup(src->options.phonetic);
 	}
+
+	//--------------------------------------------------------------------------
+	// clone type specific field names
+	//--------------------------------------------------------------------------
+
+	if(src->type & INDEX_FLD_FULLTEXT) {
+		dest->fulltext_name = dest->name;
+	}
+	if(src->type & INDEX_FLD_RANGE) {
+		dest->range_name = rm_strdup(src->range_name);
+	}
+	if(src->type & INDEX_FLD_VECTOR) {
+		dest->vector_name = rm_strdup(src->vector_name);
+	}
+}
+
+inline IndexFieldType IndexField_GetType
+(
+	const IndexField *f  // field to get type
+) {
+	ASSERT(f != NULL);
+
+	return f->type;
+}
+
+const char *IndexField_GetName
+(
+	const IndexField *f  // field to get name
+) {
+	ASSERT(f != NULL);	
+	
+	return f->name;
+}
+
+// remove type from field
+void IndexField_RemoveType
+(
+	IndexField *f,    // field to update
+	IndexFieldType t  // type to remove
+) {
+	ASSERT(f != NULL);
+	ASSERT(t & (INDEX_FLD_RANGE | INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR));
+	ASSERT(f->type & t);
+
+	// remove RANGE type
+	if(t & INDEX_FLD_RANGE) {
+		rm_free(f->range_name);
+		f->range_name = NULL;
+	}
+
+	// remove FULLTEXT type
+	if(t & INDEX_FLD_FULLTEXT) {
+		f->fulltext_name = NULL;
+		_ResetFulltextOptions(f);
+	}
+
+	// remove VECTOR type
+	if(t & INDEX_FLD_VECTOR) {
+		rm_free(f->vector_name);
+		f->vector_name = NULL;
+		_ResetVectorOptions(f);
+	}
+
+	f->type &= ~t;
 }
 
 //------------------------------------------------------------------------------
@@ -176,5 +270,9 @@ void IndexField_Free
 
 	rm_free(field->name);
 	rm_free(field->options.phonetic);
+
+	// free type specific field names
+	if(field->range_name  != NULL) rm_free(field->range_name);
+	if(field->vector_name != NULL) rm_free(field->vector_name);
 }
 
