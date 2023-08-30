@@ -13,12 +13,6 @@ SIValue SIVector32f_New
 	uint32_t dim  // vector's dimension
 );
 
-// creates a new float64 vector
-SIValue SIVector64f_New
-(
-	uint32_t dim  // vector's dimension
-);
-
 // clones vector
 SIValue SIVector_Clone
 (

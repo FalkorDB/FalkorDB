@@ -55,16 +55,9 @@ static void _RdbSaveSIVector
 	void *elements = SIVector_Elements(v);
 
 	// save individual elements
-	if(SI_TYPE(v) == T_VECTOR32F) {
-		float *values = (float*)elements;
-		for(uint32_t i = 0; i < dim; i ++) {
-			RedisModule_SaveFloat(rdb, values[i]);
-		}
-	} else {
-		double *values = (double*)elements;
-		for(uint32_t i = 0; i < dim; i ++) {
-			RedisModule_SaveDouble(rdb, values[i]);
-		}
+	float *values = (float*)elements;
+	for(uint32_t i = 0; i < dim; i ++) {
+		RedisModule_SaveFloat(rdb, values[i]);
 	}
 }
 
@@ -99,7 +92,6 @@ static void _RdbSaveSIValue
 			RedisModule_SaveDouble(rdb, Point_lon(*v));
 			break;
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 			_RdbSaveSIVector(rdb, *v);
 			break;
 		case T_NULL:

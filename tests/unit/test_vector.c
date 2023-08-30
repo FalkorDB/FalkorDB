@@ -14,24 +14,14 @@ void setup() {
 #include "acutest.h"
 
 void test_empty_vector(void) {
-	
-	SIValue v;
-
-	v = SIVector32f_New(0);
+	SIValue v = SIVector32f_New(0);
 	TEST_ASSERT(SI_TYPE(v) == T_VECTOR32F);
-	TEST_ASSERT(SI_ALLOCATION(&v) == M_SELF);
-	TEST_ASSERT(SIVector_Dim(v) == 0);
-	SIVector_Free(v);
-
-	v = SIVector64f_New(0);
-	TEST_ASSERT(SI_TYPE(v) == T_VECTOR64F);
 	TEST_ASSERT(SI_ALLOCATION(&v) == M_SELF);
 	TEST_ASSERT(SIVector_Dim(v) == 0);
 	SIVector_Free(v);
 }
 
 void test_vector_elements(void) {
-	SIValue v;
 	float *f_elements;
 	double *d_elements;
 
@@ -39,7 +29,7 @@ void test_vector_elements(void) {
 	// test vector32f
 	//--------------------------------------------------------------------------
 
-	v = SIVector32f_New(3);
+	SIValue v = SIVector32f_New(3);
 	
 	f_elements = (float*)SIVector_Elements(v);
 	for(int i = 0; i < 3; i++) {
@@ -53,26 +43,6 @@ void test_vector_elements(void) {
 	}
 
 	f_elements = NULL;
-	SIVector_Free(v);
-
-	//--------------------------------------------------------------------------
-	// test vector64f
-	//--------------------------------------------------------------------------
-
-	v = SIVector64f_New(3);
-	
-	d_elements = (double*)SIVector_Elements(v);
-	for(int i = 0; i < 3; i++) {
-		TEST_ASSERT(d_elements[i] == 0);
-		d_elements[i] = i;
-	}
-
-	d_elements = (double*)SIVector_Elements(v);
-	for(int i = 0; i < 3; i++) {
-		TEST_ASSERT(d_elements[i] == i);
-	}
-
-	d_elements = NULL;
 	SIVector_Free(v);
 }
 
@@ -104,31 +74,6 @@ void test_vector_clone(void) {
 	clone_f_elements = (float*)SIVector_Elements(clone);
 	for(int i = 0; i < 3; i++) {
 		TEST_ASSERT(clone_f_elements[i] == f_elements[i]);
-	}
-
-	SIVector_Free(v);
-	SIVector_Free(clone);
-
-	//--------------------------------------------------------------------------
-	// test vector64f
-	//--------------------------------------------------------------------------
-
-	v = SIVector64f_New(3);
-	
-	d_elements = (double*)SIVector_Elements(v);
-	for(int i = 0; i < 3; i++) {
-		d_elements[i] = i;
-	}
-
-	clone = SIVector_Clone(v);
-
-	TEST_ASSERT(SI_TYPE(clone)        == SI_TYPE(v));
-	TEST_ASSERT(SIVector_Dim(clone)   == SIVector_Dim(v));
-	TEST_ASSERT(SI_ALLOCATION(&clone) == M_SELF);
-
-	clone_d_elements = (double*)SIVector_Elements(clone);
-	for(int i = 0; i < 3; i++) {
-		TEST_ASSERT(clone_d_elements[i] == d_elements[i]);
 	}
 
 	SIVector_Free(v);
@@ -169,33 +114,6 @@ void test_vector_compare(void) {
 
 	SIVector_Free(a);
 	SIVector_Free(b);
-
-	//--------------------------------------------------------------------------
-	// test vector64f
-	//--------------------------------------------------------------------------
-
-	a = SIVector64f_New(3);
-	b = SIVector64f_New(3);
-
-	a_d_elements = (double*)SIVector_Elements(a);
-	b_d_elements = (double*)SIVector_Elements(b);
-
-	for(int i = 0; i < 3; i++) {
-		a_d_elements[i] = i;
-		b_d_elements[i] = i;
-	}
-
-	TEST_ASSERT(SIVector_Compare(a, b) == 0);
-
-	a_d_elements[0] = 1;
-	TEST_ASSERT(SIVector_Compare(a, b) > 0);
-
-	a_d_elements[0] = 0;
-	b_d_elements[0] = 1;
-	TEST_ASSERT(SIVector_Compare(a, b) < 0);
-
-	SIVector_Free(a);
-	SIVector_Free(b);
 }
 
 void test_vector_tostring(void) {
@@ -232,41 +150,6 @@ void test_vector_tostring(void) {
 	bufferLen = 1;
 	bytesWritten = 0;
 	str = malloc(sizeof(char) * bufferLen);
-
-	SIValue_ToString(v, &str, &bufferLen, &bytesWritten);
-	TEST_ASSERT(strcasecmp(str, "<0.000000, 1.000000, 2.000000>") == 0);
-
-	free(str);
-	SIVector_Free(v);
-
-	//--------------------------------------------------------------------------
-	// test vector64f
-	//--------------------------------------------------------------------------
-
-	v = SIVector64f_New(3);
-
-	bufferLen    = 1;
-	bytesWritten = 0;
-	str          = malloc(sizeof(char) * bufferLen);
-
-	SIValue_ToString(v, &str, &bufferLen, &bytesWritten);
-	TEST_ASSERT(strcasecmp(str, "<0.000000, 0.000000, 0.000000>") == 0);
-
-	free(str);
-	SIVector_Free(v);
-
-	//--------------------------------------------------------------------------
-
-	v = SIVector64f_New(3);
-
-	double *d_elements = (double*)SIVector_Elements(v);
-	for(int i = 0; i < 3; i++) {
-		d_elements[i] = i;
-	}
-
-	bufferLen    = 1;
-	bytesWritten = 0;
-	str          = malloc(sizeof(char) * bufferLen);
 
 	SIValue_ToString(v, &str, &bufferLen, &bytesWritten);
 	TEST_ASSERT(strcasecmp(str, "<0.000000, 1.000000, 2.000000>") == 0);

@@ -75,8 +75,8 @@ static void _Index_MergeFields
 	if(b->type & INDEX_FLD_FULLTEXT) {
 		a->options.weight   = b->options.weight;
 		a->options.nostem   = b->options.nostem;
-		a->options.phonetic = rm_strdup(b->options.phonetic);
-		a->fulltext_name    = rm_strdup(b->fulltext_name);
+		a->fulltext_name    = a->name;
+		IndexField_SetPhonetic(a, b->options.phonetic);
 	} else if(b->type & INDEX_FLD_RANGE) {
 		a->options.dimension = b->options.dimension;
 		a->range_name        = rm_strdup(b->range_name);

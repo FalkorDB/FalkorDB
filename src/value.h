@@ -39,7 +39,6 @@ typedef enum {
 	T_PTR = (1 << 16),
 	T_POINT = (1 << 17),  // TODO: verify type order of point
 	T_VECTOR32F = (1 << 18),
-	T_VECTOR64F = (1 << 19),
 } SIType;
 
 typedef enum {
@@ -49,7 +48,7 @@ typedef enum {
 	M_CONST = (1 << 2)      // SIValue does not own its allocation, but its access is safe
 } SIAllocation;
 
-#define T_VECTOR (T_VECTOR32F | T_VECTOR64F)
+#define T_VECTOR (T_VECTOR32F)
 #define SI_TYPE(value) (value).type
 #define SI_ALLOCATION(value) (value)->allocation
 #define SI_NUMERIC (T_INT64 | T_DOUBLE)
@@ -116,7 +115,6 @@ SIValue SI_PtrVal(void *v);
 SIValue SI_LongVal(int64_t i);
 SIValue SI_DoubleVal(double d);
 SIValue SI_Vector32f(uint32_t dim);
-SIValue SI_Vector64f(uint32_t dim);
 SIValue SI_Map(u_int64_t initialCapacity);
 SIValue SI_Array(u_int64_t initialCapacity);
 SIValue SI_Point(float latitude, float longitude);

@@ -61,10 +61,12 @@ void IndexField_Init
 		field->fulltext_name = field->name;
 	}
 	if(type & INDEX_FLD_RANGE) {
-		asprintf(&field->range_name, "range:%s", name);
+		field->range_name = rm_malloc(strlen(name)+7);
+		sprintf(field->range_name, "range:%s", name);
 	}
 	if(type & INDEX_FLD_VECTOR) {
-		asprintf(&field->vector_name, "vector:%s", name);
+		field->vector_name = rm_malloc(strlen(name)+8);
+		sprintf(field->vector_name, "vector:%s", name);
 	}
 }
 
@@ -248,6 +250,7 @@ void IndexField_SetPhonetic
 	ASSERT(field    != NULL);
 	ASSERT(phonetic != NULL);
 
+	if(field->options.phonetic) rm_free(field->options.phonetic);
 	field->options.phonetic = rm_strdup(phonetic);
 }
 

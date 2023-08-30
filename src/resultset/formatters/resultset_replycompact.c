@@ -18,8 +18,8 @@ static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc
 static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
 static void _ResultSet_CompactReplyWithVector(RedisModuleCtx *ctx, SIValue vec);
 
-static inline ValueType _mapValueType(const SIValue v) {
-	switch(SI_TYPE(v)) {
+static inline ValueType _mapValueType(SIType t) {
+	switch(t) {
 	case T_NULL:
 		return VALUE_NULL;
 	case T_STRING:
@@ -33,8 +33,7 @@ static inline ValueType _mapValueType(const SIValue v) {
 	case T_ARRAY:
 		return VALUE_ARRAY;
 	case T_VECTOR32F:
-	case T_VECTOR64F:
-		return VALUE_VECTOR;
+		return VALUE_ARRAY;
 	case T_NODE:
 		return VALUE_NODE;
 	case T_EDGE:
@@ -50,8 +49,8 @@ static inline ValueType _mapValueType(const SIValue v) {
 	}
 }
 
-static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, const SIValue v) {
-	RedisModule_ReplyWithLongLong(ctx, _mapValueType(v));
+static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, SIType t) {
+	RedisModule_ReplyWithLongLong(ctx, _mapValueType(t));
 }
 
 static void _ResultSet_CompactReplyWithSIValue
@@ -61,7 +60,7 @@ static void _ResultSet_CompactReplyWithSIValue
 	const SIValue v
 ) {
 	// Emit the value type, then the actual value (to facilitate client-side parsing)
-	_ResultSet_ReplyWithValueType(ctx, v);
+	_ResultSet_ReplyWithValueType(ctx, SI_TYPE(v));
 
 	switch(SI_TYPE(v)) {
 	case T_STRING:
@@ -81,7 +80,6 @@ static void _ResultSet_CompactReplyWithSIValue
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
 		break;
 	case T_VECTOR32F:
-	case T_VECTOR64F:
 		_ResultSet_CompactReplyWithVector(ctx, v);
 		break;
 	case T_NULL:
@@ -212,15 +210,16 @@ static void _ResultSet_CompactReplyWithVector
 	RedisModuleCtx *ctx,
 	SIValue vec
 ) {
-	// compact vector reply format:
-	// [
-	//   v0
-	//   v1
-	//   .
-	//   .
-	//   .
-	//   vn
-	// ]
+	/*  Compact vector reply format:
+	 *  [
+	 *      [double, value]
+	 *      [double, value]
+	 *      .
+	 *      .
+	 *      .
+	 *      [double, value]
+	 *  ]
+	 */
 
 	ASSERT(SI_TYPE(vec) & T_VECTOR);
 
@@ -232,16 +231,11 @@ static void _ResultSet_CompactReplyWithVector
 	void *elements = SIVector_Elements(vec);
 
 	// reply with vector elements
-	if(SI_TYPE(vec) == T_VECTOR32F) {
-		float *values = (float*)elements;
-		for(uint i = 0; i < dim; i++) {
-			RedisModule_ReplyWithDouble(ctx, (double)values[i]);
-		}
-	} else {
-		double *values = (double*)elements;
-		for(uint i = 0; i < dim; i++) {
-			RedisModule_ReplyWithDouble(ctx, values[i]);
-		}
+	float *values = (float*)elements;
+	for(uint i = 0; i < dim; i++) {
+		RedisModule_ReplyWithArray(ctx, 2);
+		_ResultSet_ReplyWithValueType(ctx, T_DOUBLE);
+		_ResultSet_ReplyWithRoundedDouble(ctx, (double)values[i]);
 	}
 }
 

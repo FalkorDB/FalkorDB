@@ -97,13 +97,6 @@ SIValue SI_Vector32f
 	return SIVector32f_New(dim);
 }
 
-SIValue SI_Vector64f
-(
-	uint32_t dim  // vector's dimension
-) {
-	return SIVector64f_New(dim);
-}
-
 SIValue SI_DuplicateStringVal(const char *s) {
 	return (SIValue) {
 		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
@@ -163,7 +156,6 @@ SIValue SI_CloneValue(const SIValue v) {
 			return Map_Clone(v);
 
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 			return SIVector_Clone(v);
 
 		default:
@@ -289,8 +281,6 @@ const char *SIType_ToString(SIType t) {
 			return "Point";
 		case T_VECTOR32F:
 			return "Vector32f";
-		case T_VECTOR64F:
-			return "Vector64f";
 		case T_NULL:
 			return "Null";
 		default:
@@ -400,7 +390,6 @@ void SIValue_ToString
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
 			break;
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 			SIVector_ToString(v, buf, bufferLen, bytesWritten);
 			break;
 		default:
@@ -657,7 +646,6 @@ int SIValue_Compare
 			return lon_diff;
 		}
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 		return SIVector_Compare(a, b);
 		default:
 			// both inputs were of an incomparable type, like a pointer
@@ -785,7 +773,6 @@ void SIValue_HashUpdate(SIValue v, XXH64_state_t *state) {
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 			inner_hash = SIVector_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
@@ -865,7 +852,6 @@ SIValue SIValue_FromBinary
 			v = SI_DoubleVal(d);
 			break;
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 			v = SIVector_FromBinary(stream, t);
 			break;
 		case T_NULL:
@@ -901,7 +887,6 @@ void SIValue_Free(SIValue v) {
 		Map_Free(v);
 		break;
 	case T_VECTOR32F:
-	case T_VECTOR64F:
 		SIVector_Free(v);
 		return;
 	default:

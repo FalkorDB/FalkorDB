@@ -190,7 +190,6 @@ static void EffectsBuffer_WriteSIValue
 			// no additional data is required to represent NULL
 			break;
 		case T_VECTOR32F:
-		case T_VECTOR64F:
 			EffectsBuffer_WriteSIVector(v, buff);
 			break;
 		default:
@@ -236,9 +235,7 @@ static void EffectsBuffer_WriteSIVector
 
 	// write vector elements
 	void *elements   = SIVector_Elements(*v);
-	size_t elem_size = (SI_TYPE(*v) == T_VECTOR32F)
-		? sizeof(float)
-		: sizeof(double);
+	size_t elem_size = sizeof(float);
 	size_t n = dim * elem_size;
 
 	EffectsBuffer_WriteBytes(elements, n, buff);

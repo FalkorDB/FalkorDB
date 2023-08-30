@@ -158,6 +158,7 @@ static void _RdbLoadExactMatchIndex
 			Schema_AddIndex(&idx, s, &field);
 		}
 		RedisModule_Free(field_name);
+		RedisModule_Free(phonetic);
 	}
 
 	if(!already_loaded) {
