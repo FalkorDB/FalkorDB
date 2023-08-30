@@ -52,7 +52,7 @@ void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SI
 			bolt_reply_string(client, lbl_name);
 		}
 		const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)n);
-		int prop_count = ATTRIBUTE_SET_COUNT(set);
+		int prop_count = AttributeSet_Count(set);
 		bolt_reply_map(client, prop_count);
 		// Iterate over all properties stored on entity
 		for(int i = 0; i < prop_count; i ++) {
@@ -77,7 +77,7 @@ void _ResultSet_BoltReplyWithSIValue(bolt_client_t *client, GraphContext *gc, SI
 		const char *reltype = Schema_GetName(s);
 		bolt_reply_string(client, reltype);
 		const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)e);
-		int prop_count = ATTRIBUTE_SET_COUNT(set);
+		int prop_count = AttributeSet_Count(set);
 		bolt_reply_map(client, prop_count);
 		// Iterate over all properties stored on entity
 		for(int i = 0; i < prop_count; i ++) {
