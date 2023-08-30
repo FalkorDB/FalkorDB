@@ -6,8 +6,8 @@
 
 #include "execution_ctx.h"
 #include "RG.h"
-#include "../errors.h"
 #include "../query_ctx.h"
+#include "../errors/errors.h"
 #include "../execution_plan/execution_plan_clone.h"
 
 static ExecutionType _GetExecutionTypeFromAST
@@ -104,7 +104,7 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	const char *q_str;  // query string excluding query parameters
 
 	if(unlikely(strlen(q) == 0)) {
-		ErrorCtx_SetError("Error: empty query.");
+		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
 		return NULL;
 	}
 
@@ -124,7 +124,7 @@ ExecutionCtx *ExecutionCtx_FromQuery
 	// query included only params e.g. 'cypher a=1' was provided
 	if(unlikely(strlen(q_str) == 0)) {
 		parse_result_free(params_parse_result);
-		ErrorCtx_SetError("Error: empty query.");
+		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
 		return NULL;
 	}
 
@@ -162,7 +162,7 @@ ExecutionCtx *ExecutionCtx_FromQuery
 
 		// if no error has been set, emit one now
 		if(!ErrorCtx_EncounteredError()) {
-			ErrorCtx_SetError("Error: could not parse query");
+			ErrorCtx_SetError(EMSG_COULD_NOT_PARSE_QUERY);
 		}
 		return NULL;
 	}

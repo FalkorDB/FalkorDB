@@ -328,7 +328,7 @@ static void _collect_call_projections(
 		// error if this is a RETURN clause with no aliases
 		// e.g.
 		// CALL db.indexes() RETURN *
-		ErrorCtx_SetError("RETURN * is not allowed when there are no variables in scope");
+		ErrorCtx_SetError(EMSG_RETURN_STAR_NO_VARIABLES);
 		return;
 	}
 

@@ -7,9 +7,9 @@
 #include "arithmetic_expression_construct.h"
 #include "RG.h"
 #include "funcs.h"
-#include "../errors.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../datatypes/array.h"
 #include "../configuration/config.h"
 #include "../ast/ast_build_filter_tree.h"
@@ -81,7 +81,7 @@ static AR_ExpNode *_AR_EXP_FromApplyExpression(const cypher_astnode_t *expr) {
 	}
 
 	if(op->op.f->internal) {
-		ErrorCtx_SetError("Attempted to access variable before it has been defined");
+		ErrorCtx_SetError(EMSG_ACCESS_VAR);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
@@ -131,7 +131,7 @@ static AR_ExpNode *_AR_EXP_FromIdentifier(const cypher_astnode_t *expr) {
 		/* Attempted to access the AST before it has been constructed.
 		 * This can occur in scenarios like parameter evaluation:
 		 * CYPHER param=[a] MATCH (a) RETURN a */
-		ErrorCtx_SetError("Attempted to access variable before it has been defined");
+		ErrorCtx_SetError(EMSG_ACCESS_VAR);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
@@ -175,11 +175,11 @@ static SIValue _AR_EXP_FromIntegerString(const char *value_str) {
 	int64_t l = strtol(value_str, &endptr, 0);
 	if(endptr[0] != 0) {
 		// Failed to convert integer value; set compile-time error to be raised later.
-		ErrorCtx_SetError("Invalid numeric value '%s'", value_str);
+		ErrorCtx_SetError(EMSG_INVALID_NUMERIC, value_str);
 		return SI_NullVal();
 	}
 	if(errno == ERANGE) {
-		ErrorCtx_SetError("Integer overflow '%s'", value_str);
+		ErrorCtx_SetError(EMSG_INTEGER_OVERFLOW, value_str);
 		return SI_NullVal();
 	}
 	SIValue converted = SI_LongVal(l);
@@ -198,11 +198,11 @@ static AR_ExpNode *_AR_EXP_FromFloatExpression(const cypher_astnode_t *expr) {
 	double d = strtod(value_str, &endptr);
 	if(endptr[0] != 0) {
 		// Failed to convert integer value; set compile-time error to be raised later.
-		ErrorCtx_SetError("Invalid numeric value '%s'", value_str);
+		ErrorCtx_SetError(EMSG_INVALID_NUMERIC, value_str);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 	if(errno == ERANGE) {
-		ErrorCtx_SetError("Float overflow '%s'", value_str);
+		ErrorCtx_SetError(EMSG_FLOAT_OVERFLOW, value_str);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 	SIValue converted = SI_DoubleVal(d);
@@ -391,7 +391,7 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 	// Return an error if the identifier is not a string literal, like 5 in:
 	// RETURN 5 {v: 'b'}
 	if(cypher_astnode_type(identifier) != CYPHER_AST_IDENTIFIER) {
-		ErrorCtx_SetError("Encountered unhandled type when trying to read map projection identifier");
+		ErrorCtx_SetError(EMSG_UNHANDLED_TYPE_MAP_PROJECTION);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 	const char *entity_name = cypher_ast_identifier_get_name(identifier);
@@ -525,7 +525,7 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 
 	uint path_len = cypher_ast_pattern_path_nelements(path);
 	if(path_len != 3) {
-		ErrorCtx_SetError("shortestPath requires a path containing a single relationship");
+		ErrorCtx_SetError(EMSG_SHORTESTPATH_SINGLE_RELATIONSHIP);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
@@ -542,7 +542,7 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 			// If specified, the edge's minimum hop value must be 0 or 1
 			start = AST_ParseIntegerNode(range_start);
 			if(start > 1) {
-				ErrorCtx_SetError("shortestPath does not support a minimal length different from 0 or 1");
+				ErrorCtx_SetError(EMSG_SHORTESTPATH_MINIMAL_LENGTH);
 				return AR_EXP_NewConstOperandNode(SI_NullVal());
 			}
 		}
@@ -550,25 +550,25 @@ static AR_ExpNode *_AR_ExpFromShortestPath
 		if(range_end) end = AST_ParseIntegerNode(range_end);
 
 		if(end != EDGE_LENGTH_INF && end < start) {
-			ErrorCtx_SetError("Maximum number of hops must be greater than or equal to minimum number of hops");
+			ErrorCtx_SetError(EMSG_SHORTESTPATH_MAX_HOPS);
 			return AR_EXP_NewConstOperandNode(SI_NullVal());
 		}
 	}
 
 	enum cypher_rel_direction dir = cypher_ast_rel_pattern_get_direction(edge);
 	if(dir == CYPHER_REL_BIDIRECTIONAL) {
-		ErrorCtx_SetError("RedisGraph does not currently support undirected shortestPath traversals");
+		ErrorCtx_SetError(EMSG_SHORTESTPATH_UNDIRECTED);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
 	if(cypher_ast_rel_pattern_get_properties(edge)) {
-		ErrorCtx_SetError("RedisGraph does not currently support filters on relationships in shortestPath");
+		ErrorCtx_SetError(EMSG_SHORTESTPATH_RELATIONSHIP_FILTERS);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
 	if(cypher_ast_node_pattern_get_properties(cypher_ast_pattern_path_get_element(path, 0)) ||
 	   cypher_ast_node_pattern_get_properties(cypher_ast_pattern_path_get_element(path, 2))) {
-		ErrorCtx_SetError("Node filters may not be introduced in shortestPath");
+		ErrorCtx_SetError(EMSG_SHORTESTPATH_NODE_FILTERS);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
 
@@ -668,7 +668,7 @@ static AR_ExpNode *_AR_ExpNodeFromComprehensionFunction
 		AST_ConvertFilters(&ctx->ft, predicate_node);
 	} else if(type != CYPHER_AST_LIST_COMPREHENSION) {
 		// Functions like any() and all() must have a predicate node.
-		ErrorCtx_SetError("'%s' function requires a WHERE predicate", func_name);
+		ErrorCtx_SetError(EMSG_FUNCTION_REQUIER_PREDICATE, func_name);
 		rm_free(ctx);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
@@ -882,7 +882,7 @@ AR_ExpNode *AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 	 * count(max(n.v)) */
 	if(_AR_EXP_ContainsNestedAgg(root)) {
 		// Set error (compile-time), this error will be raised later on.
-		ErrorCtx_SetError("Can't use aggregate functions inside of aggregate functions.");
+		ErrorCtx_SetError(EMSG_NESTED_AGGREGATION);
 	}
 
 	return root;

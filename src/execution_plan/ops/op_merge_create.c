@@ -5,9 +5,9 @@
  */
 
 #include "op_merge_create.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 
 /* Forward declarations. */
 static Record MergeCreateConsume(OpBase *opBase);

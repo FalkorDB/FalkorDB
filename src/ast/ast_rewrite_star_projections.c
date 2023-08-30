@@ -5,11 +5,11 @@
  */
 
 #include "ast.h"
-#include "../errors.h"
 #include "ast_shared.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/sds/sds.h"
+#include "../errors/errors.h"
 #include "../util/rax_extensions.h"
 #include "../procedures/procedure.h"
 
@@ -108,7 +108,7 @@ static void replace_clause
 			// error if this is a RETURN clause with no aliases
 			// e.g.
 			// MATCH () RETURN *
-			ErrorCtx_SetError("RETURN * is not allowed when there are no variables in scope");
+			ErrorCtx_SetError(EMSG_RETURN_STAR_NO_VARIABLES);
 			raxFree(identifiers);
 			return;
 		} else {

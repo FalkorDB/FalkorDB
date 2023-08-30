@@ -216,7 +216,7 @@ static void EffectsBuffer_WriteAttributeSet
 	// write attribute count
 	//--------------------------------------------------------------------------
 
-	ushort attr_count = ATTRIBUTE_SET_COUNT(attrs);
+	ushort attr_count = AttributeSet_Count(attrs);
 	EffectsBuffer_WriteBytes(&attr_count, sizeof(attr_count), buff);
 
 	//--------------------------------------------------------------------------
@@ -341,7 +341,7 @@ void EffectsBuffer_AddCreateNodeEffect
 	
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
 	stats->nodes_created++;
-	stats->properties_set += ATTRIBUTE_SET_COUNT(*n->attributes);
+	stats->properties_set += AttributeSet_Count(*n->attributes);
 
 	EffectType t = EFFECT_CREATE_NODE;
 	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
@@ -389,7 +389,7 @@ void EffectsBuffer_AddCreateEdgeEffect
 	
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
 	stats->relationships_created++;
-	stats->properties_set += ATTRIBUTE_SET_COUNT(*edge->attributes);
+	stats->properties_set += AttributeSet_Count(*edge->attributes);
 
 	EffectType t = EFFECT_CREATE_EDGE;
 	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
@@ -599,7 +599,7 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 ) {
 	// attribute was deleted
 	int n = (attr_id == ATTRIBUTE_ID_ALL)
-		? ATTRIBUTE_SET_COUNT(*entity->attributes)
+		? AttributeSet_Count(*entity->attributes)
 		: 1;
 
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();

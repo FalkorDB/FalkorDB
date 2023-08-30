@@ -6,9 +6,9 @@
 
 #include "op_create.h"
 #include "RG.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 
 // forward declarations
 static Record CreateConsume(OpBase *opBase);
@@ -94,11 +94,14 @@ static void _CreateEdges
 		EdgeCreateCtx *e = op->pending.edges_to_create + i;
 
 		// retrieve source and dest nodes
-		Node *src_node = Record_GetNode(r, e->src_idx);
-		Node *dest_node = Record_GetNode(r, e->dest_idx);
-		// verify that the endpoints of the new edge resolved properly
-		// fail otherwise
-		if(!src_node || !dest_node) {
+		GraphEntity *src_node  = (GraphEntity*)Record_GetNode(r, e->src_idx);
+		GraphEntity *dest_node = (GraphEntity*)Record_GetNode(r, e->dest_idx);
+
+		// verify edge endpoints resolved properly, fail otherwise
+		if(unlikely(!src_node                       ||
+					!dest_node                      ||
+					GraphEntity_IsDeleted(src_node) ||
+					GraphEntity_IsDeleted(dest_node))) {
 			ErrorCtx_RaiseRuntimeException(
 					"Failed to create relationship; endpoint was not found.");
 		}
@@ -126,11 +129,17 @@ static void _CreateEdges
 }
 
 // Return mode, emit a populated Record.
-static Record _handoff(OpCreate *op) {
+static Record _handoff
+(
+	OpCreate *op
+) {
 	return array_pop(op->records);
 }
 
-static Record CreateConsume(OpBase *opBase) {
+static Record CreateConsume
+(
+	OpBase *opBase
+) {
 	OpCreate *op = (OpCreate *)opBase;
 	Record r;
 

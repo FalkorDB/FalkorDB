@@ -61,12 +61,16 @@ static void _ResultSet_VerboseReplyWithSIValue(RedisModuleCtx *ctx, GraphContext
 	}
 }
 
-static void _ResultSet_VerboseReplyWithProperties(RedisModuleCtx *ctx, GraphContext *gc,
-												  const GraphEntity *e) {
+static void _ResultSet_VerboseReplyWithProperties
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	const GraphEntity *e
+) {
 	const AttributeSet set = GraphEntity_GetAttributes(e);
-	int prop_count = ATTRIBUTE_SET_COUNT(set);
+	int prop_count = AttributeSet_Count(set);
 	RedisModule_ReplyWithArray(ctx, prop_count);
-	// Iterate over all properties stored on entity
+	// iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
 		RedisModule_ReplyWithArray(ctx, 2);
 		Attribute_ID attr_id;

@@ -7,7 +7,7 @@
 #pragma once
 
 #include "ast.h"
-#include "../errors.h"
+#include "../errors/errors.h"
 #include "../arithmetic/arithmetic_expression.h"
 
 struct AR_ExpNode;

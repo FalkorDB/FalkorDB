@@ -9,11 +9,11 @@
 #include "../RG.h"
 #include "funcs.h"
 #include "rax.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../graph/graph.h"
 #include "../util/rmalloc.h"
+#include "../errors/errors.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/temporal_value.h"
 #include "../datatypes/array.h"
@@ -173,11 +173,11 @@ static void _AR_EXP_ValidateArgsCount
 	// Make sure number of arguments is as expected.
 	if(fdesc->min_argc > argc) {
 		// Set the query-level error.
-		ErrorCtx_SetError("Received %d arguments to function '%s', expected at least %d", argc,
+		ErrorCtx_SetError(EMSG_FUNCTION_MIN_ARGS, argc,
 						  fdesc->name, fdesc->min_argc);
 	} else if(fdesc->max_argc < argc) {
 		// Set the query-level error.
-		ErrorCtx_SetError("Received %d arguments to function '%s', expected at most %d", argc,
+		ErrorCtx_SetError(EMSG_FUNCTION_MAX_ARGS, argc,
 						  fdesc->name, fdesc->max_argc);
 	}
 }
@@ -517,15 +517,13 @@ cleanup:
 static bool _AR_EXP_UpdateEntityIdx(AR_OperandNode *node, const Record r) {
 	if(!r) {
 		// Set the query-level error.
-		ErrorCtx_SetError("_AR_EXP_UpdateEntityIdx: No record was given to locate a value with alias %s",
-						  node->variadic.entity_alias);
+		ErrorCtx_SetError(EMSG_MISSING_RECORD, node->variadic.entity_alias);
 		return false;
 	}
 	int entry_alias_idx = Record_GetEntryIdx(r, node->variadic.entity_alias);
 	if(entry_alias_idx == INVALID_INDEX) {
 		// Set the query-level error.
-		ErrorCtx_SetError("_AR_EXP_UpdateEntityIdx: Unable to locate a value with alias %s within the record",
-						  node->variadic.entity_alias);
+		ErrorCtx_SetError(EMSG_MISSING_VALUE, node->variadic.entity_alias);
 		return false;
 	} else {
 		node->variadic.entity_alias_idx = entry_alias_idx;
@@ -563,7 +561,7 @@ static AR_EXP_Result _AR_EXP_EvaluateParam
 
 	if(params == NULL || param == raxNotFound) {
 		// set the query-level error
-		ErrorCtx_SetError("Missing parameters");
+		ErrorCtx_SetError(EMSG_MISSING_PARAMETERS);
 		return EVAL_ERR;
 	}
 

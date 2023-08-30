@@ -6,21 +6,15 @@
 
 #pragma once
 
+#include "RG.h"
+#include "GraphBLAS.h"
+
 #include <pthread.h>
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
 
 // forward declaration of RG_Matrix type
 typedef struct _RG_Matrix _RG_Matrix;
 typedef _RG_Matrix *RG_Matrix;
 
-// Mask with most significant bit on 10000...
-#define MSB_MASK (1UL << (sizeof(uint64_t) * 8 - 1))
-// Mask complement 01111...
-#define MSB_MASK_CMP ~MSB_MASK
-// Set X's most significant bit on.
-#define SET_MSB(x) (x) | MSB_MASK
-// Clear X's most significant bit.
-#define CLEAR_MSB(x) (x) & MSB_MASK_CMP
 // Checks if X represents edge ID.
 #define SINGLE_EDGE(x) !((x) & MSB_MASK)
 

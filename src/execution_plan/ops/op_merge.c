@@ -6,9 +6,9 @@
 
 #include "op_merge.h"
 #include "../../RG.h"
-#include "../../errors.h"
 #include "op_merge_create.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 #include "../../schema/schema.h"
 #include "../../util/rax_extensions.h"
 #include "../../arithmetic/arithmetic_expression.h"

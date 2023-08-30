@@ -6,10 +6,10 @@
 
 #include "proc_fulltext_create_index.h"
 #include "../value.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../errors/errors.h"
 #include "../index/indexer.h"
 #include "../util/rmalloc.h"
 #include "../graph/graphcontext.h"
@@ -38,7 +38,7 @@ static ProcedureResult _validateIndexConfigMap
 	bool stopword_exists = MAP_GET(config, "stopwords", sw);
 
 	if(!label_exists) {
-		ErrorCtx_SetError("Label is missing");
+		ErrorCtx_SetError(EMSG_IS_MISSING, "Label");
 		return PROCEDURE_ERR;
 	}
 
@@ -47,7 +47,7 @@ static ProcedureResult _validateIndexConfigMap
 		Index idx = GraphContext_GetIndex(gc, label.stringval, NULL, 0,
 				IDX_FULLTEXT, SCHEMA_NODE);
 		if(idx != NULL) {
-			ErrorCtx_SetError("Index already exists configuration can't be changed");
+			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
 			return PROCEDURE_ERR;
 		}
 	}
@@ -62,12 +62,12 @@ static ProcedureResult _validateIndexConfigMap
 			for (uint i = 0; i < stopwords_count; i++) {
 				SIValue stopword = SIArray_Get(sw, i);
 				if(SI_TYPE(stopword) != T_STRING) {
-					ErrorCtx_SetError("Stopword must be a string");
+					ErrorCtx_SetError(EMSG_MUST_BE, "Stopword", "string");
 					return PROCEDURE_ERR;
 				}
 			}
 		} else {
-			ErrorCtx_SetError("Stopwords must be array");
+			ErrorCtx_SetError(EMSG_MUST_BE, "Stopwords", "array");
 			return PROCEDURE_ERR;
 		}
 	}
@@ -78,11 +78,11 @@ static ProcedureResult _validateIndexConfigMap
 
 	if(lang_exists) {
 		if(SI_TYPE(lang) != T_STRING) {
-			ErrorCtx_SetError("Language must be string");
+			ErrorCtx_SetError(EMSG_MUST_BE, "Language", "string");
 			return PROCEDURE_ERR;
 		}
 		if(RediSearch_ValidateLanguage(lang.stringval)) {
-			ErrorCtx_SetError("Language is not supported");
+			ErrorCtx_SetError(EMSG_NOT_SUPPORTED, "Language");
 			return PROCEDURE_ERR;
 		}
 	}
@@ -114,32 +114,32 @@ static ProcedureResult _validateFieldConfigMap
 
 	// field name is mandatory
 	if(!field_exists) {
-		ErrorCtx_SetError("Field is missing");
+		ErrorCtx_SetError(EMSG_IS_MISSING, "Field");
 		return PROCEDURE_ERR;
 	}
 
 	if((SI_TYPE(field) & T_STRING) == 0) {
-		ErrorCtx_SetError("Field must be a string");
+		ErrorCtx_SetError(EMSG_MUST_BE, "Field", "string");
 		return PROCEDURE_ERR;
 	}
 
 	if(weight_exists) {
 		if((SI_TYPE(weight) & SI_NUMERIC) == 0) {
-			ErrorCtx_SetError("Weight must be numeric");
+			ErrorCtx_SetError(EMSG_MUST_BE, "Weight", "numeric");
 			return PROCEDURE_ERR;
 		}
 	}
 
 	if(nostem_exists) {
 		if(SI_TYPE(nostem) != T_BOOL) {
-			ErrorCtx_SetError("Nostem must be bool");
+			ErrorCtx_SetError(EMSG_MUST_BE, "Nostem", "bool");
 			return PROCEDURE_ERR;
 		}
 	}
 
 	if(phonetic_exists) {
 		if(SI_TYPE(phonetic) != T_STRING) {
-			ErrorCtx_SetError("Phonetic must be a string");
+			ErrorCtx_SetError(EMSG_MUST_BE, "Phonetic", "string");
 			return PROCEDURE_ERR;
 		}
 	}
@@ -153,7 +153,7 @@ static ProcedureResult _validateFieldConfigMap
 		Index idx = GraphContext_GetIndex(gc, label, &fieldID, 1, IDX_FULLTEXT,
 				SCHEMA_NODE);
 		if(idx != NULL) {
-			ErrorCtx_SetError("Index already exists configuration can't be changed");
+			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
 			return PROCEDURE_ERR;
 		}
 	}
@@ -173,13 +173,13 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 ) {
 	uint arg_count = array_len((SIValue *)args);
 	if(arg_count < 2) {
-		ErrorCtx_SetError("Minimum number of arguments is 2");
+		ErrorCtx_SetError(EMSG_FULLTEXT_MIN_ARGS);
 		return PROCEDURE_ERR;
 	}
 
 	// label argument should be of type string or map
 	if(!(SI_TYPE(args[0]) & (T_STRING | T_MAP))) {
-		ErrorCtx_SetError("Label argument can be string or map");
+		ErrorCtx_SetError(EMSG_FULLTEXT_LABEL_TYPE);
 		return PROCEDURE_ERR;
 	}
 	if(SI_TYPE(args[0]) == T_MAP &&
@@ -201,7 +201,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	// validation, fields arguments should be of type string or map
 	for(uint i = 1; i < arg_count; i++) {
 		if(!(SI_TYPE(args[i]) & (T_STRING | T_MAP))) {
-			ErrorCtx_SetError("Field argument must be string or map");
+			ErrorCtx_SetError(EMSG_FULLTEXT_FIELD_TYPE);
 			return PROCEDURE_ERR;
 		}
 		if(SI_TYPE(args[i]) == T_MAP &&

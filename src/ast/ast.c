@@ -722,7 +722,7 @@ cypher_parse_result_t *parse_query
 
 	// check that the parser parsed the entire query
 	if(!cypher_parse_result_eof(result)) {
-		ErrorCtx_SetError("Error: query with more than one statement is not supported.");
+		ErrorCtx_SetError(EMSG_QUERY_WITH_MULTIPLE_STATEMENTS);
 		parse_result_free(result);
 		return NULL;
 	}

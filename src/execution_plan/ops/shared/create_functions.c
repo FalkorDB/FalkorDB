@@ -6,8 +6,8 @@
 
 #include "create_functions.h"
 #include "RG.h"
-#include "../../../errors.h"
 #include "../../../query_ctx.h"
+#include "../../../errors/errors.h"
 #include "../../../ast/ast_shared.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"

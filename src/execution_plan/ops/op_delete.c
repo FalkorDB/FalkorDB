@@ -5,9 +5,9 @@
  */
 
 #include "./op_delete.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 #include "../../graph/graph_hub.h"
 #include "datatypes/path/sipath.h"
 #include "../../arithmetic/arithmetic_expression.h"

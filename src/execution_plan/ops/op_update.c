@@ -6,14 +6,14 @@
 
 #include "op_update.h"
 #include "RG.h"
-#include "../../errors.h"
 #include "../../query_ctx.h"
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
+#include "../../errors/errors.h"
 #include "../../util/rax_extensions.h"
 #include "../../arithmetic/arithmetic_expression.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record UpdateConsume(OpBase *opBase);
 static OpResult UpdateReset(OpBase *opBase);
 static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -74,7 +74,10 @@ OpBase *NewUpdateOp(const ExecutionPlan *plan, rax *update_exps) {
 	return (OpBase *)op;
 }
 
-static Record UpdateConsume(OpBase *opBase) {
+static Record UpdateConsume
+(
+	OpBase *opBase
+) {
 	OpUpdate *op = (OpUpdate *)opBase;
 	OpBase *child = op->op.children[0];
 	Record r;

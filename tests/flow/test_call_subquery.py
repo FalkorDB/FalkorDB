@@ -128,7 +128,7 @@ updating clause.")
 
         # a query can not be terminated by a returning subquery
         query = "MATCH (n:N) CALL {WITH n CREATE (m:M {n: n.v}) RETURN m}"
-        self.expect_error(query, "A query cannot conclude with a returning subquery \
+        self.expect_error(query, "Query cannot conclude with a returning subquery \
 (must be a RETURN clause, an update clause, a procedure call or a non-returning\
  subquery)")
 

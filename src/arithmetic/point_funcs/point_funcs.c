@@ -6,8 +6,8 @@
 
 #include "RG.h"
 #include "../func_desc.h"
-#include "../../errors.h"
 #include "../../util/arr.h"
+#include "../../errors/errors.h"
 #include "../../datatypes/map.h"
 #include <math.h>
 

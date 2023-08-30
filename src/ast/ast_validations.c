@@ -8,10 +8,10 @@
 #include "ast.h"
 #include "util.h"
 #include "astnode.h"
-#include "../errors.h"
 #include "ast_shared.h"
 #include "../util/arr.h"
 #include "ast_visitor.h"
+#include "../errors/errors.h"
 #include "../util/rax_extensions.h"
 #include "../procedures/procedure.h"
 #include "../execution_plan/ops/op.h"
@@ -129,7 +129,7 @@ static bool _AST_GetWithAliases
 			// Retrieve "a" from "WITH a"
 			const cypher_astnode_t *expr = cypher_ast_projection_get_expression(child);
 			if(cypher_astnode_type(expr) != CYPHER_AST_IDENTIFIER) {
-				ErrorCtx_SetError("WITH clause projections must be aliased");
+				ErrorCtx_SetError(EMSG_WITH_PROJ_MISSING_ALIAS);
 				raxFree(local_env);
 				return false;	
 			}
@@ -142,7 +142,7 @@ static bool _AST_GetWithAliases
 		if(raxTryInsert(local_env, (unsigned char *)alias, strlen(alias), NULL,
 			NULL) == 0 &&
 			alias[0] != '@') {
-				ErrorCtx_SetError("Error: Multiple result columns with the same name are not supported.");
+				ErrorCtx_SetError(EMSG_SAME_RESULT_COLUMN_NAME);
 				raxFree(local_env);
 				return false;
 		}
@@ -203,7 +203,7 @@ static AST_Validation _ValidateMultiHopTraversal
 
 	// Validate specified range
 	if(start > end) {
-		ErrorCtx_SetError("Variable length path, maximum number of hops must be greater or equal to minimum number of hops.");
+		ErrorCtx_SetError(EMSG_VAR_LEN_INVALID_RANGE);
 		return AST_INVALID;
 	}
 	
@@ -220,7 +220,7 @@ static AST_Validation _ValidateMergeRelation
 	// Verify that this is not a variable length relationship
 	const cypher_astnode_t *range = cypher_ast_rel_pattern_get_varlength(entity);
 	if(range) {
-		ErrorCtx_SetError("Variable length relationships cannot be used in MERGE");
+		ErrorCtx_SetError(EMSG_VAR_LEN, "MERGE");
 		return AST_INVALID;
 	}
 
@@ -230,7 +230,7 @@ static AST_Validation _ValidateMergeRelation
 		alias = cypher_ast_identifier_get_name(identifier);
 		// Verify that we're not redeclaring a bound variable
 		if(raxFind(defined_aliases, (unsigned char *)alias, strlen(alias)) != raxNotFound) {
-			ErrorCtx_SetError("The bound variable %s' can't be redeclared in a MERGE clause", alias);
+			ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "MERGE");
 			return AST_INVALID;
 		}
 	}
@@ -238,7 +238,7 @@ static AST_Validation _ValidateMergeRelation
 	// Exactly one reltype should be specified for the introduced edge
 	uint reltype_count = cypher_ast_rel_pattern_nreltypes(entity);
 	if(reltype_count != 1) {
-		ErrorCtx_SetError("Exactly one relationship type must be specified for each relation in a MERGE pattern.");
+		ErrorCtx_SetError(EMSG_ONE_RELATIONSHIP_TYPE, "MERGE");
 		return AST_INVALID;
 	}
 
@@ -272,7 +272,7 @@ static AST_Validation _ValidateMergeNode
 	// If the entity is already bound, the MERGE pattern should not introduce labels or properties
 	if(cypher_ast_node_pattern_nlabels(entity) ||
 	   cypher_ast_node_pattern_get_properties(entity)) {
-		ErrorCtx_SetError("The bound node '%s' can't be redeclared in a MERGE clause", alias);
+		ErrorCtx_SetError(EMSG_REDECLARE, "node", alias, "MERGE");
 		return AST_INVALID;
 	}
 
@@ -289,7 +289,7 @@ static AST_Validation _ValidateCreateRelation
 	if(identifier) {
 		const char *alias = cypher_ast_identifier_get_name(identifier);
 		if(raxFind(defined_aliases, (unsigned char *)alias, strlen(alias)) != raxNotFound) {
-			ErrorCtx_SetError("The bound variable '%s' can't be redeclared in a CREATE clause", alias);
+			ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "CREATE");
 			return AST_INVALID;
 		}
 	}
@@ -312,7 +312,7 @@ static AST_Validation _Validate_CREATE_Entities
 		if(identifier) {
 			const char *alias = cypher_ast_identifier_get_name(identifier);
 			if(raxFind(defined_aliases, (unsigned char *)alias, strlen(alias)) != raxNotFound) {
-				ErrorCtx_SetError("The bound variable '%s' can't be redeclared in a CREATE clause", alias);
+				ErrorCtx_SetError(EMSG_REDECLARE, "variable", alias, "CREATE");
 				return AST_INVALID;
 			}
 		}
@@ -329,7 +329,7 @@ static AST_Validation _Validate_referred_identifier
 ) {
 	int len = strlen(identifier);
 	if(raxFind(defined_identifiers, (unsigned char *)identifier, len) == raxNotFound) {
-		ErrorCtx_SetError("'%.*s' not defined", len, identifier);
+		ErrorCtx_SetError(EMSG_NOT_DEFINED_LEN, len, identifier);
 		return AST_INVALID;
 	}
 
@@ -534,13 +534,13 @@ static AST_Validation _ValidateFunctionCall
 ) {
 	// check existence of the function-name
 	if(!AR_FuncExists(funcName)) {
-		ErrorCtx_SetError("Unknown function '%s'", funcName);
+		ErrorCtx_SetError(EMSG_UNKNOWN_FUNCTION, funcName);
 		return AST_INVALID;
 	}
 
 	if(!include_aggregates && AR_FuncIsAggregate(funcName)) {
 		// Provide a unique error for using aggregate functions from inappropriate contexts
-		ErrorCtx_SetError("Invalid use of aggregating function '%s'", funcName);
+		ErrorCtx_SetError(EMSG_INVALID_USE_OF_AGGREGATION_FUNCTION, funcName);
 		return AST_INVALID;
 	}
 
@@ -565,14 +565,14 @@ static VISITOR_STRATEGY _Validate_apply_all_operator
 
 	// Verify that this is a COUNT call.
 	if(strcasecmp(func_name, "COUNT")) {
-		ErrorCtx_SetError("COUNT is the only function which can accept * as an argument");
+		ErrorCtx_SetError(EMSG_INVALID_USAGE_OF_STAR_PARAMETER);
 		return VISITOR_BREAK;
 	}
 
 	// Verify that DISTINCT is not specified.
 	if(cypher_ast_apply_all_operator_get_distinct(n)) {
 		// TODO consider opening a parser error, this construction is invalid in Neo's parser.
-		ErrorCtx_SetError("Cannot specify both DISTINCT and * in COUNT(DISTINCT *)");
+		ErrorCtx_SetError(EMSG_INVALID_USAGE_OF_DISTINCT_STAR_PARAMETER);
 		return VISITOR_BREAK;
 	}
 
@@ -636,7 +636,7 @@ static VISITOR_STRATEGY _Validate_reduce
 		// check if the variable has already been introduced
 		const char *var_str = cypher_ast_identifier_get_name(init_node);
 		if(raxFind(vctx->defined_identifiers, (unsigned char *)var_str, strlen(var_str)) == raxNotFound) {
-			ErrorCtx_SetError("%s not defined.", var_str);
+			ErrorCtx_SetError(EMSG_NOT_DEFINED, var_str);
 			return VISITOR_BREAK;
 		}
 	}
@@ -653,7 +653,7 @@ static VISITOR_STRATEGY _Validate_reduce
 	if(cypher_astnode_type(list_var) == CYPHER_AST_IDENTIFIER) {
 		const char *list_var_str = cypher_ast_identifier_get_name(list_var);
 		if(raxFind(vctx->defined_identifiers, (unsigned char *) list_var_str, strlen(list_var_str)) == raxNotFound) {
-			ErrorCtx_SetError("%s not defined", list_var_str);
+			ErrorCtx_SetError(EMSG_NOT_DEFINED, list_var_str);
 			return VISITOR_BREAK;
 		}
 	}
@@ -667,7 +667,7 @@ static VISITOR_STRATEGY _Validate_reduce
 	// make sure that the eval-expression exists
 	const cypher_astnode_t *eval_node = cypher_ast_reduce_get_eval(n);
 	if(!eval_node) {
-		ErrorCtx_SetError("No eval expression given in reduce");
+		ErrorCtx_SetError(EMSG_MISSING_EVAL_EXP_IN_REDUCE);
 		return VISITOR_BREAK;
 	}
 
@@ -722,7 +722,7 @@ static AST_Validation _ValidateInlinedProperties
 	// Emit an error if the properties are not presented as a map, as in:
 	// MATCH (p {invalid_property_construction}) RETURN p
 	if(cypher_astnode_type(props) != CYPHER_AST_MAP) {
-		ErrorCtx_SetError("Encountered unhandled type in inlined properties.");
+		ErrorCtx_SetError(EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES);
 		return AST_INVALID;
 	}
 
@@ -736,7 +736,7 @@ static AST_Validation _ValidateInlinedProperties
 		if(patterns_count > 0) {
 			// Encountered query of the form:
 			// MATCH (a {prop: ()-[]->()}) RETURN a
-			ErrorCtx_SetError("Encountered unhandled type in inlined properties.");
+			ErrorCtx_SetError(EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES);
 			return AST_INVALID;
 		}
 	}
@@ -766,19 +766,19 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 		// Validate that each relation has exactly one type
 		uint reltype_count = cypher_ast_rel_pattern_nreltypes(n);
 		if(reltype_count != 1) {
-			ErrorCtx_SetError("Exactly one relationship type must be specified for CREATE");
+			ErrorCtx_SetError(EMSG_ONE_RELATIONSHIP_TYPE, "CREATE");
 			return VISITOR_BREAK;
 		}
 
 		// Validate that each relation being created is directed
 		if(cypher_ast_rel_pattern_get_direction(n) == CYPHER_REL_BIDIRECTIONAL) {
-			ErrorCtx_SetError("Only directed relationships are supported in CREATE");
+			ErrorCtx_SetError(EMSG_CREATE_DIRECTED_RELATIONSHIP);
 			return VISITOR_BREAK;
 		}
 
 		// Validate that each relation being created is not variable length relationship
 		if(range) {
-			ErrorCtx_SetError("Variable length relationships cannot be used in CREATE");
+			ErrorCtx_SetError(EMSG_VAR_LEN, "CREATE");
 			return VISITOR_BREAK;
 		}
 	}
@@ -811,12 +811,12 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 		}
 			
 		if(alias_type != (void *)T_EDGE && alias_type != NULL) {
-			ErrorCtx_SetError("The alias '%s' was specified for both a node and a relationship.", alias);
+			ErrorCtx_SetError(EMSG_SAME_ALIAS_NODE_RELATIONSHIP, alias);
 			return VISITOR_BREAK;
 		}
 
 		if(vctx->clause == CYPHER_AST_MATCH && alias_type != NULL) {
-			ErrorCtx_SetError("Cannot use the same relationship variable '%s' for multiple patterns.", alias);
+			ErrorCtx_SetError(EMSG_SAME_ALIAS_MULTIPLE_PATTERNS, alias);
 			return VISITOR_BREAK;
 		}
 	}
@@ -853,7 +853,7 @@ static VISITOR_STRATEGY _Validate_node_pattern
 	} else {
 		void *alias_type = raxFind(vctx->defined_identifiers, (unsigned char *)alias, strlen(alias));
 		if(alias_type != raxNotFound && alias_type != NULL && alias_type != (void *)T_NODE) {
-			ErrorCtx_SetError("The alias '%s' was specified for both a node and a relationship.", alias);
+			ErrorCtx_SetError(EMSG_SAME_ALIAS_NODE_RELATIONSHIP, alias);
 			return VISITOR_BREAK;
 		}
 	}
@@ -880,14 +880,14 @@ static VISITOR_STRATEGY _Validate_shortest_path
 		const cypher_astnode_t *start = cypher_ast_node_pattern_get_identifier(cypher_ast_pattern_path_get_element(path, 0));
 		const cypher_astnode_t *end = cypher_ast_node_pattern_get_identifier(cypher_ast_pattern_path_get_element(path, elements - 1));
 		if(start == NULL || end == NULL) {
-			ErrorCtx_SetError("A shortestPath requires bound nodes");
+			ErrorCtx_SetError(EMSG_SHORTESTPATH_BOUND_NODES);
 			return VISITOR_BREAK;
 		}
 		const char *start_id = cypher_ast_identifier_get_name(start);
 		const char *end_id = cypher_ast_identifier_get_name(end);
 		if(raxFind(vctx->defined_identifiers, (unsigned char *)start_id, strlen(start_id)) == raxNotFound ||
 			raxFind(vctx->defined_identifiers, (unsigned char *)end_id, strlen(end_id)) == raxNotFound) {
-			ErrorCtx_SetError("A shortestPath requires bound nodes");
+			ErrorCtx_SetError(EMSG_SHORTESTPATH_BOUND_NODES);
 			return VISITOR_BREAK;
 		}
 		return VISITOR_RECURSE;
@@ -902,7 +902,7 @@ static VISITOR_STRATEGY _Validate_shortest_path
 			const cypher_astnode_t *start = cypher_ast_range_get_start(r);
 			if(start) min_hops = AST_ParseIntegerNode(start);
 			if(min_hops != 1) {
-				ErrorCtx_SetError("allShortestPaths(...) does not support a minimal length different from 1");
+				ErrorCtx_SetError(EMSG_ALLSHORTESTPATH_MINIMAL_LENGTH);
 				break;
 			}
 		}
@@ -968,7 +968,7 @@ static AST_Validation _Validate_LIMIT_SKIP_Modifiers
 		// The value validation of integer node or parameter node is done in run time evaluation.
 		if(cypher_astnode_type(limit) != CYPHER_AST_INTEGER &&
 			cypher_astnode_type(limit) != CYPHER_AST_PARAMETER) {
-			ErrorCtx_SetError("LIMIT specified value of invalid type, must be a positive integer");
+			ErrorCtx_SetError(EMSG_LIMIT_MUST_BE_NON_NEGATIVE);
 			return AST_INVALID;
 		}
 	}
@@ -978,7 +978,7 @@ static AST_Validation _Validate_LIMIT_SKIP_Modifiers
 		// The value validation of integer node or parameter node is done in run time evaluation.
 		if(cypher_astnode_type(skip) != CYPHER_AST_INTEGER &&
 			cypher_astnode_type(skip) != CYPHER_AST_PARAMETER) {
-			ErrorCtx_SetError("SKIP specified value of invalid type, must be a positive integer");
+			ErrorCtx_SetError(EMSG_SKIP_MUST_BE_NON_NEGATIVE);
 			return AST_INVALID;
 		}
 	}
@@ -1004,7 +1004,7 @@ static AST_Validation _ValidateUnion_Clauses
 
 		// We should have one more RETURN clauses than we have UNION clauses.
 		if(return_clause_count != union_clause_count + 1) {
-			ErrorCtx_SetError("Found %d UNION clauses but only %d RETURN clauses.", union_clause_count,
+			ErrorCtx_SetError(EMSG_UNION_MISSING_RETURNS, union_clause_count,
 							return_clause_count);
 			array_free(return_indices);
 			return AST_INVALID;
@@ -1029,7 +1029,7 @@ static AST_Validation _ValidateUnion_Clauses
 		for(uint i = 1; i < return_clause_count; i++) {
 			return_clause = cypher_ast_query_get_clause(ast->root, return_indices[i]);
 			if(proj_count != cypher_ast_return_nprojections(return_clause)) {
-				ErrorCtx_SetError("All sub queries in a UNION must have the same column names.");
+				ErrorCtx_SetError(EMSG_UNION_MISMATCHED_RETURNS);
 				res = AST_INVALID;
 				goto cleanup;
 			}
@@ -1044,7 +1044,7 @@ static AST_Validation _ValidateUnion_Clauses
 				}
 				const char *alias = cypher_ast_identifier_get_name(alias_node);
 				if(strcmp(projections[j], alias) != 0) {
-					ErrorCtx_SetError("All sub queries in a UNION must have the same column names.");
+					ErrorCtx_SetError(EMSG_UNION_MISMATCHED_RETURNS);
 					res = AST_INVALID;
 					goto cleanup;
 				}
@@ -1107,7 +1107,7 @@ static VISITOR_STRATEGY _Validate_CALL_Clause
 		proc = Proc_Get(proc_name);
 
 		if(proc == NULL) {
-			ErrorCtx_SetError("Procedure `%s` is not registered", proc_name);
+			ErrorCtx_SetError(EMSG_PROCEDURE_NOT_REGISTERED, proc_name);
 			goto cleanup;
 		}
 
@@ -1115,7 +1115,7 @@ static VISITOR_STRATEGY _Validate_CALL_Clause
 		if(proc->argc != PROCEDURE_VARIABLE_ARG_COUNT) {
 			unsigned int given_arg_count = cypher_ast_call_narguments(n);
 			if(Procedure_Argc(proc) != given_arg_count) {
-				ErrorCtx_SetError("Procedure `%s` requires %d arguments, got %d", proc_name, proc->argc,
+				ErrorCtx_SetError(EMSG_PROCEDURE_INVALID_ARGUMENTS, proc_name, proc->argc,
 									given_arg_count);
 				goto cleanup;
 			}
@@ -1134,13 +1134,13 @@ static VISITOR_STRATEGY _Validate_CALL_Clause
 
 			// make sure each yield output is mentioned only once
 			if(!raxInsert(rax, (unsigned char *)identifier, strlen(identifier), NULL, NULL)) {
-				ErrorCtx_SetError("Variable `%s` already declared", identifier);
+				ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, identifier);
 				goto cleanup;
 			}
 
 			// make sure procedure is aware of output
 			if(!Procedure_ContainsOutput(proc, identifier)) {
-				ErrorCtx_SetError("Procedure `%s` does not yield output `%s`",
+				ErrorCtx_SetError(EMSG_PROCEDURE_INVALID_OUTPUT,
 									proc_name, identifier);
 				goto cleanup;
 			}
@@ -1278,9 +1278,7 @@ static VISITOR_STRATEGY _Validate_call_subquery
 		// validate that the with imports (if exist) are simple, i.e., 'WITH a'
 		if(!_ValidateCallInitialWith(first_clause, vctx)) {
 			raxFree(in_env);
-			ErrorCtx_SetError(
-				"WITH imports in CALL {} must consist of only simple references\
- to outside variables");
+			ErrorCtx_SetError(EMSG_CALLSUBQUERY_INVALID_REFERENCES);
 			return VISITOR_BREAK;
 		}
 	}
@@ -1304,9 +1302,7 @@ static VISITOR_STRATEGY _Validate_call_subquery
 			// 'WITH a'
 			if(!_ValidateCallInitialWith(clause, vctx)) {
 				raxFree(in_env);
-				ErrorCtx_SetError(
-					"WITH imports in CALL {} must consist of only simple \
-references to outside variables");
+				ErrorCtx_SetError(EMSG_CALLSUBQUERY_INVALID_REFERENCES);
 				return VISITOR_BREAK;
 			}
 		}
@@ -1369,7 +1365,7 @@ references to outside variables");
 			if(!raxTryInsert(vctx->defined_identifiers,
 				(unsigned char *)var_name, strlen(var_name), NULL, NULL)) {
 					ErrorCtx_SetError(
-						"Variable `%s` already declared in outer scope",
+						EMSG_VAIABLE_ALREADY_DECLARED_IN_OUTER_SCOPE,
 						var_name);
 					return VISITOR_BREAK;
 			}
@@ -1494,7 +1490,7 @@ static VISITOR_STRATEGY _Validate_DELETE_Clause
 		   type != CYPHER_AST_APPLY_OPERATOR     &&
 		   type != CYPHER_AST_APPLY_ALL_OPERATOR &&
 		   type != CYPHER_AST_SUBSCRIPT_OPERATOR) {
-			ErrorCtx_SetError("DELETE can only be called on nodes, paths and relationships");
+			ErrorCtx_SetError(EMSG_DELETE_INVALID_ARGUMENTS);
 			return VISITOR_BREAK;
 		}
 	}
@@ -1517,7 +1513,7 @@ static VISITOR_STRATEGY _Validate_set_property
 	const cypher_astnode_t *ast_prop = cypher_ast_set_property_get_property(n);
 	const cypher_astnode_t *ast_entity = cypher_ast_property_operator_get_expression(ast_prop);
 	if(cypher_astnode_type(ast_entity) != CYPHER_AST_IDENTIFIER) {
-		ErrorCtx_SetError("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions");
+		ErrorCtx_SetError(EMSG_SET_LHS_NON_ALIAS);
 		return VISITOR_BREAK;
 	}
 
@@ -1558,7 +1554,7 @@ static VISITOR_STRATEGY _Validate_UNION_Clause
 	if(vctx->union_all == NOT_DEFINED) {
 		vctx->union_all = cypher_ast_union_has_all(n);
 	} else if(vctx->union_all != cypher_ast_union_has_all(n)) {
-		ErrorCtx_SetError("Invalid combination of UNION and UNION ALL.");
+		ErrorCtx_SetError(EMSG_UNION_COMBINATION);
 		return VISITOR_BREAK;
 	}
 
@@ -1677,7 +1673,7 @@ static VISITOR_STRATEGY _Validate_FOREACH_Clause
 			child_clause_type != CYPHER_AST_DELETE  &&
 			child_clause_type != CYPHER_AST_FOREACH
 		) {
-			ErrorCtx_SetError("Error: Only updating clauses may reside in FOREACH");
+			ErrorCtx_SetError(EMSG_FOREACH_INVALID_BODY);
 			break;
 		}
 
@@ -1725,7 +1721,7 @@ static VISITOR_STRATEGY _Validate_RETURN_Clause
 		for (uint i = 0; i < column_count; i++) {
 			// column with same name is invalid
 			if(raxTryInsert(rax, (unsigned char *)columns[i], strlen(columns[i]), NULL, NULL) == 0) {
-				ErrorCtx_SetError("Error: Multiple result columns with the same name are not supported.");
+				ErrorCtx_SetError(EMSG_SAME_RESULT_COLUMN_NAME);
 				break;
 			}
 		}
@@ -1834,8 +1830,7 @@ static AST_Validation _ValidateQueryTermination
 	   type != CYPHER_AST_REMOVE         &&
 	   type != CYPHER_AST_FOREACH
 	  ) {
-			ErrorCtx_SetError("Query cannot conclude with %s (must be a RETURN \
-clause, an update clause, a procedure call or a non-returning subquery)",
+			ErrorCtx_SetError(EMSG_QUERY_INVALID_LAST_CLAUSE,
 						cypher_astnode_typestr(type));
 		return AST_INVALID;
 	}
@@ -1847,9 +1842,8 @@ clause, an update clause, a procedure call or a non-returning subquery)",
 		if(cypher_astnode_type(cypher_ast_query_get_clause(query,
 				cypher_ast_query_nclauses(query)-1)) ==
 		   CYPHER_AST_RETURN) {
-			ErrorCtx_SetError("A query cannot conclude with a returning \
-subquery (must be a RETURN clause, an update clause, a procedure call or a \
-non-returning subquery)");
+			ErrorCtx_SetError(EMSG_QUERY_INVALID_LAST_CLAUSE,
+						"a returning subquery");
 
 			return AST_INVALID;
 		}
@@ -1863,7 +1857,7 @@ non-returning subquery)");
 		cypher_astnode_type_t type = cypher_astnode_type(clause);
 		if(type != CYPHER_AST_UNION && last_was_return) {
 			// unexpected clause following RETURN
-			ErrorCtx_SetError("Unexpected clause following RETURN");
+			ErrorCtx_SetError(EMSG_UNEXPECTED_CLAUSE_FOLLOWING_RETURN);
 			return AST_INVALID;
 		} else if(type == CYPHER_AST_RETURN) {
 			last_was_return = true;
@@ -1909,14 +1903,14 @@ static AST_Validation _ValidateQuerySequence
 	const cypher_astnode_t *start_clause = cypher_ast_query_get_clause(ast->root, 0);
 	if(cypher_astnode_type(start_clause) == CYPHER_AST_WITH &&
 	   cypher_ast_with_has_include_existing(start_clause)) {
-		ErrorCtx_SetError("Query cannot begin with 'WITH *'.");
+		ErrorCtx_SetError(EMSG_QUERY_CANNOT_BEGIN_WITH, "WITH");
 		return AST_INVALID;
 	}
 
 	// The query cannot begin with a "RETURN *" projection.
 	if(cypher_astnode_type(start_clause) == CYPHER_AST_RETURN &&
 	   cypher_ast_return_has_include_existing(start_clause)) {
-		ErrorCtx_SetError("Query cannot begin with 'RETURN *'.");
+		ErrorCtx_SetError(EMSG_QUERY_CANNOT_BEGIN_WITH, "RETURN");
 		return AST_INVALID;
 	}
 
@@ -1942,8 +1936,7 @@ static AST_Validation _ValidateClauseOrder
 										   type == CYPHER_AST_UNWIND         ||
 										   type == CYPHER_AST_CALL           ||
 										   type == CYPHER_AST_CALL_SUBQUERY)) {
-			ErrorCtx_SetError("A WITH clause is required to introduce %s after an updating clause.",
-							  cypher_astnode_typestr(type));
+			ErrorCtx_SetError(EMSG_MISSING_WITH, cypher_astnode_typestr(type));
 			return AST_INVALID;
 		}
 		encountered_updating_clause = (encountered_updating_clause ||
@@ -1955,8 +1948,7 @@ static AST_Validation _ValidateClauseOrder
 			// If the current clause is non-optional but we have already
 			// encountered an optional match, emit an error
 			if(!current_clause_is_optional && encountered_optional_match) {
-				ErrorCtx_SetError("A WITH clause is required to introduce a \
-MATCH clause after an OPTIONAL MATCH.");
+				ErrorCtx_SetError(EMSG_MISSING_WITH_AFTER_MATCH);
 				return AST_INVALID;
 			}
 			encountered_optional_match |= current_clause_is_optional;
@@ -2145,7 +2137,7 @@ AST_Validation AST_Validate_ParseResultRoot
 		   root_type == CYPHER_AST_COMMENT) {
 			continue;
 		} else if(root_type != CYPHER_AST_STATEMENT) {
-			ErrorCtx_SetError("Encountered unsupported query type '%s'", cypher_astnode_typestr(root_type));
+			ErrorCtx_SetError(EMSG_UNSUPPORTED_QUERY_TYPE, cypher_astnode_typestr(root_type));
 			return AST_INVALID;
 		} else {
 			// We got a statement.
@@ -2156,7 +2148,7 @@ AST_Validation AST_Validate_ParseResultRoot
 
 	// query with no roots like ';'
 	if(nroots == 0) {
-		ErrorCtx_SetError("Error: empty query.");
+		ErrorCtx_SetError(EMSG_EMPTY_QUERY);
 	}
 
 	return AST_INVALID;
@@ -2195,12 +2187,12 @@ AST_Validation AST_Validate_Query
 
 	// validate positions of allShortestPaths
 	if(!_ValidateAllShortestPaths(body)) {
-		ErrorCtx_SetError("RedisGraph support allShortestPaths only in match clauses");
+		ErrorCtx_SetError(EMSG_ALLSHORTESTPATH_SUPPORT);
 		return AST_INVALID;
 	}
 
 	if(!_ValidateShortestPaths(body)) {
-		ErrorCtx_SetError("RedisGraph currently only supports shortestPaths in WITH or RETURN clauses");
+		ErrorCtx_SetError(EMSG_SHORTESTPATH_SUPPORT);
 		return AST_INVALID;
 	}
 
@@ -2223,7 +2215,7 @@ static AST_Validation _ValidateParamsOnly
 		const cypher_astnode_type_t type = cypher_astnode_type(option);
 		if((type == CYPHER_AST_EXPLAIN_OPTION) || (type == CYPHER_AST_PROFILE_OPTION)) {
 			const char *invalid_option_name = cypher_astnode_typestr(type);
-			ErrorCtx_SetError("Please use GRAPH.%s 'key' 'query' command instead of GRAPH.QUERY 'key' '%s query'",
+			ErrorCtx_SetError(EMSG_EXPLAIN_PROFILE_USAGE,
 							  invalid_option_name, invalid_option_name);
 			return AST_INVALID;
 		}
@@ -2246,7 +2238,7 @@ static AST_Validation _ValidateDuplicateParameters
 			const char *paramName = cypher_ast_string_get_value(cypher_ast_cypher_option_param_get_name(param));
 			// If parameter already exists return an error.
 			if(!raxInsert(param_names, (unsigned char *) paramName, strlen(paramName), NULL, NULL)) {
-				ErrorCtx_SetError("Duplicated parameter: %s", paramName);
+				ErrorCtx_SetError(EMSG_DUPLICATE_PARAMETERS, paramName);
 				raxFree(param_names);
 				return AST_INVALID;
 			}
@@ -2327,6 +2319,6 @@ void AST_ReportErrors
 	// this to be reported to the user, typically with an arrow pointing to the
 	// invalid character.
 	size_t errCtxOffset = cypher_parse_error_context_offset(error);
-	ErrorCtx_SetError("errMsg: %s line: %u, column: %u, offset: %zu errCtx: %s errCtxOffset: %zu",
+	ErrorCtx_SetError(EMSG_PARSER_ERROR,
 					  errMsg, errPos.line, errPos.column, errPos.offset, errCtx, errCtxOffset);
 }

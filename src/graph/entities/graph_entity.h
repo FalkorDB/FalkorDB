@@ -62,14 +62,6 @@ SIValue *GraphEntity_GetProperty
 	Attribute_ID attr_id
 );
 
-// updates existing attribute value, return true if property been updated
-bool GraphEntity_SetProperty
-(
-	const GraphEntity *e,
-	Attribute_ID attr_id,
-	SIValue value
-);
-
 // returns an SIArray of all keys in graph entity properties
 SIValue GraphEntity_Keys
 (

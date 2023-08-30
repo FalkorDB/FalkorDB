@@ -6,7 +6,7 @@
 
 #include "numeric_funcs.h"
 #include "RG.h"
-#include "../../errors.h"
+#include "../../errors/errors.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"

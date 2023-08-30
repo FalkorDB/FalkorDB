@@ -5,11 +5,11 @@
  */
 
 #include "ast.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/qsort.h"
 #include "../util/sds/sds.h"
+#include "../errors/errors.h"
 #include "../procedures/procedure.h"
 
 // forward declarations

@@ -7,13 +7,13 @@
 #include "resultset.h"
 #include "RG.h"
 #include "../value.h"
-#include "../errors.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../bolt/bolt.h"
 #include "../bolt/socket.h"
 #include "../globals.h"
+#include "../errors/errors.h"
 #include "../commands/cmd_context.h"
 
 static void _ResultSet_ReplyWithPreamble

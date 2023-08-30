@@ -5,9 +5,9 @@
  */
 
 #include "../ops/ops.h"
-#include "../../errors.h"
 #include "../../query_ctx.h"
 #include "../execution_plan.h"
+#include "../../errors/errors.h"
 #include "execution_plan_util.h"
 #include "execution_plan_modify.h"
 #include "execution_plan_construct.h"
@@ -131,7 +131,7 @@ static void _ExecutionPlan_ProcessQueryGraph
 					// TODO: would be great if we can perform this validation
 					// at AST validation time
 					if(!src_bounded || !dest_bounded) {
-						ErrorCtx_SetError("Source and destination must already be resolved to call allShortestPaths");
+						ErrorCtx_SetError(EMSG_ALLSHORTESTPATH_SRC_DST_RESLOVED);
 					}
 				}
 				root = NewCondVarLenTraverseOp(plan, gc->g, exp);
