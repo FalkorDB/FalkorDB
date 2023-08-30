@@ -106,7 +106,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 	// validate minimum redis-server version
 	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERION_MAJOR,
 									 MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH)) {
-		RedisModule_Log(ctx, "warning", "RedisGraph requires redis-server version %d.%d.%d and up",
+		RedisModule_Log(ctx, "warning", "FalkorDB requires redis-server version %d.%d.%d and up",
 						MIN_REDIS_VERION_MAJOR, MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH);
 		return REDISMODULE_ERR;
 	}
@@ -115,7 +115,7 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 		return REDISMODULE_ERR;
 	}
 
-	RedisModule_Log(ctx, "notice", "Starting up RedisGraph version %d.%d.%d.",
+	RedisModule_Log(ctx, "notice", "Starting up FalkorDB version %d.%d.%d.",
 					REDISGRAPH_VERSION_MAJOR, REDISGRAPH_VERSION_MINOR, REDISGRAPH_VERSION_PATCH);
 
 	Proc_Register();     // register procedures
