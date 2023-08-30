@@ -39,13 +39,11 @@ void _ResultSet_BoltReplyWithSIValue
 		bolt_reply_string(client, v.stringval);
 		break;
 	case T_INT64:
-		if(v.longval < UINT8_MAX) {
+		if(INT8_MIN <= v.longval && v.longval <= INT8_MAX) {
 			bolt_reply_int8(client, v.longval);
-		}
-		else if(v.longval < UINT16_MAX) {
+		} else if(INT16_MIN <= v.longval && v.longval <= INT16_MAX) {
 			bolt_reply_int16(client, v.longval);
-		}
-		else if(v.longval < UINT32_MAX) {
+		} else if(INT32_MIN <= v.longval && v.longval <= INT32_MAX) {
 			bolt_reply_int32(client, v.longval);
 		} else {
 			bolt_reply_int64(client, v.longval);
@@ -106,6 +104,13 @@ static void _ResultSet_BoltReplyWithNode
 	GraphContext *gc,
 	Node *n
 ) {
+	// Node::Structure(
+	//     id::Integer,
+	//     labels::List<String>,
+	//     properties::Dictionary,
+	//     element_id::String,
+	// )
+
 	bolt_reply_structure(client, BST_NODE, 4);
 	bolt_reply_int64(client, n->id);
 	uint lbls_count;

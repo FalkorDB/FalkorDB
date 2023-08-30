@@ -545,7 +545,7 @@ void bolt_reply_int16
     int16_t data
 ) {
     client->write_buffer[client->write_index++] = 0xC9;
-    *(uint16_t *)(client->write_buffer + client->write_index) = data;
+    *(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(data);
     client->write_index += 2;
 }
 
@@ -555,7 +555,7 @@ void bolt_reply_int32
     int32_t data
 ) {
     client->write_buffer[client->write_index++] = 0xCA;
-    *(uint32_t *)(client->write_buffer + client->write_index) = data;
+    *(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(data);
     client->write_index += 4;
 }
 
@@ -565,7 +565,7 @@ void bolt_reply_int64
     int64_t data
 ) {
     client->write_buffer[client->write_index++] = 0xCB;
-    *(uint64_t *)(client->write_buffer + client->write_index) = data;
+    *(uint64_t *)(client->write_buffer + client->write_index) = bswap_64(data);
     client->write_index += 8;
 }
 
@@ -576,8 +576,9 @@ void bolt_reply_float
 ) {
     client->write_buffer[client->write_index++] = 0xC1;
     char *buf = (char *)&data;
-    for (int i = 0; i < sizeof(double); i++)
+    for (int i = 0; i < sizeof(double); i++) {
       client->write_buffer[client->write_index++] = buf[sizeof(double) - i - 1];
+    }
 }
 
 void bolt_reply_string
