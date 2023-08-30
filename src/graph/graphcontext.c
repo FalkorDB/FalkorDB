@@ -744,7 +744,7 @@ bool GraphContext_AddVectorIndex
 (
 	Index *idx,                   // [input/output] index created
 	GraphContext *gc,             // graph context
-	GraphEntityType entity_type,  // node/edge
+	SchemaType schema_type,       // type of entities to index nodes/edges
 	const char *label,            // label of indexed entities
 	const char *attr,             // attribute to index
 	uint32_t dimension            // vector dimension
@@ -757,12 +757,11 @@ bool GraphContext_AddVectorIndex
 	// retrieve the schema for this label
 	bool index_changed = false;
 	ResultSet *result_set = QueryCtx_GetResultSet();
-	SchemaType t = (entity_type == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema(gc, label, t);
+	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
 
 	// missing shema, create it
 	if(s == NULL) {
-		s = GraphContext_AddSchema(gc, label, t);
+		s = GraphContext_AddSchema(gc, label, schema_type);
 	}
 	ASSERT(s != NULL);
 

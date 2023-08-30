@@ -308,7 +308,7 @@ bool GraphContext_AddVectorIndex
 (
 	Index *idx,                   // [input/output] index created
 	GraphContext *gc,             // graph context
-	GraphEntityType entity_type,  // node/edge
+	SchemaType schema_type,       // type of entities to index nodes/edges
 	const char *label,            // label of indexed entities
 	const char *attr,             // attribute to index
 	uint32_t dimension            // vector dimension

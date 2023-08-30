@@ -15,7 +15,7 @@
 static bool _parseArgs
 (
 	const SIValue *args,     // arguments
-	GraphEntityType *type,   // (node/edge)
+	SchemaType *type,        // (node/edge)
 	const char **label,      // label to index
 	const char **attribute,  // attribute to index
 	uint32_t *dimension      // vector length
@@ -53,9 +53,9 @@ static bool _parseArgs
 
 	// make sure type is either NODE or RELATIONSHIP
 	if(strcasecmp(val.stringval, "NODE") == 0) {
-		*type = GETYPE_NODE;
+		*type = SCHEMA_NODE;
 	} else if(strcasecmp(val.stringval, "RELATIONSHIP") == 0) {
-		*type = GETYPE_EDGE;
+		*type = SCHEMA_EDGE;
 	} else {
 		return false;
 	}
@@ -117,13 +117,13 @@ ProcedureResult Proc_VectorCreateIdxInvoke
 	const char*     label       = NULL;            // label to index
 	const char*     attribute   = NULL;            // attribute to index
 	uint32_t        dimension   = 0;               // vector length
-	GraphEntityType entity_type = GETYPE_UNKNOWN;  // (node/edge) 
+	SchemaType      schema_type = SCHEMA_NODE;     // (node/edge) 
 
 	//--------------------------------------------------------------------------
 	// parse arguments
 	//--------------------------------------------------------------------------
 
-	if(!_parseArgs(args, &entity_type, &label, &attribute, &dimension)) {
+	if(!_parseArgs(args, &schema_type, &label, &attribute, &dimension)) {
 		ErrorCtx_SetError(EMSG_VECTOR_IDX_CREATE_INVALID_CALL);
 		res = PROCEDURE_ERR;
 		goto cleanup;
@@ -136,7 +136,7 @@ ProcedureResult Proc_VectorCreateIdxInvoke
 	// create index
 	//--------------------------------------------------------------------------
 
-	if(GraphContext_AddVectorIndex(&idx, gc, entity_type, label, attribute,
+	if(GraphContext_AddVectorIndex(&idx, gc, schema_type, label, attribute,
 				dimension) == false) {
 		ErrorCtx_SetError(EMSG_VECTOR_IDX_CREATE_FAIL);
 		res = PROCEDURE_ERR;
@@ -147,8 +147,7 @@ ProcedureResult Proc_VectorCreateIdxInvoke
 	// populate index asynchornously
 	//--------------------------------------------------------------------------
 
-	SchemaType t = (entity_type == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema(gc, label, t);
+	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
 	ASSERT(s != NULL);
 
 	Indexer_PopulateIndex(gc, s, idx);

@@ -157,7 +157,7 @@ const cypher_astnode_t *cypher_ast_create_pattern_props_index_get_options(
     REQUIRE_TYPE(astnode, CYPHER_AST_CREATE_PATTERN_PROPS_INDEX, NULL);
     struct create_pattern_index *node =
         container_of(astnode, struct create_pattern_index, _astnode);
-    return node->label;
+    return node->options;
 }
 
 
