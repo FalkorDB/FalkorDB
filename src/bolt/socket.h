@@ -20,12 +20,12 @@ typedef int socket_t;
 
 socket_t socket_bind
 (
-    uint16_t port
+	uint16_t port
 );
 
 bool socket_read
 (
-    socket_t socket,
-    char* buff,
-    size_t size
+	socket_t socket,
+	char* buff,
+	size_t size
 );

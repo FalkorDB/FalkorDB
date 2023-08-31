@@ -39,15 +39,7 @@ void _ResultSet_BoltReplyWithSIValue
 		bolt_reply_string(client, v.stringval);
 		break;
 	case T_INT64:
-		if(INT8_MIN <= v.longval && v.longval <= INT8_MAX) {
-			bolt_reply_int8(client, v.longval);
-		} else if(INT16_MIN <= v.longval && v.longval <= INT16_MAX) {
-			bolt_reply_int16(client, v.longval);
-		} else if(INT32_MIN <= v.longval && v.longval <= INT32_MAX) {
-			bolt_reply_int32(client, v.longval);
-		} else {
-			bolt_reply_int64(client, v.longval);
-		}
+		bolt_reply_int(client, v.longval);
 		break;
 	case T_DOUBLE:
 		bolt_reply_float(client, v.doubleval);
@@ -98,6 +90,18 @@ void _ResultSet_BoltReplyWithSIValue
 	}
 }
 
+static void _ResultSet_BoltReplyWithElementID
+(
+	bolt_client_t *client,
+	uint64_t id,
+	const char *prefix
+) {
+	int ndigits = id == 0 ? 1 : floor(log10(id)) + 1;
+	char element_id[ndigits + strlen(prefix) + 2];
+	sprintf(element_id, "%s_%ld", prefix, id);
+	bolt_reply_string(client, element_id);
+}
+
 static void _ResultSet_BoltReplyWithNode
 (
 	bolt_client_t *client,
@@ -134,7 +138,7 @@ static void _ResultSet_BoltReplyWithNode
 		// Emit the value
 		_ResultSet_BoltReplyWithSIValue(client, gc, value);
 	}
-	bolt_reply_string(client, "node_0");
+	_ResultSet_BoltReplyWithElementID(client, n->id, "node");
 }
 
 static void _ResultSet_BoltReplyWithEdge
@@ -161,6 +165,7 @@ static void _ResultSet_BoltReplyWithEdge
 	//     properties::Dictionary,
 	//     element_id::String,
 	// )
+
 	bolt_reply_structure(client, is_bounded ? BST_RELATIONSHIP : BST_UNBOUND_RELATIONSHIP, 8);
 	bolt_reply_int64(client, e->id);
 	if(is_bounded) {
@@ -183,10 +188,10 @@ static void _ResultSet_BoltReplyWithEdge
 		// Emit the value
 		_ResultSet_BoltReplyWithSIValue(client, gc, value);
 	}
-	bolt_reply_string(client, "relationship_0");
+	_ResultSet_BoltReplyWithElementID(client, e->id, "relationship");
 	if(is_bounded) {
-		bolt_reply_string(client, "node_0");
-		bolt_reply_string(client, "node_0");
+		_ResultSet_BoltReplyWithElementID(client, e->src_id, "node");
+		_ResultSet_BoltReplyWithElementID(client, e->dest_id, "node");
 	}
 }
 
@@ -196,6 +201,12 @@ static void _ResultSet_BoltReplyWithPath
 	GraphContext *gc,
 	SIValue path
 ) {
+	// Path::Structure(
+	//     nodes::List<Node>,
+	//     rels::List<UnboundRelationship>,
+	//     indices::List<Integer>,
+	// )
+
 	bolt_reply_structure(client, BST_PATH, 3);
 	size_t node_count = SIPath_NodeCount(path);
 	bolt_reply_list(client, node_count);
@@ -210,8 +221,9 @@ static void _ResultSet_BoltReplyWithPath
 
 	size_t indices = node_count + edge_count - 1;
 	bolt_reply_list(client, indices);
-	for(int i = 0; i < indices; i++) {
-		bolt_reply_int8(client, 1); // TODO: Support path indices
+	for(int i = 0; i < node_count; i++) {
+		bolt_reply_int8(client, i + 1);
+		bolt_reply_int8(client, i + i);
 	}
 }
 

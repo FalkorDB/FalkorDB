@@ -45,21 +45,40 @@ class testBolt():
     
     def test02_graph_entities_values(self):
         with bolt_con.session() as session:
-            result = session.run("""CREATE (n:TestNode {name:'TestNode', foo:'bar'})-[r:TestRel {name:'TestRel'}]->(m:TestNode {name:'TestNode'}) RETURN n, r, m""")
+            result = session.run("""CREATE (a:A {v: 1})-[r1:R1]->(b:B)<-[r2:R2]-(c:C) RETURN a, r1, b, r2, c""")
             record = result.single()
-            n:neo4j.graph.Node = record[0]
-            r:neo4j.graph.Relationship = record[1]
-            m:neo4j.graph.Node = record[2]
+            a:neo4j.graph.Node = record[0]
+            r1:neo4j.graph.Relationship = record[1]
+            b:neo4j.graph.Node = record[2]
+            r2:neo4j.graph.Relationship = record[3]
+            c:neo4j.graph.Node = record[4]
 
-            self.env.assertEquals(n.id, 0)
-            self.env.assertEquals(n.labels, set(['TestNode']))
-            self.env.assertEquals(n['name'], 'TestNode')
-            self.env.assertEquals(n['foo'], 'bar')
+            self.env.assertEquals(a.id, 0)
+            self.env.assertEquals(a.labels, set(['A']))
 
-            self.env.assertEquals(r.id, 0)
-            self.env.assertEquals(r.type, 'TestRel')
-            self.env.assertEquals(r['name'], 'TestRel')
+            self.env.assertEquals(r1.id, 0)
+            self.env.assertEquals(r1.type, 'R1')
+            self.env.assertEquals(r1.start_node, a)
+            self.env.assertEquals(r1.end_node, b)
 
-            self.env.assertEquals(m.id, 1)
-            self.env.assertEquals(m.labels, set(['TestNode']))
-            self.env.assertEquals(m['name'], 'TestNode')
+            self.env.assertEquals(b.id, 1)
+            self.env.assertEquals(b.labels, set(['B']))
+
+            self.env.assertEquals(r2.id, 1)
+            self.env.assertEquals(r2.type, 'R2')
+            self.env.assertEquals(r2.start_node, c)
+            self.env.assertEquals(r2.end_node, b)
+
+            self.env.assertEquals(c.id, 2)
+            self.env.assertEquals(c.labels, set(['C']))
+
+            result = session.run("""MATCH p=(:A)-[:R1]->(:B)<-[:R2]-(:C) RETURN p""")
+            record = result.single()
+            p:neo4j.graph.Path = record[0]
+            self.env.assertEquals(p.start_node.labels, set(['A']))
+            self.env.assertEquals(p.end_node.labels, set(['C']))
+            self.env.assertEquals(p.nodes[0].labels, set(['A']))
+            self.env.assertEquals(p.nodes[1].labels, set(['B']))
+            self.env.assertEquals(p.nodes[2].labels, set(['C']))
+            self.env.assertEquals(p.relationships[0].type, 'R1')
+            self.env.assertEquals(p.relationships[1].type, 'R2')
