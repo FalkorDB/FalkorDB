@@ -144,6 +144,80 @@ RedisModuleString *get_db
 	return RedisModule_CreateString(ctx, db_str, db_len);
 }
 
+int print_parameter_value
+(
+	char *buff,
+	char *value
+) {
+	switch (bolt_read_type(value))
+	{
+		case BVT_NULL:
+			return sprintf(buff, "NULL");
+		case BVT_BOOL:
+			return sprintf(buff, "%s", bolt_read_bool(value) ? "true" : "false");
+		case BVT_INT8:
+			return sprintf(buff, "%d", bolt_read_int8(value));
+		case BVT_INT16:
+			return sprintf(buff, "%d", bolt_read_int16(value));
+		case BVT_INT32:
+			return sprintf(buff, "%d", bolt_read_int32(value));
+		case BVT_INT64:
+			return sprintf(buff, "%lld", bolt_read_int64(value));
+		case BVT_FLOAT:
+			return sprintf(buff, "%f", bolt_read_float(value));
+		case BVT_STRING:
+			return sprintf(buff, "'%.*s'", bolt_read_string_size(value), bolt_read_string(value));
+		case BVT_LIST: {
+			uint32_t size = bolt_read_list_size(value);
+			int n = 0;
+			n += sprintf(buff, "[");
+			if(size > 0) {
+				char *item = bolt_read_list_item(value, 0);
+				n += print_parameter_value(buff + n, item);
+				for (int i = 1; i < size - 0; i++) {
+					n += sprintf(buff + n, ", ");
+					item = bolt_read_list_item(value, i);
+					n += print_parameter_value(buff + n, item);
+				}
+			}
+			n += sprintf(buff + n, "]");
+			return n;
+		}
+		case BVT_MAP: {
+			uint32_t size = bolt_read_map_size(value);
+			int n = 0;
+			n += sprintf(buff, "{");
+			if(size > 0) {
+				char *key = bolt_read_map_key(value, 0);
+				char *val = bolt_read_map_value(value, 0);
+				n += sprintf(buff + n, "%.*s: ", bolt_read_string_size(key), bolt_read_string(key));
+				n += print_parameter_value(buff + n, val);
+				for (int i = 1; i < size - 0; i++) {
+					n += sprintf(buff + n, ", ");
+					key = bolt_read_map_key(value, i);
+					val = bolt_read_map_value(value, i);
+					n += sprintf(buff + n, "%.*s: ", bolt_read_string_size(key), bolt_read_string(key));
+					n += print_parameter_value(buff + n, val);
+				}
+			}
+			n += sprintf(buff + n, "}");
+			return n;
+		}
+		case BVT_STRUCTURE:
+			if(bolt_read_structure_type(value) == BST_POINT2D) {
+				char *x = bolt_read_structure_value(value, 1);
+				char *y = bolt_read_structure_value(value, 2);
+				sprintf(buff, "POINT({longitude: %f, latitude: %f})", bolt_read_float(x), bolt_read_string(y));
+				break;
+			}
+			ASSERT(false);
+			break;
+		default:
+			ASSERT(false);
+			break;
+	}
+}
+
 RedisModuleString *get_query
 (
 	RedisModuleCtx *ctx,
@@ -152,32 +226,19 @@ RedisModuleString *get_query
 	char *query = bolt_read_structure_value(client->read_buffer, 0);
 	char *parameters = bolt_read_structure_value(client->read_buffer, 1);
 	uint32_t params_count = bolt_read_map_size(parameters);
-	char parameters_str[1024];
+	int n = 0;
 	if(params_count > 0) {
-		sprintf(parameters_str, "CYPHER");
+		char prametrize_query[1024];
+		n += sprintf(prametrize_query, "CYPHER ");
 		for (int i = 0; i < params_count; i++) {
 			char *key = bolt_read_map_key(parameters, i);
 			char *value = bolt_read_map_value(parameters, i);
-			switch (bolt_read_type(value))
-			{
-			case BVT_STRING:
-				sprintf(parameters_str, "%s %.*s='%.*s'", parameters_str, bolt_read_string_size(key), bolt_read_string(key), bolt_read_string_size(value), bolt_read_string(value));
-				break;
-			case BVT_STRUCTURE:
-				if(bolt_read_structure_type(value) == BST_POINT2D) {
-					// value = bolt_read_structure_value(value, 0);
-					// sprintf(parameters_str, "%s %.*s=POINT({latitude: %f, longitude: %f})", parameters_str, bolt_read_string_size(key), bolt_read_string(key), bolt_read_string_size(value), bolt_read_string(value));
-					break;
-				}
-				ASSERT(false);
-				break;
-			default:
-				ASSERT(false);
-				break;
-			}
+			n += sprintf(prametrize_query + n, "%.*s=", bolt_read_string_size(key), bolt_read_string(key));
+			n += print_parameter_value(prametrize_query + n, value);
+			n += sprintf(prametrize_query + n, " ");
 		}
-		sprintf(parameters_str, "%s %.*s", parameters_str, bolt_read_string_size(query), bolt_read_string(query));
-		return RedisModule_CreateString(ctx, parameters_str, strlen(parameters_str));
+		sprintf(prametrize_query + n, "%.*s", bolt_read_string_size(query), bolt_read_string(query));
+		return RedisModule_CreateString(ctx, prametrize_query, strlen(prametrize_query));
 	}
 
 	return RedisModule_CreateString(ctx, bolt_read_string(query), bolt_read_string_size(query));

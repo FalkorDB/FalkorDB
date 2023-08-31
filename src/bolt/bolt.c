@@ -829,6 +829,33 @@ char *bolt_value_read
 			}
 			return data;
 		}
+		case 0xD8: {
+			int n = data[1];
+			data = data + 2;
+			for (uint32_t i = 0; i < n; i++) {
+				data = bolt_value_read(data);
+				data = bolt_value_read(data);
+			}
+			return data;
+		}
+		case 0xD9: {
+			int n = *(uint16_t *)(data + 1);
+			data = data + 3;
+			for (uint32_t i = 0; i < n; i++) {
+				data = bolt_value_read(data);
+				data = bolt_value_read(data);
+			}
+			return data;
+		}
+		case 0xDA: {
+			int n = *(uint32_t *)(data + 1);
+			data = data + 5;
+			for (uint32_t i = 0; i < n; i++) {
+				data = bolt_value_read(data);
+				data = bolt_value_read(data);
+			}
+			return data;
+		}
 		default:
 			if(marker >= 0xF0 || marker <= 0x7F) {
 				return data + 1;
@@ -884,10 +911,42 @@ bolt_value_type bolt_read_type
 		case 0xD1:
 		case 0xD2:
 			return BVT_STRING;
+		case 0x90:
+		case 0x91:
+		case 0x92:
+		case 0x93:
+		case 0x94:
+		case 0x95:
+		case 0x96:
+		case 0x97:
+		case 0x98:
+		case 0x99:
+		case 0x9A:
+		case 0x9B:
+		case 0x9C:
+		case 0x9D:
+		case 0x9E:
+		case 0x9F:
 		case 0xD4:
 		case 0xD5:
 		case 0xD6:
 			return BVT_LIST;
+		case 0xA0:
+		case 0xA1:
+		case 0xA2:
+		case 0xA3:
+		case 0xA4:
+		case 0xA5:
+		case 0xA6:
+		case 0xA7:
+		case 0xA8:
+		case 0xA9:
+		case 0xAA:
+		case 0xAB:
+		case 0xAC:
+		case 0xAD:
+		case 0xAE:
+		case 0xAF:
 		case 0xD8:
 		case 0xD9:
 		case 0xDA:
@@ -944,6 +1003,9 @@ int8_t bolt_read_int8
 		case 0xC8:
 			return data[1];
 		default:
+			if(marker >= 0xF0 || marker <= 0x7F) {
+				return marker;
+			}
 			ASSERT(false);
 			return 0;
 	}
@@ -957,7 +1019,7 @@ int16_t bolt_read_int16
 	switch (marker)
 	{
 		case 0xC9:
-			return *(uint16_t *)(data + 1);
+			return bswap_16(*(uint16_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -972,7 +1034,7 @@ int32_t bolt_read_int32
 	switch (marker)
 	{
 		case 0xCA:
-			return *(uint32_t *)(data + 1);
+			return bswap_32(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -987,7 +1049,7 @@ int64_t bolt_read_int64
 	switch (marker)
 	{
 		case 0xCB:
-			return *(uint64_t *)(data + 1);
+			return bswap_64(*(uint64_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1002,7 +1064,12 @@ double bolt_read_float
 	switch (marker)
 	{
 		case 0xC1:
-			return *(double *)(data + 1);
+			double d;
+			char *buf = (char *)&d;
+			for (int i = 0; i < sizeof(double); i++) {
+				buf[i] = data[sizeof(double) - i];
+			}
+			return d;
 		default:
 			ASSERT(false);
 			return 0;
