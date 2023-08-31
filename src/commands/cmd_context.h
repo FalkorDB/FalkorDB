@@ -6,11 +6,11 @@
 
 #pragma once
 
+#include "../bolt/bolt.h"
 #include "cypher-parser.h"
 #include "../redismodule.h"
 #include "../util/simple_timer.h"
 #include "../graph/graphcontext.h"
-#include "../bolt/bolt.h"
 
 #include <stdatomic.h>
 
