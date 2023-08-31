@@ -103,6 +103,12 @@ void bolt_reply_bool
 	bool data
 );
 
+void bolt_reply_tiny_int
+(
+	bolt_client_t *client,
+	uint8_t data
+);
+
 void bolt_reply_int8
 (
 	bolt_client_t *client,

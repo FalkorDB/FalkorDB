@@ -530,6 +530,14 @@ void bolt_reply_bool
 	client->write_buffer[client->write_index++] = data ? 0xC3 : 0xC2;
 }
 
+void bolt_reply_tiny_int
+(
+	bolt_client_t *client,
+	uint8_t data
+) {
+	client->write_buffer[client->write_index++] = data;
+}
+
 void bolt_reply_int8
 (
 	bolt_client_t *client,
@@ -574,7 +582,9 @@ void bolt_reply_int
 	bolt_client_t *client,
 	int64_t data
 ) {
-	if(INT8_MIN <= data && data <= INT8_MAX) {
+	if(data >= 0xF0 && data <= 0x7F) {
+		bolt_reply_tiny_int(client, data);
+	} else if(INT8_MIN <= data && data <= INT8_MAX) {
 		bolt_reply_int8(client, data);
 	} else if(INT16_MIN <= data && data <= INT16_MAX) {
 		bolt_reply_int16(client, data);
