@@ -166,7 +166,12 @@ static void _ResultSet_BoltReplyWithEdge
 	//     element_id::String,
 	// )
 
-	bolt_reply_structure(client, is_bounded ? BST_RELATIONSHIP : BST_UNBOUND_RELATIONSHIP, 8);
+	if(is_bounded) {
+		bolt_reply_structure(client, BST_RELATIONSHIP, 8);
+	} else {
+		bolt_reply_structure(client, BST_UNBOUND_RELATIONSHIP, 4);
+	}
+	
 	bolt_reply_int64(client, e->id);
 	if(is_bounded) {
 		bolt_reply_int64(client, e->src_id);
@@ -221,9 +226,9 @@ static void _ResultSet_BoltReplyWithPath
 
 	size_t indices = node_count + edge_count - 1;
 	bolt_reply_list(client, indices);
-	for(int i = 0; i < node_count; i++) {
+	for(int i = 0; i < edge_count; i++) {
 		bolt_reply_int8(client, i + 1);
-		bolt_reply_int8(client, i + i);
+		bolt_reply_int8(client, i + 1);
 	}
 }
 

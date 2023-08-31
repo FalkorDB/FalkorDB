@@ -72,6 +72,20 @@ class testBolt():
             self.env.assertEquals(c.id, 2)
             self.env.assertEquals(c.labels, set(['C']))
 
+            result = session.run("""MATCH p=(:A) RETURN p""")
+            record = result.single()
+            p:neo4j.graph.Path = record[0]
+            self.env.assertEquals(p.start_node.labels, set(['A']))
+
+            result = session.run("""MATCH p=(:A)-[:R1]->(:B) RETURN p""")
+            record = result.single()
+            p:neo4j.graph.Path = record[0]
+            self.env.assertEquals(p.start_node.labels, set(['A']))
+            self.env.assertEquals(p.end_node.labels, set(['B']))
+            self.env.assertEquals(p.nodes[0].labels, set(['A']))
+            self.env.assertEquals(p.nodes[1].labels, set(['B']))
+            self.env.assertEquals(p.relationships[0].type, 'R1')
+
             result = session.run("""MATCH p=(:A)-[:R1]->(:B)<-[:R2]-(:C) RETURN p""")
             record = result.single()
             p:neo4j.graph.Path = record[0]
