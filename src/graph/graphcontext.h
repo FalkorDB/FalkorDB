@@ -291,16 +291,14 @@ bool GraphContext_AddRangeIndex
 // create a full text index for the given label and attribute
 bool GraphContext_AddFullTextIndex
 (
-	Index *idx,              // [input/output] index created
-	GraphContext *gc,        // graph context
-	const char *label,       // label of indexed entities
-	const char **attrs,      // attributes to index
-	uint attrs_count,        // number of attributes to index
-	double *weights,         // fields weights
-	bool *nostems,           //
-	const char **phonetics,  //
-	char **stopwords,
-	const char *language
+	Index *idx,             // [input/output] index created
+	GraphContext *gc,       // graph context
+	const char *label,      // label of indexed entities
+	const char **attrs,     // attributes to index
+	uint attrs_count,       // number of attributes to index
+	double *weights,        // fields weights
+	bool *nostems,          // fields stemming
+	const char **phonetics  // fields phonetics
 );
 
 // create a vector index for the given label and attribute

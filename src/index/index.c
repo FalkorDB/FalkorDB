@@ -637,6 +637,16 @@ const char *Index_GetLanguage
 	return RediSearch_IndexGetLanguage(_idx);
 }
 
+// check if index contains stopwords
+bool Index_ContainsStopwords
+(
+	const Index idx  // index to query
+) {
+	ASSERT(idx != NULL);
+
+	return idx->stopwords != NULL;
+}
+
 char **Index_GetStopwords
 (
 	const Index idx,
@@ -664,7 +674,7 @@ void Index_SetLanguage
 }
 
 // set indexed stopwords
-bool Index_SetStopwords
+void Index_SetStopwords
 (
 	Index idx,
 	char ***stopwords
@@ -673,14 +683,8 @@ bool Index_SetStopwords
 	ASSERT(idx->stopwords == NULL);
 	ASSERT(stopwords != NULL && *stopwords != NULL);
 
-	if(idx->stopwords != NULL) {
-		// can't set stopwords twice
-		return false;
-	}
-
 	idx->stopwords = *stopwords;
 	*stopwords = NULL;
-	return true;
 }
 
 // returns true if index doesn't contains any pending changes

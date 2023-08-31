@@ -42,17 +42,6 @@ static ProcedureResult _validateIndexConfigMap
 		return PROCEDURE_ERR;
 	}
 
-	// TODO: error later on when trying to overwrite stopwords or language
-//	if(multi_config) {
-//		GraphContext *gc = QueryCtx_GetGraphCtx();
-//		Index idx = GraphContext_GetIndex(gc, label.stringval, NULL, 0,
-//				IDX_FULLTEXT, SCHEMA_NODE);
-//		if(idx != NULL) {
-//			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-//			return PROCEDURE_ERR;
-//		}
-//	}
-
 	//--------------------------------------------------------------------------
 	// validate stopwords
 	//--------------------------------------------------------------------------
@@ -145,20 +134,6 @@ static ProcedureResult _validateFieldConfigMap
 		}
 	}
 
-	if(multi_config) {
-		// additional configuration is specified
-		// make sure field doesn't exists in index, as reconfiguration
-		// isn't supported
-		GraphContext *gc = QueryCtx_GetGraphCtx();
-		Attribute_ID fieldID = GraphContext_GetAttributeID(gc, field.stringval);
-
-		if(GraphContext_GetIndex(gc, label, &fieldID, 1, INDEX_FLD_FULLTEXT,
-					SCHEMA_NODE)) {
-			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-			return PROCEDURE_ERR;
-		}
-	}
-
 	return PROCEDURE_OK;
 }
 
@@ -183,6 +158,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		ErrorCtx_SetError(EMSG_FULLTEXT_LABEL_TYPE);
 		return PROCEDURE_ERR;
 	}
+
 	if(SI_TYPE(args[0]) == T_MAP &&
 			_validateIndexConfigMap(args[0]) == PROCEDURE_ERR) {
 		return PROCEDURE_ERR;
@@ -216,6 +192,8 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	SIValue lang;  // index language
 
 	bool res              = false;
+	bool lang_exists      = false;
+	bool stopword_exists  = false;
 	Index idx             = NULL;
 	GraphContext *gc      = QueryCtx_GetGraphCtx();
 	uint fields_count     = arg_count - 1; // skip label
@@ -226,7 +204,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	double      weights[fields_count];
 	const char* phonetics[fields_count];
 
-	// collect fields
+	// collect fields and configuration
 	for(uint i = 0; i < fields_count; i++) {
 		weights[i]   = INDEX_FIELD_DEFAULT_WEIGHT;
 		nostems[i]   = INDEX_FIELD_DEFAULT_NOSTEM;
@@ -251,39 +229,70 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		}
 	}
 
-	char **stopwords     = NULL;
-	const char *language = NULL;
-
 	if(SI_TYPE(label_config) == T_MAP) {
-		bool lang_exists     = MAP_GET(label_config, "language",  lang);
-		bool stopword_exists = MAP_GET(label_config, "stopwords", sw);
+		lang_exists     = MAP_GET(label_config, "language",  lang);
+		stopword_exists = MAP_GET(label_config, "stopwords", sw);
+	}
+
+	// make sure fields aren't already indexed
+	// TODO: remove duplicated fields
+	for(uint i = 0; i < fields_count; i++) {
+		Attribute_ID attr_id = GraphContext_GetAttributeID(gc, _fields[i]);
+		if(attr_id == ATTRIBUTE_ID_NONE) continue;
+
+		if(GraphContext_GetIndex(gc, label, &attr_id, 1, INDEX_FLD_FULLTEXT,
+					SCHEMA_NODE)) {
+			ErrorCtx_SetError(EMSG_INDEX_FIELD_ALREADY_EXISTS);
+			return PROCEDURE_ERR;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// create index one field at a time
+	//--------------------------------------------------------------------------
+
+	SIValue options = SI_Map(5);
+
+	for(uint i = 0; i < fields_count; i++) {
+		// construct options map
+		Map_Add(&options, SI_ConstStringVal("weight"),
+				SI_DoubleVal(weights[i]));
+		Map_Add(&options, SI_ConstStringVal("phonetic"),
+				SI_DoubleVal(weights[i]));
+		Map_Add(&options, SI_ConstStringVal("nostem"),
+				SI_DoubleVal(weights[i]));
+
+		// index level configurations
+		// introduce only on first iteration
+		if(lang_exists) {
+			Map_Add(&options, SI_ConstStringVal("language"), lang);
+			SIValue_Free(lang);
+			lang_exists = false;
+		}
 
 		if(stopword_exists) {
-			uint stopwords_count = SIArray_Length(sw);
-			stopwords = array_new(char*, stopwords_count); // freed by the index
-			for (uint i = 0; i < stopwords_count; i++) {
-				SIValue stopword = SIArray_Get(sw, i);
-				array_append(stopwords, rm_strdup(stopword.stringval));
-			}
+			Map_Add(&options, SI_ConstStringVal("stopwords"), sw);
+			SIValue_Free(sw);
+			stopword_exists = false;
 		}
-		if(lang_exists) {
-			language = lang.stringval;
+
+		res = Index_FulltextCreate(label, GETYPE_NODE, _fields[i], options);
+		if(!res) {
+			break;
 		}
+
+		Map_Clear(options);
 	}
 
-	res = GraphContext_AddFullTextIndex(&idx, gc, label, _fields, fields_count,
-			weights, nostems, phonetics, stopwords, language);
+	Map_Free(options);
 
-	// build index
-	if(res) {
-		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-		Indexer_PopulateIndex(gc, s, idx);
-	}
-
-	return PROCEDURE_OK;
+	return (res) ? PROCEDURE_OK : PROCEDURE_ERR;
 }
 
-SIValue *Proc_FulltextCreateNodeIdxStep(ProcedureCtx *ctx) {
+SIValue *Proc_FulltextCreateNodeIdxStep
+(
+	ProcedureCtx *ctx
+) {
 	return NULL;
 }
 

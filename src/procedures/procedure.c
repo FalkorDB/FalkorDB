@@ -45,7 +45,6 @@ void Proc_Register() {
 	_procRegister("db.idx.fulltext.createNodeIndex", Proc_FulltextCreateNodeIdxGen);
 
 	// register vector search generator
-	_procRegister("db.idx.vector.createIndex", Proc_VectorCreateIdxGen);
 	_procRegister("db.idx.vector.query", Proc_VectorKNNGen);
 }
 

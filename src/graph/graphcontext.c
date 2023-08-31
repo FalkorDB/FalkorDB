@@ -674,16 +674,14 @@ bool GraphContext_AddRangeIndex
 // create a full text index for the given label and attribute
 bool GraphContext_AddFullTextIndex
 (
-	Index *idx,              // [input/output] index created
-	GraphContext *gc,        // graph context
-	const char *label,       // label of indexed entities
-	const char **attrs,      // attributes to index
-	uint attrs_count,        // number of attributes to index
-	double *weights,         // fields weights
-	bool *nostems,           // fields stemming
-	const char **phonetics,  // fields phonetics
-	char **stopwords,        // index stopwords
-	const char *language     // index language
+	Index *idx,             // [input/output] index created
+	GraphContext *gc,       // graph context
+	const char *label,      // label of indexed entities
+	const char **attrs,     // attributes to index
+	uint attrs_count,       // number of attributes to index
+	double *weights,        // fields weights
+	bool *nostems,          // fields stemming
+	const char **phonetics  // fields phonetics
 ) {
 	ASSERT(idx   != NULL);
 	ASSERT(gc    != NULL);
@@ -721,14 +719,6 @@ bool GraphContext_AddFullTextIndex
 			// update result-set
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		}
-	}
-
-	if(stopwords != NULL) {
-		Index_SetStopwords(*idx, &stopwords);
-	}
-
-	if(language != NULL) {
-		Index_SetLanguage(*idx, language);
 	}
 
 	// diable index if it was created

@@ -5,14 +5,17 @@
 
 #pragma once
 
-#include "RG.h"
 #include "../ast/ast.h"
 #include "execution_ctx.h"
+#include "../redismodule.h"
+#include "../graph/graphcontext.h"
 
+// handle index creation/deletion
 void IndexOperation_Run
 (
-	RedisModuleCtx *ctx,
-	GraphContext *gc,
-	AST *ast,
-	ExecutionType exec_type
+	RedisModuleCtx *ctx,  // Redis context
+	GraphContext *gc,     // graph context
+	AST *ast,             // AST
+	ExecutionType op      // operation type
 );
+

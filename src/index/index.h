@@ -50,6 +50,33 @@ Index Index_Clone
 	const Index idx  // index to clone
 );
 
+// create range index
+Index Index_RangeCreate
+(
+	const char *label,            // label/relationship type
+	GraphEntityType entity_type,  // entity type (node/edge)
+	const char **fields,          // fields to index
+	uint nfields	              // number of fields to index
+);
+
+// create fulltext index
+Index Index_FulltextCreate
+(
+	const char *label,            // label/relationship type
+	GraphEntityType entity_type,  // entity type (node/edge)
+	const char *attribute,        // attribute to index
+	const SIValue options         // index options
+);
+
+// create a vector index
+Index Index_VectorCreate
+(
+	const char *label,            // label/relationship type
+	GraphEntityType entity_type,  // entity type (node/edge)
+	const char *attribute,        // attribute to index
+	SIValue options               // index options
+);
+
 // returns number of pending changes
 int Index_PendingChanges
 (
@@ -240,6 +267,12 @@ const char *Index_GetLanguage
 	const Index idx  // index to query
 );
 
+// check if index contains stopwords
+bool Index_ContainsStopwords
+(
+	const Index idx  // index to query
+);
+
 // returns indexed stopwords
 char **Index_GetStopwords
 (
@@ -255,7 +288,7 @@ void Index_SetLanguage
 );
 
 // set indexed stopwords
-bool Index_SetStopwords
+void Index_SetStopwords
 (
 	Index idx,         // index modified
 	char ***stopwords  // stopwords

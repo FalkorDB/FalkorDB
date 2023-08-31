@@ -58,6 +58,12 @@ void Map_Remove
 	SIValue key   // key to remove
 );
 
+// clears map
+void Map_Clear
+(
+	SIValue map  // map to clear
+);
+
 // retrieves value under key, map[key]
 // return true and set 'value' if key is in map
 // otherwise return false
