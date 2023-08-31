@@ -2,7 +2,10 @@ import sys
 import os
 import ast
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../utils/')
+if 'TCK_PROTOCOL' in os.environ and os.environ['TCK_PROTOCOL'] == 'NEO4J':
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../neo4j_utils/')
+else:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../redis_utils/')
 
 import assertions
 import graphs

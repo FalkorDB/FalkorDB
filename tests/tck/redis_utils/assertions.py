@@ -7,8 +7,6 @@ from redis.commands.graph.node import Node
 from redis.commands.graph.edge import Edge
 from redis.commands.graph.path import Path
 
-# Returns True if value is a number or string representation of a number.
-
 
 def is_numeric(value):
     # check for value's type to be a number or a string
@@ -126,9 +124,6 @@ def toString(value):
     elif value == None:
         return "null"
 
-# prepare the actual value returned from redisgraph to be in
-# comparison vaiable format of the TCK feature files expected values
-
 
 def prepareActualValue(actualValue):
     # if value is a numeric string or a number, transform to numeric value
@@ -154,8 +149,6 @@ def prepareActualValue(actualValue):
         # actual value is null or boolean
         Env.RTestInstance.currEnv.assertTrue(isinstance(actualValue, (type(None), bool)))
     return actualValue
-
-# prepare the expected value to be in comparison vaiable format
 
 
 def prepareExpectedValue(expectedValue):
@@ -185,8 +178,6 @@ def prepare_expected_row(row):
 def assert_empty_resultset(resultset):
     Env.RTestInstance.currEnv.assertEquals(len(resultset.result_set), 0)
 
-# check value of a designated statistic
-
 
 def assert_statistics(resultset, stat, value):
     if stat == "+nodes":
@@ -208,8 +199,6 @@ def assert_statistics(resultset, stat, value):
     else:
         print(stat)
         Env.RTestInstance.currEnv.assertTrue(False)
-
-# checks resultset statistics for no graph modifications
 
 
 def assert_no_modifications(resultset):
