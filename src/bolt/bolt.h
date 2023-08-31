@@ -71,6 +71,11 @@ typedef struct bolt_client_t {
 	char read_buffer[65536];
 } bolt_client_t;
 
+typedef struct bolt_version_t {
+	uint32_t major;
+	uint32_t minor;
+} bolt_version_t;
+
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,
@@ -169,11 +174,6 @@ void bolt_reply_structure
 	bolt_structure_type type,
 	uint32_t size
 );
-
-typedef struct bolt_version_t {
-	uint32_t major;
-	uint32_t minor;
-} bolt_version_t;
 
 bolt_value_type bolt_read_type
 (
