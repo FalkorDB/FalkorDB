@@ -624,13 +624,13 @@ void bolt_reply_string
 		client->write_index += size;
 	} else if (size < 0x10000) {
 		client->write_buffer[client->write_index++] = 0xD1;
-		*(uint16_t *)(client->write_buffer + client->write_index) = size;
+		*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(size);
 		client->write_index += 2;
 		memcpy(client->write_buffer + client->write_index, data, size);
 		client->write_index += size;
 	} else {
 		client->write_buffer[client->write_index++] = 0xD2;
-		*(uint32_t *)(client->write_buffer + client->write_index) = size;
+		*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(size);
 		client->write_index += 4;
 		memcpy(client->write_buffer + client->write_index, data, size);
 		client->write_index += size;
@@ -649,11 +649,11 @@ void bolt_reply_list
 		client->write_buffer[client->write_index++] = size;
 	} else if (size < 0x10000) {
 		client->write_buffer[client->write_index++] = 0xD5;
-		*(uint16_t *)(client->write_buffer + client->write_index) = size;
+		*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(size);
 		client->write_index += 2;
 	} else {
 		client->write_buffer[client->write_index++] = 0xD6;
-		*(uint32_t *)(client->write_buffer + client->write_index) = size;
+		*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(size);
 		client->write_index += 4;
 	}
 }
@@ -670,11 +670,11 @@ void bolt_reply_map
 		client->write_buffer[client->write_index++] = size;
 	} else if (size < 0x10000) {
 		client->write_buffer[client->write_index++] = 0xD9;
-		*(uint16_t *)(client->write_buffer + client->write_index) = size;
+		*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(size);
 		client->write_index += 2;
 	} else {
 		client->write_buffer[client->write_index++] = 0xDA;
-		*(uint32_t *)(client->write_buffer + client->write_index) = size;
+		*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(size);
 		client->write_index += 4;
 	}
 }
@@ -1103,9 +1103,9 @@ uint32_t bolt_read_string_size
 		case 0xD0:
 			return *(uint8_t *)(data + 1);
 		case 0xD1:
-			return *(uint16_t *)(data + 1);
-		case 0xD3:
-			return *(uint32_t *)(data + 1);
+			return bswap_16(*(uint16_t *)(data + 1));
+		case 0xD2:
+			return bswap_32(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1140,7 +1140,7 @@ char *bolt_read_string
 			return data + 2;
 		case 0xD1:
 			return data + 3;
-		case 0xD3:
+		case 0xD2:
 			return data + 5;
 		default:
 			ASSERT(false);
@@ -1175,9 +1175,9 @@ uint32_t bolt_read_list_size
 		case 0xD4:
 			return *(uint8_t *)(data + 1);
 		case 0xD5:
-			return *(uint16_t *)(data + 1);
+			return bswap_16(*(uint16_t *)(data + 1));
 		case 0xD6:
-			return *(uint32_t *)(data + 1);
+			return bswap_32(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1264,9 +1264,9 @@ uint32_t bolt_read_map_size
 		case 0xD8:
 			return *(uint8_t *)(data + 1);
 		case 0xD9:
-			return *(uint16_t *)(data + 1);
+			return bswap_16(*(uint16_t *)(data + 1));
 		case 0xDA:
-			return *(uint32_t *)(data + 1);
+			return bswap_32(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
