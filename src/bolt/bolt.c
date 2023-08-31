@@ -1063,13 +1063,14 @@ double bolt_read_float
 	uint8_t marker = data[0];
 	switch (marker)
 	{
-		case 0xC1:
+		case 0xC1: {
 			double d;
 			char *buf = (char *)&d;
 			for (int i = 0; i < sizeof(double); i++) {
 				buf[i] = data[sizeof(double) - i];
 			}
 			return d;
+		}
 		default:
 			ASSERT(false);
 			return 0;
