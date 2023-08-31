@@ -16,16 +16,11 @@ typedef int socket_t;
 
 #define socket_write(socket, buff, size) send(socket, buff, size, 0)
 
+#define socket_read(socket, buff, size) recv(socket, buff, size, 0)
+
 #define socket_close(socket) close(socket)
 
 socket_t socket_bind
 (
 	uint16_t port
-);
-
-bool socket_read
-(
-	socket_t socket,
-	char* buff,
-	size_t size
 );

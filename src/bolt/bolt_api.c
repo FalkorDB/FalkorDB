@@ -77,7 +77,7 @@ int print_parameter_value
 		case BVT_INT32:
 			return sprintf(buff, "%d", bolt_read_int32(value));
 		case BVT_INT64:
-			return sprintf(buff, "%lld", bolt_read_int64(value));
+			return sprintf(buff, "%ld", bolt_read_int64(value));
 		case BVT_FLOAT:
 			return sprintf(buff, "%f", bolt_read_float(value));
 		case BVT_STRING:
@@ -122,7 +122,7 @@ int print_parameter_value
 			if(bolt_read_structure_type(value) == BST_POINT2D) {
 				char *x = bolt_read_structure_value(value, 1);
 				char *y = bolt_read_structure_value(value, 2);
-				sprintf(buff, "POINT({longitude: %f, latitude: %f})", bolt_read_float(x), bolt_read_string(y));
+				sprintf(buff, "POINT({longitude: %f, latitude: %f})", bolt_read_float(x), bolt_read_float(y));
 				break;
 			}
 			ASSERT(false);
@@ -225,7 +225,7 @@ void BoltRequestHandler
 	int mask
 ) {
 	bolt_client_t *client = (bolt_client_t*)user_data;
-	if(!socket_read(fd, client->read_buffer + client->read_index, 2)) {
+	if(!bolt_client_read(client, 2)) {
 		rm_free(client);
 		socket_close(fd);
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
@@ -235,7 +235,7 @@ void BoltRequestHandler
 	uint16_t size = bswap_16(*(uint16_t*)(client->read_buffer + client->read_index));
 
 	if(size > 0) {
-		if(socket_read(fd, client->read_buffer + client->read_index, size)) {
+		if(bolt_client_read(client, size)) {
 			client->read_index += size;
 		} else {
 			rm_free(client);

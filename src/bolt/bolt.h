@@ -82,6 +82,12 @@ bolt_client_t *bolt_client_new
 	RedisModuleEventLoopFunc on_write
 );
 
+bool bolt_client_read
+(
+	bolt_client_t *client,
+	size_t size
+);
+
 void bolt_change_client_state
 (
 	bolt_client_t *client   

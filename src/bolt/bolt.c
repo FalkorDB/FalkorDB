@@ -23,6 +23,26 @@ bolt_client_t *bolt_client_new
 	return client;
 }
 
+bool bolt_client_read
+(
+	bolt_client_t *client,
+	size_t size
+) {
+	int nread = 0;
+
+	while(nread < size) {
+		int n = socket_read(client->socket, client->read_buffer + client->read_index + nread, size - nread);
+		if(n <= 0) {
+			return false;
+		}
+		nread += n;
+	}
+
+	ASSERT(nread == size);
+
+	return true;
+}
+
 void bolt_change_negotiation_state
 (
 	bolt_client_t *client   

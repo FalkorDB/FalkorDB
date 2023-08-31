@@ -53,24 +53,3 @@ socket_t socket_bind
 
 	return fd;
 }
-
-bool socket_read
-(
-	socket_t socket,
-	char* buff,
-	size_t size
-) {
-	int nread = 0;
-
-	while(nread < size) {
-		int n = recv(socket, buff + nread, size - nread, 0);
-		if(n <= 0) {
-			return false;
-		}
-		nread += n;
-	}
-
-	ASSERT(nread == size);
-
-	return true;
-}
