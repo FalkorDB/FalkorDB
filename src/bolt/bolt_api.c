@@ -173,6 +173,13 @@ void BoltRunCommand
 	args[4] = RedisModule_CreateStringFromLongLong(ctx, (long long)client);
 
 	CommandDispatch(ctx, args, 5);
+
+	RedisModule_FreeString(ctx, args[0]);
+	RedisModule_FreeString(ctx, args[1]);
+	RedisModule_FreeString(ctx, args[2]);
+	RedisModule_FreeString(ctx, args[3]);
+	RedisModule_FreeString(ctx, args[4]);
+	RedisModule_FreeThreadSafeContext(ctx);
 }
 
 void BoltPullCommand

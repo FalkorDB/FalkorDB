@@ -170,6 +170,10 @@ void CommandCtx_UnblockClient
 			command_ctx->ctx = NULL;
 		}
 	}
+	if(command_ctx->bolt_client) {
+		RedisModule_FreeThreadSafeContext(command_ctx->ctx);
+		command_ctx->ctx = NULL;
+	}
 }
 
 void CommandCtx_Free
