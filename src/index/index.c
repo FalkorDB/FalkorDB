@@ -453,14 +453,16 @@ void Index_Enable
 }
 
 // adds field to index
-void Index_AddField
+int Index_AddField
 (
 	Index idx,         // index to update
 	IndexField *field  // field to add
 ) {
 	ASSERT(idx   != NULL);
 	ASSERT(field != NULL);
-	ASSERT(!Index_ContainsField(idx, field->id, field->type));
+
+	// make sure typed field is not already indexed
+	ASSERT(Index_ContainsField(idx, field->id, field->type) == false);
 
 	// see if index already contains field
 	IndexField *existing_field = Index_GetField(NULL, idx, field->id);
@@ -473,6 +475,8 @@ void Index_AddField
 		_Index_MergeFields(existing_field, field);
 		IndexField_Free(field);
 	}
+
+	return INDEX_OK;
 }
 
 // removes fields from index

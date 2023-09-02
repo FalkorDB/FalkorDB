@@ -7,15 +7,13 @@
 
 #include "../ast/ast.h"
 #include "execution_ctx.h"
-#include "../redismodule.h"
 #include "../graph/graphcontext.h"
 
 // handle index creation/deletion
 void IndexOperation_Run
 (
-	RedisModuleCtx *ctx,  // Redis context
-	GraphContext *gc,     // graph context
-	AST *ast,             // AST
-	ExecutionType op      // operation type
+	GraphContext *gc,  // graph context
+	AST *ast,          // AST
+	ExecutionType op   // operation type
 );
 

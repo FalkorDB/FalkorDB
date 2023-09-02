@@ -8,8 +8,6 @@
 #include "../query_ctx.h"
 #include "../index/index.h"
 #include "../errors/errors.h"
-#include "../index/indexer.h"
-#include "../util/rmalloc.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 
@@ -117,20 +115,20 @@ Index Index_FulltextCreate
 (
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
-	const char *attribute,        // attribute to index
+	const char *attr,             // attribute to index
+	Attribute_ID attr_id,		  // attribute id
 	const SIValue options         // index options
 ) {
 	ASSERT(label       != NULL);
-	ASSERT(attribute   != NULL);
+	ASSERT(attr        != NULL);
 	ASSERT(entity_type != GETYPE_UNKNOWN);
 
 	if(SI_TYPE(options) != T_MAP || !_validateOptions(options)) {
+		ErrorCtx_SetError("invlaid index configuration");
 		return NULL;
 	}
 
 	// validation passed, create full-text index
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-
 	double      weight   = INDEX_FIELD_DEFAULT_WEIGHT;
 	bool        nostem   = INDEX_FIELD_DEFAULT_NOSTEM;
 	const char *phonetic = INDEX_FIELD_DEFAULT_PHONETIC;
@@ -140,82 +138,30 @@ Index Index_FulltextCreate
 	//--------------------------------------------------------------------------
 
 	SIValue tmp;
-	if(MAP_GET(options, "weight", tmp))   weight   = SI_GET_NUMERIC(tmp);
-	if(MAP_GET(options, "nostem", tmp))   nostem   = tmp.longval;
+	if(MAP_GET(options, "weight",   tmp)) weight   = SI_GET_NUMERIC(tmp);
+	if(MAP_GET(options, "nostem",   tmp)) nostem   = tmp.longval;
 	if(MAP_GET(options, "phonetic", tmp)) phonetic = tmp.stringval;
-
-	//--------------------------------------------------------------------------
-	// index stopwords
-	//--------------------------------------------------------------------------
-
-	SIValue sw;
-	char **stopwords = NULL;
-
-	if(MAP_GET(options, "stopwords", sw)) {
-		uint stopwords_count = SIArray_Length(sw);
-		stopwords = array_new(char*, stopwords_count); // freed by the index
-		for (uint i = 0; i < stopwords_count; i++) {
-			SIValue stopword = SIArray_Get(sw, i);
-			array_append(stopwords, rm_strdup(stopword.stringval));
-		}
-	}
-
-	//--------------------------------------------------------------------------
-	// index language
-	//--------------------------------------------------------------------------
-
-	SIValue lang;  
-	const char *language = NULL;
-
-	if(MAP_GET(options, "language", lang)) {
-		language = lang.stringval;
-	}
-
-	// make sure index configuration isn't overridden
-	Index idx = NULL;
-	Attribute_ID attr = GraphContext_GetAttributeID(gc, label);
-	if(attr != ATTRIBUTE_ID_NONE) {
-		// make sure field isn't already indexed
-		idx = GraphContext_GetIndex(gc, label, &attr, 1, INDEX_FLD_FULLTEXT,
-				SCHEMA_NODE);
-		if(idx != NULL) {
-			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-			goto cleanup;
-		}
-
-		// make sure index level configuration isn't already set
-		SchemaType st = (entity_type == GETYPE_NODE)? SCHEMA_NODE : SCHEMA_EDGE;
-		idx = GraphContext_GetIndex(gc, label, &attr, 1, INDEX_FLD_ANY, st);
-
-		if( idx != NULL                                        &&
-		   (stopwords != NULL && Index_ContainsStopwords(idx)) || 
-		   (language  != NULL && Index_GetLanguage(idx))) {
-			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-			goto cleanup;
-		}
-	}
 
 	//--------------------------------------------------------------------------
 	// try to build index
 	//--------------------------------------------------------------------------
 
-	bool res = GraphContext_AddFullTextIndex(&idx, gc, label, &attribute, 1,
-			&weight, &nostem, &phonetic);
-	ASSERT(res == true);
+	IndexField field;
 
-	// set stopwords
-	if(stopwords != NULL) Index_SetStopwords(idx, &stopwords);
+	IndexField_NewFullTextField(&field, attr, attr_id);
+	IndexField_SetWeight(&field,   weight);
+	IndexField_SetStemming(&field, nostem);
+	IndexField_SetPhonetic(&field, phonetic);
 
-	// set language
-	if(language != NULL) Index_SetLanguage(idx, language);
+	// get schema
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
+	Schema *s = GraphContext_GetSchema(gc, label, st);
+	ASSERT(s != NULL);
+
+	Index idx = NULL;
+	Schema_AddIndex(&idx, s, &field);
 
 	return idx;
-
-cleanup:
-	if(stopwords != NULL) {
-		array_free_cb(stopwords, rm_free);
-	}
-
-	return NULL;
 }
 

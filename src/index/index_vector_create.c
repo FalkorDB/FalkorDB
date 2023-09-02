@@ -68,15 +68,24 @@ Index Index_VectorCreate
 (
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
-	const char *attribute,        // attribute to index
+	const char *attr,             // attribute to index
+	Attribute_ID attr_id,         // attribute id
 	SIValue options               // index options
 ) {
-	ASSERT(ctx != NULL);
+	ASSERT(label != NULL);
+	ASSERT(attr  != NULL);
+	ASSERT(SI_TYPE(options) == T_MAP);
+	ASSERT(entity_type == GETYPE_NODE || entity_type == GETYPE_EDGE);
+	ASSERT(attr_id != ATTRIBUTE_ID_ALL && attr_id != ATTRIBUTE_ID_NONE);
 
 	// arguments
 	uint32_t dimension;  // vector length
-	SchemaType schema_type =
-		(entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
+
+	// get schema
+	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Schema *s = GraphContext_GetSchema(gc, label, st);
+	ASSERT(s != NULL);
 
 	//--------------------------------------------------------------------------
 	// parse options
@@ -91,23 +100,12 @@ Index Index_VectorCreate
 	// create index
 	//--------------------------------------------------------------------------
 
+	// create index field
+	IndexField field;
+	IndexField_NewVectorField(&field, attr, attr_id, dimension);
+
 	Index idx = NULL;
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-
-	if(GraphContext_AddVectorIndex(&idx, gc, schema_type, label, attribute,
-				dimension) == false) {
-		ErrorCtx_SetError(EMSG_VECTOR_IDX_CREATE_FAIL);
-		return NULL;
-	}
-
-	//--------------------------------------------------------------------------
-	// populate index asynchornously
-	//--------------------------------------------------------------------------
-
-	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
-	ASSERT(s != NULL);
-
-	Indexer_PopulateIndex(gc, s, idx);
+	Schema_AddIndex(&idx, s, &field);
 
 	return idx;
 }

@@ -22,15 +22,16 @@
 
 // UndoLog operation types
 typedef enum {
-	UNDO_UPDATE = 0,    // undo entity update
-	UNDO_CREATE_NODE,   // undo node creation
-	UNDO_CREATE_EDGE,   // undo edge creation
-	UNDO_DELETE_NODE,   // undo node deletion
-	UNDO_DELETE_EDGE,   // undo edge deletion
-	UNDO_SET_LABELS,    // undo set labels
-	UNDO_REMOVE_LABELS, // undo remove labels
-	UNDO_ADD_SCHEMA,    // undo schema addition
-	UNDO_ADD_ATTRIBUTE  // undo property addition
+	UNDO_UPDATE = 0,     // undo entity update
+	UNDO_CREATE_NODE,    // undo node creation
+	UNDO_CREATE_EDGE,    // undo edge creation
+	UNDO_DELETE_NODE,    // undo node deletion
+	UNDO_DELETE_EDGE,    // undo edge deletion
+	UNDO_SET_LABELS,     // undo set labels
+	UNDO_REMOVE_LABELS,  // undo remove labels
+	UNDO_ADD_SCHEMA,     // undo schema addition
+	UNDO_ADD_ATTRIBUTE,  // undo property addition
+	UNDO_CREATE_INDEX,   // undo index addition
 } UndoOpType;
 
 //------------------------------------------------------------------------------
@@ -94,6 +95,14 @@ struct UndoAddAttributeOp {
 	Attribute_ID attribute_id;
 };
 
+typedef struct UndoCreateIndexOp UndoCreateIndexOp;
+struct UndoCreateIndexOp {
+	SchemaType st;      // schema type
+	const char *label;  // label / relationship
+	const char *field;  // field
+	IndexFieldType t;   // type of index
+};
+
 // Undo operation
 typedef struct {
 	union {
@@ -104,6 +113,7 @@ typedef struct {
 		UndoLabelsOp labels_op;
 		UndoAddSchemaOp schema_op;
 		UndoAddAttributeOp attribute_op;
+		UndoCreateIndexOp index_op;
 	};
 	UndoOpType type;  // type of undo operation
 } UndoOp;
@@ -192,6 +202,16 @@ void UndoLog_AddAttribute
 (
 	UndoLog log,                 // undo log
 	Attribute_ID attribute_id    // id of the attribute
+);
+
+// undo index creation
+void UndoLog_CreateIndex
+(
+	UndoLog log,                 // undo log
+	SchemaType st,               // schema type
+	const char *label,           // label / relationship
+	const char *field,           // attribute
+	IndexFieldType t             // type of index
 );
 
 // rollback all modifications tracked by this undo log

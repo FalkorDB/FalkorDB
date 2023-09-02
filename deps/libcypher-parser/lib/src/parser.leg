@@ -139,7 +139,7 @@ create-index-for =
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN >
-                                       { $$ = create_pattern_index(i, l, range_index, NULL, false);
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, NULL, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
         LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
@@ -149,7 +149,7 @@ create-index-for =
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN >
-                                       { $$ = create_pattern_index(i, l, range_index, NULL, true);
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, NULL, true);
 									   }
     ) -
 
@@ -161,7 +161,7 @@ create-fulltext-index-for =
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
-                                       { $$ = create_pattern_index(i, l, fulltext_index, o, false);
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
         LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
@@ -171,7 +171,7 @@ create-fulltext-index-for =
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
-                                       { $$ = create_pattern_index(i, l, fulltext_index, o, true);
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, true);
 									   }
     ) -
 
@@ -183,7 +183,7 @@ create-vector-index-for =
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
-                                       { $$ = create_pattern_index(i, l, vector_index, o, false);
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
         LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
@@ -193,7 +193,7 @@ create-vector-index-for =
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
-                                       { $$ = create_pattern_index(i, l, vector_index, o, true);
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, true);
 									   }
     ) -
     

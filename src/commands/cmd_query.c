@@ -231,7 +231,7 @@ static void _ExecuteQuery(void *args) {
 		exec_ctx->plan = NULL;
 	} else if(exec_type == EXECUTION_TYPE_INDEX_CREATE ||
 			exec_type == EXECUTION_TYPE_INDEX_DROP) {
-		IndexOperation_Run(rm_ctx, gc, ast, exec_type);
+		IndexOperation_Run(gc, ast, exec_type);
 	} else {
 		ASSERT("Unhandled query type" && false);
 	}

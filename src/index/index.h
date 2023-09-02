@@ -55,8 +55,8 @@ Index Index_RangeCreate
 (
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
-	const char **fields,          // fields to index
-	uint nfields	              // number of fields to index
+	const char *attr,             // attribute to index
+	Attribute_ID attr_id 		  // attribute id
 );
 
 // create fulltext index
@@ -65,6 +65,7 @@ Index Index_FulltextCreate
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
 	const char *attribute,        // attribute to index
+	Attribute_ID attr_id,         // attribute id
 	const SIValue options         // index options
 );
 
@@ -73,7 +74,8 @@ Index Index_VectorCreate
 (
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
-	const char *attribute,        // attribute to index
+	const char *attr,             // attribute to index
+	Attribute_ID attr_id,         // attribute id
 	SIValue options               // index options
 );
 
@@ -124,7 +126,7 @@ void Index_Populate
 );
 
 // adds field to index
-void Index_AddField
+int Index_AddField
 (
 	Index idx,         // index modified
 	IndexField *field  // field added

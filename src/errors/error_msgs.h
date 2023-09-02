@@ -121,4 +121,5 @@
 #define EMSG_VECTOR_TYPE_ERROR "vector%df expects an array of numbers"
 #define EMSG_VECTOR_IDX_CREATE_FAIL "Failed to create vector index"
 #define EMSG_IDX_INVALID_OPTIONS "Invalid vector index options"
+#define EMSG_IDX_FIELD_ALREADY_EXISTS "Attribute '%s' is already indexed"
 

@@ -8,6 +8,7 @@
 #include "../index/index.h"
 #include "../index/indexer.h"
 #include "index_operations.h"
+#include "../graph/graph_hub.h"
 #include "../datatypes/datatypes.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
 
@@ -65,6 +66,148 @@ static bool index_delete
 	return false;
 }
 
+// extract index information from AST provided in the new format
+// CREATE [RANGE|FULLTEXT|VECTOR] INDEX FOR (n:N) ON n.name
+static void parse_new_format
+(
+	const cypher_astnode_t *index_op,  // AST index create node
+	char **label,                      // label to index
+	char ***fields,                    // fields to index
+	uint *nfields,                     // number of fields to index
+	GraphEntityType *et,               // entity type to index
+    IndexFieldType *idx_type,          // index type
+	SIValue *options                   // index options
+) {
+	ASSERT(et       != NULL);
+	ASSERT(label    != NULL);
+	ASSERT(fields   != NULL);
+	ASSERT(nfields  != NULL);
+	ASSERT(options  != NULL);
+	ASSERT(idx_type != NULL);
+	ASSERT(index_op != NULL);
+
+	//--------------------------------------------------------------------------
+	// extract label
+	//--------------------------------------------------------------------------
+
+	*label = (char*)cypher_ast_label_get_name(
+			cypher_ast_create_pattern_props_index_get_label(index_op));
+
+	//--------------------------------------------------------------------------
+	// extract fields
+	//--------------------------------------------------------------------------
+
+	*nfields = cypher_ast_create_pattern_props_index_nprops(index_op);
+	*fields = rm_malloc(sizeof(char*) * (*nfields));
+
+	for(uint i = 0; i < *nfields; i++) {
+		const cypher_astnode_t *field_name =
+			cypher_ast_property_operator_get_prop_name(
+					cypher_ast_create_pattern_props_index_get_property_operator(
+						index_op, i));
+
+		(*fields)[i] = (char*)cypher_ast_prop_name_get_value(field_name);
+	}
+
+	//--------------------------------------------------------------------------
+	// extract entity type
+	//--------------------------------------------------------------------------
+
+	if(cypher_ast_create_pattern_props_index_pattern_is_relation(index_op)) {
+		*et = GETYPE_EDGE;
+	} else {
+		*et = GETYPE_NODE;
+	}
+
+	//--------------------------------------------------------------------------
+	// extract index type
+	//--------------------------------------------------------------------------
+
+	switch(cypher_ast_create_pattern_props_index_get_index_type(index_op)) {
+		case CYPHER_INDEX_TYPE_RANGE:
+			*idx_type = INDEX_FLD_RANGE;
+			break;
+		case CYPHER_INDEX_TYPE_FULLTEXT:
+			*idx_type = INDEX_FLD_FULLTEXT;
+			break;
+		case CYPHER_INDEX_TYPE_VECTOR:
+			*idx_type = INDEX_FLD_VECTOR;
+			break;
+	}
+
+	//--------------------------------------------------------------------------
+	// extract options
+	//--------------------------------------------------------------------------
+
+	const cypher_astnode_t *options_ast =
+		cypher_ast_create_pattern_props_index_get_options(index_op);
+	if(options_ast != NULL) {
+		AR_ExpNode *exp = AR_EXP_FromASTNode(options_ast);
+		*options = AR_EXP_Evaluate(exp, NULL);
+		AR_EXP_Free(exp);
+	} else {
+		*options = SI_Map(0);
+	}
+}
+
+// extract index information from AST provided in the old format
+// CREATE INDEX :N(n)
+static void parse_old_format
+(
+	const cypher_astnode_t *index_op,  // AST index create node
+	char **label,                      // label to index
+	char ***fields,                    // fields to index
+	uint *nfields,                     // number of fields to index
+	GraphEntityType *et,               // entity type to index
+    IndexFieldType *idx_type,          // index type
+	SIValue *options                   // index options
+) {
+	ASSERT(et       != NULL);
+	ASSERT(label    != NULL);
+	ASSERT(fields   != NULL);
+	ASSERT(nfields  != NULL);
+	ASSERT(options  != NULL);
+	ASSERT(idx_type != NULL);
+	ASSERT(index_op != NULL);
+
+	//--------------------------------------------------------------------------
+	// extract label
+	//--------------------------------------------------------------------------
+
+	*label = (char*)cypher_ast_label_get_name(
+			cypher_ast_create_node_props_index_get_label(index_op));
+
+	//--------------------------------------------------------------------------
+	// extract fields
+	//--------------------------------------------------------------------------
+
+	*nfields = cypher_ast_create_node_props_index_nprops(index_op);
+	*fields = rm_malloc(sizeof(char*) * (*nfields));
+	for(uint i = 0; i < *nfields ; i++) {
+		const cypher_astnode_t *prop_name =
+			cypher_ast_create_node_props_index_get_prop_name(index_op, i);
+		(*fields)[i] = (char*)cypher_ast_prop_name_get_value(prop_name);
+	}
+
+	//--------------------------------------------------------------------------
+	// set entity type
+	//--------------------------------------------------------------------------
+
+	*et = GETYPE_NODE;
+
+	//--------------------------------------------------------------------------
+	// set index type
+	//--------------------------------------------------------------------------
+
+	*idx_type = INDEX_FLD_RANGE;
+
+	//--------------------------------------------------------------------------
+	// set options
+	//--------------------------------------------------------------------------
+
+	*options = SI_Map(0);
+}
+
 // create index
 // CREATE INDEX ON :N(name)
 // CREATE INDEX FOR (n:N) ON (n.name)
@@ -73,101 +216,76 @@ static bool index_delete
 // CREATE VECTOR INDEX FOR ()-[e:R]-() ON (e.name)
 static void index_create
 (
-	RedisModuleCtx *ctx,  // Redis context
-	GraphContext *gc,     // graph context
-	AST *ast              // AST
+	GraphContext *gc,  // graph context
+	AST *ast           // AST
 ) {
 	ASSERT(gc  != NULL);
-	ASSERT(ctx != NULL);
 	ASSERT(ast != NULL);
 
-	uint nfields       = 0;            // number of fields to index
-	const char *label  = NULL;         // label to index
-	GraphEntityType et = GETYPE_NODE;  // type of entity to index
-
 	const cypher_astnode_t *index_op = ast->root;
-    enum cypher_ast_index_type idx_type = CYPHER_INDEX_TYPE_RANGE;  // idx type
-	cypher_astnode_type_t t = cypher_astnode_type(index_op);
-    SIValue options = SI_NullVal();
 
 	//--------------------------------------------------------------------------
 	// retrieve index label and attributes from AST
 	//--------------------------------------------------------------------------
 
+	uint            nfields  = 0;             // number of fields
+	char            *label   = NULL;          // label to index
+	char            **fields = NULL;          // fields to index
+	GraphEntityType et       = GETYPE_NODE;   // type of entity to index
+	SIValue         options  = SI_NullVal();  // index options
+	IndexFieldType  idx_type;                 // index type
+
+	// extract info from AST
+	cypher_astnode_type_t t = cypher_astnode_type(index_op);
 	if(t == CYPHER_AST_CREATE_NODE_PROPS_INDEX) {
-		// old format
-		// CREATE INDEX ON :N(name)
-		nfields = cypher_ast_create_node_props_index_nprops(index_op);
-		label   = cypher_ast_label_get_name(
-				cypher_ast_create_node_props_index_get_label(index_op));
+		parse_old_format(index_op, &label, &fields, &nfields, &et, &idx_type,
+				&options);
 	} else {
-		// new format
-		// CREATE [RANGE|FULLTEXT|VECTOR] INDEX FOR (n:N) ON n.name
-		nfields = cypher_ast_create_pattern_props_index_nprops(index_op);
-		label   = cypher_ast_label_get_name(
-				cypher_ast_create_pattern_props_index_get_label(index_op));
-
-		// determine indexed entity type
-		if(cypher_ast_create_pattern_props_index_pattern_is_relation(index_op)){
-			et = GETYPE_EDGE;
-		}
-
-		// determine index type
-        idx_type =
-			cypher_ast_create_pattern_props_index_get_index_type(index_op);
-
-		// get index options
-        const cypher_astnode_t *options_ast =
-			cypher_ast_create_pattern_props_index_get_options(index_op);
-        if(options_ast != NULL) {
-            AR_ExpNode *exp = AR_EXP_FromASTNode(options_ast);
-            options = AR_EXP_Evaluate(exp, NULL);
-			AR_EXP_Free(exp);
-        }
+		parse_new_format(index_op, &label, &fields, &nfields, &et, &idx_type,
+				&options);
 	}
 
+	// validate all arguments are valid
 	ASSERT(nfields > 0);
-	ASSERT(label != NULL);
-
-	const char *fields[nfields];
-	for(uint i = 0; i < nfields ; i++) {
-		const cypher_astnode_t *prop_name =
-			(t == CYPHER_AST_CREATE_NODE_PROPS_INDEX) ?
-			cypher_ast_create_node_props_index_get_prop_name(index_op, i) :
-			cypher_ast_property_operator_get_prop_name(
-					cypher_ast_create_pattern_props_index_get_property_operator(
-						index_op, i));
-
-		fields[i] = cypher_ast_prop_name_get_value(prop_name);
-	}
+	ASSERT(label   != NULL);
+	ASSERT(fields  != NULL);
+	ASSERT(fields  != NULL);
+	ASSERT(SI_TYPE(options) == T_MAP);
+	ASSERT(et == GETYPE_NODE || et == GETYPE_EDGE);
+	ASSERT(idx_type == INDEX_FLD_RANGE    ||
+		   idx_type == INDEX_FLD_FULLTEXT ||
+		   idx_type == INDEX_FLD_VECTOR);
 
 	// lock
 	QueryCtx_LockForCommit();
 
 	Index idx = NULL;
-	// add fields to index
-    switch(idx_type) {
-        case CYPHER_INDEX_TYPE_RANGE:
-            idx = Index_RangeCreate(label, et, (const char**)fields, nfields);
-            break;
+	ResultSet *result_set = QueryCtx_GetResultSet();
+	ASSERT(result_set != NULL);
 
-        case CYPHER_INDEX_TYPE_FULLTEXT:
-			idx = Index_FulltextCreate(label, et, fields[0], options);
+	for(uint i = 0; i < nfields; i++) {
+		idx = AddIndex(label, fields[i], et, idx_type, options, true);
+		if(idx != NULL) {
+			ResultSet_IndexCreated(result_set, INDEX_OK);
+		} else {
+			// operation failed
 			break;
+		}
+	}
 
-		case CYPHER_INDEX_TYPE_VECTOR:
-			idx = Index_VectorCreate(label, et, fields[0], options);
-            break;
+	SIValue_Free(options);
 
-        default:
-            ASSERT(false);
-            break;
-    }
-
+	// index created, populate
 	if(idx != NULL) {
-		// build index
+
+		// TODO:index level configuration
+
+		Index_Disable(idx);
+
+		// populate index
 		SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
 		Schema *s = GraphContext_GetSchema(gc, label, st);
+		ASSERT(s != NULL);
 		Indexer_PopulateIndex(gc, s, idx);
 	}
 }
@@ -175,14 +293,13 @@ static void index_create
 // handle index creation/deletion
 void IndexOperation_Run
 (
-	RedisModuleCtx *ctx,  // Redis context
-	GraphContext *gc,     // graph context
-	AST *ast,             // AST
-	ExecutionType op      // operation type
+	GraphContext *gc,  // graph context
+	AST *ast,          // AST
+	ExecutionType op   // operation type
 ) {
 	switch(op) {
 		case EXECUTION_TYPE_INDEX_CREATE:
-			index_create(ctx, gc, ast);
+			index_create(gc, ast);
 			break;
 		case EXECUTION_TYPE_INDEX_DROP:
 			index_delete(gc, ast);

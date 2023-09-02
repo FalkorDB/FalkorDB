@@ -201,7 +201,8 @@ int Schema_AddIndex
 	ASSERT(idx   != NULL);
 	ASSERT(field != NULL);
 
-	// see if index already exists
+	*idx = NULL;  // set default
+
 	Index _idx = NULL;
 	GraphEntityType et = (s->type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE;
 
@@ -216,10 +217,12 @@ int Schema_AddIndex
 	Index pending = PENDING_IDX(s);
 	Index altered = (pending != NULL) ? pending : active;
 
+	// see if field is already indexed
 	if(altered != NULL) {
-		// make sure attribute isn't already indexed
+		// error if field is already indexed
 		if(Index_ContainsField(altered, field->id, field->type)) {
-			// field already indexed, quick return
+			// field already indexed, error and return
+			ErrorCtx_SetError(EMSG_IDX_FIELD_ALREADY_EXISTS, field->name);
 			IndexField_Free(field);
 			return INDEX_FAIL;
 		}
@@ -235,10 +238,12 @@ int Schema_AddIndex
 	}
 	PENDING_IDX(s) = _idx;  // set pending exact-match index
 
-	Index_AddField(_idx, field);
+	// add field to index
+	int res = Index_AddField(_idx, field);
+	ASSERT(res == INDEX_OK);
 
 	*idx = _idx;
-	return INDEX_OK;
+	return res;
 }
 
 int Schema_RemoveIndex

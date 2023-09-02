@@ -12,6 +12,7 @@
 #include "../errors/errors.h"
 #include "../index/indexer.h"
 #include "../util/rmalloc.h"
+#include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 
@@ -251,7 +252,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	// create index one field at a time
 	//--------------------------------------------------------------------------
 
-	SIValue options = SI_Map(5);
+	SIValue options = SI_Map(3);
 
 	for(uint i = 0; i < fields_count; i++) {
 		// construct options map
@@ -262,26 +263,23 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		Map_Add(&options, SI_ConstStringVal("nostem"),
 				SI_DoubleVal(weights[i]));
 
-		// index level configurations
-		// introduce only on first iteration
-		if(lang_exists) {
-			Map_Add(&options, SI_ConstStringVal("language"), lang);
-			SIValue_Free(lang);
-			lang_exists = false;
-		}
+		idx = AddIndex(label, _fields[i], GETYPE_NODE, INDEX_FLD_FULLTEXT,
+				options, true);
 
-		if(stopword_exists) {
-			Map_Add(&options, SI_ConstStringVal("stopwords"), sw);
-			SIValue_Free(sw);
-			stopword_exists = false;
-		}
-
-		res = Index_FulltextCreate(label, GETYPE_NODE, _fields[i], options);
-		if(!res) {
+		if(idx == NULL) {
 			break;
 		}
+	}
 
-		Map_Clear(options);
+	// TODO: index level configurations
+	if(lang_exists) {
+		// lang
+		SIValue_Free(lang);
+	}
+
+	if(stopword_exists) {
+		// sw
+		SIValue_Free(sw);
 	}
 
 	Map_Free(options);

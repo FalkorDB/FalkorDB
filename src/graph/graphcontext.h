@@ -278,40 +278,6 @@ Index GraphContext_GetIndex
 	SchemaType schema_type
 );
 
-bool GraphContext_AddRangeIndex
-(
-	Index *idx,              // [input/output] index created
-	GraphContext *gc,        // graph context
-	SchemaType schema_type,  // type of entities to index nodes/edges
-	const char *label,       // label of indexed entities
-	const char **attrs,      // attributes to index
-	uint attrs_count         // number of attributes to index
-);
-
-// create a full text index for the given label and attribute
-bool GraphContext_AddFullTextIndex
-(
-	Index *idx,             // [input/output] index created
-	GraphContext *gc,       // graph context
-	const char *label,      // label of indexed entities
-	const char **attrs,     // attributes to index
-	uint attrs_count,       // number of attributes to index
-	double *weights,        // fields weights
-	bool *nostems,          // fields stemming
-	const char **phonetics  // fields phonetics
-);
-
-// create a vector index for the given label and attribute
-bool GraphContext_AddVectorIndex
-(
-	Index *idx,                   // [input/output] index created
-	GraphContext *gc,             // graph context
-	SchemaType schema_type,       // type of entities to index nodes/edges
-	const char *label,            // label of indexed entities
-	const char *attr,             // attribute to index
-	uint32_t dimension            // vector dimension
-);
-
 // remove and free an index
 int GraphContext_DeleteIndex
 (

@@ -838,9 +838,9 @@ const cypher_astnode_t *cypher_ast_drop_props_index_get_prop_name(
         const cypher_astnode_t *node, unsigned int index);
 
 enum cypher_ast_index_type {
-    range_index,
-    fulltext_index,
-    vector_index
+	CYPHER_INDEX_TYPE_RANGE,
+	CYPHER_INDEX_TYPE_FULLTEXT,
+	CYPHER_INDEX_TYPE_VECTOR
 };
 
 /**

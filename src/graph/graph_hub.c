@@ -40,8 +40,8 @@ static void _DeleteEdgeFromIndices
 	GraphContext *gc,
 	Edge *e
 ) {
-	Schema  *s  =  NULL;
-	Graph   *g  =  gc->g;
+	Schema *s = NULL;
+	Graph  *g = gc->g;
 
 	int relation_id = Edge_GetRelationID(e);
 
@@ -60,9 +60,9 @@ static void _AddNodeToIndices
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
 
-	Schema    *s       =  NULL;
-	Graph     *g       =  gc->g;
-	EntityID  node_id  =  ENTITY_GET_ID(n);
+	Schema   *s      = NULL;
+	Graph    *g      = gc->g;
+	EntityID node_id = ENTITY_GET_ID(n);
 
 	// retrieve node labels
 	uint label_count;
@@ -77,9 +77,13 @@ static void _AddNodeToIndices
 }
 
 // add edge to any relevant index
-static void _AddEdgeToIndices(GraphContext *gc, Edge *e) {
-	Schema  *s  =  NULL;
-	Graph   *g  =  gc->g;
+static void _AddEdgeToIndices
+(
+	GraphContext *gc,
+	Edge *e
+) {
+	Schema *s = NULL;
+	Graph  *g = gc->g;
 
 	int relation_id = Edge_GetRelationID(e);
 
@@ -480,5 +484,71 @@ Attribute_ID FindOrAddAttribute
 	}
 
 	return attr_id;
+}
+
+// create index
+Index AddIndex
+(
+	const char *label,   // label/relationship type
+	const char *attr,    // attribute to index
+	GraphEntityType et,  // entity type (node/edge)
+	IndexFieldType t,    // type of index (range/fulltext/vector)
+	SIValue options,     // index options
+	bool log
+) {
+	ASSERT(label != NULL);
+	ASSERT(attr != NULL);
+	ASSERT(et != GETYPE_UNKNOWN);
+	ASSERT(t == INDEX_FLD_FULLTEXT ||
+		   t == INDEX_FLD_RANGE    ||
+		   t == INDEX_FLD_VECTOR);
+
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+
+	//--------------------------------------------------------------------------
+	// make sure schema exists
+	//--------------------------------------------------------------------------
+
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
+	Schema *s = GraphContext_GetSchema(gc, label, st);
+
+	// schema missing, creating an index will create the schema
+	if(s == NULL) {
+		s = AddSchema(gc, label, st, log);
+	}
+	ASSERT(s != NULL);
+
+	//--------------------------------------------------------------------------
+	// make sure attribute exists
+	//--------------------------------------------------------------------------
+
+	// creating an index will create the attribute
+	Attribute_ID attr_id = FindOrAddAttribute(gc, attr, log);
+
+	//--------------------------------------------------------------------------
+	// create index field
+	//--------------------------------------------------------------------------
+
+	Index idx = NULL;
+	if(t == INDEX_FLD_RANGE) {
+		idx = Index_RangeCreate(label, et, attr, attr_id);
+	} else if(t == INDEX_FLD_FULLTEXT) {
+		idx = Index_FulltextCreate(label, et, attr, attr_id, options);
+	} else if(t == INDEX_FLD_VECTOR) {
+		idx = Index_VectorCreate(label, et, attr, attr_id, options);
+	} else {
+		assert(false && "unknown index type");
+	}
+
+	//--------------------------------------------------------------------------
+	// add create index operation to undo log
+	//--------------------------------------------------------------------------
+
+	if(idx != NULL && log == true) {
+		UndoLog log = QueryCtx_GetUndoLog();
+		UndoLog_CreateIndex(log, st, label, attr, t);
+	}
+
+	return idx;
 }
 

@@ -97,7 +97,8 @@ static void _index_delete_edge
 	QueryCtx *ctx,
 	Edge *e
 ) {
-	Schema *s = GraphContext_GetSchemaByID(ctx->gc, Edge_GetRelationID(e), SCHEMA_EDGE);
+	Schema *s = GraphContext_GetSchemaByID(ctx->gc, Edge_GetRelationID(e),
+			SCHEMA_EDGE);
 	ASSERT(s);
 
 	// update index
@@ -332,12 +333,24 @@ static void _UndoLog_Rollback_Add_Attribute
 	}
 }
 
+static void _UndoLog_Rollback_Create_Index
+(
+	QueryCtx *ctx,
+	int seq_start,
+	int seq_end
+) {
+	for(int i = seq_start; i > seq_end; --i) {
+		UndoOp *op = UNDOLOG_GET_ITEM(ctx->undo_log, i);
+		UndoCreateIndexOp index_op = op->index_op;
+		int res = GraphContext_DeleteIndex(ctx->gc, index_op.st,
+				index_op.label, index_op.field, index_op.t);
+		ASSERT(res == INDEX_OK);
+	}
+}
+
 UndoLog UndoLog_New(void) {
-	return (UndoLog)DataBlock_New(
-		UNDOLOG_INIT_SIZE,
-		UNDOLOG_INIT_SIZE,
-		sizeof(UndoOp),
-		NULL);
+	return (UndoLog)DataBlock_New(UNDOLOG_INIT_SIZE, UNDOLOG_INIT_SIZE,
+			sizeof(UndoOp), NULL);
 }
 
 // returns number of entries in log
@@ -485,11 +498,13 @@ void UndoLog_AddLabels
 
 	UndoOp op;
 
-	op.type = UNDO_SET_LABELS;
-	op.labels_op.node = *node;
-	op.labels_op.label_ids = array_new(LabelID, labels_count);
-	memcpy(op.labels_op.label_ids, label_ids, sizeof(LabelID)*labels_count);
+	op.type                   = UNDO_SET_LABELS;
+	op.labels_op.node         = *node;
+	op.labels_op.label_ids    = array_new(LabelID,  labels_count);
 	op.labels_op.labels_count = labels_count;
+
+	memcpy(op.labels_op.label_ids, label_ids, sizeof(LabelID)*labels_count);
+
 	UNDOLOG_ADD_OP(log, op);
 }
 
@@ -506,11 +521,13 @@ void UndoLog_RemoveLabels
 
 	UndoOp op;
 
-	op.type = UNDO_REMOVE_LABELS;
-	op.labels_op.node = *node;
-	op.labels_op.label_ids = array_new(LabelID, labels_count);
-	memcpy(op.labels_op.label_ids, label_ids, sizeof(LabelID)*labels_count);
+	op.type                   = UNDO_REMOVE_LABELS;
+	op.labels_op.node         = *node;
+	op.labels_op.label_ids    = array_new(LabelID, labels_count);
 	op.labels_op.labels_count = labels_count;
+
+	memcpy(op.labels_op.label_ids, label_ids, sizeof(LabelID)*labels_count);
+
 	UNDOLOG_ADD_OP(log, op);
 }
 
@@ -524,9 +541,10 @@ void UndoLog_AddSchema
 	ASSERT(log != NULL);
 	UndoOp op;
 
-	op.type = UNDO_ADD_SCHEMA;
+	op.type                = UNDO_ADD_SCHEMA;
+	op.schema_op.t         = t;
 	op.schema_op.schema_id = schema_id;
-	op.schema_op.t = t;
+
 	UNDOLOG_ADD_OP(log, op);
 }
 
@@ -538,8 +556,30 @@ void UndoLog_AddAttribute
 	ASSERT(log != NULL);
 	UndoOp op;
 
-	op.type = UNDO_ADD_ATTRIBUTE;
+	op.type                      = UNDO_ADD_ATTRIBUTE;
 	op.attribute_op.attribute_id = attribute_id;
+
+	UNDOLOG_ADD_OP(log, op);
+}
+
+// undo index creation
+void UndoLog_CreateIndex
+(
+	UndoLog log,                 // undo log
+	SchemaType st,               // schema type
+	const char *label,           // label / relationship
+	const char *field,           // field
+	IndexFieldType t             // type of index
+) {
+	ASSERT(log != NULL);
+	UndoOp op;
+
+	op.type           = UNDO_CREATE_INDEX;
+	op.index_op.t     = t;
+	op.index_op.st    = st;
+	op.index_op.label = label;
+	op.index_op.field = field;
+
 	UNDOLOG_ADD_OP(log, op);
 }
 
@@ -601,6 +641,9 @@ void UndoLog_Rollback
 			case UNDO_ADD_ATTRIBUTE:
 				_UndoLog_Rollback_Add_Attribute(ctx, seq_start, seq_end);
 				break;
+			case UNDO_CREATE_INDEX:
+				_UndoLog_Rollback_Create_Index(ctx, seq_start, seq_end);
+				break;
 			default:
 				ASSERT(false);
 		}
@@ -637,6 +680,8 @@ static void UndoLog_FreeOp
 			break;
 		case UNDO_ADD_SCHEMA:
 		case UNDO_ADD_ATTRIBUTE:
+			break;
+		case UNDO_CREATE_INDEX:
 			break;
 		default:
 			ASSERT(false);

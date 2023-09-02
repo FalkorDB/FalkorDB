@@ -404,6 +404,9 @@ Schema *GraphContext_AddSchema
 	const char *label,
 	SchemaType t
 ) {
+	ASSERT(gc != NULL);
+	ASSERT(label != NULL);
+
 	int id;
 	Schema *schema;
 
@@ -617,157 +620,6 @@ Index GraphContext_GetIndex
 	if(s == NULL) return NULL;
 
 	return Schema_GetIndex(s, attrs, n, type, false);
-}
-
-// create an exact match index for the given label and attribute
-bool GraphContext_AddRangeIndex
-(
-	Index *idx,              // [input/output] index created
-	GraphContext *gc,        // graph context
-	SchemaType schema_type,  // type of entities to index nodes/edges
-	const char *label,       // label of indexed entities
-	const char **attrs,      // attributes to index
-	uint attrs_count         // number of attributes to index
-) {
-	ASSERT(idx   !=  NULL);
-	ASSERT(gc    !=  NULL);
-	ASSERT(label !=  NULL);
-	ASSERT(attrs !=  NULL);
-	ASSERT(attrs_count > 0);
-
-	// retrieve the schema for this label
-	bool      index_changed = false;
-	Schema    *s            = GraphContext_GetSchema(gc, label, schema_type);
-	ResultSet *result_set   = QueryCtx_GetResultSet();
-
-	if(s == NULL) {
-		// schema doesn't exists, create it
-		s = GraphContext_AddSchema(gc, label, schema_type);
-	}
-
-	for(uint i = 0; i < attrs_count; i++) {
-		// create index field
-		IndexField field;
-		const char *attr = attrs[i];
-		Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
-
-		IndexField_NewRangeField(&field, attr, attr_id);
-
-		if(Schema_AddIndex(idx, s, &field) == INDEX_OK) {
-			index_changed = true;
-			// update result-set
-			ResultSet_IndexCreated(result_set, INDEX_OK);
-		}
-	}
-
-	// disable index if it was created
-	// we don't call Index_Disable within Schema_AddIndex as multiple
-	// field additions are still considered a "single" modification
-	// of the index
-	if(index_changed) {
-		Index_Disable(*idx);
-	}
-
-	return index_changed;
-}
-
-// create a full text index for the given label and attribute
-bool GraphContext_AddFullTextIndex
-(
-	Index *idx,             // [input/output] index created
-	GraphContext *gc,       // graph context
-	const char *label,      // label of indexed entities
-	const char **attrs,     // attributes to index
-	uint attrs_count,       // number of attributes to index
-	double *weights,        // fields weights
-	bool *nostems,          // fields stemming
-	const char **phonetics  // fields phonetics
-) {
-	ASSERT(idx   != NULL);
-	ASSERT(gc    != NULL);
-	ASSERT(label != NULL);
-	ASSERT(attrs != NULL);
-	ASSERT(attrs_count > 0);
-
-	// retrieve the schema for this label
-	ResultSet *result_set   = QueryCtx_GetResultSet();
-	bool      index_changed = false;
-	Schema    *s            = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-
-	// create schema if it doesn't exists
-	if(s == NULL) {
-		s = GraphContext_AddSchema(gc, label, SCHEMA_NODE);
-	}
-
-	// introduce index fields
-	for(uint i = 0; i < attrs_count; i++) {
-		const char* attr      = attrs[i];
-		double      weight    = weights[i];
-		bool        nostem    = nostems[i];
-		const char  *phonetic = phonetics[i];
-
-		IndexField field;
-		Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
-
-		IndexField_NewFullTextField(&field, attr, attr_id);
-		IndexField_SetWeight(&field,   weight);
-		IndexField_SetStemming(&field, nostem);
-		IndexField_SetPhonetic(&field, phonetic);
-
-		if(Schema_AddIndex(idx, s, &field) == INDEX_OK) {
-			index_changed = true;
-			// update result-set
-			ResultSet_IndexCreated(result_set, INDEX_OK);
-		}
-	}
-
-	// diable index if it was created
-	if(index_changed) {
-		Index_Disable(*idx);
-	}
-
-	return index_changed;
-}
-
-// create a vector index for the given label and attribute
-bool GraphContext_AddVectorIndex
-(
-	Index *idx,                   // [input/output] index created
-	GraphContext *gc,             // graph context
-	SchemaType schema_type,       // type of entities to index nodes/edges
-	const char *label,            // label of indexed entities
-	const char *attr,             // attribute to index
-	uint32_t dimension            // vector dimension
-) {
-	ASSERT(idx   != NULL);
-	ASSERT(gc    != NULL);
-	ASSERT(attr  != NULL);
-	ASSERT(label != NULL);
-
-	// retrieve the schema for this label
-	bool index_changed = false;
-	ResultSet *result_set = QueryCtx_GetResultSet();
-	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
-
-	// missing shema, create it
-	if(s == NULL) {
-		s = GraphContext_AddSchema(gc, label, schema_type);
-	}
-	ASSERT(s != NULL);
-
-	// create index field
-	IndexField field;
-	Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
-	IndexField_NewVectorField(&field, attr, attr_id, dimension);
-
-	if(Schema_AddIndex(idx, s, &field) == INDEX_OK) {
-		index_changed = true;
-		Index_Disable(*idx);
-		// update result-set
-		ResultSet_IndexCreated(result_set, INDEX_OK);
-	}
-
-	return index_changed;
 }
 
 int GraphContext_DeleteIndex
