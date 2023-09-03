@@ -122,17 +122,12 @@ def toString(value):
 
 
 def prepareActualValue(actualValue):
-    # if value is a numeric string or a number, transform to numeric value
     if isinstance(actualValue, Number):
         actualValue = toNumeric(actualValue)
-    # value is string
     elif isinstance(actualValue, str):
-        # remove qoutes if any
         actualValue = removeQuotes(actualValue)
-    # value is a node
     elif isinstance(actualValue, Node):
         actualValue = nodeToString(actualValue)
-    # value is an edge
     elif isinstance(actualValue, Relationship):
         actualValue = edgeToString(actualValue)
     elif isinstance(actualValue, list):
@@ -215,7 +210,7 @@ def assert_resultsets_equals_in_order(actual, expected):
     # check amount of rows
     assert_resultset_length(actual, rowCount)
     for rowIdx in range(rowCount):
-        actualRow = prepare_actual_row(actual.result_set[rowIdx])
+        actualRow = prepare_actual_row(actual[rowIdx])
         expectedRow = prepare_expected_row(expected.rows[rowIdx])
         # compare rows
         Env.RTestInstance.currEnv.assertEquals(actualRow, expectedRow)
