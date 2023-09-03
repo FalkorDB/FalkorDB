@@ -26,7 +26,7 @@ static bool _parseOptions
 	//     similarityFunction:'euclidean'
 	//  }
 
-	if(Map_KeyCount(options) != 2) {
+	if(Map_KeyCount(options) < 2) {
 		return false;
 	}
 
@@ -37,7 +37,7 @@ static bool _parseOptions
 	// extract vector length
 	//--------------------------------------------------------------------------
 
-	if(!MAP_GET(val, "dim", val) || SI_TYPE(val) != T_INT64) {
+	if(!MAP_GET(options, "dim", val) || SI_TYPE(val) != T_INT64) {
 		return false;
 	}
 	*dimension = val.longval;
@@ -46,7 +46,7 @@ static bool _parseOptions
 	// extract similarity function
 	//--------------------------------------------------------------------------
 
-	if(!MAP_GET(val, "similarityFunction", val) || SI_TYPE(val) != T_STRING) {
+	if(!MAP_GET(options, "similarityFunction", val) || SI_TYPE(val) != T_STRING) {
 		return false;
 	}
 

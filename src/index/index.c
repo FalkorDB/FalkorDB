@@ -195,15 +195,11 @@ void Index_ConstructStructure
 	RediSearch_IndexOptionsSetGCPolicy(idx_options, GC_POLICY_FORK);
 	#endif
 
-	// TODO: handle stopwordsa
 	RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
 	if(idx->stopwords) {
 		RediSearch_IndexOptionsSetStopwords(idx_options,
 				(const char**)idx->stopwords, array_len(idx->stopwords));
 	}
-//	} else if(idx->type == IDX_EXACT_MATCH) {
-//		RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
-//	}
 
 	rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
 	RediSearch_FreeIndexOptions(idx_options);
@@ -636,7 +632,7 @@ const char *Index_GetLanguage
 	ASSERT(idx != NULL);
 
 	RSIndex *_idx = Index_RSIndex(idx);
-	ASSERT(_idx != NULL);
+	if(_idx == NULL) return NULL;
 
 	return RediSearch_IndexGetLanguage(_idx);
 }
@@ -659,36 +655,49 @@ char **Index_GetStopwords
 	ASSERT(idx != NULL);
 
 	RSIndex *_idx = Index_RSIndex(idx);
-	ASSERT(_idx != NULL);
+	if(_idx == NULL) return NULL;
 
 	return RediSearch_IndexGetStopwords(_idx, size);
 }
 
 // set indexed language
-void Index_SetLanguage
+bool Index_SetLanguage
 (
 	Index idx,
 	const char *language
 ) {
-	ASSERT(idx != NULL);
+	ASSERT(idx      != NULL);
 	ASSERT(language != NULL);
-	ASSERT(idx->language == NULL);
+
+	// fail if index already has language
+	if(idx->language != NULL) {
+		ErrorCtx_SetError("Can not override index configuration");
+		return false;
+	}
 
 	idx->language = rm_strdup(language);
+	return true;
 }
 
 // set indexed stopwords
-void Index_SetStopwords
+bool Index_SetStopwords
 (
 	Index idx,
 	char ***stopwords
 ) {
 	ASSERT(idx != NULL);
-	ASSERT(idx->stopwords == NULL);
 	ASSERT(stopwords != NULL && *stopwords != NULL);
+
+	// fail if index already has stopwords
+	if(idx->stopwords != NULL) {
+		ErrorCtx_SetError("Can not override index configuration");
+		return false;
+	}
 
 	idx->stopwords = *stopwords;
 	*stopwords = NULL;
+
+	return true;
 }
 
 // returns true if index doesn't contains any pending changes
@@ -733,11 +742,7 @@ void Index_Free
 	array_free(idx->fields);
 
 	if(idx->stopwords != NULL) {
-		uint stopwords_count = array_len(idx->stopwords);
-		for(uint i = 0; i < stopwords_count; i++) {
-			rm_free(idx->stopwords[i]);
-		}
-		array_free(idx->stopwords);
+		array_free_cb(idx->stopwords, rm_free);
 	}
 
 	rm_free(idx->label);

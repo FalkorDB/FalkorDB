@@ -283,14 +283,14 @@ char **Index_GetStopwords
 );
 
 // set indexed language
-void Index_SetLanguage
+bool Index_SetLanguage
 (
 	Index idx,            // index modified
 	const char *language  // language to set
 );
 
 // set indexed stopwords
-void Index_SetStopwords
+bool Index_SetStopwords
 (
 	Index idx,         // index modified
 	char ***stopwords  // stopwords

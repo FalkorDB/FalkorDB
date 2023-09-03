@@ -144,6 +144,7 @@ static void parse_new_format
 	if(options_ast != NULL) {
 		AR_ExpNode *exp = AR_EXP_FromASTNode(options_ast);
 		*options = AR_EXP_Evaluate(exp, NULL);
+		SIValue_Persist(options);
 		AR_EXP_Free(exp);
 	} else {
 		*options = SI_Map(0);
@@ -208,6 +209,68 @@ static void parse_old_format
 	*options = SI_Map(0);
 }
 
+// extract index level configuration from options map
+static bool extract_index_level_config
+(
+	char ***stopwords,  // index stopwods
+	char **language,    // index language
+	SIValue options     // options map
+) {
+	ASSERT(language  != NULL);
+	ASSERT(stopwords != NULL);
+
+	// set default values
+	*language  = NULL;
+	*stopwords = NULL;
+
+	if(SI_TYPE(options) != T_MAP) return false;
+
+	//--------------------------------------------------------------------------
+	// extract language
+	//--------------------------------------------------------------------------
+
+	SIValue language_val;
+	bool language_specified = MAP_GET(options, "language", language_val);
+
+	if(language_specified) {
+		if(SI_TYPE(language_val) != T_STRING) {
+			ErrorCtx_SetError("Index configuration error");
+			return false;
+		} else {
+			*language = language_val.stringval;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// extract stopwords
+	//--------------------------------------------------------------------------
+
+	SIValue stopwords_val;
+	bool stopwords_specified = MAP_GET(options, "stopwords", stopwords_val);
+
+	if(stopwords_specified) {
+		// validate stopwords is an array of strings
+		if(SI_TYPE(stopwords_val) != T_ARRAY) {
+			ErrorCtx_SetError("Index configuration error");
+			return false;
+		}
+
+		if(!SIArray_AllOfType(stopwords_val, T_STRING)) {
+			ErrorCtx_SetError("Index configuration error");
+			return false;
+		}
+
+		uint nstopwords = SIArray_Length(stopwords_val);
+		*stopwords = array_new(char*, nstopwords);
+		for(uint i = 0; i < nstopwords; i++) {
+			SIValue stopword = SIArray_Get(stopwords_val, i);
+			array_append((*stopwords), rm_strdup(stopword.stringval));
+		}
+	}
+
+	return true;
+}
+
 // create index
 // CREATE INDEX ON :N(name)
 // CREATE INDEX FOR (n:N) ON (n.name)
@@ -245,10 +308,20 @@ static void index_create
 				&options);
 	}
 
+	//--------------------------------------------------------------------------
+	// index level configuration
+	//--------------------------------------------------------------------------
+
+	char *language   = NULL;
+	char **stopwords = NULL;
+	if(!extract_index_level_config(&stopwords, &language, options)) {
+		// failed to extract index level configuration
+		goto cleanup;
+	}
+
 	// validate all arguments are valid
 	ASSERT(nfields > 0);
 	ASSERT(label   != NULL);
-	ASSERT(fields  != NULL);
 	ASSERT(fields  != NULL);
 	ASSERT(SI_TYPE(options) == T_MAP);
 	ASSERT(et == GETYPE_NODE || et == GETYPE_EDGE);
@@ -269,16 +342,23 @@ static void index_create
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
 			// operation failed
-			break;
+			goto cleanup;
 		}
 	}
 
-	SIValue_Free(options);
-
 	// index created, populate
 	if(idx != NULL) {
+		//----------------------------------------------------------------------
+		// set index level configuration
+		//----------------------------------------------------------------------
 
-		// TODO:index level configuration
+		if(language != NULL && !Index_SetLanguage(idx, language)) {
+			goto cleanup;
+		}
+
+		if(stopwords != NULL && !Index_SetStopwords(idx, &stopwords)) {
+			goto cleanup;
+		}
 
 		Index_Disable(idx);
 
@@ -288,6 +368,10 @@ static void index_create
 		ASSERT(s != NULL);
 		Indexer_PopulateIndex(gc, s, idx);
 	}
+
+cleanup:
+	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
+	SIValue_Free(options);
 }
 
 // handle index creation/deletion
