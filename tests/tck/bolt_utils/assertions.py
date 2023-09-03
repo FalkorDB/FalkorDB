@@ -55,7 +55,7 @@ def edgeToString(value):
     if value._properties:
         props = ', '.join(key+': '+str(val)
                           for key, val in value._properties.items())
-        if value.relation:
+        if value.type:
             res += " "
         res += '{' + props + '}'
     res += ']'
