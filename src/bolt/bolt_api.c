@@ -9,7 +9,6 @@
 #include "../commands/commands.h"
 
 #include <string.h>
-#include <byteswap.h>
 
 void BoltHelloCommand
 (
@@ -45,7 +44,7 @@ RedisModuleString *get_db
 	RedisModuleCtx *ctx,
 	bolt_client_t *client
 ) {
-	char *db = bolt_read_structure_value(client->read_buffer, 2);
+	char *db = bolt_read_structure_value(client->read_buffer + client->current_message_index, 2);
 	char *db_str;
 	size_t db_len;
 	if(bolt_read_map_size(db) == 0) {
@@ -77,7 +76,7 @@ int print_parameter_value
 		case BVT_INT32:
 			return sprintf(buff, "%d", bolt_read_int32(value));
 		case BVT_INT64:
-			return sprintf(buff, "%ld", bolt_read_int64(value));
+			return sprintf(buff, "%lld", bolt_read_int64(value));
 		case BVT_FLOAT:
 			return sprintf(buff, "%f", bolt_read_float(value));
 		case BVT_STRING:
@@ -138,8 +137,8 @@ RedisModuleString *get_query
 	RedisModuleCtx *ctx,
 	bolt_client_t *client
 ) {
-	char *query = bolt_read_structure_value(client->read_buffer, 0);
-	char *parameters = bolt_read_structure_value(client->read_buffer, 1);
+	char *query = bolt_read_structure_value(client->read_buffer + client->current_message_index, 0);
+	char *parameters = bolt_read_structure_value(client->read_buffer + client->current_message_index, 1);
 	uint32_t params_count = bolt_read_map_size(parameters);
 	int n = 0;
 	if(params_count > 0) {
@@ -220,35 +219,15 @@ void BoltRollbackCommand
 
 void BoltRequestHandler
 (
-	int fd,
-	void *user_data,
-	int mask
+	bolt_client_t *client
 ) {
-	bolt_client_t *client = (bolt_client_t*)user_data;
-	if(!bolt_client_read(client, 2)) {
-		rm_free(client);
-		socket_close(fd);
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+	if(client->current_message_index != -1 || client->nmessages == 0) {
 		return;
 	}
 
-	uint16_t size = bswap_16(*(uint16_t*)(client->read_buffer + client->read_index));
+	client->current_message_index = client->messages[0];
 
-	if(size > 0) {
-		if(bolt_client_read(client, size)) {
-			client->read_index += size;
-		} else {
-			rm_free(client);
-			socket_close(fd);
-			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		}
-		return;
-	}
-
-	client->read_index = 0;
-	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-
-	switch (bolt_read_structure_type(client->read_buffer))
+	switch (bolt_read_structure_type(client->read_buffer + client->current_message_index))
 	{
 		case BST_HELLO:
 			BoltHelloCommand(client);
@@ -287,6 +266,34 @@ void BoltRequestHandler
 	}
 }
 
+void BoltReadHandler
+(
+	int fd,
+	void *user_data,
+	int mask
+) {
+	bolt_client_t *client = (bolt_client_t*)user_data;
+	int nread = socket_read(client->socket, client->read_buffer + client->nread, 65536 - client->nread);
+	if(nread == 0) {
+		rm_free(client);
+		socket_close(fd);
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		return;
+	} else {
+		client->nread += nread;
+	}
+
+	while(client->nread - client->last_message_index > 2) {
+		uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + client->last_message_index));
+		if(client->last_message_index + size <= client->nread) {
+			client->messages[client->nmessages++] = client->last_message_index + 2;
+			client->last_message_index += size + 4;
+		}
+	}
+
+	BoltRequestHandler(client);
+}
+
 void BoltResponseHandler
 (
 	int fd,
@@ -296,7 +303,11 @@ void BoltResponseHandler
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	bolt_client_send(client);
-	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltRequestHandler, client);
+	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + client->current_message_index));
+	client->nmessages--;
+	memmove(client->messages, client->messages + 1, client->nmessages * sizeof(uint32_t));
+	client->current_message_index = -1;
+	BoltRequestHandler(client);
 }
 
 void BoltAcceptHandler
@@ -323,7 +334,7 @@ void BoltAcceptHandler
 	socket_write(client, data, 4);
 
 	bolt_client_t *bolt_client = bolt_client_new(client, BoltResponseHandler);
-	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltRequestHandler, bolt_client);
+	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, bolt_client);
 }
 
 int BoltApi_Register

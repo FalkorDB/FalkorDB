@@ -6,540 +6,13 @@
 #include "RG.h"
 #include "bolt.h"
 #include "string.h"
-#include "util/rmalloc.h"
-#include <byteswap.h>
-
-bolt_client_t *bolt_client_new
-(
-	socket_t socket,
-	RedisModuleEventLoopFunc on_write
-) {
-	bolt_client_t *client = rm_malloc(sizeof(bolt_client_t));
-	client->socket = socket;
-	client->state = BS_NEGOTIATION;
-	client->on_write = on_write;
-	client->write_index = 2;
-	client->read_index = 0;
-	return client;
-}
-
-bool bolt_client_read
-(
-	bolt_client_t *client,
-	size_t size
-) {
-	int nread = 0;
-
-	while(nread < size) {
-		int n = socket_read(client->socket, client->read_buffer + client->read_index + nread, size - nread);
-		if(n <= 0) {
-			return false;
-		}
-		nread += n;
-	}
-
-	ASSERT(nread == size);
-
-	return true;
-}
-
-void bolt_change_negotiation_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_NEGOTIATION && bolt_read_structure_type(client->read_buffer) == BST_HELLO);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (response_type)
-	{
-		case BST_SUCCESS:
-			client->state = BS_AUTHENTICATION;
-			break;
-		case BST_FAILURE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_authentication_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_AUTHENTICATION && bolt_read_structure_type(client->read_buffer) == BST_LOGON);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (response_type)
-	{
-		case BST_SUCCESS:
-			client->state = BS_READY;
-			break;
-		case BST_FAILURE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_ready_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_READY);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (request_type)
-	{
-		case BST_LOGOFF:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_AUTHENTICATION;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RUN:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_STREAMING;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_BEGIN:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_TX_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_ROUTE:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RESET:
-			client->state = BS_READY;
-			break;
-		case BST_GOODBYE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_streaming_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_STREAMING);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (request_type)
-	{
-		case BST_PULL:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_DISCARD:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RESET:
-			client->state = BS_READY;
-			break;
-		case BST_GOODBYE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_txready_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_TX_READY);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (request_type)
-	{
-		case BST_RUN:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_TX_STREAMING;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_COMMIT:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_ROLLBACK:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RESET:
-			client->state = BS_READY;
-			break;
-		case BST_GOODBYE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_txstreaming_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_TX_STREAMING);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (request_type)
-	{
-		case BST_RUN:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_TX_STREAMING;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_PULL:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_TX_STREAMING;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_COMMIT:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_DISCARD:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_TX_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RESET:
-			client->state = BS_READY;
-			break;
-		case BST_GOODBYE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_failed_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_FAILED);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (request_type)
-	{
-		case BST_RUN:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_PULL:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_DISCARD:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RESET:
-			client->state = BS_READY;
-			break;
-		case BST_GOODBYE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_interrupted_state
-(
-	bolt_client_t *client   
-) {
-	ASSERT(client->state == BS_INTERRUPTED);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	switch (request_type)
-	{
-		case BST_RUN:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_PULL:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_DISCARD:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_BEGIN:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_COMMIT:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_ROLLBACK:
-			switch (response_type)
-			{
-				case BST_IGNORED:
-					client->state = BS_FAILED;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_RESET:
-			switch (response_type)
-			{
-				case BST_SUCCESS:
-					client->state = BS_READY;
-					break;
-				case BST_FAILURE:
-					client->state = BS_DEFUNCT;
-					break;
-				default:
-					ASSERT(false);
-			}
-			break;
-		case BST_GOODBYE:
-			client->state = BS_DEFUNCT;
-			break;
-		default:
-			ASSERT(false);
-	}
-}
-
-void bolt_change_client_state
-(
-	bolt_client_t *client   
-) {
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
-	if(response_type == BST_RECORD) {
-		return;
-	}
-	switch (client->state)
-	{
-		case BS_NEGOTIATION:
-			bolt_change_negotiation_state(client);
-			break;
-		case BS_AUTHENTICATION:
-			bolt_change_authentication_state(client);
-			break;
-		case BS_READY:
-			bolt_change_ready_state(client);
-			break;
-		case BS_STREAMING:
-			bolt_change_streaming_state(client);
-			break;
-		case BS_TX_READY:
-			bolt_change_txready_state(client);
-			break;
-		case BS_TX_STREAMING:
-			bolt_change_txstreaming_state(client);
-			break;
-		case BS_FAILED:
-			bolt_change_failed_state(client);
-			break;
-		case BS_INTERRUPTED:
-			bolt_change_interrupted_state(client);
-			break;
-		default:
-			ASSERT(false);
-			break;
-	}
-}
-
-void bolt_client_finish_write
-(
-	bolt_client_t *client
-) {
-	RedisModule_EventLoopAdd(client->socket, REDISMODULE_EVENTLOOP_WRITABLE, client->on_write, client);
-}
-
-void bolt_client_send
-(
-	bolt_client_t *client
-) {
-	if(client->state == BS_FAILED && bolt_read_structure_type(client->read_buffer) != BST_RESET) {
-		client->write_index = 2;
-		bolt_reply_structure(client, BST_IGNORED, 0);
-	}
-
-	uint16_t n = client->write_index - 2;
-	if(n == 0) {
-		return;
-	}
-	*(u_int16_t *)client->write_buffer = bswap_16(n);
-	client->write_buffer[n + 2] = 0x00;
-	client->write_buffer[n + 3] = 0x00;
-	socket_write(client->socket, client->write_buffer, n + 4);
-	client->write_index = 2;
-	bolt_change_client_state(client);
-}
+#include <arpa/inet.h>
 
 void bolt_reply_null
 (
 	bolt_client_t *client
 ) {
-	client->write_buffer[client->write_index++] = 0xC0;
+	client->write_buffer[client->nwrite++] = 0xC0;
 }
 
 void bolt_reply_bool
@@ -547,7 +20,7 @@ void bolt_reply_bool
 	bolt_client_t *client,
 	bool data
 ) {
-	client->write_buffer[client->write_index++] = data ? 0xC3 : 0xC2;
+	client->write_buffer[client->nwrite++] = data ? 0xC3 : 0xC2;
 }
 
 void bolt_reply_tiny_int
@@ -555,7 +28,7 @@ void bolt_reply_tiny_int
 	bolt_client_t *client,
 	uint8_t data
 ) {
-	client->write_buffer[client->write_index++] = data;
+	client->write_buffer[client->nwrite++] = data;
 }
 
 void bolt_reply_int8
@@ -563,8 +36,8 @@ void bolt_reply_int8
 	bolt_client_t *client,
 	int8_t data
 ) {
-	client->write_buffer[client->write_index++] = 0xC8;
-	client->write_buffer[client->write_index++] = data;
+	client->write_buffer[client->nwrite++] = 0xC8;
+	client->write_buffer[client->nwrite++] = data;
 }
 
 void bolt_reply_int16
@@ -572,9 +45,9 @@ void bolt_reply_int16
 	bolt_client_t *client,
 	int16_t data
 ) {
-	client->write_buffer[client->write_index++] = 0xC9;
-	*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(data);
-	client->write_index += 2;
+	client->write_buffer[client->nwrite++] = 0xC9;
+	*(uint16_t *)(client->write_buffer + client->nwrite) = htons(data);
+	client->nwrite += 2;
 }
 
 void bolt_reply_int32
@@ -582,9 +55,9 @@ void bolt_reply_int32
 	bolt_client_t *client,
 	int32_t data
 ) {
-	client->write_buffer[client->write_index++] = 0xCA;
-	*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(data);
-	client->write_index += 4;
+	client->write_buffer[client->nwrite++] = 0xCA;
+	*(uint32_t *)(client->write_buffer + client->nwrite) = htonl(data);
+	client->nwrite += 4;
 }
 
 void bolt_reply_int64
@@ -592,9 +65,9 @@ void bolt_reply_int64
 	bolt_client_t *client,
 	int64_t data
 ) {
-	client->write_buffer[client->write_index++] = 0xCB;
-	*(uint64_t *)(client->write_buffer + client->write_index) = bswap_64(data);
-	client->write_index += 8;
+	client->write_buffer[client->nwrite++] = 0xCB;
+	*(uint64_t *)(client->write_buffer + client->nwrite) = htonll(data);
+	client->nwrite += 8;
 }
 
 void bolt_reply_int
@@ -620,10 +93,10 @@ void bolt_reply_float
 	bolt_client_t *client,
 	double data
 ) {
-	client->write_buffer[client->write_index++] = 0xC1;
+	client->write_buffer[client->nwrite++] = 0xC1;
 	char *buf = (char *)&data;
 	for (int i = 0; i < sizeof(double); i++) {
-	  client->write_buffer[client->write_index++] = buf[sizeof(double) - i - 1];
+	  client->write_buffer[client->nwrite++] = buf[sizeof(double) - i - 1];
 	}
 }
 
@@ -634,26 +107,26 @@ void bolt_reply_string
 ) {
 	uint32_t size = strlen(data);
 	if (size < 0x10) {
-		client->write_buffer[client->write_index++] = 0x80 + size;
-		memcpy(client->write_buffer + client->write_index, data, size);
-		client->write_index += size;
+		client->write_buffer[client->nwrite++] = 0x80 + size;
+		memcpy(client->write_buffer + client->nwrite, data, size);
+		client->nwrite += size;
 	} else if (size < 0x100) {
-		client->write_buffer[client->write_index++] = 0xD0;
-		client->write_buffer[client->write_index++] = size;
-		memcpy(client->write_buffer + client->write_index, data, size);
-		client->write_index += size;
+		client->write_buffer[client->nwrite++] = 0xD0;
+		client->write_buffer[client->nwrite++] = size;
+		memcpy(client->write_buffer + client->nwrite, data, size);
+		client->nwrite += size;
 	} else if (size < 0x10000) {
-		client->write_buffer[client->write_index++] = 0xD1;
-		*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(size);
-		client->write_index += 2;
-		memcpy(client->write_buffer + client->write_index, data, size);
-		client->write_index += size;
+		client->write_buffer[client->nwrite++] = 0xD1;
+		*(uint16_t *)(client->write_buffer + client->nwrite) = htons(size);
+		client->nwrite += 2;
+		memcpy(client->write_buffer + client->nwrite, data, size);
+		client->nwrite += size;
 	} else {
-		client->write_buffer[client->write_index++] = 0xD2;
-		*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(size);
-		client->write_index += 4;
-		memcpy(client->write_buffer + client->write_index, data, size);
-		client->write_index += size;
+		client->write_buffer[client->nwrite++] = 0xD2;
+		*(uint32_t *)(client->write_buffer + client->nwrite) = htonl(size);
+		client->nwrite += 4;
+		memcpy(client->write_buffer + client->nwrite, data, size);
+		client->nwrite += size;
 	}
 }
 
@@ -663,18 +136,18 @@ void bolt_reply_list
 	uint32_t size
 ) {
 	if (size < 0x10) {
-		client->write_buffer[client->write_index++] = 0x90 + size;
+		client->write_buffer[client->nwrite++] = 0x90 + size;
 	} else if (size < 0x100) {
-		client->write_buffer[client->write_index++] = 0xD4;
-		client->write_buffer[client->write_index++] = size;
+		client->write_buffer[client->nwrite++] = 0xD4;
+		client->write_buffer[client->nwrite++] = size;
 	} else if (size < 0x10000) {
-		client->write_buffer[client->write_index++] = 0xD5;
-		*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(size);
-		client->write_index += 2;
+		client->write_buffer[client->nwrite++] = 0xD5;
+		*(uint16_t *)(client->write_buffer + client->nwrite) = htons(size);
+		client->nwrite += 2;
 	} else {
-		client->write_buffer[client->write_index++] = 0xD6;
-		*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(size);
-		client->write_index += 4;
+		client->write_buffer[client->nwrite++] = 0xD6;
+		*(uint32_t *)(client->write_buffer + client->nwrite) = htons(size);
+		client->nwrite += 4;
 	}
 }
 
@@ -684,18 +157,18 @@ void bolt_reply_map
 	uint32_t size
 ) {
 	if (size < 0x10) {
-		client->write_buffer[client->write_index++] = 0xA0 + size;
+		client->write_buffer[client->nwrite++] = 0xA0 + size;
 	} else if (size < 0x100) {
-		client->write_buffer[client->write_index++] = 0xD8;
-		client->write_buffer[client->write_index++] = size;
+		client->write_buffer[client->nwrite++] = 0xD8;
+		client->write_buffer[client->nwrite++] = size;
 	} else if (size < 0x10000) {
-		client->write_buffer[client->write_index++] = 0xD9;
-		*(uint16_t *)(client->write_buffer + client->write_index) = bswap_16(size);
-		client->write_index += 2;
+		client->write_buffer[client->nwrite++] = 0xD9;
+		*(uint16_t *)(client->write_buffer + client->nwrite) = htons(size);
+		client->nwrite += 2;
 	} else {
-		client->write_buffer[client->write_index++] = 0xDA;
-		*(uint32_t *)(client->write_buffer + client->write_index) = bswap_32(size);
-		client->write_index += 4;
+		client->write_buffer[client->nwrite++] = 0xDA;
+		*(uint32_t *)(client->write_buffer + client->nwrite) = htonl(size);
+		client->nwrite += 4;
 	}
 }
 
@@ -705,8 +178,8 @@ void bolt_reply_structure
 	bolt_structure_type type,
 	uint32_t size
 ) {
-	client->write_buffer[client->write_index++] = 0xB0 + size;
-	client->write_buffer[client->write_index++] = type;
+	client->write_buffer[client->nwrite++] = 0xB0 + size;
+	client->write_buffer[client->nwrite++] = type;
 }
 
 char *bolt_value_read
@@ -822,9 +295,9 @@ char *bolt_value_read
 		case 0xD0:
 			return data + 2 + *(uint8_t *)(data + 1);
 		case 0xD1:
-			return data + 3 + bswap_16(*(uint16_t *)(data + 1));
+			return data + 3 + ntohs(*(uint16_t *)(data + 1));
 		case 0xD2:
-			return data + 5 + *(uint32_t *)(data + 1);
+			return data + 5 + ntohl(*(uint32_t *)(data + 1));
 		case 0xD4: {
 			int n = data[1];
 			data = data + 2;
@@ -1039,7 +512,7 @@ int16_t bolt_read_int16
 	switch (marker)
 	{
 		case 0xC9:
-			return bswap_16(*(uint16_t *)(data + 1));
+			return ntohs(*(uint16_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1054,7 +527,7 @@ int32_t bolt_read_int32
 	switch (marker)
 	{
 		case 0xCA:
-			return bswap_32(*(uint32_t *)(data + 1));
+			return ntohl(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1069,7 +542,7 @@ int64_t bolt_read_int64
 	switch (marker)
 	{
 		case 0xCB:
-			return bswap_64(*(uint64_t *)(data + 1));
+			return ntohll(*(uint64_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1124,9 +597,9 @@ uint32_t bolt_read_string_size
 		case 0xD0:
 			return *(uint8_t *)(data + 1);
 		case 0xD1:
-			return bswap_16(*(uint16_t *)(data + 1));
+			return ntohs(*(uint16_t *)(data + 1));
 		case 0xD2:
-			return bswap_32(*(uint32_t *)(data + 1));
+			return ntohl(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1196,9 +669,9 @@ uint32_t bolt_read_list_size
 		case 0xD4:
 			return *(uint8_t *)(data + 1);
 		case 0xD5:
-			return bswap_16(*(uint16_t *)(data + 1));
+			return ntohs(*(uint16_t *)(data + 1));
 		case 0xD6:
-			return bswap_32(*(uint32_t *)(data + 1));
+			return ntohl(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1285,9 +758,9 @@ uint32_t bolt_read_map_size
 		case 0xD8:
 			return *(uint8_t *)(data + 1);
 		case 0xD9:
-			return bswap_16(*(uint16_t *)(data + 1));
+			return ntohs(*(uint16_t *)(data + 1));
 		case 0xDA:
-			return bswap_32(*(uint32_t *)(data + 1));
+			return ntohs(*(uint32_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;
@@ -1498,25 +971,4 @@ char *bolt_read_structure_value
 			ASSERT(false);
 			return 0;
 	}
-}
-
-bool bolt_check_handshake
-(
-	socket_t socket
-) {
-	char data[4];
-	return socket_read(socket, data, 4) && data[0] == 0x60 && data[1] == 0x60 && data[2] == (char)0xB0 && data[3] == 0x17;
-}
-
-bolt_version_t bolt_read_supported_version
-(
-	socket_t socket
-) {
-	char data[16];
-	bool res = socket_read(socket, data, 16);
-	ASSERT(res);
-	bolt_version_t version;
-	version.minor = data[2];
-	version.major = data[3];
-	return version;
 }

@@ -7,8 +7,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "socket.h"
-#include "../redismodule.h"
+#include "bolt_client.h"
 
 typedef enum bolt_value_type {
 	BVT_NULL,
@@ -48,60 +47,6 @@ typedef enum bolt_structure_type {
 	BST_PATH = 0x50,
 	BST_POINT2D = 0x58
 } bolt_structure_type;
-
-typedef enum bolt_state {
-	BS_NEGOTIATION,
-	BS_AUTHENTICATION,
-	BS_READY,
-	BS_STREAMING,
-	BS_TX_READY,
-	BS_TX_STREAMING,
-	BS_FAILED,
-	BS_INTERRUPTED,
-	BS_DEFUNCT,
-} bolt_state;
-
-typedef struct bolt_client_t {
-	socket_t socket;
-	bolt_state state;
-	RedisModuleEventLoopFunc on_write;
-	uint32_t write_index;
-	uint32_t read_index;
-	char write_buffer[1024];
-	char read_buffer[65536];
-} bolt_client_t;
-
-typedef struct bolt_version_t {
-	uint32_t major;
-	uint32_t minor;
-} bolt_version_t;
-
-bolt_client_t *bolt_client_new
-(
-	socket_t socket,
-	RedisModuleEventLoopFunc on_write
-);
-
-bool bolt_client_read
-(
-	bolt_client_t *client,
-	size_t size
-);
-
-void bolt_change_client_state
-(
-	bolt_client_t *client   
-);
-
-void bolt_client_finish_write
-(
-	bolt_client_t *client
-);
-
-void bolt_client_send
-(
-	bolt_client_t *client
-);
 
 void bolt_reply_null
 (
@@ -268,14 +213,4 @@ char *bolt_read_structure_value
 (
 	char *data,
 	uint32_t index
-);
-
-bool bolt_check_handshake
-(
-	socket_t socket
-);
-
-bolt_version_t bolt_read_supported_version
-(
-	socket_t socket
 );

@@ -10,14 +10,16 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
+#include <sys/socket.h>
+
+#define CLIENT_QUEUE_LEN 32
 
 socket_t socket_bind
 (
 	uint16_t port
 ) {
 	int on = 1;
-	socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
+	socket_t fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
 	if (fd == -1) {
 		return -1;
 	}
@@ -34,19 +36,19 @@ socket_t socket_bind
 		return -1;
 	}
 
-	struct sockaddr_in serveraddr, cli;
+	struct sockaddr_in6 serveraddr, cli;
 	memset(&serveraddr, 0, sizeof(serveraddr));
 
-	serveraddr.sin_family = AF_INET;
-	serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	serveraddr.sin_port = htons(port);
+	serveraddr.sin6_family = AF_INET6;
+	serveraddr.sin6_addr = in6addr_any;
+	serveraddr.sin6_port = htons(port);
 
 	if (bind(fd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) != 0) {
 		close(fd);
 		return -1;
 	}
 
-	if (listen(fd, 32) != 0) {
+	if (listen(fd, CLIENT_QUEUE_LEN) != 0) {
 		close(fd);
 		return -1;
 	}
