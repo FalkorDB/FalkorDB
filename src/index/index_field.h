@@ -86,6 +86,12 @@ void IndexField_NewVectorField
 	uint32_t dimension   // vector dimension
 );
 
+// return number of types in field
+int IndexField_TypeCount
+(
+	const IndexField *f  // field
+);
+
 IndexFieldType IndexField_GetType
 (
 	const IndexField *f  // field to get type

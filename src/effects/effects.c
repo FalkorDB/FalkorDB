@@ -280,6 +280,14 @@ static inline void EffectsBuffer_IncEffectCount
 	buff->n++;
 }
 
+static inline void EffectsBufferBlock_Free
+(
+	struct EffectsBufferBlock *b
+) {
+	ASSERT(b != NULL);
+	rm_free(b);
+}
+
 // create a new effects-buffer
 EffectsBuffer *EffectsBuffer_New
 (
@@ -300,6 +308,30 @@ EffectsBuffer *EffectsBuffer_New
 	EffectsBuffer_WriteBytes(&v, sizeof(v), eb);
 
 	return eb;
+}
+
+// reset effects-buffer
+void EffectsBuffer_Reset
+(
+	EffectsBuffer *buff  // effects-buffer
+) {
+	ASSERT(buff != NULL);
+
+	// free all blocks except the first one
+	struct EffectsBufferBlock *b = buff->head->next;
+	while(b != NULL) {
+		struct EffectsBufferBlock *next = b->next;
+		EffectsBufferBlock_Free(b);
+		b = next;
+	}
+
+	// clear first block
+	buff->n = 0;
+	buff->current = buff->head;
+
+	// write effects version
+	uint8_t v = EFFECTS_VERSION;
+	EffectsBuffer_WriteBytes(&v, sizeof(v), buff);
 }
 
 // returns number of effects in buffer
@@ -820,14 +852,6 @@ void EffectsBuffer_AddNewAttributeEffect
 	EffectsBuffer_WriteString(attr, buff);
 
 	EffectsBuffer_IncEffectCount(buff);
-}
-
-static inline void EffectsBufferBlock_Free
-(
-	struct EffectsBufferBlock *b
-) {
-	ASSERT(b != NULL);
-	rm_free(b);
 }
 
 void EffectsBuffer_Free

@@ -167,6 +167,21 @@ void IndexField_Clone
 	}
 }
 
+// return number of types in field
+int IndexField_TypeCount
+(
+	const IndexField *f  // field
+) {
+	ASSERT(f != NULL);
+	int count = 0;
+
+	if(f->type & INDEX_FLD_RANGE)    count++;
+	if(f->type & INDEX_FLD_VECTOR)   count++;
+	if(f->type & INDEX_FLD_FULLTEXT) count++;
+
+	return count;
+}
+
 inline IndexFieldType IndexField_GetType
 (
 	const IndexField *f  // field to get type

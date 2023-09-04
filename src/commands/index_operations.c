@@ -372,6 +372,10 @@ static void index_create
 cleanup:
 	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
 	SIValue_Free(options);
+
+	// make sure no effects were generated
+	// as index creation isn't replicated via effects
+	ASSERT(EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) == 0);
 }
 
 // handle index creation/deletion

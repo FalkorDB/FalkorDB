@@ -549,6 +549,13 @@ Index AddIndex
 		UndoLog_CreateIndex(log, st, label, attr, t);
 	}
 
+	// index operation is not replicated via effects
+	// remove all index creation side effects:
+	// 1. schema creation
+	// 2. attribute creation
+	// from effects buffer, forcing query replication of the index
+	EffectsBuffer_Reset(QueryCtx_GetEffectsBuffer());
+
 	return idx;
 }
 

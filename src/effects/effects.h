@@ -43,6 +43,12 @@ void Effects_Apply
 // create a new effects-buffer
 EffectsBuffer *EffectsBuffer_New(void);
 
+// reset effects-buffer
+void EffectsBuffer_Reset
+(
+	EffectsBuffer *buff  // effects-buffer
+);
+
 // returns number of effects in buffer
 uint64_t EffectsBuffer_Length
 (

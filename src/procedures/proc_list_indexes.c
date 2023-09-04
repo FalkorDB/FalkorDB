@@ -197,13 +197,36 @@ static bool _EmitIndex
 	//--------------------------------------------------------------------------
 
 	if(ctx->yield_properties) {
+		// [field_name, [field_types]]
+		// e.g.
+		// ['name',  ['range', 'fulltext']]
+		// ['image', ['vector']]
+
 		uint fields_count        = Index_FieldsCount(idx);
 		const IndexField *fields = Index_GetFields(idx);
 		*ctx->yield_properties   = SI_Array(fields_count);
 
 		for(uint i = 0; i < fields_count; i++) {
-			SIArray_Append(ctx->yield_properties,
-						   SI_ConstStringVal((char *)fields[i].name));
+			const IndexField *field = fields + i;
+			IndexFieldType types = IndexField_GetType(field);
+			int n = IndexField_TypeCount(field);  // number of types
+
+			SIValue prop       = SI_Array(2);
+			SIValue prop_types = SI_Array(n);
+
+			if(types & INDEX_FLD_RANGE) {
+				SIArray_Append(&prop_types, SI_ConstStringVal("RANGE"));
+			}
+			if(types & INDEX_FLD_VECTOR) {
+				SIArray_Append(&prop_types, SI_ConstStringVal("VECTOR"));
+			}
+			if(types & INDEX_FLD_FULLTEXT) {
+				SIArray_Append(&prop_types, SI_ConstStringVal("FULLTEXT"));
+			}
+
+			SIArray_Append(&prop, SI_ConstStringVal(IndexField_GetName(field)));
+			SIArray_Append(&prop, prop_types);
+			SIArray_Append(ctx->yield_properties, prop);
 		}
 	}
 
