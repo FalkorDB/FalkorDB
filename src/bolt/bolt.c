@@ -7,6 +7,8 @@
 #include "bolt.h"
 #include "string.h"
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <endian.h>
 
 void bolt_reply_null
 (
@@ -66,7 +68,7 @@ void bolt_reply_int64
 	int64_t data
 ) {
 	client->write_buffer[client->nwrite++] = 0xCB;
-	*(uint64_t *)(client->write_buffer + client->nwrite) = htonll(data);
+	*(uint64_t *)(client->write_buffer + client->nwrite) = htobe64(data);
 	client->nwrite += 8;
 }
 
@@ -542,7 +544,7 @@ int64_t bolt_read_int64
 	switch (marker)
 	{
 		case 0xCB:
-			return ntohll(*(uint64_t *)(data + 1));
+			return be64toh(*(uint64_t *)(data + 1));
 		default:
 			ASSERT(false);
 			return 0;

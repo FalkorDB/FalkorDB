@@ -7,6 +7,7 @@
 #include "bolt.h"
 #include "bolt_client.h"
 #include "util/rmalloc.h"
+#include <arpa/inet.h>
 
 bolt_client_t *bolt_client_new
 (
@@ -19,9 +20,9 @@ bolt_client_t *bolt_client_new
 	client->on_write = on_write;
 	client->nwrite = 2;
 	client->nread = 0;
-	client->nmessages = 0;
-	client->last_message_index = 0;
-	client->current_message_index = -1;
+	client->nmessage = 0;
+	client->has_message = false;
+	client->last_read_index = 0;
 	return client;
 }
 
@@ -29,7 +30,7 @@ void bolt_change_negotiation_state
 (
 	bolt_client_t *client   
 ) {
-	ASSERT(client->state == BS_NEGOTIATION && bolt_read_structure_type(client->read_buffer + client->current_message_index) == BST_HELLO);
+	ASSERT(client->state == BS_NEGOTIATION && bolt_read_structure_type(client->messasge_buffer) == BST_HELLO);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (response_type)
 	{
@@ -48,7 +49,7 @@ void bolt_change_authentication_state
 (
 	bolt_client_t *client   
 ) {
-	ASSERT(client->state == BS_AUTHENTICATION && bolt_read_structure_type(client->read_buffer + client->current_message_index) == BST_LOGON);
+	ASSERT(client->state == BS_AUTHENTICATION && bolt_read_structure_type(client->messasge_buffer) == BST_LOGON);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (response_type)
 	{
@@ -68,7 +69,7 @@ void bolt_change_ready_state
 	bolt_client_t *client   
 ) {
 	ASSERT(client->state == BS_READY);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + client->current_message_index);
+	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (request_type)
 	{
@@ -137,7 +138,7 @@ void bolt_change_streaming_state
 	bolt_client_t *client   
 ) {
 	ASSERT(client->state == BS_STREAMING);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + client->current_message_index);
+	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (request_type)
 	{
@@ -183,7 +184,7 @@ void bolt_change_txready_state
 	bolt_client_t *client   
 ) {
 	ASSERT(client->state == BS_TX_READY);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + client->current_message_index);
+	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (request_type)
 	{
@@ -242,7 +243,7 @@ void bolt_change_txstreaming_state
 	bolt_client_t *client   
 ) {
 	ASSERT(client->state == BS_TX_STREAMING);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + client->current_message_index);
+	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (request_type)
 	{
@@ -314,7 +315,7 @@ void bolt_change_failed_state
 	bolt_client_t *client   
 ) {
 	ASSERT(client->state == BS_FAILED);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + client->current_message_index);
+	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (request_type)
 	{
@@ -364,7 +365,7 @@ void bolt_change_interrupted_state
 	bolt_client_t *client   
 ) {
 	ASSERT(client->state == BS_INTERRUPTED);
-	bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + client->current_message_index);
+	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
 	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	switch (request_type)
 	{
@@ -500,7 +501,7 @@ void bolt_client_send
 (
 	bolt_client_t *client
 ) {
-	if(client->state == BS_FAILED && bolt_read_structure_type(client->read_buffer + client->current_message_index) != BST_RESET) {
+	if(client->state == BS_FAILED && bolt_read_structure_type(client->messasge_buffer) != BST_RESET) {
 		client->nwrite = 2;
 		bolt_reply_structure(client, BST_IGNORED, 0);
 	}

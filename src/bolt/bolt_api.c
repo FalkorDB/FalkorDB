@@ -9,6 +9,9 @@
 #include "../commands/commands.h"
 
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <endian.h>
 
 void BoltHelloCommand
 (
@@ -44,7 +47,7 @@ RedisModuleString *get_db
 	RedisModuleCtx *ctx,
 	bolt_client_t *client
 ) {
-	char *db = bolt_read_structure_value(client->read_buffer + client->current_message_index, 2);
+	char *db = bolt_read_structure_value(client->messasge_buffer, 2);
 	char *db_str;
 	size_t db_len;
 	if(bolt_read_map_size(db) == 0) {
@@ -137,8 +140,8 @@ RedisModuleString *get_query
 	RedisModuleCtx *ctx,
 	bolt_client_t *client
 ) {
-	char *query = bolt_read_structure_value(client->read_buffer + client->current_message_index, 0);
-	char *parameters = bolt_read_structure_value(client->read_buffer + client->current_message_index, 1);
+	char *query = bolt_read_structure_value(client->messasge_buffer, 0);
+	char *parameters = bolt_read_structure_value(client->messasge_buffer, 1);
 	uint32_t params_count = bolt_read_map_size(parameters);
 	int n = 0;
 	if(params_count > 0) {
@@ -221,13 +224,23 @@ void BoltRequestHandler
 (
 	bolt_client_t *client
 ) {
-	if(client->current_message_index != -1 || client->nmessages == 0) {
+	if(client->has_message || client->nread - client->last_read_index <= 2) {
 		return;
 	}
 
-	client->current_message_index = client->messages[0];
+	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + client->last_read_index));
+	while(size > 0) {
+		if(client->last_read_index + 2 + size > client->nread) return;
+		memcpy(client->messasge_buffer + client->nmessage, client->read_buffer + client->last_read_index + 2, size);
+		client->nmessage += size;
+		client->last_read_index += size + 2;
+		size = ntohs(*(uint16_t*)(client->read_buffer + client->last_read_index));
+	}
+	client->last_read_index += 2;
 
-	switch (bolt_read_structure_type(client->read_buffer + client->current_message_index))
+	client->has_message = true;
+
+	switch (bolt_read_structure_type(client->messasge_buffer))
 	{
 		case BST_HELLO:
 			BoltHelloCommand(client);
@@ -283,14 +296,6 @@ void BoltReadHandler
 		client->nread += nread;
 	}
 
-	while(client->nread - client->last_message_index > 2) {
-		uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + client->last_message_index));
-		if(client->last_message_index + size <= client->nread) {
-			client->messages[client->nmessages++] = client->last_message_index + 2;
-			client->last_message_index += size + 4;
-		}
-	}
-
 	BoltRequestHandler(client);
 }
 
@@ -303,10 +308,8 @@ void BoltResponseHandler
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	bolt_client_send(client);
-	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + client->current_message_index));
-	client->nmessages--;
-	memmove(client->messages, client->messages + 1, client->nmessages * sizeof(uint32_t));
-	client->current_message_index = -1;
+	client->nmessage = 0;
+	client->has_message = false;
 	BoltRequestHandler(client);
 }
 

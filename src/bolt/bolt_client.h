@@ -27,10 +27,10 @@ typedef struct bolt_client_t {
 	RedisModuleEventLoopFunc on_write;
 	uint32_t nwrite;
 	uint32_t nread;
-	uint32_t nmessages;
-    uint32_t current_message_index;
-	uint32_t last_message_index;
-	uint32_t messages[16];
+	uint32_t nmessage;
+	uint32_t last_read_index;
+    uint32_t has_message;
+	char messasge_buffer[65536];
 	char write_buffer[1024];
 	char read_buffer[65536];
 } bolt_client_t;
