@@ -85,7 +85,6 @@ static ProcedureResult _validateIndexConfigMap
 // configuration can't change if index exists 
 static ProcedureResult _validateFieldConfigMap
 (
-	const char *label,
 	SIValue config
 ) {
 	SIValue field;
@@ -190,6 +189,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	const SIValue *args,
 	const char **yield
 ) {
+	bool res = true;
 	uint arg_count = array_len((SIValue *)args);
 	if(arg_count < 2) {
 		ErrorCtx_SetError(EMSG_FULLTEXT_MIN_ARGS);
@@ -207,16 +207,8 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		return PROCEDURE_ERR;
 	}
 
-	const char *label    = NULL;
+	char *label = NULL;
 	SIValue label_config = args[0];
-
-	if(SI_TYPE(label_config) == T_STRING) {
-		label = label_config.stringval;
-	} else if(SI_TYPE(label_config) == T_MAP) {
-		SIValue label_value;
-		MAP_GET(label_config, "label", label_value);
-		label = label_value.stringval;
-	}
 
 	// validation, fields arguments should be of type string or map
 	for(uint i = 1; i < arg_count; i++) {
@@ -225,13 +217,24 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			return PROCEDURE_ERR;
 		}
 		if(SI_TYPE(args[i]) == T_MAP &&
-			_validateFieldConfigMap(label, args[i]) == PROCEDURE_ERR) {
+			_validateFieldConfigMap(args[i]) == PROCEDURE_ERR) {
 			return PROCEDURE_ERR;
 		}
 	}
 
+	// extract index label
+	if(SI_TYPE(label_config) == T_STRING) {
+		label = label_config.stringval;
+	} else if(SI_TYPE(label_config) == T_MAP) {
+		SIValue label_value;
+		MAP_GET(label_config, "label", label_value);
+		label = label_value.stringval;
+	}
+
+	// label is mandatory
+	ASSERT(label != NULL);
+
 	// validation passed, create full-text index
-	bool res              = false;
 	Index idx             = NULL;
 	char *language        = NULL;
 	char **stopwords      = NULL;
@@ -292,6 +295,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
 			// operation failed
+			res = false;
 			goto cleanup;
 		}
 	}
@@ -305,10 +309,12 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		extract_index_level_config(&stopwords, &language, label_config);
 
 		if(language != NULL && !Index_SetLanguage(idx, language)) {
+			res = false;
 			goto cleanup;
 		}
 
 		if(stopwords != NULL && !Index_SetStopwords(idx, &stopwords)) {
+			res = false;
 			goto cleanup;
 		}
 

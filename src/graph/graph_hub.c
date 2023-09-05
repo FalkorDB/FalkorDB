@@ -546,7 +546,14 @@ Index AddIndex
 
 	if(idx != NULL && log == true) {
 		UndoLog log = QueryCtx_GetUndoLog();
-		UndoLog_CreateIndex(log, st, label, attr, t);
+
+		// extract label and field from index
+		IndexField *fld = Index_GetField(NULL, idx, attr_id);
+		const char *field_name = IndexField_GetName(fld);
+		const char *lbl = Index_GetLabel(idx);
+
+		// add index create undo operation
+		UndoLog_CreateIndex(log, st, lbl, field_name, t);
 	}
 
 	// index operation is not replicated via effects

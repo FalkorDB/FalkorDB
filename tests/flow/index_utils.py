@@ -1,6 +1,6 @@
 import time
 
-def _wait_on_index(graph, label, t):
+def _wait_on_index(graph, label):
     q = f"""CALL db.indexes() YIELD label, status
     WHERE label = '{label}' AND status <> 'OPERATIONAL'
     RETURN count(1)"""
@@ -10,11 +10,11 @@ def _wait_on_index(graph, label, t):
         if result.result_set[0][0] == 0:
             break
 
-def _create_index(graph, q, label=None, t=None, sync=False):
+def _create_index(graph, q, label=None, sync=False):
     res = graph.query(q)
 
     if sync:
-        _wait_on_index(graph, label, t)
+        _wait_on_index(graph, label)
 
     return res
 
@@ -31,27 +31,27 @@ def list_indicies(graph, label=None):
 
 def create_node_exact_match_index(graph, label, *properties, sync=False):
     q = f"CREATE INDEX for (n:{label}) on (" + ','.join(map('n.{0}'.format, properties)) + ")"
-    return _create_index(graph, q, label, "exact-match", sync)
+    return _create_index(graph, q, label, sync)
 
 def create_edge_exact_match_index(graph, relation, *properties, sync=False):
     q = f"CREATE INDEX for ()-[r:{relation}]->() on (" + ','.join(map('r.{0}'.format, properties)) +")"
-    return _create_index(graph, q, relation, "exact-match", sync)
+    return _create_index(graph, q, relation, sync)
 
 def create_fulltext_index(graph, label, *properties, sync=False):
     q = f"CALL db.idx.fulltext.createNodeIndex('{label}', "
     q += ','.join(map("'{0}'".format, properties))
     q += ")"
-    return _create_index(graph, q, label, "full-text", sync)
+    return _create_index(graph, q, label, sync)
 
 def create_vector_index(graph, entity_type, label, attribute, dim, similarity_function="euclidean", sync=False):
-    q = f"""CALL db.idx.vector.createIndex({{
-                type:'{entity_type}',
-                label:'{label}',
-                attribute:'{attribute}',
-                dim:{dim},
-                similarityFunction:'{similarity_function}'
-            }})"""
-    return _create_index(graph, q, label, "exact-match", sync)
+    if(entity_type == "NODE"):
+        q = f"""CREATE VECTOR INDEX FOR (n:{label}) ON (n.{attribute})
+                OPTIONS {{dim:{dim}, similarityFunction:'{similarity_function}'}}"""
+    else:
+        q = f"""CREATE VECTOR INDEX FOR ()-[e:{label}]->() ON (e.{attribute})
+                OPTIONS {{dim:{dim}, similarityFunction:'{similarity_function}'}}"""
+
+    return _create_index(graph, q, label, sync)
 
 def create_node_vector_index(graph, label, attribute, dim, similarity_function="euclidean", sync=False):
     return create_vector_index(graph, "NODE", label, attribute, dim, similarity_function, sync)

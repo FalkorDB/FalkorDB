@@ -389,6 +389,10 @@ Index Index_Clone
 		array_clone_with_cb(clone->stopwords, idx->stopwords, rm_strdup);
 	}
 
+	if(clone->language != NULL) {
+		clone->language = rm_strdup(idx->language);
+	}
+
 	//--------------------------------------------------------------------------
 	// clone index fields
 	//--------------------------------------------------------------------------

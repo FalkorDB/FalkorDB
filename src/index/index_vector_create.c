@@ -22,7 +22,7 @@ static bool _parseOptions
 	
 	// expecting a map with the following fields:
 	// {
-	//     length:538,
+	//     dim:538,
 	//     similarityFunction:'euclidean'
 	//  }
 

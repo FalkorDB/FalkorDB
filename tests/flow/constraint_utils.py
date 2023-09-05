@@ -85,13 +85,24 @@ def create_mandatory_constraint(g, entity_type, lbl, *props, sync=False):
     return create_constraint(g, "MANDATORY", entity_type, lbl, *props, sync=sync)
 
 def create_unique_node_constraint(g, lbl, *props, sync=False):
-    # create exact-match index
-    create_node_exact_match_index(g, lbl, *props, sync=False)
+    # create exact-match index(es)
+    for p in props:
+        # OK to fail if index already exists
+        try:
+            create_node_exact_match_index(g, lbl, p, sync=False)
+        except:
+            pass
+
     return create_unique_constraint(g, "NODE", lbl, *props, sync=sync)
 
 def create_unique_edge_constraint(g, rel, *props, sync=False):
     # create exact-match index
-    create_edge_exact_match_index(g, rel, *props, sync=False)
+    for p in props:
+        # OK to fail if index already exists
+        try:
+            create_edge_exact_match_index(g, rel, p, sync=False)
+        except:
+            pass
     return create_unique_constraint(g, "RELATIONSHIP", rel, *props, sync=sync)
 
 def create_mandatory_node_constraint(g, lbl, *props, sync=False):

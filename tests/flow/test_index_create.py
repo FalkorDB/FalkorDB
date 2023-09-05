@@ -19,32 +19,16 @@ class testIndexCreationFlow():
     # full-text index creation
     def test01_fulltext_index_creation(self):
         # create an index over L:v0
-        result = create_fulltext_index(graph, 'L', 'v0', sync=True)
-        self.env.assertEquals(result.indices_created, 1)
-
-        # create an index over L:v1
-        result = create_fulltext_index(graph, 'L', 'v1', sync=True)
+        result = create_fulltext_index(graph, 'L', 'v0')
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L:v1 and L:v2
-        result = create_fulltext_index(graph, 'L', 'v1', 'v2', sync=True)
-        self.env.assertEquals(result.indices_created, 1)
-
-        # create an index over L:v0, L:v1 and L:v2
-        result = create_fulltext_index(graph, 'L', 'v0', 'v1', 'v2', sync=True)
-        self.env.assertEquals(result.indices_created, 0)
-
-        # create an index over L:v2, L:v1 and L:v0
-        result = create_fulltext_index(graph, 'L', 'v2', 'v1', 'v0', sync=True)
-        self.env.assertEquals(result.indices_created, 0)
-
-        # create an index over L:v3 and L:v4
-        result = create_fulltext_index(graph, 'L', 'v3', 'v4', sync=True)
+        result = create_fulltext_index(graph, 'L', 'v1', 'v2')
         self.env.assertEquals(result.indices_created, 2)
 
-        # create an index over L:v5 and L:v6
-        result = create_fulltext_index(graph, 'L', 'v5', 'v6', sync=True)
-        self.env.assertEquals(result.indices_created, 2)
+        # create an index over L:v3, L:v4, L:v5 and L:v6
+        result = create_fulltext_index(graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
+        self.env.assertEquals(result.indices_created, 4)
 
     def test02_fulltext_index_creation_label_config(self):
         # create an index over L1:v1
@@ -70,23 +54,31 @@ class testIndexCreationFlow():
         except ResponseError as e:
             self.env.assertIn("Label is missing", str(e))
 
-        try:
-            # create an index over L1:v4 with stopwords should failed
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v4')")
-            assert(False)
-        except ResponseError as e:
-            self.env.assertIn("Index already exists configuration can't be changed", str(e))
+        # create an index over L1:v4 with stopwords
+        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v4')")
+        self.env.assertEquals(result.indices_created, 1)
 
+        # try to update L1 index stopwords should failed
         try:
-            # create an index over L1:v4 with language should failed
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v4')")
+            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v5')")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Index already exists configuration can't be changed", str(e))
+            self.env.assertIn("Can not override index configuration", str(e))
+
+        # create an index over L1:v5 with language
+        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v5')")
+        self.env.assertEquals(result.indices_created, 1)
+
+        # try to update L1 index language should failed
+        try:
+            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v6')")
+            assert(False)
+        except ResponseError as e:
+            self.env.assertIn("Can not override index configuration", str(e))
 
         # drop L1 index
         result = graph.query("CALL db.idx.fulltext.drop('L1')")
-        self.env.assertEquals(result.indices_deleted, 1)
+        self.env.assertEquals(result.indices_deleted, 5)
 
         try:
             # create an index over L1:v4 with an unsupported language, expecting to failed
@@ -144,7 +136,7 @@ class testIndexCreationFlow():
             result = graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', phonetic: true })")
             assert(False)
         except ResponseError as e:
-            self.env.assertIn("Phonetic must be a string", str(e))
+            self.env.assertIn("Phonetic must be string", str(e))
 
     def test03_multi_prop_index_creation(self):
         # create an index over person:age and person:name
@@ -152,20 +144,41 @@ class testIndexCreationFlow():
         self.env.assertEquals(result.indices_created, 2)
 
         # try to create an index over person:age and person:name, index shouldn't be created as it already exist
-        result = graph.query("CREATE INDEX ON :person(age, name)")
-        self.env.assertEquals(result.indices_created, 0)
+        try:
+            result = graph.query("CREATE INDEX ON :person(age, name)")
+            assert(False)
+        except ResponseError as e:
+            self.env.assertIn("Attribute 'age' is already indexed", str(e))
 
         # try to create an index over person:name and person:age, index shouldn't be created as it already exist
-        result = graph.query("CREATE INDEX ON :person(name, age)")
-        self.env.assertEquals(result.indices_created, 0)
+        try:
+            result = graph.query("CREATE INDEX ON :person(name, age)")
+            assert(False)
+        except ResponseError as e:
+            self.env.assertIn("Attribute 'name' is already indexed", str(e))
 
-        # try to create an index over person:age and person:name and person:height, index for height should be created as the rest already exist
-        result = graph.query("CREATE INDEX ON :person(age, age, name, height)")
-        self.env.assertEquals(result.indices_created, 1)
+        # try to create an index over person: age, name height,
+        # operation should fail as 'age' and 'name' are already indexed
+        try:
+            result = graph.query("CREATE INDEX ON :person(age, name, height)")
+            assert(False)
+        except ResponseError as e:
+            self.env.assertIn("Attribute 'age' is already indexed", str(e))
 
-        # try to create an index over person:gender and person:name and person:height, index for gender should be created as the rest already exist
-        result = graph.query("CREATE INDEX ON :person(gender, gender, name, height)")
-        self.env.assertEquals(result.indices_created, 1)
+        # try to create an index over person: gender, name and height
+        # operation should fail as 'name' is already indexed
+        try:
+            result = graph.query("CREATE INDEX ON :person(gender, name, height)")
+            assert(False)
+        except ResponseError as e:
+            self.env.assertIn("Attribute 'name' is already indexed", str(e))
+
+        # try to create an index with a duplicated field
+        try:
+            result = graph.query("CREATE INDEX ON :person(height, height)")
+            assert(False)
+        except ResponseError as e:
+            self.env.assertIn("Attribute 'height' is already indexed", str(e))
 
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name
