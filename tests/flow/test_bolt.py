@@ -4,8 +4,6 @@ from neo4j.spatial import WGS84Point
 import neo4j.graph
 # from neo4j.debug import watch
 
-# watch("neo4j")
-
 bolt_con = None
 
 CACHE_SIZE = 16
@@ -15,6 +13,7 @@ class testBolt():
         self.env = Env(decodeResponses=True)
         global bolt_con
         bolt_con = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "password"))
+        # self.watcher = watch("neo4j")
 
     def test01_simple_values(self):
         with bolt_con.session() as session:

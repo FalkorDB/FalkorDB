@@ -40,6 +40,7 @@ def nodeToString(value):
     if value.alias:
         res += value.alias
     if value.labels:
+        value.labels.sort()
         res += ':' + ":".join(value.labels)
     if value.properties:
         props = ', '.join(key+': '+str(val)
