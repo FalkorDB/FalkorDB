@@ -286,9 +286,13 @@ void BoltReadHandler
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	int nread = socket_read(client->socket, client->read_buffer + client->nread, 65536 - client->nread);
 	if(nread == 0) {
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		if(client->has_message) {
+			client->shutdown = true;
+			return;
+		}
 		rm_free(client);
 		socket_close(fd);
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		return;
 	} else {
 		client->nread += nread;
@@ -305,6 +309,11 @@ void BoltResponseHandler
 ) {
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 	bolt_client_t *client = (bolt_client_t*)user_data;
+	if(client->shutdown) {
+		rm_free(client);
+		socket_close(fd);
+		return;
+	}
 	bolt_client_send(client);
 	client->nmessage = 0;
 	client->has_message = false;

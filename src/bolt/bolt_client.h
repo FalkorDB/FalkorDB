@@ -29,7 +29,8 @@ typedef struct bolt_client_t {
 	uint32_t nread;
 	uint32_t nmessage;
 	uint32_t last_read_index;
-    uint32_t has_message;
+    bool has_message;
+	bool shutdown;
 	char messasge_buffer[65536];
 	char write_buffer[1024];
 	char read_buffer[65536];

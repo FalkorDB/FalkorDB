@@ -22,6 +22,7 @@ bolt_client_t *bolt_client_new
 	client->nread = 0;
 	client->nmessage = 0;
 	client->has_message = false;
+	client->shutdown = false;
 	client->last_read_index = 0;
 	return client;
 }
