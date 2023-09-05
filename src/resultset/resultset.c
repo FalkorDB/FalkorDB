@@ -268,6 +268,12 @@ void ResultSet_Reply
 	}
 
 	if(set->format == FORMATTER_BOLT) {
+		while(!set->bolt_client->pull) {
+			// Waiting for client to pull data"
+		}
+		set->bolt_client->pull = false;
+		bolt_reply_structure(set->bolt_client, BST_SUCCESS, 1);
+		bolt_reply_map(set->bolt_client, 0);
 		bolt_client_finish_write(set->bolt_client);
 	}
 

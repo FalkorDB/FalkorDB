@@ -3,6 +3,9 @@ import sys
 from RLTest import Env
 
 from neo4j import GraphDatabase
+# from neo4j.debug import watch
+
+# watch("neo4j", out=open("neo4j.log", "w"))
 
 r = None
 bolt_con = None

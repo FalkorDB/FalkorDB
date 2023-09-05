@@ -7,7 +7,6 @@
 
 #include "socket.h"
 #include "../redismodule.h"
-#include "../util/circular_buffer.h"
 
 typedef enum bolt_client_state {
 	BS_NEGOTIATION,
@@ -27,13 +26,14 @@ typedef struct bolt_client_t {
 	RedisModuleEventLoopFunc on_write;
 	uint32_t nwrite;
 	uint32_t nread;
-	uint32_t nmessage;
 	uint32_t last_read_index;
     bool has_message;
 	bool shutdown;
-	char messasge_buffer[65536];
+	bool reset;
+	char messasge_buffer[UINT16_MAX];
+	volatile bool pull;
 	char write_buffer[1024];
-	char read_buffer[65536];
+	char read_buffer[UINT16_MAX];
 } bolt_client_t;
 
 typedef struct bolt_version_t {

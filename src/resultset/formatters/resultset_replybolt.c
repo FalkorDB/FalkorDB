@@ -246,6 +246,9 @@ void ResultSet_EmitBoltRow
 	SIValue **row,
 	uint numcols
 ) {
+	while(!bolt_client->pull) { 
+		// Waiting for client to pull data
+	}
 	bolt_reply_structure(bolt_client, BST_RECORD, 1);
 	bolt_reply_list(bolt_client, numcols);
 	for(int i = 0; i < numcols; i++) {
@@ -273,5 +276,5 @@ void ResultSet_ReplyWithBoltHeader
 	}
 	bolt_reply_string(bolt_client, "qid");
 	bolt_reply_int8(bolt_client, 0);
-	bolt_client_send(bolt_client);
+	bolt_client_finish_write(bolt_client);
 }

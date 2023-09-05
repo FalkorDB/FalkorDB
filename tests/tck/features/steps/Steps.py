@@ -170,11 +170,13 @@ def step_impl(context):
 
 @then(u'a SyntaxError should be raised at compile time: InvalidAggregation')
 def step_impl(context):
+    global exception
     assert exception != None
     assert "Invalid use of aggregating function" in str(exception)
 
 @then(u'a SyntaxError should be raised at compile time: UndefinedVariable')
 def step_impl(context):
+    global exception
     assert exception != None
     assert "not defined" in str(exception)
 

@@ -31,15 +31,6 @@ void BoltLogonCommand
 	bolt_client_finish_write(client);
 }
 
-void BoltResetCommand
-(
-	bolt_client_t *client
-) {
-	bolt_reply_structure(client, BST_SUCCESS, 1);
-	bolt_reply_map(client, 0);
-	bolt_client_finish_write(client);
-}
-
 RedisModuleString *get_db
 (
 	RedisModuleCtx *ctx,
@@ -186,9 +177,7 @@ void BoltPullCommand
 (
 	bolt_client_t *client
 ) {
-	bolt_reply_structure(client, BST_SUCCESS, 1);
-	bolt_reply_map(client, 0);
-	bolt_client_finish_write(client);
+	client->pull = true;
 }
 
 void BoltBeginCommand
@@ -226,15 +215,22 @@ void BoltRequestHandler
 		return;
 	}
 
-	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + client->last_read_index));
+	uint32_t last_read_index = client->last_read_index;
+	uint32_t nmessage = 0;
+	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+	ASSERT(size > 0);
 	while(size > 0) {
-		if(client->last_read_index + 2 + size > client->nread) return;
-		memcpy(client->messasge_buffer + client->nmessage, client->read_buffer + client->last_read_index + 2, size);
-		client->nmessage += size;
-		client->last_read_index += size + 2;
-		size = ntohs(*(uint16_t*)(client->read_buffer + client->last_read_index));
+		if(last_read_index + 2 + size > client->nread) return;
+		memcpy(client->messasge_buffer + nmessage, client->read_buffer + last_read_index + 2, size);
+		nmessage += size;
+		last_read_index += size + 2;
+		size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
 	}
-	client->last_read_index += 2;
+	client->last_read_index = last_read_index + 2;
+	if(client->last_read_index == client->nread) {
+		client->last_read_index = 0;
+		client->nread = 0;
+	}
 
 	client->has_message = true;
 
@@ -249,9 +245,6 @@ void BoltRequestHandler
 		case BST_LOGOFF:
 			break;
 		case BST_GOODBYE:
-			break;
-		case BST_RESET:
-			BoltResetCommand(client);
 			break;
 		case BST_RUN:
 			BoltRunCommand(client);
@@ -284,8 +277,17 @@ void BoltReadHandler
 	int mask
 ) {
 	bolt_client_t *client = (bolt_client_t*)user_data;
-	int nread = socket_read(client->socket, client->read_buffer + client->nread, 65536 - client->nread);
+	int nread = socket_read(client->socket, client->read_buffer + client->nread, UINT16_MAX - client->nread);
 	if(nread == 0) {
+		if(client->nread == UINT16_MAX) {
+			if(client->has_message) {
+				return;
+			}
+			memmove(client->read_buffer, client->read_buffer + client->last_read_index, client->nread - client->last_read_index);
+			client->nread -= client->last_read_index;
+			client->last_read_index = 0;
+			return;
+		}
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		if(client->has_message) {
 			client->shutdown = true;
@@ -296,6 +298,28 @@ void BoltReadHandler
 		return;
 	} else {
 		client->nread += nread;
+	}
+
+	uint32_t last_read_index = client->last_read_index;
+	while(last_read_index < client->nread) {
+		uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+		if(last_read_index + 2 + size > client->nread) break;
+		bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + last_read_index + 2);
+		if(request_type == BST_RESET) {
+			client->reset = true;
+			memmove(client->read_buffer + last_read_index, client->read_buffer + last_read_index + size + 4, client->nread - last_read_index - size - 4);
+			client->nread -= size + 4;
+			bolt_client_finish_write(client);
+		}
+		last_read_index += size + 2;
+		size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+		while(size > 0) {
+			if(last_read_index + 2 + size > client->nread) break;
+			last_read_index += size + 2;
+			size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+		}
+		if(size > 0) break;
+		last_read_index += 2;
 	}
 
 	BoltRequestHandler(client);
@@ -315,7 +339,6 @@ void BoltResponseHandler
 		return;
 	}
 	bolt_client_send(client);
-	client->nmessage = 0;
 	client->has_message = false;
 	BoltRequestHandler(client);
 }
