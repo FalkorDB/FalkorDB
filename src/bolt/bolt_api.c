@@ -9,9 +9,7 @@
 #include "../commands/commands.h"
 
 #include <string.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <endian.h>
+#include "endian.h"
 
 void BoltHelloCommand
 (
