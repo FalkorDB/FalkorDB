@@ -6,8 +6,6 @@ import neo4j.graph
 
 bolt_con = None
 
-CACHE_SIZE = 16
-
 class testBolt():
     def __init__(self):
         self.env = Env(decodeResponses=True)
