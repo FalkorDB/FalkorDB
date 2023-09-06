@@ -118,6 +118,9 @@ schema-command =
     | create-vector-index-for
     | create-constraint
     | drop-index
+    | drop-index-for
+    | drop-fulltext-index-for
+    | drop-vector-index-for
     | drop-constraint
     ) ~{ERR("a schema command")}
     (SEMICOLON | EOF)
@@ -221,6 +224,72 @@ drop-index =
       )* RIGHT-PAREN >
                                        { $$ = drop_index(l); }
     -
+
+drop-index-for =
+    < DROP-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, true);
+									   }
+    ) -
+
+drop-fulltext-index-for =
+    < DROP-FULLTEXT-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, true);
+									   }
+    ) -
+
+drop-vector-index-for =
+    < DROP-VECTOR-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, true);
+									   }
+    ) -
 
 drop-constraint =
     < DROP-CONSTRAINT-ON
@@ -1098,6 +1167,12 @@ DROP-CONSTRAINT-ON = [Dd]([Rr][Oo][Pp] WB -
     ~{ERR("DROP CONSTRAINT ON")}
 DROP-INDEX-ON = [Dd]([Rr][Oo][Pp] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Oo][Nn] WB -)
     ~{ERR("DROP INDEX ON")}
+DROP-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("DROP INDEX FOR")}
+DROP-FULLTEXT-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Ff][Uu][Ll][Ll][Tt][Ee][Xx][Tt] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("DROP INDEX FOR")}
+DROP-VECTOR-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Vv][Ee][Cc][Tt][Oo][Rr] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("DROP INDEX FOR")}
 
 ASSERT = ([Aa][Ss][Ss][Ee][Rr][Tt] WB -) ~{ERR("ASSERT")}
 IS-UNIQUE = ([Ii][Ss] WB - [Uu][Nn][Ii][Qq][Uu][Ee] WB -) ~{ERR("IS UNIQUE")}

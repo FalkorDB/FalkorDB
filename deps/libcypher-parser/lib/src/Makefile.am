@@ -32,6 +32,7 @@ libcypher_parser_la_SOURCES = \
 	ast_cypher_option_param.c \
 	ast_delete.c \
 	ast_drop_props_index.c \
+	ast_drop_pattern_props_index.c \
 	ast_drop_node_prop_constraint.c \
 	ast_drop_rel_prop_constraint.c \
 	ast_error.c \

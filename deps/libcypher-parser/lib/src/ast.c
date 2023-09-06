@@ -34,6 +34,7 @@ struct cypher_astnode_vts
     const struct cypher_astnode_vt *create_node_props_index;
     const struct cypher_astnode_vt *create_pattern_props_index;
     const struct cypher_astnode_vt *drop_props_index;
+    const struct cypher_astnode_vt *drop_pattern_props_index;
     const struct cypher_astnode_vt *create_node_prop_constraint;
     const struct cypher_astnode_vt *drop_node_prop_constraint;
     const struct cypher_astnode_vt *create_rel_prop_constraint;
@@ -152,6 +153,7 @@ static const struct cypher_astnode_vts cypher_astnode_vts =
     .create_node_props_index = &cypher_create_node_props_index_astnode_vt,
     .create_pattern_props_index = &cypher_create_pattern_props_index_astnode_vt,
     .drop_props_index = &cypher_drop_props_index_astnode_vt,
+    .drop_pattern_props_index = &cypher_drop_pattern_props_index_astnode_vt,
     .create_node_prop_constraint =
            &cypher_create_node_prop_constraint_astnode_vt,
     .drop_node_prop_constraint = &cypher_drop_node_prop_constraint_astnode_vt,
@@ -279,6 +281,8 @@ const uint8_t CYPHER_AST_CREATE_PATTERN_PROPS_INDEX =
         VT_OFFSET(create_pattern_props_index);
 const uint8_t CYPHER_AST_DROP_PROPS_INDEX =
         VT_OFFSET(drop_props_index);
+const uint8_t CYPHER_AST_DROP_PATTERN_PROPS_INDEX =
+        VT_OFFSET(drop_pattern_props_index);
 const uint8_t CYPHER_AST_CREATE_NODE_PROP_CONSTRAINT =
         VT_OFFSET(create_node_prop_constraint);
 const uint8_t CYPHER_AST_DROP_NODE_PROP_CONSTRAINT =

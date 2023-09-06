@@ -209,6 +209,10 @@ static cypher_astnode_t *_create_pattern_index(yycontext *yy,
          bool is_relation);
 #define drop_index(l) _drop_index(yy, l)
 static cypher_astnode_t *_drop_index(yycontext *yy, cypher_astnode_t *label);
+#define drop_pattern_index(i, t, it, r) _drop_pattern_index(yy, i, t, it, r)
+static cypher_astnode_t *_drop_pattern_index(yycontext *yy,
+         cypher_astnode_t *identifier, cypher_astnode_t *label,
+         enum cypher_ast_index_type index_type, bool is_relation);
 #define create_node_prop_constraint(i, l, e, u) \
         _create_node_prop_constraint(yy, i, l, e, u)
 static cypher_astnode_t *_create_node_prop_constraint(yycontext *yy,
@@ -1247,6 +1251,31 @@ cypher_astnode_t *_drop_index(yycontext *yy, cypher_astnode_t *label)
     assert(yy->prev_block != NULL &&
             "An AST node can only be created immediately after a `>` in the grammar");
     cypher_astnode_t *node = cypher_ast_drop_props_index(label,
+            astnodes_elements(&(yy->prev_block->sequence)),
+            astnodes_size(&(yy->prev_block->sequence)),
+            astnodes_elements(&(yy->prev_block->children)),
+            astnodes_size(&(yy->prev_block->children)),
+            yy->prev_block->range);
+    if (node == NULL)
+    {
+        abort_parse(yy);
+    }
+    astnodes_clear(&(yy->prev_block->sequence));
+    astnodes_clear(&(yy->prev_block->children));
+    block_free(yy->prev_block);
+    yy->prev_block = NULL;
+    return add_child(yy, node);
+}
+
+static cypher_astnode_t *_drop_pattern_index(yycontext *yy,
+         cypher_astnode_t *identifier, cypher_astnode_t *label,
+         enum cypher_ast_index_type index_type, bool is_relation) {
+    assert(yy->prev_block != NULL &&
+            "An AST node can only be created immediately after a `>` in the grammar");
+    cypher_astnode_t *node = cypher_ast_drop_pattern_props_index(identifier,
+            label,
+            index_type,
+            is_relation,
             astnodes_elements(&(yy->prev_block->sequence)),
             astnodes_size(&(yy->prev_block->sequence)),
             astnodes_elements(&(yy->prev_block->children)),

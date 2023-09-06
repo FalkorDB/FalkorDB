@@ -142,6 +142,8 @@ extern const cypher_astnode_type_t CYPHER_AST_CREATE_NODE_PROPS_INDEX;
 extern const cypher_astnode_type_t CYPHER_AST_CREATE_PATTERN_PROPS_INDEX;
 /** Type for an AST `DROP INDEX` node. */
 extern const cypher_astnode_type_t CYPHER_AST_DROP_PROPS_INDEX;
+/** Type for an AST `DROP PATTERN INDEX` node. */
+extern const cypher_astnode_type_t CYPHER_AST_DROP_PATTERN_PROPS_INDEX;
 /** Type for an AST create node property constraint node. */
 extern const cypher_astnode_type_t CYPHER_AST_CREATE_NODE_PROP_CONSTRAINT;
 /** Type for an AST drop node property constraint node. */
@@ -842,6 +844,31 @@ enum cypher_ast_index_type {
 	CYPHER_INDEX_TYPE_FULLTEXT,
 	CYPHER_INDEX_TYPE_VECTOR
 };
+
+cypher_astnode_t *cypher_ast_drop_pattern_props_index(
+        const cypher_astnode_t *identifier, const cypher_astnode_t *label,
+        enum cypher_ast_index_type index_type, bool is_relation,
+        cypher_astnode_t *const *prop_expressions, unsigned int nprops,
+        cypher_astnode_t **children, unsigned int nchildren,
+        struct cypher_input_range range);
+
+enum cypher_ast_index_type cypher_ast_drop_pattern_props_index_get_index_type(
+        const cypher_astnode_t *astnode);
+
+const cypher_astnode_t *cypher_ast_drop_pattern_props_index_get_identifier(
+        const cypher_astnode_t *astnode);
+
+const cypher_astnode_t *cypher_ast_drop_pattern_props_index_get_label(
+                const cypher_astnode_t *astnode);
+
+unsigned int cypher_ast_drop_pattern_props_index_nprops(
+        const cypher_astnode_t *astnode);
+
+const cypher_astnode_t *cypher_ast_drop_pattern_props_index_get_property_operator(
+                const cypher_astnode_t *astnode, unsigned int index);
+
+bool cypher_ast_drop_pattern_props_index_pattern_is_relation(
+        const cypher_astnode_t *astnode);
 
 /**
  * Construct a `CYPHER_AST_CREATE_PATTERN_PROPS_INDEX` node.

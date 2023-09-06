@@ -143,6 +143,7 @@ extern const struct cypher_astnode_vt cypher_schema_command_astnode_vt;
 extern const struct cypher_astnode_vt cypher_create_node_props_index_astnode_vt;
 extern const struct cypher_astnode_vt cypher_create_pattern_props_index_astnode_vt;
 extern const struct cypher_astnode_vt cypher_drop_props_index_astnode_vt;
+extern const struct cypher_astnode_vt cypher_drop_pattern_props_index_astnode_vt;
 extern const struct cypher_astnode_vt
         cypher_create_node_prop_constraint_astnode_vt;
 extern const struct cypher_astnode_vt

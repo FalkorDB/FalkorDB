@@ -26,11 +26,33 @@ static bool index_delete
 	Schema *s = NULL;
 	const cypher_astnode_t *index_op = ast->root;
 
+	cypher_astnode_type_t t = cypher_astnode_type(index_op);
+
 	// extract label and attribute from AST
-	const char *label = cypher_ast_label_get_name(
+	const char *label;
+	const char *attr;
+	enum cypher_ast_index_type index_type;
+	bool is_node;
+	bool is_relation;
+	if(t == CYPHER_AST_DROP_PROPS_INDEX) {
+		label = cypher_ast_label_get_name(
 			cypher_ast_drop_props_index_get_label(index_op));
-	const char *attr = cypher_ast_prop_name_get_value(
+	 	attr = cypher_ast_prop_name_get_value(
 			cypher_ast_drop_props_index_get_prop_name(index_op, 0));
+		index_type = CYPHER_INDEX_TYPE_RANGE;
+		is_node = true;
+		is_relation = true;
+	} else {
+		label = cypher_ast_label_get_name(
+			cypher_ast_drop_pattern_props_index_get_label(index_op));
+	 	attr = cypher_ast_prop_name_get_value(
+			cypher_ast_property_operator_get_prop_name(
+				cypher_ast_drop_pattern_props_index_get_property_operator(
+				index_op, 0)));
+		index_type = cypher_ast_drop_pattern_props_index_get_index_type(index_op);
+		is_relation = cypher_ast_drop_pattern_props_index_pattern_is_relation(index_op);
+		is_node = !is_relation;
+	}
 
 	// resolve attribute ID
 	Attribute_ID attr_id = GraphContext_GetAttributeID(gc, attr);
