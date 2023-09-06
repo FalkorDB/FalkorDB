@@ -117,7 +117,14 @@ def binary_tree_graph2():
                         (b4)-[:FRIEND] -> (b1)        \
                         ")
 
+class BoltResult:
+    def __init__(self, result_set, summary):
+        self.result_set = result_set
+        self.summary = summary
 
 def query(q):
     with bolt_con.session() as session:
-        return list(session.run(q))
+        res = session.run(q)
+        result_set = list(res)
+        summary = res.consume()
+        return BoltResult(result_set, summary)

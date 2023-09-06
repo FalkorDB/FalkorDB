@@ -47,6 +47,7 @@ def listToString(listToConvert):
     strValue += ']'
     return strValue
 
+
 def pathToString(pathToConvert):
     strValue = "<"
     nodes_count = pathToConvert.nodes_count()
@@ -60,6 +61,7 @@ def pathToString(pathToConvert):
     strValue += nodeToString(pathToConvert.get_node(nodes_count - 1)) if nodes_count > 0 else ""
     strValue += ">"
     return strValue
+
 
 def dictToString(dictToConvert):
     size = len(dictToConvert)
