@@ -5,16 +5,39 @@
 
 #include "RG.h"
 #include "bolt.h"
+#include "endian.h"
 #include "bolt_api.h"
 #include "../commands/commands.h"
 
-#include <string.h>
-#include "endian.h"
-
-void BoltHelloCommand
+// handle the HELLO message
+static void BoltHelloCommand
 (
-	bolt_client_t *client
+	bolt_client_t *client  // the client that sent the message
 ) {
+	// The HELLO message request the connection to be authorized for use with the remote database
+	// input:
+	// extra::Dictionary(
+	//   user_agent::String,
+	//   patch_bolt::List<String>,
+	//   routing::Dictionary(address::String),
+	//   notifications_minimum_severity::String,
+	//   notifications_disabled_categories::List<String>,
+	//   bolt_agent::Dictionary(
+	//     product::String,
+	//     platform::String,
+	//     language::String,
+	//     language_details::String
+	//   )
+	// )
+	// output:
+	// SUCCESS::Dictionary(
+	//   server::String,
+	//   connection_id::String,
+	// }
+
+	ASSERT(client != NULL);
+	ASSERT(client->state == BS_NEGOTIATION);
+
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 1);
 	bolt_reply_string(client, "server");
@@ -22,39 +45,64 @@ void BoltHelloCommand
 	bolt_client_finish_write(client);
 }
 
-void BoltLogonCommand
+// handle the LOGON message
+static void BoltLogonCommand
 (
-	bolt_client_t *client
+	bolt_client_t *client  // the client that sent the message
 ) {
+	// A LOGON message carries an authentication request
+	// input:
+	// auth::Dictionary(
+	//   scheme::String,
+	//   ...
+	// )
+	// when schema:
+	// 	 basic: principal::String and credentials::String required
+	//   bearer: credentials::String required
+	// output:
+	// SUCCESS
+
+	ASSERT(client != NULL);
+	ASSERT(client->state == BS_AUTHENTICATION);
+
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
 	bolt_client_finish_write(client);
 }
 
-RedisModuleString *get_db
+// read the graph name from the message buffer
+static RedisModuleString *get_graph_name
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *client
+	RedisModuleCtx *ctx,   // the redis context
+	bolt_client_t *client  // the client that sent the message
 ) {
-	char *db = bolt_read_structure_value(client->messasge_buffer, 2);
-	char *db_str;
-	size_t db_len;
-	if(bolt_read_map_size(db) == 0) {
-		db_str = "falkordb";
-		db_len = 8;
+	ASSERT(ctx != NULL);
+	ASSERT(client != NULL);
+
+	char *graph_name = bolt_read_structure_value(client->messasge_buffer, 2);
+	char *graph_name_str;
+	size_t graph_name_len;
+	if(bolt_read_map_size(graph_name) == 0) {
+		// default graph name
+		graph_name_str = "falkordb";
+		graph_name_len = 8;
 	} else {
-		db = bolt_read_map_value(db, 0);
-		db_str = bolt_read_string(db);
-		db_len = bolt_read_string_size(db);
+		graph_name = bolt_read_map_value(graph_name, 0);
+		graph_name_str = bolt_read_string(graph_name);
+		graph_name_len = bolt_read_string_size(graph_name);
 	}
-	return RedisModule_CreateString(ctx, db_str, db_len);
+	return RedisModule_CreateString(ctx, graph_name_str, graph_name_len);
 }
 
-int print_parameter_value
+// write the bolt value to the buffer as string
+int write_value
 (
-	char *buff,
-	char *value
+	char *buff,  // the buffer to write to
+	char *value  // the value to write
 ) {
+	ASSERT(buff != NULL);
+	ASSERT(value != NULL);
+
 	switch (bolt_read_type(value))
 	{
 		case BVT_NULL:
@@ -79,11 +127,11 @@ int print_parameter_value
 			n += sprintf(buff, "[");
 			if(size > 0) {
 				char *item = bolt_read_list_item(value, 0);
-				n += print_parameter_value(buff + n, item);
+				n += write_value(buff + n, item);
 				for (int i = 1; i < size - 0; i++) {
 					n += sprintf(buff + n, ", ");
 					item = bolt_read_list_item(value, i);
-					n += print_parameter_value(buff + n, item);
+					n += write_value(buff + n, item);
 				}
 			}
 			n += sprintf(buff + n, "]");
@@ -97,13 +145,13 @@ int print_parameter_value
 				char *key = bolt_read_map_key(value, 0);
 				char *val = bolt_read_map_value(value, 0);
 				n += sprintf(buff + n, "%.*s: ", bolt_read_string_size(key), bolt_read_string(key));
-				n += print_parameter_value(buff + n, val);
+				n += write_value(buff + n, val);
 				for (int i = 1; i < size - 0; i++) {
 					n += sprintf(buff + n, ", ");
 					key = bolt_read_map_key(value, i);
 					val = bolt_read_map_value(value, i);
 					n += sprintf(buff + n, "%.*s: ", bolt_read_string_size(key), bolt_read_string(key));
-					n += print_parameter_value(buff + n, val);
+					n += write_value(buff + n, val);
 				}
 			}
 			n += sprintf(buff + n, "}");
@@ -124,41 +172,66 @@ int print_parameter_value
 	}
 }
 
+// read the query from the message buffer
 RedisModuleString *get_query
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *client
+	RedisModuleCtx *ctx,   // the redis context
+	bolt_client_t *client  // the client that sent the message
 ) {
+	ASSERT(ctx != NULL);
+	ASSERT(client != NULL);
+
 	char *query = bolt_read_structure_value(client->messasge_buffer, 0);
+	uint32_t query_len = bolt_read_string_size(query);
+	query = bolt_read_string(query);
 	char *parameters = bolt_read_structure_value(client->messasge_buffer, 1);
 	uint32_t params_count = bolt_read_map_size(parameters);
-	int n = 0;
 	if(params_count > 0) {
 		char prametrize_query[1024];
-		n += sprintf(prametrize_query, "CYPHER ");
+		int n = sprintf(prametrize_query, "CYPHER ");
 		for (int i = 0; i < params_count; i++) {
 			char *key = bolt_read_map_key(parameters, i);
 			char *value = bolt_read_map_value(parameters, i);
-			n += sprintf(prametrize_query + n, "%.*s=", bolt_read_string_size(key), bolt_read_string(key));
-			n += print_parameter_value(prametrize_query + n, value);
+			uint32_t key_len = bolt_read_string_size(key);
+			key = bolt_read_string(key);
+			n += sprintf(prametrize_query + n, "%.*s=", key_len, key);
+			n += write_value(prametrize_query + n, value);
 			n += sprintf(prametrize_query + n, " ");
 		}
-		sprintf(prametrize_query + n, "%.*s", bolt_read_string_size(query), bolt_read_string(query));
-		return RedisModule_CreateString(ctx, prametrize_query, strlen(prametrize_query));
+		n += sprintf(prametrize_query + n, "%.*s", query_len, query);
+		return RedisModule_CreateString(ctx, prametrize_query, n);
 	}
 
-	return RedisModule_CreateString(ctx, bolt_read_string(query), bolt_read_string_size(query));
+	return RedisModule_CreateString(ctx, query, query_len);
 }
 
+// handle the RUN message
 void BoltRunCommand
 (
-	bolt_client_t *client
+	bolt_client_t *client  // the client that sent the message
 ) {
+	// The RUN message requests that a Cypher query is executed with a set of parameters and additional extra data
+	// input:
+	// query::String,
+	// parameters::Dictionary,
+	// extra::Dictionary(
+	//   bookmarks::List<String>,
+	//   tx_timeout::Integer,
+	//   tx_metadata::Dictionary,
+	//   mode::String,
+	//   db:String,
+	//   imp_user::String,
+	//   notifications_minimum_severity::String,
+	//   notifications_disabled_categories::List<String>
+	// )
+
+	ASSERT(client != NULL);
+
 	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
 	RedisModuleString *args[5];
 
 	args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
-	args[1] = get_db(ctx, client);
+	args[1] = get_graph_name(ctx, client);
 	args[2] = get_query(ctx, client);
 	args[3] = RedisModule_CreateString(ctx, "--bolt", 6);
 	args[4] = RedisModule_CreateStringFromLongLong(ctx, (long long)client);
@@ -173,48 +246,90 @@ void BoltRunCommand
 	RedisModule_FreeThreadSafeContext(ctx);
 }
 
+// handle the PULL message
 void BoltPullCommand
 (
-	bolt_client_t *client
+	bolt_client_t *client  // the client that sent the message
 ) {
+	// The PULL message requests data from the remainder of the result stream
+	// input:
+	// extra::Dictionary{
+	//   n::Integer,
+	//   qid::Integer,
+	// }
+
+	ASSERT(client != NULL);
+
 	client->pull = true;
 }
 
+// handle the BEGIN message
 void BoltBeginCommand
 (
-	bolt_client_t *client
+	bolt_client_t *client  // the client that sent the message
 ) {
+	// The BEGIN message request the creation of a new Explicit Transaction
+	// input:
+	// extra::Dictionary(
+	//   bookmarks::List<String>,
+	//   tx_timeout::Integer,
+	//   tx_metadata::Dictionary,
+	//   mode::String,
+	//   db::String,
+	//   imp_user::String,
+	//   notifications_minimum_severity::String,
+	//   notifications_disabled_categories::List<String>
+	// )
+
+	ASSERT(client != NULL);
+
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
 	bolt_client_finish_write(client);
 }
 
+// handle the COMMIT message
 void BoltCommitCommand
 (
-	bolt_client_t *client
+	bolt_client_t *client  // the client that sent the message
 ) {
+	// The COMMIT message request that the Explicit Transaction is done
+
+	ASSERT(client != NULL);
+
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
 	bolt_client_finish_write(client);
 }
 
+// handle the ROLLBACK message
 void BoltRollbackCommand
 (
 	bolt_client_t *client
 ) {
+	// The ROLLBACK message requests that the Explicit Transaction rolls back
+
+	ASSERT(client != NULL);
+
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
 	bolt_client_finish_write(client);
 }
 
+// process next message from the client
 void BoltRequestHandler
 (
-	bolt_client_t *client
+	bolt_client_t *client // the client that sent the message
 ) {
+	ASSERT(client != NULL);
+
+	// if there is a message already in process or
+	// not enough data to read the message
 	if(client->has_message || client->nread - client->last_read_index <= 2) {
 		return;
 	}
 
+	// read chunked message
 	uint32_t last_read_index = client->last_read_index;
 	uint32_t nmessage = 0;
 	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
@@ -270,16 +385,22 @@ void BoltRequestHandler
 	}
 }
 
+// read data from socket to client buffer
 void BoltReadHandler
 (
-	int fd,
-	void *user_data,
-	int mask
+	int fd,           // the socket file descriptor
+	void *user_data,  // the client that sent the message
+	int mask          // the event mask
 ) {
+	ASSERT(fd != -1);
+	ASSERT(user_data != NULL);
+
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	int nread = socket_read(client->socket, client->read_buffer + client->nread, UINT16_MAX - client->nread);
 	if(nread == 0) {
 		if(client->nread == UINT16_MAX) {
+			// not enough space in the buffer
+			// try to move the message to the beginning of the buffer
 			if(client->has_message) {
 				return;
 			}
@@ -288,6 +409,7 @@ void BoltReadHandler
 			client->last_read_index = 0;
 			return;
 		}
+		// client disconnected
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		if(client->has_message) {
 			client->shutdown = true;
@@ -300,6 +422,7 @@ void BoltReadHandler
 		client->nread += nread;
 	}
 
+	// process interrupt message
 	uint32_t last_read_index = client->last_read_index;
 	while(last_read_index < client->nread) {
 		uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
@@ -325,30 +448,41 @@ void BoltReadHandler
 	BoltRequestHandler(client);
 }
 
+// write data from client buffer to socket
 void BoltResponseHandler
 (
-	int fd,
-	void *user_data,
-	int mask
+	int fd,           // the socket file descriptor
+	void *user_data,  // the client that sent the message
+	int mask          // the event mask
 ) {
-	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
+	ASSERT(fd != -1);
+	ASSERT(user_data != NULL);
+
 	bolt_client_t *client = (bolt_client_t*)user_data;
+
+	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
+
 	if(client->shutdown) {
 		rm_free(client);
 		socket_close(fd);
 		return;
 	}
+
 	bolt_client_send(client);
 	client->has_message = false;
+
 	BoltRequestHandler(client);
 }
 
+// handle new client connection
 void BoltAcceptHandler
 (
-	int fd,
-	void *user_data,
-	int mask
+	int fd,           // the socket file descriptor
+	void *user_data,  // the client that sent the message
+	int mask          // the event mask
 ) {
+	ASSERT(fd != -1);
+
 	socket_t client = socket_accept(fd);
 	if(client == -1) return;
 
@@ -370,9 +504,11 @@ void BoltAcceptHandler
 	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, bolt_client);
 }
 
+// listen to bolt port 7687
+// add the socket to the event loop
 int BoltApi_Register
 (
-    RedisModuleCtx *ctx
+    RedisModuleCtx *ctx  // redis context
 ) {
     socket_t bolt = socket_bind(7687);
 	if(bolt == -1) {
