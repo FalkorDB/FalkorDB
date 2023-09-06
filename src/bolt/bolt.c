@@ -299,7 +299,7 @@ char *bolt_value_read
 		case 0xD2:
 			return data + 5 + ntohl(*(uint32_t *)(data + 1));
 		case 0xD4: {
-			int n = data[1];
+			int n = (unsigned char)data[1];
 			data = data + 2;
 			for (uint32_t i = 0; i < n; i++) {
 				data = bolt_value_read(data);
@@ -307,7 +307,7 @@ char *bolt_value_read
 			return data;
 		}
 		case 0xD5: {
-			int n = *(uint16_t *)(data + 1);
+			int n = ntohs(*(uint16_t *)(data + 1));
 			data = data + 3;
 			for (uint32_t i = 0; i < n; i++) {
 				data = bolt_value_read(data);
@@ -315,7 +315,7 @@ char *bolt_value_read
 			return data;
 		}
 		case 0xD6: {
-			int n = *(uint32_t *)(data + 1);
+			int n = ntohl(*(uint32_t *)(data + 1));
 			data = data + 5;
 			for (uint32_t i = 0; i < n; i++) {
 				data = bolt_value_read(data);
@@ -323,7 +323,7 @@ char *bolt_value_read
 			return data;
 		}
 		case 0xD8: {
-			int n = data[1];
+			int n = (unsigned char)data[1];
 			data = data + 2;
 			for (uint32_t i = 0; i < n; i++) {
 				data = bolt_value_read(data);
@@ -332,7 +332,7 @@ char *bolt_value_read
 			return data;
 		}
 		case 0xD9: {
-			int n = *(uint16_t *)(data + 1);
+			int n = ntohs(*(uint16_t *)(data + 1));
 			data = data + 3;
 			for (uint32_t i = 0; i < n; i++) {
 				data = bolt_value_read(data);
@@ -341,7 +341,7 @@ char *bolt_value_read
 			return data;
 		}
 		case 0xDA: {
-			int n = *(uint32_t *)(data + 1);
+			int n = ntohl(*(uint32_t *)(data + 1));
 			data = data + 5;
 			for (uint32_t i = 0; i < n; i++) {
 				data = bolt_value_read(data);
