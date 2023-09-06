@@ -8,73 +8,101 @@
 #include "string.h"
 #include "endian.h"
 
+// write null to client response buffer
 void bolt_reply_null
 (
-	bolt_client_t *client
+	bolt_client_t *client  // client to write to
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xC0;
 }
 
+// write bool value to client response buffer
 void bolt_reply_bool
 (
-	bolt_client_t *client,
-	bool data
+	bolt_client_t *client,  // client to write to
+	bool data               // bool value to write
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = data ? 0xC3 : 0xC2;
 }
 
+// write tiny int value to client response buffer
+// tiny int: -16 to 127
 void bolt_reply_tiny_int
 (
-	bolt_client_t *client,
-	uint8_t data
+	bolt_client_t *client,  // client to write to
+	int8_t data            // tiny int value to write
 ) {
+	ASSERT(client != NULL);
+	ASSERT(data >= -16 && data <= 127);
+
 	client->write_buffer[client->nwrite++] = data;
 }
 
+// write int8 value to client response buffer
 void bolt_reply_int8
 (
-	bolt_client_t *client,
-	int8_t data
+	bolt_client_t *client,  // client to write to
+	int8_t data             // int8 value to write
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xC8;
 	client->write_buffer[client->nwrite++] = data;
 }
 
+// write int16 value to client response buffer
 void bolt_reply_int16
 (
-	bolt_client_t *client,
-	int16_t data
+	bolt_client_t *client,  // client to write to
+	int16_t data            // int16 value to write
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xC9;
 	*(uint16_t *)(client->write_buffer + client->nwrite) = htons(data);
 	client->nwrite += 2;
 }
 
+// write int32 value to client response buffer
 void bolt_reply_int32
 (
-	bolt_client_t *client,
-	int32_t data
+	bolt_client_t *client,  // client to write to
+	int32_t data            // int32 value to write
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xCA;
 	*(uint32_t *)(client->write_buffer + client->nwrite) = htonl(data);
 	client->nwrite += 4;
 }
 
+// write int64 value to client response buffer
 void bolt_reply_int64
 (
-	bolt_client_t *client,
-	int64_t data
+	bolt_client_t *client, // client to write to
+	int64_t data           // int64 value to write
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xCB;
 	*(uint64_t *)(client->write_buffer + client->nwrite) = htonll(data);
 	client->nwrite += 8;
 }
 
+// write int value to client response buffer
+// using the minimal representation
+// if the minimal representation is known use it for better performance
 void bolt_reply_int
 (
-	bolt_client_t *client,
-	int64_t data
+	bolt_client_t *client,  // client to write to
+	int64_t data            // int value to write
 ) {
+	ASSERT(client != NULL);
+
 	if(data >= 0xF0 && data <= 0x7F) {
 		bolt_reply_tiny_int(client, data);
 	} else if(INT8_MIN <= data && data <= INT8_MAX) {
@@ -88,11 +116,14 @@ void bolt_reply_int
 	}
 }
 
+// write float value to client response buffer
 void bolt_reply_float
 (
-	bolt_client_t *client,
-	double data
+	bolt_client_t *client,  // client to write to
+	double data             // float value to write
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xC1;
 	char *buf = (char *)&data;
 	for (int i = 0; i < sizeof(double); i++) {
@@ -100,11 +131,15 @@ void bolt_reply_float
 	}
 }
 
+// write string value to client response buffer
+// using the minimal representation
 void bolt_reply_string
 (
-	bolt_client_t *client,
-	const char *data
+	bolt_client_t *client,  // client to write to
+	const char *data        // string value to write
 ) {
+	ASSERT(client != NULL);
+
 	uint32_t size = strlen(data);
 	if (size < 0x10) {
 		client->write_buffer[client->nwrite++] = 0x80 + size;
@@ -130,11 +165,15 @@ void bolt_reply_string
 	}
 }
 
+// write list header to client response buffer
+// expected 'size' number of items to follow
 void bolt_reply_list
 (
 	bolt_client_t *client,
 	uint32_t size
 ) {
+	ASSERT(client != NULL);
+
 	if (size < 0x10) {
 		client->write_buffer[client->nwrite++] = 0x90 + size;
 	} else if (size < 0x100) {
@@ -151,11 +190,17 @@ void bolt_reply_list
 	}
 }
 
+// write map header to client response buffer
+// expected 'size' number of key-value pairs to follow
+// key should be string
+// value can be any type
 void bolt_reply_map
 (
-	bolt_client_t *client,
-	uint32_t size
+	bolt_client_t *client,  // client to write to
+	uint32_t size           // number of key-value pairs to follow
 ) {
+	ASSERT(client != NULL);
+
 	if (size < 0x10) {
 		client->write_buffer[client->nwrite++] = 0xA0 + size;
 	} else if (size < 0x100) {
@@ -172,20 +217,28 @@ void bolt_reply_map
 	}
 }
 
+// write structure header to client response buffer
+// expected 'size' number of items to follow
 void bolt_reply_structure
 (
-	bolt_client_t *client,
-	bolt_structure_type type,
-	uint32_t size
+	bolt_client_t *client,     // client to write to
+	bolt_structure_type type,  // structure type
+	uint32_t size              // number of items to follow
 ) {
+	ASSERT(client != NULL);
+
 	client->write_buffer[client->nwrite++] = 0xB0 + size;
 	client->write_buffer[client->nwrite++] = type;
 }
 
-char *bolt_value_read
+// read value type from buffer
+// return the pointer to the buffer after the value
+static char *bolt_value_read
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -289,9 +342,9 @@ char *bolt_value_read
 		case 0xCC:
 			return data + 2 + *(uint8_t *)(data + 1);
 		case 0xCD:
-			return data + 3 + *(uint16_t *)(data + 1);
+			return data + 3 + ntohs(*(uint16_t *)(data + 1));
 		case 0xCE:
-			return data + 5 + *(uint32_t *)(data + 1);
+			return data + 5 + ntohl(*(uint32_t *)(data + 1));
 		case 0xD0:
 			return data + 2 + *(uint8_t *)(data + 1);
 		case 0xD1:
@@ -358,10 +411,13 @@ char *bolt_value_read
 	}
 }
 
+// read value type from buffer
 bolt_value_type bolt_read_type
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -469,10 +525,13 @@ bolt_value_type bolt_read_type
 	}
 }
 
+// read bool value from buffer
 bool bolt_read_bool
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -486,10 +545,13 @@ bool bolt_read_bool
 	}
 }
 
+// read int8 value from buffer
 int8_t bolt_read_int8
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -504,10 +566,13 @@ int8_t bolt_read_int8
 	}
 }
 
+// read int16 value from buffer
 int16_t bolt_read_int16
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -519,10 +584,13 @@ int16_t bolt_read_int16
 	}
 }
 
+// read int32 value from buffer
 int32_t bolt_read_int32
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -534,10 +602,13 @@ int32_t bolt_read_int32
 	}
 }
 
+// read int64 value from buffer
 int64_t bolt_read_int64
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -549,10 +620,13 @@ int64_t bolt_read_int64
 	}
 }
 
+// read float value from buffer
 double bolt_read_float
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -570,10 +644,13 @@ double bolt_read_float
 	}
 }
 
+// read string size from buffer
 uint32_t bolt_read_string_size
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -606,10 +683,14 @@ uint32_t bolt_read_string_size
 	}
 }
 
+// read string value from buffer
+// notice: the string is not null terminated
 char *bolt_read_string
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -642,10 +723,13 @@ char *bolt_read_string
 	}
 }
 
+// read bytes size from buffer
 uint32_t bolt_read_list_size
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -678,11 +762,15 @@ uint32_t bolt_read_list_size
 	}
 }
 
+// read list item from buffer
 char *bolt_read_list_item
 (
-	char *data,
-	uint32_t index
+	char *data,     // buffer to read from
+	uint32_t index  // index of the item to read
 ) {
+	ASSERT(data != NULL);
+	ASSERT(index < bolt_read_list_size(data));
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -731,10 +819,13 @@ char *bolt_read_list_item
 	}
 }
 
+// read map size from buffer
 uint32_t bolt_read_map_size
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -767,11 +858,15 @@ uint32_t bolt_read_map_size
 	}
 }
 
+// read map key from buffer
 char *bolt_read_map_key
 (
-	char *data,
-	uint32_t index
+	char *data,     // buffer to read from
+	uint32_t index  // index of the key to read
 ) {
+	ASSERT(data != NULL);
+	ASSERT(index < bolt_read_map_size(data));
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -824,11 +919,15 @@ char *bolt_read_map_key
 	}
 }
 
+// read map value from buffer
 char *bolt_read_map_value
 (
-	char *data,
-	uint32_t index
+	char *data,     // buffer to read from
+	uint32_t index  // index of the value to read
 ) {
+	ASSERT(data != NULL);
+	ASSERT(index < bolt_read_map_size(data));
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -885,10 +984,13 @@ char *bolt_read_map_value
 	}
 }
 
+// read structure type from buffer
 bolt_structure_type bolt_read_structure_type
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -908,10 +1010,13 @@ bolt_structure_type bolt_read_structure_type
 	}
 }
 
+// read structure size from buffer
 uint32_t bolt_read_structure_size
 (
-	char *data
+	char *data  // buffer to read from
 ) {
+	ASSERT(data != NULL);
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
@@ -938,11 +1043,15 @@ uint32_t bolt_read_structure_size
 	}
 }
 
+// read structure value from buffer
 char *bolt_read_structure_value
 (
-	char *data,
-	uint32_t index
+	char *data,     // buffer to read from
+	uint32_t index  // index of the value to read
 ) {
+	ASSERT(data != NULL);
+	ASSERT(index < bolt_read_structure_size(data));
+
 	uint8_t marker = data[0];
 	switch (marker)
 	{
