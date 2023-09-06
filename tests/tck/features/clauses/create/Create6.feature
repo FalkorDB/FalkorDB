@@ -128,8 +128,8 @@ Feature: Create6 - Persistence of create clause side effects
       RETURN sum(n.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | +nodes         | 5 |
       | +labels        | 1 |
@@ -145,8 +145,8 @@ Feature: Create6 - Persistence of create clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | +nodes         | 5 |
       | +labels        | 1 |
@@ -250,8 +250,8 @@ Feature: Create6 - Persistence of create clause side effects
       RETURN sum(r.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | +nodes         | 10 |
       | +relationships | 5  |
@@ -267,8 +267,8 @@ Feature: Create6 - Persistence of create clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | +nodes         | 10 |
       | +relationships | 5  |

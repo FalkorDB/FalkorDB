@@ -161,8 +161,8 @@ Feature: Remove3 - Persistence of remove clause side effects
       RETURN sum(n.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | -properties | 5 |
 
@@ -184,8 +184,8 @@ Feature: Remove3 - Persistence of remove clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | -properties | 5 |
 
@@ -323,8 +323,8 @@ Feature: Remove3 - Persistence of remove clause side effects
       RETURN sum(n.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | -labels | 1 |
 
@@ -347,8 +347,8 @@ Feature: Remove3 - Persistence of remove clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | -labels | 1 |
 
@@ -483,8 +483,8 @@ Feature: Remove3 - Persistence of remove clause side effects
       RETURN sum(r.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | -properties | 5 |
 
@@ -506,7 +506,7 @@ Feature: Remove3 - Persistence of remove clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | -properties | 5 |

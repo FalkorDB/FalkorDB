@@ -45,7 +45,7 @@ Feature: Aggregation3 - Sum
       """
     Then the result should be, in any order:
       | n.name | sum(n.num) |
-      | 'a'    | 75         |
+      | 'a'    | 75.0       |
     And no side effects
 
   Scenario: [2] No overflow during summation
@@ -58,8 +58,8 @@ Feature: Aggregation3 - Sum
       RETURN sum(i)
       """
     Then the result should be, in any order:
-      | sum(i)     |
-      | 3004498500 |
+      | sum(i)       |
+      | 3004498500.0 |
     And no side effects
 
   

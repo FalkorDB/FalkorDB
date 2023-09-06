@@ -140,6 +140,6 @@ Feature: WithSkipLimit2 - Limit
       RETURN x, c
       """
     Then the result should be, in any order:
-      | x    | c |
-      | (:Y) | 1 |
+      | x    | c   |
+      | (:Y) | 1.0 |
     And no side effects
