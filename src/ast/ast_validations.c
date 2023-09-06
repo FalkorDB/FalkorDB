@@ -31,7 +31,7 @@ typedef struct {
 } validations_ctx;
 
 // ast validation visitor mappings
-// number of ast-node types: _MAX_VT_OFF = sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *) = 115
+// number of ast-node types: _MAX_VT_OFF = sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *) = 116
 static visit validations_mapping[116];
 
 // validate that allShortestPaths is in a supported place
@@ -2050,7 +2050,7 @@ bool AST_ValidationsMappingInit(void) {
 	// create a mapping for the validations
 
 	// set default entries
-	for(uint i = 0; i < 115; i++) {
+	for(uint i = 0; i < 116; i++) {
 		validations_mapping[i] = _default_visit;
 	}
 
@@ -2188,7 +2188,7 @@ AST_Validation AST_Validate_Query
 	cypher_astnode_type_t body_type = cypher_astnode_type(body);
 	if(body_type == CYPHER_AST_CREATE_NODE_PROPS_INDEX    ||
 	   body_type == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX ||
-	   body_type == CYPHER_AST_DROP_PROPS_INDEX ||
+	   body_type == CYPHER_AST_DROP_PROPS_INDEX           ||
 	   body_type == CYPHER_AST_DROP_PATTERN_PROPS_INDEX) {
 		return _ValidateScopes(&ast);
 	}

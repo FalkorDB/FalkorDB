@@ -12,6 +12,84 @@
 #include "../datatypes/datatypes.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
 
+// parse drop index old format
+// DROP INDEX ON :N(name)
+static void _index_delete_parse_old_format
+(
+	bool *is_node,              // node index
+	bool *is_relation,          // relation index
+	const char **attr,          // attribute to index
+	const char **label,         // label to index
+	IndexFieldType *idx_type,   // index type
+	const cypher_astnode_t *op  // AST drop index node
+) {
+	ASSERT(op          != NULL);
+	ASSERT(attr        != NULL);
+	ASSERT(label       != NULL);
+	ASSERT(is_node     != NULL);
+	ASSERT(is_relation != NULL);
+
+	// extract label
+	*label = cypher_ast_label_get_name(
+			cypher_ast_drop_props_index_get_label(op));
+
+	// extract attribute
+	*attr = cypher_ast_prop_name_get_value(
+			cypher_ast_drop_props_index_get_prop_name(op, 0));
+
+	// we don't know if this is a node or relation index
+	*is_node     = true;
+	*is_relation = true;
+	*idx_type     = INDEX_FLD_RANGE;
+}
+
+// parse drop index new format
+// DROP VECTOR INDEX FOR (n:N) ON (n.name)
+static void _index_delete_parse_new_format
+(
+	bool *is_node,              // node index
+	bool *is_relation,          // relation index
+	const char **attr,          // attribute to index
+	const char **label,         // label to index
+	IndexFieldType *idx_type,   // index type
+	const cypher_astnode_t *op  // AST drop index node
+) {
+	ASSERT(op          != NULL);
+	ASSERT(attr        != NULL);
+	ASSERT(label       != NULL);
+	ASSERT(is_node     != NULL);
+	ASSERT(is_relation != NULL);
+
+	// extract label
+	*label = cypher_ast_label_get_name(
+			cypher_ast_drop_pattern_props_index_get_label(op));
+
+	// extract attribute
+	*attr = cypher_ast_prop_name_get_value(
+			cypher_ast_property_operator_get_prop_name(
+				cypher_ast_drop_pattern_props_index_get_property_operator(op,
+					0)));
+
+	// determine if this is a node or relation index
+	*is_node = !is_relation;
+
+	// determine index type
+	switch(cypher_ast_drop_pattern_props_index_get_index_type(op)) {
+		case CYPHER_INDEX_TYPE_RANGE:
+			*idx_type = INDEX_FLD_RANGE;
+			break;
+		case CYPHER_INDEX_TYPE_FULLTEXT:
+			*idx_type = INDEX_FLD_FULLTEXT;
+			break;
+		case CYPHER_INDEX_TYPE_VECTOR:
+			*idx_type = INDEX_FLD_VECTOR;
+			break;
+		default:
+			assert(false && "unknown index type");
+			break;
+	}
+}
+
 // delete index
 // DROP INDEX ON :N(name)
 // DROP INDEX FOR (n:N) ON (n.name)
@@ -23,67 +101,71 @@ static bool index_delete
 	GraphContext *gc,  // graph context
 	AST *ast           // AST
 ) {
-	Schema *s = NULL;
-	const cypher_astnode_t *index_op = ast->root;
-
-	cypher_astnode_type_t t = cypher_astnode_type(index_op);
+	const cypher_astnode_t *op      = ast->root;
+	cypher_astnode_type_t  t        = cypher_astnode_type(op);
+	IndexFieldType         idx_type = INDEX_FLD_RANGE;
 
 	// extract label and attribute from AST
-	const char *label;
-	const char *attr;
-	enum cypher_ast_index_type index_type;
-	bool is_node;
-	bool is_relation;
+	Schema     *s           = NULL;   // schema
+	bool       is_node      = false;  // node index
+	bool       is_relation  = false;  // relation index
+	const char *lbl         = NULL;   // removed label
+	const char *attr        = NULL;   // removed attribute
+
 	if(t == CYPHER_AST_DROP_PROPS_INDEX) {
-		label = cypher_ast_label_get_name(
-			cypher_ast_drop_props_index_get_label(index_op));
-	 	attr = cypher_ast_prop_name_get_value(
-			cypher_ast_drop_props_index_get_prop_name(index_op, 0));
-		index_type = CYPHER_INDEX_TYPE_RANGE;
-		is_node = true;
-		is_relation = true;
+		_index_delete_parse_old_format(&is_node, &is_relation, &attr, &lbl,
+				&idx_type, op);
 	} else {
-		label = cypher_ast_label_get_name(
-			cypher_ast_drop_pattern_props_index_get_label(index_op));
-	 	attr = cypher_ast_prop_name_get_value(
-			cypher_ast_property_operator_get_prop_name(
-				cypher_ast_drop_pattern_props_index_get_property_operator(
-				index_op, 0)));
-		index_type = cypher_ast_drop_pattern_props_index_get_index_type(index_op);
-		is_relation = cypher_ast_drop_pattern_props_index_pattern_is_relation(index_op);
-		is_node = !is_relation;
+		_index_delete_parse_new_format(&is_node, &is_relation, &attr, &lbl,
+				&idx_type, op);
 	}
 
+	//--------------------------------------------------------------------------
 	// resolve attribute ID
+	//--------------------------------------------------------------------------
+
+	// quickly return if attribute doesn't exist
 	Attribute_ID attr_id = GraphContext_GetAttributeID(gc, attr);
+	if(attr_id == ATTRIBUTE_ID_NONE) {
+		ErrorCtx_SetError(EMSG_UNABLE_TO_DROP_INDEX, lbl, attr);
+		return false;
+	}
+
+	//--------------------------------------------------------------------------
+	// resolve schema
+	//--------------------------------------------------------------------------
 
 	// lock
 	QueryCtx_LockForCommit();
 
-	// try deleting node RANGE index
-	s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-	if(s != NULL) {
-		if(Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_RANGE, true) != NULL) {
-			// try deleting a node range index
-			// operation may fail if this index supports a constraint
-			return GraphContext_DeleteIndex(gc, SCHEMA_NODE, label, attr,
-					INDEX_FLD_RANGE);
+	if(is_node) {
+		// try deleting node index
+		s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
+		if(s != NULL) {
+			if(Schema_GetIndex(s, &attr_id, 1, idx_type, true) != NULL) {
+				// try deleting a node index
+				// operation may fail if this index supports a constraint
+				return GraphContext_DeleteIndex(gc, SCHEMA_NODE, lbl, attr,
+						idx_type);
+			}
 		}
 	}
 
-	// try deleting edge RANGE index
-	s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
-	if(s != NULL) {
-		if(Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_RANGE, true) != NULL) {
-			// try deleting an edge range index
-			// operation may fail if this index supports a constraint
-			return GraphContext_DeleteIndex(gc, SCHEMA_EDGE, label, attr,
-					INDEX_FLD_RANGE);
+	if(is_relation) {
+		// try deleting edge index
+		s = GraphContext_GetSchema(gc, lbl, SCHEMA_EDGE);
+		if(s != NULL) {
+			if(Schema_GetIndex(s, &attr_id, 1, idx_type, true) != NULL) {
+				// try deleting an edge index
+				// operation may fail if this index supports a constraint
+				return GraphContext_DeleteIndex(gc, SCHEMA_EDGE, lbl, attr,
+						idx_type);
+			}
 		}
 	}
 
 	// no matching index
-	ErrorCtx_SetError(EMSG_UNABLE_TO_DROP_INDEX, label, attr);
+	ErrorCtx_SetError(EMSG_UNABLE_TO_DROP_INDEX, lbl, attr);
 
 	return false;
 }

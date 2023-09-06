@@ -154,8 +154,7 @@ static const struct cypher_astnode_vts cypher_astnode_vts =
     .create_pattern_props_index = &cypher_create_pattern_props_index_astnode_vt,
     .drop_props_index = &cypher_drop_props_index_astnode_vt,
     .drop_pattern_props_index = &cypher_drop_pattern_props_index_astnode_vt,
-    .create_node_prop_constraint =
-           &cypher_create_node_prop_constraint_astnode_vt,
+    .create_node_prop_constraint = &cypher_create_node_prop_constraint_astnode_vt,
     .drop_node_prop_constraint = &cypher_drop_node_prop_constraint_astnode_vt,
     .create_rel_prop_constraint = &cypher_create_rel_prop_constraint_astnode_vt,
     .drop_rel_prop_constraint = &cypher_drop_rel_prop_constraint_astnode_vt,
@@ -275,22 +274,14 @@ const uint8_t CYPHER_AST_CYPHER_OPTION_PARAM = VT_OFFSET(cypher_option_param);
 const uint8_t CYPHER_AST_EXPLAIN_OPTION = VT_OFFSET(explain_option);
 const uint8_t CYPHER_AST_PROFILE_OPTION = VT_OFFSET(profile_option);
 const uint8_t CYPHER_AST_SCHEMA_COMMAND = VT_OFFSET(schema_command);
-const uint8_t CYPHER_AST_CREATE_NODE_PROPS_INDEX =
-        VT_OFFSET(create_node_props_index);
-const uint8_t CYPHER_AST_CREATE_PATTERN_PROPS_INDEX =
-        VT_OFFSET(create_pattern_props_index);
-const uint8_t CYPHER_AST_DROP_PROPS_INDEX =
-        VT_OFFSET(drop_props_index);
-const uint8_t CYPHER_AST_DROP_PATTERN_PROPS_INDEX =
-        VT_OFFSET(drop_pattern_props_index);
-const uint8_t CYPHER_AST_CREATE_NODE_PROP_CONSTRAINT =
-        VT_OFFSET(create_node_prop_constraint);
-const uint8_t CYPHER_AST_DROP_NODE_PROP_CONSTRAINT =
-        VT_OFFSET(drop_node_prop_constraint);
-const uint8_t CYPHER_AST_CREATE_REL_PROP_CONSTRAINT =
-        VT_OFFSET(create_rel_prop_constraint);
-const uint8_t CYPHER_AST_DROP_REL_PROP_CONSTRAINT =
-        VT_OFFSET(drop_rel_prop_constraint);
+const uint8_t CYPHER_AST_CREATE_NODE_PROPS_INDEX = VT_OFFSET(create_node_props_index);
+const uint8_t CYPHER_AST_CREATE_PATTERN_PROPS_INDEX = VT_OFFSET(create_pattern_props_index);
+const uint8_t CYPHER_AST_DROP_PROPS_INDEX = VT_OFFSET(drop_props_index);
+const uint8_t CYPHER_AST_DROP_PATTERN_PROPS_INDEX = VT_OFFSET(drop_pattern_props_index);
+const uint8_t CYPHER_AST_CREATE_NODE_PROP_CONSTRAINT = VT_OFFSET(create_node_prop_constraint);
+const uint8_t CYPHER_AST_DROP_NODE_PROP_CONSTRAINT = VT_OFFSET(drop_node_prop_constraint);
+const uint8_t CYPHER_AST_CREATE_REL_PROP_CONSTRAINT = VT_OFFSET(create_rel_prop_constraint);
+const uint8_t CYPHER_AST_DROP_REL_PROP_CONSTRAINT = VT_OFFSET(drop_rel_prop_constraint);
 const uint8_t CYPHER_AST_QUERY = VT_OFFSET(query);
 const uint8_t CYPHER_AST_QUERY_OPTION = VT_OFFSET(query_option);
 const uint8_t CYPHER_AST_USING_PERIODIC_COMMIT = VT_OFFSET(using_periodic_commit);
@@ -388,14 +379,10 @@ const uint8_t CYPHER_AST_BLOCK_COMMENT = VT_OFFSET(block_comment);
 const uint8_t CYPHER_AST_ERROR = VT_OFFSET(error);
 const uint8_t CYPHER_AST_MAP_PROJECTION = VT_OFFSET(map_projection);
 const uint8_t CYPHER_AST_MAP_PROJECTION_SELECTOR = VT_OFFSET(map_projection_selector);
-const uint8_t CYPHER_AST_MAP_PROJECTION_LITERAL =
-        VT_OFFSET(map_projection_literal);
-const uint8_t CYPHER_AST_MAP_PROJECTION_PROPERTY =
-        VT_OFFSET(map_projection_property);
-const uint8_t CYPHER_AST_MAP_PROJECTION_IDENTIFIER =
-        VT_OFFSET(map_projection_identifier);
-const uint8_t CYPHER_AST_MAP_PROJECTION_ALL_PROPERTIES =
-        VT_OFFSET(map_projection_all_properties);
+const uint8_t CYPHER_AST_MAP_PROJECTION_LITERAL = VT_OFFSET(map_projection_literal);
+const uint8_t CYPHER_AST_MAP_PROJECTION_PROPERTY = VT_OFFSET(map_projection_property);
+const uint8_t CYPHER_AST_MAP_PROJECTION_IDENTIFIER = VT_OFFSET(map_projection_identifier);
+const uint8_t CYPHER_AST_MAP_PROJECTION_ALL_PROPERTIES = VT_OFFSET(map_projection_all_properties);
 static const uint8_t _MAX_VT_OFF =
     (sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *));
 

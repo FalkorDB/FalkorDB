@@ -382,9 +382,20 @@ void GraphContext_DisableConstrains
 	}
 }
 
-Schema *GraphContext_GetSchemaByID(const GraphContext *gc, int id, SchemaType t) {
-	Schema **schemas = (t == SCHEMA_NODE) ? gc->node_schemas : gc->relation_schemas;
-	if(id == GRAPH_NO_LABEL) return NULL;
+Schema *GraphContext_GetSchemaByID
+(
+	const GraphContext *gc,
+	int id,
+	SchemaType t
+) {
+	if(id == GRAPH_NO_LABEL) {
+		return NULL;
+	}
+
+	Schema **schemas = (t == SCHEMA_NODE) ?
+		gc->node_schemas :
+		gc->relation_schemas;
+
 	return schemas[id];
 }
 
