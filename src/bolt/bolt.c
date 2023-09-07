@@ -1003,6 +1003,13 @@ bolt_structure_type bolt_read_structure_type
 		case 0xB6:
 		case 0xB7:
 		case 0xB8:
+		case 0xB9:
+		case 0xBA:
+		case 0xBB:
+		case 0xBC:
+		case 0xBD:
+		case 0xBE:
+		case 0xBF:
 			return data[1];
 		default:
 			ASSERT(false);

@@ -399,6 +399,17 @@ void BoltReadHandler
 
 	bolt_client_t *client = (bolt_client_t*)user_data;
 	int nread = socket_read(client->socket, client->read_buffer + client->nread, UINT16_MAX - client->nread);
+	if(nread == -1) {
+		// error
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		if(client->has_message) {
+			client->shutdown = true;
+			return;
+		}
+		rm_free(client);
+		socket_close(fd);
+		return;
+	}
 	if(nread == 0) {
 		if(client->nread == UINT16_MAX) {
 			// not enough space in the buffer
