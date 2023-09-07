@@ -7,6 +7,7 @@
 #include "bolt.h"
 #include "bolt_client.h"
 #include "util/rmalloc.h"
+#include <pthread.h>
 #include <arpa/inet.h>
 
 bolt_client_t *bolt_client_new
@@ -27,6 +28,8 @@ bolt_client_t *bolt_client_new
 	client->shutdown = false;
 	client->reset = false;
 	client->last_read_index = 0;
+	pthread_cond_init(&client->pull_condv, NULL);
+	pthread_mutex_init(&client->pull_condv_mutex, NULL);
 	return client;
 }
 

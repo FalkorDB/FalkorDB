@@ -33,6 +33,8 @@ typedef struct bolt_client_t {
 	bool reset;
 	char messasge_buffer[UINT16_MAX];
 	volatile bool pull;
+	pthread_mutex_t pull_condv_mutex;
+	pthread_cond_t pull_condv;
 	char write_buffer[1024];
 	char read_buffer[UINT16_MAX];
 } bolt_client_t;

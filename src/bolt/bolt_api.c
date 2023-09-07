@@ -229,6 +229,7 @@ void BoltRunCommand
 
 	ASSERT(client != NULL);
 
+	client->pull = false;
 	RedisModuleCtx *ctx = client->ctx;
 	RedisModuleString *args[5];
 
@@ -261,7 +262,10 @@ void BoltPullCommand
 
 	ASSERT(client != NULL);
 
+	pthread_mutex_lock(&client->pull_condv_mutex);
 	client->pull = true;
+	pthread_cond_signal(&client->pull_condv);
+	pthread_mutex_unlock(&client->pull_condv_mutex);
 }
 
 // handle the BEGIN message
