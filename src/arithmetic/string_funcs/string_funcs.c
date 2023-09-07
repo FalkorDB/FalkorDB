@@ -236,7 +236,7 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 		}
 
 		// Check for overflow.
-		if( !__builtin_uadd_overflow(str_len, strlen(str.stringval), &str_len)){
+		if( __builtin_uadd_overflow(str_len, strlen(str.stringval), &str_len)){
 			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
 			return SI_NullVal();
 		}
