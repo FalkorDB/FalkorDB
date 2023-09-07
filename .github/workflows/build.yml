@@ -67,6 +67,13 @@ jobs:
         push: true
         tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name  }}
 
+    - name: Update repo description
+      uses: peter-evans/dockerhub-description@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        repository: falkordb/falkordb        
+
   unit-tests:
     runs-on: ubuntu-latest
     container: falkordb/falkordb:${{ github.ref_name }}
