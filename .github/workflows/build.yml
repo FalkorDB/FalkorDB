@@ -72,7 +72,8 @@ jobs:
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
-        repository: falkordb/falkordb        
+        repository: falkordb/falkordb
+        readme-filepath: /FalkorDB/README.md
 
   unit-tests:
     runs-on: ubuntu-latest
