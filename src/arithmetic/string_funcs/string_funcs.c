@@ -226,7 +226,7 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 	const size_t delimeter_len = strlen(delimiter);
 
 	// Calculate the length of the resulting string.
-	uint64_t str_len = delimeter_len * (count - 1);
+	uint str_len = delimeter_len * (count - 1);
 	for(uint i = 0; i < count; i++) {
 		SIValue str = SIArray_Get(list, i);
 		if(SI_TYPE(str) != T_STRING) {
@@ -235,7 +235,7 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 			return SI_NullVal();
 		}
 
-		// Check for overflow
+		// Check for overflow.
 		if( !__builtin_uadd_overflow(str_len, strlen(str.stringval), &str_len)){
 			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
 			return SI_NullVal();
