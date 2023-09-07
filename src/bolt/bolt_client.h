@@ -23,6 +23,7 @@ typedef enum bolt_client_state {
 typedef struct bolt_client_t {
 	socket_t socket;
 	bolt_client_state state;
+	RedisModuleCtx *ctx;
 	RedisModuleEventLoopFunc on_write;
 	uint32_t nwrite;
 	uint32_t nread;
@@ -44,6 +45,7 @@ typedef struct bolt_version_t {
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,
+	RedisModuleCtx *ctx,
 	RedisModuleEventLoopFunc on_write
 );
 

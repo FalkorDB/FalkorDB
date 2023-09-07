@@ -255,7 +255,8 @@ int CommandDispatch
 	} else {
 		// run query on a dedicated thread
 		RedisModuleBlockedClient *bc = bolt_client != NULL ? NULL : RedisGraph_BlockClient(ctx);
-		context = CommandCtx_New(NULL, bc, argv[0], query, gc, exec_thread,
+		RedisModuleCtx*ctx = bolt_client != NULL ? bolt_client->ctx : NULL;
+		context = CommandCtx_New(ctx, bc, argv[0], query, gc, exec_thread,
 								 is_replicated, compact, timeout, timeout_rw,
 								 received_ts, timer, bolt_client);
 

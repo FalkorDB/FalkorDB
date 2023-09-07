@@ -229,7 +229,7 @@ void BoltRunCommand
 
 	ASSERT(client != NULL);
 
-	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+	RedisModuleCtx *ctx = client->ctx;
 	RedisModuleString *args[5];
 
 	args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
@@ -245,7 +245,6 @@ void BoltRunCommand
 	RedisModule_FreeString(ctx, args[2]);
 	RedisModule_FreeString(ctx, args[3]);
 	RedisModule_FreeString(ctx, args[4]);
-	RedisModule_FreeThreadSafeContext(ctx);
 }
 
 // handle the PULL message
@@ -473,9 +472,8 @@ void BoltResponseHandler
 
 	bolt_client_t *client = (bolt_client_t*)user_data;
 
-	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
-
 	if(client->shutdown) {
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 		rm_free(client);
 		socket_close(fd);
 		return;
@@ -483,6 +481,8 @@ void BoltResponseHandler
 
 	bolt_client_send(client);
 	client->has_message = false;
+
+	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 
 	BoltRequestHandler(client);
 }
@@ -495,6 +495,9 @@ void BoltAcceptHandler
 	int mask          // the event mask
 ) {
 	ASSERT(fd != -1);
+	ASSERT(user_data != NULL);
+
+	RedisModuleCtx *global_ctx = (RedisModuleCtx*)user_data;
 
 	socket_t client = socket_accept(fd);
 	if(client == -1) return;
@@ -513,7 +516,7 @@ void BoltAcceptHandler
 	data[3] = version.major;
 	socket_write(client, data, 4);
 
-	bolt_client_t *bolt_client = bolt_client_new(client, BoltResponseHandler);
+	bolt_client_t *bolt_client = bolt_client_new(client, global_ctx, BoltResponseHandler);
 	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, bolt_client);
 }
 
@@ -529,7 +532,9 @@ int BoltApi_Register
 		return REDISMODULE_ERR;
 	}
 
-	if(RedisModule_EventLoopAdd(bolt, REDISMODULE_EVENTLOOP_READABLE, BoltAcceptHandler, NULL) == REDISMODULE_ERR) {
+	RedisModuleCtx *global_ctx = RedisModule_GetDetachedThreadSafeContext(ctx);
+
+	if(RedisModule_EventLoopAdd(bolt, REDISMODULE_EVENTLOOP_READABLE, BoltAcceptHandler, global_ctx) == REDISMODULE_ERR) {
 		RedisModule_Log(ctx, "warning", "Failed to register socket accept handler");
 		return REDISMODULE_ERR;
 	}

@@ -12,11 +12,13 @@
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,
+	RedisModuleCtx *ctx,
 	RedisModuleEventLoopFunc on_write
 ) {
 	bolt_client_t *client = rm_malloc(sizeof(bolt_client_t));
 	client->socket = socket;
 	client->state = BS_NEGOTIATION;
+	client->ctx = ctx;
 	client->on_write = on_write;
 	client->nwrite = 2;
 	client->nread = 0;

@@ -85,7 +85,7 @@ RedisModuleCtx *CommandCtx_GetRedisCtx
 		return command_ctx->ctx;
 	}
 
-	ASSERT(command_ctx->bc != NULL || command_ctx->bolt_client != NULL);
+	ASSERT(command_ctx->bc != NULL);
 
 	command_ctx->ctx = RedisModule_GetThreadSafeContext(command_ctx->bc);
 	return command_ctx->ctx;
@@ -169,10 +169,6 @@ void CommandCtx_UnblockClient
 			RedisModule_FreeThreadSafeContext(command_ctx->ctx);
 			command_ctx->ctx = NULL;
 		}
-	}
-	if(command_ctx->bolt_client) {
-		RedisModule_FreeThreadSafeContext(command_ctx->ctx);
-		command_ctx->ctx = NULL;
 	}
 }
 
