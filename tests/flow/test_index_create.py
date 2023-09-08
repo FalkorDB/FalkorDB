@@ -2,6 +2,7 @@ import asyncio
 from common import *
 from index_utils import *
 from time import sleep, time
+from collections import OrderedDict
 from execution_plan_util import locate_operation
 
 GRAPH_ID = "index_create"
@@ -19,15 +20,15 @@ class testIndexCreationFlow():
     # full-text index creation
     def test01_fulltext_index_creation(self):
         # create an index over L:v0
-        result = create_fulltext_index(graph, 'L', 'v0')
+        result = create_node_fulltext_index(graph, 'L', 'v0')
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L:v1 and L:v2
-        result = create_fulltext_index(graph, 'L', 'v1', 'v2')
+        result = create_node_fulltext_index(graph, 'L', 'v1', 'v2')
         self.env.assertEquals(result.indices_created, 2)
 
         # create an index over L:v3, L:v4, L:v5 and L:v6
-        result = create_fulltext_index(graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
+        result = create_node_fulltext_index(graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
         self.env.assertEquals(result.indices_created, 4)
 
     def test02_fulltext_index_creation_label_config(self):
@@ -328,7 +329,7 @@ class testIndexCreationFlow():
         # create an index
         #-----------------------------------------------------------------------
 
-        res = create_node_exact_match_index(g, 'L', 'v', sync=False)
+        res = create_node_range_index(g, 'L', 'v', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
@@ -443,7 +444,7 @@ class testIndexCreationFlow():
         # create a fulltext index
         #-----------------------------------------------------------------------
 
-        res = create_fulltext_index(g, 'L', 'h', sync=False)
+        res = create_node_fulltext_index(g, 'L', 'h', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
@@ -556,7 +557,7 @@ class testIndexCreationFlow():
         # create an index
         #-----------------------------------------------------------------------
 
-        res = create_node_exact_match_index(g, 'L', 'v', sync=False)
+        res = create_node_range_index(g, 'L', 'v', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
@@ -607,7 +608,7 @@ class testIndexCreationFlow():
         # create an index
         #-----------------------------------------------------------------------
 
-        res = create_fulltext_index(g, 'L', 'v', sync=False)
+        res = create_node_fulltext_index(g, 'L', 'v', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         #-----------------------------------------------------------------------
@@ -663,7 +664,7 @@ class testIndexCreationFlow():
         # determine how much time does it take to construct our index
         start = time()
 
-        res = create_node_exact_match_index(g, 'L', 'v', sync=True)
+        res = create_node_range_index(g, 'L', 'v', sync=True)
         self.env.assertEquals(res.indices_created, 1)
 
         # total index creation time
@@ -683,11 +684,11 @@ class testIndexCreationFlow():
         start = time()
 
         # introduce a new field
-        res = create_node_exact_match_index(g, 'L', 'a', sync=False)
+        res = create_node_range_index(g, 'L', 'a', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         # introduce a new field
-        res = create_node_exact_match_index(g, 'L', 'b', sync=False)
+        res = create_node_range_index(g, 'L', 'b', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         # remove field
@@ -696,7 +697,7 @@ class testIndexCreationFlow():
         self.env.assertEquals(res.indices_deleted, 1)
 
         # introduce a new field
-        res = create_node_exact_match_index(g, 'L', 'v', sync=False)
+        res = create_node_range_index(g, 'L', 'v', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         # wait for index to become operational
@@ -744,7 +745,7 @@ class testIndexCreationFlow():
         # determine how much time does it take to construct our index
         start = time()
 
-        res = create_fulltext_index(g, 'L', 'v', sync=True)
+        res = create_node_fulltext_index(g, 'L', 'v', sync=True)
         self.env.assertEquals(res.indices_created, 1)
 
         # total index creation time
@@ -764,11 +765,11 @@ class testIndexCreationFlow():
         start = time()
 
         # introduce a new field
-        res = create_fulltext_index(g, 'L', 'a', sync=False)
+        res = create_node_fulltext_index(g, 'L', 'a', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         # introduce a new field
-        res = create_fulltext_index(g, 'L', 'b', sync=False)
+        res = create_node_fulltext_index(g, 'L', 'b', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         # remove index
@@ -777,7 +778,7 @@ class testIndexCreationFlow():
         self.env.assertEquals(res.indices_deleted, 2)
 
         # introduce a new field
-        res = create_fulltext_index(g, 'L', 'v', sync=False)
+        res = create_node_fulltext_index(g, 'L', 'v', sync=False)
         self.env.assertEquals(res.indices_created, 1)
 
         # wait for index to become operational
@@ -789,4 +790,67 @@ class testIndexCreationFlow():
         # new index includes 2 fields (b,v) while the former index included just
         # one (v) we're expecting thier overall construction time to be similar
         self.env.assertTrue(elapsed_2 < elapsed * 2)
+
+    def test14_multi_type_index_listing(self):
+        # clear DB
+        con.flushall()
+
+        # create index of multiple types
+        # Label | Attributes | Types
+        # --------------------------------------------
+        # L     | a          | range
+        # L     | b          | vector
+        # L     | c          | fulltext
+        # L     | d          | range, vector
+        # L     | e          | range, fulltext
+        # L     | f          | fulltext, vector
+        # L     | g          | vector, range, fulltext
+
+        create_node_range_index(graph, 'L', 'a', 'd', 'e', 'g')
+        create_node_fulltext_index(graph, 'L', 'c', 'e', 'f', 'g')
+        create_node_vector_index(graph, 'L', 'b', 'd', 'f', 'g')
+
+        # list all indices
+        res = list_indicies(graph).result_set
+
+        label      = res[0][0]
+        properties = res[0][1]
+        types      = res[0][2]
+        language   = res[0][3]
+        stopwords  = res[0][4]
+        entitytype = res[0][5]
+
+        # sort
+        properties.sort()
+
+        # sort by key
+        types = OrderedDict(sorted(types.items(), key=lambda t: t[0]))
+
+        # sort values
+        for k, v in types.items():
+            types[k].sort()
+
+        #-----------------------------------------------------------------------
+        # validate
+        #-----------------------------------------------------------------------
+
+        self.env.assertEquals(label, 'L')
+
+        self.env.assertEquals(properties, ['a', 'b', 'c', 'd', 'e', 'f', 'g'])
+
+        expected_types = OrderedDict(
+                [
+                    ('a', ['RANGE']),
+                    ('b', ['VECTOR']),
+                    ('c', ['FULLTEXT']),
+                    ('d', ['RANGE', 'VECTOR']),
+                    ('e', ['FULLTEXT', 'RANGE']),
+                    ('f', ['FULLTEXT', 'VECTOR']),
+                    ('g', ['FULLTEXT', 'RANGE', 'VECTOR'])
+                ]
+            )
+
+        self.env.assertEquals(types, expected_types)
+        self.env.assertEquals(language, 'english')
+        self.env.assertEquals(entitytype, 'NODE')
 
