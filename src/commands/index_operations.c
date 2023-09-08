@@ -475,6 +475,7 @@ static void index_create
 	}
 
 cleanup:
+	if(fields    != NULL) rm_free(fields);
 	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
 	SIValue_Free(options);
 
