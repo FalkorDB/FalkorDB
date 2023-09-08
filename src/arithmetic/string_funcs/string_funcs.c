@@ -235,31 +235,52 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 			return SI_NullVal();
 		}
 
-		// Check for overflow.
-		if( __builtin_uadd_overflow(str_len, strlen(str.stringval), &str_len)){
-			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
-			return SI_NullVal();
-		}
+		str_len += strlen(str.stringval);
 	}
 
 	char *base = rm_malloc(str_len + 1);
 	char *res = base;
+	uint copied_len = 0;
+
 	for(uint i = 0; i < count - 1; i++) {
-		// Copy the string.
+		
 		SIValue str = SIArray_Get(list, i);
-		int str_len = strlen(str.stringval);
-		memcpy(res, str.stringval, str_len);
-		res += str_len;
+		int val_len = strlen(str.stringval);
+
+		// Protect from buffer overflow.
+		// Might happen if str_len overflowed
+		copied_len += val_len + delimeter_len;
+		if(copied_len > str_len) {
+			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
+			return SI_NullVal();
+		}
+
+		// Copy the value.
+		memcpy(res, str.stringval, val_len);
+		res += val_len;
 		
 		// Copy the delimiter.
 		memcpy(res, delimiter, delimeter_len);
 		res += delimeter_len;
 	}
 
-	// Copy the last string.
+	// The last value	
 	SIValue str = SIArray_Get(list, count - 1);
+	int val_len = strlen(str.stringval);
+
+	// Protect from buffer overflow.
+	// Might happen if str_len overflowed
+	copied_len += val_len;
+	if(copied_len > str_len) {
+		ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
+		return SI_NullVal();
+	}
+
+	// Copy the last value.
 	memcpy(res, str.stringval, strlen(str.stringval));
-	res[str_len] = '\0';
+	
+	// The last character should be '\0'
+	base[str_len] = '\0';
 
 	return SI_TransferStringVal(base);
 }
