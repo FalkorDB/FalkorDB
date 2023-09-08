@@ -1,6 +1,7 @@
 import time
 import threading
 from common import *
+from index_utils import *
 
 GRAPH_ID = "effects"
 MONITOR_ATTACHED = False
@@ -116,8 +117,8 @@ class testEffects():
         self.replica_graph = Graph(self.replica, GRAPH_ID)
 
         # create indices
-        self.master_graph.query("CREATE INDEX FOR (n:L) ON (n.a, n.b, n.c)")
-        self.master_graph.query("CREATE INDEX FOR ()-[e:R]->() ON (e.a, e.b, e.c)")
+        create_node_range_index(self.master_graph, "L", "a", "b", "c")
+        create_edge_range_index(self.master_graph, "R", "a", "b", "c")
 
         # wait for replica and master to sync
         self.master.wait(1, 0)
