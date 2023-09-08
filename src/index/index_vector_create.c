@@ -92,7 +92,7 @@ Index Index_VectorCreate
 	//--------------------------------------------------------------------------
 
 	if(!_parseOptions(options, &dimension)) {
-		ErrorCtx_SetError(EMSG_IDX_INVALID_OPTIONS);
+		ErrorCtx_SetError(EMSG_IDX_INVALID_CONFIG);
 		return NULL;
 	}
 

@@ -71,7 +71,8 @@ static void _index_delete_parse_new_format
 					0)));
 
 	// determine if this is a node or relation index
-	*is_node = !is_relation;
+	*is_relation = cypher_ast_drop_pattern_props_index_pattern_is_relation(op);
+	*is_node = !*is_relation;
 
 	// determine index type
 	switch(cypher_ast_drop_pattern_props_index_get_index_type(op)) {

@@ -163,7 +163,7 @@ create-fulltext-index-for =
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
-        )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
                                        { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
@@ -173,7 +173,7 @@ create-fulltext-index-for =
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
-        )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
                                        { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, true);
 									   }
     ) -
@@ -185,7 +185,7 @@ create-vector-index-for =
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
-        )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
                                        { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
@@ -195,7 +195,7 @@ create-vector-index-for =
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
-        )* RIGHT-PAREN (- OPTIONS - o:map-literal)? >
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
                                        { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, true);
 									   }
     ) -
