@@ -89,7 +89,7 @@ def create_unique_node_constraint(g, lbl, *props, sync=False):
     for p in props:
         # OK to fail if index already exists
         try:
-            create_node_exact_match_index(g, lbl, p, sync=False)
+            create_node_range_index(g, lbl, p, sync=False)
         except:
             pass
 
@@ -100,7 +100,7 @@ def create_unique_edge_constraint(g, rel, *props, sync=False):
     for p in props:
         # OK to fail if index already exists
         try:
-            create_edge_exact_match_index(g, rel, p, sync=False)
+            create_edge_range_index(g, rel, p, sync=False)
         except:
             pass
     return create_unique_constraint(g, "RELATIONSHIP", rel, *props, sync=sync)

@@ -164,7 +164,7 @@ class testPathFilter(FlowTestsBase):
         redis_graph.flush()
 
         # Create index.
-        result_set = create_node_exact_match_index(redis_graph, 'L', 'x', sync=True)
+        result_set = create_node_range_index(redis_graph, 'L', 'x', sync=True)
         self.env.assertEquals(result_set.indices_created, 1)
 
         # Issue a query in which the bound variable stream of the SemiApply op is an Index Scan.

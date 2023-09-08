@@ -30,11 +30,11 @@ class testVecsim():
     def create_indicies(self):
         # index nodes
         # create vector index over Person:embeddings
-        create_node_vector_index(self.graph, "Person", "embeddings", 2, "euclidean")
+        create_node_vector_index(self.graph, "Person", "embeddings", dim=2, similarity_function="euclidean")
 
         # index edges
         # create vector index over Points::embeddings
-        create_edge_vector_index(self.graph, "Points", "embeddings", 2, "euclidean")
+        create_edge_vector_index(self.graph, "Points", "embeddings", dim=2, similarity_function="euclidean")
 
         # wait for indices to be become operational
         wait_for_indices_to_sync(self.graph)

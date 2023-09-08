@@ -65,7 +65,7 @@ class testImdbFlow(FlowTestsBase):
 
         # Execute this command directly, as its response does not contain the result set that
         # 'redis_graph.query()' expects
-        create_node_exact_match_index(redis_graph, 'actor', 'age', sync=True)
+        create_node_range_index(redis_graph, 'actor', 'age', sync=True)
 
         q = imdb.actors_over_85_index_scan.query
         execution_plan = redis_graph.execution_plan(q)
@@ -95,7 +95,7 @@ class testImdbFlow(FlowTestsBase):
 
         # Execute this command directly, as its response does not contain the result set that
         # 'redis_graph.query()' expects
-        create_node_exact_match_index(redis_graph, 'movie', 'year', sync=True)
+        create_node_range_index(redis_graph, 'movie', 'year', sync=True)
 
         q = imdb.eighties_movies_index_scan.query
         execution_plan = redis_graph.execution_plan(q)

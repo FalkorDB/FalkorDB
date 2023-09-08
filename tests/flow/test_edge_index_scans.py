@@ -85,7 +85,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
     # Validate that the appropriate bounds are respected when a Cartesian product uses the same index in two streams
     def test03_cartesian_product_reused_index(self):
-        create_edge_exact_match_index(redis_graph, 'friend', 'updated_at', sync=True)
+        create_edge_range_index(redis_graph, 'friend', 'updated_at', sync=True)
         query = """MATCH ()-[a:friend]->(), ()-[b:friend]->()
                    WHERE a.created_at >= 80 AND b.updated_at >= 120
                    RETURN a.created_at, b.updated_at
@@ -472,8 +472,8 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
     def test13_index_scan_numeric_accuracy(self):
         redis_graph = Graph(self.env.getConnection(), 'large_index_values')
 
-        create_edge_exact_match_index(redis_graph, 'R1', 'id', sync=True)
-        create_edge_exact_match_index(redis_graph, 'R2', 'id1', 'id2', sync=True)
+        create_edge_range_index(redis_graph, 'R1', 'id', sync=True)
+        create_edge_range_index(redis_graph, 'R2', 'id1', 'id2', sync=True)
         redis_graph.query("UNWIND range(1, 5) AS v CREATE ()-[:R1 {id: 990000000262240068 + v}]->()")
         redis_graph.query("UNWIND range(1, 5) AS v CREATE ()-[:R2 {id1: 990000000262240068 + v, id2: 990000000262240068 - v}]->()")
 
@@ -521,7 +521,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         result = redis_graph.query("MATCH (a:A), (b:B) UNWIND range(1, 500) AS x CREATE (a)-[:R{v:x}]->(b)")
         self.env.assertEquals(result.relationships_created, 500)
 
-        result = create_edge_exact_match_index(redis_graph, 'R', 'v', sync=True)
+        result = create_edge_range_index(redis_graph, 'R', 'v', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         result = redis_graph.query("MATCH (a:A)-[r:R]->(b:B) WHERE r.v > 0 RETURN count(r)")
@@ -541,7 +541,7 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(res.result_set[0][1].id, 0)
 
         # create index over R.v
-        create_edge_exact_match_index(g, "R", "v", sync=True)
+        create_edge_range_index(g, "R", "v", sync=True)
 
         # make sure edge can be located via index scan
         q = "MATCH ()-[e:R{v:1}]->() RETURN e"

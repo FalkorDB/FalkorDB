@@ -527,19 +527,19 @@ class testConstraintNodes():
             self.env.assertContains("missing supporting exact-match index", str(e))
 
         # create supporting index
-        create_node_exact_match_index(self.g, "Author", "nickname", "birthdate")
+        create_node_range_index(self.g, "Author", "nickname", "birthdate")
 
         # create unique index
         create_constraint(self.g, "unique", "node", "Author", "nickname", "birthdate")
 
         # try to drop supporting index
         try:
-            drop_exact_match_index(self.g, "Author", "nickname")
+            drop_node_range_index(self.g, "Author", "nickname")
         except ResponseError as e:
             self.env.assertContains("Index supports constraint", str(e))
 
         try:
-            drop_exact_match_index(self.g, "Author", "birthdate")
+            drop_node_range_index(self.g, "Author", "birthdate")
         except ResponseError as e:
             self.env.assertContains("Index supports constraint", str(e))
 
@@ -547,8 +547,8 @@ class testConstraintNodes():
         drop_unique_node_constraint(self.g, "Author", "nickname", "birthdate")
 
         # try to drop supporting index
-        drop_exact_match_index(self.g, "Author", "nickname")
-        drop_exact_match_index(self.g, "Author", "birthdate")
+        drop_node_range_index(self.g, "Author", "nickname")
+        drop_node_range_index(self.g, "Author", "birthdate")
 
 class testConstraintEdges():
     def __init__(self):

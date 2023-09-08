@@ -65,7 +65,7 @@ class testQueryTimeout():
         # set timeout to unlimited
         redis_con.execute_command("GRAPH.CONFIG SET timeout 0")
 
-        create_node_exact_match_index(redis_graph, 'Person', 'age', 'height', 'weight', sync=True)
+        create_node_range_index(redis_graph, 'Person', 'age', 'height', 'weight', sync=True)
 
         queries = [
                 # full scan

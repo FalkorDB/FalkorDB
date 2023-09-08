@@ -61,7 +61,7 @@ class testIndexScanFlow():
 
     # Validate that the appropriate bounds are respected when a Cartesian product uses the same index in two streams
     def test03_cartesian_product_reused_index(self):
-        create_node_exact_match_index(redis_graph, 'person', 'name', sync=True)
+        create_node_range_index(redis_graph, 'person', 'name', sync=True)
         query = "MATCH (a:person {name: 'Omri Traub'}), (b:person) WHERE b.age <= 30 RETURN a.name, b.name ORDER BY a.name, b.name"
         plan = redis_graph.execution_plan(query)
         # The two streams should both use index scans
@@ -145,7 +145,7 @@ class testIndexScanFlow():
     # Validate index utilization when filtering on string fields with the `IN` keyword.
     def test05_test_in_operator_string_props(self):
         # Build an index on the name property.
-        create_node_exact_match_index(redis_graph, 'person', 'name', sync=True)
+        create_node_range_index(redis_graph, 'person', 'name', sync=True)
         # Validate the transformation of IN to multiple OR expressions over string properties.
         query = "MATCH (p:person) WHERE p.name IN ['Gal Derriere', 'Lucy Yanfital'] RETURN p.name ORDER BY p.name"
         plan = redis_graph.execution_plan(query)
@@ -207,7 +207,7 @@ class testIndexScanFlow():
         redis_graph.query(query)
 
         # Index property.
-        create_node_exact_match_index(redis_graph, 'Node', 'value', sync=True)
+        create_node_range_index(redis_graph, 'Node', 'value', sync=True)
 
         # Make sure node is returned by index scan.
         query = """MATCH (a:Node{value:"A ValuePartition is a pattern that describes a restricted set of classes from which a property can be associated. The parent class is used in restrictions, and the covering axiom means that only members of the subclasses may be used as values."}) RETURN a"""
@@ -226,7 +226,7 @@ class testIndexScanFlow():
             redis_graph.add_node(node)
             redis_graph.flush()
         
-        query_result = create_node_exact_match_index(redis_graph, 'person', 'age', sync=True)
+        query_result = create_node_range_index(redis_graph, 'person', 'age', sync=True)
         self.env.assertEqual(1, query_result.indices_created)
 
         query = """MATCH (n:person) WHERE id(n)>=7 AND n.age<9 RETURN n ORDER BY n.age"""
@@ -288,7 +288,7 @@ class testIndexScanFlow():
 
     def test13_point_index_scan(self):
         # create index
-        create_node_exact_match_index(redis_graph, 'restaurant', 'location', sync=True)
+        create_node_range_index(redis_graph, 'restaurant', 'location', sync=True)
 
         # create restaurant
         q = "CREATE (:restaurant {location: point({latitude:30.27822306, longitude:-97.75134723})})"
@@ -386,7 +386,7 @@ class testIndexScanFlow():
         g = Graph(self.env.getConnection(), 'fulltext_scoring')
 
         # create full-text index over label 'L', attribute 'v'
-        create_fulltext_index(g, 'L', 'v', sync=True)
+        create_node_fulltext_index(g, 'L', 'v', sync=True)
 
         # introduce 2 nodes
         g.query("create (:L {v:'hello world hello'})")
@@ -561,7 +561,7 @@ class testIndexScanFlow():
     def test18_index_scan_inside_apply(self):
         redis_graph = Graph(self.env.getConnection(), 'g')
 
-        create_node_exact_match_index(redis_graph, 'L1', 'id', sync=True)
+        create_node_range_index(redis_graph, 'L1', 'id', sync=True)
         redis_graph.query("UNWIND range(1, 5) AS v CREATE (:L1 {id: v})")
         result = redis_graph.query("UNWIND range(1, 5) AS id OPTIONAL MATCH (u:L1{id: 5}) RETURN u.id")
 
@@ -571,8 +571,8 @@ class testIndexScanFlow():
     def test19_index_scan_numeric_accuracy(self):
         redis_graph = Graph(self.env.getConnection(), 'large_index_values')
 
-        create_node_exact_match_index(redis_graph, 'L1', 'id', sync=True)
-        create_node_exact_match_index(redis_graph, 'L2', 'id1', 'id2', sync=True)
+        create_node_range_index(redis_graph, 'L1', 'id', sync=True)
+        create_node_range_index(redis_graph, 'L2', 'id1', 'id2', sync=True)
         redis_graph.query("UNWIND range(1, 5) AS v CREATE (:L1 {id: 990000000262240068 + v})")
         redis_graph.query("UNWIND range(1, 5) AS v CREATE (:L2 {id1: 990000000262240068 + v, id2: 990000000262240068 - v})")
 
@@ -619,9 +619,9 @@ class testIndexScanFlow():
         #-----------------------------------------------------------------------
 
         # create exact match index over User id
-        create_node_exact_match_index(redis_graph, 'User', 'id', sync=True)
+        create_node_range_index(redis_graph, 'User', 'id', sync=True)
         # create a fulltext index over User id
-        create_fulltext_index(redis_graph, 'User', 'id', sync=True)
+        create_node_fulltext_index(redis_graph, 'User', 'id', sync=True)
 
         #-----------------------------------------------------------------------
         # create node
@@ -650,7 +650,7 @@ class testIndexScanFlow():
         redis_graph = Graph(self.env.getConnection(), 'invalid_distance')
 
         # create exact match index over User id
-        create_node_exact_match_index(redis_graph, 'User', 'loc', sync=True)
+        create_node_range_index(redis_graph, 'User', 'loc', sync=True)
         
         # create a node
         redis_graph.query("CREATE (:User {loc:point({latitude:40.4, longitude:30.3})})")
@@ -677,7 +677,7 @@ class testIndexScanFlow():
         self.env.assertNotIn('Node By Index Scan', plan)
 
         # create an index
-        resultset = create_node_exact_match_index(g, 'N', 'v', sync=True)
+        resultset = create_node_range_index(g, 'N', 'v', sync=True)
         self.env.assertEqual(1, resultset.indices_created)
 
         # re-issue the same query
@@ -701,7 +701,7 @@ class testIndexScanFlow():
         self.env.assertNotIn('Node By Index Scan', plan)
 
         # create an index
-        resultset = create_node_exact_match_index(g, 'N', 'v', sync=True)
+        resultset = create_node_range_index(g, 'N', 'v', sync=True)
         self.env.assertEqual(1, resultset.indices_created)
 
         # re-issue the same query

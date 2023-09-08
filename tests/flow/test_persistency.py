@@ -62,9 +62,9 @@ class testGraphPersistency():
         redis_graph.query(query)
 
         # create indices
-        create_node_exact_match_index(redis_graph, "person", "name", "height")
-        create_node_exact_match_index(redis_graph, "country", "name", "population")
-        create_edge_exact_match_index(redis_graph, "visit", "purpose")
+        create_node_range_index(redis_graph, "person", "name", "height")
+        create_node_range_index(redis_graph, "country", "name", "population")
+        create_edge_range_index(redis_graph, "visit", "purpose")
         redis_graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
         wait_for_indices_to_sync(redis_graph)
 

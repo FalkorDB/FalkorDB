@@ -38,7 +38,7 @@ class testProcedures(FlowTestsBase):
         redis_graph.commit()
 
         # Create full-text index.
-        create_fulltext_index(redis_graph, 'fruit', 'name', sync=True)
+        create_node_fulltext_index(redis_graph, 'fruit', 'name', sync=True)
 
     # Compares two nodes based on their properties.
     def _compareNodes(self, a, b):
@@ -332,7 +332,7 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
-        result = create_node_exact_match_index(redis_graph, 'fruit', 'other_property')
+        result = create_node_range_index(redis_graph, 'fruit', 'other_property')
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
@@ -341,7 +341,7 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to the full-text indexed property on the same label..
-        result = create_node_exact_match_index(redis_graph, 'fruit', 'name', sync=True)
+        result = create_node_range_index(redis_graph, 'fruit', 'name', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.

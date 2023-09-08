@@ -231,7 +231,7 @@ class testUndoLog():
         self.env.assertEquals(property_keys, new_property_keys)
 
     def test07_undo_create_indexed_node(self):
-        create_node_exact_match_index(self.graph, "N", "v", sync=True)
+        create_node_range_index(self.graph, "N", "v", sync=True)
         property_keys = self.graph.query("CALL db.propertyKeys").result_set
         try:
             self.graph.query("CREATE (n:N {v:1}) WITH n RETURN 1 * n")
@@ -262,7 +262,7 @@ class testUndoLog():
         self.env.assertEquals(property_keys, new_property_keys)
 
     def test08_undo_create_indexed_edge(self):
-        create_edge_exact_match_index(self.graph, "R", "v", sync=True)
+        create_edge_range_index(self.graph, "R", "v", sync=True)
         self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
         property_keys = self.graph.query("CALL db.propertyKeys").result_set
         try:
@@ -300,7 +300,7 @@ class testUndoLog():
         self.env.assertEquals(property_keys, new_property_keys)
 
     def test09_undo_delete_indexed_node(self):
-        create_node_exact_match_index(self.graph, "N", "v", sync=True)
+        create_node_range_index(self.graph, "N", "v", sync=True)
         self.graph.query("CREATE (:N {v: 0})")
         try:
             self.graph.query("""MATCH (n:N)
@@ -320,7 +320,7 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 1)
 
     def test10_undo_delete_indexed_edge(self):
-        create_edge_exact_match_index(self.graph, "R", "v", sync=True)
+        create_edge_range_index(self.graph, "R", "v", sync=True)
         self.graph.query("CREATE (:N)-[:R {v: 0}]->(:N)")
         try:
             self.graph.query("""MATCH ()-[r:R]->()
@@ -340,7 +340,7 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 1)
 
     def test11_undo_update_indexed_node(self):
-        create_node_exact_match_index(self.graph, "N", "v", sync=True)
+        create_node_range_index(self.graph, "N", "v", sync=True)
         self.graph.query("CREATE (:N {v: 1})")
         try:
             self.graph.query("""MATCH (n:N {v: 1})
@@ -360,7 +360,7 @@ class testUndoLog():
         self.env.assertEquals(result.result_set[0][0], 1)
     
     def test12_undo_update_indexed_edge(self):
-        create_edge_exact_match_index(self.graph, "R", "v", sync=True)
+        create_edge_range_index(self.graph, "R", "v", sync=True)
         self.graph.query("CREATE (:N)-[:R {v: 1}]->(:N)")
         try:
             self.graph.query("""MATCH ()-[r]->()
@@ -436,7 +436,7 @@ class testUndoLog():
 
 
     def test16_undo_label_set(self):
-        create_node_exact_match_index(self.graph, "L1", "v", sync=True)
+        create_node_range_index(self.graph, "L1", "v", sync=True)
         self.graph.query("CREATE (n:L1 {v:1})")
         try:
             self.graph.query("MATCH (n:L1) SET n:L2 WITH n RETURN 1 * n")
@@ -460,7 +460,7 @@ class testUndoLog():
         self.env.assertEquals(result.result_set, [["L1"]])
 
     def test17_undo_remove_label(self):
-        create_node_exact_match_index(self.graph, "L2", "v", sync=True)
+        create_node_range_index(self.graph, "L2", "v", sync=True)
         self.graph.query("CREATE (n:L2 {v:1})")
         try:
             self.graph.query("MATCH (n:L2) REMOVE n:L2 WITH n RETURN 1 * n")

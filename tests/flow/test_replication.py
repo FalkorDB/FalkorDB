@@ -58,13 +58,13 @@ class testReplication(FlowTestsBase):
         #-----------------------------------------------------------------------
 
         # create index
-        create_node_exact_match_index(src, 'L', 'id')
+        create_node_range_index(src, 'L', 'id')
 
         # create full-text index
-        create_fulltext_index(src, 'L', 'name')
+        create_node_fulltext_index(src, 'L', 'name')
 
         # add fields to existing index
-        create_fulltext_index(src, 'L', 'title', 'desc', sync=True)
+        create_node_fulltext_index(src, 'L', 'title', 'desc', sync=True)
 
         # create full-text index with index config
         q = "CALL db.idx.fulltext.createNodeIndex({label: 'L1', language: 'german', stopwords: ['a', 'b'] }, 'title', 'desc')"
