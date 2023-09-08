@@ -81,6 +81,10 @@ jobs:
     container: falkordb/falkordb:${{ github.ref_name }}
     needs: build
     steps:
+      - name: Install sudo
+        run: apt-get install sudo -y
+      - name: Setup upterm session
+        uses: lhotari/action-upterm@v1
       - name: Flow tests
         working-directory: /FalkorDB
         run: make CLEAR_LOGS=0 PARALLEL=4 flow-tests
