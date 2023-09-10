@@ -22,8 +22,8 @@ class testIndexScanFlow():
         self.env.cmd('flushall')
 
     def build_indices(self):
-        redis_graph.query("CREATE INDEX ON :person(age)")
-        redis_graph.query("CREATE INDEX ON :country(name)")
+        create_node_range_index(redis_graph, 'person', 'age')
+        create_node_range_index(redis_graph, 'country', 'name')
         wait_for_indices_to_sync(redis_graph)
 
     # Validate that Cartesian products using index and label scans succeed
@@ -710,3 +710,34 @@ class testIndexScanFlow():
 
         # expecting an no index scan operation
         self.env.assertNotIn('Node By Index Scan', plan)
+
+    def test_24_multitype_index(self):
+        # create index with multiple types
+        # 1. RANGE
+        # 2. FULLTEXT
+        redis_con = self.env.getConnection()
+        redis_graph = Graph(redis_con, social_utils.graph_name)
+        create_node_range_index(redis_graph, 'person', 'name')
+        create_node_fulltext_index(redis_graph, 'person', 'name', sync=True)
+
+        # make sure we can search index using both range and fulltext
+
+        # search using range
+        q = "MATCH (p:person) WHERE p.name = 'Ailon Velger' RETURN p.name"
+        plan = redis_graph.execution_plan(q)
+        self.env.assertIn('Node By Index Scan', plan)
+
+        result = redis_graph.query(q).result_set
+        self.env.assertEqual(len(result), 1)
+
+        # search usign fulltext
+        q = """CALL db.idx.fulltext.queryNodes('person', 'A*') YIELD node
+               WITH node.name AS name
+               ORDER BY name
+               RETURN collect(name)"""
+        names = redis_graph.query(q).result_set[0][0]
+        self.env.assertIn('Alon Fital', names)
+        self.env.assertIn('Ailon Velger', names)
+        self.env.assertIn('Boaz Arad', names)
+        self.env.assertIn('Valerie Abigail Arad', names)
+

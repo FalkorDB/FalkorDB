@@ -108,6 +108,12 @@ class testEffects():
         replica_resultset = self.replica_graph.query(q, read_only=True).result_set
         self.env.assertEquals(master_resultset, replica_resultset)
 
+        # validate indices
+        q = "CALL db.indexes() YIELD label, properties, types, language, stopwords, entitytype"
+        master_resultset = self.master_graph.query(q).result_set
+        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
+        self.env.assertEquals(master_resultset, replica_resultset)
+
     def __init__(self):
         self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
         self.monitor = []
