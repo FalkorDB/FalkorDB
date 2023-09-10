@@ -50,6 +50,29 @@ jobs:
         git config --global --add safe.directory '*'
         git submodule update --init --recursive
 
+    # Check for cached dependencies 
+
+    - name: Cache GraphBLAS
+      id: cache_graphblas
+      uses: actions/cache@v3
+      with:
+        path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
+        key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}    
+
+    - name: Cache parser
+      id: cache_parser
+      uses: actions/cache@v3
+      with:
+        path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
+        key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+    - name: Cache search
+      id: cache_search
+      uses: actions/cache@v3
+      with:
+        path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
+        key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v2
