@@ -478,16 +478,18 @@ void BoltResponseHandler
 	bolt_client_t *client = (bolt_client_t*)user_data;
 
 	if(client->shutdown) {
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 		rm_free(client);
 		socket_close(fd);
 		return;
 	}
 
+	if(!client->finished_write) {
+		return;
+	}
+
 	bolt_client_send(client);
 	client->has_message = false;
-
-	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
+	client->finished_write = false;
 
 	BoltRequestHandler(client);
 }
@@ -521,8 +523,9 @@ void BoltAcceptHandler
 	data[3] = version.major;
 	socket_write(client, data, 4);
 
-	bolt_client_t *bolt_client = bolt_client_new(client, global_ctx, BoltResponseHandler);
+	bolt_client_t *bolt_client = bolt_client_new(client, global_ctx);
 	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, bolt_client);
+	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_WRITABLE, BoltResponseHandler, bolt_client);
 }
 
 // listen to bolt port 7687

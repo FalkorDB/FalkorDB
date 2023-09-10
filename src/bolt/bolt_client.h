@@ -24,13 +24,13 @@ typedef struct bolt_client_t {
 	socket_t socket;
 	bolt_client_state state;
 	RedisModuleCtx *ctx;
-	RedisModuleEventLoopFunc on_write;
 	uint32_t nwrite;
 	uint32_t nread;
 	uint32_t last_read_index;
     bool has_message;
 	bool shutdown;
 	bool reset;
+	bool finished_write;
 	char messasge_buffer[UINT16_MAX];
 	volatile bool pull;
 	pthread_mutex_t pull_condv_mutex;
@@ -47,8 +47,7 @@ typedef struct bolt_version_t {
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,
-	RedisModuleCtx *ctx,
-	RedisModuleEventLoopFunc on_write
+	RedisModuleCtx *ctx
 );
 
 void bolt_change_client_state

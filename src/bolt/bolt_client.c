@@ -13,14 +13,12 @@
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,
-	RedisModuleCtx *ctx,
-	RedisModuleEventLoopFunc on_write
+	RedisModuleCtx *ctx
 ) {
 	bolt_client_t *client = rm_malloc(sizeof(bolt_client_t));
 	client->socket = socket;
 	client->state = BS_NEGOTIATION;
 	client->ctx = ctx;
-	client->on_write = on_write;
 	client->nwrite = 2;
 	client->nread = 0;
 	client->pull = false;
@@ -28,6 +26,7 @@ bolt_client_t *bolt_client_new
 	client->shutdown = false;
 	client->reset = false;
 	client->last_read_index = 0;
+	client->finished_write = false;
 	pthread_cond_init(&client->pull_condv, NULL);
 	pthread_mutex_init(&client->pull_condv_mutex, NULL);
 	return client;
@@ -501,7 +500,7 @@ void bolt_client_finish_write
 (
 	bolt_client_t *client
 ) {
-	RedisModule_EventLoopAdd(client->socket, REDISMODULE_EVENTLOOP_WRITABLE, client->on_write, client);
+	client->finished_write = true;
 }
 
 void bolt_client_send
