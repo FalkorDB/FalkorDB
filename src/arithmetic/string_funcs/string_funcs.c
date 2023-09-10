@@ -238,9 +238,12 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 		str_len += strlen(str.stringval);
 	}
 
+	uint cur_len = 0;
 	char *base = rm_malloc(str_len + 1);
 	char *res = base;
-	uint copied_len = 0;
+	
+	// The last character should be '\0'
+	base[str_len] = '\0';
 
 	for(uint i = 0; i < count - 1; i++) {
 		
@@ -249,8 +252,8 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 
 		// Protect from buffer overflow.
 		// Might happen if str_len overflowed
-		copied_len += val_len + delimeter_len;
-		if(copied_len > str_len) {
+		cur_len += val_len + delimeter_len;
+		if(cur_len > str_len) {
 			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
 			return SI_NullVal();
 		}
@@ -270,17 +273,14 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 
 	// Protect from buffer overflow.
 	// Might happen if str_len overflowed
-	copied_len += val_len;
-	if(copied_len > str_len) {
+	cur_len += val_len;
+	if(cur_len > str_len) {
 		ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
 		return SI_NullVal();
 	}
 
 	// Copy the last value.
 	memcpy(res, str.stringval, strlen(str.stringval));
-	
-	// The last character should be '\0'
-	base[str_len] = '\0';
 
 	return SI_TransferStringVal(base);
 }
