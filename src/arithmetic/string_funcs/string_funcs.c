@@ -241,9 +241,6 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 	uint cur_len = 0;
 	char *base = rm_malloc(str_len + 1);
 	char *res = base;
-	
-	// The last character should be '\0'
-	base[str_len] = '\0';
 
 	for(uint i = 0; i < count - 1; i++) {
 		
@@ -281,6 +278,9 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 
 	// Copy the last value.
 	memcpy(res, str.stringval, strlen(str.stringval));
+	
+	// The last character should be '\0'
+	base[str_len] = '\0';
 
 	return SI_TransferStringVal(base);
 }
