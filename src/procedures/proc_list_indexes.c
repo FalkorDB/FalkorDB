@@ -243,6 +243,8 @@ static bool _EmitIndex
 
 			Map_Add(ctx->yield_types,
 					SI_ConstStringVal(IndexField_GetName(field)), prop_types);
+
+			SIValue_Free(prop_types);
 		}
 	}
 
