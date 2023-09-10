@@ -207,6 +207,9 @@ RedisModuleString *get_query
 	return RedisModule_CreateString(ctx, query, query_len);
 }
 
+RedisModuleString *COMMAND;
+RedisModuleString *BOLT;
+
 // handle the RUN message
 void BoltRunCommand
 (
@@ -233,18 +236,16 @@ void BoltRunCommand
 	RedisModuleCtx *ctx = client->ctx;
 	RedisModuleString *args[5];
 
-	args[0] = RedisModule_CreateString(ctx, "graph.QUERY", 11);
+	args[0] = COMMAND;
 	args[1] = get_graph_name(ctx, client);
 	args[2] = get_query(ctx, client);
-	args[3] = RedisModule_CreateString(ctx, "--bolt", 6);
-	args[4] = RedisModule_CreateStringFromLongLong(ctx, (long long)client);
+	args[3] = BOLT;
+	args[4] = RedisModule_CreateString(ctx, (const char *)&client, sizeof(bolt_client_t*));
 
 	CommandDispatch(ctx, args, 5);
 
-	RedisModule_FreeString(ctx, args[0]);
 	RedisModule_FreeString(ctx, args[1]);
 	RedisModule_FreeString(ctx, args[2]);
-	RedisModule_FreeString(ctx, args[3]);
 	RedisModule_FreeString(ctx, args[4]);
 }
 
@@ -543,5 +544,9 @@ int BoltApi_Register
 		return REDISMODULE_ERR;
 	}
 	RedisModule_Log(NULL, "notice", "bolt server initialized");
+
+	COMMAND = RedisModule_CreateString(global_ctx, "graph.QUERY", 11);
+	BOLT = RedisModule_CreateString(global_ctx, "--bolt", 6);
+
     return REDISMODULE_OK;
 }

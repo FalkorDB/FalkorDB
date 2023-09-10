@@ -65,9 +65,7 @@ static int _read_flags
 			// compact result-set
 			*compact = true;
 		} else if(!strcasecmp(arg, "--bolt")) {
-			long long v;
-			RedisModule_StringToLongLong(argv[++i], &v);
-			*bolt_client = (bolt_client_t *)v;
+			*bolt_client = *(bolt_client_t **)RedisModule_StringPtrLen(argv[++i], NULL);
 		} else if(!strcasecmp(arg, "timeout")) {
 			// query timeout
 			int err = REDISMODULE_ERR;
