@@ -102,7 +102,7 @@ static void _Index_ConstructStructure
 		IndexField *field = idx->fields + i;
 
 		//----------------------------------------------------------------------
-		// full text field
+		// fulltext field
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_FULLTEXT) {

@@ -258,12 +258,13 @@ void UpdateNodeProperty
 	Attribute_ID attr_id,         // attribute ID
 	SIValue v                     // new attribute value
 ) {
-	Node n;
-	int res = Graph_GetNode(gc->g, id, &n);
+	ASSERT(gc      != NULL);
+	ASSERT(id      != INVALID_ENTITY_ID);
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
-	// make sure entity was found
-	UNUSED(res);
-	ASSERT(res == true);
+	Node n;  // node to update
+	int res = Graph_GetNode(gc->g, id, &n);
+	ASSERT(res == true);  // make sure entity was found
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
@@ -282,7 +283,15 @@ void UpdateNodeProperty
 		int label_id = labels[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
-		Schema_AddNodeToIndex(s, &n);
+
+		if(attr_id == ATTRIBUTE_ID_ALL) {
+			// remove node from all indices
+			Schema_RemoveNodeFromIndex(s, &n);
+		} else {
+			// index node if updated attribute is indexed
+			Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
+			if(idx) Schema_AddNodeToIndex(s, &n);
+		}
 	}
 }
 
@@ -296,31 +305,54 @@ void UpdateEdgeProperty
 	Attribute_ID attr_id,         // attribute ID
 	SIValue v                     // new attribute value
 ) {
-	Edge e; // edge to delete
+	ASSERT(gc      != NULL);
+	ASSERT(id      != INVALID_ENTITY_ID);
+	ASSERT(r_id    != GRAPH_NO_RELATION);
+	ASSERT(src_id  != INVALID_ENTITY_ID);
+	ASSERT(dest_id != INVALID_ENTITY_ID);
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+
+	Edge e; // edge to update
 
 	// get src node, dest node and edge from the graph
-	int res;
-	UNUSED(res);
-
-	res = Graph_GetEdge(gc->g, id, &e);
+	int res = Graph_GetEdge(gc->g, id, &e);
 	ASSERT(res != 0);
 
 	// set edge relation, src and destination node
-	Edge_SetSrcNodeID(&e, src_id);
-	Edge_SetDestNodeID(&e, dest_id);
 	Edge_SetRelationID(&e, r_id);
+	Edge_SetSrcNodeID(&e,  src_id);
+	Edge_SetDestNodeID(&e, dest_id);
 
+	// get edge schema
+	Schema *s = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
+	ASSERT(s != NULL);
+
+	// clear all attributes
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(e.attributes);
-	} else if(GraphEntity_GetProperty((GraphEntity *)&e, attr_id) == ATTRIBUTE_NOTFOUND) {
-		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
-	} else {
-		AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
+
+		// remove edge from index
+		Schema_RemoveEdgeFromIndex(s, &e);
+		return;
 	}
 
-	Schema *schema = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
-	ASSERT(schema != NULL);
-	Schema_AddEdgeToIndex(schema, &e);
+	bool update_idx = true;
+	GraphEntity *ge = (GraphEntity *)&e;
+
+	if(GraphEntity_GetProperty(ge, attr_id) == ATTRIBUTE_NOTFOUND) {
+		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
+	} else {
+		update_idx = AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
+	}
+
+	// update index if
+	// 1. attribute was set/updated
+	// 2. attribute is indexed
+	if(update_idx == true) {
+		// see if attribute is indexed
+		Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
+		if(idx) Schema_AddEdgeToIndex(s, &e);
+	}
 }
 
 void UpdateNodeLabels
