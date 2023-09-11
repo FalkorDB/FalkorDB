@@ -40,10 +40,10 @@ static void BoltHelloCommand
 
 	bolt_reply_structure(client, BST_SUCCESS, 1);
 	bolt_reply_map(client, 2);
-	bolt_reply_string(client, "server");
-	bolt_reply_string(client, "Neo4j/5.11.0");
-	bolt_reply_string(client, "connection_id");
-	bolt_reply_string(client, "bolt-connection-1");
+	bolt_reply_string(client, "server", 6);
+	bolt_reply_string(client, "Neo4j/5.11.0", 12);
+	bolt_reply_string(client, "connection_id", 13);
+	bolt_reply_string(client, "bolt-connection-1", 17);
 	bolt_client_finish_write(client);
 }
 

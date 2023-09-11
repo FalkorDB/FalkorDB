@@ -105,10 +105,10 @@ void ErrorCtx_EmitException(void) {
 		if(bolt_client != NULL) {
 			bolt_reply_structure(bolt_client, BST_FAILURE, 1);
 			bolt_reply_map(bolt_client, 2);
-			bolt_reply_string(bolt_client, "code");
-			bolt_reply_string(bolt_client, "SyntaxError");
-			bolt_reply_string(bolt_client, "message");
-			bolt_reply_string(bolt_client, ctx->error);
+			bolt_reply_string(bolt_client, "code", 4);
+			bolt_reply_string(bolt_client, "SyntaxError", 11);
+			bolt_reply_string(bolt_client, "message", 7);
+			bolt_reply_string(bolt_client, ctx->error, strlen(ctx->error));
 			bolt_client_finish_write(bolt_client);
 		} else {
 			RedisModuleCtx *rm_ctx = QueryCtx_GetRedisModuleCtx();

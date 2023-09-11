@@ -136,11 +136,12 @@ void bolt_reply_float
 void bolt_reply_string
 (
 	bolt_client_t *client,  // client to write to
-	const char *data        // string value to write
+	const char *data,       // string value to write
+	uint32_t size           // string size
 ) {
 	ASSERT(client != NULL);
+	ASSERT(data != NULL);
 
-	uint32_t size = strlen(data);
 	if (size < 0x10) {
 		client->write_buffer[client->nwrite++] = 0x80 + size;
 		memcpy(client->write_buffer + client->nwrite, data, size);

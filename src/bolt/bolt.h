@@ -118,7 +118,8 @@ void bolt_reply_float
 void bolt_reply_string
 (
 	bolt_client_t *client,  // client to write to
-	const char *data        // string value to write
+	const char *data,       // string value to write
+	uint32_t size           // string size
 );
 
 // write list header to client response buffer

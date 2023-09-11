@@ -36,7 +36,7 @@ void _ResultSet_BoltReplyWithSIValue
 ) {
 	switch(SI_TYPE(v)) {
 	case T_STRING:
-		bolt_reply_string(client, v.stringval);
+		bolt_reply_string(client, v.stringval, strlen(v.stringval));
 		break;
 	case T_INT64:
 		bolt_reply_int(client, v.longval);
@@ -85,6 +85,19 @@ void _ResultSet_BoltReplyWithSIValue
 		bolt_reply_float(client, v.point.latitude);
 		bolt_reply_null(client);
 		break;
+	case T_VECTOR32F:
+		uint32_t dim = SIVector_Dim(v);
+		bolt_reply_list(client, dim);
+
+		// get vector elements
+		void *elements = SIVector_Elements(v);
+
+		// reply with vector elements
+		float *values = (float*)elements;
+		for(uint i = 0; i < dim; i++) {
+			bolt_reply_float(client, (double)values[i]);
+		}
+		break;
 	default:
 		RedisModule_Assert("Unhandled value type" && false);
 	}
@@ -99,7 +112,7 @@ static void _ResultSet_BoltReplyWithElementID
 	int ndigits = id == 0 ? 1 : floor(log10(id)) + 1;
 	char element_id[ndigits + strlen(prefix) + 2];
 	sprintf(element_id, "%s_%llu", prefix, id);
-	bolt_reply_string(client, element_id);
+	bolt_reply_string(client, element_id, strlen(element_id));
 }
 
 static void _ResultSet_BoltReplyWithNode
@@ -123,7 +136,7 @@ static void _ResultSet_BoltReplyWithNode
 	for(int i = 0; i < lbls_count; i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		const char *lbl_name = Schema_GetName(s);
-		bolt_reply_string(client, lbl_name);
+		bolt_reply_string(client, lbl_name, strlen(lbl_name));
 	}
 	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)n);
 	int prop_count = AttributeSet_Count(set);
@@ -134,7 +147,7 @@ static void _ResultSet_BoltReplyWithNode
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		// Emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
-		bolt_reply_string(client, prop_str);
+		bolt_reply_string(client, prop_str, strlen(prop_str));
 		// Emit the value
 		_ResultSet_BoltReplyWithSIValue(client, gc, value);
 	}
@@ -179,7 +192,7 @@ static void _ResultSet_BoltReplyWithEdge
 	}
 	Schema *s = GraphContext_GetSchemaByID(gc, Edge_GetRelationID(e), SCHEMA_EDGE);
 	const char *reltype = Schema_GetName(s);
-	bolt_reply_string(client, reltype);
+	bolt_reply_string(client, reltype, strlen(reltype));
 	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)e);
 	int prop_count = AttributeSet_Count(set);
 	bolt_reply_map(client, prop_count);
@@ -189,7 +202,7 @@ static void _ResultSet_BoltReplyWithEdge
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		// Emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
-		bolt_reply_string(client, prop_str);
+		bolt_reply_string(client, prop_str, strlen(prop_str));
 		// Emit the value
 		_ResultSet_BoltReplyWithSIValue(client, gc, value);
 	}
@@ -264,14 +277,14 @@ void ResultSet_ReplyWithBoltHeader
 ) {
 	bolt_reply_structure(bolt_client, BST_SUCCESS, 1);
 	bolt_reply_map(bolt_client, 3);
-	bolt_reply_string(bolt_client, "t_first");
+	bolt_reply_string(bolt_client, "t_first", 7);
 	bolt_reply_int8(bolt_client, 2);
-	bolt_reply_string(bolt_client, "fields");
+	bolt_reply_string(bolt_client, "fields", 6);
 	bolt_reply_list(bolt_client, array_len(columns));
 	for(int i = 0; i < array_len(columns); i++) {
-		bolt_reply_string(bolt_client, columns[i]);
+		bolt_reply_string(bolt_client, columns[i], strlen(columns[i]));
 	}
-	bolt_reply_string(bolt_client, "qid");
+	bolt_reply_string(bolt_client, "qid", 3);
 	bolt_reply_int8(bolt_client, 0);
 	bolt_client_finish_write(bolt_client);
 }
