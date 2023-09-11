@@ -99,6 +99,6 @@ Feature: WithSkipLimit1 - Skip
       RETURN x, c
       """
     Then the result should be, in any order:
-      | x    | c |
-      | (:X) | 5 |
+      | x    | c   |
+      | (:X) | 5.0 |
     And no side effects

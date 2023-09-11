@@ -7,44 +7,16 @@ from redis.commands.graph.node import Node
 from redis.commands.graph.edge import Edge
 from redis.commands.graph.path import Path
 
-# Returns True if value is a number or string representation of a number.
-
-
-def is_numeric(value):
-    # check for value's type to be a number or a string
-    if not isinstance(value, (Number, str)):
-        return False
-    try:
-        # value is either number or string, try to convert to float
-        float(value)
-        # conversion succeed
-        return True
-    except ValueError:
-        # value was a string not representing a number
-        return False
-
-
-def removeQuotes(value):
-    value = value.replace("'", "")
-    value = value.replace('"', "")
-    return value
-
-
-def toNumeric(value):
-    value = float(value)
-    if value.is_integer():
-        value = int(value)
-    return value
-
 
 def nodeToString(value):
     res = '('
     if value.alias:
         res += value.alias
     if value.labels:
+        value.labels.sort()
         res += ':' + ":".join(value.labels)
     if value.properties:
-        props = ', '.join(key+': '+str(val)
+        props = ', '.join(key+': ' + prepareActualValue(val)
                           for key, val in value.properties.items())
         if value.labels:
             res += " "
@@ -59,7 +31,7 @@ def edgeToString(value):
     if value.relation:
         res += ":" + value.relation
     if value.properties:
-        props = ', '.join(key+': '+str(val)
+        props = ', '.join(key+': ' + prepareActualValue(val)
                           for key, val in value.properties.items())
         if value.relation:
             res += " "
@@ -71,9 +43,10 @@ def edgeToString(value):
 
 def listToString(listToConvert):
     strValue = '['
-    strValue += ", ".join(map(lambda value: toString(value), listToConvert))
+    strValue += ", ".join(map(lambda value: prepareActualValue(value), listToConvert))
     strValue += ']'
     return strValue
+
 
 def pathToString(pathToConvert):
     strValue = "<"
@@ -89,59 +62,41 @@ def pathToString(pathToConvert):
     strValue += ">"
     return strValue
 
+
 def dictToString(dictToConvert):
     size = len(dictToConvert)
     strValue = '{'
     for idx, item in enumerate(dictToConvert.items()):
         strValue += item[0] + ": "
-        strValue += toString(item[1])
+        strValue += prepareActualValue(item[1])
         if idx < size - 1:
             strValue += ", "
     strValue += '}'
     return strValue
 
-def toString(value):
-    if isinstance(value, bool):
-        if value is True:
-            return "true"
-        elif value is False:
-            return "false"
-    elif is_numeric(value):
-        return str(value)
-    elif isinstance(value, str):
-        # remove qoutes if any
-        return removeQuotes(value)
-    # value is a node
-    elif isinstance(value, Node):
-        return nodeToString(value)
-    # value is an edge
-    elif isinstance(value, Edge):
-        return edgeToString(value)
-    elif isinstance(value, list):
-        return listToString(value)
-    elif isinstance(value, Path):
-        return pathToString(value)
-    elif isinstance(value, dict):
-        return dictToString(value)
-    elif value == None:
-        return "null"
-
-# prepare the actual value returned from redisgraph to be in
-# comparison vaiable format of the TCK feature files expected values
-
 
 def prepareActualValue(actualValue):
-    # if value is a numeric string or a number, transform to numeric value
-    if is_numeric(actualValue):
-        actualValue = toNumeric(actualValue)
-    # value is string
+    if isinstance(actualValue, bool):
+        actualValue = str(actualValue).lower()
+    elif isinstance(actualValue, Number):
+        actualValue = str(actualValue)
+        if actualValue == "-0.0":
+            actualValue = "0.0"
+        elif "e+" in actualValue:
+            actualValue = actualValue.replace("e+", "e")
+        elif "e-" in actualValue:
+            e_index = actualValue.find('e')
+            zeroes = int(actualValue[e_index+2:]) - 1
+            if zeroes < 10:
+                num_str = ''
+                if actualValue[0] == '-':
+                    num_str += '-'
+                num_str += '0.' + zeroes * '0' + actualValue[:e_index].replace("-", "").replace(".", "")
+                actualValue = num_str
     elif isinstance(actualValue, str):
-        # remove qoutes if any
-        actualValue = removeQuotes(actualValue)
-    # value is a node
+        actualValue = f"'{actualValue}'"
     elif isinstance(actualValue, Node):
         actualValue = nodeToString(actualValue)
-    # value is an edge
     elif isinstance(actualValue, Edge):
         actualValue = edgeToString(actualValue)
     elif isinstance(actualValue, list):
@@ -150,28 +105,11 @@ def prepareActualValue(actualValue):
         actualValue = pathToString(actualValue)
     elif isinstance(actualValue, dict):
         actualValue = dictToString(actualValue)
+    elif actualValue is None:
+        actualValue = "null"
     else:
-        # actual value is null or boolean
-        Env.RTestInstance.currEnv.assertTrue(isinstance(actualValue, (type(None), bool)))
+        Env.RTestInstance.currEnv.assertTrue(False)
     return actualValue
-
-# prepare the expected value to be in comparison vaiable format
-
-
-def prepareExpectedValue(expectedValue):
-    # the expected value is always string. Do a string preparation
-    expectedValue = removeQuotes(expectedValue)
-    # in case of boolean value string
-    if expectedValue == "true":
-        expectedValue = True
-    elif expectedValue == "false":
-        expectedValue = False
-    elif expectedValue == "null":
-        expectedValue = None
-    # in case of numeric string
-    elif is_numeric(expectedValue):
-        expectedValue = toNumeric(expectedValue)
-    return expectedValue
 
 
 def prepare_actual_row(row):
@@ -179,13 +117,11 @@ def prepare_actual_row(row):
 
 
 def prepare_expected_row(row):
-    return tuple(prepareExpectedValue(cell) for cell in row)
+    return tuple(cell for cell in row)
 
 
 def assert_empty_resultset(resultset):
     Env.RTestInstance.currEnv.assertEquals(len(resultset.result_set), 0)
-
-# check value of a designated statistic
 
 
 def assert_statistics(resultset, stat, value):
@@ -208,8 +144,6 @@ def assert_statistics(resultset, stat, value):
     else:
         print(stat)
         Env.RTestInstance.currEnv.assertTrue(False)
-
-# checks resultset statistics for no graph modifications
 
 
 def assert_no_modifications(resultset):

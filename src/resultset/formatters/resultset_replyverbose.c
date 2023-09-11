@@ -215,8 +215,14 @@ static void _ResultSet_VerboseReplyWithVector
 	rm_free(str);
 }
 
-void ResultSet_EmitVerboseRow(RedisModuleCtx *ctx, GraphContext *gc,
-							  SIValue **row, uint numcols) {
+void ResultSet_EmitVerboseRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+) {
 	// Prepare return array sized to the number of RETURN entities
 	RedisModule_ReplyWithArray(ctx, numcols);
 
@@ -227,8 +233,13 @@ void ResultSet_EmitVerboseRow(RedisModuleCtx *ctx, GraphContext *gc,
 }
 
 // Emit the alias or descriptor for each column in the header.
-void ResultSet_ReplyWithVerboseHeader(RedisModuleCtx *ctx, const char **columns,
-									  uint *col_rec_map) {
+void ResultSet_ReplyWithVerboseHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+) {
 	uint columns_len = array_len(columns);
 	RedisModule_ReplyWithArray(ctx, columns_len);
 	for(uint i = 0; i < columns_len; i++) {

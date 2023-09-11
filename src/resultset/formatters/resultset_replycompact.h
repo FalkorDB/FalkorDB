@@ -7,8 +7,20 @@
 #pragma once
 
 // Formatter for compact (client-parsed) replies
-void ResultSet_ReplyWithCompactHeader(RedisModuleCtx *ctx, const char **columns, uint *col_rec_map);
+void ResultSet_ReplyWithCompactHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+);
 
-void ResultSet_EmitCompactRow(RedisModuleCtx *ctx, GraphContext *gc,
-		SIValue **row, uint numcols);
+void ResultSet_EmitCompactRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+);
 

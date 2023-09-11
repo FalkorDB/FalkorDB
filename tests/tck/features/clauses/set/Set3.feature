@@ -62,7 +62,7 @@ Feature: Set3 - Set a Label
       """
     Then the result should be, in any order:
       | n          |
-      | (:Foo:Bar) |
+      | (:Bar:Foo) |
     And the side effects should be:
       | +labels | 2 |
 
@@ -98,7 +98,7 @@ Feature: Set3 - Set a Label
       """
     Then the result should be, in any order:
       | n            |
-      | (:A:Foo:Bar) |
+      | (:A:Bar:Foo) |
     And the side effects should be:
       | +labels | 2 |
 

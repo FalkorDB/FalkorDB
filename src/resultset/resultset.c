@@ -10,17 +10,26 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
+#include "../bolt/bolt.h"
+#include "../bolt/socket.h"
+#include "../globals.h"
 #include "../errors/errors.h"
+#include "../commands/cmd_context.h"
 
 static void _ResultSet_ReplyWithPreamble
 (
 	ResultSet *set
 ) {
+	if(set->format == FORMATTER_BOLT) {
+		set->formatter->EmitHeader(set->ctx, set->bolt_client, set->columns,
+				set->columns_record_map);
+		return;
+	}
 	if(set->column_count > 0) {
 		// prepare a response containing a header, records, and statistics
 		RedisModule_ReplyWithArray(set->ctx, 3);
 		// emit the table header using the appropriate formatter
-		set->formatter->EmitHeader(set->ctx, set->columns,
+		set->formatter->EmitHeader(set->ctx, set->bolt_client, set->columns,
 				set->columns_record_map);
 	} else {
 		// prepare a response containing only statistics
@@ -60,6 +69,7 @@ static void _ResultSet_SetColumns
 ResultSet *NewResultSet
 (
 	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
 	ResultSetFormatterType format  // resultset format
 ) {
 	ResultSet *set = rm_malloc(sizeof(ResultSet));
@@ -70,6 +80,7 @@ ResultSet *NewResultSet
 	set->format              =  format;
 	set->columns             =  NULL;
 	set->formatter           =  ResultSetFormatter_GetFormatter(format);
+	set->bolt_client         =  bolt_client;
 	set->column_count        =  0;
 	set->cells_allocation    =  M_NONE;
 	set->columns_record_map  =  NULL;
@@ -240,6 +251,17 @@ void ResultSet_Reply
 	// set up the results array and emit the header if the query requires one
 	_ResultSet_ReplyWithPreamble(set);
 
+	if(set->format == FORMATTER_BOLT && !set->bolt_client->pull) {
+		pthread_mutex_lock(&set->bolt_client->pull_condv_mutex);
+		if(!set->bolt_client->pull) {
+			// Waiting for client to pull data
+			int res = pthread_cond_wait(&set->bolt_client->pull_condv, &set->bolt_client->pull_condv_mutex);
+			ASSERT(res == 0);
+			ASSERT(set->bolt_client->pull);
+		}
+		pthread_mutex_unlock(&set->bolt_client->pull_condv_mutex);
+	}
+
 	// emit resultset
 	if(set->column_count > 0) {
 		RedisModule_ReplyWithArray(set->ctx, row_count);
@@ -252,8 +274,83 @@ void ResultSet_Reply
 				row[j] = DataBlock_GetItem(set->cells, i + j);
 			}
 
-			set->formatter->EmitRow(set->ctx, set->gc, row, set->column_count);
+			set->formatter->EmitRow(set->ctx, set->bolt_client, set->gc, row, set->column_count);
 		}
+	}
+
+	if(set->format == FORMATTER_BOLT) {
+		bolt_reply_structure(set->bolt_client, BST_SUCCESS, 1);
+		int stats = 0;
+		if(set->stats.index_creation)            stats++;
+		if(set->stats.index_deletion)            stats++;
+		if(set->stats.constraint_creation)       stats++;
+		if(set->stats.constraint_deletion)       stats++;
+		if(set->stats.labels_added          > 0) stats++;
+		if(set->stats.nodes_created         > 0) stats++;
+		if(set->stats.nodes_deleted         > 0) stats++;
+		if(set->stats.labels_removed        > 0) stats++;
+		if(set->stats.properties_set        > 0) stats++;
+		if(set->stats.properties_removed    > 0) stats++;
+		if(set->stats.relationships_deleted > 0) stats++;
+		if(set->stats.relationships_created > 0) stats++;
+		if(stats > 0) {
+			bolt_reply_map(set->bolt_client, 1);
+			bolt_reply_string(set->bolt_client, "stats");
+			bolt_reply_map(set->bolt_client, stats);
+			if(set->stats.index_creation) {
+				bolt_reply_string(set->bolt_client, "indexes-added");
+				bolt_reply_int(set->bolt_client, set->stats.indices_created);
+			}
+			if(set->stats.index_deletion) {
+				bolt_reply_string(set->bolt_client, "indexes-removed");
+				bolt_reply_int(set->bolt_client, set->stats.indices_deleted);
+			}
+			if(set->stats.constraint_creation) {
+				bolt_reply_string(set->bolt_client, "constraints-added");
+				bolt_reply_int(set->bolt_client, set->stats.constraints_created);
+			}
+			if(set->stats.constraint_deletion) {
+				bolt_reply_string(set->bolt_client, "constraints-removed");
+				bolt_reply_int(set->bolt_client, set->stats.constraints_deleted);
+			}
+			if(set->stats.labels_added          > 0) {
+				bolt_reply_string(set->bolt_client, "labels-added");
+				bolt_reply_int(set->bolt_client, set->stats.labels_added);
+			}
+			if(set->stats.nodes_created         > 0) {
+				bolt_reply_string(set->bolt_client, "nodes-created");
+				bolt_reply_int(set->bolt_client, set->stats.nodes_created);
+			}
+			if(set->stats.nodes_deleted         > 0) {
+				bolt_reply_string(set->bolt_client, "nodes-deleted");
+				bolt_reply_int(set->bolt_client, set->stats.nodes_deleted);
+			}
+			if(set->stats.labels_removed        > 0) {
+				bolt_reply_string(set->bolt_client, "labels-removed");
+				bolt_reply_int(set->bolt_client, set->stats.labels_removed);
+			}
+			if(set->stats.properties_set        > 0) {
+				bolt_reply_string(set->bolt_client, "properties-set");
+				bolt_reply_int(set->bolt_client, set->stats.properties_set);
+			}
+			if(set->stats.properties_removed    > 0) {
+				bolt_reply_string(set->bolt_client, "properties-removed");
+				bolt_reply_int(set->bolt_client, set->stats.properties_removed);
+			}
+			if(set->stats.relationships_deleted > 0) {
+				bolt_reply_string(set->bolt_client, "relationships-deleted");
+				bolt_reply_int(set->bolt_client, set->stats.relationships_deleted);
+			}
+			if(set->stats.relationships_created > 0) {
+				bolt_reply_string(set->bolt_client, "relationships-created");
+				bolt_reply_int(set->bolt_client, set->stats.relationships_created);
+			}
+		} else {
+			bolt_reply_map(set->bolt_client, 0);
+		}
+
+		bolt_client_finish_write(set->bolt_client);
+		return;
 	}
 
 	ResultSetStat_emit(set->ctx, &set->stats); // response with statistics

@@ -147,5 +147,5 @@ Feature: Remove1 - Remove a Property
       """
     Then the result should be, in any order:
       | totalNumberOfProps |
-      | 0                  |
+      | 0.0                |
     And no side effects

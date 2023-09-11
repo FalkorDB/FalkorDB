@@ -173,15 +173,18 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	// instantiate the query ResultSet
+	bool bolt    = command_ctx->bolt_client != NULL;
 	bool compact = command_ctx->compact;
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
 		profile || command_ctx->replicated_command
 		? FORMATTER_NOP
-		: (compact)
-			? FORMATTER_COMPACT
-			: FORMATTER_VERBOSE;
-	ResultSet *result_set = NewResultSet(rm_ctx, resultset_format);
+		: (bolt)
+			? FORMATTER_BOLT
+			: (compact)
+				? FORMATTER_COMPACT
+				: FORMATTER_VERBOSE;
+	ResultSet *result_set = NewResultSet(rm_ctx, command_ctx->bolt_client, resultset_format);
 	if(exec_ctx->cached) {
 		ResultSet_CachedExecution(result_set); // indicate a cached execution
 	}
@@ -266,6 +269,8 @@ static void _ExecuteQuery(void *args) {
 			}
 		}	
 	}
+
+	ASSERT(gc->g->reserved_node_count == 0);
 
 	QueryCtx_UnlockCommit();
 
