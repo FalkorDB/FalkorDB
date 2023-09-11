@@ -259,12 +259,12 @@ uint64_t GraphContext_EdgeIndexCount
 // attempt to retrieve an index on the given label and attribute IDs
 Index GraphContext_GetIndexByID
 (
-	const GraphContext *gc,        // graph context
-	int lbl_id,                    // label / rel-type ID
-	const Attribute_ID *attrs,     // attributes
-	uint n,                        // attributes count
-	IndexType idx_type,            // index type
-	GraphEntityType entity_type    // schema type NODE / EDGE
+	const GraphContext *gc,      // graph context
+	int lbl_id,                  // label / rel-type ID
+	const Attribute_ID *attrs,   // attributes
+	uint n,                      // attributes count
+	IndexFieldType t,            // all index attributes must be of this type
+	GraphEntityType entity_type  // schema type NODE / EDGE
 );
 
 // attempt to retrieve an index on the given label and attribute
@@ -274,34 +274,8 @@ Index GraphContext_GetIndex
 	const char *label,
 	Attribute_ID *attrs,
 	uint n,
-	IndexType type,
+	IndexFieldType type,
 	SchemaType schema_type
-);
-
-bool GraphContext_AddExactMatchIndex
-(
-	Index *idx,                 // [input/output] index created
-	GraphContext *gc,           // graph context
-	SchemaType schema_type,     // type of entities to index nodes/edges
-	const char *label,          // label of indexed entities
-	const char **fields_str,    // fields to index
-	uint fields_count,          // number of fields to index
-	bool should_reply           // should reply to client
-);
-
-// create a full text index for the given label and attribute
-bool GraphContext_AddFullTextIndex
-(
-	Index *idx,              // [input/output] index created
-	GraphContext *gc,        // graph context
-	const char *label,       // label of indexed entities
-	const char **fields,     // fields to index
-	uint fields_count,       // number of fields to index
-	double *weights,         // fields weights
-	bool *nostems,           //
-	const char **phonetics,  //
-	char **stopwords,
-	const char *language
 );
 
 // remove and free an index
@@ -311,7 +285,7 @@ int GraphContext_DeleteIndex
 	SchemaType schema_type,
 	const char *label,
 	const char *field,
-	IndexType type
+	IndexFieldType t
 );
 
 // remove a single node from all indices that refer to it

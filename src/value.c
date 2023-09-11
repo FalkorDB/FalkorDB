@@ -15,10 +15,7 @@
 #include <ctype.h>
 #include <sys/param.h>
 #include "util/rmalloc.h"
-#include "datatypes/map.h"
-#include "datatypes/array.h"
-#include "datatypes/point.h"
-#include "datatypes/path/sipath.h"
+#include "datatypes/datatypes.h"
 
 static inline void _SIString_ToString(SIValue str, char **buf, size_t *bufferLen,
 									  size_t *bytesWritten) {
@@ -93,6 +90,13 @@ SIValue SI_Map(u_int64_t initialCapacity) {
 	return Map_New(initialCapacity);
 }
 
+SIValue SI_Vector32f
+(
+	uint32_t dim  // vector's dimension
+) {
+	return SIVector32f_New(dim);
+}
+
 SIValue SI_DuplicateStringVal(const char *s) {
 	return (SIValue) {
 		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
@@ -128,31 +132,39 @@ SIValue SI_ShareValue(const SIValue v) {
 	return dup;
 }
 
-/* Make an SIValue that creates its own copies of the original's allocations, if any.
- * This is not a deep clone: if the inner value holds its own references,
- * such as the Entity pointer to the properties of a Node or Edge, those are unmodified. */
+// make an SIValue that creates its own copies of the original's allocations
+// if any this is not a deep clone: if the inner value holds its own references
+// such as the Entity pointer to the properties of a Node or Edge
+// those are unmodified
 SIValue SI_CloneValue(const SIValue v) {
-	if(v.allocation == M_NONE) return v; // Stack value; no allocation necessary.
-
-	if(v.type == T_STRING) {
-		// Allocate a new copy of the input's string value.
-		return SI_DuplicateStringVal(v.stringval);
+	if(v.allocation == M_NONE) {
+		return v; // stack value; no allocation necessary
 	}
 
-	if(v.type == T_ARRAY) {
-		return SIArray_Clone(v);
+	switch(v.type) {
+		case T_STRING:
+			// allocate a new copy of the input's string value
+			return SI_DuplicateStringVal(v.stringval);
+
+		case T_ARRAY:
+			return SIArray_Clone(v);
+
+		case T_PATH:
+			return SIPath_Clone(v);
+
+		case T_MAP:
+			return Map_Clone(v);
+
+		case T_VECTOR32F:
+			return SIVector_Clone(v);
+
+		default:
+			// handeled outside of the switch to avoid compiler warning
+			break;
 	}
 
-	if(v.type == T_PATH) {
-		return SIPath_Clone(v);
-	}
-
-	if(v.type == T_MAP) {
-		return Map_Clone(v);
-	}
-
-	// Copy the memory region for Node and Edge values. This does not modify the
-	// inner Entity pointer to the value's properties.
+	// copy the memory region for Node and Edge values
+	// this does not modify the inner entity pointer to the value's properties
 	SIValue clone;
 	clone.type = v.type;
 	clone.allocation = M_SELF;
@@ -232,44 +244,47 @@ inline bool SIValue_IsNullPtr(SIValue *v) {
 }
 
 const char *SIType_ToString(SIType t) {
-	if (t & T_MAP) {
-		return "Map";
-	} else if(t & T_STRING) {
-		return "String";
-	} else if(t & T_INT64) {
-		return "Integer";
-	} else if(t & T_BOOL) {
-		return "Boolean";
-	} else if(t & T_DOUBLE) {
-		return "Float";
-	} else if(t & T_PTR) {
-		return "Pointer";
-	} else if(t & T_NODE) {
-		return "Node";
-	} else if(t & T_EDGE) {
-		return "Edge";
-	} else if(t & T_ARRAY) {
-		return "List";
-	} else if(t & T_PATH) {
-		return "Path";
-	} else if(t & T_DATETIME) {
-		return "Datetime";
-	} else if(t & T_LOCALDATETIME) {
-		return "Local Datetime";
-	} else if(t & T_DATE) {
-		return "Date";
-	} else if(t & T_TIME) {
-		return "Time";
-	} else if(t & T_LOCALTIME) {
-		return "Local Time";
-	} else if(t & T_DURATION) {
-		return "Duration";
-	} else if(t & T_POINT) {
-		return "Point";
-	} else if(t & T_NULL) {
-		return "Null";
-	} else {
-		return "Unknown";
+	switch(t) {
+		case T_MAP:
+			return "Map";
+		case T_STRING:
+			return "String";
+		case T_INT64:
+			return "Integer";
+		case T_BOOL:
+			return "Boolean";
+		case T_DOUBLE:
+			return "Float";
+		case T_PTR:
+			return "Pointer";
+		case T_NODE:
+			return "Node";
+		case T_EDGE:
+			return "Edge";
+		case T_ARRAY:
+			return "List";
+		case T_PATH:
+			return "Path";
+		case T_DATETIME:
+			return "Datetime";
+		case T_LOCALDATETIME:
+			return "Local Datetime";
+		case T_DATE:
+			return "Date";
+		case T_TIME:
+			return "Time";
+		case T_LOCALTIME:
+			return "Local Time";
+		case T_DURATION:
+			return "Duration";
+		case T_POINT:
+			return "Point";
+		case T_VECTOR32F:
+			return "Vector32f";
+		case T_NULL:
+			return "Null";
+		default:
+			return "Unknown";
 	}
 }
 
@@ -309,7 +324,13 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%s%s", comma, SIType_ToString(currentType));
 }
 
-void SIValue_ToString(SIValue v, char **buf, size_t *bufferLen, size_t *bytesWritten) {
+void SIValue_ToString
+(
+	SIValue v,
+	char **buf,
+	size_t *bufferLen,
+	size_t *bytesWritten
+) {
 	// uint64 max and int64 min string representation requires 21 bytes
 	// checkt for enough space
 	if(*bufferLen - *bytesWritten < 64) {
@@ -318,61 +339,64 @@ void SIValue_ToString(SIValue v, char **buf, size_t *bufferLen, size_t *bytesWri
 	}
 
 	switch(v.type) {
-	case T_STRING:
-		_SIString_ToString(v, buf, bufferLen, bytesWritten);
-		break;
-	case T_INT64:
-		*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%lld", (long long)v.longval);
-		break;
-	case T_BOOL:
-		*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s", v.longval ? "true" : "false");
-		break;
-	case T_DOUBLE:
-	{
-		size_t n = snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%f", v.doubleval);
-		// check if there was enough space in the buffer
-		if(*bytesWritten + n > *bufferLen) {
-			// realloc the buffer
-			*bufferLen = *bytesWritten + n + 1;
-			*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
+		case T_STRING:
+			_SIString_ToString(v, buf, bufferLen, bytesWritten);
+			break;
+		case T_INT64:
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%lld", (long long)v.longval);
+			break;
+		case T_BOOL:
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s", v.longval ? "true" : "false");
+			break;
+		case T_DOUBLE:
+			{
+				size_t n = snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%f", v.doubleval);
+				// check if there was enough space in the buffer
+				if(*bytesWritten + n > *bufferLen) {
+					// realloc the buffer
+					*bufferLen = *bytesWritten + n + 1;
+					*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
 
-			// write it again
-			snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%f", v.doubleval);
-		}
-		*bytesWritten += n;
-		break;
-	}
-	case T_NODE:
-		Node_ToString(v.ptrval, buf, bufferLen, bytesWritten, ENTITY_ID);
-		break;
-	case T_EDGE:
-		Edge_ToString(v.ptrval, buf, bufferLen, bytesWritten, ENTITY_ID);
-		break;
-	case T_ARRAY:
-		SIArray_ToString(v, buf, bufferLen, bytesWritten);
-		break;
-	case T_MAP:
-		Map_ToString(v, buf, bufferLen, bytesWritten);
-		break;
-	case T_PATH:
-		SIPath_ToString(v, buf, bufferLen, bytesWritten);
-		break;
-	case T_NULL:
-		*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "NULL");
-		break;
-	case T_PTR:
-		*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "POINTER");
-		break;
-	case T_POINT:
-		// max string length is 32 chars of string + 10 * 2 chars for the floats
-		// = 52 bytes that already checked in the header of the function
-		*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
-		break;
-	default:
-		// unrecognized type
-		printf("unrecognized type: %d\n", v.type);
-		ASSERT(false);
-		break;
+					// write it again
+					snprintf(*buf + *bytesWritten, *bufferLen - *bytesWritten, "%f", v.doubleval);
+				}
+				*bytesWritten += n;
+				break;
+			}
+		case T_NODE:
+			Node_ToString(v.ptrval, buf, bufferLen, bytesWritten, ENTITY_ID);
+			break;
+		case T_EDGE:
+			Edge_ToString(v.ptrval, buf, bufferLen, bytesWritten, ENTITY_ID);
+			break;
+		case T_ARRAY:
+			SIArray_ToString(v, buf, bufferLen, bytesWritten);
+			break;
+		case T_MAP:
+			Map_ToString(v, buf, bufferLen, bytesWritten);
+			break;
+		case T_PATH:
+			SIPath_ToString(v, buf, bufferLen, bytesWritten);
+			break;
+		case T_NULL:
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "NULL");
+			break;
+		case T_PTR:
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "POINTER");
+			break;
+		case T_POINT:
+			// max string length is 32 chars of string + 10 * 2 chars for the floats
+			// = 52 bytes that already checked in the header of the function
+			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
+			break;
+		case T_VECTOR32F:
+			SIVector_ToString(v, buf, bufferLen, bytesWritten);
+			break;
+		default:
+			// unrecognized type
+			printf("unrecognized type: %d\n", v.type);
+			ASSERT(false);
+			break;
 	}
 }
 
@@ -578,13 +602,18 @@ int SIArray_Compare(SIValue arrayA, SIValue arrayB, int *disjointOrNull) {
 	return lenDiff;
 }
 
-int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull) {
-
-	/* No special case (null or disjoint comparison) happened yet.
-	 * If indication for such cases is required, first set the indication value to zero (not happen). */
+int SIValue_Compare
+(
+	const SIValue a,
+	const SIValue b,
+	int *disjointOrNull
+) {
+	// no special case (null or disjoint comparison) happened yet
+	// if indication for such cases is required
+	// first set the indication value to zero (not happen)
 	if(disjointOrNull) *disjointOrNull = 0;
 
-	/* In order to be comparable, both SIValues must be from the same type. */
+	// in order to be comparable, both SIValues must be from the same type
 	if(a.type == b.type) {
 		switch(a.type) {
 		case T_INT64:
@@ -616,15 +645,18 @@ int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull) {
 				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
 			return lon_diff;
 		}
+		case T_VECTOR32F:
+		return SIVector_Compare(a, b);
 		default:
-			// Both inputs were of an incomparable type, like a pointer, or not implemented comparison yet.
+			// both inputs were of an incomparable type, like a pointer
+			// or not implemented comparison yet
 			ASSERT(false);
 			break;
 		}
 	}
 
-	/* The inputs have different SITypes - compare them if they
-	 * are both numerics of differing types. */
+	// the inputs have different SITypes - compare them if they
+	// are both numerics of differing types
 	if(SI_TYPE(a) & SI_NUMERIC && SI_TYPE(b) & SI_NUMERIC) {
 		if(isnan(SI_GET_NUMERIC(a)) || isnan(SI_GET_NUMERIC(b))) {
 			if(disjointOrNull) *disjointOrNull = COMPARED_NAN;
@@ -634,16 +666,16 @@ int SIValue_Compare(const SIValue a, const SIValue b, int *disjointOrNull) {
 		return SAFE_COMPARISON_RESULT(diff);
 	}
 
-	// Check if either type is null.
+	// check if either type is null
 	if(a.type == T_NULL || b.type == T_NULL) {
-		// Check if indication is required and inform about null comparison.
+		// check if indication is required and inform about null comparison
 		if(disjointOrNull) *disjointOrNull = COMPARED_NULL;
 	} else {
-		// Check if indication is required, and inform about disjoint comparison.
+		// check if indication is required, and inform about disjoint comparison
 		if(disjointOrNull) *disjointOrNull = DISJOINT;
 	}
 
-	// In case of disjoint or null comparison, return value type difference.
+	// in case of disjoint or null comparison, return value type difference
 	return a.type - b.type;
 }
 
@@ -740,6 +772,10 @@ void SIValue_HashUpdate(SIValue v, XXH64_state_t *state) {
 			inner_hash = SIPath_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
+		case T_VECTOR32F:
+			inner_hash = SIVector_HashCode(v);
+			XXH64_update(state, &inner_hash, sizeof(inner_hash));
+			return;
 			// TODO: Implement for temporal types once we support them.
 		default:
 			ASSERT(false);
@@ -815,6 +851,9 @@ SIValue SIValue_FromBinary
 			fread_assert(&d, sizeof(d), stream);
 			v = SI_DoubleVal(d);
 			break;
+		case T_VECTOR32F:
+			v = SIVector_FromBinary(stream, t);
+			break;
 		case T_NULL:
 			v = SI_NullVal();
 			break;
@@ -846,6 +885,10 @@ void SIValue_Free(SIValue v) {
 		return;
 	case T_MAP:
 		Map_Free(v);
+		break;
+	case T_VECTOR32F:
+		SIVector_Free(v);
+		return;
 	default:
 		return;
 	}

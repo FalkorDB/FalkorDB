@@ -1,0 +1,60 @@
+version: 2
+jobs:
+  build:
+    docker:
+        - image: cleishm/libcypher-parser-build-env:0.0.1
+
+    working_directory: ~/repo
+
+    environment:
+      TERM: dumb
+
+    steps:
+      - checkout
+
+      - run:
+          name: Configuring
+          command: |
+            ./autogen.sh
+            ./configure
+
+      - run:
+          name: Building
+          command: |
+            make
+            make dist
+
+      - run:
+          name: Collecting artifacts
+          command: |
+            mkdir ~/dist
+            cp *.tar.gz ~/dist
+
+      - store_artifacts:
+          name: Uploading distribution
+          path: ~/dist
+          destination: dist
+          when: always
+
+      - run:
+          name: Running tests
+          command: |
+            make check
+
+      - run:
+          name: Collecting test reports
+          command: |
+            mkdir ~/test-reports
+            xsltproc ./build-aux/libcheck-xml-to-junit.xsl \
+                lib/test/results.xml > ~/test-reports/lib-test-results.xml
+
+      - store_test_results:
+          name: Uploading test reports
+          path: ~/test-reports
+          destination: tests
+          when: always
+
+      - store_artifacts:
+          name: Uploading docs
+          path: lib/doc/html
+          destination: libdoc

@@ -219,6 +219,12 @@ bool _applicableFilter
 
 	for(uint i = 0; i < idx_fields_count; i++) {
 		const IndexField *field = idx_fields + i;
+
+		// skip non-range fields
+		if(!(field->type & INDEX_FLD_RANGE)) {
+			continue;
+		}
+
 		if(raxFind(attr, (unsigned char *)field->name, strlen(field->name)) != raxNotFound) {
 			filter_attribute_count--;
 			// All filtered attributes are indexed.
@@ -295,15 +301,15 @@ void reduce_scan_op
 ) {
 	// in the multi-label case, we want to pick the label which will allow us to
 	// both utilize an index and iterate over the fewest values
-	GraphContext *gc  =  QueryCtx_GetGraphCtx();
-	Graph        *g   =  QueryCtx_GetGraph();
-	QueryGraph   *qg  =  scan->op.plan->query_graph;
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	Graph        *g  = QueryCtx_GetGraph();
+	QueryGraph   *qg = scan->op.plan->query_graph;
 
 	// find label with filtered indexed properties
 	// that has the minimum NNZ entries
 	int         min_label_id;                 // tracks min label ID
 	uint64_t    min_nnz        = UINT64_MAX;  // tracks min entries
-	RSIndex     *rs_idx        = NULL;        // the index to be applied
+	Index       idx            = NULL;        // the index to be applied
 	OpFilter    **filters      = NULL;        // tracks indexed filters to apply
 	uint        filters_count  = 0;           // number of matching filters
 	const char  *min_label_str = NULL;        // tracks min label name
@@ -315,24 +321,25 @@ void reduce_scan_op
 
 	uint label_count = QGNode_LabelCount(qn);
 	for(uint i = 0; i < label_count; i++) {
-		Index idx;
 		uint64_t nnz;
+		Index cur_idx = NULL;
 		int label_id = QGNode_GetLabelID(qn, i);
 		const char *label = QGNode_GetLabel(qn, i);
 
 		// unknown label
 		if(label_id == GRAPH_UNKNOWN_LABEL) continue;
 
-		idx = GraphContext_GetIndexByID(gc, label_id, NULL, 0, IDX_EXACT_MATCH,
-				GETYPE_NODE);
+		cur_idx = GraphContext_GetIndexByID(gc, label_id, NULL, 0,
+				INDEX_FLD_RANGE, GETYPE_NODE);
 
 		// no index for current label
-		if(idx == NULL) continue;
+		if(cur_idx == NULL) continue;
 
-		ASSERT(Index_Enabled(idx));
+		ASSERT(Index_Enabled(cur_idx));
 
 		// TODO switch to reusable array
-		OpFilter **cur_filters = _applicableFilters((OpBase *)scan, scan->n->alias, idx);
+		OpFilter **cur_filters = _applicableFilters((OpBase *)scan,
+				scan->n->alias, cur_idx);
 
 		// TODO consider heuristic which combines max
 		// number / restrictiveness of applicable filters
@@ -344,15 +351,12 @@ void reduce_scan_op
 			continue;
 		}
 
-		// get all applicable filter for index
-		RSIndex *cur_idx = Index_RSIndex(idx);
-
 		nnz = Graph_LabeledNodeCount(g, label_id);
 		if(min_nnz > nnz) {
-			rs_idx         =  cur_idx;
-			min_nnz        =  nnz;
-			min_label_str  =  label;
-			min_label_id   =  label_id;
+			idx           = cur_idx;
+			min_nnz       = nnz;
+			min_label_str = label;
+			min_label_id  = label_id;
 
 			// swap previously stored index and
 			// filters array (if any) with current filters
@@ -363,7 +367,7 @@ void reduce_scan_op
 	}
 
 	// no label possessed indexed and filtered attributes, return early
-	if(rs_idx == NULL) goto cleanup;
+	if(idx == NULL) goto cleanup;
 
 	// did we found a better label to utilize? if so swap
 	if(scan->n->label_id != min_label_id) {
@@ -397,7 +401,7 @@ void reduce_scan_op
 	}
 
 	FT_FilterNode *root = _Concat_Filters(filters);
-	OpBase *indexOp = NewIndexScanOp(scan->op.plan, scan->g, scan->n, rs_idx,
+	OpBase *indexOp = NewIndexScanOp(scan->op.plan, scan->g, scan->n, idx,
 			root);
 	scan->n = NULL;
 
@@ -419,8 +423,8 @@ cleanup:
 	array_free(filters);
 }
 
-// try to replace given Conditional Traverse operation and a set of Filter operations with
-// a single Index Scan operation
+// try to replace given Conditional Traverse operation and a set of Filters
+// into a single Index Scan operation
 void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 	// make sure there's an index for scanned label
 	const char *edge = AlgebraicExpression_Edge(cond->ae);
@@ -431,7 +435,7 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 
 	const char *label = QGEdge_Relation(e, 0);
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Index idx = GraphContext_GetIndex(gc, label, NULL, 0, IDX_EXACT_MATCH,
+	Index idx = GraphContext_GetIndex(gc, label, NULL, 0, INDEX_FLD_RANGE,
 			SCHEMA_EDGE);
 	if(idx == NULL) return;
 
@@ -442,9 +446,8 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 	uint filters_count = array_len(filters);
 	if(filters_count == 0) goto cleanup;
 
-	RSIndex *rs_idx = Index_RSIndex(idx);
 	FT_FilterNode *root = _Concat_Filters(filters);
-	OpBase *indexOp = NewEdgeIndexScanOp(cond->op.plan, cond->graph, e, rs_idx,
+	OpBase *indexOp = NewEdgeIndexScanOp(cond->op.plan, cond->graph, e, idx,
 			root);
 
 	// The OPType_ALL_NODE_SCAN operation is redundant
@@ -455,12 +458,13 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		ExecutionPlan_RemoveOp(plan, allNodeScan);
 		OpBase_Free(allNodeScan);
 	}
-
 	
-	const char *other_alias  =  AlgebraicExpression_Dest(cond->ae);
-	QGNode     *other_node   =  QueryGraph_GetNodeByAlias(cond->op.plan->query_graph, other_alias);
+	const char *other_alias = AlgebraicExpression_Dest(cond->ae);
+	QGNode *other_node  = QueryGraph_GetNodeByAlias( cond->op.plan->query_graph,
+			other_alias);
+
 	ASSERT(other_node != NULL);
-	uint other_label_count   =  QGNode_LabelCount(other_node);
+	uint other_label_count = QGNode_LabelCount(other_node);
 	if(other_label_count > 0) {
 		// create func expression
 		const char *func_name = "hasLabels";
@@ -484,7 +488,8 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		FT_FilterNode *ft = FilterTree_CreateExpressionFilter(op);
 		OpBase *filter = NewFilterOp(plan, ft);
 
-		// replace the redundant scan op with the newly-constructed filter op and add Index Scan as child
+		// replace the redundant scan op with the newly-constructed filter op
+		// and add Index Scan as child
 		ExecutionPlan_ReplaceOp(plan, (OpBase *)cond, indexOp);
 		ExecutionPlan_PushBelow(indexOp, filter);
 	} else {
@@ -508,14 +513,32 @@ cleanup:
 	array_free(filters);
 }
 
-void utilizeIndices
+static void traversalToIndexScan
 (
-	ExecutionPlan *plan
+	ExecutionPlan *plan,
+	GraphContext *gc
 ) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	// return immediately if the graph has no indices
-	if(!GraphContext_HasIndices(gc)) return;
+	// collect all conditional traverse
+	OpBase **condOps = ExecutionPlan_CollectOps(plan->root,
+			OPType_CONDITIONAL_TRAVERSE);
 
+	uint condOpCount = array_len(condOps);
+	for(uint i = 0; i < condOpCount; i++) {
+		OpCondTraverse *condOp = (OpCondTraverse *)condOps[i];
+		// try to reduce conditional travers + filter(s)
+		// to a single IndexScan operation
+		reduce_cond_op(plan, condOp);
+	}
+
+	// cleanup
+	array_free(condOps);
+}
+
+static void labelScanToIndexScan
+(
+	ExecutionPlan *plan,
+	GraphContext *gc
+) {
 	// collect all label scans
 	OpBase **scanOps = ExecutionPlan_CollectOps(plan->root,
 			OPType_NODE_BY_LABEL_SCAN);
@@ -535,19 +558,26 @@ void utilizeIndices
 		reduce_scan_op(plan, scanOp);
 	}
 
-	// collect all conditional traverse
-	OpBase **condOps = ExecutionPlan_CollectOps(plan->root,
-			OPType_CONDITIONAL_TRAVERSE);
-
-	uint condOpCount = array_len(condOps);
-	for(uint i = 0; i < condOpCount; i++) {
-		OpCondTraverse *condOp = (OpCondTraverse *)condOps[i];
-		// try to reduce conditional travers + filter(s) to a single IndexScan operation
-		reduce_cond_op(plan, condOp);
-	}
-
-	// cleanup
 	array_free(scanOps);
-	array_free(condOps);
+}
+
+void utilizeIndices
+(
+	ExecutionPlan *plan
+) {
+	// return immediately if the graph has no indices
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	if(!GraphContext_HasIndices(gc)) return;
+
+	// indices are utilized in three sections:
+	// 1. label scan followed by filter(s)
+	// 2. traversal followed by filter(s)
+	// 3. vector similarity KNN search
+
+	// convert label scan into a index scan
+	labelScanToIndexScan(plan, gc);
+
+	// convert traversal into a index scan
+	traversalToIndexScan(plan, gc);
 }
 

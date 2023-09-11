@@ -38,8 +38,8 @@ class testIndexUpdatesFlow(FlowTestsBase):
 
     def build_indices(self):
         for field in fields:
-            create_node_exact_match_index(redis_graph, 'label_a', field)
-            create_node_exact_match_index(redis_graph, 'label_b', field)
+            create_node_range_index(redis_graph, 'label_a', field)
+            create_node_range_index(redis_graph, 'label_b', field)
         wait_for_indices_to_sync(redis_graph)
 
     # Validate that all properties are indexed
@@ -156,7 +156,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
         result = redis_graph.query(query)
         self.env.assertEquals(result.properties_set, 1)
         self.env.assertEquals(result.labels_added, 1)
-        create_node_exact_match_index(redis_graph, 'NEW', 'v', sync=True)
+        create_node_range_index(redis_graph, 'NEW', 'v', sync=True)
 
         # Delete the entity's property
         query = """MATCH (a:NEW {v: 5}) SET a.v = NULL"""
@@ -181,10 +181,10 @@ class testIndexUpdatesFlow(FlowTestsBase):
     # index does not track the property.
     def test07_update_property_only_on_fulltext_index(self):
         # Remove the exact-match index on a property
-        drop_exact_match_index(redis_graph, 'label_a', 'group')
+        drop_node_range_index(redis_graph, 'label_a', 'group')
 
         # Add a full-text index on the property
-        result = create_fulltext_index(redis_graph, 'label_a', 'group', sync=True)
+        result = create_node_fulltext_index(redis_graph, 'label_a', 'group', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Modify the values of the property

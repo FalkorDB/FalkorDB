@@ -359,7 +359,7 @@ static void ApplyUpdateEdge
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);	
+	UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
 }
 
 // process UpdateNode effect

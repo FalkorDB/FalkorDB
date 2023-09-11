@@ -6,8 +6,8 @@
 
 #include "op_edge_by_index_scan.h"
 #include "../../query_ctx.h"
+#include "../../index/index.h"
 #include "shared/print_functions.h"
-#include "../../filter_tree/ft_to_rsq.h"
 
 // forward declarations
 static OpResult EdgeIndexScanInit(OpBase *opBase);
@@ -36,7 +36,7 @@ OpBase *NewEdgeIndexScanOp
 	const ExecutionPlan *plan,
 	Graph *g,
 	QGEdge *e,
-	RSIndex *idx,
+	Index idx,
 	FT_FilterNode *filter
 ) {
 	// validate inputs
@@ -207,6 +207,7 @@ static Record EdgeIndexScanConsumeFromChild
 	OpBase *opBase
 ) {
 	OpEdgeIndexScan	*op = (OpEdgeIndexScan*)opBase;
+	RSIndex *rsIdx = Index_RSIndex(op->idx);
 	const EdgeIndexKey *edgeKey = NULL;
 
 pull_index:
@@ -215,7 +216,7 @@ pull_index:
 	//--------------------------------------------------------------------------
 
 	if(op->iter != NULL && op->child_record != NULL) {
-		while((edgeKey = RediSearch_ResultsIteratorNext(op->iter, op->idx, NULL))
+		while((edgeKey = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 				!= NULL) {
 			// populate record with edge
 			_UpdateRecord(op, op->child_record, edgeKey);
@@ -278,22 +279,22 @@ pull_index:
 		#endif
 
 		// convert filter into a RediSearch query
-		RSQNode *rs_query_node = FilterTreeToQueryNode(&op->unresolved_filters,
-				filter, op->idx);
+		RSQNode *rs_query_node = Index_BuildQueryTree(&op->unresolved_filters,
+				op->idx, filter);
 		FilterTree_Free(filter);
 
 		// create iterator
 		ASSERT(rs_query_node != NULL);
-		op->iter = RediSearch_GetResultsIterator(rs_query_node, op->idx);
+		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 	} else {
 		// build index query only once (first call)
 		// reset it if already initialized
 		if(op->iter == NULL) {
 			// first call to consume, create query and iterator
-			RSQNode *rs_query_node = FilterTreeToQueryNode(
-					&op->unresolved_filters, op->filter, op->idx);
+			RSQNode *rs_query_node = Index_BuildQueryTree(
+					&op->unresolved_filters, op->idx, op->filter);
 			ASSERT(rs_query_node != NULL);
-			op->iter = RediSearch_GetResultsIterator(rs_query_node, op->idx);
+			op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 		} else {
 			// reset existing iterator
 			RediSearch_ResultsIteratorReset(op->iter);
@@ -309,22 +310,23 @@ static Record EdgeIndexScanConsume
 	OpBase *opBase
 ) {
 	OpEdgeIndexScan *op = (OpEdgeIndexScan *)opBase;
+	RSIndex *rsIdx = Index_RSIndex(op->idx);
 
 	// create iterator on first call
 	if(op->iter == NULL) {
 		UpdateCurrentAwareIds(op);
 
-		RSQNode *rs_query_node = FilterTreeToQueryNode(&op->unresolved_filters,
-				op->filter, op->idx);
+		RSQNode *rs_query_node = Index_BuildQueryTree(&op->unresolved_filters,
+				op->idx, op->filter);
 
-		op->iter = RediSearch_GetResultsIterator(rs_query_node, op->idx);
+		op->iter = RediSearch_GetResultsIterator(rs_query_node, rsIdx);
 	}
 
 	const EdgeIndexKey *edgeKey = NULL;
 
 	// populate the Record with the actual edge
 	Record r = OpBase_CreateRecord((OpBase *)op);
-	while((edgeKey = RediSearch_ResultsIteratorNext(op->iter, op->idx, NULL))
+	while((edgeKey = RediSearch_ResultsIteratorNext(op->iter, rsIdx, NULL))
 			!= NULL) {
 		// populate record with edge
 		_UpdateRecord(op, r, edgeKey);

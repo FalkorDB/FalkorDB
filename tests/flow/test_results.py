@@ -189,3 +189,4 @@ class testResultSetFlow(FlowTestsBase):
         query = """RETURN 'Foo\r\nBar'"""
         result = graph.query(query)
         self.env.assertEqual(result.result_set[0][0], 'Foo\r\nBar')
+

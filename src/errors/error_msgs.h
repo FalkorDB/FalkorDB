@@ -105,6 +105,7 @@
 #define EMSG_FULLTEXT_LABEL_TYPE "Label argument can be string or map"
 #define EMSG_FULLTEXT_FIELD_TYPE "Field argument must be string or map"
 #define EMSG_FULLTEXT_DROP_INDEX "ERR Unable to drop index on :%s: no such index."
+#define EMSG_INDEX_FIELD_ALREADY_EXISTS "Index field already exists"
 #define EMSG_REDISEARCH "RediSearch: %s"
 #define EMSG_MANDATORY_CONSTRAINT_VIOLATION_NODE "mandatory constraint violation: node with label %s missing property %s"
 #define EMSG_MANDATORY_CONSTRAINT_VIOLATION_EDGE "mandatory constraint violation: edge with relationship-type %s missing property %s";
@@ -117,3 +118,8 @@
 #define EMSG_SSPATH_INVALID_TYPE "sourceNode must be of type Node"
 #define EMSG_INDEX_SUPPORT_CONSTRAINTS "Index supports constraint"
 #define EMSG_QUERY_MEM_CONSUMPTION "Query's mem consumption exceeded capacity"
+#define EMSG_VECTOR_TYPE_ERROR "vector%df expects an array of numbers"
+#define EMSG_VECTOR_IDX_CREATE_FAIL "Failed to create vector index"
+#define EMSG_IDX_INVALID_CONFIG "Invalid vector index configuration"
+#define EMSG_IDX_FIELD_ALREADY_EXISTS "Attribute '%s' is already indexed"
+

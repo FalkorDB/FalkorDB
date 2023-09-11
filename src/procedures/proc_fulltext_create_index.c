@@ -12,6 +12,7 @@
 #include "../errors/errors.h"
 #include "../index/indexer.h"
 #include "../util/rmalloc.h"
+#include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 
@@ -42,29 +43,15 @@ static ProcedureResult _validateIndexConfigMap
 		return PROCEDURE_ERR;
 	}
 
-	if(multi_config) {
-		GraphContext *gc = QueryCtx_GetGraphCtx();
-		Index idx = GraphContext_GetIndex(gc, label.stringval, NULL, 0,
-				IDX_FULLTEXT, SCHEMA_NODE);
-		if(idx != NULL) {
-			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-			return PROCEDURE_ERR;
-		}
-	}
-
 	//--------------------------------------------------------------------------
 	// validate stopwords
 	//--------------------------------------------------------------------------
 
 	if(stopword_exists) {
 		if(SI_TYPE(sw) == T_ARRAY) {
-			uint stopwords_count = SIArray_Length(sw);
-			for (uint i = 0; i < stopwords_count; i++) {
-				SIValue stopword = SIArray_Get(sw, i);
-				if(SI_TYPE(stopword) != T_STRING) {
-					ErrorCtx_SetError(EMSG_MUST_BE, "Stopword", "string");
-					return PROCEDURE_ERR;
-				}
+			if(!SIArray_AllOfType(sw, T_STRING)) {
+				ErrorCtx_SetError(EMSG_MUST_BE, "Stopword", "string");
+				return PROCEDURE_ERR;
 			}
 		} else {
 			ErrorCtx_SetError(EMSG_MUST_BE, "Stopwords", "array");
@@ -98,7 +85,6 @@ static ProcedureResult _validateIndexConfigMap
 // configuration can't change if index exists 
 static ProcedureResult _validateFieldConfigMap
 (
-	const char *label,
 	SIValue config
 ) {
 	SIValue field;
@@ -106,11 +92,11 @@ static ProcedureResult _validateFieldConfigMap
 	SIValue nostem;
 	SIValue phonetic;
 
-	bool  multi_config     = Map_KeyCount(config) > 1;
-	bool  field_exists     =  MAP_GET(config,  "field",     field);
-	bool  weight_exists    =  MAP_GET(config,  "weight",    weight);
-	bool  nostem_exists    =  MAP_GET(config,  "nostem",    nostem);
-	bool  phonetic_exists  =  MAP_GET(config,  "phonetic",  phonetic);
+	bool  multi_config    = Map_KeyCount(config) > 1;
+	bool  field_exists    = MAP_GET(config, "field",    field);
+	bool  weight_exists   = MAP_GET(config, "weight",   weight);
+	bool  nostem_exists   = MAP_GET(config, "nostem",   nostem);
+	bool  phonetic_exists = MAP_GET(config, "phonetic", phonetic);
 
 	// field name is mandatory
 	if(!field_exists) {
@@ -144,21 +130,53 @@ static ProcedureResult _validateFieldConfigMap
 		}
 	}
 
-	if(multi_config) {
-		// additional configuration is specified
-		// make sure field doesn't exists in index, as reconfiguration
-		// isn't supported
-		GraphContext *gc = QueryCtx_GetGraphCtx();
-		Attribute_ID fieldID = GraphContext_GetAttributeID(gc, field.stringval);
-		Index idx = GraphContext_GetIndex(gc, label, &fieldID, 1, IDX_FULLTEXT,
-				SCHEMA_NODE);
-		if(idx != NULL) {
-			ErrorCtx_SetError(EMSG_INDEX_ALREADY_EXISTS);
-			return PROCEDURE_ERR;
-		}
+	return PROCEDURE_OK;
+}
+
+// extract index level configuration from options map
+static void extract_index_level_config
+(
+	char ***stopwords,  // index stopwods
+	char **language,    // index language
+	SIValue options     // options map
+) {
+	ASSERT(language  != NULL);
+	ASSERT(stopwords != NULL);
+
+	// set default values
+	*language  = NULL;
+	*stopwords = NULL;
+
+	// quick return if options is not a map
+	if(SI_TYPE(options) != T_MAP) return;
+
+	//--------------------------------------------------------------------------
+	// extract language
+	//--------------------------------------------------------------------------
+
+	SIValue language_val;
+	if(MAP_GET(options, "language", language_val)) {
+		ASSERT(SI_TYPE(language_val) == T_STRING);
+		*language = language_val.stringval;
 	}
 
-	return PROCEDURE_OK;
+	//--------------------------------------------------------------------------
+	// extract stopwords
+	//--------------------------------------------------------------------------
+
+	SIValue stopwords_val;
+	if(MAP_GET(options, "stopwords", stopwords_val)) {
+		// validate stopwords is an array of strings
+		ASSERT(SI_TYPE(stopwords_val) == T_ARRAY &&
+			   SIArray_AllOfType(stopwords_val, T_STRING));
+
+		uint nstopwords = SIArray_Length(stopwords_val);
+		*stopwords = array_new(char*, nstopwords);
+		for(uint i = 0; i < nstopwords; i++) {
+			SIValue stopword = SIArray_Get(stopwords_val, i);
+			array_append((*stopwords), rm_strdup(stopword.stringval));
+		}
+	}
 }
 
 // CALL db.idx.fulltext.createNodeIndex(label, fields...)
@@ -171,6 +189,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	const SIValue *args,
 	const char **yield
 ) {
+	bool res = true;
 	uint arg_count = array_len((SIValue *)args);
 	if(arg_count < 2) {
 		ErrorCtx_SetError(EMSG_FULLTEXT_MIN_ARGS);
@@ -182,21 +201,14 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		ErrorCtx_SetError(EMSG_FULLTEXT_LABEL_TYPE);
 		return PROCEDURE_ERR;
 	}
+
 	if(SI_TYPE(args[0]) == T_MAP &&
 			_validateIndexConfigMap(args[0]) == PROCEDURE_ERR) {
 		return PROCEDURE_ERR;
 	}
 
-	const char *label    = NULL;
+	char *label = NULL;
 	SIValue label_config = args[0];
-
-	if(SI_TYPE(label_config) == T_STRING) {
-		label = label_config.stringval;
-	} else if(SI_TYPE(label_config) == T_MAP) {
-		SIValue label_value;
-		MAP_GET(label_config, "label", label_value);
-		label = label_value.stringval;
-	}
 
 	// validation, fields arguments should be of type string or map
 	for(uint i = 1; i < arg_count; i++) {
@@ -205,17 +217,27 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			return PROCEDURE_ERR;
 		}
 		if(SI_TYPE(args[i]) == T_MAP &&
-			_validateFieldConfigMap(label, args[i]) == PROCEDURE_ERR) {
+			_validateFieldConfigMap(args[i]) == PROCEDURE_ERR) {
 			return PROCEDURE_ERR;
 		}
 	}
 
-	// validation passed, create full-text index
-	SIValue sw;    // index stopwords
-	SIValue lang;  // index language
+	// extract index label
+	if(SI_TYPE(label_config) == T_STRING) {
+		label = label_config.stringval;
+	} else if(SI_TYPE(label_config) == T_MAP) {
+		SIValue label_value;
+		MAP_GET(label_config, "label", label_value);
+		label = label_value.stringval;
+	}
 
-	bool res              = false;
+	// label is mandatory
+	ASSERT(label != NULL);
+
+	// validation passed, create full-text index
 	Index idx             = NULL;
+	char *language        = NULL;
+	char **stopwords      = NULL;
 	GraphContext *gc      = QueryCtx_GetGraphCtx();
 	uint fields_count     = arg_count - 1; // skip label
 	const SIValue *fields = args + 1;      // skip index name
@@ -225,7 +247,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	double      weights[fields_count];
 	const char* phonetics[fields_count];
 
-	// collect fields
+	// collect fields and configuration
 	for(uint i = 0; i < fields_count; i++) {
 		weights[i]   = INDEX_FIELD_DEFAULT_WEIGHT;
 		nostems[i]   = INDEX_FIELD_DEFAULT_NOSTEM;
@@ -250,44 +272,72 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		}
 	}
 
-	char **stopwords     = NULL;
-	const char *language = NULL;
+	//--------------------------------------------------------------------------
+	// create index one field at a time
+	//--------------------------------------------------------------------------
 
-	if(SI_TYPE(label_config) == T_MAP) {
-		bool lang_exists     = MAP_GET(label_config, "language",  lang);
-		bool stopword_exists = MAP_GET(label_config, "stopwords", sw);
+	ResultSet *result_set = QueryCtx_GetResultSet();
+	ASSERT(result_set != NULL);
 
-		if(stopword_exists) {
-			uint stopwords_count = SIArray_Length(sw);
-			stopwords = array_new(char*, stopwords_count); // freed by the index
-			for (uint i = 0; i < stopwords_count; i++) {
-				SIValue stopword = SIArray_Get(sw, i);
-				array_append(stopwords, rm_strdup(stopword.stringval));
-			}
-		}
-		if(lang_exists) {
-			language = lang.stringval;
+	SIValue options = SI_Map(3);
+	for(uint i = 0; i < fields_count; i++) {
+		// construct options map
+		Map_Add(&options, SI_ConstStringVal("weight"),
+				SI_DoubleVal(weights[i]));
+		Map_Add(&options, SI_ConstStringVal("phonetic"),
+				SI_ConstStringVal(phonetics[i]));
+		Map_Add(&options, SI_ConstStringVal("nostem"),
+				SI_BoolVal(nostems[i]));
+
+		idx = AddIndex(label, _fields[i], GETYPE_NODE, INDEX_FLD_FULLTEXT,
+				options, true);
+		if(idx != NULL) {
+			ResultSet_IndexCreated(result_set, INDEX_OK);
+		} else {
+			// operation failed
+			res = false;
+			goto cleanup;
 		}
 	}
 
-	res = GraphContext_AddFullTextIndex(&idx, gc, label, _fields, fields_count,
-			weights, nostems, phonetics, stopwords, language);
+	// index created, populate
+	if(idx != NULL) {
+		//----------------------------------------------------------------------
+		// set index level configuration
+		//----------------------------------------------------------------------
 
-	// build index
-	if(res) {
+		extract_index_level_config(&stopwords, &language, label_config);
+
+		if(language != NULL && !Index_SetLanguage(idx, language)) {
+			res = false;
+			goto cleanup;
+		}
+
+		if(stopwords != NULL && !Index_SetStopwords(idx, &stopwords)) {
+			res = false;
+			goto cleanup;
+		}
+
+		Index_Disable(idx);
+
+		// populate index
 		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+		ASSERT(s != NULL);
 		Indexer_PopulateIndex(gc, s, idx);
 	}
 
-	return PROCEDURE_OK;
+cleanup:
+	if(stopwords != NULL) array_free_cb(stopwords, rm_free);
+	Map_Free(options);
+
+	return (res) ? PROCEDURE_OK : PROCEDURE_ERR;
 }
 
-SIValue *Proc_FulltextCreateNodeIdxStep(ProcedureCtx *ctx) {
+SIValue *Proc_FulltextCreateNodeIdxStep
+(
+	ProcedureCtx *ctx
+) {
 	return NULL;
-}
-
-ProcedureResult Proc_FulltextCreateNodeIdxFree(ProcedureCtx *ctx) {
-	return PROCEDURE_OK;
 }
 
 ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
@@ -295,6 +345,6 @@ ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
 	return ProcCtxNew("db.idx.fulltext.createNodeIndex",
 			PROCEDURE_VARIABLE_ARG_COUNT, output,
 			Proc_FulltextCreateNodeIdxStep, Proc_FulltextCreateNodeIdxInvoke,
-			Proc_FulltextCreateNodeIdxFree, NULL, false);
+			NULL, NULL, false);
 }
 

@@ -76,89 +76,47 @@ bool EnforceUniqueEntity
 
 	UniqueConstraint _c = (UniqueConstraint)c;
 
-	Index   idx     = _c->idx;
-	bool    holds   = false;  // return value none-optimistic
-	RSIndex *rs_idx = Index_RSIndex(idx);
-
 	//--------------------------------------------------------------------------
-	// construct a RediSearch query locating entity
+	// validate entity has all required attributes
 	//--------------------------------------------------------------------------
 
-	// TODO: prefer to have the RediSearch query "template" constructed
-	// once and reused for each entity
-
-	SIType t;
-	SIValue *v;
-	uint8_t i     = 0;
-	RSQNode *node = NULL;  // RediSearch query node
-	RSQNode *root = NULL;  // root of RediSearch query tree
-	RSQNode *nodes[_c->n_attr];
-	RSResultsIterator *iter = NULL;
 	const AttributeSet attributes = GraphEntity_GetAttributes(e);
 
-	//--------------------------------------------------------------------------
-	// create a RediSearch query
-	//--------------------------------------------------------------------------
-
-	for(i = 0; i < _c->n_attr; i++) {
+	for(uint8_t i = 0; i < _c->n_attr; i++) {
 		Attribute_ID attr_id = _c->attrs[i];
-		const char *field = _c->attr_names[i];
 
-		// get current attribute from entity
-		v = AttributeSet_Get(attributes, attr_id);
+		// make sure entity possesses attribute
+		SIValue *v = AttributeSet_Get(attributes, attr_id);
 		if(v == ATTRIBUTE_NOTFOUND) {
 			// entity satisfies constraint in a vacuous truth manner
-			holds = true;
-			goto cleanup;
+			return true;
 		}
 
-		// create RediSearch query node according to entity attr type
-		t = SI_TYPE(*v);
-
-		if(!(t & SI_INDEXABLE)) {
+		// validate attribute type
+		SIType t = SI_TYPE(*v);
+		if(t & ~(T_STRING | T_BOOL | SI_NUMERIC)) {
 			// TODO: see RediSearch MULTI-VALUE index.
-			holds = true;
-			goto cleanup;
-		} else if(t == T_STRING) {
-			node = RediSearch_CreateTagNode(rs_idx, field);
-			RSQNode *child = RediSearch_CreateTagTokenNode(rs_idx, v->stringval);
-			RediSearch_QueryNodeAddChild(node, child);
-		} else if(t & (SI_NUMERIC | T_BOOL)) {
-			double d = SI_GET_NUMERIC((*v));
-			node = RediSearch_CreateNumericNode(rs_idx, field, d, d, true, true);
-		} else {
-			// ASSERT(t == T_POINT);
-			// double lat = (double)Point_lat(*v);
-			// double lon = (double)Point_lon(*v);
-			// node = RediSearch_CreateGeoNode(rs_idx, field, lat, lon, 0, RS_GEO_DISTANCE_M);
 			// TODO: RediSearch exact match for point.
-			holds = true;
-			goto cleanup;
-		}
-
-		ASSERT(node != NULL);
-		nodes[i] = node;
-	}
-
-	//--------------------------------------------------------------------------
-	// cancat filters
-	//--------------------------------------------------------------------------
-
-	root = node;
-	if(_c->n_attr > 1) {
-		// intersection query node
-		root = RediSearch_CreateIntersectNode(rs_idx, false);
-		for(uint8_t i = 0; i < _c->n_attr; i++) {
-			RediSearch_QueryNodeAddChild(root, nodes[i]);
+			return true;
 		}
 	}
+
+	// construct a unique constraint query tree
+	// TODO: prefer to have the RediSearch query "template" constructed
+	// once and reused for each entity
+	Index idx = _c->idx;
+	RSQNode *root = Index_BuildUniqueConstraintQuery(idx, e, _c->attrs,
+			_c->n_attr);
 
 	//--------------------------------------------------------------------------
 	// query RediSearch index
 	//--------------------------------------------------------------------------
 
+	bool holds = false;  // return value none-optimistic
+
 	// constraint holds if there are no duplicates, a single index match
-	iter = RediSearch_GetResultsIterator(root, rs_idx);
+	RSIndex *rs_idx = Index_RSIndex(idx);
+	RSResultsIterator *iter = RediSearch_GetResultsIterator(root, rs_idx);
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index
 		const EntityID *id =
@@ -187,13 +145,7 @@ bool EnforceUniqueEntity
 	holds = RediSearch_ResultsIteratorNext(iter, rs_idx, NULL) == NULL;
 
 cleanup:
-	if(iter != NULL) {
-		RediSearch_ResultsIteratorFree(iter);
-	} else {
-		for(uint8_t j = 0; j < i; j++) {
-			RediSearch_QueryNodeFree(nodes[j]);
-		}
-	}
+	RediSearch_ResultsIteratorFree(iter);
 
 	if(holds == false && err_msg != NULL) {
 		int res;

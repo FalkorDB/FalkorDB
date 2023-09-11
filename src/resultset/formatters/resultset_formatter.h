@@ -30,7 +30,7 @@ typedef enum {
 	VALUE_NODE = 8,
 	VALUE_PATH = 9,
 	VALUE_MAP = 10,
-	VALUE_POINT = 11
+	VALUE_POINT = 11,
 } ValueType;
 
 // Typedef for header formatters.

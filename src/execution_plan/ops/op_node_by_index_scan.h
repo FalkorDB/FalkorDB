@@ -11,13 +11,12 @@
 #include "../../graph/graph.h"
 #include "../../index/index.h"
 #include "shared/scan_functions.h"
-#include "redisearch_api.h"
 
 typedef struct {
 	OpBase op;
 	Graph *g;
 	bool rebuild_index_query;           // should we rebuild RediSearch index query for each input record
-	RSIndex *idx;                       // index to query
+	Index idx;                          // index to query
 	NodeScanCtx *n;                     // label data of node being scanned
 	uint nodeRecIdx;                    // index of the node being scanned in the Record
 	RSResultsIterator *iter;            // rediSearch iterator over an index with the appropriate filters
@@ -28,5 +27,5 @@ typedef struct {
 
 // creates a new IndexScan operation
 OpBase *NewIndexScanOp(const ExecutionPlan *plan, Graph *g, NodeScanCtx *n,
-		RSIndex *idx, FT_FilterNode *filter);
+		Index idx, FT_FilterNode *filter);
 
