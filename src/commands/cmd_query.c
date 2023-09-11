@@ -270,8 +270,6 @@ static void _ExecuteQuery(void *args) {
 		}	
 	}
 
-	ASSERT(gc->g->reserved_node_count == 0);
-
 	QueryCtx_UnlockCommit();
 
 	if(!profile || ErrorCtx_EncounteredError()) {

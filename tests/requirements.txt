@@ -7,3 +7,4 @@ redisgraph-bulk-loader~=0.12.3
 click
 behave~=1.2
 pathos~=0.2.8
+neo4j

@@ -85,7 +85,7 @@ void _ResultSet_BoltReplyWithSIValue
 		bolt_reply_float(client, v.point.latitude);
 		bolt_reply_null(client);
 		break;
-	case T_VECTOR32F:
+	case T_VECTOR32F: {
 		uint32_t dim = SIVector_Dim(v);
 		bolt_reply_list(client, dim);
 
@@ -98,6 +98,7 @@ void _ResultSet_BoltReplyWithSIValue
 			bolt_reply_float(client, (double)values[i]);
 		}
 		break;
+	}
 	default:
 		RedisModule_Assert("Unhandled value type" && false);
 	}
