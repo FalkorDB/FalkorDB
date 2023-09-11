@@ -531,7 +531,10 @@ int BoltApi_Register
 (
     RedisModuleCtx *ctx  // redis context
 ) {
-    socket_t bolt = socket_bind(7687);
+	RedisModuleServerInfoData *data = RedisModule_GetServerInfo(ctx, "Server");
+	uint64_t redis_port = RedisModule_ServerInfoGetFieldUnsigned(data, "tcp_port", NULL);
+	RedisModule_FreeServerInfo(ctx, data);
+    socket_t bolt = socket_bind(7687 + 6379 - redis_port);
 	if(bolt == -1) {
 		RedisModule_Log(ctx, "warning", "Failed to bind to port 7687");
 		return REDISMODULE_ERR;
