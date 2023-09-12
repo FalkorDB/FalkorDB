@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v15.h"
+#include "decode_v14.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(RedisModuleIO *rdb);
@@ -124,7 +124,7 @@ static void _RdbLoadEntity
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
 }
 
-void RdbLoadNodes_v15
+void RdbLoadNodes_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -164,7 +164,7 @@ void RdbLoadNodes_v15
 	}
 }
 
-void RdbLoadDeletedNodes_v15
+void RdbLoadDeletedNodes_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -178,7 +178,7 @@ void RdbLoadDeletedNodes_v15
 	}
 }
 
-void RdbLoadEdges_v15
+void RdbLoadEdges_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -214,7 +214,7 @@ void RdbLoadEdges_v15
 	}
 }
 
-void RdbLoadDeletedEdges_v15
+void RdbLoadDeletedEdges_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

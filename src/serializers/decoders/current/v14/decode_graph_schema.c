@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v15.h"
+#include "decode_v14.h"
 #include "../../../../schema/schema.h"
 
 static void _RdbDecodeIndexField
@@ -260,7 +260,7 @@ static void _RdbLoadAttributeKeys(RedisModuleIO *rdb, GraphContext *gc) {
 	}
 }
 
-void RdbLoadGraphSchema_v15
+void RdbLoadGraphSchema_v14
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,

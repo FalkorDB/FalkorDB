@@ -23,8 +23,6 @@ GraphContext *Decode_Previous
 			return RdbLoadGraphContext_v12(rdb);
 		case 13:
 			return RdbLoadGraphContext_v13(rdb);
-		case 14:
-			return RdbLoadGraphContext_v14(rdb);
 		default:
 			ASSERT(false && "attempted to read unsupported RedisGraph version from RDB file.");
 			return NULL;
