@@ -238,52 +238,40 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 		str_len += strlen(str.stringval);
 	}
 
-	uint cur_len = 0;
+	
 	char *base = rm_malloc(str_len + 1);
+
 	char *res = base;
+	uint remain_len = str_len;
 
 	for(uint i = 0; i < count - 1; i++) {
 		
 		SIValue str = SIArray_Get(list, i);
-		int val_len = strlen(str.stringval);
+		size_t val_len = strlen(str.stringval);
+		PROTECTED_MEMCPY(res, str.stringval, val_len, remain_len)	
 
-		// Protect from buffer overflow.
-		// Might happen if str_len overflowed
-		cur_len += val_len + delimeter_len;
-		if(cur_len > str_len) {
-			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
-			return SI_NullVal();
-		}
-
-		// Copy the value.
-		memcpy(res, str.stringval, val_len);
-		res += val_len;
-		
-		// Copy the delimiter.
-		memcpy(res, delimiter, delimeter_len);
-		res += delimeter_len;
+		PROTECTED_MEMCPY(res, delimiter, delimeter_len, remain_len)
 	}
 
 	// The last value	
 	SIValue str = SIArray_Get(list, count - 1);
-	int val_len = strlen(str.stringval);
-
-	// Protect from buffer overflow.
-	// Might happen if str_len overflowed
-	cur_len += val_len;
-	if(cur_len > str_len) {
-		ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION);
-		return SI_NullVal();
-	}
-
-	// Copy the last value.
-	memcpy(res, str.stringval, strlen(str.stringval));
+	size_t val_len = strlen(str.stringval);
+	PROTECTED_MEMCPY(res, str.stringval, val_len, remain_len)		
 	
 	// The last character should be '\0'
 	base[str_len] = '\0';
 
 	return SI_TransferStringVal(base);
 }
+
+#define PROTECTED_MEMCPY(res, val, val_len, remain_len) \
+        if(remain_len < val_len) { \
+			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION); \
+			return SI_NullVal(); \
+		} \
+		memcpy(res, val, val_len); \
+		res += val_len; \
+		remain_len -= val_len;
 
 typedef struct {
 	SIValue *list;
