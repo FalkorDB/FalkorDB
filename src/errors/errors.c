@@ -103,7 +103,7 @@ void ErrorCtx_EmitException(void) {
 	if(ctx->error != NULL) {
 		bolt_client_t *bolt_client = QueryCtx_GetBoltClient();
 		if(bolt_client != NULL) {
-			bolt_reply_structure(bolt_client, BST_FAILURE, 1);
+			bolt_client_reply_for(bolt_client, BST_RUN, BST_FAILURE, 1);
 			bolt_reply_map(bolt_client, 2);
 			bolt_reply_string(bolt_client, "code", 4);
 			bolt_reply_string(bolt_client, "SyntaxError", 11);

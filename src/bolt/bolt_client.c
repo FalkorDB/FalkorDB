@@ -542,6 +542,20 @@ void bolt_client_send
 	bolt_client_t *client
 ) {
 	if(client->reset) {
+		if(client->state != BS_FAILED) {
+			client->last_write_index = 2;
+			bolt_reply_structure(client, BST_SUCCESS, 1);
+			bolt_reply_map(client, 0);
+			uint16_t n = client->last_write_index - 2;
+			*(u_int16_t *)client->write_buffer = htons(n);
+			client->write_buffer[n + 2] = 0x00;
+			client->write_buffer[n + 3] = 0x00;
+			socket_write(client->socket, client->write_buffer, n + 4);
+			client->last_write_index = 2;
+			client->nwrite = 0;
+			client->reset = false;
+			return;
+		}
 		client->last_write_index = 2;
 		bolt_reply_structure(client, BST_IGNORED, 0);
 		uint16_t n = client->last_write_index - 2;
