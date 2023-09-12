@@ -20,6 +20,15 @@
 // date, time, localtime, localdatetime or datetime values
 #define STRINGABLE (SI_NUMERIC | T_POINT | T_DURATION | T_DATETIME | T_STRING | T_BOOL)
 
+#define PROTECTED_MEMCPY(res, val, val_len, remain_len) \
+        if(remain_len < val_len) { \
+			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION); \
+			return SI_NullVal(); \
+		} \
+		memcpy(res, val, val_len); \
+		res += val_len; \
+		remain_len -= val_len;
+
 // returns a string containing the specified number of leftmost characters of the original string.
 SIValue AR_LEFT(SIValue *argv, int argc, void *private_data) {
 	if(SIValue_IsNull(argv[0])) return SI_NullVal();
@@ -264,14 +273,6 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 	return SI_TransferStringVal(base);
 }
 
-#define PROTECTED_MEMCPY(res, val, val_len, remain_len) \
-        if(remain_len < val_len) { \
-			ErrorCtx_SetError(EMSG_QUERY_MEM_CONSUMPTION); \
-			return SI_NullVal(); \
-		} \
-		memcpy(res, val, val_len); \
-		res += val_len; \
-		remain_len -= val_len;
 
 typedef struct {
 	SIValue *list;
