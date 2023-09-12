@@ -265,7 +265,7 @@ void ResultSet_EmitBoltRow
 	for(int i = 0; i < numcols; i++) {
 		_ResultSet_BoltReplyWithSIValue(bolt_client, gc, *row[i]);
 	}
-	bolt_client_send(bolt_client);
+	bolt_client_end_message(bolt_client);
 }
 
 // Emit the alias or descriptor for each column in the header.
@@ -276,7 +276,7 @@ void ResultSet_ReplyWithBoltHeader
 	const char **columns,
 	uint *col_rec_map
 ) {
-	bolt_reply_structure(bolt_client, BST_SUCCESS, 1);
+	bolt_client_reply_for(bolt_client, BST_RUN, BST_SUCCESS, 1);
 	bolt_reply_map(bolt_client, 3);
 	bolt_reply_string(bolt_client, "t_first", 7);
 	bolt_reply_int8(bolt_client, 2);
@@ -287,5 +287,5 @@ void ResultSet_ReplyWithBoltHeader
 	}
 	bolt_reply_string(bolt_client, "qid", 3);
 	bolt_reply_int8(bolt_client, 0);
-	bolt_client_finish_write(bolt_client);
+	bolt_client_end_message(bolt_client);
 }

@@ -7,7 +7,6 @@
 #include "bolt.h"
 #include "bolt_client.h"
 #include "util/rmalloc.h"
-#include <pthread.h>
 #include <arpa/inet.h>
 
 bolt_client_t *bolt_client_new
@@ -21,24 +20,24 @@ bolt_client_t *bolt_client_new
 	client->state = BS_NEGOTIATION;
 	client->ctx = ctx;
 	client->on_write = on_write;
-	client->nwrite = 2;
+	client->nwrite = 0;
 	client->nread = 0;
-	client->pull = false;
-	client->has_message = false;
+	client->processing = false;
 	client->shutdown = false;
 	client->reset = false;
 	client->last_read_index = 0;
-	pthread_cond_init(&client->pull_condv, NULL);
-	pthread_mutex_init(&client->pull_condv_mutex, NULL);
+	client->last_write_index = 2;
 	return client;
 }
 
 void bolt_change_negotiation_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
-	ASSERT(client->state == BS_NEGOTIATION && bolt_read_structure_type(client->messasge_buffer) == BST_HELLO);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+	ASSERT(client->state == BS_NEGOTIATION && request_type == BST_HELLO);
+
 	switch (response_type)
 	{
 		case BST_SUCCESS:
@@ -54,10 +53,12 @@ void bolt_change_negotiation_state
 
 void bolt_change_authentication_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
-	ASSERT(client->state == BS_AUTHENTICATION && bolt_read_structure_type(client->messasge_buffer) == BST_LOGON);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+	ASSERT(client->state == BS_AUTHENTICATION && request_type == BST_LOGON);
+
 	switch (response_type)
 	{
 		case BST_SUCCESS:
@@ -73,11 +74,12 @@ void bolt_change_authentication_state
 
 void bolt_change_ready_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
 	ASSERT(client->state == BS_READY);
-	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+
 	switch (request_type)
 	{
 		case BST_LOGOFF:
@@ -142,11 +144,12 @@ void bolt_change_ready_state
 
 void bolt_change_streaming_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
 	ASSERT(client->state == BS_STREAMING);
-	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+
 	switch (request_type)
 	{
 		case BST_PULL:
@@ -188,11 +191,12 @@ void bolt_change_streaming_state
 
 void bolt_change_txready_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
 	ASSERT(client->state == BS_TX_READY);
-	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+
 	switch (request_type)
 	{
 		case BST_RUN:
@@ -247,11 +251,12 @@ void bolt_change_txready_state
 
 void bolt_change_txstreaming_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
 	ASSERT(client->state == BS_TX_STREAMING);
-	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+
 	switch (request_type)
 	{
 		case BST_RUN:
@@ -319,11 +324,12 @@ void bolt_change_txstreaming_state
 
 void bolt_change_failed_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
 	ASSERT(client->state == BS_FAILED);
-	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+
 	switch (request_type)
 	{
 		case BST_RUN:
@@ -369,11 +375,12 @@ void bolt_change_failed_state
 
 void bolt_change_interrupted_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
 	ASSERT(client->state == BS_INTERRUPTED);
-	bolt_structure_type request_type = bolt_read_structure_type(client->messasge_buffer);
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
+
 	switch (request_type)
 	{
 		case BST_RUN:
@@ -459,42 +466,68 @@ void bolt_change_interrupted_state
 
 void bolt_change_client_state
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type
 ) {
-	bolt_structure_type response_type = bolt_read_structure_type(client->write_buffer + 2);
 	if(response_type == BST_RECORD) {
 		return;
 	}
 	switch (client->state)
 	{
 		case BS_NEGOTIATION:
-			bolt_change_negotiation_state(client);
+			bolt_change_negotiation_state(client, request_type, response_type);
 			break;
 		case BS_AUTHENTICATION:
-			bolt_change_authentication_state(client);
+			bolt_change_authentication_state(client, request_type, response_type);
 			break;
 		case BS_READY:
-			bolt_change_ready_state(client);
+			bolt_change_ready_state(client, request_type, response_type);
 			break;
 		case BS_STREAMING:
-			bolt_change_streaming_state(client);
+			bolt_change_streaming_state(client, request_type, response_type);
 			break;
 		case BS_TX_READY:
-			bolt_change_txready_state(client);
+			bolt_change_txready_state(client, request_type, response_type);
 			break;
 		case BS_TX_STREAMING:
-			bolt_change_txstreaming_state(client);
+			bolt_change_txstreaming_state(client, request_type, response_type);
 			break;
 		case BS_FAILED:
-			bolt_change_failed_state(client);
+			bolt_change_failed_state(client, request_type, response_type);
 			break;
 		case BS_INTERRUPTED:
-			bolt_change_interrupted_state(client);
+			bolt_change_interrupted_state(client, request_type, response_type);
 			break;
 		default:
 			ASSERT(false);
 			break;
 	}
+}
+
+void bolt_client_reply_for
+(
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type,
+	uint32_t size
+) {
+	bolt_reply_structure(client, response_type, size);
+	bolt_change_client_state(client, request_type, response_type);
+}
+
+void bolt_client_end_message
+(
+	bolt_client_t *client
+) {
+	uint16_t n = client->last_write_index - client->nwrite - 2;
+	ASSERT(n > 2);
+	
+	*(u_int16_t *)(client->write_buffer + client->nwrite) = htons(n);
+	client->write_buffer[client->last_write_index++] = 0x00;
+	client->write_buffer[client->last_write_index++] = 0x00;
+	client->nwrite = client->last_write_index;
+	client->last_write_index += 2;
 }
 
 void bolt_client_finish_write
@@ -509,40 +542,33 @@ void bolt_client_send
 	bolt_client_t *client
 ) {
 	if(client->reset) {
-		client->nwrite = 2;
-		if(client->pull) {
-			bolt_reply_structure(client, BST_IGNORED, 0);
-			uint16_t n = client->nwrite - 2;
-			*(u_int16_t *)client->write_buffer = htons(n);
-			client->write_buffer[n + 2] = 0x00;
-			client->write_buffer[n + 3] = 0x00;
-			socket_write(client->socket, client->write_buffer, n + 4);
-			client->nwrite = 2;
-			client->pull = false;
-		}
-		bolt_reply_structure(client, BST_SUCCESS, 1);
-		bolt_reply_map(client, 0);
-		uint16_t n = client->nwrite - 2;
+		client->last_write_index = 2;
+		bolt_reply_structure(client, BST_IGNORED, 0);
+		uint16_t n = client->last_write_index - 2;
 		*(u_int16_t *)client->write_buffer = htons(n);
 		client->write_buffer[n + 2] = 0x00;
 		client->write_buffer[n + 3] = 0x00;
 		socket_write(client->socket, client->write_buffer, n + 4);
-		client->nwrite = 2;
+		client->last_write_index = 2;
+		bolt_reply_structure(client, BST_SUCCESS, 1);
+		bolt_reply_map(client, 0);
+		n = client->last_write_index - 2;
+		*(u_int16_t *)client->write_buffer = htons(n);
+		client->write_buffer[n + 2] = 0x00;
+		client->write_buffer[n + 3] = 0x00;
+		socket_write(client->socket, client->write_buffer, n + 4);
+		client->last_write_index = 2;
+		client->nwrite = 0;
 		client->reset = false;
 		client->state = BS_READY;
 		return;
 	}
 
-	uint16_t n = client->nwrite - 2;
-	if(n == 0) {
-		return;
-	}
-	*(u_int16_t *)client->write_buffer = htons(n);
-	client->write_buffer[n + 2] = 0x00;
-	client->write_buffer[n + 3] = 0x00;
-	socket_write(client->socket, client->write_buffer, n + 4);
-	client->nwrite = 2;
-	bolt_change_client_state(client);
+	ASSERT(client->nwrite > 0);
+	socket_write(client->socket, client->write_buffer, client->nwrite);
+	ASSERT(client->nwrite == client->last_write_index - 2);
+	client->nwrite = 0;
+	client->last_write_index = 2;
 }
 
 bool bolt_check_handshake

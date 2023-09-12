@@ -8,6 +8,8 @@
 #include "socket.h"
 #include "../redismodule.h"
 
+typedef enum bolt_structure_type bolt_structure_type;
+
 typedef enum bolt_client_state {
 	BS_NEGOTIATION,
 	BS_AUTHENTICATION,
@@ -25,17 +27,15 @@ typedef struct bolt_client_t {
 	bolt_client_state state;
 	RedisModuleCtx *ctx;
 	RedisModuleEventLoopFunc on_write;
-	uint32_t nwrite;
-	uint32_t nread;
-	uint32_t last_read_index;
-    bool has_message;
 	bool shutdown;
 	bool reset;
+    bool processing;
 	char messasge_buffer[UINT16_MAX];
-	volatile bool pull;
-	pthread_mutex_t pull_condv_mutex;
-	pthread_cond_t pull_condv;
-	char write_buffer[1024];
+	uint32_t nwrite;
+	uint32_t last_write_index;
+	char write_buffer[UINT16_MAX];
+	uint32_t nread;
+	uint32_t last_read_index;
 	char read_buffer[UINT16_MAX];
 } bolt_client_t;
 
@@ -51,9 +51,17 @@ bolt_client_t *bolt_client_new
 	RedisModuleEventLoopFunc on_write
 );
 
-void bolt_change_client_state
+void bolt_client_reply_for
 (
-	bolt_client_t *client   
+	bolt_client_t *client,
+	bolt_structure_type request_type,
+	bolt_structure_type response_type,
+	uint32_t size
+);
+
+void bolt_client_end_message
+(
+	bolt_client_t *client
 );
 
 void bolt_client_finish_write

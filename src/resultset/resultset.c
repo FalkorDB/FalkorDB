@@ -251,17 +251,6 @@ void ResultSet_Reply
 	// set up the results array and emit the header if the query requires one
 	_ResultSet_ReplyWithPreamble(set);
 
-	if(set->format == FORMATTER_BOLT && !set->bolt_client->pull) {
-		pthread_mutex_lock(&set->bolt_client->pull_condv_mutex);
-		if(!set->bolt_client->pull) {
-			// Waiting for client to pull data
-			int res = pthread_cond_wait(&set->bolt_client->pull_condv, &set->bolt_client->pull_condv_mutex);
-			ASSERT(res == 0);
-			ASSERT(set->bolt_client->pull);
-		}
-		pthread_mutex_unlock(&set->bolt_client->pull_condv_mutex);
-	}
-
 	// emit resultset
 	if(set->column_count > 0) {
 		RedisModule_ReplyWithArray(set->ctx, row_count);
@@ -279,7 +268,7 @@ void ResultSet_Reply
 	}
 
 	if(set->format == FORMATTER_BOLT) {
-		bolt_reply_structure(set->bolt_client, BST_SUCCESS, 1);
+		bolt_client_reply_for(set->bolt_client, BST_PULL, BST_SUCCESS, 1);
 		int stats = 0;
 		if(set->stats.index_creation)            stats++;
 		if(set->stats.index_deletion)            stats++;
@@ -349,6 +338,7 @@ void ResultSet_Reply
 			bolt_reply_map(set->bolt_client, 0);
 		}
 
+		bolt_client_end_message(set->bolt_client);
 		bolt_client_finish_write(set->bolt_client);
 		return;
 	}

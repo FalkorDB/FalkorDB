@@ -38,12 +38,13 @@ static void BoltHelloCommand
 	ASSERT(client != NULL);
 	ASSERT(client->state == BS_NEGOTIATION);
 
-	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_client_reply_for(client, BST_HELLO, BST_SUCCESS, 1);
 	bolt_reply_map(client, 2);
 	bolt_reply_string(client, "server", 6);
 	bolt_reply_string(client, "Neo4j/5.11.0", 12);
 	bolt_reply_string(client, "connection_id", 13);
 	bolt_reply_string(client, "bolt-connection-1", 17);
+	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
 
@@ -67,8 +68,9 @@ static void BoltLogonCommand
 	ASSERT(client != NULL);
 	ASSERT(client->state == BS_AUTHENTICATION);
 
-	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_client_reply_for(client, BST_LOGON, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
+	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
 
@@ -232,7 +234,6 @@ void BoltRunCommand
 
 	ASSERT(client != NULL);
 
-	client->pull = false;
 	RedisModuleCtx *ctx = client->ctx;
 	RedisModuleString *args[5];
 
@@ -262,11 +263,6 @@ void BoltPullCommand
 	// }
 
 	ASSERT(client != NULL);
-
-	pthread_mutex_lock(&client->pull_condv_mutex);
-	client->pull = true;
-	pthread_cond_signal(&client->pull_condv);
-	pthread_mutex_unlock(&client->pull_condv_mutex);
 }
 
 // handle the BEGIN message
@@ -289,8 +285,9 @@ void BoltBeginCommand
 
 	ASSERT(client != NULL);
 
-	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_client_reply_for(client, BST_BEGIN, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
+	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
 
@@ -303,8 +300,9 @@ void BoltCommitCommand
 
 	ASSERT(client != NULL);
 
-	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_client_reply_for(client, BST_COMMIT, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
+	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
 
@@ -317,8 +315,9 @@ void BoltRollbackCommand
 
 	ASSERT(client != NULL);
 
-	bolt_reply_structure(client, BST_SUCCESS, 1);
+	bolt_client_reply_for(client, BST_ROLLBACK, BST_SUCCESS, 1);
 	bolt_reply_map(client, 0);
+	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
 
@@ -331,7 +330,7 @@ void BoltRequestHandler
 
 	// if there is a message already in process or
 	// not enough data to read the message
-	if(client->has_message || client->nread - client->last_read_index <= 2) {
+	if(client->processing || client->nread - client->last_read_index <= 2) {
 		return;
 	}
 
@@ -353,7 +352,7 @@ void BoltRequestHandler
 		client->nread = 0;
 	}
 
-	client->has_message = true;
+	client->processing = true;
 
 	switch (bolt_read_structure_type(client->messasge_buffer))
 	{
@@ -374,6 +373,8 @@ void BoltRequestHandler
 			break;
 		case BST_PULL:
 			BoltPullCommand(client);
+			client->processing = false;
+			BoltRequestHandler(client);
 			break;
 		case BST_BEGIN:
 			BoltBeginCommand(client);
@@ -406,7 +407,7 @@ void BoltReadHandler
 	if(nread == -1) {
 		// error
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		if(client->has_message) {
+		if(client->processing) {
 			client->shutdown = true;
 			return;
 		}
@@ -418,7 +419,7 @@ void BoltReadHandler
 		if(client->nread == UINT16_MAX) {
 			// not enough space in the buffer
 			// try to move the message to the beginning of the buffer
-			if(client->has_message) {
+			if(client->processing) {
 				return;
 			}
 			memmove(client->read_buffer, client->read_buffer + client->last_read_index, client->nread - client->last_read_index);
@@ -428,7 +429,7 @@ void BoltReadHandler
 		}
 		// client disconnected
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		if(client->has_message) {
+		if(client->processing) {
 			client->shutdown = true;
 			return;
 		}
@@ -485,7 +486,7 @@ void BoltResponseHandler
 	}
 
 	bolt_client_send(client);
-	client->has_message = false;
+	client->processing = false;
 
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 
