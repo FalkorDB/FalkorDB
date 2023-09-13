@@ -2484,6 +2484,17 @@ class testFunctionCallsFlow(FlowTestsBase):
         query = """RETURN string.join(['HELL','OW', 'NOW'], ' ')"""
         actual_result = graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
+
+        # join overflow
+        q = """UNWIND RANGE(0, 10000000) as x
+               WITH collect('looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong string') as list
+               RETURN string.join(list, 'loooooooooooooooooooooooooooooooooooooooooonggggggggggggggggggggggggggggggggggggggggggggggggggggg delimiterrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
+               """
+        try:
+            result = graph.query(q)
+            self.env.assertFalse(True)
+        except ResponseError as e:
+            self.env.assertContains("String overflow", str(e))
   
     def test90_size(self):
         query_to_expected_result = {
