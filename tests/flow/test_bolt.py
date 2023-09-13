@@ -82,12 +82,12 @@ class testBolt():
     
     def test06_list(self):
         with bolt_con.session() as session:
-            result = session.run("RETURN [], [1,2,3], $v8", {"v8": [1] * 255})
+            result = session.run("RETURN [], [1,2,3], $v8, $v16", {"v8": [1] * 255, "v16": [1] * 256})
             record = result.single()
             self.env.assertEquals(record[0], [])
             self.env.assertEquals(record[1], [1,2,3])
             self.env.assertEquals(record[2], [1] * 255)
-            # self.env.assertEquals(record[3], [1] * 256)
+            self.env.assertEquals(record[3], [1] * 256)
 
     def test07_map(self):
         with bolt_con.session() as session:
@@ -96,7 +96,6 @@ class testBolt():
             self.env.assertEquals(record[0], {})
             self.env.assertEquals(record[1], {'foo':'bar'})
             self.env.assertEquals(record[2], {'foo':'bar'})
-            # self.env.assertEquals(record[3], {'foo':'bar'})
 
     def test08_point(self):
         with bolt_con.session() as session:

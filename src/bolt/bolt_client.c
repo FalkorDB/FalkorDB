@@ -23,10 +23,11 @@ bolt_client_t *bolt_client_new
 	client->processing = false;
 	client->shutdown = false;
 	client->reset = false;
-	client->read = client->read_buffer;
-	client->current_read = client->read_buffer;
-	client->write = client->write_buffer;
-	client->current_write = client->write_buffer + 2;
+	buffer_new(&client->read_buf);
+	buffer_new(&client->write_buf);
+	buffer_new(&client->msg_buf);
+	buffer_index(&client->write_buf, &client->write, 0);
+	buffer_write_uint16(&client->write_buf.write, htons(0x0000));
 	return client;
 }
 
@@ -520,14 +521,14 @@ void bolt_client_end_message
 (
 	bolt_client_t *client
 ) {
-	uint16_t n = client->current_write - client->write - 2;
+	uint16_t n = buffer_index_diff(&client->write_buf.write, &client->write) - 2;
 	ASSERT(n > 2);
 	
-	*(u_int16_t *)(client->write) = htons(n);
-	client->current_write[0] = 0x00;
-	client->current_write[1]= 0x00;
-	client->write = client->current_write + 2;
-	client->current_write += 4;
+	buffer_write_uint16(&client->write, htons(n));
+	buffer_write_uint8(&client->write_buf.write, 0x00);
+	buffer_write_uint8(&client->write_buf.write, 0x00);
+	client->write = client->write_buf.write;
+	buffer_write_uint16(&client->write_buf.write, 0x0000);
 }
 
 void bolt_client_finish_write
@@ -542,47 +543,52 @@ void bolt_client_send
 	bolt_client_t *client
 ) {
 	if(client->reset) {
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->write_buf, &client->write_buf.write, 2);
+
 		if(client->state != BS_FAILED) {
-			client->current_write = client->write_buffer + 2;
 			bolt_reply_structure(client, BST_SUCCESS, 1);
 			bolt_reply_map(client, 0);
-			uint16_t n = client->current_write - client->write - 2;
-			*(u_int16_t *)client->write_buffer = htons(n);
-			client->write_buffer[n + 2] = 0x00;
-			client->write_buffer[n + 3] = 0x00;
-			socket_write(client->socket, client->write_buffer, n + 4);
-			client->current_write = client->write_buffer + 2;
-			client->write = client->write_buffer;
+			uint16_t n = buffer_index_diff(&client->write_buf.write, &client->write) - 2;
+			buffer_write_uint16(&client->write, htons(n));
+			buffer_write_uint8(&client->write_buf.write, 0x00);
+			buffer_write_uint8(&client->write_buf.write, 0x00);
+			buffer_socket_write(&client->write_buf.write, client->socket);
+
+			buffer_index(&client->write_buf, &client->write, 0);
+			buffer_index(&client->write_buf, &client->write_buf.write, 2);
 			client->reset = false;
 			return;
 		}
-		client->current_write = client->write_buffer + 2;
+
 		bolt_reply_structure(client, BST_IGNORED, 0);
-		uint16_t n = client->current_write - client->write - 2;
-		*(u_int16_t *)client->write_buffer = htons(n);
-		client->write_buffer[n + 2] = 0x00;
-		client->write_buffer[n + 3] = 0x00;
-		socket_write(client->socket, client->write_buffer, n + 4);
-		client->current_write = client->write_buffer + 2;
+		uint16_t n = buffer_index_diff(&client->write_buf.write, &client->write) - 2;
+		buffer_write_uint16(&client->write, htons(n));
+		buffer_write_uint8(&client->write_buf.write, 0x00);
+		buffer_write_uint8(&client->write_buf.write, 0x00);
+		buffer_socket_write(&client->write_buf.write, client->socket);
+
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->write_buf, &client->write_buf.write, 2);
+
 		bolt_reply_structure(client, BST_SUCCESS, 1);
 		bolt_reply_map(client, 0);
-		n = client->current_write - client->write - 2;
-		*(u_int16_t *)client->write_buffer = htons(n);
-		client->write_buffer[n + 2] = 0x00;
-		client->write_buffer[n + 3] = 0x00;
-		socket_write(client->socket, client->write_buffer, n + 4);
-		client->current_write = client->write_buffer + 2;
-		client->write = client->write_buffer;
+		n = buffer_index_diff(&client->write_buf.write, &client->write) - 2;
+		buffer_write_uint16(&client->write, htons(n));
+		buffer_write_uint8(&client->write_buf.write, 0x00);
+		buffer_write_uint8(&client->write_buf.write, 0x00);
+		buffer_socket_write(&client->write_buf.write, client->socket);
+
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->write_buf, &client->write_buf.write, 2);
 		client->reset = false;
 		client->state = BS_READY;
 		return;
 	}
 
-	ASSERT(client->write > client->write_buffer);
-	socket_write(client->socket, client->write_buffer, client->write - client->write_buffer);
-	ASSERT(client->write == client->current_write - 2);
-	client->current_write = client->write_buffer + 2;
-	client->write = client->write_buffer;
+	buffer_socket_write(&client->write, client->socket);
+	buffer_index(&client->write_buf, &client->write, 0);
+	buffer_index(&client->write_buf, &client->write_buf.write, 2);
 }
 
 bool bolt_check_handshake
@@ -612,4 +618,15 @@ bolt_version_t bolt_read_supported_version
 	version.minor = data[2];
 	version.major = data[3];
 	return version;
+}
+
+void bolt_client_free
+(
+	bolt_client_t *client
+) {
+	socket_close(client->socket);
+	buffer_free(&client->read_buf);
+	buffer_free(&client->write_buf);
+	buffer_free(&client->msg_buf);
+	rm_free(client);
 }

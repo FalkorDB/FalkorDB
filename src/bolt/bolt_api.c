@@ -83,17 +83,15 @@ static RedisModuleString *get_graph_name
 	ASSERT(ctx != NULL);
 	ASSERT(client != NULL);
 
-	char *graph_name = bolt_read_structure_value(client->messasge_buffer, 2);
 	char *graph_name_str;
-	size_t graph_name_len;
-	if(bolt_read_map_size(graph_name) == 0) {
+	uint32_t graph_name_len;
+	if(bolt_read_map_size(&client->msg_buf.read) == 0) {
 		// default graph name
 		graph_name_str = "falkordb";
 		graph_name_len = 8;
 	} else {
-		graph_name = bolt_read_map_value(graph_name, 0);
-		graph_name_str = bolt_read_string(graph_name);
-		graph_name_len = bolt_read_string_size(graph_name);
+		buffer_index_t graph_name = bolt_read_string(&client->msg_buf.read, &graph_name_len);
+		graph_name_str = buffer_index_read(&graph_name, graph_name_len);
 	}
 	return RedisModule_CreateString(ctx, graph_name_str, graph_name_len);
 }
@@ -101,15 +99,16 @@ static RedisModuleString *get_graph_name
 // write the bolt value to the buffer as string
 int write_value
 (
-	char *buff,  // the buffer to write to
-	char *value  // the value to write
+	char *buff,            // the buffer to write to
+	buffer_index_t *value  // the value to write
 ) {
 	ASSERT(buff != NULL);
 	ASSERT(value != NULL);
 
-	switch (bolt_read_type(value))
+	switch (bolt_read_type(*value))
 	{
 		case BVT_NULL:
+			bolt_read_null(value);
 			return sprintf(buff, "NULL");
 		case BVT_BOOL:
 			return sprintf(buff, "%s", bolt_read_bool(value) ? "true" : "false");
@@ -123,19 +122,21 @@ int write_value
 			return sprintf(buff, "%lld", bolt_read_int64(value));
 		case BVT_FLOAT:
 			return sprintf(buff, "%f", bolt_read_float(value));
-		case BVT_STRING:
-			return sprintf(buff, "'%.*s'", bolt_read_string_size(value), bolt_read_string(value));
+		case BVT_STRING: {
+			uint32_t len;
+			buffer_index_t str = bolt_read_string(value, &len);
+			char *ptr = buffer_index_read(&str, len);
+			return sprintf(buff, "'%.*s'", len, ptr);
+		}
 		case BVT_LIST: {
 			uint32_t size = bolt_read_list_size(value);
 			int n = 0;
 			n += sprintf(buff, "[");
 			if(size > 0) {
-				char *item = bolt_read_list_item(value, 0);
-				n += write_value(buff + n, item);
-				for (int i = 1; i < size - 0; i++) {
+				n += write_value(buff + n, value);
+				for (int i = 1; i < size; i++) {
 					n += sprintf(buff + n, ", ");
-					item = bolt_read_list_item(value, i);
-					n += write_value(buff + n, item);
+					n += write_value(buff + n, value);
 				}
 			}
 			n += sprintf(buff + n, "]");
@@ -146,16 +147,17 @@ int write_value
 			int n = 0;
 			n += sprintf(buff, "{");
 			if(size > 0) {
-				char *key = bolt_read_map_key(value, 0);
-				char *val = bolt_read_map_value(value, 0);
-				n += sprintf(buff + n, "%.*s: ", bolt_read_string_size(key), bolt_read_string(key));
-				n += write_value(buff + n, val);
-				for (int i = 1; i < size - 0; i++) {
+				uint32_t key_len;
+				buffer_index_t key = bolt_read_string(value, &key_len);
+				char *key_ptr = buffer_index_read(&key, key_len);
+				n += sprintf(buff + n, "%.*s: ", key_len, key_ptr);
+				n += write_value(buff + n, value);
+				for (int i = 1; i < size; i++) {
+					key = bolt_read_string(value, &key_len);
+					key_ptr = buffer_index_read(&key, key_len);
 					n += sprintf(buff + n, ", ");
-					key = bolt_read_map_key(value, i);
-					val = bolt_read_map_value(value, i);
-					n += sprintf(buff + n, "%.*s: ", bolt_read_string_size(key), bolt_read_string(key));
-					n += write_value(buff + n, val);
+					n += sprintf(buff + n, "%.*s: ", key_len, key_ptr);
+					n += write_value(buff + n, value);
 				}
 			}
 			n += sprintf(buff + n, "}");
@@ -163,16 +165,15 @@ int write_value
 		}
 		case BVT_STRUCTURE:
 			if(bolt_read_structure_type(value) == BST_POINT2D) {
-				char *x = bolt_read_structure_value(value, 1);
-				char *y = bolt_read_structure_value(value, 2);
-				sprintf(buff, "POINT({longitude: %f, latitude: %f})", bolt_read_float(x), bolt_read_float(y));
-				break;
+				double x = bolt_read_float(value);
+				double y = bolt_read_float(value);
+				return sprintf(buff, "POINT({longitude: %f, latitude: %f})", x, y);
 			}
 			ASSERT(false);
-			break;
+			return 0;
 		default:
 			ASSERT(false);
-			break;
+			return 0;
 	}
 }
 
@@ -185,28 +186,42 @@ RedisModuleString *get_query
 	ASSERT(ctx != NULL);
 	ASSERT(client != NULL);
 
-	char *query = bolt_read_structure_value(client->messasge_buffer, 0);
-	uint32_t query_len = bolt_read_string_size(query);
-	query = bolt_read_string(query);
-	char *parameters = bolt_read_structure_value(client->messasge_buffer, 1);
-	uint32_t params_count = bolt_read_map_size(parameters);
+	uint32_t query_len;
+	buffer_index_t query = bolt_read_string(&client->msg_buf.read, &query_len);
+	buffer_index_t query_end = query;
+	char *query_ptr = buffer_index_read(&query_end, query_len);
+	if(query.chunk < query_end.chunk) {
+		// query is split between chunks
+		char query_str[query_len];
+		int n = query_len;
+		while(n > BUFFER_CHUNK_SIZE) {
+			query_ptr = buffer_index_read(&query, 0);
+			memcpy(query_str + query_len - n, query_ptr, BUFFER_CHUNK_SIZE - query.offset);
+			n -= BUFFER_CHUNK_SIZE - query.offset;
+			query.chunk++;
+			query.offset = 0;
+		}
+		query_ptr = buffer_index_read(&query, 0);
+		memcpy(query_str + query_len - n, query_ptr, n);
+		return RedisModule_CreateString(ctx, query_str, query_len);
+	}
+	uint32_t params_count = bolt_read_map_size(&client->msg_buf.read);
 	if(params_count > 0) {
-		char prametrize_query[1024];
+		char prametrize_query[4096];
 		int n = sprintf(prametrize_query, "CYPHER ");
 		for (int i = 0; i < params_count; i++) {
-			char *key = bolt_read_map_key(parameters, i);
-			char *value = bolt_read_map_value(parameters, i);
-			uint32_t key_len = bolt_read_string_size(key);
-			key = bolt_read_string(key);
-			n += sprintf(prametrize_query + n, "%.*s=", key_len, key);
-			n += write_value(prametrize_query + n, value);
+			uint32_t key_len;
+			buffer_index_t key = bolt_read_string(&client->msg_buf.read, &key_len);
+			char *key_ptr = buffer_index_read(&key, key_len);
+			n += sprintf(prametrize_query + n, "%.*s=", key_len, key_ptr);
+			n += write_value(prametrize_query + n, &client->msg_buf.read);
 			n += sprintf(prametrize_query + n, " ");
 		}
-		n += sprintf(prametrize_query + n, "%.*s", query_len, query);
+		n += sprintf(prametrize_query + n, "%.*s", query_len, query_ptr);
 		return RedisModule_CreateString(ctx, prametrize_query, n);
 	}
 
-	return RedisModule_CreateString(ctx, query, query_len);
+	return RedisModule_CreateString(ctx, query_ptr, query_len);
 }
 
 RedisModuleString *COMMAND;
@@ -236,18 +251,19 @@ void BoltRunCommand
 
 	RedisModuleCtx *ctx = client->ctx;
 	RedisModuleString *args[5];
+	RedisModuleString *query = get_query(ctx, client);
+	RedisModuleString *graph_name = get_graph_name(ctx, client);
 
 	args[0] = COMMAND;
-	args[1] = get_graph_name(ctx, client);
-	args[2] = get_query(ctx, client);
+	args[1] = graph_name;
+	args[2] = query;
 	args[3] = BOLT;
-	args[4] = RedisModule_CreateString(ctx, (const char *)&client, sizeof(bolt_client_t*));
+	args[4] = (RedisModuleString *)client;
 
 	CommandDispatch(ctx, args, 5);
 
-	RedisModule_FreeString(ctx, args[1]);
-	RedisModule_FreeString(ctx, args[2]);
-	RedisModule_FreeString(ctx, args[4]);
+	RedisModule_FreeString(ctx, query);
+	RedisModule_FreeString(ctx, graph_name);
 }
 
 // handle the PULL message
@@ -330,31 +346,30 @@ void BoltRequestHandler
 
 	// if there is a message already in process or
 	// not enough data to read the message
-	if(client->processing || client->read - client->current_read <= 2) {
+	if(client->processing || buffer_index_diff(&client->read_buf.write, &client->read_buf.read) <= 2) {
 		return;
 	}
 
 	// read chunked message
-	char *current_read = client->current_read;
-	uint32_t nmessage = 0;
-	uint16_t size = ntohs(*(uint16_t*)current_read);
+	buffer_index(&client->msg_buf, &client->msg_buf.read, 0);
+	buffer_index(&client->msg_buf, &client->msg_buf.write, 0);
+	buffer_index_t current_read = client->read_buf.read;
+	uint16_t size = ntohs(buffer_read_uint16(&current_read));
 	ASSERT(size > 0);
 	while(size > 0) {
-		if(current_read + 2 + size > client->read) return;
-		memcpy(client->messasge_buffer + nmessage, current_read + 2, size);
-		nmessage += size;
-		current_read += size + 2;
-		size = ntohs(*(uint16_t*)current_read);
+		if(buffer_index_diff(&client->read_buf.write, &current_read) < size) return;
+		buffer_read(&current_read, &client->msg_buf.write, size);
+		size = ntohs(buffer_read_uint16(&current_read));
 	}
-	client->current_read = current_read + 2;
-	if(client->current_read == client->read) {
-		client->read = client->read_buffer;
-		client->current_read = client->read_buffer;
+	client->read_buf.read = current_read;
+	if(buffer_index_diff(&client->read_buf.read, &client->read_buf.write) == 0) {
+		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		client->read_buf.write = client->read_buf.read;
 	}
 
 	client->processing = true;
 
-	switch (bolt_read_structure_type(client->messasge_buffer))
+	switch (bolt_read_structure_type(&client->msg_buf.read))
 	{
 		case BST_HELLO:
 			BoltHelloCommand(client);
@@ -403,65 +418,44 @@ void BoltReadHandler
 	ASSERT(user_data != NULL);
 
 	bolt_client_t *client = (bolt_client_t*)user_data;
-	int nread = socket_read(client->socket, client->read, UINT16_MAX - (client->read - client->read_buffer));
-	if(nread == -1) {
-		// error
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		if(client->processing) {
-			client->shutdown = true;
-			return;
-		}
-		rm_free(client);
-		socket_close(fd);
-		return;
-	}
-	if(nread == 0) {
-		if(client->read == client->read_buffer + UINT16_MAX) {
-			// not enough space in the buffer
-			// try to move the message to the beginning of the buffer
-			if(client->processing) {
-				return;
-			}
-			int n = client->read - client->current_read;
-			memmove(client->read_buffer, client->current_read, n);
-			client->read -= n;
-			client->current_read = client->read_buffer;
-			return;
-		}
+	if(!buffer_socket_read(&client->read_buf, client->socket)) {
 		// client disconnected
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		if(client->processing) {
 			client->shutdown = true;
 			return;
 		}
-		rm_free(client);
-		socket_close(fd);
+		bolt_client_free(client);
 		return;
-	} else {
-		client->read += nread;
 	}
 
 	// process interrupt message
-	char *current_read = client->current_read;
-	while(current_read < client->read) {
-		uint16_t size = ntohs(*(uint16_t*)current_read);
-		if(current_read + 2 + size > client->read) break;
-		bolt_structure_type request_type = bolt_read_structure_type(current_read + 2);
+	buffer_index_t current_read = client->read_buf.read;
+	while(buffer_index_diff(&client->read_buf.write, &current_read) > 0) {
+		uint16_t size = ntohs(buffer_read_uint16(&current_read));
+		if(buffer_index_diff(&client->read_buf.write, &current_read) < size) break;
+		bolt_structure_type request_type = bolt_read_structure_type(&current_read);
 		if(request_type == BST_RESET) {
+			ASSERT(size == 2);
 			client->reset = true;
-			memmove(current_read, current_read + size + 4, client->read - current_read - size - 4);
-			client->read -= size + 4;
+			uint16_t res = buffer_read_uint16(&current_read);
+			ASSERT(res == 0);
+			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
+			char *dst = src - size - 4;
+			size = buffer_index_diff(&client->read_buf.write, &current_read);
+			memmove(dst, src, size);
+			current_read.offset -= 6;
+			client->read_buf.write.offset -= 6;
 			bolt_client_finish_write(client);
+		} else {
+			size = ntohs(buffer_read_uint16(&current_read));
+			while(size > 0) {
+				if(buffer_index_diff(&client->read_buf.write, &current_read) < size) break;
+				buffer_index_read(&current_read, size);
+				size = ntohs(buffer_read_uint16(&current_read));
+			}
+			if(size > 0) break;
 		}
-		current_read += size + 2;
-		size = ntohs(*(uint16_t*)current_read);
-		while(size > 0) {
-			if(current_read + 2 + size > client->read) break;
-			current_read += size + 2;
-			size = ntohs(*(uint16_t*)current_read);
-		}
-		if(size > 0) break;
-		current_read += 2;
 	}
 
 	BoltRequestHandler(client);
@@ -481,8 +475,7 @@ void BoltResponseHandler
 
 	if(client->shutdown) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
-		rm_free(client);
-		socket_close(fd);
+		bolt_client_free(client);
 		return;
 	}
 

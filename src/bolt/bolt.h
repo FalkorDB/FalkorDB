@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include <stdint.h>
-#include <stdbool.h>
+#include "RG.h"
+#include "buffer.h"
 #include "bolt_client.h"
 
 typedef enum bolt_value_type {
@@ -152,106 +152,79 @@ void bolt_reply_structure
 // read value type from buffer
 bolt_value_type bolt_read_type
 (
-	char *data  // buffer to read from
+	buffer_index_t data  // buffer to read from
+);
+
+// read null value from buffer
+void bolt_read_null
+(
+	buffer_index_t *data  // buffer to read from
 );
 
 // read bool value from buffer
 bool bolt_read_bool
 (
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read int8 value from buffer
 int8_t bolt_read_int8
 (
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read int16 value from buffer
 int16_t bolt_read_int16
 (
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read int32 value from buffer
 int32_t bolt_read_int32
 (
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read int64 value from buffer
 int64_t bolt_read_int64
 (
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read float value from buffer
 double bolt_read_float
 (
-	char *data  // buffer to read from
-);
-
-// read string size from buffer
-uint32_t bolt_read_string_size
-(
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read string value from buffer
 // notice: the string is not null terminated
-char *bolt_read_string
+buffer_index_t bolt_read_string
 (
-	char *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // string size
 );
 
 // read list size from buffer
 uint32_t bolt_read_list_size
 (
-	char *data
-);
-
-// read list item from buffer
-char *bolt_read_list_item
-(
-	char *data,     // buffer to read from
-	uint32_t index  // index of item to read
+	buffer_index_t *data
 );
 
 // read map size from buffer
 uint32_t bolt_read_map_size
 (
-	char *data  // buffer to read from
-);
-
-// read map key from buffer
-char *bolt_read_map_key
-(
-	char *data,     // buffer to read from
-	uint32_t index  // index of key to read
-);
-
-// read map value from buffer
-char *bolt_read_map_value
-(
-	char *data,     // buffer to read from
-	uint32_t index  // index of value to read
+	buffer_index_t *data  // buffer to read from
 );
 
 // read structure type from buffer
 bolt_structure_type bolt_read_structure_type
 (
-	char *data  // buffer to read from
+	buffer_index_t *data  // buffer to read from
 );
 
 // read structure size from buffer
 uint32_t bolt_read_structure_size
 (
-	char *data  // buffer to read from
-);
-
-// read structure value from buffer
-char *bolt_read_structure_value
-(
-	char *data,     // buffer to read from
-	uint32_t index  // index of value to read
+	buffer_index_t *data  // buffer to read from
 );
