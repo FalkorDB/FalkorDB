@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v15.h"
+#include "encode_v14.h"
 #include "../../../util/arr.h"
 
 static void _RdbSaveAttributeKeys
@@ -205,7 +205,7 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v15(RedisModuleIO *rdb, GraphContext *gc) {
+void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
 	/* Format:
 	 * attribute keys (unified schema)
 	 * #node schemas
