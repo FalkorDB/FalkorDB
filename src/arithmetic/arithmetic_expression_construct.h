@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "ast.h"
+#include "../ast/ast.h"
 #include "arithmetic_expression.h"
 
 // Construct arithmetic expression from AST node
