@@ -8,6 +8,9 @@
 #include "string.h"
 #include "endian.h"
 
+#define write(t, v) *(t *)client->current_write = v; \
+	client->current_write += sizeof(t);
+
 // write null to client response buffer
 void bolt_reply_null
 (
@@ -15,7 +18,7 @@ void bolt_reply_null
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xC0;
+	client->current_write++[0] = 0xC0;
 }
 
 // write bool value to client response buffer
@@ -26,7 +29,7 @@ void bolt_reply_bool
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = data ? 0xC3 : 0xC2;
+	client->current_write++[0] = data ? 0xC3 : 0xC2;
 }
 
 // write tiny int value to client response buffer
@@ -39,7 +42,7 @@ void bolt_reply_tiny_int
 	ASSERT(client != NULL);
 	ASSERT(data >= -16 && data <= 127);
 
-	client->write_buffer[client->last_write_index++] = data;
+	client->current_write++[0] = data;
 }
 
 // write int8 value to client response buffer
@@ -50,8 +53,8 @@ void bolt_reply_int8
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xC8;
-	client->write_buffer[client->last_write_index++] = data;
+	client->current_write++[0] = 0xC8;
+	client->current_write++[0] = data;
 }
 
 // write int16 value to client response buffer
@@ -62,9 +65,8 @@ void bolt_reply_int16
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xC9;
-	*(uint16_t *)(client->write_buffer + client->last_write_index) = htons(data);
-	client->last_write_index += 2;
+	client->current_write++[0] = 0xC9;
+	write(int16_t, htons(data));
 }
 
 // write int32 value to client response buffer
@@ -75,9 +77,8 @@ void bolt_reply_int32
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xCA;
-	*(uint32_t *)(client->write_buffer + client->last_write_index) = htonl(data);
-	client->last_write_index += 4;
+	client->current_write++[0] = 0xCA;
+	write(int32_t, htonl(data));
 }
 
 // write int64 value to client response buffer
@@ -88,9 +89,8 @@ void bolt_reply_int64
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xCB;
-	*(uint64_t *)(client->write_buffer + client->last_write_index) = htonll(data);
-	client->last_write_index += 8;
+	client->current_write++[0] = 0xCB;
+	write(int64_t, htonll(data));
 }
 
 // write int value to client response buffer
@@ -124,10 +124,10 @@ void bolt_reply_float
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xC1;
+	client->current_write++[0] = 0xC1;
 	char *buf = (char *)&data;
 	for (int i = 0; i < sizeof(double); i++) {
-	  client->write_buffer[client->last_write_index++] = buf[sizeof(double) - i - 1];
+		client->current_write++[0] = buf[sizeof(double) - i - 1];
 	}
 }
 
@@ -143,26 +143,24 @@ void bolt_reply_string
 	ASSERT(data != NULL);
 
 	if (size < 0x10) {
-		client->write_buffer[client->last_write_index++] = 0x80 + size;
-		memcpy(client->write_buffer + client->last_write_index, data, size);
-		client->last_write_index += size;
+		client->current_write++[0] = 0x80 + size;
+		memcpy(client->current_write, data, size);
+		client->current_write += size;
 	} else if (size < 0x100) {
-		client->write_buffer[client->last_write_index++] = 0xD0;
-		client->write_buffer[client->last_write_index++] = size;
-		memcpy(client->write_buffer + client->last_write_index, data, size);
-		client->last_write_index += size;
+		client->current_write++[0] = 0xD0;
+		client->current_write++[0] = size;
+		memcpy(client->current_write, data, size);
+		client->current_write += size;
 	} else if (size < 0x10000) {
-		client->write_buffer[client->last_write_index++] = 0xD1;
-		*(uint16_t *)(client->write_buffer + client->last_write_index) = htons(size);
-		client->last_write_index += 2;
-		memcpy(client->write_buffer + client->last_write_index, data, size);
-		client->last_write_index += size;
+		client->current_write++[0] = 0xD1;
+		write(uint16_t, htons(size));
+		memcpy(client->current_write, data, size);
+		client->current_write += size;
 	} else {
-		client->write_buffer[client->last_write_index++] = 0xD2;
-		*(uint32_t *)(client->write_buffer + client->last_write_index) = htonl(size);
-		client->last_write_index += 4;
-		memcpy(client->write_buffer + client->last_write_index, data, size);
-		client->last_write_index += size;
+		client->current_write++[0] = 0xD2;
+		write(uint32_t, htonl(size));
+		memcpy(client->current_write, data, size);
+		client->current_write += size;
 	}
 }
 
@@ -176,18 +174,16 @@ void bolt_reply_list
 	ASSERT(client != NULL);
 
 	if (size < 0x10) {
-		client->write_buffer[client->last_write_index++] = 0x90 + size;
+		client->current_write++[0] = 0x90 + size;
 	} else if (size < 0x100) {
-		client->write_buffer[client->last_write_index++] = 0xD4;
-		client->write_buffer[client->last_write_index++] = size;
+		client->current_write++[0] = 0xD4;
+		client->current_write++[0] = size;
 	} else if (size < 0x10000) {
-		client->write_buffer[client->last_write_index++] = 0xD5;
-		*(uint16_t *)(client->write_buffer + client->last_write_index) = htons(size);
-		client->last_write_index += 2;
+		client->current_write++[0] = 0xD5;
+		write(uint16_t, htons(size));
 	} else {
-		client->write_buffer[client->last_write_index++] = 0xD6;
-		*(uint32_t *)(client->write_buffer + client->last_write_index) = htons(size);
-		client->last_write_index += 4;
+		client->current_write++[0] = 0xD6;
+		write(uint32_t, htonl(size));
 	}
 }
 
@@ -203,18 +199,16 @@ void bolt_reply_map
 	ASSERT(client != NULL);
 
 	if (size < 0x10) {
-		client->write_buffer[client->last_write_index++] = 0xA0 + size;
+		client->current_write++[0] = 0xA0 + size;
 	} else if (size < 0x100) {
-		client->write_buffer[client->last_write_index++] = 0xD8;
-		client->write_buffer[client->last_write_index++] = size;
+		client->current_write++[0] = 0xD8;
+		client->current_write++[0] = size;
 	} else if (size < 0x10000) {
-		client->write_buffer[client->last_write_index++] = 0xD9;
-		*(uint16_t *)(client->write_buffer + client->last_write_index) = htons(size);
-		client->last_write_index += 2;
+		client->current_write++[0] = 0xD9;
+		write(uint16_t, htons(size));
 	} else {
-		client->write_buffer[client->last_write_index++] = 0xDA;
-		*(uint32_t *)(client->write_buffer + client->last_write_index) = htonl(size);
-		client->last_write_index += 4;
+		client->current_write++[0] = 0xDA;
+		write(uint32_t, htonl(size));
 	}
 }
 
@@ -228,8 +222,8 @@ void bolt_reply_structure
 ) {
 	ASSERT(client != NULL);
 
-	client->write_buffer[client->last_write_index++] = 0xB0 + size;
-	client->write_buffer[client->last_write_index++] = type;
+	client->current_write++[0] = 0xB0 + size;
+	client->current_write++[0] = type;
 }
 
 // read value type from buffer

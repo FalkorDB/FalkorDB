@@ -31,11 +31,11 @@ typedef struct bolt_client_t {
 	bool reset;
     bool processing;
 	char messasge_buffer[UINT16_MAX];
-	uint32_t nwrite;
-	uint32_t last_write_index;
+	char *write;
+	char *current_write;
 	char write_buffer[UINT16_MAX];
-	uint32_t nread;
-	uint32_t last_read_index;
+	char *read;
+	char *current_read;
 	char read_buffer[UINT16_MAX];
 } bolt_client_t;
 

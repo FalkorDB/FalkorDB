@@ -330,26 +330,26 @@ void BoltRequestHandler
 
 	// if there is a message already in process or
 	// not enough data to read the message
-	if(client->processing || client->nread - client->last_read_index <= 2) {
+	if(client->processing || client->read - client->current_read <= 2) {
 		return;
 	}
 
 	// read chunked message
-	uint32_t last_read_index = client->last_read_index;
+	char *current_read = client->current_read;
 	uint32_t nmessage = 0;
-	uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+	uint16_t size = ntohs(*(uint16_t*)current_read);
 	ASSERT(size > 0);
 	while(size > 0) {
-		if(last_read_index + 2 + size > client->nread) return;
-		memcpy(client->messasge_buffer + nmessage, client->read_buffer + last_read_index + 2, size);
+		if(current_read + 2 + size > client->read) return;
+		memcpy(client->messasge_buffer + nmessage, current_read + 2, size);
 		nmessage += size;
-		last_read_index += size + 2;
-		size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+		current_read += size + 2;
+		size = ntohs(*(uint16_t*)current_read);
 	}
-	client->last_read_index = last_read_index + 2;
-	if(client->last_read_index == client->nread) {
-		client->last_read_index = 0;
-		client->nread = 0;
+	client->current_read = current_read + 2;
+	if(client->current_read == client->read) {
+		client->read = client->read_buffer;
+		client->current_read = client->read_buffer;
 	}
 
 	client->processing = true;
@@ -403,7 +403,7 @@ void BoltReadHandler
 	ASSERT(user_data != NULL);
 
 	bolt_client_t *client = (bolt_client_t*)user_data;
-	int nread = socket_read(client->socket, client->read_buffer + client->nread, UINT16_MAX - client->nread);
+	int nread = socket_read(client->socket, client->read, UINT16_MAX - (client->read - client->read_buffer));
 	if(nread == -1) {
 		// error
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
@@ -416,15 +416,16 @@ void BoltReadHandler
 		return;
 	}
 	if(nread == 0) {
-		if(client->nread == UINT16_MAX) {
+		if(client->read == client->read_buffer + UINT16_MAX) {
 			// not enough space in the buffer
 			// try to move the message to the beginning of the buffer
 			if(client->processing) {
 				return;
 			}
-			memmove(client->read_buffer, client->read_buffer + client->last_read_index, client->nread - client->last_read_index);
-			client->nread -= client->last_read_index;
-			client->last_read_index = 0;
+			int n = client->read - client->current_read;
+			memmove(client->read_buffer, client->current_read, n);
+			client->read -= n;
+			client->current_read = client->read_buffer;
 			return;
 		}
 		// client disconnected
@@ -437,30 +438,30 @@ void BoltReadHandler
 		socket_close(fd);
 		return;
 	} else {
-		client->nread += nread;
+		client->read += nread;
 	}
 
 	// process interrupt message
-	uint32_t last_read_index = client->last_read_index;
-	while(last_read_index < client->nread) {
-		uint16_t size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
-		if(last_read_index + 2 + size > client->nread) break;
-		bolt_structure_type request_type = bolt_read_structure_type(client->read_buffer + last_read_index + 2);
+	char *current_read = client->current_read;
+	while(current_read < client->read) {
+		uint16_t size = ntohs(*(uint16_t*)current_read);
+		if(current_read + 2 + size > client->read) break;
+		bolt_structure_type request_type = bolt_read_structure_type(current_read + 2);
 		if(request_type == BST_RESET) {
 			client->reset = true;
-			memmove(client->read_buffer + last_read_index, client->read_buffer + last_read_index + size + 4, client->nread - last_read_index - size - 4);
-			client->nread -= size + 4;
+			memmove(current_read, current_read + size + 4, client->read - current_read - size - 4);
+			client->read -= size + 4;
 			bolt_client_finish_write(client);
 		}
-		last_read_index += size + 2;
-		size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+		current_read += size + 2;
+		size = ntohs(*(uint16_t*)current_read);
 		while(size > 0) {
-			if(last_read_index + 2 + size > client->nread) break;
-			last_read_index += size + 2;
-			size = ntohs(*(uint16_t*)(client->read_buffer + last_read_index));
+			if(current_read + 2 + size > client->read) break;
+			current_read += size + 2;
+			size = ntohs(*(uint16_t*)current_read);
 		}
 		if(size > 0) break;
-		last_read_index += 2;
+		current_read += 2;
 	}
 
 	BoltRequestHandler(client);
