@@ -250,7 +250,7 @@ ProcedureResult Proc_VectorKNNInvoke
 					 &label,
 					 &attribute,
 					 &query_vector)) {
-		//ErrorCtx_SetError("", err);
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS);
 		return PROCEDURE_ERR;
 	}
 
@@ -274,7 +274,7 @@ ProcedureResult Proc_VectorKNNInvoke
 	// get attribute ID
 	Attribute_ID attr_id = GraphContext_GetAttributeID(gc, attribute);
 	if(attr_id == ATTRIBUTE_ID_NONE) {
-		//ErrorCtx_SetError("", err);
+		ErrorCtx_SetError(EMSG_ACCESS_UNDEFINED_ATTRIBUTE);
 		return PROCEDURE_ERR;
 	}
 

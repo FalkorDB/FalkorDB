@@ -183,46 +183,7 @@ class testNodeIndexDeletionFlow():
         result = list_indicies(self.g)
         self.env.assertEquals(len(result.result_set), 0)
 
-    def test_06_index_rollback(self):
-        # make sure graph rollsback to its previous state if index creation fails
-
-        # create an index over 'L', 'age'
-        result = create_node_range_index(self.g, 'L', 'age')
-        self.env.assertEquals(result.indices_created, 1)
-
-        # try to create index over multiple fields: some new to the graph
-        # some already indexed
-        try:
-            result = create_node_range_index(self.g, 'L', 'x', 'y', 'z', 'age')
-            self.env.assertTrue(False)
-        except ResponseError as e:
-            self.env.assertContains("Attribute 'age' is already indexed", str(e))
-
-        # make sure attributes 'x', 'y', 'z' are not part of the graph
-        result = self.g.query("CALL db.propertyKeys()")
-        self.env.assertFalse('x' in result.result_set[0])
-        self.env.assertFalse('y' in result.result_set[0])
-        self.env.assertFalse('z' in result.result_set[0])
-
-        # try to create a vector index with wrong configuration
-        try:
-            result = create_node_vector_index(self.g, 'NewLabel', 'NewAttr', dim=-1, similarity_function='tarnegol')
-            self.env.assertTrue(False)
-        except ResponseError as e:
-            self.env.assertContains("Invalid vector index configuration", str(e))
-
-        # make sure 'NewLabel' is not part of the graph
-        result = self.g.query("CALL db.labels()")
-        self.env.assertFalse('NewLabel' in result.result_set[0])
-
-        # make sure 'NewAttr' is not part of the graph
-        result = self.g.query("CALL db.propertyKeys()")
-        self.env.assertFalse('NewAttr' in result.result_set[0])
-
-        # drop index over 'L', 'age'
-        result = drop_node_range_index(self.g, 'L', 'age')
-
-    def test_07_drop_index_during_population(self):
+    def test_06_drop_index_during_population(self):
         # 1. populate a graph
         # 2. create an index and wait for it to be sync
         # 3. constantly update indexed entities
@@ -272,7 +233,7 @@ class testNodeIndexDeletionFlow():
                 indicies = list_indicies(self.g).result_set
                 self.env.assertEquals(len(indicies), 0)
 
-    def test_08_reset_order(self):
+    def test_07_reset_order(self):
         """Tests that the reset order is correct, i.e., that the reading ops are
         reset before the writing ops (otherwise we write while a read-lock is
         held)."""

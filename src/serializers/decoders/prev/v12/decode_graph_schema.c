@@ -49,9 +49,9 @@ static void _RdbLoadFullTextIndex
 			IndexField_NewFullTextField(&field, field_name, field_id);
 
 			// set field options
-			IndexField_SetWeight(&field, weight);
-			IndexField_SetStemming(&field, nostem);
-			IndexField_SetPhonetic(&field, phonetic);
+			IndexField_OptionsSetWeight(&field, weight);
+			IndexField_OptionsSetStemming(&field, nostem);
+			IndexField_OptionsSetPhonetic(&field, phonetic);
 
 			Schema_AddIndex(&idx, s, &field);
 		}
@@ -62,7 +62,7 @@ static void _RdbLoadFullTextIndex
 
 	if(!already_loaded) {
 		ASSERT(idx != NULL);
-		if(language  != NULL) Index_SetLanguage(idx, language);
+		Index_SetLanguage(idx, language);
 		if(stopwords != NULL) Index_SetStopwords(idx, &stopwords);
 		Index_Disable(idx);
 	}

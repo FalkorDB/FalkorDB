@@ -507,3 +507,43 @@ class testUndoLog():
         result = self.graph.query("MATCH (n:L4) RETURN labels(n)")
         self.env.assertEquals(len(result.result_set), 1)
         self.env.assertEquals(["L4"], result.result_set[0][0])
+
+    def test_20_index_rollback(self):
+        # make sure graph rollsback to its previous state if index creation fails
+
+        # create an index over 'L', 'age'
+        result = create_node_range_index(self.graph, 'L', 'age')
+        self.env.assertEquals(result.indices_created, 1)
+
+        # try to create index over multiple fields: some new to the graph
+        # some already indexed
+        try:
+            result = create_node_range_index(self.graph, 'L', 'x', 'y', 'z', 'age')
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Attribute 'age' is already indexed", str(e))
+
+        # make sure attributes 'x', 'y', 'z' are not part of the graph
+        result = self.graph.query("CALL db.propertyKeys()")
+        self.env.assertFalse('x' in result.result_set[0])
+        self.env.assertFalse('y' in result.result_set[0])
+        self.env.assertFalse('z' in result.result_set[0])
+
+        # try to create a vector index with wrong configuration
+        try:
+            result = create_node_vector_index(self.graph, 'NewLabel', 'NewAttr', dim=-1, similarity_function='tarnegol')
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Invalid vector index configuration", str(e))
+
+        # make sure 'NewLabel' is not part of the graph
+        result = self.graph.query("CALL db.labels()")
+        self.env.assertFalse('NewLabel' in result.result_set[0])
+
+        # make sure 'NewAttr' is not part of the graph
+        result = self.graph.query("CALL db.propertyKeys()")
+        self.env.assertFalse('NewAttr' in result.result_set[0])
+
+        # drop index over 'L', 'age'
+        result = drop_node_range_index(self.graph, 'L', 'age')
+

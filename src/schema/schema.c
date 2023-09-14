@@ -222,7 +222,7 @@ int Schema_AddIndex
 		// error if field is already indexed
 		if(Index_ContainsField(altered, field->id, field->type)) {
 			// field already indexed, error and return
-			ErrorCtx_SetError(EMSG_IDX_FIELD_ALREADY_EXISTS, field->name);
+			ErrorCtx_SetError(EMSG_INDEX_FIELD_ALREADY_EXISTS, field->name);
 			IndexField_Free(field);
 			return INDEX_FAIL;
 		}

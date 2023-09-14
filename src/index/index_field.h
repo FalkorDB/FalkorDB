@@ -125,31 +125,38 @@ void IndexField_SetOptions
 );
 
 // set index field weight
-void IndexField_SetWeight
+void IndexField_OptionsSetWeight
 (
 	IndexField *field,  // field to update
 	double weight       // new weight
 );
 
 // set index field stemming
-void IndexField_SetStemming
+void IndexField_OptionsSetStemming
 (
 	IndexField *field,  // field to update
 	bool nostem         // enable/disable stemming
 );
 
 // set index field phonetic
-void IndexField_SetPhonetic
+void IndexField_OptionsSetPhonetic
 (
 	IndexField *field,    // field to update
 	const char *phonetic  // phonetic
 );
 
 // set index field vector dimension
-void IndexField_SetDimension
+void IndexField_OptionsSetDimension
 (
 	IndexField *field,  // field to update
 	uint32_t dimension  // vector dimension
+);
+
+// get vector index field dimension
+// field must be a vector field
+uint32_t IndexField_OptionsGetDimension
+(
+	const IndexField *field  // field to get dimension
 );
 
 // free index field

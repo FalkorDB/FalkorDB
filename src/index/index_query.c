@@ -14,10 +14,15 @@
 #include "../util/range/numeric_range.h"
 #include "../filter_tree/filter_tree_utils.h"
 
-extern void Index_TypedFieldName
+extern void Index_RangeFieldName
 (
 	char *type_aware_name,  // [out] type aware name
-	IndexFieldType t,       // field type
+	const char *name        // field name
+);
+
+extern void Index_VectorFieldName
+(
+	char *type_aware_name,  // [out] type aware name
 	const char *name        // field name
 );
 
@@ -45,7 +50,7 @@ static RSQNode *_NumericRangeToQueryNode
 	const NumericRange *range  // range to query
 ) {
 	char type_aware_field_name[512];
-	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	Index_RangeFieldName(type_aware_field_name, field);
 
 	double max = (range->max == INFINITY) ? RSRANGE_INF : range->max;
 	double min = (range->min == -INFINITY) ? RSRANGE_NEG_INF : range->min;
@@ -61,7 +66,7 @@ static RSQNode *_StringRangeToQueryNode
 	const StringRange *range  // range to query
 ) {
 	char type_aware_field_name[512];
-	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	Index_RangeFieldName(type_aware_field_name, field);
 	RSQNode *root = RediSearch_CreateTagNode(idx, type_aware_field_name);
 	RSQNode *child = NULL;
 	const char *max = range->max;
@@ -96,7 +101,7 @@ static RSQNode *_FilterTreeToDistanceQueryNode
 	extractOriginAndRadius(filter, &origin, &radius, &field);
 
 	char type_aware_field_name[512];
-	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	Index_RangeFieldName(type_aware_field_name, field);
 	return RediSearch_CreateGeoNode(idx, type_aware_field_name,
 			Point_lat(origin), Point_lon(origin), SI_GET_NUMERIC(radius),
 			RS_GEO_DISTANCE_M);
@@ -136,7 +141,7 @@ static RSQNode *_FilterTreeToInQueryNode
 	RSQNode *U = RediSearch_CreateUnionNode(idx);
 
 	char type_aware_field_name[512];
-	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	Index_RangeFieldName(type_aware_field_name, field);
 
 	for(uint i = 0; i < list_len; i ++) {
 		double d;
@@ -460,7 +465,7 @@ static bool _FilterTreePredicateToQueryNode
 		   op == OP_EQUAL);
 
 	char type_aware_field_name[512];
-	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_RANGE, field);
+	Index_RangeFieldName(type_aware_field_name, field);
 
 	if(t == T_STRING) {
 		switch(tree->pred.op) {
@@ -661,7 +666,7 @@ RSQNode *Index_BuildVectorQueryTree
 	RSIndex *rsIdx = Index_RSIndex(idx);
 
 	char type_aware_field_name[512];
-	Index_TypedFieldName(type_aware_field_name, INDEX_FLD_VECTOR, field);
+	Index_VectorFieldName(type_aware_field_name, field);
 
 	RSQNode *root = RediSearch_CreateVecSimNode(rsIdx, type_aware_field_name,
 			(char*)vec, nbytes, k);

@@ -149,9 +149,9 @@ Index Index_FulltextCreate
 	IndexField field;
 
 	IndexField_NewFullTextField(&field, attr, attr_id);
-	IndexField_SetWeight(&field,   weight);
-	IndexField_SetStemming(&field, nostem);
-	IndexField_SetPhonetic(&field, phonetic);
+	IndexField_OptionsSetWeight(&field,   weight);
+	IndexField_OptionsSetStemming(&field, nostem);
+	IndexField_OptionsSetPhonetic(&field, phonetic);
 
 	// get schema
 	GraphContext *gc = QueryCtx_GetGraphCtx();

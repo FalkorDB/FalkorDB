@@ -15,35 +15,43 @@
 
 #include <stdatomic.h>
 
-// returns a type aware name for a given field
-// e.g.
-// "range:age" for a range field named "age"
-// "vector:location" for a vector field named "location"
-// "name" for a full text field named "name"
-void Index_TypedFieldName
+// gets type aware index field name
+void Index_RangeFieldName
 (
 	char *type_aware_name,  // [out] type aware name
-	IndexFieldType t,       // field type
 	const char *name        // field name
 ) {
 	ASSERT(name != NULL);
 	ASSERT(type_aware_name != NULL);
-	ASSERT(t == INDEX_FLD_FULLTEXT ||
-		   t == INDEX_FLD_RANGE    ||
-		   t == INDEX_FLD_VECTOR);
 
-	if(t == INDEX_FLD_FULLTEXT) {
-		// maintain original name for full text fields
-		strcpy(type_aware_name, name);
-	} else if(t == INDEX_FLD_RANGE) {
-		// prefix range field name with "range:"
-		sprintf(type_aware_name, "range:%s", name);
-	} else if(t == INDEX_FLD_VECTOR) {
-		// prefix vector field name with "vector:"
-		sprintf(type_aware_name, "vector:%s", name);
-	} else {
-		assert(false && "unexpected field type");
-	}
+	// prefix range field name with "range:"
+	sprintf(type_aware_name, "range:%s", name);
+}
+
+// gets type aware index field name
+void Index_FulltextxFieldName
+(
+	char *type_aware_name,  // [out] type aware name
+	const char *name        // field name
+) {
+	ASSERT(name != NULL);
+	ASSERT(type_aware_name != NULL);
+
+	// maintain original name for full text fields
+	strcpy(type_aware_name, name);
+}
+
+// gets type aware index field name
+void Index_VectorFieldName
+(
+	char *type_aware_name,  // [out] type aware name
+	const char *name        // field name
+) {
+	ASSERT(name != NULL);
+	ASSERT(type_aware_name != NULL);
+
+	// prefix vector field name with "vector:"
+	sprintf(type_aware_name, "vector:%s", name);
 }
 
 // index structure
@@ -76,11 +84,11 @@ static void _Index_MergeFields
 		a->options.weight   = b->options.weight;
 		a->options.nostem   = b->options.nostem;
 		a->fulltext_name    = a->name;
-		IndexField_SetPhonetic(a, b->options.phonetic);
+		IndexField_OptionsSetPhonetic(a, b->options.phonetic);
 	} else if(b->type & INDEX_FLD_RANGE) {
-		a->options.dimension = b->options.dimension;
 		a->range_name        = rm_strdup(b->range_name);
 	} else if(b->type & INDEX_FLD_VECTOR) {
+		a->options.dimension = b->options.dimension;
 		a->vector_name = rm_strdup(b->vector_name);
 	} else {
 		assert(false && "unexpected field type");
@@ -95,7 +103,6 @@ static void _Index_ConstructStructure
 	ASSERT(idx != NULL);
 	ASSERT(rsIdx != NULL);
 
-	RSFieldID fieldID;
 	uint fields_count = array_len(idx->fields);
 
 	for(uint i = 0; i < fields_count; i++) {
@@ -118,8 +125,8 @@ static void _Index_ConstructStructure
 				options |= RSFLDOPT_TXTPHONETIC;
 			}
 
-			fieldID = RediSearch_CreateField(rsIdx, field->fulltext_name,
-					RSFLDTYPE_FULLTEXT, options);
+			RSFieldID fieldID = RediSearch_CreateField(rsIdx,
+					field->fulltext_name, RSFLDTYPE_FULLTEXT, options);
 
 			RediSearch_TextFieldSetWeight(rsIdx, fieldID, field->options.weight);
 		}
@@ -129,7 +136,9 @@ static void _Index_ConstructStructure
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR) {
-			fieldID = RediSearch_CreateVectorField(rsIdx, field->vector_name);
+			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
+					field->vector_name);
+
 			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
 		}
 
@@ -141,8 +150,8 @@ static void _Index_ConstructStructure
 			// introduce both text, numeric and geo fields
 			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
 
-			fieldID = RediSearch_CreateField(rsIdx, field->range_name, types,
-					RSFLDOPT_NONE);
+			RSFieldID fieldID = RediSearch_CreateField(rsIdx, field->range_name,
+					types, RSFLDOPT_NONE);
 
 			RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
 			RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
@@ -156,7 +165,7 @@ static void _Index_ConstructStructure
 	// for none indexable types e.g. Array introduce an additional field
 	// "none_indexable_fields" which will hold a list of attribute names
 	// that were not indexed
-	fieldID = RediSearch_CreateField(rsIdx, INDEX_FIELD_NONE_INDEXED,
+	RSFieldID fieldID = RediSearch_CreateField(rsIdx, INDEX_FIELD_NONE_INDEXED,
 			RSFLDTYPE_TAG, RSFLDOPT_NONE);
 	RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
 	RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
@@ -300,6 +309,12 @@ RSDoc *Index_IndexGraphEntity
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_VECTOR && (t & T_VECTOR)) {
+			// make sure entity vector dimension matches index vector dimension
+			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(*v)) {
+				// vector dimension mis-match, can't index this vector
+				continue;
+			}
+
 			*doc_field_count += 1;
 
 			size_t   n        = SIVector_ElementsByteSize(*v);
@@ -674,8 +689,8 @@ bool Index_SetLanguage
 	ASSERT(language != NULL);
 
 	// fail if index already has language
-	if(idx->language != NULL) {
-		ErrorCtx_SetError("Can not override index configuration");
+	if(idx->language != NULL && strcasecmp(idx->language, language) != 0) {
+		ErrorCtx_SetError(EMSG_INDEX_CANT_RECONFIG);
 		return false;
 	}
 
@@ -694,7 +709,7 @@ bool Index_SetStopwords
 
 	// fail if index already has stopwords
 	if(idx->stopwords != NULL) {
-		ErrorCtx_SetError("Can not override index configuration");
+		ErrorCtx_SetError(EMSG_INDEX_CANT_RECONFIG);
 		return false;
 	}
 

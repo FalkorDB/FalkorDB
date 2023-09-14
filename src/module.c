@@ -32,7 +32,7 @@
 #include "arithmetic/arithmetic_expression.h"
 
 // minimal supported Redis version
-#define MIN_REDIS_VERION_MAJOR 6
+#define MIN_REDIS_VERION_MAJOR 7
 #define MIN_REDIS_VERION_MINOR 2
 #define MIN_REDIS_VERION_PATCH 0
 

@@ -132,7 +132,7 @@ void IndexField_NewVectorField
 	uint32_t dimension   // vector dimension
 ) {
 	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);
-	IndexField_SetDimension(field, dimension);
+	IndexField_OptionsSetDimension(field, dimension);
 }
 
 // clone index field
@@ -237,7 +237,7 @@ void IndexField_RemoveType
 //------------------------------------------------------------------------------
 
 // set index field weight
-void IndexField_SetWeight
+void IndexField_OptionsSetWeight
 (
 	IndexField *field,  // field to update
 	double weight       // new weight
@@ -247,7 +247,7 @@ void IndexField_SetWeight
 }
 
 // set index field stemming
-void IndexField_SetStemming
+void IndexField_OptionsSetStemming
 (
 	IndexField *field,  // field to update
 	bool nostem         // enable/disable stemming
@@ -257,7 +257,7 @@ void IndexField_SetStemming
 }
 
 // set index field phonetic
-void IndexField_SetPhonetic
+void IndexField_OptionsSetPhonetic
 (
 	IndexField *field,    // field to update
 	const char *phonetic  // phonetic
@@ -270,13 +270,23 @@ void IndexField_SetPhonetic
 }
 
 // set index field vector dimension
-void IndexField_SetDimension
+void IndexField_OptionsSetDimension
 (
 	IndexField *field,  // field to update
 	uint32_t dimension  // vector dimension
 ) {
 	ASSERT(field != NULL);
 	field->options.dimension = dimension;
+}
+
+uint32_t IndexField_OptionsGetDimension
+(
+	const IndexField *field  // field to get dimension
+) {
+	ASSERT(field != NULL);
+	ASSERT(field->type & INDEX_FLD_VECTOR);
+
+	return field->options.dimension;
 }
 
 // free index field

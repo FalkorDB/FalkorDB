@@ -110,7 +110,7 @@ static void _RdbLoadIndex
 	if(!already_loaded) {
 		ASSERT(idx != NULL);
 
-		if(language  != NULL) Index_SetLanguage(idx, language);
+		Index_SetLanguage(idx, language);
 		if(stopwords != NULL) Index_SetStopwords(idx, &stopwords);
 
 		// disable and create index structure

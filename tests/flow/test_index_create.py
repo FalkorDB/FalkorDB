@@ -72,7 +72,7 @@ class testIndexCreationFlow():
 
         # try to update L1 index language should failed
         try:
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v6')")
+            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'italian' }, 'v6')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Can not override index configuration", str(e))
@@ -82,8 +82,8 @@ class testIndexCreationFlow():
         self.env.assertEquals(result.indices_deleted, 5)
 
         try:
-            # create an index over L1:v4 with an unsupported language, expecting to failed
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'x' }, 'v4')")
+            # create an index over L2:v4 with an unsupported language, expecting to failed
+            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', language: 'x' }, 'v4')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Language is not supported", str(e))

@@ -6,25 +6,17 @@
 
 #pragma once
 
-// A single header file including all important headers for serialization.
+// a single header file including all important headers for serialization
 
-// include Redis Modules API
-#include "../redismodule.h"
-// include Graph Context
-#include "../graph/graphcontext.h"
-// include Query contxt
-#include "../query_ctx.h"
-// include GraphBLAS
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
-// utils
+#include "GraphBLAS.h"
 #include "../util/arr.h"
+#include "../query_ctx.h"
+#include "../redismodule.h"
 #include "../util/rmalloc.h"
-// non primitive data types
+#include "graph_extensions.h"
 #include "../datatypes/array.h"
 #include "../datatypes/vector.h"
-// graph extentions
-#include "graph_extensions.h"
-// module configuration
+#include "../graph/graphcontext.h"
 #include "../configuration/config.h"
 
 // this struct is used to describe the payload content of a key

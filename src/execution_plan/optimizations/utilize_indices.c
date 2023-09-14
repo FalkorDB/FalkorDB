@@ -572,7 +572,6 @@ void utilizeIndices
 	// indices are utilized in three sections:
 	// 1. label scan followed by filter(s)
 	// 2. traversal followed by filter(s)
-	// 3. vector similarity KNN search
 
 	// convert label scan into a index scan
 	labelScanToIndexScan(plan, gc);
