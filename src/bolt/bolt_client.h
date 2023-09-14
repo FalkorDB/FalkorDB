@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "buffer.h"
 #include "socket.h"
 #include "../redismodule.h"
 
@@ -27,16 +28,13 @@ typedef struct bolt_client_t {
 	bolt_client_state state;
 	RedisModuleCtx *ctx;
 	RedisModuleEventLoopFunc on_write;
-	bool shutdown;
 	bool reset;
+	bool shutdown;
     bool processing;
-	char messasge_buffer[UINT16_MAX];
-	char *write;
-	char *current_write;
-	char write_buffer[UINT16_MAX];
-	char *read;
-	char *current_read;
-	char read_buffer[UINT16_MAX];
+	buffer_index_t write;
+	buffer_t read_buf;
+	buffer_t write_buf;
+	buffer_t msg_buf;
 } bolt_client_t;
 
 typedef struct bolt_version_t {
@@ -82,4 +80,9 @@ bool bolt_check_handshake
 bolt_version_t bolt_read_supported_version
 (
 	socket_t socket
+);
+
+void bolt_client_free
+(
+	bolt_client_t *client
 );
