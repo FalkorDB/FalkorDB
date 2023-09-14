@@ -13,6 +13,7 @@
 #define EMSG_INVALID_NUMERIC "Invalid numeric value '%s'"
 #define EMSG_INTEGER_OVERFLOW "Integer overflow '%s'"
 #define EMSG_FLOAT_OVERFLOW "Float overflow '%s'"
+#define EMSG_STRING_OVERFLOW "String overflow"
 #define EMSG_UNHANDLED_TYPE_MAP_PROJECTION "Encountered unhandled type when trying to read map projection identifier"
 #define EMSG_SHORTESTPATH_SINGLE_RELATIONSHIP "shortestPath requires a path containing a single relationship"
 #define EMSG_SHORTESTPATH_MINIMAL_LENGTH "shortestPath does not support a minimal length different from 0 or 1"

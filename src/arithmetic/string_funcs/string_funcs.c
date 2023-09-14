@@ -12,6 +12,7 @@
 #include "../../util/rmalloc.h"
 #include "../../util/strutil.h"
 #include "../../errors/errors.h"
+#include "../../util/math_util.h"
 #include "../../datatypes/array.h"
 #include "../../util/json_encoder.h"
 #include "../deps/oniguruma/src/oniguruma.h"
@@ -222,11 +223,24 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 		delimiter = argv[1].stringval;
 	}
 
-	uint32_t count = SIArray_Length(list);
+	int str_len = 0;                           // output string length
+	uint32_t n = SIArray_Length(list);         // number of strings to join
+	size_t delimeter_len = strlen(delimiter);  // length of the delimiter
 
-	size_t delimeter_len = strlen(delimiter);
-	uint str_len = delimeter_len * (count - 1);
-	for(uint i = 0; i < count; i++) {
+	//--------------------------------------------------------------------------
+	// compute required string length
+	//--------------------------------------------------------------------------
+
+	// delimeter length is added between each string
+	if(n >= 2) {
+		if(safe_mul(delimeter_len, n - 1, &str_len)) {
+			ErrorCtx_SetError(EMSG_STRING_OVERFLOW);
+			return SI_NullVal();
+		}
+	}
+
+	// acount for each string length
+	for(uint i = 0; i < n; i++) {
 		SIValue str = SIArray_Get(list, i);
 		if(SI_TYPE(str) != T_STRING) {
 			// all elements in the list should be string.
@@ -234,21 +248,43 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 			return SI_NullVal();
 		}
 
-		str_len += strlen(str.stringval);
+		if(safe_add(str_len, strlen(str.stringval), &str_len)) {
+			ErrorCtx_SetError(EMSG_STRING_OVERFLOW);
+			return SI_NullVal();
+		}
 	}
 
-	int cur_len = 0;
-	char *res = rm_malloc(str_len + 1);
-	for(uint i = 0; i < count - 1; i++) {
+	// acoun for null terminator
+	if(safe_add(str_len, 1, &str_len)) {
+		ErrorCtx_SetError(EMSG_STRING_OVERFLOW);
+		return SI_NullVal();
+	}
+
+	//--------------------------------------------------------------------------
+	// join strings
+	//--------------------------------------------------------------------------
+
+	int l = 0;                       // current string length
+	int cur_len = 0;                 // offset into output string
+	char *res = rm_malloc(str_len);  // output string
+
+	for(uint i = 0; i < n - 1; i++) {
 		SIValue str = SIArray_Get(list, i);
-		memcpy(res + cur_len, str.stringval, strlen(str.stringval));
-		cur_len += strlen(str.stringval);
+		l = strlen(str.stringval);
+		memcpy(res + cur_len, str.stringval, l);
+		cur_len += l;
 		memcpy(res + cur_len, delimiter, delimeter_len);
 		cur_len += delimeter_len;
 	}
-	SIValue str = SIArray_Get(list, count - 1);
-	memcpy(res + cur_len, str.stringval, strlen(str.stringval));
-	res[str_len] = '\0';
+
+	// write the last string
+	SIValue str = SIArray_Get(list, n - 1);
+	l = strlen(str.stringval);
+	memcpy(res + cur_len, str.stringval, l);
+	cur_len += l;
+
+	// place null terminator
+	res[cur_len] = '\0';
 
 	return SI_TransferStringVal(res);
 }
