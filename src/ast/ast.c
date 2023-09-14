@@ -9,9 +9,9 @@
 #include <pthread.h>
 
 #include "RG.h"
-#include "errors.h"
 #include "util/arr.h"
 #include "query_ctx.h"
+#include "../errors/errors.h"
 #include "procedures/procedure.h"
 #include "ast_rewrite_same_clauses.h"
 #include "ast_rewrite_call_subquery.h"
