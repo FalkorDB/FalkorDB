@@ -65,7 +65,7 @@ jobs:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         push: true
-        tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name  }}
+        tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || '${{ github.ref_name }},falkordb/falkordb:latest'  }}
 
   unit-tests:
     runs-on: ubuntu-latest
