@@ -3,6 +3,8 @@ name: Build on ubuntu
 on:
   push:
   workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -59,13 +61,23 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Build and push
+    - name: Build and push on PUSH
+      if: github.event_name == 'push'
       uses: docker/build-push-action@v4
       with:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         push: true
-        tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || '4.0.0-alpha.1,falkordb/falkordb:latest'   }}
+        tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name }}
+
+    - name: Build and push on RELEASE
+      if: github.event_name == 'release'
+      uses: docker/build-push-action@v4
+      with:
+        context: /FalkorDB
+        file: /FalkorDB/build/docker/Dockerfile
+        push: true
+        tags: falkordb/falkordb:${{ github.event.release.tag_name }},falkordb/falkordb:latest
 
   unit-tests:
     runs-on: ubuntu-latest
