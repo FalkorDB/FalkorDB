@@ -654,7 +654,7 @@ bool bolt_check_handshake
 ) {
 	ASSERT(client != NULL);
 
-	return htonl(buffer_read_uint32(&client->read_buf.read)) == 0x6060B017;
+	return ntohl(buffer_read_uint32(&client->read_buf.read)) == 0x6060B017;
 }
 
 // return the latest supported bolt version

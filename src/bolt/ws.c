@@ -108,7 +108,7 @@ uint64_t ws_read_frame
     //  |                     Payload Data continued ...                |
     //  +---------------------------------------------------------------+
 
-    uint16_t frame_header = htons(buffer_read_uint16(buf));
+    uint16_t frame_header = ntohs(buffer_read_uint16(buf));
     bool fin = frame_header >> 15;
     ASSERT(fin && "Fragmented frames are not supported");
     uint8_t rsv123 = (frame_header >> 12) & 0x07;
@@ -117,9 +117,9 @@ uint64_t ws_read_frame
     ASSERT(opcode == 0x02 && "Only binary frames are supported");
     uint64_t payload_len = frame_header & 0x7F;
     if(payload_len == 126) {
-        payload_len = htons(buffer_read_uint16(buf));
+        payload_len = ntohs(buffer_read_uint16(buf));
     } else if(payload_len == 127) {
-        payload_len = htobe32(buffer_read_uint64(buf));
+        payload_len = ntohll(buffer_read_uint64(buf));
     }
     bool mask = (frame_header >> 7) & 0x1;
     if(mask) {
