@@ -571,6 +571,11 @@ void BoltAcceptHandler
 	socket_t socket = socket_accept(fd);
 	if(socket == -1) return;
 
+	if(!socket_set_non_blocking(socket)) {
+		close(socket);
+		return;
+	}
+
 	bolt_client_t *client = bolt_client_new(socket, global_ctx, BoltResponseHandler);
 	if(!buffer_socket_read(&client->read_buf, client->socket)) {
 		// client disconnected

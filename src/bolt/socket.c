@@ -24,13 +24,12 @@ socket_t socket_bind
 		return -1;
 	}
 
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) != 0)
-	{
+	if(!socket_set_non_blocking(fd)) {
 		close(fd);
 		return -1;
 	}
 
-	if (ioctl(fd, FIONBIO, (void *)&on) != 0)
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) != 0)
 	{
 		close(fd);
 		return -1;
@@ -54,4 +53,16 @@ socket_t socket_bind
 	}
 
 	return fd;
+}
+
+bool socket_set_non_blocking
+(
+	socket_t socket
+) {
+	int on = 1;
+	if (ioctl(socket, FIONBIO, (void *)&on) != 0) {
+		return false;
+	}
+
+	return true;
 }

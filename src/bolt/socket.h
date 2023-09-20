@@ -24,3 +24,8 @@ socket_t socket_bind
 (
 	uint16_t port
 );
+
+bool socket_set_non_blocking
+(
+	socket_t socket
+);
