@@ -530,6 +530,63 @@ void BoltReadHandler
 	BoltRequestHandler(client);
 }
 
+// handle the handshake process
+void BoltHandshakeHandler
+(
+	int fd,           // the socket file descriptor
+	void *user_data,  // the client that sent the message
+	int mask          // the event mask
+) {
+	bolt_client_t *client = (bolt_client_t *)user_data;
+	if(!buffer_socket_read(&client->read_buf, client->socket)) {
+		// client disconnected
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		bolt_client_free(client);
+		return;
+	}
+
+	if(client->ws && ws_read_frame(&client->read_buf.read) != 20) {
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		bolt_client_free(client);
+		return;
+	}
+
+	if(!bolt_check_handshake(client)) {
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		if(!ws_handshake(&client->read_buf.read, &client->write)) {
+			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+			bolt_client_free(client);
+			return;
+		}
+		buffer_socket_write(&client->write, client->socket);
+		client->ws = true;
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		buffer_index(&client->read_buf, &client->read_buf.write, 0);
+		buffer_write_uint16(&client->write_buf.write, htons(0x0000));
+		return;
+	}
+
+	bolt_version_t version = bolt_read_supported_version(client);
+
+	if(client->ws) {
+		buffer_write_uint8(&client->write, 0x82);
+		buffer_write_uint8(&client->write, 0x04);
+	}
+	buffer_write_uint8(&client->write, 0x00);
+	buffer_write_uint8(&client->write, 0x00);
+	buffer_write_uint8(&client->write, version.minor);
+	buffer_write_uint8(&client->write, version.major);
+	buffer_socket_write(&client->write, client->socket);
+	buffer_index(&client->write_buf, &client->write, 0);
+	buffer_index(&client->read_buf, &client->read_buf.read, 0);
+	buffer_index(&client->read_buf, &client->read_buf.write, 0);
+
+	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);
+}
+
 // write data from client buffer to socket
 void BoltResponseHandler
 (
@@ -543,6 +600,7 @@ void BoltResponseHandler
 	bolt_client_t *client = (bolt_client_t*)user_data;
 
 	if(client->shutdown) {
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 		bolt_client_free(client);
 		return;
@@ -577,65 +635,7 @@ void BoltAcceptHandler
 	}
 
 	bolt_client_t *client = bolt_client_new(socket, global_ctx, BoltResponseHandler);
-	if(!buffer_socket_read(&client->read_buf, client->socket)) {
-		// client disconnected
-		bolt_client_free(client);
-		return;
-	}
-
-
-	if(!bolt_check_handshake(client)) {
-		buffer_index(&client->read_buf, &client->read_buf.write, 0);
-		buffer_index(&client->read_buf, &client->read_buf.read, 0);
-		buffer_index(&client->write_buf, &client->write_buf.write, 0);
-		if(!ws_handshake(&client->read_buf.read, &client->write_buf.write)) {
-			bolt_client_free(client);
-			return;
-		}
-		buffer_socket_write(&client->write_buf.write, client->socket);
-		client->ws = true;
-		buffer_index(&client->read_buf, &client->read_buf.write, 0);
-		buffer_index(&client->read_buf, &client->read_buf.read, 0);
-		buffer_socket_read(&client->read_buf, client->socket);
-		if(ws_read_frame(&client->read_buf.read) != 20) {
-			bolt_client_free(client);
-			return;
-		}
-		if(!bolt_check_handshake(client)) {
-			bolt_client_free(client);
-			return;
-		}
-
-		bolt_version_t version = bolt_read_supported_version(client);
-
-		char data[6];
-		data[0] = 0x82;
-		data[1] = 0x04;
-		data[2] = 0x00;
-		data[3] = 0x00;
-		data[4] = version.minor;
-		data[5] = version.major;
-		socket_write(socket, data, 6);
-
-		buffer_index(&client->read_buf, &client->read_buf.write, 0);
-		buffer_index(&client->read_buf, &client->read_buf.read, 0);
-		buffer_index(&client->write_buf, &client->write_buf.write, 4);
-		client->ws_frame = client->read_buf.read;
-
-		RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);
-		return;
-	}
-
-	bolt_version_t version = bolt_read_supported_version(client);
-
-	char data[4];
-	data[0] = 0x00;
-	data[1] = 0x00;
-	data[2] = version.minor;
-	data[3] = version.major;
-	socket_write(socket, data, 4);
-
-	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);
+	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
 }
 
 // listen to bolt port 7687
