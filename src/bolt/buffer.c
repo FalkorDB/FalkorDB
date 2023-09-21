@@ -5,6 +5,7 @@
 
 #include "buffer.h"
 #include "../util/arr.h"
+#include <errno.h>
 
 void buffer_index
 (
@@ -174,15 +175,29 @@ bool buffer_socket_read
     return true;
 }
 
-void buffer_socket_write
+bool buffer_socket_write
 (
     buffer_index_t *buf,
     socket_t socket
 ) {
     for(int32_t i = 0; i < buf->chunk; i++) {
-        socket_write(socket, buf->buf->chunks[i], BUFFER_CHUNK_SIZE);
+        int res = socket_write(socket, buf->buf->chunks[i], BUFFER_CHUNK_SIZE);
+        while(res != BUFFER_CHUNK_SIZE) {
+            int n = socket_write(socket, buf->buf->chunks[i] + res, BUFFER_CHUNK_SIZE - res);
+            if(n < 0) {
+                if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                    continue;
+                } else {
+                    return false;
+                }
+            }
+            res += n;
+        }
+        ASSERT(res == BUFFER_CHUNK_SIZE);
     }
-    socket_write(socket, buf->buf->chunks[buf->chunk], buf->offset);
+    int res = socket_write(socket, buf->buf->chunks[buf->chunk], buf->offset);
+    ASSERT(res == buf->offset);
+    return true;
 }
 
 void buffer_write_uint8

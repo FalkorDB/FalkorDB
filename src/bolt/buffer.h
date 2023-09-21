@@ -82,7 +82,7 @@ bool buffer_socket_read
     socket_t socket
 );
 
-void buffer_socket_write
+bool buffer_socket_write
 (
     buffer_index_t *buf,
     socket_t socket
