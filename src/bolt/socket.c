@@ -7,9 +7,10 @@
 
 #include "RG.h"
 #include <string.h>
+#include <errno.h>
+#include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 
 #define CLIENT_QUEUE_LEN 32
@@ -64,5 +65,26 @@ bool socket_set_non_blocking
 		return false;
 	}
 
+	return true;
+}
+
+bool socket_write_all
+(
+	socket_t socket,
+	const char *buff,
+	uint32_t size
+) {
+	uint32_t res = 0;
+	while(res < size) {
+		int n = socket_write(socket, buff + res, size - res);
+		if(n < 0) {
+			if(errno == EAGAIN || errno == EWOULDBLOCK) {
+				continue;
+			} else {
+				return false;
+			}
+		}
+		res += n;
+	}
 	return true;
 }

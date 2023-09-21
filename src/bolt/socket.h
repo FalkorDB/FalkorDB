@@ -29,3 +29,10 @@ bool socket_set_non_blocking
 (
 	socket_t socket
 );
+
+bool socket_write_all
+(
+	socket_t socket,
+	const char *buff,
+	uint32_t size
+);
