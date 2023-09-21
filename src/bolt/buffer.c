@@ -159,6 +159,9 @@ bool buffer_socket_read
     if(nread < 0) {
         return false;
     }
+    if(nread == 0 && buf->write.offset < BUFFER_CHUNK_SIZE) {
+        return false;
+    }
 
     buffer_index_add(&buf->write, nread);
     while(buf->write.offset == BUFFER_CHUNK_SIZE) {

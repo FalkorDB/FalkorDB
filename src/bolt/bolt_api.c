@@ -448,6 +448,7 @@ void BoltRequestHandler
 		case BST_LOGOFF:
 			break;
 		case BST_GOODBYE:
+			client->processing = false;
 			break;
 		case BST_RUN:
 			BoltRunCommand(client);
@@ -601,7 +602,6 @@ void BoltResponseHandler
 
 	if(client->shutdown) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
 		bolt_client_free(client);
 		return;
 	}

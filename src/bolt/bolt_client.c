@@ -678,6 +678,7 @@ void bolt_client_free
 ) {
 	ASSERT(client != NULL);
 
+	RedisModule_EventLoopDel(client->socket, REDISMODULE_EVENTLOOP_WRITABLE);
 	socket_close(client->socket);
 	buffer_free(&client->read_buf);
 	buffer_free(&client->write_buf);

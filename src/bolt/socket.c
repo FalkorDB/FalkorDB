@@ -79,6 +79,10 @@ bool socket_write_all
 		int n = socket_write(socket, buff + res, size - res);
 		if(n < 0) {
 			if(errno == EAGAIN || errno == EWOULDBLOCK) {
+				fd_set wfds;
+				FD_ZERO(&wfds);
+				FD_SET(socket, &wfds);
+				select(socket + 1, NULL, &wfds, NULL, NULL);
 				continue;
 			} else {
 				return false;
