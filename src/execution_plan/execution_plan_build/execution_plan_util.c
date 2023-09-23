@@ -201,10 +201,15 @@ OpBase *ExecutionPlan_LocateReferences
 
 // populates `ops` with all operations with a type in `types` in an
 // execution plan, based at `root`
-static void _ExecutionPlan_CollectOpsMatchingTypes(OpBase *root, const OPType *types, int type_count,
-												  OpBase ***ops) {
+static void _ExecutionPlan_CollectOpsMatchingTypes
+(
+	OpBase *root,
+	const OPType *types,
+	int type_count,
+	OpBase ***ops
+) {
 	for(int i = 0; i < type_count; i++) {
-		// Check to see if the op's type matches any of the types we're searching for.
+		// check to see if the op's type matches any of the types provided
 		if(root->type == types[i]) {
 			array_append(*ops, root);
 			break;
@@ -212,8 +217,9 @@ static void _ExecutionPlan_CollectOpsMatchingTypes(OpBase *root, const OPType *t
 	}
 
 	for(int i = 0; i < root->childCount; i++) {
-		// Recursively visit children.
-		_ExecutionPlan_CollectOpsMatchingTypes(root->children[i], types, type_count, ops);
+		// recursively visit children
+		_ExecutionPlan_CollectOpsMatchingTypes(root->children[i], types,
+				type_count, ops);
 	}
 }
 
@@ -236,8 +242,7 @@ OpBase **ExecutionPlan_CollectOps
     OPType type
 ) {
 	OpBase **ops = array_new(OpBase *, 0);
-	const OPType type_arr[1] = {type};
-	_ExecutionPlan_CollectOpsMatchingTypes(root, type_arr, 1, &ops);
+	_ExecutionPlan_CollectOpsMatchingTypes(root, &type, 1, &ops);
 	return ops;
 }
 

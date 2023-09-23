@@ -190,19 +190,26 @@ static void _reduce_cp_to_hashjoin(ExecutionPlan *plan, OpBase *cp) {
 	array_free(filter_ops);
 }
 
-// TODO: Consider changing Cartesian Products such that each has exactly two child operations.
-/* Try to replace Cartesian Products (cross joins) with Value Hash Joins.
- * This is viable when a Cartesian Product is combining two streams that each satisfies
- * one side of an EQUALS filter operation, like:
- * MATCH (a), (b) WHERE ID(a) = ID(b) */
-void applyJoin(ExecutionPlan *plan) {
-	OpBase **cps = ExecutionPlan_CollectOps(plan->root, OPType_CARTESIAN_PRODUCT);
+// TODO: consider changing Cartesian Products such that each has exactly two
+// child operations
+
+// try to replace Cartesian Products (cross joins) with Value Hash Joins
+// this is viable when a Cartesian Product is combining two streams that each
+// satisfies one side of an EQUALS filter operation like:
+// MATCH (a), (b) WHERE ID(a) = ID(b)
+void applyJoin
+(
+	ExecutionPlan *plan
+) {
+	OpBase **cps = ExecutionPlan_CollectOps(plan->root,
+			OPType_CARTESIAN_PRODUCT);
 	uint cp_count = array_len(cps);
 
 	for(uint i = 0; i < cp_count; i++) {
 		OpBase *cp = cps[i];
 		_reduce_cp_to_hashjoin(plan, cp);
 	}
+
 	array_free(cps);
 }
 

@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "../../query_ctx.h"
+#include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_conditional_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
@@ -33,17 +34,19 @@
 // Scan(B)
 // Traverse A*R
 
-static void _optimizeLabelScan(NodeByLabelScan *scan) {
+static void _optimizeLabelScan
+(
+	NodeByLabelScan *scan
+) {
 	ASSERT(scan != NULL);	
 
-	Graph       *g     =  QueryCtx_GetGraph();
-	OpBase      *op    =  (OpBase*)scan;
-	QueryGraph *qg     =  op->plan->query_graph;
-	NodeScanCtx *n_ctx =  scan->n;
+	Graph       *g     = QueryCtx_GetGraph();
+	OpBase      *op    = (OpBase*)scan;
+	QueryGraph *qg     = op->plan->query_graph;
+	NodeScanCtx *n_ctx = scan->n;
 
 	// see if scanned node has multiple labels
 	const char *node_alias = n_ctx->alias;
-
 	QGNode *n = n_ctx->n;
 
 	// return if node has only one label
@@ -80,12 +83,19 @@ static void _optimizeLabelScan(NodeByLabelScan *scan) {
 	// patch following traversal, skip filters
 	OpBase *parent = op->parent;
 	while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
-	ASSERT(OpBase_Type(parent) == OPType_CONDITIONAL_TRAVERSE);
+	OPType t = OpBase_Type(parent);
+	ASSERT(t == OPType_CONDITIONAL_TRAVERSE || t == OPType_EXPAND_INTO);
 
-	OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
-	AlgebraicExpression *ae = op_traverse->ae;
+	AlgebraicExpression *ae = NULL;
+	if(t == OPType_CONDITIONAL_TRAVERSE) {
+		OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
+		ae = op_traverse->ae;
+	} else {
+		OpExpandInto *op_expand = (OpExpandInto*)parent;
+		ae = op_expand->ae;
+	}
+
 	AlgebraicExpression *operand;
-
 	const char *row_domain    = n_ctx->alias;
 	const char *column_domain = n_ctx->alias;
 
@@ -107,7 +117,10 @@ static void _optimizeLabelScan(NodeByLabelScan *scan) {
 	_AlgebraicExpression_InplaceRepurpose(operand, replacement);
 }
 
-void optimizeLabelScan(ExecutionPlan *plan) {
+void optimizeLabelScan
+(
+	ExecutionPlan *plan
+) {
 	ASSERT(plan != NULL);
 
 	// collect all label scan operations
@@ -123,3 +136,4 @@ void optimizeLabelScan(ExecutionPlan *plan) {
 	}
 	array_free(label_scan_ops);
 }
+

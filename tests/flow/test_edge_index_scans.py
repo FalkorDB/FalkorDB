@@ -45,10 +45,9 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
     def build_indices(self):
         global redis_graph
-        redis_graph.query("CREATE INDEX ON :person(age)")
-        redis_graph.query("CREATE INDEX FOR ()-[f:friend]-() ON (f.created_at)")
-        redis_graph.query("CREATE INDEX FOR ()-[k:knows]-() ON (k.created_at)")
-        wait_for_indices_to_sync(redis_graph)
+        create_node_exact_match_index(redis_graph, "person", "age")
+        create_edge_exact_match_index(redis_graph, "friend", "created_at")
+        create_edge_exact_match_index(redis_graph, "knows", "created_at", sync=True)
 
     # Validate that Cartesian products using index and label scans succeed
     def test01_cartesian_product_mixed_scans(self):
@@ -203,7 +202,9 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(query_result.result_set[0], expected_result)
 
     def test09_single_index_multiple_scans(self):
-        query = "MATCH (p1:person {name: 'Roi'}), (p2:person {name: 'Alon'}) MERGE (p1)-[:friend {created_at: 100}]->(p2) MERGE (p1)-[:friend {created_at: 101}]->(p2)"
+        query = """MATCH (p1:person {name: 'Roi'}), (p2:person {name: 'Alon'})
+                   MERGE (p1)-[:friend {created_at: 100}]->(p2)
+                   MERGE (p1)-[:friend {created_at: 101}]->(p2)"""
         plan = redis_graph.execution_plan(query)
         # Two index scans should be performed.
         self.env.assertEqual(plan.count("Edge By Index Scan"), 2)

@@ -7,9 +7,15 @@
 #include "./optimizer.h"
 #include "./optimizations.h"
 
-void optimizePlan(ExecutionPlan *plan) {
+// apply compile time optimizations
+void Optimizer_CompileTimeOptimize
+(
+	ExecutionPlan *plan  // plan to optimize
+) {
+	// remove redundant SCAN operations
+	reduceScans(plan);
+
 	// tries to compact filter trees, and remove redundant filters
-	// [COMPILE TIME]
 	compactFilters(plan);
 
 	// scan optimizations order:
@@ -22,10 +28,31 @@ void optimizePlan(ExecutionPlan *plan) {
 	//          label scan will be replaced with index scan when possible
 	//          so the id filter remains
 
-	// remove redundant SCAN operations
-	// [COMPILE TIME]
-	reduceScans(plan);
+	// migrate filters on variable-length edges into the traversal operations
+	filterVariableLengthEdges(plan);
 
+	// try to optimize cartesian product
+	reduceCartesianProductStreamCount(plan);
+
+	// try to match disjoint entities by applying a join
+	applyJoin(plan);
+
+	// reduce traversals where both src and dest nodes are already resolved
+	// into an expand into operation
+	reduceTraversal(plan);
+
+	// try to reduce distinct if it follows aggregation
+	reduceDistinct(plan);
+
+	// try to reduce execution plan incase it perform node or edge counting
+	reduceCount(plan);
+}
+
+// apply runtime optimizations
+void Optimizer_RuntimeOptimize
+(
+	ExecutionPlan *plan  // plan to optimize
+) {
 	// when possible, replace label scan and filter ops with index scans
 	utilizeIndices(plan);
 
@@ -35,38 +62,13 @@ void optimizePlan(ExecutionPlan *plan) {
 	// try to reduce SCAN + FILTER to a node seek operation
 	seekByID(plan);
 
-	// migrate filters on variable-length edges into the traversal operations
-	// [COMPILE TIME]
-	filterVariableLengthEdges(plan);
-
-	// try to optimize cartesian product
-	// [COMPILE TIME]
-	reduceCartesianProductStreamCount(plan);
-
-	// try to match disjoint entities by applying a join
-	// [COMPILE TIME]
-	applyJoin(plan);
-
 	// try to reduce a number of filters into a single filter op
 	reduceFilters(plan);
-
-	// reduce traversals where both src and dest nodes are already resolved
-	// into an expand into operation
-	reduceTraversal(plan);
-
-	// try to reduce distinct if it follows aggregation
-	// [COMPILE TIME]
-	reduceDistinct(plan);
-
-	// try to reduce execution plan incase it perform node or edge counting
-	// [COMPILE TIME]
-	reduceCount(plan);
 
 	// let operations know about specified limit(s)
 	applyLimit(plan);
 
 	// let operations know about specified skip(s)
-	// [COMPILE TIME]
 	applySkip(plan);
 }
 

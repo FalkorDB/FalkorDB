@@ -9,6 +9,7 @@
 #include "../query_ctx.h"
 #include "../errors/errors.h"
 #include "../execution_plan/execution_plan_clone.h"
+#include "../execution_plan/optimizations/optimizer.h"
 
 static ExecutionType _GetExecutionTypeFromAST
 (
@@ -190,6 +191,9 @@ ExecutionCtx *ExecutionCtx_FromQuery
 			ExecutionPlan_Free(plan);
 			return NULL;
 		}
+
+		// apply compile time optimizations
+		Optimizer_CompileTimeOptimize(plan);
 
 		ExecutionCtx *exec_ctx = _ExecutionCtx_New(ast, plan, exec_type);
 		ret = Cache_SetGetValue(cache, q_str, exec_ctx);
