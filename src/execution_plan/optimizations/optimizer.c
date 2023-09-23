@@ -9,6 +9,7 @@
 
 void optimizePlan(ExecutionPlan *plan) {
 	// tries to compact filter trees, and remove redundant filters
+	// [COMPILE TIME]
 	compactFilters(plan);
 
 	// scan optimizations order:
@@ -22,6 +23,7 @@ void optimizePlan(ExecutionPlan *plan) {
 	//          so the id filter remains
 
 	// remove redundant SCAN operations
+	// [COMPILE TIME]
 	reduceScans(plan);
 
 	// when possible, replace label scan and filter ops with index scans
@@ -34,12 +36,15 @@ void optimizePlan(ExecutionPlan *plan) {
 	seekByID(plan);
 
 	// migrate filters on variable-length edges into the traversal operations
+	// [COMPILE TIME]
 	filterVariableLengthEdges(plan);
 
 	// try to optimize cartesian product
+	// [COMPILE TIME]
 	reduceCartesianProductStreamCount(plan);
 
 	// try to match disjoint entities by applying a join
+	// [COMPILE TIME]
 	applyJoin(plan);
 
 	// try to reduce a number of filters into a single filter op
@@ -50,15 +55,18 @@ void optimizePlan(ExecutionPlan *plan) {
 	reduceTraversal(plan);
 
 	// try to reduce distinct if it follows aggregation
+	// [COMPILE TIME]
 	reduceDistinct(plan);
 
 	// try to reduce execution plan incase it perform node or edge counting
+	// [COMPILE TIME]
 	reduceCount(plan);
 
 	// let operations know about specified limit(s)
 	applyLimit(plan);
 
 	// let operations know about specified skip(s)
+	// [COMPILE TIME]
 	applySkip(plan);
 }
 
