@@ -118,7 +118,11 @@ static OpBase **_find_entities_solving_branches(rax *entities, OpBase *cp) {
 	return solving_branches;
 }
 
-static void _optimize_cartesian_product(ExecutionPlan *plan, OpBase *cp) {
+static void _optimize_cartesian_product
+(
+	ExecutionPlan *plan,
+	OpBase *cp
+) {
 	// Retrieve all filter operations located upstream from the Cartesian Product.
 	FilterCtx *filter_ctx_arr = _locate_filters_and_entities(cp);
 	uint filter_count = array_len(filter_ctx_arr);
@@ -152,7 +156,8 @@ static void _optimize_cartesian_product(ExecutionPlan *plan, OpBase *cp) {
 			continue;
 		}
 
-		// Need to create a new cartesian product and connect the solving branches to the filter.
+		// need to create a new cartesian product and connect the solving
+		// branches to the filter
 		OpBase *new_cp = NewCartesianProductOp(cp->plan);
 		ExecutionPlan_AddOp((OpBase *)filter_op, new_cp);
 		// Detach each solving branch from the original cp, and attach them as children for the new cp.

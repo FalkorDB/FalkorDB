@@ -7,14 +7,17 @@
 #include "op_cartesian_product.h"
 #include "RG.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult CartesianProductInit(OpBase *opBase);
 static Record CartesianProductConsume(OpBase *opBase);
 static OpResult CartesianProductReset(OpBase *opBase);
 static OpBase *CartesianProductClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void CartesianProductFree(OpBase *opBase);
 
-OpBase *NewCartesianProductOp(const ExecutionPlan *plan) {
+OpBase *NewCartesianProductOp
+(
+	const ExecutionPlan *plan
+) {
 	CartesianProduct *op = rm_malloc(sizeof(CartesianProduct));
 	op->init = true;
 	op->r = NULL;
@@ -26,12 +29,22 @@ OpBase *NewCartesianProductOp(const ExecutionPlan *plan) {
 	return (OpBase *)op;
 }
 
-static void _ResetStreams(CartesianProduct *cp, int streamIdx) {
-	// Reset each child stream, Reset propagates upwards.
-	for(int i = 0; i < streamIdx; i++) OpBase_PropagateReset(cp->op.children[i]);
+static void _ResetStreams
+(
+	CartesianProduct *cp,
+	int streamIdx
+) {
+	// reset each child stream
+	// reset propagates upwards
+	for(int i = 0; i < streamIdx; i++) {
+		OpBase_PropagateReset(cp->op.children[i]);
+	}
 }
 
-static int _PullFromStreams(CartesianProduct *op) {
+static int _PullFromStreams
+(
+	CartesianProduct *op
+) {
 	for(int i = 1; i < op->op.childCount; i++) {
 		OpBase *child = op->op.children[i];
 		Record childRecord = OpBase_Consume(child);
@@ -39,8 +52,8 @@ static int _PullFromStreams(CartesianProduct *op) {
 		if(childRecord) {
 			Record_TransferEntries(&op->r, childRecord, true);
 			OpBase_DeleteRecord(childRecord);
-			/* Managed to get new data
-			 * Reset streams [0-i] */
+			// managed to get new data
+			// reset streams [0-i]
 			_ResetStreams(op, i);
 
 			// Pull from resetted streams.
@@ -64,13 +77,19 @@ static int _PullFromStreams(CartesianProduct *op) {
 	return 0;
 }
 
-static OpResult CartesianProductInit(OpBase *opBase) {
+static OpResult CartesianProductInit
+(
+	OpBase *opBase
+) {
 	CartesianProduct *op = (CartesianProduct *)opBase;
 	op->r = OpBase_CreateRecord((OpBase *)op);
 	return OP_OK;
 }
 
-static Record CartesianProductConsume(OpBase *opBase) {
+static Record CartesianProductConsume
+(
+	OpBase *opBase
+) {
 	CartesianProduct *op = (CartesianProduct *)opBase;
 	OpBase *child;
 	Record childRecord;
@@ -88,17 +107,17 @@ static Record CartesianProductConsume(OpBase *opBase) {
 		return OpBase_CloneRecord(op->r);
 	}
 
-	// Pull from first stream.
+	// pull from first stream
 	child = op->op.children[0];
 	childRecord = OpBase_Consume(child);
 
 	if(childRecord) {
-		// Managed to get data from first stream.
+		// managed to get data from first stream
 		Record_TransferEntries(&op->r, childRecord, true);
 		OpBase_DeleteRecord(childRecord);
 	} else {
-		// Failed to get data from first stream,
-		// try pulling other streams for data.
+		// failed to get data from first stream
+		// try pulling other streams for data
 		if(!_PullFromStreams(op)) return NULL;
 	}
 
@@ -106,18 +125,28 @@ static Record CartesianProductConsume(OpBase *opBase) {
 	return OpBase_CloneRecord(op->r);
 }
 
-static OpResult CartesianProductReset(OpBase *opBase) {
+static OpResult CartesianProductReset
+(
+	OpBase *opBase
+) {
 	CartesianProduct *op = (CartesianProduct *)opBase;
 	op->init = true;
 	return OP_OK;
 }
 
-static OpBase *CartesianProductClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *CartesianProductClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_CARTESIAN_PRODUCT);
 	return NewCartesianProductOp(plan);
 }
 
-static void CartesianProductFree(OpBase *opBase) {
+static void CartesianProductFree
+(
+	OpBase *opBase
+) {
 	CartesianProduct *op = (CartesianProduct *)opBase;
 	if(op->r) {
 		OpBase_DeleteRecord(op->r);

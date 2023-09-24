@@ -110,20 +110,23 @@ void ExecutionPlan_PushBelow(OpBase *a, OpBase *b) {
 	_OpBase_AddChild(b, a);
 }
 
-void ExecutionPlan_NewRoot(OpBase *old_root, OpBase *new_root) {
-	/* The new root should have no parent, but may have children if we've constructed
-	 * a chain of traversals/scans. */
+void ExecutionPlan_NewRoot
+(
+	OpBase *old_root,
+	OpBase *new_root
+) {
+	// the new root should have no parent
+	// but may have children if we've constructed a chain of traversals/scans
 	ASSERT(!old_root->parent && !new_root->parent);
 
-	/* Find the deepest child of the new root operation.
-	 * Currently, we can only follow the first child, since we don't call this function when
-	 * introducing Cartesian Products (the only multiple-stream operation at this stage.)
-	 * This may be inadequate later. */
+	// find the deepest child of the new root operation
+	// currently, we can only follow the first child
+	// since we don't call this function when introducing Cartesian Products
 	OpBase *tail = new_root;
 	ASSERT(tail->childCount <= 1);
 	while(tail->childCount > 0) tail = tail->children[0];
 
-	// Append the old root to the tail of the new root's chain.
+	// append the old root to the tail of the new root's chain.
 	_OpBase_AddChild(tail, old_root);
 }
 
