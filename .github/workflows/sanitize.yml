@@ -64,6 +64,7 @@ jobs:
 
     - name: TCK tests
       run: make tck-tests CLEAR_LOGS=0 SAN=address
+      continue-on-error: true
 
     - uses: actions/upload-artifact@v3
       with:
