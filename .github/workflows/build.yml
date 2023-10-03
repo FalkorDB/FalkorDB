@@ -82,7 +82,7 @@ jobs:
     - name: Upload Artifact
         uses: softprops/action-gh-release@v1
         with:
-          name: "v4.0.0 Alpha.1"
+          name: 'v4.0.0 Alpha.1'
           files: |
             /FalkorDB/bin/linux-x64-release/src/falkordb.so
   
