@@ -80,9 +80,9 @@ jobs:
         tags: falkordb/falkordb:${{ github.event.release.tag_name }},falkordb/falkordb:latest
 
     - name: Upload Artifact
+      if: github.event_name == 'release'
       uses: softprops/action-gh-release@v1
       with:
-        name: 'v4.0.0 Alpha.1'
         tag_name: v4.0.0-a1
         files: |
           /FalkorDB/bin/linux-x64-release/src/falkordb.so
