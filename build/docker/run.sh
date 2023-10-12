@@ -6,6 +6,7 @@ then
                  --tls-cert-file ./tls/redis.crt \
                  --tls-key-file ./tls/redis.key \
                  --tls-ca-cert-file ./tls/ca.crt \
+                 --tls-auth-clients no \
                  --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
 else
     redis-server --protected-mode no ${REDIS_ARGS} \
