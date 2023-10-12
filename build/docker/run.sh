@@ -1,0 +1,13 @@
+if [ ${TLS} -eq 1 ]
+then
+    /FalkorDB/build/docker/gen-certs.sh
+    redis-server --protected-mode no ${REDIS_ARGS} \
+                 --tls-port 6379 --port 0 \
+                 --tls-cert-file ./tls/redis.crt \
+                 --tls-key-file ./tls/redis.key \
+                 --tls-ca-cert-file ./tls/ca.crt \
+                 --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
+else
+    redis-server --protected-mode no ${REDIS_ARGS} \
+                 --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
+fi
