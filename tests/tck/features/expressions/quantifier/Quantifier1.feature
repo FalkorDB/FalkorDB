@@ -282,7 +282,6 @@ Feature: Quantifier1 - None quantifier
       | [[:RB {name: 'b'}], [:RB {name: 'b'}], [:RB {name: 'b'}]] | true   |
     And no side effects
 
-  @skip
   Scenario Outline: [10] None quantifier on lists containing nulls
     Given any graph
     When executing query:
