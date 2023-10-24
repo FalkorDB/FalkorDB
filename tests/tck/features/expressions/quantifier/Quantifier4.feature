@@ -282,7 +282,6 @@ Feature: Quantifier4 - All quantifier
       | [[:RB {name: 'b'}], [:RB {name: 'b'}], [:RB {name: 'b'}]] | false  |
     And no side effects
 
-  @skip
   Scenario Outline: [10] All quantifier on lists containing nulls
     Given any graph
     When executing query:
