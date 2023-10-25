@@ -2495,7 +2495,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.env.assertFalse(True)
         except ResponseError as e:
             self.env.assertContains("String overflow", str(e))
-  
+
     def test90_size(self):
         query_to_expected_result = {
             "RETURN size(NULL)" : [[None]],
