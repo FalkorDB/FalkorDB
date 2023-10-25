@@ -514,56 +514,6 @@ cleanup:
 	array_free(filters);
 }
 
-// try to replace given ExpandInto Traverse operation and a set of Filter
-// operations with a single Index Scan operation
-void reduce_expand_into_op
-(
-	ExecutionPlan *plan,
-	OpExpandInto *expand
-) {
-	// make sure there's an index for scanned label
-	const char *edge = AlgebraicExpression_Edge(expand->ae);
-	if(!edge) return;
-
-	QGEdge *e = QueryGraph_GetEdgeByAlias(expand->op.plan->query_graph, edge);
-	if(QGEdge_RelationCount(e) != 1) return;
-
-	const char *relation = QGEdge_Relation(e, 0);
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Index idx = GraphContext_GetIndex(gc, relation, NULL, 0, IDX_EXACT_MATCH,
-			SCHEMA_EDGE);
-	if(idx == NULL) return;
-
-	// get all applicable filter for index
-	OpFilter **filters = _applicableFilters((OpBase *)expand, edge, idx);
-
-	// no filters, return
-	uint filters_count = array_len(filters);
-	if(filters_count == 0) goto cleanup;
-
-	RSIndex *rs_idx = Index_RSIndex(idx);
-	FT_FilterNode *root = _Concat_Filters(filters);
-	OpBase *indexOp = NewEdgeIndexScanOp(expand->op.plan, expand->graph, e,
-			rs_idx, root);
-
-	ExecutionPlan_ReplaceOp(plan, (OpBase *)expand, indexOp);
-
-	OpBase_Free((OpBase *)expand);
-
-	// remove and free all redundant filter ops
-	// since this is a chain of single-child operations
-	// all operations are replaced in-place
-	// avoiding problems with stream-sensitive ops like SemiApply
-	for(uint i = 0; i < filters_count; i++) {
-		OpFilter *filter = filters[i];
-		ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
-		OpBase_Free((OpBase *)filter);
-	}
-
-cleanup:
-	array_free(filters);
-}
-
 void utilizeIndices
 (
 	ExecutionPlan *plan
@@ -609,24 +559,8 @@ void utilizeIndices
 		reduce_cond_op(plan, condOp);
 	}
 
-	//--------------------------------------------------------------------------
-	// return expand into
-	//--------------------------------------------------------------------------
-
-	OpBase **expandOps = ExecutionPlan_CollectOps(plan->root,
-			OPType_EXPAND_INTO);
-
-	uint expandOpCount = array_len(expandOps);
-	for(uint i = 0; i < expandOpCount; i++) {
-		OpExpandInto *expandOp = (OpExpandInto *)expandOps[i];
-		// try to reduce expand-into + filter(s) to a single
-		// IndexScan operation
-		reduce_expand_into_op(plan, expandOp);
-	}
-
 	// cleanup
 	array_free(scanOps);
 	array_free(condOps);
-	array_free(expandOps);
 }
 

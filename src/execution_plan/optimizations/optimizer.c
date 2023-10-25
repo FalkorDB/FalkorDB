@@ -54,21 +54,35 @@ void Optimizer_RuntimeOptimize
 	ExecutionPlan *plan  // plan to optimize
 ) {
 	// when possible, replace label scan and filter ops with index scans
+	// note: this is a run-time optimization as indices might be added/remove
+	// over time
 	utilizeIndices(plan);
 
 	// scan label with least entities
+	// note: this is a run-time optimization as the number of entities labeled
+	// under a specific label can change over time
 	optimizeLabelScan(plan);
 
 	// try to reduce SCAN + FILTER to a node seek operation
+	// note: this is a run-time optimization as the ID range can be specified
+	// as a run-time argument
+	// TODO: turn this into a compile-time optimization
 	seekByID(plan);
 
 	// try to reduce a number of filters into a single filter op
+	// note: this is a run-time optimization as previous run-time optimizations
+	// e.g. utilizeIndices
+	// depend on the fact that filters are broken down into their simplest form
 	reduceFilters(plan);
 
 	// let operations know about specified limit(s)
+	// note: this is a run-time optimization as the value of limit can effect
+	// other operations (e.g. sort)
 	applyLimit(plan);
 
 	// let operations know about specified skip(s)
+	// note: this is a run-time optimization as the value of skip can effect
+	// other operations (e.g. sort)
 	applySkip(plan);
 }
 

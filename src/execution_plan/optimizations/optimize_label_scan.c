@@ -20,7 +20,7 @@
 // for the above example if NNZ(A) < NNZ(B) we will want to iterate over A
 //
 // in-case this optimization changed the label scanned e.g. from A to B
-// it will have to patch the following conditional traversal removing B operand
+// it will have to patch the following traversal removing B operand
 // and adding A back
 //
 // consider MATCH (n:A:B)-[:R]->(m) RETURN m
@@ -38,7 +38,7 @@ static void _optimizeLabelScan
 (
 	NodeByLabelScan *scan
 ) {
-	ASSERT(scan != NULL);	
+	ASSERT(scan != NULL);
 
 	Graph       *g     = QueryCtx_GetGraph();
 	OpBase      *op    = (OpBase*)scan;
@@ -88,9 +88,19 @@ static void _optimizeLabelScan
 
 	AlgebraicExpression *ae = NULL;
 	if(t == OPType_CONDITIONAL_TRAVERSE) {
+		// GRAPH.EXPLAIN g "match (n:B:A:C)-[]->() RETURN n"
+		// 1) "Results"
+		// 2) "    Project"
+		// 3) "        Conditional Traverse | (n:B:C)->(@anon_0)"
+		// 4) "            Node By Label Scan | (n:A)"
 		OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
 		ae = op_traverse->ae;
 	} else {
+		// GRAPH.EXPLAIN g "MATCH (n:B:A:C) RETURN n"
+		// 1) "Results"
+		// 2) "    Project"
+		// 3) "        Expand Into | (n:A:C)->(n:A:C)"
+		// 4) "            Node By Label Scan | (n:B)"
 		OpExpandInto *op_expand = (OpExpandInto*)parent;
 		ae = op_expand->ae;
 	}
