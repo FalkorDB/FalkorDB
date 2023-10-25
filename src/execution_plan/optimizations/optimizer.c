@@ -61,7 +61,7 @@ void Optimizer_RuntimeOptimize
 	// scan label with least entities
 	// note: this is a run-time optimization as the number of entities labeled
 	// under a specific label can change over time
-	optimizeLabelScan(plan);
+	costBaseLabelScan(plan);
 
 	// try to reduce SCAN + FILTER to a node seek operation
 	// note: this is a run-time optimization as the ID range can be specified
@@ -73,16 +73,7 @@ void Optimizer_RuntimeOptimize
 	// note: this is a run-time optimization as previous run-time optimizations
 	// e.g. utilizeIndices
 	// depend on the fact that filters are broken down into their simplest form
+	// TODO: turn this into a compile-time optimization
 	reduceFilters(plan);
-
-	// let operations know about specified limit(s)
-	// note: this is a run-time optimization as the value of limit can effect
-	// other operations (e.g. sort)
-	applyLimit(plan);
-
-	// let operations know about specified skip(s)
-	// note: this is a run-time optimization as the value of skip can effect
-	// other operations (e.g. sort)
-	applySkip(plan);
 }
 

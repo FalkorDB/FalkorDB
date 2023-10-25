@@ -5,13 +5,16 @@
  */
 
 #include "execution_plan_util.h"
+#include "../ops/op_skip.h"
+#include "../ops/op_limit.h"
 
 // returns true if an operation in the op-tree rooted at `root` is eager
 bool ExecutionPlan_isEager
 (
     OpBase *root
 ) {
-	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS, 6) != NULL;
+	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS,
+			EAGER_OP_COUNT) != NULL;
 }
 
 OpBase *ExecutionPlan_LocateOpResolvingAlias
@@ -187,6 +190,62 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 
 	if(refs_resolved) resolving_op = root;
 	return resolving_op;
+}
+
+// scans plan from root via parent nodes until a limit operation is found
+// eager operation will terminate the scan
+// return true if a limit operation was found, in which case 'limit' is set
+// otherwise return false
+bool ExecutionPlan_ContainsLimit
+(
+	OpBase *root,    // root to start the scan from
+	uint64_t *limit  // limit value
+) {
+	ASSERT(root  != NULL);
+	ASSERT(limit != NULL);
+
+	while(root != NULL) {
+		// halt if we encounter an eager operation
+		if(ExecutionPlan_isEager(root)) return false;
+
+		// found a limit operation
+		if(root->type == OPType_LIMIT) {
+			*limit = ((const OpLimit*)root)->limit;
+			return true;
+		}
+
+		root = root->parent;
+	}
+
+	return false;
+}
+
+// scans plan from root via parent nodes until a skip operation is found
+// eager operation will terminate the scan
+// return true if a skip operation was found, in which case 'skip' is set
+// otherwise return false
+bool ExecutionPlan_ContainsSkip
+(
+	OpBase *root,   // root to start the scan from
+	uint64_t *skip  // skip value
+) {
+	ASSERT(root != NULL);
+	ASSERT(skip != NULL);
+
+	while(root != NULL) {
+		// halt if we encounter an eager operation
+		if(ExecutionPlan_isEager(root)) return false;
+
+		// found a skip operation
+		if(root->type == OPType_SKIP) {
+			*skip = ((const OpSkip*)root)->skip;
+			return true;
+		}
+
+		root = root->parent;
+	}
+
+	return false;
 }
 
 OpBase *ExecutionPlan_LocateReferences

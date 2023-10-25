@@ -34,7 +34,7 @@
 // Scan(B)
 // Traverse A*R
 
-static void _optimizeLabelScan
+static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
 ) {
@@ -127,7 +127,7 @@ static void _optimizeLabelScan
 	_AlgebraicExpression_InplaceRepurpose(operand, replacement);
 }
 
-void optimizeLabelScan
+void costBaseLabelScan
 (
 	ExecutionPlan *plan
 ) {
@@ -142,7 +142,7 @@ void optimizeLabelScan
 	uint op_count = array_len(label_scan_ops);
 	for(uint i = 0; i < op_count; i++) {
 		NodeByLabelScan *label_scan = (NodeByLabelScan*)label_scan_ops[i];
-		_optimizeLabelScan(label_scan);
+		_costBaseLabelScan(label_scan);
 	}
 	array_free(label_scan_ops);
 }

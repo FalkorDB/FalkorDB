@@ -5,8 +5,9 @@
  */
 
 #include "op_expand_into.h"
-#include "shared/print_functions.h"
 #include "../../query_ctx.h"
+#include "shared/print_functions.h"
+#include "../execution_plan_build/execution_plan_util.h"
 
 // default number of records to accumulate before traversing
 #define BATCH_SIZE 16
@@ -131,6 +132,10 @@ static OpResult ExpandIntoInit
 ) {
 	OpExpandInto *op = (OpExpandInto *)opBase;
 
+	// in case this operation is restricted by a limit
+	// set record_cap to the specified limit
+	ExecutionPlan_ContainsLimit(opBase, &op->record_cap);
+
 	// see if we can optimize by avoiding matrix multiplication
 	// if the algebraic expression passed in is just a single operand
 	// there's no need to compute F and perform F*X, we can simply inspect X
@@ -161,10 +166,7 @@ static OpResult ExpandIntoInit
 		}
 	}
 
-	// create 'records' within this Init function as 'record_cap'
-	// might be set during optimization time (applyLimit)
-	// If cap greater than BATCH_SIZE is specified,
-	// use BATCH_SIZE as the value.
+	// allocate record buffer, limited to a maximum of BATCH_SIZE
 	if(op->record_cap > BATCH_SIZE) op->record_cap = BATCH_SIZE;
 
 	op->records = rm_calloc(op->record_cap, sizeof(Record));
