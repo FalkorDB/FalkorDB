@@ -12,11 +12,11 @@
 #include "../../ast/ast_shared.h"
 #include "../../datatypes/array.h"
 #include "../../datatypes/point.h"
+#include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_node_by_index_scan.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_edge_by_index_scan.h"
-#include "../ops/op_conditional_traverse.h"
 #include "../ops/op_conditional_traverse.h"
 #include "../../arithmetic/arithmetic_op.h"
 #include "../../filter_tree/filter_tree_utils.h"
@@ -419,9 +419,13 @@ cleanup:
 	array_free(filters);
 }
 
-// try to replace given Conditional Traverse operation and a set of Filter operations with
-// a single Index Scan operation
-void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
+// try to replace given Conditional Traverse operation and a set of Filter
+// operations with a single Index Scan operation
+void reduce_cond_op
+(
+	ExecutionPlan *plan,
+	OpCondTraverse *cond
+) {
 	// make sure there's an index for scanned label
 	const char *edge = AlgebraicExpression_Edge(cond->ae);
 	if(!edge) return;
@@ -456,11 +460,12 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		OpBase_Free(allNodeScan);
 	}
 
-	
-	const char *other_alias  =  AlgebraicExpression_Dest(cond->ae);
-	QGNode     *other_node   =  QueryGraph_GetNodeByAlias(cond->op.plan->query_graph, other_alias);
+	const char *other_alias = AlgebraicExpression_Dest(cond->ae);
+	QGNode     *other_node  = QueryGraph_GetNodeByAlias(cond->op.plan->query_graph,
+			other_alias);
 	ASSERT(other_node != NULL);
-	uint other_label_count   =  QGNode_LabelCount(other_node);
+
+	uint other_label_count = QGNode_LabelCount(other_node);
 	if(other_label_count > 0) {
 		// create func expression
 		const char *func_name = "hasLabels";
@@ -472,7 +477,8 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		// create labels expression
 		SIValue labels = SI_Array(other_label_count);
 		for (uint i = 0; i < other_label_count; i++) {
-			SIArray_Append(&labels, SI_ConstStringVal((char *)other_node->labels[i]));
+			SIArray_Append(&labels,
+					SI_ConstStringVal((char *)other_node->labels[i]));
 		}
 		AR_ExpNode *labels_exp = AR_EXP_NewConstOperandNode(labels);
 
@@ -516,7 +522,10 @@ void utilizeIndices
 	// return immediately if the graph has no indices
 	if(!GraphContext_HasIndices(gc)) return;
 
-	// collect all label scans
+	//--------------------------------------------------------------------------
+	// reduce label scans
+	//--------------------------------------------------------------------------
+
 	OpBase **scanOps = ExecutionPlan_CollectOps(plan->root,
 			OPType_NODE_BY_LABEL_SCAN);
 
@@ -535,14 +544,18 @@ void utilizeIndices
 		reduce_scan_op(plan, scanOp);
 	}
 
-	// collect all conditional traverse
+	//--------------------------------------------------------------------------
+	// reduce conditional traverse
+	//--------------------------------------------------------------------------
+
 	OpBase **condOps = ExecutionPlan_CollectOps(plan->root,
 			OPType_CONDITIONAL_TRAVERSE);
 
 	uint condOpCount = array_len(condOps);
 	for(uint i = 0; i < condOpCount; i++) {
 		OpCondTraverse *condOp = (OpCondTraverse *)condOps[i];
-		// try to reduce conditional travers + filter(s) to a single IndexScan operation
+		// try to reduce conditional travers + filter(s) to a single
+		// IndexScan operation
 		reduce_cond_op(plan, condOp);
 	}
 

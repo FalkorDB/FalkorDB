@@ -8,6 +8,15 @@
 
 #include "../execution_plan.h"
 
-/* Try to optimize an execution plan segment. */
-void optimizePlan(ExecutionPlan *plan);
+// apply compile time optimizations
+void Optimizer_CompileTimeOptimize
+(
+	ExecutionPlan *plan  // plan to optimize
+);
+
+// apply runtime optimizations
+void Optimizer_RuntimeOptimize
+(
+	ExecutionPlan *plan  // plan to optimize
+);
 

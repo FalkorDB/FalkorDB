@@ -55,8 +55,11 @@ static inline int _FilterCtx_cmp
 // 2. reduce the overall filter runtime by potentially order(s) of magnitude
 
 
-// Free FilterCtx.
-static inline void _FilterCtx_Free(FilterCtx *ctx) {
+// free FilterCtx
+static inline void _FilterCtx_Free
+(
+	FilterCtx *ctx
+) {
 	raxFree(ctx->entities);
 }
 
@@ -88,7 +91,11 @@ static FilterCtx *_locate_filters_and_entities
 }
 
 // Finds all the cartesian product's children which solve a specific filter entities.
-static OpBase **_find_entities_solving_branches(rax *entities, OpBase *cp) {
+static OpBase **_find_entities_solving_branches
+(
+	rax *entities,
+	OpBase *cp
+) {
 	int entities_count = raxSize(entities);
 	if(entities_count == 0) return NULL; // No dependencies in filters.
 
@@ -118,8 +125,12 @@ static OpBase **_find_entities_solving_branches(rax *entities, OpBase *cp) {
 	return solving_branches;
 }
 
-static void _optimize_cartesian_product(ExecutionPlan *plan, OpBase *cp) {
-	// Retrieve all filter operations located upstream from the Cartesian Product.
+static void _optimize_cartesian_product
+(
+	ExecutionPlan *plan,
+	OpBase *cp
+) {
+	// retrieve all filter operations located upstream from the cartesian product
 	FilterCtx *filter_ctx_arr = _locate_filters_and_entities(cp);
 	uint filter_count = array_len(filter_ctx_arr);
 
@@ -187,14 +198,19 @@ static void _optimize_cartesian_product(ExecutionPlan *plan, OpBase *cp) {
 	array_free(filter_ctx_arr);
 }
 
-void reduceCartesianProductStreamCount(ExecutionPlan *plan) {
-	OpBase **cps = ExecutionPlan_CollectOps(plan->root, OPType_CARTESIAN_PRODUCT);
+void reduceCartesianProductStreamCount
+(
+	ExecutionPlan *plan
+) {
+	OpBase **cps = ExecutionPlan_CollectOps(plan->root,
+			OPType_CARTESIAN_PRODUCT);
 	uint cp_count = array_len(cps);
 
 	for(uint i = 0; i < cp_count ; i++) {
 		OpBase *cp = cps[i];
 		if(cp->childCount > 2) _optimize_cartesian_product(plan, cp);
 	}
+
 	array_free(cps);
 }
 

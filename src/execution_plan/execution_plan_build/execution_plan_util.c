@@ -5,13 +5,16 @@
  */
 
 #include "execution_plan_util.h"
+#include "../ops/op_skip.h"
+#include "../ops/op_limit.h"
 
 // returns true if an operation in the op-tree rooted at `root` is eager
 bool ExecutionPlan_isEager
 (
     OpBase *root
 ) {
-	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS, 6) != NULL;
+	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS,
+			EAGER_OP_COUNT) != NULL;
 }
 
 OpBase *ExecutionPlan_LocateOpResolvingAlias
@@ -189,6 +192,62 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	return resolving_op;
 }
 
+// scans plan from root via parent nodes until a limit operation is found
+// eager operation will terminate the scan
+// return true if a limit operation was found, in which case 'limit' is set
+// otherwise return false
+bool ExecutionPlan_ContainsLimit
+(
+	OpBase *root,    // root to start the scan from
+	uint64_t *limit  // limit value
+) {
+	ASSERT(root  != NULL);
+	ASSERT(limit != NULL);
+
+	while(root != NULL) {
+		// halt if we encounter an eager operation
+		if(ExecutionPlan_isEager(root)) return false;
+
+		// found a limit operation
+		if(root->type == OPType_LIMIT) {
+			*limit = ((const OpLimit*)root)->limit;
+			return true;
+		}
+
+		root = root->parent;
+	}
+
+	return false;
+}
+
+// scans plan from root via parent nodes until a skip operation is found
+// eager operation will terminate the scan
+// return true if a skip operation was found, in which case 'skip' is set
+// otherwise return false
+bool ExecutionPlan_ContainsSkip
+(
+	OpBase *root,   // root to start the scan from
+	uint64_t *skip  // skip value
+) {
+	ASSERT(root != NULL);
+	ASSERT(skip != NULL);
+
+	while(root != NULL) {
+		// halt if we encounter an eager operation
+		if(ExecutionPlan_isEager(root)) return false;
+
+		// found a skip operation
+		if(root->type == OPType_SKIP) {
+			*skip = ((const OpSkip*)root)->skip;
+			return true;
+		}
+
+		root = root->parent;
+	}
+
+	return false;
+}
+
 OpBase *ExecutionPlan_LocateReferences
 (
 	OpBase *root,
@@ -201,10 +260,15 @@ OpBase *ExecutionPlan_LocateReferences
 
 // populates `ops` with all operations with a type in `types` in an
 // execution plan, based at `root`
-static void _ExecutionPlan_CollectOpsMatchingTypes(OpBase *root, const OPType *types, int type_count,
-												  OpBase ***ops) {
+static void _ExecutionPlan_CollectOpsMatchingTypes
+(
+	OpBase *root,
+	const OPType *types,
+	int type_count,
+	OpBase ***ops
+) {
 	for(int i = 0; i < type_count; i++) {
-		// Check to see if the op's type matches any of the types we're searching for.
+		// check to see if the op's type matches any of the types provided
 		if(root->type == types[i]) {
 			array_append(*ops, root);
 			break;
@@ -212,8 +276,9 @@ static void _ExecutionPlan_CollectOpsMatchingTypes(OpBase *root, const OPType *t
 	}
 
 	for(int i = 0; i < root->childCount; i++) {
-		// Recursively visit children.
-		_ExecutionPlan_CollectOpsMatchingTypes(root->children[i], types, type_count, ops);
+		// recursively visit children
+		_ExecutionPlan_CollectOpsMatchingTypes(root->children[i], types,
+				type_count, ops);
 	}
 }
 
@@ -236,8 +301,7 @@ OpBase **ExecutionPlan_CollectOps
     OPType type
 ) {
 	OpBase **ops = array_new(OpBase *, 0);
-	const OPType type_arr[1] = {type};
-	_ExecutionPlan_CollectOpsMatchingTypes(root, type_arr, 1, &ops);
+	_ExecutionPlan_CollectOpsMatchingTypes(root, &type, 1, &ops);
 	return ops;
 }
 

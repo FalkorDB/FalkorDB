@@ -4,10 +4,11 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_conditional_traverse.h"
 #include "RG.h"
-#include "shared/print_functions.h"
 #include "../../query_ctx.h"
+#include "shared/print_functions.h"
+#include "op_conditional_traverse.h"
+#include "../execution_plan_build/execution_plan_util.h"
 
 // default number of records to accumulate before traversing
 #define BATCH_SIZE 16
@@ -109,11 +110,14 @@ OpBase *NewCondTraverseOp
 
 static OpResult CondTraverseInit(OpBase *opBase) {
 	OpCondTraverse *op = (OpCondTraverse *)opBase;
-	// Create 'records' with this Init function as 'record_cap'
-	// might be set during optimization time (applyLimit)
-	// If cap greater than BATCH_SIZE is specified,
-	// use BATCH_SIZE as the value.
+
+	// in case this operation is restricted by a limit
+	// set record_cap to the specified limit
+	ExecutionPlan_ContainsLimit(opBase, &op->record_cap);
+
+	// record_cap should not be greater than BATCH_SIZE
 	if(op->record_cap > BATCH_SIZE) op->record_cap = BATCH_SIZE;
+
 	op->records = rm_calloc(op->record_cap, sizeof(Record));
 
 	return OP_OK;

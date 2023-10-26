@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "../../query_ctx.h"
+#include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_conditional_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
@@ -19,7 +20,7 @@
 // for the above example if NNZ(A) < NNZ(B) we will want to iterate over A
 //
 // in-case this optimization changed the label scanned e.g. from A to B
-// it will have to patch the following conditional traversal removing B operand
+// it will have to patch the following traversal removing B operand
 // and adding A back
 //
 // consider MATCH (n:A:B)-[:R]->(m) RETURN m
@@ -33,17 +34,19 @@
 // Scan(B)
 // Traverse A*R
 
-static void _optimizeLabelScan(NodeByLabelScan *scan) {
-	ASSERT(scan != NULL);	
+static void _costBaseLabelScan
+(
+	NodeByLabelScan *scan
+) {
+	ASSERT(scan != NULL);
 
-	Graph       *g     =  QueryCtx_GetGraph();
-	OpBase      *op    =  (OpBase*)scan;
-	QueryGraph *qg     =  op->plan->query_graph;
-	NodeScanCtx *n_ctx =  scan->n;
+	Graph       *g     = QueryCtx_GetGraph();
+	OpBase      *op    = (OpBase*)scan;
+	QueryGraph *qg     = op->plan->query_graph;
+	NodeScanCtx *n_ctx = scan->n;
 
 	// see if scanned node has multiple labels
 	const char *node_alias = n_ctx->alias;
-
 	QGNode *n = n_ctx->n;
 
 	// return if node has only one label
@@ -80,12 +83,29 @@ static void _optimizeLabelScan(NodeByLabelScan *scan) {
 	// patch following traversal, skip filters
 	OpBase *parent = op->parent;
 	while(OpBase_Type(parent) == OPType_FILTER) parent = parent->parent;
-	ASSERT(OpBase_Type(parent) == OPType_CONDITIONAL_TRAVERSE);
+	OPType t = OpBase_Type(parent);
+	ASSERT(t == OPType_CONDITIONAL_TRAVERSE || t == OPType_EXPAND_INTO);
 
-	OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
-	AlgebraicExpression *ae = op_traverse->ae;
+	AlgebraicExpression *ae = NULL;
+	if(t == OPType_CONDITIONAL_TRAVERSE) {
+		// GRAPH.EXPLAIN g "match (n:B:A:C)-[]->() RETURN n"
+		// 1) "Results"
+		// 2) "    Project"
+		// 3) "        Conditional Traverse | (n:B:C)->(@anon_0)"
+		// 4) "            Node By Label Scan | (n:A)"
+		OpCondTraverse *op_traverse = (OpCondTraverse*)parent;
+		ae = op_traverse->ae;
+	} else {
+		// GRAPH.EXPLAIN g "MATCH (n:B:A:C) RETURN n"
+		// 1) "Results"
+		// 2) "    Project"
+		// 3) "        Expand Into | (n:A:C)->(n:A:C)"
+		// 4) "            Node By Label Scan | (n:B)"
+		OpExpandInto *op_expand = (OpExpandInto*)parent;
+		ae = op_expand->ae;
+	}
+
 	AlgebraicExpression *operand;
-
 	const char *row_domain    = n_ctx->alias;
 	const char *column_domain = n_ctx->alias;
 
@@ -107,7 +127,10 @@ static void _optimizeLabelScan(NodeByLabelScan *scan) {
 	_AlgebraicExpression_InplaceRepurpose(operand, replacement);
 }
 
-void optimizeLabelScan(ExecutionPlan *plan) {
+void costBaseLabelScan
+(
+	ExecutionPlan *plan
+) {
 	ASSERT(plan != NULL);
 
 	// collect all label scan operations
@@ -119,7 +142,8 @@ void optimizeLabelScan(ExecutionPlan *plan) {
 	uint op_count = array_len(label_scan_ops);
 	for(uint i = 0; i < op_count; i++) {
 		NodeByLabelScan *label_scan = (NodeByLabelScan*)label_scan_ops[i];
-		_optimizeLabelScan(label_scan);
+		_costBaseLabelScan(label_scan);
 	}
 	array_free(label_scan_ops);
 }
+

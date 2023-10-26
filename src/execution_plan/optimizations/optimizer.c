@@ -7,7 +7,14 @@
 #include "./optimizer.h"
 #include "./optimizations.h"
 
-void optimizePlan(ExecutionPlan *plan) {
+// apply compile time optimizations
+void Optimizer_CompileTimeOptimize
+(
+	ExecutionPlan *plan  // plan to optimize
+) {
+	// remove redundant SCAN operations
+	reduceScans(plan);
+
 	// tries to compact filter trees, and remove redundant filters
 	compactFilters(plan);
 
@@ -21,18 +28,6 @@ void optimizePlan(ExecutionPlan *plan) {
 	//          label scan will be replaced with index scan when possible
 	//          so the id filter remains
 
-	// remove redundant SCAN operations
-	reduceScans(plan);
-
-	// when possible, replace label scan and filter ops with index scans
-	utilizeIndices(plan);
-
-	// scan label with least entities
-	optimizeLabelScan(plan);
-
-	// try to reduce SCAN + FILTER to a node seek operation
-	seekByID(plan);
-
 	// migrate filters on variable-length edges into the traversal operations
 	filterVariableLengthEdges(plan);
 
@@ -41,9 +36,6 @@ void optimizePlan(ExecutionPlan *plan) {
 
 	// try to match disjoint entities by applying a join
 	applyJoin(plan);
-
-	// try to reduce a number of filters into a single filter op
-	reduceFilters(plan);
 
 	// reduce traversals where both src and dest nodes are already resolved
 	// into an expand into operation
@@ -54,11 +46,34 @@ void optimizePlan(ExecutionPlan *plan) {
 
 	// try to reduce execution plan incase it perform node or edge counting
 	reduceCount(plan);
+}
 
-	// let operations know about specified limit(s)
-	applyLimit(plan);
+// apply runtime optimizations
+void Optimizer_RuntimeOptimize
+(
+	ExecutionPlan *plan  // plan to optimize
+) {
+	// when possible, replace label scan and filter ops with index scans
+	// note: this is a run-time optimization as indices might be added/remove
+	// over time
+	utilizeIndices(plan);
 
-	// let operations know about specified skip(s)
-	applySkip(plan);
+	// scan label with least entities
+	// note: this is a run-time optimization as the number of entities labeled
+	// under a specific label can change over time
+	costBaseLabelScan(plan);
+
+	// try to reduce SCAN + FILTER to a node seek operation
+	// note: this is a run-time optimization as the ID range can be specified
+	// as a run-time argument
+	// TODO: turn this into a compile-time optimization
+	seekByID(plan);
+
+	// try to reduce a number of filters into a single filter op
+	// note: this is a run-time optimization as previous run-time optimizations
+	// e.g. utilizeIndices
+	// depend on the fact that filters are broken down into their simplest form
+	// TODO: turn this into a compile-time optimization
+	reduceFilters(plan);
 }
 

@@ -376,7 +376,7 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 void ExecutionPlan_PreparePlan(ExecutionPlan *plan) {
 	// Plan should be prepared only once.
 	ASSERT(!plan->prepared);
-	optimizePlan(plan);
+	Optimizer_RuntimeOptimize(plan);
 	plan->prepared = true;
 }
 
