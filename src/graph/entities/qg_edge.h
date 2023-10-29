@@ -56,10 +56,10 @@ QGEdge *QGEdge_Clone
 	const QGEdge *orig
 );
 
-// determine whether this is a variable length edge
+// returns true if edge represents a variable length path
 bool QGEdge_VariableLength
 (
-	const QGEdge *e
+	const QGEdge *e  // edge to check
 );
 
 // determine whether this is a "ghost" edge

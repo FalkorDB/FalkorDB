@@ -70,12 +70,15 @@ QGEdge *QGEdge_Clone
 	return e;
 }
 
+// returns true if edge represents a variable length path
+// e.g. ()-[*]->()
 bool QGEdge_VariableLength
 (
-	const QGEdge *e
+	const QGEdge *e  // edge to check
 ) {
 	ASSERT(e != NULL);
-	return (e->minHops != e->maxHops);
+
+	return e->minHops != e->maxHops;
 }
 
 // determine whether this is a "ghost" edge
