@@ -3,8 +3,6 @@ cmake_minimum_required(VERSION 3.13)
 get_filename_component(root ${CMAKE_CURRENT_LIST_DIR} ABSOLUTE)
 include(${root}/deps/readies/cmake/main)
 
-find_package(OpenSSL REQUIRED)
-
 SET(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 if (NOT DEFINED UNIT_TESTS)
@@ -51,6 +49,8 @@ setup_shared_object_target(falkordb "")
 set_target_properties(falkordb PROPERTIES LINKER_LANGUAGE CXX)
 
 set(FALKORDB_OBJECTS $<TARGET_OBJECTS:falkordb>)
+
+find_package(OpenSSL)
 
 lists_from_env(GRAPHBLAS LIBXXHASH RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA)
 set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
