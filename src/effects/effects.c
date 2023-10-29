@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "../query_ctx.h"
+#include "../datatypes/vector.h"
 
 // determine block available space 
 #define BLOCK_AVAILABLE_SPACE(b) (b->cap - BLOCK_USED_SPACE(b))
@@ -31,9 +32,18 @@ struct _EffectsBuffer {
 };
 
 // forward declarations
+
+// write array to effects buffer
 static void EffectsBuffer_WriteSIArray
 (
 	const SIValue *arr,  // array
+	EffectsBuffer *buff  // effect buffer
+);
+
+// write vector to effects buffer
+static void EffectsBuffer_WriteSIVector
+(
+	const SIValue *v,    // vector
 	EffectsBuffer *buff  // effect buffer
 );
 
@@ -179,6 +189,9 @@ static void EffectsBuffer_WriteSIValue
 		case T_NULL:
 			// no additional data is required to represent NULL
 			break;
+		case T_VECTOR32F:
+			EffectsBuffer_WriteSIVector(v, buff);
+			break;
 		default:
 			assert(false && "unknown SIValue type");
 	}
@@ -204,6 +217,28 @@ static void EffectsBuffer_WriteSIArray
 	for (uint32_t i = 0; i < len; i++) {
 		EffectsBuffer_WriteSIValue(elements + i, buff);
 	}
+}
+
+// write vector to effects buffer
+static void EffectsBuffer_WriteSIVector
+(
+	const SIValue *v,    // vector
+	EffectsBuffer *buff  // effect buffer
+) {
+	// format:
+	// number of elements
+	// elements
+
+	// write vector dimension
+	uint32_t dim = SIVector_Dim(*v);
+	EffectsBuffer_WriteBytes(&dim, sizeof(uint32_t), buff);
+
+	// write vector elements
+	void *elements   = SIVector_Elements(*v);
+	size_t elem_size = sizeof(float);
+	size_t n = dim * elem_size;
+
+	EffectsBuffer_WriteBytes(elements, n, buff);
 }
 
 // dump attributes to stream
@@ -245,6 +280,14 @@ static inline void EffectsBuffer_IncEffectCount
 	buff->n++;
 }
 
+static inline void EffectsBufferBlock_Free
+(
+	struct EffectsBufferBlock *b
+) {
+	ASSERT(b != NULL);
+	rm_free(b);
+}
+
 // create a new effects-buffer
 EffectsBuffer *EffectsBuffer_New
 (
@@ -265,6 +308,30 @@ EffectsBuffer *EffectsBuffer_New
 	EffectsBuffer_WriteBytes(&v, sizeof(v), eb);
 
 	return eb;
+}
+
+// reset effects-buffer
+void EffectsBuffer_Reset
+(
+	EffectsBuffer *buff  // effects-buffer
+) {
+	ASSERT(buff != NULL);
+
+	// free all blocks except the first one
+	struct EffectsBufferBlock *b = buff->head->next;
+	while(b != NULL) {
+		struct EffectsBufferBlock *next = b->next;
+		EffectsBufferBlock_Free(b);
+		b = next;
+	}
+
+	// clear first block
+	buff->n = 0;
+	buff->current = buff->head;
+
+	// write effects version
+	uint8_t v = EFFECTS_VERSION;
+	EffectsBuffer_WriteBytes(&v, sizeof(v), buff);
 }
 
 // returns number of effects in buffer
@@ -785,14 +852,6 @@ void EffectsBuffer_AddNewAttributeEffect
 	EffectsBuffer_WriteString(attr, buff);
 
 	EffectsBuffer_IncEffectCount(buff);
-}
-
-static inline void EffectsBufferBlock_Free
-(
-	struct EffectsBufferBlock *b
-) {
-	ASSERT(b != NULL);
-	rm_free(b);
 }
 
 void EffectsBuffer_Free

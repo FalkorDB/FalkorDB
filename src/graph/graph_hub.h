@@ -137,3 +137,14 @@ Attribute_ID FindOrAddAttribute
 	bool log                // should operation be logged in the undo-log
 );
 
+// create index
+Index AddIndex
+(
+	const char *label,   // label/relationship type
+	const char *attr,    // attribute to index
+	GraphEntityType et,  // entity type (node/edge)
+	IndexFieldType t,    // type of index (range/fulltext/vector)
+	SIValue options,     // index options
+	bool log
+);
+

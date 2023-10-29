@@ -7,7 +7,7 @@ GRAPH_ID = "replication"
 
 
 # test to see if replication works as expected
-# RedisGraph should replicate all write queries which had an effect on the
+# FalkorDB should replicate all write queries which had an effect on the
 # underline graph, e.g. CREATE, DELETE, UPDATE operations as well as
 # index creation and removal
 # constraint creation and removal
@@ -28,7 +28,7 @@ class testReplication(FlowTestsBase):
         source_con = env.getConnection()
         replica_con = env.getSlaveConnection()
 
-        # enable write commands on slave, required as all RedisGraph
+        # enable write commands on slave, required as all FalkorDB
         # commands are registered as write commands
         replica_con.config_set("slave-read-only", "no")
 
@@ -58,13 +58,13 @@ class testReplication(FlowTestsBase):
         #-----------------------------------------------------------------------
 
         # create index
-        create_node_exact_match_index(src, 'L', 'id')
+        create_node_range_index(src, 'L', 'id')
 
         # create full-text index
-        create_fulltext_index(src, 'L', 'name')
+        create_node_fulltext_index(src, 'L', 'name')
 
         # add fields to existing index
-        create_fulltext_index(src, 'L', 'title', 'desc', sync=True)
+        create_node_fulltext_index(src, 'L', 'title', 'desc', sync=True)
 
         # create full-text index with index config
         q = "CALL db.idx.fulltext.createNodeIndex({label: 'L1', language: 'german', stopwords: ['a', 'b'] }, 'title', 'desc')"
@@ -158,7 +158,7 @@ class testReplication(FlowTestsBase):
         env.assertEquals(replica_result, result)
 
         # make sure both primary and replica have the same set of indexes
-        q = "CALL db.indexes() YIELD type, label, properties, language, stopwords, entitytype"
+        q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
         result = src.query(q, read_only=True).result_set
         replica_result = replica.query(q, read_only=True).result_set
         env.assertEquals(replica_result, result)
@@ -166,13 +166,13 @@ class testReplication(FlowTestsBase):
         # drop fulltext index
         q = "CALL db.idx.fulltext.drop('L')"
         result = src.query(q)
-        env.assertEquals(result.indices_deleted, 1)
+        env.assertEquals(result.indices_deleted, 3)
 
         # the WAIT command forces master slave sync to complete
         source_con.execute_command("WAIT", "1", "0")
 
         # make sure both primary and replica have the same set of indexes
-        q = "CALL db.indexes() YIELD type, label, properties, language, stopwords, entitytype"
+        q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
         result = src.query(q, read_only=True).result_set
         replica_result = replica.query(q, read_only=True).result_set
         env.assertEquals(replica_result, result)

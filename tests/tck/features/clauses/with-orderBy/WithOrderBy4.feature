@@ -306,9 +306,9 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       RETURN mod, sum
       """
     Then the result should be, in any order:
-      | mod | sum |
-      | 2   | 7   |
-      | 1   | 13  |
+      | mod | sum   |
+      | 2   | 7.0   |
+      | 1   | 13.0  |
     And no side effects
 
   Scenario: [12] Sort by an aliased aggregate projection
@@ -330,9 +330,9 @@ Feature: WithOrderBy4 - Order by in combination with projection and aliasing
       RETURN mod, sum
       """
     Then the result should be, in any order:
-      | mod | sum |
-      | 2   | 7   |
-      | 1   | 13  |
+      | mod | sum   |
+      | 2   | 7.0   |
+      | 1   | 13.0  |
     And no side effects
 
   @skip

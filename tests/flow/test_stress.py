@@ -121,7 +121,7 @@ class testStressFlow():
         n_deletions  =  n_creations/2
 
         conn = self.env.getConnection()
-        create_node_exact_match_index(graphs[0], 'Node', 'v', sync=True)
+        create_node_range_index(graphs[0], 'Node', 'v', sync=True)
 
         pool = Pool(nodes=5)
 

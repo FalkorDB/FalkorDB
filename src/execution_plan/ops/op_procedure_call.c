@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include "op_procedure_call.h"
-#include "../../RG.h"
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 #include "../../query_ctx.h"
@@ -51,21 +51,21 @@ OpBase *NewProcCallOp
 	AR_ExpNode **yield_exps
 ) {
 
-	ASSERT(plan        !=  NULL);
-	ASSERT(proc_name   !=  NULL);
-	ASSERT(arg_exps    !=  NULL);
-	ASSERT(yield_exps  !=  NULL);
+	ASSERT(plan       != NULL);
+	ASSERT(proc_name  != NULL);
+	ASSERT(arg_exps   != NULL);
+	ASSERT(yield_exps != NULL);
 
 	OpProcCall *op = rm_malloc(sizeof(OpProcCall));
 
-	op->r           =  NULL;
-	op->args        =  array_new(SIValue, array_len(arg_exps));
-	op->arg_exps    =  arg_exps;
-	op->arg_count   =  array_len(arg_exps);
-	op->proc_name   =  proc_name;
-	op->yield_map   =  NULL;
-	op->first_call  =  true;
-	op->yield_exps  =  yield_exps;
+	op->r          = NULL;
+	op->args       = array_new(SIValue, array_len(arg_exps));
+	op->arg_exps   = arg_exps;
+	op->arg_count  = array_len(arg_exps);
+	op->proc_name  = proc_name;
+	op->yield_map  = NULL;
+	op->first_call = true;
+	op->yield_exps = yield_exps;
 
 	// procedure must exist
 	op->procedure = Proc_Get(proc_name);

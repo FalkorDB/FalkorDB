@@ -84,6 +84,7 @@ SIValue AR_ANY(SIValue *argv, int argc, void *private_data) {
 	// Populate the local Record with the contents of the outer Record.
 	Record_Clone(outer_record, r);
 
+	bool is_null = false;
 	uint len = SIArray_Length(list);
 	for(uint i = 0; i < len; i++) {
 		// Retrieve the current element.
@@ -92,9 +93,14 @@ SIValue AR_ANY(SIValue *argv, int argc, void *private_data) {
 		Record_AddScalar(r, ctx->variable_idx, current_elem);
 
 		// If any element in an ANY function passes the predicate, return true.
-		if(FilterTree_applyFilters(ctx->ft, r)) return SI_BoolVal(true);
+		FT_Result res = FilterTree_applyFilters(ctx->ft, r);
+		if(res == FILTER_PASS) return SI_BoolVal(true);
+		is_null |= (res == FILTER_NULL);
 	}
 
+	if(is_null) {
+		return SI_NullVal();
+	}
 	// No element passed, return false.
 	return SI_BoolVal(false);
 }
@@ -116,6 +122,7 @@ SIValue AR_ALL(SIValue *argv, int argc, void *private_data) {
 	// Populate the local Record with the contents of the outer Record.
 	Record_Clone(outer_record, r);
 
+	bool is_null = false;
 	uint len = SIArray_Length(list);
 	for(uint i = 0; i < len; i++) {
 		// Retrieve the current element.
@@ -124,9 +131,14 @@ SIValue AR_ALL(SIValue *argv, int argc, void *private_data) {
 		Record_AddScalar(r, ctx->variable_idx, current_elem);
 
 		// If any element in an ALL function does not pass the predicate, return false.
-		if(!FilterTree_applyFilters(ctx->ft, r)) return SI_BoolVal(false);
+		FT_Result res = FilterTree_applyFilters(ctx->ft, r);
+		if(res == FILTER_FAIL) return SI_BoolVal(false);
+		is_null |= (res == FILTER_NULL);
 	}
 
+	if(is_null) {
+		return SI_NullVal();
+	}
 	// All elements passed, return true.
 	return SI_BoolVal(true);
 }
@@ -149,6 +161,7 @@ SIValue AR_SINGLE(SIValue *argv, int argc, void *private_data) {
 	Record_Clone(outer_record, r);
 
 	bool single = false;
+	bool is_null = false;
 	uint len = SIArray_Length(list);
 	for(uint i = 0; i < len; i++) {
 		// Retrieve the current element.
@@ -157,12 +170,17 @@ SIValue AR_SINGLE(SIValue *argv, int argc, void *private_data) {
 		Record_AddScalar(r, ctx->variable_idx, current_elem);
 
 		// If more then 1 element in a SINGLE function pass the predicate, return false.
-		if(FilterTree_applyFilters(ctx->ft, r)) {
+		FT_Result res = FilterTree_applyFilters(ctx->ft, r);
+		if(res == FILTER_PASS) {
 			if(single) return SI_BoolVal(false);
 			else single = true;
 		}
+		is_null |= (res == FILTER_NULL);
 	}
 
+	if(is_null) {
+		return SI_NullVal();
+	}
 	// If only 1 element in a SINGLE function pass the predicate, return true, otherwise false.
 	return SI_BoolVal(single);
 }
@@ -184,6 +202,7 @@ SIValue AR_NONE(SIValue *argv, int argc, void *private_data) {
 	// Populate the local Record with the contents of the outer Record.
 	Record_Clone(outer_record, r);
 
+	bool is_null = false;
 	uint len = SIArray_Length(list);
 	for(uint i = 0; i < len; i++) {
 		// Retrieve the current element.
@@ -192,9 +211,14 @@ SIValue AR_NONE(SIValue *argv, int argc, void *private_data) {
 		Record_AddScalar(r, ctx->variable_idx, current_elem);
 
 		// If any element in an NONE function pass the predicate, return false.
-		if(FilterTree_applyFilters(ctx->ft, r) == FILTER_PASS) return SI_BoolVal(false);
+		FT_Result res = FilterTree_applyFilters(ctx->ft, r);
+		if(res == FILTER_PASS) return SI_BoolVal(false);
+		is_null |= (res == FILTER_NULL);
 	}
 
+	if(is_null) {
+		return SI_NullVal();
+	}
 	// No elements passed, return true.
 	return SI_BoolVal(true);
 }

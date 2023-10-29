@@ -14,6 +14,7 @@
 #include "util/arr.h"
 #include "cron/cron.h"
 #include "query_ctx.h"
+#include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "redisearch_api.h"
 #include "arithmetic/funcs.h"
@@ -31,7 +32,7 @@
 #include "arithmetic/arithmetic_expression.h"
 
 // minimal supported Redis version
-#define MIN_REDIS_VERION_MAJOR 6
+#define MIN_REDIS_VERION_MAJOR 7
 #define MIN_REDIS_VERION_MINOR 2
 #define MIN_REDIS_VERION_PATCH 0
 
@@ -215,6 +216,10 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 
 	if(RedisModule_CreateCommand(ctx, "graph.EFFECT", Graph_Effect, "write", 1,
 				1, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(BoltApi_Register(ctx) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

@@ -11,11 +11,10 @@
 #include "redisearch_api.h"
 #include "../constraint/constraint.h"
 #include "../graph/entities/graph_entity.h"
+#include "../graph/entities/attribute_set.h"
 
-#define ACTIVE_FULLTEXT_IDX(s)    s->fulltextIdx[0]
-#define PENDING_FULLTEXT_IDX(s)   s->fulltextIdx[1]
-#define ACTIVE_EXACTMATCH_IDX(s)  s->exactmatchIdx[0]
-#define PENDING_EXACTMATCH_IDX(s) s->exactmatchIdx[1]
+#define ACTIVE_IDX(s)  s->index[0]
+#define PENDING_IDX(s) s->index[1]
 
 typedef enum {
 	SCHEMA_NODE,
@@ -26,12 +25,11 @@ typedef enum {
 // similar to a relational table structure, our schemas are a collection
 // of attributes we've encountered overtime as entities were created or updated
 typedef struct {
-	int id;                     // schema id
-	char *name;                 // schema name
-	SchemaType type;            // schema type (node/edge)
-	Index fulltextIdx[2];       // full-text index
-	Index exactmatchIdx[2];     // active/pending exact-match index
-	Constraint *constraints;    // constraints array
+	int id;                   // schema id
+	char *name;               // schema name
+	SchemaType type;          // schema type (node/edge)
+	Index index[2];           // active/pending index
+	Constraint *constraints;  // constraints array
 } Schema;
 
 // creates a new schema
@@ -65,28 +63,20 @@ SchemaType Schema_GetType
 	const Schema *s
 );
 
-// returns true if schema has either a full-text or exact-match index
+// returns true if schema has an index
 bool Schema_HasIndices
 (
 	const Schema *s
 );
 
-// returns number of indices in schema
-unsigned short Schema_IndexCount
-(
-	const Schema *s
-);
-
 // retrieves all indicies from schema
-// active exact-match index
-// pending exact-match index
-// active fulltext index
-// pending fulltext index
+// active index
+// pending index
 // returns number of indicies set
 unsigned short Schema_GetIndicies
 (
 	const Schema *s,
-	Index indicies[4]
+	Index indicies[2]
 );
 
 // get index from schema
@@ -96,60 +86,58 @@ Index Schema_GetIndex
 	const Schema *s,            // schema to get index from
 	const Attribute_ID *attrs,  // indexed attributes
 	uint n,                     // number of attributes
-	IndexType type,             // type of index
+	IndexFieldType t,           // all index attributes must be of this type
 	bool include_pending        // take into considiration pending indicies
 );
 
-// assign a new index to attribute
-// attribute must already exists and not associated with an index
+// assign a new attribute to index
+// attribute must not be associated with an index
 int Schema_AddIndex
 (
-	Index *idx,           // [input/output] index to create
-	Schema *s,            // schema holding the index
-	IndexField *fields,   // field to index
-	IndexType type        // type of entities to index
+	Index *idx,         // [input/output] index to create
+	Schema *s,          // schema holding the index
+	IndexField *fields  // field to index
 );
 
 // removes index
 int Schema_RemoveIndex
 (
-	Schema *s,
-	const char *field,
-	IndexType type
+	Schema *s,        // schema to remove index from
+	const char *f,    // field to remove from index
+	IndexFieldType t  // field type
 );
 
-// activate pending exact-match index
-// asserts that pending exact-match index is enabled
-// drops current active exact-exact index if exists
+// activate pending index
+// asserts that pending index is enabled
+// drops current active index if exists
 void Schema_ActivateIndex
 (
-	Schema *s,   // schema to activate index on
-	Index idx   // index to activate
+	Schema *s   // schema to activate index on
 );
 
-// introduce node to schema indicies
-void Schema_AddNodeToIndices
+// introduce node to schema index
+void Schema_AddNodeToIndex
 (
 	const Schema *s,
 	const Node *n
 );
 
-// introduce edge to schema indicies
-void Schema_AddEdgeToIndices
+// introduce edge to schema index
+void Schema_AddEdgeToIndex
 (
 	const Schema *s,
 	const Edge *e
 );
 
-// remove node from schema indicies
-void Schema_RemoveNodeFromIndices
+// remove node from schema index
+void Schema_RemoveNodeFromIndex
 (
 	const Schema *s,
 	const Node *n
 );
 
-// remove edge from schema indicies
-void Schema_RemoveEdgeFromIndices
+// remove edge from schema index
+void Schema_RemoveEdgeFromIndex
 (
 	const Schema *s,
 	const Edge *e

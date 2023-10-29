@@ -71,8 +71,10 @@ static Record ProjectConsume(OpBase *opBase) {
 		// MATCH (a) WITH toUpper(a.name) AS e RETURN e
 		// TODO: this is a rare case;
 		// the logic of when to persist can be improved
+		if(!(v.type & SI_GRAPHENTITY)) {
+			SIValue_Persist(&v);
+		}
 
-		if(!(v.type & SI_GRAPHENTITY)) SIValue_Persist(&v);
 		Record_Add(op->projection, rec_idx, v);
 
 		// if the value was a graph entity with its own allocation

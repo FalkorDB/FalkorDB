@@ -83,7 +83,7 @@ static void _indexer_idx_populate
 	Index_Enable(idx);
 
 	if(Index_Enabled(idx)) {
-		Schema_ActivateIndex(ctx->s, idx);
+		Schema_ActivateIndex(ctx->s);
 	}
 
 	// release locks

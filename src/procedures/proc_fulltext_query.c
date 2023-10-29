@@ -72,7 +72,7 @@ ProcedureResult Proc_FulltextQueryNodeInvoke
 	const char *query = args[1].stringval;
 
 	// get full-text index from schema
-	Index idx = GraphContext_GetIndex(gc, label, NULL, 0, IDX_FULLTEXT,
+	Index idx = GraphContext_GetIndex(gc, label, NULL, 0, INDEX_FLD_ANY,
 			SCHEMA_NODE);
 	if(!idx) return PROCEDURE_ERR; // TODO: this should cause an error to be emitted
 

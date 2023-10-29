@@ -6,73 +6,41 @@
 
 #pragma once
 
+#include "index_field.h"
+#include "redisearch_api.h"
+#include "../graph/graph.h"
 #include "../graph/entities/node.h"
 #include "../graph/entities/edge.h"
+#include "../filter_tree/filter_tree.h"
 #include "../graph/entities/graph_entity.h"
-#include "../graph/graph.h"
-#include "redisearch_api.h"
 
-#define INDEX_OK 1
-#define INDEX_FAIL 0
+#define INDEX_OK   1  // index operation succeeded
+#define INDEX_FAIL 0  // index operation failed
 #define INDEX_SEPARATOR '\1'  // can't use '\0', RediSearch will terminate on \0
-#define INDEX_FIELD_NONE_INDEXED "NONE_INDEXABLE_FIELDS"
-
-#define INDEX_FIELD_DEFAULT_WEIGHT 1.0
-#define INDEX_FIELD_DEFAULT_NOSTEM false
-#define INDEX_FIELD_DEFAULT_PHONETIC "no"
-
-// initialize index field with default values
-#define IndexField_Default(field, id, name) IndexField_New(field, id, name,  \
-		INDEX_FIELD_DEFAULT_WEIGHT, INDEX_FIELD_DEFAULT_NOSTEM,              \
-		INDEX_FIELD_DEFAULT_PHONETIC)
 
 // forward declaration
 typedef struct _Index _Index;
 typedef _Index *Index;
 
+// deprecated
 typedef enum {
-	IDX_ANY          =  0,
-	IDX_EXACT_MATCH  =  1,
-	IDX_FULLTEXT     =  2,
+	IDX_ANY         = 0,
+	IDX_EXACT_MATCH = 1,
+	IDX_FULLTEXT    = 2,
 } IndexType;
 
+// edge document key
 typedef struct {
-	EntityID src_id;
-	EntityID dest_id;
-	EntityID edge_id;
+	EntityID src_id;   // edge source node ID
+	EntityID dest_id;  // edge destination node ID
+	EntityID edge_id;  // edge ID
 } EdgeIndexKey;
-
-typedef struct {
-	char *name;        // field name
-	Attribute_ID id;   // field id
-	double weight;     // the importance of text
-	bool nostem;       // disable stemming of the text
-	char *phonetic;    // phonetic search of text
-} IndexField;
-
-// create new index field
-void IndexField_New
-(
-	IndexField *field,    // field to initialize
-	Attribute_ID id,      // field id
-	const char *name,     // field name
-	double weight,        // the importance of text
-	bool nostem,          // disable stemming of the text
-	const char *phonetic  // phonetic search of text
-);
-
-// free index field
-void IndexField_Free
-(
-	IndexField *field  // index field to be freed
-);
 
 // create a new index
 Index Index_New
 (
 	const char *label,           // indexed label
 	int label_id,                // indexed label id
-	IndexType type,              // exact match or full text
 	GraphEntityType entity_type  // entity type been indexed
 );
 
@@ -80,6 +48,35 @@ Index Index_New
 Index Index_Clone
 (
 	const Index idx  // index to clone
+);
+
+// create range index
+Index Index_RangeCreate
+(
+	const char *label,            // label/relationship type
+	GraphEntityType entity_type,  // entity type (node/edge)
+	const char *attr,             // attribute to index
+	Attribute_ID attr_id 		  // attribute id
+);
+
+// create fulltext index
+Index Index_FulltextCreate
+(
+	const char *label,            // label/relationship type
+	GraphEntityType entity_type,  // entity type (node/edge)
+	const char *attribute,        // attribute to index
+	Attribute_ID attr_id,         // attribute id
+	const SIValue options         // index options
+);
+
+// create a vector index
+Index Index_VectorCreate
+(
+	const char *label,            // label/relationship type
+	GraphEntityType entity_type,  // entity type (node/edge)
+	const char *attr,             // attribute to index
+	Attribute_ID attr_id,         // attribute id
+	SIValue options               // index options
 );
 
 // returns number of pending changes
@@ -129,7 +126,7 @@ void Index_Populate
 );
 
 // adds field to index
-void Index_AddField
+int Index_AddField
 (
 	Index idx,         // index modified
 	IndexField *field  // field added
@@ -138,8 +135,9 @@ void Index_AddField
 // removes field from index
 void Index_RemoveField
 (
-	Index idx,            // index modified
-	Attribute_ID attr_id  // field to remove
+	Index idx,             // index modified
+	Attribute_ID attr_id,  // field to remove
+	IndexFieldType t       // field type
 );
 
 // index node
@@ -170,18 +168,43 @@ void Index_RemoveEdge
 	const Edge *e  // edge to remove from index
 );
 
+//------------------------------------------------------------------------------
+// index query API
+//------------------------------------------------------------------------------
+
+// construct a query tree from a filter tree
+RSQNode *Index_BuildQueryTree
+(
+	FT_FilterNode **none_converted_filters,  // [out] none converted filters
+	const Index idx,                         // index to query
+	const FT_FilterNode *tree                // filter tree to convert
+);
+
+// construct a vector query tree
+RSQNode *Index_BuildVectorQueryTree
+(
+	const Index idx,    // index to query
+	const char *field,  // field to query
+	const float *vec,   // query vector
+	size_t nbytes,      // vector size in bytes
+	int k			    // number of results to return
+);
+
+// construct a unique constraint query tree
+RSQNode *Index_BuildUniqueConstraintQuery
+(
+	const Index idx,       // index to query
+	const GraphEntity *e,  // entity being validated
+	Attribute_ID *attrs,   // constraint attributes
+	uint8_t n              // number of constraint attributes
+);
+
 // query an index
 RSResultsIterator *Index_Query
 (
 	const Index idx,    // index to query
 	const char *query,  // query to execute
 	char **err          // [optional] report back error
-);
-
-// returns index type
-IndexType Index_Type
-(
-	const Index idx
 );
 
 // returns index graph entity type
@@ -202,11 +225,30 @@ const IndexField *Index_GetFields
 	const Index idx  // index to query
 );
 
-// checks if given attribute is indexed
-bool Index_ContainsAttribute
+// retrieve field by id
+// returns NULL if field does not exist
+IndexField *Index_GetField
 (
-	const Index idx,           // index to query
-	Attribute_ID attribute_id  // attribute id to search
+	int *pos,         // [optional out] field index
+	const Index idx,  // index to get field from
+	Attribute_ID id   // field attribute id
+);
+
+// returns indexed field type
+// if field is not indexed, INDEX_FLD_UNKNOWN is returned
+IndexFieldType Index_GetFieldType
+(
+	const Index idx,      // index to query
+	Attribute_ID attr_id  // field to retrieve type of
+);
+
+// checks if index contains field
+// returns true if field is indexed, false otherwise
+bool Index_ContainsField
+(
+	const Index idx,     // index to query
+	Attribute_ID id,     // field to look for
+	IndexFieldType type  // field type to look for
 );
 
 // returns indexed label
@@ -227,6 +269,12 @@ const char *Index_GetLanguage
 	const Index idx  // index to query
 );
 
+// check if index contains stopwords
+bool Index_ContainsStopwords
+(
+	const Index idx  // index to query
+);
+
 // returns indexed stopwords
 char **Index_GetStopwords
 (
@@ -235,20 +283,20 @@ char **Index_GetStopwords
 );
 
 // set indexed language
-void Index_SetLanguage
+bool Index_SetLanguage
 (
 	Index idx,            // index modified
 	const char *language  // language to set
 );
 
 // set indexed stopwords
-void Index_SetStopwords
+bool Index_SetStopwords
 (
-	Index idx,        // index modified
-	char **stopwords  // stopwords
+	Index idx,         // index modified
+	char ***stopwords  // stopwords
 );
 
-// free fulltext index
+// free index
 void Index_Free
 (
 	Index idx  // index being freed

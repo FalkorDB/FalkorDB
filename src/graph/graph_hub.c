@@ -31,7 +31,7 @@ static void _DeleteNodeFromIndices
 		ASSERT(s != NULL);
 
 		// update any indices this entity is represented in
-		Schema_RemoveNodeFromIndices(s, n);
+		Schema_RemoveNodeFromIndex(s, n);
 	}
 }
 
@@ -40,15 +40,15 @@ static void _DeleteEdgeFromIndices
 	GraphContext *gc,
 	Edge *e
 ) {
-	Schema  *s  =  NULL;
-	Graph   *g  =  gc->g;
+	Schema *s = NULL;
+	Graph  *g = gc->g;
 
 	int relation_id = Edge_GetRelationID(e);
 
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
 
 	// update any indices this entity is represented in
-	Schema_RemoveEdgeFromIndices(s, e);
+	Schema_RemoveEdgeFromIndex(s, e);
 }
 
 // add node to any relevant index
@@ -60,9 +60,9 @@ static void _AddNodeToIndices
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
 
-	Schema    *s       =  NULL;
-	Graph     *g       =  gc->g;
-	EntityID  node_id  =  ENTITY_GET_ID(n);
+	Schema   *s      = NULL;
+	Graph    *g      = gc->g;
+	EntityID node_id = ENTITY_GET_ID(n);
 
 	// retrieve node labels
 	uint label_count;
@@ -72,21 +72,25 @@ static void _AddNodeToIndices
 		int label_id = labels[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
-		Schema_AddNodeToIndices(s, n);
+		Schema_AddNodeToIndex(s, n);
 	}
 }
 
 // add edge to any relevant index
-static void _AddEdgeToIndices(GraphContext *gc, Edge *e) {
-	Schema  *s  =  NULL;
-	Graph   *g  =  gc->g;
+static void _AddEdgeToIndices
+(
+	GraphContext *gc,
+	Edge *e
+) {
+	Schema *s = NULL;
+	Graph  *g = gc->g;
 
 	int relation_id = Edge_GetRelationID(e);
 
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
-	Schema_AddEdgeToIndices(s, e);
+	Schema_AddEdgeToIndex(s, e);
 }
 
 void CreateNode
@@ -108,7 +112,7 @@ void CreateNode
 	for(uint i = 0; i < label_count; i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		ASSERT(s);
-		Schema_AddNodeToIndices(s, n);
+		Schema_AddNodeToIndex(s, n);
 	}
 
 	// add node creation operation to undo log
@@ -139,7 +143,7 @@ void CreateEdge
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	// all schemas have been created in the edge blueprint loop or earlier
 	ASSERT(s != NULL);
-	Schema_AddEdgeToIndices(s, e);
+	Schema_AddEdgeToIndex(s, e);
 
 	// add edge creation operation to undo log
 	if(log == true) {
@@ -254,12 +258,13 @@ void UpdateNodeProperty
 	Attribute_ID attr_id,         // attribute ID
 	SIValue v                     // new attribute value
 ) {
-	Node n;
-	int res = Graph_GetNode(gc->g, id, &n);
+	ASSERT(gc      != NULL);
+	ASSERT(id      != INVALID_ENTITY_ID);
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
-	// make sure entity was found
-	UNUSED(res);
-	ASSERT(res == true);
+	Node n;  // node to update
+	int res = Graph_GetNode(gc->g, id, &n);
+	ASSERT(res == true);  // make sure entity was found
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
@@ -278,7 +283,15 @@ void UpdateNodeProperty
 		int label_id = labels[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
-		Schema_AddNodeToIndices(s, &n);
+
+		if(attr_id == ATTRIBUTE_ID_ALL) {
+			// remove node from all indices
+			Schema_RemoveNodeFromIndex(s, &n);
+		} else {
+			// index node if updated attribute is indexed
+			Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
+			if(idx) Schema_AddNodeToIndex(s, &n);
+		}
 	}
 }
 
@@ -292,31 +305,54 @@ void UpdateEdgeProperty
 	Attribute_ID attr_id,         // attribute ID
 	SIValue v                     // new attribute value
 ) {
-	Edge e; // edge to delete
+	ASSERT(gc      != NULL);
+	ASSERT(id      != INVALID_ENTITY_ID);
+	ASSERT(r_id    != GRAPH_NO_RELATION);
+	ASSERT(src_id  != INVALID_ENTITY_ID);
+	ASSERT(dest_id != INVALID_ENTITY_ID);
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+
+	Edge e; // edge to update
 
 	// get src node, dest node and edge from the graph
-	int res;
-	UNUSED(res);
-
-	res = Graph_GetEdge(gc->g, id, &e);
+	int res = Graph_GetEdge(gc->g, id, &e);
 	ASSERT(res != 0);
 
 	// set edge relation, src and destination node
-	Edge_SetSrcNodeID(&e, src_id);
-	Edge_SetDestNodeID(&e, dest_id);
 	Edge_SetRelationID(&e, r_id);
+	Edge_SetSrcNodeID(&e,  src_id);
+	Edge_SetDestNodeID(&e, dest_id);
 
+	// get edge schema
+	Schema *s = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
+	ASSERT(s != NULL);
+
+	// clear all attributes
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(e.attributes);
-	} else if(GraphEntity_GetProperty((GraphEntity *)&e, attr_id) == ATTRIBUTE_NOTFOUND) {
-		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
-	} else {
-		AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
+
+		// remove edge from index
+		Schema_RemoveEdgeFromIndex(s, &e);
+		return;
 	}
 
-	Schema *schema = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
-	ASSERT(schema != NULL);
-	Schema_AddEdgeToIndices(schema, &e);
+	bool update_idx = true;
+	GraphEntity *ge = (GraphEntity *)&e;
+
+	if(GraphEntity_GetProperty(ge, attr_id) == ATTRIBUTE_NOTFOUND) {
+		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
+	} else {
+		update_idx = AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
+	}
+
+	// update index if
+	// 1. attribute was set/updated
+	// 2. attribute is indexed
+	if(update_idx == true) {
+		// see if attribute is indexed
+		Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
+		if(idx) Schema_AddEdgeToIndex(s, &e);
+	}
 }
 
 void UpdateNodeLabels
@@ -380,7 +416,7 @@ void UpdateNodeLabels
 				// append label id
 				add_labels_ids[add_labels_index++] = schema_id;
 				// add to index
-				Schema_AddNodeToIndices(s, node);
+				Schema_AddNodeToIndex(s, node);
 			}
 		}
 
@@ -420,7 +456,7 @@ void UpdateNodeLabels
 			// append label id
 			remove_labels_ids[remove_labels_index++] = Schema_GetID(s);
 			// remove node from index
-			Schema_RemoveNodeFromIndices(s, node);
+			Schema_RemoveNodeFromIndex(s, node);
 		}
 
 		if(remove_labels_index > 0) {
@@ -480,5 +516,85 @@ Attribute_ID FindOrAddAttribute
 	}
 
 	return attr_id;
+}
+
+// create index
+Index AddIndex
+(
+	const char *label,   // label/relationship type
+	const char *attr,    // attribute to index
+	GraphEntityType et,  // entity type (node/edge)
+	IndexFieldType t,    // type of index (range/fulltext/vector)
+	SIValue options,     // index options
+	bool log
+) {
+	ASSERT(label != NULL);
+	ASSERT(attr != NULL);
+	ASSERT(et != GETYPE_UNKNOWN);
+	ASSERT(t == INDEX_FLD_FULLTEXT ||
+		   t == INDEX_FLD_RANGE    ||
+		   t == INDEX_FLD_VECTOR);
+
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+
+	//--------------------------------------------------------------------------
+	// make sure schema exists
+	//--------------------------------------------------------------------------
+
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
+	Schema *s = GraphContext_GetSchema(gc, label, st);
+
+	// schema missing, creating an index will create the schema
+	if(s == NULL) {
+		s = AddSchema(gc, label, st, log);
+	}
+	ASSERT(s != NULL);
+
+	//--------------------------------------------------------------------------
+	// make sure attribute exists
+	//--------------------------------------------------------------------------
+
+	// creating an index will create the attribute
+	Attribute_ID attr_id = FindOrAddAttribute(gc, attr, log);
+
+	//--------------------------------------------------------------------------
+	// create index field
+	//--------------------------------------------------------------------------
+
+	Index idx = NULL;
+	if(t == INDEX_FLD_RANGE) {
+		idx = Index_RangeCreate(label, et, attr, attr_id);
+	} else if(t == INDEX_FLD_FULLTEXT) {
+		idx = Index_FulltextCreate(label, et, attr, attr_id, options);
+	} else if(t == INDEX_FLD_VECTOR) {
+		idx = Index_VectorCreate(label, et, attr, attr_id, options);
+	} else {
+		assert(false && "unknown index type");
+	}
+
+	//--------------------------------------------------------------------------
+	// add create index operation to undo log
+	//--------------------------------------------------------------------------
+
+	if(idx != NULL && log == true) {
+		UndoLog log = QueryCtx_GetUndoLog();
+
+		// extract label and field from index
+		IndexField *fld = Index_GetField(NULL, idx, attr_id);
+		const char *field_name = IndexField_GetName(fld);
+		const char *lbl = Index_GetLabel(idx);
+
+		// add index create undo operation
+		UndoLog_CreateIndex(log, st, lbl, field_name, t);
+	}
+
+	// index operation is not replicated via effects
+	// remove all index creation side effects:
+	// 1. schema creation
+	// 2. attribute creation
+	// from effects buffer, forcing query replication of the index
+	EffectsBuffer_Reset(QueryCtx_GetEffectsBuffer());
+
+	return idx;
 }
 

@@ -15,12 +15,17 @@ static void _ResultSet_VerboseReplyWithPoint(RedisModuleCtx *ctx, SIValue point)
 static void _ResultSet_VerboseReplyWithArray(RedisModuleCtx *ctx, SIValue array);
 static void _ResultSet_VerboseReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n);
 static void _ResultSet_VerboseReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e);
+static void _ResultSet_VerboseReplyWithVector(RedisModuleCtx *ctx, SIValue vector);
 
-/* This function has handling for all SIValue scalar types.
- * The current RESP protocol only has unique support for strings, 8-byte integers,
- * and NULL values. */
-static void _ResultSet_VerboseReplyWithSIValue(RedisModuleCtx *ctx, GraphContext *gc,
-											   const SIValue v) {
+// this function has handling for all SIValue scalar types
+// the current RESP protocol only has unique support for:
+// strings, 8-byte integers, and NULL values
+static void _ResultSet_VerboseReplyWithSIValue
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	const SIValue v
+) {
 	switch(SI_TYPE(v)) {
 	case T_STRING:
 		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
@@ -55,6 +60,9 @@ static void _ResultSet_VerboseReplyWithSIValue(RedisModuleCtx *ctx, GraphContext
 		return;
 	case T_POINT:
 		_ResultSet_VerboseReplyWithPoint(ctx, v);
+		return;
+	case T_VECTOR32F:
+		_ResultSet_VerboseReplyWithVector(ctx, v);
 		return;
 	default:
 		RedisModule_Assert("Unhandled value type" && false);
@@ -194,8 +202,27 @@ static void _ResultSet_VerboseReplyWithPoint(RedisModuleCtx *ctx, SIValue point)
 	RedisModule_ReplyWithStringBuffer(ctx, buffer, bytes_written);
 }
 
-void ResultSet_EmitVerboseRow(RedisModuleCtx *ctx, GraphContext *gc,
-							  SIValue **row, uint numcols) {
+static void _ResultSet_VerboseReplyWithVector
+(
+	RedisModuleCtx *ctx,
+	SIValue vector
+) {
+	size_t bufferLen = 512;
+	char *str = rm_calloc(bufferLen, sizeof(char));
+	size_t bytesWrriten = 0;
+	SIValue_ToString(vector, &str, &bufferLen, &bytesWrriten);
+	RedisModule_ReplyWithStringBuffer(ctx, str, bytesWrriten);
+	rm_free(str);
+}
+
+void ResultSet_EmitVerboseRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+) {
 	// Prepare return array sized to the number of RETURN entities
 	RedisModule_ReplyWithArray(ctx, numcols);
 
@@ -206,8 +233,13 @@ void ResultSet_EmitVerboseRow(RedisModuleCtx *ctx, GraphContext *gc,
 }
 
 // Emit the alias or descriptor for each column in the header.
-void ResultSet_ReplyWithVerboseHeader(RedisModuleCtx *ctx, const char **columns,
-									  uint *col_rec_map) {
+void ResultSet_ReplyWithVerboseHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+) {
 	uint columns_len = array_len(columns);
 	RedisModule_ReplyWithArray(ctx, columns_len);
 	for(uint i = 0; i < columns_len; i++) {

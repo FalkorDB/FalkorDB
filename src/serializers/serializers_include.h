@@ -6,29 +6,23 @@
 
 #pragma once
 
-// A single header file including all important headers for serialization.
+// a single header file including all important headers for serialization
 
-// Include Redis Modules API.
-#include "../redismodule.h"
-// Include Graph Context.
-#include "../graph/graphcontext.h"
-// Include Query contxt.
-#include "../query_ctx.h"
-// Include GraphBLAS.
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
-// Utils.
+#include "GraphBLAS.h"
 #include "../util/arr.h"
+#include "../query_ctx.h"
+#include "../redismodule.h"
 #include "../util/rmalloc.h"
-// Non primitive data types.
-#include "../datatypes/array.h"
-// Graph extentions.
 #include "graph_extensions.h"
-// Module configuration
+#include "../datatypes/array.h"
+#include "../datatypes/vector.h"
+#include "../graph/graphcontext.h"
 #include "../configuration/config.h"
 
-// This struct is used to describe the payload content of a key.
-// It contains the type and the number of entities that were encoded.
+// this struct is used to describe the payload content of a key
+// it contains the type and the number of entities that were encoded
 typedef struct {
-	EncodeState state;        // Payload type.
-	uint64_t entities_count;  // Number of entities in the payload.
+	EncodeState state;        // payload type
+	uint64_t entities_count;  // number of entities in the payload
 } PayloadInfo;
+

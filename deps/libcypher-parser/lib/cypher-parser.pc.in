@@ -1,0 +1,12 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: Cypher Parser
+Description: A parser library for Cypher, the graph query language
+URL: http://github.com/cleishm/libcypher-parser
+Version: @VERSION@
+Requires: @REQUIRES@
+Libs: -L${libdir} -lcypher-parser
+Cflags: -I${includedir}

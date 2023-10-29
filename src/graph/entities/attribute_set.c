@@ -25,6 +25,7 @@ SIValue *ATTRIBUTE_NOTFOUND = &(SIValue) {
 };
 
 // removes an attribute from set
+// returns true if attribute was removed false otherwise
 static bool _AttributeSet_Remove
 (
 	AttributeSet *set,
@@ -57,7 +58,7 @@ static bool _AttributeSet_Remove
 		_set->attributes[i] = _set->attributes[attr_count - 1];
 
 		// update attribute count
-		--_set->attr_count;
+		_set->attr_count--;
 
 		// compute new set size
 		size_t n = ATTRIBUTESET_BYTE_SIZE(_set);

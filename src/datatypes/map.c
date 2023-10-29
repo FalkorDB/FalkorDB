@@ -134,6 +134,23 @@ void Map_Remove
 	array_del_fast(m, idx);
 }
 
+// clears map
+void Map_Clear
+(
+	SIValue map  // map to clear
+) {
+	ASSERT(SI_TYPE(map) & T_MAP);
+
+	Map m  = map.map;
+	uint n = array_len(m);
+
+	for(uint i = 0; i < n; i++) {
+		Pair_Free(m[i]);
+	}
+
+	array_clear(m);
+}
+
 // retrieves value under key, map[key]
 // sets 'value' to NULL if key isn't in map
 bool Map_Get

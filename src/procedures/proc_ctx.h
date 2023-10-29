@@ -66,3 +66,4 @@ ProcedureCtx *ProcCtxNew(
 	void *privateData,          // Procedure private data.
 	bool readOnly               // Indicates if the procedure is able to mutate the graph.
 );
+

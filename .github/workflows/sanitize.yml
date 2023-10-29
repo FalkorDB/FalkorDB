@@ -7,7 +7,7 @@ on:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: swilly22/falkordb-build:latest
+    container: falkordb/falkordb-build:latest
     steps:
 
     - name: Safe dir

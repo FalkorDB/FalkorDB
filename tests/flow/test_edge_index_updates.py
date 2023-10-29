@@ -181,7 +181,7 @@ class testEdgeIndexUpdatesFlow():
         query = """CREATE ()-[:NEW {v: 5}]->()"""
         result = redis_graph.query(query)
         self.env.assertEquals(result.properties_set, 1)
-        create_edge_exact_match_index(redis_graph, 'NEW', 'v', sync=True)
+        create_edge_range_index(redis_graph, 'NEW', 'v', sync=True)
 
         # Delete the entity's property
         query = """MATCH ()-[a:NEW {v: 5}]->() SET a.v = NULL"""

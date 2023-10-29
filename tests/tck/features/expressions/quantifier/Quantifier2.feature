@@ -282,7 +282,6 @@ Feature: Quantifier2 - Single quantifier
       | [[:RB {name: 'b'}], [:RB {name: 'b'}], [:RB {name: 'b'}]] | false  |
     And no side effects
 
-  @skip
   Scenario Outline: [10] Single quantifier on lists containing nulls
     Given any graph
     When executing query:
