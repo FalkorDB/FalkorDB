@@ -238,6 +238,20 @@ bool OpBase_IsWriter
 	return op->writer;
 }
 
+// indicates if the operation is an eager operation
+bool OpBase_IsEager
+(
+	const OpBase *op
+) {
+	ASSERT(op != NULL);
+
+	for(int i = 0; i < EAGER_OP_COUNT; i++) {
+		if(op->type == EAGER_OPERATIONS[i]) return true;
+	}
+
+	return false;
+}
+
 void OpBase_UpdateConsume
 (
 	OpBase *op,

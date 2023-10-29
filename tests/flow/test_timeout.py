@@ -22,7 +22,7 @@ class testQueryTimeout():
         redis_graph = Graph(redis_con, GRAPH_ID)
 
     def test01_read_write_query_timeout(self):
-        query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
+        query = "UNWIND range(0, 1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
             # The query is expected to timeout
             redis_graph.query(query, timeout=1)

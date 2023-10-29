@@ -7,6 +7,7 @@
 #pragma once
 
 #include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include "../util/dict.h"
 #include "../graph/rg_matrix/rg_matrix.h"
 #include "../graph/rg_matrix/rg_matrix_iter.h"
 #include "../graph/entities/node.h"
@@ -29,6 +30,7 @@ typedef struct {
 	bool first_pull;               // first call to Next
 	EntityID *visited;             // visited nodes
 	RG_MatrixTupleIter *levels;    // array of neighbors iterator
+	dict *visited_nodes;           // visited nodes
 } AllNeighborsCtx;
 
 void AllNeighborsCtx_Reset

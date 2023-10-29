@@ -85,6 +85,26 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
     rax *refs_to_resolve
 );
 
+// scans plan from root via parent nodes until a limit operation is found
+// eager operation will terminate the scan
+// return true if a limit operation was found, in which case 'limit' is set
+// otherwise return false
+bool ExecutionPlan_ContainsLimit
+(
+	OpBase *root,    // root to start the scan from
+	uint64_t *limit  // limit value
+);
+
+// scans plan from root via parent nodes until a skip operation is found
+// eager operation will terminate the scan
+// return true if a skip operation was found, in which case 'skip' is set
+// otherwise return false
+bool ExecutionPlan_ContainsSkip
+(
+	OpBase *root,   // root to start the scan from
+	uint64_t *skip  // skip value
+);
+
 //------------------------------------------------------------------------------
 // ExecutionPlan_Collect API:
 // For collecting all matching operations in tree.

@@ -87,11 +87,14 @@ static OpResult EdgeIndexScanInit
 
 	// source and destination nodes may or may not already be resolved
 	// missing nodes will be resolved by this operation
-	const  char  *src_alias   =  QGNode_Alias(QGEdge_Src(op->edge));
-	const  char  *dest_alias  =  QGNode_Alias(QGEdge_Dest(op->edge));
+	const char *src_alias  = QGNode_Alias(QGEdge_Src(op->edge));
+	const char *dest_alias = QGNode_Alias(QGEdge_Dest(op->edge));
 
-	op->srcAware   =  OpBase_ChildrenAware((OpBase *)op, src_alias, &op->srcRecIdx);
-	op->destAware  =  OpBase_ChildrenAware((OpBase *)op, dest_alias, &op->destRecIdx);
+	op->srcAware = OpBase_ChildrenAware((OpBase *)op, src_alias,
+			&op->srcRecIdx);
+
+	op->destAware = OpBase_ChildrenAware((OpBase *)op, dest_alias,
+			&op->destRecIdx);
 
 	if(!op->srcAware) {
 		op->srcRecIdx = OpBase_Modifies((OpBase *)op, src_alias);
