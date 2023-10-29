@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.13)
 get_filename_component(root ${CMAKE_CURRENT_LIST_DIR} ABSOLUTE)
 include(${root}/deps/readies/cmake/main)
 
+find_package(OpenSSL REQUIRED)
+
 SET(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
 if (NOT DEFINED UNIT_TESTS)
@@ -51,11 +53,10 @@ set_target_properties(falkordb PROPERTIES LINKER_LANGUAGE CXX)
 set(FALKORDB_OBJECTS $<TARGET_OBJECTS:falkordb>)
 
 lists_from_env(GRAPHBLAS LIBXXHASH RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA)
-set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA})
+set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
 
-find_package(OpenSSL REQUIRED)
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS} OpenSSL::SSL)
+target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
 extract_debug_symbols(falkordb)
 

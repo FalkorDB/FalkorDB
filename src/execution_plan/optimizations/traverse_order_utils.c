@@ -24,7 +24,7 @@ static bool _AlgebraicExpression_IsVarLen
 	QGEdge *e = QueryGraph_GetEdgeByAlias(qg, edge_alias);
 	ASSERT(e != NULL);
 
-	return QGEdge_VariableLength(e);
+	return QGEdge_VariableLength(e) || QGEdge_GhostEdge(e);
 }
 
 //------------------------------------------------------------------------------

@@ -336,7 +336,7 @@ static AlgebraicExpression *_AlgebraicExpression_OperandFromEdge
 	AlgebraicExpression *add              = NULL;
 	AlgebraicExpression *root             = NULL;
 	AlgebraicExpression *src_filter       = NULL;
-	bool                var_len_traversal = QGEdge_VariableLength(e);
+	bool                var_len_traversal = QGEdge_VariableLength(e) | QGEdge_GhostEdge(e);
 
 	// use original `src` and `dest` for algebraic operands
 	const char *src  = (transpose)              ? dest_node->alias : src_node->alias;
