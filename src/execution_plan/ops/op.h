@@ -255,6 +255,12 @@ bool OpBase_IsWriter
 	OpBase *op
 );
 
+// indicates if the operation is an eager operation
+bool OpBase_IsEager
+(
+	const OpBase *op
+);
+
 // update operation consume function
 void OpBase_UpdateConsume
 (

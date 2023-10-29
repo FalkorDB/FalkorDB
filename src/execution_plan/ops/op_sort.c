@@ -8,9 +8,10 @@
 #include "op_project.h"
 #include "op_aggregate.h"
 #include "../../util/arr.h"
+#include "../../query_ctx.h"
 #include "../../util/qsort.h"
 #include "../../util/rmalloc.h"
-#include "../../query_ctx.h"
+#include "../execution_plan_build/execution_plan_util.h"
 
 // forward declarations
 static OpResult SortInit(OpBase *opBase);
@@ -111,6 +112,11 @@ OpBase *NewSortOp
 
 static OpResult SortInit(OpBase *opBase) {
 	OpSort *op = (OpSort *)opBase;
+
+	// set skip and limit if present in the execution-plan
+	ExecutionPlan_ContainsSkip(opBase, &op->skip);
+	ExecutionPlan_ContainsLimit(opBase, &op->limit);
+
 	// if there is LIMIT value, l, set in the current clause,
 	// the operation must return the top l records with respect to
 	// the sorting criteria. In order to do so, it must collect the l records,

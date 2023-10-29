@@ -24,20 +24,6 @@ static void _AllNeighborsCtx_CollectNeighbors
 	}
 }
 
-static bool _AllNeighborsCtx_Visited
-(
-	AllNeighborsCtx *ctx,
-	EntityID id
-) {
-	uint count = ctx->current_level;
-
-	for(uint i = 0; i < count; i++) {
-		if(ctx->visited[i] == id) return true;
-	}
-
-	return false;
-}
-
 void AllNeighborsCtx_Reset
 (
 	AllNeighborsCtx *ctx,  // all neighbors context to reset
@@ -46,27 +32,27 @@ void AllNeighborsCtx_Reset
 	uint minLen,           // minimum traversal depth
 	uint maxLen            // maximum traversal depth
 ) {
-	ASSERT(M             != NULL);
-	ASSERT(src           != INVALID_ENTITY_ID);
-	ASSERT(ctx           != NULL);
-	ASSERT(ctx->levels   != NULL);
-	ASSERT(ctx->visited  != NULL);
+	ASSERT(M            != NULL);
+	ASSERT(src          != INVALID_ENTITY_ID);
+	ASSERT(ctx          != NULL);
+	ASSERT(ctx->levels  != NULL);
+	ASSERT(ctx->visited != NULL);
 
-	ctx->M              =  M;
-	ctx->src            =  src;
-	ctx->minLen         =  minLen;
-	ctx->maxLen         =  maxLen;
-	ctx->first_pull     =  true;
-	ctx->current_level  =  0;
+	ctx->M             = M;
+	ctx->src           = src;
+	ctx->minLen        = minLen;
+	ctx->maxLen        = maxLen;
+	ctx->first_pull    = true;
+	ctx->current_level = 0;
 
-	uint count = array_len(ctx->levels);
-	for (uint i = 0; i < count; i++) {
-		RG_MatrixTupleIter_detach(ctx->levels + i);
-	}
 	array_clear(ctx->levels);
 	array_clear(ctx->visited);
 
-	// Dummy iterator at level 0
+	// reset visited nodes
+	HashTableRelease(ctx->visited_nodes);
+	ctx->visited_nodes = HashTableCreate(&def_dt);
+
+	// dummy iterator at level 0
 	array_append(ctx->levels, (RG_MatrixTupleIter) {0});
 }
 
@@ -82,14 +68,15 @@ AllNeighborsCtx *AllNeighborsCtx_New
 
 	AllNeighborsCtx *ctx = rm_calloc(1, sizeof(AllNeighborsCtx));
 
-	ctx->M              =  M;
-	ctx->src            =  src;
-	ctx->minLen         =  minLen;
-	ctx->maxLen         =  maxLen;
-	ctx->levels         =  array_new(RG_MatrixTupleIter, 1);
-	ctx->visited        =  array_new(EntityID, 1);
-	ctx->first_pull     =  true;
-	ctx->current_level  =  0;
+	ctx->M              = M;
+	ctx->src            = src;
+	ctx->minLen         = minLen;
+	ctx->maxLen         = maxLen;
+	ctx->levels         = array_new(RG_MatrixTupleIter, 1);
+	ctx->visited        = array_new(EntityID, 1);
+	ctx->first_pull     = true;
+	ctx->current_level  = 0;
+	ctx->visited_nodes  = HashTableCreate(&def_dt);
 
 	// Dummy iterator at level 0
 	array_append(ctx->levels, (RG_MatrixTupleIter) {0});
@@ -101,14 +88,15 @@ EntityID AllNeighborsCtx_NextNeighbor
 (
 	AllNeighborsCtx *ctx
 ) {
-	if(!ctx) return INVALID_ENTITY_ID;
+	if(unlikely(ctx == NULL)) return INVALID_ENTITY_ID;
 
-	if(ctx->first_pull) {
+	if(unlikely(ctx->first_pull)) {
 		ASSERT(ctx->current_level == 0);
 		ctx->first_pull = false;
 
 		// update visited path, replace frontier with current node
 		array_append(ctx->visited, ctx->src);
+		HashTableAdd(ctx->visited_nodes, (void*)(ctx->src), NULL);
 
 		// current_level >= ctx->minLen
 		// see if we should expand further?
@@ -132,14 +120,18 @@ EntityID AllNeighborsCtx_NextNeighbor
 		if(info == GxB_EXHAUSTED) {
 			// backtrack
 			ctx->current_level--;
-			array_pop(ctx->visited);
+			dest_id = array_pop(ctx->visited);
+			int res = HashTableDelete(ctx->visited_nodes, (void*)(dest_id));
+			ASSERT(res == DICT_OK);
 			continue;
 		}
 
 		// update visited path, replace frontier with current node
-		array_append(ctx->visited, dest_id);
+		bool visited =
+			HashTableAdd(ctx->visited_nodes, (void*)(dest_id), NULL) != DICT_OK;
 
-		if(ctx->current_level < ctx->minLen) {
+		if(ctx->current_level < ctx->minLen && !visited) {
+			array_append(ctx->visited, dest_id);
 			// continue traversing
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 			continue;
@@ -147,8 +139,8 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 		// current_level >= ctx->minLen
 		// see if we should expand further?
-		if(ctx->current_level < ctx->maxLen &&
-		   !_AllNeighborsCtx_Visited(ctx, dest_id)) {
+		if(ctx->current_level < ctx->maxLen && !visited) {
+			array_append(ctx->visited, dest_id);
 			// we can expand further
 			_AllNeighborsCtx_CollectNeighbors(ctx, dest_id);
 		}
@@ -172,6 +164,8 @@ void AllNeighborsCtx_Free
 	}
 	array_free(ctx->levels);
 	array_free(ctx->visited);
+
+	HashTableRelease(ctx->visited_nodes);
 
 	rm_free(ctx);
 }

@@ -12,11 +12,11 @@
 #include "../../ast/ast_shared.h"
 #include "../../datatypes/array.h"
 #include "../../datatypes/point.h"
+#include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_node_by_index_scan.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_edge_by_index_scan.h"
-#include "../ops/op_conditional_traverse.h"
 #include "../ops/op_conditional_traverse.h"
 #include "../../arithmetic/arithmetic_op.h"
 #include "../../filter_tree/filter_tree_utils.h"
@@ -423,9 +423,13 @@ cleanup:
 	array_free(filters);
 }
 
-// try to replace given Conditional Traverse operation and a set of Filters
-// into a single Index Scan operation
-void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
+// try to replace given Conditional Traverse operation and a set of Filter
+// operations with a single Index Scan operation
+void reduce_cond_op
+(
+	ExecutionPlan *plan,
+	OpCondTraverse *cond
+) {
 	// make sure there's an index for scanned label
 	const char *edge = AlgebraicExpression_Edge(cond->ae);
 	if(!edge) return;
@@ -458,12 +462,12 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		ExecutionPlan_RemoveOp(plan, allNodeScan);
 		OpBase_Free(allNodeScan);
 	}
-	
-	const char *other_alias = AlgebraicExpression_Dest(cond->ae);
-	QGNode *other_node  = QueryGraph_GetNodeByAlias( cond->op.plan->query_graph,
-			other_alias);
 
+	const char *other_alias = AlgebraicExpression_Dest(cond->ae);
+	QGNode     *other_node  = QueryGraph_GetNodeByAlias(cond->op.plan->query_graph,
+			other_alias);
 	ASSERT(other_node != NULL);
+
 	uint other_label_count = QGNode_LabelCount(other_node);
 	if(other_label_count > 0) {
 		// create func expression
@@ -476,7 +480,8 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		// create labels expression
 		SIValue labels = SI_Array(other_label_count);
 		for (uint i = 0; i < other_label_count; i++) {
-			SIArray_Append(&labels, SI_ConstStringVal((char *)other_node->labels[i]));
+			SIArray_Append(&labels,
+					SI_ConstStringVal((char *)other_node->labels[i]));
 		}
 		AR_ExpNode *labels_exp = AR_EXP_NewConstOperandNode(labels);
 

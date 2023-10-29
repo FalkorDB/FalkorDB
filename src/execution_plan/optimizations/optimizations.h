@@ -30,7 +30,5 @@ void reduceFilters(ExecutionPlan *plan);
 void reduceTraversal(ExecutionPlan *plan);
 void reduceDistinct(ExecutionPlan *plan);
 void reduceCount(ExecutionPlan *plan);
-void applyLimit(ExecutionPlan *plan);
-void applySkip(ExecutionPlan *plan);
-void optimizeLabelScan(ExecutionPlan *plan);
+void costBaseLabelScan(ExecutionPlan *plan);
 

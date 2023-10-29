@@ -67,25 +67,35 @@ static inline void _setTraverseDirection(CondVarLenTraverse *op, const QGEdge *e
 	}
 }
 
-static inline void CondVarLenTraverseToString(const OpBase *ctx, sds *buf) {
+static inline void CondVarLenTraverseToString
+(
+	const OpBase *ctx,
+	sds *buf
+) {
 	// TODO: tmp, improve TraversalToString
 	CondVarLenTraverse *op = (CondVarLenTraverse *)ctx;
 	AlgebraicExpression_Optimize(&op->ae);
 	TraversalToString(ctx, buf, op->ae);
 }
 
-void CondVarLenTraverseOp_ExpandInto(CondVarLenTraverse *op) {
-	// Expand into doesn't performs any modifications.
+void CondVarLenTraverseOp_ExpandInto
+(
+	CondVarLenTraverse *op
+) {
+	// expand into doesn't performs any modifications
 	array_clear(op->op.modifies);
 	op->expandInto = true;
 	op->op.type = OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO;
 	op->op.name = "Conditional Variable Length Traverse (Expand Into)";
 }
 
-inline void CondVarLenTraverseOp_SetFilter(CondVarLenTraverse *op,
-										   FT_FilterNode *ft) {
-	ASSERT(op != NULL);
-	ASSERT(ft != NULL);
+inline void CondVarLenTraverseOp_SetFilter
+(
+	CondVarLenTraverse *op,
+	FT_FilterNode *ft
+) {
+	ASSERT(op     != NULL);
+	ASSERT(ft     != NULL);
 	ASSERT(op->ft == NULL);
 
 	op->ft = ft;
@@ -326,12 +336,33 @@ static OpResult CondVarLenTraverseReset(OpBase *ctx) {
 	return OP_OK;
 }
 
-static OpBase *CondVarLenTraverseClone(const ExecutionPlan *plan, const OpBase *opBase) {
-	ASSERT(opBase->type == OPType_CONDITIONAL_VAR_LEN_TRAVERSE);
+static OpBase *CondVarLenTraverseClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
+	ASSERT(opBase->type == OPType_CONDITIONAL_VAR_LEN_TRAVERSE ||
+		   opBase->type == OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO);
+
+	// clone "conditional var length traversal" operation
+	// handels the case where the operation had been modified into an
+	// "conditional var len expand into"
 	CondVarLenTraverse *op = (CondVarLenTraverse *) opBase;
-	OpBase *op_clone = NewCondVarLenTraverseOp(plan, QueryCtx_GetGraph(),
-											   AlgebraicExpression_Clone(op->ae));
-	return op_clone;
+	OpBase *clone = NewCondVarLenTraverseOp(plan, QueryCtx_GetGraph(),
+			AlgebraicExpression_Clone(op->ae));
+
+	// clone filter tree
+	if(op->ft != NULL) {
+		CondVarLenTraverseOp_SetFilter((CondVarLenTraverse*)clone,
+				FilterTree_Clone(op->ft));
+	}
+
+	// switch to expand into
+	if(opBase->type == OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO) {
+		CondVarLenTraverseOp_ExpandInto((CondVarLenTraverse*) clone);
+	}
+
+	return clone;
 }
 
 static void CondVarLenTraverseFree(OpBase *ctx) {

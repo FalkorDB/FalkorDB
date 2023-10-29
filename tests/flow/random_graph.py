@@ -217,8 +217,6 @@ def run_random_graph_ops(g, nodes, edges, ops):
         params, query = ops[op](nodes, edges)
         # print(query)
         res = g.query(query, params)
-        res.nodes_created
-        res.nodes_created
         result.append(res)
 
     return total, result

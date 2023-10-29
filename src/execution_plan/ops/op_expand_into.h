@@ -23,8 +23,8 @@ typedef struct {
 	int srcNodeIdx;             // source node index into record
 	int destNodeIdx;            // destination node index into record
 	bool single_operand;        // expression contains a single operand
-	uint record_count;          // number of held records
-	uint record_cap;            // max number of records to process
+	uint64_t record_count;      // number of held records
+	uint64_t record_cap;        // max number of records to process
 	Record *records;            // array of records
 	Record r;                   // currently selected record
 } OpExpandInto;

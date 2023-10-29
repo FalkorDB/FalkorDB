@@ -76,43 +76,49 @@ static int _identifyNodeCountPattern(OpBase *root, OpResult **opResult, OpAggreg
 	return 1;
 }
 
-bool _reduceNodeCount(ExecutionPlan *plan) {
-	/* We'll only modify execution plan if it is structured as follows:
-	 * "Scan -> Aggregate -> Results" */
+bool _reduceNodeCount
+(
+	ExecutionPlan *plan
+) {
+	// we'll only modify execution plan if it is structured as follows:
+	// "Scan -> Aggregate -> Results"
 	const char *label;
 	OpBase *opScan;
 	OpResult *opResult;
 	OpAggregate *opAggregate;
 
-	/* See if execution-plan matches the pattern:
-	 * "Scan -> Aggregate -> Results".
-	 * if that's not the case, simply return without making any modifications. */
-	if(!_identifyNodeCountPattern(plan->root, &opResult, &opAggregate, &opScan, &label)) return false;
+	// see if execution-plan matches the pattern:
+	// "Scan -> Aggregate -> Results"
+	// if that's not the case, simply return without making any modifications
+	if(!_identifyNodeCountPattern(plan->root, &opResult, &opAggregate, &opScan,
+				&label)) {
+		return false;
+	}
 
-	/* User is trying to get total number of nodes in the graph
-	 * optimize by skiping SCAN and AGGREGATE. */
+	// user is trying to get total number of nodes in the graph
+	// optimize by skiping SCAN and AGGREGATE
 	SIValue nodeCount;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
-	// If label is specified, count only labeled entities.
+	// if label is specified, count only labeled entities
 	if(label) {
 		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 		if(s) nodeCount = SI_LongVal(Graph_LabeledNodeCount(gc->g, s->id));
-		else nodeCount = SI_LongVal(0); // Specified Label doesn't exists.
+		else nodeCount = SI_LongVal(0); // specified Label doesn't exists
 	} else {
 		nodeCount = SI_LongVal(Graph_NodeCount(gc->g));
 	}
 
-	// Construct a constant expression, used by a new projection operation
+	// construct a constant expression, used by a new projection operation
 	AR_ExpNode *exp = AR_EXP_NewConstOperandNode(nodeCount);
-	// The new expression must be aliased to populate the Record.
+	// the new expression must be aliased to populate the Record
 	exp->resolved_name = opAggregate->aggregate_exps[0]->resolved_name;
 	AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
 	array_append(exps, exp);
 
 	OpBase *opProject = NewProjectOp(opAggregate->op.plan, exps);
 
-	// New execution plan: "Project -> Results"
+	// new execution plan: "Project -> Results"
 	ExecutionPlan_RemoveOp(plan, opScan);
 	OpBase_Free(opScan);
 
@@ -123,14 +129,19 @@ bool _reduceNodeCount(ExecutionPlan *plan) {
 	return true;
 }
 
-/* Checks if execution plan solely performs edge count */
-static bool _identifyEdgeCountPattern(OpBase *root, OpResult **opResult,
-		OpAggregate **opAggregate, OpBase **opTraverse, OpBase **opScan) {
-
+// checks if execution plan solely performs edge count
+static bool _identifyEdgeCountPattern
+(
+	OpBase *root,
+	OpResult **opResult,
+	OpAggregate **opAggregate,
+	OpBase **opTraverse,
+	OpBase **opScan
+) {
 	// reset
-	*opScan = NULL;
-	*opTraverse = NULL;
-	*opResult = NULL;
+	*opScan      = NULL;
+	*opTraverse  = NULL;
+	*opResult    = NULL;
 	*opAggregate = NULL;
 
 	if(!_identifyResultAndAggregateOps(root, opResult, opAggregate)) {
@@ -154,7 +165,10 @@ static bool _identifyEdgeCountPattern(OpBase *root, OpResult **opResult,
 	return true;
 }
 
-void _reduceEdgeCount(ExecutionPlan *plan) {
+void _reduceEdgeCount
+(
+	ExecutionPlan *plan
+) {
 	// we'll only modify execution plan if it is structured as follows:
 	// "Full Scan -> Conditional Traverse -> Aggregate -> Results"
 	OpBase *opScan;
@@ -220,7 +234,10 @@ void _reduceEdgeCount(ExecutionPlan *plan) {
 	ExecutionPlan_AddOp((OpBase *)opResult, opProject);
 }
 
-void reduceCount(ExecutionPlan *plan) {
+void reduceCount
+(
+	ExecutionPlan *plan
+) {
 	// start by trying to identify node count pattern
 	// if unsuccessful try edge count pattern
 	if(!_reduceNodeCount(plan)) _reduceEdgeCount(plan);
