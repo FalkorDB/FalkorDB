@@ -7,9 +7,10 @@
 
 #include "RG.h"
 #include <string.h>
+#include <errno.h>
+#include <sys/ioctl.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 
 #define CLIENT_QUEUE_LEN 32
@@ -24,13 +25,12 @@ socket_t socket_bind
 		return -1;
 	}
 
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) != 0)
-	{
+	if(!socket_set_non_blocking(fd)) {
 		close(fd);
 		return -1;
 	}
 
-	if (ioctl(fd, FIONBIO, (void *)&on) != 0)
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) != 0)
 	{
 		close(fd);
 		return -1;
@@ -54,4 +54,41 @@ socket_t socket_bind
 	}
 
 	return fd;
+}
+
+bool socket_set_non_blocking
+(
+	socket_t socket
+) {
+	int on = 1;
+	if (ioctl(socket, FIONBIO, (void *)&on) != 0) {
+		return false;
+	}
+
+	return true;
+}
+
+bool socket_write_all
+(
+	socket_t socket,
+	const char *buff,
+	uint32_t size
+) {
+	uint32_t res = 0;
+	while(res < size) {
+		int n = socket_write(socket, buff + res, size - res);
+		if(n < 0) {
+			if(errno == EAGAIN || errno == EWOULDBLOCK) {
+				fd_set wfds;
+				FD_ZERO(&wfds);
+				FD_SET(socket, &wfds);
+				select(socket + 1, NULL, &wfds, NULL, NULL);
+				continue;
+			} else {
+				return false;
+			}
+		}
+		res += n;
+	}
+	return true;
 }

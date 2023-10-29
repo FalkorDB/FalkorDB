@@ -4,9 +4,11 @@
  */
 
 #include "RG.h"
+#include "ws.h"
 #include "bolt.h"
 #include "endian.h"
 #include "bolt_api.h"
+#include "../util/uuid.h"
 #include "../commands/commands.h"
 
 // handle the HELLO message
@@ -43,7 +45,9 @@ static void BoltHelloCommand
 	bolt_reply_string(client, "server", 6);
 	bolt_reply_string(client, "Neo4j/5.11.0", 12);
 	bolt_reply_string(client, "connection_id", 13);
-	bolt_reply_string(client, "bolt-connection-1", 17);
+	char *uuid = UUID_New();
+	bolt_reply_string(client, uuid, strlen(uuid));
+	rm_free(uuid);
 	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
@@ -337,6 +341,65 @@ void BoltRollbackCommand
 	bolt_client_finish_write(client);
 }
 
+// handle the ROUTE message
+void BoltRouteCommand
+(
+	bolt_client_t *client
+) {
+	// TThe ROUTE instructs the server to return the current routing table
+	// input:
+	// routing::Dictionary,
+	// bookmarks::List<String>,
+	// extra::Dictionary(
+	//   db::String,
+	//   imp_user::String,
+	// )
+	// output:
+	// SUCCESS::Dictionary(
+	//   rt::Dictionary(
+	//     ttl::Integer,
+	//     db::String,
+	//     servers::List<Dictionary(
+	//       addresses::List<String>,
+	//       role::String
+	//     )>
+	//   )
+	// )
+
+	ASSERT(client != NULL);
+
+	bolt_client_reply_for(client, BST_ROUTE, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "rt", 2);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "ttl", 3);
+	bolt_reply_int(client, 1000);
+	bolt_reply_string(client, "db", 2);
+	bolt_reply_string(client, "falkordb", 8);
+	bolt_reply_string(client, "servers", 7);
+	bolt_reply_list(client, 3);
+	bolt_reply_map(client, 2);
+	bolt_reply_string(client, "addresses", 9);
+	bolt_reply_list(client, 1);
+	bolt_reply_string(client, "localhost:7687", 14);
+	bolt_reply_string(client, "role", 4);
+	bolt_reply_string(client, "ROUTE", 5);
+	bolt_reply_map(client, 2);
+	bolt_reply_string(client, "addresses", 9);
+	bolt_reply_list(client, 1);
+	bolt_reply_string(client, "localhost:7687", 14);
+	bolt_reply_string(client, "role", 4);
+	bolt_reply_string(client, "READ", 4);
+	bolt_reply_map(client, 2);
+	bolt_reply_string(client, "addresses", 9);
+	bolt_reply_list(client, 1);
+	bolt_reply_string(client, "localhost:7687", 14);
+	bolt_reply_string(client, "role", 4);
+	bolt_reply_string(client, "WRITE", 5);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
 // process next message from the client
 void BoltRequestHandler
 (
@@ -354,6 +417,10 @@ void BoltRequestHandler
 	buffer_index(&client->msg_buf, &client->msg_buf.read, 0);
 	buffer_index(&client->msg_buf, &client->msg_buf.write, 0);
 	buffer_index_t current_read = client->read_buf.read;
+	if(client->ws && buffer_index_diff(&client->ws_frame, &current_read) == 0) {
+		ws_read_frame(&current_read);
+		client->ws_frame = current_read;
+	}
 	uint16_t size = ntohs(buffer_read_uint16(&current_read));
 	ASSERT(size > 0);
 	while(size > 0) {
@@ -365,6 +432,7 @@ void BoltRequestHandler
 	if(buffer_index_diff(&client->read_buf.read, &client->read_buf.write) == 0) {
 		buffer_index(&client->read_buf, &client->read_buf.read, 0);
 		client->read_buf.write = client->read_buf.read;
+		client->ws_frame = client->read_buf.read;
 	}
 
 	client->processing = true;
@@ -380,6 +448,7 @@ void BoltRequestHandler
 		case BST_LOGOFF:
 			break;
 		case BST_GOODBYE:
+			client->processing = false;
 			break;
 		case BST_RUN:
 			BoltRunCommand(client);
@@ -401,6 +470,7 @@ void BoltRequestHandler
 			BoltRollbackCommand(client);
 			break;
 		case BST_ROUTE:
+			BoltRouteCommand(client);
 			break;
 		default:
 			break;
@@ -461,6 +531,63 @@ void BoltReadHandler
 	BoltRequestHandler(client);
 }
 
+// handle the handshake process
+void BoltHandshakeHandler
+(
+	int fd,           // the socket file descriptor
+	void *user_data,  // the client that sent the message
+	int mask          // the event mask
+) {
+	bolt_client_t *client = (bolt_client_t *)user_data;
+	if(!buffer_socket_read(&client->read_buf, client->socket)) {
+		// client disconnected
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		bolt_client_free(client);
+		return;
+	}
+
+	if(client->ws && ws_read_frame(&client->read_buf.read) != 20) {
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		bolt_client_free(client);
+		return;
+	}
+
+	if(!bolt_check_handshake(client)) {
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		if(!ws_handshake(&client->read_buf.read, &client->write)) {
+			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+			bolt_client_free(client);
+			return;
+		}
+		buffer_socket_write(&client->write, client->socket);
+		client->ws = true;
+		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		buffer_index(&client->read_buf, &client->read_buf.write, 0);
+		buffer_write_uint16(&client->write_buf.write, htons(0x0000));
+		return;
+	}
+
+	bolt_version_t version = bolt_read_supported_version(client);
+
+	if(client->ws) {
+		buffer_write_uint8(&client->write, 0x82);
+		buffer_write_uint8(&client->write, 0x04);
+	}
+	buffer_write_uint8(&client->write, 0x00);
+	buffer_write_uint8(&client->write, 0x00);
+	buffer_write_uint8(&client->write, version.minor);
+	buffer_write_uint8(&client->write, version.major);
+	buffer_socket_write(&client->write, client->socket);
+	buffer_index(&client->write_buf, &client->write, 0);
+	buffer_index(&client->read_buf, &client->read_buf.read, 0);
+	buffer_index(&client->read_buf, &client->read_buf.write, 0);
+
+	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);
+}
+
 // write data from client buffer to socket
 void BoltResponseHandler
 (
@@ -474,7 +601,7 @@ void BoltResponseHandler
 	bolt_client_t *client = (bolt_client_t*)user_data;
 
 	if(client->shutdown) {
-		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_WRITABLE);
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 		bolt_client_free(client);
 		return;
 	}
@@ -499,25 +626,16 @@ void BoltAcceptHandler
 
 	RedisModuleCtx *global_ctx = (RedisModuleCtx*)user_data;
 
-	socket_t client = socket_accept(fd);
-	if(client == -1) return;
+	socket_t socket = socket_accept(fd);
+	if(socket == -1) return;
 
-	if(!bolt_check_handshake(client)) {
-		socket_close(client);
+	if(!socket_set_non_blocking(socket)) {
+		close(socket);
 		return;
 	}
 
-	bolt_version_t version = bolt_read_supported_version(client);
-
-	char data[4];
-	data[0] = 0x00;
-	data[1] = 0x00;
-	data[2] = version.minor;
-	data[3] = version.major;
-	socket_write(client, data, 4);
-
-	bolt_client_t *bolt_client = bolt_client_new(client, global_ctx, BoltResponseHandler);
-	RedisModule_EventLoopAdd(client, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, bolt_client);
+	bolt_client_t *client = bolt_client_new(socket, global_ctx, BoltResponseHandler);
+	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
 }
 
 // listen to bolt port 7687
