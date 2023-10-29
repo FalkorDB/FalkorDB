@@ -1250,6 +1250,17 @@ class testFunctionCallsFlow(FlowTestsBase):
         expected_result = [[{'name': 'R1', 'len': 5}]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
+        # properies of entity properties subset
+        query = """MATCH (p:Person {name: 'Alexa'}) RETURN properties(p{.name, .age})"""
+        query_result = graph.query(query)
+        expected_result = [[{'name': 'Alexa', 'age': 44}]]
+        self.env.assertEquals(query_result.result_set, expected_result)
+
+        query = """MATCH ()-[r:R {name:'R1', len:5}]->() RETURN properties(r{.name})"""
+        query_result = graph.query(query)
+        expected_result = [[{'name': 'R1'}]]
+        self.env.assertEquals(query_result.result_set, expected_result)
+
         # string input
         query = """RETURN properties('a')"""
         self.expect_type_error(query)
