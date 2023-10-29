@@ -45,9 +45,9 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
     def build_indices(self):
         global redis_graph
-        create_node_exact_match_index(redis_graph, "person", "age")
-        create_edge_exact_match_index(redis_graph, "friend", "created_at")
-        create_edge_exact_match_index(redis_graph, "knows", "created_at", sync=True)
+        create_node_range_index(redis_graph, "person", "age")
+        create_edge_range_index(redis_graph, "friend", "created_at")
+        create_edge_range_index(redis_graph, "knows", "created_at", sync=True)
 
     # Validate that Cartesian products using index and label scans succeed
     def test01_cartesian_product_mixed_scans(self):
