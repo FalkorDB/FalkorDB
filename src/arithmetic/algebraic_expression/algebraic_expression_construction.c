@@ -336,7 +336,11 @@ static AlgebraicExpression *_AlgebraicExpression_OperandFromEdge
 	AlgebraicExpression *add              = NULL;
 	AlgebraicExpression *root             = NULL;
 	AlgebraicExpression *src_filter       = NULL;
-	bool                var_len_traversal = QGEdge_VariableLength(e);
+
+	// zero length edges should be treated as varaiable length traversal
+	// by doing so a "var-len conditional traversal" operation will
+	// be used matching only the source node of the pattern
+	bool var_len_traversal = (QGEdge_VariableLength(e) || QGEdge_GhostEdge(e));
 
 	// use original `src` and `dest` for algebraic operands
 	const char *src  = (transpose)              ? dest_node->alias : src_node->alias;

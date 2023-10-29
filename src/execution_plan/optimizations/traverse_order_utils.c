@@ -24,7 +24,9 @@ static bool _AlgebraicExpression_IsVarLen
 	QGEdge *e = QueryGraph_GetEdgeByAlias(qg, edge_alias);
 	ASSERT(e != NULL);
 
-	return QGEdge_VariableLength(e);
+	// zero length edges should be handeled by a varaiable length traversal
+	// matching only the source node
+	return QGEdge_VariableLength(e) || QGEdge_GhostEdge(e);
 }
 
 //------------------------------------------------------------------------------

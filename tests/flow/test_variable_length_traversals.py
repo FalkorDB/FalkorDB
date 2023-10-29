@@ -344,3 +344,94 @@ class testVariableLengthTraversals(FlowTestsBase):
             self.env.assertEquals(l, 2)
             self.env.assertEquals(identity, i)
 
+    def test14_no_hops(self):
+        redis_con.flushall()
+
+        # create graph
+        # (a)->(b)->(c)
+        q = "CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})-[:R {v:4}]->(:C {v:5})"
+        res = redis_graph.query(q)
+        self.env.assertEquals(res.nodes_created, 3)
+        self.env.assertEquals(res.relationships_created, 2)
+
+        # perform 0 hop traversal
+        q = "MATCH (a)-[*0]->(b) RETURN a.v, b.v ORDER BY a.v, b.v"
+        res = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1], [3, 3], [5, 5]])
+
+        # specify node label
+        q = "MATCH (a:A)-[*0]->(b) RETURN a.v, b.v"
+        res = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1]])
+
+        # reposition label
+        q = "MATCH (a)-[*0]->(b:A) RETURN a.v, b.v"
+        res = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1]])
+
+        # conflicting labels
+        q = "MATCH (a:A)-[*0]->(b:B) RETURN a.v, b.v"
+        res = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [])
+
+        # return zero length edge
+        # 'e' is a path object of length 0
+        q = "MATCH (a)-[e:R*0]->(b) RETURN e"
+        res = redis_graph.query(q)
+        for row in res.result_set:
+            path = row[0]
+            self.env.assertEquals(path.edge_count(), 0)
+
+        # filter none existing edge
+        # all edges (none) setisfy the filter
+        q = "MATCH (a)-[e:R*0]->(b) WHERE e.v = 1 RETURN a.v, b.v ORDER BY a.v, b.v"
+        res = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1], [3, 3], [5, 5]])
+
+        # zero length traversal with follow up
+        q = "MATCH (a)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 3, 3], [3, 5, 5]])
+
+        q = "MATCH (a:A)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 3, 3]])
+
+        q = "MATCH (a)-[e0]->(b:B)-[e1*0]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 3, 3]])
+
+        q = "MATCH (a:A)-[e0]->(b:B)-[e1*0]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 3, 3]])
+
+        q = "MATCH (a)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 3, 3], [3, 5, 5]])
+
+        # same queries as before, swap zero length edge
+        q = "MATCH (a)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1, 3], [3, 3, 5]])
+
+        q = "MATCH (a:A)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1, 3]])
+
+        q = "MATCH (a)-[e0*0]->(b:A)-[e1]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1, 3]])
+
+        q = "MATCH (a:A)-[e0*0]->(b:A)-[e1]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1, 3]])
+
+        q = "MATCH (a)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1, 3], [3, 3, 5]])
+
+        # multi zero length edges
+        q = "MATCH (a)-[e0*0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
+        res  = redis_graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1, 1], [3, 3, 3], [5, 5, 5]])
+
