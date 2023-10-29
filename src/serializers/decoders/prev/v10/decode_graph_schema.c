@@ -29,24 +29,37 @@ static Schema *_RdbLoadSchema
 	for(uint i = 0; i < index_count; i++) {
 		IndexType type = RedisModule_LoadUnsigned(rdb);
 		char *field_name = RedisModule_LoadStringBuffer(rdb, NULL);
-		if(!already_loaded) {
-			IndexField field;
-			Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc, field_name, NULL);
-			IndexField_New(&field, field_id, field_name, INDEX_FIELD_DEFAULT_WEIGHT,
-					INDEX_FIELD_DEFAULT_NOSTEM, INDEX_FIELD_DEFAULT_PHONETIC);
-			Schema_AddIndex(&idx, s, &field, type);
+
+		// skip if we've already loaded this schema
+		if(already_loaded) {
+			// skip field name
+			RedisModule_Free(field_name);
+			continue;
 		}
+
+		IndexField field;
+		Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc, field_name,
+				NULL);
+
+		if(type == IDX_EXACT_MATCH) {
+			IndexField_NewRangeField(&field, field_name, field_id);
+		} else if(type == IDX_FULLTEXT) {
+			IndexField_NewFullTextField(&field, field_name, field_id);
+		} else {
+			// error
+			RedisModule_LogIOError(rdb, "warning", "unknown index type %d",
+					type);
+			assert(false);
+		}
+
+		Schema_AddIndex(&idx, s, &field);
 		RedisModule_Free(field_name);
 	}
 
 	if(s) {
 		// no entities are expected to be in the graph in this point in time
-		if(PENDING_EXACTMATCH_IDX(s)) {
-			Index_Disable(PENDING_EXACTMATCH_IDX(s));
-		}
-
-		if(PENDING_FULLTEXT_IDX(s) != NULL) {
-			Index_Disable(PENDING_FULLTEXT_IDX(s));
+		if(PENDING_IDX(s)) {
+			Index_Disable(PENDING_IDX(s));
 		}
 	}
 
@@ -93,20 +106,21 @@ void RdbLoadGraphSchema_v10
 	bool already_loaded =
 		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) > 0;
 
-	// Load each node schema
+	// load each node schema
 	gc->node_schemas = array_ensure_cap(gc->node_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
 		if(!already_loaded) array_append(gc->node_schemas, s);
 	}
 
-	// #Edge schemas
+	// #edge schemas
 	schema_count = RedisModule_LoadUnsigned(rdb);
 
-	// Load each edge schema
+	// load each edge schema
 	gc->relation_schemas = array_ensure_cap(gc->relation_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
 		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
 		if(!already_loaded) array_append(gc->relation_schemas, s);
 	}
 }
+

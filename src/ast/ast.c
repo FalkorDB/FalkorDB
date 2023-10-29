@@ -161,7 +161,8 @@ bool AST_ReadOnly
 	   type == CYPHER_AST_REMOVE                     ||
 	   type == CYPHER_AST_CREATE_NODE_PROPS_INDEX    ||
 	   type == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX ||
-	   type == CYPHER_AST_DROP_PROPS_INDEX) {
+	   type == CYPHER_AST_DROP_PROPS_INDEX           ||
+	   type == CYPHER_AST_DROP_PATTERN_PROPS_INDEX) {
 		return false;
 	}
 

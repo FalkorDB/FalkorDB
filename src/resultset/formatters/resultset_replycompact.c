@@ -16,9 +16,10 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path);
 static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
 static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
+static void _ResultSet_CompactReplyWithVector(RedisModuleCtx *ctx, SIValue vec);
 
-static inline ValueType _mapValueType(const SIValue v) {
-	switch(SI_TYPE(v)) {
+static inline ValueType _mapValueType(SIType t) {
+	switch(t) {
 	case T_NULL:
 		return VALUE_NULL;
 	case T_STRING:
@@ -30,6 +31,8 @@ static inline ValueType _mapValueType(const SIValue v) {
 	case T_DOUBLE:
 		return VALUE_DOUBLE;
 	case T_ARRAY:
+		return VALUE_ARRAY;
+	case T_VECTOR32F:
 		return VALUE_ARRAY;
 	case T_NODE:
 		return VALUE_NODE;
@@ -46,14 +49,18 @@ static inline ValueType _mapValueType(const SIValue v) {
 	}
 }
 
-static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, const SIValue v) {
-	RedisModule_ReplyWithLongLong(ctx, _mapValueType(v));
+static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, SIType t) {
+	RedisModule_ReplyWithLongLong(ctx, _mapValueType(t));
 }
 
-static void _ResultSet_CompactReplyWithSIValue(RedisModuleCtx *ctx, GraphContext *gc,
-											   const SIValue v) {
+static void _ResultSet_CompactReplyWithSIValue
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	const SIValue v
+) {
 	// Emit the value type, then the actual value (to facilitate client-side parsing)
-	_ResultSet_ReplyWithValueType(ctx, v);
+	_ResultSet_ReplyWithValueType(ctx, SI_TYPE(v));
 
 	switch(SI_TYPE(v)) {
 	case T_STRING:
@@ -71,6 +78,9 @@ static void _ResultSet_CompactReplyWithSIValue(RedisModuleCtx *ctx, GraphContext
 		return;
 	case T_ARRAY:
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
+		break;
+	case T_VECTOR32F:
+		_ResultSet_CompactReplyWithVector(ctx, v);
 		break;
 	case T_NULL:
 		RedisModule_ReplyWithNull(ctx);
@@ -195,6 +205,40 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 	}
 }
 
+static void _ResultSet_CompactReplyWithVector
+(
+	RedisModuleCtx *ctx,
+	SIValue vec
+) {
+	/*  Compact vector reply format:
+	 *  [
+	 *      [double, value]
+	 *      [double, value]
+	 *      .
+	 *      .
+	 *      .
+	 *      [double, value]
+	 *  ]
+	 */
+
+	ASSERT(SI_TYPE(vec) & T_VECTOR);
+
+	// construct arrry of vector elements
+	uint32_t dim = SIVector_Dim(vec);
+	RedisModule_ReplyWithArray(ctx, dim);
+
+	// get vector elements
+	void *elements = SIVector_Elements(vec);
+
+	// reply with vector elements
+	float *values = (float*)elements;
+	for(uint i = 0; i < dim; i++) {
+		RedisModule_ReplyWithArray(ctx, 2);
+		_ResultSet_ReplyWithValueType(ctx, T_DOUBLE);
+		_ResultSet_ReplyWithRoundedDouble(ctx, (double)values[i]);
+	}
+}
+
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path) {
 	/* Path will return as an array of two SIArrays, the first is path nodes and the second is edges,
 	* see array compact format.
@@ -275,8 +319,14 @@ static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *
 	_ResultSet_ReplyWithRoundedDouble(ctx, Point_lon(v));
 }
 
-void ResultSet_EmitCompactRow(RedisModuleCtx *ctx, GraphContext *gc,
-							  SIValue **row, uint numcols) {
+void ResultSet_EmitCompactRow
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	GraphContext *gc,
+	SIValue **row,
+	uint numcols
+) {
 	// Prepare return array sized to the number of RETURN entities
 	RedisModule_ReplyWithArray(ctx, numcols);
 
@@ -289,14 +339,19 @@ void ResultSet_EmitCompactRow(RedisModuleCtx *ctx, GraphContext *gc,
 
 // For every column in the header, emit a 2-array containing the ColumnType enum
 // followed by the column alias.
-void ResultSet_ReplyWithCompactHeader(RedisModuleCtx *ctx, const char **columns,
-									  uint *col_rec_map) {
+void ResultSet_ReplyWithCompactHeader
+(
+	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
+	const char **columns,
+	uint *col_rec_map
+) {
 	uint columns_len = array_len(columns);
 	RedisModule_ReplyWithArray(ctx, columns_len);
 	for(uint i = 0; i < columns_len; i++) {
 		RedisModule_ReplyWithArray(ctx, 2);
-		/* Because the types found in the first Record do not necessarily inform the types
-		 * in subsequent records, we will always set the column type as scalar. */
+		// because the types found in the first Record do not necessarily inform the types
+		// in subsequent records, we will always set the column type as scalar
 		ColumnType t = COLUMN_SCALAR;
 		RedisModule_ReplyWithLongLong(ctx, t);
 

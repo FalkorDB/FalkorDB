@@ -9,13 +9,13 @@
 #include "op.h"
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
-#include "redisearch_api.h"
+#include "../../index/index.h"
 
 typedef struct {
 	OpBase op;
 	Graph *g;
 	bool rebuild_index_query;           // should we rebuild RediSearch index query for each input record
-	RSIndex *idx;                       // index to query
+	Index idx;                          // index to query
 	QGEdge *edge;                       // edge scanned
 	int edgeRecIdx;                     // record index of source node
 	int srcRecIdx;                      // record index of destination node
@@ -36,7 +36,7 @@ OpBase *NewEdgeIndexScanOp
 	const ExecutionPlan *plan,
 	Graph *g,
 	QGEdge *e,
-	RSIndex *idx,
+	Index idx,
 	FT_FilterNode *filter
 );
 

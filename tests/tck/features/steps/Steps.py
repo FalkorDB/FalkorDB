@@ -2,7 +2,10 @@ import sys
 import os
 import ast
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../utils/')
+if 'TCK_PROTOCOL' in os.environ and os.environ['TCK_PROTOCOL'] == 'BOLT':
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../bolt_utils/')
+else:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../redis_utils/')
 
 import assertions
 import graphs
@@ -167,11 +170,13 @@ def step_impl(context):
 
 @then(u'a SyntaxError should be raised at compile time: InvalidAggregation')
 def step_impl(context):
+    global exception
     assert exception != None
     assert "Invalid use of aggregating function" in str(exception)
 
 @then(u'a SyntaxError should be raised at compile time: UndefinedVariable')
 def step_impl(context):
+    global exception
     assert exception != None
     assert "not defined" in str(exception)
 

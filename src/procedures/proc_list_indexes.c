@@ -18,9 +18,9 @@ typedef struct {
 	SIValue *out;               // outputs
 	Index *indices;             // indicies to emit
 	GraphContext *gc;           // graph context
-	SIValue *yield_type;        // yield index type
 	SIValue *yield_label;       // yield index label
-	SIValue *yield_properties;  // yield index properties
+	SIValue *yield_types;       // yield index fields types
+	SIValue *yield_fields;      // yield index fields
 	SIValue *yield_language;    // yield index language
 	SIValue *yield_stopwords;   // yield index stopwords
 	SIValue *yield_entity_type; // yield index entity type
@@ -33,31 +33,31 @@ static void _process_yield
 	IndexesContext *ctx,
 	const char **yield
 ) {
-	ctx->yield_type        = NULL;
 	ctx->yield_info        = NULL;
 	ctx->yield_label       = NULL;
+	ctx->yield_types       = NULL;
+	ctx->yield_fields      = NULL;
 	ctx->yield_status      = NULL;
 	ctx->yield_language    = NULL;
 	ctx->yield_stopwords   = NULL;
-	ctx->yield_properties  = NULL;
 	ctx->yield_entity_type = NULL;
 
 	int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
-		if(strcasecmp("type", yield[i]) == 0) {
-			ctx->yield_type = ctx->out + idx;
-			idx++;
-			continue;
-		}
-
 		if(strcasecmp("label", yield[i]) == 0) {
 			ctx->yield_label = ctx->out + idx;
 			idx++;
 			continue;
 		}
 
+		if(strcasecmp("types", yield[i]) == 0) {
+			ctx->yield_types = ctx->out + idx;
+			idx++;
+			continue;
+		}
+
 		if(strcasecmp("properties", yield[i]) == 0) {
-			ctx->yield_properties = ctx->out + idx;
+			ctx->yield_fields = ctx->out + idx;
 			idx++;
 			continue;
 		}
@@ -185,18 +185,6 @@ static bool _EmitIndex
 	}
 
 	//--------------------------------------------------------------------------
-	// index type
-	//--------------------------------------------------------------------------
-
-	if(ctx->yield_type != NULL) {
-		if(Index_Type(idx) == IDX_EXACT_MATCH) {
-			*ctx->yield_type = SI_ConstStringVal("exact-match");
-		} else {
-			*ctx->yield_type = SI_ConstStringVal("full-text");
-		}
-	}
-
-	//--------------------------------------------------------------------------
 	// index label
 	//--------------------------------------------------------------------------
 
@@ -208,14 +196,55 @@ static bool _EmitIndex
 	// index fields
 	//--------------------------------------------------------------------------
 
-	if(ctx->yield_properties) {
+	if(ctx->yield_fields) {
 		uint fields_count        = Index_FieldsCount(idx);
 		const IndexField *fields = Index_GetFields(idx);
-		*ctx->yield_properties   = SI_Array(fields_count);
+		*ctx->yield_fields       = SI_Array(fields_count);
 
 		for(uint i = 0; i < fields_count; i++) {
-			SIArray_Append(ctx->yield_properties,
-						   SI_ConstStringVal((char *)fields[i].name));
+			const IndexField *field = fields + i;
+			SIArray_Append(ctx->yield_fields,
+					SI_ConstStringVal(IndexField_GetName(field)));
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// index fields types
+	//--------------------------------------------------------------------------
+
+	if(ctx->yield_types) {
+		// {field_name, [field_types]}
+		// e.g.
+		// {
+		//  'name': ['range', 'fulltext']
+		//  'image' ['vector']
+		// }
+
+		uint fields_count        = Index_FieldsCount(idx);
+		const IndexField *fields = Index_GetFields(idx);
+		*ctx->yield_types        = SI_Map(fields_count);
+
+		for(uint i = 0; i < fields_count; i++) {
+			const IndexField *field = fields + i;
+			IndexFieldType types = IndexField_GetType(field);
+			int n = IndexField_TypeCount(field);  // number of types
+
+			SIValue prop_types = SI_Array(n);
+
+			if(types & INDEX_FLD_RANGE) {
+				SIArray_Append(&prop_types, SI_ConstStringVal("RANGE"));
+			}
+			if(types & INDEX_FLD_VECTOR) {
+				SIArray_Append(&prop_types, SI_ConstStringVal("VECTOR"));
+			}
+			if(types & INDEX_FLD_FULLTEXT) {
+				SIArray_Append(&prop_types, SI_ConstStringVal("FULLTEXT"));
+			}
+
+			Map_Add(ctx->yield_types,
+					SI_ConstStringVal(IndexField_GetName(field)), prop_types);
+
+			SIValue_Free(prop_types);
 		}
 	}
 
@@ -270,7 +299,6 @@ static bool _EmitIndex
 			SIValue field = SI_Map(6);
 			Map_Add(&field, SI_ConstStringVal("path"),             SI_ConstStringVal(f.path));
 			Map_Add(&field, SI_ConstStringVal("name"),             SI_ConstStringVal(f.name));
-			Map_Add(&field, SI_ConstStringVal("types"),            SI_LongVal(f.types));
 			Map_Add(&field, SI_ConstStringVal("options"),          SI_LongVal(f.options));
 			Map_Add(&field, SI_ConstStringVal("textWeight"),       SI_DoubleVal(f.textWeight));
 			Map_Add(&field, SI_ConstStringVal("tagCaseSensitive"), SI_BoolVal(f.tagCaseSensitive));
@@ -346,13 +374,7 @@ ProcedureResult Proc_IndexesFree
 ProcedureCtx *Proc_IndexesCtx(void) {
 	void *privateData = NULL;
 	ProcedureOutput output;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 8);
-
-	// index type (exact-match / fulltext)
-	output = (ProcedureOutput) {
-		.name = "type", .type = T_STRING
-	};
-	array_append(outputs, output);
+	ProcedureOutput *outputs = array_new(ProcedureOutput, 7);
 
 	// indexed label
 	output = (ProcedureOutput) {
@@ -363,6 +385,12 @@ ProcedureCtx *Proc_IndexesCtx(void) {
 	// indexed properties
 	output = (ProcedureOutput) {
 		.name = "properties", .type = T_ARRAY
+	};
+	array_append(outputs, output);
+
+	// indexed fields types
+	output = (ProcedureOutput) {
+		.name = "types", .type = T_MAP
 	};
 	array_append(outputs, output);
 

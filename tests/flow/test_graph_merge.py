@@ -193,7 +193,7 @@ class testGraphMergeFlow(FlowTestsBase):
     # Add node that matches pre-existing index
     def test15_merge_indexed_entity(self):
         # Create index
-        create_node_exact_match_index(redis_graph, 'person', 'age', sync=True)
+        create_node_range_index(redis_graph, 'person', 'age', sync=True)
 
         count_query = """MATCH (p:person) WHERE p.age > 0 RETURN COUNT(p)"""
         result = redis_graph.query(count_query)
@@ -508,7 +508,7 @@ class testGraphMergeFlow(FlowTestsBase):
         graph = Graph(redis_con, "M")
 
         # Index the "L:prop) combination so that the MERGE tree will not have a filter op.
-        create_node_exact_match_index(graph, 'L', 'prop', sync=True)
+        create_node_range_index(graph, 'L', 'prop', sync=True)
 
         query = """MERGE (n:L {prop:1}) WITH n WHERE n.prop < 1 RETURN n.prop"""
         result = graph.query(query)

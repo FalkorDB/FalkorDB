@@ -2750,3 +2750,20 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+    def test94_vector(self):
+        # Test invalid inputs
+        err_msg = "vector32f expects an array of numbers"
+        queries_with_errors = [
+                "RETURN vector32f([1.2, 'a'])",
+                "RETURN vector32f([1.2, NULL])",
+                "RETURN vector32f([1.2, true])",
+                "RETURN vector32f([1.2, []])",
+                "RETURN vector32f([1.2, {a:2}])",
+                "RETURN vector32f([1.2, point({latitude:1,longitude:2})])",
+                "RETURN vector32f([1.2, vector32f([1])])",
+        ]
+
+        for q in queries_with_errors:
+            self.expect_error(q, err_msg)
+

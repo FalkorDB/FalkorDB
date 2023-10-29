@@ -115,7 +115,7 @@ class testMultiLabel():
     # Validate behavior of index scans on multi-labeled nodes
     def test05_index_scan(self):
 
-        query_result = create_node_exact_match_index(graph, 'L1', 'v', sync=True)
+        query_result = create_node_range_index(graph, 'L1', 'v', sync=True)
         self.env.assertEquals(query_result.indices_created, 1)
 
         # Query the explicitly created index

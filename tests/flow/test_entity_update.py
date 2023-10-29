@@ -16,7 +16,7 @@ class testEntityUpdate():
         # create a graph with a two nodes connected by an edge
         multiple_entity_graph = Graph(self.env.getConnection(), 'multiple_entity_update')
         multiple_entity_graph.query("CREATE (:L {v1: 1})-[:R {v1: 3}]->(:L {v2: 2})")
-        create_node_exact_match_index(multiple_entity_graph, 'L', 'v1', 'v2', sync=True)
+        create_node_range_index(multiple_entity_graph, 'L', 'v1', 'v2', sync=True)
 
     def test01_update_attribute(self):
         # update existing attribute 'v'

@@ -31,8 +31,8 @@ typedef struct {
 } validations_ctx;
 
 // ast validation visitor mappings
-// number of ast-node types: _MAX_VT_OFF = sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *) = 115
-static visit validations_mapping[115];
+// number of ast-node types: _MAX_VT_OFF = sizeof(struct cypher_astnode_vts) / sizeof(struct cypher_astnode_vt *) = 116
+static visit validations_mapping[116];
 
 // validate that allShortestPaths is in a supported place
 static bool _ValidateAllShortestPaths
@@ -1803,6 +1803,27 @@ static VISITOR_STRATEGY _Validate_index_creation
 	return VISITOR_RECURSE;
 }
 
+// validate index deletion
+static VISITOR_STRATEGY _Validate_index_deletion
+(
+	const cypher_astnode_t *n,  // ast-node
+	bool start,                 // first traversal
+	ast_visitor *visitor        // visitor
+) {
+	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+
+	if(!start) {
+		return VISITOR_CONTINUE;
+	}
+
+	vctx->clause = cypher_astnode_type(n);
+
+	const cypher_astnode_t *id = cypher_ast_drop_pattern_props_index_get_identifier(n);
+	const char *name = cypher_ast_identifier_get_name(id);
+	raxInsert(vctx->defined_identifiers, (unsigned char *)name, strlen(name), NULL, NULL);
+	return VISITOR_RECURSE;
+}
+
 // A query must end in a RETURN clause, a procedure, or an updating clause
 // (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH or CALL {})
 static AST_Validation _ValidateQueryTermination
@@ -2029,7 +2050,7 @@ bool AST_ValidationsMappingInit(void) {
 	// create a mapping for the validations
 
 	// set default entries
-	for(uint i = 0; i < 115; i++) {
+	for(uint i = 0; i < 116; i++) {
 		validations_mapping[i] = _default_visit;
 	}
 
@@ -2069,6 +2090,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_APPLY_ALL_OPERATOR]         = _Validate_apply_all_operator;
 	validations_mapping[CYPHER_AST_LIST_COMPREHENSION]         = _Validate_list_comprehension;
 	validations_mapping[CYPHER_AST_PATTERN_COMPREHENSION]      = _Validate_pattern_comprehension;
+	validations_mapping[CYPHER_AST_DROP_PATTERN_PROPS_INDEX]   = _Validate_index_deletion;	
 	validations_mapping[CYPHER_AST_CREATE_PATTERN_PROPS_INDEX] = _Validate_index_creation;
 
 	//--------------------------------------------------------------------------
@@ -2166,7 +2188,8 @@ AST_Validation AST_Validate_Query
 	cypher_astnode_type_t body_type = cypher_astnode_type(body);
 	if(body_type == CYPHER_AST_CREATE_NODE_PROPS_INDEX    ||
 	   body_type == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX ||
-	   body_type == CYPHER_AST_DROP_PROPS_INDEX) {
+	   body_type == CYPHER_AST_DROP_PROPS_INDEX           ||
+	   body_type == CYPHER_AST_DROP_PATTERN_PROPS_INDEX) {
 		return _ValidateScopes(&ast);
 	}
 

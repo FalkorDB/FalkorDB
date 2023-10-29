@@ -167,8 +167,8 @@ Feature: Set6 - Persistence of set clause side effects
       RETURN sum(n.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 20  |
+      | sum   |
+      | 20.0  |
     And the side effects should be:
       | +properties | 5 |
       | -properties | 5 |
@@ -191,8 +191,8 @@ Feature: Set6 - Persistence of set clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 20  |
+      | sum   |
+      | 20.0  |
     And the side effects should be:
       | +properties | 5 |
       | -properties | 5 |
@@ -331,8 +331,8 @@ Feature: Set6 - Persistence of set clause side effects
       RETURN sum(n.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | +labels | 1 |
 
@@ -355,8 +355,8 @@ Feature: Set6 - Persistence of set clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 15  |
+      | sum   |
+      | 15.0  |
     And the side effects should be:
       | +labels | 1 |
 
@@ -497,8 +497,8 @@ Feature: Set6 - Persistence of set clause side effects
       RETURN sum(r.num) AS sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 20  |
+      | sum   |
+      | 20.0  |
     And the side effects should be:
       | +properties | 5 |
       | -properties | 5 |
@@ -521,8 +521,8 @@ Feature: Set6 - Persistence of set clause side effects
       RETURN sum
       """
     Then the result should be, in any order:
-      | sum |
-      | 20  |
+      | sum   |
+      | 20.0  |
     And the side effects should be:
       | +properties | 5 |
       | -properties | 5 |

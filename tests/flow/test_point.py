@@ -87,7 +87,7 @@ class testPath():
         miradouro = {'lat': 37.854010999507736, 'lon': -25.775820972037057}
 
         # create index over location
-        create_node_exact_match_index(redis_graph, 'N', 'loc', sync=True)
+        create_node_range_index(redis_graph, 'N', 'loc', sync=True)
 
         # create 2 points: 'home' and 'univ'
         q = """create (:N {name:'home', loc:point({ latitude:%f, longitude:%f })})""" % (home['lat'], home['lon'])

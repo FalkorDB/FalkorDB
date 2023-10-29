@@ -38,7 +38,7 @@ class testProcedures(FlowTestsBase):
         redis_graph.commit()
 
         # Create full-text index.
-        create_fulltext_index(redis_graph, 'fruit', 'name', sync=True)
+        create_node_fulltext_index(redis_graph, 'fruit', 'name', sync=True)
 
     # Compares two nodes based on their properties.
     def _compareNodes(self, a, b):
@@ -327,51 +327,50 @@ class testProcedures(FlowTestsBase):
 
     def test11_procedure_indexes(self):
         # Verify that the full-text index is reported properly.
-        actual_resultset = redis_graph.query("CALL db.indexes() YIELD type, label, properties").result_set
-        expected_results = [["full-text", "fruit", ["name"]]]
+        actual_resultset = redis_graph.query("CALL db.indexes() YIELD label, properties").result_set
+        expected_results = [["fruit", ["name"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to a different property on the same label..
-        result = create_node_exact_match_index(redis_graph, 'fruit', 'other_property')
+        result = create_node_range_index(redis_graph, 'fruit', 'other_property')
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
-        actual_resultset = redis_graph.query("CALL db.indexes() YIELD type, label, properties RETURN type, label, properties ORDER BY type").result_set
-        expected_results = [["exact-match", "fruit", ["other_property"]],
-                            ["full-text", "fruit", ["name"]]]
+        actual_resultset = redis_graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
+        expected_results = [["fruit", ["name", "other_property"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Add an exact-match index to the full-text indexed property on the same label..
-        result = create_node_exact_match_index(redis_graph, 'fruit', 'name', sync=True)
+        result = create_node_range_index(redis_graph, 'fruit', 'name', sync=True)
         self.env.assertEquals(result.indices_created, 1)
 
         # Verify that all indexes are reported.
-        actual_resultset = redis_graph.query("CALL db.indexes() YIELD type, label, properties RETURN type, label, properties ORDER BY type").result_set
-        expected_results = [["exact-match", "fruit", ["other_property", "name"]],
-                            ["full-text", "fruit", ["name"]]]
+        actual_resultset = redis_graph.query("CALL db.indexes() YIELD label, properties RETURN * ORDER BY properties").result_set
+        expected_results = [["fruit", ["name", "other_property"]]]
         self.env.assertEquals(actual_resultset, expected_results)
 
         # Validate the results when yielding only one element.
         actual_resultset = redis_graph.query("CALL db.indexes() YIELD label").result_set
-        expected_results = [["fruit"],
-                            ["fruit"]]
+        expected_results = [["fruit"]]
         self.env.assertEquals(actual_resultset, expected_results)
 
     def test12_procedure_reordered_yields(self):
         # Yield results of procedure in a non-default sequence
         actual_resultset = redis_graph.query("CALL dbms.procedures() YIELD mode, name RETURN mode, name ORDER BY name").result_set
 
-        expected_result = [["READ", "algo.BFS"],
-                           ['READ', 'algo.SPpaths'],
-                           ['READ', 'algo.SSpaths'],
-                           ["READ", "algo.pageRank"],
-                           ['READ', 'db.constraints'],
+        expected_result = [["READ",  "algo.BFS"],
+                           ['READ',  'algo.SPpaths'],
+                           ['READ',  'algo.SSpaths'],
+                           ["READ",  "algo.pageRank"],
+                           ['READ',  'db.constraints'],
                            ["WRITE", "db.idx.fulltext.createNodeIndex"],
                            ["WRITE", "db.idx.fulltext.drop"],
-                           ["READ", "db.idx.fulltext.queryNodes"],
-                           ["READ", "db.indexes"],
-                           ["READ", "db.labels"],
-                           ["READ", "db.propertyKeys"],
-                           ["READ", "db.relationshipTypes"],
-                           ["READ", "dbms.procedures"]]
+                           ["READ",  "db.idx.fulltext.queryNodes"],
+                           ["READ",  "db.idx.vector.query"],
+                           ["READ",  "db.indexes"],
+                           ["READ",  "db.labels"],
+                           ["READ",  "db.propertyKeys"],
+                           ["READ",  "db.relationshipTypes"],
+                           ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
+

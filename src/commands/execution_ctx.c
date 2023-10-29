@@ -29,7 +29,8 @@ static ExecutionType _GetExecutionTypeFromAST
 		return EXECUTION_TYPE_INDEX_CREATE;
 	}
 
-	if(root_type == CYPHER_AST_DROP_PROPS_INDEX) {
+	if(root_type == CYPHER_AST_DROP_PROPS_INDEX ||
+	   root_type == CYPHER_AST_DROP_PATTERN_PROPS_INDEX) {
 		return EXECUTION_TYPE_INDEX_DROP;
 	}
 

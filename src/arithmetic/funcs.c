@@ -1,4 +1,3 @@
-
 /*
  * Copyright Redis Ltd. 2018 - present
  * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
@@ -23,6 +22,7 @@ void AR_RegisterFuncs() {
 	Register_PointFuncs();
 	Register_EntityFuncs();
 	Register_StringFuncs();
+	Register_VectorFuncs();
 	Register_NumericFuncs();
 	Register_BooleanFuncs();
 	Register_ConditionalFuncs();

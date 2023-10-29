@@ -26,16 +26,17 @@ ALL_VALUES_EXCEPT_ARRAY = [random_string, random_int,
 
 
 def random_array():
-    len = randint(0, 10)
+    l = randint(0, 10)
     arr = []
-    for i in range(0, len):
+    for i in range(0, l):
         arr.append(random_graph_value(ALL_VALUES_EXCEPT_ARRAY))
     return arr
-
 
 def random_point():
     raise "not implemented"
 
+def random_vector():
+    raise "not implemented"
 
 ALL_VALUES = [random_string, random_int,
               random_bool, random_double, random_array]
@@ -113,7 +114,7 @@ def create_random_graph(g, nodes, edges):
         # print(node["count"])
 
         index_label = node["labels"][0]
-        res = create_node_exact_match_index(g, index_label, 'v', sync=True)
+        res = create_node_range_index(g, index_label, 'v', sync=True)
         result["indexes"].append(res)
 
         data, range_pattern = create_nodes_range(node, "map")

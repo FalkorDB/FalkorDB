@@ -65,7 +65,7 @@ class testQueryTimeout():
         # set timeout to unlimited
         redis_con.execute_command("GRAPH.CONFIG SET timeout 0")
 
-        create_node_exact_match_index(redis_graph, 'Person', 'age', 'height', 'weight', sync=True)
+        create_node_range_index(redis_graph, 'Person', 'age', 'height', 'weight', sync=True)
 
         queries = [
                 # full scan
@@ -274,10 +274,14 @@ class testQueryTimeout():
 
         # Issue a profile query, expect a timeout error
         try:
-            redis_graph.profile("UNWIND range(0, 100000000) AS x CREATE (:P{v:x})")
+            q = """UNWIND range(0, 10000) AS x
+                   UNWIND range(0, 10000) AS y
+                   CREATE (:P{v:x * y + y})"""
+            redis_graph.profile(q)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
-            self.env.assertTrue(True)
+            # expecting to get a timeout error
+            self.env.assertIn("Query timed out", str(e))
 
         # make sure no pending result exists
         res = redis_graph.query("RETURN 1")

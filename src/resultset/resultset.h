@@ -6,17 +6,19 @@
 
 #pragma once
 
-#include "resultset_statistics.h"
+#include "../bolt/bolt.h"
 #include "../redismodule.h"
+#include "resultset_statistics.h"
 #include "../execution_plan/record.h"
-#include "rax.h"
 #include "./formatters/resultset_formatters.h"
+#include "rax.h"
 
 #define RESULTSET_OK 1
 #define RESULTSET_FULL 0
 
 typedef struct {
 	RedisModuleCtx *ctx;            // redis context
+	bolt_client_t *bolt_client;     // bolt client
 	GraphContext *gc;               // context used for mapping attribute strings and IDs
 	uint column_count;              // number of columns in result set
 	const char **columns;           // field names for each column of results
@@ -42,6 +44,7 @@ void ResultSet_MapProjection
 ResultSet *NewResultSet
 (
 	RedisModuleCtx *ctx,
+	bolt_client_t *bolt_client,
 	ResultSetFormatterType format  // resultset format
 );
 

@@ -1,0 +1,1343 @@
+# vi:set ts=4 sw=4 expandtab:
+#
+# Copyright 2016, Chris Leishman (http://github.com/cleishm)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# NOTE: the use of `<` and `>` in this grammar has been modified. Instead of
+# the typical LEG behaviour of making a region of input text available via
+# yytext and yyleng, it instead denotes the start and end of a block,
+# containing the start and end positions in the input, a sequence accumulator,
+# and a list accumulating all AST nodes created within the range. Thus every
+# action in the grammer that outputs an AST node, or requires the range of the
+# previous block, should have an associated set of rules delimited by `<` and
+# `>`.
+
+__entry_points = directive | statement | params
+
+
+directive = - _directive
+_directive =
+    ( __directive                      { finished(yy); }
+    | _error_ (EOF | skip-to-directive) _directive
+    )
+__directive =
+    ( EOF                              { yy->result = NULL; }
+    | SEMICOLON                        { yy->result = NULL; }
+    | d:client-command                 { yy->result = d; }
+    | d:cypher-statement               { yy->result = d; }
+    )
+
+statement = - _statement
+_statement =
+    ( __statement                      { finished(yy); }
+    | _error_ (EOF | skip-to-statement) _statement
+    )
+__statement =
+    ( EOF                              { yy->result = NULL; }
+    | SEMICOLON                        { yy->result = NULL; }
+    | d:cypher-statement               { yy->result = d; }
+    )
+
+params = - _params
+_params = 
+    ( __params                          {finished(yy); } 
+    | _error_ (EOF | skip-to-params) _params
+    )
+__params =
+    ( EOF                               { yy->result = NULL; } 
+    | SEMICOLON                         { yy->result = NULL; }
+    | d:cypher-params                   { yy->result = d; }
+    )
+
+#----------------------------------------------------
+# Statement parsing
+#----------------------------------------------------
+
+cypher-params = < statement-option* - (q:query-string) >
+                                        { $$ = statement(q); }
+
+query-string =                        { strbuf_reset(); }
+   (<.*> {strbuf_append_block();})          { $$ = strbuf_string(); }
+
+cypher-statement = < statement-option* - (b:query | b:schema-command) >
+                                       { $$ = statement(b); }
+statement-option =
+    ( o:cypher-option | o:profile-option | o:explain-option )
+    ~{ERR("a statement option")}
+    -                                  { sequence_add(o); }
+
+cypher-option =
+    < CYPHER - (v:cypher-version | v:_null_)
+      ( - p:cypher-param               { sequence_add(p); }
+      )* >                             { $$ = cypher_option(v); }
+cypher-version = <
+    ([0-9]+ DOT [0-9]+) ~{ERR("a version number")}
+    >                                  { $$ = block_string(); }
+cypher-param = < n:cypher-param-name - EQUAL - v:cypher-param-val >
+                                       { $$ = cypher_option_param(n, v); }
+cypher-param-name =                    { strbuf_reset(); }
+    < parameter-name >                 { $$ = strbuf_string(); }
+cypher-param-val = p:cypher-param-value        { $$ = p; }
+
+cypher-param-value =  
+      true-literal
+    | false-literal
+    | null-literal
+    | string-literal
+    | collection-literal
+    | map-literal
+    | number
+
+number = 
+      float-literal
+    | integer-literal
+    | negative_number
+
+negative-number = 
+      < MINUS &{OP(UNARY_MINUS)} - n:number >     { op_push(UNARY_MINUS);
+                                                    $$ = unary_operator(op_pop(), n); }
+
+profile-option = < PROFILE >           { $$ = profile_option(); }
+explain-option = < EXPLAIN >           { $$ = explain_option(); }
+
+schema-command =
+    ( create-index-on
+    | create-index-for
+    | create-fulltext-index-for
+    | create-vector-index-for
+    | create-constraint
+    | drop-index
+    | drop-index-for
+    | drop-fulltext-index-for
+    | drop-vector-index-for
+    | drop-constraint
+    ) ~{ERR("a schema command")}
+    (SEMICOLON | EOF)
+
+create-index-on =
+    < CREATE-INDEX-ON l:label LEFT-PAREN - p:prop-name
+                                       { sequence_add(p); }
+      ( COMMA - p:prop-name
+                                       { sequence_add(p); }
+      )* RIGHT-PAREN >
+                                       { $$ = create_index(l); }
+    -
+
+create-index-for =
+    < CREATE-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, NULL, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, NULL, true);
+									   }
+    ) -
+
+create-fulltext-index-for =
+    < CREATE-FULLTEXT-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, true);
+									   }
+    ) -
+
+create-vector-index-for =
+    < CREATE-VECTOR-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
+                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, true);
+									   }
+    ) -
+    
+
+create-constraint =
+    < CREATE-CONSTRAINT-ON
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN - ASSERT
+        ( e:expression IS-UNIQUE >
+                                       { $$ = create_node_prop_constraint(i,l,e,true); }
+        | e:expression >
+                                       { $$ = create_node_prop_constraint(i,l,e,false); }
+        )
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier t:rel-type RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        ASSERT e:expression >
+                                       { $$ = create_rel_prop_constraint(i,t,e,false); }
+      ) -
+
+drop-index =
+    < DROP-INDEX-ON l:label LEFT-PAREN - p:prop-name
+                                       { sequence_add(p); }
+      ( COMMA - p:prop-name
+                                       { sequence_add(p); }
+      )* RIGHT-PAREN >
+                                       { $$ = drop_index(l); }
+    -
+
+drop-index-for =
+    < DROP-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, true);
+									   }
+    ) -
+
+drop-fulltext-index-for =
+    < DROP-FULLTEXT-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, true);
+									   }
+    ) -
+
+drop-vector-index-for =
+    < DROP-VECTOR-INDEX-FOR
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, false);
+									   }
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
+                                       { sequence_add(p); }
+        ( COMMA - p:property-key-name
+                                       { sequence_add(p); }
+        )* RIGHT-PAREN >
+                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, true);
+									   }
+    ) -
+
+drop-constraint =
+    < DROP-CONSTRAINT-ON
+      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN - ASSERT
+        ( e:expression IS-UNIQUE >
+                                       { $$ = drop_node_prop_constraint(i,l,e,true); }
+        | e:expression >
+                                       { $$ = drop_node_prop_constraint(i,l,e,false); }
+        )
+      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
+        LEFT-SQ-PAREN - i:identifier t:rel-type RIGHT-SQ-PAREN -
+        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
+        ASSERT e:expression >
+                                       { $$ = drop_rel_prop_constraint(i,t,e,false); }
+      ) -
+
+
+query = < query-hints* clauses >       { $$ = query(); }
+# TODO: Remove query-hints, we don't use them.
+query-hints =
+    ( c:periodic-commit                { sequence_add(c); }
+    ) ~{ERR("a query hint")}
+clauses =
+    c:clause                           { sequence_add(c); }
+    _clauses
+_clauses =
+    ( SEMICOLON
+    | EOF
+    | c:clause                         { sequence_add(c); }
+      _cut_ _clauses
+    | _error_ (EOF | skip-to-clause) - _clauses
+    )
+
+periodic-commit = < USING-PERIODIC-COMMIT (l:integer-literal | l:_null_) >
+                                       { $$ = using_periodic_commit(l); }
+
+clause =
+    ( match-clause
+    | return-clause
+    | unwind-clause
+    | merge-clause
+    | create-clause
+    | set-clause
+    | delete-clause
+    | remove-clause
+    | with-clause
+    | foreach-clause
+    | call-clause
+    | loadcsv-clause
+    | start-clause
+    | union-clause
+    ) ~{ERR("a clause")}
+
+loadcsv-clause =
+      < LOADCSV WITH-HEADERS FROM u:expression AS i:identifier
+        (FIELDTERMINATOR t:string-literal | t:_null_) >
+                                       { $$ = load_csv(true, u, i, t); }
+    | < LOADCSV FROM u:expression AS i:identifier
+        (FIELDTERMINATOR t:string-literal | t:_null_) >
+                                       { $$ = load_csv(false, u, i, t); }
+
+start-clause =
+    < START s:start-point -            { sequence_add(s); }
+      ( COMMA - s:start-point -        { sequence_add(s); }
+      )* ( WHERE c:expression | c:_null_ ) >
+                                       { $$ = start_clause(c); }
+start-point =
+    < i:identifier EQUAL -
+      ( node
+        ( COLON - x:index-name LEFT-PAREN -
+          ( p:prop-name EQUAL - (l:string-literal | l:parameter) RIGHT-PAREN >
+                                       { $$ = node_index_lookup(i, x, p, l); }
+          | (l:string-literal | l:parameter) RIGHT-PAREN >
+                                       { $$ = node_index_query(i, x, l); }
+          )
+        | LEFT-PAREN -
+          ( node-ids RIGHT-PAREN >     { $$ = node_id_lookup(i); }
+          | STAR - RIGHT-PAREN >       { $$ = all_nodes_scan(i); }
+          )
+        )
+      | ( relationship | rel )
+        ( COLON - x:index-name LEFT-PAREN -
+          ( p:prop-name EQUAL - (l:string-literal | l:parameter) RIGHT-PAREN >
+                                       { $$ = rel_index_lookup(i, x, p, l); }
+          | (l:string-literal | l:parameter) RIGHT-PAREN >
+                                       { $$ = rel_index_query(i, x, l); }
+          )
+        | LEFT-PAREN -
+          ( node-ids RIGHT-PAREN >     { $$ = rel_id_lookup(i); }
+          | STAR - RIGHT-PAREN >       { $$ = all_rels_scan(i); }
+          )
+        )
+      )
+
+node-ids =
+    i:integer-literal                  { sequence_add(i); }
+    ( COMMA - i:integer-literal        { sequence_add(i); }
+    )*
+
+match-clause =
+      < OPTIONAL-MATCH p:pattern
+        ( h:hint                       { sequence_add(h); }
+        )* ( WHERE c:expression | c:_null_ ) >
+                                       { $$ = match_clause(true, p, c); }
+    | < MATCH p:pattern
+        ( h:hint                       { sequence_add(h); }
+        )* ( WHERE c:expression | c:_null_ ) >
+                                       { $$ = match_clause(false, p, c); }
+
+hint =
+      < USING-INDEX i:identifier l:label
+        LEFT-PAREN - p:prop-name RIGHT-PAREN - >
+                                       { $$ = using_index(i, l, p); }
+    | < USING-JOIN-ON i:identifier     { sequence_add(i); }
+        ( COMMA - i:identifier         { sequence_add(i); }
+        )* >                           { $$ = using_join(); }
+    | < USING-SCAN i:identifier l:label >
+                                       { $$ = using_scan(i, l); }
+
+merge-clause =
+    < MERGE p:pattern-part -
+      ( a:merge-action                 { sequence_add(a); }
+      )* >                             { $$ = merge_clause(p); }
+    -
+
+merge-action =
+      < ON-MATCH merge-action-set >    { $$ = on_match(); }
+    | < ON-CREATE merge-action-set >   { $$ = on_create(); }
+merge-action-set =
+    SET ~{ERR("SET")} i:set-item       { sequence_add(i); }
+    ( COMMA - i:set-item               { sequence_add(i); }
+    )*
+
+create-clause =
+      < CREATE-UNIQUE p:pattern >      { $$ = create_clause(true, p); }
+    | < CREATE p:pattern >             { $$ = create_clause(false, p); }
+
+set-clause =
+    < SET i:set-item                   { sequence_add(i); }
+      ( COMMA - i:set-item             { sequence_add(i); }
+      )* >                             { $$ = set_clause(); }
+
+set-item =
+      < p:property-expression EQUAL - e:expression >
+                                       { $$ = set_property(p, e); }
+    | < i:identifier EQUAL - e:expression >
+                                       { $$ = set_all_properties(i, e); }
+    | < i:identifier PLUSEQUAL - e:expression >
+                                       { $$ = merge_properties(i, e); }
+    | < i:identifier (l:label          { sequence_add(l); }
+        )+ >                           { $$ = set_labels(i); }
+
+delete-clause =
+      < DETACH-DELETE e:expression     { sequence_add(e); }
+        ( COMMA - e:expression         { sequence_add(e); }
+        )* >                           { $$ = delete(true); }
+    | < DELETE e:expression            { sequence_add(e); }
+        ( COMMA - e:expression         { sequence_add(e); }
+        )* >                           { $$ = delete(false); }
+
+remove-clause =
+    < REMOVE i:remove-item             { sequence_add(i); }
+      ( COMMA - i:remove-item          { sequence_add(i); }
+      )* >                             { $$ = remove_clause(); }
+
+remove-item =
+      < p:property-expression >        { $$ = remove_property(p); }
+    | < i:identifier (l:label          { sequence_add(l); }
+        )+ >                           { $$ = remove_labels(i); }
+
+foreach-clause =
+    < FOREACH LEFT-PAREN - i:identifier IN - e:expression PIPE -
+      ( c:clause                       { sequence_add(c); }
+      )+ RIGHT-PAREN >                 { $$ = foreach_clause(i, e); }
+    -
+
+with-clause =
+    < WITH
+      ( DISTINCT STAR -
+        additional-with-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_)
+        (WHERE p:expression | p:_null_) >
+                                       { $$ = with_clause(true,true,o,s,l,p); }
+      | DISTINCT i:with-projection     { sequence_add(i); }
+        additional-with-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_)
+        (WHERE p:expression | p:_null_) >
+                                       { $$ = with_clause(true,false,o,s,l,p); }
+      | STAR -
+        additional-with-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_)
+        (WHERE p:expression | p:_null_) >
+                                       { $$ = with_clause(false,true,o,s,l,p); }
+      | i:with-projection              { sequence_add(i); }
+        additional-with-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_)
+        (WHERE p:expression | p:_null_) >
+                                       { $$ = with_clause(false,false,o,s,l,p); }
+      )
+additional-with-projections =
+    ( COMMA - i:with-projection        { sequence_add(i); }
+    )*
+
+with-projection =
+    < e:expression
+      ( AS i:identifier >              { $$ = projection(e, i); }
+      | _empty_ >                      { $$ = projection(e, NULL); }
+      )
+
+unwind-clause = < UNWIND e:expression AS i:identifier >
+                                       { $$ = unwind_clause(e, i); }
+
+# NOTE: accumulates both arguments and results into the same sequence,
+# and then splits based on type when creating the AST node. This isn't very
+# clean: it would be better to introduce a way to accumulate independent
+# sequences whilst parsing.
+call-clause =
+    ( call-proc
+    | call-subquery
+    ) ~{ERR("call clause")}
+
+call-proc =
+    < CALL p:proc-name
+      ( LEFT-PAREN -
+        ( e:expression                 { sequence_add(e); }
+          ( COMMA - e:expression       { sequence_add(e); }
+          )*
+        )?
+        RIGHT-PAREN -
+      )?
+      ( YIELD
+        ( r:proc-projection            { sequence_add(r); }
+          ( COMMA - r:proc-projection  { sequence_add(r); }
+          )*
+        | '-'
+        ) -
+      )?
+      (WHERE w:expression | w:_null_) >
+                                       { $$ = call_clause(p, w); }
+
+call-subquery =
+    < CALL LEFT-CURLY -
+    ( c:clause                         { sequence_add(c); }
+    )+ RIGHT-CURLY >                   { $$ = call_subquery(); }
+    -
+
+proc-projection = < r:identifier (
+      AS i:identifier >                { $$ = projection(r, i); }
+    | _empty_ >                        { $$ = projection(r, NULL); }
+    )
+
+return-clause =
+    < RETURN
+      ( DISTINCT STAR - additional-return-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_) >
+                                       { $$ = return_clause(true,true,o,s,l); }
+      | DISTINCT i:return-projection   { sequence_add(i); }
+        additional-return-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_) >
+                                       { $$ = return_clause(true,false,o,s,l); }
+      | STAR -
+        additional-return-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_) >
+                                       { $$ = return_clause(false,true,o,s,l); }
+      | i:return-projection            { sequence_add(i); }
+        additional-return-projections
+        (o:order-by | o:_null_) (s:skip | s:_null_) (l:limit | l:_null_) >
+                                       { $$ = return_clause(false,false,o,s,l); }
+      )
+additional-return-projections =
+    ( COMMA - i:return-projection      { sequence_add(i); }
+    )*
+
+return-projection =
+    < _block_start_ e:expression
+      ( AS i:identifier _block_merge_
+      | i:_null_ _block_merge_         { if (!cypher_astnode_instanceof(
+                                                 e, CYPHER_AST_IDENTIFIER))
+                                         {
+                                           i = block_identifier();
+                                         }
+                                       }
+      ) >                              { $$ = projection(e, i); }
+
+order-by = < ORDER-BY s:sort-item      { sequence_add(s); }
+           ( COMMA - s:sort-item       { sequence_add(s); }
+           )* >                        { $$ = order_by(); }
+
+sort-item =
+    < e:expression
+      ( (DESCENDING | DESC) >          { $$ = sort_item(e, false); }
+      | (ASCENDING | ASC)? >           { $$ = sort_item(e, true); }
+      )
+
+skip = SKIP e:expression               { $$ = e }
+limit = LIMIT e:expression             { $$ = e }
+
+union-clause =
+    < UNION
+      ( ALL >                          { $$ = union_clause(true); }
+      | _empty_ >                      { $$ = union_clause(false); }
+      )
+
+
+#----------------------------------------------------
+# Expression parsing
+#----------------------------------------------------
+
+# Precedence climbing - http://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing
+expression = &{PREC_PUSH_TOP()} e:_expression ~{PREC_POP()} &{PREC_POP()}
+                                       { $$ = e; }
+_prec_expression = &{PREC_PUSH()} e:_expression ~{PREC_POP()} &{PREC_POP()}
+                                       { $$ = e; }
+_expression =
+      _block_start_ l:_atom
+        ( DOT &{OP(PROPERTY)} &{PREC_CHK()} - n:prop-name _block_replace_
+                                       { l = property_operator(l, n); }
+        | INFIX-OP &{PREC_CHK()} - r:_prec_expression _block_replace_
+                                       { l = binary_operator(op_pop(), l, r); }
+        |                              { sequence_add(l); }
+          ( COMPARISON-OP &{PREC_CHK()} - r:_prec_expression
+                                       { sequence_add(r); }
+          )+ _block_replace_           { l = comparison_operator(); }
+        | POSTFIX-OP &{PREC_CHK()} _block_replace_
+                                       { l = unary_operator(op_pop(), l); }
+        | LEFT-SQ-PAREN &{OP(SUBSCRIPT)} &{PREC_CHK()} -
+          r:expression RIGHT-SQ-PAREN - _block_replace_
+                                       { l = subscript_operator(l, r); }
+        | LEFT-SQ-PAREN &{OP(SUBSCRIPT)} &{PREC_CHK()} -
+          (s:expression | s:_null_) ELLIPSIS - (e:expression | e:_null_)
+          RIGHT-SQ-PAREN - _block_replace_
+                                       { l = slice_operator(l, s, e); }
+        | LEFT-CURLY &{OP(MAP_PROJECTION)} &{PREC_CHK()} -
+          ( m:map_projection_element   { sequence_add(m); }
+            ( COMMA - m:map_projection_element
+                                       { sequence_add(m); }
+            )*
+          )? RIGHT-CURLY - _block_replace_
+                                       { l = map_projection(l); }
+        | ( &{OP(LABEL)} &{PREC_CHK()} n:label
+                                       { sequence_add(n); }
+          )+ _block_replace_           { l = labels_operator(l); }
+        )+ _block_merge_               { $$ = l; }
+    | _atom
+_atom =
+      _block_start_ PREFIX-OP - r:_prec_expression _block_end_
+                                       { $$ = unary_operator(op_pop(), r); }
+    | atom
+
+map-projection-element =
+      < p:prop-name COLON - e:expression >
+                                       { $$ = map_projection_literal(p, e); }
+    | < DOT - p:prop-name >            { $$ = map_projection_property(p); }
+    | < i:identifier >                 { $$ = map_projection_identifier(i); }
+    | < DOT-STAR - >                   { $$ = map_projection_all_properties(); }
+
+atom =
+      true-literal
+    | false-literal
+    | null-literal
+    | string-literal
+    | float-literal
+    | integer-literal
+    | list-comprehension
+    | pattern-comprehension
+    | collection-literal
+    | parameter
+    | map-literal
+    | case-expression
+    | filter-expression
+    | extract-expression
+    | reduce-expression
+    | all-predicate
+    | any-predicate
+    | none-predicate
+    | single-predicate
+    | pattern-expression
+    | LEFT-PAREN - e:expression RIGHT-PAREN -
+                                       { $$ = e; }
+    | function-application
+    | identifier
+
+property-expression = _block_start_ p:atom
+    ( DOT - n:prop-name _block_replace_
+                                       { p = property_operator(p, n); }
+    )+ _block_merge_                   { $$ = p; }
+
+property-key-name = _block_start_ p:identifier
+    ( DOT - n:prop-name _block_replace_
+                                       { p = property_operator(p, n); }
+    ) _block_merge_                    { $$ = p; }
+
+# operator rules set yy->op during evaluation, for use in PREC_CHK() and
+# in PREC_PUSH(), and also push the operator to a stack after matching,
+# for use in AST construction.
+PREFIX-OP =
+    ( NOT &{OP(NOT)}                   { op_push(NOT); }
+    | PLUS &{OP(UNARY_PLUS)}           { op_push(UNARY_PLUS); }
+    | MINUS &{OP(UNARY_MINUS)}         { op_push(UNARY_MINUS); }
+    ) -
+
+POSTFIX-OP =
+    ( IS-NULL &{OP(IS_NULL)}           { op_push(IS_NULL); }
+    | IS-NOT-NULL &{OP(IS_NOT_NULL)}   { op_push(IS_NOT_NULL); }
+    ) -
+
+INFIX-OP =
+    ( AND &{OP(AND)}                   { op_push(AND); }
+    | OR &{OP(OR)}                     { op_push(OR); }
+    | XOR &{OP(XOR)}                   { op_push(XOR); }
+    | NOT &{OP(NOT)}                   { op_push(NOT); }
+    | REGEX &{OP(REGEX)}               { op_push(REGEX); }
+    | EQUAL &{OP(EQUAL)}               { op_push(EQUAL); }
+    | NEQUAL &{OP(NEQUAL)}             { op_push(NEQUAL); }
+    | PLUS &{OP(PLUS)}                 { op_push(PLUS); }
+    | MINUS &{OP(MINUS)}               { op_push(MINUS); }
+    | MULT &{OP(MULT)}                 { op_push(MULT); }
+    | DIV &{OP(DIV)}                   { op_push(DIV); }
+    | MOD &{OP(MOD)}                   { op_push(MOD); }
+    | POW &{OP(POW)}                   { op_push(POW); }
+    | IN &{OP(IN)}                     { op_push(IN); }
+    | CONTAINS &{OP(CONTAINS)}         { op_push(CONTAINS); }
+    | STARTS-WITH &{OP(STARTS_WITH)}   { op_push(STARTS_WITH); }
+    | ENDS-WITH &{OP(ENDS_WITH)}       { op_push(ENDS_WITH); }
+    ) -
+
+COMPARISON-OP =
+    ( LTE &{OP(LTE)}                   { op_push(LTE); }
+    | GTE &{OP(GTE)}                   { op_push(GTE); }
+    | LT &{OP(LT)}                     { op_push(LT); }
+    | GT &{OP(GT)}                     { op_push(GT); }
+    ) -
+
+list-comprehension = < LEFT-SQ-PAREN -
+    i:identifier IN - e:expression
+    (WHERE p:expression | p:_null_)
+    (PIPE - v:expression | v:_null_)
+    RIGHT-SQ-PAREN >                   { $$ = list_comprehension(i, e, p, v); }
+    -
+
+pattern-comprehension = < LEFT-SQ-PAREN -
+    (i:identifier EQUAL - | i:_null_)
+    r:pattern-expression-path -
+    (WHERE p:expression | p:_null_)
+    PIPE - v:expression
+    RIGHT-SQ-PAREN >                   { $$ = pattern_comprehension(i, r, p, v); }
+    -
+
+case-expression =
+    < CASE (e:_null_ case-alternative+ | e:expression case-alternative+)
+      (d:case-default | d:_null_) END >
+                                       { $$ = case_expression(e, d); }
+    -
+case-alternative =
+    WHEN e:expression                  { sequence_add(e); }
+    THEN e:expression                  { sequence_add(e); }
+case-default = ELSE e:expression       { $$ = e; }
+
+filter-expression =
+    < FILTER LEFT-PAREN -
+      i:identifier IN - e:expression (WHERE p:expression | p:_null_)
+      RIGHT-PAREN >                    { $$ = filter(i, e, p); }
+    -
+extract-expression =
+    < EXTRACT LEFT-PAREN -
+      i:identifier IN - e:expression (PIPE - v:expression | v:_null_)
+      RIGHT-PAREN >                    { $$ = extract(i, e, v); }
+    -
+reduce-expression =
+    < REDUCE LEFT-PAREN -
+      a:identifier EQUAL - n:expression COMMA - i:identifier IN - e:expression
+      PIPE - v:expression
+      RIGHT-PAREN >                    { $$ = reduce(a, n, i, e, v); }
+    -
+all-predicate =
+    < ALL LEFT-PAREN -
+      i:identifier IN - e:expression (WHERE p:expression | p:_null_)
+      RIGHT-PAREN >                    { $$ = all_predicate(i, e, p); }
+    -
+any-predicate =
+    < ANY LEFT-PAREN -
+      i:identifier IN - e:expression (WHERE p:expression | p:_null_)
+      RIGHT-PAREN >                    { $$ = any_predicate(i, e, p); }
+    -
+single-predicate =
+    < SINGLE LEFT-PAREN -
+      i:identifier IN - e:expression (WHERE p:expression | p:_null_)
+      RIGHT-PAREN >                    { $$ = single_predicate(i, e, p); }
+    -
+none-predicate =
+    < NONE LEFT-PAREN -
+      i:identifier IN - e:expression (WHERE p:expression | p:_null_)
+      RIGHT-PAREN >                    { $$ = none_predicate(i, e, p); }
+    -
+
+function-application =
+    ( < n:function-name LEFT-PAREN - DISTINCT STAR - RIGHT-PAREN >
+                                       { $$ = apply_all_operator(n, true); }
+    | < n:function-name LEFT-PAREN - STAR - RIGHT-PAREN >
+                                       { $$ = apply_all_operator(n, false); }
+    | < n:function-name LEFT-PAREN - DISTINCT
+        ( e:expression                 { sequence_add(e); }
+          ( COMMA - e:expression       { sequence_add(e); }
+          )*
+        )? RIGHT-PAREN >               { $$ = apply_operator(n, true); }
+    | < n:function-name LEFT-PAREN -
+        ( e:expression                 { sequence_add(e); }
+          ( COMMA - e:expression       { sequence_add(e); }
+          )*
+        )? RIGHT-PAREN >               { $$ = apply_operator(n, false); }
+    ) -
+
+collection-literal = < LEFT-SQ-PAREN -
+    ( e:expression                     { sequence_add(e); }
+      ( COMMA - e:expression           { sequence_add(e); }
+      )*
+    )? RIGHT-SQ-PAREN >                { $$ = collection_literal(); }
+    -
+
+map-literal = < LEFT-CURLY -
+    ( n:prop-name                      { sequence_add(n); }
+      COLON - v:expression             { sequence_add(v); }
+      ( COMMA - n:prop-name            { sequence_add(n); }
+        COLON - v:expression           { sequence_add(v); }
+      )*
+    )? RIGHT-CURLY >                   { $$ = map_literal(); }
+    -
+
+identifier =                           { strbuf_reset(); }
+    ( < symbolic-name >                { $$ = strbuf_identifier(); }
+    - ) ~{ERR("an identifier")}
+
+string-literal =                       { strbuf_reset(); }
+    ( < quoted >                       { $$ = strbuf_string(); }
+    - ) ~{ERR("\"...string...\"")}
+
+float-literal =                        { strbuf_reset(); }
+    ( < float-string >                 { $$ = strbuf_float(); }
+    - ) ~{ERR("a float")}
+
+integer-literal =                      { strbuf_reset(); }
+    ( < integer-string >               { $$ = strbuf_integer(); }
+    - ) ~{ERR("an integer")}
+
+true-literal =
+    < TRUE >                           { $$ = true_literal(); }
+    -
+false-literal =
+    < FALSE >                          { $$ = false_literal(); }
+    -
+null-literal =
+    < NULL >                           { $$ = null_literal(); }
+    -
+
+parameter = _block_start_              { strbuf_reset(); }
+    ( ( '$' - parameter-name ) ~{ERR("a parameter")}
+    ) _block_merge_                    { $$ = strbuf_parameter(); }
+    -
+
+label = _block_start_                  { strbuf_reset(); }
+    ( ':' -  symbolic-name ) ~{ERR("a label")}
+    _block_merge_                      { $$ = strbuf_label(); }
+    -
+
+rel-type = _block_start_               { strbuf_reset(); }
+    ( ':' - symbolic-name ) ~{ERR("a relationship type")}
+    _block_merge_                      { $$ = strbuf_reltype(); }
+    -
+
+rel-type-name = <                      { strbuf_reset(); }
+    symbolic-name ~{ERR("a relationship type name")}
+    >                                  { $$ = strbuf_reltype(); }
+    -
+
+prop-name = <                          { strbuf_reset(); }
+    symbolic-name ~{ERR("a property name")}
+    >                                  { $$ = strbuf_prop_name(); }
+    -
+
+function-name = <                      { strbuf_reset(); }
+    ( (symbolic-name - DOT -           { strbuf_append(".", 1); }
+      )* symbolic-name
+    ) ~{ERR("a function name")}
+    >                                  { $$ = strbuf_function_name(); }
+    -
+
+index-name = <                         { strbuf_reset(); }
+    symbolic-name ~{ERR("an index name")}
+    >                                  { $$ = strbuf_index_name(); }
+    -
+
+proc-name = <                          { strbuf_reset(); }
+    ( (symbolic-name - DOT -           { strbuf_append(".", 1); }
+      )* symbolic-name
+    ) ~{ERR("a procedure name")}
+    >                                  { $$ = strbuf_proc_name(); }
+    -
+
+
+#----------------------------------------------------
+# Pattern parsing
+#----------------------------------------------------
+
+pattern =
+    < p:pattern-part                   { sequence_add(p); }
+    ( - COMMA - p:pattern-part         { sequence_add(p); }
+    )* >                               { $$ = pattern(); }
+    -
+
+pattern-part =
+      < i:identifier EQUAL - p:anon-pattern-part >
+                                       { $$ = named_path(i, p); }
+    | p:anon-pattern-part              { $$ = p; }
+
+anon-pattern-part =
+      p:shortest-path-pattern          { $$ = p; }
+    | p:pattern-path                   { $$ = p; }
+
+shortest-path-pattern =
+      < SHORTESTPATH LEFT-PAREN - p:pattern-path - RIGHT-PAREN >
+                                       { $$ = shortest_path(true, p); }
+    | < ALLSHORTESTPATHS LEFT-PAREN - p:pattern-path - RIGHT-PAREN >
+                                       { $$ = shortest_path(false, p); }
+
+pattern-path =
+    < n:node-pattern                   { sequence_add(n); }
+    ( - r:relationship-pattern - n:node-pattern
+                                       { sequence_add(r); sequence_add(n); }
+    )* >                               { $$ = pattern_path(); }
+
+pattern-expression =
+      p:shortest-path-pattern -        { $$ = p; }
+    | p:pattern-expression-path -      { $$ = p; }
+
+pattern-expression-path =
+    < n:node-pattern                   { sequence_add(n); }
+    ( - r:relationship-pattern - n:node-pattern
+                                       { sequence_add(r); sequence_add(n); }
+    )+ >                               { $$ = pattern_path(); }
+
+node-pattern = < LEFT-PAREN -
+    (i:identifier | i:_null_)
+    ( n:label                          { sequence_add(n); }
+    )* (p:pattern-properties | p:_null_)
+    RIGHT-PAREN >                      { $$ = node_pattern(i, p); }
+
+relationship-pattern =
+      < ( LEFT-ARROW-HEAD - DASH -
+          ( DASH
+            ( - RIGHT-ARROW-HEAD >     { $$ = simple_rel_pattern(BIDIRECTIONAL); }
+            | _empty_ >                { $$ = simple_rel_pattern(INBOUND); }
+            )
+          | LEFT-SQ-PAREN - (i:identifier | i:_null_)
+            rel-types? (l:rel-varlength | l:_null_)
+            (p:pattern-properties | p:_null_) RIGHT-SQ-PAREN - DASH 
+            ( - RIGHT-ARROW-HEAD >     { $$ = rel_pattern(BIDIRECTIONAL, i, l, p); }
+            | _empty_ >                { $$ = rel_pattern(INBOUND, i, l, p); }
+            )
+          )
+        | DASH -
+          ( DASH
+            ( - RIGHT-ARROW-HEAD >     { $$ = simple_rel_pattern(OUTBOUND); }
+            | _empty_ >                { $$ = simple_rel_pattern(BIDIRECTIONAL); }
+            )
+          | LEFT-SQ-PAREN - (i:identifier | i:_null_)
+            rel-types? (l:rel-varlength | l:_null_)
+            (p:pattern-properties | p:_null_) RIGHT-SQ-PAREN - DASH 
+            ( - RIGHT-ARROW-HEAD >     { $$ = rel_pattern(OUTBOUND, i, l, p); }
+            | _empty_ >                { $$ = rel_pattern(BIDIRECTIONAL, i, l, p); }
+            )
+          )
+        )
+
+rel-types =
+    n:rel-type                         { sequence_add(n); }
+    ( PIPE - (n:rel-type | n:rel-type-name)
+                                       { sequence_add(n); }
+    )*
+
+rel-varlength =
+    ( < STAR - (s:integer-literal | s:_null_) ELLIPSIS -
+      (e:integer-literal | e:_null_) >
+                                       { $$ = range(s, e); }
+    | STAR - < (s:integer-literal | s:_null_) >
+                                       { $$ = range(s, s); }
+    | < STAR - >                       { $$ = range(NULL, NULL); }
+    )
+
+pattern-properties = map-literal | parameter
+
+
+#----------------------------------------------------
+# Client :command parsing
+#----------------------------------------------------
+
+client-command =
+    < COLON -- n:client-command-name
+      ( '\\' -- line-end --
+      | a:client-command-arg           { sequence_add(a); }
+      )*
+    >                                  { $$ = command(n); }
+    (SEMICOLON | line-end)
+
+client-command-name = n:client-command-arg ~{ERR("a command name")}
+                                       { $$ = n; }
+client-command-arg = s:client-arg-string --
+                                       { $$ = s; }
+
+client-arg-string =                    { strbuf_reset(); }
+    < (unquoted | quoted)+ >           { $$ = strbuf_string(); }
+
+
+#----------------------------------------------------
+# Strings
+#
+# Note: ensure strbuf_reset() is evaluated before these rules
+#----------------------------------------------------
+
+unquoted =
+    ( escaped-char
+    | '\\;'                            { strbuf_append(";", 1); }
+    | < (!(['"] | WS | '//' | '/*' | '\\' | SEMICOLON | EOF) .)+ >
+                                       { strbuf_append_block(); }
+    )+
+
+quoted = single-quoted | double-quoted
+single-quoted = "'"
+    ( escaped-char
+    | < EOL >                          { strbuf_append_block(); }
+    | < (!("'" | escaped-char | EOL) .)+ >
+                                       { strbuf_append_block(); }
+    )* "'" ~{ERR("'")}
+double-quoted = '"'
+    ( escaped-char
+    | < EOL >                          { strbuf_append_block(); }
+    | < (!('"' | escaped-char | EOL) .)+ >
+                                       { strbuf_append_block(); }
+    )* '"' ~{ERR("\"")}
+
+escaped-char =
+      "\\a"                            { strbuf_append("\a", 1); }
+    | "\\b"                            { strbuf_append("\b", 1); }
+    | "\\f"                            { strbuf_append("\f", 1); }
+    | "\\n"                            { strbuf_append("\n", 1); }
+    | "\\r"                            { strbuf_append("\r", 1); }
+    | "\\t"                            { strbuf_append("\t", 1); }
+    | "\\v"                            { strbuf_append("\v", 1); }
+    | "\\\\"                           { strbuf_append("\\", 1); }
+    | "\\'"                            { strbuf_append("'", 1); }
+    | "\\\""                           { strbuf_append("\"", 1); }
+    | "\\?"                            { strbuf_append("?", 1); }
+
+symbolic-name =
+      unescaped-symbolic-name
+    | escaped-symbolic-name
+unescaped-symbolic-name = < sym-start sym-part* >
+                                       { strbuf_append_block(); }
+escaped-symbolic-name = '`' < (!'`' .)* > '`' ~{ERR("`")}
+                                       { strbuf_append_block(); }
+
+parameter-name =
+      symbolic-name                    { strbuf_append_block(); }
+
+# NOTE: accepts char sequences that are not valid floats, allowing
+# the validity checking to be done during semantic checking.
+float-string =
+      < [0-9]+ '.'? [0-9]* [eE] [-+]? [0-9] sym-part* >
+                                       { strbuf_append_block(); }
+    | < [0-9]* '.' [0-9] sym-part* >   { strbuf_append_block(); }
+
+# NOTE: accepts char sequences that are not valid integers, allowing
+# the validity checking to be done during semantic checking. Will accept
+# decimal, octal and hex ('0x' [0-9]+). Will match exponent form floats,
+# so when both float and integer are accepted, the float rule should be
+# tried first.
+integer-string = < [0-9] sym-part* >   { strbuf_append_block(); }
+
+sym-start = [a-zA-Z_]
+sym-part = [a-zA-Z0-9_$]
+
+
+#----------------------------------------------------
+# Whitespace and comments
+#----------------------------------------------------
+
+- = (WS | comment)*
+-- = (HWS | block-comment)*
+line-end = (line-comment | EOL | EOF)
+
+comment = line-comment | block-comment
+line-comment = '//' < (!EOL .)* >      { line_comment(); }
+               (EOL | EOF)
+block-comment = '/*' < (EOL | !'*/' .)* >
+                                       { block_comment(); }
+                '*/' ~{ERR("*/")}
+
+WS = HWS | EOL
+HWS = [ \t]
+EOL = ( '\n' | '\r\n' ) _line_start_
+EOF = !.                               { yy->eof = true; }
+
+#----------------------------------------------------
+# Keywords and Operators
+#----------------------------------------------------
+
+# for statement options, match one character before applying an ERR marker
+CYPHER = [Cc]([Yy][Pp][Hh][Ee][Rr] WB) ~{ERR("CYPHER")}
+PROFILE = [Pp]([Rr][Oo][Ff][Ii][Ll][Ee] WB) ~{ERR("PROFILE")}
+EXPLAIN = [Ee]([Xx][Pp][Ll][Aa][Ii][Nn] WB) ~{ERR("EXPLAIN")}
+
+OR = ([Oo][Rr] WB) ~{ERR("OR")}
+XOR = ([Xx][Oo][Rr] WB) ~{ERR("XOR")}
+AND = ([Aa][Nn][Dd] WB) ~{ERR("AND")}
+NOT = ([Nn][Oo][Tt] WB) ~{ERR("NOT")}
+EQUAL = '=' ~{ERR("'='")}
+NEQUAL = '<>' ~{ERR("'<>'")}
+PLUSEQUAL = '+=' ~{ERR("'+='")}
+LT = '<' ~{ERR("'<'")}
+GT = '>' ~{ERR("'>'")}
+LTE = '<=' ~{ERR("'<='")}
+GTE = '>=' ~{ERR("'>='")}
+PLUS = '+' ~{ERR("'+'")}
+MINUS = '-' ~{ERR("'-'")}
+MULT = '*' ~{ERR("'*'")}
+DIV = '/' ~{ERR("'/'")}
+MOD = '%' ~{ERR("'%'")}
+POW = '^' ~{ERR("'^'")}
+IN = ([Ii][Nn] WB) ~{ERR("IN")}
+REGEX = '=~' ~{ERR("'=~'")}
+STARTS-WITH = ([Ss][Tt][Aa][Rr][Tt][Ss] WB - [Ww][Ii][Tt][Hh] WB) ~{ERR("STARTS WITH")}
+ENDS-WITH = ([Ee][Nn][Dd][Ss] WB - [Ww][Ii][Tt][Hh] WB) ~{ERR("ENDS WITH")}
+CONTAINS = ([Cc][Oo][Nn][Tt][Aa][Ii][Nn][Ss] WB) ~{ERR("CONTAINS")}
+IS-NULL = ([Ii][Ss] WB - [Nn][Uu][Ll][Ll] WB) ~{ERR("IS NULL")}
+IS-NOT-NULL = ([Ii][Ss] WB - [Nn][Oo][Tt] WB - [Nn][Uu][Ll][Ll] WB) ~{ERR("IS NOT NULL")}
+DOT = '.' ~{ERR("'.'")}
+DOT-STAR = ('.' - '*') ~{ERR("'.*'")}
+
+COLON = ':' ~{ERR("':'")}
+SEMICOLON = ';' ~{ERR("';'")}
+COMMA = ',' ~{ERR("','")}
+STAR = '*' ~{ERR("'*'")}
+PIPE = '|' ~{ERR("'|'")}
+DASH = '-' ~{ERR("'-'")}
+LEFT-PAREN = '(' ~{ERR("'('")}
+RIGHT-PAREN = ')' ~{ERR("')'")}
+LEFT-SQ-PAREN = '[' ~{ERR("'['")}
+RIGHT-SQ-PAREN = ']' ~{ERR("']'")}
+LEFT-CURLY = '{' ~{ERR("'\173'")}
+RIGHT-CURLY = '}' ~{ERR("'\175'")}
+ELLIPSIS = '..' ~{ERR("'..'")}
+LEFT-ARROW-HEAD = '<' ~{ERR("'<'")}
+RIGHT-ARROW-HEAD = '>' ~{ERR("'>'")}
+
+# for schema commands, match one character before applying an ERR marker
+CREATE-CONSTRAINT-ON = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
+    [Cc][Oo][Nn][Ss][Tt][Rr][Aa][Ii][Nn][Tt] WB - [Oo][Nn] WB -)
+    ~{ERR("CREATE CONSTRAINT ON")}
+CREATE-INDEX-ON = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
+    [Ii][Nn][Dd][Ee][Xx] WB - [Oo][Nn] WB -)
+    ~{ERR("CREATE INDEX ON")}
+CREATE-FULLTEXT-INDEX-FOR = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
+    [Ff][Uu][Ll][Ll][Tt][Ee][Xx][Tt] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("CREATE INDEX FOR")}
+CREATE-VECTOR-INDEX-FOR = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
+    [Vv][Ee][Cc][Tt][Oo][Rr] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("CREATE INDEX FOR")}
+CREATE-INDEX-FOR = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
+    [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("CREATE INDEX FOR")}
+ON = [Oo][Nn] WB ~{ERR("ON")}
+ON-EACH = [Oo][Nn] WB - [Ee][Aa][Cc][Hh] ~{ERR("ON")}
+OPTIONS = [Oo][Pp][Tt][Ii][Oo][Nn][Ss] WB ~{ERR("ON")}
+DROP-CONSTRAINT-ON = [Dd]([Rr][Oo][Pp] WB -
+    [Cc][Oo][Nn][Ss][Tt][Rr][Aa][Ii][Nn][Tt] WB - [Oo][Nn] WB -)
+    ~{ERR("DROP CONSTRAINT ON")}
+DROP-INDEX-ON = [Dd]([Rr][Oo][Pp] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Oo][Nn] WB -)
+    ~{ERR("DROP INDEX ON")}
+DROP-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("DROP INDEX FOR")}
+DROP-FULLTEXT-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Ff][Uu][Ll][Ll][Tt][Ee][Xx][Tt] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("DROP INDEX FOR")}
+DROP-VECTOR-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Vv][Ee][Cc][Tt][Oo][Rr] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
+    ~{ERR("DROP INDEX FOR")}
+
+ASSERT = ([Aa][Ss][Ss][Ee][Rr][Tt] WB -) ~{ERR("ASSERT")}
+IS-UNIQUE = ([Ii][Ss] WB - [Uu][Nn][Ii][Qq][Uu][Ee] WB -) ~{ERR("IS UNIQUE")}
+DROP = [Dd][Rr][Oo][Pp] WB -
+
+# for clauses, match one character before applying an ERR marker
+USING-PERIODIC-COMMIT = [Uu]([Ss][Ii][Nn][Gg] WB -
+    [Pp][Ee][Rr][Ii][Oo][Dd][Ii][Cc] WB -
+    [Cc][Oo][Mm][Mm][Ii][Tt] WB -) ~{ERR("USING PERIODIC COMMIT")}
+LOADCSV = [Ll]([Oo][Aa][Dd] WB - [Cc][Ss][Vv] WB -) ~{ERR("LOAD CSV")}
+START = [Ss]([Tt][Aa][Rr][Tt] WB -) ~{ERR("START")}
+MATCH = [Mm]([Aa][Tt][Cc][Hh] WB -) ~{ERR("MATCH")}
+OPTIONAL-MATCH = [Oo]([Pp][Tt][Ii][Oo][Nn][Aa][Ll] WB - MATCH)
+    ~{ERR("OPTIONAL MATCH")}
+UNWIND = [Uu]([Nn][Ww][Ii][Nn][Dd] WB -) ~{ERR("UNWIND")}
+MERGE = [Mm]([Ee][Rr][Gg][Ee] WB -) ~{ERR("MERGE")}
+CREATE = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -) ~{ERR("CREATE")}
+CREATE-UNIQUE = [Cc]([Rr][Ee][Aa][Tt][Ee] WB - [Uu][Nn][Ii][Qq][Uu][Ee] WB -)
+    ~{ERR("CREATE UNIQUE")}
+SET = [Ss]([Ee][Tt] WB -) ~{ERR("SET")}
+DELETE = [Dd]([Ee][Ll][Ee][Tt][Ee] WB -) ~{ERR("DELETE")}
+DETACH-DELETE = [Dd]([Ee][Tt][Aa][Cc][Hh] WB - [Dd][Ee][Ll][Ee][Tt][Ee] WB -)
+    ~{ERR("DETACH DELETE")}
+REMOVE = [Rr]([Ee][Mm][Oo][Vv][Ee] WB -) ~{ERR("REMOVE")}
+FOREACH = [Ff]([Oo][Rr][Ee][Aa][Cc][Hh] WB -) ~{ERR("FOREACH")}
+WITH = [Ww]([Ii][Tt][Hh] WB -) ~{ERR("WITH")}
+CALL = [Cc]([Aa][Ll][Ll] WB -) ~{ERR("CALL")}
+RETURN = [Rr]([Ee][Tt][Uu][Rr][Nn] WB -) ~{ERR("RETURN")}
+UNION = [Uu]([Nn][Ii][Oo][Nn] WB -) ~{ERR("UNION")}
+
+node = ([Nn][Oo][Dd][Ee] WB -) ~{ERR("node")}
+relationship = ([Rr][Ee][Ll][Aa][Tt][Ii][Oo][Nn][Ss][Hh][Ii][Pp] WB -)
+    ~{ERR("relatioinship")}
+rel = ([Rr][Ee][Ll] WB -) ~{ERR("rel")}
+
+USING-INDEX = ([Uu][Ss][Ii][Nn][Gg] WB - [Ii][Nn][Dd][Ee][Xx] WB -)
+    ~{ERR("USING INDEX")}
+USING-JOIN-ON = ([Uu][Ss][Ii][Nn][Gg] WB - [Jj][Oo][Ii][Nn] WB - [Oo][Nn] WB -)
+    ~{ERR("USING JOIN ON")}
+USING-SCAN = ([Uu][Ss][Ii][Nn][Gg] WB - [Ss][Cc][Aa][Nn] WB -)
+    ~{ERR("USING SCAN")}
+
+ON-MATCH = ([Oo][Nn] WB - [Mm][Aa][Tt][Cc][Hh] WB -) ~{ERR("ON MATCH")}
+ON-CREATE = ([Oo][Nn] WB - [Cc][Rr][Ee][Aa][Tt][Ee] WB -) ~{ERR("ON CREATE")}
+
+WHERE = ([Ww][Hh][Ee][Rr][Ee] WB -) ~{ERR("WHERE")}
+
+AS = ([Aa][Ss] WB -) ~{ERR("AS")}
+DISTINCT = ([Dd][Ii][Ss][Tt][Ii][Nn][Cc][Tt] WB -) ~{ERR("DISTINCT")}
+
+YIELD = ([Yy][Ii][Ee][Ll][Dd] WB -) ~{ERR("YIELD")}
+
+ORDER-BY = ([Oo][Rr][Dd][Ee][Rr] WB - [Bb][Yy] WB -) ~{ERR("ORDER BY")}
+ASCENDING = ([Aa][Ss][Cc][Ee][Nn][Dd][Ii][Nn][Gg] WB -) ~{ERR("ASCENDING")}
+ASC = ([Aa][Ss][Cc] WB -) ~{ERR("ASC")}
+DESCENDING = ([Dd][Ee][Ss][Cc][Ee][Nn][Dd][Ii][Nn][Gg] WB -) ~{ERR("DESCENDING")}
+DESC = ([Dd][Ee][Ss][Cc] WB -) ~{ERR("DESC")}
+SKIP = ([Ss][Kk][Ii][Pp] WB -) ~{ERR("SKIP")}
+LIMIT = ([Ll][Ii][Mm][Ii][Tt] WB -) ~{ERR("LIMIT")}
+
+CASE = ([Cc][Aa][Ss][Ee] WB -) ~{ERR("CASE")}
+WHEN = ([Ww][Hh][Ee][Nn] WB -) ~{ERR("WHEN")}
+THEN = ([Tt][Hh][Ee][Nn] WB -) ~{ERR("THEN")}
+ELSE = ([Ee][Ll][Ss][Ee] WB -) ~{ERR("ELSE")}
+END = ([Ee][Nn][Dd] WB) ~{ERR("END")}
+
+FILTER = ([Ff][Ii][Ll][Tt][Ee][Rr] WB -) ~{ERR("FILTER")}
+EXTRACT = ([Ee][Xx][Tt][Rr][Aa][Cc][Tt] WB -) ~{ERR("EXTRACT")}
+REDUCE = ([Rr][Ee][Dd][Uu][Cc][Ee] WB -) ~{ERR("REDUCE")}
+ALL = ([Aa][Ll][Ll] WB -) ~{ERR("ALL")}
+ANY = ([Aa][Nn][Yy] WB -) ~{ERR("ANY")}
+SINGLE = ([Ss][Ii][Nn][Gg][Ll][Ee] WB -) ~{ERR("SINGLE")}
+NONE = ([Nn][Oo][Nn][Ee] WB -) ~{ERR("NONE")}
+
+WITH-HEADERS = (WITH [Hh][Ee][Aa][Dd][Ee][Rr][Ss] WB -)
+    ~{ERR("WITH HEADERS")}
+FROM = ([Ff][Rr][Oo][Mm] WB -) ~{ERR("FROM")}
+FIELDTERMINATOR = ([Ff][Ii][Ee][Ll][Dd][Tt][Ee][Rr][Mm][Ii][Nn][Aa][Tt][Oo][Rr] WB -)
+    ~{ERR("FIELDTERMINATOR")}
+
+TRUE = ([Tt][Rr][Uu][Ee] WB) ~{ERR("TRUE")}
+FALSE = ([Ff][Aa][Ll][Ss][Ee] WB) ~{ERR("FALSE")}
+NULL = ([Nn][Uu][Ll][Ll] WB) ~{ERR("NULL")}
+
+SHORTESTPATH = ([Ss][Hh][Oo][Rr][Tt][Ee][Ss][Tt][Pp][Aa][Tt][Hh] WB -)
+    ~{ERR("shortestPath")}
+ALLSHORTESTPATHS = ([Aa][Ll][Ll][Ss][Hh][Oo][Rr][Tt][Ee][Ss][Tt][Pp][Aa][Tt][Hh][Ss] WB -)
+    ~{ERR("allShortestPaths")}
+
+WB = &(EOF | !sym-part .)
+
+
+#----------------------------------------------------
+# Error recovery
+#----------------------------------------------------
+
+# remove one char of input, then as much as necessary to reach a sync point
+skip-to-directive = < . (!(
+      EOF
+    | SEMICOLON
+    | (WS | comment) resync-directive
+    ) .)* >                            { $$ = skip(); }
+resync-directive =
+      resync-statement
+    | COLON
+
+skip-to-statement = < . (!(
+      EOF
+    | SEMICOLON
+    | (WS | comment) resync-statement
+    ) .)* >                            { $$ = skip(); }
+resync-statement =
+      resync-clause
+    | CYPHER
+    | PROFILE
+    | EXPLAIN
+
+skip-to-params = < . (!(
+      EOF
+    | SEMICOLON
+    | (WS | comment) resync-params
+    ) .)* >                            { $$ = skip(); }
+
+resync-params = CYPHER
+
+skip-to-clause = < . (!(
+      EOF
+    | SEMICOLON
+    | (WS | comment) resync-clause
+    ) .)* >                            { $$ = skip(); }
+resync-clause =
+      LOADCSV
+    | START
+    | MATCH
+    | UNWIND
+    | MERGE
+    | CREATE
+    | SET
+    | DELETE
+    | REMOVE
+    | FOREACH
+    | WITH
+    | CALL
+    | RETURN
+    | DROP
+
+
+#----------------------------------------------------
+# Processing directives
+#----------------------------------------------------
+
+# prefer to use `<` over _block_start_
+_block_start_ =
+    &{ yyDo(yy, block_start_action, yy->__pos, 0), 1 }
+# prefer to use `>` over _block_end_
+_block_end_ =
+    &{ yyDo(yy, block_end_action, yy->__pos, 0), 1 }
+_block_replace_ =
+    &{ yyDo(yy, block_replace_action, yy->__pos, 0), 1 }
+_block_merge_ =
+    &{ yyDo(yy, block_merge_action, yy->__pos, 0), 1 }
+
+_empty_ = &{1}
+_none_ = &{0}
+_null_ = _empty_                       { $$ = NULL; }
+_cut_ = _empty_ # used only as a marker
+_line_start_ = &{ (line_start(yy), 1) }
+_error_ = &{ (record_error(yy), 1) }
