@@ -11,6 +11,9 @@
 #include "../util/uuid.h"
 #include "../commands/commands.h"
 
+RedisModuleString *COMMAND;
+RedisModuleString *BOLT;
+
 // handle the HELLO message
 static void BoltHelloCommand
 (
@@ -52,6 +55,64 @@ static void BoltHelloCommand
 	bolt_client_finish_write(client);
 }
 
+static bool is_authenticated
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	ASSERT(client != NULL);
+
+	uint32_t auth_size = bolt_read_map_size(&client->msg_buf.read);
+
+	if(auth_size < 3) {
+		// if no password provided check we can call PING
+		RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "PING", "");
+		return RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+	}
+
+	uint32_t len;
+	buffer_index_t s = bolt_read_string(&client->msg_buf.read, &len);
+	char *key_ptr = buffer_index_read(&s, len);
+	// check if the first key is scheme
+	if(strncmp(key_ptr, "scheme", len) != 0) {
+		return false;
+	}
+	
+	// check if the scheme is basic
+	s = bolt_read_string(&client->msg_buf.read, &len);
+	char *scheme_ptr = buffer_index_read(&s, len);
+	if(strncmp(scheme_ptr, "basic", len) != 0) {
+		return false;
+	}
+
+	// check if the second key is principal
+	s = bolt_read_string(&client->msg_buf.read, &len);
+	char *principal_ptr = buffer_index_read(&s, len);
+	if(strncmp(principal_ptr, "principal", len) != 0) {
+		return false;
+	}
+	
+	// check if the principal is falkordb
+	uint32_t principal_len;
+	s = bolt_read_string(&client->msg_buf.read, &principal_len);
+	principal_ptr = buffer_index_read(&s, principal_len);
+	if(strncmp(principal_ptr, "falkordb", principal_len) != 0) {
+		return false;
+	}
+	
+	// check if the third key is credentials
+	s = bolt_read_string(&client->msg_buf.read, &len);
+	char *credentials_ptr = buffer_index_read(&s, len);
+	if(strncmp(credentials_ptr, "credentials", len) != 0) {
+		return false;
+	}
+	
+	// check if the credentials are valid
+	s = bolt_read_string(&client->msg_buf.read, &len);
+	credentials_ptr = buffer_index_read(&s, len);
+	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials_ptr, len);
+	return RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+}
+
 // handle the LOGON message
 static void BoltLogonCommand
 (
@@ -72,10 +133,19 @@ static void BoltLogonCommand
 	ASSERT(client != NULL);
 	ASSERT(client->state == BS_AUTHENTICATION);
 
-	bolt_client_reply_for(client, BST_LOGON, BST_SUCCESS, 1);
-	bolt_reply_map(client, 0);
-	bolt_client_end_message(client);
-	bolt_client_finish_write(client);
+	if(is_authenticated(client)) {
+		bolt_client_reply_for(client, BST_LOGON, BST_SUCCESS, 1);
+		bolt_reply_map(client, 0);
+		bolt_client_end_message(client);
+		bolt_client_finish_write(client);
+	} else {
+		bolt_client_reply_for(client, BST_LOGON, BST_FAILURE, 1);
+		bolt_reply_map(client, 1);
+		bolt_reply_string(client, "code", 4);
+		bolt_reply_string(client, "FalkorDB.ClientError.Security.Unauthorized", 42);
+		bolt_client_end_message(client);
+		bolt_client_finish_write(client);
+	}
 }
 
 // read the graph name from the message buffer
@@ -227,9 +297,6 @@ RedisModuleString *get_query
 
 	return RedisModule_CreateString(ctx, query_ptr, query_len);
 }
-
-RedisModuleString *COMMAND;
-RedisModuleString *BOLT;
 
 // handle the RUN message
 void BoltRunCommand
