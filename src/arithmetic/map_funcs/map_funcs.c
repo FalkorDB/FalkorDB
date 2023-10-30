@@ -67,7 +67,7 @@ SIValue AR_PROPERTIES(SIValue *argv, int argc, void *private_data) {
 		case T_EDGE:
 			return GraphEntity_Properties(argv[0].ptrval);
 		case T_MAP:
-			return argv[0];
+			return SI_CloneValue(argv[0]);  // clone the map
 		default:
 			ASSERT(false);
 	}
