@@ -20,21 +20,7 @@ static void _ResultSet_ReplyWithPreamble
 (
 	ResultSet *set
 ) {
-	if(set->format == FORMATTER_BOLT) {
-		set->formatter->EmitHeader(set->ctx, set->bolt_client, set->columns,
-				set->columns_record_map);
-		return;
-	}
-	if(set->column_count > 0) {
-		// prepare a response containing a header, records, and statistics
-		RedisModule_ReplyWithArray(set->ctx, 3);
-		// emit the table header using the appropriate formatter
-		set->formatter->EmitHeader(set->ctx, set->bolt_client, set->columns,
-				set->columns_record_map);
-	} else {
-		// prepare a response containing only statistics
-		RedisModule_ReplyWithArray(set->ctx, 1);
-	}
+	set->formatter->EmitHeader(set);
 }
 
 static void _ResultSet_SetColumns
@@ -263,87 +249,11 @@ void ResultSet_Reply
 				row[j] = DataBlock_GetItem(set->cells, i + j);
 			}
 
-			set->formatter->EmitRow(set->ctx, set->bolt_client, set->gc, row, set->column_count);
+			set->formatter->EmitRow(set, row);
 		}
 	}
 
-	if(set->format == FORMATTER_BOLT) {
-		bolt_client_reply_for(set->bolt_client, BST_PULL, BST_SUCCESS, 1);
-		int stats = 0;
-		if(set->stats.index_creation)            stats++;
-		if(set->stats.index_deletion)            stats++;
-		if(set->stats.constraint_creation)       stats++;
-		if(set->stats.constraint_deletion)       stats++;
-		if(set->stats.labels_added          > 0) stats++;
-		if(set->stats.nodes_created         > 0) stats++;
-		if(set->stats.nodes_deleted         > 0) stats++;
-		if(set->stats.labels_removed        > 0) stats++;
-		if(set->stats.properties_set        > 0) stats++;
-		if(set->stats.properties_removed    > 0) stats++;
-		if(set->stats.relationships_deleted > 0) stats++;
-		if(set->stats.relationships_created > 0) stats++;
-		if(stats > 0) {
-			bolt_reply_map(set->bolt_client, 1);
-			bolt_reply_string(set->bolt_client, "stats", 5);
-			bolt_reply_map(set->bolt_client, stats);
-			if(set->stats.index_creation) {
-				bolt_reply_string(set->bolt_client, "indexes-added", 13);
-				bolt_reply_int(set->bolt_client, set->stats.indices_created);
-			}
-			if(set->stats.index_deletion) {
-				bolt_reply_string(set->bolt_client, "indexes-removed", 15);
-				bolt_reply_int(set->bolt_client, set->stats.indices_deleted);
-			}
-			if(set->stats.constraint_creation) {
-				bolt_reply_string(set->bolt_client, "constraints-added", 17);
-				bolt_reply_int(set->bolt_client, set->stats.constraints_created);
-			}
-			if(set->stats.constraint_deletion) {
-				bolt_reply_string(set->bolt_client, "constraints-removed", 19);
-				bolt_reply_int(set->bolt_client, set->stats.constraints_deleted);
-			}
-			if(set->stats.labels_added          > 0) {
-				bolt_reply_string(set->bolt_client, "labels-added", 12);
-				bolt_reply_int(set->bolt_client, set->stats.labels_added);
-			}
-			if(set->stats.nodes_created         > 0) {
-				bolt_reply_string(set->bolt_client, "nodes-created", 13);
-				bolt_reply_int(set->bolt_client, set->stats.nodes_created);
-			}
-			if(set->stats.nodes_deleted         > 0) {
-				bolt_reply_string(set->bolt_client, "nodes-deleted", 13);
-				bolt_reply_int(set->bolt_client, set->stats.nodes_deleted);
-			}
-			if(set->stats.labels_removed        > 0) {
-				bolt_reply_string(set->bolt_client, "labels-removed", 14);
-				bolt_reply_int(set->bolt_client, set->stats.labels_removed);
-			}
-			if(set->stats.properties_set        > 0) {
-				bolt_reply_string(set->bolt_client, "properties-set", 14);
-				bolt_reply_int(set->bolt_client, set->stats.properties_set);
-			}
-			if(set->stats.properties_removed    > 0) {
-				bolt_reply_string(set->bolt_client, "properties-removed", 18);
-				bolt_reply_int(set->bolt_client, set->stats.properties_removed);
-			}
-			if(set->stats.relationships_deleted > 0) {
-				bolt_reply_string(set->bolt_client, "relationships-deleted", 21);
-				bolt_reply_int(set->bolt_client, set->stats.relationships_deleted);
-			}
-			if(set->stats.relationships_created > 0) {
-				bolt_reply_string(set->bolt_client, "relationships-created", 21);
-				bolt_reply_int(set->bolt_client, set->stats.relationships_created);
-			}
-		} else {
-			bolt_reply_map(set->bolt_client, 0);
-		}
-
-		bolt_client_end_message(set->bolt_client);
-		bolt_client_finish_write(set->bolt_client);
-		return;
-	}
-
-	ResultSetStat_emit(set->ctx, &set->stats); // response with statistics
+	set->formatter->EmitStats(set);
 }
 
 void ResultSet_Clear(ResultSet *set) {

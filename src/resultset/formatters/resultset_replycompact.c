@@ -4,9 +4,11 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "resultset_formatters.h"
 #include "RG.h"
+#include "../resultset.h"
 #include "../../util/arr.h"
+#include "../../query_ctx.h"
+#include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
 
 // Forward declarations.
@@ -321,19 +323,17 @@ static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *
 
 void ResultSet_EmitCompactRow
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
-	GraphContext *gc,
-	SIValue **row,
-	uint numcols
+	ResultSet *set,
+	SIValue **row
 ) {
+	RedisModuleCtx *ctx = set->ctx;
 	// Prepare return array sized to the number of RETURN entities
-	RedisModule_ReplyWithArray(ctx, numcols);
+	RedisModule_ReplyWithArray(ctx, set->column_count);
 
-	for(uint i = 0; i < numcols; i++) {
+	for(uint i = 0; i < set->column_count; i++) {
 		SIValue cell = *row[i];
 		RedisModule_ReplyWithArray(ctx, 2); // Reply with array with space for type and value
-		_ResultSet_CompactReplyWithSIValue(ctx, gc, cell);
+		_ResultSet_CompactReplyWithSIValue(ctx, set->gc, cell);
 	}
 }
 
@@ -341,14 +341,19 @@ void ResultSet_EmitCompactRow
 // followed by the column alias.
 void ResultSet_ReplyWithCompactHeader
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
-	const char **columns,
-	uint *col_rec_map
+	ResultSet *set
 ) {
-	uint columns_len = array_len(columns);
-	RedisModule_ReplyWithArray(ctx, columns_len);
-	for(uint i = 0; i < columns_len; i++) {
+	RedisModuleCtx *ctx = set->ctx;
+	if(set->column_count > 0) {
+		// prepare a response containing a header, records, and statistics
+		RedisModule_ReplyWithArray(ctx, 3);
+	} else {
+		// prepare a response containing only statistics
+		RedisModule_ReplyWithArray(ctx, 1);
+		return;
+	}
+	RedisModule_ReplyWithArray(ctx, set->column_count);
+	for(uint i = 0; i < set->column_count; i++) {
 		RedisModule_ReplyWithArray(ctx, 2);
 		// because the types found in the first Record do not necessarily inform the types
 		// in subsequent records, we will always set the column type as scalar
@@ -356,6 +361,101 @@ void ResultSet_ReplyWithCompactHeader
 		RedisModule_ReplyWithLongLong(ctx, t);
 
 		// Second, emit the identifier string associated with the column
-		RedisModule_ReplyWithStringBuffer(ctx, columns[i], strlen(columns[i]));
+		RedisModule_ReplyWithStringBuffer(ctx, set->columns[i], strlen(set->columns[i]));
 	}
+}
+
+void ResultSet_EmitCompactStats
+(
+	ResultSet *set
+) {
+	RedisModuleCtx *ctx = set->ctx;
+	ResultSetStatistics *stats = &set->stats;
+	int buflen;
+	char buff[512] = {0};
+	size_t resultset_size = 2; // execution time, cached
+
+	// compute required space for resultset statistics
+	if(stats->index_creation)            resultset_size++;
+	if(stats->index_deletion)            resultset_size++;
+	if(stats->constraint_creation)       resultset_size++;
+	if(stats->constraint_deletion)       resultset_size++;
+	if(stats->labels_added          > 0) resultset_size++;
+	if(stats->nodes_created         > 0) resultset_size++;
+	if(stats->nodes_deleted         > 0) resultset_size++;
+	if(stats->labels_removed        > 0) resultset_size++;
+	if(stats->properties_set        > 0) resultset_size++;
+	if(stats->properties_removed    > 0) resultset_size++;
+	if(stats->relationships_deleted > 0) resultset_size++;
+	if(stats->relationships_created > 0) resultset_size++;
+
+	RedisModule_ReplyWithArray(set->ctx, resultset_size);
+
+	if(stats->labels_added > 0) {
+		buflen = sprintf(buff, "Labels added: %d", stats->labels_added);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->labels_removed > 0) {
+		buflen = sprintf(buff, "Labels removed: %d", stats->labels_removed);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->nodes_created > 0) {
+		buflen = sprintf(buff, "Nodes created: %d", stats->nodes_created);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->properties_set > 0) {
+		buflen = sprintf(buff, "Properties set: %d", stats->properties_set);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->properties_removed > 0) {
+		buflen = sprintf(buff, "Properties removed: %d", stats->properties_removed);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->relationships_created > 0) {
+		buflen = sprintf(buff, "Relationships created: %d", stats->relationships_created);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->nodes_deleted > 0) {
+		buflen = sprintf(buff, "Nodes deleted: %d", stats->nodes_deleted);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->relationships_deleted > 0) {
+		buflen = sprintf(buff, "Relationships deleted: %d", stats->relationships_deleted);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->index_creation) {
+		buflen = sprintf(buff, "Indices created: %d", stats->indices_created);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->index_deletion) {
+		buflen = sprintf(buff, "Indices deleted: %d", stats->indices_deleted);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->constraint_creation) {
+		buflen = sprintf(buff, "Constraints created: %d", stats->constraints_created);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	if(stats->constraint_deletion) {
+		buflen = sprintf(buff, "Constraints deleted: %d", stats->constraints_deleted);
+		RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+	}
+
+	buflen = sprintf(buff, "Cached execution: %d", stats->cached ? 1 : 0);
+	RedisModule_ReplyWithStringBuffer(ctx, (const char *)buff, buflen);
+
+	// emit query execution time
+	double t = QueryCtx_GetRuntime();
+	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
+	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }

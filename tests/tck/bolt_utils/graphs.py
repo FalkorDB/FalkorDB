@@ -24,7 +24,7 @@ def _brand_new_redis():
     r = redis()
 
     if driver is None:
-        driver = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "falkordb"))
+        driver = GraphDatabase.driver("bolt://localhost:7687", auth=("falkordb", ""))
 
     return driver
 
