@@ -9,18 +9,16 @@
 // Formatter for compact (client-parsed) replies
 void ResultSet_EmitNOPHeader
 (
-    RedisModuleCtx *ctx,
-    bolt_client_t *bolt_client,
-    const char **columns,
-    uint *col_rec_map
+    ResultSet *set
 );
 
 void ResultSet_EmitNOPRow
 (
-    RedisModuleCtx *ctx,
-    bolt_client_t *bolt_client,
-    GraphContext *gc,
-    SIValue **row,
-    uint numcols
+    ResultSet *set,
+    SIValue **row
 );
 
+void ResultSet_EmitNOPStats
+(
+    ResultSet *set
+);

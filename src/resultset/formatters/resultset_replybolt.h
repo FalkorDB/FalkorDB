@@ -8,18 +8,16 @@
 // Formatter for bolt replies
 void ResultSet_ReplyWithBoltHeader
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
-	const char **columns,
-	uint *col_rec_map
+	ResultSet *set
 );
 
 void ResultSet_EmitBoltRow
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
-	GraphContext *gc,
-	SIValue **row,
-	uint numcols
+	ResultSet *set,
+	SIValue **row
 );
 
+void ResultSet_EmitBoltStats
+(
+	ResultSet *set
+);

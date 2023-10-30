@@ -2,7 +2,7 @@ from common import *
 from neo4j import GraphDatabase
 from neo4j.spatial import WGS84Point
 import neo4j.graph
-from neo4j.debug import watch
+# from neo4j.debug import watch
 
 bolt_con = None
 
@@ -12,7 +12,7 @@ class testBolt():
         port = 7687 + 6379 - self.env.port
         global bolt_con
         bolt_con = GraphDatabase.driver(f"bolt://localhost:{port}", auth=("falkordb", ""))
-        self.watcher = watch("neo4j")
+        # self.watcher = watch("neo4j")
 
     def test01_null(self):
         with bolt_con.session() as session:

@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include "../../bolt/bolt.h"
 #include "../../redismodule.h"
 #include "../../graph/graphcontext.h"
 #include "../../graph/query_graph.h"
@@ -33,16 +32,19 @@ typedef enum {
 	VALUE_POINT = 11,
 } ValueType;
 
+typedef struct ResultSet ResultSet;
+
 // Typedef for header formatters.
-typedef void (*EmitHeaderFunc)(RedisModuleCtx *ctx, bolt_client_t *bolt_client,
-	const char **columns, uint *col_rec_map);
+typedef void (*EmitHeaderFunc)(ResultSet *set);
 
 // Typedef for row formatters.
-typedef void (*EmitRowFunc)(RedisModuleCtx *ctx, bolt_client_t *bolt_client,
-	GraphContext *gc, SIValue **row, uint numcols);
+typedef void (*EmitRowFunc)(ResultSet *set, SIValue **row);
+
+typedef void (*EmitStatsFunc)(ResultSet *set);
 							   
 typedef struct {
 	EmitRowFunc    EmitRow;
+	EmitStatsFunc  EmitStats;
 	EmitHeaderFunc EmitHeader;
 } ResultSetFormatter;
 
