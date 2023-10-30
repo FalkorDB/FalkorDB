@@ -6,17 +6,21 @@
 #pragma once
 
 // Formatter for bolt replies
+
+// emit a header
 void ResultSet_ReplyWithBoltHeader
 (
 	ResultSet *set
 );
 
+// emit a row
 void ResultSet_EmitBoltRow
 (
 	ResultSet *set,
 	SIValue **row
 );
 
+// emit statistics
 void ResultSet_EmitBoltStats
 (
 	ResultSet *set

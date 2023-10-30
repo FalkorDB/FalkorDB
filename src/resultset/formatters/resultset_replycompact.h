@@ -7,17 +7,21 @@
 #pragma once
 
 // Formatter for compact (client-parsed) replies
+
+// emit a header
 void ResultSet_ReplyWithCompactHeader
 (
 	ResultSet *set
 );
 
+// emit a row
 void ResultSet_EmitCompactRow
 (
 	ResultSet *set,
 	SIValue **row
 );
 
+// emit statistics
 void ResultSet_EmitCompactStats
 (
 	ResultSet *set

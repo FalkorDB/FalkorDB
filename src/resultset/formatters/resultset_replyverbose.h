@@ -7,17 +7,21 @@
 #pragma once
 
 // Formatter for verbose (human-readable) replies
+
+// emit a header
 void ResultSet_ReplyWithVerboseHeader
 (
 	ResultSet *set
 );
 
+// emit a row
 void ResultSet_EmitVerboseRow
 (
 	ResultSet *set,
 	SIValue **row
 );
 
+// emit statistics
 void ResultSet_EmitVerboseStats
 (
 	ResultSet *set

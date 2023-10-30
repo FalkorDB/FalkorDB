@@ -6,18 +6,22 @@
 
 #pragma once
 
-// Formatter for compact (client-parsed) replies
+// Formatter for no operation (replication) replies
+
+// emit a header
 void ResultSet_EmitNOPHeader
 (
     ResultSet *set
 );
 
+// emit a row
 void ResultSet_EmitNOPRow
 (
     ResultSet *set,
     SIValue **row
 );
 
+// emit statistics
 void ResultSet_EmitNOPStats
 (
     ResultSet *set
