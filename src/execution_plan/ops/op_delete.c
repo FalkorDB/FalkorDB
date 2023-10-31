@@ -16,7 +16,7 @@
 
 // forward declarations
 static Record DeleteConsume(OpBase *opBase);
-static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *DeleteClone(ExecutionPlan *plan, const OpBase *opBase);
 static void DeleteFree(OpBase *opBase);
 
 static int entity_cmp
@@ -130,7 +130,11 @@ static void _DeleteEntities
 	array_free(distinct_edges);
 }
 
-OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
+OpBase *NewDeleteOp
+(
+	ExecutionPlan *plan,
+	AR_ExpNode **exps
+) {
 	OpDelete *op = rm_calloc(1, sizeof(OpDelete));
 
 	op->gc = QueryCtx_GetGraphCtx();
@@ -147,7 +151,11 @@ OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
 }
 
 // collect nodes and edges to be deleted
-static inline void _CollectDeletedEntities(Record r, OpBase *opBase) {
+static inline void _CollectDeletedEntities
+(
+	Record r,
+	OpBase *opBase
+) {
 	OpDelete *op = (OpDelete *)opBase;
 
 	// expression should be evaluated to either a node, an edge or a path
@@ -190,11 +198,17 @@ static inline void _CollectDeletedEntities(Record r, OpBase *opBase) {
 	}
 }
 
-static inline Record _handoff(OpDelete *op) {
+static inline Record _handoff
+(
+	OpDelete *op
+) {
 	return array_pop(op->records);
 }
 
-static Record DeleteConsume(OpBase *opBase) {
+static Record DeleteConsume
+(
+	OpBase *opBase
+) {
 	OpDelete *op = (OpDelete *)opBase;
 	Record r;
 	ASSERT(op->op.childCount > 0);
@@ -235,7 +249,11 @@ static Record DeleteConsume(OpBase *opBase) {
 	return _handoff(op);
 }
 
-static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *DeleteClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_DELETE);
 
 	OpDelete *op = (OpDelete *)opBase;
@@ -244,12 +262,17 @@ static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	return NewDeleteOp(plan, exps);
 }
 
-static void DeleteFree(OpBase *opBase) {
+static void DeleteFree
+(
+	OpBase *opBase
+) {
 	OpDelete *op = (OpDelete *)opBase;
 
 	if(op->records) {
 		uint rec_count = array_len(op->records);
-		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(op->records[i]);
+		for(uint i = 1; i < rec_count; i++) {
+			OpBase_DeleteRecord(op->records[i]);
+		}
 		array_free(op->records);
 		op->records = NULL;
 	}
@@ -270,3 +293,4 @@ static void DeleteFree(OpBase *opBase) {
 		op->exps = NULL;
 	}
 }
+

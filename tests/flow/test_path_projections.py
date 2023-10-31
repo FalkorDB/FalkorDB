@@ -54,9 +54,12 @@ class testPathProjections():
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test02_multi_source_projection(self):
-        query = """MATCH (a) WITH (a)-[]->() AS paths WHERE a.v < 2
+        query = """MATCH (a) 
+                   WHERE a.v < 2
+                   WITH (a)-[]->() AS paths
                    UNWIND paths as path
-                   RETURN nodes(path) AS nodes ORDER BY nodes"""
+                   RETURN nodes(path) AS nodes
+                   ORDER BY nodes"""
         actual_result = redis_graph.query(query)
         traversal01 = [nodes[0], nodes[1]]
         traversal04 = [nodes[0], nodes[4]]
@@ -67,9 +70,12 @@ class testPathProjections():
         self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test03_multiple_projections(self):
-        query = """MATCH (a {v: 1}) WITH (a)-[]->() AS p1, (a)<-[]-() AS p2
-                   UNWIND p1 AS n1 UNWIND p2 AS n2
-                   RETURN nodes(n1) AS nodes, nodes(n2) ORDER BY nodes"""
+        query = """MATCH (a {v: 1})
+                   WITH (a)-[]->() AS p1, (a)<-[]-() AS p2
+                   UNWIND p1 AS n1
+                   UNWIND p2 AS n2
+                   RETURN nodes(n1) AS nodes, nodes(n2)
+                   ORDER BY nodes"""
         actual_result = redis_graph.query(query)
         traversal = [[nodes[1], nodes[2]], [nodes[1], nodes[0]]]
         expected_result = [traversal]
@@ -81,7 +87,8 @@ class testPathProjections():
     def test04_variable_length_projection(self):
         query = """MATCH (a {v: 1}) WITH (a)-[*]->({v: 3}) AS paths
                    UNWIND paths as path
-                   RETURN nodes(path) AS nodes ORDER BY nodes"""
+                   RETURN nodes(path) AS nodes
+                   ORDER BY nodes"""
         actual_result = redis_graph.query(query)
         traversal = [nodes[1], nodes[2], nodes[3]]
         expected_result = [[traversal]]
@@ -90,7 +97,8 @@ class testPathProjections():
     def test05_no_bound_variables_projection(self):
         query = """MATCH (a {v: 1}) WITH a, ({v: 2})-[]->({v: 3}) AS paths
                    UNWIND paths as path
-                   RETURN a, nodes(path) AS nodes ORDER BY nodes"""
+                   RETURN a, nodes(path) AS nodes
+                   ORDER BY nodes"""
         actual_result = redis_graph.query(query)
         traversal = [nodes[2], nodes[3]]
         expected_result = [[nodes[1], traversal]]
@@ -100,8 +108,10 @@ class testPathProjections():
         query = """MATCH (a {v: 1}) WITH a, [({v: 2})-[]->({v: 3})] AS path_arr
                    UNWIND path_arr as paths
                    UNWIND paths AS path
-                   RETURN a, nodes(path) AS nodes ORDER BY nodes"""
+                   RETURN a, nodes(path) AS nodes
+                   ORDER BY nodes"""
         actual_result = redis_graph.query(query)
         traversal = [nodes[2], nodes[3]]
         expected_result = [[nodes[1], traversal]]
         self.env.assertEqual(actual_result.result_set, expected_result)
+

@@ -11,32 +11,33 @@
 #include "../execution_plan.h"
 #include "../../procedures/procedure.h"
 
-/* Maps procedure output to record index.
- * yield element I is mapped to procedure output J
- * which will be stored within Record at position K. */
+// maps procedure output to record index
+// yield element I is mapped to procedure output J
+// which will be stored within Record at position K
 typedef struct {
-	uint proc_out_idx;  // Index into procedure output.
-	uint rec_idx;       // Index into record.
+	uint proc_out_idx;  // index into procedure output
+	uint rec_idx;       // index into record
 } OutputMap;
 
-/* OpProcCall, */
+// OpProcCall
 typedef struct {
-	OpBase op;                  // Base op.
-    Record r;                   // Current record.
-    uint arg_count;             // Number of arguments.
-    AR_ExpNode **arg_exps;      // Expression representing arguments to procedure.
-    SIValue *args;              // Computed arguments.
-	const char **output;        // Procedure output.
-	const char *proc_name;      // Procedure name.
-    AR_ExpNode **yield_exps;    // Yield expressions.
-	ProcedureCtx *procedure;    // Procedure to call.
-	OutputMap *yield_map;       // Maps between yield to procedure output and record idx.
-    bool first_call;            // Indicate first call.
+	OpBase op;                // base op
+    Record r;                 // current record
+    uint arg_count;           // number of arguments
+    AR_ExpNode **arg_exps;    // expression representing arguments to procedure
+    SIValue *args;            // computed arguments
+	const char **output;      // procedure output
+	const char *proc_name;    // procedure name
+    AR_ExpNode **yield_exps;  // yield expressions
+	ProcedureCtx *procedure;  // procedure to call
+	OutputMap *yield_map;     // maps between yield to procedure output and record idx
+    bool first_call;          // indicate first call
 } OpProcCall;
 
 OpBase *NewProcCallOp(
-	const ExecutionPlan *plan,  // Execution plan this operation belongs to.
-	const char *proc_name,      // Procedure name.
-    AR_ExpNode **arg_exps,      // Arguments passed to procedure invocation.
-	AR_ExpNode **yield_exps     // Procedure output.
+	ExecutionPlan *plan,     // execution plan this operation belongs to
+	const char *proc_name,   // procedure name
+    AR_ExpNode **arg_exps,   // arguments passed to procedure invocation
+	AR_ExpNode **yield_exps  // procedure output
 );
+

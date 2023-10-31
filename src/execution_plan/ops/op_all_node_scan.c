@@ -8,19 +8,27 @@
 #include "../../query_ctx.h"
 #include "shared/print_functions.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult AllNodeScanInit(OpBase *opBase);
 static Record AllNodeScanConsume(OpBase *opBase);
 static Record AllNodeScanConsumeFromChild(OpBase *opBase);
 static OpResult AllNodeScanReset(OpBase *opBase);
-static OpBase *AllNodeScanClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *AllNodeScanClone(ExecutionPlan *plan, const OpBase *opBase);
 static void AllNodeScanFree(OpBase *opBase);
 
-static inline void AllNodeScanToString(const OpBase *ctx, sds *buf) {
+static inline void AllNodeScanToString
+(
+	const OpBase *ctx,
+	sds *buf
+) {
 	ScanToString(ctx, buf, ((AllNodeScan *)ctx)->alias, NULL);
 }
 
-OpBase *NewAllNodeScanOp(const ExecutionPlan *plan, const char *alias) {
+OpBase *NewAllNodeScanOp
+(
+	ExecutionPlan *plan,
+	const char *alias
+) {
 	AllNodeScan *op = rm_malloc(sizeof(AllNodeScan));
 	op->iter = NULL;
 	op->alias = alias;
@@ -34,14 +42,20 @@ OpBase *NewAllNodeScanOp(const ExecutionPlan *plan, const char *alias) {
 	return (OpBase *)op;
 }
 
-static OpResult AllNodeScanInit(OpBase *opBase) {
+static OpResult AllNodeScanInit
+(
+	OpBase *opBase
+) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
 	if(opBase->childCount > 0) OpBase_UpdateConsume(opBase, AllNodeScanConsumeFromChild);
 	else op->iter = Graph_ScanNodes(QueryCtx_GetGraph());
 	return OP_OK;
 }
 
-static Record AllNodeScanConsumeFromChild(OpBase *opBase) {
+static Record AllNodeScanConsumeFromChild
+(
+	OpBase *opBase
+) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
 
 	if(op->child_record == NULL) {
@@ -76,7 +90,10 @@ static Record AllNodeScanConsumeFromChild(OpBase *opBase) {
 	return r;
 }
 
-static Record AllNodeScanConsume(OpBase *opBase) {
+static Record AllNodeScanConsume
+(
+	OpBase *opBase
+) {
 	AllNodeScan *op = (AllNodeScan *)opBase;
 
 	Node n = GE_NEW_NODE();
@@ -89,18 +106,28 @@ static Record AllNodeScanConsume(OpBase *opBase) {
 	return r;
 }
 
-static OpResult AllNodeScanReset(OpBase *op) {
+static OpResult AllNodeScanReset
+(
+	OpBase *op
+) {
 	AllNodeScan *allNodeScan = (AllNodeScan *)op;
 	if(allNodeScan->iter) DataBlockIterator_Reset(allNodeScan->iter);
 	return OP_OK;
 }
 
-static inline OpBase *AllNodeScanClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *AllNodeScanClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_ALL_NODE_SCAN);
 	return NewAllNodeScanOp(plan, ((AllNodeScan *)opBase)->alias);
 }
 
-static void AllNodeScanFree(OpBase *ctx) {
+static void AllNodeScanFree
+(
+	OpBase *ctx
+) {
 	AllNodeScan *op = (AllNodeScan *)ctx;
 	if(op->iter) {
 		DataBlockIterator_Free(op->iter);

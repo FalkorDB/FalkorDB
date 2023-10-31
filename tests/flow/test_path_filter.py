@@ -261,22 +261,27 @@ class testPathFilter(FlowTestsBase):
         self.env.assertEquals(result_set.result_set, expected_result)
 
     def test13_path_filter_in_different_scope(self):
-        # Create a graph of the form:
-        # (c)-[]->(a)-[]->(b)
-        node0 = Node(node_id=0, label="L", properties={'x': 'a'})
-        node1 = Node(node_id=1, label="L", properties={'x': 'b'})
-        node2 = Node(node_id=2, label="L", properties={'x': 'c'})
-        edge01 = Edge(src_node=node0, dest_node=node1, relation="R")
-        edge12 = Edge(src_node=node1, dest_node=node2, relation="R")
-        redis_graph.add_node(node0)
-        redis_graph.add_node(node1)
-        redis_graph.add_node(node2)
-        redis_graph.add_edge(edge01)
-        redis_graph.add_edge(edge12)
+        # create a graph of the form:
+        # (a)-[]->(b)-[]->(c)
+        a = Node(node_id=0, label="L", properties={'x': 'a'})
+        b = Node(node_id=1, label="L", properties={'x': 'b'})
+        c = Node(node_id=2, label="L", properties={'x': 'c'})
+        ab = Edge(src_node=a, dest_node=b, relation="R")
+        bc = Edge(src_node=b, dest_node=c, relation="R")
+        redis_graph.add_node(a)
+        redis_graph.add_node(b)
+        redis_graph.add_node(c)
+        redis_graph.add_edge(ab)
+        redis_graph.add_edge(bc)
         redis_graph.flush()
 
-        # Match nodes with an outgoing edge that optionally have an incoming edge.
-        query = "MATCH (a) OPTIONAL MATCH (a)<-[]-() WITH a WHERE (a)-[]->() return a.x ORDER BY a.x"
+        # match nodes with an outgoing edge that optionally have an incoming edge
+        query = """MATCH (n)
+                   OPTIONAL MATCH (n)<-[]-()
+                   WHERE exists((n)-[]->())
+                   WITH n
+                   RETURN n.x
+                   ORDER BY n.x"""
         result_set = redis_graph.query(query)
         expected_result = [['a'],
                            ['b']]

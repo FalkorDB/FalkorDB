@@ -10,22 +10,26 @@
 #include "op_argument.h"
 #include "../execution_plan.h"
 
-/* SemiApply operation tests for the presence of a pattern
- * Normal Semi Apply: Starts by pulling on the main execution plan branch,
- * for each record received it tries to get a record from the match branch
- * if no data is produced it will try to fetch a new data point from the main execution plan branch,
- * otherwise the main execution plan branch record is passed onward.
- * Anti Semi Apply: Starts by pulling on the main execution plan branch,
- * for each record received it tries to get a record from the match branch
- * if no data is produced the main execution plan branch record is passed onward
- * otherwise it will try to fetch a new data point from the main execution plan branch. */
+// semiApply operation tests for the presence of a pattern
+// normal Semi Apply: Starts by pulling on the main execution plan branch
+// for each record received it tries to get a record from the match branch
+// if no data is produced it will try to fetch a new data point from the main execution plan branch
+// otherwise the main execution plan branch record is passed onward
+// anti Semi Apply: Starts by pulling on the main execution plan branch
+// for each record received it tries to get a record from the match branch
+// if no data is produced the main execution plan branch record is passed onward
+// otherwise it will try to fetch a new data point from the main execution plan branch
 
 typedef struct OpSemiApply {
 	OpBase op;
-	Record r;                       // Bound branch record.
-	OpBase *bound_branch;           // Bound branch root;
-	OpBase *match_branch;           // Match branch root;
-	Argument *op_arg;               // Match branch tap.
+	Record r;              // bound branch record
+	OpBase *bound_branch;  // bound branch root
+	OpBase *match_branch;  // match branch root
+	Argument *op_arg;      // match branch tap
 } OpSemiApply;
 
-OpBase *NewSemiApplyOp(const ExecutionPlan *plan, bool anti);
+OpBase *NewSemiApplyOp
+(
+	ExecutionPlan *plan,
+	bool anti
+);

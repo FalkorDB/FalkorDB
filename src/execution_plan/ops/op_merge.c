@@ -17,7 +17,7 @@
 // forward declarations
 static OpResult MergeInit(OpBase *opBase);
 static Record MergeConsume(OpBase *opBase);
-static OpBase *MergeClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *MergeClone(ExecutionPlan *plan, const OpBase *opBase);
 static void MergeFree(OpBase *opBase);
 
 // fake hash function
@@ -117,7 +117,7 @@ static inline void _free_pending_updates
 
 OpBase *NewMergeOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	rax *on_match,
 	rax *on_create
 ) {
@@ -204,27 +204,27 @@ static OpResult MergeInit
 		// neither Match stream and Create stream have a Merge op
 		// the bound variable stream will have a Merge op in-case of a merge merge query
 		// MERGE (a:A) MERGE (b:B)
-		// In which case the first Merge has yet to order its streams!
+		// in which case the first Merge has yet to order its streams!
 		if(!op->bound_variable_stream && child_has_merge) {
 			op->bound_variable_stream = child;
 			continue;
 		}
 
 		bool child_has_argument = _LocateOp(child, OPType_ARGUMENT);
-		// The bound variable stream is the only stream not populated by an Argument op.
+		// the bound variable stream is the only stream not populated by an Argument op
 		if(!op->bound_variable_stream && !child_has_argument) {
 			op->bound_variable_stream = child;
 			continue;
 		}
 
-		// The Create stream is the only stream with a MergeCreate op and Argument op.
+		// the Create stream is the only stream with a MergeCreate op and Argument op
 		if(!op->create_stream && _LocateOp(child, OPType_MERGE_CREATE) && child_has_argument) {
 			op->create_stream = child;
 			continue;
 		}
 
-		// The Match stream has an unknown set of operations, but is the only other stream
-		// populated by an Argument op.
+		// the Match stream has an unknown set of operations
+		// but is the only other stream populated by an Argument op
 		if(!op->match_stream && child_has_argument) {
 			op->match_stream = child;
 			continue;
@@ -247,7 +247,8 @@ static OpResult MergeInit
 	op->match_argument_tap =
 		(Argument *)ExecutionPlan_LocateOp(op->match_stream, OPType_ARGUMENT);
 
-	// if the create stream is populated by an Argument tap, store a reference to it.
+	// if the create stream is populated by an Argument tap
+	// store a reference to it
 	op->create_argument_tap =
 		(Argument *)ExecutionPlan_LocateOp(op->create_stream, OPType_ARGUMENT);
 
@@ -309,7 +310,7 @@ static Record MergeConsume
 	while(reading_matches) {
 		Record lhs_record = NULL;
 		if(op->input_records) {
-			// if we had bound variables but have depleted our input records,
+			// if we had bound variables but have depleted our input records
 			// we're done pulling from the Match stream
 			if(array_len(op->input_records) == 0) {
 				break;
@@ -435,7 +436,7 @@ static Record MergeConsume
 
 static OpBase *MergeClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_MERGE);

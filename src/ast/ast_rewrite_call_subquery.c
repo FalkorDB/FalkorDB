@@ -6,8 +6,8 @@
 
 #include "ast_shared.h"
 #include "../util/arr.h"
+#include "ast_rewrites.h"
 #include "../util/rmalloc.h"
-#include "ast_rewrite_call_subquery.h"
 
 // fill `names` and `inner_names` with the bound vars and their internal
 // representation, respectively

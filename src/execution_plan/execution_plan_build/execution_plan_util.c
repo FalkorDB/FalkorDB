@@ -14,33 +14,9 @@ bool ExecutionPlan_isEager
 	return ExecutionPlan_LocateOpMatchingTypes(root, EAGER_OPERATIONS, 6) != NULL;
 }
 
-OpBase *ExecutionPlan_LocateOpResolvingAlias
-(
-    OpBase *root,
-    const char *alias
-) {
-	if(!root) return NULL;
-
-	uint count = array_len(root->modifies);
-
-	for(uint i = 0; i < count; i++) {
-		const char *resolved_alias = root->modifies[i];
-		// NOTE - if this function is later used to modify the returned
-		// operation, we should return the deepest operation that modifies the
-		// alias rather than the shallowest, as done here
-		if(strcmp(resolved_alias, alias) == 0) return root;
-	}
-
-	for(int i = 0; i < root->childCount; i++) {
-		OpBase *op = ExecutionPlan_LocateOpResolvingAlias(root->children[i], alias);
-		if(op) return op;
-	}
-
-	return NULL;
-}
-
 // locate the first operation matching one of the given types in the op tree by
-// performing DFS. Returns NULL if no matching operation was found
+// performing DFS
+// returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
     OpBase *root,
@@ -48,13 +24,14 @@ OpBase *ExecutionPlan_LocateOpMatchingTypes
     uint type_count
 ) {
 	for(int i = 0; i < type_count; i++) {
-		// Return the current op if it matches any of the types we're searching for.
+		// return the current op if it matches any of the given types
 		if(root->type == types[i]) return root;
 	}
 
 	for(int i = 0; i < root->childCount; i++) {
-		// Recursively visit children.
-		OpBase *op = ExecutionPlan_LocateOpMatchingTypes(root->children[i], types, type_count);
+		// recursively visit children
+		OpBase *op = ExecutionPlan_LocateOpMatchingTypes(root->children[i],
+				types, type_count);
 		if(op) return op;
 	}
 
@@ -72,50 +49,19 @@ OpBase *ExecutionPlan_LocateOp
 	return ExecutionPlan_LocateOpMatchingTypes(root, type_arr, 1);
 }
 
-// searches for an operation of a given type, up to the given depth in the
-// execution-plan
-OpBase *ExecutionPlan_LocateOpDepth
-(
-    OpBase *root,
-    OPType type,
-    uint depth
-) {
-	if(root == NULL) {
-		return NULL;
-	}
-
-	if(root->type == type) {
-		return root;
-	}
-
-	if(depth == 0) {
-		return NULL;
-	}
-
-	for(int i = 0; i < root->childCount; i++) {
-		OpBase *op = ExecutionPlan_LocateOpDepth(root->children[i], type,
-			depth - 1);
-		if(op) {
-			return op;
-		}
-	}
-
-	return NULL;
-}
-
 // returns all operations of a certain type in a execution plan
 void ExecutionPlan_LocateOps
 (
-	OpBase ***plans,  // array in which ops are stored
-	OpBase *root,     // root operation of the plan to traverse
-	OPType type       // operation type to search
+	OpBase ***ops,  // array in which ops are stored
+	OpBase *root,   // root operation of the plan to traverse
+	OPType type     // operation type to search
 ) {
 	if(root->type == type) {
-		array_append(*plans, root);
+		array_append(*ops, root);
 	}
 
 	for(uint i = 0; i < root->childCount; i++) {
-		ExecutionPlan_LocateOps(plans, root->children[i], type);
+		ExecutionPlan_LocateOps(ops, root->children[i], type);
 	}
 }
 
@@ -127,10 +73,10 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	int nblacklisted_ops,
 	rax *refs_to_resolve
 ) {
-	int dependency_count = 0;
-	bool blacklisted = false;
-	OpBase *resolving_op = NULL;
-	bool all_refs_resolved = false;
+	int    dependency_count  = 0;
+	bool   blacklisted       = false;
+	OpBase *resolving_op     = NULL;
+	bool   all_refs_resolved = false;
 
 	// check if this op is blacklisted
 	for(int i = 0; i < nblacklisted_ops && !blacklisted; i++) {

@@ -11,11 +11,9 @@
 #include "RG.h"
 #include "util/arr.h"
 #include "query_ctx.h"
+#include "ast_rewrites.h"
 #include "../errors/errors.h"
 #include "procedures/procedure.h"
-#include "ast_rewrite_same_clauses.h"
-#include "ast_rewrite_call_subquery.h"
-#include "ast_rewrite_star_projections.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "arithmetic/arithmetic_expression_construct.h"
 
@@ -381,16 +379,44 @@ void AST_CollectAliases
 	const char ***aliases,
 	const cypher_astnode_t *entity
 ) {
+	ASSERT(aliases != NULL);
+
 	if(entity == NULL) return;
 
-	const  cypher_astnode_t **identifier_nodes =  AST_GetTypedNodes(entity, CYPHER_AST_IDENTIFIER);
+	const cypher_astnode_t **identifier_nodes =
+		AST_GetTypedNodes(entity, CYPHER_AST_IDENTIFIER);
+
 	uint nodes_count = array_len(identifier_nodes);
 	for(uint i = 0 ; i < nodes_count; i ++) {
-		const char *identifier = cypher_ast_identifier_get_name(identifier_nodes[i]);
+		const char *identifier =
+			cypher_ast_identifier_get_name(identifier_nodes[i]);
 		array_append(*aliases, identifier);
 	}
 
 	array_free(identifier_nodes);
+}
+
+static int string_cmp
+(
+	const void *a,
+	const void *b
+) {
+	ASSERT(a != NULL);
+	ASSERT(b != NULL);
+
+	const char *_a = *(const char **)a;
+	const char *_b = *(const char **)b;
+
+	return strcmp(*(const char **)a, *(const char **)b);
+}
+
+void AST_CollectUniqueAliases
+(
+	const char ***aliases,
+	const cypher_astnode_t *entity
+) {
+	AST_CollectAliases(aliases, entity);
+	array_dedupe(*aliases, string_cmp);
 }
 
 AST *AST_Build
@@ -514,25 +540,32 @@ bool AST_IdentifierIsAlias
 ) {
 	if(cypher_astnode_type(root) == CYPHER_AST_PROJECTION) {
 		const cypher_astnode_t *alias_node = cypher_ast_projection_get_alias(root);
-		// If this projection is aliased, check the alias.
+		// if this projection is aliased, check the alias
 		if(alias_node) {
 			const char *alias = cypher_ast_identifier_get_name(alias_node);
-			if(!strcmp(alias, identifier)) return true; // The identifier is an alias.
+			if(!strcmp(alias, identifier)) {
+				// the identifier is an alias
+				return true;
+			}
 		} else {
 			if(cypher_astnode_type(root) == CYPHER_AST_IDENTIFIER) {
-				// If the projection itself is the identifier, it is not an alias.
-				const char *current_identifier = cypher_ast_identifier_get_name(alias_node);
+				// if the projection itself is the identifier
+				// it is not an alias
+				const char *current_identifier =
+					cypher_ast_identifier_get_name(alias_node);
 				if(!strcmp(current_identifier, identifier)) return false;
 			}
 		}
 	}
 
-	// Recursively visit children.
+	// recursively visit children
 	uint child_count = cypher_astnode_nchildren(root);
 	for(uint i = 0; i < child_count; i ++) {
-		bool alias_found = AST_IdentifierIsAlias(cypher_astnode_get_child(root, i), identifier);
+		bool alias_found = AST_IdentifierIsAlias(
+				cypher_astnode_get_child(root, i), identifier);
 		if(alias_found) return true;
 	}
+
 	return false;
 }
 
@@ -556,7 +589,7 @@ bool AST_ClauseContainsAggregation
 
 	bool aggregated = false;
 
-	// Retrieve all user-specified functions in clause.
+	// retrieve all user-specified functions in clause
 	rax *referred_funcs = raxNew();
 	AST_ReferredFunctions(clause, referred_funcs);
 
@@ -566,7 +599,7 @@ bool AST_ClauseContainsAggregation
 	while(raxNext(&it)) {
 		size_t len = it.key_len;
 		ASSERT(len < 32);
-		// Copy the triemap key so that we can safely add a terinator character
+		// copy the triemap key so that we can safely add a terinator character
 		memcpy(funcName, it.key, len);
 		funcName[len] = 0;
 
@@ -768,6 +801,10 @@ cypher_parse_result_t *parse_query
 	//  MATCH (a), (b) RETURN a, b
 	rerun_validation |= AST_RewriteStarProjections(
 		cypher_ast_statement_get_body(root));
+
+	// rewrite WITH filters
+	// WITH a AS b WHERE a.v = 1 -> WITH a AS b WHERE b.v = 1
+	rerun_validation |= AST_RewriteFilters(root);
 
 	// only perform validations again if there's been a rewrite
 	if(rerun_validation && AST_Validate_Query(root) != AST_VALID) {

@@ -368,3 +368,4 @@ bool AST_RewriteSameClauses
 	// compress consecutive clauses
 	return _compress_clauses(body);
 }
+

@@ -207,23 +207,34 @@ AR_ExpNode *AR_EXP_NewOpNode
 	return node;
 }
 
-static inline AR_ExpNode *_AR_EXP_InitializeOperand(AR_OperandNodeType type) {
+static inline AR_ExpNode *_AR_EXP_InitializeOperand
+(
+	AR_OperandNodeType type
+) {
 	AR_ExpNode *node = rm_calloc(1, sizeof(AR_ExpNode));
 	node->type = AR_EXP_OPERAND;
 	node->operand.type = type;
 	return node;
 }
 
-AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias) {
+AR_ExpNode *AR_EXP_NewVariableOperandNode
+(
+	const char *alias
+) {
 	AR_ExpNode *node = _AR_EXP_InitializeOperand(AR_EXP_VARIADIC);
-	node->operand.variadic.entity_alias = alias;
+
+	node->resolved_name                     = alias;
+	node->operand.variadic.entity_alias     = alias;
 	node->operand.variadic.entity_alias_idx = IDENTIFIER_NOT_FOUND;
 
 	return node;
 }
 
-AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity,
-										  const char *attr) {
+AR_ExpNode *AR_EXP_NewAttributeAccessNode
+(
+	AR_ExpNode *entity,
+	const char *attr
+) {
 
 	ASSERT(attr != NULL);
 	ASSERT(entity != NULL);

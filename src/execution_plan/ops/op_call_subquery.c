@@ -14,8 +14,7 @@ static OpResult CallSubqueryInit(OpBase *opBase);
 static OpResult CallSubqueryReset(OpBase *opBase);
 static Record CallSubqueryConsume(OpBase *opBase);
 static Record CallSubqueryConsumeEager(OpBase *opBase);
-static OpBase *CallSubqueryClone(const ExecutionPlan *plan,
-	const OpBase *opBase);
+static OpBase *CallSubqueryClone(ExecutionPlan *plan, const OpBase *opBase);
 
 // find the deepest child of a root operation (feeder), and append it to the
 // arguments/argumentLists array of the CallSubquery operation
@@ -68,9 +67,9 @@ static void _plant_records_Arguments
 // creates a new CallSubquery operation
 OpBase *NewCallSubqueryOp
 (
-	const ExecutionPlan *plan,  // execution plan
-	bool is_eager,              // is the subquery eager or not
-	bool is_returning           // is the subquery returning or not
+	ExecutionPlan *plan,  // execution plan
+	bool is_eager,        // is the subquery eager or not
+	bool is_returning     // is the subquery returning or not
 ) {
 	OpCallSubquery *op = rm_calloc(1, sizeof(OpCallSubquery));
 
@@ -367,8 +366,8 @@ static OpResult CallSubqueryReset
 // clones a CallSubquery operation
 static OpBase *CallSubqueryClone
 (
-	const ExecutionPlan *plan,  // plan
-	const OpBase *opBase        // operation to clone
+	ExecutionPlan *plan,  // plan
+	const OpBase *opBase  // operation to clone
 ) {
 	ASSERT(opBase->type == OPType_CALLSUBQUERY);
 	OpCallSubquery *op = (OpCallSubquery *) opBase;
@@ -397,3 +396,4 @@ static void CallSubqueryFree
 		}
 	}
 }
+

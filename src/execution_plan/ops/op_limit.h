@@ -11,11 +11,15 @@
 
 typedef struct {
 	OpBase op;
-	unsigned int limit;     // Max number of records to consume.
-	AR_ExpNode *limit_exp;  // Expression evaluated to limit.
-	unsigned int consumed;  // Number of records consumed so far.
+	unsigned int limit;     // max number of records to consume
+	AR_ExpNode *limit_exp;  // expression evaluated to limit
+	unsigned int consumed;  // number of records consumed so far
 } OpLimit;
 
-// Limits number of produced records
-OpBase *NewLimitOp(const ExecutionPlan *plan, AR_ExpNode *limit_exp);
+// limits number of produced records
+OpBase *NewLimitOp
+(
+	ExecutionPlan *plan,
+	AR_ExpNode *limit_exp
+);
 

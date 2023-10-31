@@ -11,21 +11,21 @@ static void ForeachFree(OpBase *opBase);
 static OpResult ForeachInit(OpBase *opBase);
 static Record ForeachConsume(OpBase *opBase);
 static OpResult ForeachReset(OpBase *opBase);
-static OpBase *ForeachClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ForeachClone(ExecutionPlan *plan, const OpBase *opBase);
 
 // creates a new Foreach operation
 OpBase *NewForeachOp
 (
-	const ExecutionPlan *plan  // execution plan
+	ExecutionPlan *plan  // execution plan
 ) {
     OpForeach *op = rm_calloc(1, sizeof(OpForeach));
 
-	op->body           = NULL;
-	op->first          = true;
-	op->records        = NULL;
-	op->supplier       = NULL;
-	op->body_records   = NULL;
-	op->argument_list  = NULL;
+	op->body          = NULL;
+	op->first         = true;
+	op->records       = NULL;
+	op->supplier      = NULL;
+	op->body_records  = NULL;
+	op->argument_list = NULL;
 
     OpBase_Init((OpBase *)op, OPType_FOREACH, "Foreach", ForeachInit,
 			ForeachConsume, ForeachReset, NULL, ForeachClone, ForeachFree,
@@ -188,8 +188,8 @@ static OpResult ForeachReset
 
 static OpBase *ForeachClone
 (
-    const ExecutionPlan *plan,  // plan
-    const OpBase *opBase        // operation to clone
+    ExecutionPlan *plan,  // plan
+    const OpBase *opBase  // operation to clone
 ) {
     ASSERT(opBase->type == OPType_FOREACH);
 	return NewForeachOp(plan);
@@ -203,3 +203,4 @@ static void ForeachFree
 
 	_freeInternals(_op);
 }
+

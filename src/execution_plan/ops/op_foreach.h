@@ -8,7 +8,7 @@
 
 #include "op_argument_list.h"
 
-// The Foreach operation aggregates records from its supplier if it exists,
+// the Foreach operation aggregates records from its supplier if it exists,
 // which are passed in a list to the ArgumentList operation in its
 // first-embedded execution plan child operation. If there is no supplier,
 // Foreach creates a dummy empty record passed to the ArgumentList operation
@@ -34,5 +34,5 @@ typedef struct {
 // creates a new Foreach operation
 OpBase *NewForeachOp
 (
-    const ExecutionPlan *plan  // execution plan
+    ExecutionPlan *plan  // execution plan
 );

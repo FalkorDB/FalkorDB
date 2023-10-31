@@ -16,13 +16,23 @@ static Record IndexScanConsumeFromChild(OpBase *opBase);
 static OpResult IndexScanReset(OpBase *opBase);
 static void IndexScanFree(OpBase *opBase);
 
-static void IndexScanToString(const OpBase *ctx, sds *buf) {
+static void IndexScanToString
+(
+	const OpBase *ctx,
+	sds *buf
+) {
 	IndexScan *op = (IndexScan *)ctx;
 	ScanToString(ctx, buf, op->n->alias, op->n->label);
 }
 
-OpBase *NewIndexScanOp(const ExecutionPlan *plan, Graph *g, NodeScanCtx *n,
-		RSIndex *idx, FT_FilterNode *filter) {
+OpBase *NewIndexScanOp
+(
+	ExecutionPlan *plan,
+	Graph *g,
+	NodeScanCtx *n,
+	RSIndex *idx,
+	FT_FilterNode *filter
+) {
 	// validate inputs
 	ASSERT(g      != NULL);
 	ASSERT(idx    != NULL);
@@ -39,15 +49,19 @@ OpBase *NewIndexScanOp(const ExecutionPlan *plan, Graph *g, NodeScanCtx *n,
 	op->unresolved_filters   =  NULL;
 	op->rebuild_index_query  =  false;
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_NODE_BY_INDEX_SCAN, "Node By Index Scan", IndexScanInit, IndexScanConsume,
-				IndexScanReset, IndexScanToString, NULL, IndexScanFree, false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_NODE_BY_INDEX_SCAN, "Node By Index Scan",
+			IndexScanInit, IndexScanConsume, IndexScanReset, IndexScanToString,
+			NULL, IndexScanFree, false, plan);
 
 	op->nodeRecIdx = OpBase_Modifies((OpBase *)op, n->alias);
 	return (OpBase *)op;
 }
 
-static OpResult IndexScanInit(OpBase *opBase) {
+static OpResult IndexScanInit
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
 
 	if(opBase->childCount > 0) {
@@ -73,21 +87,33 @@ static OpResult IndexScanInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-static inline void _UpdateRecord(IndexScan *op, Record r, EntityID node_id) {
-	// Populate the Record with the graph entity data.
+static inline void _UpdateRecord
+(
+	IndexScan *op,
+	Record r,
+	EntityID node_id
+) {
+	// populate the Record with the graph entity data
 	Node n = GE_NEW_NODE();
 	int res = Graph_GetNode(op->g, node_id, &n);
 	ASSERT(res != 0);
 	Record_AddNode(r, op->nodeRecIdx, n);
 }
 
-static inline bool _PassUnresolvedFilters(const IndexScan *op, Record r) {
+static inline bool _PassUnresolvedFilters
+(
+	const IndexScan *op,
+	Record r
+) {
 	FT_FilterNode *unresolved_filters = op->unresolved_filters;
 	if(unresolved_filters == NULL) return true; // no filters
 	return FilterTree_applyFilters(unresolved_filters, r) == FILTER_PASS;
 }
 
-static Record IndexScanConsumeFromChild(OpBase *opBase) {
+static Record IndexScanConsumeFromChild
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
 	const EntityID *nodeId = NULL;
 
@@ -183,7 +209,10 @@ pull_index:
 	goto pull_index;
 }
 
-static Record IndexScanConsume(OpBase *opBase) {
+static Record IndexScanConsume
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
 
 	// create iterator on first call
@@ -213,7 +242,10 @@ static Record IndexScanConsume(OpBase *opBase) {
 	return NULL;
 }
 
-static OpResult IndexScanReset(OpBase *opBase) {
+static OpResult IndexScanReset
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
 
 	if(op->iter) {
@@ -229,12 +261,15 @@ static OpResult IndexScanReset(OpBase *opBase) {
 	return OP_OK;
 }
 
-static void IndexScanFree(OpBase *opBase) {
+static void IndexScanFree
+(
+	OpBase *opBase
+) {
 	IndexScan *op = (IndexScan *)opBase;
-	/* As long as this Index iterator is alive the index is
-	 * read locked, if this index scan operation is part of
-	 * a query which will modified this index we'll be stuck in
-	 * a dead lock, as we're unable to acquire index write lock. */
+	// as long as this Index iterator is alive the index is
+	// read locked, if this index scan operation is part of
+	// a query which will modified this index we'll be stuck in
+	// a dead lock, as we're unable to acquire index write lock
 	if(op->iter != NULL) {
 		RediSearch_ResultsIteratorFree(op->iter);
 		op->iter = NULL;

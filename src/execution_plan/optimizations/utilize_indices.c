@@ -290,7 +290,6 @@ static FT_FilterNode *_Concat_Filters(OpFilter **filter_ops) {
 // a single Index Scan operation
 void reduce_scan_op
 (
-	ExecutionPlan *plan,
 	NodeByLabelScan *scan
 ) {
 	// in the multi-label case, we want to pick the label which will allow us to
@@ -402,7 +401,7 @@ void reduce_scan_op
 	scan->n = NULL;
 
 	// replace the redundant scan op with the newly-constructed Index Scan
-	ExecutionPlan_ReplaceOp(plan, (OpBase *)scan, indexOp);
+	ExecutionPlan_ReplaceOp((OpBase *)scan, indexOp);
 	OpBase_Free((OpBase *)scan);
 
 	// remove and free all redundant filter ops
@@ -411,7 +410,7 @@ void reduce_scan_op
 	// avoiding problems with stream-sensitive ops like SemiApply
 	for(uint i = 0; i < filters_count; i++) {
 		OpFilter *filter = filters[i];
-		ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
+		ExecutionPlan_RemoveOp((OpBase *)filter);
 		OpBase_Free((OpBase *)filter);
 	}
 
@@ -421,7 +420,11 @@ cleanup:
 
 // try to replace given Conditional Traverse operation and a set of Filter operations with
 // a single Index Scan operation
-void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
+void reduce_cond_op
+(
+	ExecutionPlan *plan,
+	OpCondTraverse *cond
+) {
 	// make sure there's an index for scanned label
 	const char *edge = AlgebraicExpression_Edge(cond->ae);
 	if(!edge) return;
@@ -452,7 +455,7 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 	if(cond->op.children[0]->type == OPType_ALL_NODE_SCAN) {
 		OpBase *allNodeScan = cond->op.children[0];
 		// remove all node scan op
-		ExecutionPlan_RemoveOp(plan, allNodeScan);
+		ExecutionPlan_RemoveOp(allNodeScan);
 		OpBase_Free(allNodeScan);
 	}
 
@@ -485,11 +488,11 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 		OpBase *filter = NewFilterOp(plan, ft);
 
 		// replace the redundant scan op with the newly-constructed filter op and add Index Scan as child
-		ExecutionPlan_ReplaceOp(plan, (OpBase *)cond, indexOp);
+		ExecutionPlan_ReplaceOp((OpBase *)cond, indexOp);
 		ExecutionPlan_PushBelow(indexOp, filter);
 	} else {
 		// replace the redundant scan op with the newly-constructed Index Scan
-		ExecutionPlan_ReplaceOp(plan, (OpBase *)cond, indexOp);
+		ExecutionPlan_ReplaceOp((OpBase *)cond, indexOp);
 	}
 
 	OpBase_Free((OpBase *)cond);
@@ -500,7 +503,7 @@ void reduce_cond_op(ExecutionPlan *plan, OpCondTraverse *cond) {
 	// avoiding problems with stream-sensitive ops like SemiApply
 	for(uint i = 0; i < filters_count; i++) {
 		OpFilter *filter = filters[i];
-		ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
+		ExecutionPlan_RemoveOp((OpBase *)filter);
 		OpBase_Free((OpBase *)filter);
 	}
 
@@ -532,7 +535,7 @@ void utilizeIndices
 		}
 
 		// try to reduce label scan + filter(s) to a single IndexScan operation
-		reduce_scan_op(plan, scanOp);
+		reduce_scan_op(scanOp);
 	}
 
 	// collect all conditional traverse

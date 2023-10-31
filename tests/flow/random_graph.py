@@ -127,6 +127,8 @@ def create_random_graph(g, nodes, edges):
 
         data, range_pattern = create_edge_range(edge, nodes, "map")
         edge_pattern = create_edge_pattern(edge, nodes, "map")
+        print(f"{range_pattern} {edge_pattern}")
+        print({"edges": data})
         res = g.query(
             f"{range_pattern} {edge_pattern}", {"edges": data})
         result["edges"].append(res)

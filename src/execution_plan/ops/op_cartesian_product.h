@@ -18,6 +18,6 @@ typedef struct {
 
 OpBase *NewCartesianProductOp
 (
-	const ExecutionPlan *plan
+	ExecutionPlan *plan
 );
 

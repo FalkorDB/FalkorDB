@@ -8,13 +8,12 @@
 
 #include "../record.h"
 #include "../../util/arr.h"
+#include "../../util/dict.h"
 #include "../../redismodule.h"
 #include "../../schema/schema.h"
 #include "../../graph/query_graph.h"
 #include "../../graph/entities/node.h"
 #include "../../graph/entities/edge.h"
-
-#define OP_REQUIRE_NEW_DATA(opRes) (opRes & (OP_DEPLETED | OP_REFRESH)) > 0
 
 typedef enum {
 	OPType_ALL_NODE_SCAN,
@@ -64,7 +63,7 @@ typedef enum {
 	OP_ERR = 8,
 } OpResult;
 
-// Macro for checking whether an operation is an Apply variant.
+// macro for checking whether an operation is an Apply variant
 #define OP_IS_APPLY(op) ((op)->type == OPType_OR_APPLY_MULTIPLEXER || (op)->type == OPType_AND_APPLY_MULTIPLEXER || (op)->type == OPType_SEMI_APPLY || (op)->type == OPType_ANTI_SEMI_APPLY)
 
 #define PROJECT_OP_COUNT 2
@@ -91,7 +90,8 @@ static const OPType SCAN_OPS[] = {
 
 #define BLACKLIST_OP_COUNT 2
 static const OPType FILTER_RECURSE_BLACKLIST[] = {
-	OPType_APPLY,
+	//OPType_APPLY,
+	OPType_OPTIONAL,
 	OPType_MERGE
 };
 
@@ -109,72 +109,68 @@ static const OPType EAGER_OPERATIONS[] = {
 struct OpBase;
 struct ExecutionPlan;
 
-typedef void (*fpFree)(struct OpBase *);
-typedef OpResult(*fpInit)(struct OpBase *);
-typedef Record(*fpConsume)(struct OpBase *);
-typedef OpResult(*fpReset)(struct OpBase *);
+// operation function pointers
+typedef void (*fpFree)(struct OpBase *);      // free operation
+typedef OpResult(*fpInit)(struct OpBase *);   // initialize operation
+typedef Record(*fpConsume)(struct OpBase *);  // consume operation
+typedef OpResult(*fpReset)(struct OpBase *);  // reset operation
 typedef void (*fpToString)(const struct OpBase *, sds *);
-typedef struct OpBase *(*fpClone)(const struct ExecutionPlan *, const struct OpBase *);
+typedef struct OpBase *(*fpClone)(struct ExecutionPlan *, const struct OpBase *);
 
-// Execution plan operation statistics.
+// execution plan operation statistics
 typedef struct {
-	int profileRecordCount;     // Number of records generated.
-	double profileExecTime;     // Operation total execution time in ms.
+	int profileRecordCount;  // number of records generated
+	double profileExecTime;  // operation total execution time in ms
 }  OpStats;
 
+// operation base
 struct OpBase {
-	OPType type;                // Type of operation.
-	fpInit init;                // Called once before execution.
-	fpFree free;                // Free operation.
-	fpReset reset;              // Reset operation state.
-	fpClone clone;              // Operation clone.
-	fpConsume consume;          // Produce next record.
-	fpConsume profile;          // Profiled version of consume.
-	fpToString toString;        // Operation string representation.
-	const char *name;           // Operation name.
-	int childCount;             // Number of children.
-	bool op_initialized;        // True if the operation has already been initialized.
-	struct OpBase **children;   // Child operations.
-	const char **modifies;      // List of entities this op modifies.
-	OpStats *stats;             // Profiling statistics.
-	struct OpBase *parent;      // Parent operations.
-	const struct ExecutionPlan *plan; // ExecutionPlan this operation is part of.
-	bool writer;             // Indicates this is a writer operation.
+	OPType type;                // type of operation
+	fpInit init;                // called once before execution
+	fpFree free;                // free operation
+	fpReset reset;              // reset operation state
+	fpClone clone;              // operation clone
+	fpConsume consume;          // produce next record
+	fpConsume profile;          // profiled version of consume
+	fpToString toString;        // operation string representation
+	const char *name;           // operation name
+	int childCount;             // number of children
+	struct OpBase **children;   // child operations
+	const char **modifies;      // list of entities this op modifies
+	OpStats *stats;             // profiling statistics
+	struct OpBase *parent;      // parent operations
+	bool writer;                // indicates this is a writer operation
+	struct ExecutionPlan *plan; // executionPlan this operation is part of
+	dict *aware;                // identifiers available to this operation
 };
 typedef struct OpBase OpBase;
 
 // initialize op
 void OpBase_Init
 (
-	OpBase *op,
-	OPType type,
-	const char *name,
-	fpInit init,
-	fpConsume consume,
-	fpReset reset,
-	fpToString toString,
-	fpClone,
-	fpFree free,
-	bool writer,
-	const struct ExecutionPlan *plan
-);
-
-// free op
-void OpBase_Free
-(
-	OpBase *op
+	OpBase *op,                 // op to initialize
+	OPType type,                // op type
+	const char *name,           // op name
+	fpInit init,                // op's init function
+	fpConsume consume,          // op's consume function
+	fpReset reset,              // op's reset function
+	fpToString toString,        // op's toString function
+	fpClone clone,              // op's clone function
+	fpFree free,                // op's free function
+	bool writer,  			    // writer indicator
+	struct ExecutionPlan *plan  // op's execution plan
 );
 
 // consume op
 Record OpBase_Consume
 (
-	OpBase *op
+	OpBase *op  // operation to consume
 );
 
 // profile op
 Record OpBase_Profile
 (
-	OpBase *op
+	OpBase *op  // operation to profile
 );
 
 void OpBase_ToString
@@ -183,9 +179,10 @@ void OpBase_ToString
 	sds *buff
 );
 
+// clone opertion
 OpBase *OpBase_Clone
 (
-	const struct ExecutionPlan *plan,
+	struct ExecutionPlan *plan,
 	const OpBase *op
 );
 
@@ -195,13 +192,52 @@ OPType OpBase_Type
 	const OpBase *op
 );
 
-// returns the number of children of the op
+void OpBase_SetParent
+(
+	OpBase *op,     // op to set parent for
+	OpBase *parent  // parent to set
+);
+
+// add child
+void OpBase_AddChild
+(
+	OpBase *parent,  // parent op
+	OpBase *child    // new child op
+);
+
+// add child at specific index
+void OpBase_AddChildAt
+(
+	OpBase *parent,  // parent op
+	OpBase *child,   // child op
+	uint idx         // index of op
+);
+
+// remove child from parent
+void OpBase_RemoveChild
+(
+	OpBase *op,            // parent op
+	OpBase *child,         // child to remove
+	bool inharit_children  // if true, child's children will be inharited
+);
+
+// locate child in parent's children array
+// returns true if child was found, false otherwise
+// sets 'idx' to the index of child in parent's children array
+bool OpBase_LocateChild
+(
+	const OpBase *parent,  // parent op
+	const OpBase *child,   // child op to locate
+	int *idx               // [optional out] index of child in parent
+);
+
+// returns op's number of children
 uint OpBase_ChildCount
 (
 	const OpBase *op
 );
 
-// returns the i'th child of the op
+// returns op's i'th child
 OpBase *OpBase_GetChild
 (
 	OpBase *join,  // op
@@ -216,13 +252,11 @@ int OpBase_Modifies
 	const char *alias
 );
 
-// adds an alias to an existing modifier
-// such that record[modifier] = record[alias]
-int OpBase_AliasModifier
+// returns op's modifiers
+const char **OpBase_GetModifiers
 (
-	OpBase *op,            // op
-	const char *modifier,  // existing alias
-	const char *alias      // new alias
+	const OpBase *op,  // op to get modifiers from
+	int *n             // number of modifiers
 );
 
 // returns true if any of an op's children are aware of the given alias
@@ -241,6 +275,14 @@ bool OpBase_Aware
 	OpBase *op,
 	const char *alias,
 	int *idx
+);
+
+// computes op awareness
+// an op is aware of all alises its children are aware of in addition to
+// aliases it modifies
+void OpBase_ComputeAwareness
+(
+	OpBase *op  // op to compute awareness for
 );
 
 // sends reset request to each operation up the chain
@@ -266,7 +308,7 @@ void OpBase_UpdateConsume
 void OpBase_BindOpToPlan
 (
 	OpBase *op,
-	const struct ExecutionPlan *plan
+	struct ExecutionPlan *plan
 );
 
 // creates a new record that will be populated during execution
@@ -292,3 +334,10 @@ void OpBase_DeleteRecord
 (
 	Record r
 );
+
+// free op
+void OpBase_Free
+(
+	OpBase *op  // operation to free
+);
+

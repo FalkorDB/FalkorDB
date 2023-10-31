@@ -13,20 +13,26 @@
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
-/* The reduce scans optimizer searches the execution plans for
- * SCAN operations which set node N, in-case there's an earlier
- * operation within the execution plan e.g. PROCEDURE-CALL which sets N
- * then omit SCAN. */
+// the reduce scans optimizer searches the execution plans for
+// SCAN operations which set node N, in-case there's an earlier
+// operation within the execution plan e.g. PROCEDURE-CALL which sets N
+// then omit SCAN
 
-static OpBase *_LabelScanToConditionalTraverse(NodeByLabelScan *op) {
+static OpBase *_LabelScanToConditionalTraverse
+(
+	NodeByLabelScan *op
+) {
 	Graph *g = QueryCtx_GetGraph();
 	const char *alias = op->n->alias;
-	AlgebraicExpression *ae = AlgebraicExpression_NewOperand(GrB_NULL, true, alias, alias, NULL,
-															 op->n->label);
+	AlgebraicExpression *ae = AlgebraicExpression_NewOperand(GrB_NULL, true,
+			alias, alias, NULL, op->n->label);
 	return NewCondTraverseOp(op->op.plan, g, ae);
 }
 
-static void _reduceScans(ExecutionPlan *plan, OpBase *scan) {
+static void _reduceScans
+(
+	OpBase *scan
+) {
 	// Return early if the scan has no child operations.
 	if(scan->childCount == 0) return;
 
@@ -42,26 +48,32 @@ static void _reduceScans(ExecutionPlan *plan, OpBase *scan) {
 	}
 
 	if(raxFind(bound_vars, (unsigned char *)scanned_alias, strlen(scanned_alias)) != raxNotFound) {
-		// If the alias the scan operates on is already bound, the scan operation is redundant.
+		// if the alias the scan operates on is already bound, the scan operation is redundant
 		if(scan->type == OPType_NODE_BY_LABEL_SCAN) {
-			// If we are performing a label scan, introduce a conditional traversal to filter by label.
+			// if we are performing a label scan
+			// introduce a conditional traversal to filter by label
 			OpBase *traverse = _LabelScanToConditionalTraverse((NodeByLabelScan *)scan);
-			ExecutionPlan_ReplaceOp(plan, scan, traverse);
+			ExecutionPlan_ReplaceOp(scan, traverse);
 		} else {
-			// Remove the redundant scan op.
-			ExecutionPlan_RemoveOp(plan, scan);
+			// remove the redundant scan op
+			ExecutionPlan_RemoveOp(scan);
 		}
 		OpBase_Free(scan);
 	}
 	raxFree(bound_vars);
 }
 
-void reduceScans(ExecutionPlan *plan) {
-	// Collect all SCAN operations within the execution plan.
-	OpBase **scans = ExecutionPlan_CollectOpsMatchingTypes(plan->root, SCAN_OPS, SCAN_OP_COUNT);
+void reduceScans
+(
+	ExecutionPlan *plan
+) {
+	// collect all SCAN operations within the execution plan
+	OpBase **scans = ExecutionPlan_CollectOpsMatchingTypes(plan->root, SCAN_OPS,
+			SCAN_OP_COUNT);
+
 	uint scan_count = array_len(scans);
 	for(uint i = 0; i < scan_count; i++) {
-		_reduceScans(plan, scans[i]);
+		_reduceScans(scans[i]);
 	}
 
 	array_free(scans);

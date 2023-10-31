@@ -15,7 +15,7 @@
 static void AggregateFree(OpBase *opBase);
 static Record AggregateConsume(OpBase *opBase);
 static OpResult AggregateReset(OpBase *opBase);
-static OpBase *AggregateClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *AggregateClone(ExecutionPlan *plan, const OpBase *opBase);
 
 // fake hash function
 // hash of key is simply key
@@ -224,7 +224,7 @@ static Record _handoff
 
 OpBase *NewAggregateOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	AR_ExpNode **exps
 ) {
 	OpAggregate *op = rm_malloc(sizeof(OpAggregate));
@@ -347,7 +347,7 @@ static OpResult AggregateReset
 
 static OpBase *AggregateClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_AGGREGATE);
@@ -372,7 +372,7 @@ static OpBase *AggregateClone
 void AggregateBindToPlan
 (
 	OpBase *opBase,            // op to bind
-	const ExecutionPlan *plan  // plan to bind the op to
+	ExecutionPlan *plan  // plan to bind the op to
 ) {
 	OpAggregate *op = (OpAggregate *)opBase;
 	opBase->plan = plan;

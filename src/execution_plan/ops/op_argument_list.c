@@ -11,11 +11,11 @@
 static void ArgumentListFree(OpBase *opBase);
 static Record ArgumentListConsume(OpBase *opBase);
 static OpResult ArgumentListReset(OpBase *opBase);
-static OpBase *ArgumentListClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ArgumentListClone(ExecutionPlan *plan, const OpBase *opBase);
 
 OpBase *NewArgumentListOp
 (
-	const ExecutionPlan *plan
+	ExecutionPlan *plan
 ) {
 	ArgumentList *op = rm_malloc(sizeof(ArgumentList));
 	op->records = NULL;
@@ -78,7 +78,7 @@ static OpResult ArgumentListReset
 
 static inline OpBase *ArgumentListClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_ARGUMENT_LIST);
@@ -101,3 +101,4 @@ static void ArgumentListFree
 		op->records = NULL;
 	}
 }
+

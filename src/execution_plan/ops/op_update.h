@@ -14,13 +14,18 @@
 
 typedef struct {
 	OpBase op;
-	raxIterator it;                 // Iterator for traversing update contexts
-	Record *records;                // Updated records
+	raxIterator it;          // iterator for traversing update contexts
+	Record *records;         // updated records
 	GraphContext *gc;
-	rax *update_ctxs;               // Entities to update and their expressions
-	bool updates_committed;         // True if we've already committed updates and are now in handoff mode.
-	dict *node_updates;             // Enqueued node updates
-	dict *edge_updates;             // Enqueued edge updates
+	rax *update_ctxs;        // entities to update and their expressions
+	bool updates_committed;  // true if we've already committed updates and are now in handoff mode.
+	dict *node_updates;      // enqueued node updates
+	dict *edge_updates;      // enqueued edge updates
 } OpUpdate;
 
-OpBase *NewUpdateOp(const ExecutionPlan *plan, rax *update_exps);
+OpBase *NewUpdateOp
+(
+	ExecutionPlan *plan,
+	rax *update_exps
+);
+

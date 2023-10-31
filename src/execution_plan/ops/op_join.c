@@ -8,17 +8,20 @@
 #include "RG.h"
 #include "../../query_ctx.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record JoinConsume(OpBase *opBase);
 static OpResult JoinInit(OpBase *opBase);
-static OpBase *JoinClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *JoinClone(ExecutionPlan *plan, const OpBase *opBase);
 static OpResult JoinReset(OpBase *opBase);
 
-OpBase *NewJoinOp(const ExecutionPlan *plan) {
+OpBase *NewJoinOp
+(
+	ExecutionPlan *plan
+) {
 	OpJoin *op = rm_malloc(sizeof(OpJoin));
 	op->stream = NULL;
 
-	// Set our Op operations
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_JOIN, "Join", JoinInit, JoinConsume, 
 		JoinReset, NULL, JoinClone, NULL, false, plan);
 
@@ -29,9 +32,12 @@ OpBase *NewJoinOp(const ExecutionPlan *plan) {
 	return (OpBase *)op;
 }
 
-static OpResult JoinInit(OpBase *opBase) {
+static OpResult JoinInit
+(
+	OpBase *opBase
+) {
 	OpJoin *op = (OpJoin *)opBase;
-	// Start pulling from first stream.
+	// start pulling from first stream.
 	op->streamIdx = 0;
 	op->stream = op->op.children[op->streamIdx];
 
@@ -55,31 +61,35 @@ static OpResult JoinInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-static Record JoinConsume(OpBase *opBase) {
+static Record JoinConsume
+(
+	OpBase *opBase
+) {
 	OpJoin *op = (OpJoin *)opBase;
 	Record r = NULL;
 	bool new_stream = false;
 
 	while(!r) {
-		// Try pulling from current stream.
+		// try pulling from current stream
 		r = OpBase_Consume(op->stream);
 
 		if(!r) {
-			// Stream depleted
-			// Propagate reset to release RediSearch index lock if any exists
+			// stream depleted
+			// propagate reset to release RediSearch index lock if any exists
 			OpBase_PropagateReset(op->stream);
-			// See if there's a new stream to pull from.
+			// see if there's a new stream to pull from
 			op->streamIdx++;
 			if(op->streamIdx >= op->op.childCount) break;
 
 			op->stream = op->op.children[op->streamIdx];
-			// Switched streams, need to update the ResultSet column mapping
+			// switched streams need to update the ResultSet column mapping
 			new_stream = true;
 			continue;
 		}
 
 		if(op->update_column_map && new_stream) {
-			// We have a new record mapping, update the ResultSet column map to match it.
+			// we have a new record mapping
+			// update the ResultSet column map to match it
 			ResultSet_MapProjection(QueryCtx_GetResultSet(), r->mapping);
 		}
 	}
@@ -87,7 +97,11 @@ static Record JoinConsume(OpBase *opBase) {
 	return r;
 }
 
-static inline OpBase *JoinClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *JoinClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_JOIN);
 	OpBase *clone = NewJoinOp(plan);
 	return clone;
@@ -119,3 +133,4 @@ bool JoinGetUpdateColumnMap
 	ASSERT(op->type == OPType_JOIN);
 	return ((OpJoin *)op)->update_column_map;
 }
+

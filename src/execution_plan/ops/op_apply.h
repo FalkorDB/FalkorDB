@@ -20,11 +20,15 @@
 // left-hand branch and the process repeats
 typedef struct {
 	OpBase op;
-	Record r;                       // bound branch record
-	Record *records;                // LHS records
-	OpBase *bound_branch;           // bound branch
-	OpBase *rhs_branch;             // right-hand branch
-	Argument *op_arg;               // right-hand branch tap
+	Record r;              // bound branch record
+	Record *records;       // LHS records
+	OpBase *bound_branch;  // bound branch
+	OpBase *rhs_branch;    // right-hand branch
+	Argument **args;       // right-hand side taps
 } Apply;
 
-OpBase *NewApplyOp(const ExecutionPlan *plan);
+OpBase *NewApplyOp
+(
+	ExecutionPlan *plan
+);
+

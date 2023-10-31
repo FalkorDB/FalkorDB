@@ -12,45 +12,54 @@
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
-/* Reduce traversal searches for traversal operations where
- * both the src and destination nodes in the traversal are already
- * resolved by former operation, in which case we need to make sure
- * src is connected to dest via the current expression.
- *
- * Consider the following query, execution plan:
- * MATCH (A)-[X]->(B)-[Y]->(A) RETURN A,B
- * SCAN (A)
- * TRAVERSE-1 (A)-[X]->(B)
- * TRAVERSE-2 (B)-[Y]->(A)
- * TRAVERSE-2 tries to see if B is connected to A via Y
- * but A and B are known, we just need to make sure there's an edge
- * of type Y connecting B to A
- * this is done by the EXPAND-INTO operation. */
+// reduce traversal searches for traversal operations where
+// both the src and destination nodes in the traversal are already
+// resolved by former operation, in which case we need to make sure
+// src is connected to dest via the current expression
+//
+// consider the following query, execution plan:
+// mATCH (A)-[X]->(B)-[Y]->(A) RETURN A,B
+// sCAN (A)
+// tRAVERSE-1 (A)-[X]->(B)
+// tRAVERSE-2 (B)-[Y]->(A)
+// tRAVERSE-2 tries to see if B is connected to A via Y
+// but A and B are known, we just need to make sure there's an edge
+// of type Y connecting B to A
+// this is done by the EXPAND-INTO operation
 
-static inline bool _isInSubExecutionPlan(OpBase *op) {
+static inline bool _isInSubExecutionPlan
+(
+	OpBase *op
+) {
 	return ExecutionPlan_LocateOp(op, OPType_ARGUMENT) != NULL;
 }
 
-static void _removeRedundantTraversal(ExecutionPlan *plan, OpCondTraverse *traverse) {
+static void _removeRedundantTraversal
+(
+	OpCondTraverse *traverse
+) {
 	AlgebraicExpression *ae =  traverse->ae;
 	if(AlgebraicExpression_OperandCount(ae) == 1 &&
 	   !strcmp(AlgebraicExpression_Src(ae), AlgebraicExpression_Dest(ae))) {
-		ExecutionPlan_RemoveOp(plan, (OpBase *)traverse);
+		ExecutionPlan_RemoveOp((OpBase *)traverse);
 		OpBase_Free((OpBase *)traverse);
 	}
 }
 
-/* Inspect each traverse operation T,
- * For each T see if T's source and destination nodes
- * are already resolved, in which case replace traversal operation
- * with expand-into op. */
-void reduceTraversal(ExecutionPlan *plan) {
-	OpBase **traversals = ExecutionPlan_CollectOpsMatchingTypes(plan->root, TRAVERSE_OPS,
-															   TRAVERSE_OP_COUNT);
+// inspect each traverse operation T
+// for each T see if T's source and destination nodes
+// are already resolved, in which case replace traversal operation
+// with expand-into op
+void reduceTraversal
+(
+	ExecutionPlan *plan
+) {
+	OpBase **traversals = ExecutionPlan_CollectOpsMatchingTypes(plan->root,
+			TRAVERSE_OPS, TRAVERSE_OP_COUNT);
 	uint traversals_count = array_len(traversals);
 
-	/* Keep track of redundant traversals which will be removed
-	 * once we'll inspect every traversal operation. */
+	// keep track of redundant traversals which will be removed
+	// once we'll inspect every traversal operation
 	uint redundantTraversalsCount = 0;
 	OpCondTraverse *redundantTraversals[traversals_count];
 
@@ -67,18 +76,18 @@ void reduceTraversal(ExecutionPlan *plan) {
 			ASSERT(false);
 		}
 
-		/* If traverse src and dest nodes are the same,
-		 * number of hops is 1 and the matrix being used is a label matrix, than
-		 * traverse acts as a filter which make sure the node is of a specific type
-		 * e.g. MATCH (a:A)-[e:R]->(b:B) RETURN e
-		 * in this case there will be a traverse operation which will
-		 * filter our dest nodes (b) which aren't of type B. */
+		// if traverse src and dest nodes are the same
+		// number of hops is 1 and the matrix being used is a label matrix, than
+		// traverse acts as a filter which make sure the node is of a specific type
+		// e.g. MATCH (a:A)-[e:R]->(b:B) RETURN e
+		// in this case there will be a traverse operation which will
+		// filter our dest nodes (b) which aren't of type B
 
 		if(!strcmp(AlgebraicExpression_Src(ae), AlgebraicExpression_Dest(ae)) &&
 		   AlgebraicExpression_OperandCount(ae) == 1 &&
 		   AlgebraicExpression_DiagonalOperand(ae, 0)) continue;
 
-		// Collect variables bound before this op.
+		// collect variables bound before this op
 		rax *bound_vars = raxNew();
 		for(int i = 0; i < op->childCount; i ++) {
 			ExecutionPlan_BoundVariables(op->children[i], bound_vars,
@@ -92,41 +101,43 @@ void reduceTraversal(ExecutionPlan *plan) {
 			continue;
 		}
 
-		/* Both src and dest are already known
-		 * perform expand into instead of traverse. */
+		// both src and dest are already known
+		// perform expand into instead of traverse
 		if(op->type == OPType_CONDITIONAL_TRAVERSE) {
 			OpCondTraverse *traverse = (OpCondTraverse *)op;
-			const ExecutionPlan *traverse_plan = traverse->op.plan;
-			OpBase *expand_into = NewExpandIntoOp(traverse_plan, traverse->graph, traverse->ae);
+			ExecutionPlan *traverse_plan = traverse->op.plan;
+			OpBase *expand_into = NewExpandIntoOp(traverse_plan,
+					traverse->graph, traverse->ae);
 
-			// Set traverse algebraic_expression to NULL to avoid early free.
+			// set traverse algebraic_expression to NULL to avoid early free
 			traverse->ae = NULL;
-			ExecutionPlan_ReplaceOp(plan, (OpBase *)traverse, expand_into);
+			ExecutionPlan_ReplaceOp((OpBase *)traverse, expand_into);
 			OpBase_Free((OpBase *)traverse);
 		} else {
 			CondVarLenTraverse *traverse = (CondVarLenTraverse *)op;
 			const ExecutionPlan *traverse_plan = traverse->op.plan;
 			CondVarLenTraverseOp_ExpandInto(traverse);
-			/* Conditional variable length traversal do not perform
-			 * label filtering by matrix matrix multiplication
-			 * it introduces conditional traverse operation in order
-			 * to perform label filtering, but in case a node is already
-			 * resolved this filtering is redundent and should be removed. */
+			// conditional variable length traversal do not perform
+			// label filtering by matrix matrix multiplication
+			// it introduces conditional traverse operation in order
+			// to perform label filtering, but in case a node is already
+			// resolved this filtering is redundent and should be removed
 			OpBase *t;
-			QGNode *src = QueryGraph_GetNodeByAlias(traverse_plan->query_graph, AlgebraicExpression_Src(ae));
+			QGNode *src = QueryGraph_GetNodeByAlias(traverse_plan->query_graph,
+					AlgebraicExpression_Src(ae));
 			if(QGNode_Labeled(src)) {
 				t = op->children[0];
 				if(t->type == OPType_CONDITIONAL_TRAVERSE && !_isInSubExecutionPlan(op)) {
-					// Queue traversal for removal.
+					// queue traversal for removal
 					redundantTraversals[redundantTraversalsCount++] = (OpCondTraverse *)t;
 				}
 			}
 			QGNode *dest = QueryGraph_GetNodeByAlias(traverse_plan->query_graph,
-													 AlgebraicExpression_Dest(ae));
+					AlgebraicExpression_Dest(ae));
 			if(QGNode_Labeled(dest)) {
 				t = op->parent;
 				if(t->type == OPType_CONDITIONAL_TRAVERSE && !_isInSubExecutionPlan(op)) {
-					// Queue traversal for removal.
+					// queue traversal for removal
 					redundantTraversals[redundantTraversalsCount++] = (OpCondTraverse *)t;
 				}
 			}
@@ -134,11 +145,11 @@ void reduceTraversal(ExecutionPlan *plan) {
 		raxFree(bound_vars);
 	}
 
-	// Remove redundant traversals
+	// remove redundant traversals
 	for(uint i = 0; i < redundantTraversalsCount; i++)
-		_removeRedundantTraversal(plan, redundantTraversals[i]);
+		_removeRedundantTraversal(redundantTraversals[i]);
 
-	// Clean up.
+	// clean up
 	array_free(traversals);
 }
 

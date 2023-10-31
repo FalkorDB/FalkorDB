@@ -13,29 +13,34 @@
 #include "../../arithmetic/arithmetic_expression.h"
 #include "../execution_plan_build/execution_plan_util.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record ResultsConsume(OpBase *opBase);
 static OpResult ResultsInit(OpBase *opBase);
-static OpBase *ResultsClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ResultsClone(ExecutionPlan *plan, const OpBase *opBase);
 
-OpBase *NewResultsOp(const ExecutionPlan *plan) {
+OpBase *NewResultsOp
+(
+	ExecutionPlan *plan
+) {
 	Results *op = rm_malloc(sizeof(Results));
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_RESULTS, "Results", ResultsInit, ResultsConsume,
-				NULL, NULL, ResultsClone, NULL, false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_RESULTS, "Results", ResultsInit,
+			ResultsConsume, NULL, NULL, ResultsClone, NULL, false, plan);
 
 	return (OpBase *)op;
 }
 
-static OpResult ResultsInit(OpBase *opBase) {
+static OpResult ResultsInit
+(
+	OpBase *opBase
+) {
 	Results *op = (Results *)opBase;
 	op->result_set = QueryCtx_GetResultSet();
 	Config_Option_get(Config_RESULTSET_MAX_SIZE, &op->result_set_size_limit);
 
 	// map resultset columns to record entries
-	OpBase *join = ExecutionPlan_LocateOpDepth(opBase, OPType_JOIN, 2);
-	if(op->result_set != NULL && (join == NULL || !JoinGetUpdateColumnMap(join))) {
+	if(op->result_set != NULL) {
 		rax *mapping = ExecutionPlan_GetMappings(opBase->plan);
 		ResultSet_MapProjection(op->result_set, mapping);
 	}
@@ -43,9 +48,12 @@ static OpResult ResultsInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-/* Results consume operation
- * called each time a new result record is required */
-static Record ResultsConsume(OpBase *opBase) {
+// results consume operation
+// called each time a new result record is required
+static Record ResultsConsume
+(
+	OpBase *opBase
+) {
 	Record r = NULL;
 	Results *op = (Results *)opBase;
 
@@ -62,7 +70,12 @@ static Record ResultsConsume(OpBase *opBase) {
 	return r;
 }
 
-static inline OpBase *ResultsClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *ResultsClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_RESULTS);
 	return NewResultsOp(plan);
 }
+

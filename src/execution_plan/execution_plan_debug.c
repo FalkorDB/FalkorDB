@@ -8,27 +8,37 @@
 #include "../RG.h"
 #include "./ops/ops.h"
 
-void _ExecutionPlan_Print(const OpBase *op, RedisModuleCtx *ctx, sds *buffer,
-						  int ident, int *op_count) {
+void _ExecutionPlan_Print
+(
+	const OpBase *op,
+	RedisModuleCtx *ctx,
+	sds *buffer,
+	int ident,
+	int *op_count
+) {
 	if(!op) return;
 
-	*op_count += 1; // account for current operation.
+	*op_count += 1; // account for current operation
 
-	// Construct operation string representation.
+	// construct operation string representation
 	sdsclear(*buffer);
 	*buffer = sdscatprintf(*buffer, "%*s", ident, "");
 	OpBase_ToString(op, buffer);
 
 	RedisModule_ReplyWithStringBuffer(ctx, *buffer, sdslen(*buffer));
 
-	// Recurse over child operations.
+	// recurse over child operations
 	for(int i = 0; i < op->childCount; i++) {
 		_ExecutionPlan_Print(op->children[i], ctx, buffer, ident + 4, op_count);
 	}
 }
 
-// Reply with a string representation of given execution plan.
-void ExecutionPlan_Print(const ExecutionPlan *plan, RedisModuleCtx *ctx) {
+// reply with a string representation of given execution plan
+void ExecutionPlan_Print
+(
+	const ExecutionPlan *plan,
+	RedisModuleCtx *ctx
+) {
 	ASSERT(plan && ctx);
 
 	int op_count = 0;   // Number of operations printed.
@@ -40,5 +50,19 @@ void ExecutionPlan_Print(const ExecutionPlan *plan, RedisModuleCtx *ctx) {
 
 	RedisModule_ReplySetArrayLength(ctx, op_count);
 	sdsfree(buffer);
+
+	// DEBUG
+	// print resolvers
+	
+	dictIterator *it = HashTableGetIterator(plan->resolvers);
+	dictEntry *HashTableNext(dictIterator *iter);
+	dictEntry *et;
+	while((et = HashTableNext(it))) {
+		const char *key  = (const char *) HashTableGetKey(et);
+		const OpBase *op = (const OpBase*) HashTableGetVal(et);
+		printf("op: %s resolves: %s\n", op->name, key);
+	}
+
+	// END OF DEBUG
 }
 

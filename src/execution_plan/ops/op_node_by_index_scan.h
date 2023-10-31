@@ -27,6 +27,12 @@ typedef struct {
 } IndexScan;
 
 // creates a new IndexScan operation
-OpBase *NewIndexScanOp(const ExecutionPlan *plan, Graph *g, NodeScanCtx *n,
-		RSIndex *idx, FT_FilterNode *filter);
+OpBase *NewIndexScanOp
+(
+	ExecutionPlan *plan,
+	Graph *g,
+	NodeScanCtx *n,
+	RSIndex *idx,
+	FT_FilterNode *filter
+);
 

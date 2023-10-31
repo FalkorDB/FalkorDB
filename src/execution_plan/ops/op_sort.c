@@ -16,7 +16,7 @@
 static OpResult SortInit(OpBase *opBase);
 static Record SortConsume(OpBase *opBase);
 static OpResult SortReset(OpBase *opBase);
-static OpBase *SortClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *SortClone(ExecutionPlan *plan, const OpBase *opBase);
 static void SortFree(OpBase *opBase);
 
 // function to compare two records on a subset of fields
@@ -86,7 +86,7 @@ static inline Record _handoff(OpSort *op) {
 
 OpBase *NewSortOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	AR_ExpNode **exps,
 	int *directions
 ) {
@@ -138,7 +138,10 @@ static OpResult SortInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-static Record SortConsume(OpBase *opBase) {
+static Record SortConsume
+(
+	OpBase *opBase
+) {
 	OpSort *op = (OpSort *)opBase;
 
 	if(!op->first) {
@@ -175,7 +178,10 @@ static Record SortConsume(OpBase *opBase) {
 }
 
 // restart iterator
-static OpResult SortReset(OpBase *ctx) {
+static OpResult SortReset
+(
+	OpBase *ctx
+) {
 	OpSort *op = (OpSort *)ctx;
 	uint recordCount;
 
@@ -201,7 +207,11 @@ static OpResult SortReset(OpBase *ctx) {
 	return OP_OK;
 }
 
-static OpBase *SortClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *SortClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_SORT);
 	OpSort *op = (OpSort *)opBase;
 	int *directions;
@@ -212,7 +222,10 @@ static OpBase *SortClone(const ExecutionPlan *plan, const OpBase *opBase) {
 }
 
 // frees sort
-static void SortFree(OpBase *ctx) {
+static void SortFree
+(
+	OpBase *ctx
+) {
 	OpSort *op = (OpSort *)ctx;
 
 	if(op->heap) {
@@ -252,3 +265,4 @@ static void SortFree(OpBase *ctx) {
 		op->exps = NULL;
 	}
 }
+

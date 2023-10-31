@@ -20,7 +20,7 @@ typedef struct {
 
 OpBase *NewArgumentListOp
 (
-	const ExecutionPlan *plan
+	ExecutionPlan *plan
 );
 
 void ArgumentList_AddRecordList

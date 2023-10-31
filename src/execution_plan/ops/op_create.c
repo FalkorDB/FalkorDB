@@ -12,25 +12,34 @@
 
 // forward declarations
 static Record CreateConsume(OpBase *opBase);
-static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *CreateClone(ExecutionPlan *plan, const OpBase *opBase);
 static void CreateFree(OpBase *opBase);
 
-OpBase *NewCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateCtx *edges) {
+OpBase *NewCreateOp
+(
+	ExecutionPlan *plan,
+	NodeCreateCtx *nodes,
+	EdgeCreateCtx *edges
+) {
 	OpCreate *op = rm_calloc(1, sizeof(OpCreate));
 	op->records = NULL;
-	NewPendingCreationsContainer(&op->pending, nodes, edges); // Prepare all creation variables.
-	// Set our Op operations
+
+	// prepare all creation variables
+	NewPendingCreationsContainer(&op->pending, nodes, edges);
+
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
 				NULL, NULL, CreateClone, CreateFree, true, plan);
 
 	uint node_blueprint_count = array_len(nodes);
 	uint edge_blueprint_count = array_len(edges);
 
-	// Construct the array of IDs this operation modifies
+	// construct the array of IDs this operation modifies
 	for(uint i = 0; i < node_blueprint_count; i ++) {
 		NodeCreateCtx *n = nodes + i;
 		n->node_idx = OpBase_Modifies((OpBase *)op, n->alias);
 	}
+
 	for(uint i = 0; i < edge_blueprint_count; i ++) {
 		EdgeCreateCtx *e = edges + i;
 		e->edge_idx = OpBase_Modifies((OpBase *)op, e->alias);
@@ -128,7 +137,7 @@ static void _CreateEdges
 	}
 }
 
-// Return mode, emit a populated Record.
+// return mode, emit a populated Record
 static Record _handoff
 (
 	OpCreate *op
@@ -196,8 +205,13 @@ static Record CreateConsume
 	return _handoff(op);
 }
 
-static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *CreateClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_CREATE);
+
 	OpCreate *op = (OpCreate *)opBase;
 	NodeCreateCtx *nodes;
 	EdgeCreateCtx *edges;
@@ -206,7 +220,10 @@ static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	return NewCreateOp(plan, nodes, edges);
 }
 
-static void CreateFree(OpBase *ctx) {
+static void CreateFree
+(
+	OpBase *ctx
+) {
 	OpCreate *op = (OpCreate *)ctx;
 
 	if(op->records) {

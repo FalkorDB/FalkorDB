@@ -11,21 +11,22 @@
 static OpResult CartesianProductInit(OpBase *opBase);
 static Record CartesianProductConsume(OpBase *opBase);
 static OpResult CartesianProductReset(OpBase *opBase);
-static OpBase *CartesianProductClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *CartesianProductClone(ExecutionPlan *plan, const OpBase *opBase);
 static void CartesianProductFree(OpBase *opBase);
 
 OpBase *NewCartesianProductOp
 (
-	const ExecutionPlan *plan
+	ExecutionPlan *plan
 ) {
 	CartesianProduct *op = rm_malloc(sizeof(CartesianProduct));
 	op->init = true;
 	op->r = NULL;
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_CARTESIAN_PRODUCT, "Cartesian Product", CartesianProductInit,
-				CartesianProductConsume, CartesianProductReset, NULL, CartesianProductClone, CartesianProductFree,
-				false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_CARTESIAN_PRODUCT, "Cartesian Product",
+			CartesianProductInit, CartesianProductConsume,
+			CartesianProductReset, NULL, CartesianProductClone,
+			CartesianProductFree, false, plan);
 	return (OpBase *)op;
 }
 
@@ -56,7 +57,7 @@ static int _PullFromStreams
 			// reset streams [0-i]
 			_ResetStreams(op, i);
 
-			// Pull from resetted streams.
+			// pull from resetted streams
 			for(int j = 0; j < i; j++) {
 				child = op->op.children[j];
 				childRecord = OpBase_Consume(child);
@@ -67,13 +68,13 @@ static int _PullFromStreams
 					return 0;
 				}
 			}
-			// Ready to continue.
+			// ready to continue
 			return 1;
 		}
 	}
 
-	/* If we're here, then we didn't manged to get new data.
-	 * Last stream depleted. */
+	// if we're here, then we didn't manged to get new data
+	// last stream depleted
 	return 0;
 }
 
@@ -121,7 +122,7 @@ static Record CartesianProductConsume
 		if(!_PullFromStreams(op)) return NULL;
 	}
 
-	// Pass down a clone of record.
+	// pass down a clone of record
 	return OpBase_CloneRecord(op->r);
 }
 
@@ -136,7 +137,7 @@ static OpResult CartesianProductReset
 
 static OpBase *CartesianProductClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_CARTESIAN_PRODUCT);

@@ -10,30 +10,35 @@
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
-/* The filterVariableLengthEdges optimization finds variable-length traversal ops
- * in the op tree that are immediately followed by filter ops and, if the filter
- * op(s) apply predicates directly to the traversed edge, migrates those predicates
- * into the traversal itself.
- *
- * This allows us to only expand paths on which the traversed edges pass the
- * filter predicates, rather than applying them after discovering all paths. */
+// the filterVariableLengthEdges optimization finds variable-length traversal ops
+// in the op tree that are immediately followed by filter ops and, if the filter
+// op(s) apply predicates directly to the traversed edge, migrates those predicates
+// into the traversal itself
+//
+// this allows us to only expand paths on which the traversed edges pass the
+// filter predicates, rather than applying them after discovering all paths
 
-// Returns true if the given filter operates exclusively on the traversed edge
+// returns true if the given filter operates exclusively on the traversed edge
 // of a CondVarLenTraverse op
-static bool _applicableFilter(FT_FilterNode *ft, const char *src,
-							  const char *edge, const char *dest) {
+static bool _applicableFilter
+(
+	FT_FilterNode *ft,
+	const char *src,
+	const char *edge,
+	const char *dest
+) {
 	bool applicable = false;
 
-	// Collect all modified aliases in the FilterTree.
+	// collect all modified aliases in the FilterTree
 	rax *filtered = FilterTree_CollectModified(ft);
 
-	// Look up the edge alias in the alias map.
+	// look up the edge alias in the alias map
 	applicable = (raxFind(filtered, (unsigned char *)edge, strlen(edge)) != raxNotFound);
 	if(applicable) {
-		/* Reject filter trees that contain either the source or destination node.
-		 * This avoids false positives on TOPATH expressions that collect all aliases in a path
-		 * and rejects filters between an edge property and a traversal's src/dest property,
-		 * which will not be available during traversals. */
+		// reject filter trees that contain either the source or destination node
+		// this avoids false positives on TOPATH expressions that collect all aliases in a path
+		// and rejects filters between an edge property and a traversal's src/dest property
+		// which will not be available during traversals
 		applicable =
 			(raxFind(filtered, (unsigned char *)src, strlen(src)) == raxNotFound
 			 &&
@@ -44,9 +49,10 @@ static bool _applicableFilter(FT_FilterNode *ft, const char *src,
 	return applicable;
 }
 
-static void _filterVariableLengthEdges(ExecutionPlan *plan,
-									   CondVarLenTraverse *traverse_op) {
-	ASSERT(plan != NULL);
+static void _filterVariableLengthEdges
+(
+	CondVarLenTraverse *traverse_op
+) {
 	ASSERT(traverse_op != NULL);
 
 	// retrieve the aliases of the traversed source, destination, and edge
@@ -79,7 +85,7 @@ static void _filterVariableLengthEdges(ExecutionPlan *plan,
 		FT_FilterNode *ft = filter_op->filterTree;
 
 		// remove filter operation from execution plan
-		ExecutionPlan_RemoveOp(plan, (OpBase *)filter_op);
+		ExecutionPlan_RemoveOp((OpBase *)filter_op);
 		// NULL-set the filter tree to avoid a double free
 		filter_op->filterTree = NULL;
 		OpBase_Free((OpBase *)filter_op);
@@ -100,11 +106,14 @@ static void _filterVariableLengthEdges(ExecutionPlan *plan,
 	if(root != NULL) CondVarLenTraverseOp_SetFilter(traverse_op, root);
 }
 
-void filterVariableLengthEdges(ExecutionPlan *plan) {
+void filterVariableLengthEdges
+(
+	ExecutionPlan *plan
+) {
 	ASSERT(plan != NULL);
 	OpBase **var_len_traverse_ops = NULL;
 
-	// Collect all variable-length traversals
+	// collect all variable-length traversals
 	const OPType types[] = {OPType_CONDITIONAL_VAR_LEN_TRAVERSE,
 							OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO
 						   };
@@ -115,7 +124,7 @@ void filterVariableLengthEdges(ExecutionPlan *plan) {
 	uint count = array_len(var_len_traverse_ops);
 	for(uint i = 0; i < count; i ++) {
 		CondVarLenTraverse *op = (CondVarLenTraverse *)var_len_traverse_ops[i];
-		_filterVariableLengthEdges(plan, op);
+		_filterVariableLengthEdges(op);
 	}
 
 	array_free(var_len_traverse_ops);

@@ -187,7 +187,10 @@ class testWithClause(FlowTestsBase):
         # otherwise, x is even and ceil(x/2) == floor(x/2).
         # ceil(5/2) = 3, floor(5/2) = 2
         # ceil(6/2) = 3, floor(6/2) = 3.
-        query = """unwind(range(0, 10)) as x with x as x where ceil(x/2.0) > floor(x/2.0) return count(x)"""
+        query = """UNWIND(range(0, 10)) AS x
+                   WITH x AS x
+                   WHERE ceil(x/2.0) > floor(x/2.0)
+                   RETURN count(x)"""
         actual_result = redis_graph.query(query)
         # Expecting count of 5: [1,3,5,7,9].
         self.env.assertEqual(actual_result.result_set[0], [5])
@@ -195,51 +198,74 @@ class testWithClause(FlowTestsBase):
     # Verify that filters can properly be placed in the scope up to WITH and the expressions projected by it.
     def test09_filter_placement(self):
         # Place a filter on a projected expression.
-        query = """UNWIND [1,2,3] AS a WITH a WHERE a = 2 RETURN a"""
+        query = """UNWIND [1,2,3] AS a
+                   WITH a WHERE a = 2
+                   RETURN a"""
         actual_result = redis_graph.query(query)
         expected = [[2]]
         self.env.assertEqual(actual_result.result_set, expected)
 
         # Place a filter on a projected expression that is aliased by the WITH clause.
-        query = """UNWIND [1,2,3] AS a WITH a AS b WHERE a = 2 RETURN b"""
+        query = """UNWIND [1,2,3] AS a
+                   WITH a AS b
+                   WHERE a = 2
+                   RETURN b"""
         actual_result = redis_graph.query(query)
         expected = [[2]]
         self.env.assertEqual(actual_result.result_set, expected)
 
     def test10_filter_placement_validate_scopes(self):
         # Verify that filters cannot be placed in earlier scopes.
-        query = """UNWIND ['scope1'] AS a WITH a AS b UNWIND ['scope2'] AS a WITH a WHERE a = 'scope1' RETURN a"""
+        query = """UNWIND ['scope1'] AS a
+                   WITH a AS b
+                   UNWIND ['scope2'] AS a
+                   WITH a
+                   WHERE a = 'scope1'
+                   RETURN a"""
         actual_result = redis_graph.query(query)
-        expected = [] # No results should be returned
+        expected = [] # no results should be returned
         self.env.assertEqual(actual_result.result_set, expected)
 
-        query = """UNWIND ['scope1'] AS a WITH a AS b UNWIND ['scope2'] AS a WITH a WHERE a = 'scope2' RETURN a"""
+        query = """UNWIND ['scope1'] AS a
+                   WITH a AS b
+                   UNWIND ['scope2'] AS a
+                   WITH a
+                   WHERE a = 'scope2'
+                   RETURN a"""
         actual_result = redis_graph.query(query)
         expected = [['scope2']]
         self.env.assertEqual(actual_result.result_set, expected)
 
-        # Verify that WITH filters are properly placed in scope without violating Apply restrictions.
-        query = """MATCH (a) OPTIONAL MATCH (b) WITH a, b WHERE b.fakeprop = true RETURN a, b"""
+        # verify that WITH filters are applied after the WITH clause
+        query = """MATCH (a)
+                   OPTIONAL MATCH (b)
+                   WITH a, b
+                   WHERE b.fakeprop = true
+                   RETURN a, b"""
         actual_result = redis_graph.query(query)
-        expected = [] # No results should be returned
+        expected = [] # no results should be returned
         self.env.assertEqual(actual_result.result_set, expected)
-        # Verify that the Filter op appears directly above the Apply operation in the ExecutionPlan.
         plan = redis_graph.execution_plan(query)
-        self.env.assertTrue(re.search('Filter\s+Apply', plan))
+        self.env.assertTrue(re.search('Project\s+Filter', plan))
 
-        # Verify that filters on projected aliases do not get placed before the projection op.
-        query = """UNWIND [1] AS a WITH a AS b, 'projected' AS a WHERE a = 1 RETURN a"""
+        query = """UNWIND [1] AS a
+                   WITH a AS b, 'projected' AS a
+                   WHERE a = 1
+                   RETURN a"""
         plan = redis_graph.execution_plan(query)
         actual_result = redis_graph.query(query)
-        expected = [] # No results should be returned
+        expected = [] # no results should be returned
         self.env.assertEqual(actual_result.result_set, expected)
-        self.env.assertTrue(re.search('Filter\s+Project', plan))
+        self.env.assertTrue(re.search('Project\s+Filter', plan))
 
-        query = """UNWIND [1] AS a WITH a AS b, 'projected' AS a WHERE a = 'projected' RETURN a"""
+        query = """UNWIND [1] AS a
+                   WITH a AS b, 'projected' AS a
+                   WHERE a = 'projected'
+                   RETURN a"""
         plan = redis_graph.execution_plan(query)
         actual_result = redis_graph.query(query)
         expected = [['projected']] # The projected string should be returned
-        self.env.assertTrue(re.search('Filter\s+Project', plan))
+        self.env.assertTrue(re.search('Project\s+Filter', plan))
 
     def test11_valid_order_by_aliases(self):
         # Verify that ORDER BY aliases match previously defined references
@@ -267,3 +293,31 @@ class testWithClause(FlowTestsBase):
         query = """WITH 1 AS x MATCH (a:label_a), (b:label_b) RETURN a.v, b.v"""
         actual_result = redis_graph.query(query)
         self.env.assertEqual(len(actual_result.result_set), 36)
+
+    def test13_invalid_with_filter(self):
+        # a WITH clause that performs aggregation AND contains filter(s)
+        # that operate on a variable that is not projected by the WITH clause
+        # should be rejected.
+        # e.g.
+        #
+        # MATCH (a), (b)
+        # WITH a, count(a) AS cnt
+        # WHERE b.v = cnt
+        # RETURN 1
+        #
+        # must raise an error.
+        # this is becasue an intermidate implicit projection needs to be added
+        # but we can't add 'b' as additional aggregation key, as this will
+        # change the aggregation result
+
+        query = """MATCH (a), (b)
+                   WITH a, count(a) AS cnt
+                   WHERE b.v = cnt
+                   RETURN 1"""
+        try:
+            redis_graph.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error
+            self.env.assertIn("In a WITH with an aggregation, it is not possible to access variables declared before the WITH", str(e))
+

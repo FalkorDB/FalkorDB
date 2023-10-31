@@ -33,7 +33,7 @@ typedef struct {
 // creates a new OpEdgeIndexScan operation
 OpBase *NewEdgeIndexScanOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	Graph *g,
 	QGEdge *e,
 	RSIndex *idx,

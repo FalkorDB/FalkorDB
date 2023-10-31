@@ -12,14 +12,20 @@
 
 typedef struct {
 	OpBase op;
-	Record rhs_rec;                     // Right hand side record.
-	AR_ExpNode *lhs_exp;                // Left hand side expression to join on.
-	AR_ExpNode *rhs_exp;                // Right hand side expression to join on.
-	int64_t intersect_idx;              // Current intersection, < number_of_intersections
-	Record *cached_records;             // Cached left hand side records.
-	uint join_value_rec_idx;            // position on joined expression within record.
-	int64_t number_of_intersections;    // Number of intersections located.
+	Record rhs_rec;                   // right hand side record
+	AR_ExpNode *lhs_exp;              // left hand side expression to join on
+	AR_ExpNode *rhs_exp;              // right hand side expression to join on
+	int64_t intersect_idx;            // current intersection, < number_of_intersections
+	Record *cached_records;           // cached left hand side records
+	uint join_value_rec_idx;          // position on joined expression within record
+	int64_t number_of_intersections;  // number of intersections located
 } OpValueHashJoin;
 
-/* Creates a new ValueHashJoin operation */
-OpBase *NewValueHashJoin(const ExecutionPlan *plan, AR_ExpNode *lhs_exp, AR_ExpNode *rhs_exp);
+// creates a new ValueHashJoin operation
+OpBase *NewValueHashJoin
+(
+	ExecutionPlan *plan,
+	AR_ExpNode *lhs_exp,
+	AR_ExpNode *rhs_exp
+);
+

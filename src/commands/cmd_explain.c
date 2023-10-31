@@ -30,8 +30,8 @@ void Graph_Explain(void *args) {
 	Globals_TrackCommandCtx(command_ctx);
 
 	// retrieve the required execution items and information:
-	// 1. Execution plan
-	// 2. Whether these items were cached or not
+	// 1. execution plan
+	// 2. whether these items were cached or not
 	bool           cached = false;
 	ExecutionPlan  *plan  = NULL;
 	exec_ctx  =  ExecutionCtx_FromQuery(command_ctx->query);
@@ -55,14 +55,14 @@ void Graph_Explain(void *args) {
 	lock_acquired = true;
 
 	ExecutionPlan_PreparePlan(plan);
-	ExecutionPlan_Init(plan);       // Initialize the plan's ops.
+	ExecutionPlan_Init(plan);       // initialize the plan's ops
 
 	if (ErrorCtx_EncounteredError()) {
 		query_ctx->status = QueryExecutionStatus_FAILURE;
 		goto cleanup;
 	}
 
-	ExecutionPlan_Print(plan, ctx); // Print the execution plan.
+	ExecutionPlan_Print(plan, ctx); // print the execution plan
 
 cleanup:
 	if(ErrorCtx_EncounteredError()) ErrorCtx_EmitException();
@@ -72,7 +72,7 @@ cleanup:
 	Globals_UntrackCommandCtx(command_ctx);
 	CommandCtx_UnblockClient(command_ctx);
 	CommandCtx_Free(command_ctx);
-	QueryCtx_Free(); // Reset the QueryCtx and free its allocations.
+	QueryCtx_Free(); // reset the QueryCtx and free its allocations
 	ErrorCtx_Clear();
 }
 

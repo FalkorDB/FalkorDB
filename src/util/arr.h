@@ -20,13 +20,13 @@
  *
  *
  *  */
+#include "RG.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/param.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
-#include "../RG.h"
 #include "rmalloc.h"
 
 #ifdef __cplusplus
@@ -347,6 +347,29 @@ __extension__({                                         \
       }                                              \
     }                                                \
 })                                                   \
+
+// removes duplicates from the array
+// cmp is a function that compares two elements
+#define array_dedupe(arr, cmp)                              \
+	__extension__({                                         \
+		uint32_t n = array_len((arr));                      \
+		uint32_t s = array_hdr((arr))->elem_sz;             \
+                                                            \
+		/* sort the array */                                \
+		qsort((arr), n, s, cmp);                            \
+                                                            \
+		/* remove duplicates */                             \
+		uint32_t i = 0;                                     \
+		for(uint32_t j = 0; j < n; j++) {                   \
+			if(i != j && cmp((arr) + i, (arr) + j) != 0) {  \
+				(arr)[++i] = (arr)[j];                      \
+			}                                               \
+		}                                                   \
+                                                            \
+		/* remove all elements after i  */                  \
+		i = (i+1 > n) ? n : i+1;                            \
+		arr = array_reset_cap((arr), i);                    \
+	})                                                      \
 
 #pragma GCC diagnostic pop
 

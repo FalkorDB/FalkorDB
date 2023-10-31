@@ -10,13 +10,16 @@
 #include "../../util/rmalloc.h"
 #include "../../query_ctx.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record ProcCallConsume(OpBase *opBase);
 static OpResult ProcCallReset(OpBase *opBase);
-static OpBase *ProcCallClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ProcCallClone(ExecutionPlan *plan, const OpBase *opBase);
 static void ProcCallFree(OpBase *opBase);
 
-static Record _yield(OpProcCall *op) {
+static Record _yield
+(
+	OpProcCall *op
+) {
 	SIValue *outputs = Proc_Step(op->procedure);
 	if(outputs == NULL) return NULL;
 
@@ -31,7 +34,10 @@ static Record _yield(OpProcCall *op) {
 	return clone;
 }
 
-static void _evaluate_proc_args(OpProcCall *op) {
+static void _evaluate_proc_args
+(
+	OpProcCall *op
+) {
 	// evaluate arguments, free args from previous call
 	uint arg_count = array_len(op->args);
 	for(uint i = 0; i < arg_count; i++) SIValue_Free(op->args[i]);
@@ -45,7 +51,7 @@ static void _evaluate_proc_args(OpProcCall *op) {
 
 OpBase *NewProcCallOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const char *proc_name,
 	AR_ExpNode **arg_exps,
 	AR_ExpNode **yield_exps
@@ -58,14 +64,14 @@ OpBase *NewProcCallOp
 
 	OpProcCall *op = rm_malloc(sizeof(OpProcCall));
 
-	op->r           =  NULL;
-	op->args        =  array_new(SIValue, array_len(arg_exps));
-	op->arg_exps    =  arg_exps;
-	op->arg_count   =  array_len(arg_exps);
-	op->proc_name   =  proc_name;
-	op->yield_map   =  NULL;
-	op->first_call  =  true;
-	op->yield_exps  =  yield_exps;
+	op->r          = NULL;
+	op->args       = array_new(SIValue, array_len(arg_exps));
+	op->arg_exps   = arg_exps;
+	op->arg_count  = array_len(arg_exps);
+	op->proc_name  = proc_name;
+	op->yield_map  = NULL;
+	op->first_call = true;
+	op->yield_exps = yield_exps;
 
 	// procedure must exist
 	op->procedure = Proc_Get(proc_name);
@@ -94,12 +100,15 @@ OpBase *NewProcCallOp
 	return (OpBase *)op;
 }
 
-static Record ProcCallConsume(OpBase *opBase) {
+static Record ProcCallConsume
+(
+	OpBase *opBase
+) {
 	OpProcCall *op = (OpProcCall *)opBase;
 
 	Record yield_record = NULL;
 	while(!(yield_record = _yield(op))) {
-		// Free old record.
+		// free old record
 		if(op->r) {
 			OpBase_DeleteRecord(op->r);
 			op->r = NULL;
@@ -137,21 +146,28 @@ static Record ProcCallConsume(OpBase *opBase) {
 
 		ProcedureResult res = Proc_Invoke(op->procedure, op->args, op->output);
 
-		/* TODO: should rise run-time exception?
-		 * op->r will be freed in ProcCallFree. */
+		// TODO: should rise run-time exception?
+		// op->r will be freed in ProcCallFree
 		if(res != PROCEDURE_OK) return NULL;
 	}
 
 	return yield_record;
 }
 
-static OpResult ProcCallReset(OpBase *ctx) {
+static OpResult ProcCallReset
+(
+	OpBase *ctx
+) {
 	OpProcCall *op = (OpProcCall *)ctx;
 	op->first_call = true;
 	return OP_OK;
 }
 
-static OpBase *ProcCallClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *ProcCallClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_PROC_CALL);
 	OpProcCall *op = (OpProcCall *)opBase;
 	AR_ExpNode **args_exp;
@@ -161,7 +177,10 @@ static OpBase *ProcCallClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	return NewProcCallOp(plan, op->proc_name, args_exp, yield_exps);
 }
 
-static void ProcCallFree(OpBase *ctx) {
+static void ProcCallFree
+(
+	OpBase *ctx
+) {
 	OpProcCall *op = (OpProcCall *)ctx;
 
 	if(op->r) {

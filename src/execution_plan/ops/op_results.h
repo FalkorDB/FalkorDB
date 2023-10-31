@@ -12,7 +12,7 @@
 #include "../../graph/graphcontext.h"
 #include "../../resultset/resultset.h"
 
-/* Results generates result set */
+// results generates result set
 
 typedef struct {
 	OpBase op;
@@ -20,5 +20,8 @@ typedef struct {
 	uint64_t result_set_size_limit;
 } Results;
 
-/* Creates a new Results operation */
-OpBase *NewResultsOp(const ExecutionPlan *plan);
+// creates a new Results operation
+OpBase *NewResultsOp
+(
+	ExecutionPlan *plan
+);

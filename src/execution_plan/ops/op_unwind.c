@@ -16,11 +16,11 @@ static void UnwindFree(OpBase *opBase);
 static OpResult UnwindInit(OpBase *opBase);
 static Record UnwindConsume(OpBase *opBase);
 static OpResult UnwindReset(OpBase *opBase);
-static OpBase *UnwindClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *UnwindClone(ExecutionPlan *plan, const OpBase *opBase);
 
 OpBase *NewUnwindOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	AR_ExpNode *exp
 ) {
 	OpUnwind *op = rm_malloc(sizeof(OpUnwind));
@@ -31,9 +31,10 @@ OpBase *NewUnwindOp
 	op->listLen       = 0;
 	op->currentRecord = NULL;
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit, UnwindConsume,
-				UnwindReset, NULL, UnwindClone, UnwindFree, false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_UNWIND, "Unwind", UnwindInit,
+			UnwindConsume, UnwindReset, NULL, UnwindClone, UnwindFree, false,
+			plan);
 
 	op->unwindRecIdx = OpBase_Modifies((OpBase *)op, exp->resolved_name);
 	return (OpBase *)op;
@@ -53,7 +54,7 @@ static void _initList
 	op->list = SI_NullVal(); 
 	SIValue new_list = AR_EXP_Evaluate(op->exp, op->currentRecord);
 	if(SI_TYPE(new_list) == T_ARRAY) {
-		// update the list value.
+		// update the list value
 		op->list = new_list;
 	} else if(SI_TYPE(new_list) == T_NULL) {
 		op->list = SI_Array(0);
@@ -158,7 +159,7 @@ static OpResult UnwindReset
 
 static inline OpBase *UnwindClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_UNWIND);

@@ -15,7 +15,7 @@
 static OpResult ExpandIntoInit(OpBase *opBase);
 static Record ExpandIntoConsume(OpBase *opBase);
 static OpResult ExpandIntoReset(OpBase *opBase);
-static OpBase *ExpandIntoClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ExpandIntoClone(ExecutionPlan *plan, const OpBase *opBase);
 static void ExpandIntoFree(OpBase *opBase);
 
 // string representation of operation
@@ -82,22 +82,22 @@ static void _traverse
 
 OpBase *NewExpandIntoOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	Graph *g,
 	AlgebraicExpression *ae
 ) {
 	OpExpandInto *op = rm_malloc(sizeof(OpExpandInto));
 
-	op->r               =  NULL;
-	op->F               =  NULL;
-	op->M               =  NULL;
-	op->ae              =  ae;
-	op->graph           =  g;
-	op->records         =  NULL;
-	op->edge_ctx        =  NULL;
-	op->record_cap      =  BATCH_SIZE;
-	op->record_count    =  0;
-	op->single_operand  =  false;
+	op->r              = NULL;
+	op->F              = NULL;
+	op->M              = NULL;
+	op->ae             = ae;
+	op->graph          = g;
+	op->records        = NULL;
+	op->edge_ctx       = NULL;
+	op->record_cap     = BATCH_SIZE;
+	op->record_count   = 0;
+	op->single_operand = false;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_EXPAND_INTO, "Expand Into", ExpandIntoInit,
@@ -334,7 +334,7 @@ static OpResult ExpandIntoReset
 
 static inline OpBase *ExpandIntoClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_EXPAND_INTO);
@@ -385,3 +385,4 @@ static void ExpandIntoFree
 		op->r = NULL;
 	}
 }
+

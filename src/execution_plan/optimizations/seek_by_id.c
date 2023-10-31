@@ -14,12 +14,17 @@
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
-/* The seek by ID optimization searches for a SCAN operation on which
- * a filter of the form ID(n) = X is applied in which case
- * both the SCAN and FILTER operations can be reduced into a single
- * NODE_BY_ID_SEEK operation. */
-
-static bool _idFilter(FT_FilterNode *f, AST_Operator *rel, EntityID *id, bool *reverse) {
+// the seek by ID optimization searches for a SCAN operation on which
+// a filter of the form ID(n) = X is applied in which case
+// both the SCAN and FILTER operations can be reduced into a single
+// NODE_BY_ID_SEEK operation
+static bool _idFilter
+(
+	FT_FilterNode *f,
+	AST_Operator *rel,
+	EntityID *id,
+	bool *reverse
+) {
 	if(f->t != FT_N_PRED) return false;
 	if(f->pred.op == OP_NEQUAL) return false;
 
@@ -29,9 +34,9 @@ static bool _idFilter(FT_FilterNode *f, AST_Operator *rel, EntityID *id, bool *r
 	AR_ExpNode *rhs = f->pred.rhs;
 	*rel = f->pred.op;
 
-	/* Either ID(N) compare const
-	 * OR
-	 * const compare ID(N) */
+	// either ID(N) compare const
+	// OR
+	// const compare ID(N)
 	if(lhs->type == AR_EXP_OPERAND && rhs->type == AR_EXP_OP) {
 		op = &rhs->op;
 		expr = lhs;
@@ -44,28 +49,31 @@ static bool _idFilter(FT_FilterNode *f, AST_Operator *rel, EntityID *id, bool *r
 		return false;
 	}
 
-	// Make sure ID is compared to a constant int64.
+	// make sure ID is compared to a constant int64
 	SIValue val;
 	bool reduced = AR_EXP_ReduceToScalar(expr, true, &val);
 	if(!reduced) return false;
 	if(SI_TYPE(val) != T_INT64) return false;
 	*id = SI_GET_NUMERIC(val);
 
-	// Make sure applied function is ID.
+	// make sure applied function is ID
 	if(strcasecmp(op->f->name, "id")) return false;
 
 	return true;
 }
 
-static void _UseIdOptimization(ExecutionPlan *plan, OpBase *scan_op) {
-	/* See if there's a filter of the form
-	 * ID(n) op X
-	 * where X is a constant and op in [EQ, GE, LE, GT, LT] */
+static void _UseIdOptimization
+(
+	OpBase *scan_op
+) {
+	// see if there's a filter of the form
+	// ID(n) op X
+	// where X is a constant and op in [EQ, GE, LE, GT, LT]
 	OpBase *parent = scan_op->parent;
 	OpBase *grandparent;
 	UnsignedRange *id_range = NULL;
 	while(parent && parent->type == OPType_FILTER) {
-		grandparent = parent->parent; // Track the next op to visit in case we free parent.
+		grandparent = parent->parent; // track the next op to visit in case we free parent
 		OpFilter *filter = (OpFilter *)parent;
 		FT_FilterNode *f = filter->filterTree;
 
@@ -77,18 +85,18 @@ static void _UseIdOptimization(ExecutionPlan *plan, OpBase *scan_op) {
 			if(reverse) op = ArithmeticOp_ReverseOp(op);
 			UnsignedRange_TightenRange(id_range, op, id);
 
-			// Free replaced operations.
-			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
+			// free replaced operations
+			ExecutionPlan_RemoveOp((OpBase *)filter);
 			OpBase_Free((OpBase *)filter);
 		}
-		// Advance.
+		// advance
 		parent = grandparent;
 	}
 	if(id_range) {
-		/* Don't replace label scan, but set it to have range query.
-		 * Issue 818 https://github.com/RedisGraph/RedisGraph/issues/818
-		 * This optimization caused a range query over the entire range of ids in the graph
-		 * regardless to the label. */
+		// don't replace label scan, but set it to have range query
+		// Issue 818 https://github.com/RedisGraph/RedisGraph/issues/818
+		// this optimization caused a range query over the entire range of ids
+		// in the graph regardless to the label
 		if(scan_op->type == OPType_NODE_BY_LABEL_SCAN) {
 			NodeByLabelScan *label_scan = (NodeByLabelScan *) scan_op;
 			NodeByLabelScanOp_SetIDRange(label_scan, id_range);
@@ -96,8 +104,8 @@ static void _UseIdOptimization(ExecutionPlan *plan, OpBase *scan_op) {
 			const char *alias = ((AllNodeScan *)scan_op)->alias;
 			OpBase *opNodeByIdSeek = NewNodeByIdSeekOp(scan_op->plan, alias, id_range);
 
-			// Managed to reduce!
-			ExecutionPlan_ReplaceOp(plan, scan_op, opNodeByIdSeek);
+			// managed to reduce
+			ExecutionPlan_ReplaceOp(scan_op, opNodeByIdSeek);
 			OpBase_Free(scan_op);
 		}
 		UnsignedRange_Free(id_range);
@@ -111,7 +119,7 @@ void seekByID(ExecutionPlan *plan) {
 	OpBase **scan_ops = ExecutionPlan_CollectOpsMatchingTypes(plan->root, types, 2);
 
 	for(int i = 0; i < array_len(scan_ops); i++) {
-		_UseIdOptimization(plan, scan_ops[i]);
+		_UseIdOptimization(scan_ops[i]);
 	}
 
 	array_free(scan_ops);

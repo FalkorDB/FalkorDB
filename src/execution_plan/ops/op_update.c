@@ -16,13 +16,16 @@
 // forward declarations
 static Record UpdateConsume(OpBase *opBase);
 static OpResult UpdateReset(OpBase *opBase);
-static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *UpdateClone(ExecutionPlan *plan, const OpBase *opBase);
 static void UpdateFree(OpBase *opBase);
 
-static Record _handoff(OpUpdate *op) {
-	/* TODO: popping a record out of op->records
-	 * will reverse the order in which records
-	 * are passed down the execution plan. */
+static Record _handoff
+(
+	OpUpdate *op
+) {
+	// TODO: popping a record out of op->records
+	// will reverse the order in which records
+	// are passed down the execution plan
 	if(op->records && array_len(op->records) > 0) return array_pop(op->records);
 	return NULL;
 }
@@ -49,8 +52,13 @@ static void freeCallback
 static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
 
-OpBase *NewUpdateOp(const ExecutionPlan *plan, rax *update_exps) {
+OpBase *NewUpdateOp
+(
+	ExecutionPlan *plan,
+	rax *update_exps
+) {
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
+
 	op->gc                = QueryCtx_GetGraphCtx();
 	op->records           = array_new(Record, 64);
 	op->update_ctxs       = update_exps;
@@ -122,15 +130,24 @@ static Record UpdateConsume
 	return _handoff(op);
 }
 
-static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *UpdateClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_UPDATE);
 	OpUpdate *op = (OpUpdate *)opBase;
 
-	rax *update_ctxs = raxCloneWithCallback(op->update_ctxs, (void *(*)(void *))UpdateCtx_Clone);
+	rax *update_ctxs = raxCloneWithCallback(op->update_ctxs,
+			(void *(*)(void *))UpdateCtx_Clone);
+
 	return NewUpdateOp(plan, update_ctxs);
 }
 
-static OpResult UpdateReset(OpBase *ctx) {
+static OpResult UpdateReset
+(
+	OpBase *ctx
+) {
 	OpUpdate *op = (OpUpdate *)ctx;
 
 	HashTableEmpty(op->node_updates, NULL);
@@ -140,7 +157,10 @@ static OpResult UpdateReset(OpBase *ctx) {
 	return OP_OK;
 }
 
-static void UpdateFree(OpBase *ctx) {
+static void UpdateFree
+(
+	OpBase *ctx
+) {
 	OpUpdate *op = (OpUpdate *)ctx;
 
 	if(op->node_updates) {
@@ -161,10 +181,13 @@ static void UpdateFree(OpBase *ctx) {
 
 	if(op->records) {
 		uint records_count = array_len(op->records);
-		for(uint i = 0; i < records_count; i++) OpBase_DeleteRecord(op->records[i]);
+		for(uint i = 0; i < records_count; i++) {
+			OpBase_DeleteRecord(op->records[i]);
+		}
 		array_free(op->records);
 		op->records = NULL;
 	}
 
 	raxStop(&op->it);
 }
+

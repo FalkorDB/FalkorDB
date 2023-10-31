@@ -130,12 +130,12 @@ SIValue AR_ENDNODE(SIValue *argv, int argc, void *private_data) {
 	return si_node;
 }
 
-/* returns true if the specified property exists in the node, or relationship. */
+// returns true if the specified property exists in the node, or relationship
 SIValue AR_EXISTS(SIValue *argv, int argc, void *private_data) {
-	/* MATCH (n) WHERE EXISTS(n.name) RETURN n
-	 * If property n.name does not exists
-	 * SIValue representing NULL is returned.
-	 * if n.name exists its value can not be NULL. */
+	// MATCH (n) WHERE EXISTS(n.name) RETURN n
+	// if property n.name does not exists
+	// SIValue representing NULL is returned
+	// if n.name exists its value can not be NULL
 	if(SIValue_IsNull(argv[0])) return SI_BoolVal(0);
 	return SI_BoolVal(1);
 }

@@ -119,18 +119,24 @@ static AR_ExpNode *_AR_EXP_FromApplyAllExpression(const cypher_astnode_t *expr) 
 	return op;
 }
 
-static AR_ExpNode *_AR_EXP_FromIdentifierExpression(const cypher_astnode_t *expr) {
-	// Identifier referencing another entity
+static AR_ExpNode *_AR_EXP_FromIdentifierExpression
+(
+	const cypher_astnode_t *expr
+) {
+	// identifier referencing another entity
 	const char *alias = cypher_ast_identifier_get_name(expr);
 	return AR_EXP_NewVariableOperandNode(alias);
 }
 
-static AR_ExpNode *_AR_EXP_FromIdentifier(const cypher_astnode_t *expr) {
+static AR_ExpNode *_AR_EXP_FromIdentifier
+(
+	const cypher_astnode_t *expr
+) {
 	AST *ast = QueryCtx_GetAST();
 	if(ast == NULL) {
-		/* Attempted to access the AST before it has been constructed.
-		 * This can occur in scenarios like parameter evaluation:
-		 * CYPHER param=[a] MATCH (a) RETURN a */
+		// attempted to access the AST before it has been constructed
+		// this can occur in scenarios like parameter evaluation:
+		// CYPHER param=[a] MATCH (a) RETURN a
 		ErrorCtx_SetError(EMSG_ACCESS_VAR);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
@@ -142,9 +148,12 @@ static AR_ExpNode *_AR_EXP_FromIdentifier(const cypher_astnode_t *expr) {
 	const cypher_astnode_t *named_path_annotation =
 		cypher_astnode_get_annotation(named_paths_ctx, expr);
 
-	// if the identifier is a named path identifier,
+	// if the identifier is a named path identifier
 	// evaluate the path expression accordingly
-	if(named_path_annotation) return _AR_ExpFromNamedPath(named_path_annotation);
+	if(named_path_annotation) {
+		return _AR_ExpFromNamedPath(named_path_annotation);
+	}
+
 	// else, evalute the identifier
 	return _AR_EXP_FromIdentifierExpression(expr);
 }
@@ -792,8 +801,11 @@ static AR_ExpNode *_AR_ExpFromLabelsOperatorFunction(const cypher_astnode_t *exp
 	return op;
 }
 
-static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
-
+static AR_ExpNode *_AR_EXP_FromASTNode
+(
+	const cypher_astnode_t *expr
+) {
+	ASSERT(expr != NULL);
 	const cypher_astnode_type_t t = cypher_astnode_type(expr);
 
 	// function invocations
@@ -863,9 +875,7 @@ static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 		const char *alias = AST_ToString(expr);
 		return AR_EXP_NewVariableOperandNode(alias);
 	} else {
-		/*
-		   Unhandled types:
-		*/
+		// Unhandled types
 		Error_UnsupportedASTNodeType(expr);
 		return AR_EXP_NewConstOperandNode(SI_NullVal());
 	}
@@ -874,14 +884,17 @@ static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 	return NULL;
 }
 
-AR_ExpNode *AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
+AR_ExpNode *AR_EXP_FromASTNode
+(
+	const cypher_astnode_t *expr
+) {
 	AR_ExpNode *root = _AR_EXP_FromASTNode(expr);
 	AR_EXP_ReduceToScalar(root, false, NULL);
 
-	/* Make sure expression doesn't contain nested aggregation functions
-	 * count(max(n.v)) */
+	// make sure expression doesn't contain nested aggregation functions
+	// count(max(n.v))
 	if(_AR_EXP_ContainsNestedAgg(root)) {
-		// Set error (compile-time), this error will be raised later on.
+		// set error (compile-time), this error will be raised later on.
 		ErrorCtx_SetError(EMSG_NESTED_AGGREGATION);
 	}
 

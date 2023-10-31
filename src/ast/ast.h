@@ -148,6 +148,13 @@ void AST_CollectAliases
 	const cypher_astnode_t *entity
 );
 
+// collect unique all aliases within `entity` subtree
+void AST_CollectUniqueAliases
+(
+	const char ***aliases,
+	const cypher_astnode_t *entity
+);
+
 AST *AST_Build
 (
 	cypher_parse_result_t *parse_result
@@ -259,3 +266,4 @@ void AST_Free
 (
 	AST *ast
 );
+

@@ -7,18 +7,21 @@
 #include "op_apply.h"
 #include "../execution_plan_build/execution_plan_util.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult ApplyInit(OpBase *opBase);
 static Record ApplyConsume(OpBase *opBase);
 static OpResult ApplyReset(OpBase *opBase);
-static OpBase *ApplyClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ApplyClone(ExecutionPlan *plan, const OpBase *opBase);
 static void ApplyFree(OpBase *opBase);
 
-OpBase *NewApplyOp(const ExecutionPlan *plan) {
+OpBase *NewApplyOp
+(
+	ExecutionPlan *plan
+) {
 	Apply *op = rm_malloc(sizeof(Apply));
 
 	op->r            = NULL;
-	op->op_arg       = NULL;
+	op->args         = NULL;
 	op->records      = NULL;
 	op->rhs_branch   = NULL;
 	op->bound_branch = NULL;
@@ -30,7 +33,10 @@ OpBase *NewApplyOp(const ExecutionPlan *plan) {
 	return (OpBase *)op;
 }
 
-static OpResult ApplyInit(OpBase *opBase) {
+static OpResult ApplyInit
+(
+	OpBase *opBase
+) {
 	ASSERT(opBase->childCount == 2);
 
 	Apply *op = (Apply *)opBase;
@@ -41,13 +47,16 @@ static OpResult ApplyInit(OpBase *opBase) {
 	op->bound_branch = opBase->children[0];
 
 	// locate branch's Argument op tap
-	op->op_arg = (Argument *)ExecutionPlan_LocateOp(op->rhs_branch,
-			OPType_ARGUMENT);
+	op->args = array_new(Argument*, 1);
+	ExecutionPlan_LocateOps((OpBase***)&op->args, op->rhs_branch, OPType_ARGUMENT);
 
 	return OP_OK;
 }
 
-static Record ApplyConsume(OpBase *opBase) {
+static Record ApplyConsume
+(
+	OpBase *opBase
+) {
 	Apply *op = (Apply *)opBase;
 
 	while(true) {
@@ -59,11 +68,13 @@ static Record ApplyConsume(OpBase *opBase) {
 			}
 
 			// collect record for future freeing
-			array_append(op->records, op->r);
+			//array_append(op->records, op->r);
 
-			// Successfully pulled a new Record, propagate to the top of the RHS branch.
-			if(op->op_arg) {
-				Argument_AddRecord(op->op_arg, OpBase_CloneRecord(op->r));
+			// successfully pulled a new Record
+			// propagate to the top of the RHS branch
+			for(uint i = 0; i < array_len(op->args); i++) {
+				Argument *arg = op->args[i];
+				Argument_AddRecord(arg, OpBase_CloneRecord(op->r));
 			}
 		}
 
@@ -91,7 +102,10 @@ static Record ApplyConsume(OpBase *opBase) {
 	return NULL;
 }
 
-static OpResult ApplyReset(OpBase *opBase) {
+static OpResult ApplyReset
+(
+	OpBase *opBase
+) {
 	Apply *op = (Apply *)opBase;
 	op->r = NULL;
 
@@ -105,11 +119,18 @@ static OpResult ApplyReset(OpBase *opBase) {
 	return OP_OK;
 }
 
-static OpBase *ApplyClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *ApplyClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	return NewApplyOp(plan);
 }
 
-static void ApplyFree(OpBase *opBase) {
+static void ApplyFree
+(
+	OpBase *opBase
+) {
 	Apply *op = (Apply *)opBase;
 
 	// free collected records
@@ -121,6 +142,11 @@ static void ApplyFree(OpBase *opBase) {
 
 		array_free(op->records);
 		op->records = NULL;
+	}
+
+	if(op->args != NULL) {
+		array_free(op->args);
+		op->args = NULL;
 	}
 
 	op->r = NULL;

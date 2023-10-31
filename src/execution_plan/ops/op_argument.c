@@ -7,29 +7,37 @@
 #include "op_argument.h"
 #include "RG.h"
 
-// Forward declarations
+// forward declarations
 static Record ArgumentConsume(OpBase *opBase);
 static OpResult ArgumentReset(OpBase *opBase);
-static OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ArgumentClone(ExecutionPlan *plan, const OpBase *opBase);
 static void ArgumentFree(OpBase *opBase);
 
-OpBase *NewArgumentOp(const ExecutionPlan *plan, const char **variables) {
+OpBase *NewArgumentOp
+(
+	ExecutionPlan *plan,
+	const char **variables
+) {
 	Argument *op = rm_malloc(sizeof(Argument));
 	op->r = NULL;
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_ARGUMENT, "Argument", NULL,
-				ArgumentConsume, ArgumentReset, NULL, ArgumentClone, ArgumentFree, false, plan);
+			ArgumentConsume, ArgumentReset, NULL, ArgumentClone, ArgumentFree,
+			false, plan);
 
 	uint variable_count = array_len(variables);
-	for(uint i = 0; i < variable_count; i ++) {
+	for(uint i = 0; i < variable_count; i++) {
 		OpBase_Modifies((OpBase *)op, variables[i]);
 	}
 
 	return (OpBase *)op;
 }
 
-static Record ArgumentConsume(OpBase *opBase) {
+static Record ArgumentConsume
+(
+	OpBase *opBase
+) {
 	Argument *arg = (Argument *)opBase;
 
 	// Emit the record only once.
@@ -39,8 +47,11 @@ static Record ArgumentConsume(OpBase *opBase) {
 	return r;
 }
 
-static OpResult ArgumentReset(OpBase *opBase) {
-	// Reset operation, freeing the Record if one is held.
+static OpResult ArgumentReset
+(
+	OpBase *opBase
+) {
+	// reset operation, freeing the Record if one is held
 	Argument *arg = (Argument *)opBase;
 
 	if(arg->r) {
@@ -51,17 +62,28 @@ static OpResult ArgumentReset(OpBase *opBase) {
 	return OP_OK;
 }
 
-void Argument_AddRecord(Argument *arg, Record r) {
+void Argument_AddRecord
+(
+	Argument *arg,
+	Record r
+) {
 	ASSERT(!arg->r && "tried to insert into a populated Argument op");
 	arg->r = r;
 }
 
-static inline OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *ArgumentClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_ARGUMENT);
 	return NewArgumentOp(plan, opBase->modifies);
 }
 
-static void ArgumentFree(OpBase *opBase) {
+static void ArgumentFree
+(
+	OpBase *opBase
+) {
 	Argument *arg = (Argument *)opBase;
 	if(arg->r) {
 		OpBase_DeleteRecord(arg->r);

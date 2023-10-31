@@ -33,7 +33,7 @@ static void EdgeIndexScanToString
 
 OpBase *NewEdgeIndexScanOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	Graph *g,
 	QGEdge *e,
 	RSIndex *idx,
@@ -48,17 +48,17 @@ OpBase *NewEdgeIndexScanOp
 	ASSERT(QGEdge_Alias(e)         != NULL);
 	ASSERT(QGEdge_RelationCount(e) == 1);
 
-	OpEdgeIndexScan *op      =  rm_malloc(sizeof(OpEdgeIndexScan));
-	op->g                    =  g;
-	op->idx                  =  idx;
-	op->edge                 =  e;
-	op->iter                 =  NULL;
-	op->filter               =  filter;
-	op->child_record         =  NULL;
-	op->current_src_node_id  =  NULL;
-	op->current_dest_node_id =  NULL;
-	op->unresolved_filters   =  NULL;
-	op->rebuild_index_query  =  false;
+	OpEdgeIndexScan *op      = rm_malloc(sizeof(OpEdgeIndexScan));
+	op->g                    = g;
+	op->idx                  = idx;
+	op->edge                 = e;
+	op->iter                 = NULL;
+	op->filter               = filter;
+	op->child_record         = NULL;
+	op->current_src_node_id  = NULL;
+	op->current_dest_node_id = NULL;
+	op->unresolved_filters   = NULL;
+	op->rebuild_index_query  = false;
 
 	// set our Op operations
 	OpBase_Init(
@@ -190,7 +190,10 @@ static inline bool _PassUnresolvedFilters
 	return FilterTree_applyFilters(unresolved_filters, r) == FILTER_PASS;
 }
 
-static void UpdateCurrentAwareIds(const OpEdgeIndexScan *op) {
+static void UpdateCurrentAwareIds
+(
+	const OpEdgeIndexScan *op
+) {
 	if(op->current_src_node_id) {
 		Node *n = Record_GetNode(op->child_record, op->srcRecIdx);
 		op->current_src_node_id->operand.constant = SI_LongVal(ENTITY_GET_ID(n));
@@ -339,7 +342,10 @@ static Record EdgeIndexScanConsume
 	return NULL;
 }
 
-static OpResult EdgeIndexScanReset(OpBase *opBase) {
+static OpResult EdgeIndexScanReset
+(
+	OpBase *opBase
+) {
 	OpEdgeIndexScan *op = (OpEdgeIndexScan *)opBase;
 
 	if(op->iter) {
@@ -355,7 +361,10 @@ static OpResult EdgeIndexScanReset(OpBase *opBase) {
 	return OP_OK;
 }
 
-static void EdgeIndexScanFree(OpBase *opBase) {
+static void EdgeIndexScanFree
+(
+	OpBase *opBase
+) {
 	OpEdgeIndexScan *op = (OpEdgeIndexScan *)opBase;
 	// as long as this Index iterator is alive the index is
 	// read locked, if this index scan operation is part of

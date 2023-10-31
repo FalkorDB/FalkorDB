@@ -6,23 +6,30 @@
 
 #include "op_optional.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record OptionalConsume(OpBase *opBase);
 static OpResult OptionalReset(OpBase *opBase);
-static OpBase *OptionalClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *OptionalClone(ExecutionPlan *plan, const OpBase *opBase);
 
-OpBase *NewOptionalOp(const ExecutionPlan *plan) {
+OpBase *NewOptionalOp
+(
+	ExecutionPlan *plan
+) {
 	Optional *op = rm_malloc(sizeof(Optional));
 	op->emitted_record = false;
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_OPTIONAL, "Optional", NULL, OptionalConsume,
-				OptionalReset, NULL, OptionalClone, NULL, false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_OPTIONAL, "Optional", NULL,
+			OptionalConsume, OptionalReset, NULL, OptionalClone, NULL, false,
+			plan);
 
 	return (OpBase *)op;
 }
 
-static Record OptionalConsume(OpBase *opBase) {
+static Record OptionalConsume
+(
+	OpBase *opBase
+) {
 	Optional *op = (Optional *)opBase;
 	// try to produce a Record from the child op.
 	Record r = OpBase_Consume(opBase->children[0]);
@@ -39,14 +46,22 @@ static Record OptionalConsume(OpBase *opBase) {
 	return r;
 }
 
-static OpResult OptionalReset(OpBase *opBase) {
+static OpResult OptionalReset
+(
+	OpBase *opBase
+) {
 	Optional *op = (Optional *)opBase;
 	op->emitted_record = false;
 	return OP_OK;
 }
 
-static inline OpBase *OptionalClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *OptionalClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	Optional *op = (Optional *)opBase;
 	OpBase *clone = NewOptionalOp(plan);
 	return clone;
 }
+

@@ -10,13 +10,13 @@
 #include "../../ast/ast.h"
 #include "../../query_ctx.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult NodeByLabelScanInit(OpBase *opBase);
 static Record NodeByLabelScanConsume(OpBase *opBase);
 static Record NodeByLabelScanConsumeFromChild(OpBase *opBase);
 static Record NodeByLabelScanNoOp(OpBase *opBase);
 static OpResult NodeByLabelScanReset(OpBase *opBase);
-static OpBase *NodeByLabelScanClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *NodeByLabelScanClone(ExecutionPlan *plan, const OpBase *opBase);
 static void NodeByLabelScanFree(OpBase *opBase);
 
 static inline void NodeByLabelScanToString
@@ -43,20 +43,21 @@ static void _update_label_id
 
 OpBase *NewNodeByLabelScanOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	NodeScanCtx *n
 ) {
 	NodeByLabelScan *op = rm_calloc(sizeof(NodeByLabelScan), 1);
 	op->g = QueryCtx_GetGraph();
 	op->n = n;
-	// Defaults to [0...UINT64_MAX].
+	// defaults to [0...UINT64_MAX].
 	op->id_range = UnsignedRange_New();
 	_update_label_id(op);
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_NODE_BY_LABEL_SCAN, "Node By Label Scan", NodeByLabelScanInit,
-				NodeByLabelScanConsume, NodeByLabelScanReset, NodeByLabelScanToString, NodeByLabelScanClone,
-				NodeByLabelScanFree, false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_NODE_BY_LABEL_SCAN, "Node By Label Scan",
+			NodeByLabelScanInit, NodeByLabelScanConsume, NodeByLabelScanReset,
+			NodeByLabelScanToString, NodeByLabelScanClone, NodeByLabelScanFree,
+			false, plan);
 
 	op->nodeRecIdx = OpBase_Modifies((OpBase *)op, n->alias);
 
@@ -142,7 +143,7 @@ static inline void _UpdateRecord
 	Record r,
 	GrB_Index node_id
 ) {
-	// Populate the Record with the graph entity data.
+	// populate the Record with the graph entity data
 	Node n = GE_NEW_NODE();
 	Graph_GetNode(op->g, node_id, &n);
 	Record_AddNode(r, op->nodeRecIdx, n);
@@ -201,7 +202,10 @@ static Record NodeByLabelScanConsumeFromChild
 	return r;
 }
 
-static Record NodeByLabelScanConsume(OpBase *opBase) {
+static Record NodeByLabelScanConsume
+(
+	OpBase *opBase
+) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index nodeId;
@@ -212,7 +216,7 @@ static Record NodeByLabelScanConsume(OpBase *opBase) {
 
 	Record r = OpBase_CreateRecord((OpBase *)op);
 
-	// Populate the Record with the actual node.
+	// populate the Record with the actual node
 	_UpdateRecord(op, r, nodeId);
 
 	return r;
@@ -243,13 +247,20 @@ static OpResult NodeByLabelScanReset
 	return OP_OK;
 }
 
-static OpBase *NodeByLabelScanClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *NodeByLabelScanClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_NODE_BY_LABEL_SCAN);
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 	return NewNodeByLabelScanOp(plan, NodeScanCtx_Clone(op->n));
 }
 
-static void NodeByLabelScanFree(OpBase *op) {
+static void NodeByLabelScanFree
+(
+	OpBase *op
+) {
 	NodeByLabelScan *nodeByLabelScan = (NodeByLabelScan *)op;
 
 	GrB_Info info = RG_MatrixTupleIter_detach(&(nodeByLabelScan->iter));
@@ -270,3 +281,4 @@ static void NodeByLabelScanFree(OpBase *op) {
 		nodeByLabelScan->n = NULL;
 	}
 }
+

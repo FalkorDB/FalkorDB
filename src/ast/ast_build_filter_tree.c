@@ -11,12 +11,17 @@
 #include "../errors/errors.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
 
-// Forward declaration
+// forward declaration
 FT_FilterNode *_FilterNode_FromAST(const cypher_astnode_t *expr);
 
-FT_FilterNode *_CreatePredicateFilterNode(AST_Operator op, const cypher_astnode_t *lhs,
-										  const cypher_astnode_t *rhs) {
-	return FilterTree_CreatePredicateFilter(op, AR_EXP_FromASTNode(lhs), AR_EXP_FromASTNode(rhs));
+FT_FilterNode *_CreatePredicateFilterNode
+(
+	AST_Operator op,
+	const cypher_astnode_t *lhs,
+	const cypher_astnode_t *rhs
+) {
+	return FilterTree_CreatePredicateFilter(op, AR_EXP_FromASTNode(lhs),
+			AR_EXP_FromASTNode(rhs));
 }
 
 void _FT_Append(FT_FilterNode **root_ptr, FT_FilterNode *child) {
@@ -48,67 +53,77 @@ void _FT_Append(FT_FilterNode **root_ptr, FT_FilterNode *child) {
 	*root_ptr = new_root;
 }
 
-FT_FilterNode *_CreateFilterSubtree(AST_Operator op, const cypher_astnode_t *lhs,
-									const cypher_astnode_t *rhs) {
+FT_FilterNode *_CreateFilterSubtree
+(
+	AST_Operator op,
+	const cypher_astnode_t *lhs,
+	const cypher_astnode_t *rhs
+) {
 	FT_FilterNode *filter = NULL;
 	switch(op) {
-	case OP_OR:
-	case OP_AND:
-	case OP_XOR:
-		filter = FilterTree_CreateConditionFilter(op);
-		FilterTree_AppendLeftChild(filter, _FilterNode_FromAST(lhs));
-		FilterTree_AppendRightChild(filter, _FilterNode_FromAST(rhs));
-		return filter;
-	case OP_NOT:
-		filter = FilterTree_CreateConditionFilter(op);
-		FilterTree_AppendLeftChild(filter, _FilterNode_FromAST(lhs));
-		FilterTree_AppendRightChild(filter, NULL);
-		return filter;
-	case OP_EQUAL:
-	case OP_NEQUAL:
-	case OP_LT:
-	case OP_LE:
-	case OP_GT:
-	case OP_GE:
-		return _CreatePredicateFilterNode(op, lhs, rhs);
-	default:
-		/* Probably an invalid query
-		 * e.g. MATCH (u) where u.v NOT NULL RETURN u
-		 * this will cause the constructed tree to form an illegal structure
-		 * which will be caught later on by `FilterTree_Valid`
-		 * and set a compile-time error. */
-		return NULL;
+		case OP_OR:
+		case OP_AND:
+		case OP_XOR:
+			filter = FilterTree_CreateConditionFilter(op);
+			FilterTree_AppendLeftChild(filter, _FilterNode_FromAST(lhs));
+			FilterTree_AppendRightChild(filter, _FilterNode_FromAST(rhs));
+			return filter;
+		case OP_NOT:
+			filter = FilterTree_CreateConditionFilter(op);
+			FilterTree_AppendLeftChild(filter, _FilterNode_FromAST(lhs));
+			FilterTree_AppendRightChild(filter, NULL);
+			return filter;
+		case OP_EQUAL:
+		case OP_NEQUAL:
+		case OP_LT:
+		case OP_LE:
+		case OP_GT:
+		case OP_GE:
+			return _CreatePredicateFilterNode(op, lhs, rhs);
+		default:
+			// probably an invalid query
+			// e.g. MATCH (u) where u.v NOT NULL RETURN u
+			// this will cause the constructed tree to form an illegal structure
+			// which will be caught later on by `FilterTree_Valid`
+			// and set a compile-time error
+			return NULL;
 	}
 }
 
 // AND, OR, XOR (others?)
-/* WHERE (condition) AND (condition),
- * WHERE a.val = b.val */
-static FT_FilterNode *_convertBinaryOperator(const cypher_astnode_t *op_node) {
-	const cypher_operator_t *operator = cypher_ast_binary_operator_get_operator(op_node);
+// WHERE (condition) AND (condition),
+// WHERE a.val = b.val
+static FT_FilterNode *_convertBinaryOperator
+(
+	const cypher_astnode_t *op_node
+) {
+	const cypher_operator_t *operator =
+		cypher_ast_binary_operator_get_operator(op_node);
 	AST_Operator op = AST_ConvertOperatorNode(operator);
 	const cypher_astnode_t *lhs;
 	const cypher_astnode_t *rhs;
 
 	switch(op) {
-	case OP_OR:
-	case OP_AND:
-	case OP_XOR:
-	case OP_EQUAL:
-	case OP_NEQUAL:
-	case OP_LT:
-	case OP_LE:
-	case OP_GT:
-	case OP_GE:
-		// Arguments are of type CYPHER_AST_EXPRESSION
-		lhs = cypher_ast_binary_operator_get_argument1(op_node);
-		rhs = cypher_ast_binary_operator_get_argument2(op_node);
-		return _CreateFilterSubtree(op, lhs, rhs);
-	case OP_NOT:
-		ErrorCtx_SetError(EMSG_INVALIDE_NOT_USAGE);
-		return NULL;
-	default:
-		return FilterTree_CreateExpressionFilter(AR_EXP_FromASTNode(op_node));
+		case OP_OR:
+		case OP_AND:
+		case OP_XOR:
+		case OP_EQUAL:
+		case OP_NEQUAL:
+		case OP_LT:
+		case OP_LE:
+		case OP_GT:
+		case OP_GE:
+			// arguments are of type CYPHER_AST_EXPRESSION
+			//lhs = cypher_ast_binary_operator_get_argument1(op_node);
+			//rhs = cypher_ast_binary_operator_get_argument2(op_node);
+			lhs = cypher_astnode_get_child(op_node, 0);
+			rhs = cypher_astnode_get_child(op_node, 1);
+			return _CreateFilterSubtree(op, lhs, rhs);
+		case OP_NOT:
+			ErrorCtx_SetError(EMSG_INVALIDE_NOT_USAGE);
+			return NULL;
+		default:
+			return FilterTree_CreateExpressionFilter(AR_EXP_FromASTNode(op_node));
 	}
 }
 
@@ -265,8 +280,12 @@ void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
 	}
 }
 
-void AST_ConvertFilters(FT_FilterNode **root, const cypher_astnode_t *entity) {
-	if(!entity) return;
+void AST_ConvertFilters
+(
+	FT_FilterNode **root,
+	const cypher_astnode_t *entity
+) {
+	if(entity == NULL) return;
 
 	cypher_astnode_type_t type = cypher_astnode_type(entity);
 
@@ -358,16 +377,18 @@ FT_FilterNode *AST_BuildFilterTreeFromClauses
 			ASSERT(false);
 		}
 
-		if(predicate) AST_ConvertFilters(&filter_tree, predicate);
+		if(predicate) {
+			AST_ConvertFilters(&filter_tree, predicate);
+		}
 	}
 
 	if(!FilterTree_Valid(filter_tree)) {
-		// Invalid filter tree structure, a compile-time error has been set.
+		// invalid filter tree structure, a compile-time error has been set
 		FilterTree_Free(filter_tree);
 		return NULL;
 	}
 
-	// Apply De Morgan's laws
+	// apply De Morgan's laws
 	FilterTree_DeMorgan(&filter_tree);
 
 	return filter_tree;

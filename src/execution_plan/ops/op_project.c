@@ -11,36 +11,45 @@
 #include "../../query_ctx.h"
 #include "../../util/rmalloc.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record ProjectConsume(OpBase *opBase);
 static OpResult ProjectReset(OpBase *opBase);
-static OpBase *ProjectClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ProjectClone(ExecutionPlan *plan, const OpBase *opBase);
 static void ProjectFree(OpBase *opBase);
 
-OpBase *NewProjectOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
+OpBase *NewProjectOp
+(
+	ExecutionPlan *plan,
+	AR_ExpNode **exps
+) {
 	OpProject *op = rm_malloc(sizeof(OpProject));
-	op->exps = exps;
-	op->singleResponse = false;
-	op->exp_count = array_len(exps);
-	op->record_offsets = array_new(uint, op->exp_count);
-	op->r = NULL;
-	op->projection = NULL;
 
-	// Set our Op operations
+	op->exps           = exps;
+	op->singleResponse = false;
+	op->exp_count      = array_len(exps);
+	op->record_offsets = array_new(uint, op->exp_count);
+	op->r              = NULL;
+	op->projection     = NULL;
+
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_PROJECT, "Project", NULL, ProjectConsume,
 				ProjectReset, NULL, ProjectClone, ProjectFree, false, plan);
 
 	for(uint i = 0; i < op->exp_count; i ++) {
-		// The projected record will associate values with their resolved name
-		// to ensure that space is allocated for each entry.
-		int record_idx = OpBase_Modifies((OpBase *)op, op->exps[i]->resolved_name);
+		// the projected record will associate values with their resolved name
+		// to ensure that space is allocated for each entry
+		int record_idx = OpBase_Modifies((OpBase *)op,
+				op->exps[i]->resolved_name);
 		array_append(op->record_offsets, record_idx);
 	}
 
 	return (OpBase *)op;
 }
 
-static Record ProjectConsume(OpBase *opBase) {
+static Record ProjectConsume
+(
+	OpBase *opBase
+) {
 	OpProject *op = (OpProject *)opBase;
 
 	if(op->op.childCount) {
@@ -49,7 +58,7 @@ static Record ProjectConsume(OpBase *opBase) {
 		if(!op->r) return NULL;
 	} else {
 		// QUERY: RETURN 1+2
-		// Return a single record followed by NULL on the second call.
+		// return a single record followed by NULL on the second call
 		if(op->singleResponse) return NULL;
 		op->singleResponse = true;
 		op->r = OpBase_CreateRecord(opBase);
@@ -87,19 +96,26 @@ static Record ProjectConsume(OpBase *opBase) {
 	OpBase_DeleteRecord(op->r);
 	op->r = NULL;
 
-	// Emit the projected Record once.
+	// emit the projected Record once
 	Record projection = op->projection;
 	op->projection = NULL;
 	return projection;
 }
 
-static OpResult ProjectReset(OpBase *opBase) {
+static OpResult ProjectReset
+(
+	OpBase *opBase
+) {
 	OpProject *op = (OpProject *)opBase;
 	op->singleResponse = false;
 	return OP_OK;
 }
 
-static OpBase *ProjectClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *ProjectClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_PROJECT);
 	OpProject *op = (OpProject *)opBase;
 	AR_ExpNode **exps;
@@ -109,8 +125,8 @@ static OpBase *ProjectClone(const ExecutionPlan *plan, const OpBase *opBase) {
 
 void ProjectBindToPlan
 (
-	OpBase *opBase,            // op to bind
-	const ExecutionPlan *plan  // plan to bind the op to
+	OpBase *opBase,      // op to bind
+	ExecutionPlan *plan  // plan to bind the op to
 ) {
 	OpProject *op = (OpProject *)opBase;
 	opBase->plan = plan;
@@ -120,14 +136,17 @@ void ProjectBindToPlan
 	array_clear(op->record_offsets);
 
 	for(uint i = 0; i < op->exp_count; i ++) {
-		// The projected record will associate values with their resolved name
+		// the projected record will associate values with their resolved name
 		// to ensure that space is allocated for each entry.
 		int record_idx = OpBase_Modifies((OpBase *)op, op->exps[i]->resolved_name);
 		array_append(op->record_offsets, record_idx);
 	}
 }
 
-static void ProjectFree(OpBase *ctx) {
+static void ProjectFree
+(
+	OpBase *ctx
+) {
 	OpProject *op = (OpProject *)ctx;
 
 	if(op->exps) {
@@ -151,3 +170,4 @@ static void ProjectFree(OpBase *ctx) {
 		op->projection = NULL;
 	}
 }
+

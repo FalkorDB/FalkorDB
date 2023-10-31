@@ -6,7 +6,7 @@
 
 #pragma once
 
-/* Include all available execution plan operations. */
+// include all available execution plan operations
 #include "op_sort.h"
 #include "op_skip.h"
 #include "op_join.h"
@@ -41,3 +41,4 @@
 #include "op_node_by_index_scan.h"
 #include "op_conditional_traverse.h"
 #include "op_cond_var_len_traverse.h"
+

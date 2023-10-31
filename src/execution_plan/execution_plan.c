@@ -18,29 +18,66 @@
 
 #include <setjmp.h>
 
-// Allocate a new ExecutionPlan segment.
-inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
-	return rm_calloc(1, sizeof(ExecutionPlan));
+//------------------------------------------------------------------------------
+// resolvers hashtable callbacks
+//------------------------------------------------------------------------------
+
+// fake hash function
+// hash of key is simply key
+static uint64_t _resolvers_id_hash
+(
+	const void *key
+) {
+	return ((uint64_t)key);
 }
 
-void ExecutionPlan_PopulateExecutionPlan(ExecutionPlan *plan) {
+static int _resolvers_key_cmp
+(
+    dict *d,
+	const void *key1,
+	const void *key2
+) {
+	return strcmp(key1, key2) == 0;
+}
+
+dictType resolvers_dt = {_resolvers_id_hash, NULL, NULL, _resolvers_key_cmp,
+	NULL, NULL, NULL, NULL, NULL, NULL};
+
+// allocate a new ExecutionPlan segment
+inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
+	ExecutionPlan *plan = rm_calloc(1, sizeof(ExecutionPlan));
+
+	// map identifiers to resolving operations
+	// e.g. alias 'n' is resolved by that operation
+	plan->resolvers = HashTableCreate(&resolvers_dt);
+
+	return plan;
+}
+
+void ExecutionPlan_PopulateExecutionPlan
+(
+	ExecutionPlan *plan
+) {
 	AST *ast = QueryCtx_GetAST();
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
-	// Initialize the plan's record mapping if necessary.
-	// It will already be set if this ExecutionPlan has been created to populate a single stream.
+	// initialize the plan's record mapping if necessary
+	// it will already be set if this ExecutionPlan has been created
+	// to populate a single stream
 	if(plan->record_map == NULL) {
 		plan->record_map = raxNew();
 	}
 
-	// Build query graph
-	// Query graph is set if this ExecutionPlan has been created to populate a single stream.
+	// build query graph
+	// query graph is set if this ExecutionPlan has been created
+	// to populate a single stream
 	if(plan->query_graph == NULL) plan->query_graph = BuildQueryGraph(ast);
 
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
-	for(uint i = 0; i < clause_count; i ++) {
-		// Build the appropriate operation(s) for each clause in the query.
-		const cypher_astnode_t *clause = cypher_ast_query_get_clause(ast->root, i);
+	for(uint i = 0; i < clause_count; i++) {
+		// build the appropriate operation(s) for each clause in the query
+		const cypher_astnode_t *clause =
+			cypher_ast_query_get_clause(ast->root, i);
 		ExecutionPlanSegment_ConvertClause(gc, ast, plan, clause);
 	}
 }
@@ -108,13 +145,13 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 			}
 			// Build a Distinct op and add it to the op tree
 			OpBase *distinct_op = NewDistinctOp(plan, projections, projection_count);
-			ExecutionPlan_AddOp(results_op, distinct_op);
+			OpBase_AddChild(results_op, distinct_op);
 			parent = distinct_op;
 		}
 	}
 
 	OpBase *join_op = NewJoinOp(plan);
-	ExecutionPlan_AddOp(parent, join_op);
+	OpBase_AddChild(parent, join_op);
 
 	// Join execution plans.
 	for(int i = 0; i < union_count; i++) {
@@ -123,23 +160,27 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 
 		// Remove OP_Result.
 		OpBase *op_result = sub_plan->root;
-		ExecutionPlan_RemoveOp(sub_plan, sub_plan->root);
+		ExecutionPlan_RemoveOp(sub_plan->root);
 		OpBase_Free(op_result);
 
-		ExecutionPlan_AddOp(join_op, sub_plan->root);
+		OpBase_AddChild(join_op, sub_plan->root);
 	}
 
 	return plan;
 }
 
-static ExecutionPlan *_process_segment(AST *ast, uint segment_start_idx,
-									   uint segment_end_idx) {
+static ExecutionPlan *_process_segment
+(
+	AST *ast,
+	uint segment_start_idx,
+	uint segment_end_idx
+) {
 	ASSERT(ast != NULL);
 	ASSERT(segment_start_idx <= segment_end_idx);
 
 	ExecutionPlan *segment = NULL;
 
-	// Construct a new ExecutionPlanSegment.
+	// construct a new ExecutionPlanSegment
 	segment = ExecutionPlan_NewEmptyExecutionPlan();
 	segment->ast_segment = ast;
 	ExecutionPlan_PopulateExecutionPlan(segment);
@@ -147,15 +188,18 @@ static ExecutionPlan *_process_segment(AST *ast, uint segment_start_idx,
 	return segment;
 }
 
-static ExecutionPlan **_process_segments(AST *ast) {
-	uint nsegments = 0;               // number of segments
-	uint seg_end_idx = 0;             // segment clause end index
-	uint clause_count = 0;            // number of clauses
-	uint seg_start_idx = 0;           // segment clause start index
-	AST *ast_segment = NULL;          // segment AST
-	uint *segment_indices = NULL;     // array segment bounds
-	ExecutionPlan *segment = NULL;    // portion of the entire execution plan
-	ExecutionPlan **segments = NULL;  // constructed segments
+static ExecutionPlan **_process_segments
+(
+	AST *ast
+) {
+	uint          nsegments        = 0;     // number of segments
+	uint          seg_end_idx      = 0;     // segment clause end index
+	uint          clause_count     = 0;     // number of clauses
+	uint          seg_start_idx    = 0;     // segment clause start index
+	AST           *ast_segment     = NULL;  // segment AST
+	uint          *segment_indices = NULL;  // array segment bounds
+	ExecutionPlan *segment         = NULL;  // portion of the entire execution  plan
+	ExecutionPlan **segments       = NULL;  // constructed segments
 
 	clause_count = cypher_ast_query_nclauses(ast->root);
 
@@ -164,14 +208,14 @@ static ExecutionPlan **_process_segments(AST *ast) {
 	//--------------------------------------------------------------------------
 
 	// retrieve the indices of each WITH clause to properly set
-	// the segment's bounds.
-	// Every WITH clause demarcates the beginning of a new segment
+	// the segment's bounds
+	// every WITH clause demarcates the beginning of a new segment
 	segment_indices = AST_GetClauseIndices(ast, CYPHER_AST_WITH);
 
 	// last segment
 	array_append(segment_indices, clause_count);
 	nsegments = array_len(segment_indices);
-	segments = array_new(ExecutionPlan *, nsegments);
+	segments  = array_new(ExecutionPlan*, nsegments);
 
 	//--------------------------------------------------------------------------
 	// process segments
@@ -190,11 +234,11 @@ static ExecutionPlan **_process_segments(AST *ast) {
 		segment = _process_segment(ast_segment, seg_start_idx, seg_end_idx);
 		array_append(segments, segment);
 
-		// The next segment will start where the current one ended.
+		// the next segment will start where the current one ended
 		seg_start_idx = seg_end_idx;
 	}
 
-	// Restore the overall AST.
+	// restore the overall AST
 	QueryCtx_SetAST(ast);
 	array_free(segment_indices);
 
@@ -229,12 +273,12 @@ static ExecutionPlan *_tie_segments
 	ExecutionPlan **segments,
 	uint segment_count
 ) {
-	FT_FilterNode  *ft                  =  NULL; // filters following WITH
-	OpBase         *connecting_op       =  NULL; // op connecting one segment to another
-	OpBase         *prev_connecting_op  =  NULL; // root of previous segment
-	ExecutionPlan  *prev_segment        =  NULL;
-	ExecutionPlan  *current_segment     =  NULL;
-	AST            *master_ast          =  QueryCtx_GetAST();  // top-level AST of plan
+	FT_FilterNode  *ft                 = NULL; // filters following WITH
+	OpBase         *connecting_op      = NULL; // op connecting one segment to another
+	OpBase         *prev_connecting_op = NULL; // root of previous segment
+	ExecutionPlan  *prev_segment       = NULL;
+	ExecutionPlan  *current_segment    = NULL;
+	AST            *master_ast         = QueryCtx_GetAST();  // top-level AST of plan
 
 	//--------------------------------------------------------------------------
 	// merge segments
@@ -266,7 +310,7 @@ static ExecutionPlan *_tie_segments
 			ASSERT(connecting_op->type == OPType_PROJECT ||
 			       connecting_op->type == OPType_AGGREGATE);
 
-			ExecutionPlan_AddOp(connecting_op, prev_segment->root);
+			OpBase_AddChild(connecting_op, prev_segment->root);
 		}
 
 		//----------------------------------------------------------------------
@@ -300,37 +344,7 @@ static ExecutionPlan *_tie_segments
 		}
 
 		prev_segment = segment;
-
-		//----------------------------------------------------------------------
-		// introduce projection filters
-		//----------------------------------------------------------------------
-
-		// Retrieve the current projection clause to build any necessary filters
-		const cypher_astnode_t *opening_clause = cypher_ast_query_get_clause(ast->root, 0);
-		cypher_astnode_type_t type = cypher_astnode_type(opening_clause);
-		// Only WITH clauses introduce filters at this level;
-		// all other scopes will be fully built at this point.
-		if(type != CYPHER_AST_WITH) continue;
-
-		// Build filters required by current segment.
-		QueryCtx_SetAST(ast);
-		ft = AST_BuildFilterTreeFromClauses(ast, &opening_clause, 1);
-		if(ft == NULL) continue;
-
-		// If any of the filtered variables operate on a WITH alias,
-		// place the filter op above the projection.
-		if(FilterTree_FiltersAlias(ft, opening_clause)) {
-			OpBase *filter_op = NewFilterOp(current_segment, ft);
-			ExecutionPlan_PushBelow(connecting_op, filter_op);
-		} else {
-			// None of the filtered variables are aliases;
-			// filter ops may be placed anywhere in the scope.
-			ExecutionPlan_PlaceFilterOps(segment, connecting_op, prev_connecting_op, ft);
-		}
 	}
-
-	// Restore the master AST.
-	QueryCtx_SetAST(master_ast);
 
 	// The last ExecutionPlan segment is the master ExecutionPlan.
 	ExecutionPlan *plan = segments[segment_count - 1];
@@ -352,11 +366,14 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 
 	// handle UNION if there are any
 	bool union_query = AST_ContainsClause(ast, CYPHER_AST_UNION);
-	if(union_query) return _ExecutionPlan_UnionPlans(ast);
+	if(union_query) {
+		return _ExecutionPlan_UnionPlans(ast);
+	}
 
 	// execution plans are created in 1 or more segments
 	ExecutionPlan **segments = _process_segments(ast);
 	ASSERT(segments != NULL);
+
 	uint segment_count = array_len(segments);
 	ASSERT(segment_count > 0);
 
@@ -373,16 +390,86 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 	return plan;
 }
 
-void ExecutionPlan_PreparePlan(ExecutionPlan *plan) {
-	// Plan should be prepared only once.
+void ExecutionPlan_PreparePlan
+(
+	ExecutionPlan *plan
+) {
+	// plan should be prepared only once
 	ASSERT(!plan->prepared);
 	optimizePlan(plan);
 	plan->prepared = true;
 }
 
-inline rax *ExecutionPlan_GetMappings(const ExecutionPlan *plan) {
+inline rax *ExecutionPlan_GetMappings
+(
+	const ExecutionPlan *plan
+) {
 	ASSERT(plan && plan->record_map);
 	return plan->record_map;
+}
+
+// add a new mappings from an alias to a Record ID
+// returns the ID of the new mapping
+int ExecutionPlan_AddMappings
+(
+	const ExecutionPlan *plan,  // plan to update
+	const char *alias           // alias to map
+) {
+	ASSERT(plan  != NULL);
+	ASSERT(alias != NULL);
+
+	// add the mapping to the plan's record map
+	rax *map = ExecutionPlan_GetMappings(plan);
+	
+	size_t l  = strlen(alias);
+	void *id  = (void *)raxSize(map);
+	void *old = NULL;
+	int found = raxTryInsert(map, (unsigned char *)alias, l, id, &old);
+
+	if(found == 1) return (intptr_t)id;
+	else return (intptr_t)old;
+}
+
+// mark 'op' as a resolver for 'alias'
+void ExecutionPlan_AddResolver
+(
+	ExecutionPlan *plan,  // plan to update
+	const char *alias,    // resolved alias
+	const OpBase *op      // resolver operation
+) {
+	ASSERT(op       != NULL);
+	ASSERT(plan     != NULL);
+	ASSERT(alias    != NULL);
+	ASSERT(op->plan == plan);
+
+	// try to add op as a resolver for alias
+	HashTableAdd(plan->resolvers, (void*)alias, (void *)op);
+}
+
+// remove alias from plan's resolver map
+// if indeed the alias was mapped to 'op'
+void ExecutionPlan_RemoveResolver
+(
+	ExecutionPlan *plan,  // plan to update
+	const OpBase *op      // resolver operation
+) {
+	ASSERT(op       != NULL);
+	ASSERT(plan     != NULL);
+	ASSERT(alias    != NULL);
+	ASSERT(op->plan == plan);
+
+	int n;
+	const char **identifiers = OpBase_GetModifiers(op, &n);
+	for(int i = 0; i < n; i++) {
+		const char *id = identifiers[i];
+		// remove id from plan's resolvers map if it is mapped to 'op'
+		dictEntry *entry = HashTableFind(plan->resolvers, id);
+		if(entry != NULL) {
+			// only remove resolver if it is indeed mapped to 'op'
+			OpBase *resolver = (OpBase *)HashTableGetVal(entry);
+			if(resolver == op) HashTableDelete(plan->resolvers, id);
+		}
+	}
 }
 
 Record ExecutionPlan_BorrowRecord(ExecutionPlan *plan) {
@@ -407,23 +494,29 @@ void ExecutionPlan_ReturnRecord(const ExecutionPlan *plan, Record r) {
 
 static inline void _ExecutionPlan_InitRecordPool(ExecutionPlan *plan) {
 	if(plan->record_pool) return;
-	// Initialize record pool.
-	// Determine Record size to inform ObjectPool allocation
+	// initialize record pool
+	// determine Record size to inform ObjectPool allocation
 	uint entries_count = raxSize(plan->record_map);
 	uint rec_size = sizeof(_Record) + (sizeof(Entry) * entries_count);
 
-	// Create a data block with initial capacity of 256 records.
+	// create a data block with initial capacity of 256 records
 	plan->record_pool = ObjectPool_New(256, rec_size, (fpDestructor)Record_FreeEntries);
 }
 
-static void _ExecutionPlanInit(OpBase *root) {
-	// If the ExecutionPlan associated with this op hasn't built a record pool yet, do so now.
+static void _ExecutionPlanInit
+(
+	OpBase *root
+) {
+	// if the ExecutionPlan associated with this op hasn't built a record pool
+	// yet, do so now
 	_ExecutionPlan_InitRecordPool((ExecutionPlan *)root->plan);
 
-	// Initialize the operation if necessary.
-	if(root->init) root->init(root);
+	// initialize the operation if necessary
+	if(root->init) {
+		root->init(root);
+	}
 
-	// Continue initializing downstream operations.
+	// continue initializing downstream operations
 	for(int i = 0; i < root->childCount; i++) {
 		_ExecutionPlanInit(root->children[i]);
 	}
@@ -542,6 +635,9 @@ static void _ExecutionPlan_FreeInternals
 	if(plan->ast_segment != NULL) {
 		AST_Free(plan->ast_segment);
 	}
+	if(plan->resolvers != NULL) {
+		HashTableRelease(plan->resolvers);
+	}
 	rm_free(plan);
 }
 
@@ -556,9 +652,9 @@ void ExecutionPlan_Free
 		return;
 	}
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// free op tree and collect execution-plans
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 
 	// traverse the execution-plan graph (DAG -> no endless cycles), while
 	// collecting the different segments, and freeing the op tree
@@ -594,9 +690,9 @@ void ExecutionPlan_Free
 	array_free(visited);
 	array_free(to_visit);
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// free internals of the plans
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 
 	dictEntry *entry;
 	ExecutionPlan *curr_plan;

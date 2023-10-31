@@ -24,7 +24,7 @@ typedef struct {
 // creates a new Unwind operation
 OpBase *NewUnwindOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	AR_ExpNode *exp
 );
 

@@ -31,7 +31,7 @@ typedef struct {
 
 OpBase *NewExpandIntoOp
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	Graph *g,
 	AlgebraicExpression *ae
 );

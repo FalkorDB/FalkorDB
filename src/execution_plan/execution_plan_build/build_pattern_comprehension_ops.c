@@ -97,7 +97,7 @@ void buildPatternComprehensionOps
 		AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
 		array_append(exps, collect_exp);
 		OpBase *aggregate = NewAggregateOp(plan, exps);
-		ExecutionPlan_AddOp(aggregate, match_stream);
+		OpBase_AddChild(aggregate, match_stream);
 
 		// handle filters attached to pattern
 		// [(a {v:1})-[]->(z) WHERE z.v = 2 | z.x]
@@ -126,9 +126,9 @@ void buildPatternComprehensionOps
 		if(root->childCount > 0) {
 			OpBase *apply_op = NewApplyOp(plan);
 			ExecutionPlan_PushBelow(root->children[0], apply_op);
-			ExecutionPlan_AddOp(apply_op, aggregate);
+			OpBase_AddChild(apply_op, aggregate);
 		} else {
-			ExecutionPlan_AddOp(root, aggregate);
+			OpBase_AddChild(root, aggregate);
 		}
 	}
 
@@ -248,7 +248,7 @@ void buildPatternPathOps
 		AR_ExpNode **exps = array_new(AR_ExpNode *, 1);
 		array_append(exps, collect_exp);
 		OpBase *aggregate = NewAggregateOp(plan, exps);
-		ExecutionPlan_AddOp(aggregate, match_stream);
+		OpBase_AddChild(aggregate, match_stream);
 
 		// in case the execution-plan had child operations we need to combine
 		// records coming out of our newly constucted aggregation with the rest
@@ -257,9 +257,9 @@ void buildPatternPathOps
 		if(root->childCount > 0) {
 			OpBase *apply_op = NewApplyOp(plan);
 			ExecutionPlan_PushBelow(root->children[0], apply_op);
-			ExecutionPlan_AddOp(apply_op, aggregate);
+			OpBase_AddChild(apply_op, aggregate);
 		} else {
-			ExecutionPlan_AddOp(root, aggregate);
+			OpBase_AddChild(root, aggregate);
 		}
 	}
 

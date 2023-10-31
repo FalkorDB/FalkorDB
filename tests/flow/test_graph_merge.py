@@ -592,27 +592,27 @@ class testGraphMergeFlow(FlowTestsBase):
         redis_con = self.env.getConnection()
         graph = Graph(redis_con, "merge_reuse")
         query = """
-        CREATE (m:L1 {v: "abc"})
-        CREATE (u:L2 {v: "x"})
-        CREATE (n:L2 {v: "y"})
-        CREATE (:L2 {v: 'y'})
-        CREATE (u)-[:R]->(m), (u)-[:R]->(m)
-        CREATE (n)-[:R]->(m), (n)-[:R]->(m)"""
+        CREATE (m:L1 {v: 'abc'}),
+        (u:L2 {v: 'x'}),
+        (n:L2 {v: 'y'}),
+        (:L2 {v: 'y'}),
+        (u)-[:R]->(m), (u)-[:R]->(m),
+        (n)-[:R]->(m), (n)-[:R]->(m)"""
         graph.query(query)
 
         query = """
-        MERGE (m:L1 {v: "abc"})
-        SET m.v = "abcd"
+        MERGE (m:L1 {v: 'abc'})
+        SET m.v = 'abcd'
         WITH m
-        MATCH (u:L2 {v: "x"})
-        MATCH (n:L2 {v: "y"})
+        MATCH (u:L2 {v: 'x'})
+        MATCH (n:L2 {v: 'y'})
         MERGE (u)-[:R]->(m)<-[:R]-(n)
         RETURN m.v, u.v, n.v"""
 
         res = graph.query(query)
         self.env.assertEquals(res.nodes_created, 0)
-        self.env.assertEquals(res.relationships_created, 0)
-        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y']])
+        self.env.assertEquals(res.relationships_created, 2)
+        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y'], ['abcd', 'x', 'y']])
 
     def test30_record_clone_under_merge(self):
         # the following operations

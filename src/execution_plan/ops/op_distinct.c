@@ -11,16 +11,20 @@
 #include "../../util/arr.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
-/* Forward declarations. */
+// forward declarations
 static void DistinctFree(OpBase *opBase);
 static Record DistinctConsume(OpBase *opBase);
 static OpResult DistinctReset(OpBase *opBase);
-static OpBase *DistinctClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *DistinctClone(ExecutionPlan *plan, const OpBase *opBase);
 
 // compute hash on distinct values
 // values that are required to be distinct are located at 'offset'
 // positions within the record
-static unsigned long long _compute_hash(OpDistinct *op, Record r) {
+static unsigned long long _compute_hash
+(
+	OpDistinct *op,
+	Record r
+) {
 	// initialize the hash state
 	XXH64_state_t state;
 	XXH_errorcode res = XXH64_reset(&state, 0);
@@ -40,7 +44,11 @@ static unsigned long long _compute_hash(OpDistinct *op, Record r) {
 }
 
 // compute record offset to distinct values
-static void _updateOffsets(OpDistinct *op, Record r) {
+static void _updateOffsets
+(
+	OpDistinct *op,
+	Record r
+) {
 	ASSERT(op->aliases != NULL);
 	ASSERT(op->offsets != NULL);
 
@@ -51,28 +59,37 @@ static void _updateOffsets(OpDistinct *op, Record r) {
 	}
 }
 
-OpBase *NewDistinctOp(const ExecutionPlan *plan, const char **aliases, uint alias_count) {
+OpBase *NewDistinctOp
+(
+	ExecutionPlan *plan,
+	const char **aliases,
+	uint alias_count
+) {
 	ASSERT(aliases != NULL);
 	ASSERT(alias_count > 0);
 
 	OpDistinct *op = rm_malloc(sizeof(OpDistinct));
 
-	op->found           =  raxNew();
-	op->mapping         =  NULL;
-	op->aliases         =  rm_malloc(alias_count * sizeof(const char *));
-	op->offset_count    =  alias_count;
-	op->offsets         =  rm_calloc(op->offset_count, sizeof(uint));
+	op->found        = raxNew();
+	op->mapping      = NULL;
+	op->aliases      = rm_malloc(alias_count * sizeof(const char *));
+	op->offset_count = alias_count;
+	op->offsets      = rm_calloc(op->offset_count, sizeof(uint));
 
-	// Copy aliases into heap array managed by this op
+	// copy aliases into heap array managed by this op
 	memcpy(op->aliases, aliases, alias_count * sizeof(const char *));
 
-	OpBase_Init((OpBase *)op, OPType_DISTINCT, "Distinct", NULL, DistinctConsume,
-				DistinctReset, NULL, DistinctClone, DistinctFree, false, plan);
+	OpBase_Init((OpBase *)op, OPType_DISTINCT, "Distinct", NULL,
+			DistinctConsume, DistinctReset, NULL, DistinctClone, DistinctFree,
+			false, plan);
 
 	return (OpBase *)op;
 }
 
-static Record DistinctConsume(OpBase *opBase) {
+static Record DistinctConsume
+(
+	OpBase *opBase
+) {
 	OpDistinct *op = (OpDistinct *)opBase;
 	OpBase *child = op->op.children[0];
 
@@ -101,7 +118,11 @@ static Record DistinctConsume(OpBase *opBase) {
 	}
 }
 
-static inline OpBase *DistinctClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *DistinctClone
+(
+	ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_DISTINCT);
 	OpDistinct *op = (OpDistinct *)opBase;
 	return NewDistinctOp(plan, op->aliases, op->offset_count);
@@ -121,7 +142,10 @@ static OpResult DistinctReset
 	return OP_OK;
 }
 
-static void DistinctFree(OpBase *ctx) {
+static void DistinctFree
+(
+	OpBase *ctx
+) {
 	OpDistinct *op = (OpDistinct *)ctx;
 	if(op->found) {
 		raxFree(op->found);

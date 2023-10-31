@@ -15,72 +15,84 @@
 #include "../../ast/ast_build_op_contexts.h"
 #include "../../arithmetic/arithmetic_expression_construct.h"
 
-static inline void _PushDownPathFilters(ExecutionPlan *plan,
-										OpBase *path_filter_op) {
+static inline void _PushDownPathFilters
+(
+	OpBase *path_filter_op
+) {
 	OpBase *relocate_to = path_filter_op;
-	// Find the earliest filter op in the path filter op's chain of parents.
+	// find the earliest filter op in the path filter op's chain of parents
 	while(relocate_to->parent && relocate_to->parent->type == OPType_FILTER) {
 		relocate_to = relocate_to->parent;
 	}
-	// If the filter op is part of a chain of filter ops, migrate it
-	// to be the topmost. This ensures that cheaper filters will be
-	// applied first
+
+	// if the filter op is part of a chain of filter ops, migrate it
+	// to be the topmost
+	// this ensures that cheaper filters will be applied first
 	if(relocate_to != path_filter_op) {
-		ExecutionPlan_RemoveOp(plan, path_filter_op);
+		ExecutionPlan_RemoveOp(path_filter_op);
 		ExecutionPlan_PushBelow(relocate_to, path_filter_op);
 	}
 }
 
-static void _ExecutionPlan_PlaceApplyOps(ExecutionPlan *plan) {
+static void _ExecutionPlan_PlaceApplyOps
+(
+	ExecutionPlan *plan
+) {
 	OpBase **filter_ops = ExecutionPlan_CollectOps(plan->root, OPType_FILTER);
 	uint filter_ops_count = array_len(filter_ops);
 	for(uint i = 0; i < filter_ops_count; i++) {
 		OpFilter *op = (OpFilter *)filter_ops[i];
 		FT_FilterNode *node;
 		if(FilterTree_ContainsFunc(op->filterTree, "path_filter", &node)) {
-			// If the path filter op has other filter ops above it,
-			// migrate it to be the topmost.
-			_PushDownPathFilters(plan, (OpBase *)op);
-			// Convert the filter op to an Apply operation
+			// if the path filter op has other filter ops above it
+			// migrate it to be the topmost
+			_PushDownPathFilters((OpBase *)op);
+			// convert the filter op to an Apply operation
 			ExecutionPlan_ReduceFilterToApply(plan, op);
 		}
 	}
 	array_free(filter_ops);
 }
 
-void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
-									  const OpBase *upper_bound, OpBase *filter) {
+void ExecutionPlan_RePositionFilterOp
+(
+	ExecutionPlan *plan,
+	OpBase *lower_bound,
+	const OpBase *upper_bound,
+	OpBase *filter
+) {
 	// validate inputs
 	ASSERT(plan != NULL);
 	ASSERT(filter->type == OPType_FILTER);
 
-	/* When placing filters, we should not recurse into certain operation's
-	 * subtrees that would cause logical errors.
-	 * The cases we currently need to be concerned with are:
-	 * Merge - the results which should only be filtered after the entity
-	 * is matched or created.
-	 *
-	 * Apply - which has an Optional child that should project results or NULL
-	 * before being filtered.
-	 *
-	 * The family of SemiApply ops (including the Apply Multiplexers)
-	 * does not require this restriction since they are always exclusively
-	 * performing filtering. */
+	// when placing filters, we should not recurse into certain operation's
+	// subtrees that would cause logical errors
+	// the cases we currently need to be concerned with are:
+	// merge - the results which should only be filtered after the entity
+	// is matched or created
+	//
+	// apply - which has an Optional child that should project results or NULL
+	// before being filtered
+	//
+	// the family of SemiApply ops (including the Apply Multiplexers)
+	// does not require this restriction since they are always exclusively
+	// performing filtering
 
-	OpBase *op = NULL; // Operation after which filter will be located.
+	OpBase *op = NULL; // operation after which filter will be located
 	FT_FilterNode *filter_tree = ((OpFilter *)filter)->filterTree;
 
-	// collect all filtered entities.
+	// collect all filtered entities
 	rax *references = FilterTree_CollectModified(filter_tree);
 	uint64_t references_count = raxSize(references);
 
 	if(references_count > 0) {
-		// Scan execution plan, locate the earliest position where all
+		// scan execution plan, locate the earliest position where all
 		// references been resolved
-		op = ExecutionPlan_LocateReferencesExcludingOps(lower_bound, upper_bound, FILTER_RECURSE_BLACKLIST,
-														BLACKLIST_OP_COUNT, references);
+		op = ExecutionPlan_LocateReferencesExcludingOps(lower_bound,
+				upper_bound, FILTER_RECURSE_BLACKLIST, BLACKLIST_OP_COUNT,
+				references);
 		if(!op) {
-			// Failed to resolve all filter references.
+			// failed to resolve all filter references
 			Error_InvalidFilterPlacement(references);
 			OpBase_Free(filter);
 			return;
@@ -88,7 +100,7 @@ void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
 	} else {
 		// The filter tree does not contain references, like:
 		// WHERE 1=1
-		// Place the op directly below the first projection if there is one,
+		// place the op directly below the first projection if there is one,
 		// otherwise update the ExecutionPlan root
 		op = plan->root;
 		while(op && op->childCount > 0 && op->type != OPType_PROJECT && op->type != OPType_AGGREGATE) {
@@ -97,27 +109,28 @@ void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
 		if(op == NULL || (op->type != OPType_PROJECT && op->type != OPType_AGGREGATE)) op = plan->root;
 	}
 
-	// In case this is a pre-existing filter (this function is not called out from ExecutionPlan_PlaceFilterOps)
+	// in case this is a pre-existing filter
+	// (this function is not called out from ExecutionPlan_PlaceFilterOps)
 	if(filter->childCount > 0) {
-		// If the located op is not the filter child, re position the filter.
+		// if the located op is not the filter child, re position the filter
 		if(op != filter->children[0]) {
-			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
+			ExecutionPlan_RemoveOp((OpBase *)filter);
 			ExecutionPlan_PushBelow(op, (OpBase *)filter);
 		}
 	} else if(op == NULL) {
-		// No root was found, place filter at the root.
+		// no root was found, place filter at the root
 		ExecutionPlan_UpdateRoot(plan, (OpBase *)filter);
 		op = filter;
 	} else {
-		// This is a new filter.
+		// this is a new filter
 		ExecutionPlan_PushBelow(op, (OpBase *)filter);
 	}
 
-	// Filter may have migrated a segment, update the filter segment
-	// and check if the segment root needs to be updated.
-	// The filter should be associated with the op's segment
+	// filter may have migrated a segment, update the filter segment
+	// and check if the segment root needs to be updated
+	// the filter should be associated with the op's segment
 	filter->plan = op->plan;
-	// Re-set the segment root if needed.
+	// re-set the segment root if needed
 	if(op == op->plan->root) {
 		ExecutionPlan *segment = (ExecutionPlan *)op->plan;
 		segment->root = filter;
@@ -126,13 +139,18 @@ void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
 	raxFree(references);
 }
 
-void ExecutionPlan_PlaceFilterOps(ExecutionPlan *plan, OpBase *root, const OpBase *recurse_limit,
-								  FT_FilterNode *ft) {
-	// Decompose the filter tree into an array of the smallest possible subtrees
+void ExecutionPlan_PlaceFilterOps
+(
+	ExecutionPlan *plan,
+	OpBase *root,
+	const OpBase *recurse_limit,
+	FT_FilterNode *ft
+) {
+	// decompose the filter tree into an array of the smallest possible subtrees
 	// that do not violate the rules of AND/OR combinations
 	const FT_FilterNode **sub_trees = FilterTree_SubTrees(ft);
 
-	// For each filter tree, find the earliest position in the op tree
+	// for each filter tree, find the earliest position in the op tree
 	// after which the filter tree can be applied
 	uint nfilters = array_len(sub_trees);
 	for(uint i = 0; i < nfilters; i++) {
@@ -256,7 +274,7 @@ static void _buildForeachOp
 	// from the plan the Unwind is binded to.
 
 	// add the op as a child of the unwind operation
-	ExecutionPlan_AddOp(unwind, argument_list);
+	OpBase_AddChild(unwind, argument_list);
 
 	// update the root of the (currently empty) embedded plan
 	ExecutionPlan_UpdateRoot(embedded_plan, unwind);
@@ -275,7 +293,7 @@ static void _buildForeachOp
 	ExecutionPlan_UpdateRoot(plan, foreach);
 
 	// connect the embedded plan to the Foreach op
-	ExecutionPlan_AddOp(foreach, embedded_plan->root);
+	OpBase_AddChild(foreach, embedded_plan->root);
 }
 
 OpBase *ExecutionPlan_BuildOpsFromPath
@@ -284,11 +302,11 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	const char **bound_vars,
 	const cypher_astnode_t *node
 ) {
-	// Initialize an ExecutionPlan that shares this plan's Record mapping.
+	// initialize an ExecutionPlan that shares this plan's Record mapping
 	ExecutionPlan *match_stream_plan = ExecutionPlan_NewEmptyExecutionPlan();
 	match_stream_plan->record_map = plan->record_map;
 
-	// If we have bound variables, build an Argument op that represents them.
+	// if we have bound variables, build an Argument op that represents them
 	if(bound_vars) match_stream_plan->root = NewArgumentOp(match_stream_plan,
 															   bound_vars);
 
@@ -342,7 +360,7 @@ void ExecutionPlanSegment_ConvertClause
 	const cypher_astnode_t *clause
 ) {
 	cypher_astnode_type_t t = cypher_astnode_type(clause);
-	// Because 't' is set using the offsetof() call
+	// because 't' is set using the offsetof() call
 	// it cannot be used in switch statements
 	if(t == CYPHER_AST_MATCH) {
 		buildMatchOpTree(plan, ast, clause);
@@ -359,10 +377,10 @@ void ExecutionPlanSegment_ConvertClause
 	} else if(t == CYPHER_AST_DELETE) {
 		_buildDeleteOp(plan, clause);
 	} else if(t == CYPHER_AST_RETURN) {
-		// Converting a RETURN clause can create multiple operations.
+		// converting a RETURN clause can create multiple operations
 		buildReturnOps(plan, clause);
 	} else if(t == CYPHER_AST_WITH) {
-		// Converting a WITH clause can create multiple operations.
+		// converting a WITH clause can create multiple operations
 		buildWithOps(plan, clause);
 	} else if(t == CYPHER_AST_FOREACH) {
 		_buildForeachOp(plan, clause, gc);
@@ -372,3 +390,4 @@ void ExecutionPlanSegment_ConvertClause
 		assert(false && "unhandeled clause");
 	}
 }
+

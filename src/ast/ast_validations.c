@@ -106,10 +106,10 @@ static bool _ValidateShortestPaths
 // return true if no errors where encountered, false otherwise
 static bool _AST_GetWithAliases
 (
-	const cypher_astnode_t *node,  // ast-node from which to retrieve the aliases
+	const cypher_astnode_t *with,  // node from which to retrieve the aliases
 	rax *aliases                   // rax to which to insert the aliases
 ) {
-	if(!node || (cypher_astnode_type(node) != CYPHER_AST_WITH)) {
+	if(!with || (cypher_astnode_type(with) != CYPHER_AST_WITH)) {
 		return false;
 	}
 
@@ -117,11 +117,12 @@ static bool _AST_GetWithAliases
 	rax *local_env = raxNew();
 
 	// traverse the projections
-	uint num_with_projections = cypher_ast_with_nprojections(node);
-	for(uint i = 0; i < num_with_projections; i ++) {
-		const cypher_astnode_t *child = cypher_ast_with_get_projection(node, i);
-		const cypher_astnode_t *alias_node = cypher_ast_projection_get_alias(child);
+	uint num_with_projections = cypher_ast_with_nprojections(with);
+	for(uint i = 0; i < num_with_projections; i++) {
 		const char *alias;
+		const cypher_astnode_t *child = cypher_ast_with_get_projection(with, i);
+		const cypher_astnode_t *alias_node = cypher_ast_projection_get_alias(child);
+
 		if(alias_node) {
 			// Retrieve "a" from "WITH [1, 2, 3] as a"
 			alias = cypher_ast_identifier_get_name(alias_node);
@@ -131,14 +132,17 @@ static bool _AST_GetWithAliases
 			if(cypher_astnode_type(expr) != CYPHER_AST_IDENTIFIER) {
 				ErrorCtx_SetError(EMSG_WITH_PROJ_MISSING_ALIAS);
 				raxFree(local_env);
-				return false;	
+				return false;
 			}
 			alias = cypher_ast_identifier_get_name(expr);
 		}
+
 		raxInsert(aliases, (unsigned char *)alias, strlen(alias), NULL, NULL);
 
 		// check for duplicate column names (other than internal representation
 		// of outer-context variables)
+		// e.g.
+		// WITH 1 as a, 2 as a
 		if(raxTryInsert(local_env, (unsigned char *)alias, strlen(alias), NULL,
 			NULL) == 0 &&
 			alias[0] != '@') {
@@ -591,7 +595,7 @@ static VISITOR_STRATEGY _Validate_apply_operator
 		return VISITOR_CONTINUE;
 	}
 
-	// Collect the function name.
+	// collect the function name
 	const cypher_astnode_t *func = cypher_ast_apply_operator_get_func_name(n);
 	const char *func_name = cypher_ast_function_name_get_value(func);
 	if(_ValidateFunctionCall(func_name, (vctx->clause == CYPHER_AST_WITH ||
@@ -964,8 +968,9 @@ static AST_Validation _Validate_LIMIT_SKIP_Modifiers
 	const cypher_astnode_t *skip    // skip ast-node
 ) {
 	if(limit) {
-		// Handle non-integer or non parameter types specified as LIMIT value
-		// The value validation of integer node or parameter node is done in run time evaluation.
+		// handle non-integer or non parameter types specified as LIMIT value
+		// the value validation of integer node or parameter node is done in
+		// run time evaluation
 		if(cypher_astnode_type(limit) != CYPHER_AST_INTEGER &&
 			cypher_astnode_type(limit) != CYPHER_AST_PARAMETER) {
 			ErrorCtx_SetError(EMSG_LIMIT_MUST_BE_NON_NEGATIVE);
@@ -974,8 +979,9 @@ static AST_Validation _Validate_LIMIT_SKIP_Modifiers
 	}
 
 	if(skip) {
-		// Handle non-integer or non parameter types specified as skip value
-		// The value validation of integer node or parameter node is done in run time evaluation.
+		// handle non-integer or non parameter types specified as skip value
+		// the value validation of integer node or parameter node is done in
+		// run time evaluation
 		if(cypher_astnode_type(skip) != CYPHER_AST_INTEGER &&
 			cypher_astnode_type(skip) != CYPHER_AST_PARAMETER) {
 			ErrorCtx_SetError(EMSG_SKIP_MUST_BE_NON_NEGATIVE);
@@ -1407,8 +1413,9 @@ static VISITOR_STRATEGY _Validate_WITH_Clause
 		return VISITOR_BREAK;
 	}
 
-	// manually traverse children. order by and predicate should be aware of the
-	// vars introduced in the with projections, but the projections should not
+	// manually traverse children: ORDER-BY and predicates should be aware of
+	// the variables introduced in this WITH projections
+	// but the projections themself should not
 	for(uint i = 0; i < cypher_ast_with_nprojections(n); i++) {
 		// visit the projection
 		const cypher_astnode_t *proj = cypher_ast_with_get_projection(n, i);
@@ -1462,7 +1469,62 @@ static VISITOR_STRATEGY _Validate_WITH_Clause
 		}
 	}
 
-	return VISITOR_CONTINUE;
+	// make sure that if this WITH clause has filters
+	// then none of the filters is referencing a variable that is not projected
+	// and that the WITH clause does not perform aggregation
+	// e.g.
+	//
+	// MATCH (a), (b)
+	// WITH count(a) as cnt
+	// WHERE b.v = cnt
+	// RETURN 1
+	// is invalid and an error should be raised
+	//
+	// in other cases
+	// e.g.
+	//
+	// MATCH (a), (b)
+	// WITH a
+	// WHERE a.v = b.v
+	// RETURN 1
+	// 
+	// the query is valid and an intermidate implicit projection is added
+	//
+	// MATCH (a), (b)
+	// WITH a, b
+	// WHERE a.v = b.v
+	// WITH a
+	// RETURN 1
+	
+	VISITOR_STRATEGY res = VISITOR_CONTINUE;
+
+	if(predicate != NULL && AST_ClauseContainsAggregation(n)) {
+		// collect filtered aliases
+		const char **filtered_aliases = array_new(const char *, 1);
+		AST_CollectAliases(&filtered_aliases, predicate);
+
+		// see if all filtered aliases are projected
+		bool missing_alias = false;
+		uint l = array_len(filtered_aliases);
+		for(uint i = 0; i < l; i++) {
+			const char *alias = filtered_aliases[i];
+			if(raxFind(vctx->defined_identifiers, (unsigned char *)alias,
+				strlen(alias)) == raxNotFound) {
+				missing_alias = true;
+				break;
+			}
+		}
+
+		// see if WITH perform aggregation
+		if(missing_alias) {
+			ErrorCtx_SetError(EMSG_INVALID_WITH_FILTER);
+			res = VISITOR_BREAK;
+		}
+
+		array_free(filtered_aliases);
+	}
+
+	return res;
 }
 
 // validate a DELETE clause
@@ -2322,3 +2384,4 @@ void AST_ReportErrors
 	ErrorCtx_SetError(EMSG_PARSER_ERROR,
 					  errMsg, errPos.line, errPos.column, errPos.offset, errCtx, errCtxOffset);
 }
+

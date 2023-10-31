@@ -13,7 +13,7 @@
 // forward declarations
 static Record ValueHashJoinConsume(OpBase *opBase);
 static OpResult ValueHashJoinReset(OpBase *opBase);
-static OpBase *ValueHashJoinClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpBase *ValueHashJoinClone(ExecutionPlan *plan, const OpBase *opBase);
 static void ValueHashJoinFree(OpBase *opBase);
 
 // Determins order between two records by inspecting
@@ -230,7 +230,7 @@ static void ValueHashJoinToString
 // creates a new valueHashJoin operation
 OpBase *NewValueHashJoin
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	AR_ExpNode *lhs_exp,
 	AR_ExpNode *rhs_exp
 ) {
@@ -253,7 +253,7 @@ OpBase *NewValueHashJoin
 	return (OpBase *)op;
 }
 
-// Produce a record by joining
+// produce a record by joining
 // records coming from the left and right hand side
 // of this operation
 static Record ValueHashJoinConsume
@@ -352,7 +352,7 @@ static OpResult ValueHashJoinReset
 
 static inline OpBase *ValueHashJoinClone
 (
-	const ExecutionPlan *plan,
+	ExecutionPlan *plan,
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_VALUE_HASH_JOIN);
@@ -362,7 +362,10 @@ static inline OpBase *ValueHashJoinClone
 }
 
 // frees ValueHashJoin
-static void ValueHashJoinFree(OpBase *ctx) {
+static void ValueHashJoinFree
+(
+	OpBase *ctx
+) {
 	OpValueHashJoin *op = (OpValueHashJoin *)ctx;
 	// free cached records
 	if(op->rhs_rec) {

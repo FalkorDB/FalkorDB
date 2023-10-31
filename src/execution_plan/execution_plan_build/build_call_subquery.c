@@ -4,18 +4,19 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "../../ast/ast.h"
+#include "../ops/op.h"
 #include "../ops/op_join.h"
+#include "../ops/op_project.h"
+#include "../ops/op_argument.h"
+#include "../ops/op_aggregate.h"
+#include "../ops/op_argument_list.h"
+#include "../ops/op_call_subquery.h"
+#include "../../ast/ast.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
 #include "../execution_plan.h"
-#include "../ops/op_project.h"
-#include "../ops/op_argument.h"
 #include "execution_plan_util.h"
-#include "../ops/op_aggregate.h"
 #include "execution_plan_modify.h"
-#include "../ops/op_argument_list.h"
-#include "../ops/op_call_subquery.h"
 
 // adds an empty projection as the child of parent, such that the records passed
 // to parent are "filtered" to contain no bound vars
@@ -28,9 +29,9 @@ static OpBase *_add_empty_projection
 
 	OPType type = OpBase_Type(parent);
 	if(type == OPType_CALLSUBQUERY || type == OPType_FOREACH) {
-		ExecutionPlan_AddOpInd(parent, empty_proj, 0);
+		OpBase_AddChildAt(parent, empty_proj, 0);
 	} else {
-		ExecutionPlan_AddOp(parent, empty_proj);
+		OpBase_AddChild(parent, empty_proj);
 	}
 
 	return empty_proj;
@@ -255,7 +256,7 @@ void buildCallSubqueryPlan
 		// remove the Results op from the embedded execution-plan
 		OpBase *results_op = embedded_plan->root;
 		ASSERT(OpBase_Type(results_op) == OPType_RESULTS);
-		ExecutionPlan_RemoveOp(embedded_plan, embedded_plan->root);
+		ExecutionPlan_RemoveOp(embedded_plan->root);
 		OpBase_Free(results_op);
 
 		// bind the returning ops to the outer plan
@@ -270,12 +271,12 @@ void buildCallSubqueryPlan
 	if(is_eager) {
 		for(uint i = 0; i < n_feeding_points; i++) {
 			OpBase *argument_list = NewArgumentListOp(plan);
-			ExecutionPlan_AddOp(feeding_points[i], argument_list);
+			OpBase_AddChild(feeding_points[i], argument_list);
 		}
 	} else {
 		for(uint i = 0; i < n_feeding_points; i++) {
 			OpBase *argument = NewArgumentOp(plan, NULL);
-			ExecutionPlan_AddOp(feeding_points[i], argument);
+			OpBase_AddChild(feeding_points[i], argument);
 		}
 	}
 
@@ -289,10 +290,11 @@ void buildCallSubqueryPlan
 	ExecutionPlan_UpdateRoot(plan, call_op);
 
 	// add the embedded plan as a child of the Call-Subquery op
-	ExecutionPlan_AddOp(call_op, embedded_plan->root);
+	OpBase_AddChild(call_op, embedded_plan->root);
 
 	if(free_embedded_plan) {
 		embedded_plan->root = NULL;
 		ExecutionPlan_Free(embedded_plan);
 	}
 }
+
