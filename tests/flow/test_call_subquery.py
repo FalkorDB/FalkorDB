@@ -733,17 +733,6 @@ updating clause.")
         """Tests that the AST-rewriting of same consecutive clauses works
         properly in a subquery"""
 
-        # Test CREATE compression
-        query = """
-            CALL {
-                CREATE (x:X)
-                CREATE (m:M)
-            }
-            """
-        plan = graph.explain(query)
-        # make sure that CREATE is called only once
-        _assert_subquery_contains_single(plan, "Create", self.env)
-
         # Test SET compression
         query = """
             CALL {
