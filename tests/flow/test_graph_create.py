@@ -76,7 +76,7 @@ class testGraphCreationFlow(FlowTestsBase):
             redis_graph.query(query)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
-            self.env.assertIn("undefined attribute", str(e))
+            self.env.assertIn("'a' not defined", str(e))
 
     def test06_create_project_volatile_value(self):
         # The path e is volatile; verify that it can be projected after entity creation.
@@ -100,8 +100,8 @@ class testGraphCreationFlow(FlowTestsBase):
         # Invalid types are NULL, maps, nodes, edges, and paths
         queries = ["CREATE (a), (b) SET a.v = [b]",
                    "CREATE (a {v: ['str', [1, NULL]]})",
-                   "CREATE (a {v: [[{k: 'v'}]]})",
-                   "CREATE (a:L)-[e:R]->(:L {v: [e]})"]
+                   "CREATE (a {v: [[{k: 'v'}]]})"]
+
         for query in queries:
             try:
                 redis_graph.query(query)

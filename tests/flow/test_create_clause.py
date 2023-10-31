@@ -38,5 +38,5 @@ class testCreateClause():
                 # should not reach this point
                 self.env.assertTrue(False)
             except Exception as e:
-                self.env.assertTrue("Attempted to access undefined attribute" in str(e))
+                self.env.assertTrue("not defined" in str(e))
 
