@@ -1702,7 +1702,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 
 		// fail on duplicate identifier
 		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 && t == T_EDGE) {
-			ErrorCtx_SetError(EMSG_FOREACH_INVALID_BODY);
+			ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, alias);
 			res = VISITOR_BREAK;
 			break;
 		}
