@@ -1582,6 +1582,15 @@ static VISITOR_STRATEGY _Validate_UNION_Clause
 	return VISITOR_RECURSE;
 }
 
+// qsort comparison function for strings
+static int _compareStrings
+(
+	const void *a,
+	const void *b
+) {
+    return strcmp(*(const char **)a, *(const char **)b);
+}
+
 // validate a CREATE clause
 static VISITOR_STRATEGY _Validate_CREATE_Clause
 (
@@ -1589,12 +1598,24 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	bool start,                 // first traversal
 	ast_visitor *visitor        // visitor
 ) {
+	VISITOR_STRATEGY res = VISITOR_CONTINUE; // optimistic
 	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+
+	// set current clause
 	vctx->clause = cypher_astnode_type(n);
 
-	// manual traversal validation of the CREATE clause
-	// TODO: explain why!
-	// primarily because of identifiers introduction
+	// track new entities (identifier + type) introduced by CREATE clause
+	const char **new_identifiers = array_new(const char*, 1);
+
+	// manual traverse validation of the CREATE clause
+	// this is done primarily because of identifiers scoping
+	// the CREATE isn't allowed access to its own identifiers
+	// e.g. CREATE (a {v:b.v}), (b {v:a.v})
+	// but while the AST is traversed, we visit the created entity IDENTIFIER
+	// AST node which tests to see if the identifier is within scope and fails
+	// if it isn't
+	// by manually traversing the AST, we can avoid this issue
+
 	const cypher_astnode_t *pattern = cypher_ast_create_get_pattern(n);
 	uint npaths = cypher_ast_pattern_npaths(pattern);
 
@@ -1620,17 +1641,24 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 		// make sure CREATE actually creates something
 		// e.g. MATCH (a) CREATE (a) doesn't create anything
 		if(_Validate_CREATE_Entities(path, vctx) == AST_INVALID) {
-			return VISITOR_BREAK;
+			res = VISITOR_BREAK;
+			goto cleanup;
 		}
 
 		// validate individual path elements
 		uint nelems = cypher_ast_pattern_path_nelements(path);
 		for(uint j = 0; j < nelems; j++) {
 			const cypher_astnode_t *e = cypher_ast_pattern_path_get_element(path, j);
+			SIType t;
 			const cypher_astnode_t *id;
 
-			if(j % 2 == 0) id = cypher_ast_node_pattern_get_identifier(e);
-			else id = cypher_ast_rel_pattern_get_identifier(e);
+			if(j % 2 == 0) {
+				id = cypher_ast_node_pattern_get_identifier(e);
+				t = T_NODE;
+			} else {
+				id = cypher_ast_rel_pattern_get_identifier(e);
+				t = T_EDGE;
+			}
 
 			bool hide = false;
 			const char *alias = NULL;
@@ -1649,10 +1677,17 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 
 			// validate AST expand from current element
 			AST_Visitor_visit(e, visitor);
-			if(ErrorCtx_EncounteredError()) return VISITOR_BREAK;
+			if(ErrorCtx_EncounteredError()) {
+				res = VISITOR_BREAK;
+				goto cleanup;
+			}
 
 			// remove identifier from scope
-			if(hide) _IdentifierRemove(vctx, alias);
+			if(hide) {
+				_IdentifierRemove(vctx, alias);
+				array_append(new_identifiers, alias);
+				array_append(new_identifiers, (char*)t); // note identifier type
+			}
 		}
 	}
 
@@ -1660,31 +1695,22 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 	// introduce identifiers to scope
 	//--------------------------------------------------------------------------
 
-	for(uint i = 0; i < npaths; i++) {
-		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, i);
-		uint nelems = cypher_ast_pattern_path_nelements(path);
-		for(uint j = 0; j < nelems; j++) {
-			SIType t;
-			const cypher_astnode_t *id;
-			const cypher_astnode_t *e = cypher_ast_pattern_path_get_element(path, j);
+	uint l = array_len(new_identifiers);
+	for(uint i = 0; i < l; i+=2) {
+		const char *alias = new_identifiers[i];
+		SIType t = (SIType)new_identifiers[i+1];
 
-			if(j % 2 == 0) {
-				t = T_NODE;
-				id = cypher_ast_node_pattern_get_identifier(e);
-			} else {
-				t = T_EDGE;
-				id = cypher_ast_rel_pattern_get_identifier(e);
-			}
-
-			if(id != NULL) {
-				const char *alias = cypher_ast_identifier_get_name(id);
-				_IdentifierAdd(vctx, alias, (void*)t);
-			}
+		// fail on duplicate identifier
+		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 && t == T_EDGE) {
+			ErrorCtx_SetError(EMSG_FOREACH_INVALID_BODY);
+			res = VISITOR_BREAK;
+			break;
 		}
 	}
 
-	// continue do not recurse
-	return VISITOR_CONTINUE;
+	cleanup:
+	array_free(new_identifiers);
+	return res;
 }
 
 // validate a MERGE clause
