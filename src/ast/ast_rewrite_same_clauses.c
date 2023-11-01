@@ -20,46 +20,6 @@ static bool _compress_clauses(const cypher_astnode_t *node);
 typedef void (*replace_func)(cypher_astnode_t *, cypher_astnode_t *, unsigned int, unsigned int);
 typedef const cypher_astnode_t * (*get_clause_func)(const cypher_astnode_t *, unsigned int);
 
-// compresses multiple consecutive CREATE clauses into a single CREATE clause
-static void _replace_create_clause
-(
-	cypher_astnode_t *root,      // ast root
-	cypher_astnode_t **clauses,  // clause being replaced
-	int scope_start,             // beginning of scope
-	int scope_end,               // ending of scope
-	replace_func replace         // replace function pointer
-) {
-	uint count = array_len(clauses);
-
-	struct cypher_input_range range = cypher_astnode_range(clauses[0]);
-	cypher_astnode_t **paths = array_new(cypher_astnode_t *, count);
-
-	// collect paths
-	for (uint i = 0; i < count; i++) {
-		const cypher_astnode_t *pattern =
-			cypher_ast_create_get_pattern(clauses[i]);
-		uint npaths = cypher_ast_pattern_npaths(pattern);
-		for (uint j = 0; j < npaths; j++) {
-			const cypher_astnode_t *path =
-				cypher_ast_pattern_get_path(pattern, j);
-			array_append(paths, cypher_ast_clone(path));
-		}
-	}
-	
-	// build the replacement pattern
-	cypher_astnode_t *pattern = cypher_ast_pattern(paths, array_len(paths),
-			paths, array_len(paths), range);
-	
-	// build the replacement clause
-	cypher_astnode_t *new_clause = cypher_ast_create(false, pattern, &pattern,
-			1, range);
-
-	// replace original clause with the new one
-	replace(root, new_clause, scope_start, scope_end);
-	
-	array_free(paths);
-}
-
 // compresses multiple consecutive MATCH clauses into a single MATCH clause
 static void _replace_match_clause
 (
@@ -301,9 +261,7 @@ static bool _compress_clauses
 		if(array_len(clauses) > 1) {
 			// multiple consecutive clauses of the same type
 			// compress them
-			if(t == CYPHER_AST_CREATE) {
-				_replace_create_clause((cypher_astnode_t *)node, clauses, s, e, replace_func);
-			} else if(t == CYPHER_AST_MATCH) {
+			if(t == CYPHER_AST_MATCH) {
 				_replace_match_clause((cypher_astnode_t *)node, clauses, s, e, replace_func);
 			} else if(t == CYPHER_AST_DELETE) {
 				_replace_delete_clause((cypher_astnode_t *)node, clauses, s, e, replace_func);
@@ -334,13 +292,11 @@ static inline bool is_compressible
 ) {
 	// compressible clauses:
 	// 1. Non-OPTIONAL MATCH
-	// 2. CREATE
-	// 3. SET
-	// 4. DELETE
-	// 5. REMOVE
+	// 2. SET
+	// 3. DELETE
+	// 4. REMOVE
 	return ((type == CYPHER_AST_MATCH &&
 			  !cypher_ast_match_is_optional(clause)) ||
-			  type == CYPHER_AST_CREATE              ||
 			  type == CYPHER_AST_SET                 ||
 			  type == CYPHER_AST_DELETE              ||
 			  type == CYPHER_AST_REMOVE);
@@ -368,3 +324,4 @@ bool AST_RewriteSameClauses
 	// compress consecutive clauses
 	return _compress_clauses(body);
 }
+
