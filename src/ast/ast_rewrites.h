@@ -33,22 +33,3 @@ bool AST_RewriteCallSubquery
 	const cypher_astnode_t *root // root of AST
 );
 
-// AST_RewriteFilters rewrites filters which tries to access a variable which is
-// aliased but is no longer available
-//
-// e.g.
-//
-// WITH a AS b WHERE a.v = 1
-// ->
-// WITH a AS b WHERE b.v = 1
-//
-// from user perspective 'a' still exists, but internally only 'b' is available
-//
-// in case such as:
-// WITH a AS b, c AS a WHERE a.v = 1
-// we do not perform the rewrite as 'a' is defined and acceessible
-bool AST_RewriteFilters
-(
-	const cypher_astnode_t *root // root of AST
-);
-
