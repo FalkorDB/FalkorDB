@@ -1582,15 +1582,6 @@ static VISITOR_STRATEGY _Validate_UNION_Clause
 	return VISITOR_RECURSE;
 }
 
-// qsort comparison function for strings
-static int _compareStrings
-(
-	const void *a,
-	const void *b
-) {
-    return strcmp(*(const char **)a, *(const char **)b);
-}
-
 // validate a CREATE clause
 static VISITOR_STRATEGY _Validate_CREATE_Clause
 (
