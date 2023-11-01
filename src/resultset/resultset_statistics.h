@@ -41,13 +41,6 @@ void ResultSetStat_init
 	ResultSetStatistics *stats  // resultset statistics to initialize
 );
 
-// emit resultset statistics
-void ResultSetStat_emit
-(
-	RedisModuleCtx *ctx,              // redis module context
-	const ResultSetStatistics *stats  // statistics to emit
-);
-
 // Clear result-set statistics
 void ResultSetStat_Clear
 (

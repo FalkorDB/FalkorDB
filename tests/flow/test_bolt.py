@@ -11,7 +11,7 @@ class testBolt():
         self.env = Env(decodeResponses=True)
         port = 7687 + 6379 - self.env.port
         global bolt_con
-        bolt_con = GraphDatabase.driver(f"bolt://localhost:{port}", auth=("neo4j", "password"))
+        bolt_con = GraphDatabase.driver(f"bolt://localhost:{port}", auth=("falkordb", ""))
         # self.watcher = watch("neo4j")
 
     def test01_null(self):

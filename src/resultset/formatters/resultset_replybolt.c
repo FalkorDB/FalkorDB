@@ -3,6 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "../resultset.h"
+#include "../../bolt/bolt.h"
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
 
@@ -254,16 +256,14 @@ static void _ResultSet_BoltReplyWithPath
 
 void ResultSet_EmitBoltRow
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
-	GraphContext *gc,
-	SIValue **row,
-	uint numcols
+	ResultSet *set,
+	SIValue **row
 ) {
-	bolt_reply_structure(bolt_client, BST_RECORD, 1);
-	bolt_reply_list(bolt_client, numcols);
-	for(int i = 0; i < numcols; i++) {
-		_ResultSet_BoltReplyWithSIValue(bolt_client, gc, *row[i]);
+	bolt_client_t *bolt_client = set->bolt_client;
+	bolt_reply_structure(set->bolt_client, BST_RECORD, 1);
+	bolt_reply_list(set->bolt_client, set->column_count);
+	for(int i = 0; i < set->column_count; i++) {
+		_ResultSet_BoltReplyWithSIValue(bolt_client, set->gc, *row[i]);
 	}
 	bolt_client_end_message(bolt_client);
 }
@@ -271,21 +271,97 @@ void ResultSet_EmitBoltRow
 // Emit the alias or descriptor for each column in the header.
 void ResultSet_ReplyWithBoltHeader
 (
-	RedisModuleCtx *ctx,
-	bolt_client_t *bolt_client,
-	const char **columns,
-	uint *col_rec_map
+	ResultSet *set
 ) {
+	bolt_client_t *bolt_client = set->bolt_client;
 	bolt_client_reply_for(bolt_client, BST_RUN, BST_SUCCESS, 1);
 	bolt_reply_map(bolt_client, 3);
 	bolt_reply_string(bolt_client, "t_first", 7);
 	bolt_reply_int8(bolt_client, 2);
 	bolt_reply_string(bolt_client, "fields", 6);
-	bolt_reply_list(bolt_client, array_len(columns));
-	for(int i = 0; i < array_len(columns); i++) {
-		bolt_reply_string(bolt_client, columns[i], strlen(columns[i]));
+	bolt_reply_list(bolt_client, set->column_count);
+	for(int i = 0; i < set->column_count; i++) {
+		bolt_reply_string(bolt_client, set->columns[i], strlen(set->columns[i]));
 	}
 	bolt_reply_string(bolt_client, "qid", 3);
 	bolt_reply_int8(bolt_client, 0);
 	bolt_client_end_message(bolt_client);
+}
+
+void ResultSet_EmitBoltStats
+(
+	ResultSet *set
+) {
+	bolt_client_reply_for(set->bolt_client, BST_PULL, BST_SUCCESS, 1);
+	int stats = 0;
+	if(set->stats.index_creation)            stats++;
+	if(set->stats.index_deletion)            stats++;
+	if(set->stats.constraint_creation)       stats++;
+	if(set->stats.constraint_deletion)       stats++;
+	if(set->stats.labels_added          > 0) stats++;
+	if(set->stats.nodes_created         > 0) stats++;
+	if(set->stats.nodes_deleted         > 0) stats++;
+	if(set->stats.labels_removed        > 0) stats++;
+	if(set->stats.properties_set        > 0) stats++;
+	if(set->stats.properties_removed    > 0) stats++;
+	if(set->stats.relationships_deleted > 0) stats++;
+	if(set->stats.relationships_created > 0) stats++;
+	if(stats > 0) {
+		bolt_reply_map(set->bolt_client, 1);
+		bolt_reply_string(set->bolt_client, "stats", 5);
+		bolt_reply_map(set->bolt_client, stats);
+		if(set->stats.index_creation) {
+			bolt_reply_string(set->bolt_client, "indexes-added", 13);
+			bolt_reply_int(set->bolt_client, set->stats.indices_created);
+		}
+		if(set->stats.index_deletion) {
+			bolt_reply_string(set->bolt_client, "indexes-removed", 15);
+			bolt_reply_int(set->bolt_client, set->stats.indices_deleted);
+		}
+		if(set->stats.constraint_creation) {
+			bolt_reply_string(set->bolt_client, "constraints-added", 17);
+			bolt_reply_int(set->bolt_client, set->stats.constraints_created);
+		}
+		if(set->stats.constraint_deletion) {
+			bolt_reply_string(set->bolt_client, "constraints-removed", 19);
+			bolt_reply_int(set->bolt_client, set->stats.constraints_deleted);
+		}
+		if(set->stats.labels_added          > 0) {
+			bolt_reply_string(set->bolt_client, "labels-added", 12);
+			bolt_reply_int(set->bolt_client, set->stats.labels_added);
+		}
+		if(set->stats.nodes_created         > 0) {
+			bolt_reply_string(set->bolt_client, "nodes-created", 13);
+			bolt_reply_int(set->bolt_client, set->stats.nodes_created);
+		}
+		if(set->stats.nodes_deleted         > 0) {
+			bolt_reply_string(set->bolt_client, "nodes-deleted", 13);
+			bolt_reply_int(set->bolt_client, set->stats.nodes_deleted);
+		}
+		if(set->stats.labels_removed        > 0) {
+			bolt_reply_string(set->bolt_client, "labels-removed", 14);
+			bolt_reply_int(set->bolt_client, set->stats.labels_removed);
+		}
+		if(set->stats.properties_set        > 0) {
+			bolt_reply_string(set->bolt_client, "properties-set", 14);
+			bolt_reply_int(set->bolt_client, set->stats.properties_set);
+		}
+		if(set->stats.properties_removed    > 0) {
+			bolt_reply_string(set->bolt_client, "properties-removed", 18);
+			bolt_reply_int(set->bolt_client, set->stats.properties_removed);
+		}
+		if(set->stats.relationships_deleted > 0) {
+			bolt_reply_string(set->bolt_client, "relationships-deleted", 21);
+			bolt_reply_int(set->bolt_client, set->stats.relationships_deleted);
+		}
+		if(set->stats.relationships_created > 0) {
+			bolt_reply_string(set->bolt_client, "relationships-created", 21);
+			bolt_reply_int(set->bolt_client, set->stats.relationships_created);
+		}
+	} else {
+		bolt_reply_map(set->bolt_client, 0);
+	}
+
+	bolt_client_end_message(set->bolt_client);
+	bolt_client_finish_write(set->bolt_client);
 }

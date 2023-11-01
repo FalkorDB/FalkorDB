@@ -6,21 +6,23 @@
 
 #pragma once
 
-// Formatter for compact (client-parsed) replies
+// Formatter for no operation (replication) replies
+
+// emit a header
 void ResultSet_EmitNOPHeader
 (
-    RedisModuleCtx *ctx,
-    bolt_client_t *bolt_client,
-    const char **columns,
-    uint *col_rec_map
+    ResultSet *set
 );
 
+// emit a row
 void ResultSet_EmitNOPRow
 (
-    RedisModuleCtx *ctx,
-    bolt_client_t *bolt_client,
-    GraphContext *gc,
-    SIValue **row,
-    uint numcols
+    ResultSet *set,
+    SIValue **row
 );
 
+// emit statistics
+void ResultSet_EmitNOPStats
+(
+    ResultSet *set
+);

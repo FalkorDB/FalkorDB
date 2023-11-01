@@ -16,7 +16,7 @@
 #define RESULTSET_OK 1
 #define RESULTSET_FULL 0
 
-typedef struct {
+typedef struct ResultSet {
 	RedisModuleCtx *ctx;            // redis context
 	bolt_client_t *bolt_client;     // bolt client
 	GraphContext *gc;               // context used for mapping attribute strings and IDs
