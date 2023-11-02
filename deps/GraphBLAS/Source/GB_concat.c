@@ -2,7 +2,7 @@
 // GB_concat: concatenate an array of matrices into a single matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n
     const GrB_Index m,
     const GrB_Index n,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -149,13 +149,11 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
             // check if C is iso, full, and/or empty
             //------------------------------------------------------------------
 
-            bool A_full = (A_sparsity == GxB_FULL) || (anz == GB_nnz_full (A)) ;
+            bool A_full = (A_sparsity == GxB_FULL) ;
             bool A_empty = (anz == 0) ;
             bool A_iso = A->iso || (anz == 1 && A_sparsity != GxB_BITMAP) ;
 
-            // C is full only if all tiles are full or as-if-full.  A tile with
-            // a zero dimension has no entries and is both as-if-full and
-            // empty, but not iso.
+            // C is full only if all tiles are full.
             C_is_full = C_is_full && A_full ;
 
             // get the iso value of an iso tile, typecasted to C->type
@@ -199,8 +197,8 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     // replace Tile_rows and Tile_cols with their cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Tile_rows, m, NULL, 1, Context) ;
-    GB_cumsum (Tile_cols, n, NULL, 1, Context) ;
+    GB_cumsum (Tile_rows, m, NULL, 1, Werk) ;
+    GB_cumsum (Tile_cols, n, NULL, 1, Werk) ;
     int64_t cnrows = Tile_rows [m] ;
     int64_t cncols = Tile_cols [n] ;
     if (cnrows != GB_NROWS (C) || cncols != GB_NCOLS (C))
@@ -219,22 +217,21 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     { 
         // construct C as an empty matrix
         GBURBLE ("(empty concat) ") ;
-        GB_OK (GB_clear (C, Context)) ;
+        GB_OK (GB_clear (C, Werk)) ;
     }
     else if (C_is_full)
     { 
         // construct C as full
         GBURBLE ("(%sfull concat) ", C_iso ? "iso " : "") ;
         GB_OK (GB_concat_full (C, C_iso, cscalar,
-            Tiles, m, n, Tile_rows, Tile_cols, Context)) ;
+            Tiles, m, n, Tile_rows, Tile_cols, Werk)) ;
     }
-    else if (GB_convert_sparse_to_bitmap_test (C->bitmap_switch, cnz, cnrows,
-        cncols))
+    else if (GB_convert_s2b_test (C->bitmap_switch, cnz, cnrows, cncols))
     { 
         // construct C as bitmap
         GBURBLE ("(%sbitmap concat) ", C_iso ? "iso " : "") ;
         GB_OK (GB_concat_bitmap (C, C_iso, cscalar,
-            cnz, Tiles, m, n, Tile_rows, Tile_cols, Context)) ;
+            cnz, Tiles, m, n, Tile_rows, Tile_cols, Werk)) ;
     }
     else if (GB_convert_sparse_to_hyper_test (C->hyper_switch, cnvec_estimate,
         C->vdim))
@@ -242,14 +239,14 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
         // construct C as hypersparse
         GBURBLE ("(%shyper concat) ", C_iso ? "iso " : "") ;
         GB_OK (GB_concat_hyper (C, C_iso, cscalar,
-            cnz, Tiles, m, n, Tile_rows, Tile_cols, Context)) ;
+            cnz, Tiles, m, n, Tile_rows, Tile_cols, Werk)) ;
     }
     else
     { 
         // construct C as sparse
         GBURBLE ("(%ssparse concat) ", C_iso ? "iso " : "") ;
         GB_OK (GB_concat_sparse (C, C_iso, cscalar,
-            cnz, Tiles, m, n, Tile_rows, Tile_cols, Context)) ;
+            cnz, Tiles, m, n, Tile_rows, Tile_cols, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -258,7 +255,7 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
 
     GB_FREE_WORKSPACE ;
     ASSERT_MATRIX_OK (C, "C before conform for GB_concat", GB0) ;
-    GB_OK (GB_conform (C, Context)) ;
+    GB_OK (GB_conform (C, Werk)) ;
     ASSERT_MATRIX_OK (C, "C output for GB_concat", GB0) ;
     return (GrB_SUCCESS) ;
 }

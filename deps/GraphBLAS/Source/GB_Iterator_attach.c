@@ -2,7 +2,7 @@
 // GB_Iterator_attach: attach an iterator to matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,16 +39,10 @@ GrB_Info GB_Iterator_attach
     //--------------------------------------------------------------------------
 
     if (GB_ANY_PENDING_WORK (A))
-    {
+    { 
         GrB_Info info ;
-        GB_CONTEXT ("GxB_Iterator_attach") ;
-        if (desc != NULL)
-        { 
-            // get the # of threads to use
-            Context->nthreads_max = desc->nthreads_max ;
-            Context->chunk = desc->chunk ;
-        }
-        GB_OK (GB_wait (A, "A", Context)) ;
+        GB_WERK ("GxB_Iterator_attach") ;
+        GB_OK (GB_wait (A, "A", Werk)) ;
     }
 
     //--------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 // GrB_Matrix_serialize: copy a matrix into a serialized array of bytes
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -55,7 +55,7 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // no descriptor, so assume the default method
     int method = GxB_DEFAULT ;
 
-    // Context will hold the default # of threads, which can be controlled
+    // Werk will hold the default # of threads, which can be controlled
     // by GxB_Global_Option_set.
 
     //--------------------------------------------------------------------------
@@ -64,7 +64,7 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
 
     size_t blob_size = (size_t) (*blob_size_handle) ;
     GrB_Info info = GB_serialize ((GB_void **) &blob, &blob_size, A, method,
-        Context) ;
+        Werk) ;
     if (info == GrB_SUCCESS)
     { 
         (*blob_size_handle) = (GrB_Index) blob_size ;

@@ -7,7 +7,7 @@ function ok = GB_spec_compare (C_spec, C_mex, identity, tol)
 % some GraphBLAS method.  C_mex = GB_mex_* (...) is the output of the
 % corresponding interface to the true GraphBLAS method, in C.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % get the semiring identity
@@ -21,7 +21,7 @@ if (isempty (identity))
     return
 end
 
-if (nargin < 4)
+if (nargin < 4 || isempty (tol))
     if (isfloat (identity))
         tol = 64*eps (class (identity)) ;   % not GB_spec_type.
     else

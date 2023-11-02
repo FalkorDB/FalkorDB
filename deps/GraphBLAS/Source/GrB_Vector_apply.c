@@ -2,13 +2,13 @@
 // GrB_Vector_apply: apply a unary or binary operator to a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_apply.h"
-#include "GB_scalar.h"
+#include "GB_scalar_wrap.h"
 #include "GB_get_mask.h"
 
 //------------------------------------------------------------------------------
@@ -57,7 +57,7 @@ GrB_Info GrB_Vector_apply           // w<M> = accum (w, op(u))
         accum,                      // optional accum for Z=accum(w,T)
         (GB_Operator) op, NULL, false, // operator op(.) to apply to the entries
         (GrB_Matrix) u, false,      // u, not transposed
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;
@@ -76,7 +76,7 @@ static inline GrB_Info GB_1st       // w<mask> = accum (w, op(x,u))
     const GrB_Scalar x,             // first input:  scalar x
     const GrB_Vector u,             // second input: vector u
     const GrB_Descriptor desc,      // descriptor for w and M
-    GB_Context Context
+    GB_Werk Werk
 )
 { 
 
@@ -111,7 +111,7 @@ static inline GrB_Info GB_1st       // w<mask> = accum (w, op(x,u))
         accum,                      // optional accum for Z=accum(w,T)
         (GB_Operator) op, x, true,  // operator op(x,.) to apply to the entries
         (GrB_Matrix) u,  false,     // u, not transposed
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;
@@ -130,7 +130,7 @@ static inline GrB_Info GB_2nd       // w<mask> = accum (w, op(u,y))
     const GrB_Vector u,             // first input:  vector u
     const GrB_Scalar y,             // second input: scalar y
     const GrB_Descriptor desc,      // descriptor for w and M
-    GB_Context Context
+    GB_Werk Werk
 )
 { 
 
@@ -165,7 +165,7 @@ static inline GrB_Info GB_2nd       // w<mask> = accum (w, op(u,y))
         accum,                      // optional accum for Z=accum(w,T)
         op, y, false,               // operator op(.,y) to apply to the entries
         (GrB_Matrix) u, false,      // u, not transposed
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;
@@ -188,7 +188,7 @@ GrB_Info GrB_Vector_apply_BinaryOp1st_Scalar    // w<mask> = accum (w, op(x,u))
 { 
     GB_WHERE (w, "GrB_Vector_apply_BinaryOp1st_Scalar"
         " (w, M, accum, op, x, u, desc)") ;
-    return (GB_1st (w, M, accum, op, x, u, desc, Context)) ;
+    return (GB_1st (w, M, accum, op, x, u, desc, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -227,7 +227,7 @@ GrB_Info GrB_Vector_apply_BinaryOp2nd_Scalar    // w<mask> = accum (w, op(u,y))
 { 
     GB_WHERE (w, "GrB_Vector_apply_BinaryOp2nd_Scalar"
         " (w, M, accum, op, u, y, desc)") ;
-    return (GB_2nd (w, M, accum, (GB_Operator) op, u, y, desc, Context)) ;
+    return (GB_2nd (w, M, accum, (GB_Operator) op, u, y, desc, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -268,7 +268,7 @@ GrB_Info GB_EVAL3 (prefix, _Vector_apply_BinaryOp1st_, T)                   \
     GB_WHERE (w, GB_STR(prefix) "_Vector_apply_BinaryOp1st_" GB_STR(T)      \
         " (w, M, accum, op, x, u, desc)") ;                                 \
     GB_SCALAR_WRAP (scalar, x, GB_EVAL3 (prefix, _, T)) ;                   \
-    return (GB_1st (w, M, accum, op, scalar, u, desc, Context)) ;           \
+    return (GB_1st (w, M, accum, op, scalar, u, desc, Werk)) ;              \
 }
 
 GB_BIND1ST (GrB, bool      , BOOL  )
@@ -303,7 +303,7 @@ GrB_Info GrB_Vector_apply_BinaryOp1st_UDT
     GB_WHERE (w, "GrB_Vector_apply_BinaryOp1st_UDT"
         " (w, M, accum, op, x, u, desc)") ;
     GB_SCALAR_WRAP_UDT (scalar, x, (op == NULL) ? NULL : op->xtype) ;
-    return (GB_1st (w, M, accum, op, scalar, u, desc, Context)) ;
+    return (GB_1st (w, M, accum, op, scalar, u, desc, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -325,7 +325,7 @@ GrB_Info GB_EVAL3 (prefix, _Vector_apply_BinaryOp2nd_, T)                   \
     GB_WHERE (w, GB_STR(prefix) "_Vector_apply_BinaryOp2nd_" GB_STR(T)      \
         " (w, M, accum, op, u, y, desc)") ;                                 \
     GB_SCALAR_WRAP (scalar, y, GB_EVAL3 (prefix, _, T)) ;                   \
-    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Context)) ;\
+    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;\
 }
 
 GB_BIND2ND (GrB, bool      , BOOL  )
@@ -360,7 +360,7 @@ GrB_Info GrB_Vector_apply_BinaryOp2nd_UDT
     GB_WHERE (w, "GrB_Vector_apply_BinaryOp2nd_UDT"
         " (w, M, accum, op, u, y, desc)") ;
     GB_SCALAR_WRAP_UDT (scalar, y, (op == NULL) ? NULL : op->ytype) ;
-    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Context)) ;
+    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -382,7 +382,7 @@ GrB_Info GB_EVAL3 (prefix, _Vector_apply_IndexOp_, T)                       \
     GB_WHERE (w, GB_STR(prefix) "_Vector_apply_IndexOp_" GB_STR(T)          \
         " (w, M, accum, op, u, thunk, desc)") ;                             \
     GB_SCALAR_WRAP (scalar, thunk, GB_EVAL3 (prefix, _, T)) ;               \
-    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Context)) ;\
+    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;\
 }
 
 GB_IDXUNOP (GrB, bool      , BOOL  )
@@ -417,7 +417,7 @@ GrB_Info GrB_Vector_apply_IndexOp_UDT
     GB_WHERE (w, "GrB_Vector_apply_IndexOp_UDT"
         " (w, M, accum, op, u, thunk, desc)") ;
     GB_SCALAR_WRAP_UDT (scalar, thunk, (op == NULL) ? NULL : op->ytype) ;
-    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Context)) ;
+    return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -437,6 +437,6 @@ GrB_Info GrB_Vector_apply_IndexOp_Scalar
 { 
     GB_WHERE (w, "GrB_Vector_apply_IndexOp_Scalar"
         " (w, M, accum, op, u, thunk, desc)") ;
-    return (GB_2nd (w, M, accum, (GB_Operator) op, u, thunk, desc, Context)) ;
+    return (GB_2nd (w, M, accum, (GB_Operator) op, u, thunk, desc, Werk)) ;
 }
 

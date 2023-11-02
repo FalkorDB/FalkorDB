@@ -2,10 +2,14 @@
 // GB_select_phase2: C=select(A,thunk)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// C is sparse or hypersparse, but it is present only as Cp, Ci, and Cx.
+// A is never bitmap.  It is sparse or hypersparse in most cases.  It can also
+// by full for DIAG.
 
 {
     //--------------------------------------------------------------------------
@@ -15,9 +19,7 @@
     const int64_t  *restrict Ap = A->p ;
     const int64_t  *restrict Ah = A->h ;
     const int64_t  *restrict Ai = A->i ;
-    // if A is iso and the op is user-defined, Ax [0] is passed to the user
-    // selectop
-    const GB_ATYPE *restrict Ax = (GB_ATYPE *) A->x ;
+    const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
     size_t asize = A->type->size ;
     int64_t avlen = A->vlen ;
     int64_t avdim = A->vdim ;
@@ -56,9 +58,9 @@
             // find the part of A(:,k) to be operated on by this task
             //------------------------------------------------------------------
 
-            int64_t pA_start, pA_end, pC ;
-            GB_get_pA_and_pC (&pA_start, &pA_end, &pC, tid, k, kfirst, klast,
-                pstart_Aslice, Cp_kfirst, Cp, avlen, Ap, avlen) ;
+            GB_GET_PA_AND_PC (pA_start, pA_end, pC, tid, k, kfirst, klast,
+                pstart_Aslice, Cp_kfirst,
+                GBP_A (Ap, k, avlen), GBP_A (Ap, k+1, avlen), Cp [k]) ;
 
             //------------------------------------------------------------------
             // compact Ai and Ax [pA_start ... pA_end-1] into Ci and Cx
@@ -66,11 +68,10 @@
 
             #if defined ( GB_ENTRY_SELECTOR )
 
-                int64_t j = GBH (Ah, k) ;
+                int64_t j = GBH_A (Ah, k) ;
                 for (int64_t pA = pA_start ; pA < pA_end ; pA++)
                 {
-                    // A is never full; that case is now handled by the
-                    // bitmap selector instead.
+                    // A is sparse or hypersparse
                     ASSERT (Ai != NULL) ;
                     int64_t i = Ai [pA] ;
                     GB_TEST_VALUE_OF_ENTRY (keep, pA) ;
@@ -122,12 +123,12 @@
             #elif defined ( GB_DIAG_SELECTOR )
 
                 // task that owns the diagonal entry does this work
-                // A can be sparse or full, but not bitmap
+                // A can be sparse, hypersparse, or full, but not bitmap
                 int64_t p = Zp [k] ;
                 if (pA_start <= p && p < pA_end)
                 { 
                     ASSERT (pC >= Cp [k] && pC + 1 <= Cp [k+1]) ;
-                    Ci [pC] = GBI (Ai, p, avlen) ;
+                    Ci [pC] = GBI_A (Ai, p, avlen) ;
                     #if !GB_ISO_SELECT
                     memcpy (Cx +pC*asize, Ax +p*asize, asize) ;
                     #endif
@@ -170,4 +171,12 @@
         }
     }
 }
+
+#undef GB_TRIL_SELECTOR
+#undef GB_TRIU_SELECTOR
+#undef GB_DIAG_SELECTOR
+#undef GB_OFFDIAG_SELECTOR
+#undef GB_ROWINDEX_SELECTOR
+#undef GB_ROWLE_SELECTOR
+#undef GB_ROWGT_SELECTOR
 

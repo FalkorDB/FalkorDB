@@ -2,7 +2,7 @@
 // GB_enumify_identity: return ecode for identity value of an op of a monoid 
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2021, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ void GB_enumify_identity
     GB_Opcode opcode,       // built-in binary opcode of a monoid
     GB_Type_code zcode      // type code of the operator
 )
-{
+{ 
 
     int e = 31 ;            // default: use the monoid->identity bytes
 

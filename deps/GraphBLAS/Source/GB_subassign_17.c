@@ -2,10 +2,12 @@
 // GB_subassign_17: C(I,J)<!M,repl> = scalar ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 17: C(I,J)<!M,repl> = scalar ; using S
 
@@ -20,6 +22,7 @@
 // M: not bitmap
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 GrB_Info GB_subassign_17
 (
@@ -38,8 +41,8 @@ GrB_Info GB_subassign_17
     const GrB_Matrix M,
     const bool Mask_struct,
     const void *scalar,
-    const GrB_Type atype,
-    GB_Context Context
+    const GrB_Type scalar_type,
+    GB_Werk Werk
 )
 {
 
@@ -48,7 +51,7 @@ GrB_Info GB_subassign_17
     //--------------------------------------------------------------------------
 
     ASSERT (!GB_IS_BITMAP (C)) ; ASSERT (!GB_IS_FULL (C)) ;
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
 
     //--------------------------------------------------------------------------
     // S = C(I,J)
@@ -56,7 +59,7 @@ GrB_Info GB_subassign_17
 
     GB_EMPTY_TASKLIST ;
     GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Context)) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Werk)) ;
 
     //--------------------------------------------------------------------------
     // get inputs
@@ -153,7 +156,7 @@ GrB_Info GB_subassign_17
                 if (i == iM)
                 { 
                     // mij = (bool) M [pM]
-                    mij = GBB (Mb, pM) && GB_mcast (Mx, pM, msize) ;
+                    mij = GBB (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     GB_NEXT (M) ;
                 }
                 else
@@ -277,7 +280,7 @@ GrB_Info GB_subassign_17
                 if (i == iM)
                 { 
                     // mij = (bool) M [pM]
-                    mij = GBB (Mb, pM) && GB_mcast (Mx, pM, msize) ;
+                    mij = GBB (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     GB_NEXT (M) ;
                 }
                 else

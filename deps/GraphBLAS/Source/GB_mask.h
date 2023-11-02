@@ -2,7 +2,7 @@
 // GB_mask: definitions for GB_mask and related functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ GrB_Info GB_mask                // C<M> = Z
     const bool C_replace,       // true if clear(C) to be done first
     const bool Mask_comp,       // true if M is to be complemented
     const bool Mask_struct,     // if true, use the only structure of M
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_masker          // R = masker (C, M, Z)
@@ -32,7 +32,7 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     const bool Mask_struct, // if true, use the only structure of M
     const GrB_Matrix C,     // input C matrix
     const GrB_Matrix Z,     // input Z matrix
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
@@ -57,7 +57,7 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     const bool Mask_struct,         // if true, use the only structure of M
     const GrB_Matrix C,
     const GrB_Matrix Z,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
@@ -86,7 +86,7 @@ GrB_Info GB_masker_phase2           // phase2 for R = masker (C,M,Z)
     const bool Mask_struct,         // if true, use the only structure of M
     const GrB_Matrix C,
     const GrB_Matrix Z,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 int GB_masker_sparsity      // return the sparsity structure for R

@@ -2,13 +2,13 @@
 // GB_matvec_check: print a GraphBLAS matrix and check if it is valid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // for code development only:
-#ifdef GBCUDA
+#ifdef SUITESPARSE_CUDA
 // when CUDA kernels enabled:
 #define GB_DEVELOPER 0
 #else
@@ -18,7 +18,6 @@
 
 #include "GB_Pending.h"
 #include "GB.h"
-#include "GB_hash.h"
 
 GrB_Info GB_matvec_check    // check a GraphBLAS matrix or vector
 (
@@ -79,11 +78,11 @@ GrB_Info GB_matvec_check    // check a GraphBLAS matrix or vector
             GBPR0 ("float complex") ;
         }
         else if (A->type == GxB_FC64)
-        {
+        { 
             GBPR0 ("double complex") ;
         }
         else
-        {
+        { 
             GBPR0 ("%s", A->type->name) ;
         }
     }
@@ -692,7 +691,7 @@ GrB_Info GB_matvec_check    // check a GraphBLAS matrix or vector
         return (GrB_INVALID_OBJECT) ;
     }
     else if ((is_sparse || is_hyper) && anz != anz_actual)
-    {
+    { 
         // sparse/hypersparse with invalid nvals
         GBPR0 ("  invalid sparse/hypersparse entry count: " GBd " exist but"
             " A->nvals = " GBd "\n", anz_actual, anz) ;
@@ -834,7 +833,7 @@ GrB_Info GB_matvec_check    // check a GraphBLAS matrix or vector
     // when its computation is postponed or not needed.  If not -1, however,
     // the value must be correct.
 
-    int64_t actual_nvec_nonempty = GB_nvec_nonempty (A, NULL) ;
+    int64_t actual_nvec_nonempty = GB_nvec_nonempty (A) ;
 
     if (! ((A->nvec_nonempty == actual_nvec_nonempty) ||
            (A->nvec_nonempty == -1)))

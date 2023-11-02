@@ -2,7 +2,7 @@
 // GB_convert_any_to_iso: convert a matrix from non-iso to iso
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,7 @@
 GrB_Info GB_convert_any_to_iso // convert non-iso matrix to iso
 (
     GrB_Matrix A,           // input/output matrix
-    GB_void *scalar,        // scalar value, of size A->type->size, or NULL
-    GB_Context Context
+    GB_void *scalar         // scalar value, of size A->type->size, or NULL
 )
 {
 
@@ -84,7 +83,7 @@ GrB_Info GB_convert_any_to_iso // convert non-iso matrix to iso
     // finalize the matrix and return result
     //--------------------------------------------------------------------------
 
-    A->iso = true ;     // OK: convert_any_to_iso
+    A->iso = true ;
     ASSERT_MATRIX_OK (A, "A converted to iso", GB0) ;
     return (GrB_SUCCESS) ;
 }

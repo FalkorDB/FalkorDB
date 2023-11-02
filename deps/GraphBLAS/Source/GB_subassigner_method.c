@@ -2,7 +2,7 @@
 // GB_subassigner_method: determine method for GB_subassign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -26,7 +26,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
     const int Jkind,
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,
-    const GrB_Type atype            // type of A, or the type of the scalar
+    const GrB_Type scalar_type      // type of the scalar, or NULL
 )
 {
 
@@ -43,11 +43,11 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
     // no_mask: mask not present and not complemented
     bool no_mask = (M == NULL) && !Mask_comp ;
-    bool M_is_A = (M == A) ;
+    bool M_is_A = GB_all_aliased (M, A) ;
     bool M_is_bitmap = GB_IS_BITMAP (M) ;
 
     bool A_is_bitmap = GB_IS_BITMAP (A) ;
-    bool A_as_if_full = GB_as_if_full (A) ;
+    bool A_is_full = GB_IS_FULL (A) ;
     int64_t anz = GB_nnz (A) ;
 
     // these properties of C are not affected by wait(C):
@@ -57,7 +57,6 @@ int GB_subassigner_method           // return method to use in GB_subassigner
     // these properties of C can change after wait(C):
     bool C_is_empty = (GB_nnz (C) == 0 && !GB_PENDING (C) && !GB_ZOMBIES (C)) ;
     bool C_is_bitmap = GB_IS_BITMAP (C) ;
-    bool C_as_if_full = GB_as_if_full (C) ;
     bool C_is_full = GB_IS_FULL (C) ;
 
     //--------------------------------------------------------------------------
@@ -85,12 +84,12 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         }
     }
 
-    // check if C is competely dense:  all entries present and no pending work.
+    // check if C is full
     bool C_dense_update = false ;
-    if (C_as_if_full && whole_C_matrix && no_mask && (accum != NULL)
+    if (C_is_full && whole_C_matrix && no_mask && (accum != NULL)
             && (ctype == accum->ztype) && (ctype == accum->xtype))
     { 
-        // C(:,:) += x or A, where C is dense, no typecasting of C
+        // C(:,:) += x or A, where C is full, no typecasting of C
         C_dense_update = true ;
     }
 
@@ -115,7 +114,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
     if (C_splat_scalar)
     { 
-        // Method 21: C(:,:) = x where x is a scalar; C becomes dense
+        // Method 21: C(:,:) = x where x is a scalar; C becomes full
         S_Extraction = false ;
     }
     else if (C_splat_matrix)
@@ -125,7 +124,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
     }
     else if (C_dense_update)
     { 
-        // Methods 22 and 23: C(:,:) += x or A where C is dense
+        // Methods 22 and 23: C(:,:) += x or A where C is full
         S_Extraction = false ;
     }
     else if (C_Mask_scalar)
@@ -149,17 +148,17 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         {
             // C(I,J)<M> = A ;  use 06s (with S) or 06n (without S)
             // method 06s (with S) is faster when nnz (A) < nnz (M).
-            if ((C_as_if_full || C_is_bitmap) && whole_C_matrix && M_is_A)
+            if ((C_is_full || C_is_bitmap) && whole_C_matrix && M_is_A)
             { 
                 // Method 06d: C<A> = A
                 method_06d = true ;
                 S_Extraction = false ;
             }
             else if (C_is_empty && whole_C_matrix && Mask_struct &&
-                (A_as_if_full || A_is_bitmap))
+                (A_is_full || A_is_bitmap))
             { 
                 // Method 25: C<M,s> = A, where M is structural, A is
-                // dense, and C starts out empty.  The pattern of C will be the
+                // full, and C starts out empty.  The pattern of C will be the
                 // same as M, and the subassign method is extremely simple.
                 method_25 = true ;
                 S_Extraction = false ;
@@ -192,7 +191,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
     // determined by the input.  The table below has been pruned to remove
     // combinations that are not used, or equivalent to other entries in the
     // table.  Only 22 unique combinations of the 128 combinations are needed,
-    // with additional special cases when C(:,:) is dense.
+    // with additional special cases when C(:,:) is full.
 
     //      M           present or NULL
     //      Mask_comp   true or false
@@ -216,8 +215,8 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
         //  -   -   x   -   -   -       21:  C = x, no S, C anything
         //  -   -   x   -   A   -       24:  C = A, no S, C and A anything
-        //  -   -   -   +   -   -       22:  C += x, no S, C dense
-        //  -   -   -   +   A   -       23:  C += A, no S, C dense
+        //  -   -   -   +   -   -       22:  C += x, no S, C full
+        //  -   -   -   +   A   -       23:  C += A, no S, C full
 
         //  -   -   -   -   -   S       01:  C(I,J) = x, with S
         //  -   -   -   -   A   S       02:  C(I,J) = A, with S
@@ -227,12 +226,12 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         //  -   c   -                        no work to do
         //  -   c   r           S       00:  C(I,J)<!,repl> = empty, with S
 
-        //  M   -   -   -   -   -       05d: C<M> = x, no S, C dense
+        //  M   -   -   -   -   -       05d: C<M> = x, no S, C full
         //  M   -   -   -   -   -       05e: C<M,s> = x, no S, C empty
         //  M   -   -   -   -   -       05f: C<C,s> = x, no S, C == M
         //  M   -   -   -   -   -       05:  C(I,J)<M> = x, no S
-        //  A   -   -   -   A   -       06d: C<A> = A, no S, C dense
-        //  M   -   -   -   A   -       25:  C<M,s> = A, A dense, C empty
+        //  A   -   -   -   A   -       06d: C<A> = A, no S, C full
+        //  M   -   -   -   A   -       25:  C<M,s> = A, A full, C empty
         //  M   -   -   -   A   -       06n: C(I,J)<M> = A, no S
         //  M   -   -   -   A   S       06s: C(I,J)<M> = A, with S
         //  M   -   -   +   -   -       07:  C(I,J)<M> += x, no S
@@ -267,7 +266,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
         //----------------------------------------------------------------------
         // FUTURE::: C<C,s> += x   C == M, update all values, C_replace ignored
-        // FUTURE::: C<C,s> = A    C == M, A dense, C_replace ignored
+        // FUTURE::: C<C,s> = A    C == M, A full, C_replace ignored
         //----------------------------------------------------------------------
 
     // For the single case C(I,J)<M>=A, two methods can be used: 06n and 06s.
@@ -326,16 +325,16 @@ int GB_subassigner_method           // return method to use in GB_subassigner
     {
 
         //----------------------------------------------------------------------
-        // C += A or x where C is dense or full (and becomes full)
+        // C += A or x where C is full
         //----------------------------------------------------------------------
 
         //  =====================       ==============
         //  M   cmp rpl acc A   S       method: action
         //  =====================       ==============
-        //  -   -   -   +   -   -       22:  C += x, no S, C dense
-        //  -   -   -   +   A   -       23:  C += A, no S, C dense
+        //  -   -   -   +   -   -       22:  C += x, no S, C full
+        //  -   -   -   +   A   -       23:  C += A, no S, C full
 
-        ASSERT (C_as_if_full) ;             // C is dense
+        ASSERT (C_is_full) ;                // C is full
         ASSERT (whole_C_matrix) ;           // C(:,:) is modified
         ASSERT (M == NULL) ;                // no mask present
         ASSERT (accum != NULL) ;            // accum is present
@@ -344,12 +343,12 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
         if (scalar_expansion)
         { 
-            // Method 22: C(:,:) += x where C is dense or full
+            // Method 22: C(:,:) += x where C is full
             subassign_method = GB_SUBASSIGN_METHOD_22 ;
         }
         else
         { 
-            // Method 23: C(:,:) += A where C is dense or full
+            // Method 23: C(:,:) += A where C is full
             subassign_method = GB_SUBASSIGN_METHOD_23 ;
         }
 
@@ -364,7 +363,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         //  =====================       ==============
         //  M   cmp rpl acc A   S       method: action
         //  =====================       ==============
-        //  M   -   -   -   -   -       05d: C(:,:)<M> = x, no S, C dense
+        //  M   -   -   -   -   -       05d: C(:,:)<M> = x, no S, C full
         //  M   -   -   -   -   -       05e: C(:,:)<M,s> = x, no S, C empty
         //  M   -   -   -   -   -       05f: C(:,:)<C,s> = x, no S, C == M
         //  M   -   -   -   -   -       05:  C(I,J)<M> = x, no S
@@ -387,9 +386,9 @@ int GB_subassigner_method           // return method to use in GB_subassigner
                 // Method 05e: C(:,:)<M,s> = scalar ; no S; C empty, M struct
                 subassign_method = GB_SUBASSIGN_METHOD_05e ;
             }
-            else if (C_as_if_full && whole_C_matrix)
+            else if (C_is_full && whole_C_matrix)
             { 
-                // Method 05d: C(:,:)<M> = scalar ; no S; C is dense or full;
+                // Method 05d: C(:,:)<M> = scalar ; no S; C is full
                 // C becomes full.
                 subassign_method = GB_SUBASSIGN_METHOD_05d ;
             }
@@ -418,8 +417,8 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         //  =====================       ==============
         //  M   -   -   +   A   -       08n:  C(I,J)<M> += A, no S
         //  M   -   -   +   A   -       08s:  C(I,J)<M> += A, with S
-        //  A   -   -   -   A   -       06d: C<A> = A, no S, C dense
-        //  M   -   x   -   A   -       25:  C<M,s> = A, A dense, C empty
+        //  A   -   -   -   A   -       06d: C<A> = A, no S, C full
+        //  M   -   x   -   A   -       25:  C<M,s> = A, A full, C empty
         //  M   -   -   -   A   -       06n: C(I,J)<M> = A, no S
         //  M   -   -   -   A   S       06s: C(I,J)<M> = A, with S
 
@@ -443,13 +442,13 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         }
         else if (method_06d)
         { 
-            // Method 06d: C(:,:)<A> = A ; no S, C dense or full;
+            // Method 06d: C(:,:)<A> = A ; no S, C full
             subassign_method = GB_SUBASSIGN_METHOD_06d ;
-            ASSERT ((C_as_if_full || C_is_bitmap) && whole_C_matrix && M == A) ;
+            ASSERT ((C_is_full || C_is_bitmap) && whole_C_matrix && M_is_A) ;
         }
         else if (method_25)
         { 
-            // Method 25: C<M,struct> = A, C empty; A is dense, full, or bitmap
+            // Method 25: C<M,struct> = A, C empty; A is full or bitmap
             subassign_method = GB_SUBASSIGN_METHOD_25 ;
         }
         else if (!S_Extraction)
@@ -657,6 +656,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
             GB_Type_code ccode = ctype->code ;
             size_t       csize = ctype->size ;
+            GrB_Type atype = (A == NULL) ? scalar_type : A->type ;
             GB_Type_code acode = atype->code ;
             size_t       asize = atype->size ;
 
@@ -733,7 +733,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
                 case GB_SUBASSIGN_METHOD_01 :   // C(I,J) = scalar
                 case GB_SUBASSIGN_METHOD_05 :   // C(I,J)<M> = scalar
                 case GB_SUBASSIGN_METHOD_13 :   // C(I,J)<!M> = scalar
-                case GB_SUBASSIGN_METHOD_05d :  // C(:,:)<M> = scalar ; C dense
+                case GB_SUBASSIGN_METHOD_05d :  // C(:,:)<M> = scalar ; C full
                 case GB_SUBASSIGN_METHOD_09 :   // C(I,J)<M,replace> = scalar
                 case GB_SUBASSIGN_METHOD_17 :   // C(I,J)<!M,replace> = scalar
                     (*C_iso_out) = c_ok ;
@@ -748,7 +748,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
                 case GB_SUBASSIGN_METHOD_14 :   // C(I,J)<!M> = A
                 case GB_SUBASSIGN_METHOD_10 :   // C(I,J)<M,replace> = A
                 case GB_SUBASSIGN_METHOD_18 :   // C(I,J)<!M,replace> = A
-                case GB_SUBASSIGN_METHOD_06d :  // C(:,:)<A> = A ; C is dense
+                case GB_SUBASSIGN_METHOD_06d :  // C(:,:)<A> = A ; C is full
                 case GB_SUBASSIGN_METHOD_06n :  // C(I,J)<M> = A ; no S
                     (*C_iso_out) = c_ok ;
                     break ;
@@ -779,7 +779,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
                 case GB_SUBASSIGN_METHOD_03 :   // C(I,J) += scalar
                 case GB_SUBASSIGN_METHOD_07 :   // C(I,J)<M> += scalar
                 case GB_SUBASSIGN_METHOD_15 :   // C(I,J)<!M> += scalar
-                case GB_SUBASSIGN_METHOD_22 :   // C += scalar ; C is dense
+                case GB_SUBASSIGN_METHOD_22 :   // C += scalar ; C is full
                 case GB_SUBASSIGN_METHOD_11 :   // C(I,J)<M,replace> += scalar
                 case GB_SUBASSIGN_METHOD_19 :   // C(I,J)<!M,replace> += scalar
                     (*C_iso_out) = accum_ok ;
@@ -794,7 +794,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
                 case GB_SUBASSIGN_METHOD_04 :   // C(I,J) += A
                 case GB_SUBASSIGN_METHOD_08s :  // C(I,J)<M> += A, with S
                 case GB_SUBASSIGN_METHOD_16 :   // C(I,J)<!M> += A 
-                case GB_SUBASSIGN_METHOD_23 :   // C += A ; C is dense
+                case GB_SUBASSIGN_METHOD_23 :   // C += A ; C is full
                 case GB_SUBASSIGN_METHOD_08n :  // C(I,J)<M> += A, no S
                     (*C_iso_out) = accum_ok ;
                     break ;
@@ -835,10 +835,10 @@ int GB_subassigner_method           // return method to use in GB_subassigner
             GB_USE_BITMAP_IF (C_is_bitmap) ;
             break ;
 
-        case GB_SUBASSIGN_METHOD_05d :  // C(:,:)<M> = scalar ; C is dense
+        case GB_SUBASSIGN_METHOD_05d :  // C(:,:)<M> = scalar ; C is full
         case GB_SUBASSIGN_METHOD_05e :  // C(:,:)<M,struct> = scalar ; C empty
         case GB_SUBASSIGN_METHOD_05f :  // C(:,:)<C,struct> = scalar
-        case GB_SUBASSIGN_METHOD_22 :   // C += scalar ; C is dense
+        case GB_SUBASSIGN_METHOD_22 :   // C += scalar ; C is full
             // C and M can have any sparsity pattern, including bitmap
             break ;
 
@@ -875,8 +875,8 @@ int GB_subassigner_method           // return method to use in GB_subassigner
             GB_USE_BITMAP_IF (C_is_bitmap) ;
             break ;
 
-        case GB_SUBASSIGN_METHOD_06d :  // C(:,:)<A> = A ; C is dense
-        case GB_SUBASSIGN_METHOD_23 :   // C += A ; C is dense
+        case GB_SUBASSIGN_METHOD_06d :  // C(:,:)<A> = A ; C is full
+        case GB_SUBASSIGN_METHOD_23 :   // C += A ; C is full
             // C, M, and A can have any sparsity structure, including bitmap
             break ;
 

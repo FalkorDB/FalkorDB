@@ -2,7 +2,7 @@
 // GxB_Matrix_import_HyperCSC: import a matrix in hypersparse CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ GrB_Info GxB_Matrix_import_HyperCSC      // import a hypersparse CSC matrix
     GB_WHERE1 ("GxB_Matrix_import_HyperCSC (&A, type, nrows, ncols, "
         "&Ap, &Ah, &Ai, &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso, "
         "nvec, jumbled, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_import_HyperCSC") ;
+    // GB_BURBLE_START ("GxB_Matrix_import_HyperCSC") ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
 
@@ -55,9 +55,9 @@ GrB_Info GxB_Matrix_import_HyperCSC      // import a hypersparse CSC matrix
         Ax,   Ax_size,  // Ax
         0, jumbled, nvec,                   // jumbled or not
         GxB_HYPERSPARSE, true,              // hypersparse by col
-        iso, fast_import, true, Context) ;
+        iso, fast_import, true, Werk) ;
 
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

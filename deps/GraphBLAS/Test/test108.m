@@ -1,7 +1,7 @@
 function test108
 %TEST108 test boolean monoids
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % only well-defined if op is associative
@@ -75,9 +75,18 @@ for d = 0:10
                 A.values (end) = last ;
                 X = A.values ;
                 for id = 0:1
-                    % no terminal
+
                     identity = logical (id) ;
-                    result = GB_mex_reduce_bool (A, op, identity) ;
+
+                    if (isequal (op, 'or'))
+                        % with terminal and typecasting
+                        A.class = 'single' ;
+                        result = GB_mex_reduce_bool (A, op, identity, false) ;
+                        A.class = 'logical' ;
+                    else
+                        % no terminal
+                        result = GB_mex_reduce_bool (A, op, identity) ;
+                    end
 
                     % now compute with built-in methods
 

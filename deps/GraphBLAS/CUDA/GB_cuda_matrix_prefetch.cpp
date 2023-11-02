@@ -36,7 +36,7 @@ GrB_Info GB_cuda_matrix_prefetch
 
     if (A->Y != NULL && (which & GB_PREFETCH_Y))
     {
-        // prefetch the hyper_hash: A->Y->p, A->Y->i, and A->Y-x
+        // prefetch the hyper_hash: A->Y->p, A->Y->i, and A->Y->x
         GB_OK (GB_cuda_matrix_prefetch (A->Y, GB_PREFETCH_PIX, device, stream)) ;
     }
 

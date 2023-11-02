@@ -2,10 +2,12 @@
 // GB_subassign_09: C(I,J)<M,repl> = scalar ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 09: C(I,J)<M,repl> = scalar ; using S
 
@@ -19,6 +21,7 @@
 // C: not bitmap or full
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 #include "GB_unused.h"
 
 GrB_Info GB_subassign_09
@@ -38,8 +41,8 @@ GrB_Info GB_subassign_09
     const GrB_Matrix M,
     const bool Mask_struct,
     const void *scalar,
-    const GrB_Type atype,
-    GB_Context Context
+    const GrB_Type scalar_type,
+    GB_Werk Werk
 )
 {
 
@@ -48,7 +51,7 @@ GrB_Info GB_subassign_09
     //--------------------------------------------------------------------------
 
     ASSERT (!GB_IS_BITMAP (C)) ; ASSERT (!GB_IS_FULL (C)) ;
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
 
     //--------------------------------------------------------------------------
     // S = C(I,J)
@@ -56,7 +59,7 @@ GrB_Info GB_subassign_09
 
     GB_EMPTY_TASKLIST ;
     GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Context)) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Werk)) ;
 
     //--------------------------------------------------------------------------
     // get inputs
@@ -145,7 +148,7 @@ GrB_Info GB_subassign_09
 
                     int64_t pM = pM_start + iM ;
                     bool Sfound = (pS < pS_end) && (GBI (Si, pS, Svlen) == iM) ;
-                    bool mij = Mb [pM] && GB_mcast (Mx, pM, msize) ;
+                    bool mij = Mb [pM] && GB_MCAST (Mx, pM, msize) ;
 
                     if (Sfound && !mij)
                     { 
@@ -239,7 +242,7 @@ GrB_Info GB_subassign_09
                     else if (iM < iS)
                     {
                         // S (i,j) is not present, M (i,j) is present
-                        if (GB_mcast (Mx, pM, msize))
+                        if (GB_MCAST (Mx, pM, msize))
                         { 
                             // ----[. A 1]--------------------------------------
                             // [. A 1]: action: ( insert )
@@ -251,7 +254,7 @@ GrB_Info GB_subassign_09
                     {
                         // both S (i,j) and M (i,j) present
                         GB_C_S_LOOKUP ;
-                        if (GB_mcast (Mx, pM, msize))
+                        if (GB_MCAST (Mx, pM, msize))
                         { 
                             // ----[C A 1] or [X A 1]---------------------------
                             // [C A 1]: action: ( =A ): copy A, no accum
@@ -286,7 +289,7 @@ GrB_Info GB_subassign_09
                 while (pM < pM_end)
                 {
                     // S (i,j) is not present, M (i,j) is present
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     { 
                         // ----[. A 1]------------------------------------------
                         // [. A 1]: action: ( insert )
@@ -349,7 +352,7 @@ GrB_Info GB_subassign_09
                 {
                     int64_t pM = pM_start + iM ;
                     bool Sfound = (pS < pS_end) && (GBI (Si, pS, Svlen) == iM) ;
-                    bool mij = Mb [pM] && GB_mcast (Mx, pM, msize) ;
+                    bool mij = Mb [pM] && GB_MCAST (Mx, pM, msize) ;
 
                     if (!Sfound && mij)
                     { 
@@ -424,7 +427,7 @@ GrB_Info GB_subassign_09
                     else if (iM < iS)
                     {
                         // S (i,j) is not present, M (i,j) is present
-                        if (GB_mcast (Mx, pM, msize))
+                        if (GB_MCAST (Mx, pM, msize))
                         { 
                             // ----[. A 1]--------------------------------------
                             // [. A 1]: action: ( insert )
@@ -445,7 +448,7 @@ GrB_Info GB_subassign_09
                 while (pM < pM_end)
                 {
                     // S (i,j) is not present, M (i,j) is present
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     { 
                         // ----[. A 1]------------------------------------------
                         // [. A 1]: action: ( insert )

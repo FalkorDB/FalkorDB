@@ -2,7 +2,7 @@
 // GB_bitmap_assign_noM_noaccum_whole:  assign to C bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,9 +41,13 @@
 // For matrix assignment, C = A, if A is sparse or hyper and C may become
 // sparse or hyper, then the assignement is done by GB_subassign_24.
 
-#include "GB_bitmap_assign_methods.h"
-#include "GB_dense.h"
+// JIT: needed.
 
+#include "GB_bitmap_assign_methods.h"
+#include "GB_assign_shared_definitions.h"
+#include "GB_subassign_dense.h"
+
+#undef  GB_FREE_ALL
 #define GB_FREE_ALL ;
 
 GrB_Info GB_bitmap_assign_noM_noaccum_whole
@@ -59,7 +63,7 @@ GrB_Info GB_bitmap_assign_noM_noaccum_whole
     const GrB_Matrix A,         // input matrix, not transposed
     const void *scalar,         // input scalar
     const GrB_Type scalar_type, // type of input scalar
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -113,7 +117,7 @@ GrB_Info GB_bitmap_assign_noM_noaccum_whole
                 //--------------------------------------------------------------
 
                 // copy or typecast the values
-                GB_cast_matrix (C, A, Context) ;
+                GB_OK (GB_cast_matrix (C, A)) ;
 
                 if (GB_IS_BITMAP (A))
                 { 
@@ -142,18 +146,18 @@ GrB_Info GB_bitmap_assign_noM_noaccum_whole
                         (sparsity_control & GxB_HYPERSPARSE)))
                 { 
                     // C becomes sparse or hypersparse, the same as A
-                    GB_OK (GB_subassign_24 (C, A, Context)) ;
+                    GB_OK (GB_subassign_24 (C, A, Werk)) ;
                 }
                 else
                 { 
                     // C remains bitmap: scatter A into the C bitmap
                     GB_memset (Cb, 0, cnzmax, nthreads_max) ;
                     cnvals = 0 ;
-                    #define GB_AIJ_WORK(pC,pA)              \
-                    {                                       \
-                        /* Cx [pC] = Ax [pA] */             \
-                        GB_ASSIGN_AIJ (pC, pA) ;            \
-                        Cb [pC] = 1 ;                       \
+                    #define GB_AIJ_WORK(pC,pA)                              \
+                    {                                                       \
+                        /* Cx [pC] = Ax [pA] */                             \
+                        GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork) ;   \
+                        Cb [pC] = 1 ;                                       \
                     }
                     #include "GB_bitmap_assign_A_whole_template.c"
                     C->nvals = GB_nnz (A) ;

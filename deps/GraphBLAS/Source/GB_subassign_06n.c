@@ -2,10 +2,12 @@
 // GB_subassign_06n: C(I,J)<M> = A ; no S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 06n: C(I,J)<M> = A ; no S
 
@@ -28,6 +30,7 @@
 // M and A are not bitmap: 06s is used instead, if M or A are bitmap.
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 GrB_Info GB_subassign_06n
 (
@@ -44,7 +47,7 @@ GrB_Info GB_subassign_06n
     const GrB_Matrix M,
     const bool Mask_struct,
     const GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -55,8 +58,8 @@ GrB_Info GB_subassign_06n
     ASSERT (!GB_IS_BITMAP (C)) ; ASSERT (!GB_IS_FULL (C)) ;
     ASSERT (!GB_IS_BITMAP (M)) ;    // Method 06n is not used for M bitmap
     ASSERT (!GB_IS_BITMAP (A)) ;    // Method 06n is not used for A bitmap
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
-    ASSERT (!GB_aliased (C, A)) ;   // NO ALIAS of C==A
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, A)) ;   // NO ALIAS of C==A
 
     ASSERT_MATRIX_OK (C, "C input for 06n", GB0) ;
     ASSERT_MATRIX_OK (M, "M input for 06n", GB0) ;
@@ -85,11 +88,11 @@ GrB_Info GB_subassign_06n
     const bool A_is_hyper = (Ah != NULL) ;
     GrB_BinaryOp accum = NULL ;
 
-    GB_OK (GB_hyper_hash_build (A, Context)) ;
-    const int64_t *restrict A_Yp = (A_is_hyper) ? A->Y->p : NULL ;
-    const int64_t *restrict A_Yi = (A_is_hyper) ? A->Y->i : NULL ;
-    const int64_t *restrict A_Yx = (A_is_hyper) ? A->Y->x : NULL ;
-    const int64_t A_hash_bits = (A_is_hyper) ? (A->Y->vdim - 1) : 0 ;
+    GB_OK (GB_hyper_hash_build (A, Werk)) ;
+    const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+    const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+    const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+    const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
 
     //--------------------------------------------------------------------------
     // Method 06n: C(I,J)<M> = A ; no S
@@ -179,7 +182,7 @@ GrB_Info GB_subassign_06n
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     { 
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
                         GB_iC_DENSE_LOOKUP ;
@@ -210,7 +213,7 @@ GrB_Info GB_subassign_06n
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     {
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
                         GB_iC_DENSE_LOOKUP ;
@@ -253,7 +256,7 @@ GrB_Info GB_subassign_06n
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     {
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
 
@@ -296,7 +299,7 @@ GrB_Info GB_subassign_06n
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     {
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
 
@@ -408,7 +411,7 @@ GrB_Info GB_subassign_06n
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     {
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
 

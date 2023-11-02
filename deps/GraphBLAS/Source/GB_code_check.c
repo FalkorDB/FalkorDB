@@ -2,7 +2,7 @@
 // GB_code_check: print an entry using a type code
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -102,8 +102,8 @@ GrB_Info GB_code_check          // print an entry using a type code
         case GB_FC32_code   : 
             c = *((GxB_FC32_t *) x) ;
             GBPR ("   ") ;
-            GB_PRINT_FLOAT (crealf (c)) ;
-            s = cimagf (c) ;
+            GB_PRINT_FLOAT (GB_crealf (c)) ;
+            s = GB_cimagf (c) ;
             if (s < 0)
             {
                 GBPR (" - ") ;
@@ -120,8 +120,8 @@ GrB_Info GB_code_check          // print an entry using a type code
         case GB_FC64_code   : 
             z = *((GxB_FC64_t *) x) ;
             GBPR ("   ") ;
-            GB_PRINT_DOUBLE (creal (z), pr_verbose) ;
-            d = cimag (z) ;
+            GB_PRINT_DOUBLE (GB_creal (z), pr_verbose) ;
+            d = GB_cimag (z) ;
             if (d < 0)
             {
                 GBPR (" - ") ;

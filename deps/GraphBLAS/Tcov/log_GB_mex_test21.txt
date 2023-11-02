@@ -1,0 +1,2574 @@
+
+
+================================================================================
+GB_macrofy_cast_output, ztype NULL
+#define GB_PUTC(z,Cx,p)
+
+
+================================================================================
+GB_macrofy_cast_output, cast FC64 to bool
+#define GB_PUTC(z,Cx,p) Cx [p] = (GB_creal (z) != 0 || GB_cimag (z) != 0)
+
+
+================================================================================
+GB_assign_describe
+C<!> = A 
+
+
+================================================================================
+GB_enumify_ewise / GB_macrofy_ewise, C iso
+// op: symbolic only (C is iso)
+
+// binary operator types:
+#define GB_Z_TYPE void
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// binary operator:
+#define GB_BINOP(z,x,y,i,j)
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
+#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE void
+#define GB_PUTC(c,Cx,p)
+#define GB_EWISEOP(Cx,p,aij,bij,i,j)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+// B matrix: hypersparse
+#define GB_B_IS_HYPER  1
+#define GB_B_IS_SPARSE 0
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   0
+#define GBP_B(Bp,k,vlen) Bp [k]
+#define GBH_B(Bh,k)      Bh [k]
+#define GBI_B(Bi,p,vlen) Bi [p]
+#define GBB_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = B->nvals
+#define GB_B_NHELD(e) GB_B_NVALS(e)
+#define GB_B_ISO 0
+#define GB_B_TYPE bool
+#define GB_B2TYPE void
+#define GB_DECLAREB(b)
+#define GB_GETB(b,Bx,p,iso)
+
+#include "GB_ewise_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_ewise / GB_macrofy_ewise, C non iso
+// op: (and, bool)
+
+// binary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE bool
+#define GB_Y_TYPE bool
+
+// binary operator:
+#define GB_BINOP(z,x,y,i,j) z = ((x) && (y))
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso) Cx [pC] = Bx [pB]
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(c,Cx,p) Cx [p] = c
+#define GB_EWISEOP(Cx,p,aij,bij,i,j) GB_BINOP (Cx [p], aij, bij, i, j)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE bool
+#define GB_DECLAREA(a) bool a
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
+
+// B matrix: hypersparse
+#define GB_B_IS_HYPER  1
+#define GB_B_IS_SPARSE 0
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   0
+#define GBP_B(Bp,k,vlen) Bp [k]
+#define GBH_B(Bh,k)      Bh [k]
+#define GBI_B(Bi,p,vlen) Bi [p]
+#define GBB_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = B->nvals
+#define GB_B_NHELD(e) GB_B_NVALS(e)
+#define GB_B_ISO 0
+#define GB_B_TYPE bool
+#define GB_B2TYPE bool
+#define GB_DECLAREB(b) bool b
+#define GB_GETB(b,Bx,p,iso) b = Bx [p]
+
+#include "GB_ewise_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_mxm / GB_macrofy_mxm, C iso
+// semiring: symbolic only (C is iso)
+
+// monoid:
+#define GB_Z_TYPE void
+#define GB_UPDATE(z,y)
+#define GB_ADD(z,x,y)
+#define GB_DECLARE_IDENTITY(z)
+#define GB_DECLARE_IDENTITY_CONST(z)
+#define GB_IS_ANY_MONOID 1
+#define GB_Z_IGNORE_OVERFLOW 1
+#define GB_Z_NBITS 0
+#define GB_Z_ATOMIC_BITS 0
+
+// multiplicative operator (flipped):
+#define GB_MULT(z,x,y,i,k,j)
+
+// multiply-add operator:
+#define GB_MULTADD(z,x,y,i,k,j)
+
+// special cases:
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE void
+#define GB_PUTC(c,Cx,p)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 1
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+// B matrix: hypersparse
+#define GB_B_IS_HYPER  1
+#define GB_B_IS_SPARSE 0
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   0
+#define GBP_B(Bp,k,vlen) Bp [k]
+#define GBH_B(Bh,k)      Bh [k]
+#define GBI_B(Bi,p,vlen) Bi [p]
+#define GBB_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = B->nvals
+#define GB_B_NHELD(e) GB_B_NVALS(e)
+#define GB_B_ISO 1
+#define GB_B_IS_PATTERN 1
+#define GB_B_TYPE void
+#define GB_B2TYPE void
+#define GB_DECLAREB(b)
+#define GB_GETB(b,Bx,p,iso)
+
+#include "GB_mxm_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_mxm / GB_macrofy_mxm, any_pair, flipxy
+// semiring: symbolic only (C is iso)
+
+// monoid:
+#define GB_Z_TYPE void
+#define GB_UPDATE(z,y)
+#define GB_ADD(z,x,y)
+#define GB_DECLARE_IDENTITY(z)
+#define GB_DECLARE_IDENTITY_CONST(z)
+#define GB_IS_ANY_MONOID 1
+#define GB_Z_NBITS 0
+#define GB_Z_ATOMIC_BITS 0
+
+// multiplicative operator (flipped):
+#define GB_MULT(z,x,y,i,k,j)
+
+// multiply-add operator:
+#define GB_MULTADD(z,x,y,i,k,j)
+
+// special cases:
+#define GB_IS_ANY_PAIR_SEMIRING 1
+#define GB_IS_PAIR_MULTIPLIER 1
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE void
+#define GB_PUTC(c,Cx,p)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 1
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+// B matrix: hypersparse
+#define GB_B_IS_HYPER  1
+#define GB_B_IS_SPARSE 0
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   0
+#define GBP_B(Bp,k,vlen) Bp [k]
+#define GBH_B(Bh,k)      Bh [k]
+#define GBI_B(Bi,p,vlen) Bi [p]
+#define GBB_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = B->nvals
+#define GB_B_NHELD(e) GB_B_NVALS(e)
+#define GB_B_ISO 1
+#define GB_B_IS_PATTERN 1
+#define GB_B_TYPE void
+#define GB_B2TYPE void
+#define GB_DECLAREB(b)
+#define GB_GETB(b,Bx,p,iso)
+
+#include "GB_mxm_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_mxm / GB_macrofy_mxm, any_pair fp32
+// semiring: (any, pair (flipped), float)
+
+// monoid:
+#define GB_Z_TYPE float
+#define GB_ADD(z,x,y) z = y
+#define GB_UPDATE(z,y) z = y
+#define GB_DECLARE_IDENTITY(z) float z = 0
+#define GB_DECLARE_IDENTITY_CONST(z) const float z = 0
+#define GB_HAS_IDENTITY_BYTE 1
+#define GB_IDENTITY_BYTE 0x00
+#define GB_IS_ANY_MONOID 1
+#define GB_Z_NBITS 32
+#define GB_Z_ATOMIC_BITS 32
+#define GB_Z_HAS_ATOMIC_UPDATE 1
+#define GB_Z_HAS_OMP_ATOMIC_UPDATE 1
+#define GB_Z_HAS_CUDA_ATOMIC_BUILTIN 1
+#define GB_Z_CUDA_ATOMIC GB_cuda_atomic_write
+#define GB_Z_CUDA_ATOMIC_TYPE float
+
+// multiplicative operator (flipped):
+#define GB_MULT(z,y,x,j,k,i) z = 1
+
+// multiply-add operator:
+#define GB_MULTADD(z,y,x,j,k,i) z = 1
+
+// special cases:
+#define GB_IS_PAIR_MULTIPLIER 1
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE float
+#define GB_PUTC(c,Cx,p) Cx [p] = c
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 1
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+// B matrix: hypersparse
+#define GB_B_IS_HYPER  1
+#define GB_B_IS_SPARSE 0
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   0
+#define GBP_B(Bp,k,vlen) Bp [k]
+#define GBH_B(Bh,k)      Bh [k]
+#define GBI_B(Bi,p,vlen) Bi [p]
+#define GBB_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = B->nvals
+#define GB_B_NHELD(e) GB_B_NVALS(e)
+#define GB_B_ISO 1
+#define GB_B_IS_PATTERN 1
+#define GB_B_TYPE void
+#define GB_B2TYPE void
+#define GB_DECLAREB(b)
+#define GB_GETB(b,Bx,p,iso)
+
+#include "GB_mxm_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: rowindex
+// op: (rowindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int32_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((i) + (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_DEPENDS_ON_Y 1
+#define GB_ROWINDEX_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: rowindex
+// op: (rowindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((i) + (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_DEPENDS_ON_Y 1
+#define GB_ROWINDEX_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: colindex
+// op: (colindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int32_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) + (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_COLINDEX_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: colindex
+// op: (colindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) + (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_COLINDEX_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: diagindex
+// op: (diagindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int32_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) - ((i) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_OFFDIAG_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: diagindex
+// op: (diagindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) - ((i) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_OFFDIAG_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: tril
+// op: (tril, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) <= ((i) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_TRIL_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: triu
+// op: (triu, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) >= ((i) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_TRIU_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: diag
+// op: (diag, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) == ((i) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_DIAG_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: offdiag
+// op: (offdiag, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) != ((i) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_OFFDIAG_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: colle
+// op: (colle, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) <= (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_COLLE_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: colgt
+// op: (colgt, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((j) > (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_COLGT_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: rowle
+// op: (rowle, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((i) <= (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_DEPENDS_ON_Y 1
+#define GB_ROWLE_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: rowgt
+// op: (rowgt, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((i) > (y))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_DEPENDS_ON_Y 1
+#define GB_ROWGT_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    bool keep ;                        \
+    GB_IDXUNOP (keep, , i, j, y) ;
+
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: flipdiagindex
+// op: (flipdiagindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int32_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((i) - ((j) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_ENTRY_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: flipdiagindex
+// op: (flipdiagindex, GB_void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE int64_t
+
+// index unary operator:
+#define GB_IDXUNOP(z,x,i,j,y) z = ((i) - ((j) + (y)))
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_ENTRY_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_IDXUNOP (z, , i, j, y) ; \
+    bool keep = ((z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE bool
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_select / GB_macrofy_select: opi32
+// op: opi32func, ztype: GxB_FC32_t, xtype: GxB_FC32_t, ytype: GxB_FC32_t
+
+// unary operator types:
+#define GB_Z_TYPE GxB_FC32_t
+#define GB_X_TYPE GxB_FC32_t
+#define GB_Y_TYPE GxB_FC32_t
+
+// index unary operator:
+#ifndef GB_GUARD_opi32func_DEFINED
+#define GB_GUARD_opi32func_DEFINED
+GB_STATIC_INLINE
+void opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, GrB_Index i, GrB_Index j, 
+    const GxB_FC32_t *y)   
+{                          
+    (*z) = (*x) ;          
+}
+#define GB_opi32func_USER_DEFN \
+"void opi32func (GxB_FC32_t *z, const GxB_FC32_t *x, GrB_Index i, GrB_Index j, \n" \
+"    const GxB_FC32_t *y)   \n" \
+"{                          \n" \
+"    (*z) = (*x) ;          \n" \
+"}"
+#endif
+#define GB_IDXUNOP(z,x,i,j,y) opi32func (&(z), &(x), i, j, &(y))
+#define GB_DEPENDS_ON_X 1
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 1
+#define GB_DEPENDS_ON_Y 1
+#define GB_ENTRY_SELECTOR
+
+// test if A(i,j) is to be kept:
+#define GB_TEST_VALUE_OF_ENTRY(keep,p) \
+    GB_Z_TYPE z ;                      \
+    GB_DECLAREA (x) ;                  \
+    GB_GETA (x, Ax, p, ) ;             \
+    GB_IDXUNOP (z, x, i, j, y) ;       \
+    bool keep = (GB_crealf (z) != 0 || GB_cimagf (z) != 0)
+// copy A(i,j) to C(i,j):
+#define GB_SELECT_ENTRY(Cx,pC,Ax,pA) Cx [pC] = Ax [pA]
+
+// C type:
+#define GB_C_TYPE GxB_FC32_t
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE GxB_FC32_t
+#define GB_A2TYPE GxB_FC32_t
+#define GB_DECLAREA(a) GxB_FC32_t a
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
+
+#include "GB_select_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: one
+// op: (one, void)
+
+// unary operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = 1
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) \
+{                                              \
+    GB_DECLAREZ (z) ;                          \
+    GB_UNARYOP (z, aij, Ax [pA],  ,  ,  ) ; \
+    GB_PUTC (z, Cx, pC) ;                      \
+}
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = (int32_t) (c)
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positioni
+// op: (positioni, void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (i)
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) GB_UNARYOP (Cx [pC], Ax [pA], i,  ,  )
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = c
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positioni
+// op: (positioni, void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (i)
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) \
+{                                              \
+    GB_DECLAREZ (z) ;                          \
+    GB_UNARYOP (z, aij, Ax [pA], i,  ,  ) ; \
+    GB_PUTC (z, Cx, pC) ;                      \
+}
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = (int32_t) (c)
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positioni1
+// op: (positioni1, void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (i) + 1
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) GB_UNARYOP (Cx [pC], Ax [pA], i,  ,  )
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = c
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positioni1
+// op: (positioni1, void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (i) + 1
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 1
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) \
+{                                              \
+    GB_DECLAREZ (z) ;                          \
+    GB_UNARYOP (z, aij, Ax [pA], i,  ,  ) ; \
+    GB_PUTC (z, Cx, pC) ;                      \
+}
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = (int32_t) (c)
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positionj
+// op: (positionj, void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (j)
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) GB_UNARYOP (Cx [pC], Ax [pA],  , j,  )
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = c
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positionj
+// op: (positionj, void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (j)
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) \
+{                                              \
+    GB_DECLAREZ (z) ;                          \
+    GB_UNARYOP (z, aij, Ax [pA],  , j,  ) ; \
+    GB_PUTC (z, Cx, pC) ;                      \
+}
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = (int32_t) (c)
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positionj1
+// op: (positionj1, void)
+
+// unary operator types:
+#define GB_Z_TYPE int32_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (j) + 1
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) GB_UNARYOP (Cx [pC], Ax [pA],  , j,  )
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = c
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: positionj1
+// op: (positionj1, void)
+
+// unary operator types:
+#define GB_Z_TYPE int64_t
+#define GB_X_TYPE void
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = (j) + 1
+#define GB_DEPENDS_ON_X 0
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 1
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) \
+{                                              \
+    GB_DECLAREZ (z) ;                          \
+    GB_UNARYOP (z, aij, Ax [pA],  , j,  ) ; \
+    GB_PUTC (z, Cx, pC) ;                      \
+}
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#define GB_PUTC(c,Cx,p) Cx [p] = (int32_t) (c)
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_apply / GB_macrofy_apply: sqrt
+// op: (sqrt, GxB_FC64_t)
+
+// unary operator types:
+#define GB_Z_TYPE GxB_FC64_t
+#define GB_X_TYPE GxB_FC64_t
+#define GB_Y_TYPE void
+
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = GB_csqrt (x)
+#define GB_DEPENDS_ON_X 1
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) \
+{                                      \
+    GB_DECLAREA (aij) ;                \
+    GB_GETA (aij, Ax, pA, ) ;          \
+    GB_DECLAREZ (z) ;                  \
+    GB_UNARYOP (z, aij,  ,  ,  ) ;  \
+    GB_PUTC (z, Cx, pC) ;              \
+}
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE int32_t
+#ifndef GB_GUARD_GJ_cast_to_int32_DEFINED
+#define GB_GUARD_GJ_cast_to_int32_DEFINED
+GB_STATIC_INLINE
+int32_t GJ_cast_to_int32 (double x)                    
+{                                                      
+    if (isnan (x)) return (0) ;                        
+    if (x <= (double) INT32_MIN) return (INT32_MIN) ;  
+    if (x >= (double) INT32_MAX) return (INT32_MAX) ;  
+    return ((int32_t) x) ;                             
+}
+#endif
+#define GB_PUTC(c,Cx,p) Cx [p] = GJ_cast_to_int32 (GB_creal (c))
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_TYPE int32_t
+#define GB_A2TYPE GxB_FC64_t
+#define GB_DECLAREA(a) GxB_FC64_t a
+#define GB_GETA(a,Ax,p,iso) a = (GxB_FC64_t) (Ax [p])
+
+#include "GB_apply_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_build / GB_macrofy_build: times
+// op: (times, GxB_FC32_t)
+
+// binary dup operator types:
+#define GB_Z_TYPE GxB_FC32_t
+#define GB_X_TYPE GxB_FC32_t
+#define GB_Y_TYPE GxB_FC32_t
+
+// S and T data types:
+#define GB_T_TYPE bool
+#define GB_S_TYPE bool
+
+// binary dup operator:
+#define GB_DUP(z,x,y) z = GB_FC32_mul (x,y)
+#define GB_UPDATE(z,y) GB_DUP(z,z,y)
+
+// build copy/dup methods:
+#define GB_BLD_COPY(Tx,p,Sx,k) Tx [p] = Sx [k]
+#define GB_BLD_DUP(Tx,p,Sx,k) \
+    GxB_FC32_t y = (GxB_FC32_t) Sx [k] ; \
+    GxB_FC32_t x = (GxB_FC32_t) Tx [p] ; \
+    GxB_FC32_t z ; \
+    GB_DUP (z, x, y) ; \
+    Tx [p] = (GB_crealf (z) != 0 || GB_cimagf (z) != 0) ;
+
+#include "GB_kernel_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_build / GB_macrofy_build: and
+// op: (and, bool)
+
+// binary dup operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE bool
+#define GB_Y_TYPE bool
+
+// S and T data types:
+#define GB_T_TYPE GxB_FC32_t
+#define GB_S_TYPE GxB_FC32_t
+
+// binary dup operator:
+#define GB_DUP(z,x,y) z = ((x) && (y))
+#define GB_UPDATE(z,y) z &= y
+
+// build copy/dup methods:
+#define GB_BLD_COPY(Tx,p,Sx,k) Tx [p] = Sx [k]
+#define GB_BLD_DUP(Tx,p,Sx,k) \
+    bool y = (GB_crealf (Sx [k]) != 0 || GB_cimagf (Sx [k]) != 0) ; \
+    bool x = (GB_crealf (Tx [p]) != 0 || GB_cimagf (Tx [p]) != 0) ; \
+    bool z ; \
+    GB_DUP (z, x, y) ; \
+    Tx [p] = (GxB_FC32_t) z ;
+
+#include "GB_kernel_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(lo:hi,lo:hi)=A (assign) 
+// assign/subassign: C(I,J) = A 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: not present
+
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,iso) cwork = Ax [p]
+#define GB_COPY_C_to_xwork(xwork,Cx,p)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(lo:s:hi,lo:s:hi)=A (assign) 
+// assign/subassign: C(I,J) = A 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_STRIDE
+#define GB_J_KIND GB_STRIDE
+#define GB_C_REPLACE 0
+// accum: not present
+
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,iso) cwork = Ax [p]
+#define GB_COPY_C_to_xwork(xwork,Cx,p)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(i,J)=s (row assign) 
+// assign/subassign: C(i,J) = A 
+#define GB_ASSIGN_KIND GB_ROW_ASSIGN
+#define GB_I_KIND GB_ALL
+#define GB_J_KIND GB_LIST
+#define GB_C_REPLACE 0
+// accum: not present
+
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_scalar_to_cwork(cwork,scalar) cwork = scalar
+#define GB_COPY_scalar_to_C(Cx,pC,cwork) Cx [pC] = cwork
+#define GB_COPY_C_to_xwork(xwork,Cx,p)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// scalar:
+#define GB_A_TYPE bool
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(I,j)=s (col assign) 
+// assign/subassign: C(I,j) = A 
+#define GB_ASSIGN_KIND GB_COL_ASSIGN
+#define GB_I_KIND GB_LIST
+#define GB_J_KIND GB_ALL
+#define GB_C_REPLACE 0
+// accum: not present
+
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_scalar_to_cwork(cwork,scalar) cwork = scalar
+#define GB_COPY_scalar_to_C(Cx,pC,cwork) Cx [pC] = cwork
+#define GB_COPY_C_to_xwork(xwork,Cx,p)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// scalar:
+#define GB_A_TYPE bool
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C_iso(lo:hi,lo:hi)=A (assign) 
+// assign/subassign: C(I,J) = scalar 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: not present
+
+
+// C matrix: full
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   1
+#define GBP_C(Cp,k,vlen) ((k) * (vlen))
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) ((p) % (vlen))
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = 0 ; GB_INT64_MULT (e, C->vlen, C->vdim)
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE void
+#define GB_PUTC(cwork,Cx,p)
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_scalar_to_cwork(cwork,scalar) cwork = scalar
+#define GB_COPY_scalar_to_C(Cx,pC,cwork)
+#define GB_COPY_C_to_xwork(xwork,Cx,pC)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// scalar:
+#define GB_A_TYPE bool
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C_iso(lo:hi,lo:hi)+=s (assign) 
+// assign/subassign: C(I,J) += scalar 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: (plus, float)
+
+// accum operator types:
+#define GB_Z_TYPE float
+#define GB_X_TYPE float
+#define GB_Y_TYPE float
+#define GB_DECLAREZ(zwork) float zwork
+#define GB_DECLAREX(xwork) float xwork
+#define GB_DECLAREY(ywork) float ywork
+
+// accum operator:
+#define GB_UPDATE(z,y)
+#define GB_ACCUM_OP(z,x,y)
+#define GB_ACCUMULATE_scalar(Cx,pC,ywork)
+
+// C matrix: full
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   1
+#define GBP_C(Cp,k,vlen) ((k) * (vlen))
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) ((p) % (vlen))
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = 0 ; GB_INT64_MULT (e, C->vlen, C->vdim)
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE void
+#define GB_PUTC(zwork,Cx,p)
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_scalar_to_cwork(cwork,scalar) cwork = scalar
+#define GB_COPY_scalar_to_C(Cx,pC,cwork)
+#define GB_COPY_C_to_xwork(xwork,Cx,pC)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// scalar:
+#define GB_A_TYPE bool
+#define GB_COPY_scalar_to_ywork(ywork,scalar) ywork = (float) (scalar)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C_iso(lo:hi,lo:hi)+=s (assign) 
+// assign/subassign: C(I,J) += scalar 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: (plus, float)
+
+// accum operator types:
+#define GB_Z_TYPE float
+#define GB_X_TYPE float
+#define GB_Y_TYPE float
+#define GB_DECLAREZ(zwork) float zwork
+#define GB_DECLAREX(xwork) float xwork
+#define GB_DECLAREY(ywork) float ywork
+
+// accum operator:
+#define GB_UPDATE(z,y)
+#define GB_ACCUM_OP(z,x,y)
+#define GB_ACCUMULATE_scalar(Cx,pC,ywork)
+
+// C matrix: full
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   1
+#define GBP_C(Cp,k,vlen) ((k) * (vlen))
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) ((p) % (vlen))
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = 0 ; GB_INT64_MULT (e, C->vlen, C->vdim)
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE void
+#define GB_PUTC(zwork,Cx,p)
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_scalar_to_cwork(cwork,scalar) cwork = scalar
+#define GB_COPY_scalar_to_C(Cx,pC,cwork)
+#define GB_COPY_C_to_xwork(xwork,Cx,pC)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// scalar:
+#define GB_A_TYPE bool
+#define GB_COPY_scalar_to_ywork(ywork,scalar) ywork = (float) (scalar)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(lo:hi,lo:hi)+=A (assign) 
+// assign/subassign: C(I,J) += A 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: (plus, float)
+
+// accum operator types:
+#define GB_Z_TYPE float
+#define GB_X_TYPE float
+#define GB_Y_TYPE float
+#define GB_DECLAREZ(zwork) float zwork
+#define GB_DECLAREX(xwork) float xwork
+#define GB_DECLAREY(ywork) float ywork
+
+// accum operator:
+#define GB_ACCUM_OP(z,x,y) z = (x) + (y)
+#define GB_UPDATE(z,y) z += y
+#define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork) \
+{                                          \
+    GB_DECLAREY (ywork) ;                  \
+    GB_GETA (ywork, Ax, pA, ) ;            \
+    GB_DECLAREX (xwork) ;                  \
+    GB_COPY_C_to_xwork (xwork, Cx, pC) ;   \
+    GB_DECLAREZ (zwork) ;                  \
+    GB_ACCUM_OP (zwork, xwork, ywork) ;          \
+    GB_PUTC (zwork, Cx, pC) ;              \
+}
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(zwork,Cx,p) Cx [p] = ((zwork) != 0)
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,iso) cwork = Ax [p]
+#define GB_COPY_C_to_xwork(xwork,Cx,p) xwork = (float) (Cx [p])
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE float
+#define GB_DECLAREA(a) float a
+#define GB_GETA(a,Ax,p,iso) a = (float) (Ax [p])
+#define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(lo:hi,lo:hi)&=A (assign) 
+// assign/subassign: C(I,J) &= A 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: (and, bool)
+
+// accum operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE bool
+#define GB_Y_TYPE bool
+#define GB_DECLAREZ(zwork) bool zwork
+#define GB_DECLAREX(xwork) bool xwork
+#define GB_DECLAREY(ywork) bool ywork
+
+// accum operator:
+#define GB_ACCUM_OP(z,x,y) z = ((x) && (y))
+#define GB_UPDATE(z,y) z &= y
+#define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork) \
+{                                          \
+    GB_UPDATE (Cx [pC], Ax [pA]) ;          \
+}
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(zwork,Cx,p) Cx [p] = zwork
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,iso) cwork = Ax [p]
+#define GB_COPY_C_to_xwork(xwork,Cx,p) xwork = Cx [p]
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE bool
+#define GB_DECLAREA(a) bool a
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
+#define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C(lo:hi,lo:hi)<=A (assign) 
+// assign/subassign: C(I,J) lt= A 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: (lt, float)
+
+// accum operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE float
+#define GB_Y_TYPE float
+#define GB_DECLAREZ(zwork) bool zwork
+#define GB_DECLAREX(xwork) float xwork
+#define GB_DECLAREY(ywork) float ywork
+
+// accum operator:
+#define GB_ACCUM_OP(z,x,y) z = ((x) < (y))
+#define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork) \
+{                                          \
+    GB_DECLAREY (ywork) ;                  \
+    GB_GETA (ywork, Ax, pA, ) ;            \
+    GB_DECLAREX (xwork) ;                  \
+    GB_COPY_C_to_xwork (xwork, Cx, pC) ;   \
+    GB_ACCUM_OP (Cx [pC], xwork, ywork) ;          \
+}
+
+// C matrix: hypersparse
+#define GB_C_IS_HYPER  1
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   0
+#define GBP_C(Cp,k,vlen) Cp [k]
+#define GBH_C(Ch,k)      Ch [k]
+#define GBI_C(Ci,p,vlen) Ci [p]
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = C->nvals
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 0
+#define GB_C_IN_ISO 0
+#define GB_C_TYPE bool
+#define GB_PUTC(zwork,Cx,p) Cx [p] = zwork
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,iso) cwork = Ax [p]
+#define GB_COPY_C_to_xwork(xwork,Cx,p) xwork = (float) (Cx [p])
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE float
+#define GB_DECLAREA(a) float a
+#define GB_GETA(a,Ax,p,iso) a = (float) (Ax [p])
+#define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
+
+#include "GB_assign_shared_definitions.h"
+
+
+================================================================================
+GB_enumify_assign / GB_macrofy_assign: C_iso(lo:hi,lo:hi)<=H (assign) 
+// assign/subassign: C(I,J) lt= A 
+#define GB_ASSIGN_KIND GB_ASSIGN
+#define GB_I_KIND GB_RANGE
+#define GB_J_KIND GB_RANGE
+#define GB_C_REPLACE 0
+// accum: (lt, float)
+
+// accum operator types:
+#define GB_Z_TYPE bool
+#define GB_X_TYPE float
+#define GB_Y_TYPE float
+#define GB_DECLAREZ(zwork) bool zwork
+#define GB_DECLAREX(xwork) float xwork
+#define GB_DECLAREY(ywork) float ywork
+
+// accum operator:
+#define GB_ACCUM_OP(z,x,y)
+#define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork)
+
+// C matrix: full
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   1
+#define GBP_C(Cp,k,vlen) ((k) * (vlen))
+#define GBH_C(Ch,k)      (k)
+#define GBI_C(Ci,p,vlen) ((p) % (vlen))
+#define GBB_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = 0 ; GB_INT64_MULT (e, C->vlen, C->vdim)
+#define GB_C_NHELD(e) GB_C_NVALS(e)
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE void
+#define GB_PUTC(zwork,Cx,p)
+#define GB_DECLAREC(cwork) bool cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,iso) cwork = Ax [p]
+#define GB_COPY_C_to_xwork(xwork,Cx,pC)
+
+// M matrix: none
+#define GB_M_TYPE void
+#define GB_MCAST(Mx,p,msize) 1
+#define GB_MASK_STRUCT 1
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     1
+
+// A matrix: hypersparse
+#define GB_A_IS_HYPER  1
+#define GB_A_IS_SPARSE 0
+#define GB_A_IS_BITMAP 0
+#define GB_A_IS_FULL   0
+#define GBP_A(Ap,k,vlen) Ap [k]
+#define GBH_A(Ah,k)      Ah [k]
+#define GBI_A(Ai,p,vlen) Ai [p]
+#define GBB_A(Ab,p)      1
+#define GB_A_NVALS(e) int64_t e = A->nvals
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
+#define GB_A_TYPE bool
+#define GB_A2TYPE float
+#define GB_DECLAREA(a) float a
+#define GB_GETA(a,Ax,p,iso) a = (float) (Ax [p])
+#define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
+
+#include "GB_assign_shared_definitions.h"

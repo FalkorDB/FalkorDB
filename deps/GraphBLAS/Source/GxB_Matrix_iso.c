@@ -2,7 +2,7 @@
 // GxB_Matrix_iso: report if a matrix is iso-valued or not
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,7 +14,7 @@ GrB_Info GxB_Matrix_iso     // return iso status of a matrix
     bool *iso,              // true if the matrix is iso-valued
     const GrB_Matrix A      // matrix to query
 )
-{
+{ 
 
     //--------------------------------------------------------------------------
     // check inputs

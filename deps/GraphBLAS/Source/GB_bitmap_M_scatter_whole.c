@@ -2,26 +2,17 @@
 // GB_bitmap_M_scatter_whole: scatter M into/from the C bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-#include "GB_bitmap_assign_methods.h"
+// JIT: not needed, but variants possible for each kind of mask matrix.
 
-void GB_bitmap_M_scatter_whole  // scatter M into the C bitmap
-(
-    // input/output:
-    GrB_Matrix C,
-    // inputs:
-    const GrB_Matrix M,         // mask to scatter into the C bitmap
-    const bool Mask_struct,     // true if M is structural, false if valued
-    const int operation,        // +=2, -=2, or %=2
-    const int64_t *M_ek_slicing, // size 3*M_ntasks+1
-    const int M_ntasks,
-    const int M_nthreads,
-    GB_Context Context
-)
+#include "GB_bitmap_assign_methods.h"
+#include "GB_assign_shared_definitions.h"
+
+GB_CALLBACK_BITMAP_M_SCATTER_WHOLE_PROTO (GB_bitmap_M_scatter_whole)
 {
 
     //--------------------------------------------------------------------------

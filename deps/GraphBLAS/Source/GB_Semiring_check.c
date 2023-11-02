@@ -2,7 +2,7 @@
 // GB_Semiring_check: check and print a semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,17 +35,38 @@ GrB_Info GB_Semiring_check          // check a GraphBLAS semiring
     //--------------------------------------------------------------------------
 
     GB_CHECK_MAGIC (semiring) ;
-    GBPR0 (semiring->header_size > 0 ? "(user-defined)" : "(built-in)") ;
+    GBPR0 (semiring->header_size > 0 ? "(user-defined):" : "(built-in):") ;
+
+    GrB_Monoid add = semiring->add ;
+    GrB_BinaryOp mult = semiring->multiply ;
+
+    if (semiring->name == NULL)
+    { 
+        // semiring contains a built-in monoid and multiply operator
+        char *add_name  = (add  == NULL) ? "nil" : add->op->name ;
+        char *mult_name = (mult == NULL) ? "nil" : mult->name ;
+        GBPR0 (" (%s,%s)", add_name, mult_name) ;
+    }
+    else
+    { 
+        // semiring contains user-defined monoid and/or multiply operator
+        GBPR0 (" (%s)", semiring->name) ;
+        if (semiring->name_len != strlen (semiring->name))
+        { 
+            GBPR0 ("    Semiring->name invalid\n") ;
+            return (GrB_INVALID_OBJECT) ;
+        }
+    }
 
     GrB_Info info ;
-    info = GB_Monoid_check (semiring->add, "semiring->add", pr, f) ;
+    info = GB_Monoid_check (add, "semiring->add", pr, f) ;
     if (info != GrB_SUCCESS)
     { 
         GBPR0 ("    Semiring->add invalid\n") ;
         return (GrB_INVALID_OBJECT) ;
     }
 
-    info = GB_BinaryOp_check (semiring->multiply, "semiring->multiply", pr, f) ;
+    info = GB_BinaryOp_check (mult, "semiring->multiply", pr, f) ;
     if (info != GrB_SUCCESS)
     { 
         GBPR0 ("    Semiring->multiply invalid\n") ;
@@ -53,7 +74,7 @@ GrB_Info GB_Semiring_check          // check a GraphBLAS semiring
     }
 
     // z = multiply(x,y); type of z must match monoid type
-    if (semiring->multiply->ztype != semiring->add->op->ztype)
+    if (mult->ztype != add->op->ztype)
     { 
         GBPR0 ("    Semiring multiply output domain must match monoid"
             " domain\n") ;

@@ -11,7 +11,7 @@ function A = GB_spec_random (m, n, d, scale, type, is_csc,is_hyper,hyper_switch)
 % is_csc: true for CSC, false for CSR; defaults to true
 % is_hyper: false for non-hypersparse, true for hypersparse, default false
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargin < 1)
@@ -58,6 +58,11 @@ if (test_contains (type, 'complex'))
     else
         A.matrix = A.matrix + 1i * scale * sprandn (m, n, d) ;
     end
+end
+
+if (type (1) == 'u')
+    % A is uint8, uint16, uint32, or uint64
+    A.matrix = abs (A.matrix) ;
 end
 
 A.class = type ;

@@ -2,7 +2,7 @@
 // GrB_Monoid_new:  create a new monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ GrB_Info GB_EVAL3 (prefix, _Monoid_new_, T) /* create a new monoid */       \
     GB_WHERE1 ("GrB_Monoid_new_" GB_STR(T) " (&monoid, op, identity)") ;    \
     type id = identity ;                                                    \
     return (GB_Monoid_new (monoid, op, &id, NULL, GB_ ## T ## _code,        \
-        Context)) ;                                                         \
+        Werk)) ;                                                         \
 }
 
 GB_MONOID_NEW (GrB, bool      , BOOL   )
@@ -50,6 +50,6 @@ GrB_Info GrB_Monoid_new_UDT         // create a monoid with a user-defined type
 )
 { 
     GB_WHERE1 ("GrB_Monoid_new_UDT (&monoid, op, identity)") ;
-    return (GB_Monoid_new (monoid, op, identity, NULL, GB_UDT_code, Context)) ;
+    return (GB_Monoid_new (monoid, op, identity, NULL, GB_UDT_code, Werk)) ;
 }
 

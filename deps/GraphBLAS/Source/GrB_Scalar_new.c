@@ -2,12 +2,12 @@
 // GrB_Scalar_new: create a new GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// The new GGr_Scalar has no entry.  Internally, it is identical to a
+// The new GrB_Scalar has no entry.  Internally, it is identical to a
 // GrB_Vector of length 1.  If this method fails, *s is set to NULL.
 
 #include "GB.h"
@@ -36,7 +36,7 @@ GrB_Info GrB_Scalar_new     // create a new GrB_Scalar with no entries
 
     info = GB_new ((GrB_Matrix *) s, // new user header
         type, 1, 1, GB_Ap_calloc, true, GxB_SPARSE,
-        GB_Global_hyper_switch_get ( ), 1, Context) ;
+        GB_Global_hyper_switch_get ( ), 1) ;
     ASSERT (GB_IMPLIES (info == GrB_SUCCESS, GB_SCALAR_OK (*s))) ;
     return (info) ;
 }

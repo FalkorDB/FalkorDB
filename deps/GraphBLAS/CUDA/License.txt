@@ -4,10 +4,6 @@ RMM
 http://github.com/rapidsai/rmm
 Apache-2.0 license
 
-CNMEM 
-http://github.com/NVIDIA/cnmem
-BSD 3-Clause
-
 Jitify
 http://github.com/NVIDIA/jitify
 BSD 3-Clause "New" or "Revised" License
@@ -19,7 +15,7 @@ BSD 3-Clause "New" or "Revised" License
 In addition, any source files not part of the above packages is hereby
 licensed under the Apache-2.0 license.
 
-Copyright 2020, NVIDIA Corporation
+Copyright 2020-2023, NVIDIA Corporation
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file expect in compilance with the License.

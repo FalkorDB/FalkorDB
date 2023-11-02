@@ -7,9 +7,12 @@
 //------------------------------------------------------------------------------
 
 // This file is #include'd into all CUDA kernels for GraphBLAS.  It provides
-// a
+// a subset of GraphBLAS.h and GB.h, plus other definitions.
 
 #pragma once
+
+#define GB_CUDA_KERNEL
+
 #undef  ASSERT
 #define ASSERT(x)
 
@@ -18,146 +21,21 @@
 #define chunksize 128 
 
 //------------------------------------------------------------------------------
-// GETA, GETB: get entries from input matrices A and B
+// NVIDIA warp size
 //------------------------------------------------------------------------------
 
-// The entries are typecasted to the type of the inputs to the operator f(x,y),
-// which is either the multiplicative operator of a semiring, or a binary
-// operator for eWise operations.  GETA and GETB can also be used for loading
-// values to be passed to the binary accumulator operator.
+#define WARPSIZE 32
+#define LOG2_WARPSIZE 5
 
-#if GB_FLIPXY
+//------------------------------------------------------------------------------
 
-    // The operator is "flipped", so that f(b,a) is to be computed.
-    // In this case, aval must be typecasted to the ytype of f, which is
-    // T_Y, and bval to the xtype of f (that is, T_X).
-
-    // aval = (T_Y) A (i,j)
-    #if GB_A_IS_PATTERN
-        #define GB_DECLAREA(aval)
-        #define GB_SHAREDA(aval)
-        #define GB_GETA( aval, ax, p)
-    #else
-        #define GB_DECLAREA(aval) T_Y aval
-        #define GB_SHAREDA(aval) __shared__ T_Y aval
-        #if GB_A_ISO
-            #define GB_GETA( aval, ax, p) aval = (T_Y) (ax [0]) ;
-        #else
-            #define GB_GETA( aval, ax, p) aval = (T_Y) (ax [p]) ;
-        #endif
-    #endif
-
-    // bval = (T_X) B (i,j)
-    #if GB_B_IS_PATTERN
-        #define GB_DECLAREB(bval)
-        #define GB_SHAREDB(bval)
-        #define GB_GETB( bval, bx, p)
-    #else
-        #define GB_DECLAREB(bval) T_X bval
-        #define GB_SHAREDB(bval) __shared__ T_X bval
-        #if GB_B_ISO
-            #define GB_GETB( bval, bx, p) bval = (T_X) (bx [0]) ;
-        #else
-            #define GB_GETB( bval, bx, p) bval = (T_X) (bx [p]) ;
-        #endif
-    #endif
-
-#else
-
-    // The operator is not "flipped", so that f(a,b) is to be computed.
-    // In this case, aval must be typecasted to the xtype of f, which is
-    // T_X, and bval to the xtype of f (that is, T_Y).
-
-    // aval = (T_X) A (i,j)
-    #if GB_A_IS_PATTERN
-        #define GB_DECLAREA(aval)
-        #define GB_SHAREDA(aval)
-        #define GB_GETA( aval, ax, p)
-    #else
-        #define GB_DECLAREA(aval) T_X aval
-        #define GB_SHAREDA(aval) __shared__ T_X aval
-        #if GB_A_ISO
-            #define GB_GETA( aval, ax, p) aval = (T_X) (ax [0]) ;
-        #else
-            #define GB_GETA( aval, ax, p) aval = (T_X) (ax [p]) ;
-        #endif
-    #endif
-
-    // bval = (T_Y) B (i,j)
-    #if GB_B_IS_PATTERN
-        #define GB_DECLAREB(bval)
-        #define GB_SHAREDB(bval)
-        #define GB_GETB( bval, bx, p)
-    #else
-        #define GB_DECLAREB(bval) T_Y bval
-        #define GB_SHAREDB(bval) __shared__ T_Y bval
-        #if GB_B_ISO
-            #define GB_GETB( bval, bx, p) bval = (T_Y) (bx [0]) ;
-        #else
-            #define GB_GETB( bval, bx, p) bval = (T_Y) (bx [p]) ;
-        #endif
-    #endif
-
+#ifndef INFINITY
+#define INFINITY (std::numeric_limits<double>::max())
 #endif
 
-//------------------------------------------------------------------------------
-// operators
-//------------------------------------------------------------------------------
-
-#if GB_C_ISO
-
-    #define GB_MULTADD( c, a ,b, i, k, j)
-    #define GB_DOT_TERMINAL( c ) break
-    #define GB_DOT_MERGE(pA,pB)                                         \
-    {                                                                   \
-        cij_exists = true ;                                             \
-    }
-    #define GB_CIJ_EXIST_POSTCHECK
-
-#else
-
-    // the result the multiply must be typecast to ztype of the add.
-    #define GB_MULTADD( c, a, b, i, k, j )                              \
-    {                                                                   \
-        T_Z x_op_y ;                                                    \
-        GB_MULT (x_op_y, a, b, i, k, j) ;   /* x_op_y = a*b */          \
-        GB_ADD (c, c, x_op_y) ;             /* c += x_op_y  */          \
-    }
-
-    #define GB_DOT_TERMINAL( c ) GB_IF_TERMINAL_BREAK ( c, z )
-
-    #if GB_IS_PLUS_PAIR_REAL_SEMIRING
-
-        // cij += A(k,i) * B(k,j), for merge operation (plus_pair_real semiring)
-        #if GB_ZTYPE_IGNORE_OVERFLOW
-            // plus_pair for int64, uint64, float, or double
-            #define GB_DOT_MERGE(pA,pB) cij++ ;
-            #define GB_CIJ_EXIST_POSTCHECK cij_exists = (cij != 0) ;
-        #else
-            // plus_pair semiring for small integers
-            #define GB_DOT_MERGE(pA,pB)                                     \
-            {                                                               \
-                cij_exists = true ;                                         \
-                cij++ ;                                                     \
-            }
-            #define GB_CIJ_EXIST_POSTCHECK
-        #endif
-
-    #else
-
-        // cij += A(k,i) * B(k,j), for merge operation (general case)
-        #define GB_DOT_MERGE(pA,pB)                                         \
-        {                                                                   \
-            GB_GETA (aki, Ax, pA) ;         /* aki = A(k,i) */              \
-            GB_GETB (bkj, Bx, pB) ;         /* bkj = B(k,j) */              \
-            cij_exists = true ;                                             \
-            GB_MULTADD (cij, aki, bkj, i, k, j) ;  /* cij += aki * bkj */   \
-        }
-        #define GB_CIJ_EXIST_POSTCHECK
-
-    #endif
-
-#endif
+// for internal static inline functions
+#undef  GB_STATIC_INLINE
+#define GB_STATIC_INLINE static __device__ __inline__
 
 //------------------------------------------------------------------------------
 // subset of GraphBLAS.h
@@ -168,17 +46,16 @@
 
 #undef restrict
 #undef GB_restrict
-#if defined ( GB_CUDA_KERNEL ) || defined ( __NVCC__ )
-    #define GB_restrict __restrict__
-#else
-    #define GB_restrict
-#endif
+#define GB_restrict __restrict__
 #define restrict GB_restrict
 
 #include <stdint.h>
 //#include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+
+#undef  GB_GLOBAL
+#define GB_GLOBAL extern
 
 // GB_STR: convert the content of x into a string "x"
 #define GB_XSTR(x) GB_STR(x)
@@ -192,13 +69,15 @@ typedef struct GB_Descriptor_opaque *GrB_Descriptor ;
 typedef struct GB_Type_opaque *GrB_Type ;
 typedef struct GB_UnaryOp_opaque *GrB_UnaryOp ;
 typedef struct GB_BinaryOp_opaque *GrB_BinaryOp ;
-typedef struct GB_SelectOp_opaque *GxB_SelectOp ;
 typedef struct GB_IndexUnaryOp_opaque *GrB_IndexUnaryOp ;
 typedef struct GB_Monoid_opaque *GrB_Monoid ;
 typedef struct GB_Semiring_opaque *GrB_Semiring ;
 typedef struct GB_Scalar_opaque *GrB_Scalar ;
 typedef struct GB_Vector_opaque *GrB_Vector ;
 typedef struct GB_Matrix_opaque *GrB_Matrix ;
+typedef struct GB_Context_opaque *GxB_Context ;
+typedef struct GB_Global_opaque *GrB_Global ;
+typedef struct GB_Iterator_opaque *GxB_Iterator ;
 
 #define GxB_HYPERSPARSE 1   // store matrix in hypersparse form
 #define GxB_SPARSE      2   // store matrix as sparse form (compressed vector)
@@ -225,6 +104,8 @@ typedef void (*GxB_index_unary_function)
     const void *y       // input scalar y
 ) ;
 
+#define GxB_GLOBAL_GPU_ID 26
+
 typedef enum
 {
     // for all GrB_Descriptor fields:
@@ -241,10 +122,6 @@ typedef enum
     // for GrB_INP0 and GrB_INP1 only:
     GrB_TRAN = 3,       // use the transpose of the input
 
-    // for GxB_GPU_CONTROL only (DRAFT: in progress, do not use)
-    GxB_GPU_ALWAYS  = 2001,
-    GxB_GPU_NEVER   = 2002,
-
     // for GxB_AxB_METHOD only:
     GxB_AxB_GUSTAVSON = 1001,   // gather-scatter saxpy method
     GxB_AxB_DOT       = 1003,   // dot product
@@ -253,7 +130,6 @@ typedef enum
 }
 GrB_Desc_Value ;
 
-#include "GB_opaque.h"
 #endif
 
 //------------------------------------------------------------------------------
@@ -274,8 +150,13 @@ GrB_Desc_Value ;
 #define GBI_UNFLIP(Ai,p,avlen)      \
     ((Ai == NULL) ? ((p) % (avlen)) : GB_UNFLIP (Ai [p]))
 
-#include "GB_nnz.h"
+#include "GB_index.h"
 #include "GB_partition.h"
+#include "GB_pun.h"
+#include "GB_opaque.h"
+#include "GB_int64_mult.h"
+#define GB_HAS_CMPLX_MACROS 1
+#include "GB_complex.h"
 
 // version for the GPU, with fewer branches
 #define GB_TRIM_BINARY_SEARCH(i,X,pleft,pright)                             \
@@ -315,8 +196,7 @@ GrB_Desc_Value ;
     }                                                                       \
 }
 
-__device__
-static inline int64_t GB_search_for_vector_device
+static __device__ __inline__ int64_t GB_search_for_vector_device
 (
     const int64_t p,                // search for vector k that contains p
     const int64_t *restrict Ap,  // vector pointers to search

@@ -23,7 +23,7 @@ endef
 
 SRCDIR=$(ROOT)/deps/GraphBLAS
 
-CMAKE_TARGETS=graphblas_static
+CMAKE_TARGETS=GraphBLAS_static
 
 BINDIR=$(BINROOT)/GraphBLAS
 

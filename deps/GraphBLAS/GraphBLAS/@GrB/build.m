@@ -68,7 +68,7 @@ function C = build (varargin)
 %
 % See also sparse, GrB/sparse, GrB/find, GrB.extracttuples.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [C, k] = gbbuild (varargin {:}) ;

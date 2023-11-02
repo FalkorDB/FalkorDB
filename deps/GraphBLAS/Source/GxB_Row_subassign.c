@@ -2,7 +2,7 @@
 // GxB_Row_subassign: C(row,Cols)<M'> = accum (C(row,Cols),u')
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -61,7 +61,7 @@ GrB_Info GxB_Row_subassign          // C(row,Cols)<M'> += u'
         Rows, 1,                        // a single row index
         Cols, nCols,                    // column indices
         false, NULL, GB_ignore_code,    // no scalar expansion
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

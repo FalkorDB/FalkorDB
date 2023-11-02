@@ -2,9 +2,8 @@
 // GB_cuda_cumsum: cumlative sum of an array using GPU acceleration
 //------------------------------------------------------------------------------
 
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2019, All Rights Reserved.
-// http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
@@ -20,7 +19,8 @@
 // On output, count [n] is the total sum.
 
 #include "GB_cuda.h"
-#include <local_cub/device/device_scan.cuh>
+// #include <local_cub/device/device_scan.cuh>
+#include <cub/device/device_scan.cuh>
 
 GrB_Info GB_cuda_cumsum             // compute the cumulative sum of an array
 (
@@ -28,6 +28,7 @@ GrB_Info GB_cuda_cumsum             // compute the cumulative sum of an array
     const int64_t n
 )
 {
+
     //--------------------------------------------------------------------------
     // check inputs
     //--------------------------------------------------------------------------
@@ -38,9 +39,11 @@ GrB_Info GB_cuda_cumsum             // compute the cumulative sum of an array
     //--------------------------------------------------------------------------
     // count = cumsum ([0 count[0:n-1]]) ;
     //--------------------------------------------------------------------------
+
     void *d_temp_storage = NULL;
     size_t temp_storage_bytes;
-    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, count, count, (int)n);
+    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, count,
+        count, (int) n) ;
     size_t size ;
     d_temp_storage  = GB_malloc_memory( temp_storage_bytes, 1, &size);
     if ( d_temp_storage == NULL){
@@ -59,7 +62,7 @@ GrB_Info GB_cuda_cumsum             // compute the cumulative sum of an array
     #endif
 
     // Cleanup
-    GB_dealloc_memory (&d_temp_storage, size) ;
+    GB_free_memory (&d_temp_storage, size) ;
 
     return GrB_SUCCESS;
 }

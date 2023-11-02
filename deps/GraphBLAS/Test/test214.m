@@ -1,12 +1,12 @@
 function test214
 %TEST214 test C<M>=A'*B (tricount)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
-GrB.burble (1) ;
+GB_mex_burble (1) ;
 
 n = 10 ;
 Cin = sparse (n, n) ;
@@ -38,6 +38,6 @@ C1 = GB_mex_mxm (Cin, M, [ ], semiring, A, B, desc) ;
 C2 = GB_mex_mxm (Cin, M, [ ], semiring, A, B, desc) ;
 GB_spec_compare (C1, C2) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest214: all tests passed\n') ;
 

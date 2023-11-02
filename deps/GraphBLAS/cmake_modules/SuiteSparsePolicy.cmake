@@ -23,15 +23,13 @@
 #                       into SuiteSparse/lib and SuiteSparse/include.
 #                       if false, "cmake --install" will install into the
 #                       default prefix (or the one configured with
-#                       CMAKE_INSTALL_PREFIX).
+#                       CMAKE_INSTALL_PREFIX).  Requires cmake 3.19.
 #                       Default: false
 #
 #   NSTATIC:            if true, static libraries are not built.
 #                       Default: false, except for GraphBLAS, which
 #                       takes a long time to compile so the default for
-#                       GraphBLAS is true.  For Mongoose, the NSTATIC setting
-#                       is treated as if it always false, since the mongoose
-#                       program is built with the static library.
+#                       GraphBLAS is true.
 #
 #   SUITESPARSE_CUDA_ARCHITECTURES:  a string, such as "all" or
 #                       "35;50;75;80" that lists the CUDA architectures to use
@@ -71,15 +69,15 @@
 #                       system.
 #                       Default: false
 
-cmake_minimum_required ( VERSION 3.19 )
-
 message ( STATUS "Source:        ${CMAKE_SOURCE_DIR} ")
 message ( STATUS "Build:         ${CMAKE_BINARY_DIR} ")
 
 cmake_policy ( SET CMP0042 NEW )    # enable MACOSX_RPATH by default
 cmake_policy ( SET CMP0048 NEW )    # VERSION variable policy
 cmake_policy ( SET CMP0054 NEW )    # if ( expression ) handling policy
-cmake_policy ( SET CMP0104 NEW )    # initialize CUDA architectures
+if (${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.18.0" )
+    cmake_policy ( SET CMP0104 NEW )    # initialize CUDA architectures
+endif ( )
 
 if ( WIN32 )
     set ( CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS true )
@@ -102,7 +100,12 @@ else ( )
 endif ( )
 
 # installation options
-option ( LOCAL_INSTALL "Install in SuiteSparse/lib" off )
+if ( ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.19.0" )
+    # the LOCAL_INSTALL option requires cmake 3.19.0 or later
+    option ( LOCAL_INSTALL "Install in SuiteSparse/lib" off )
+else ( )
+    set ( LOCAL_INSTALL off )
+endif ( )
 
 if ( SUITESPARSE_SECOND_LEVEL )
     # some packages in SuiteSparse are in SuiteSparse/Package/Package
@@ -144,17 +147,18 @@ if ( LOCAL_INSTALL )
 
 endif ( )
 
-if ( INSIDE_SUITESPARSE )
-    # ../lib and ../include exist: the package is inside SuiteSparse.
-    # find ( REAL_PATH ...) requires cmake 3.19.
-    if ( SUITESPARSE_SECOND_LEVEL )
-        file ( REAL_PATH  ${CMAKE_SOURCE_DIR}/../.. SUITESPARSE_LOCAL_PREFIX )
-    else ( )
-        file ( REAL_PATH  ${CMAKE_SOURCE_DIR}/..    SUITESPARSE_LOCAL_PREFIX )
-    endif ( )
-endif ( )
-
 if ( LOCAL_INSTALL )
+    if ( INSIDE_SUITESPARSE )
+        # ../lib and ../include exist: the package is inside SuiteSparse.
+        # find ( REAL_PATH ...) requires cmake 3.19.
+        if ( SUITESPARSE_SECOND_LEVEL )
+            file ( REAL_PATH  ${CMAKE_SOURCE_DIR}/../..
+                SUITESPARSE_LOCAL_PREFIX )
+        else ( )
+            file ( REAL_PATH  ${CMAKE_SOURCE_DIR}/..
+                SUITESPARSE_LOCAL_PREFIX )
+        endif ( )
+    endif ( )
     set ( SUITESPARSE_LIBDIR ${SUITESPARSE_LOCAL_PREFIX}/lib )
     set ( SUITESPARSE_INCLUDEDIR ${SUITESPARSE_LOCAL_PREFIX}/include )
     set ( SUITESPARSE_BINDIR ${SUITESPARSE_LOCAL_PREFIX}/bin )

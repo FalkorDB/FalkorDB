@@ -2,7 +2,7 @@
 // GB_mex_debug: determine GB_DEBUG status
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,11 +44,7 @@ void mexFunction
     pargout [0] = mxCreateDoubleScalar (0) ;
     #endif
 
-    #ifdef GBCUDA_DEV
-    #error "CUDA development not yet enabled for @GrB interface"
-    #else
     pargout [1] = mxCreateDoubleScalar (0) ;
-    #endif
 
     if (malloc_debug)
     {

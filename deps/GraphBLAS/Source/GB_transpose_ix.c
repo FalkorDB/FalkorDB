@@ -2,10 +2,12 @@
 // GB_transpose_ix: transpose the values and pattern of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: done.
 
 // The values of A are typecasted to C->type, the type of the C matrix.
 
@@ -26,11 +28,13 @@
 //      This method is parallel and fully scalable.
 
 #include "GB_transpose.h"
-#ifndef GBCUDA_DEV
+#include "GB_unop.h"
+#include "GB_stringify.h"
+#ifndef GBCOMPACT
 #include "GB_unop__include.h"
 #endif
 
-void GB_transpose_ix            // transpose the pattern and values of a matrix
+GrB_Info GB_transpose_ix        // transpose the pattern and values of a matrix
 (
     GrB_Matrix C,                       // output matrix
     const GrB_Matrix A,                 // input matrix
@@ -51,7 +55,7 @@ void GB_transpose_ix            // transpose the pattern and values of a matrix
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (!GB_PENDING (A)) ;
 
-    GrB_Info info ;
+    GrB_Info info = GrB_NO_VALUE ;
     GrB_Type ctype = C->type ;
     GB_Type_code code1 = ctype->code ;          // defines ztype
     GB_Type_code code2 = A->type->code ;        // defines atype
@@ -65,7 +69,7 @@ void GB_transpose_ix            // transpose the pattern and values of a matrix
     { 
 
         //----------------------------------------------------------------------
-        // compute the iso value and transpose the pattern
+        // via the iso kernel
         //----------------------------------------------------------------------
 
         // A and C are iso: Cx [0] = (ctype) Ax [0]
@@ -73,17 +77,20 @@ void GB_transpose_ix            // transpose the pattern and values of a matrix
 
         // C = pattern of A transposed
         #define GB_ISO_TRANSPOSE
-        #include "GB_unop_transpose.c"
+        #include "GB_transpose_template.c"
+        info = GrB_SUCCESS ;
 
     }
     else
     { 
 
         //----------------------------------------------------------------------
-        // transpose the values and pattern
+        // via the factory kernel
         //----------------------------------------------------------------------
 
-        #ifndef GBCUDA_DEV
+        #ifndef GBCOMPACT
+        GB_IF_FACTORY_KERNELS_ENABLED
+        { 
 
             //------------------------------------------------------------------
             // define the worker for the switch factory
@@ -96,7 +103,6 @@ void GB_transpose_ix            // transpose the pattern and values of a matrix
             {                                                               \
                 info = GB_unop_tran (zname,aname)                           \
                     (C, A, Workspaces, A_slice, nworkspaces, nthreads) ;    \
-                if (info == GrB_SUCCESS) return ;                           \
             }                                                               \
             break ;
 
@@ -104,24 +110,43 @@ void GB_transpose_ix            // transpose the pattern and values of a matrix
             // launch the switch factory
             //------------------------------------------------------------------
 
-            #include "GB_2type_factory.c"
-
+            #include "GB_twotype_factory.c"
+        }
         #endif
 
         //----------------------------------------------------------------------
-        // generic worker: transpose and typecast
+        // via the JIT or PreJIT kernel
         //----------------------------------------------------------------------
 
-        GB_BURBLE_MATRIX (A, "(generic transpose) ") ;
-        size_t csize = C->type->size ;
-        GB_cast_function cast_A_to_X = GB_cast_factory (code1, code2) ;
+        if (info == GrB_NO_VALUE)
+        { 
+            struct GB_UnaryOp_opaque op_header ;
+            GrB_Type ctype = C->type ;
+            GB_Operator op = GB_unop_identity (ctype, &op_header) ;
+            ASSERT_OP_OK (op, "identity op for transpose_ix", GB0) ;
+            info = GB_transpose_unop_jit (C, op, A, Workspaces,
+                A_slice, nworkspaces, nthreads) ;
+        }
 
-        // Cx [pC] = (ctype) Ax [pA]
-        #define GB_CAST_OP(pC,pA)  \
-            cast_A_to_X (Cx +((pC)*csize), Ax +((pA)*asize), asize) ;
-        #define GB_ATYPE GB_void
-        #define GB_CTYPE GB_void
-        #include "GB_unop_transpose.c"
+        //----------------------------------------------------------------------
+        // via the generic kernel
+        //----------------------------------------------------------------------
+
+        if (info == GrB_NO_VALUE)
+        { 
+            GB_BURBLE_MATRIX (A, "(generic transpose) ") ;
+            size_t csize = C->type->size ;
+            GB_cast_function cast_A_to_X = GB_cast_factory (code1, code2) ;
+
+            // Cx [pC] = (ctype) Ax [pA]
+            #define GB_APPLY_OP(pC,pA)  \
+                cast_A_to_X (Cx +((pC)*csize), Ax +((pA)*asize), asize) ;
+            #define GB_A_TYPE GB_void
+            #define GB_C_TYPE GB_void
+            #include "GB_transpose_template.c"
+            info = GrB_SUCCESS ;
+        }
     }
-}
 
+    return (info) ;
+}

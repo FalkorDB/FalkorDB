@@ -21,7 +21,7 @@ function [I, J, X] = find (G, k, search)
 %
 % See also sparse, GrB.build, GrB.extracttuples.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % FUTURE: find (G,k,'first') and find (G,k,'last') are slow.

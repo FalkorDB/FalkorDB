@@ -1,14 +1,14 @@
 function test211
 %TEST211 test iso assign
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
 n = 10 ;
 
-% GrB.burble (1) ;
+% GB_mex_burble (1) ;
 Cin.matrix = logical (spones (sprand (n, n, 0.5))) ;
 Cin.iso = true ;
 
@@ -37,6 +37,6 @@ for s = [true false]
 
 end
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest211: all tests passed\n') ;
 

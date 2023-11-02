@@ -2,23 +2,27 @@
 // GraphBLAS/Demo/Program/wathen_demo.c: test wathen
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Construct a matrix using the Demo/Source/wathen.c method.
+// Construct a matrix using the wathen method.
 //
 //  wathen_demo nx ny method nthreads
 
-// macro used by OK(...) to free workspace if an error occurs
-#define FREE_ALL            \
-    GrB_Matrix_free (&A) ;  \
-
 #include "graphblas_demos.h"
+#include "simple_rand.h"
+#include "simple_rand.c"
+#include "wathen.c"
 #ifdef _OPENMP
 #include "omp.h"
 #endif
+
+// macro used by OK(...) to free workspace if an error occurs
+#undef  FREE_ALL
+#define FREE_ALL            \
+    GrB_Matrix_free (&A) ;  \
 
 int main (int argc, char **argv)
 {
@@ -60,7 +64,7 @@ int main (int argc, char **argv)
     #endif
     fprintf (stderr, "\n") ;
 
-    OK (GxB_print (A, GxB_SUMMARY)) ;
+    OK (GxB_Matrix_fprint (A, "A", GxB_SUMMARY, stdout)) ;
 
     FREE_ALL ;
 

@@ -2,7 +2,7 @@
 // GrB_Matrix_extractElement: extract a single entry from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ GrB_Info GrB_Matrix_extractElement_Scalar   // S = A(i,j)
     if (!GB_IS_BITMAP (S))
     { 
         // convert S to bitmap
-        GB_OK (GB_convert_any_to_bitmap ((GrB_Matrix) S, Context)) ;
+        GB_OK (GB_convert_any_to_bitmap ((GrB_Matrix) S, Werk)) ;
     }
 
     //--------------------------------------------------------------------------

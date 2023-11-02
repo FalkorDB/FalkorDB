@@ -2,10 +2,12 @@
 // GB_msort_2: sort a 2-by-n list of integers, using A[0:1][ ] as the key
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // A parallel mergesort of an array of 2-by-n integers.  Each key
 // consists of two integers.

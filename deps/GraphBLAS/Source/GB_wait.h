@@ -2,7 +2,7 @@
 // GB_wait.h: definitions for GB_wait
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,49 +13,21 @@
 GrB_Info GB_block   // apply all pending computations if blocking mode enabled
 (
     GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_wait                // finish all pending computations
 (
     GrB_Matrix A,               // matrix with pending computations
     const char *name,           // name of the matrix
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_unjumble        // unjumble a matrix
 (
     GrB_Matrix A,           // matrix to unjumble
-    GB_Context Context
+    GB_Werk Werk
 ) ;
-
-// true if a matrix has pending tuples
-#define GB_PENDING(A) ((A) != NULL && (A)->Pending != NULL)
-
-// true if a matrix is allowed to have pending tuples
-#define GB_PENDING_OK(A) (GB_PENDING (A) || !GB_PENDING (A))
-
-// true if a matrix has zombies
-#define GB_ZOMBIES(A) ((A) != NULL && (A)->nzombies > 0)
-
-// true if a matrix is allowed to have zombies
-#define GB_ZOMBIES_OK(A) (((A) == NULL) || ((A) != NULL && (A)->nzombies >= 0))
-
-// true if a matrix has pending tuples or zombies
-#define GB_PENDING_OR_ZOMBIES(A) (GB_PENDING (A) || GB_ZOMBIES (A))
-
-// true if a matrix is jumbled
-#define GB_JUMBLED(A) ((A) != NULL && (A)->jumbled)
-
-// true if a matrix is allowed to be jumbled
-#define GB_JUMBLED_OK(A) (GB_JUMBLED (A) || !GB_JUMBLED (A))
-
-// true if a matrix has pending tuples, zombies, or is jumbled
-#define GB_ANY_PENDING_WORK(A) \
-    (GB_PENDING (A) || GB_ZOMBIES (A) || GB_JUMBLED (A))
-
-// true if a matrix is hypersparse but has no A->Y component
-#define GB_NEED_HYPER_HASH(A) (GB_IS_HYPERSPARSE (A) && (((A)->Y) == NULL))
 
 // wait if condition holds
 #define GB_WAIT_IF(condition,A,name)                                    \
@@ -63,7 +35,7 @@ GrB_Info GB_unjumble        // unjumble a matrix
     if (condition)                                                      \
     {                                                                   \
         GrB_Info info ;                                                 \
-        GB_OK (GB_wait ((GrB_Matrix) A, name, Context)) ;               \
+        GB_OK (GB_wait ((GrB_Matrix) A, name, Werk)) ;                  \
     }                                                                   \
 }
 

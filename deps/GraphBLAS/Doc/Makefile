@@ -10,7 +10,7 @@
 # creates the user guide
 
 GraphBLAS_UserGuide.pdf: GraphBLAS_UserGuide.tex GraphBLAS_UserGuide.bib \
-    GraphBLAS_API_version.tex GraphBLAS_version.tex
+    GraphBLAS_API_version.tex GraphBLAS_version.tex GrB_get_set.tex
 	pdflatex GraphBLAS_UserGuide.tex
 	bibtex GraphBLAS_UserGuide
 	pdflatex GraphBLAS_UserGuide.tex

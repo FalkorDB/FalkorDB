@@ -2,10 +2,12 @@
 // GB_serialize_array: serialize an array, with optional compression
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Parallel compression method for an array.  The array is compressed into
 // a sequence of independently allocated blocks, or returned as-is if not
@@ -16,10 +18,10 @@
 #include "GB_lz4.h"
 #include "GB_zstd.h"
 
-#define GB_FREE_ALL                                                     \
-{                                                                       \
-    GB_FREE (&Sblocks, Sblocks_size) ;                                  \
-    GB_serialize_free_blocks (&Blocks, Blocks_size, nblocks, Context) ; \
+#define GB_FREE_ALL                                             \
+{                                                               \
+    GB_FREE (&Sblocks, Sblocks_size) ;                          \
+    GB_serialize_free_blocks (&Blocks, Blocks_size, nblocks) ;  \
 }
 
 GrB_Info GB_serialize_array
@@ -40,7 +42,7 @@ GrB_Info GB_serialize_array
     int32_t method,                     // compression method requested
     int32_t algo,                       // compression algorithm
     int32_t level,                      // compression level
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -120,7 +122,8 @@ GrB_Info GB_serialize_array
     // determine # of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (len, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------
@@ -229,7 +232,7 @@ GrB_Info GB_serialize_array
         char *dst = (char *) Blocks [blockid].p ;           // destination
         int srcSize = (int) (kend - kstart) ;               // size of source
         size_t dsize = Blocks [blockid].p_size_allocated ;  // size of dest
-        int dstCapacity = GB_IMIN (dsize, INT32_MAX) ;
+        int dstCapacity = (int) GB_IMIN (dsize, INT32_MAX) ;
         int s ;
         size_t s64 ;
         switch (algo)
@@ -270,7 +273,7 @@ GrB_Info GB_serialize_array
     // compute cumulative sum of the compressed blocks
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Sblocks, nblocks, NULL, 1, Context) ;
+    GB_cumsum (Sblocks, nblocks, NULL, 1, Werk) ;
 
     //--------------------------------------------------------------------------
     // free workspace return result

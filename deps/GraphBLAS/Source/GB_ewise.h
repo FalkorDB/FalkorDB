@@ -2,7 +2,7 @@
 // GB_ewise.h: definitions for GB_ewise
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,39 +29,31 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
     const bool is_eWiseUnion,       // if true, eWiseUnion, else eWiseAdd
     const GrB_Scalar alpha,         // alpha and beta ignored for eWiseAdd,
     const GrB_Scalar beta,          // nonempty scalars for GxB_eWiseUnion
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
-void GB_ewise_generic       // generic ewise
+//------------------------------------------------------------------------------
+// GB_ewise_fulla: C += A+B, all 3 matrices full
+//------------------------------------------------------------------------------
+
+GrB_Info GB_ewise_fulla        // C += A+B, all matrices full
 (
-    // input/output:
-    GrB_Matrix C,           // output matrix, static header
-    // input:
-    const GrB_BinaryOp op,  // op to perform C = op (A,B)
-    // tasks from phase1a:
-    const GB_task_struct *restrict TaskList,  // array of structs
-    const int C_ntasks,                         // # of tasks
-    const int C_nthreads,                       // # of threads to use
-    // analysis from phase0:
-    const int64_t *restrict C_to_M,
-    const int64_t *restrict C_to_A,
-    const int64_t *restrict C_to_B,
-    const int C_sparsity,
-    // from GB_emult_sparsity or GB_add_sparsity:
-    const int ewise_method,
-    // from GB_emult_04 and GB_emult_02:
-    const int64_t *restrict Cp_kfirst,
-    // to slice M, A, and/or B,
-    const int64_t *M_ek_slicing, const int M_ntasks, const int M_nthreads,
-    const int64_t *A_ek_slicing, const int A_ntasks, const int A_nthreads,
-    const int64_t *B_ek_slicing, const int B_ntasks, const int B_nthreads,
-    // original input:
-    const GrB_Matrix M,             // optional mask, may be NULL
-    const bool Mask_struct,         // if true, use the only structure of M
-    const bool Mask_comp,           // if true, use !M
+    GrB_Matrix C,                   // input/output matrix
+    const GrB_BinaryOp op,          // only GB_BINOP_SUBSET operators supported
     const GrB_Matrix A,
-    const GrB_Matrix B,
-    GB_Context Context
+    const GrB_Matrix B
+) ;
+
+//------------------------------------------------------------------------------
+// GB_ewise_fulln: C = A+B where A and B are full; C anything
+//------------------------------------------------------------------------------
+
+GrB_Info GB_ewise_fulln      // C = A+B
+(
+    GrB_Matrix C,                   // input/output matrix
+    const GrB_BinaryOp op,          // must not be a positional op
+    const GrB_Matrix A,
+    const GrB_Matrix B
 ) ;
 
 #endif

@@ -2,10 +2,13 @@
 // GB_AxB_dot3_phase1_template: analysis phase for dot3; C<M> = A'*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// Purely symbolic phase1 for the dot3 method of GrB_mxm.  This does not
+// access any values, except for the mask.
 
 {
     int taskid ;
@@ -37,12 +40,12 @@
             // get j, the kth vector of C and M
             //------------------------------------------------------------------
 
-            #if defined ( GB_MASK_SPARSE_AND_STRUCTURAL )
+            #if defined ( GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED )
             // M and C are sparse
             const int64_t j = k ;
             #else
             // M and C are either both sparse or both hypersparse
-            const int64_t j = GBH (Ch, k) ;
+            const int64_t j = GBH_C (Ch, k) ;
             #endif
 
             GB_GET_VECTOR (pM, pM_end, pM, pM_end, Mp, k, mvlen) ;
@@ -54,8 +57,8 @@
             #if GB_B_IS_HYPER
                 // B is hyper: find B(:,j) using the B->Y hyper hash
                 int64_t pB_start, pB_end ;
-                GB_hyper_hash_lookup (Bp, B_Yp, B_Yi, B_Yx, B_hash_bits,
-                    j, &pB_start, &pB_end) ;
+                GB_hyper_hash_lookup (Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx,
+                    B_hash_bits, j, &pB_start, &pB_end) ;
             #elif GB_B_IS_SPARSE
                 // B is sparse
                 const int64_t pB_start = Bp [j] ;
@@ -94,17 +97,17 @@
                 for ( ; pM < pM_end ; pM++)
                 {
                     int64_t work = 1 ;
-                    #if !defined ( GB_MASK_SPARSE_AND_STRUCTURAL )
+                    #if !defined ( GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED )
                     // if M is structural, no need to check its values
-                    if (GB_mcast (Mx, pM, msize))
+                    if (GB_MCAST (Mx, pM, msize))
                     #endif
                     { 
                         const int64_t i = Mi [pM] ;
                         #if GB_A_IS_HYPER
                         // A is hyper: find A(:,i) using the A->Y hyper hash
                         int64_t pA, pA_end ;
-                        GB_hyper_hash_lookup (Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
-                            i, &pA, &pA_end) ;
+                        GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx,
+                            A_hash_bits, i, &pA, &pA_end) ;
                         const int64_t ainz = pA_end - pA ;
                         work += GB_IMIN (ainz, bjnz) ;
                         #elif GB_A_IS_SPARSE

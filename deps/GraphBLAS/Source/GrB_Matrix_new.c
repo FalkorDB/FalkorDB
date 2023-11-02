@@ -2,7 +2,7 @@
 // GrB_Matrix_new: create a new matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,8 +18,8 @@ GrB_Info GrB_Matrix_new     // create a new matrix with no entries
     GrB_Index nrows,        // matrix dimension is nrows-by-ncols
     GrB_Index ncols
 )
-{
+{ 
     GB_WHERE1 ("GrB_Matrix_new (&A, type, nrows, ncols)") ;
-    return (GB_Matrix_new (A, type, nrows, ncols, Context)) ;
+    return (GB_Matrix_new (A, type, nrows, ncols)) ;
 }
 

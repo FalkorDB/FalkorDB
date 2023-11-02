@@ -17,8 +17,8 @@ Files in this folder:
 
 When ZSTD is compiled for use in SuiteSparse:GraphBLAS, ZSTD_DEPS_MALLOC is
 defined, and ZSTD_malloc, ZSTD_calloc, and ZSTD_free, are provided to ZSTD
-instead of have it use the standard ANSI C11 malloc/calloc/free.  Those
-functions use whatever memory manager is given to GxB_init, or the ANSI C11
+instead of have it use the standard C11 malloc/calloc/free.  Those
+functions use whatever memory manager is given to GxB_init, or the C11
 malloc/calloc/free for GrB_init.
 
 This compile-time change could cause a conflict if ZSTD is also installed as a

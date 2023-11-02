@@ -2,7 +2,7 @@
 // GxB_Vector_export_CSC: export a vector in CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
 
     GB_WHERE1 ("GxB_Vector_export_CSC (&v, &type, &n, "
         "&vi, &vx, &vi_size, &vx_size, &iso, &nvals, &jumbled, desc)") ;
-    GB_BURBLE_START ("GxB_Vector_export_CSC") ;
+    // GB_BURBLE_START ("GxB_Vector_export_CSC") ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_NULL_OR_FAULTY (*v) ;
@@ -61,7 +61,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
     // ensure the vector is sparse
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_convert_any_to_sparse ((GrB_Matrix) *v, Context)) ;
+    GB_OK (GB_convert_any_to_sparse ((GrB_Matrix) *v, Werk)) ;
 
     //--------------------------------------------------------------------------
     // export the vector
@@ -85,7 +85,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
         vx,   vx_size,  // Ax
         nvals, jumbled, NULL,               // jumbled or not
         &sparsity, &is_csc,                 // sparse by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     { 
@@ -93,7 +93,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
         ASSERT (is_csc) ;
         ASSERT (vdim == 1) ;
     }
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

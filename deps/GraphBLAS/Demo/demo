@@ -1,9 +1,8 @@
 #!/bin/sh
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-../build/wildtype_demo                 > wildtype_demo.out
 ../build/simple_demo                   > simple_demo.out
 ../build/complex_demo                  > complex_demo_out.m
 ../build/complex_demo 1                > complex_demo_out2.m
@@ -12,9 +11,6 @@
 ../build/import_demo < Matrix/west0067 > import_demo.out
 ../build/wildtype_demo                 > wildtype_demo.out
 
-echo "Comparing output:"
-diff Output/simple_demo.out       simple_demo.out
-diff Output/complex_demo_out.m    complex_demo_out.m
-diff Output/wildtype_demo.out     wildtype_demo.out
-
+../build/gauss_demo > gauss_demo1.out
+../build/gauss_demo > gauss_demo.out
 exit 0

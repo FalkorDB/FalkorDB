@@ -30,6 +30,6 @@ Files in this package:
     README.md           this file
     rmm_wrap.cpp        rmm_wrap_* functions
     rmm_wrap.h          definitions for an external C program
-    rmm_wrap.hpp        internal defintions for rmm_wrap only
+    rmm_wrap.hpp        internal definitions for rmm_wrap only
     rmm_wrap_test.c     tests for the rmm_wrap library
 

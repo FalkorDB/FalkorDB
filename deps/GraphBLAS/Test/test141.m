@@ -1,7 +1,7 @@
 function test141
 %TEST141 test GrB_eWiseAdd (all types and operators) for dense matrices
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [binops, ~, ~, types, ~, ~] = GB_spec_opsall ;
@@ -34,6 +34,10 @@ B.matrix = Bmat ; B.class = 'see below' ;
 C.matrix = Cmat ; C.class = 'see below' ;
 S.matrix = Smat ; S.class = 'see below' ;
 E.matrix = Emat ; E.class = 'see below' ;
+
+A.sparsity = 8 ;
+B.sparsity = 8 ;
+C.sparsity = 8 ;
 
 for k2 = 1:length(binops)
     binop = binops {k2}  ;
@@ -79,13 +83,15 @@ for k2 = 1:length(binops)
             C.class = type ;
         end
 
+        id = test_cast (0, type) ;
+
         %---------------------------------------
         % C = A+B
         %---------------------------------------
 
         C0 = GB_spec_Matrix_eWiseAdd (S, [ ], [ ], op, A, B, [ ]) ;
         C1 = GB_mex_Matrix_eWiseAdd  (S, [ ], [ ], op, A, B, [ ]) ;
-        GB_spec_compare (C0, C1) ;
+        GB_spec_compare (C0, C1, id) ;
 
         %---------------------------------------
         % C<M> = A+B, both A and B dense
@@ -93,7 +99,7 @@ for k2 = 1:length(binops)
 
         C0 = GB_spec_Matrix_eWiseAdd (S, M, [ ], op, A, B, desc) ;
         C1 = GB_mex_Matrix_eWiseAdd  (S, M, [ ], op, A, B, desc) ;
-        GB_spec_compare (C0, C1) ;
+        GB_spec_compare (C0, C1, id) ;
 
         %---------------------------------------
         % C<M> = A+E, A dense, E sparse
@@ -101,7 +107,7 @@ for k2 = 1:length(binops)
 
         C0 = GB_spec_Matrix_eWiseAdd (S, M, [ ], op, A, E, desc) ;
         C1 = GB_mex_Matrix_eWiseAdd  (S, M, [ ], op, A, E, desc) ;
-        GB_spec_compare (C0, C1) ;
+        GB_spec_compare (C0, C1, id) ;
 
         %---------------------------------------
         % C<M> = E+A, A dense, E sparse
@@ -109,7 +115,7 @@ for k2 = 1:length(binops)
 
         C0 = GB_spec_Matrix_eWiseAdd (S, M, [ ], op, E, A, desc) ;
         C1 = GB_mex_Matrix_eWiseAdd  (S, M, [ ], op, E, A, desc) ;
-        GB_spec_compare (C0, C1) ;
+        GB_spec_compare (C0, C1, id) ;
 
         %---------------------------------------
         % C += A+B
@@ -118,7 +124,7 @@ for k2 = 1:length(binops)
         if (~GB_spec_is_positional (op))
             C0 = GB_spec_Matrix_eWiseAdd (C, [ ], op, op, A, B, [ ]) ;
             C1 = GB_mex_Matrix_eWiseAdd  (C, [ ], op, op, A, B, [ ]) ;
-            GB_spec_compare (C0, C1) ;
+            GB_spec_compare (C0, C1, id) ;
         end
     end
 end

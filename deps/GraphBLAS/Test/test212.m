@@ -1,12 +1,12 @@
 function test212
 %TEST212 test iso mask all zero
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
-GrB.burble (1) ;
+GB_mex_burble (1) ;
 
 n = 10 ;
 Cin.matrix = sprand (n, n, 0.5) ;
@@ -42,6 +42,6 @@ C1 = GB_mex_apply  (Cin, M, [ ], op, A, desc) ;
 C2 = GB_spec_apply (Cin, M, [ ], op, A, desc) ;
 GB_spec_compare (C1, C2) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest212: all tests passed\n') ;
 

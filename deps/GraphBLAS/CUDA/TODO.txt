@@ -1,13 +1,56 @@
+all the FIXMEs
 
-rename functions and filenames to GB_*
-
-refactor jitFactor.hpp
+clean up comments and code style
 
 hexadecimal
 
 stream pool
 
-complex types/ops, CPU & GPU 
+test complex
 
-reduce: do any monoid (but Tim needs to do the GB*reduce_23482304823094.h)
+reduce: do any monoid
+    terminal condition?
+
+ANY monoid in mxm
+
+full test suite
+
+when to use the GPU?  which GPU?  See the new GxB_Context object
+
+rmm_init
+
+--------------------------------------------------------------------------------
+future:
+
+cuda: needs source directory
+    (1) environment var set.  If so, use it.
+    (3) not found so no cuda jit
+
+all of GrB_mxm?
+
+(1) DOT
+        dot2:       C<#> = A'*B     C is bitmap or full
+        dot3:       C<M>=A'B        C is sparse empty, M is sparse/hyper
+        dot4:       C += A'B        C is full (+ same as semiring monoid)
+
+(2)     colscale    C = A*D
+
+(3)     rowscale    C = D*B
+
+(4) SAXPY
+
+        saxpy3      C<#> = A*B      C is sparse or hyper
+
+        saxpy4      C += A*B        C is full, A hyper or sparse
+                                    B is full or bitmap
+
+        saxpy5      C += A*B        C is full, B hyper or sparse
+                                    A is full or bitmap
+
+        bitmap      C<#> = A*B      C bitmap
+
+NO      bitmap      C<#> += A*B     C bitmap
+NO      outer       C<#> = AB'      C sparse? full? bitmap?
+
+    GrB_select?
 

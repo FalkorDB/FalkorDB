@@ -2,7 +2,7 @@
 // GrB_finalize: finalize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,11 +13,11 @@
 // same time.
 
 #include "GB.h"
+#include "GB_jitifyer.h"
 
 GrB_Info GrB_finalize ( )
 { 
-    // free all memory pools
-    GB_free_pool_finalize ( ) ;
+    GB_jitifyer_finalize ( ) ;
     return (GrB_SUCCESS) ;
 }
 

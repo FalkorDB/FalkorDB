@@ -2,7 +2,7 @@
 // GB_mx_mxArray_to_Matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,7 +23,7 @@
 // The built-in matrix or struct is not modified.  If deep_copy is true, the
 // GraphBLAS matrix is always a deep copy and can be modified by GraphBLAS.
 // Otherwise, its pattern (A->p, A->h, and A->i) may be a shallow copy, and
-// A->x is a shallow copy if the built-in matrix is 'logical' or 'double'. 
+// A->x is a shallow copy if the built-in matrix is 'logical' or 'double'.
 
 // If the built-in matrix is double complex, it becomes a GraphBLAS
 // Complex or GxB_FC64 matrix.
@@ -48,6 +48,7 @@
 #define FREE_ALL            \
 {                           \
     GrB_Matrix_free_(&A) ;  \
+    GrB_Matrix_free_(&T) ;  \
 }
 
 GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
@@ -64,9 +65,9 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
     // check for empty matrix
     //--------------------------------------------------------------------------
 
-    GB_CONTEXT ("mxArray_to_Matrix") ;
-
     GrB_Matrix A = NULL ;
+    struct GB_Matrix_opaque T_header ;
+    GrB_Matrix T = NULL ;
 
     if (A_builtin == NULL)
     {
@@ -197,7 +198,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         anzmax = anz ;
     }
 
-    GB_void *Mx = mxGetData (Amatrix) ;
+    GB_void *MatlabX = mxGetData (Amatrix) ;
     if (anz == 0)
     {
         // an empty matrix cannot be iso
@@ -221,7 +222,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
             }
             if (mxGetNumberOfElements (values) >= anz)
             {
-                Mx = mxGetData (values) ;
+                MatlabX = mxGetData (values) ;
                 atype_in = GB_mx_Type (values) ;
                 atype_in_code = atype_in->code ;
                 anzmax = mxGetNumberOfElements (values) ;
@@ -255,7 +256,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         // create the GraphBLAS matrix
         info = GB_new (&A, // sparse or full, new header
             atype_out, (GrB_Index) nrows, (GrB_Index) ncols,
-            GB_Ap_calloc, is_csc, sparsity, GxB_HYPER_DEFAULT, 0, Context) ;
+            GB_Ap_calloc, is_csc, sparsity, GxB_HYPER_DEFAULT, 0) ;
         if (info != GrB_SUCCESS)
         {
             FREE_ALL ;
@@ -264,7 +265,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         }
 
         // A is a deep copy and can be modified by GraphBLAS
-        info = GB_bix_alloc (A, anz, sparsity, false, true, false, Context) ;
+        info = GB_bix_alloc (A, anz, sparsity, false, true, false) ;
         if (info != GrB_SUCCESS)
         {
             FREE_ALL ;
@@ -290,7 +291,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         // [ create the GraphBLAS matrix, do not allocate A->p
         info = GB_new (&A, // sparse or full, new header
             atype_out, (GrB_Index) nrows, (GrB_Index) ncols,
-            GB_Ap_null, is_csc, sparsity, GxB_HYPER_DEFAULT, 0, Context) ;
+            GB_Ap_null, is_csc, sparsity, GxB_HYPER_DEFAULT, 0) ;
         if (info != GrB_SUCCESS)
         {
             FREE_ALL ;
@@ -344,7 +345,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         // the built-in matrix and GraphBLAS matrix have the same type;
         // (logical, double, or double complex), and a deep copy is not
         // requested.  Just make a shallow copy.
-        A->x = Mx ;
+        A->x = MatlabX ;
         A->x_size = anzmax * atype_out->size ;
     }
     else
@@ -378,11 +379,20 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
 
         if (code1 == code2)
         {
-            memcpy (A->x, Mx, anz * asize) ;
+            memcpy (A->x, MatlabX, anz * asize) ;
         }
         else
         {
-            GB_cast_array (A->x, code1, Mx, code2, NULL, anz, 1) ;
+            // create a shallow cnz-by-1 matrix T to wrap the array MatlabX
+            T = NULL ;
+            GrB_Type ttype = (atype_in_code == GB_UDT_code) ? GxB_FC64 : atype_in ;
+            void *Tx = MatlabX ;
+            GrB_Index nrows = anz, ncols = 1, Tx_size = anz * asize ;
+            GxB_Matrix_import_FullC (&T, ttype, nrows, ncols, &Tx, Tx_size, false, NULL) ;
+            GB_cast_array (A->x, code1, T, 1) ;
+            // GB_cast_array (A->x, code1, MatlabX, code2, NULL, anz, 1) ;
+            bool iso ;
+            GxB_Matrix_export_FullC (&T, &ttype, &nrows, &ncols, &Tx, &Tx_size, &iso, NULL) ;
         }
     }
 
@@ -415,7 +425,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
                 // A->x for the iso value, so set it to zero
                 A->iso = false ;
             }
-            GB_convert_any_to_iso (A, NULL, NULL) ;
+            GB_convert_any_to_iso (A, NULL) ;
         }
         else
         {
@@ -492,7 +502,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         {
             bool burble = GB_Global_burble_get ( ) ;
             if (burble) printf (" [ GB_mx_mxArray_to_Matrix ") ;
-            GB_convert_hyper_to_sparse (A, true, Context) ;
+            GB_convert_hyper_to_sparse (A, true) ;
             if (burble) printf ("]\n") ;
         }
         ASSERT (!A->is_csc) ;

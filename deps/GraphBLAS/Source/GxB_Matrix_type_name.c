@@ -2,7 +2,7 @@
 // GxB_Matrix_type_name: return the name of the type of a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,6 +28,6 @@ GrB_Info GxB_Matrix_type_name      // return the name of the type of a vector
     // get the type_name
     //--------------------------------------------------------------------------
 
-    return (GB_matvec_type_name (type_name, A, Context)) ;
+    return (GB_matvec_type_name (type_name, A, Werk)) ;
 }
 

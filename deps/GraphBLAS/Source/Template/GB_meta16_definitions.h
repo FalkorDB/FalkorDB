@@ -2,7 +2,7 @@
 // GB_meta16_definitions.h: methods that depend on the sparsity of A and B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -69,20 +69,20 @@
     #if ( GB_B_IS_HYPER || GB_B_IS_SPARSE )
 
         // B is hyper or sparse
-        #define GB_GET_B_kj_INDEX               \
+        #define GB_GET_B_kj_INDEX                   \
             const int64_t k = Bi [pB]
 
     #elif ( GB_B_IS_BITMAP )
 
         // B is bitmap
-        #define GB_GET_B_kj_INDEX               \
-            if (!Bb [pB]) continue ;            \
+        #define GB_GET_B_kj_INDEX                   \
+            if (!Bb [pB]) continue ;                \
             const int64_t k = pB % bvlen
 
     #else
 
         // B is full
-        #define GB_GET_B_kj_INDEX               \
+        #define GB_GET_B_kj_INDEX                   \
             const int64_t k = pB % bvlen
 
     #endif
@@ -90,9 +90,9 @@
 #else
 
     // for any format of B
-    #define GB_GET_B_kj_INDEX                   \
-        if (!GBB (Bb, pB)) continue ;           \
-        const int64_t k = GBI (Bi, pB, bvlen)
+    #define GB_GET_B_kj_INDEX                       \
+        if (!GBB_B (Bb, pB)) continue ;             \
+        const int64_t k = GBI_B (Bi, pB, bvlen)
 
 #endif
 
@@ -145,20 +145,20 @@
     #if ( GB_A_IS_HYPER || GB_A_IS_SPARSE )
 
         // A is hyper or sparse
-        #define GB_GET_A_ik_INDEX               \
+        #define GB_GET_A_ik_INDEX                   \
             const int64_t i = Ai [pA]
 
     #elif ( GB_A_IS_BITMAP )
 
         // A is bitmap
-        #define GB_GET_A_ik_INDEX               \
-            if (!Ab [pA]) continue ;            \
+        #define GB_GET_A_ik_INDEX                   \
+            if (!Ab [pA]) continue ;                \
             const int64_t i = pA % avlen
 
     #else
 
         // A is full
-        #define GB_GET_A_ik_INDEX               \
+        #define GB_GET_A_ik_INDEX                   \
             const int64_t i = pA % avlen
 
     #endif
@@ -166,9 +166,9 @@
 #else
 
     // for any format of A
-    #define GB_GET_A_ik_INDEX                   \
-        if (!GBB (Ab, pA)) continue ;           \
-        const int64_t i = GBI (Ai, pA, avlen)
+    #define GB_GET_A_ik_INDEX                       \
+        if (!GBB_A (Ab, pA)) continue ;             \
+        const int64_t i = GBI_A (Ai, pA, avlen)
 
 #endif
 
@@ -218,6 +218,8 @@
 //------------------------------------------------------------------------------
 
 // This method is not used for the saxpy3 generic method.
+// It is only used by the GB_AxB_saxpy3_coarseGus_*_phase5.c methods
+// for pre-generated, any_pair (see the case below), and JIT kernels.
 
 #undef GB_COMPUTE_DENSE_C_j
 
@@ -237,7 +239,7 @@
         for (int64_t i = 0 ; i < cvlen ; i++)                       \
         {                                                           \
             Ci [pC + i] = i ;                                       \
-            GB_CIJ_WRITE (pC + i, GB_IDENTITY) ; /* C(i,j)=0 */     \
+            GB_CIJ_WRITE (pC + i, zidentity) ;  /* C(i,j)=0 */      \
         }                                                           \
         for ( ; pB < pB_end ; pB++)     /* scan B(:,j) */           \
         {                                                           \

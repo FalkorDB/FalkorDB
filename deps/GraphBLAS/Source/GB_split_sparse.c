@@ -2,10 +2,12 @@
 // GB_split_sparse: split a sparse/hypersparse matrix into tiles 
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: done.
 
 #define GB_FREE_WORKSPACE                   \
     GB_WERK_POP (C_ek_slicing, int64_t) ;   \
@@ -16,6 +18,8 @@
     GB_Matrix_free (&C) ;
 
 #include "GB_split.h"
+#include "GB_stringify.h"
+#include "GB_apply.h"
 
 GrB_Info GB_split_sparse            // split a sparse matrix
 (
@@ -25,7 +29,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     const GrB_Matrix A,             // input matrix
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -49,7 +53,8 @@ GrB_Info GB_split_sparse            // split a sparse matrix
 //  int64_t avdim = A->vdim ;
     size_t asize = atype->size ;
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     int64_t nouter = csc ? n : m ;
     int64_t ninner = csc ? m : n ;
@@ -138,7 +143,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             C = NULL ;
             GB_OK (GB_new (&C, // new header
                 atype, cvlen, cvdim, GB_Ap_malloc, csc, A_sparsity,
-                hyper_switch, cnvec, Context)) ;
+                hyper_switch, cnvec)) ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;
             C->nvec = cnvec ;
@@ -199,7 +204,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
                 }
             }
 
-            GB_cumsum (Cp, cnvec, &(C->nvec_nonempty), nth, Context) ;
+            GB_cumsum (Cp, cnvec, &(C->nvec_nonempty), nth, Werk) ;
             int64_t cnz = Cp [cnvec] ;
 
             //------------------------------------------------------------------
@@ -207,8 +212,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             //------------------------------------------------------------------
 
             // set C->iso = A_iso       OK
-            GB_OK (GB_bix_alloc (C, cnz, GxB_SPARSE, false, true, A_iso,
-                Context)) ;
+            GB_OK (GB_bix_alloc (C, cnz, GxB_SPARSE, false, true, A_iso)) ;
             int64_t *restrict Ci = C->i ;
             C->nvals = cnz ;
             C->magic = GB_MAGIC ;       // for GB_nnz_held(C), to slice C
@@ -218,9 +222,9 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             //------------------------------------------------------------------
 
             int C_ntasks, C_nthreads ;
-            GB_SLICE_MATRIX (C, 8, chunk) ;
+            GB_SLICE_MATRIX (C, 8) ;
 
-            bool done = false ;
+            info = GrB_NO_VALUE ;
 
             if (A_iso)
             { 
@@ -235,6 +239,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
                 #define GB_ISO_SPLIT
                 #define GB_COPY(pC,pA) ;
                 #include "GB_split_sparse_template.c"
+                info = GrB_SUCCESS ;
 
             }
             else
@@ -244,59 +249,84 @@ GrB_Info GB_split_sparse            // split a sparse matrix
                 // split a non-iso matrix A into an non-iso tile C
                 //--------------------------------------------------------------
 
-                #ifndef GBCUDA_DEV
-                // no typecasting needed
-                switch (asize)
-                {
-                    #undef  GB_COPY
-                    #define GB_COPY(pC,pA) Cx [pC] = Ax [pA] ;
-
-                    case GB_1BYTE : // uint8, int8, bool, or 1-byte user-defined
-                        #define GB_CTYPE uint8_t
-                        #include "GB_split_sparse_template.c"
-                        break ;
-
-                    case GB_2BYTE : // uint16, int16, or 2-byte user-defined
-                        #define GB_CTYPE uint16_t
-                        #include "GB_split_sparse_template.c"
-                        break ;
-
-                    case GB_4BYTE : // uint32, int32, float, or 4-byte user
-                        #define GB_CTYPE uint32_t
-                        #include "GB_split_sparse_template.c"
-                        break ;
-
-                    case GB_8BYTE : // uint64, int64, double, float complex,
-                                    // or 8-byte user defined
-                        #define GB_CTYPE uint64_t
-                        #include "GB_split_sparse_template.c"
-                        break ;
-
-                    case GB_16BYTE : // double complex or 16-byte user-defined
-                        #define GB_CTYPE GB_blob16
-                        /*
-                        #define GB_CTYPE uint64_t
+                #ifndef GBCOMPACT
+                GB_IF_FACTORY_KERNELS_ENABLED
+                { 
+                    // no typecasting needed
+                    switch (asize)
+                    {
                         #undef  GB_COPY
-                        #define GB_COPY(pC,pA)                  \
-                            Cx [2*pC  ] = Ax [2*pA  ] ;         \
-                            Cx [2*pC+1] = Ax [2*pA+1] ;
-                        */
-                        #include "GB_split_sparse_template.c"
-                        break ;
+                        #define GB_COPY(pC,pA) Cx [pC] = Ax [pA] ;
 
-                    default:;
+                        case GB_1BYTE : // uint8, int8, bool, or 1-byte user
+                            #define GB_C_TYPE uint8_t
+                            #define GB_A_TYPE uint8_t
+                            #include "GB_split_sparse_template.c"
+                            info = GrB_SUCCESS ;
+                            break ;
+
+                        case GB_2BYTE : // uint16, int16, or 2-byte user-defined
+                            #define GB_C_TYPE uint16_t
+                            #define GB_A_TYPE uint16_t
+                            #include "GB_split_sparse_template.c"
+                            info = GrB_SUCCESS ;
+                            break ;
+
+                        case GB_4BYTE : // uint32, int32, float, or 4-byte user
+                            #define GB_C_TYPE uint32_t
+                            #define GB_A_TYPE uint32_t
+                            #include "GB_split_sparse_template.c"
+                            info = GrB_SUCCESS ;
+                            break ;
+
+                        case GB_8BYTE : // uint64, int64, double, float complex,
+                                        // or 8-byte user defined
+                            #define GB_C_TYPE uint64_t
+                            #define GB_A_TYPE uint64_t
+                            #include "GB_split_sparse_template.c"
+                            info = GrB_SUCCESS ;
+                            break ;
+
+                        case GB_16BYTE : // double complex or 16-byte user
+                            #define GB_C_TYPE GB_blob16
+                            #define GB_A_TYPE GB_blob16
+                            #include "GB_split_sparse_template.c"
+                            info = GrB_SUCCESS ;
+                            break ;
+
+                        default:;
+                    }
                 }
                 #endif
             }
 
-            if (!done)
+            //------------------------------------------------------------------
+            // via the JIT or PreJIT kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
+            { 
+                struct GB_UnaryOp_opaque op_header ;
+                GB_Operator op = GB_unop_identity (atype, &op_header) ;
+                ASSERT_OP_OK (op, "identity op for split sparse", GB0) ;
+                info = GB_split_sparse_jit (C, op, A, akstart, aistart, Wp,
+                    C_ek_slicing, C_ntasks, C_nthreads) ;
+            }
+
+            //------------------------------------------------------------------
+            // via the generic kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
             { 
                 // user-defined types
-                #define GB_CTYPE GB_void
+                #define GB_C_TYPE GB_void
+                #define GB_A_TYPE GB_void
                 #undef  GB_COPY
                 #define GB_COPY(pC,pA)                          \
                     memcpy (Cx + (pC)*asize, Ax +(pA)*asize, asize) ;
                 #include "GB_split_sparse_template.c"
+                info = GrB_SUCCESS ;
             }
 
             //------------------------------------------------------------------
@@ -304,6 +334,13 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             //------------------------------------------------------------------
 
             GB_WERK_POP (C_ek_slicing, int64_t) ;
+
+            if (info != GrB_SUCCESS)
+            { 
+                // out of memory, or other error
+                GB_FREE_ALL ;
+                return (info) ;
+            }
 
             //------------------------------------------------------------------
             // advance to the next tile
@@ -326,8 +363,8 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             //------------------------------------------------------------------
 
             ASSERT_MATRIX_OK (C, "C for GB_split", GB0) ;
-            GB_OK (GB_hypermatrix_prune (C, Context)) ;
-            GB_OK (GB_conform (C, Context)) ;
+            GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+            GB_OK (GB_conform (C, Werk)) ;
             if (csc)
             { 
                 GB_TILE (Tiles, inner, outer) = C ;

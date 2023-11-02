@@ -2,7 +2,7 @@
 // GxB_Matrix_export_BitmapR: export a bitmap matrix, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,7 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
 
     GB_WHERE1 ("GxB_Matrix_export_BitmapR (&A, &type, &nrows, &ncols, "
         "&Ab, &Ax, &Ab_size, &Ax_size, &iso, &nvals, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_export_BitmapR") ;
+    // GB_BURBLE_START ("GxB_Matrix_export_BitmapR") ;
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL_OR_FAULTY (*A) ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -48,11 +48,11 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
     if ((*A)->is_csc)
     { 
         // A = A', done in-place, to put A in by-row format
-        GBURBLE ("(transpose) ") ;
-        GB_OK (GB_transpose_in_place (*A, false, Context)) ;
+        GBURBLE ("(export transpose) ") ;
+        GB_OK (GB_transpose_in_place (*A, false, Werk)) ;
     }
 
-    GB_OK (GB_convert_any_to_bitmap (*A, Context)) ;
+    GB_OK (GB_convert_any_to_bitmap (*A, Werk)) ;
 
     //--------------------------------------------------------------------------
     // export the matrix
@@ -75,14 +75,14 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
         Ax,   Ax_size,  // Ax
         nvals, NULL, NULL,                  // nvals for bitmap
         &sparsity, &is_csc,                 // bitmap by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {
         ASSERT (sparsity == GxB_BITMAP) ;
         ASSERT (!is_csc) ;
     }
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

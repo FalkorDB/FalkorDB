@@ -2,7 +2,7 @@
 // GB_Scalar_reduce: reduce a matrix to a GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ GrB_Info GB_Scalar_reduce
     const GrB_BinaryOp accum,       // optional accum for c=accum(c,t)
     const GrB_Monoid monoid,        // monoid to do the reduction
     const GrB_Matrix A,             // matrix to reduce
-    GB_Context Context
+    GB_Werk Werk
 )
 { 
 
@@ -35,13 +35,13 @@ GrB_Info GB_Scalar_reduce
     //--------------------------------------------------------------------------
 
     GrB_Index nvals ;
-    GB_OK (GB_nvals (&nvals, A, Context)) ;
+    GB_OK (GB_nvals (&nvals, A, Werk)) ;
     if (nvals == 0)
     {
         // no work to do, except to clear S if there is no accum operator
         if (accum == NULL)
         { 
-            GB_OK (GB_clear ((GrB_Matrix) S, Context)) ;
+            GB_OK (GB_clear ((GrB_Matrix) S, Werk)) ;
         }
         return (GrB_SUCCESS) ;
     }
@@ -58,7 +58,7 @@ GrB_Info GB_Scalar_reduce
     else
     { 
         // convert S to bitmap
-        GB_OK (GB_convert_any_to_bitmap ((GrB_Matrix) S, Context)) ;
+        GB_OK (GB_convert_any_to_bitmap ((GrB_Matrix) S, Werk)) ;
         nvals = S->nvals ;
     }
 
@@ -68,7 +68,7 @@ GrB_Info GB_Scalar_reduce
 
     // ignore accum if S has no entry on input
     GrB_BinaryOp accum_op = (nvals == 0) ? NULL : accum ;
-    GB_OK (GB_reduce_to_scalar (S->x, S->type, accum_op, monoid, A, Context)) ;
+    GB_OK (GB_reduce_to_scalar (S->x, S->type, accum_op, monoid, A, Werk)) ;
 
     //--------------------------------------------------------------------------
     // ensure S is full

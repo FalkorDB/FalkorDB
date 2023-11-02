@@ -52,15 +52,10 @@ Demo/*.log
 Demo/complex_demo_out.m
 Demo/complex_demo_out2.m
 Demo/import_demo.out
+Demo/gauss_demo1.out
+Demo/gauss_demo.out
 Demo/t1.out
 Demo/t2.out
-
-alternative/*.out
-alternative/*_out.m
-alternative/*_out2.m
-alternative/*_demo
-alternative/*.so*
-alternative/*.dylib*
 
 Test/*.log
 Test/errlog.txt

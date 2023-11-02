@@ -43,8 +43,9 @@
 
 namespace jit {
 
-const std::vector<std::string> compiler_flags{
-    "-std=c++11",
+#if 0
+const std::vector<std::string> GB_jit_cuda_compiler_flags{
+    "-std=c++17",
             "--use_fast_math",
             "-remove-unused-globals",
             "-w",
@@ -55,10 +56,11 @@ const std::vector<std::string> compiler_flags{
             "-I../../Include",
             "-I../../Source",
             "-I../../Source/Template",
-            "-Ilocal_cub/block",
+//          "-Ilocal_cub/block",
             "-Itemplates",
-            "-I/usr/local/cuda/include"
+            "-I/usr/local/cuda/include" // FIXME: remove this?
 };
+#endif
 
 
 /**

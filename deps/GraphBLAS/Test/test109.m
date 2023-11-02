@@ -1,13 +1,12 @@
 function test109
 %TEST109 terminal monoid with user-defined type
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest109: terminal monoid with user-defined type\n') ;
 
 for k = [false true]
-    fprintf ('builtin_complex: %d\n', k) ;
     GB_builtin_complex_set (k) ;
 
     rng ('default') ;
@@ -16,7 +15,6 @@ for k = [false true]
 
     [i j x] = find (A) ;
     s = prod (prod (x)) ;
-    A
     t = GB_mex_reduce_complex (A) ;
     err = norm (s-t) ;
     assert (err < 1e-12)

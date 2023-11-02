@@ -2,7 +2,7 @@
 // GrB_Scalar_dup: make a deep copy of a sparse GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,7 +31,7 @@ GrB_Info GrB_Scalar_dup     // make an exact copy of a GrB_Scalar
     // duplicate the GrB_Scalar
     //--------------------------------------------------------------------------
 
-    return (GB_dup ((GrB_Matrix *) s, (GrB_Matrix) t, Context)) ;
+    return (GB_dup ((GrB_Matrix *) s, (GrB_Matrix) t, Werk)) ;
 }
 
 //------------------------------------------------------------------------------

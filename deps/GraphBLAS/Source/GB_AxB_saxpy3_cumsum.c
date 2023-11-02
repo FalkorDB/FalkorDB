@@ -2,26 +2,20 @@
 // GB_AxB_saxpy3_cumsum: finalize nnz(C(:,j)) and find cumulative sum of Cp
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
+// JIT: not needed.  Only one variant possible.
+
 // phase3: fine tasks finalize their computation nnz(C(:,j))
 // phase4: cumulative sum of C->p
 
-#include "GB_AxB_saxpy3.h"
+#include "GB.h"
 #include "GB_unused.h"
 
-void GB_AxB_saxpy3_cumsum
-(
-    GrB_Matrix C,               // finalize C->p
-    GB_saxpy3task_struct *SaxpyTasks, // list of tasks, and workspace
-    int nfine,                  // number of fine tasks
-    double chunk,               // chunk size
-    int nthreads,               // number of threads
-    GB_Context Context
-)
+GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum)
 {
 
     //--------------------------------------------------------------------------
@@ -33,6 +27,7 @@ void GB_AxB_saxpy3_cumsum
     int64_t *restrict Cp = C->p ;
     const int64_t cvlen = C->vlen ;
     const int64_t cnvec = C->nvec ;
+    ASSERT (Cp != NULL) ;
 
     //==========================================================================
     // phase3: count nnz(C(:,j)) for fine tasks
@@ -99,7 +94,7 @@ void GB_AxB_saxpy3_cumsum
             }
         }
 
-        SaxpyTasks [taskid].my_cjnz = my_cjnz ;   // count my nnz(C(:,j))
+        SaxpyTasks [taskid].my_cjnz = my_cjnz ; // count this task's nnz(C(:,j))
     }
 
     //==========================================================================
@@ -135,7 +130,7 @@ void GB_AxB_saxpy3_cumsum
     // fine tasks or coarse tasks, and where j == GBH (Bh, kk) 
 
     int nth = GB_nthreads (cnvec, chunk, nthreads) ;
-    GB_cumsum (Cp, cnvec, &(C->nvec_nonempty), nth, Context) ;
+    GB_cumsum (Cp, cnvec, &(C->nvec_nonempty), nth, Werk) ;
 
     //--------------------------------------------------------------------------
     // cumulative sum of nnz (C (:,j)) for each team of fine tasks

@@ -2,7 +2,7 @@
 // GxB_Matrix_import_HyperCSR: import a matrix in hypersparse CSR format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ GrB_Info GxB_Matrix_import_HyperCSR      // import a hypersparse CSR matrix
     GB_WHERE1 ("GxB_Matrix_import_HyperCSR (&A, type, nrows, ncols, "
         "&Ap, &Ah, &Aj, &Ax, Ap_size, Ah_size, Aj_size, Ax_size, iso, "
         "nvec, jumbled, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_import_HyperCSR") ;
+    // GB_BURBLE_START ("GxB_Matrix_import_HyperCSR") ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
 
@@ -55,9 +55,9 @@ GrB_Info GxB_Matrix_import_HyperCSR      // import a hypersparse CSR matrix
         Ax,   Ax_size,  // Ax
         0, jumbled, nvec,                   // jumbled or not
         GxB_HYPERSPARSE, false,             // hypersparse by row
-        iso, fast_import, true, Context) ;
+        iso, fast_import, true, Werk) ;
 
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

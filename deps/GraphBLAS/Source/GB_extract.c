@@ -2,7 +2,7 @@
 // GB_extract: C<M> = accum(C,A(I,J))
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     const GrB_Index nRows_in,       // number of row indices
     const GrB_Index *Cols,          // column indices
     const GrB_Index nCols_in,       // number of column indices
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -61,7 +61,7 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
 
     // check domains and dimensions for C<M> = accum (C,T)
     GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, A->type,
-        Context)) ;
+        Werk)) ;
 
     // check the dimensions of C
     int64_t cnrows = GB_NROWS (C) ;
@@ -163,7 +163,7 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     // TODO::: iso:  if accum is PAIR, extract T as iso
 
     GB_CLEAR_STATIC_HEADER (T, &T_header) ;
-    GB_OK (GB_subref (T, false, T_is_csc, A, I, ni, J, nj, false, Context)) ;
+    GB_OK (GB_subref (T, false, T_is_csc, A, I, ni, J, nj, false, Werk)) ;
     ASSERT_MATRIX_OK (T, "T extracted", GB0) ;
     ASSERT (GB_JUMBLED_OK (T)) ;
 
@@ -172,6 +172,6 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     //--------------------------------------------------------------------------
 
     return (GB_accum_mask (C, M, NULL, accum, &T, C_replace, Mask_comp,
-        Mask_struct, Context)) ;
+        Mask_struct, Werk)) ;
 }
 

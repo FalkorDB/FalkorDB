@@ -63,7 +63,7 @@ function Cout = GB_spec_matrix (Cin, identity)
 % must first be passed to this function, C0=GB_spec_matrix(C0,identity) and
 % then C0 and C1 should be identical.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % get the semiring addititive identity, if present
@@ -131,7 +131,8 @@ else
 end
 
 % in the dense X, entries not in the xpattern must be set to the identity
-X (~xpattern) = GB_mex_cast (identity, xtype) ;
+id = GB_mex_cast (identity, xtype) ;
+X (~xpattern) = id ;
 
 if (~isequal (xtype, GB_spec_type (X)))
     % if X is complex, it may have been downgraded to real, if

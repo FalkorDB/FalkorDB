@@ -2,7 +2,7 @@
 // GB_reshape:  reshape a matrix into another matrix, or reshape it in-place
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
     bool by_col,            // true if reshape by column, false if by row
     int64_t nrows_new,      // number of rows of C
     int64_t ncols_new,      // number of columns of C
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

@@ -1,19 +1,20 @@
 #!/bin/sh
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # V="valgrind --error-limit=no --tool=memcheck -q --log-file=valgrind_%p.log --leak-check=full --show-leak-kinds=all"
 V="valgrind --error-limit=no --tool=memcheck -q --log-file=valgrind_%p.log"
 
-$V ../build/wildtype_demo       > wildtype_demo.out
-$V ../build/simple_demo         > simple_demo.out
-$V ../build/complex_demo        > complex_demo_out.m
+$V ../build/simple_demo                   > simple_demo.out
+$V ../build/complex_demo                  > complex_demo_out.m
+$V ../build/complex_demo 1                > complex_demo_out2.m
+$V ../build/openmp_demo                   > openmp_demo.out
 
-# NOTE: OpenMP will cause valgrind to report memory leaks.  These are not a
-# problem.  They are malloc'ed objects that OpenMP intentionaly keeps until the
-# application finishes.
-$V ../build/openmp_demo         > openmp_demo.out
+$V ../build/import_demo < Matrix/west0067 > import_demo.out
+$V ../build/wildtype_demo                 > wildtype_demo.out
+
+$V ../build/gauss_demo
 
 echo "Comparing output:"
 diff Output/simple_demo.out       simple_demo.out

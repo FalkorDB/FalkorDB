@@ -10,7 +10,7 @@
 #include <cmath>
 #include <random>
 #include <algorithm>
-#include <cstdint>
+#include <stdint.h>
 #include "problem_spec.hpp"
 #include "jitTestFactory.hpp"
 #include "../GB_cuda_buckets.h"

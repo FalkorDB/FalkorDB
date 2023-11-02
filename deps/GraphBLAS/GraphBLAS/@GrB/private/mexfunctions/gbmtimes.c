@@ -2,7 +2,7 @@
 // gbmtimes: sparse matrix-matrix multiplication over the standard semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,9 +13,9 @@
 
 // The standard rules state that if A or B are full, then C is always full.
 // The rules here are slightly different:  C is full for (sparse or bitmap)
-// times full, or full times (sparse or bitmap), using this full.  C is not
-// full for hypersparse times full or full times hypersparse.  Instead, it is
-// left sparse (or whatever format GraphBLAS decides to use).
+// times full, or full times (sparse or bitmap), using the MATLAB rule.  C is
+// not full for hypersparse times full or full times hypersparse.  Instead, it
+// is left sparse (or whatever format GraphBLAS decides to use).
 
 // This method also allows for the inputs A and/or B to be transposed, but
 // this parameter is not passed by MATLAB to the mtimes method.

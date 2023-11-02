@@ -2,7 +2,7 @@
 // GxB_Vector_unpack_CSC: unpack a vector in CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -55,7 +55,7 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
     // ensure the vector is sparse
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_convert_any_to_sparse ((GrB_Matrix) v, Context)) ;
+    GB_OK (GB_convert_any_to_sparse ((GrB_Matrix) v, Werk)) ;
 
     //--------------------------------------------------------------------------
     // unpack the vector
@@ -80,7 +80,7 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
         vx,   vx_size,  // Ax
         nvals, jumbled, NULL,               // jumbled or not
         &sparsity, &is_csc,                 // sparse by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     { 

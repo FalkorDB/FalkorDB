@@ -2,22 +2,24 @@
 // GxB_Global_Option_set: set a global default option for all future matrices
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // GxB_Global_Option_set is a single va_arg-based method for any global option,
-// of any type.  The following functions are alternative methods that do not
-// use va_arg (useful for compilers and interfaces that do not support va_arg):
+// of any type.  The following functions are non-va_arg-based methods
+// (useful for compilers and interfaces that do not support va_arg):
 //
 //  GxB_Global_Option_set_INT32         int32_t scalars
 //  GxB_Global_Option_set_FP64          double scalars
 //  GxB_Global_Option_set_FP64_ARRAY    double arrays
 //  GxB_Global_Option_set_INT64_ARRAY   int64_t arrays
+//  GxB_Global_Option_set_CHAR          strings
 //  GxB_Global_Option_set_FUNCTION      function pointers (as void *)
 
 #include "GB.h"
+#include "GB_jitifyer.h"
 
 //------------------------------------------------------------------------------
 // GxB_Global_Option_set_INT32: set a global option (int32_t)
@@ -52,11 +54,14 @@ GrB_Info GxB_Global_Option_set_INT32      // set a global default option
             GB_Global_is_csc_set (value != (int) GxB_BY_ROW) ; 
             break ;
 
-        case GxB_GLOBAL_NTHREADS :      // same as GxB_NTHREADS
+        case GxB_GLOBAL_NTHREADS :          // same as GxB_NTHREADS
 
-            // if < 1, then treat it as if nthreads_max = 1
-            value = GB_IMAX (1, value) ;
-            GB_Global_nthreads_max_set (value) ;
+            GB_Context_nthreads_max_set (NULL, value) ;
+            break ;
+
+        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
+
+            GB_Context_gpu_id_set (NULL, value) ;
             break ;
 
         case GxB_BURBLE : 
@@ -69,9 +74,14 @@ GrB_Info GxB_Global_Option_set_INT32      // set a global default option
             GB_Global_print_one_based_set ((bool) value) ;
             break ;
 
-        case GxB_GLOBAL_GPU_CONTROL :       // same as GxB_GPU_CONTROL
+        case GxB_JIT_USE_CMAKE : 
 
-            GB_Global_gpu_control_set ((GrB_Desc_Value) value) ;
+            GB_jitifyer_set_use_cmake ((bool) value) ;
+            break ;
+
+        case GxB_JIT_C_CONTROL : 
+
+            GB_jitifyer_set_control ((int) value) ;
             break ;
 
         default : 
@@ -111,14 +121,9 @@ GrB_Info GxB_Global_Option_set_FP64      // set a global default option
             GB_Global_hyper_switch_set ((float) value) ;
             break ;
 
-        case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
+        case GxB_GLOBAL_CHUNK :             // same as GxB_CHUNK
 
-            GB_Global_chunk_set (value) ;
-            break ;
-
-        case GxB_GLOBAL_GPU_CHUNK :         // same as GxB_GPU_CHUNK
-
-            GB_Global_gpu_chunk_set (value) ;
+            GB_Context_chunk_set (NULL, value) ;
             break ;
 
         default : 
@@ -203,15 +208,7 @@ GrB_Info GxB_Global_Option_set_INT64_ARRAY      // set a global default option
 
         case GxB_MEMORY_POOL : 
 
-            if (value == NULL)
-            { 
-                // set all limits to their default
-                GB_Global_free_pool_init (false) ;
-            }
-            else
-            {
-                GB_Global_free_pool_limit_set (value) ;
-            }
+            // nothing to do: no longer used
             break ;
 
         default : 
@@ -220,6 +217,68 @@ GrB_Info GxB_Global_Option_set_INT64_ARRAY      // set a global default option
     }
 
     return (GrB_SUCCESS) ;
+}
+
+//------------------------------------------------------------------------------
+// GxB_Global_Option_set_CHAR: set a global option (string)
+//------------------------------------------------------------------------------
+
+GrB_Info GxB_Global_Option_set_CHAR      // set a global default option
+(
+    GxB_Option_Field field,         // option to change
+    const char *value               // value to change it to
+)
+{
+
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
+
+    GB_WHERE1 ("GxB_Global_Option_set_CHAR (field, value)") ;
+
+    //--------------------------------------------------------------------------
+    // set the global option
+    //--------------------------------------------------------------------------
+
+    switch (field)
+    {
+
+        case GxB_JIT_C_COMPILER_NAME : 
+
+            return (GB_jitifyer_set_C_compiler (value)) ;
+
+        case GxB_JIT_C_COMPILER_FLAGS : 
+
+            return (GB_jitifyer_set_C_flags (value)) ;
+
+        case GxB_JIT_C_LINKER_FLAGS : 
+
+            return (GB_jitifyer_set_C_link_flags (value)) ;
+
+        case GxB_JIT_C_LIBRARIES : 
+
+            return (GB_jitifyer_set_C_libraries (value)) ;
+
+        case GxB_JIT_C_CMAKE_LIBS : 
+
+            return (GB_jitifyer_set_C_cmake_libs (value)) ;
+
+        case GxB_JIT_C_PREFACE : 
+
+            return (GB_jitifyer_set_C_preface (value)) ;
+
+        case GxB_JIT_ERROR_LOG : 
+
+            return (GB_jitifyer_set_error_log (value)) ;
+
+        case GxB_JIT_CACHE_PATH : 
+
+            return (GB_jitifyer_set_cache_path (value)) ;
+
+        default : 
+
+            return (GrB_INVALID_VALUE) ;
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -341,28 +400,36 @@ GrB_Info GxB_Global_Option_set      // set a global default option
             break ;
 
         //----------------------------------------------------------------------
-        // OpenMP control
+        // GxB_CONTEXT_WORLD
         //----------------------------------------------------------------------
 
-        case GxB_GLOBAL_NTHREADS :      // same as GxB_NTHREADS
+        case GxB_GLOBAL_NTHREADS :          // same as GxB_NTHREADS
 
             {
                 va_start (ap, field) ;
-                int nthreads_max_new = va_arg (ap, int) ;
+                int value = va_arg (ap, int) ;
                 va_end (ap) ;
-                // if < 1, then treat it as if nthreads_max = 1
-                nthreads_max_new = GB_IMAX (1, nthreads_max_new) ;
-                GB_Global_nthreads_max_set (nthreads_max_new) ;
+                GB_Context_nthreads_max_set (NULL, value) ;
             }
             break ;
 
-        case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
+        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
 
             {
                 va_start (ap, field) ;
-                double chunk = va_arg (ap, double) ;
+                int value = va_arg (ap, int) ;
                 va_end (ap) ;
-                GB_Global_chunk_set (chunk) ;
+                GB_Context_gpu_id_set (NULL, value) ;
+            }
+            break ;
+
+        case GxB_GLOBAL_CHUNK :             // same as GxB_CHUNK
+
+            {
+                va_start (ap, field) ;
+                double value = va_arg (ap, double) ;
+                va_end (ap) ;
+                GB_Context_chunk_set (NULL, value) ;
             }
             break ;
 
@@ -372,20 +439,7 @@ GrB_Info GxB_Global_Option_set      // set a global default option
 
         case GxB_MEMORY_POOL : 
 
-            {
-                va_start (ap, field) ;
-                int64_t *free_pool_limit = va_arg (ap, int64_t *) ;
-                va_end (ap) ;
-                if (free_pool_limit == NULL)
-                { 
-                    // set all limits to their default
-                    GB_Global_free_pool_init (false) ;
-                }
-                else
-                {
-                    GB_Global_free_pool_limit_set (free_pool_limit) ;
-                }
-            }
+            // nothing to do: no longer used
             break ;
 
         //----------------------------------------------------------------------
@@ -433,28 +487,100 @@ GrB_Info GxB_Global_Option_set      // set a global default option
             break ;
 
         //----------------------------------------------------------------------
-        // CUDA (DRAFT: in progress, do not use)
+        // JIT configuruation
         //----------------------------------------------------------------------
 
-        case GxB_GLOBAL_GPU_CONTROL :       // same as GxB_GPU_CONTROL
+        case GxB_JIT_C_COMPILER_NAME : 
 
             {
                 va_start (ap, field) ;
-                GrB_Desc_Value gpu_control = (GrB_Desc_Value) va_arg (ap, int) ;
+                char *C_compiler = va_arg (ap, char *) ;
                 va_end (ap) ;
-                GB_Global_gpu_control_set (gpu_control) ;
+                return (GB_jitifyer_set_C_compiler (C_compiler)) ;
             }
-            break ;
 
-        case GxB_GLOBAL_GPU_CHUNK :         // same as GxB_GPU_CHUNK
+        case GxB_JIT_C_COMPILER_FLAGS : 
 
             {
                 va_start (ap, field) ;
-                double gpu_chunk = va_arg (ap, double) ;
+                char *C_flags = va_arg (ap, char *) ;
                 va_end (ap) ;
-                GB_Global_gpu_chunk_set (gpu_chunk) ;
+                return (GB_jitifyer_set_C_flags (C_flags)) ;
+            }
+
+        case GxB_JIT_C_LINKER_FLAGS : 
+
+            {
+                va_start (ap, field) ;
+                char *C_link = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_C_link_flags (C_link)) ;
+            }
+
+        case GxB_JIT_C_LIBRARIES : 
+
+            {
+                va_start (ap, field) ;
+                char *C_libraries = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_C_libraries (C_libraries)) ;
+            }
+
+        case GxB_JIT_C_CMAKE_LIBS : 
+
+            {
+                va_start (ap, field) ;
+                char *C_libraries = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_C_cmake_libs (C_libraries)) ;
+            }
+
+        case GxB_JIT_C_PREFACE : 
+
+            {
+                va_start (ap, field) ;
+                char *C_preface = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_C_preface (C_preface)) ;
+            }
+
+        case GxB_JIT_USE_CMAKE : 
+
+            {
+                va_start (ap, field) ;
+                int value = va_arg (ap, int) ;
+                va_end (ap) ;
+                GB_jitifyer_set_use_cmake ((bool) value) ;
             }
             break ;
+
+        case GxB_JIT_C_CONTROL : 
+
+            {
+                va_start (ap, field) ;
+                int value = va_arg (ap, int) ;
+                va_end (ap) ;
+                GB_jitifyer_set_control (value) ;
+            }
+            break ;
+
+        case GxB_JIT_ERROR_LOG : 
+
+            {
+                va_start (ap, field) ;
+                char *error_log = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_error_log (error_log)) ;
+            }
+
+        case GxB_JIT_CACHE_PATH : 
+
+            {
+                va_start (ap, field) ;
+                char *cache_path = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_cache_path (cache_path)) ;
+            }
 
         default : 
 

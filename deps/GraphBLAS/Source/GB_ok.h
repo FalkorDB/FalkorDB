@@ -2,7 +2,7 @@
 // GB_ok.h: macros for checking inputs and returning if an error occurs
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -76,15 +76,14 @@
     if (Mask_comp && (M == NULL || (GB_IS_FULL (M) && Mask_struct)))        \
     {                                                                       \
         /* C<!NULL>=NULL since result does not depend on computing Z */     \
-        return (C_replace ? GB_clear (C, Context) : GrB_SUCCESS) ;          \
+        return (C_replace ? GB_clear (C, Werk) : GrB_SUCCESS) ;          \
     }
 
 //------------------------------------------------------------------------------
 // GB_GET_DESCRIPTOR*: get the contents of a descriptor
 //------------------------------------------------------------------------------
 
-// check the descriptor and extract its contents; also copies
-// nthreads_max and chunk from the descriptor to the Context
+// check the descriptor and extract its contents
 #define GB_GET_DESCRIPTOR(info,desc,dout,dmc,dms,d0,d1,dalgo,dsort)          \
     GrB_Info info ;                                                          \
     bool dout, dmc, dms, d0, d1 ;                                            \
@@ -92,7 +91,7 @@
     GrB_Desc_Value dalgo ;                                                   \
     /* if desc is NULL then defaults are used.  This is OK */                \
     info = GB_Descriptor_get (desc, &dout, &dmc, &dms, &d0, &d1, &dalgo,     \
-        &dsort, Context) ;                                                   \
+        &dsort) ;                                                            \
     if (info != GrB_SUCCESS)                                                 \
     {                                                                        \
         /* desc not NULL, but uninitialized or an invalid object */          \

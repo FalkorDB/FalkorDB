@@ -1,7 +1,7 @@
 function test247
-%TEST247: test saxpy3 fine-hash method
+%TEST247 test saxpy3 fine-hash method
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -20,9 +20,9 @@ semiring.class = 'double' ;
 
 desc.axb = 'hash' ;
 nthreads_set (16, 1) ;
-GrB.burble (1) ;
+GB_mex_burble (1) ;
 C1 = GB_mex_mxm (S, [ ], [ ], semiring, A, B, desc) ;
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 
 C2 = A.matrix * B.matrix ;
 err = norm (C1.matrix - C2, 1) ;
@@ -32,4 +32,5 @@ assert (err < 1e-12) ;
 nthreads_set (nth, chk) ;
 
 fprintf ('\ntest247: all tests passed\n') ;
+
 

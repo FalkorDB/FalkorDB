@@ -2,7 +2,7 @@
 // GxB_Vector_eWiseUnion: vector element-wise operations, set union
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,7 +44,7 @@
         (GrB_Matrix) v, false,      /* v, never transposed         */       \
         true,                       /* eWiseAdd                    */       \
         true, alpha, beta,          /* eWiseUnion                  */       \
-        Context)
+        Werk)
 
 //------------------------------------------------------------------------------
 // GxB_Vector_eWiseUnion: vector addition

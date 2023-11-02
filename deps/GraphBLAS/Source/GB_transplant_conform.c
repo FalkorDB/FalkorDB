@@ -2,7 +2,7 @@
 // GB_transplant_conform: transplant T into C, then conform C
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,7 +19,7 @@ GrB_Info GB_transplant_conform      // transplant and conform sparsity structure
     GrB_Matrix C,                   // destination matrix to transplant into
     GrB_Type ctype,                 // type to cast into
     GrB_Matrix *Thandle,            // source matrix
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -39,7 +39,7 @@ GrB_Info GB_transplant_conform      // transplant and conform sparsity structure
     // transplant and typecast T into C, and free T
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GB_transplant (C, ctype, Thandle, Context) ;
+    GrB_Info info = GB_transplant (C, ctype, Thandle, Werk) ;
 
     // T is always freed, even if the transplant runs out of memory
     ASSERT (*Thandle == NULL ||
@@ -57,7 +57,7 @@ GrB_Info GB_transplant_conform      // transplant and conform sparsity structure
     // conform C to its desired sparsity structure
     //--------------------------------------------------------------------------
 
-    info = GB_conform (C, Context) ;
+    info = GB_conform (C, Werk) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory

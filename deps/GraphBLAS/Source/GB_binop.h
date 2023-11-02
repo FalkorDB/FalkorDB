@@ -2,7 +2,7 @@
 // GB_binop.h: definitions for binary operators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,6 @@ GrB_BinaryOp GB_flip_binop  // flip a binary operator
 (
     // input:
     GrB_BinaryOp op,        // binary operator to flip
-    bool for_ewise,         // if true: flip for eWise, else for semiring
     // input/output:
     bool *flipxy            // true on input, set to false if op is flipped
 ) ;
@@ -77,6 +76,12 @@ void GB_binop_pattern
     const bool flipxy,      // if true,  z = op (b,a) will be computed
                             // if false, z = op (a,b) will be computed
     const GB_Opcode opcode  // opcode of binary op
+) ;
+
+GrB_BinaryOp GB_binop_second    // return SECOND operator, or NULL on error
+(
+    GrB_Type type,              // operator type
+    GrB_BinaryOp op             // header for SECOND_UDT operator
 ) ;
 
 #endif

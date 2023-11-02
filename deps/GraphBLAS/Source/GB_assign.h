@@ -2,7 +2,7 @@
 // GB_assign.h: definitions for GB_assign and related functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand
     int assign_kind,                // row, col, or matrix/vector assign
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_assign_scalar           // C<M>(Rows,Cols) += x
@@ -45,7 +45,7 @@ GrB_Info GB_assign_scalar           // C<M>(Rows,Cols) += x
     const GrB_Index *Cols,          // column indices
     const GrB_Index nCols,          // number of column indices
     const GrB_Descriptor desc,      // descriptor for C and M
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

@@ -2,7 +2,7 @@
 // GxB_Matrix_pack_CSR: pack a matrix in CSR format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -49,7 +49,7 @@ GrB_Info GxB_Matrix_pack_CSR      // pack a CSR matrix
         Ax,   Ax_size,  // Ax
         0, jumbled, 0,                      // jumbled or not
         GxB_SPARSE, false,                  // sparse by row
-        iso, fast_import, true, Context) ;
+        iso, fast_import, true, Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

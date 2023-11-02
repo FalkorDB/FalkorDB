@@ -2,10 +2,12 @@
 // GB_deserialize_from_blob: uncompress a set of blocks from the blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Decompress a single array from a set of compressed blocks in the blob.  If
 // the input data is mangled, this method is still safe, since it performs the
@@ -36,8 +38,7 @@ GrB_Info GB_deserialize_from_blob
     int32_t nblocks,            // # of compressed blocks for this array
     int32_t method,             // compression method used for each block
     // input/output:
-    size_t *s_handle,           // where to read from the blob
-    GB_Context Context
+    size_t *s_handle            // where to read from the blob
 )
 {
 
@@ -76,7 +77,7 @@ GrB_Info GB_deserialize_from_blob
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
 
     //--------------------------------------------------------------------------
     // decompress the blocks from the blob
@@ -93,7 +94,7 @@ GrB_Info GB_deserialize_from_blob
         //----------------------------------------------------------------------
 
         if (nblocks > 1 || Sblocks [0] != X_len || s + X_len > blob_size)
-        {
+        { 
             // blob is invalid: guard against an unsafe memcpy
             ok = false ;
         }
@@ -105,8 +106,7 @@ GrB_Info GB_deserialize_from_blob
         }
 
     }
-    else if (algo == GxB_COMPRESSION_LZ4 || algo == GxB_COMPRESSION_LZ4HC
-        || algo == GxB_COMPRESSION_ZSTD)
+    else
     {
 
         //----------------------------------------------------------------------
@@ -132,7 +132,7 @@ GrB_Info GB_deserialize_from_blob
                 kstart >= kend || s_start >= s_end || s_size > INT32_MAX ||
                 s + s_start > blob_size || s + s_end > blob_size ||
                 kstart > X_len || kend > X_len || d_size > INT32_MAX)
-            {
+            { 
                 // blob is invalid
                 ok = false ;
             }
@@ -170,14 +170,9 @@ GrB_Info GB_deserialize_from_blob
             }
         }
     }
-    else
-    {
-        // unknown compression method
-        ok = false ;
-    }
 
     if (!ok)
-    {
+    { 
         // decompression failure; blob is invalid
         GB_FREE_ALL ;
         return (GrB_INVALID_OBJECT) ;
@@ -190,7 +185,7 @@ GrB_Info GB_deserialize_from_blob
     (*X_handle) = X ;
     (*X_size_handle) = X_size ;
     if (nblocks > 0)
-    {
+    { 
         s += Sblocks [nblocks-1] ;
     }
     (*s_handle) = s ;

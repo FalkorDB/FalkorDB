@@ -2,7 +2,7 @@
 // GB_Descriptor_check: check and print a Descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -135,29 +135,6 @@ GrB_Info GB_Descriptor_check    // check a GraphBLAS descriptor
             GBPR0 ("    Descriptor field set to an invalid value\n") ;
             return (GrB_INVALID_OBJECT) ;
         }
-    }
-
-    int nthreads_max = D->nthreads_max ;
-    double chunk = D->chunk ;
-
-    GBPR0 ("    d.nthreads = ") ;
-    if (nthreads_max <= GxB_DEFAULT)
-    { 
-        GBPR0 ("default\n") ;
-    }
-    else
-    { 
-        GBPR0 ("%d\n", nthreads_max) ;
-    }
-
-    GBPR0 ("    d.chunk    = ") ;
-    if (chunk <= GxB_DEFAULT)
-    { 
-        GBPR0 ("default\n") ;
-    }
-    else
-    { 
-        GBPR0 ("%g\n", chunk) ;
     }
 
     if (D->do_sort)

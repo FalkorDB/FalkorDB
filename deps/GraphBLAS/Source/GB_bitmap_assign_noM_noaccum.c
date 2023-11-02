@@ -2,7 +2,7 @@
 // GB_bitmap_assign_noM_noaccum:  assign to C bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -34,8 +34,12 @@
 // for GB_ASSIGN, C<!,replace>(I,J)=anything clears all of C, regardless of
 // I and J.  In that case, GB_assign_prep calls GB_clear instead.
 
-#include "GB_bitmap_assign_methods.h"
+// JIT: needed.
 
+#include "GB_bitmap_assign_methods.h"
+#include "GB_assign_shared_definitions.h"
+
+#undef  GB_FREE_ALL
 #define GB_FREE_ALL ;
 
 GrB_Info GB_bitmap_assign_noM_noaccum
@@ -60,7 +64,7 @@ GrB_Info GB_bitmap_assign_noM_noaccum
     const void *scalar,         // input scalar
     const GrB_Type scalar_type, // type of input scalar
     const int assign_kind,      // row assign, col assign, assign, or subassign
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -124,13 +128,13 @@ GrB_Info GB_bitmap_assign_noM_noaccum
 
             // for all IxJ
             #undef  GB_IXJ_WORK
-            #define GB_IXJ_WORK(pC,ignore)          \
-            {                                       \
-                int8_t cb = Cb [pC] ;               \
-                /* Cx [pC] = scalar */              \
-                GB_ASSIGN_SCALAR (pC) ;             \
-                Cb [pC] = 1 ;                       \
-                task_cnvals += (cb == 0) ;          \
+            #define GB_IXJ_WORK(pC,ignore)              \
+            {                                           \
+                int8_t cb = Cb [pC] ;                   \
+                /* Cx [pC] = scalar */                  \
+                GB_COPY_scalar_to_C (Cx, pC, cwork) ;   \
+                Cb [pC] = 1 ;                           \
+                task_cnvals += (cb == 0) ;              \
             }
             #include "GB_bitmap_assign_IxJ_template.c"
 
@@ -159,12 +163,12 @@ GrB_Info GB_bitmap_assign_noM_noaccum
             //      Cx(p) = aij     // C(iC,jC) inserted or updated
             //      Cb(p) = 1
 
-            #define GB_AIJ_WORK(pC,pA)              \
-            {                                       \
-                int8_t cb = Cb [pC] ;               \
-                /* Cx [pC] = Ax [pA] */             \
-                GB_ASSIGN_AIJ (pC, pA) ;            \
-                Cb [pC] = 1 ;                       \
+            #define GB_AIJ_WORK(pC,pA)                              \
+            {                                                       \
+                int8_t cb = Cb [pC] ;                               \
+                /* Cx [pC] = Ax [pA] */                             \
+                GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork) ;   \
+                Cb [pC] = 1 ;                                       \
             }
             #include "GB_bitmap_assign_A_template.c"
 

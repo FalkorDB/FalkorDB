@@ -2,7 +2,7 @@
 // GrB_Matrix_exportHint: determine sizes of arrays for GrB_Matrix_export
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,7 +22,7 @@ GrB_Info GrB_Matrix_exportHint  // suggest the best export format
     //--------------------------------------------------------------------------
 
     GB_WHERE1 ("GrB_Matrix_exportHint (&format, A)") ;
-    GB_BURBLE_START ("GrB_Matrix_exportHint") ;
+    // GB_BURBLE_START ("GrB_Matrix_exportHint") ;
     GB_RETURN_IF_NULL (format) ;
     GB_RETURN_IF_NULL_OR_FAULTY (A) ;
 
@@ -63,7 +63,7 @@ GrB_Info GrB_Matrix_exportHint  // suggest the best export format
             break ;
     }
 
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     #pragma omp flush
     return (GrB_SUCCESS) ;
 }

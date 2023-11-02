@@ -1,0 +1,17 @@
+# GraphBLAS_CUDA, Copyright (c) 2017-2023, Timothy A. Davis.
+# All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+# FIXME: Which flags do we need to statically link CUDA?
+
+Name: GraphBLAS_CUDA
+URL: https://github.com/DrTimothyAldenDavis/SuiteSparse
+Description: CUDA support library for GraphBLAS in SuiteSparse
+Version: @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@
+Libs: -L${libdir} -lgraphblascuda
+Cflags: -I${includedir} -DSUITESPARSE_CUDA
