@@ -1739,7 +1739,14 @@ static VISITOR_STRATEGY _Validate_UNWIND_Clause
 	// introduce alias to bound vars
 	const cypher_astnode_t *alias = cypher_ast_unwind_get_alias(n);
 	const char *identifier = cypher_ast_identifier_get_name(alias);
-	_IdentifierAdd(vctx, identifier, NULL);
+
+	// fail if UNWIND identifier is already defined
+	// e.g. MATCH (n) UNWIND [0,1] AS n RETURN n
+	if(_IdentifierAdd(vctx, identifier, NULL) == 0) {
+		ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, identifier);
+		return VISITOR_BREAK;
+	}
+
 	return VISITOR_RECURSE;
 }
 
