@@ -1514,6 +1514,42 @@ static VISITOR_STRATEGY _Validate_DELETE_Clause
 	return VISITOR_RECURSE;
 }
 
+static VISITOR_STRATEGY _Validate_REMOVE_Clause
+(
+	const cypher_astnode_t *n,  // ast-node
+	bool start,                 // first traversal
+	ast_visitor *visitor        // visitor
+) {
+	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+
+	if(!start) {
+		return VISITOR_CONTINUE;
+	}
+
+	vctx->clause = cypher_astnode_type(n);
+
+	// make sure each attribute removal is of the form:
+	// identifier . propery
+	unsigned int l = cypher_ast_remove_nitems(n);
+	for(unsigned int i = 0; i < l; i++) {
+		const cypher_astnode_t *item = cypher_ast_remove_get_item(n, i);
+		cypher_astnode_type_t t = cypher_astnode_type(item);
+		if(t == CYPHER_AST_REMOVE_PROPERTY) {
+			const cypher_astnode_t *prop =
+				cypher_ast_remove_property_get_property(item);
+			const cypher_astnode_t *exp =
+				cypher_ast_property_operator_get_expression(prop);
+
+			if(cypher_astnode_type(exp) != CYPHER_AST_IDENTIFIER) {
+				ErrorCtx_SetError(EMSG_REMOVE_INVALID_INPUT);
+				return VISITOR_BREAK;
+			}
+		}
+	}
+
+	return VISITOR_RECURSE;
+}
+
 // checks if a set property contains non-aliased references in its lhs
 static VISITOR_STRATEGY _Validate_set_property
 (
@@ -2214,6 +2250,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_UNWIND]                     = _Validate_UNWIND_Clause;
 	validations_mapping[CYPHER_AST_CREATE]                     = _Validate_CREATE_Clause;
 	validations_mapping[CYPHER_AST_DELETE]                     = _Validate_DELETE_Clause;
+	validations_mapping[CYPHER_AST_REMOVE]                     = _Validate_REMOVE_Clause;
 	validations_mapping[CYPHER_AST_REDUCE]                     = _Validate_reduce;
 	validations_mapping[CYPHER_AST_FOREACH]                    = _Validate_FOREACH_Clause;
 	validations_mapping[CYPHER_AST_IDENTIFIER]                 = _Validate_identifier;
