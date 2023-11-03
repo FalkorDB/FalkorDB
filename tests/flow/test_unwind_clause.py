@@ -111,3 +111,12 @@ class testUnwindClause():
             except Exception as e:
                 self.env.assertTrue("Variable `i` already declared" in str(e))
 
+    def test05_access_undefined_var(self):
+        query = "UNWIND [0, i, 1] AS i RETURN i"
+        try:
+            redis_graph.query(query)
+            # should not reach this point
+            self.env.assertTrue(False)
+        except Exception as e:
+            self.env.assertTrue("'i' not defined" in str(e))
+
