@@ -1734,13 +1734,32 @@ static VISITOR_STRATEGY _Validate_UNWIND_Clause
 		return VISITOR_CONTINUE;
 	}
 
+	// set current clause
 	vctx->clause = cypher_astnode_type(n);
 
-	// introduce alias to bound vars
+	//--------------------------------------------------------------------------
+	// validate unwind collection
+	//--------------------------------------------------------------------------
+
+	const cypher_astnode_t *collection = cypher_ast_unwind_get_expression(n);
+
+	AST_Visitor_visit(collection, visitor);
+	if(ErrorCtx_EncounteredError()) {
+		return VISITOR_BREAK;
+	}
+
+	// introduce UNWIND alias to scope
+	// fail if alias is already defined
+	// e.g. MATCH (n) UNWIND [0,1] AS n RETURN n
 	const cypher_astnode_t *alias = cypher_ast_unwind_get_alias(n);
 	const char *identifier = cypher_ast_identifier_get_name(alias);
-	_IdentifierAdd(vctx, identifier, NULL);
-	return VISITOR_RECURSE;
+
+	if(_IdentifierAdd(vctx, identifier, NULL) == 0) {
+		ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, identifier);
+		return VISITOR_BREAK;
+	}
+
+	return VISITOR_CONTINUE;
 }
 
 // validate a FOREACH clause
