@@ -233,7 +233,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 
 [redgraph-author]: https://github.com/pzac
 [redgraph-url]: https://github.com/pzac/redgraph
-[redgraph-stars]: https://img.shields.io/github/stars/pzac/redgraph-rb.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[redgraph-stars]: https://img.shields.io/github/stars/pzac/redgraph.svg?style=social&amp;label=Star&amp;maxAge=2592000
 
 [redisgraph-go-author]: https://redislabs.com
 [redisgraph-go-url]: https://github.com/RedisGraph/redisgraph-go
