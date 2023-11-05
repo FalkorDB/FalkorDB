@@ -37,7 +37,7 @@ define CMAKE_DEFS +=
 	NSTATIC=off
 	BUILD_TESTING=off
 	CMAKE_POSITION_INDEPENDENT_CODE=on
-  NJIT=1
+	NJIT=1
 endef
 
 #----------------------------------------------------------------------------------------------
