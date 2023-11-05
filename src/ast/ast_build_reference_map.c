@@ -304,10 +304,10 @@ static void _AST_MapRemoveClauseReferences
 
 	uint nitems = cypher_ast_remove_nitems(remove_clause);
 	for(uint i = 0; i < nitems; i++) {
-		// get the SET directive at this index
-		const cypher_astnode_t *set_item =
+		// get the REMOVE directive at this index
+		const cypher_astnode_t *remove_item =
 			cypher_ast_remove_get_item(remove_clause, i);
-		_AST_MapRemoveItemReferences(ast, set_item);
+		_AST_MapRemoveItemReferences(ast, remove_item);
 	}
 }
 

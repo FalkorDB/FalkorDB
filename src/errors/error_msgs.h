@@ -122,4 +122,5 @@
 #define EMSG_INDEX_FIELD_ALREADY_EXISTS "Attribute '%s' is already indexed"
 #define EMSG_VECTOR_INDEX_INVALID_CONFIG "Invalid vector index configuration"
 #define EMSG_INDEX_CANT_RECONFIG "Can not override index configuration"
+#define EMSG_REMOVE_INVALID_INPUT "REMOVE operates on either a node, relationship or a map"
 
