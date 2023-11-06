@@ -526,6 +526,17 @@ class testEntityUpdate():
             except ResponseError as e:
                 self.env.assertContains("Update error: alias 'x' did not resolve to a graph entity", str(e))
 
+        queries = ["REMOVE NULL.v",
+                   "REMOVE 1.v",
+                   "REMOVE 'a'.v",
+                   "REMOVE f(1).v"]
+        for q in queries:
+            try:
+                graph.query(q)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("REMOVE operates on either a node, relationship or a map", str(e))
+
     def test_36_mix_add_and_remove_node_properties(self):
         graph.delete()
         graph.query("CREATE ({v:1})")

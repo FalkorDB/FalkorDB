@@ -1514,6 +1514,42 @@ static VISITOR_STRATEGY _Validate_DELETE_Clause
 	return VISITOR_RECURSE;
 }
 
+static VISITOR_STRATEGY _Validate_REMOVE_Clause
+(
+	const cypher_astnode_t *n,  // ast-node
+	bool start,                 // first traversal
+	ast_visitor *visitor        // visitor
+) {
+	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+
+	if(!start) {
+		return VISITOR_CONTINUE;
+	}
+
+	vctx->clause = cypher_astnode_type(n);
+
+	// make sure each attribute removal is of the form:
+	// identifier . propery
+	unsigned int l = cypher_ast_remove_nitems(n);
+	for(unsigned int i = 0; i < l; i++) {
+		const cypher_astnode_t *item = cypher_ast_remove_get_item(n, i);
+		cypher_astnode_type_t t = cypher_astnode_type(item);
+		if(t == CYPHER_AST_REMOVE_PROPERTY) {
+			const cypher_astnode_t *prop =
+				cypher_ast_remove_property_get_property(item);
+			const cypher_astnode_t *exp =
+				cypher_ast_property_operator_get_expression(prop);
+
+			if(cypher_astnode_type(exp) != CYPHER_AST_IDENTIFIER) {
+				ErrorCtx_SetError(EMSG_REMOVE_INVALID_INPUT);
+				return VISITOR_BREAK;
+			}
+		}
+	}
+
+	return VISITOR_RECURSE;
+}
+
 // checks if a set property contains non-aliased references in its lhs
 static VISITOR_STRATEGY _Validate_set_property
 (
@@ -1734,13 +1770,32 @@ static VISITOR_STRATEGY _Validate_UNWIND_Clause
 		return VISITOR_CONTINUE;
 	}
 
+	// set current clause
 	vctx->clause = cypher_astnode_type(n);
 
-	// introduce alias to bound vars
+	//--------------------------------------------------------------------------
+	// validate unwind collection
+	//--------------------------------------------------------------------------
+
+	const cypher_astnode_t *collection = cypher_ast_unwind_get_expression(n);
+
+	AST_Visitor_visit(collection, visitor);
+	if(ErrorCtx_EncounteredError()) {
+		return VISITOR_BREAK;
+	}
+
+	// introduce UNWIND alias to scope
+	// fail if alias is already defined
+	// e.g. MATCH (n) UNWIND [0,1] AS n RETURN n
 	const cypher_astnode_t *alias = cypher_ast_unwind_get_alias(n);
 	const char *identifier = cypher_ast_identifier_get_name(alias);
-	_IdentifierAdd(vctx, identifier, NULL);
-	return VISITOR_RECURSE;
+
+	if(_IdentifierAdd(vctx, identifier, NULL) == 0) {
+		ErrorCtx_SetError(EMSG_VAIABLE_ALREADY_DECLARED, identifier);
+		return VISITOR_BREAK;
+	}
+
+	return VISITOR_CONTINUE;
 }
 
 // validate a FOREACH clause
@@ -2195,6 +2250,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_UNWIND]                     = _Validate_UNWIND_Clause;
 	validations_mapping[CYPHER_AST_CREATE]                     = _Validate_CREATE_Clause;
 	validations_mapping[CYPHER_AST_DELETE]                     = _Validate_DELETE_Clause;
+	validations_mapping[CYPHER_AST_REMOVE]                     = _Validate_REMOVE_Clause;
 	validations_mapping[CYPHER_AST_REDUCE]                     = _Validate_reduce;
 	validations_mapping[CYPHER_AST_FOREACH]                    = _Validate_FOREACH_Clause;
 	validations_mapping[CYPHER_AST_IDENTIFIER]                 = _Validate_identifier;

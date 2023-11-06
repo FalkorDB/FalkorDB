@@ -91,10 +91,47 @@ class testUnwindClause():
         expected = [[None], [1], [2]]
         self.env.assertEqual(actual_result.result_set, expected)
 
-    def test02_unwind_set(self):
+    def test03_unwind_heap_allocated_value(self):
+        # make sure access to unwinded heap allocated values is safe
+        # the second UNWIND will free its internal list every time it pulls
+        # from the former UNWIND list, once freed we want to make sure access
+        # to its former elements is still valid
+        query = """UNWIND [1, 2, 3] AS i
+                   UNWIND [[tostring(i), tostring(i+1)]] AS j
+                   MERGE (n:N {v:j})
+                   RETURN n.v
+                   ORDER BY n.v"""
+        res = redis_graph.query(query)
+        self.env.assertEqual(res.nodes_created, 3)
+        expected_result = [[['1','2']], [['2','3']], [['3','4']]]
+        self.env.assertEqual(res.result_set, expected_result)
+
+    def test04_unwind_set(self):
         # delete property
         query = """CREATE (n:N {x:3})"""
         actual_result = redis_graph.query(query)
         query = """UNWIND ({x:null}) AS q MATCH (n:N) SET n.x= q.x RETURN n"""
         actual_result = redis_graph.query(query)
         self.env.assertEqual(actual_result.properties_removed, 1)
+
+    def test05_overwrite_var(self):
+        queries = ["UNWIND [0, 1] AS i UNWIND [2, 3] AS i RETURN i",
+                   "MATCH (i) UNWIND [0, 1] as i RETURN i"]
+
+        for q in queries:
+            try:
+                redis_graph.query(q)
+                # should not reach this point
+                self.env.assertTrue(False)
+            except Exception as e:
+                self.env.assertTrue("Variable `i` already declared" in str(e))
+
+    def test06_access_undefined_var(self):
+        query = "UNWIND [0, i, 1] AS i RETURN i"
+        try:
+            redis_graph.query(query)
+            # should not reach this point
+            self.env.assertTrue(False)
+        except Exception as e:
+            self.env.assertTrue("'i' not defined" in str(e))
+
