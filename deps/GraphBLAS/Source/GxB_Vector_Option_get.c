@@ -2,7 +2,7 @@
 // GxB_Vector_Option_get: get an option in a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,8 +12,8 @@
 //------------------------------------------------------------------------------
 
 // GxB_Vector_Option_get is a single va_arg-based method for any vector option,
-// of any type.  The following functions are alternative methods that do not
-// use va_arg (useful for compilers and interfaces that do not support va_arg):
+// of any type.  The following functions are non-va_arg-based methods
+// (useful for compilers and interfaces that do not support va_arg):
 //
 //  GxB_Vector_Option_get_INT32         int32_t scalars
 //  GxB_Vector_Option_get_FP64          double scalars

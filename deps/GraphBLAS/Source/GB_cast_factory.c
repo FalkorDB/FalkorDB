@@ -2,7 +2,7 @@
 // GB_cast_factory: return a pointer to a typecasting function
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,7 +38,8 @@ GB_cast_function GB_cast_factory   // returns pointer to function to cast x to z
 
     // switch factory for two built-in types; user types are skipped.
     // no generic worker so the switch factory cannot be disabled.
-    #include "GB_2type_factory.c"
+    // no JIT kernel.
+    #include "GB_twotype_factory.c"
 
     //--------------------------------------------------------------------------
     // user-defined types fall through the switch factory to here

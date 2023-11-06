@@ -1,7 +1,7 @@
 function test18(fulltest)
 %TEST18 test GrB_eWiseAdd, GxB_eWiseUnion, and GrB_eWiseMult
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [binops, ~, ~, types, ~, ~] = GB_spec_opsall ;
@@ -98,8 +98,7 @@ for k1 = k1test % 1:length (types)
                 vvec = sparse (scale * sprandn (m,1, 0.2)) ;
 
                 % these tests do not convert real A and B into complex C for C
-                % = A.^B.  GrB.power handles that case.  So ensure the test
-                % matrices are all positive.
+                % = A.^B.  So ensure the test matrices are all positive.
                 if (isequal (binop, 'pow'))
                     Amat = abs (Amat) ;
                     Bmat = abs (Bmat) ;

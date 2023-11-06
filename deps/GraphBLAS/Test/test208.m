@@ -1,12 +1,12 @@
 function test208
 %TEST208 test iso apply, bind 1st and 2nd
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
-% GrB.burble (1) ;
+% GB_mex_burble (1) ;
 n = 100 ;
 A.matrix = spones (sprand (n, n, 0.5)) ;
 A.iso = true ;
@@ -43,6 +43,6 @@ C1 = GB_mex_apply2 (C, [ ], [ ], op_single, 0, A, x, [ ]) ;
 C2 = GB_spec_Matrix_eWiseMult (C, [ ], [ ], op_single, A, X, [ ]) ;
 GB_spec_compare (C1, C2, 0, tol) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest208: all tests passed\n') ;
 

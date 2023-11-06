@@ -1,13 +1,14 @@
 function grbshow
 %GBSHOW create a test coverage report in tmp_cover/
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (ispc)
     error ('The tests in Tcov are not ported to Windows') ;
 end
 
+GB_mex_finalize ;
 infiles = [ dir('tmp_source/*.*') ; dir('tmp_include/*.*') ] ;
 
 nfiles = length (infiles) ;

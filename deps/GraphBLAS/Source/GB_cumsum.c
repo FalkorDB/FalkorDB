@@ -2,10 +2,12 @@
 // GB_cumsum: cumlative sum of an array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Compute the cumulative sum of an array count[0:n], of size n+1:
 
@@ -24,7 +26,7 @@ void GB_cumsum                      // cumulative sum of an array
     const int64_t n,
     int64_t *restrict kresult,   // return k, if needed by the caller
     int nthreads,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 

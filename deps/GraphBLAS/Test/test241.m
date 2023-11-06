@@ -1,7 +1,7 @@
 function test241
 %TEST241 test GrB_mxm: swap_rule
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test241 -------- GrB_mxm swap_rule\n') ;
@@ -53,6 +53,6 @@ C1 = GB_mex_mxm  (C_csr, [ ], [ ], semiring, A_csr, B_csc, [ ]) ;
 C2 = A_csr.matrix * B_csc.matrix ;
 GB_spec_compare (C1, C2, 0, 1e-12) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest241: all tests passed\n') ;
 

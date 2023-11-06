@@ -2,7 +2,7 @@
 // GrB_mxm: matrix-matrix multiply
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -60,7 +60,7 @@ GrB_Info GrB_mxm                    // C<M> = accum (C, A*B)
         B,          B_transpose,    // B matrix and its descriptor
         false,                      // use fmult(x,y), flipxy = false
         AxB_method, do_sort,        // algorithm selector
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

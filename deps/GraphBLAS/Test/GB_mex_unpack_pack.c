@@ -2,7 +2,7 @@
 // GB_mex_unpack_pack: unpack and then pack a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -71,7 +71,6 @@ GrB_Matrix Y = NULL ;
 GrB_Index *Cp = NULL, *Ch = NULL, *Ci = NULL ;
 void *Cx = NULL ;
 int8_t *Cb = NULL ;
-GB_Context Context = NULL ;
 GrB_Index nvec = 0, nvals = 0 ;
 
 GrB_Index Cp_size = 0 ;

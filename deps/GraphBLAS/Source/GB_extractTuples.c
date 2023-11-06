@@ -2,10 +2,12 @@
 // GB_extractTuples: extract all the tuples from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Extracts all tuples from a matrix, like [I,J,X] = find (A).  If any
 // parameter I, J and/or X is NULL, then that component is not extracted.  The
@@ -16,12 +18,13 @@
 // This function does the work for the user-callable GrB_*_extractTuples
 // functions, and helps build the tuples for GB_concat_hyper.
 
-// Tf A is iso and X is not NULL, the iso scalar Ax [0] is expanded into X.
+// If A is iso and X is not NULL, the iso scalar Ax [0] is expanded into X.
 
 #include "GB.h"
 
 #define GB_FREE_ALL                             \
 {                                               \
+    GB_Matrix_free (&T) ;                       \
     GB_FREE_WORK (&Ap, Ap_size) ;               \
     GB_FREE_WORK (&X_bitmap, X_bitmap_size) ;   \
 }
@@ -34,7 +37,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     GrB_Index *p_nvals,         // I,J,X size on input; # tuples on output
     const GB_Type_code xcode,   // type of array X
     const GrB_Matrix A,         // matrix to extract tuples from
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -43,6 +46,8 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
+    struct GB_Matrix_opaque T_header ;
+    GrB_Matrix T = NULL ;
     GB_void *restrict X_bitmap = NULL ; size_t X_bitmap_size = 0 ;
     int64_t *restrict Ap       = NULL ; size_t Ap_size = 0 ;
 
@@ -83,7 +88,8 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     // determine the number of threads to use
     //-------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (anz + A->nvec, chunk, nthreads_max) ;
 
     //-------------------------------------------------------------------------
@@ -139,7 +145,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
         // into its result, X or X_bitmap
 
         GB_OK (GB_convert_bitmap_worker (Ap, (int64_t *) I, (int64_t *) J,
-            (GB_void *) (need_typecast ? X_bitmap : X), NULL, A, Context)) ;
+            (GB_void *) (need_typecast ? X_bitmap : X), NULL, A, Werk)) ;
 
         //----------------------------------------------------------------------
         // typecast X if needed
@@ -147,11 +153,21 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
 
         if (need_typecast)
         { 
-            // typecast the values from X_bitmap into X
+            // typecast the values from X_bitmap into X, using a temporary
+            // full anz-by-1 matrix T
             ASSERT (X != NULL) ;
             ASSERT (xcode != acode) ;
-            GB_cast_array ((GB_void *) X, xcode, X_bitmap, acode, NULL, anz,
-                nthreads) ;
+            GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+            GB_OK (GB_new (&T, // full, existing header
+                A->type, anz, 1, GB_Ap_null, true, GxB_FULL, 0, 0)) ;
+            T->x = X_bitmap ;
+            T->x_shallow = true ;
+            T->magic = GB_MAGIC ;
+            T->plen = -1 ;
+            T->nvec = 1 ;
+            ASSERT_MATRIX_OK (T, "T to cast_array", GB0) ;
+            GB_OK (GB_cast_array ((GB_void *) X, xcode, T, nthreads)) ;
+            GB_Matrix_free (&T) ;
         }
 
     }
@@ -191,7 +207,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
 
         if (J != NULL)
         {
-            GB_OK (GB_extract_vector_list ((int64_t *) J, A, Context)) ;
+            GB_OK (GB_extract_vector_list ((int64_t *) J, A, Werk)) ;
         }
 
         //----------------------------------------------------------------------
@@ -206,7 +222,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
                 size_t xsize = GB_code_size (xcode, asize) ;
                 GB_void scalar [GB_VLA(xsize)] ;
                 GB_cast_scalar (scalar, xcode, A->x, acode, asize) ;
-                GB_iso_expand (X, anz, scalar, xsize, Context) ;
+                GB_expand_iso (X, anz, scalar, xsize) ;
             }
             else if (xcode == acode)
             { 
@@ -217,8 +233,8 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
             { 
                 // typecast the values from A into X
                 ASSERT (X != NULL) ;
-                GB_cast_array ((GB_void *) X, xcode, (GB_void *) A->x, acode,
-                    NULL, anz, nthreads) ;
+                ASSERT_MATRIX_OK (A, "A to cast_array", GB0) ;
+                GB_OK (GB_cast_array ((GB_void *) X, xcode, A, nthreads)) ;
             }
         }
     }

@@ -2,10 +2,12 @@
 // GB_subassign_04: C(I,J) += A ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 04: C(I,J) += A ; using S
 
@@ -20,6 +22,7 @@
 // A: any sparsity structure.
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 GrB_Info GB_subassign_04
 (
@@ -37,7 +40,7 @@ GrB_Info GB_subassign_04
     const int64_t Jcolon [3],
     const GrB_BinaryOp accum,
     const GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -46,7 +49,7 @@ GrB_Info GB_subassign_04
     //--------------------------------------------------------------------------
 
     ASSERT (!GB_IS_BITMAP (C)) ;
-    ASSERT (!GB_aliased (C, A)) ;   // NO ALIAS of C==A
+    ASSERT (!GB_any_aliased (C, A)) ;   // NO ALIAS of C==A
 
     //--------------------------------------------------------------------------
     // S = C(I,J)
@@ -54,7 +57,7 @@ GrB_Info GB_subassign_04
 
     GB_EMPTY_TASKLIST ;
     GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Context)) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Werk)) ;
 
     //--------------------------------------------------------------------------
     // get inputs
@@ -63,9 +66,8 @@ GrB_Info GB_subassign_04
     GB_MATRIX_WAIT_IF_JUMBLED (A) ;
 
     GB_GET_C ;      // C must not be bitmap
-    GB_GET_A ;
     GB_GET_S ;
-    GB_GET_ACCUM ;
+    GB_GET_ACCUM_MATRIX ;
 
     //--------------------------------------------------------------------------
     // Method 04: C(I,J) += A ; using S

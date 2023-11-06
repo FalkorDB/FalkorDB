@@ -2,7 +2,7 @@
 // GB_block: apply all pending computations if blocking mode enabled
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,7 +14,7 @@
 GrB_Info GB_block   // apply all pending computations if blocking mode enabled
 (
     GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -29,7 +29,7 @@ GrB_Info GB_block   // apply all pending computations if blocking mode enabled
     // wait if mode is blocking, or if too many pending tuples
     //--------------------------------------------------------------------------
 
-    if (!(GB_ANY_PENDING_WORK (A) || GB_NEED_HYPER_HASH (A)))
+    if (!(GB_ANY_PENDING_WORK (A) || GB_hyper_hash_need (A)))
     { 
         // no pending work, so no need to block
         return (GrB_SUCCESS) ;
@@ -45,8 +45,8 @@ GrB_Info GB_block   // apply all pending computations if blocking mode enabled
     { 
         // delete any lingering zombies, assemble any pending tuples,
         // sort the vectors, and construct the A->Y hyper_hash
-        GB_OK (GB_wait (A, "matrix", Context)) ;
-        GB_OK (GB_hyper_hash_build (A, Context)) ;
+        GB_OK (GB_wait (A, "matrix", Werk)) ;
+        GB_OK (GB_hyper_hash_build (A, Werk)) ;
     }
     return (GrB_SUCCESS) ;
 }

@@ -2,10 +2,12 @@
 // GB_concat_hyper: concatenate an array of matrices into a hypersparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 #define GB_FREE_ALL                 \
 {                                   \
@@ -28,7 +30,7 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
     const GrB_Index n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -70,7 +72,8 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     int64_t nouter = csc ? n : m ;
     int64_t ninner = csc ? m : n ;
@@ -129,7 +132,7 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
                 (GrB_Index *) ((csc ? Wi : Wj) + pC),
                 (GrB_Index *) ((csc ? Wj : Wi) + pC),
                 (C_iso) ? NULL : (Wx + pC * csize),
-                (GrB_Index *) (&anz), ccode, A, Context)) ;
+                (GrB_Index *) (&anz), ccode, A, Werk)) ;
 
             //------------------------------------------------------------------
             // adjust the indices to reflect their new place in C
@@ -206,7 +209,7 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
         NULL,                   // no duplicates, so dup is NUL
         ctype,                  // the type of Wx (no typecasting)
         true,                   // burble is allowed
-        Context
+        Werk
     )) ;
 
     C->hyper_switch = hyper_switch ;

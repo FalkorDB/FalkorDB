@@ -23,7 +23,7 @@ endef
 
 SRCDIR=$(ROOT)/deps/GraphBLAS
 
-CMAKE_TARGETS=graphblas_static
+CMAKE_TARGETS=GraphBLAS_static
 
 BINDIR=$(BINROOT)/GraphBLAS
 
@@ -37,6 +37,7 @@ define CMAKE_DEFS +=
 	NSTATIC=off
 	BUILD_TESTING=off
 	CMAKE_POSITION_INDEPENDENT_CODE=on
+	NJIT=1
 endef
 
 #----------------------------------------------------------------------------------------------

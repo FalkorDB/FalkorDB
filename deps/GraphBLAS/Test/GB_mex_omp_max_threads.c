@@ -2,7 +2,7 @@
 // GB_mex_omp_max_threads: omp_get_max_threads ( )
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,7 +22,7 @@ void mexFunction
     const mxArray *pargin [ ]
 )
 {
-    int omp_nthreads_max = GB_Global_omp_get_max_threads ( ) ;
+    int omp_nthreads_max = GB_omp_get_max_threads ( ) ;
     pargout [0] = mxCreateDoubleScalar (omp_nthreads_max) ;
 }
 

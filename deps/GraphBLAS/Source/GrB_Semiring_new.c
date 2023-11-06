@@ -2,7 +2,7 @@
 // GrB_Semiring_new: create a new semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -66,7 +66,7 @@ GrB_Info GrB_Semiring_new           // create a semiring
     size_t header_size ;
     (*semiring) = GB_MALLOC (1, struct GB_Semiring_opaque, &header_size) ;
     if (*semiring == NULL)
-    {
+    { 
         // out of memory
         return (GrB_OUT_OF_MEMORY) ;
     }

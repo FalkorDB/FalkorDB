@@ -2,12 +2,13 @@
 // GB_unop_one: return the ONE operator for a given type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB.h"
+#include "GB_unop.h"
 
 GrB_UnaryOp GB_unop_one (GB_Type_code xcode)
 {

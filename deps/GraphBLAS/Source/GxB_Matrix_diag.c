@@ -2,7 +2,7 @@
 // GxB_Matrix_diag: build a diagonal matrix from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -54,7 +54,7 @@ GrB_Info GxB_Matrix_diag        // build a diagonal matrix from a vector
     // C = diag (v,k)
     //--------------------------------------------------------------------------
 
-    info = GB_Matrix_diag (C, (GrB_Matrix) v, k, Context) ;
+    info = GB_Matrix_diag (C, (GrB_Matrix) v, k, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

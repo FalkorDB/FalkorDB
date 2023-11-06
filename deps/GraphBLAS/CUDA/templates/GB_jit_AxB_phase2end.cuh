@@ -4,14 +4,12 @@
 
 // TODO describe me
 #pragma once
-
-#define GB_CUDA_KERNEL
-
-#include "GB_cuda_buckets.h"
 #include "GB_cuda_kernel.h"
+#include "GB_mxm_shared_definitions.h"
+#include "GB_cuda_buckets.h"
+
 //#include <cooperative_groups.h>
 //#include <cub/block/block_scan.cuh>
-
 //using namespace cooperative_groups;
 
 __global__

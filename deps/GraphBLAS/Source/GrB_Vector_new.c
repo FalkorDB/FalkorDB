@@ -2,7 +2,7 @@
 // GrB_Vector_new: create a new vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -47,7 +47,7 @@ GrB_Info GrB_Vector_new     // create a new vector with no entries
     info = GB_new ((GrB_Matrix *) v, // new user header
         type, vlen, 1, GB_Ap_calloc,
         true,  // a GrB_Vector is always held by-column
-        GxB_SPARSE, GB_Global_hyper_switch_get ( ), 1, Context) ;
+        GxB_SPARSE, GB_Global_hyper_switch_get ( ), 1) ;
     ASSERT (GB_IMPLIES (info == GrB_SUCCESS, GB_VECTOR_OK (*v))) ;
     return (info) ;
 }

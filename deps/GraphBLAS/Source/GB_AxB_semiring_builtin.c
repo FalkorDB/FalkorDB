@@ -2,7 +2,7 @@
 // GB_AxB_semiring_builtin:  determine if semiring is built-in
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,8 +39,17 @@ bool GB_AxB_semiring_builtin        // true if semiring is builtin
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_BinaryOp add  = semiring->add->op ;     // add operator
+    GrB_BinaryOp mult = semiring->multiply ;    // multiply operator
+
+    (*add_binop_code) = add->opcode ;
+    (*mult_binop_code) = mult->opcode ;
+    (*xcode) = mult->xtype->code ;
+    (*ycode) = mult->ytype->code ;
+    (*zcode) = mult->ztype->code ;
+
     if (flipxy)
-    {
+    { 
         // quick return.  All built-in semirings have been handled already
         // in GB_AxB_meta, and flipxy is now false.  If flipxy is still true,
         // the semiring is not built-in.
@@ -48,9 +57,6 @@ bool GB_AxB_semiring_builtin        // true if semiring is builtin
     }
 
     // A and B may be aliased
-
-    GrB_BinaryOp add  = semiring->add->op ;     // add operator
-    GrB_BinaryOp mult = semiring->multiply ;    // multiply operator
 
     // add is a monoid
     ASSERT (add->xtype == add->ztype && add->ytype == add->ztype) ;
@@ -63,16 +69,10 @@ bool GB_AxB_semiring_builtin        // true if semiring is builtin
     // or not this function handles the semiring as hard-coded.  Now return for
     // cases this function does not handle.
 
-    (*mult_binop_code) = GB_NOP_code ;
-    (*xcode) = GB_ignore_code ;
-    (*ycode) = GB_ignore_code ;
-    (*zcode) = GB_ignore_code ;
-
     //--------------------------------------------------------------------------
     // check the monoid
     //--------------------------------------------------------------------------
 
-    (*add_binop_code) = add->opcode ;
     ASSERT (GB_IS_BINARYOP_CODE (*add_binop_code)) ;
     if (*add_binop_code == GB_USER_binop_code)
     { 

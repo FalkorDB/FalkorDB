@@ -2,7 +2,7 @@
 // GB_transplant: replace contents of one matrix with another
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,8 +14,8 @@
 // shallow.  This function is not user-callable.  The new type of C (ctype)
 // must be compatible with A->type.
 
-// C->hyper_switch, C->bitmap_switch, C->sparsity_control, and C->static_header
-// are not modified by the transplant.
+// C->hyper_switch, C->bitmap_switch, C->sparsity_control, C->static_header,
+// C->user_name, and C->user_name_size are not modified by the transplant.
 
 #define GB_FREE_ALL                 \
 {                                   \
@@ -30,7 +30,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
     GrB_Matrix C,               // output matrix to overwrite with A
     const GrB_Type ctype,       // new type of C
     GrB_Matrix *Ahandle,        // input matrix to copy from and free
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -41,7 +41,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
     GrB_Info info ;
     ASSERT (Ahandle != NULL) ;
     GrB_Matrix A = *Ahandle ;
-    ASSERT (!GB_aliased (C, A)) ;
+    ASSERT (!GB_any_aliased (C, A)) ;
 
     ASSERT_MATRIX_OK (A, "A before transplant", GB0) ;
     ASSERT (GB_ZOMBIES_OK (A)) ;    // zombies in A transplanted into C
@@ -69,7 +69,8 @@ GrB_Info GB_transplant          // transplant one matrix into another
     int64_t anvals = A->nvals ;
     int64_t anz = GB_nnz_held (A) ;
     int64_t anvec = A->nvec ;
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (anz, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------
@@ -113,12 +114,12 @@ GrB_Info GB_transplant          // transplant one matrix into another
     if (C_is_hyper && A->Y != NULL)
     {
         if (A->Y_shallow || GB_is_shallow (A->Y))
-        {
+        { 
             // A->Y is shallow, so create a deep copy for C
-            GB_OK (GB_dup (&(C->Y), A->Y, Context)) ;
+            GB_OK (GB_dup (&(C->Y), A->Y, Werk)) ;
         }
         else
-        {
+        { 
             // A->Y is not shallow, so transplant it into C
             C->Y = A->Y ;
             A->Y = NULL ;
@@ -191,7 +192,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
         if (A->x_shallow)
         { 
             // A is shallow so make a deep copy; no typecast needed
-            GB_cast_matrix (C, A, Context) ;
+            GB_OK (GB_cast_matrix (C, A)) ;
             A->x = NULL ;
         }
         else
@@ -204,7 +205,7 @@ GrB_Info GB_transplant          // transplant one matrix into another
     else
     {
         // types differ, must typecast from A to C.
-        GB_cast_matrix (C, A, Context) ;
+        GB_OK (GB_cast_matrix (C, A)) ;
         if (!A->x_shallow)
         { 
             GB_FREE (&(A->x), A->x_size) ;

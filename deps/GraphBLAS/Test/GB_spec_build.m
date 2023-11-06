@@ -1,5 +1,5 @@
 function [S,p] = GB_spec_build (I, J, X, nrows, ncols, op, order, sclass)
-%GB_SPEC_BUILD a built-in version of GrB_Matrix_build and GrB_vector_build
+%GB_SPEC_BUILD a version of GrB_Matrix_build and GrB_vector_build
 %
 % Usage:
 % [S p] = GB_spec_build (I, J, X, nrows, ncols, op, order)
@@ -48,7 +48,7 @@ function [S,p] = GB_spec_build (I, J, X, nrows, ncols, op, order, sclass)
 % parameters, or pass fewer inputs.  For exampe S = GB_spec_build (I, J, X,
 % nrows, ncols) uses defaults for op, and order, but not X, nrows and ncols.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------
@@ -169,4 +169,5 @@ if (~isequal (optype, sclass))
     S.matrix = GB_mex_cast (S.matrix, sclass) ;
     S.class = sclass ;
 end
+
 

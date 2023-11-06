@@ -2,7 +2,7 @@
 // GrB_Vector_removeElement: remove a single entry from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -106,7 +106,7 @@ GrB_Info GB_Vector_removeElement
 (
     GrB_Vector V,               // vector to remove entry from
     GrB_Index i,                // index
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -120,20 +120,20 @@ GrB_Info GB_Vector_removeElement
         if (GB_IS_FULL (V))
         { 
             // convert V from full to sparse
-            GB_OK (GB_convert_to_nonfull ((GrB_Matrix) V, Context)) ;
+            GB_OK (GB_convert_to_nonfull ((GrB_Matrix) V, Werk)) ;
         }
         else
         { 
             // V is sparse and jumbled
             GB_OK (GB_wait ((GrB_Matrix) V, "v (removeElement:jumbled",
-                Context)) ;
+                Werk)) ;
         }
         ASSERT (!GB_IS_FULL (V)) ;
         ASSERT (!GB_ZOMBIES (V)) ;
         ASSERT (!GB_JUMBLED (V)) ;
         ASSERT (!GB_PENDING (V)) ;
         // remove the entry
-        return (GB_Vector_removeElement (V, i, Context)) ;
+        return (GB_Vector_removeElement (V, i, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -172,7 +172,7 @@ GrB_Info GB_Vector_removeElement
     { 
         GrB_Info info ;
         GB_OK (GB_wait ((GrB_Matrix) V, "v (removeElement:pending tuples)",
-            Context)) ;
+            Werk)) ;
         ASSERT (!GB_ZOMBIES (V)) ;
         ASSERT (!GB_JUMBLED (V)) ;
         ASSERT (!GB_PENDING (V)) ;
@@ -196,6 +196,6 @@ GrB_Info GrB_Vector_removeElement
     GB_WHERE (V, "GrB_Vector_removeElement (v, i)") ;
     GB_RETURN_IF_NULL_OR_FAULTY (V) ;
     ASSERT (GB_VECTOR_OK (V)) ;
-    return (GB_Vector_removeElement (V, i, Context)) ;
+    return (GB_Vector_removeElement (V, i, Werk)) ;
 }
 

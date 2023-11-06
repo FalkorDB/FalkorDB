@@ -2,7 +2,7 @@
 // GrB_Col_extract: w<M> = accum (w, A(I,j)) or A(j,I)'
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -74,7 +74,7 @@ GrB_Info GrB_Col_extract        // w<M> = accum (w, A(I,j)) or (A(j,I))'
         A,                 A_transpose, // A and its descriptor
         I, ni,                          // row indices I and length ni
         J, 1,                           // one column index, nj = 1
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

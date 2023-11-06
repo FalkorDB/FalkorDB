@@ -2,7 +2,7 @@
 // GB_Matrix_new: create a new matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,8 +19,7 @@ GrB_Info GB_Matrix_new          // create a new matrix with no entries
     GrB_Matrix *A,              // handle of matrix to create
     GrB_Type type,              // type of matrix to create
     GrB_Index nrows,            // matrix dimension is nrows-by-ncols
-    GrB_Index ncols,
-    GB_Context Context
+    GrB_Index ncols
 )
 {
 
@@ -73,6 +72,6 @@ GrB_Info GB_Matrix_new          // create a new matrix with no entries
 
     return (GB_new (A, // auto sparsity, new header
         type, vlen, vdim, GB_Ap_calloc, A_is_csc, GxB_AUTO_SPARSITY,
-        GB_Global_hyper_switch_get ( ), 1, Context)) ;
+        GB_Global_hyper_switch_get ( ), 1)) ;
 }
 

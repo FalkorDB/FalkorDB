@@ -2,7 +2,7 @@
 // GrB_Matrix_clear: clears the content of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,6 +30,6 @@ GrB_Info GrB_Matrix_clear   // clear a matrix of all entries;
     // clear the matrix
     //--------------------------------------------------------------------------
 
-    return (GB_clear (A, Context)) ;
+    return (GB_clear (A, Werk)) ;
 }
 

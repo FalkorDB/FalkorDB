@@ -2,7 +2,7 @@
 // GrB_Row_assign: C<M'>(row,Cols) = accum (C(row,Cols),u')
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -63,7 +63,7 @@ GrB_Info GrB_Row_assign             // C<M'>(row,Cols) += u'
         Cols, nCols,                    // column indices
         false, NULL, GB_ignore_code,    // no scalar expansion
         GB_ROW_ASSIGN,
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

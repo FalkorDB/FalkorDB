@@ -2,7 +2,7 @@
 // GB_add_phase1: # entries in C=A+B, C<M or !M>=A+B (C is sparse/hyper)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,7 +15,7 @@
 
 // C is sparse or hypersparse, as determined by GB_add_sparsity.  M, A, and B
 // can have any sparsity structure, but only a specific set of cases will be
-// used (see the list in Template/GB_sparse_add_template.c).
+// used (see the list in Template/GB_add_sparse_template.c).
 
 // Cp is constructed here, and either freed by phase2, or transplanted into C.
 
@@ -45,7 +45,7 @@ GrB_Info GB_add_phase1                  // count nnz in each C(:,j)
     const bool Mask_comp,           // if true, use !M
     const GrB_Matrix A,
     const GrB_Matrix B,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -90,7 +90,11 @@ GrB_Info GB_add_phase1                  // count nnz in each C(:,j)
     // count the entries in each vector of C
     //--------------------------------------------------------------------------
 
-    #define GB_PHASE_1_OF_2
+    // for the "easy mask" condition:
+    bool M_is_A = GB_all_aliased (M, A) ;
+    bool M_is_B = GB_all_aliased (M, B) ;
+
+    #define GB_ADD_PHASE 1
     #include "GB_add_template.c"
 
     //--------------------------------------------------------------------------
@@ -98,7 +102,7 @@ GrB_Info GB_add_phase1                  // count nnz in each C(:,j)
     //--------------------------------------------------------------------------
 
     GB_task_cumsum (Cp, Cnvec, Cnvec_nonempty, TaskList, C_ntasks, C_nthreads,
-        Context) ;
+        Werk) ;
 
     //--------------------------------------------------------------------------
     // return the result

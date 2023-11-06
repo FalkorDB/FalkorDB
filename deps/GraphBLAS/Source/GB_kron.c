@@ -2,7 +2,7 @@
 // GB_kron: C<M> = accum (C, kron(A,B))
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ GrB_Info GB_kron                    // C<M> = accum (C, kron(A,B))
     bool A_transpose,               // if true, use A' instead of A
     const GrB_Matrix B,             // input matrix
     bool B_transpose,               // if true, use B' instead of B
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -72,11 +72,11 @@ GrB_Info GB_kron                    // C<M> = accum (C, kron(A,B))
 
     // check domains and dimensions for C<M> = accum (C,T)
     GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, op->ztype,
-        Context)) ;
+        Werk)) ;
 
     // T=op(A,B) via op operator, so A and B must be compatible with z=op(a,b)
     GB_OK (GB_BinaryOp_compatible (op, NULL, A->type, B->type, GB_ignore_code,
-        Context)) ;
+        Werk)) ;
 
     // delete any lingering zombies and assemble any pending tuples in A and B,
     // so that cnz = nnz(A) * nnz(B) can be computed.  Updates of C and M are
@@ -141,7 +141,7 @@ GrB_Info GB_kron                    // C<M> = accum (C, kron(A,B))
         GBURBLE ("(A transpose) ") ;
         GB_CLEAR_STATIC_HEADER (AT, &AT_header) ;
         GB_OK (GB_transpose_cast (AT, op->xtype, T_is_csc, A, A_is_pattern,
-            Context)) ;
+            Werk)) ;
         ASSERT_MATRIX_OK (AT, "AT kron", GB0) ;
     }
 
@@ -151,7 +151,7 @@ GrB_Info GB_kron                    // C<M> = accum (C, kron(A,B))
         GBURBLE ("(B transpose) ") ;
         GB_CLEAR_STATIC_HEADER (BT, &BT_header) ;
         GB_OK (GB_transpose_cast (BT, op->ytype, T_is_csc, B, B_is_pattern,
-            Context)) ;
+            Werk)) ;
         ASSERT_MATRIX_OK (BT, "BT kron", GB0) ;
     }
 
@@ -162,7 +162,7 @@ GrB_Info GB_kron                    // C<M> = accum (C, kron(A,B))
     GB_CLEAR_STATIC_HEADER (T, &T_header) ;
     GB_OK (GB_kroner (T, T_is_csc, op,
         A_transpose ? AT : A, A_is_pattern,
-        B_transpose ? BT : B, B_is_pattern, Context)) ;
+        B_transpose ? BT : B, B_is_pattern, Werk)) ;
 
     GB_FREE_WORKSPACE ;
     ASSERT_MATRIX_OK (T, "T = kron(A,B)", GB0) ;
@@ -172,6 +172,6 @@ GrB_Info GB_kron                    // C<M> = accum (C, kron(A,B))
     //--------------------------------------------------------------------------
 
     return (GB_accum_mask (C, M, NULL, accum, &T, C_replace, Mask_comp,
-        Mask_struct, Context)) ;
+        Mask_struct, Werk)) ;
 }
 

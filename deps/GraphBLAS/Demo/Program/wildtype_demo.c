@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Program/wildtype_demo: an arbitrary user-defined type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,7 +29,7 @@
 
 typedef struct
 {
-    float stuff [4][4] ;
+    double stuff [4][4] ;
     char whatstuff [64] ;
 }
 wildtype ;                      // C version of wildtype
@@ -38,7 +38,7 @@ wildtype ;                      // C version of wildtype
 #define WILDTYPE_DEFN           \
 "typedef struct "               \
 "{ "                            \
-   "float stuff [4][4] ; "      \
+   "double stuff [4][4] ; "     \
    "char whatstuff [64] ; "     \
 "} "                            \
 "wildtype ;"
@@ -108,7 +108,9 @@ void wildtype_print_matrix (GrB_Matrix A, char *name)
 // add two wildtype "scalars"
 //------------------------------------------------------------------------------
 
-void wildtype_add (wildtype *z, const wildtype *x, const wildtype *y)
+// strcpy is not available for use in a GPU kernel, so a while loop is used.
+
+void wildadd (wildtype *z, const wildtype *x, const wildtype *y)
 {
     for (int i = 0 ; i < 4 ; i++)
     {
@@ -117,28 +119,35 @@ void wildtype_add (wildtype *z, const wildtype *x, const wildtype *y)
             z->stuff [i][j] = x->stuff [i][j] + y->stuff [i][j] ;
         }
     }
-    strcpy (z->whatstuff, "this was added") ;
+    const char *psrc = "this was added" ;
+    char *pdst = z->whatstuff ;
+    while ((*pdst++ = *psrc++)) ;
 }
 
-// the newlines (\n) are optional.  They just make GxB_print output readable:
-#define WILDTYPE_ADD_DEFN                                                   \
-"void wildtype_add (wildtype *z, const wildtype *x, const wildtype *y) \n"  \
-"{ \n"                                                                      \
-"   for (int i = 0 ; i < 4 ; i++) \n"                                       \
-"   { \n"                                                                   \
-"       for (int j = 0 ; j < 4 ; j++) \n"                                   \
-"       { \n"                                                               \
-"           z->stuff [i][j] = x->stuff [i][j] + y->stuff [i][j] ; \n"       \
-"       } \n"                                                               \
-"   } \n"                                                                   \
-"   strcpy (z->whatstuff, \"this was added\") ; \n"                         \
-"} \n"
+// The newlines (\n) in the definition below are optional.  They just make
+// GxB_print output readable.  This example defines wildadd as either a
+// macro or as a function.
+
+#define WILDADD_DEFN                                                        \
+"void wildadd (wildtype *z, const wildtype *x, const wildtype *y)       \n" \
+"{                                                                      \n" \
+"   for (int i = 0 ; i < 4 ; i++)                                       \n" \
+"   {                                                                   \n" \
+"       for (int j = 0 ; j < 4 ; j++)                                   \n" \
+"       {                                                               \n" \
+"           z->stuff [i][j] = x->stuff [i][j] + y->stuff [i][j] ;       \n" \
+"       }                                                               \n" \
+"   }                                                                   \n" \
+"   const char *psrc = \"this was added\" ;                             \n" \
+"   char *pdst = z->whatstuff ;                                         \n" \
+"   while ((*pdst++ = *psrc++)) ;                                       \n" \
+"}"
 
 //------------------------------------------------------------------------------
 // multiply two wildtypes "scalars"
 //------------------------------------------------------------------------------
 
-void wildtype_mult (wildtype *z, const wildtype *x, const wildtype *y)
+void wildmult (wildtype *z, const wildtype *x, const wildtype *y)
 {
     for (int i = 0 ; i < 4 ; i++)
     {
@@ -151,25 +160,29 @@ void wildtype_mult (wildtype *z, const wildtype *x, const wildtype *y)
             }
         }
     }
-    strcpy (z->whatstuff, "this was multiplied") ;
+    const char *psrc = "this was multiplied" ;
+    char *pdst = z->whatstuff ;
+    while ((*pdst++ = *psrc++)) ;
 }
 
-#define WILDTYPE_MULT_DEFN                                                  \
-"void wildtype_mult (wildtype *z, const wildtype *x, const wildtype *y) \n" \
-"{ \n"                                                                      \
-"   for (int i = 0 ; i < 4 ; i++) \n"                                       \
-"   { \n"                                                                   \
-"       for (int j = 0 ; j < 4 ; j++) \n"                                   \
-"       { \n"                                                               \
-"           z->stuff [i][j] = 0 ; \n"                                       \
-"           for (int k = 0 ; k < 4 ; k++) \n"                               \
-"           { \n"                                                           \
-"               z->stuff [i][j] += (x->stuff [i][k] * y->stuff [k][j]) ; \n"\
-"           } \n"                                                           \
-"       } \n"                                                               \
-"   } \n"                                                                   \
-"   strcpy (z->whatstuff, \"this was multiplied\") ; \n"                    \
-"} \n"
+#define WILDMULT_DEFN                                                       \
+"void wildmult (wildtype *z, const wildtype *x, const wildtype *y)      \n" \
+"{                                                                      \n" \
+"   for (int i = 0 ; i < 4 ; i++)                                       \n" \
+"   {                                                                   \n" \
+"       for (int j = 0 ; j < 4 ; j++)                                   \n" \
+"       {                                                               \n" \
+"           z->stuff [i][j] = 0 ;                                       \n" \
+"           for (int k = 0 ; k < 4 ; k++)                               \n" \
+"           {                                                           \n" \
+"               z->stuff [i][j] += (x->stuff [i][k] * y->stuff [k][j]) ;\n" \
+"           }                                                           \n" \
+"       }                                                               \n" \
+"   }                                                                   \n" \
+"   const char *psrc = \"this was multiplied\" ;                        \n" \
+"   char *pdst = z->whatstuff ;                                         \n" \
+"   while ((*pdst++ = *psrc++)) ;                                       \n" \
+"}"
 
 //------------------------------------------------------------------------------
 // wildtype main program
@@ -187,17 +200,17 @@ int main (void)
     #if 1
     GrB_init (GrB_NONBLOCKING) ;
     #else
-    rmm_wrap_initialize (rmm_wrap_managed, 256 * 1000000L, 256 * 1000000000L) ;
-    GxB_init (GxB_NONBLOCKING_GPU, rmm_wrap_malloc,
-        rmm_wrap_calloc, rmm_wrap_realloc, rmm_wrap_free) ;
-    GxB_set (GxB_GPU_CONTROL, GxB_GPU_ALWAYS) ;
+    GxB_init (GxB_NONBLOCKING_GPU, NULL, NULL, NULL, NULL, NULL) ;
+    GxB_set (GxB_GPU_ID, 0) ;
+    GB_Global_hack_set (2, 1) ; // always use the GPU
     #endif
 
+    GxB_Global_Option_set (GxB_BURBLE, true) ;
     int nthreads ;
     GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads) ;
     fprintf (stderr, "wildtype demo: nthreads %d\n", nthreads) ;
 
-    /* alternative method via #defines:
+    /* via #defines:
     fprintf (stderr, LINE2 "SuiteSparse:GraphBLAS Version %d.%d.%d, %s\n" LINE2
         "%s" LINE "License: %s" LINE "GraphBLAS API Version %d.%d.%d, %s"
         " (http://graphblas.org)\n%s" LINE2, GxB_IMPLEMENTATION_MAJOR,
@@ -247,7 +260,7 @@ int main (void)
 
     // create the WildType
     GxB_Type_new (&WildType, sizeof (wildtype), "wildtype", WILDTYPE_DEFN) ;
-    GxB_print (WildType, 3) ;
+    GxB_Type_fprint (WildType, "WildType", GxB_COMPLETE, stdout) ;
 
     // get its properties
     size_t s ;
@@ -260,6 +273,8 @@ int main (void)
     GrB_Matrix_new (&A, WildType, 10, 10) ;
 
     wildtype scalar1, scalar2 ;
+    memset (&scalar1, 0, sizeof (wildtype)) ;
+    memset (&scalar2, 0, sizeof (wildtype)) ;
     for (int i = 0 ; i < 4 ; i++)
     {
         for (int j = 0 ; j < 4 ; j++)
@@ -300,16 +315,16 @@ int main (void)
     // create the WildAdd operator
     GrB_BinaryOp WildAdd ;
     GxB_BinaryOp_new (&WildAdd, 
-        (GxB_binary_function) wildtype_add, WildType, WildType, WildType,
-        "wildtype_add", WILDTYPE_ADD_DEFN) ;
-    GxB_print (WildAdd, 3) ;
+        (GxB_binary_function) wildadd, WildType, WildType, WildType,
+        "wildadd", WILDADD_DEFN) ;
+    GxB_BinaryOp_fprint (WildAdd, "WildAdd", GxB_COMPLETE, stdout) ;
 
     // create the WildMult operator
     GrB_BinaryOp WildMult ;
     GxB_BinaryOp_new (&WildMult, 
-        (GxB_binary_function) wildtype_mult, WildType, WildType, WildType,
-        "wildtype_mult", WILDTYPE_MULT_DEFN) ;
-    GxB_print (WildMult, 3) ;
+        (GxB_binary_function) wildmult, WildType, WildType, WildType,
+        "wildmult", WILDMULT_DEFN) ;
+    GxB_BinaryOp_fprint (WildMult, "WildMult", GxB_COMPLETE, stdout) ;
 
     // create a matrix B with B (7,2) = scalar2
     GrB_Matrix B ;
@@ -318,7 +333,7 @@ int main (void)
     {
         for (int j = 0 ; j < 4 ; j++)
         {
-            scalar2.stuff [i][j] = (float) (j - i) + 0.5 ;
+            scalar2.stuff [i][j] = (double) (j - i) + 0.5 ;
         }
     }
     wildtype_print (&scalar2, "scalar2") ;
@@ -372,22 +387,33 @@ int main (void)
     printf ("\n------ C<M>=C*C'----------------------------------------\n") ;
     GrB_Matrix M ;
     GrB_Matrix_new (&M, GrB_BOOL, 10, 10) ;
-    GrB_Matrix_setElement (M, true, 2, 2) ;
-    GrB_Matrix_setElement (M, true, 2, 3) ;
-    GrB_Matrix_setElement (M, true, 3, 2) ;
-    GrB_Matrix_setElement (M, true, 3, 3) ;
+    GrB_Matrix_setElement_BOOL (M, true, 2, 2) ;
+    GrB_Matrix_setElement_BOOL (M, true, 2, 3) ;
+    GrB_Matrix_setElement_BOOL (M, true, 3, 2) ;
+    GrB_Matrix_setElement_BOOL (M, true, 3, 3) ;
     printf ("\nThe mask matrix M:\n") ;
-    GxB_print (M, 3) ;
+    GxB_Matrix_fprint (M, "M", GxB_COMPLETE, stdout) ;
 
-    GxB_set (GxB_BURBLE, true) ;
+//  GxB_Global_Option_set (GxB_BURBLE, true) ;
     GrB_mxm (C, M, NULL, InTheWild, C, C, GrB_DESC_RST1) ;
-    GxB_set (GxB_BURBLE, false) ;
     wildtype_print_matrix (C, "output C") ;
 
     // reduce C to a scalar using the WildAdder monoid
     wildtype sum ;
+    memset (&sum, 0, sizeof (wildtype)) ;
     GrB_Matrix_reduce_UDT (&sum, NULL, WildAdder, C, NULL) ;
-    wildtype_print (&sum, "sum") ;
+    wildtype_print (&sum, "sum (first time)") ;
+
+    // again, to test the JIT lookup
+    memset (&sum, 0, sizeof (wildtype)) ;
+    GrB_Matrix_reduce_UDT (&sum, NULL, WildAdder, C, NULL) ;
+    wildtype_print (&sum, "sum (again)") ;
+//  GxB_Global_Option_set (GxB_BURBLE, false) ;
+
+//  for (int k = 0 ; k < 100 ; k++)
+//  {
+//      GrB_Matrix_reduce_UDT (&sum, NULL, WildAdder, C, NULL) ;
+//  }
 
     // set C to column-oriented format
     GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_COL) ;

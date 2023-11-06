@@ -1,7 +1,7 @@
 function test135
 %TEST135 reduce-to-scalar, built-in monoids with terminal values
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test135: reduce to scalar\n') ;

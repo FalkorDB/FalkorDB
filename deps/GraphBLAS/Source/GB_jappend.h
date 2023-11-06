@@ -2,7 +2,7 @@
 // GB_jappend.h: definitions of GB_jappend, and GB_jwrapup
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,7 +33,7 @@ static inline GrB_Info GB_jappend
     int64_t *jlast,         // last vector appended, -1 if none
     int64_t cnz,            // nnz(C) after adding this vector j
     int64_t *cnz_last,      // nnz(C) before adding this vector j
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -72,7 +72,7 @@ static inline GrB_Info GB_jappend
             // double the size of C->h and C->p
             GrB_Info info ;
             info = GB_hyper_realloc (C, GB_IMIN (C->vdim, 2*(C->plen+1)),
-                Context) ;
+                Werk) ;
             if (info != GrB_SUCCESS)
             { 
                 // out of memory

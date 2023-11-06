@@ -2,7 +2,7 @@
 // GB_concat.h: definitions for GxB_concat
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,7 +22,7 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n
     const GrB_Index m,
     const GrB_Index n,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_concat_full             // concatenate into a full matrix
@@ -35,7 +35,7 @@ GrB_Info GB_concat_full             // concatenate into a full matrix
     const GrB_Index n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
@@ -49,7 +49,7 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
     const GrB_Index n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
@@ -63,7 +63,7 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
     const GrB_Index n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
@@ -77,7 +77,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
     const GrB_Index n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

@@ -2,10 +2,12 @@
 // GB_subassign_zombie: C(I,J)<!,repl> = empty ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Method 00: C(I,J)<!,repl> = empty ; using S
 
@@ -21,6 +23,7 @@
 // C->iso is not affected.
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 #undef  GB_FREE_ALL
 #define GB_FREE_ALL GB_Matrix_free (&S) ;
@@ -40,7 +43,7 @@ GrB_Info GB_subassign_zombie
     const int64_t nJ,
     const int Jkind,
     const int64_t Jcolon [3],
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -58,7 +61,7 @@ GrB_Info GB_subassign_zombie
     struct GB_Matrix_opaque S_header ;
     GrB_Matrix S = NULL ;
     GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, false, Context)) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, false, Werk)) ;
     ASSERT (GB_JUMBLED_OK (S)) ;        // S can be returned as jumbled
     // the S->Y hyper_hash is not needed
 
@@ -84,7 +87,8 @@ GrB_Info GB_subassign_zombie
 
     int64_t snz = GB_nnz (S) ;
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (snz, chunk, nthreads_max) ;
 
     int64_t nzombies = C->nzombies ;

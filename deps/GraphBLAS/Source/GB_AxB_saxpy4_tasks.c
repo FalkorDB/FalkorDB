@@ -2,7 +2,7 @@
 // GB_AxB_saxpy4_tasks: construct tasks for saxpy4 and bitmap_saxpy
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,8 +24,7 @@ void GB_AxB_saxpy4_tasks
     int64_t anz,                    // # of entries in A (sparse or hyper)
     int64_t bnz,                    // # of entries held in B
     int64_t bvdim,                  // # of vectors of B (bitmap or full)
-    int64_t cvlen,                  // # of vectors of C (bitmap or full)
-    GB_Context Context
+    int64_t cvlen                   // # of vectors of C (bitmap or full)
 )
 {
 
@@ -33,7 +32,8 @@ void GB_AxB_saxpy4_tasks
     // determine the work to do
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     double work = ((double) anz) * (double) bvdim ;
     int nthreads = GB_nthreads (work, chunk, nthreads_max) ;
     int nfine_tasks_per_vector = 0, ntasks ;
@@ -62,7 +62,7 @@ void GB_AxB_saxpy4_tasks
         // all tasks are coarse
         //----------------------------------------------------------------------
 
-        // Each coarse task does 1 or more whole vectors of B
+        // Each coarse task does 1 or more whole vectors of B and C
         ntasks = GB_IMIN (bvdim, 2 * nthreads) ;
         nthreads = GB_IMIN (ntasks, nthreads) ;
         use_coarse_tasks = true ;
@@ -76,9 +76,9 @@ void GB_AxB_saxpy4_tasks
         // use fine tasks
         //----------------------------------------------------------------------
 
-        // Each task does a slice of a single vector of B, and each vector of B
-        // is handled by the same # of fine tasks.  Determine if atomics are
-        // to be used or not.
+        // Each task does a slice of a single vector of B and C, and each
+        // vector of B and C are handled by the same # of fine tasks.
+        // Determine if atomics are to be used or not.
 
         use_coarse_tasks = false ;
         double cnz = ((double) cvlen) * ((double) bvdim) ;

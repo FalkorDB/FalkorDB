@@ -2,7 +2,7 @@
 // GxB_Vector_export_Full: export a full vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,7 +31,7 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
 
     GB_WHERE1 ("GxB_Vector_export_Full (&v, &type, &n, "
         "&vx, &vx_size, &iso, desc)") ;
-    GB_BURBLE_START ("GxB_Vector_export_Full") ;
+    // GB_BURBLE_START ("GxB_Vector_export_Full") ;
     GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_NULL_OR_FAULTY (*v) ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -76,7 +76,7 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
         vx,   vx_size,  // Ax
         NULL, NULL, NULL,
         &sparsity, &is_csc,                 // full by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {
@@ -84,7 +84,7 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
         ASSERT (is_csc) ;
         ASSERT (vdim == 1) ;
     }
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

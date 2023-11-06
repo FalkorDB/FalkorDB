@@ -2,10 +2,12 @@
 // GB_assign_zombie1: delete all entries in C(:,j) for GB_assign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // C(:,j)<!> = anything: GrB_Row_assign or GrB_Col_assign with an empty
 // complemented mask requires all entries in the C(:,j) vector to be deleted.
@@ -16,11 +18,10 @@
 #include "GB_assign.h"
 #include "GB_assign_zombie.h"
 
-void GB_assign_zombie1
+GrB_Info GB_assign_zombie1
 (
     GrB_Matrix C,
-    const int64_t j,
-    GB_Context Context
+    const int64_t j
 )
 {
 
@@ -39,13 +40,19 @@ void GB_assign_zombie1
     //--------------------------------------------------------------------------
 
     int64_t *restrict Ci = C->i ;
+    const int64_t *restrict Ch = C->h ;
     const int64_t *restrict Cp = C->p ;
     int64_t pC_start, pC_end ;
+    const int64_t cnvec = C->nvec ;
 
-    if (C->h != NULL)
+    if (Ch != NULL)
     { 
         // C is hypersparse
-        GB_hyper_hash_lookup (Cp, C->Y->p, C->Y->i, C->Y->x, C->Y->vdim-1,
+        const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+        const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+        const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+        const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
+        GB_hyper_hash_lookup (Ch, cnvec, Cp, C_Yp, C_Yi, C_Yx, C_hash_bits,
             j, &pC_start, &pC_end) ;
     }
     else
@@ -62,7 +69,8 @@ void GB_assign_zombie1
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (cjnz, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------
@@ -88,5 +96,6 @@ void GB_assign_zombie1
     //--------------------------------------------------------------------------
 
     C->nzombies = nzombies ;
+    return (GrB_SUCCESS) ;
 }
 

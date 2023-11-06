@@ -1,4 +1,4 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 GraphBLAS/Test:
@@ -15,8 +15,8 @@ files to provide 'help GB_mex...' documentation.
 For a usable @GrB interface to GraphBLAS, see the GraphBLAS/GraphBLAS folder,
 and the @GrB object it supports.
 
-Requirements:  the mex command must use a C compiler supporting ANSI C11.
-Microft Visual Studio does not support ANSI C11 so this test is not available
+Requirements:  the mex command must use a C compiler supporting C11.
+Microft Visual Studio does not support C11 so this test is not available
 on Windows unless you use another compiler.
 
 To run the tests, use the following command in this directory, in the 

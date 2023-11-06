@@ -2,7 +2,7 @@
 // GB_conform: conform any matrix to its desired sparsity structure
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,23 +25,23 @@
 static inline GrB_Info GB_conform_hyper_or_bitmap
 (
     bool is_hyper, bool is_sparse, bool is_bitmap, bool is_full,
-    GrB_Matrix A, GB_Context Context
+    GrB_Matrix A, GB_Werk Werk
 )
 {
     GrB_Info info ;
     if (is_full || ((is_hyper || is_sparse) &&
-        GB_convert_sparse_to_bitmap_test (A->bitmap_switch,
+        GB_convert_s2b_test (A->bitmap_switch,
             GB_nnz (A), A->vlen, A->vdim)))
     { 
         // if full or sparse/hypersparse with many entries: to bitmap
-        GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+        GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
     }
     else if (is_sparse || (is_bitmap &&
         GB_convert_bitmap_to_sparse_test (A->bitmap_switch,
             GB_nnz (A), A->vlen, A->vdim)))
     { 
         // if sparse or bitmap with few entries: to hypersparse
-        GB_OK (GB_convert_any_to_hyper (A, Context)) ;
+        GB_OK (GB_convert_any_to_hyper (A, Werk)) ;
     }
     return (GrB_SUCCESS) ;
 }
@@ -53,23 +53,23 @@ static inline GrB_Info GB_conform_hyper_or_bitmap
 static inline GrB_Info GB_conform_sparse_or_bitmap
 (
     bool is_hyper, bool is_sparse, bool is_bitmap, bool is_full,
-    GrB_Matrix A, GB_Context Context
+    GrB_Matrix A, GB_Werk Werk
 )
 {
     GrB_Info info ;
     if (is_full || ((is_hyper || is_sparse) &&
-        GB_convert_sparse_to_bitmap_test (A->bitmap_switch,
+        GB_convert_s2b_test (A->bitmap_switch,
             GB_nnz (A), A->vlen, A->vdim)))
     { 
         // if full or sparse/hypersparse with many entries: to bitmap
-        GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+        GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
     }
     else if (is_hyper || (is_bitmap &&
         GB_convert_bitmap_to_sparse_test (A->bitmap_switch,
             GB_nnz (A), A->vlen, A->vdim)))
     { 
         // if hypersparse or bitmap with few entries: to sparse
-        GB_OK (GB_convert_any_to_sparse (A, Context)) ;
+        GB_OK (GB_convert_any_to_sparse (A, Werk)) ;
     }
     return (GrB_SUCCESS) ;
 }
@@ -81,16 +81,16 @@ static inline GrB_Info GB_conform_sparse_or_bitmap
 static inline GrB_Info GB_conform_hyper_sparse_or_bitmap
 (
     bool is_hyper, bool is_sparse, bool is_bitmap, bool is_full,
-    GrB_Matrix A, GB_Context Context
+    GrB_Matrix A, GB_Werk Werk
 )
 {
     GrB_Info info ;
     if (is_full || ((is_hyper || is_sparse) &&
-        GB_convert_sparse_to_bitmap_test (A->bitmap_switch,
+        GB_convert_s2b_test (A->bitmap_switch,
             GB_nnz (A), A->vlen, A->vdim)))
     { 
         // if full or sparse/hypersparse with many entries: to bitmap
-        GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+        GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
     }
     else if (is_bitmap)
     {
@@ -98,15 +98,15 @@ static inline GrB_Info GB_conform_hyper_sparse_or_bitmap
             GB_nnz (A), A->vlen, A->vdim))
         { 
             // if bitmap with few entries: to sparse
-            GB_OK (GB_convert_bitmap_to_sparse (A, Context)) ;
+            GB_OK (GB_convert_bitmap_to_sparse (A, Werk)) ;
             // conform between sparse and hypersparse
-            GB_OK (GB_conform_hyper (A, Context)) ;
+            GB_OK (GB_conform_hyper (A, Werk)) ;
         }
     }
     else // is_hyper || is_sparse
     { 
         // conform between sparse and hypersparse
-        GB_OK (GB_conform_hyper (A, Context)) ;
+        GB_OK (GB_conform_hyper (A, Werk)) ;
     }
     return (GrB_SUCCESS) ;
 }
@@ -118,7 +118,7 @@ static inline GrB_Info GB_conform_hyper_sparse_or_bitmap
 GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 (
     GrB_Matrix A,       // matrix to conform
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -138,7 +138,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
     bool as_if_full = GB_as_if_full (A) ;
     if (A->nvec_nonempty < 0)
     { 
-        A->nvec_nonempty = GB_nvec_nonempty (A, Context) ;
+        A->nvec_nonempty = GB_nvec_nonempty (A) ;
     }
 
     //--------------------------------------------------------------------------
@@ -154,7 +154,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 
         case GxB_HYPERSPARSE : 
 
-            GB_OK (GB_convert_any_to_hyper (A, Context)) ;
+            GB_OK (GB_convert_any_to_hyper (A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -163,7 +163,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 
         case GxB_SPARSE : 
 
-            GB_OK (GB_convert_any_to_sparse (A, Context)) ;
+            GB_OK (GB_convert_any_to_sparse (A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -175,10 +175,10 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             if (is_full || is_bitmap)
             { 
                 // if full or bitmap: to sparse
-                GB_OK (GB_convert_any_to_sparse (A, Context)) ;
+                GB_OK (GB_convert_any_to_sparse (A, Werk)) ;
             }
             // conform between sparse and hypersparse
-            GB_OK (GB_conform_hyper (A, Context)) ;
+            GB_OK (GB_conform_hyper (A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -187,7 +187,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 
         case GxB_BITMAP : 
 
-            GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+            GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -198,7 +198,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 
             // ensure the matrix is hypersparse or bitmap
             GB_OK (GB_conform_hyper_or_bitmap (is_hyper, is_sparse, is_bitmap,
-                is_full, A, Context)) ;
+                is_full, A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -209,7 +209,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 
             // ensure the matrix is sparse or bitmap
             GB_OK (GB_conform_sparse_or_bitmap (is_hyper, is_sparse, is_bitmap,
-                is_full, A, Context)) ;
+                is_full, A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -220,7 +220,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
 
             // ensure the matrix is hypersparse, sparse, or bitmap
             GB_OK (GB_conform_hyper_sparse_or_bitmap (is_hyper, is_sparse,
-                is_bitmap, is_full, A, Context)) ;
+                is_bitmap, is_full, A, Werk)) ;
             break ;
 
         //----------------------------------------------------------------------
@@ -237,7 +237,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             else
             { 
                 // otherwise: to bitmap
-                GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+                GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
             }
             break ;
 
@@ -255,7 +255,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             else
             { 
                 // otherwise: to hypersparse
-                GB_OK (GB_convert_any_to_hyper (A, Context)) ;
+                GB_OK (GB_convert_any_to_hyper (A, Werk)) ;
             }
             break ;
 
@@ -273,7 +273,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             else
             { 
                 // otherwise: to sparse
-                GB_OK (GB_convert_any_to_sparse (A, Context)) ;
+                GB_OK (GB_convert_any_to_sparse (A, Werk)) ;
             }
             break ;
 
@@ -291,14 +291,14 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             else if (is_bitmap)
             { 
                 // if bitmap: to sparse
-                GB_OK (GB_convert_bitmap_to_sparse (A, Context)) ;
+                GB_OK (GB_convert_bitmap_to_sparse (A, Werk)) ;
                 // conform between sparse and hypersparse
-                GB_OK (GB_conform_hyper (A, Context)) ;
+                GB_OK (GB_conform_hyper (A, Werk)) ;
             }
             else
             { 
                 // conform between sparse and hypersparse
-                GB_OK (GB_conform_hyper (A, Context)) ;
+                GB_OK (GB_conform_hyper (A, Werk)) ;
             }
             break ;
 
@@ -316,7 +316,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             else
             { 
                 // otherwise: to bitmap
-                GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+                GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
             }
             break ;
 
@@ -335,7 +335,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             { 
                 // ensure the matrix is hypersparse or bitmap
                 GB_OK (GB_conform_hyper_or_bitmap (is_hyper, is_sparse,
-                    is_bitmap, is_full, A, Context)) ;
+                    is_bitmap, is_full, A, Werk)) ;
             }
             break ;
 
@@ -354,7 +354,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             { 
                 // ensure the matrix is sparse or bitmap
                 GB_OK (GB_conform_sparse_or_bitmap (is_hyper, is_sparse,
-                    is_bitmap, is_full, A, Context)) ;
+                    is_bitmap, is_full, A, Werk)) ;
             }
             break ;
 
@@ -374,7 +374,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
             { 
                 // ensure the matrix is hypersparse, sparse, or bitmap
                 GB_OK (GB_conform_hyper_sparse_or_bitmap (is_hyper, is_sparse,
-                    is_bitmap, is_full, A, Context)) ;
+                    is_bitmap, is_full, A, Werk)) ;
             }
             break ;
     }

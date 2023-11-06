@@ -2,10 +2,12 @@
 // GB_convert_hyper_to_sparse: convert a matrix from hypersparse to sparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // On input, the matrix may have shallow A->p and A->h content; it is safely
 // removed.  On output, the matrix is always non-hypersparse (even if out of
@@ -24,8 +26,7 @@
 GrB_Info GB_convert_hyper_to_sparse // convert hypersparse to sparse
 (
     GrB_Matrix A,           // matrix to convert to non-hypersparse
-    bool do_burble,         // if true, then burble is allowed
-    GB_Context Context
+    bool do_burble          // if true, then burble is allowed
 )
 {
 
@@ -92,7 +93,8 @@ GrB_Info GB_convert_hyper_to_sparse // convert hypersparse to sparse
         // determine the number of threads to use
         //----------------------------------------------------------------------
 
-        GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+        int nthreads_max = GB_Context_nthreads_max ( ) ;
+        double chunk = GB_Context_chunk ( ) ;
         int nthreads = GB_nthreads (n, chunk, nthreads_max) ;
         int ntasks = (nthreads == 1) ? 1 : (8 * nthreads) ;
         ntasks = GB_IMIN (ntasks, n) ;

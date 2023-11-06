@@ -2,7 +2,7 @@
 // GB_mex_subassign: C(I,J)<M> = accum (C (I,J), A)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 // This function is a wrapper for all GxB_*_subassign functions.
@@ -96,7 +96,7 @@ int M_sparsity_control ;
 bool have_sparsity_control = false ;
 bool use_GrB_Scalar = false ;
 
-GrB_Info assign (GB_Context Context) ;
+GrB_Info assign (void) ;
 
 GrB_Info many_subassign
 (
@@ -109,8 +109,7 @@ GrB_Info many_subassign
     int fdesc,
     int fscalar,
     GrB_Type ctype,
-    const mxArray *pargin [ ],
-    GB_Context Context
+    const mxArray *pargin [ ]
 ) ;
 
 //------------------------------------------------------------------------------
@@ -128,7 +127,7 @@ GrB_Info many_subassign
     }                                   \
 }
 
-GrB_Info assign (GB_Context Context)
+GrB_Info assign (void)
 {
     bool at = (desc != NULL && desc->in0 == GrB_TRAN) ;
     GrB_Info info ;
@@ -359,8 +358,7 @@ GrB_Info many_subassign
     int fdesc,
     int fscalar,
     GrB_Type ctype,
-    const mxArray *pargin [ ],
-    GB_Context Context
+    const mxArray *pargin [ ]
 )
 {
     GrB_Info info = GrB_SUCCESS ;
@@ -465,7 +463,7 @@ GrB_Info many_subassign
         // C(I,J)<M> = A
         //----------------------------------------------------------------------
 
-        info = assign (Context) ;
+        info = assign ( ) ;
 
         GrB_Matrix_free_(&A) ;
         GrB_Matrix_free_(&M) ;
@@ -525,11 +523,11 @@ void mexFunction
     op = NULL ;
     reduce = NULL ;
 
-    GB_CONTEXT (USAGE) ;
     if (!((nargout == 1 && (nargin == 2 || nargin == 3 ||
             nargin == 6 || nargin == 7)) ||
           ((nargout == 2 || nargout == 3) && nargin == 8)))
     {
+        GB_mx_put_global (true) ;
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
 
@@ -591,7 +589,7 @@ void mexFunction
         if (fA < 0 || fI < 0 || fJ < 0) mexErrMsgTxt ("A,I,J required") ;
 
         METHOD (many_subassign (nwork, fA, fI, fJ, faccum, fM, fdesc,
-            fscalar, C->type, pargin, Context)) ;
+            fscalar, C->type, pargin)) ;
 
     }
     else
@@ -703,7 +701,7 @@ void mexFunction
         }
 
         // C(I,J)<M> = A
-        METHOD (assign (Context)) ;
+        METHOD (assign ( )) ;
 
         // apply the reduce monoid
         if (nargin == 8 && (nargout == 2 || nargout == 3))

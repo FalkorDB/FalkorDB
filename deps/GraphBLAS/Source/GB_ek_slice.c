@@ -2,7 +2,7 @@
 // GB_ek_slice: slice the entries and vectors of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,14 +25,7 @@
 #include "GB_ek_slice.h"
 #include "GB_ek_slice_search.c"
 
-void GB_ek_slice            // slice a matrix
-(
-    // output:
-    int64_t *restrict A_ek_slicing,  // size 3*ntasks+1
-    // input:
-    GrB_Matrix A,                       // matrix to slice
-    int ntasks                          // # of tasks
-)
+GB_CALLBACK_EK_SLICE_PROTO (GB_ek_slice)
 {
 
     //--------------------------------------------------------------------------

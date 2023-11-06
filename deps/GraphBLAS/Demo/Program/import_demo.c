@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Program/import_demo.c: test import/export
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,11 +11,21 @@
 //
 //  import_demo < infile
 
+#include "graphblas_demos.h"
+#include "simple_rand.h"
+#include "simple_rand.c"
+#include "usercomplex.h"
+#include "usercomplex.c"
+#include "wathen.c"
+#include "get_matrix.c"
+#include "random_matrix.c"
+#include "import_test.c"
+#include "read_matrix.c"
+
 // macro used by OK(...) to free workspace if an error occurs
+#undef  FREE_ALL
 #define FREE_ALL            \
     GrB_Matrix_free (&A) ;  \
-
-#include "graphblas_demos.h"
 
 int main (int argc, char **argv)
 {

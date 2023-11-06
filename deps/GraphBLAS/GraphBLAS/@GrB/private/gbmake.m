@@ -16,7 +16,7 @@ function gbmake (what)
 %
 % See also mex, version, GrB.clear.
 %
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('Note: the libgraphblas_matlab dynamic library must already be\n') ;
@@ -91,7 +91,7 @@ else
     object_suffix = '.o' ;
 end
 
-inc = '-Iutil -I../../../Include -I../../../Source -I../../../Source/Template -I../../../rmm_wrap' ;
+inc = '-Iutil -I../../../Include -I../../../Source -I../../../Source/Shared -I../../../Source/Template -I../../../Source/Factories ' ;
 
 if ispc
     % First do the following in GraphBLAS/build, in the Windows console:
@@ -130,7 +130,7 @@ else
 end
 
 if (need_rename)
-    flags = [flags ' -DGBRENAME=1 ' ] ;
+    flags = [flags ' -DGBMATLAB=1 ' ] ;
     inc = [inc ' -I../../rename ' ] ;
     libgraphblas = '-lgraphblas_matlab' ;
 else

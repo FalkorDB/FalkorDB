@@ -2,7 +2,7 @@
 // GrB_kronecker: Kronecker product
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ GrB_Info GrB_Matrix_kronecker_BinaryOp  // C<M> = accum (C, kron(A,B))
         op,                         // operator that defines T=kron(A,B)
         A,          A_tran,         // A matrix and its descriptor
         B,          B_tran,         // B matrix and its descriptor
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;
@@ -102,7 +102,7 @@ GrB_Info GrB_Matrix_kronecker_Monoid  // C<M> = accum (C, kron(A,B))
         monoid->op,                 // operator that defines T=kron(A,B)
         A,          A_tran,         // A matrix and its descriptor
         B,          B_tran,         // B matrix and its descriptor
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;
@@ -152,7 +152,7 @@ GrB_Info GrB_Matrix_kronecker_Semiring  // C<M> = accum (C, kron(A,B))
         semiring->multiply,         // operator that defines T=kron(A,B)
         A,          A_tran,         // A matrix and its descriptor
         B,          B_tran,         // B matrix and its descriptor
-        Context) ;
+        Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

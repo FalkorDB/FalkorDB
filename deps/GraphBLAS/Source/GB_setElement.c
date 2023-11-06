@@ -2,7 +2,7 @@
 // GB_setElement: C(row,col) = scalar or += scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -42,7 +42,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
     const GrB_Index row,            // row index
     const GrB_Index col,            // column index
     const GB_Type_code scalar_code, // type of the scalar
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -86,7 +86,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
         // C and scalar must be compatible with the accum operator
         GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
         GB_OK (GB_BinaryOp_compatible (accum, ctype, ctype, NULL, scalar_code,
-            Context)) ;
+            Werk)) ;
     }
 
     // pending tuples and zombies are expected, and C might be jumbled too
@@ -100,7 +100,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
 
     if (C->jumbled)
     { 
-        GB_OK (GB_wait (C, "C (setElement:jumbled)", Context)) ;
+        GB_OK (GB_wait (C, "C (setElement:jumbled)", Werk)) ;
     }
 
     // zombies and pending tuples are still OK, but C is no longer jumbled
@@ -151,9 +151,9 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // pending tuples and convert C to non-iso.  Zombies are OK.
             if (C->Pending != NULL)
             { 
-                GB_OK (GB_wait (C, "C (setElement:to non-iso)", Context)) ;
+                GB_OK (GB_wait (C, "C (setElement:to non-iso)", Werk)) ;
             }
-            GB_OK (GB_convert_any_to_non_iso (C, true, Context)) ;
+            GB_OK (GB_convert_any_to_non_iso (C, true)) ;
         }
 
     }
@@ -170,11 +170,11 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // s = (ctype) scalar
             GB_void s [GB_VLA(csize)] ;
             GB_cast_scalar (s, ccode, scalar, scalar_code, csize) ;
-            GB_OK (GB_convert_any_to_iso (C, s, Context)) ;
+            GB_OK (GB_convert_any_to_iso (C, s)) ;
         }
         else
         { 
-            GB_OK (GB_convert_any_to_iso (C, (GB_void *) scalar, Context)) ;
+            GB_OK (GB_convert_any_to_iso (C, (GB_void *) scalar)) ;
         }
     }
 
@@ -223,6 +223,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
 
         int64_t pC_start, pC_end ;
         const int64_t *restrict Ch = C->h ;
+        const int64_t *restrict Cp = C->p ;
         if (C->nvals == 0)
         { 
             // C is empty
@@ -231,28 +232,21 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
         else if (Ch != NULL)
         {
             // C is hypersparse, with at least one entry
-            int64_t k ;
-            if (C->Y == NULL)
-            { 
-                // C is hypersparse but does not yet have a hyper_hash
-                k = 0 ;
-                found = GB_lookup (true, Ch, C->p, C->vlen, &k,
-                    C->nvec-1, j, &pC_start, &pC_end) ;
-            }
-            else
-            { 
-                // C is hypersparse, with a hyper_hash that is already built
-                k = GB_hyper_hash_lookup (C->p, C->Y->p, C->Y->i, C->Y->x,
-                    C->Y->vdim-1, j, &pC_start, &pC_end) ;
-                found = (k >= 0) ;
-            }
+            const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+            const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+            const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+            const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
+            const int64_t cnvec = C->nvec ;
+            int64_t k = GB_hyper_hash_lookup (Ch, cnvec, Cp, C_Yp, C_Yi, C_Yx,
+                C_hash_bits, j, &pC_start, &pC_end) ;
+            found = (k >= 0) ;
             ASSERT (GB_IMPLIES (found, j == Ch [k])) ;
         }
         else
         { 
             // C is sparse
-            pC_start = C->p [j] ;
-            pC_end   = C->p [j+1] ;
+            pC_start = Cp [j] ;
+            pC_end   = Cp [j+1] ;
             found = true ;
         }
 
@@ -355,7 +349,8 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
 
         // No typecasting can be done.  The new pending tuple must either be
         // the first pending tuple, or its type must match the prior pending
-        // tuples.  See GB_subassign_methods.h for a complete description.
+        // tuples.  See GB_assign_shared_definitions.h for a complete
+        // description.
 
         //----------------------------------------------------------------------
         // check for wait
@@ -407,7 +402,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // new tuple requires both conditions to hold.  All prior tuples
             // must be assembled before this new one can be added.
             GB_OK (GB_wait (C, "C (setElement:incompatible pending tuples)",
-                Context)) ;
+                Werk)) ;
 
             // repeat the search since the C(i,j) entry may have been in
             // the list of pending tuples.  There are no longer any pending
@@ -415,7 +410,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // pending operator will become the implicit SECOND_ctype, or
             // accum, and the type of the pending tuples will become stype.
             return (GB_setElement (C, accum, scalar, row, col, scalar_code,
-                Context)) ;
+                Werk)) ;
 
         }
         else
@@ -434,7 +429,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // becomes NULL, which is the implicit SECOND_ctype operator,
             // or non-NULL if accum is present.
             if (!GB_Pending_add (&(C->Pending), C->iso, (GB_void *) scalar,
-                stype, accum, i, j, C->vdim > 1, Context))
+                stype, accum, i, j, C->vdim > 1, Werk))
             { 
                 // out of memory
                 GB_phybix_free (C) ;
@@ -457,7 +452,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             ASSERT (C->Pending->size == stype->size) ;
 
             // one more pending tuple; block if too many of them
-            return (GB_block (C, Context)) ;
+            return (GB_block (C, Werk)) ;
         }
     }
 }

@@ -1,7 +1,7 @@
 function test245
 %TEST245 test colscale (A*D) and rowscale (D*B) with complex types
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -28,7 +28,7 @@ semiring.multiply = 'times' ;
 
 tol = 1e-12 ;
 
-% GrB.burble (1) ;
+% GB_mex_burble (1) ;
 
 for k = [false true]
     GB_builtin_complex_set (k) ;
@@ -68,7 +68,7 @@ for k = [false true]
 
 end
 
-% GrB.burble (0) ;
+% GB_mex_burble (0) ;
 
 GB_builtin_complex_set (true) ;
 

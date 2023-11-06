@@ -1,5 +1,5 @@
 function builtin_complex = GB_builtin_complex_get
-%GB_BUILTINT_COMPLEX get the flag that determines the GrB_Type Complex
+%GB_BUILTIN_COMPLEX_GET get the flag that determines the GrB_Type Complex
 %
 % builtin_complex = GB_builtin_complex_get
 %
@@ -9,7 +9,7 @@ function builtin_complex = GB_builtin_complex_get
 %
 % See also GB_builtin_complex_set.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 global GraphBLAS_builtin_complex
@@ -17,4 +17,5 @@ if (isempty (GraphBLAS_builtin_complex))
     builtin_complex = GB_builtin_complex_set (true) ;
 end
 builtin_complex = GraphBLAS_builtin_complex ;
+
 

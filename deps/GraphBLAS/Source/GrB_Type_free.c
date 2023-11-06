@@ -2,7 +2,7 @@
 // GrB_Type_free:  free a user-defined type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,14 +21,15 @@ GrB_Info GrB_Type_free          // free a user-defined type
         GrB_Type t = *type ;
         if (t != NULL)
         {
+            GB_FREE (&(t->user_name), t->user_name_size) ;
+            size_t defn_size = t->defn_size ;
+            if (defn_size > 0)
+            { 
+                GB_FREE (&(t->defn), defn_size) ;
+            }
             size_t header_size = t->header_size ;
             if (header_size > 0)
-            { 
-                size_t defn_size = t->defn_size ;
-                if (defn_size > 0)
-                { 
-                    GB_FREE (&(t->defn), defn_size) ;
-                }
+            {
                 t->magic = GB_FREED ;  // to help detect dangling pointers
                 t->header_size = 0 ;
                 GB_FREE (type, header_size) ;

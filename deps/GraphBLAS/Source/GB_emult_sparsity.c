@@ -2,7 +2,7 @@
 // GB_emult_sparsity: determine the sparsity structure for C<M or !M>=A.*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,11 +22,7 @@
 // C is full.
 
 #include "GB_emult.h"
-
-// GB_MASK_VERY_SPARSE is true if C<M>=A+B, C<M>=A.*B or C<M>=accum(C,T) is
-// being computed, and the mask M is very sparse compared with A and B.
-#define GB_MASK_VERY_SPARSE(mfactor,M,A,B) \
-    ((mfactor) * GB_nnz (M) < GB_nnz (A) + GB_nnz (B))
+#include "GB_mask_very_sparse.h"
 
 int GB_emult_sparsity       // return the sparsity structure for C
 (
@@ -57,8 +53,8 @@ int GB_emult_sparsity       // return the sparsity structure for C
     bool A_is_sparse_or_hyper = GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A) ;
     bool B_is_sparse_or_hyper = GB_IS_SPARSE (B) || GB_IS_HYPERSPARSE (B) ;
 
-    bool A_is_full = GB_as_if_full (A) ;
-    bool B_is_full = GB_as_if_full (B) ;
+    bool A_is_full = GB_IS_FULL (A) ;
+    bool B_is_full = GB_IS_FULL (B) ;
 
     if (M == NULL)
     {

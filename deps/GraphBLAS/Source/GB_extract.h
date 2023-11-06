@@ -2,7 +2,7 @@
 // GB_extract.h: definitions for GB_extract
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     const GrB_Index nRows_in,       // number of row indices
     const GrB_Index *Cols,          // column indices
     const GrB_Index nCols_in,       // number of column indices
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

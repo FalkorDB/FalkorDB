@@ -11,14 +11,15 @@
 
 #pragma once
 
-#define GB_CUDA_KERNEL
 #include <limits>
 #include "GB_cuda_kernel.h"
+#include "GB_mxm_shared_definitions.h"
 #include "GB_cuda_buckets.h"
 #include <cub/block/block_scan.cuh>
 #include <cooperative_groups.h>
 
 using namespace cooperative_groups;
+
 //------------------------------------------------------------------------------
 // GB_jit_AxB_dot3_dense_phase1: lookup i,j pairs and store in Mi, Ci 
 //------------------------------------------------------------------------------
@@ -42,11 +43,12 @@ __global__ void GB_jit_AxB_dot3_dense_phase1
     const int64_t *__restrict__ Mp = M->p ;
     const int64_t *__restrict__ Mi = M->i ;
     #if !GB_MASK_STRUCT
-    const T_M *__restrict__ Mx = (T_M*) M->x ; // not accessed if M structural
+    const GB_M_TYPE *__restrict__ Mx = (GB_M_TYPE *) M->x ;
     #endif
     const int64_t mnvec = M->nvec ;
     const int64_t mvlen = M->vlen ;
-    const int64_t mnz =  GB_nnz(M) ;
+//  const int64_t mnz =  GB_nnz(M) ;
+    const GB_M_NVALS (mnz) ;
 
     int64_t *__restrict__ Ci = C->i ;   // for zombies, or bucket assignment
 
@@ -146,7 +148,7 @@ __global__ void GB_jit_AxB_dot3_dense_phase1
             }
             #else
             {
-                bool mij = (bool) MX (pM) ;
+                bool mij = (bool) GB_MCAST (Mx,pM,) ;
                 int64_t i = Mi [ pM ] ;
                 // FIXME: no need for k<<4, just place k or GB_FLIP(i) in Ci
                 Ci[pM] = (!mij) * ( GB_FLIP(i) << 4)

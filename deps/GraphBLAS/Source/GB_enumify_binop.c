@@ -2,7 +2,7 @@
 // GB_enumify_binop: convert binary opcode and xcode into a single enum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2021, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,13 +16,13 @@
 void GB_enumify_binop
 (
     // output:
-    int *ecode,         // enumerated operator, range 0 to 139
+    int *ecode,         // enumerated operator, range 0 to 255
     // input:
     GB_Opcode opcode,   // opcode of GraphBLAS operator to convert into a macro
     GB_Type_code xcode, // op->xtype->code of the operator
     bool for_semiring   // true for A*B, false for A+B or A.*B
 )
-{
+{ 
 
     int e = 0 ;
 
@@ -33,12 +33,12 @@ void GB_enumify_binop
         // user-defined operator
         //----------------------------------------------------------------------
 
-        case GB_USER_binop_code :
+        case GB_USER_binop_code : 
 
             e = 0 ; break ;
 
         //----------------------------------------------------------------------
-        // built-in ops that can be used in a monoid:
+        // built-in ops that can be used in a monoid or for GrB_build methods:
         //----------------------------------------------------------------------
 
         case GB_FIRST_binop_code :  // z = x, can be used as the ANY monoid
@@ -46,6 +46,7 @@ void GB_enumify_binop
             e = 1 ; break ;
 
         case GB_ANY_binop_code :    // z = y (same as SECOND)
+        case GB_SECOND_binop_code : // z = y (same as ANY, but not a monoid)
 
             e = 2 ; break ;
 
@@ -111,10 +112,10 @@ void GB_enumify_binop
             // only a monoid for bool (lxor)
             switch (xcode)
             {
-                case GB_BOOL_code   : e = 16 ; break ; // x != y
+                case GB_BOOL_code   : e = 16 ; break ; // x ^ y
                 case GB_FC32_code   : e = 36 ; break ; // GB_FC32_ne (x,y)
                 case GB_FC64_code   : e = 37 ; break ; // GB_FC64_ne (x,y)
-                default             : e = 16 ; break ; // x != y
+                default             : e =141 ; break ; // x != y
             }
             break ;
 
@@ -140,7 +141,7 @@ void GB_enumify_binop
 
             switch (xcode)
             {
-                case GB_BOOL_code   : e = 16 ; break ; // x != y
+                case GB_BOOL_code   : e = 16 ; break ; // x ^ y
                 default             : e = 42 ; break ; // not a monoid
             }
             break ;
@@ -169,10 +170,6 @@ void GB_enumify_binop
         // built-in ops that cannot be used in a monoid:
         //----------------------------------------------------------------------
 
-        case GB_SECOND_binop_code : // z = y (same as ANY, but not a monoid)
-
-            e = 2 ; break ;
-
         case GB_ISEQ_binop_code :   // z = (x == y), but not a monoid
 
             switch (xcode)
@@ -180,7 +177,7 @@ void GB_enumify_binop
                 case GB_BOOL_code   : e = 15 ; break ; // x == y
                 case GB_FC32_code   : e = 34 ; break ; // GB_FC32_iseq(x,y)
                 case GB_FC64_code   : e = 35 ; break ; // GB_FC64_iseq(x,y)
-                default             : e = 15 ; break ; // x == y, not a monoid
+                default             : e =142 ; break ; // (ztype) (x == y)
             }
             break ;
 
@@ -191,7 +188,7 @@ void GB_enumify_binop
                 case GB_BOOL_code   : e = 16 ; break ; // x != y
                 case GB_FC32_code   : e = 38 ; break ; // GB_FC32_isne(x,y)
                 case GB_FC64_code   : e = 39 ; break ; // GB_FC64_isne(x,y)
-                default             : e = 16 ; break ; // x != y
+                default             : e =143 ; break ; // (ztype) (x != y)
             }
             break ;
 
@@ -222,16 +219,16 @@ void GB_enumify_binop
             switch (xcode)
             {
                 case GB_BOOL_code   : e =  1 ; break ; // x
-                case GB_INT8_code   : e = 49 ; break ; // GB_idiv_int8 (x,y)
-                case GB_INT16_code  : e = 50 ; break ; // GB_idiv_int16 (x,y)
-                case GB_INT32_code  : e = 51 ; break ; // GB_idiv_int32 (x,y)
-                case GB_INT64_code  : e = 52 ; break ; // GB_idiv_int64 (x,y)
-                case GB_UINT8_code  : e = 53 ; break ; // GB_idiv_uint8 (x,y)
-                case GB_UINT16_code : e = 54 ; break ; // GB_idiv_uint16 (x,y)
-                case GB_UINT32_code : e = 55 ; break ; // GB_idiv_uint32 (x,y)
-                case GB_UINT64_code : e = 56 ; break ; // GB_idiv_uint64 (x,y)
-                case GB_FC32_code   : e = 57 ; break ; // GB_FC32_div(x,y)
-                case GB_FC64_code   : e = 58 ; break ; // GB_FC64_div(x,y)
+                case GB_INT8_code   : e = 49 ; break ; // GJ_idiv_int8 (x,y)
+                case GB_INT16_code  : e = 50 ; break ; // GJ_idiv_int16 (x,y)
+                case GB_INT32_code  : e = 51 ; break ; // GJ_idiv_int32 (x,y)
+                case GB_INT64_code  : e = 52 ; break ; // GJ_idiv_int64 (x,y)
+                case GB_UINT8_code  : e = 53 ; break ; // GJ_idiv_uint8 (x,y)
+                case GB_UINT16_code : e = 54 ; break ; // GJ_idiv_uint16 (x,y)
+                case GB_UINT32_code : e = 55 ; break ; // GJ_idiv_uint32 (x,y)
+                case GB_UINT64_code : e = 56 ; break ; // GJ_idiv_uint64 (x,y)
+                case GB_FC32_code   : e = 57 ; break ; // GJ_FC32_div(x,y)
+                case GB_FC64_code   : e = 58 ; break ; // GJ_FC64_div(x,y)
                 default             : e = 59 ; break ; // (x) / (y)
             }
             break ;
@@ -241,45 +238,57 @@ void GB_enumify_binop
             switch (xcode)
             {
                 case GB_BOOL_code   : e =  2 ; break ; // y
-                case GB_INT8_code   : e = 60 ; break ; // GB_idiv_int8 (y,x)
-                case GB_INT16_code  : e = 61 ; break ; // GB_idiv_int16 (y,x)
-                case GB_INT32_code  : e = 62 ; break ; // GB_idiv_int32 (y,x)
-                case GB_INT64_code  : e = 63 ; break ; // GB_idiv_int64 (y,x)
-                case GB_UINT8_code  : e = 64 ; break ; // GB_idiv_uint8 (y,x)
-                case GB_UINT16_code : e = 65 ; break ; // GB_idiv_uint16 (y,x)
-                case GB_UINT32_code : e = 66 ; break ; // GB_idiv_uint32 (y,x)
-                case GB_UINT64_code : e = 67 ; break ; // GB_idiv_uint64 (y,x)
-                case GB_FC32_code   : e = 68 ; break ; // GB_FC32_div(y,x)
-                case GB_FC64_code   : e = 69 ; break ; // GB_FC64_div(y,x)
+                case GB_INT8_code   : e = 60 ; break ; // GJ_idiv_int8 (y,x)
+                case GB_INT16_code  : e = 61 ; break ; // GJ_idiv_int16 (y,x)
+                case GB_INT32_code  : e = 62 ; break ; // GJ_idiv_int32 (y,x)
+                case GB_INT64_code  : e = 63 ; break ; // GJ_idiv_int64 (y,x)
+                case GB_UINT8_code  : e = 64 ; break ; // GJ_idiv_uint8 (y,x)
+                case GB_UINT16_code : e = 65 ; break ; // GJ_idiv_uint16 (y,x)
+                case GB_UINT32_code : e = 66 ; break ; // GJ_idiv_uint32 (y,x)
+                case GB_UINT64_code : e = 67 ; break ; // GJ_idiv_uint64 (y,x)
+                case GB_FC32_code   : e = 68 ; break ; // GJ_FC32_div(y,x)
+                case GB_FC64_code   : e = 69 ; break ; // GJ_FC64_div(y,x)
                 default             : e = 70 ; break ; // (y) / (x)
             }
             break ;
 
-        case GB_GT_binop_code :
-        case GB_ISGT_binop_code :   // z = (x > y)
+        case GB_GT_binop_code :     // z = (x > y)
 
             e = 71 ; break ;
 
-        case GB_LT_binop_code :
-        case GB_ISLT_binop_code :   // z = (x < y)
+        case GB_ISGT_binop_code :   // z = (ztype) (x > y)
+
+            e = 144 ; break ;
+
+        case GB_LT_binop_code :     // z = (x < y)
 
             e = 72 ; break ;
 
-        case GB_GE_binop_code :
-        case GB_ISGE_binop_code :   // z = (x >= y)
+        case GB_ISLT_binop_code :   // z = (ztype) (x < y)
+
+            e = 145 ; break ;
+
+        case GB_GE_binop_code :     // z = (x >= y)
 
             e = 73 ; break ;
 
-        case GB_LE_binop_code :
-        case GB_ISLE_binop_code :   // z = (x <= y)
+        case GB_ISGE_binop_code :   // z = (ztype) (x >= y)
+
+            e = 146 ; break ;
+
+        case GB_LE_binop_code :     // z = (x <= y)
 
             e = 74 ; break ;
+
+        case GB_ISLE_binop_code :   // z = (ztype) (x <= y)
+
+            e =147 ; break ;
 
         case GB_BGET_binop_code :   // z = bitget (x,y)
 
             switch (xcode)
             {
-                case GB_INT8_code   : e = 75 ; break ;
+                case GB_INT8_code   : e = 75 ; break ;  // bget
                 case GB_INT16_code  : e = 76 ; break ;
                 case GB_INT32_code  : e = 77 ; break ;
                 case GB_INT64_code  : e = 78 ; break ;
@@ -295,7 +304,7 @@ void GB_enumify_binop
 
             switch (xcode)
             {
-                case GB_INT8_code   : e = 83 ; break ;
+                case GB_INT8_code   : e = 83 ; break ;  // bset
                 case GB_INT16_code  : e = 84 ; break ;
                 case GB_INT32_code  : e = 85 ; break ;
                 case GB_INT64_code  : e = 86 ; break ;
@@ -311,7 +320,7 @@ void GB_enumify_binop
 
             switch (xcode)
             {
-                case GB_INT8_code   : e = 91 ; break ;
+                case GB_INT8_code   : e = 91 ; break ;  // bclr
                 case GB_INT16_code  : e = 92 ; break ;
                 case GB_INT32_code  : e = 93 ; break ;
                 case GB_INT64_code  : e = 94 ; break ;
@@ -327,7 +336,7 @@ void GB_enumify_binop
 
             switch (xcode)
             {
-                case GB_INT8_code   : e =  99 ; break ;
+                case GB_INT8_code   : e =  99 ; break ; // bshift
                 case GB_INT16_code  : e = 100 ; break ;
                 case GB_INT32_code  : e = 101 ; break ;
                 case GB_INT64_code  : e = 102 ; break ;
@@ -344,7 +353,7 @@ void GB_enumify_binop
             switch (xcode)
             {
                 case GB_BOOL_code   : e =  71 ; break ; // x >= y
-                case GB_INT8_code   : e = 107 ; break ;
+                case GB_INT8_code   : e = 107 ; break ; // pow
                 case GB_INT16_code  : e = 108 ; break ;
                 case GB_INT32_code  : e = 109 ; break ;
                 case GB_INT64_code  : e = 110 ; break ;
@@ -424,15 +433,21 @@ void GB_enumify_binop
 
             switch (xcode)
             {
-                case GB_FP32_code   : e = 131 ; break ;
-                case GB_FP64_code   : e = 132 ; break ;
+                case GB_FP32_code   : e = 131 ; break ; // cmplx
+                case GB_FP64_code   : e = 132 ; break ; // cmplx
                 default: ;
             }
             break ;
 
         case GB_PAIR_binop_code :   // z = 1
 
-            e = 133 ; break ;
+            switch (xcode)
+            {
+                case GB_FC32_code   : e = 148 ; break ; // z = GxB_CMPLXF (1,0)
+                case GB_FC64_code   : e = 149 ; break ; // z = GxB_CMPLX (1,0)
+                default             : e = 133 ; break ; // z = 1
+            }
+            break ;
 
         //----------------------------------------------------------------------
         // positional ops
@@ -460,7 +475,7 @@ void GB_enumify_binop
 
         case GB_SECONDI1_binop_code :   // z = for_semiring ? (k+1) : (i+1)
 
-            e = for_semiring ? 138 : 139 ; break ;
+            e = for_semiring ? 138 : 137 ; break ;
 
         case GB_SECONDJ_binop_code :    // z = j
 
@@ -470,9 +485,9 @@ void GB_enumify_binop
 
             e = 139 ; break ;
 
-        case GB_NOP_code :              // no operator for GB_wait
+        case GB_NOP_code :              // no operator present
 
-            e = 140 ; break ;
+            e = 255 ; break ;
 
         default: ;
     }

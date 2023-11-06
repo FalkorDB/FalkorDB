@@ -2,7 +2,7 @@
 // GB_unjumble: unjumble the vectors of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,7 +12,7 @@
 GrB_Info GB_unjumble        // unjumble a matrix
 (
     GrB_Matrix A,           // matrix to unjumble
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -26,7 +26,7 @@ GrB_Info GB_unjumble        // unjumble a matrix
 
     if (A->nvec_nonempty < 0)
     { 
-        A->nvec_nonempty = GB_nvec_nonempty (A, Context) ;
+        A->nvec_nonempty = GB_nvec_nonempty (A) ;
     }
 
     if (!A->jumbled)
@@ -54,7 +54,8 @@ GrB_Info GB_unjumble        // unjumble a matrix
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (anz + anvec, chunk, nthreads_max) ;
     int ntasks = (nthreads == 1) ? 1 : (32 * nthreads) ;
     ntasks = GB_IMIN (ntasks, anvec) ;

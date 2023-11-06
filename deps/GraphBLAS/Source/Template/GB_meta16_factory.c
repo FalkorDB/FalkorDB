@@ -2,7 +2,7 @@
 // GB_meta16_factory: 16 cases of a method for A and B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -316,7 +316,7 @@
 }
 
 //------------------------------------------------------------------------------
-// redefine macros for any sparity of A and B
+// redefine macros for any sparsity of A and B
 //------------------------------------------------------------------------------
 
 #undef GB_META16

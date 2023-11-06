@@ -2,7 +2,7 @@
 // GxB_Matrix_unpack_BitmapR: unpack a bitmap matrix, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,10 +43,10 @@ GrB_Info GxB_Matrix_unpack_BitmapR  // unpack a bitmap matrix, by row
     { 
         // A = A', done in-place, to put A in by-row format
         GBURBLE ("(transpose) ") ;
-        GB_OK (GB_transpose_in_place (A, false, Context)) ;
+        GB_OK (GB_transpose_in_place (A, false, Werk)) ;
     }
 
-    GB_OK (GB_convert_any_to_bitmap (A, Context)) ;
+    GB_OK (GB_convert_any_to_bitmap (A, Werk)) ;
 
     //--------------------------------------------------------------------------
     // unpack the matrix
@@ -71,7 +71,7 @@ GrB_Info GxB_Matrix_unpack_BitmapR  // unpack a bitmap matrix, by row
         Ax,   Ax_size,  // Ax
         nvals, NULL, NULL,                  // nvals for bitmap
         &sparsity, &is_csc,                 // bitmap by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {

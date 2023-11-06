@@ -2,19 +2,10 @@
 // GB_enumify_terminal: return enum of terminal value
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2021, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
-
-// The GB_TERMINAL_CONDITION(cij,z) should return true if the value of cij has
-// reached its terminal value (z), or false otherwise.  If the monoid is not
-// terminal, then the macro should always return false.  The ANY monoid should
-// always return true.
-
-// The terminal_statement_macro is a macro containing a full statement.  If the
-// monoid is never terminal, it becomes the empty statement.  Otherwise,
-// it checks the terminal condition and does a "break" if true.
 
 #include "GB.h"
 #include "GB_stringify.h"
@@ -27,20 +18,20 @@ void GB_enumify_terminal        // enumify the terminal value
     GB_Opcode opcode,           // built-in binary opcode of a monoid
     GB_Type_code zcode          // type code of the operator
 )
-{
+{ 
 
     int e = 31 ;                // default is a non-terminal monoid
 
     switch (opcode)
     {
 
-        case GB_PLUS_binop_code :
+        case GB_PLUS_binop_code : 
 
             // boolean PLUS (or) is terminal (true), others are not terminal
             e = (zcode == GB_BOOL_code) ? 2 : 31 ;
             break ;
 
-        case GB_TIMES_binop_code :
+        case GB_TIMES_binop_code : 
 
             switch (zcode)
             {
@@ -71,7 +62,7 @@ void GB_enumify_terminal        // enumify the terminal value
                 e = 3 ;                 // false
                 break ;
 
-        case GB_MIN_binop_code :
+        case GB_MIN_binop_code : 
 
             switch (zcode)
             {
@@ -90,7 +81,7 @@ void GB_enumify_terminal        // enumify the terminal value
             }
             break ;
 
-        case GB_MAX_binop_code :
+        case GB_MAX_binop_code : 
 
             switch (zcode)
             {

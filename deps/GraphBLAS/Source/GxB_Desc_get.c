@@ -2,14 +2,14 @@
 // GxB_Desc_get: get a field in a descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // GxB_Desc_get is a single va_arg-based method for any descriptor option,
-// of any type.  The following functions are alternative methods that do not
-// use va_arg (useful for compilers and interfaces that do not support va_arg):
+// of any type.  The following functions are non-va_arg-based methods
+// (useful for compilers and interfaces that do not support va_arg):
 //
 //  GxB_Desc_get_INT32         int32_t scalars
 //  GxB_Desc_get_FP64          double scalars
@@ -62,12 +62,6 @@ GrB_Info GxB_Desc_get_INT32     // get a parameter from a descriptor
             (*value) = (int32_t) ((desc == NULL) ? GxB_DEFAULT : desc->in1) ;
             break ;
 
-        case GxB_DESCRIPTOR_NTHREADS :  // DEPRECATED
-
-            (*value) = (int32_t) ((desc == NULL) ?
-                    GxB_DEFAULT : desc->nthreads_max) ;
-            break ;
-
         case GxB_AxB_METHOD : 
 
             (*value) = (int32_t) ((desc == NULL) ? GxB_DEFAULT : desc->axb) ;
@@ -110,34 +104,8 @@ GrB_Info GxB_Desc_get_FP64      // get a parameter from a descriptor
     double *value               // return value of the descriptor
 )
 {
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_WHERE1 ("GxB_Desc_get_FP64 (desc, field, &value)") ;
-    GB_RETURN_IF_FAULTY (desc) ;
-    GB_RETURN_IF_NULL (value) ;
-
-    //--------------------------------------------------------------------------
-    // get the parameter
-    //--------------------------------------------------------------------------
-
-    switch (field)
-    {
-
-        case GxB_DESCRIPTOR_CHUNK :     // DEPRECATED
-
-            (*value) = (double) ((desc == NULL) ? GxB_DEFAULT : desc->chunk) ;
-            break ;
-
-        default : 
-
-            return (GrB_INVALID_VALUE) ;
-    }
-
-    #pragma omp flush
-    return (GrB_SUCCESS) ;
+    // no longer any double parameters in the descriptor
+    return (GrB_INVALID_VALUE) ;
 }
 
 //------------------------------------------------------------------------------
@@ -208,29 +176,6 @@ GrB_Info GxB_Desc_get           // get a parameter from a descriptor
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (value) ;
                 (*value) = (desc == NULL) ? GxB_DEFAULT : desc->in1 ;
-            }
-            break ;
-
-        case GxB_DESCRIPTOR_NTHREADS :  // DEPRECATED
-
-            {
-                va_start (ap, field) ;
-                int *nthreads = va_arg (ap, int *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (nthreads) ;
-                int nth = (desc == NULL) ? GxB_DEFAULT : desc->nthreads_max ;
-                (*nthreads) = nth ;
-            }
-            break ;
-
-        case GxB_DESCRIPTOR_CHUNK :     // DEPRECATED
-
-            {
-                va_start (ap, field) ;
-                double *chunk = va_arg (ap, double *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (chunk) ;
-                (*chunk) = (desc == NULL) ? GxB_DEFAULT : desc->chunk ;
             }
             break ;
 

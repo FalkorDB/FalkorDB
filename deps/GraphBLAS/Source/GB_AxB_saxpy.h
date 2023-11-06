@@ -2,7 +2,7 @@
 // GB_AxB_saxpy.h: definitions for GB_AxB_saxpy and related methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ GrB_Info GB_AxB_saxpy               // C = A*B using Gustavson/Hash/Bitmap
     bool *done_in_place,            // if true, C was computed in-place 
     const GrB_Desc_Value AxB_method,
     const int do_sort,              // if nonzero, try to sort in saxpy3
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------
@@ -48,8 +48,7 @@ void GB_AxB_saxpy_sparsity          // determine C_sparsity and method to use
     const GrB_Matrix M,             // optional mask for C, unused if NULL
     const bool Mask_comp,           // if true, use !M
     const GrB_Matrix A,             // input A matrix
-    const GrB_Matrix B,             // input B matrix
-    GB_Context Context
+    const GrB_Matrix B              // input B matrix
 ) ;
 
 //------------------------------------------------------------------------------
@@ -64,7 +63,7 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
     const GrB_Semiring semiring,    // semiring that defines C=A*B and accum
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *done_in_place,            // if true, saxpy4 has computed the result
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 void GB_AxB_saxpy4_tasks
@@ -79,8 +78,7 @@ void GB_AxB_saxpy4_tasks
     int64_t anz,                    // # of entries in A (sparse or hyper)
     int64_t bnz,                    // # of entries held in B
     int64_t bvdim,                  // # of vectors of B (bitmap or full)
-    int64_t cvlen,                  // # of vectors of C (bitmap or full)
-    GB_Context Context
+    int64_t cvlen                   // # of vectors of C (bitmap or full)
 ) ;
 
 //------------------------------------------------------------------------------
@@ -95,16 +93,27 @@ GrB_Info GB_AxB_saxpy5              // C += A*B
     const GrB_Semiring semiring,    // semiring that defines C=A*B and accum
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *done_in_place,            // if true, saxpy5 has computed the result
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------
-// saxpy methods
+// saxbit:
 //------------------------------------------------------------------------------
 
-#define GB_SAXPY_METHOD_3 3
-#define GB_SAXPY_METHOD_BITMAP 5
-#define GB_SAXPY_METHOD_ISO_FULL 6
+GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
+(
+    GrB_Matrix C,                   // output matrix, static header
+    const bool C_iso,               // true if C is iso
+    const GB_void *cscalar,         // iso value of C
+    const GrB_Matrix M,             // optional mask matrix
+    const bool Mask_comp,           // if true, use !M
+    const bool Mask_struct,         // if true, use the only structure of M
+    const GrB_Matrix A,             // input matrix A
+    const GrB_Matrix B,             // input matrix B
+    const GrB_Semiring semiring,    // semiring that defines C=A*B
+    const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
+    GB_Werk Werk
+) ;
 
 #endif
 

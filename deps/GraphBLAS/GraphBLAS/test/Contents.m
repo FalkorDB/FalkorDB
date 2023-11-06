@@ -139,6 +139,6 @@
 %  gb_contains    - same as contains (text, pattern)
 %  gb_octave      - return true if Octave is in use, false for MATLAB
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 

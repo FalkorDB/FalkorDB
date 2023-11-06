@@ -2,7 +2,7 @@
 // GrB_init: initialize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,7 @@
 // GrB_finalize must be called as the last GraphBLAS operation.
 
 #include "GB.h"
+#include "GB_init.h"
 
 GrB_Info GrB_init           // start up GraphBLAS
 (
@@ -22,17 +23,16 @@ GrB_Info GrB_init           // start up GraphBLAS
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_CONTEXT ("GrB_init (mode)") ;
+    GB_WERK ("GrB_init (mode)") ;
 
     //--------------------------------------------------------------------------
     // initialize GraphBLAS
     //--------------------------------------------------------------------------
 
-    // default:  use the ANSI C11 malloc memory manager, which is thread-safe 
+    // default:  use the C11 malloc memory manager, which is thread-safe 
 
-    return (GB_init
-        (mode,                          // blocking or non-blocking mode
-        malloc, realloc, free,          // ANSI C memory management functions
-        Context)) ;
+    return (GB_init (mode,              // blocking or non-blocking mode
+        malloc, calloc, realloc, free,  // ANSI C memory management functions
+        Werk)) ;
 }
 

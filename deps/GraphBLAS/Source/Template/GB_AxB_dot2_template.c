@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_AxB_dot2_template:  C=A'B, C<!M>=A'*B, or C<M>=A'*B via dot products
+// GB_AxB_dot2_template:  C<#M>=A'*B, or C<#M>=A*B via dot products
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,20 +12,24 @@
 // sparse matrices, and C is converted from bitmap to sparse/hypersparse when
 // done.
 
-// If A_NOT_TRANSPOSED is #defined, the C=A*B or C<#M>=A*B is computed.
+// If A_NOT_TRANSPOSED is #defined, then C=A*B or C<#M>=A*B is computed.
 // In this case A is bitmap or full, and B is sparse.
+
+// C is bitmap or full.
 
 // GB_DOT_ALWAYS_SAVE_CIJ: C(i,j) = cij
 #undef GB_DOT_ALWAYS_SAVE_CIJ
 #if GB_C_IS_FULL
     #define GB_DOT_ALWAYS_SAVE_CIJ      \
     {                                   \
-        GB_PUTC (cij, pC) ;             \
+        /* Cx [pC] = cij */             \
+        GB_PUTC (cij, Cx, pC) ;         \
     }
 #else
     #define GB_DOT_ALWAYS_SAVE_CIJ      \
     {                                   \
-        GB_PUTC (cij, pC) ;             \
+        /* Cx [pC] = cij */             \
+        GB_PUTC (cij, Cx, pC) ;         \
         Cb [pC] = 1 ;                   \
         task_cnvals++ ;                 \
     }
@@ -45,6 +49,10 @@
             GB_DOT_ALWAYS_SAVE_CIJ ;    \
         }                               \
     }
+#endif
+
+#ifndef GB_NO_MASK
+#error "mask undefined"
 #endif
 
 #if ( !GB_A_IS_HYPER && !GB_B_IS_HYPER )
@@ -124,26 +132,40 @@
             {
 
                 //--------------------------------------------------------------
-                // get C(i,j), M(i,j), and clear the C(i,j) bitmap
+                // get C(i,j), M(i,j), and clear the C(i,j) bitmap if C bitmap
                 //--------------------------------------------------------------
 
-                int64_t pC = pC_start + i ;     // C is bitmap
+                int64_t pC = pC_start + i ;     // get C(i,j) position
 
-                #if defined ( GB_ANY_SPECIALIZED )
-                // M is bitmap and structural; Mask_comp true
-                Cb [pC] = 0 ;
+                #if GB_C_IS_FULL
+
+                // C is full; nothing to do.  No mask is present
+                ASSERT (GB_NO_MASK) ;
+
+                #elif defined ( GB_ANY_SPECIALIZED )
+
+                // the JIT kernel does not need to exploit this as a special
+                // case, since Mask_comp, M_is_bitmap, etc, are all
+                // compile-time constants.
+
+                // special case: M is bitmap and structural; Mask_comp true
+                Cb [pC] = 0 ;       // C is bitmap
                 if (!Mb [pC])
-                #elif defined ( GB_MASK_IS_PRESENT )
+
+                #elif ( !GB_NO_MASK )
+
+                // C is bitmap
+                // M is present: arbitrary sparsity and valued/structural
                 bool mij ;
                 if (M_is_bitmap)
                 { 
                     // M is bitmap
-                    mij = Mb [pC] && GB_mcast (Mx, pC, msize) ;
+                    mij = Mb [pC] && GB_MCAST (Mx, pC, msize) ;
                 }
                 else if (M_is_full)
                 { 
                     // M is full
-                    mij = GB_mcast (Mx, pC, msize) ;
+                    mij = GB_MCAST (Mx, pC, msize) ;
                 }
                 else // M is sparse or hyper
                 { 
@@ -152,11 +174,12 @@
                 }
                 Cb [pC] = 0 ;
                 if (mij ^ Mask_comp)
-                #elif GB_C_IS_FULL
-                // C is full; nothing to do
+
                 #else
-                // M is not present
+
+                // C is bitmap; M is not present
                 Cb [pC] = 0 ;
+
                 #endif
                 { 
 
@@ -186,6 +209,9 @@
                         // C(i,j) = A(:,i)'*B(:,j) or A(i,:)*B(:,j)
                         bool cij_exists = false ;
                         GB_CIJ_DECLARE (cij) ;
+                        #if GB_IS_PLUS_PAIR_REAL_SEMIRING
+                        cij = 0 ;
+                        #endif
                         #include "GB_AxB_dot_cij.c"
                     }
                 }

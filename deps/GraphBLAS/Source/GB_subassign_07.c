@@ -2,10 +2,12 @@
 // GB_subassign_07: C(I,J)<M> += scalar ; no S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 07: C(I,J)<M> += scalar ; no S
 
@@ -20,6 +22,7 @@
 // M: any sparsity
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 GrB_Info GB_subassign_07
 (
@@ -37,8 +40,8 @@ GrB_Info GB_subassign_07
     const bool Mask_struct,
     const GrB_BinaryOp accum,
     const void *scalar,
-    const GrB_Type atype,
-    GB_Context Context
+    const GrB_Type scalar_type,
+    GB_Werk Werk
 )
 {
 
@@ -47,7 +50,7 @@ GrB_Info GB_subassign_07
     //--------------------------------------------------------------------------
 
     ASSERT (!GB_IS_BITMAP (C)) ;
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
 
     //--------------------------------------------------------------------------
     // get inputs
@@ -138,7 +141,7 @@ GrB_Info GB_subassign_07
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    bool mij = GBB (Mb, pM) && GB_mcast (Mx, pM, msize) ;
+                    bool mij = GBB (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     if (mij)
                     { 
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
@@ -166,7 +169,7 @@ GrB_Info GB_subassign_07
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    bool mij = GBB (Mb, pM) && GB_mcast (Mx, pM, msize) ;
+                    bool mij = GBB (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     if (mij)
                     {
                         int64_t iA = GBI (Mi, pM, Mvlen) ;
@@ -253,7 +256,7 @@ GrB_Info GB_subassign_07
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    bool mij = GBB (Mb, pM) && GB_mcast (Mx, pM, msize) ;
+                    bool mij = GBB (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     if (mij)
                     {
                         int64_t iA = GBI (Mi, pM, Mvlen) ;

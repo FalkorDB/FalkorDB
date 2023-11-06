@@ -24,7 +24,7 @@ function C = apply2 (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %
 % See also GrB/apply, GrB/spfun.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

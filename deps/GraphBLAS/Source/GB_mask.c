@@ -2,7 +2,7 @@
 // GB_mask: apply a mask: C<M> = Z
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -127,7 +127,7 @@ GrB_Info GB_mask                // C<M> = Z
     const bool C_replace,       // true if clear(C) to be done first
     const bool Mask_comp,       // true if M is to be complemented
     const bool Mask_struct,     // if true, use the only structure of M
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -164,7 +164,7 @@ GrB_Info GB_mask                // C<M> = Z
     ASSERT (C_result->vdim == Z->vdim) ;
 
     // M must be compatible with C_result
-    ASSERT_OK (GB_Mask_compatible (M, Mask_struct, C_result, 0, 0, Context)) ;
+    ASSERT_OK (GB_Mask_compatible (M, Mask_struct, C_result, 0, 0, Werk)) ;
 
     GrB_Info info = GrB_SUCCESS ;
     GrB_Matrix C = NULL, C0 = NULL, R = NULL ;
@@ -199,7 +199,7 @@ GrB_Info GB_mask                // C<M> = Z
 
             // transplant Z into C_result and conform to desired hypersparsity
             return (GB_transplant_conform (C_result, C_result->type, Zhandle,
-                Context)) ;
+                Werk)) ;
         }
         else
         {
@@ -227,7 +227,7 @@ GrB_Info GB_mask                // C<M> = Z
             if (C_replace)
             {
                 // C_result = 0
-                return (GB_clear (C_result, Context)) ;
+                return (GB_clear (C_result, Werk)) ;
             }
             else
             {
@@ -257,7 +257,7 @@ GrB_Info GB_mask                // C<M> = Z
 
         if (C_replace)
         {
-            if (GB_aliased (C_result, M))
+            if (GB_any_aliased (C_result, M))
             { 
                 // C_result and M are aliased.  This is OK, unless C_replace is
                 // true.  In this case, M must be left unchanged but C_result
@@ -270,7 +270,7 @@ GrB_Info GB_mask                // C<M> = Z
                 GB_OK (GB_new_bix (&C0, // sparse or hyper, existing header
                     C_result->type, vlen, vdim, GB_Ap_calloc, R_is_csc,
                     GxB_HYPERSPARSE, true, C_result->hyper_switch, 0, 0,
-                    true, false, Context)) ;
+                    true, false)) ;
                 C = C0 ;
                 ASSERT (C->static_header || GBNSTATIC) ;
             }
@@ -280,7 +280,7 @@ GrB_Info GB_mask                // C<M> = Z
                 // by temporarily changing the sparsity control
                 int save = C_result->sparsity_control ;     // save control
                 C_result->sparsity_control = GxB_HYPERSPARSE ;
-                GB_OK (GB_clear (C_result, Context)) ;
+                GB_OK (GB_clear (C_result, Werk)) ;
                 C_result->sparsity_control = save ;         // restore control
                 C = C_result ;  // C must have a dynamic header
                 ASSERT (!C->static_header) ;
@@ -316,7 +316,7 @@ GrB_Info GB_mask                // C<M> = Z
 
         GB_CLEAR_STATIC_HEADER (R, &R_header) ;
         GB_OK (GB_masker (R, R_is_csc, M, Mask_comp, Mask_struct, C, Z,
-            Context)) ;
+            Werk)) ;
 
         //----------------------------------------------------------------------
         // free temporary matrices Z and C0
@@ -332,7 +332,7 @@ GrB_Info GB_mask                // C<M> = Z
         // finished using the mask M, so it is now safe to modify C_result,
         // even if C_result and M are aliased
 
-        return (GB_transplant_conform (C_result, R->type, &R, Context)) ;
+        return (GB_transplant_conform (C_result, R->type, &R, Werk)) ;
     }
 }
 

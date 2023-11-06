@@ -2,7 +2,7 @@
 // GB_new.h: definitions for GB_new and related methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,8 +23,7 @@ GrB_Info GB_Matrix_new          // create a new matrix with no entries
     GrB_Matrix *A,              // handle of matrix to create
     GrB_Type type,              // type of matrix to create
     GrB_Index nrows,            // matrix dimension is nrows-by-ncols
-    GrB_Index ncols,
-    GB_Context Context
+    GrB_Index ncols
 ) ;
 
 GrB_Info GB_new                 // create matrix, except for indices & values
@@ -38,9 +37,8 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     const int sparsity,         // hyper, sparse, bitmap, full, or
                                 // auto (hyper + sparse)
     const float hyper_switch,   // A->hyper_switch, ignored if auto
-    const int64_t plen,         // size of A->p and A->h, if A hypersparse.
+    const int64_t plen          // size of A->p and A->h, if A hypersparse.
                                 // Ignored if A is not hypersparse.
-    GB_Context Context
 ) ;
 
 GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
@@ -58,27 +56,16 @@ GrB_Info GB_new_bix             // create a new matrix, incl. A->b, A->i, A->x
     const int64_t nzmax,        // number of nonzeros the matrix must hold;
                                 // ignored if A is iso and full
     const bool numeric,         // if true, allocate A->x, else A->x is NULL
-    const bool iso,             // if true, allocate A as iso
-    GB_Context Context
+    const bool iso              // if true, allocate A as iso
 ) ;
 
-GrB_Info GB_bix_alloc       // allocate A->b, A->i, and A->x space in a matrix
-(
-    GrB_Matrix A,           // matrix to allocate space for
-    const GrB_Index nzmax,  // number of entries the matrix can hold;
-                            // ignored if A is iso and full
-    const int sparsity,     // sparse (=hyper/auto) / bitmap / full
-    const bool bitmap_calloc,   // if true, calloc A->b, otherwise use malloc
-    const bool numeric,     // if true, allocate A->x, otherwise A->x is NULL
-    const bool iso,         // if true, allocate A as iso
-    GB_Context Context
-) ;
+// See GB_callbacks.h:
+// GB_CALLBACK_BIX_ALLOC_PROTO (GB_bix_alloc) ;
 
 GrB_Info GB_ix_realloc      // reallocate space in a matrix
 (
     GrB_Matrix A,               // matrix to allocate space for
-    const int64_t nzmax_new,    // new number of entries the matrix can hold
-    GB_Context Context
+    const int64_t nzmax_new     // new number of entries the matrix can hold
 ) ;
 
 void GB_bix_free                // free A->b, A->i, and A->x of a matrix

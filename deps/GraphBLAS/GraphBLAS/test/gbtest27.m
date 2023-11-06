@@ -1,7 +1,10 @@
 function gbtest27
 %GBTEST27 test conversion to full
+% This test does a lot of typecasting and requires either many JIT kernels (248
+% of them if all default FactoryKernels are enabled) or uses many generic
+% methods if the JIT is disabled.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = gbtest_types ;
@@ -29,6 +32,7 @@ for k1 = 1:length (types)
 
     for k2 = 1:length (types)
 
+        fprintf ('.') ;
         gtype = types {k2} ;
         G = full (H, gtype) ;
         K = full (G, atype) ;
@@ -40,5 +44,5 @@ for k1 = 1:length (types)
     end
 end
 
-fprintf ('gbtest27: all tests passed\n') ;
+fprintf ('\ngbtest27: all tests passed\n') ;
 

@@ -2,10 +2,12 @@
 // GB_subref_phase3: C=A(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // This function either frees Cp and Ch, or transplants then into C, as C->p
 // and C->h.  Either way, the caller must not free them.
@@ -48,7 +50,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     const GrB_Matrix A,
     const GrB_Index *I,
     const bool symbolic,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -78,7 +80,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     // set C->iso = C_iso       OK
     GrB_Info info = GB_new_bix (&C, // sparse or hyper, existing header
         ctype, nI, nJ, GB_Ap_null, C_is_csc,
-        sparsity, true, A->hyper_switch, Cnvec, cnz, true, C_iso, Context) ;
+        sparsity, true, A->hyper_switch, Cnvec, cnz, true, C_iso) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
@@ -183,7 +185,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     // remove empty vectors from C, if hypersparse
     //--------------------------------------------------------------------------
 
-    info = GB_hypermatrix_prune (C, Context) ;
+    info = GB_hypermatrix_prune (C, Werk) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory

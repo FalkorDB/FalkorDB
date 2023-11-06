@@ -1,3 +1,94 @@
+Oct 13, 2023: version 9.0.0
+
+    * GrB_get/GrB_set: new functions from the v2.1 C API.
+    * GrB_Type_new, GrB_UnaryOp_new, GrB_IndexUnaryOp_new: no longer macros,
+        since GrB_set can be used to set the names of the operators.  These
+        methods no longer extract the name, so the default name is now the
+        empty string.  This is because GrB_get/set can only set these names
+        once.  This is a non-compatible change of behaviour for these 3
+        methods, so SuiteSprase:GraphBLAS must become v9.0.0.
+    * historical methods:  many methods are replaced by GrB_get and GrB_set.
+        They remain in SuiteSparse:GraphBLAS but have been declared historical.
+        Terse prototypes exist in GraphBLAS.h, and any discussion is removed
+        from the User Guide:  GxB_get, GxB_set, and the methods they call, and
+        many more.  Use GrB_get/set in place those methods, and for:
+        GxB_*type_name, GxB_*type, GxB_Monoid_operator, GxB_Monoid_identity,
+        GxB_Monoid_terminal, GxB_Semiring_add, GxB_Semiring_multiply.  Use
+        GrB_STORAGE_ORIENTATION_HINT in place of GxB_FORMAT.
+    * hyper_hash: constructed only if the # of non-empty vectors in a
+        hypersparse matrix is large (> 1024, by default)
+
+Oct 7, 2023: version 8.2.1
+
+    * (50) bug fix: remove undefined behavior in Source/GB_add.c with
+        Cnvec_nonempty, caught by Yves Vandreissche, Intel
+    * (49) bug fix: GrB_mxm saxpy4 and saxpy5 had incorrectly handling of
+        typecasting in v8.0.0 to v8.2.0 (caught by Erik Welch)
+    * cross-compiler support: replace check_c_source_runs with _compiles,
+        for GraphBLAS and SuiteSparse_config, and remove check for
+        getenv("HOME").
+    * cmake update: add "None" build type, from Antonio Rojas, for Arch Linux
+
+Sept 8, 2023: version 8.2.0
+
+    * cmake updates: SuiteSparse:: namespace by Markus Muetzel
+    * GB_VLA_MAXSIZE: increased to 1024; only affects compilers not
+        supporting variable-length arrays (MSVC)
+
+Version 8.0.2, June 16, 2023
+
+    * added -DJITINIT=option:  use -DJITINIT to set the initial state of
+        the GxB_JIT_CONTROL (4:on, 3:load, 2:run, 1:pause, 0:off).  The default
+        is 4 (on) if the JIT is enabled, or 2 (run) if -DNJIT=1 is set.
+    * xxHash: upgraded to latest version as of June 16, 2023
+
+Version 8.0.1, May 27, 2023
+
+    * (48) bug fix: GrB_*_nvals returned UINT64_MAX ('infinity') for a
+        GrB_Vector of size n-by-2^60; it should return 2^60.
+        Caught by Erik Welch, NVIDIA.
+    * added GxB_Context_error and GxB_Context_wait
+    * C++: changed complex typedefs for C++ that #include GraphBLAS.h;
+        update from Markus Muetzel
+
+Version 8.0.0, May 18, 2023
+
+    * version 8:  This version is a major SO version increase, since
+        it removes a few minor user-visible features from SuiteSparse:GraphBLAS:
+        the GrB_Descriptor no longer supports threading control, and some
+        features of the GxB_SelectOp are removed (see below).  Enum values have
+        been changed for compatibility with the upcoming GrB_set/get features
+        in the V2.1 C API.
+    * The JIT:  GraphBLAS v8.0.0 now includes a JIT for the CPU kernels, which
+        can compile kernels at run time.  Added GxB_set/get options and
+        environment variables to control the JIT.  The GxB_*Op_new methods can
+        accept NULL function pointers, if the strings are provided and valid.
+    * GxB_Type_new: the size of the type can be given as zero,
+        in which case the size is determined via a JIT kernel.
+    * GxB_UnaryOp_new, GxB_BinaryOp_new, and GxB_IndexUnaryOp_new: the function
+        pointer can be given as NULL, in which case the function is created by
+        the JIT.
+    * math kernels: revised for CUDA JIT.  More accurate complex
+        floating-point for Mac OS on Apple Silicon.
+    * Demo/wildtype_demo: change to double so that CPU and GPU versions compute
+        the same result.
+    * GxB_get: can return malloc/calloc/realloc/free functions
+    * GxB_Context: an object for controlling computational resources:
+        # of OpenMP threads, the chunk factor, and (draft) GPU id.
+    * GrB_Descriptor: removed ability to control # of OpenMP threads from the
+        descriptor (a rarely used feature).  Replaced with the GxB_Context
+        object.
+    * GxB_SelectOp: GraphBLAS no longer supports user-defined GxB_SelectOps.
+        Use a GrB_IndexUnaryOp instead.  The GxB_SelectOp_new and
+        GxB_SelectOp_free functions are removed entirely.  The built-in
+        GxB_SelectOps, GxB_Matrix_select, GxB_Vector_select, and GxB_select
+        still work.  However, the GxB_EQ_THUNK, GxB_EQ_ZERO, GxB_NE_THUNK, and
+        GxB_NE_ZERO operators no longer work on user-defined types, as they did
+        in v7.4.4 and earlier.  Create a user-defined GrB_IndexUnaryOp to
+        compute these operations instead, and use GrB_select.
+    * alternative/Makefile: removed; incompatible with the JIT
+    * zstd: upgraded to v1.5.5 (Apr 4, 2023)
+
 Version 7.4.4, Mar 25, 2023
 
     * (47) bug fix: OpenMP atomics require seq_cst on the ARM.
@@ -31,7 +122,7 @@ Version 7.4.1, Jan 9, 2023
 
 Version 7.4.0, Dec 23, 2022
 
-    * added non-va_arg methods: va_arg-based GxB_get/set methods are ANSI C11
+    * added non-va_arg methods: va_arg-based GxB_get/set methods are C11
         but cause issues for cffi in Python.  As a temporary workaround, new
         methods have been added that do not use va_arg.  The existing
         GxB_get/set methods are not changed.  The new methods are not in the
@@ -544,7 +635,7 @@ Version 3.1.2, Dec 16, 2019
         B is a standard matrix with one or more empty vectors.
     * (14) bug fix for @GrB interface: A(58) and A(:) were conflated.
     * compiler port: changes to allow GraphBLAS to be compiled with older
-        compilers (pre ANSI C11), and Microsoft Visual Studio.
+        compilers (pre C11), and Microsoft Visual Studio.
 
 Version 3.1.1, Oct 21, 2019
 
@@ -645,7 +736,7 @@ Version 2.3.0, Feb 25, 2019
     * added GxB_init: GrB_init with malloc/calloc/realloc/free redefinition
     * _Generic: compilers differ on _Generic(x,int:,const int:). gcc, clang,
         icc 18.0.0 treat int and const int the same; icc 18.0.3 treats them
-        as different.  This is a result of an ambiguity in the ANSI C11
+        as different.  This is a result of an ambiguity in the C11
         specification.  Minor update so that the use of _Generic(...) is
         compatible with all compilers.
     * early exit: for GrB_reduce
@@ -699,7 +790,7 @@ Version 2.2.0 (BETA4), Nov 28, 2018
         Kronecker matrix generator
     * minor changes for gcc -Wall -Wpedantic -Wextra, and icc -w3: to fix or
         silence warnings.  In a few cases, prior versions were relying on
-        extensions to the ANSI C11 standard in gcc, clang, xlc.  The extensions
+        extensions to the C11 standard in gcc, clang, xlc.  The extensions
         are widely supported but best avoided anway.
 
 Version 2.2.0 (BETA3), Nov 23, 2018

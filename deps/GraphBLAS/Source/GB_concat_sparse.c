@@ -2,10 +2,12 @@
 // GB_concat_sparse: concatenate an array of matrices into a sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: done.
 
 #define GB_FREE_WORKSPACE                       \
     if (S != NULL)                              \
@@ -26,6 +28,8 @@
 }
 
 #include "GB_concat.h"
+#include "GB_stringify.h"
+#include "GB_apply.h"
 #include "GB_unused.h"
 
 GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
@@ -39,7 +43,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
     const GrB_Index n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -70,13 +74,14 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
     // set C->iso = C_iso   OK
     GB_OK (GB_new_bix (&C, // existing header
         ctype, cvlen, cvdim, GB_Ap_malloc, csc, GxB_SPARSE, false,
-        hyper_switch, cvdim, cnz, true, C_iso, Context)) ;
+        hyper_switch, cvdim, cnz, true, C_iso)) ;
     C->bitmap_switch = bitmap_switch ;
     C->sparsity_control = sparsity_control ;
     int64_t *restrict Cp = C->p ;
     int64_t *restrict Ci = C->i ;
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     if (C_iso)
     { 
@@ -120,7 +125,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
                 // T = (ctype) A', not in-place, using a dynamic header
                 GB_OK (GB_new (&T, // auto sparsity, new header
                     A->type, A->vdim, A->vlen, GB_Ap_null, csc,
-                    GxB_AUTO_SPARSITY, -1, 1, Context)) ;
+                    GxB_AUTO_SPARSITY, -1, 1)) ;
                 // save T in array S
                 if (csc)
                 { 
@@ -130,7 +135,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
                 { 
                     GB_TILE (S, outer, inner) = T ;
                 }
-                GB_OK (GB_transpose_cast (T, ctype, csc, A, false, Context)) ;
+                GB_OK (GB_transpose_cast (T, ctype, csc, A, false, Werk)) ;
                 A = T ;
                 GB_MATRIX_WAIT (A) ;
                 ASSERT_MATRIX_OK (A, "T=A' for concat sparse", GB0) ;
@@ -148,7 +153,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
                 {
                     // copy A into T
                     // set T->iso = A->iso  OK: no burble needed
-                    GB_OK (GB_dup_worker (&T, A->iso, A, true, NULL, Context)) ;
+                    GB_OK (GB_dup_worker (&T, A->iso, A, true, NULL)) ;
                     // save T in array S
                     if (csc)
                     { 
@@ -161,7 +166,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
                     ASSERT_MATRIX_OK (T, "T=dup(A) for concat sparse", GB0) ;
                 }
                 // convert T from bitmap to sparse
-                GB_OK (GB_convert_bitmap_to_sparse (T, Context)) ;
+                GB_OK (GB_convert_bitmap_to_sparse (T, Werk)) ;
                 ASSERT_MATRIX_OK (T, "T bitmap to sparse, concat sparse", GB0) ;
                 A = T ;
             }
@@ -226,7 +231,7 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
         Cp [k] = s ;
     }
 
-    GB_cumsum (Cp, cvdim, &(C->nvec_nonempty), nthreads_max, Context) ;
+    GB_cumsum (Cp, cvdim, &(C->nvec_nonempty), nthreads_max, Werk) ;
     ASSERT (cnz == Cp [cvdim]) ;
     C->nvals = cnz ;
 
@@ -311,13 +316,13 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
             const int64_t *restrict Ah = A->h ;
             const int64_t *restrict Ai = A->i ;
             const bool A_iso = A->iso ;
-            GB_SLICE_MATRIX (A, 1, chunk) ;
+            GB_SLICE_MATRIX (A, 1) ;
 
             //------------------------------------------------------------------
             // copy the tile A into C
             //------------------------------------------------------------------
 
-            bool done = false ;
+            info = GrB_NO_VALUE ;
 
             if (C_iso)
             { 
@@ -329,67 +334,111 @@ GrB_Info GB_concat_sparse           // concatenate into a sparse matrix
                 #define GB_ISO_CONCAT
                 #define GB_COPY(pC,pA,A_iso) ;
                 #include "GB_concat_sparse_template.c"
+                info = GrB_SUCCESS ;
 
             }
             else
             {
 
-                #ifndef GBCUDA_DEV
-                if (ccode == acode)
-                {
-                    // no typecasting needed
-                    switch (csize)
+                //--------------------------------------------------------------
+                // via the factory kernel (inline; not in FactoryKernels folder)
+                //--------------------------------------------------------------
+
+                #ifndef GBCOMPACT
+                GB_IF_FACTORY_KERNELS_ENABLED
+                { 
+                    if (ccode == acode)
                     {
-                        #undef  GB_COPY
-                        #define GB_COPY(pC,pA,A_iso)                        \
-                            Cx [pC] = GBX (Ax, pA, A_iso) ;
+                        // no typecasting needed
+                        switch (csize)
+                        {
+                            #undef  GB_COPY
+                            #define GB_COPY(pC,pA,A_iso)    \
+                                Cx [pC] = GBX (Ax, pA, A_iso) ;
 
-                        case GB_1BYTE : // uint8, int8, bool, or 1-byte user
-                            #define GB_CTYPE uint8_t
-                            #include "GB_concat_sparse_template.c"
-                            break ;
+                            case GB_1BYTE : // uint8, int8, bool, or 1-byte user
+                                #define GB_C_TYPE uint8_t
+                                #define GB_A_TYPE uint8_t
+                                #include "GB_concat_sparse_template.c"
+                                info = GrB_SUCCESS ;
+                                break ;
 
-                        case GB_2BYTE : // uint16, int16, or 2-byte user
-                            #define GB_CTYPE uint16_t
-                            #include "GB_concat_sparse_template.c"
-                            break ;
+                            case GB_2BYTE : // uint16, int16, or 2-byte user
+                                #define GB_C_TYPE uint16_t
+                                #define GB_A_TYPE uint16_t
+                                #include "GB_concat_sparse_template.c"
+                                info = GrB_SUCCESS ;
+                                break ;
 
-                        case GB_4BYTE : // uint32, int32, float, or 4-byte user
-                            #define GB_CTYPE uint32_t
-                            #include "GB_concat_sparse_template.c"
-                            break ;
+                            case GB_4BYTE : // uint32, int32, float, or 4-byte
+                                #define GB_C_TYPE uint32_t
+                                #define GB_A_TYPE uint32_t
+                                #include "GB_concat_sparse_template.c"
+                                info = GrB_SUCCESS ;
+                                break ;
 
-                        case GB_8BYTE : // uint64, int64, double, float complex,
-                                        // or 8-byte user defined
-                            #define GB_CTYPE uint64_t
-                            #include "GB_concat_sparse_template.c"
-                            break ;
+                            case GB_8BYTE : // uint64, int64, double, float
+                                            // complex, or 8-byte user defined
+                                #define GB_C_TYPE uint64_t
+                                #define GB_A_TYPE uint64_t
+                                #include "GB_concat_sparse_template.c"
+                                info = GrB_SUCCESS ;
+                                break ;
 
-                        case GB_16BYTE : // double complex or 16-byte user
-                            #define GB_CTYPE GB_blob16
-                            #include "GB_concat_sparse_template.c"
-                            break ;
+                            case GB_16BYTE : // double complex or 16-byte user
+                                #define GB_C_TYPE GB_blob16
+                                #define GB_A_TYPE GB_blob16
+                                #include "GB_concat_sparse_template.c"
+                                info = GrB_SUCCESS ;
+                                break ;
 
-                        default:;
+                            default:;
+                        }
                     }
                 }
                 #endif
             }
 
-            if (!done)
+            //------------------------------------------------------------------
+            // via the JIT or PreJIT kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
+            { 
+                struct GB_UnaryOp_opaque op_header ;
+                GB_Operator op = GB_unop_identity (ctype, &op_header) ;
+                ASSERT_OP_OK (op, "identity op for concat sparse", GB0) ;
+                info = GB_concat_sparse_jit (C, cistart, op, A, W,
+                    A_ek_slicing, A_ntasks, A_nthreads) ;
+            }
+
+            //------------------------------------------------------------------
+            // via the generic kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
             { 
                 // with typecasting or user-defined types
                 GB_cast_function cast_A_to_C = GB_cast_factory (ccode, acode) ;
                 size_t asize = A->type->size ;
-                #define GB_CTYPE GB_void
+                #define GB_C_TYPE GB_void
+                #define GB_A_TYPE GB_void
                 #undef  GB_COPY
                 #define GB_COPY(pC,pA,A_iso)                    \
                     cast_A_to_C (Cx + (pC)*csize,               \
                         Ax + (A_iso ? 0:(pA)*asize), asize) ;
                 #include "GB_concat_sparse_template.c"
+                info = GrB_SUCCESS ;
             }
     
             GB_WERK_POP (A_ek_slicing, int64_t) ;
+
+            if (info != GrB_SUCCESS)
+            { 
+                // out of memory, or other error
+                GB_FREE_ALL ;
+                return (info) ;
+            }
         }
     }
 

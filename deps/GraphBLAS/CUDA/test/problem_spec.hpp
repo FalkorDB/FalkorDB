@@ -14,7 +14,9 @@ extern "C" {
 #include "GB.h"
 }
 
-#include "../jitFactory.hpp"
+#include "../GB_cuda_common_jitFactory.hpp"
+#include "../GB_cuda_mxm_dot3_jitFactory.hpp"
+#include "../GB_cuda_reduce_jitFactory.hpp"
 #include "dataFactory.hpp"
 
 template<typename T_C, typename T_M, typename T_A, typename T_B>

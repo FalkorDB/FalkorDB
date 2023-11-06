@@ -2,7 +2,7 @@
 // GB_check.h: check and optionally print an object
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -102,6 +102,14 @@ GrB_Info GB_Descriptor_check    // check a GraphBLAS descriptor
 (
     const GrB_Descriptor D,     // GraphBLAS descriptor to print and check
     const char *name,           // name of the descriptor, optional
+    int pr,                     // print level
+    FILE *f                     // file for output
+) ;
+
+GrB_Info GB_Context_check       // check a GraphBLAS Context
+(
+    const GxB_Context Context,  // GraphBLAS Context to print and check
+    const char *name,           // name of the Context, optional
     int pr,                     // print level
     FILE *f                     // file for output
 ) ;

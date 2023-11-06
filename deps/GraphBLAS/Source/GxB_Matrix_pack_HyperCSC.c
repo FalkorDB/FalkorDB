@@ -2,7 +2,7 @@
 // GxB_Matrix_pack_HyperCSC: pack a matrix in hypersparse CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -53,7 +53,7 @@ GrB_Info GxB_Matrix_pack_HyperCSC      // pack a hypersparse CSC matrix
         Ax,   Ax_size,  // Ax
         0, jumbled, nvec,                   // jumbled or not
         GxB_HYPERSPARSE, true,              // hypersparse by col
-        iso, fast_import, true, Context) ;
+        iso, fast_import, true, Werk) ;
 
     GB_BURBLE_END ;
     return (info) ;

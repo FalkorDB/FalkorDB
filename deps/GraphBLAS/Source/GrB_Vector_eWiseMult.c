@@ -2,7 +2,7 @@
 // GrB_Vector_eWiseMult: vector element-wise multiplication
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,7 +37,7 @@
         (GrB_Matrix) v, false,      /* v, never transposed         */       \
         false,                      /* eWiseMult                   */       \
         false, NULL, NULL,          /* not eWiseUnion              */       \
-        Context) ;
+        Werk) ;
 
 //------------------------------------------------------------------------------
 // GrB_Vector_eWiseMult_BinaryOp: vector element-wise multiplication

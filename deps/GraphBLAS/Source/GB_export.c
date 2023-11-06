@@ -2,7 +2,7 @@
 // GB_export: export a matrix or vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -55,7 +55,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
     bool *is_csc,       // if true then matrix is by-column, else by-row
     bool *iso,          // if true then A is iso and only one entry is returned
                         // in Ax, regardless of nvals(A).
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -90,11 +90,11 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
         case GxB_SPARSE : 
             if (is_sparse_vector)
-            {
+            { 
                 GB_RETURN_IF_NULL (nvals) ;
             }
             else
-            {
+            { 
                 GB_RETURN_IF_NULL (Ap) ; GB_RETURN_IF_NULL (Ap_size) ;
             }
             GB_RETURN_IF_NULL (Ai) ; GB_RETURN_IF_NULL (Ai_size) ;
@@ -147,7 +147,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
         { 
             GBURBLE ("(iso to non-iso export) ") ;
         }
-        GB_OK (GB_convert_any_to_non_iso (*A, true, Context)) ;
+        GB_OK (GB_convert_any_to_non_iso (*A, true)) ;
         ASSERT (!((*A)->iso)) ;
     }
     else
@@ -170,7 +170,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
     // export A->x
     #ifdef GB_MEMDUMP
-    printf ("export A->x from memtable: %p\n", (*A)->x) ;
+    printf ("export A->x from memtable: %p\n", (*A)->x) ;   // MEMDUMP
     #endif
     GB_Global_memtable_remove ((*A)->x) ;
     (*Ax) = (*A)->x ; (*A)->x = NULL ;
@@ -183,7 +183,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
             // export A->h
             #ifdef GB_MEMDUMP
-            printf ("export A->h from memtable: %p\n", (*A)->h) ;
+            printf ("export A->h from memtable: %p\n", (*A)->h) ;   // MEMDUMP
             #endif
             GB_Global_memtable_remove ((*A)->h) ;
             (*Ah) = (GrB_Index *) ((*A)->h) ; (*A)->h = NULL ;
@@ -198,13 +198,13 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
             // export A->p, unless A is a sparse vector in CSC format
             if (is_sparse_vector)
-            {
+            { 
                 (*nvals) = (*A)->p [1] ;
             }
             else
-            {
+            { 
                 #ifdef GB_MEMDUMP
-                printf ("export A->p from memtable: %p\n", (*A)->p) ;
+                printf ("export A->p from memtable: %p\n", (*A)->p) ; // MEMDUMP
                 #endif
                 GB_Global_memtable_remove ((*A)->p) ;
                 (*Ap) = (GrB_Index *) ((*A)->p) ; (*A)->p = NULL ;
@@ -213,7 +213,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
             // export A->i
             #ifdef GB_MEMDUMP
-            printf ("export A->i from memtable: %p\n", (*A)->i) ;
+            printf ("export A->i from memtable: %p\n", (*A)->i) ;   // MEMDUMP
             #endif
             GB_Global_memtable_remove ((*A)->i) ;
             (*Ai) = (GrB_Index *) ((*A)->i) ; (*A)->i = NULL ;
@@ -225,7 +225,7 @@ GrB_Info GB_export      // export/unpack a matrix in any format
 
             // export A->b
             #ifdef GB_MEMDUMP
-            printf ("export A->b from memtable: %p\n", (*A)->b) ;
+            printf ("export A->b from memtable: %p\n", (*A)->b) ;   // MEMDUMP
             #endif
             GB_Global_memtable_remove ((*A)->b) ;
             (*Ab) = (*A)->b ; (*A)->b = NULL ;

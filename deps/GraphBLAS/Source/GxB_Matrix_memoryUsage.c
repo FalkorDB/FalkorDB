@@ -2,7 +2,7 @@
 // GxB_Matrix_memoryUsage: # of bytes used for a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,7 +14,7 @@ GrB_Info GxB_Matrix_memoryUsage  // return # of bytes used for a matrix
     size_t *size,           // # of bytes used by the matrix A
     const GrB_Matrix A      // matrix to query
 )
-{
+{ 
 
     //--------------------------------------------------------------------------
     // check inputs

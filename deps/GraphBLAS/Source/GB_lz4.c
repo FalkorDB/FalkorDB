@@ -2,7 +2,7 @@
 // GB_lz4: wrapper for the LZ4 compression library
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,7 +39,9 @@ void LZ4_free (void *p)
 }
 
 // LZ4 uses switch statements with no default case.
+#if GB_COMPILER_GCC
 #pragma GCC diagnostic ignored "-Wswitch-default"
+#endif
 
 // Include the unmodified lz4.c and lz4hc.c source code, version 1.9.3.  This
 // allows the LZ4_* functions to be renamed via GB_lz4.h, and avoids any

@@ -1,7 +1,7 @@
 function test209
 %TEST209 test iso build
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -11,7 +11,7 @@ GB_builtin_complex_set (true) ;
 types = types.all ;
 op.opname = 'second' ;
 
-% GrB.burble (1) ;
+% GB_mex_burble (1) ;
 
 n = 100 ;
 m = 200 ;
@@ -75,6 +75,6 @@ C1 = GB_mex_Vector_build (I, Z, m, op, type) ;
 C2 = logical (sparse (I1, 1, X, m, 1)) ;
 assert (isequal (C1.matrix, C2)) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest209: all tests passed\n') ;
 

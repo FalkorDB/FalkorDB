@@ -2,7 +2,7 @@
 // GxB_Matrix_export_HyperCSC: export a matrix in hypersparse CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ GrB_Info GxB_Matrix_export_HyperCSC  // export and free a hypersparse CSC matrix
     GB_WHERE1 ("GxB_Matrix_export_HyperCSC (&A, &type, &nrows, &ncols, "
         "&Ap, &Ah, &Ai, &Ax, &Ap_size, &Ah_size, &Ai_size, &Ax_size, "
         "&iso, &nvec, &jumbled, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_export_HyperCSC") ;
+    // GB_BURBLE_START ("GxB_Matrix_export_HyperCSC") ;
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL_OR_FAULTY (*A) ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -53,8 +53,8 @@ GrB_Info GxB_Matrix_export_HyperCSC  // export and free a hypersparse CSC matrix
     if (!((*A)->is_csc))
     { 
         // A = A', done in-place, to put A in by-col format
-        GBURBLE ("(transpose) ") ;
-        GB_OK (GB_transpose_in_place (*A, true, Context)) ;
+        GBURBLE ("(export transpose) ") ;
+        GB_OK (GB_transpose_in_place (*A, true, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -76,7 +76,7 @@ GrB_Info GxB_Matrix_export_HyperCSC  // export and free a hypersparse CSC matrix
     // ensure the matrix is hypersparse
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_convert_any_to_hyper (*A, Context)) ;
+    GB_OK (GB_convert_any_to_hyper (*A, Werk)) ;
 
     //--------------------------------------------------------------------------
     // export the matrix
@@ -99,14 +99,14 @@ GrB_Info GxB_Matrix_export_HyperCSC  // export and free a hypersparse CSC matrix
         Ax,   Ax_size,  // Ax
         NULL, jumbled, nvec,                // jumbled or not
         &sparsity, &is_csc,                 // hypersparse by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {
         ASSERT (sparsity == GxB_HYPERSPARSE) ;
         ASSERT (is_csc) ;
     }
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 
