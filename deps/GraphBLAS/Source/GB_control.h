@@ -173,17 +173,17 @@
 
 // #define GxB_NO_BOOL      1
 // #define GxB_NO_FP32      1
-// #define GxB_NO_FP64      1
-// #define GxB_NO_FC32      1
-// #define GxB_NO_FC64      1
-// #define GxB_NO_INT16     1
-// #define GxB_NO_INT32     1
-// #define GxB_NO_INT64     1
-// #define GxB_NO_INT8      1
-// #define GxB_NO_UINT16    1
-// #define GxB_NO_UINT32    1
+#define GxB_NO_FP64      1
+#define GxB_NO_FC32      1
+#define GxB_NO_FC64      1
+#define GxB_NO_INT16     1
+#define GxB_NO_INT32     1
+#define GxB_NO_INT64     1
+#define GxB_NO_INT8      1
+#define GxB_NO_UINT16    1
+#define GxB_NO_UINT32    1
 // #define GxB_NO_UINT64    1
-// #define GxB_NO_UINT8     1
+#define GxB_NO_UINT8     1
 
 //------------------------------------------------------------------------------
 // uncomment any of these lines to disable the unary operators
@@ -197,7 +197,7 @@
 // them will be slower.
 
 // #define GxB_NO_ABS       1
-// #define GxB_NO_AINV      1
+ #define GxB_NO_AINV      1
 // #define GxB_NO_IDENTITY  1
 // #define GxB_NO_LNOT      1
 // #define GxB_NO_MINV      1
@@ -205,24 +205,24 @@
 // #define GxB_NO_BNOT      1
 
 // #define GxB_NO_SQRT      1
-// #define GxB_NO_LOG       1
-// #define GxB_NO_EXP       1
+#define GxB_NO_LOG       1
+#define GxB_NO_EXP       1
 
-// #define GxB_NO_SIN       1
-// #define GxB_NO_COS       1
-// #define GxB_NO_TAN       1
+#define GxB_NO_SIN       1
+#define GxB_NO_COS       1
+#define GxB_NO_TAN       1
 
-// #define GxB_NO_ASIN      1
-// #define GxB_NO_ACOS      1
-// #define GxB_NO_ATAN      1
+#define GxB_NO_ASIN      1
+#define GxB_NO_ACOS      1
+#define GxB_NO_ATAN      1
 
-// #define GxB_NO_SINH      1
-// #define GxB_NO_COSH      1
-// #define GxB_NO_TANH      1
+#define GxB_NO_SINH      1
+#define GxB_NO_COSH      1
+#define GxB_NO_TANH      1
 
-// #define GxB_NO_ASINH     1
-// #define GxB_NO_ACOSH     1
-// #define GxB_NO_ATANH     1
+#define GxB_NO_ASINH     1
+#define GxB_NO_ACOSH     1
+#define GxB_NO_ATANH     1
 
 // #define GxB_NO_SIGNUM    1
 // #define GxB_NO_CEIL      1
@@ -230,25 +230,25 @@
 // #define GxB_NO_ROUND     1
 // #define GxB_NO_TRUNC     1
 
-// #define GxB_NO_EXP2      1
-// #define GxB_NO_EXPM1     1
-// #define GxB_NO_LOG10     1
-// #define GxB_NO_LOG1P     1
-// #define GxB_NO_LOG2      1
+#define GxB_NO_EXP2      1
+#define GxB_NO_EXPM1     1
+#define GxB_NO_LOG10     1
+#define GxB_NO_LOG1P     1
+#define GxB_NO_LOG2      1
 
-// #define GxB_NO_LGAMMA    1
-// #define GxB_NO_TGAMMA    1
-// #define GxB_NO_ERF       1
-// #define GxB_NO_ERFC      1
-// #define GxB_NO_CBRT      1
+#define GxB_NO_LGAMMA    1
+#define GxB_NO_TGAMMA    1
+#define GxB_NO_ERF       1
+#define GxB_NO_ERFC      1
+#define GxB_NO_CBRT      1
 
-// #define GxB_NO_FREXPX    1
-// #define GxB_NO_FREXPE    1
+#define GxB_NO_FREXPX    1
+#define GxB_NO_FREXPE    1
 
-// #define GxB_NO_CONJ      1
-// #define GxB_NO_CREAL     1
-// #define GxB_NO_CIMAG     1
-// #define GxB_NO_CARG      1
+#define GxB_NO_CONJ      1
+#define GxB_NO_CREAL     1
+#define GxB_NO_CIMAG     1
+#define GxB_NO_CARG      1
 
 // #define GxB_NO_ISINF     1
 // #define GxB_NO_ISNAN     1
