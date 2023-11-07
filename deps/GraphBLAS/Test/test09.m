@@ -1,7 +1,7 @@
 function test09
 %TEST09 test GxB_subassign
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\n-----------duplicate I,J test of GB_mex_subassign\n') ;
@@ -21,21 +21,23 @@ fprintf ('testing error handling, errors expected:\n') ;
 A = sparse (1) ;
 try
     K = uint64 (99) ;
-    GB_mex_subassign (C, [], 'plus', A, K, K) ;
+    Crud = GB_mex_subassign (C, [], 'plus', A, K, K) ;
     ok = false ;
 catch me
+    me
     ok = true ;
 end
 assert (ok) ;
 
-
+fprintf ('testing more:\n') ;
 A = sparse (rand (2)) ;
 try
     I = uint64 ([0 0]) ;
     K = uint64 ([99 100]) ;
-    GB_mex_subassign (C, [], 'plus', A, I, K) ;
+    Crud = GB_mex_subassign (C, [], 'plus', A, I, K) ;
     ok = false ;
 catch me
+    me
     ok = true ;
 end
 assert (ok) ;

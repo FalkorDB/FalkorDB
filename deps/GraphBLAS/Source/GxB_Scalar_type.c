@@ -2,7 +2,7 @@
 // GxB_Scalar_type: return the type of a GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,6 +29,6 @@ GrB_Info GxB_Scalar_type    // get the type of a GrB_Scalar
     // get the type
     //--------------------------------------------------------------------------
 
-    return (GB_matvec_type (type, (GrB_Matrix) s, Context)) ;
+    return (GB_matvec_type (type, (GrB_Matrix) s, Werk)) ;
 }
 

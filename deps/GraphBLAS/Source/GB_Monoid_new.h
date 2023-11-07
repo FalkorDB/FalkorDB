@@ -2,7 +2,7 @@
 // GB_Monoid_new.h: definitions for GB_Monoid_new
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ GrB_Info GB_Monoid_new          // create a monoid
     const void *identity,       // identity value
     const void *terminal,       // terminal value, if any (may be NULL)
     const GB_Type_code idcode,  // identity and terminal type code
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

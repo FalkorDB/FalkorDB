@@ -1,7 +1,7 @@
 function gbtest5
 %GBTEST5 test GrB.descriptorinfo
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 list_out  = { [ ], 'default', 'replace' } ;
@@ -28,8 +28,8 @@ for k1 = 1:length (list_out)
                     for k6 = 1:length (list_kind)
                         kind = list_kind {k6} ;
 
-                        for nthreads = [0 2]
-                            for chunk = [0 10000]
+%                       for nthreads = [0 2]
+%                           for chunk = [0 10000]
 
                                 clear d
                                 d = struct ;
@@ -58,19 +58,19 @@ for k1 = 1:length (list_out)
                                     d.kind = kind ;
                                 end
 
-                                if (nthreads > 0)
-                                    d.nthreads = nthreads ;
-                                end
+%                               if (nthreads > 0)
+%                                   d.nthreads = nthreads ;
+%                               end
 
-                                if (chunk > 0)
-                                    d.chunk = chunk ;
-                                end
+%                               if (chunk > 0)
+%                                   d.chunk = chunk ;
+%                               end
 
                                 d
                                 GrB.descriptorinfo (d) ;
                                 ntrials = ntrials + 1 ;
-                            end
-                        end
+%                           end
+%                       end
                     end
                 end
             end

@@ -2,10 +2,12 @@
 // GB_AxB_saxpy3_flopcount:  compute flops for GB_AxB_saxpy3
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed, but many variants possible (matrix sparsity formats)
 
 // On input, A, B, and M (optional) are matrices for C=A*B, C<M>=A*B, or
 // C<!M>=A*B.  The flop count for each B(:,j) is computed, and returned as a
@@ -84,7 +86,7 @@ GrB_Info GB_AxB_saxpy3_flopcount
     const bool Mask_comp,       // if true, mask is complemented
     const GrB_Matrix A,
     const GrB_Matrix B,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -117,7 +119,8 @@ GrB_Info GB_AxB_saxpy3_flopcount
 
     int64_t bnvec = B->nvec ;
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     // clear Bflops
     GB_memset (Bflops, 0, (bnvec+1) * sizeof (int64_t), nthreads_max) ;
@@ -144,8 +147,8 @@ GrB_Info GB_AxB_saxpy3_flopcount
         mnvec = M->nvec ;
         mvlen = M->vlen ;
         M_is_dense = GB_IS_BITMAP (M) || GB_as_if_full (M) ;
-        if (M_is_hyper)
-        {
+        if (M->Y != NULL)
+        { 
             // mask is present, and hypersparse
             ASSERT_MATRIX_OK (M->Y, "M->Y hyper_hash", GB0) ;
             M_Yp = M->Y->p ;
@@ -164,19 +167,10 @@ GrB_Info GB_AxB_saxpy3_flopcount
     const int64_t anvec = A->nvec ;
     const int64_t avlen = A->vlen ;
     const bool A_is_hyper = GB_IS_HYPERSPARSE (A) ;
-
-    const int64_t *restrict A_Yp = NULL ;
-    const int64_t *restrict A_Yi = NULL ;
-    const int64_t *restrict A_Yx = NULL ;
-    int64_t A_hash_bits = 0 ;
-    if (A_is_hyper)
-    {
-        ASSERT_MATRIX_OK (A->Y, "A->Y hyper_hash", GB0) ;
-        A_Yp = A->Y->p ;
-        A_Yi = A->Y->i ;
-        A_Yx = A->Y->x ;
-        A_hash_bits = A->Y->vdim - 1 ;
-    }
+    const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+    const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+    const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+    const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
 
     const int64_t *restrict Bp = B->p ;
     const int64_t *restrict Bh = B->h ;
@@ -201,7 +195,7 @@ GrB_Info GB_AxB_saxpy3_flopcount
     //--------------------------------------------------------------------------
 
     int B_ntasks, B_nthreads ;
-    GB_SLICE_MATRIX (B, 64, chunk) ;
+    GB_SLICE_MATRIX (B, 64) ;
 
     //--------------------------------------------------------------------------
     // allocate workspace
@@ -274,13 +268,13 @@ GrB_Info GB_AxB_saxpy3_flopcount
                 // find M(:,j): only do this if M is sparse or hypersparse
                 int64_t pM, pM_end ;
                 if (M_is_hyper)
-                {
+                { 
                     // M is hypersparse: find M(:,j) in the M->Y hyper_hash
-                    GB_hyper_hash_lookup (Mp, M_Yp, M_Yi, M_Yx, M_hash_bits,
-                        j, &pM, &pM_end) ;
+                    GB_hyper_hash_lookup (Mh, mnvec, Mp, M_Yp, M_Yi, M_Yx,
+                        M_hash_bits, j, &pM, &pM_end) ;
                 }
                 else
-                {
+                { 
                     // M is sparse
                     pM     = Mp [j] ;
                     pM_end = Mp [j+1] ;
@@ -324,13 +318,13 @@ GrB_Info GB_AxB_saxpy3_flopcount
                 // find A(:,k)
                 int64_t pA, pA_end ;
                 if (A_is_hyper)
-                {
+                { 
                     // A is hypersparse: find A(:,k) in the A->Y hyper_hash
-                    GB_hyper_hash_lookup (Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
-                        k, &pA, &pA_end) ;
+                    GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx,
+                        A_hash_bits, k, &pA, &pA_end) ;
                 }
                 else
-                {
+                { 
                     // A is sparse, bitmap, or full
                     pA     = GBP (Ap, k  , avlen) ;
                     pA_end = GBP (Ap, k+1, avlen) ;
@@ -395,8 +389,6 @@ GrB_Info GB_AxB_saxpy3_flopcount
     //--------------------------------------------------------------------------
     // reduce the first and last vector of each slice
     //--------------------------------------------------------------------------
-
-    // See also Template/GB_select_phase1.c
 
     int64_t kprior = -1 ;
 
@@ -470,7 +462,7 @@ GrB_Info GB_AxB_saxpy3_flopcount
 
     // Bflops = cumsum ([0 Bflops]) ;
     ASSERT (Bflops [bnvec] == 0) ;
-    GB_cumsum (Bflops, bnvec, NULL, B_nthreads, Context) ;
+    GB_cumsum (Bflops, bnvec, NULL, B_nthreads, Werk) ;
     // Bflops [bnvec] is now the total flop count, including the time to
     // compute A*B and to handle the mask.  total_Mwork is part of this total
     // flop count, but is also returned separtely.

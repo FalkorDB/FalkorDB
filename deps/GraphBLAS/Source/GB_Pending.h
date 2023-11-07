@@ -2,7 +2,7 @@
 // GB_Pending.h: operations for pending tuples
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,6 +10,10 @@
 #ifndef GB_PENDING_H
 #define GB_PENDING_H
 #include "GB.h"
+
+// FUTURE: remove this once GxB_Matrix_pending is revised (see PR #172)
+// true if a matrix is hypersparse and needs its hyper_hash built
+#define GB_NEED_HYPER_HASH(A) GB_hyper_hash_need (A)
 
 //------------------------------------------------------------------------------
 // GB_Pending functions
@@ -29,7 +33,7 @@ bool GB_Pending_realloc     // reallocate a list of pending tuples
 (
     GB_Pending *PHandle,    // Pending tuple list to reallocate
     int64_t nnew,           // # of new tuples to accomodate
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 void GB_Pending_free        // free a list of pending tuples
@@ -51,7 +55,7 @@ static inline bool GB_Pending_ensure
     GrB_BinaryOp op,        // operator for assembling pending tuples
     bool is_matrix,         // true if Pending->j must be allocated
     int64_t nnew,           // # of pending tuples to add
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -71,7 +75,7 @@ static inline bool GB_Pending_ensure
     }
     else
     {
-        return (GB_Pending_realloc (PHandle, nnew, Context)) ;
+        return (GB_Pending_realloc (PHandle, nnew, Werk)) ;
     }
 }
 
@@ -89,7 +93,7 @@ static inline bool GB_Pending_add   // add a tuple to the list
     const int64_t i,        // index into vector
     const int64_t j,        // vector index
     const bool is_matrix,   // allocate Pending->j, if list is created
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -103,7 +107,7 @@ static inline bool GB_Pending_add   // add a tuple to the list
     // allocate the Pending tuples, or ensure existing list is large enough
     //--------------------------------------------------------------------------
 
-    if (!GB_Pending_ensure (PHandle, iso, type, op, is_matrix, 1, Context))
+    if (!GB_Pending_ensure (PHandle, iso, type, op, is_matrix, 1, Werk))
     {
         return (false) ;
     }
@@ -148,34 +152,6 @@ static inline bool GB_Pending_add   // add a tuple to the list
 
     return (true) ;     // success
 }
-
-//------------------------------------------------------------------------------
-// add (iC,jC,aij) or just (iC,aij) if Pending_j is NULL
-//------------------------------------------------------------------------------
-
-// GB_PENDING_INSERT(aij) is used by GB_subassign_* to insert a pending tuple,
-// in phase 2.  The list has already been reallocated after phase 1 to hold all
-// the new pending tuples, so GB_Pending_realloc is not required.  If C is iso,
-// Pending->x is NULL.
-
-#define GB_PENDING_INSERT(aij)                                              \
-    if (task_sorted)                                                        \
-    {                                                                       \
-        if (!((jlast < jC) || (jlast == jC && ilast <= iC)))                \
-        {                                                                   \
-            task_sorted = false ;                                           \
-        }                                                                   \
-    }                                                                       \
-    Pending_i [n] = iC ;                                                    \
-    if (Pending_j != NULL) Pending_j [n] = jC ;                             \
-    if (Pending_x != NULL) memcpy (Pending_x +(n*asize), (aij), asize) ;    \
-    n++ ;                                                                   \
-    ilast = iC ;                                                            \
-    jlast = jC ;
-
-// insert A(i,j) into the list of pending tuples
-#define GB_PENDING_INSERT_aij                                               \
-    GB_PENDING_INSERT (Ax + (A_iso ? 0 : ((pA)*asize)))
 
 #endif
 

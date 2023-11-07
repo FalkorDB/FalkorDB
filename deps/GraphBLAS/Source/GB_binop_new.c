@@ -2,7 +2,7 @@
 // GB_binop_new: create a new operator (user-defined or internal)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,20 +45,30 @@ GrB_Info GB_binop_new
     //--------------------------------------------------------------------------
 
     op->magic = GB_MAGIC ;
+    op->user_name = NULL ;
+    op->user_name_size = 0 ;
     op->ztype = ztype ;
     op->xtype = xtype ;
     op->ytype = ytype ;
     op->unop_function = NULL ;
     op->idxunop_function = NULL ;
-    op->binop_function = function ;       // may be NULL
-    op->selop_function = NULL ;
+    op->binop_function = function ;       // NULL for GB_reduce_to_vector
     op->opcode = opcode ;
 
     //--------------------------------------------------------------------------
     // get the binary op name and defn
     //--------------------------------------------------------------------------
 
-    return (GB_op_name_and_defn (op->name, &(op->defn), &(op->defn_size),
-        binop_name, binop_defn, "GxB_binary_function", 19)) ;
+    // the binary op is JIT'able only if all its types are jitable
+    bool jitable =
+        (ztype->hash != UINT64_MAX) &&
+        (xtype->hash != UINT64_MAX) &&
+        (ytype->hash != UINT64_MAX) ;
+
+    return (GB_op_name_and_defn (
+        // output:
+        op->name, &(op->name_len), &(op->hash), &(op->defn), &(op->defn_size),
+        // input:
+        binop_name, binop_defn, opcode == GB_USER_binop_code, jitable)) ;
 }
 

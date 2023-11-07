@@ -2,7 +2,7 @@
 // GB_op.h: definitions for operators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,17 +24,17 @@ bool GB_op_is_second    // return true if op is SECOND, of the right type
 GrB_Info GB_op_name_and_defn
 (
     // output
-    char *operator_name,        // op->name of the GrB operator struct
-    char **operator_defn,       // op->defn of the GrB operator struct
-    size_t *operator_defn_size, // op->defn_size of the GrB operator struct
+    char *op_name,              // op->name of the GrB operator struct
+    int32_t *op_name_len,       // op->name_len
+    uint64_t *op_hash,          // op->hash
+    char **op_defn,             // op->defn
+    size_t *op_defn_size,       // op->defn_size
     // input
     const char *input_name,     // user-provided name, may be NULL
     const char *input_defn,     // user-provided name, may be NULL
-    const char *typecast_name,  // typecast name for function pointer
-    size_t typecast_name_len    // length of typecast_name
+    bool user_op,               // if true, a user-defined op
+    bool jitable                // if true, the op can be JIT'd
 ) ;
-
-GrB_UnaryOp GB_unop_one (GB_Type_code xcode) ;
 
 #endif
 

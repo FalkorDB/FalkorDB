@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_concat_full_template: concatenate an full tile into a full matrix
+// GB_concat_full_template: concatenate a full tile into a full matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,9 +15,18 @@
     // get C and the tile A
     //--------------------------------------------------------------------------
 
+    #ifdef GB_JIT_KERNEL
+    #define A_iso GB_A_ISO
+    const int64_t avlen = A->vlen ;
+    const int64_t avdim = A->vdim ;
+    const int64_t anz = avlen * avdim ;
+    const int64_t cvlen = C->vlen ;
+    #else
     const bool A_iso = A->iso ;
-    const GB_CTYPE *restrict Ax = (GB_CTYPE *) A->x ;
-          GB_CTYPE *restrict Cx = (GB_CTYPE *) C->x ;
+    #endif
+
+    const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
+          GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
 
     int64_t pA ;
     #pragma omp parallel for num_threads(A_nthreads) schedule(static)
@@ -31,9 +40,8 @@
         // Cx [pC] = Ax [pA] ;
         GB_COPY (pC, pA, A_iso) ;
     }
-
-    done = true ;
 }
 
-#undef GB_CTYPE
+#undef GB_C_TYPE
+#undef GB_A_TYPE
 

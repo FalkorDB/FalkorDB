@@ -14,9 +14,9 @@
 // #include'd in GraphBLAS/CUDA/GB_cuda.h, for use by the CUDA/GB_cuda_*.cu
 // gateway functions.
 
-// If GBCUDA is defined in GraphBLAS/CMakeLists.txt, then GraphBLAS can call
+// If SUITESPARSE_CUDA is defined in GraphBLAS/CMakeLists.txt, then GraphBLAS can call
 // the C-callable gateway functions defined in GraphBLAS/CUDA/*.cu source
-// files.  If GBCUDA is not defined, then these functions are not called.  The
+// files.  If SUITESPARSE_CUDA is not defined, then these functions are not called.  The
 // typedef always appears, since it is part of the GB_Global struct, whether
 // or not CUDA is used.
 
@@ -57,30 +57,35 @@ static inline int GB_ngpus_to_use
 )
 {
 
-    // get the current GxB_GPU_CONTROL setting
-    GrB_Desc_Value gpu_control = GB_Global_gpu_control_get ( ) ;
+    // gpu_hack: for testing only
+    //  2: never use GPU
+    //  1: always use GPU
+    //  0: default
+    int gpu_hack = GB_Global_hack_get (2) ;
 
+    // get # of GPUs avaiable
     int gpu_count = GB_Global_gpu_count_get ( ) ;
-    if (gpu_control == GxB_GPU_NEVER || gpu_count == 0)
+
+    if (gpu_hack == 2 || gpu_count == 0)
     {
         // never use the GPU(s)
-        printf ("(GPU: disabled, gpu_count: %d) ", gpu_count) ;
+        // printf ("(GPU: disabled, gpu_count: %d) ", gpu_count) ;
         return (0) ;
     }
-    else if (gpu_control == GxB_GPU_ALWAYS)
+    else if (gpu_hack == 1)
     {
         // always use all available GPU(s)
         // fixme for CUDA: allow 1 to gpu_count to be requested
-        printf ("(using the GPU: %d) ", gpu_count) ;
+        // printf ("(using the GPU: %d) ", gpu_count) ;
         return (gpu_count) ;
     }
     else
     {
-        // use no more than max_gpus_to_use
-        double gpu_chunk = GB_Global_gpu_chunk_get ( ) ;
+        // default: use no more than max_gpus_to_use
+        double gpu_chunk = 2e6 ;
         double max_gpus_to_use = floor (work / gpu_chunk) ;
-        printf ("(work %g gpu_chunk: %g max gpus to use: %g) ",
-            work, gpu_chunk, max_gpus_to_use) ;
+        // printf ("(work %g gpu_chunk: %g max gpus to use: %g) ",
+            // work, gpu_chunk, max_gpus_to_use) ;
         // but use no more than the # of GPUs available
         if (max_gpus_to_use > gpu_count) return (gpu_count) ;
         return ((int) max_gpus_to_use) ;
@@ -111,19 +116,27 @@ bool GB_cuda_get_device_properties
     GB_cuda_device *prop
 ) ;
 
-bool GB_reduce_to_scalar_cuda_branch 
+bool GB_reduce_to_scalar_cuda_branch    // return true to use the GPU
 (
-    const GrB_Monoid reduce,        // monoid to do the reduction
-    const GrB_Matrix A,             // input matrix
-    GB_Context Context
+    const GrB_Monoid monoid,        // monoid to do the reduction
+    const GrB_Matrix A              // input matrix
 ) ;
 
 GrB_Info GB_reduce_to_scalar_cuda
 (
-    GB_void *s,
-    const GrB_Monoid reduce,
-    const GrB_Matrix A,
-    GB_Context Context
+    // output:
+    GB_void *s,                 // note: statically allocated on CPU stack; if
+                                // the result is in s then V is NULL.
+    GrB_Matrix *V_handle,       // partial result if unable to reduce to scalar;
+                                // NULL if result is in s.
+    // input:
+    const GrB_Monoid monoid,
+    const GrB_Matrix A
+) ;
+
+bool GB_cuda_type_branch            // return true if the type is OK on GPU
+(
+    const GrB_Type type             // type to query
 ) ;
 
 GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
@@ -134,10 +147,8 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
     const GrB_Matrix A,             // input matrix
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*B
-    const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    const bool flipxy               // if true, do z=fmult(b,a) vs fmult(a,b)
 ) ;
-
 
 bool GB_AxB_dot3_cuda_branch
 (
@@ -146,8 +157,7 @@ bool GB_AxB_dot3_cuda_branch
     const GrB_Matrix A,             // input matrix
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*B
-    const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    const bool flipxy               // if true, do z=fmult(b,a) vs fmult(a,b)
 );
 
 #endif

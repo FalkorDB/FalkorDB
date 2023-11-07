@@ -1,7 +1,7 @@
 function testc2(quick,use_builtin)
 %TESTC2 test complex A*B, A'*B, A*B', A'*B', A+B
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -55,7 +55,7 @@ semiring.add = 'plus' ;
 semiring.class = 'complex' ;
 dtn.inp0 = 'tran' ;
 
-anum = [0 1001 1003 1004] ;
+anum = [0 7081 7083 7084] ;
 algos = {'auto', 'gustavson', 'dot', 'hash'} ;
 
 seed = 1 ;

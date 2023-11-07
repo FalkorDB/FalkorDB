@@ -13,6 +13,17 @@
 #define GB_CUDA_H
 
 extern "C"
+{ 
+    #include "GB_dev.h"
+    #include "GB_compiler.h"
+    #include "GB_cpu_features.h"
+    #include "GB_warnings.h"
+}
+
+#define GB_LIBRARY
+#include "GraphBLAS.h"
+
+extern "C"
 {
     #include <cassert>
     #include <cmath>
@@ -22,6 +33,7 @@ extern "C"
 // Finally, include the CUDA definitions
 #include "cuda_runtime.h"
 #include "cuda.h"
+// #include "cub.cuh"
 #include "jitify.hpp"
 #include "GB_cuda_mxm_factory.hpp"
 
@@ -45,28 +57,25 @@ extern "C"
 // GB_CUDA_CATCH: catch error from a try { ... } region
 //------------------------------------------------------------------------------
 
-// Usage:  Must be used in a GB* function that returns GrB_Info, and has a
-// GB_Context Context parameter.
-//
 //  #define GB_FREE_ALL { some macro to free all temporaries }
 //  GrB_Info info ;
-//  try { ... do stuff that can through an exception }
+//  try { ... do stuff that can throw an exception }
 //  GB_CUDA_CATCH (info) ;
 
-#define GB_CUDA_CATCH(info)                                                    \
-    catch (std::exception& e)                                                  \
-    {                                                                          \
-        printf ("CUDA error: %s\n", e.what ( )) ;                              \
-        info = GrB_PANIC ;                                                     \
-        /* out_of_memory : info = GrB_OUT_OF_MEMORY ; */                       \
-        /* nulltpr:  info = ... ; */                                           \
-        /* no gpus here: info = GrB_PANIC ; */                                 \
-    }                                                                          \
-    if (info != GrB_SUCCESS)                                                   \
-    {                                                                          \
-        /* CUDA failed */                                                      \
-        GB_FREE_ALL ;                                                          \
-        return (GB_ERROR (info, (GB_LOG, "CUDA died\n"))) ;                    \
+#define GB_CUDA_CATCH(info)                                     \
+    catch (std::exception& e)                                   \
+    {                                                           \
+        printf ("CUDA error: %s\n", e.what ( )) ;               \
+        info = GrB_PANIC ;                                      \
+        /* out_of_memory : info = GrB_OUT_OF_MEMORY ; */        \
+        /* nulltpr:  info = ... ; */                            \
+        /* no gpus here: info = GrB_PANIC ; */                  \
+    }                                                           \
+    if (info != GrB_SUCCESS)                                    \
+    {                                                           \
+        /* CUDA failed */                                       \
+        GB_FREE_ALL ;                                           \
+        return (info) ;                                         \
     }
 
 // NBUCKETS buckets: computed by up to NBUCKETS-1 kernel launches (zombies need
@@ -122,6 +131,12 @@ GrB_Info GB_cuda_matrix_advise
     int device,             // GPU device or cudaCpuDeviceId
 ) ;
 #endif
+
+void GB_cuda_upscale_identity
+(
+    GB_void *identity_upscaled,     // output: at least sizeof (uint16_t)
+    GrB_Monoid monoid               // input: monoid to upscale
+) ;
 
 #endif
 

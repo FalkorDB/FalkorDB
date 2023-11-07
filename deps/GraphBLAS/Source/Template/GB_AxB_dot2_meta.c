@@ -2,7 +2,7 @@
 // GB_AxB_dot2_meta: C=A'*B, C<M>=A'*B or C<!M>=A'*B via dot products
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,15 +28,26 @@
     ASSERT (GB_IS_BITMAP (C) || GB_IS_FULL (C)) ;
     int8_t *restrict Cb = C->b ;
     const int64_t cvlen = C->vlen ;
+    #ifdef GB_JIT_KERNEL
+    #define C_is_full      GB_C_IS_FULL
+    #else
     const bool C_is_full = (Cb == NULL) ;
+    #endif
 
     const int64_t *restrict Bp = B->p ;
     const int8_t  *restrict Bb = B->b ;
     const int64_t *restrict Bi = B->i ;
+    #ifdef GB_JIT_KERNEL
+    #define B_is_bitmap    GB_B_IS_BITMAP
+    #define B_is_sparse    GB_B_IS_SPARSE
+    #define B_is_full      GB_B_IS_FULL
+    #define B_iso          GB_B_IS_ISO
+    #else
     const bool B_is_bitmap = GB_IS_BITMAP (B) ;
     const bool B_is_sparse = GB_IS_SPARSE (B) ;
-    const bool B_is_full   = GB_as_if_full (B) ;
-    const bool B_iso = B->iso ;
+    const bool B_is_full   = GB_IS_FULL (B) ;
+    const bool B_iso       = B->iso ;
+    #endif
     ASSERT (!GB_IS_HYPERSPARSE (B)) ;
     #define B_is_hyper false
 
@@ -44,21 +55,28 @@
     const int8_t  *restrict Ab = A->b ;
     const int64_t *restrict Ai = A->i ;
 
+    #ifdef GB_JIT_KERNEL
+    #define A_is_bitmap    GB_A_IS_BITMAP
+    #define A_is_sparse    GB_A_IS_SPARSE
+    #define A_is_full      GB_A_IS_FULL
+    #define A_iso          GB_A_IS_ISO
+    #else
     const bool A_is_bitmap = GB_IS_BITMAP (A) ;
     const bool A_is_sparse = GB_IS_SPARSE (A) ;
-    const bool A_is_full   = GB_as_if_full (A) ;
-    const bool A_iso = A->iso ;
+    const bool A_is_full   = GB_IS_FULL (A) ;
+    const bool A_iso       = A->iso ;
+    #endif
     ASSERT (!GB_IS_HYPERSPARSE (A)) ;
     #define A_is_hyper false
 
     #if !GB_A_IS_PATTERN
-    const GB_ATYPE *restrict Ax = (GB_ATYPE *) A->x ;
+    const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
     #endif
     #if !GB_B_IS_PATTERN
-    const GB_BTYPE *restrict Bx = (GB_BTYPE *) B->x ;
+    const GB_B_TYPE *restrict Bx = (GB_B_TYPE *) B->x ;
     #endif
     #if !GB_IS_ANY_PAIR_SEMIRING
-          GB_CTYPE *restrict Cx = (GB_CTYPE *) C->x ;
+          GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
     #endif
 
     const int64_t vlen = A->vlen ;
@@ -66,17 +84,39 @@
     const int ntasks = naslice * nbslice ;
 
     //--------------------------------------------------------------------------
-    // C=A'*B, C<M>=A'*B, or C<!M>=A'*B via dot products
+    // C<#>M=A'*B, C<#M>=A*B via dot products
     //--------------------------------------------------------------------------
+
+    #ifdef GB_JIT_KERNEL
+
+        #define M_is_bitmap GB_M_IS_BITMAP
+        #define M_is_full   GB_M_IS_FULL
+        #define Mask_struct GB_MASK_STRUCT
+        #define Mask_comp   GB_MASK_COMP
+
+        const int8_t *restrict Mb = (M == NULL) ? NULL : M->b ;
+        const GB_M_TYPE *restrict Mx = (M == NULL) ? NULL :
+            ((GB_M_TYPE *) (Mask_struct ? NULL : (M->x))) ;
+        GB_DECLARE_TERMINAL_CONST (zterminal) ;
+
+        #define GB_META16
+        #include "GB_meta16_definitions.h"
+        #include "GB_AxB_dot2_template.c"
+
+    #else
 
     if (M == NULL)
     { 
 
         //----------------------------------------------------------------------
-        // C = A'*B or C=A*B
+        // C=A'*B or C=A*B, where C is bitmap or full, no mask is present
         //----------------------------------------------------------------------
 
-        #undef GB_MASK_IS_PRESENT
+        // mask is not present
+        #undef  GB_NO_MASK
+        #define GB_NO_MASK 1
+
+        ASSERT (GB_IS_BITMAP (C) || GB_IS_FULL (C)) ;
 
         if (A_not_transposed)
         {
@@ -85,10 +125,10 @@
             ASSERT (A_is_bitmap || GB_IS_FULL (A)) ;
             ASSERT (B_is_sparse) ;
             if (C_is_full)
-            {
+            { 
                 // C=A*B via dot products, where A is full and B is sparse,
                 // and C is full
-                ASSERT (GB_as_if_full (A)) ;
+                ASSERT (GB_IS_FULL (A)) ;
                 #undef  GB_C_IS_FULL
                 #define GB_C_IS_FULL   1
                 #define GB_A_IS_SPARSE 0
@@ -142,7 +182,7 @@
             #undef  GB_C_IS_FULL
             #define GB_C_IS_FULL   1
             if (A_is_full && B_is_full)
-            {
+            { 
                 // A full, B full
                 #define GB_A_IS_SPARSE 0
                 #define GB_A_IS_HYPER  0
@@ -198,8 +238,13 @@
     {
 
         //----------------------------------------------------------------------
-        // C<M>=A'*B or C<!M>=A'*B
+        // C<#M>=A'*B or C<#M>=A*B, where C is always bitmap
         //----------------------------------------------------------------------
+
+        // mask is present and C is always bitmap
+        #undef  GB_NO_MASK
+        #define GB_NO_MASK 0
+        ASSERT (GB_IS_BITMAP (C)) ;
 
         // 12 possible cases of the mask are handled:
 
@@ -226,26 +271,24 @@
 
             // GB_ANY_SPECIALIZED is defined if the following conditions hold:
             // semirings: all built-in semirings with the ANY monoid
-            // A: sparse
+            // A: sparse (and transposed)
             // B: bitmap
             // M: bitmap
             // Mask_comp: true
             // Mask_struct: true
 
-            GBURBLE ("(specialized) ") ;
+            ASSERT (!A_not_transposed) ;    // C<#M>=A'*B is being computed
             #define GB_ANY_SPECIALIZED
-            #define GB_MASK_IS_PRESENT
             #define GB_A_IS_SPARSE 1
             #define GB_A_IS_HYPER  0
             #define GB_A_IS_BITMAP 0
             #define GB_A_IS_FULL   0
             #define GB_B_IS_SPARSE 0
-            #define GB_B_IS_SPARSE 0
+            #define GB_B_IS_HYPER  0
             #define GB_B_IS_BITMAP 1
             #define GB_B_IS_FULL   0
             #include "GB_AxB_dot2_template.c"
             #undef  GB_ANY_SPECIALIZED
-            #undef GB_MASK_IS_PRESENT
 
         }
         else
@@ -256,11 +299,9 @@
             // C<#M>=A'*B or C<#!M>=A*B
             //------------------------------------------------------------------
 
-            const GB_void *restrict Mx = (GB_void *)
+            const GB_M_TYPE *restrict Mx = (GB_M_TYPE *)
                 (Mask_struct ? NULL : (M->x)) ;
             const size_t msize = M->type->size ;
-
-            #define GB_MASK_IS_PRESENT
 
             if (A_not_transposed)
             {
@@ -297,14 +338,13 @@
                 #undef GB_A_NOT_TRANSPOSED
             }
             else
-            {
+            { 
                 // C<#>M = A'*B, via dot2 method, A is implicitly transposed
                 #include "GB_meta16_factory.c"
             }
-
-            #undef GB_MASK_IS_PRESENT
         }
     }
+    #endif
 
     C->nvals = cnvals ;
 }
@@ -312,4 +352,5 @@
 #undef A_is_hyper
 #undef B_is_hyper
 #undef GB_DOT2
+#undef GB_NO_MASK
 

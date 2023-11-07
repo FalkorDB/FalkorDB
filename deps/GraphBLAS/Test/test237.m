@@ -1,77 +1,55 @@
 function test237
 %TEST237 test GrB_mxm (saxpy4)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-GrB.burble (0) ;
+GB_mex_burble (1) ;
 rng ('default') ;
 
 n = 32 ;
 
-for k = [1 2 4 8 32]
+for kind = 1:2
+    
+    if (kind == 1)
+        add = 'plus' ;
+        class = 'double' ;
+    else
+        add = 'times' ;
+        class = 'single complex' ;
+    end
 
-    A = GB_spec_random (n, n, 0.3) ;
-    B = GB_spec_random (n, k, 0.3) ;
+    accum.opname = add ;
+    accum.optype = class ;
+
+    tol = 1e-6 ;
+
+    semiring.multiply = 'times' ;
+    semiring.add = add ;
+    semiring.class = class ;
+    semiring
+
+    % k = 1 with a sparser A matrix
+
+    A = GB_spec_random (n, n, 0.05, 1, class) ;
+    B = GB_spec_random (n, 1, 0.3, 1, class) ;
     B.sparsity = 4 ;    % bitmap
-    F = GB_spec_random (n, k, inf) ;
+    F = GB_spec_random (n, 1, inf, 1, class) ;
     F.sparsity = 8 ;    % full
 
-    accum.opname = 'plus' ;
-    accum.optype = 'double' ;
-    % fprintf ('\n----------------- accum:\n') ;
-    % GB_mex_binaryop (accum) ;
-
-    % fprintf ('\n----------------- semiring:\n') ;
-    semiring.multiply = 'times' ;
-    semiring.add = 'plus' ;
-    semiring.class = 'double' ;
-    % GB_mex_semiring (semiring, 3) ;
-
-    tol = 1e-12 ;
-
-    % fprintf ('\n----------------- F += S*B:\n\n') ;
-    A.sparsity = 2 ;
+    A.sparsity = 2 ;    % sparse
     C1 = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
     C2 = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
-    GB_spec_compare (C1, C2, tol) ;
+    GB_spec_compare (C2, C1, 0, tol) ;
 
-    % fprintf ('\n----------------- F += H*B:\n\n') ;
-    A.sparsity = 1 ;
+    % typecasting (to trigger the JIT)
+    A.class = 'single' ;
     C1 = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
     C2 = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
-    GB_spec_compare (C1, C2, tol) ;
+    GB_spec_compare (C2, C1, 0, tol) ;
 
-    B = GB_spec_random (n, k, inf) ;
-    B.sparsity = 8 ;    % full
-
-    % fprintf ('\n----------------- F += S*F:\n\n') ;
-    A.sparsity = 2 ;
-    C1 = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
-    C2 = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
-    GB_spec_compare (C1, C2, tol) ;
-
-    % fprintf ('\n----------------- F += H*F:\n\n') ;
-    A.sparsity = 1 ;
-    C1 = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
-    C2 = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
-    GB_spec_compare (C1, C2, tol) ;
 end
 
-% k = 1 with a sparser A matrix
-
-    A = GB_spec_random (n, n, 0.05) ;
-    B = GB_spec_random (n, 1, 0.3) ;
-    B.sparsity = 4 ;    % bitmap
-    F = GB_spec_random (n, 1, inf) ;
-    F.sparsity = 8 ;    % full
-
-    % fprintf ('\n----------------- F += S*F:\n\n') ;
-    A.sparsity = 2 ;
-    C1 = GB_mex_mxm  (F, [ ], accum, semiring, A, B, [ ]) ;
-    C2 = GB_spec_mxm (F, [ ], accum, semiring, A, B, [ ]) ;
-    GB_spec_compare (C1, C2, tol) ;
-
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('test237: all tests passed\n') ;
 

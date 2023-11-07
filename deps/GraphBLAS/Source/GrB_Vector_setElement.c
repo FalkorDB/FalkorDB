@@ -2,7 +2,7 @@
 // GrB_Vector_setElement: set an entry in a vector, w (row) = x
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ GrB_Info GB_EVAL3 (prefix, _Vector_setElement_, T)    /* w(row) = x */      \
     GB_RETURN_IF_NULL_OR_FAULTY (w) ;                                       \
     ASSERT (GB_VECTOR_OK (w)) ;                                             \
     return (GB_setElement ((GrB_Matrix) w, NULL, ampersand x, row, 0,       \
-        GB_ ## T ## _code, Context)) ;                                      \
+        GB_ ## T ## _code, Werk)) ;                                      \
 }
 
 GB_SET (GrB, bool      , BOOL   , &)
@@ -72,18 +72,17 @@ GrB_Info GrB_Vector_setElement_Scalar
     // set or remove the element
     //--------------------------------------------------------------------------
 
-    GrB_Info info ;
     GB_MATRIX_WAIT (scalar) ;
     if (GB_nnz ((GrB_Matrix) scalar) > 0)
     { 
         // set the element: w(row) = scalar
         return (GB_setElement ((GrB_Matrix) w, NULL, scalar->x, row, 0,
-            scalar->type->code, Context)) ;
+            scalar->type->code, Werk)) ;
     }
     else
     { 
         // delete the w(row) element
-        return (GB_Vector_removeElement (w, row, Context)) ;
+        return (GB_Vector_removeElement (w, row, Werk)) ;
     }
 }
 

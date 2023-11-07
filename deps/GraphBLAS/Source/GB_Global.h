@@ -2,12 +2,12 @@
 // GB_Global.h: definitions for global data
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// These defintions are not visible to the user.  They are used only inside
+// These definitions are not visible to the user.  They are used only inside
 // GraphBLAS itself.  Note that the GB_Global struct does not appear here.
 // It is accessible only by the functions in GB_Global.c.
 
@@ -24,19 +24,14 @@ GrB_Mode GB_Global_mode_get (void) ;
 void     GB_Global_sort_set (int sort) ;
 int      GB_Global_sort_get (void) ;
 
-void     GB_Global_GrB_init_called_set (bool GrB_init_called) ;
+void     GB_Global_GrB_init_called_set (bool init_called) ;
 bool     GB_Global_GrB_init_called_get (void) ;
-
-void     GB_Global_nthreads_max_set (int nthreads_max) ;
-int      GB_Global_nthreads_max_get (void) ;
-
-int      GB_Global_omp_get_max_threads (void) ;
-
-void     GB_Global_chunk_set (double chunk) ;
-double   GB_Global_chunk_get (void) ;
 
 void     GB_Global_hyper_switch_set (float hyper_switch) ;
 float    GB_Global_hyper_switch_get (void) ;
+
+void     GB_Global_hyper_hash_set (int64_t hyper_hash) ;
+int64_t  GB_Global_hyper_hash_get (void) ;
 
 void     GB_Global_bitmap_switch_set (int k, float b) ;
 float    GB_Global_bitmap_switch_get (int k) ;
@@ -47,16 +42,20 @@ void     GB_Global_bitmap_switch_default (void) ;
 void     GB_Global_is_csc_set (bool is_csc) ;
 bool     GB_Global_is_csc_get (void) ;
 
-void     GB_Global_abort_function_set
-                        (void (* abort_function) (void)) ;
-void     GB_Global_abort_function (void) ;
+void     GB_Global_abort_set (void (* abort_function) (void)) ;
+void     GB_Global_abort (void) ;
 
 void     GB_Global_malloc_function_set (void * (* malloc_function) (size_t)) ;
 void  *  GB_Global_malloc_function (size_t size) ;
+
 void     GB_Global_realloc_function_set
             (void * (* realloc_function) (void *, size_t)) ;
 void  *  GB_Global_realloc_function (void *p, size_t size) ;
 bool     GB_Global_have_realloc_function (void) ;
+
+void     GB_Global_calloc_function_set
+            (void * (* calloc_function) (size_t, size_t)) ;
+
 void     GB_Global_free_function_set (void (* free_function) (void *)) ;
 void     GB_Global_free_function (void *p) ;
 
@@ -75,6 +74,10 @@ bool     GB_Global_malloc_debug_get (void) ;
 void     GB_Global_malloc_debug_count_set (int64_t malloc_debug_count) ;
 bool     GB_Global_malloc_debug_count_decrement (void) ;
 
+void *   GB_Global_persistent_malloc (size_t size) ;
+void     GB_Global_persistent_set (void (* persistent_function) (void *)) ;
+void     GB_Global_persistent_free (void **p) ;
+
 void     GB_Global_hack_set (int k, int64_t hack) ;
 int64_t  GB_Global_hack_get (int k) ;
 
@@ -87,10 +90,6 @@ bool     GB_Global_print_one_based_get (void) ;
 void     GB_Global_print_mem_shallow_set (bool mem_shallow) ;
 bool     GB_Global_print_mem_shallow_get (void) ;
 
-void     GB_Global_gpu_control_set (GrB_Desc_Value value) ;
-GrB_Desc_Value GB_Global_gpu_control_get (void);
-void     GB_Global_gpu_chunk_set (double gpu_chunk) ;
-double   GB_Global_gpu_chunk_get (void) ;
 bool     GB_Global_gpu_count_set (bool enable_cuda) ;
 int      GB_Global_gpu_count_get (void) ;
 size_t   GB_Global_gpu_memorysize_get (int device) ;
@@ -115,14 +114,6 @@ size_t   GB_Global_memtable_size (void *p) ;
 void     GB_Global_memtable_remove (void *p) ;
 bool     GB_Global_memtable_find (void *p) ;
 
-void     GB_Global_free_pool_init (bool clear) ;
-void    *GB_Global_free_pool_get (int k) ;
-bool     GB_Global_free_pool_put (void *p, int k) ;
-void     GB_Global_free_pool_dump (int pr) ;
-int64_t  GB_Global_free_pool_limit_get (int k) ;
-void     GB_Global_free_pool_limit_set (int64_t *limit) ;
-int64_t  GB_Global_free_pool_nblocks_total (void) ;
-
 typedef int (* GB_flush_function_t) (void) ;
 typedef int (* GB_printf_function_t) (const char *restrict format, ...) ;
 
@@ -133,5 +124,10 @@ GB_flush_function_t GB_Global_flush_get (void) ;
 void     GB_Global_flush_set (GB_flush_function_t p) ;
 
 double   GB_Global_get_wtime (void) ;
+
+void  *  GB_Global_malloc_function_get (void) ;
+void  *  GB_Global_calloc_function_get (void) ;
+void  *  GB_Global_realloc_function_get (void) ;
+void  *  GB_Global_free_function_get (void) ;
 #endif
 

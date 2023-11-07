@@ -2,7 +2,7 @@
 // GB_subassign_24: make a deep copy of a sparse or dense matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@
 // A can be jumbled, in which case C is also jumbled.
 // A can have any sparsity structure (sparse, hyper, bitmap, or full).
 
-#include "GB_dense.h"
+#include "GB_subassign_dense.h"
 #include "GB_Pending.h"
 #define GB_FREE_ALL ;
 
@@ -28,7 +28,7 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
 (
     GrB_Matrix C,           // output matrix to modify
     const GrB_Matrix A,     // input matrix to copy
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -36,7 +36,7 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (!GB_aliased (C, A)) ;   // NO ALIAS of C==A
+    ASSERT (!GB_any_aliased (C, A)) ;   // NO ALIAS of C==A
     ASSERT (!GB_is_shallow (C)) ;
 
     //--------------------------------------------------------------------------
@@ -71,12 +71,6 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
     ASSERT (!GB_ZOMBIES (A)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (!GB_PENDING (A)) ;
-
-    //--------------------------------------------------------------------------
-    // determine the number of threads to use
-    //--------------------------------------------------------------------------
-
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
 
     //--------------------------------------------------------------------------
     // C = A
@@ -119,7 +113,7 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
         GB_phybix_free (C) ;
         // copy the pattern, not the values
         // set C->iso = C_iso   OK
-        GB_OK (GB_dup_worker (&C, C_iso, A, false, C->type, Context)) ;
+        GB_OK (GB_dup_worker (&C, C_iso, A, false, C->type)) ;
         C->is_csc = C_is_csc ;      // do not change the CSR/CSC format of C
         // GB_assign_prep has assigned the C->x iso value, but this has just
         // been cleared, so it needs to be reassigned below by GB_cast_matrix.
@@ -134,7 +128,7 @@ GrB_Info GB_subassign_24    // C = A, copy A into an existing matrix C
         GBURBLE ("(typecast) ") ;
     }
 
-    GB_cast_matrix (C, A, Context) ;
+    GB_OK (GB_cast_matrix (C, A)) ;
 
     //--------------------------------------------------------------------------
     // restore the sparsity control of C

@@ -2,7 +2,7 @@
 // GB_mxm.h: definitions for C=A*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ GrB_Info GB_mxm                     // C<M> = A*B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     const GrB_Desc_Value AxB_method,// for auto vs user selection of methods
     const int do_sort,              // if nonzero, try to return C unjumbled
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_AxB_dot                 // dot product (multiple methods)
@@ -47,7 +47,7 @@ GrB_Info GB_AxB_dot                 // dot product (multiple methods)
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *mask_applied,             // if true, mask was applied
     bool *done_in_place,            // if true, C_in_place was computed in-place
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
@@ -72,29 +72,30 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
     bool *done_in_place,            // if true, C was computed in-place
     GrB_Desc_Value AxB_method,      // for auto vs user selection of methods
     const int do_sort,              // if nonzero, try to return C unjumbled
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
-GrB_Info GB_AxB_rowscale            // C = D*B, row scale with diagonal D
+GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
 (
     GrB_Matrix C,                   // output matrix, static header
     const GrB_Matrix D,             // diagonal input matrix
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=D*A
+                                    // the monoid is not used
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
-GrB_Info GB_AxB_colscale            // C = A*D, column scale with diagonal D
+GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
 (
     GrB_Matrix C,                   // output matrix, static header
     const GrB_Matrix A,             // input matrix
     const GrB_Matrix D,             // diagonal input matrix
-    const GrB_Semiring semiring,    // semiring that defines C=A*D
+    const GrB_Semiring semiring,    // semiring that defines C=A*D;
+                                    // the monoid is not used
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    GB_Werk Werk
 ) ;
-
 
 bool GB_AxB_semiring_builtin        // true if semiring is builtin
 (
@@ -126,13 +127,12 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<!M>=A'*B, dot product method
     const GrB_Matrix B_in,          // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 bool GB_is_diagonal             // true if A is diagonal
 (
-    const GrB_Matrix A,         // input matrix to examine
-    GB_Context Context
+    const GrB_Matrix A          // input matrix to examine
 ) ;
 
 GrB_Info GB_AxB_dot3                // C<M> = A'*B using dot product method
@@ -146,7 +146,7 @@ GrB_Info GB_AxB_dot3                // C<M> = A'*B using dot product method
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_AxB_dot3_slice
@@ -158,7 +158,7 @@ GrB_Info GB_AxB_dot3_slice
     int *p_nthreads,                // # of threads to use
     // input:
     const GrB_Matrix C,             // matrix to slice
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_AxB_dot3_one_slice
@@ -170,7 +170,7 @@ GrB_Info GB_AxB_dot3_one_slice
     int *p_nthreads,                // # of threads to use
     // input:
     const GrB_Matrix M,             // matrix to slice
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_AxB_dot4                // C+=A'*B, dot product method
@@ -181,7 +181,7 @@ GrB_Info GB_AxB_dot4                // C+=A'*B, dot product method
     const GrB_Semiring semiring,    // semiring that defines C+=A*B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *done_in_place,            // if true, dot4 has computed the result
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_bitmap_expand_to_hyper
@@ -193,7 +193,7 @@ GrB_Info GB_bitmap_expand_to_hyper
     int64_t cvdim_final,
     GrB_Matrix A,
     GrB_Matrix B,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------
@@ -201,7 +201,7 @@ GrB_Info GB_bitmap_expand_to_hyper
 //------------------------------------------------------------------------------
 
 // C += A'*B where C is modified in-place. C may be iso on input but dot4
-// does not handle the case where C is iso on output.  C must be as-if-full
+// does not handle the case where C is iso on output.  C must be full
 // on input, and remains so on output.
 
 static inline bool GB_AxB_dot4_control
@@ -215,9 +215,13 @@ static inline bool GB_AxB_dot4_control
     const GrB_Semiring semiring
 )
 {
-    return (!C_out_iso && C_in != NULL && GB_as_if_full (C_in)
-        && (M == NULL) && (!Mask_comp) && (accum != NULL)
-        && (accum == semiring->add->op) && (C_in->type == accum->ztype)) ;
+    return (!C_out_iso                  // C must not be iso on output
+        && GB_IS_FULL (C_in)            // C must be present and full
+        && (M == NULL) && (!Mask_comp)  // no mask, and must not be complemented
+        && (accum != NULL)              // accum must be present
+        // future:: the JIT kernel can be extended to handle these cases:
+        && (accum == semiring->add->op)     // accum must match the monoid
+        && (C_in->type == accum->ztype)) ;  // ctype must match ztype
 }
 
 //------------------------------------------------------------------------------
@@ -246,15 +250,14 @@ static inline bool GB_AxB_dot3_control
 bool GB_AxB_dot2_control  // true: use dot2, false: use saxpy
 (
     const GrB_Matrix A,
-    const GrB_Matrix B,
-    GB_Context Context
+    const GrB_Matrix B
 ) ;
 
 //------------------------------------------------------------------------------
-// GB_iso_AxB: determine if C=A*B results in an iso matrix C
+// GB_AxB_iso: determine if C=A*B results in an iso matrix C
 //------------------------------------------------------------------------------
 
-bool GB_iso_AxB             // C = A*B, return true if C is iso
+bool GB_AxB_iso             // C = A*B, return true if C is iso
 (
     // output
     GB_void *restrict c,    // output scalar of iso array
@@ -287,8 +290,7 @@ void GB_AxB_meta_adotb_control
     bool can_do_in_place,
     bool allow_scale,
     bool B_is_diagonal,
-    GrB_Desc_Value AxB_method,
-    GB_Context Context
+    GrB_Desc_Value AxB_method
 ) ;
 
 // return value of axb_method from GB_AxB_meta_adotb_control

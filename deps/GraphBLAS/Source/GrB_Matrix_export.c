@@ -2,7 +2,7 @@
 // GrB_Matrix_export: export a matrix in CSR, CSC, FullC, FullR, or COO format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,7 +44,7 @@ static GrB_Info GB_export_worker  // export a matrix
     GrB_Index *Ax_len,      // number of entries in Ax (not # of bytes)
     GrB_Format format,      // export format
     GrB_Matrix A_input,     // matrix to export
-    GB_Context Context
+    GB_Werk Werk
 )
 { 
 
@@ -135,19 +135,19 @@ static GrB_Info GB_export_worker  // export a matrix
         { 
             // T = A'
             GB_OK (GB_transpose_cast (T, A->type, csc_requested, A, false,
-                Context)) ;
+                Werk)) ;
         }
         else
         { 
             // T = A
-            GB_OK (GB_dup_worker (&T, A->iso, A, true, A->type, Context)) ;
+            GB_OK (GB_dup_worker (&T, A->iso, A, true, A->type)) ;
         }
 
         switch (format)
         {
             case GrB_CSR_FORMAT :
             case GrB_CSC_FORMAT :
-                GB_OK (GB_convert_any_to_sparse (T, Context)) ;
+                GB_OK (GB_convert_any_to_sparse (T, Werk)) ;
                 break ;
 //          case GrB_DENSE_ROW_FORMAT :
 //          case GrB_DENSE_COL_FORMAT :
@@ -163,7 +163,7 @@ static GrB_Info GB_export_worker  // export a matrix
     // export the contents of the matrix
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
 
     GrB_Index nvals = GB_nnz (A) ;
     int64_t plen = A->vdim+1 ; 
@@ -195,7 +195,7 @@ static GrB_Info GB_export_worker  // export a matrix
             { 
                 // expand the iso A->x into the non-iso array Ax
                 ASSERT (nvals > 0) ;
-                GB_iso_expand (Ax, nvals, A->x, A->type->size, Context) ;
+                GB_expand_iso (Ax, nvals, A->x, A->type->size) ;
             }
             else
             { 
@@ -211,7 +211,7 @@ static GrB_Info GB_export_worker  // export a matrix
                 return (GrB_INSUFFICIENT_SPACE) ;
             }
             GB_OK (GB_extractTuples (Ap, Ai, Ax, &nvals, A->type->code, A,
-                Context)) ;
+                Werk)) ;
             (*Ap_len) = nvals ;
             (*Ai_len) = nvals ;
             (*Ax_len) = nvals ;
@@ -249,12 +249,12 @@ GrB_Info GB_EVAL3 (prefix, _Matrix_export_, Type) /* export a matrix */        \
 {                                                                              \
     GB_WHERE1 (GB_STR(prefix) "_Matrix_export_" GB_STR(Type)                   \
         " (Ap, Ai, Ax, &Ap_len, &Ai_len, &Ax_len, format, A)") ;               \
-    GB_BURBLE_START (GB_STR(prefix) "_Matrix_export_" GB_STR(Type)) ;          \
+/*  GB_BURBLE_START (GB_STR(prefix) "_Matrix_export_" GB_STR(Type)) ; */       \
     GB_RETURN_IF_NULL_OR_FAULTY (A) ;                                          \
     if (A->type->code != acode) return (GrB_DOMAIN_MISMATCH) ;                 \
     GrB_Info info = GB_export_worker (Ap, Ai, (void *) Ax,                     \
-        Ap_len, Ai_len, Ax_len, format, A, Context) ;                          \
-    GB_BURBLE_END ;                                                            \
+        Ap_len, Ai_len, Ax_len, format, A, Werk) ;                             \
+/*  GB_BURBLE_END ;  */                                                        \
     return (info) ;                                                            \
 }
 

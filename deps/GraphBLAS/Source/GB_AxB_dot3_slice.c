@@ -2,7 +2,7 @@
 // GB_AxB_dot3_slice: slice the entries and vectors for C<M>=A'*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -50,7 +50,7 @@ GrB_Info GB_AxB_dot3_slice
     int *p_nthreads,                // # of threads to use
     // input:
     const GrB_Matrix C,             // matrix to slice
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -79,7 +79,8 @@ GrB_Info GB_AxB_dot3_slice
     // determine # of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     //--------------------------------------------------------------------------
     // get C
@@ -98,7 +99,7 @@ GrB_Info GB_AxB_dot3_slice
     // FUTURE:: handle possible int64_t overflow
 
     int nthreads = GB_nthreads (cnz, chunk, nthreads_max) ;
-    GB_cumsum (Cwork, cnz, NULL, nthreads, Context) ;
+    GB_cumsum (Cwork, cnz, NULL, nthreads, Werk) ;
     double total_work = (double) Cwork [cnz] ;
 
     //--------------------------------------------------------------------------

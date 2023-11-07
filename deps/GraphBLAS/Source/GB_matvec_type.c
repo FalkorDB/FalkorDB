@@ -2,7 +2,7 @@
 // GB_matvec_type: return the type of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,7 @@ GrB_Info GB_matvec_type            // get the type of a matrix
 (
     GrB_Type *type,         // returns the type of the matrix
     const GrB_Matrix A,     // matrix to query
-    GB_Context Context
+    GB_Werk Werk
 )
 { 
 

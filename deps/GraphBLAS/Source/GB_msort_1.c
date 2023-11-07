@@ -2,10 +2,12 @@
 // GB_msort_1: sort a 1-by-n list of integers
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // A parallel mergesort of an array of 1-by-n integers.
 

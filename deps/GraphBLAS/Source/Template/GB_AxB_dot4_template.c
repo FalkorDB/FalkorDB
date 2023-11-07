@@ -2,7 +2,7 @@
 // GB_AxB_dot4_template:  C+=A'*B via dot products, where C is full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,11 +17,11 @@
 // been expanded to non-iso, and initialized if A and/or B are hypersparse.
 // A and/or B can be iso.
 
-// MIN_FIRSTJ or MIN_FIRSTJ1 semirings:
-#define GB_IS_MIN_FIRSTJ_SEMIRING (GB_IS_IMIN_MONOID && GB_IS_FIRSTJ_MULTIPLIER)
-// MAX_FIRSTJ or MAX_FIRSTJ1 semirings:
-#define GB_IS_MAX_FIRSTJ_SEMIRING (GB_IS_IMAX_MONOID && GB_IS_FIRSTJ_MULTIPLIER)
-// GB_OFFSET is 1 for the MIN/MAX_FIRSTJ1 semirings, and 0 otherwise.
+// The #include'ing file must use GB_DECLARE_TERMINAL_CONST (zterminal) ;
+
+#ifndef GB_MXM_SHARED_DEFINITIONS_H
+#error "undefined"
+#endif
 
 #if GB_IS_ANY_MONOID
 #error "dot4 is not used for the ANY monoid"
@@ -30,7 +30,7 @@
 #undef  GB_GET4C
 #define GB_GET4C(cij,p) cij = (C_in_iso) ? cinput : Cx [p]
 
-#if ((GB_A_IS_BITMAP || GB_A_IS_FULL) && (GB_B_IS_BITMAP || GB_B_IS_FULL ))
+#if ((GB_A_IS_BITMAP || GB_A_IS_FULL) && (GB_B_IS_BITMAP || GB_B_IS_FULL))
 {
 
     //--------------------------------------------------------------------------
@@ -84,7 +84,7 @@
                 //--------------------------------------------------------------
 
                 int64_t pC = i + pC_start ;     // C(i,j) is at Cx [pC]
-                GB_CTYPE GB_GET4C (cij, pC) ;   // cij = Cx [pC]
+                GB_C_TYPE GB_GET4C (cij, pC) ;   // cij = Cx [pC]
 
                 //--------------------------------------------------------------
                 // C(i,j) += A (:,i)*B(:,j): a single dot product
@@ -99,27 +99,45 @@
                     // both A and B are full
                     //----------------------------------------------------------
 
-                    #if GB_IS_PAIR_MULTIPLIER
+                    #if GB_IS_LXOR_PAIR_SEMIRING
                     { 
-                        #if GB_IS_EQ_MONOID
-                        // EQ_PAIR semiring
-                        cij = (cij == 1) ;
-                        #elif (GB_CTYPE_BITS > 0)
-                        // PLUS, XOR monoids: A(:,i)'*B(:,j) is nnz(A(:,i)),
-                        // for bool, 8-bit, 16-bit, or 32-bit integer
+                        // (boolean XOR monoid)_PAIR semiring
                         uint64_t t = ((uint64_t) cij) + vlen ;
-                        cij = (GB_CTYPE) (t & GB_CTYPE_BITS) ;
-                        #elif GB_IS_PLUS_FC32_MONOID
-                        // PLUS monoid for float complex
-                        cij = GxB_CMPLXF (crealf (cij) + (float) vlen, 0) ;
-                        #elif GB_IS_PLUS_FC64_MONOID
-                        // PLUS monoid for double complex
-                        cij = GxB_CMPLX (creal (cij) + (double) vlen, 0) ;
-                        #else
-                        // PLUS monoid for float, double, or 64-bit integers 
-                        cij += (GB_CTYPE) vlen ;
-                        #endif
+                        cij = (GB_C_TYPE) (t & 0x1L) ;
                     }
+                    #elif GB_IS_PLUS_PAIR_8_SEMIRING
+                    { 
+                        // (PLUS int8, uint8 monoids)_PAIR semirings
+                        uint64_t t = ((uint64_t) cij) + vlen ;
+                        cij = (GB_C_TYPE) (t & 0xFFL) ;
+                    }
+                    #elif GB_IS_PLUS_PAIR_16_SEMIRING
+                    { 
+                        // (PLUS int16, uint16 monoids)_PAIR semirings
+                        uint64_t t = ((uint64_t) cij) + vlen ;
+                        cij = (GB_C_TYPE) (t & 0xFFFFL) ;
+                    }
+                    #elif GB_IS_PLUS_PAIR_32_SEMIRING
+                    { 
+                        // (PLUS int32, uint32 monoids)_PAIR semirings
+                        uint64_t t = ((uint64_t) cij) + vlen ;
+                        cij = (GB_C_TYPE) (t & 0xFFFFFFFFL) ;
+                    }
+                    #elif GB_IS_PLUS_PAIR_BIG_SEMIRING
+                    { 
+                        // (PLUS int64, uint64, float, or double)_PAIR semirings
+                        cij += (GB_C_TYPE) vlen ;
+                    }
+//                  #elif GB_IS_PLUS_PAIR_FC32_SEMIRING
+//                  {
+//                      // (PLUS monoid for float complex)_PAIR semiring
+//                      cij = GJ_CMPLX32 (GB_crealf (cij) + (float) vlen, 0) ;
+//                  }
+//                  #elif GB_IS_PLUS_PAIR_FC64_SEMIRING
+//                  {
+//                      // (PLUS monoid for double complex)_PAIR semiring
+//                      cij = GJ_CMPLX64 (GB_creal (cij) + (double) vlen, 0) ;
+//                  }
                     #elif GB_IS_MIN_FIRSTJ_SEMIRING
                     {
                         // MIN_FIRSTJ semiring: take the first entry
@@ -140,7 +158,7 @@
                     }
                     #else
                     {
-                        GB_PRAGMA_SIMD_DOT (cij)
+                        GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
                         for (int64_t k = 0 ; k < vlen ; k++)
                         { 
                             GB_DOT (k, pA+k, pB+k) ;    // cij += A(k,i)*B(k,j)
@@ -182,7 +200,7 @@
                     }
                     #else
                     {
-                        GB_PRAGMA_SIMD_DOT (cij)
+                        GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
                         for (int64_t k = 0 ; k < vlen ; k++)
                         {
                             if (Bb [pB+k])
@@ -227,7 +245,7 @@
                     }
                     #else
                     {
-                        GB_PRAGMA_SIMD_DOT (cij)
+                        GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
                         for (int64_t k = 0 ; k < vlen ; k++)
                         {
                             if (Ab [pA+k])
@@ -272,7 +290,7 @@
                     }
                     #else
                     {
-                        GB_PRAGMA_SIMD_DOT (cij)
+                        GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
                         for (int64_t k = 0 ; k < vlen ; k++)
                         {
                             if (Ab [pA+k] && Bb [pB+k])
@@ -302,7 +320,7 @@
     // C += A'*B when A is sparse/hyper and B is bitmap/full
     //--------------------------------------------------------------------------
 
-    // special cases: these methods are very fast, but cannot do not need
+    // special cases: these methods are very fast, but cannot or do not need
     // to be unrolled.
     #undef  GB_SPECIAL_CASE_OR_TERMINAL
     #define GB_SPECIAL_CASE_OR_TERMINAL \
@@ -331,8 +349,8 @@
 
     #if GB_UNROLL
     const int64_t wp = (bvdim == 1) ? 0 : GB_IMIN (bvdim, 4) ;
-    const int64_t anz = GB_nnz (A) ;
-    if (anz < wp * vlen || B_iso)
+    GB_A_NVALS (anz) ;      // const int64_t anz = GB_nnz (A) ;
+    if ((anz < wp * vlen) || B_iso)
     #endif
     {
 
@@ -367,7 +385,7 @@
                 #define pB 0
                 #define j 0
                 for (int64_t kA = kA_start ; kA < kA_end ; kA++)
-                {
+                { 
                     // get A(:,i)
                     #if GB_A_IS_HYPER
                     const int64_t i = Ah [kA] ;
@@ -405,7 +423,7 @@
                     const int64_t ainz = pA_end - pA ;
                     // C(i,:) += A(:,i)'*B
                     for (int64_t j = 0 ; j < bvdim ; j++)
-                    {
+                    { 
                         // get B(:,j) and C(:,j)
                         const int64_t pC_start = j * cvlen ;
                         const int64_t pB = j * vlen ;
@@ -425,10 +443,10 @@
         //----------------------------------------------------------------------
 
         size_t W_size = 0 ;
-        GB_BTYPE *restrict W = NULL ;
+        GB_B2TYPE *restrict W = NULL ;
         if (bvdim > 1)
         {
-            W = GB_MALLOC_WORK (wp * vlen, GB_BTYPE, &W_size) ;
+            W = GB_MALLOC_WORK (wp * vlen, GB_B2TYPE, &W_size) ;
             if (W == NULL)
             { 
                 // out of memory
@@ -440,7 +458,7 @@
         {
 
             //------------------------------------------------------------------
-            // C(:,j1:j2-1) += A * B (:,j1:j2-1) for a single panel
+            // C(:,j1:j2-1) += A' * B (:,j1:j2-1) for a single panel
             //------------------------------------------------------------------
 
             const int64_t j2 = GB_IMIN (j1 + 4, bvdim) ;
@@ -455,7 +473,7 @@
                     // C(:,j1:j2-1) is a single vector; use B(:,j1) in place
                     //----------------------------------------------------------
 
-                    const GB_BTYPE *restrict G = Bx + j1 * vlen ;
+                    const GB_B_TYPE *restrict Bxj1 = Bx + j1 * vlen ;
                     int tid ;
                     #pragma omp parallel for num_threads(nthreads) \
                         schedule(dynamic,1)
@@ -470,16 +488,19 @@
                             const int64_t pA = Ap [i] ;
                             const int64_t pA_end = Ap [i+1] ;
                             // cx [0] = C(i,j1)
-                            GB_CTYPE cx [1] ;
+                            GB_C_TYPE cx [1] ;
                             GB_GET4C (cx [0], i + j1*cvlen) ;
-                            // cx [0] += A (:,i)'*G
+                            // cx [0] += A (:,i)'*B(:,j1)
                             for (int64_t p = pA ; p < pA_end ; p++)
                             { 
                                 // aki = A(k,i)
                                 const int64_t k = Ai [p] ;
+                                GB_DECLAREA (aki) ;
                                 GB_GETA (aki, Ax, p, A_iso) ;
-                                // cx [0] += A(k,i)*G(k,0)
-                                GB_MULTADD (cx [0], aki, G [k], i, k, j1) ;
+                                GB_DECLAREB (bkj) ;
+                                GB_GETB (bkj, Bxj1, k, false) ;
+                                // cx [0] += A(k,i)*B(k,j1)
+                                GB_MULTADD (cx [0], aki, bkj, i, k, j1) ;
                             }
                             // C(i,j1) = cx [0]
                             Cx [i + j1*cvlen] = cx [0] ;
@@ -495,16 +516,16 @@
                     // G = B(:,j1:j1+1) and convert to row-form
                     //----------------------------------------------------------
 
-                    GB_BTYPE *restrict G = W ;
+                    GB_B2TYPE *restrict G = W ;
                     int64_t k ;
                     #pragma omp parallel for num_threads(nthreads) \
                         schedule(static)
                     for (k = 0 ; k < vlen ; k++)
-                    {
+                    { 
                         // G (k,0:1) = B (k,j1:j1+1)
                         const int64_t k2 = k << 1 ;
-                        G [k2    ] = Bx [k + (j1    ) * vlen] ;
-                        G [k2 + 1] = Bx [k + (j1 + 1) * vlen] ;
+                        GB_GETB (G [k2    ], Bx, k + (j1    ) * vlen, false) ;
+                        GB_GETB (G [k2 + 1], Bx, k + (j1 + 1) * vlen, false) ;
                     }
 
                     //----------------------------------------------------------
@@ -525,7 +546,7 @@
                             const int64_t pA = Ap [i] ;
                             const int64_t pA_end = Ap [i+1] ;
                             // cx [0:1] = C(i,j1:j1+1)
-                            GB_CTYPE cx [2] ;
+                            GB_C_TYPE cx [2] ;
                             GB_GET4C (cx [0], i + (j1  )*cvlen) ;
                             GB_GET4C (cx [1], i + (j1+1)*cvlen) ;
                             // cx [0:1] += A (:,i)'*G
@@ -533,6 +554,7 @@
                             { 
                                 // aki = A(k,i)
                                 const int64_t k = Ai [p] ;
+                                GB_DECLAREA (aki) ;
                                 GB_GETA (aki, Ax, p, A_iso) ;
                                 const int64_t k2 = k << 1 ;
                                 // cx [0:1] += A(k,i)*G(k,0:1)
@@ -554,17 +576,17 @@
                     // G = B(:,j1:j1+2) and convert to row-form
                     //----------------------------------------------------------
 
-                    GB_BTYPE *restrict G = W ;
+                    GB_B2TYPE *restrict G = W ;
                     int64_t k ;
                     #pragma omp parallel for num_threads(nthreads) \
                         schedule(static)
                     for (k = 0 ; k < vlen ; k++)
-                    {
+                    { 
                         // G (k,0:2) = B (k,j1:j1+2)
                         const int64_t k3 = k * 3 ;
-                        G [k3    ] = Bx [k + (j1    ) * vlen] ;
-                        G [k3 + 1] = Bx [k + (j1 + 1) * vlen] ;
-                        G [k3 + 2] = Bx [k + (j1 + 2) * vlen] ;
+                        GB_GETB (G [k3    ], Bx, k + (j1    ) * vlen, false) ;
+                        GB_GETB (G [k3 + 1], Bx, k + (j1 + 1) * vlen, false) ;
+                        GB_GETB (G [k3 + 2], Bx, k + (j1 + 2) * vlen, false) ;
                     }
 
                     //----------------------------------------------------------
@@ -585,7 +607,7 @@
                             const int64_t pA = Ap [i] ;
                             const int64_t pA_end = Ap [i+1] ;
                             // cx [0:2] = C(i,j1:j1+2)
-                            GB_CTYPE cx [3] ;
+                            GB_C_TYPE cx [3] ;
                             GB_GET4C (cx [0], i + (j1  )*cvlen) ;
                             GB_GET4C (cx [1], i + (j1+1)*cvlen) ;
                             GB_GET4C (cx [2], i + (j1+2)*cvlen) ;
@@ -594,6 +616,7 @@
                             { 
                                 // aki = A(k,i)
                                 const int64_t k = Ai [p] ;
+                                GB_DECLAREA (aki) ;
                                 GB_GETA (aki, Ax, p, A_iso) ;
                                 const int64_t k3 = k * 3 ;
                                 // cx [0:2] += A(k,i)*G(k,0:2)
@@ -617,18 +640,19 @@
                     // G = B(:,j1:j1+3) and convert to row-form
                     //----------------------------------------------------------
 
-                    GB_BTYPE *restrict G = W ;
+                    GB_B2TYPE *restrict G = W ;
+
                     int64_t k ;
                     #pragma omp parallel for num_threads(nthreads) \
                         schedule(static)
                     for (k = 0 ; k < vlen ; k++)
-                    {
+                    { 
                         // G (k,0:3) = B (k,j1:j1+3)
                         const int64_t k4 = k << 2 ;
-                        G [k4    ] = Bx [k + (j1    ) * vlen] ;
-                        G [k4 + 1] = Bx [k + (j1 + 1) * vlen] ;
-                        G [k4 + 2] = Bx [k + (j1 + 2) * vlen] ;
-                        G [k4 + 3] = Bx [k + (j1 + 3) * vlen] ;
+                        GB_GETB (G [k4    ], Bx, k + (j1    ) * vlen, false) ;
+                        GB_GETB (G [k4 + 1], Bx, k + (j1 + 1) * vlen, false) ;
+                        GB_GETB (G [k4 + 2], Bx, k + (j1 + 2) * vlen, false) ;
+                        GB_GETB (G [k4 + 3], Bx, k + (j1 + 3) * vlen, false) ;
                     }
 
                     //----------------------------------------------------------
@@ -649,7 +673,7 @@
                             const int64_t pA = Ap [i] ;
                             const int64_t pA_end = Ap [i+1] ;
                             // cx [0:3] = C(i,j1:j1+3)
-                            GB_CTYPE cx [4] ;
+                            GB_C_TYPE cx [4] ;
                             GB_GET4C (cx [0], i + (j1  )*cvlen) ;
                             GB_GET4C (cx [1], i + (j1+1)*cvlen) ;
                             GB_GET4C (cx [2], i + (j1+2)*cvlen) ;
@@ -659,6 +683,7 @@
                             { 
                                 // aki = A(k,i)
                                 const int64_t k = Ai [p] ;
+                                GB_DECLAREA (aki) ;
                                 GB_GETA (aki, Ax, p, A_iso) ;
                                 const int64_t k4 = k << 2 ;
                                 // cx [0:3] += A(k,i)*G(k,0:3)
@@ -741,7 +766,7 @@
                 //--------------------------------------------------------------
 
                 int64_t pC = i + pC_start ;     // C(i,j) is at Cx [pC]
-                GB_CTYPE GB_GET4C (cij, pC) ;   // cij = Cx [pC]
+                GB_C_TYPE GB_GET4C (cij, pC) ;   // cij = Cx [pC]
 
                 //--------------------------------------------------------------
                 // C(i,j) += A (:,i)*B(:,j): a single dot product
@@ -756,27 +781,45 @@
                     // A is full and B is sparse/hyper
                     //----------------------------------------------------------
 
-                    #if GB_IS_PAIR_MULTIPLIER
+                    #if GB_IS_LXOR_PAIR_SEMIRING
                     { 
-                        #if GB_IS_EQ_MONOID
-                        // EQ_PAIR semiring
-                        cij = (cij == 1) ;
-                        #elif (GB_CTYPE_BITS > 0)
-                        // PLUS, XOR monoids: A(:,i)'*B(:,j) is nnz(A(:,i)),
-                        // for bool, 8-bit, 16-bit, or 32-bit integer
+                        // (boolean XOR monoid)_PAIR semiring
                         uint64_t t = ((uint64_t) cij) + bjnz ;
-                        cij = (GB_CTYPE) (t & GB_CTYPE_BITS) ;
-                        #elif GB_IS_PLUS_FC32_MONOID
-                        // PLUS monoid for float complex
-                        cij = GxB_CMPLXF (crealf (cij) + (float) bjnz, 0) ;
-                        #elif GB_IS_PLUS_FC64_MONOID
-                        // PLUS monoid for double complex
-                        cij = GxB_CMPLX (creal (cij) + (double) bjnz, 0) ;
-                        #else
-                        // PLUS monoid for float, double, or 64-bit integers
-                        cij += (GB_CTYPE) bjnz ;
-                        #endif
+                        cij = (GB_C_TYPE) (t & 0x1L) ;
                     }
+                    #elif GB_IS_PLUS_PAIR_8_SEMIRING
+                    { 
+                        // (PLUS int8, uint8 monoids)_PAIR semirings
+                        uint64_t t = ((uint64_t) cij) + bjnz ;
+                        cij = (GB_C_TYPE) (t & 0xFFL) ;
+                    }
+                    #elif GB_IS_PLUS_PAIR_16_SEMIRING
+                    { 
+                        // (PLUS int16, uint16 monoids)_PAIR semirings
+                        uint64_t t = ((uint64_t) cij) + bjnz ;
+                        cij = (GB_C_TYPE) (t & 0xFFFFL) ;
+                    }
+                    #elif GB_IS_PLUS_PAIR_32_SEMIRING
+                    { 
+                        // (PLUS int32, uint32 monoids)_PAIR semirings
+                        uint64_t t = ((uint64_t) cij) + bjnz ;
+                        cij = (GB_C_TYPE) (t & 0xFFFFFFFFL) ;
+                    }
+                    #elif GB_IS_PLUS_PAIR_BIG_SEMIRING
+                    { 
+                        // (PLUS int64, uint64, float, or double)_PAIR semirings
+                        cij += (GB_C_TYPE) bjnz ;
+                    }
+//                  #elif GB_IS_PLUS_PAIR_FC32_SEMIRING
+//                  {
+//                      // (PLUS monoid for float complex)_PAIR semiring
+//                      cij = GJ_CMPLX32 (GB_crealf (cij) + (float) bjnz, 0) ;
+//                  }
+//                  #elif GB_IS_PLUS_PAIR_FC64_SEMIRING
+//                  {
+//                      // (PLUS monoid for double complex)_PAIR semiring
+//                      cij = GJ_CMPLX64 (GB_creal (cij) + (double) bjnz, 0) ;
+//                  }
                     #elif GB_IS_MIN_FIRSTJ_SEMIRING
                     {
                         // MIN_FIRSTJ semiring: take the first entry in B(:,j)
@@ -797,7 +840,7 @@
                     }
                     #else
                     {
-                        GB_PRAGMA_SIMD_DOT (cij)
+                        GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
                         for (int64_t p = pB ; p < pB_end ; p++)
                         { 
                             int64_t k = Bi [p] ;
@@ -842,7 +885,7 @@
                     }
                     #else
                     {
-                        GB_PRAGMA_SIMD_DOT (cij)
+                        GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
                         for (int64_t p = pB ; p < pB_end ; p++)
                         {
                             int64_t k = Bi [p] ;
@@ -935,7 +978,7 @@
                 //--------------------------------------------------------------
 
                 int64_t pC = i + pC_start ;     // C(i,j) is at Cx [pC]
-                GB_CTYPE GB_GET4C (cij, pC) ;   // cij = Cx [pC]
+                GB_C_TYPE GB_GET4C (cij, pC) ;   // cij = Cx [pC]
 
                 //--------------------------------------------------------------
                 // C(i,j) += A (:,i)*B(:,j): a single dot product
@@ -1085,11 +1128,4 @@
     }
 }
 #endif
-
-#undef GB_IS_MIN_FIRSTJ_SEMIRING
-#undef GB_IS_MAX_FIRSTJ_SEMIRING
-#undef GB_GET4C
-#undef GB_SPECIAL_CASE_OR_TERMINAL
-#undef GB_UNROLL
-
 

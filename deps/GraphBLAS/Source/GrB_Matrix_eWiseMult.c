@@ -2,7 +2,7 @@
 // GrB_Matrix_eWiseMult: matrix element-wise operations, using set intersection
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,7 +33,7 @@
         B,              B_tran,     /* B matrix and its descriptor */       \
         false,                      /* eWiseMult                   */       \
         false, NULL, NULL,          /* not eWiseUnion              */       \
-        Context) ;
+        Werk) ;
 
 //------------------------------------------------------------------------------
 // GrB_Matrix_eWiseMult_BinaryOp: matrix element-wise multiplication

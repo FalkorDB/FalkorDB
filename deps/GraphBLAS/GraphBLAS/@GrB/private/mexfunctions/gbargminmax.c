@@ -2,7 +2,7 @@
 // gbargminmax: argmin or argmax of a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -105,7 +105,8 @@ static void gb_argminmax
     }
 
     // drop explicit zeros from G
-    OK (GxB_Matrix_select (G, NULL, NULL, GxB_NONZERO, G, NULL, NULL)) ;
+//  OK (GxB_Matrix_select (G, NULL, NULL, GxB_NONZERO, G, NULL, NULL)) ;
+    OK (GrB_Matrix_select_BOOL (G, NULL, NULL, GrB_VALUENE_BOOL, G, 0, NULL)) ;
 
     //--------------------------------------------------------------------------
     // extract the positions of the entries in G

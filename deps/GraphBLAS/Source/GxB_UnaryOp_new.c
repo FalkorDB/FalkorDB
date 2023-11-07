@@ -2,7 +2,7 @@
 // GxB_UnaryOp_new: create a new named unary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,10 +12,12 @@
 // output arguments internally as needed.
 
 #include "GB.h"
+#include "GB_unop.h"
+#include "GB_stringify.h"
 
 GrB_Info GxB_UnaryOp_new            // create a new user-defined unary operator
 (
-    GrB_UnaryOp *unaryop,           // handle for the new unary operator
+    GrB_UnaryOp *op_handle,         // handle for the new unary operator
     GxB_unary_function function,    // pointer to the unary function
     GrB_Type ztype,                 // type of output z
     GrB_Type xtype,                 // type of input x
@@ -28,10 +30,9 @@ GrB_Info GxB_UnaryOp_new            // create a new user-defined unary operator
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_UnaryOp_new (unaryop, function, ztype, xtype, name, defn)");
-    GB_RETURN_IF_NULL (unaryop) ;
-    (*unaryop) = NULL ;
-    GB_RETURN_IF_NULL (function) ;
+    GB_WHERE1 ("GxB_UnaryOp_new (op, function, ztype, xtype, name, defn)") ;
+    GB_RETURN_IF_NULL (op_handle) ;
+    (*op_handle) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (xtype) ;
 
@@ -41,39 +42,42 @@ GrB_Info GxB_UnaryOp_new            // create a new user-defined unary operator
 
     // allocate the unary operator
     size_t header_size ;
-    (*unaryop) = GB_MALLOC (1, struct GB_UnaryOp_opaque, &header_size) ;
-    if (*unaryop == NULL)
+    GrB_UnaryOp op = GB_MALLOC (1, struct GB_UnaryOp_opaque, &header_size) ;
+    if (op == NULL)
     { 
         // out of memory
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    // initialize the unary operator
-    GrB_UnaryOp op = *unaryop ;
-    op->magic = GB_MAGIC ;
     op->header_size = header_size ;
-    op->xtype = xtype ;
-    op->ztype = ztype ;
-    op->ytype = NULL ;
 
-    op->unop_function = function ;
-    op->idxunop_function = NULL ;
-    op->binop_function = NULL ;
-    op->selop_function = NULL ;
+    GrB_Info info = GB_unop_new (op, function, ztype, xtype, unop_name,
+        unop_defn, GB_USER_unop_code) ;
 
-    op->opcode = GB_USER_unop_code ;
-
-    //--------------------------------------------------------------------------
-    // get the unary op name and defn
-    //--------------------------------------------------------------------------
-
-    GrB_Info info = GB_op_name_and_defn (op->name, &(op->defn),
-        &(op->defn_size), unop_name, unop_defn, "GxB_unary_function", 18) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
-        GB_FREE (unaryop, header_size) ;
+        GB_FREE (&op, header_size) ;
         return (info) ;
+    }
+
+    //--------------------------------------------------------------------------
+    // create the function pointer, if NULL
+    //--------------------------------------------------------------------------
+
+    if (function == NULL)
+    { 
+        GB_BURBLE_START ("GxB_UnaryOp_new") ;
+        void *user_function ;
+        info = GB_user_op_jit (&user_function, (GB_Operator) op) ;
+        if (info != GrB_SUCCESS)
+        { 
+            // unable to construct the function pointer
+            GB_Op_free ((GB_Operator *) &op) ;
+            return (GrB_NULL_POINTER) ;
+        }
+        op->unop_function = (GxB_unary_function) user_function ;
+        GB_BURBLE_END ;
     }
 
     //--------------------------------------------------------------------------
@@ -81,26 +85,7 @@ GrB_Info GxB_UnaryOp_new            // create a new user-defined unary operator
     //--------------------------------------------------------------------------
 
     ASSERT_UNARYOP_OK (op, "new user-defined unary op", GB0) ;
+    (*op_handle) = op ;
     return (GrB_SUCCESS) ;
-}
-
-//------------------------------------------------------------------------------
-// GB_UnaryOp_new: create a new user-defined unary operator (historical)
-//------------------------------------------------------------------------------
-
-// This method was only accessible via the GrB_UnaryOp_new macro in v5.1.x
-// and earlier.  The GrB_UnaryOp_new macro in v5.2.x and later calls
-// GxB_UnaryOp_new instead.
-
-GrB_Info GB_UnaryOp_new             // create a new user-defined unary operator
-(
-    GrB_UnaryOp *unaryop,           // handle for the new unary operator
-    GxB_unary_function function,    // pointer to the unary function
-    GrB_Type ztype,                 // type of output z
-    GrB_Type xtype,                 // type of input x
-    const char *name                // name of the user function
-)
-{
-    return (GxB_UnaryOp_new (unaryop, function, ztype, xtype, name, NULL)) ;
 }
 

@@ -2,7 +2,7 @@
 // GxB_Matrix_deserialize: create a matrix from a serialized array of bytes
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,8 +44,8 @@ GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
     // deserialize the blob into a matrix
     //--------------------------------------------------------------------------
 
-    info = GB_deserialize (C, type, (const GB_void *) blob, (size_t) blob_size,
-        Context) ;
+    info = GB_deserialize (C, type, (const GB_void *) blob,
+        (size_t) blob_size) ;
     GB_BURBLE_END ;
     return (info) ;
 }

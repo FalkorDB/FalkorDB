@@ -1,5 +1,5 @@
 function w = GB_spec_Vector_eWiseUnion (w, mask, accum, add, u, alpha, v, beta, descriptor)
-%GB_SPEC_VECTOR_EWISEADD a mimic of GxB_Vector_eWiseUnion
+%GB_SPEC_VECTOR_EWISEUNION a mimic of GxB_Vector_eWiseUnion
 %
 % Usage:
 % w = GB_spec_Vector_eWiseUnion (w, mask, accum, add, u, v, descriptor)
@@ -7,7 +7,7 @@ function w = GB_spec_Vector_eWiseUnion (w, mask, accum, add, u, alpha, v, beta, 
 % Computes w<mask> = accum(w,t), in GraphBLAS notation, where t =u+v,
 % The pattern of t is the union of u and v.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------
@@ -37,5 +37,6 @@ if (isfield (descriptor, 'inp1'))
 end
 
 w = GB_spec_Matrix_eWiseUnion (w, mask, accum, add, u, alpha, v, beta, descriptor) ;
+
 
 

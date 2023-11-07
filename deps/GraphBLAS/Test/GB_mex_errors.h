@@ -2,7 +2,7 @@
 // GB_mex_errors.h: error handling macros
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,7 @@
 {                                                                           \
     mexPrintf ("\nTest failure: %s line %d\n", __FILE__, __LINE__) ;        \
     mexPrintf ( "%s\n", GB_STR(s)) ;                                        \
+    GB_mx_at_exit ( ) ;                                                     \
     mexErrMsgTxt (GB_STR(s) " line: " GB_XSTR(__LINE__)) ;                  \
 }
 

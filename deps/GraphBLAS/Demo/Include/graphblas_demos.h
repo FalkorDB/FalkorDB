@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Include/graphblas_demos.h: include file for all demo programs
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -46,7 +46,7 @@
 #endif
 
 #ifndef GB_MICROSOFT
-#if ( _MSC_VER && !__INTEL_COMPILER )
+#if ( defined (_MSC_VER) && !defined(__INTEL_COMPILER) )
 #define GB_MICROSOFT 1
 #else
 #define GB_MICROSOFT 0
@@ -55,7 +55,7 @@
 
 #include "GraphBLAS.h"
 #include "simple_rand.h"
-#include "usercomplex.h"
+// #include "usercomplex.h"
 
 #undef MIN
 #undef MAX

@@ -2,18 +2,18 @@
 // GB_convert_bitmap_worker: construct triplets or CSC/CSR from bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // If A is iso and Ax_new is not NULL, the iso scalar is expanded into the
 // non-iso array Ax_new.  Otherwise, if Ax_new and Ax are NULL then no values
 // are extracted.
 
-// TODO allow this function to do typecasting.  Create 169 different versions
-// for all 13x13 versions.  Use this as part of Method 24, C=A assignment.
-// Can also use typecasting for GB_Matrix_diag.
+// TODO allow this function to do typecasting.
 
 #include "GB.h"
 #include "GB_partition.h"
@@ -29,7 +29,7 @@ GrB_Info GB_convert_bitmap_worker   // extract CSC/CSR or triplets from bitmap
     int64_t *anvec_nonempty,        // # of non-empty vectors
     // inputs: not modified
     const GrB_Matrix A,             // matrix to extract; not modified
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -51,7 +51,8 @@ GrB_Info GB_convert_bitmap_worker   // extract CSC/CSR or triplets from bitmap
 
     const int8_t *restrict Ab = A->b ;
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (avlen*avdim, chunk, nthreads_max) ;
     bool by_vector = (nthreads <= avdim) ;
 
@@ -140,7 +141,7 @@ GrB_Info GB_convert_bitmap_worker   // extract CSC/CSR or triplets from bitmap
     //--------------------------------------------------------------------------
 
     int nth = GB_nthreads (avdim, chunk, nthreads_max) ;
-    GB_cumsum (Ap, avdim, anvec_nonempty, nth, Context) ;
+    GB_cumsum (Ap, avdim, anvec_nonempty, nth, Werk) ;
     ASSERT (Ap [avdim] == A->nvals) ;
 
     //--------------------------------------------------------------------------

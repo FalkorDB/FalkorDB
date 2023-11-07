@@ -1,7 +1,7 @@
 function test154
 %TEST154 test GrB_apply with scalar binding
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [binops, ~, ~, types, ~, ~] = GB_spec_opsall ;

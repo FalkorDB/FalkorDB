@@ -2,7 +2,7 @@
 // GxB_Matrix_serialize: copy a matrix into a serialized array of bytes
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,7 +12,7 @@
 // This method is similar to GrB_Matrix_serialize.  In contrast with the GrB*
 // method, this method allocates the blob itself, and hands over the allocated
 // space to the user application.  The blob must be freed by the same free
-// function passed in to GxB_init, or by the ANSI C11 free() if GrB_init was
+// function passed in to GxB_init, or by the C11 free() if GrB_init was
 // used.  On input, the blob_size need not be initialized; it is returned as
 // the size of the blob as allocated.
 
@@ -66,7 +66,7 @@ GrB_Info GxB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     (*blob_handle) = NULL ;
     size_t blob_size = 0 ;
     info = GB_serialize ((GB_void **) blob_handle, &blob_size, A, method,
-        Context) ;
+        Werk) ;
     (*blob_size_handle) = (GrB_Index) blob_size ;
     GB_BURBLE_END ;
     #pragma omp flush

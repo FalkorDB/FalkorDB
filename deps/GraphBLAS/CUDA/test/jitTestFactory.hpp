@@ -7,20 +7,21 @@
 #include <random>
 #include <algorithm>
 #include <iostream>
-#include "GB_cuda_reduce_factory.hpp"
 #include "GpuTimer.h"
 #include "GB_cuda_buckets.h"
-#include "../../rmm_wrap/rmm_wrap.h"
 #include <gtest/gtest.h>
 #include "test_data.hpp"
+#include "../rmm_wrap/rmm_wrap.hpp"
 #include "problem_spec.hpp"
 
 extern "C" {
     #include "GB.h"
-    #include "GraphBLAS.h"
 }
 
-#include "../jitFactory.hpp"
+#include "GB_cuda_common_jitFactory.hpp"
+#include "GB_cuda_mxm_dot3_jitFactory.hpp"
+#include "GB_cuda_reduce_jitFactory.hpp"
+#include "GB_cuda_reduce_factory.hpp"
 #include "dataFactory.hpp"
 
 ////Operations for test results on CPU
@@ -77,13 +78,7 @@ template <typename T_C, typename T_M, typename T_A,typename T_B>
 bool test_AxB_phase1_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
 {
 
-    int gpuID;
-    cudaGetDevice( &gpuID);
-
-    std::cout<< "found device "<<gpuID<<std::endl;
-
-    cudaStream_t strm;
-    CHECK_CUDA(cudaStreamCreate(&strm));
+    cudaStream_t stream = (cudaStream_t)rmm_wrap_get_main_stream();
 
     /********************
      * Launch kernel
@@ -106,9 +101,9 @@ bool test_AxB_phase1_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
     kernTimer.Start();
     p1lF.jitGridBlockLaunch(Nanobuckets, Blockbucket,
                             problem_spec.getC(), problem_spec.getM(),
-                            problem_spec.getA(), problem_spec.getB(), strm);
+                            problem_spec.getA(), problem_spec.getB(), stream);
 
-    CHECK_CUDA(cudaStreamSynchronize(strm));
+    CHECK_CUDA(cudaStreamSynchronize(stream));
     kernTimer.Stop();
     std::cout<<"returned from phase1 kernel "<<kernTimer.Elapsed()<<"ms"<<std::endl;
 //
@@ -125,10 +120,7 @@ bool test_AxB_phase1_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
 
     std::cout << "end phase1 test ------------" << std::endl;
 
-    CHECK_CUDA(cudaStreamDestroy(strm));
     fflush(stdout);
-
-    
     return true;
 }
 
@@ -137,17 +129,14 @@ bool test_AxB_phase1_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
 template <typename T_C, typename T_M, typename T_A,typename T_B>
 bool test_AxB_dense_phase1_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
 {
-    cudaStream_t strm;
-    CHECK_CUDA(cudaStreamCreate(&strm));
+    cudaStream_t stream = (cudaStream_t)rmm_wrap_get_main_stream();
 
     /********************
      * Launch kernel
      */
     GB_cuda_mxm_factory mysemiringfactory = problem_spec.get_mxm_factory();
     dense_phase1launchFactory p1lF(mysemiringfactory);
-    p1lF.jitGridBlockLaunch(problem_spec.getC(), problem_spec.getM(), problem_spec.getA(), problem_spec.getB(), strm);
-
-    CHECK_CUDA(cudaStreamSynchronize(strm));
+    p1lF.jitGridBlockLaunch(problem_spec.getC(), problem_spec.getM(), problem_spec.getA(), problem_spec.getB(), stream);
     return true;
 }
 
@@ -159,12 +148,7 @@ bool test_AxB_dense_phase1_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem
 template <typename T_C, typename T_M, typename T_A, typename T_B>
 bool test_AxB_phase2_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
 {
-
-    int gpuID;
-    cudaGetDevice( &gpuID);
-
-    cudaStream_t strm;
-    CHECK_CUDA(cudaStreamCreate(&strm));
+    cudaStream_t stream = (cudaStream_t)rmm_wrap_get_main_stream();
 
     auto mymxm = problem_spec.get_mxm_factory();
     phase1launchFactory p1lF(mymxm);
@@ -194,18 +178,18 @@ bool test_AxB_phase2_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
     kernTimer.Start();
     p1lF.jitGridBlockLaunch(nanobuckets, blockbucket,
                             problem_spec.getC(), problem_spec.getM(),
-                            problem_spec.getA(), problem_spec.getB(), strm);
+                            problem_spec.getA(), problem_spec.getB(), stream);
 
 
-    CHECK_CUDA(cudaStreamSynchronize(strm));
+    CHECK_CUDA(cudaStreamSynchronize(stream));
     kernTimer.Stop();
 
     std::cout << " phase1 internal phase2 "<< kernTimer.Elapsed() <<"ms Done." << std::endl;
 
     //    // launch phase2 (just with p2ntasks as the # of tasks)
     kernTimer.Start();
-    p2lF.jitGridBlockLaunch(blockbucket, offset, problem_spec.getM(),strm);
-    CHECK_CUDA(cudaStreamSynchronize(strm));
+    p2lF.jitGridBlockLaunch(blockbucket, offset, problem_spec.getM(), stream);
+    CHECK_CUDA(cudaStreamSynchronize(stream));
     kernTimer.Stop();
     std::cout << " phase2 kern "<< kernTimer.Elapsed() <<"ms Done." << std::endl;
 
@@ -222,8 +206,8 @@ bool test_AxB_phase2_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
     kernTimer.Start();
     p2elF.jitGridBlockLaunch( nanobuckets, blockbucket,
                               bucketp, bucket, offset, problem_spec.getC(),
-                              problem_spec.getM(),strm);
-    CHECK_CUDA(cudaStreamSynchronize(strm));
+                              problem_spec.getM(),stream);
+    CHECK_CUDA(cudaStreamSynchronize(stream));
     kernTimer.Stop();
     std::cout<<"returned from phase2end kernel "<<kernTimer.Elapsed()<<"ms"<<std::endl;
 //
@@ -239,8 +223,6 @@ bool test_AxB_phase2_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec)
     rmm_wrap_free(bucketp);
     rmm_wrap_free(bucket);
     rmm_wrap_free(offset);
-
-    CHECK_CUDA(cudaStreamDestroy(strm));
 
     return true;
 }
@@ -271,7 +253,7 @@ void make_grb_matrix(GrB_Matrix mat, int64_t n_rows, int64_t n_cols,
     }
 
     GRB_TRY (GrB_Matrix_wait (mat, GrB_MATERIALIZE)) ;
-    GRB_TRY (GB_convert_any_to_non_iso (mat, true, NULL)) ;
+    GRB_TRY (GB_convert_any_to_non_iso (mat, true)) ;
     GRB_TRY (GxB_Matrix_Option_set (mat, GxB_SPARSITY_CONTROL, gxb_sparsity_control)) ;
     GRB_TRY (GxB_Matrix_Option_set(mat, GxB_FORMAT, gxb_format));
 
@@ -400,7 +382,8 @@ bool test_AxB_dot3_sparse_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_
             GRB_TRY (GrB_Matrix_new (&C_expected, type, N, N)) ;
 
             // ensure the GPU is not used
-            GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_NEVER)) ;
+            GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, -1)) ;
+            GB_Global_hack_set (2, 2) ; // hack(2) = 2: never use the GPU
 
             // Use GrB_DESC_S for structural because dot3 mask will never be complemented
             // The order of B and A is swapped to account for CSR vs CSC assumption
@@ -494,8 +477,8 @@ bool test_AxB_dot3_sparse_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_
             }
 
             // re-enable the GPU
-            GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_ALWAYS)) ;
-         
+            GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, 0)) ;
+            GB_Global_hack_set (2, 1) ; // hack(2) = 1: always use the GPU
 
     rmm_wrap_free(nanobuckets);
     rmm_wrap_free(blockbucket);
@@ -518,8 +501,7 @@ bool test_AxB_dot3_dense_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_s
 
     GpuTimer kernTimer;
 
-    cudaStream_t strm;
-    CHECK_CUDA(cudaStreamCreate(&strm));
+    cudaStream_t strm = (cudaStream_t)rmm_wrap_get_main_stream();
 
     bool result = false;
 
@@ -568,7 +550,8 @@ bool test_AxB_dot3_dense_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_s
     GRB_TRY (GrB_Matrix_new (&C_expected, type, N, N)) ;
 
     // ensure the GPU is not used
-    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_NEVER)) ;
+    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, -1)) ;
+    GB_Global_hack_set (2, 2) ; // hack(2) = 2: never use the GPU
 
     // Use GrB_DESC_S for structural because dot3 mask will never be complemented
     // The order of B and A is swapped to account for CSR vs CSC assumption
@@ -662,11 +645,11 @@ bool test_AxB_dot3_dense_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_s
     }
 
     // re-enable the GPU
-    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_ALWAYS)) ;
+    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, 0)) ;
+    GB_Global_hack_set (2, 1) ; // hack(2) = 1: always use the GPU
 
 
     GRB_TRY(GrB_Matrix_free(&C_expected));
-    CHECK_CUDA(cudaStreamDestroy(strm));
 
     std::cout << "phase 3 dense test complete ======================" << std::endl;
     return result;
@@ -733,7 +716,8 @@ bool test_AxB_dot3_sparse_dense_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &pr
     GRB_TRY (GrB_Matrix_new (&C_expected, type, N, N)) ;
 
     // ensure the GPU is not used
-    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_NEVER)) ;
+    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, -1)) ;
+    GB_Global_hack_set (2, 2) ; // hack(2) = 2: never use the GPU
 
     // Use GrB_DESC_S for structural because dot3 mask will never be complemented
     // The order of B and A is swapped to account for CSR vs CSC assumption
@@ -827,7 +811,8 @@ bool test_AxB_dot3_sparse_dense_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &pr
     }
 
     // re-enable the GPU
-    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_ALWAYS)) ;
+    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, 0)) ;
+    GB_Global_hack_set (2, 1) ; // hack(2) = 1: always use the GPU
 
 
     GRB_TRY(GrB_Matrix_free(&C_expected));
@@ -865,12 +850,14 @@ bool test_reduce_factory(mxm_problem_spec<T_C, T_M, T_A, T_B> &problem_spec) {
     T_C actual;
     GB_cuda_reduce(myreducefactory, A, &actual, monoid );
 
-    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_NEVER)) ;
+    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, -1)) ;
+    GB_Global_hack_set (2, 2) ; // hack(2) = 2: never use the GPU
 
     T_C expected;
     GRB_TRY(cuda::jit::matrix_reduce(&expected, A, monoid));
 
-    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_CONTROL, GxB_GPU_ALWAYS)) ;
+    GRB_TRY (GxB_Global_Option_set (GxB_GLOBAL_GPU_ID, 0)) ;
+    GB_Global_hack_set (2, 1) ; // hack(2) = 1: always use the GPU
 
     double tol = 0;
     GrB_BinaryOp op = NULL;

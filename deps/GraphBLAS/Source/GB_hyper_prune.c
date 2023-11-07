@@ -2,10 +2,12 @@
 // GB_hyper_prune: remove empty vectors from a hypersparse Ap, Ah list
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Removes empty vectors from a hypersparse list.  On input, *Ap and *Ah are
 // assumed to be NULL.  The input arrays Ap_old and Ah_old are not modified,
@@ -25,7 +27,7 @@ GrB_Info GB_hyper_prune
     const int64_t *Ap_old,          // size nvec_old+1
     const int64_t *Ah_old,          // size nvec_old
     const int64_t nvec_old,         // original number of vectors
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -51,7 +53,8 @@ GrB_Info GB_hyper_prune
     // determine the # of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (nvec_old, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------
@@ -78,7 +81,7 @@ GrB_Info GB_hyper_prune
     }
 
     int64_t nvec ;
-    GB_cumsum (W, nvec_old, &nvec, nthreads, Context) ;
+    GB_cumsum (W, nvec_old, &nvec, nthreads, Werk) ;
 
     //--------------------------------------------------------------------------
     // allocate the result

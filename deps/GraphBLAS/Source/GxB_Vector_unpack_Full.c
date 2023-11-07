@@ -2,7 +2,7 @@
 // GxB_Vector_unpack_Full: unpack a full vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -72,7 +72,7 @@ GrB_Info GxB_Vector_unpack_Full   // unpack a full vector
         vx,   vx_size,  // Ax
         NULL, NULL, NULL,
         &sparsity, &is_csc,                 // full by col
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {

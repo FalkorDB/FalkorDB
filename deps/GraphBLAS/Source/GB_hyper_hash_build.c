@@ -2,10 +2,12 @@
 // GB_hyper_hash_build: construct A->Y for a hypersparse matrix A
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 #define GB_FREE_WORKSPACE               \
 {                                       \
@@ -21,12 +23,11 @@
 }
 
 #include "GB_build.h"
-#include "GB_hash.h"
 
 GrB_Info GB_hyper_hash_build    // construct A->Y if not already constructed
 (
     GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 )
 { 
 
@@ -34,9 +35,11 @@ GrB_Info GB_hyper_hash_build    // construct A->Y if not already constructed
     // check inputs
     //--------------------------------------------------------------------------
 
-    if (A == NULL || !GB_NEED_HYPER_HASH (A))
+    if (!GB_hyper_hash_need (A))
     { 
-        // quick return: A is NULL, not hypersparse, or A->Y already computed
+        // quick return: A is NULL, not hypersparse, A->Y already computed,
+        // or A does not have enough non-empty vectors to warrant the creation
+        // of the A->Y hyper_hash
         return (GrB_SUCCESS) ;
     }
 
@@ -67,7 +70,7 @@ GrB_Info GB_hyper_hash_build    // construct A->Y if not already constructed
 
     GB_OK (GB_new (&(A->Y), // new dynamic header, do not allocate any content
         GrB_UINT64, yvlen, yvdim, GB_Ap_null, true, GxB_SPARSE,
-        -1, 0, Context)) ;
+        -1, 0)) ;
     GrB_Matrix Y = A->Y ;
 
     //--------------------------------------------------------------------------
@@ -84,7 +87,8 @@ GrB_Info GB_hyper_hash_build    // construct A->Y if not already constructed
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (anvec, chunk, nthreads_max) ;
 
     int64_t k ;
@@ -124,7 +128,7 @@ GrB_Info GB_hyper_hash_build    // construct A->Y if not already constructed
         NULL,                   // no duplicates, so dup is NUL
         GrB_UINT64,             // the type of X_work
         false,                  // no burble (already burbled above)
-        Context
+        Werk
     )) ;
 
     Y->hyper_switch = -1 ;              // never make Y hypersparse
@@ -144,7 +148,7 @@ GrB_Info GB_hyper_hash_build    // construct A->Y if not already constructed
     // conformed to its required sparsity format: always sparse.  No burble;
     // (already burbled above).
 
-    GB_OK (GB_convert_hyper_to_sparse (Y, false, Context)) ;
+    GB_OK (GB_convert_hyper_to_sparse (Y, false)) ;
     ASSERT (anvec == GB_nnz (Y)) ;
     ASSERT (GB_IS_SPARSE (Y)) ;         // Y is now sparse and will remain so
 

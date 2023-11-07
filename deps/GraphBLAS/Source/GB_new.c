@@ -2,7 +2,7 @@
 // GB_new: create a new GraphBLAS matrix, but do not allocate A->{b,i,x}
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,9 +43,8 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     const bool is_csc,          // true if CSC, false if CSR
     const int sparsity,         // hyper, sparse, bitmap, full, or auto
     const float hyper_switch,   // A->hyper_switch
-    const int64_t plen,         // size of A->p and A->h, if A hypersparse.
+    const int64_t plen          // size of A->p and A->h, if A hypersparse.
                                 // Ignored if A is not hypersparse.
-    GB_Context Context
 )
 {
 
@@ -92,6 +91,8 @@ GrB_Info GB_new                 // create matrix, except for indices & values
     // basic information
     A->magic = GB_MAGIC2 ;                 // object is not yet valid
     A->type = type ;
+    A->user_name = NULL ;
+    A->user_name_size = 0 ;     // no user_name yet
     A->logger = NULL ;          // no error logged yet
     A->logger_size = 0 ;
 

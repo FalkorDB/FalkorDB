@@ -2,13 +2,14 @@
 // GB_sort: sort all vectors in a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
+// JIT: needed.
+
 #include "GB_sort.h"
-#include "GB_werk.h"
 #include "GB_transpose.h"
 #include "GB_ek_slice.h"
 
@@ -214,7 +215,7 @@ GrB_Info GB_sort
     GrB_BinaryOp op,            // comparator for the sort
     GrB_Matrix A,               // matrix to sort
     const bool A_transpose,     // false: sort each row, true: sort each column
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -230,7 +231,8 @@ GrB_Info GB_sort
     struct GB_Matrix_opaque T_header ;
     GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     bool C_is_NULL = (C == NULL) ;
     if (C_is_NULL && P == NULL)
@@ -292,7 +294,7 @@ GrB_Info GB_sort
             if (!sort_in_place)
             { 
                 // A = C
-                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype, Context)) ;
+                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype)) ;
             }
         }
         else
@@ -301,12 +303,12 @@ GrB_Info GB_sort
             if (sort_in_place)
             { 
                 // A = A'
-                GB_OK (GB_transpose_in_place (A, true, Context)) ;
+                GB_OK (GB_transpose_in_place (A, true, Werk)) ;
             }
             else
             { 
                 // C = A'
-                GB_OK (GB_transpose_cast (C, atype, true, A, false, Context)) ;
+                GB_OK (GB_transpose_cast (C, atype, true, A, false, Werk)) ;
             }
         }
     }
@@ -319,7 +321,7 @@ GrB_Info GB_sort
             if (!sort_in_place)
             { 
                 // A = C
-                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype, Context)) ;
+                GB_OK (GB_dup_worker (&C, A_iso, A, true, atype)) ;
             }
         }
         else
@@ -328,12 +330,12 @@ GrB_Info GB_sort
             if (sort_in_place)
             { 
                 // A = A'
-                GB_OK (GB_transpose_in_place (A, false, Context)) ;
+                GB_OK (GB_transpose_in_place (A, false, Werk)) ;
             }
             else
             { 
                 // C = A'
-                GB_OK (GB_transpose_cast (C, atype, false, A, false, Context)) ;
+                GB_OK (GB_transpose_cast (C, atype, false, A, false, Werk)) ;
             }
         }
     }
@@ -341,7 +343,7 @@ GrB_Info GB_sort
     // ensure C is sparse or hypersparse
     if (GB_IS_BITMAP (C) || GB_IS_FULL (C))
     { 
-        GB_OK (GB_convert_any_to_sparse (C, Context)) ;
+        GB_OK (GB_convert_any_to_sparse (C, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -366,27 +368,27 @@ GrB_Info GB_sort
             switch (acode)
             {
                 case GB_BOOL_code : 
-                    GB_OK (GB(sort_matrix_ascend_BOOL   )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_BOOL   )(C, Werk)) ; break ;
                 case GB_INT8_code : 
-                    GB_OK (GB(sort_matrix_ascend_INT8   )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_INT8   )(C, Werk)) ; break ;
                 case GB_INT16_code : 
-                    GB_OK (GB(sort_matrix_ascend_INT16  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_INT16  )(C, Werk)) ; break ;
                 case GB_INT32_code : 
-                    GB_OK (GB(sort_matrix_ascend_INT32  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_INT32  )(C, Werk)) ; break ;
                 case GB_INT64_code : 
-                    GB_OK (GB(sort_matrix_ascend_INT64  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_INT64  )(C, Werk)) ; break ;
                 case GB_UINT8_code : 
-                    GB_OK (GB(sort_matrix_ascend_UINT8  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_UINT8  )(C, Werk)) ; break ;
                 case GB_UINT16_code : 
-                    GB_OK (GB(sort_matrix_ascend_UINT16 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_UINT16 )(C, Werk)) ; break ;
                 case GB_UINT32_code : 
-                    GB_OK (GB(sort_matrix_ascend_UINT32 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_UINT32 )(C, Werk)) ; break ;
                 case GB_UINT64_code : 
-                    GB_OK (GB(sort_matrix_ascend_UINT64 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_UINT64 )(C, Werk)) ; break ;
                 case GB_FP32_code : 
-                    GB_OK (GB(sort_matrix_ascend_FP32   )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_FP32   )(C, Werk)) ; break ;
                 case GB_FP64_code : 
-                    GB_OK (GB(sort_matrix_ascend_FP64   )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_ascend_FP64   )(C, Werk)) ; break ;
                 default:;
             }
         }
@@ -396,27 +398,27 @@ GrB_Info GB_sort
             switch (acode)
             {
                 case GB_BOOL_code : 
-                    GB_OK (GB(sort_matrix_descend_BOOL  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_BOOL  )(C, Werk)) ; break ;
                 case GB_INT8_code : 
-                    GB_OK (GB(sort_matrix_descend_INT8  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_INT8  )(C, Werk)) ; break ;
                 case GB_INT16_code : 
-                    GB_OK (GB(sort_matrix_descend_INT16 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_INT16 )(C, Werk)) ; break ;
                 case GB_INT32_code : 
-                    GB_OK (GB(sort_matrix_descend_INT32 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_INT32 )(C, Werk)) ; break ;
                 case GB_INT64_code : 
-                    GB_OK (GB(sort_matrix_descend_INT64 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_INT64 )(C, Werk)) ; break ;
                 case GB_UINT8_code : 
-                    GB_OK (GB(sort_matrix_descend_UINT8 )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_UINT8 )(C, Werk)) ; break ;
                 case GB_UINT16_code : 
-                    GB_OK (GB(sort_matrix_descend_UINT16)(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_UINT16)(C, Werk)) ; break ;
                 case GB_UINT32_code : 
-                    GB_OK (GB(sort_matrix_descend_UINT32)(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_UINT32)(C, Werk)) ; break ;
                 case GB_UINT64_code : 
-                    GB_OK (GB(sort_matrix_descend_UINT64)(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_UINT64)(C, Werk)) ; break ;
                 case GB_FP32_code : 
-                    GB_OK (GB(sort_matrix_descend_FP32  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_FP32  )(C, Werk)) ; break ;
                 case GB_FP64_code : 
-                    GB_OK (GB(sort_matrix_descend_FP64  )(C, Context)) ; break ;
+                    GB_OK (GB(sort_matrix_descend_FP64  )(C, Werk)) ; break ;
                 default:;
             }
         }
@@ -429,7 +431,7 @@ GrB_Info GB_sort
         // typecasting, user-defined types, or unconventional operators
         //----------------------------------------------------------------------
 
-        GB_OK (GB (sort_matrix_UDT) (C, op, Context)) ;
+        GB_OK (GB (sort_matrix_UDT) (C, op, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -459,7 +461,7 @@ GrB_Info GB_sort
     }
 
     int C_nthreads, C_ntasks ;
-    GB_SLICE_MATRIX (C, 1, chunk) ;
+    GB_SLICE_MATRIX (C, 1) ;
     int64_t *restrict Cp = C->p ;
     const int64_t cvlen = C->vlen ;
     int tid ;
@@ -557,13 +559,13 @@ GrB_Info GB_sort
     if (!C_is_NULL)
     { 
         ASSERT_MATRIX_OK (C, "C output of GB_sort (before conform)", GB0) ;
-        GB_OK (GB_conform (C, Context)) ;
+        GB_OK (GB_conform (C, Werk)) ;
         ASSERT_MATRIX_OK (C, "C output of GB_sort", GB0) ;
     }
     if (P != NULL)
     { 
         ASSERT_MATRIX_OK (P, "P output of GB_sort (before conform)", GB0) ;
-        GB_OK (GB_conform (P, Context)) ;
+        GB_OK (GB_conform (P, Werk)) ;
         ASSERT_MATRIX_OK (P, "P output of GB_sort", GB0) ;
     }
     return (GrB_SUCCESS) ;

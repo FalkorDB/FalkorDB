@@ -2,10 +2,12 @@
 // GB_convert_sparse_to_hyper: convert a matrix from sparse to hyperspasre
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // On input, the matrix may have shallow A->p content; it is safely removed.
 // On output, the matrix is always hypersparse (even if out of memory).  If the
@@ -24,7 +26,7 @@
 GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
 (
     GrB_Matrix A,           // matrix to convert to hypersparse
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -51,7 +53,8 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
 
         int64_t n = A->vdim ;
         GB_BURBLE_N (n, "(sparse to hyper) ") ;
-        GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+        int nthreads_max = GB_Context_nthreads_max ( ) ;
+        double chunk = GB_Context_chunk ( ) ;
         int nthreads = GB_nthreads (n, chunk, nthreads_max) ;
         int ntasks = (nthreads == 1) ? 1 : (8 * nthreads) ;
         ntasks = GB_IMIN (ntasks, n) ;

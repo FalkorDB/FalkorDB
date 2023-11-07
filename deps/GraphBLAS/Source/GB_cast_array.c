@@ -2,30 +2,31 @@
 // GB_cast_array: typecast an array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Casts an input array Ax to an output array Cx with a different type.  The
+// JIT: done.
+
+// Casts an input array A->x to an output array Cx with a different type.  The
 // two types are always different, so this does not need to handle user-defined
-// types.  The iso case is not handled; Ax and Cx must be the same size and no
+// types.  The iso case is not handled; A->x and Cx must be the same size and no
 // iso expansion is done.
 
 #include "GB.h"
-#ifndef GBCUDA_DEV
+#include "GB_apply.h"
+#include "GB_stringify.h"
+#ifndef GBCOMPACT
 #include "GB_unop__include.h"
 #endif
 
-void GB_cast_array              // typecast an array
+GrB_Info GB_cast_array              // typecast an array
 (
     GB_void *Cx,                // output array
     const GB_Type_code code1,   // type code for Cx
-    GB_void *Ax,                // input array
-    const GB_Type_code code2,   // type code for Ax
-    const int8_t *restrict Ab,  // bitmap for Ax
-    const int64_t anz,          // number of entries in Cx and Ax
-    const int nthreads          // number of threads to use
+    GrB_Matrix A,
+    const int A_nthreads        // number of threads to use
 )
 {
 
@@ -33,11 +34,16 @@ void GB_cast_array              // typecast an array
     // check inputs
     //--------------------------------------------------------------------------
 
+    ASSERT_MATRIX_OK (A, "A for cast_array", GB0) ;
+    const GB_void *restrict Ax = A->x ;
+    const int8_t *restrict Ab = A->b ;
+    const int64_t anz = GB_nnz_held (A) ;
+    const GB_Type_code code2 = A->type->code ;
+
     if (anz == 0 || Cx == Ax)
     { 
-        // if anz is zero: no work to do, and the Ax and Cx pointer may be NULL
-        // as well.  If Cx and Ax are aliased, then no copy is needed.
-        return ;
+        // no work to do
+        return (GrB_SUCCESS) ;
     }
 
     ASSERT (Cx != NULL) ;
@@ -48,10 +54,14 @@ void GB_cast_array              // typecast an array
     ASSERT (code1 != GB_UDT_code) ;
 
     //--------------------------------------------------------------------------
-    // typecast the array
+    // via the factory kernel
     //--------------------------------------------------------------------------
 
-    #ifndef GBCUDA_DEV
+    GrB_Info info = GrB_NO_VALUE ;
+
+    #ifndef GBCOMPACT
+    GB_IF_FACTORY_KERNELS_ENABLED
+    { 
 
         //----------------------------------------------------------------------
         // define the worker for the switch factory
@@ -62,9 +72,8 @@ void GB_cast_array              // typecast an array
 
         #define GB_WORKER(ignore1,zname,ztype,xname,xtype)                  \
         {                                                                   \
-            GrB_Info info = GB_unop_apply (zname,xname)                     \
-                ((ztype *) Cx, (xtype *) Ax, Ab, anz, nthreads) ;           \
-            if (info == GrB_SUCCESS) return ;                               \
+            info = GB_unop_apply (zname,xname) (Cx, Ax, Ab, anz,            \
+                A_nthreads) ;                                               \
         }                                                                   \
         break ;
 
@@ -73,25 +82,39 @@ void GB_cast_array              // typecast an array
         //----------------------------------------------------------------------
 
         #define GB_EXCLUDE_SAME_TYPES
-        #include "GB_2type_factory.c"
-
+        #include "GB_twotype_factory.c"
+    }
     #endif
 
     //--------------------------------------------------------------------------
-    // generic worker: only used for GBCUDA_DEV case
+    // via the JIT or PreJIT kernel
     //--------------------------------------------------------------------------
 
-    int64_t csize = GB_code_size (code1, 0) ;
-    int64_t asize = GB_code_size (code2, 0) ;
-    GB_cast_function cast_A_to_C = GB_cast_factory (code1, code2) ;
-
-    int64_t p ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (p = 0 ; p < anz ; p++)
-    {
-        if (!GBB (Ab, p)) continue ;
-        // Cx [p] = Ax [p]
-        cast_A_to_C (Cx +(p*csize), Ax +(p*asize), asize) ;
+    if (info == GrB_NO_VALUE)
+    { 
+        GrB_Type ctype = GB_code_type (code1, NULL) ;
+        GB_Operator op = GB_unop_identity (ctype, NULL) ;
+        ASSERT_OP_OK (op, "id op for cast_array", GB0) ;
+        info = GB_apply_unop_jit (Cx, ctype, op, false, A, NULL, NULL, 0,
+            A_nthreads) ;
     }
+
+    //--------------------------------------------------------------------------
+    // via the generic kernel
+    //--------------------------------------------------------------------------
+
+    if (info == GrB_NO_VALUE)
+    { 
+        GB_BURBLE_N (anz, "(generic cast array) ") ;
+        int64_t csize = GB_code_size (code1, 0) ;
+        int64_t asize = GB_code_size (code2, 0) ;
+        GB_cast_function cast_A_to_C = GB_cast_factory (code1, code2) ;
+        #define GB_APPLY_OP(p) \
+            cast_A_to_C (Cx +(p*csize), Ax +(p*asize), asize)
+        #include "GB_apply_unop_ip.c"
+        info = GrB_SUCCESS ;
+    }
+
+    return (info) ;
 }
 

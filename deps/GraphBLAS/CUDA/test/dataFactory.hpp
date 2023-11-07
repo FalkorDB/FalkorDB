@@ -216,7 +216,7 @@ class matrix : public Managed {
         }
 
         GRB_TRY (GrB_Matrix_wait (mat, GrB_MATERIALIZE)) ;
-        GB_convert_any_to_non_iso (mat, true, NULL) ;
+        GB_convert_any_to_non_iso (mat, true) ;
         // TODO: Need to specify these
         GRB_TRY (GxB_Matrix_Option_set (mat, GxB_SPARSITY_CONTROL, gxb_sparsity_control)) ;
         GRB_TRY (GxB_Matrix_Option_set(mat, GxB_FORMAT, gxb_format));

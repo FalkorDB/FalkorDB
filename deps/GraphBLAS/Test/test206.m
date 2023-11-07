@@ -1,13 +1,13 @@
 function test206
 %TEST206 test iso select
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [~, ~, ~, types, ~, select_ops] = GB_spec_opsall ;
 types = types.all ;
 
-% GrB.burble (1) ;
+% GB_mex_burble (1) ;
 rng ('default') ;
 n = 10 ;
 Cin = sparse (n,n) ;
@@ -77,15 +77,19 @@ GB_builtin_complex_set (false) ;
 A.class = 'double' ;
 C1 = GB_mex_band (A, -2, 2) ;
 C2 = triu (tril (A.matrix,2), -2) ;
+C3 = GB_mex_band2 (A, -2, 2) ;
 assert (isequal (C1, C2)) ;
+assert (isequal (C1, C3)) ;
 
 % non-iso select with user selectop (see also test27)
 B = A.matrix ;
 C1 = GB_mex_band (B, -2, 2) ;
 C2 = triu (tril (B,2), -2) ;
+C3 = GB_mex_band (B, -2, 2) ;
 assert (isequal (C1, C2)) ;
+assert (isequal (C1, C3)) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 GB_builtin_complex_set (true) ;
 fprintf ('\ntest206: all tests passed\n') ;
 

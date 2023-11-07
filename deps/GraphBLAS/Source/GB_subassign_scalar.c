@@ -2,7 +2,7 @@
 // GB_subassign_scalar: C(Rows,Cols)<M> = accum (C(Rows,Cols),x)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,7 @@
 
 // This function does the work for GxB_Matrix_subassign_TYPE and
 // GxB_Vector_subassign_[type], where [type] is one of the 11 types, or the
-// type-generic macro suffix, "_UDT".
+// type-generic "_UDT".
 
 // Compare with GB_assign_scalar, which uses M and C_replace differently
 
@@ -32,7 +32,7 @@ GrB_Info GB_subassign_scalar        // C(Rows,Cols)<M> += x
     const GrB_Index *Cols,          // column indices
     const GrB_Index nCols,          // number of column indices
     const GrB_Descriptor desc,      // descriptor for C(Rows,Cols) and M
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -60,7 +60,7 @@ GrB_Info GB_subassign_scalar        // C(Rows,Cols)<M> += x
     { 
         // C(i,j) = scalar or C(i,j) += scalar
         return (GB_setElement (C, accum, scalar, Rows [0], Cols [0],
-            scalar_code, Context)) ;
+            scalar_code, Werk)) ;
     }
     else
     { 
@@ -75,6 +75,6 @@ GrB_Info GB_subassign_scalar        // C(Rows,Cols)<M> += x
             true,                       // do scalar expansion
             scalar,                     // scalar to assign, expands to become A
             scalar_code,                // type code of scalar to expand
-            Context)) ;
+            Werk)) ;
     }
 }

@@ -2,10 +2,12 @@
 // GB_builder: build a matrix from tuples
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: done.
 
 // CALLED BY: GB_build, GB_wait, GB_transpose, GB_concat_hyper
 
@@ -73,7 +75,7 @@
 // Step 3 only does O(e/p) reads of J_work to count the vectors in each slice.
 // Step 4 only does O(e/p) reads of J_work to compute T->h and T->p.  Step 5
 // does O(e/p) read/writes per thread, but it uses the simpler case in
-// GB_reduce_build_template since no duplicates can appear.  It is unlikely
+// GB_bld_template since no duplicates can appear.  It is unlikely
 // able to transplant S_work into T->x since the input will almost always be
 // unsorted.
 
@@ -82,9 +84,9 @@
 // J_work and S_work are freed on output.  S_work is not transplanted into
 // C->x.
 
-// For iso inputs/outputs: T and Sx have the same iso property.  If
-// they are iso, then dup is always NULL.  Duplicates may or may not appear
-// if T and Sx are iso.
+// For iso inputs/outputs: T and Sx have the same iso property.  If they are
+// iso, then dup is always NULL.  Duplicates may or may not appear if T and Sx
+// are iso.
 
 //  (1) GrB_Matrix_build, GrB_Vector_build, and GB_wait do not pass in an iso
 //      Sx array, where Sx is S_input for GrB*build, and S_work for GB_wait.
@@ -96,18 +98,19 @@
 //      operator is be passed in (dup is NULL here, which is the implied 2nd
 //      operator).  Duplicates may appear.
 
-//  (3) GB_transpose and GB_concat_hyper can pass in Sx as iso or
-//      non-iso, and always passes in dup as NULL since there are no
-//      duplicates.  Sx and Tx are either both iso, or both non-iso.
+//  (3) GB_transpose and GB_concat_hyper can pass in Sx as iso or non-iso, and
+//      always passes in dup as NULL since there are no duplicates.  Sx and Tx
+//      are either both iso, or both non-iso.
 
-// This method always returns T as hypersparse, and T is iso if and only
-// if Sx is iso.
+// This method always returns T as hypersparse, and T is iso if and only if Sx
+// is iso.
 
 #include "GB_build.h"
 #include "GB_sort.h"
 #include "GB_binop.h"
-#ifndef GBCUDA_DEV
-#include "GB_red__include.h"
+#include "GB_stringify.h"
+#ifndef GBCOMPACT
+#include "GB_bld__include.h"
 #endif
 
 #define GB_I_WORK(t) (((t) < 0) ? -1 : I_work [t])
@@ -151,12 +154,12 @@ GrB_Info GB_builder                 // build a matrix from tuples
                                     // or size 1 if S_input or S_work are iso
     const bool S_iso,               // true if S_input or S_work are iso
     const int64_t nvals,            // number of tuples, and size of K_work
-    const GrB_BinaryOp dup,         // binary function to assemble duplicates,
+    GrB_BinaryOp dup,               // binary function to assemble duplicates,
                                     // if NULL use the SECOND operator to
                                     // keep the most recent duplicate.
     const GrB_Type stype,           // the type of S_work or S_input
     bool do_burble,                 // if true, then burble is allowed
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -211,7 +214,8 @@ GrB_Info GB_builder                 // build a matrix from tuples
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (nvals, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------
@@ -804,7 +808,7 @@ GrB_Info GB_builder                 // build a matrix from tuples
     // either a static or dynamic header.
     info = GB_new (&T, // always hyper, existing header
         ttype, vlen, vdim, GB_Ap_malloc, is_csc,
-        GxB_HYPERSPARSE, GB_ALWAYS_HYPER, tnvec, Context) ;
+        GxB_HYPERSPARSE, GB_ALWAYS_HYPER, tnvec) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
@@ -956,7 +960,7 @@ GrB_Info GB_builder                 // build a matrix from tuples
         { 
             // this cannot fail since the size is shrinking.
             bool ok ;
-            GB_REALLOC (I_work, tnz, int64_t, I_work_size_handle, &ok, Context);
+            GB_REALLOC (I_work, tnz, int64_t, I_work_size_handle, &ok) ;
             ASSERT (ok) ;
         }
         // transplant I_work into T->i
@@ -1006,14 +1010,10 @@ GrB_Info GB_builder                 // build a matrix from tuples
     // the matrix T, and duplicates (if any) are assembled via the dup
     // operator.
 
-    //--------------------------------------------------------------------------
-    // get opcodes and check types
-    //--------------------------------------------------------------------------
-
     // With GB_build, there can be 1 to 2 different types.
     //      T->type is identical to the types of x,y,z for z=dup(x,y).
     //      dup is never NULL and all its three types are the same
-    //      The type of Sx (stype) can different but must be compatible
+    //      The type of Sx (stype) can be different but must be compatible
     //          with T->type
 
     // With GB_wait, there can be 1 to 5 different types:
@@ -1024,70 +1024,45 @@ GrB_Info GB_builder                 // build a matrix from tuples
     //      dup may be NULL, in which case it is assumed be the implicit SECOND
     //          operator, with all three types equal to T->type
 
-    GrB_Type xtype, ytype, ztype ;
-    GxB_binary_function fdup ;
-    #ifndef GBCUDA_DEV
-    GB_Opcode opcode ;
-    #endif
+    //--------------------------------------------------------------------------
+    // construct the SECOND operator if dup is NULL
+    //--------------------------------------------------------------------------
 
-    GB_Type_code tcode = ttype->code ;
-    const size_t tsize = ttype->size ;
-    bool op_2nd ;
-
-    ASSERT_TYPE_OK (ttype, "ttype for build_factory", GB0) ;
-
+    struct GB_BinaryOp_opaque dup_header ;
     if (dup == NULL)
     { 
-
-        //----------------------------------------------------------------------
-        // dup is the implicit SECOND operator
-        //----------------------------------------------------------------------
-
         // z = SECOND (x,y) where all three types are the same as ttype
-        // T(i,j) = (ttype) Sx(k) will be done for all tuples.
-
-        #ifndef GBCUDA_DEV
-        opcode = GB_SECOND_binop_code ;
-        #endif
-        xtype = ttype ;
-        ytype = ttype ;
-        ztype = ttype ;
-        fdup = NULL ;
-        op_2nd = true ;
-        ASSERT (GB_op_is_second (dup, ttype)) ;
-
+        // T(i,j) = (ttype) Sx(k) will be done for all tuples.  If dup is
+        // SECOND_UDT, dup->binop_function will be NULL; this is OK.
+        dup = GB_binop_second (ttype, &dup_header) ;
+        ASSERT (dup != NULL && GB_op_is_second (dup, ttype)) ;
     }
-    else
-    { 
 
-        //----------------------------------------------------------------------
-        // dup is an explicit operator
-        //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
+    // get the dup operator
+    //--------------------------------------------------------------------------
 
-        // T(i,j) = (ttype) Sx[k] will be done for the first tuple.
-        // for subsequent tuples: T(i,j) += Sx[k], via the dup operator and
-        // typecasting:
-        //
-        //      y = (dup->ytype) Sx[k]
-        //      x = (dup->xtype) T(i,j)
-        //      z = (dup->ztype) dup (x,y)
-        //      T(i,j) = (ttype) z
+    // T(i,j) = (ttype) Sx[k] will be done for the first tuple.  for subsequent
+    // tuples: T(i,j) += Sx[k], via the dup operator and typecasting:
+    //
+    //      y = (dup->ytype) Sx[k]
+    //      x = (dup->xtype) T(i,j)
+    //      z = (dup->ztype) dup (x,y)      // or z = y if fdup is NULL
+    //      T(i,j) = (ttype) z
 
-        ASSERT_BINARYOP_OK (dup, "dup for build_factory", GB0) ;
-        ASSERT (!S_iso) ;
-        #ifndef GBCUDA_DEV
-        opcode = dup->opcode ;
-        #endif
-        xtype = dup->xtype ;
-        ytype = dup->ytype ;
-        ztype = dup->ztype ;
-        fdup = dup->binop_function ;
-        op_2nd = GB_op_is_second (dup, ttype) ;
-    }
+    ASSERT_BINARYOP_OK (dup, "dup for build_factory", GB0) ;
+    GrB_Type xtype = dup->xtype ;
+    GrB_Type ytype = dup->ytype ;
+    GrB_Type ztype = dup->ztype ;
+    GxB_binary_function fdup = dup->binop_function ;
+    bool op_is_2nd = GB_op_is_second (dup, ttype) ;
 
     //--------------------------------------------------------------------------
     // get the sizes and codes of each type
     //--------------------------------------------------------------------------
+
+    GB_Type_code tcode = ttype->code ;
+    const size_t tsize = ttype->size ;
 
     GB_Type_code zcode = ztype->code ;
     GB_Type_code xcode = xtype->code ;
@@ -1104,7 +1079,7 @@ GrB_Info GB_builder                 // build a matrix from tuples
 
     // no typecasting if all 5 types are the same
     bool nocasting = (ttype == stype) &&
-        (ttype == xtype) && (ttype == ytype) && (ttype == ztype) ;
+        (ttype == xtype) && (stype == ytype) && (ttype == ztype) ;
 
     ASSERT_TYPE_OK (ttype, "ttype for build_factory", GB0) ;
     ASSERT_TYPE_OK (stype, "stype for build_factory", GB0) ;
@@ -1117,6 +1092,7 @@ GrB_Info GB_builder                 // build a matrix from tuples
     //--------------------------------------------------------------------------
 
     bool copy_S_into_T = (nocasting && known_sorted && ndupl == 0) ;
+    info = GrB_NO_VALUE ;
 
     if (copy_S_into_T && S_work != NULL)
     { 
@@ -1144,9 +1120,9 @@ GrB_Info GB_builder                 // build a matrix from tuples
         { 
             // shrink the size of T->x
             bool ok = true ;
-            GB_REALLOC (T->x, tx_size_required, GB_void, &(T->x_size), &ok,
-                Context) ;
+            GB_REALLOC (T->x, tx_size_required, GB_void, &(T->x_size), &ok) ;
         }
+        info = GrB_SUCCESS ;
 
     }
     else
@@ -1173,6 +1149,7 @@ GrB_Info GB_builder                 // build a matrix from tuples
         { 
 
             // nothing to do
+            info = GrB_SUCCESS ;
 
         }
         else if (copy_S_into_T)
@@ -1190,6 +1167,7 @@ GrB_Info GB_builder                 // build a matrix from tuples
             ASSERT (S_work == NULL) ;
             ASSERT (Sx == S_input) ;
             GB_memcpy (Tx, Sx, (S_iso ? 1 : nvals) * tsize, nthreads) ;
+            info = GrB_SUCCESS ;
 
         }
         else if (nocasting)
@@ -1216,45 +1194,45 @@ GrB_Info GB_builder                 // build a matrix from tuples
 
             // Early exit cannot be exploited, so the terminal is ignored.
 
-            bool done = false ;
-
             if (S_iso)
             { 
 
                 //--------------------------------------------------------------
-                // T and Sx are iso; set iso value and delete duplicates
+                // via the iso kernel
                 //--------------------------------------------------------------
 
+                // T and Sx are iso; set iso value and delete duplicates
                 memcpy (Tx, Sx, tsize) ;
                 #define GB_ISO_BUILD
-                #include "GB_reduce_build_template.c"
-                done = true ;
+                #include "GB_bld_template.c"
+                info = GrB_SUCCESS ;
 
             }
             else
             { 
 
                 //--------------------------------------------------------------
-                // T and Sx are not iso; call in the workers
+                // via the factory kernel
                 //--------------------------------------------------------------
 
-                #ifndef GBCUDA_DEV
+                // T and Sx are not iso; call in the workers
+
+                #ifndef GBCOMPACT
+                GB_IF_FACTORY_KERNELS_ENABLED
+                { 
 
                     //----------------------------------------------------------
                     // define the worker for the switch factory
                     //----------------------------------------------------------
 
-                    #define GB_INCLUDE_SECOND_OPERATOR
+                    #define GB_bld(opname,aname) \
+                        GB (_bld_ ## opname ## aname)
 
-                    #define GB_red(opname,aname) \
-                        GB (_red_build_ ## opname ## aname)
-
-                    #define GB_RED_WORKER(opname,aname,atype)               \
+                    #define GB_BLD_WORKER(opname,aname,st_type)             \
                     {                                                       \
-                        info = GB_red (opname, aname) ((atype *) Tx, Ti,    \
-                            (atype *) Sx, nvals, ndupl, I_work, K_work,     \
+                        info = GB_bld (opname, aname) ((st_type *) Tx, Ti,  \
+                            (st_type *) Sx, nvals, ndupl, I_work, K_work,   \
                             tstart_slice, tnz_slice, nthreads) ;            \
-                        done = (info != GrB_NO_VALUE) ;                     \
                     }                                                       \
                     break ;
 
@@ -1262,18 +1240,32 @@ GrB_Info GB_builder                 // build a matrix from tuples
                     // launch the switch factory
                     //----------------------------------------------------------
 
-                    // controlled by opcode and typecode
-                    GB_Type_code typecode = tcode ;
-                    #include "GB_red_factory.c"
-
+                    // controlled by opcode and tcode
+                    GB_Opcode opcode = dup->opcode ;
+                    if (tcode == GB_BOOL_code)
+                    { 
+                        opcode = GB_boolean_rename (opcode) ;
+                    }
+                    #include "GB_bld_factory.c"
+                }
                 #endif
             }
 
             //------------------------------------------------------------------
-            // generic worker
+            // via the JIT or PreJIT kernel
             //------------------------------------------------------------------
 
-            if (!done)
+            if (info == GrB_NO_VALUE)
+            { 
+                info = GB_build_jit (Tx, Ti, Sx, ttype, stype, dup, nvals,
+                    ndupl, I_work, K_work, tstart_slice, tnz_slice, nthreads) ;
+            }
+
+            //------------------------------------------------------------------
+            // via the generic kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
             {
                 if (do_burble) GBURBLE ("(generic build) ") ;
 
@@ -1283,16 +1275,16 @@ GrB_Info GB_builder                 // build a matrix from tuples
 
                 // Either the fdup operator or type of Sx and T are
                 // user-defined, or fdup is not an associative operator handled
-                // by the GB_red_factory, or some combination of these
+                // by the GB_bld_factory, or some combination of these
                 // conditions.  User-defined types cannot be typecasted, so
                 // this handles all user-defined types.
 
                 // Tx [p] = (ttype) Sx [k], but with no typecasting
-                #undef  GB_CAST_ARRAY_TO_ARRAY
-                #define GB_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)               \
+                #undef  GB_BLD_COPY
+                #define GB_BLD_COPY(Tx,p,Sx,k)               \
                     memcpy (Tx +((p)*tsize), Sx +((k)*tsize), tsize) ;
 
-                if (op_2nd)
+                if (op_is_2nd)
                 { 
 
                     //----------------------------------------------------------
@@ -1300,10 +1292,9 @@ GrB_Info GB_builder                 // build a matrix from tuples
                     //----------------------------------------------------------
 
                     // Tx [p] += (ttype) Sx [k], but 2nd op and no typecasting
-                    #undef  GB_ADD_CAST_ARRAY_TO_ARRAY
-                    #define GB_ADD_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)       \
-                        GB_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)
-                    #include "GB_reduce_build_template.c"
+                    #undef  GB_BLD_DUP
+                    #define GB_BLD_DUP(Tx,p,Sx,k) GB_BLD_COPY(Tx,p,Sx,k)
+                    #include "GB_bld_template.c"
 
                 }
                 else
@@ -1314,11 +1305,13 @@ GrB_Info GB_builder                 // build a matrix from tuples
                     //----------------------------------------------------------
 
                     // Tx [p] += (ttype) Sx [k], but with no typecasting
-                    #undef  GB_ADD_CAST_ARRAY_TO_ARRAY
-                    #define GB_ADD_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)       \
+                    #undef  GB_BLD_DUP
+                    #define GB_BLD_DUP(Tx,p,Sx,k)       \
                         fdup (Tx +((p)*tsize), Tx +((p)*tsize), Sx+((k)*tsize));
-                    #include "GB_reduce_build_template.c"
+                    #include "GB_bld_template.c"
                 }
+
+                info = GrB_SUCCESS ;
             }
 
         }
@@ -1329,79 +1322,99 @@ GrB_Info GB_builder                 // build a matrix from tuples
             // assemble the values Sx into T, typecasting as needed
             //------------------------------------------------------------------
 
-            if (do_burble)
+            //------------------------------------------------------------------
+            // via the JIT or PreJIT kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
+            { 
+                info = GB_build_jit (Tx, Ti, Sx, ttype, stype, dup, nvals,
+                    ndupl, I_work, K_work, tstart_slice, tnz_slice, nthreads) ;
+            }
+
+            //------------------------------------------------------------------
+            // via the generic kernel
+            //------------------------------------------------------------------
+
+            if (info == GrB_NO_VALUE)
             {
-                GBURBLE ("(generic build with typecast) ") ;
-            }
 
-            // If T and Sx are iso, no typecasting is ever done, so this method
-            // is not used in that case.
-            ASSERT (!S_iso) ;
-
-            // Sx (either S_work or S_input) must be permuted and copied into
-            // T->x, since the tuples had to be sorted, or duplicates appear.
-            // Any duplicates are now assembled.  Not all of the 5 types are
-            // the same, but all of them are built-in since user-defined types
-            // cannot be typecasted.
-
-            const GB_Type_code scode = stype->code ;
-            const size_t ssize = stype->size ;
-            GB_cast_function cast_S_to_T = GB_cast_factory (tcode, scode) ;
-            GB_cast_function cast_S_to_Y = GB_cast_factory (ycode, scode) ;
-            GB_cast_function cast_T_to_X = GB_cast_factory (xcode, tcode) ;
-            GB_cast_function cast_Z_to_T = GB_cast_factory (tcode, zcode) ;
-
-            ASSERT (scode <= GB_FC64_code) ;
-            ASSERT (tcode <= GB_FC64_code) ;
-            ASSERT (xcode <= GB_FC64_code) ;
-            ASSERT (ycode <= GB_FC64_code) ;
-            ASSERT (zcode <= GB_FC64_code) ;
-
-            // Tx [p] = (ttype) Sx [k], with typecasting
-            #undef  GB_CAST_ARRAY_TO_ARRAY
-            #define GB_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)                   \
-                cast_S_to_T (Tx +((p)*tsize), Sx +((k)*ssize), ssize) ;
-
-            if (op_2nd)
-            { 
-
-                //--------------------------------------------------------------
-                // dup operator is the SECOND operator, with typecasting
-                //--------------------------------------------------------------
-
-                // Tx [p] += (ttype) Sx [k], but 2nd op, with typecasting
-                #undef  GB_ADD_CAST_ARRAY_TO_ARRAY
-                #define GB_ADD_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)           \
-                    GB_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)
-                #include "GB_reduce_build_template.c"
-
-            }
-            else
-            { 
-
-                //--------------------------------------------------------------
-                // dup is another operator, with typecasting required
-                //--------------------------------------------------------------
-
-                // Tx [p] += Sx [k], with typecasting
-                #undef  GB_ADD_CAST_ARRAY_TO_ARRAY
-                #define GB_ADD_CAST_ARRAY_TO_ARRAY(Tx,p,Sx,k)               \
-                {                                                           \
-                    /* ywork = (ytype) Sx [k] */                            \
-                    GB_void ywork [GB_VLA(ysize)] ;                         \
-                    cast_S_to_Y (ywork, Sx +((k)*ssize), ssize) ;           \
-                    /* xwork = (xtype) Tx [p] */                            \
-                    GB_void xwork [GB_VLA(xsize)] ;                         \
-                    cast_T_to_X (xwork, Tx +((p)*tsize), tsize) ;           \
-                    /* zwork = f (xwork, ywork) */                          \
-                    GB_void zwork [GB_VLA(zsize)] ;                         \
-                    fdup (zwork, xwork, ywork) ;                            \
-                    /* Tx [tnz-1] = (ttype) zwork */                        \
-                    cast_Z_to_T (Tx +((p)*tsize), zwork, zsize) ;           \
+                if (do_burble)
+                {
+                    GBURBLE ("(generic build with typecast) ") ;
                 }
 
-                #include "GB_reduce_build_template.c"
+                // If T and Sx are iso, no typecasting is ever done, so this
+                // method is not used in that case.
+                ASSERT (!S_iso) ;
+
+                // Sx (either S_work or S_input) must be permuted and copied
+                // into T->x, since the tuples had to be sorted, or duplicates
+                // appear.  Any duplicates are now assembled.  Not all of the 5
+                // types are the same, but all of them are built-in since
+                // user-defined types cannot be typecasted.
+
+                const GB_Type_code scode = stype->code ;
+                const size_t ssize = stype->size ;
+                GB_cast_function cast_S_to_T = GB_cast_factory (tcode, scode) ;
+                GB_cast_function cast_S_to_Y = GB_cast_factory (ycode, scode) ;
+                GB_cast_function cast_T_to_X = GB_cast_factory (xcode, tcode) ;
+                GB_cast_function cast_Z_to_T = GB_cast_factory (tcode, zcode) ;
+
+                // all types must be built-in
+                ASSERT (scode <= GB_FC64_code) ;
+                ASSERT (tcode <= GB_FC64_code) ;
+                ASSERT (xcode <= GB_FC64_code) ;
+                ASSERT (ycode <= GB_FC64_code) ;
+                ASSERT (zcode <= GB_FC64_code) ;
+
+                // Tx [p] = (ttype) Sx [k], with typecasting
+                #undef  GB_BLD_COPY
+                #define GB_BLD_COPY(Tx,p,Sx,k)                   \
+                    cast_S_to_T (Tx +((p)*tsize), Sx +((k)*ssize), ssize) ;
+
+                if (op_is_2nd)
+                { 
+
+                    //----------------------------------------------------------
+                    // dup operator is the SECOND operator, with typecasting
+                    //----------------------------------------------------------
+
+                    // Tx [p] += (ttype) Sx [k], but 2nd op, with typecasting
+                    #undef  GB_BLD_DUP
+                    #define GB_BLD_DUP(Tx,p,Sx,k) GB_BLD_COPY(Tx,p,Sx,k)
+                    #include "GB_bld_template.c"
+
+                }
+                else
+                { 
+
+                    //----------------------------------------------------------
+                    // dup is another operator, with typecasting required
+                    //----------------------------------------------------------
+
+                    // Tx [p] += Sx [k], with typecasting
+                    #undef  GB_BLD_DUP
+                    #define GB_BLD_DUP(Tx,p,Sx,k)                       \
+                    {                                                   \
+                        /* ywork = (ytype) Sx [k] */                    \
+                        GB_void ywork [GB_VLA(ysize)] ;                 \
+                        cast_S_to_Y (ywork, Sx +((k)*ssize), ssize) ;   \
+                        /* xwork = (xtype) Tx [p] */                    \
+                        GB_void xwork [GB_VLA(xsize)] ;                 \
+                        cast_T_to_X (xwork, Tx +((p)*tsize), tsize) ;   \
+                        /* zwork = f (xwork, ywork) */                  \
+                        GB_void zwork [GB_VLA(zsize)] ;                 \
+                        fdup (zwork, xwork, ywork) ;                    \
+                        /* Tx [tnz-1] = (ttype) zwork */                \
+                        cast_Z_to_T (Tx +((p)*tsize), zwork, zsize) ;   \
+                    }
+
+                    #include "GB_bld_template.c"
+                }
             }
+
+            info = GrB_SUCCESS ;
         }
     }
 
@@ -1410,9 +1423,12 @@ GrB_Info GB_builder                 // build a matrix from tuples
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    T->jumbled = false ;
-    ASSERT_MATRIX_OK (T, "T built", GB0) ;
-    ASSERT (GB_IS_HYPERSPARSE (T)) ;
-    return (GrB_SUCCESS) ;
+    if (info == GrB_SUCCESS)
+    { 
+        T->jumbled = false ;
+        ASSERT_MATRIX_OK (T, "T built", GB0) ;
+        ASSERT (GB_IS_HYPERSPARSE (T)) ;
+    }
+    return (info) ;
 }
 

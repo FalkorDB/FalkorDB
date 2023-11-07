@@ -2,7 +2,7 @@
 // GB_memoryUsage: # of bytes used for a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -52,65 +52,65 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
     }
 
     if (A->p != NULL)
-    { 
+    {
         if (A->p_shallow)
-        {
+        { 
             (*mem_shallow) += A->p_size ;
         }
         else
-        {
+        { 
             (*nallocs)++ ;
             (*mem_deep) += A->p_size ;
         }
     }
 
     if (A->h != NULL)
-    { 
+    {
         if (A->h_shallow)
-        {
+        { 
             (*mem_shallow) += A->h_size ;
         }
         else
-        {
+        { 
             (*nallocs)++ ;
             (*mem_deep) += A->h_size ;
         }
     }
 
     if (A->b != NULL)
-    { 
+    {
         if (A->b_shallow)
-        {
+        { 
             (*mem_shallow) += A->b_size ;
         }
         else
-        {
+        { 
             (*nallocs)++ ;
             (*mem_deep) += A->b_size ;
         }
     }
 
     if (A->i != NULL)
-    { 
+    {
         if (A->i_shallow)
-        {
+        { 
             (*mem_shallow) += A->i_size ;
         }
         else
-        {
+        { 
             (*nallocs)++ ;
             (*mem_deep) += A->i_size ;
         }
     }
 
     if (A->x != NULL)
-    { 
+    {
         if (A->x_shallow)
-        {
+        { 
             (*mem_shallow) += A->x_size ;
         }
         else
-        {
+        { 
             (*nallocs)++ ;
             (*mem_deep) += A->x_size ;
         }

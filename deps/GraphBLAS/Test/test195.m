@@ -1,14 +1,15 @@
 function test195 (dohack)
 %TEST195 test all variants of saxpy3
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
+[nthreads_orig chunk_orig] = nthreads_get ;
 
 % save current global settings, then modify them
-save = GB_mex_hack ;
-hack = save ;
+save_hack = GB_mex_hack ;
+hack = save_hack ;
 if (nargin < 1)
     dohack = 2 ;
 end
@@ -50,38 +51,48 @@ for asparsity = [1 2 4 8]
                         err = norm (C0 - C2.matrix, 1) ;
                         assert (err < 1e-12) ;
 
-                        % C<M> = A*B
-                        C0 = (A.matrix * B.matrix) .* M.matrix ;
-                        C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, desc) ;
-                        C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, desc) ;
-                        GB_spec_compare (C1, C2, 0, 1e-12) ;
-                        err = norm (C0 - C2.matrix, 1) ;
-                        assert (err < 1e-12) ;
+                        if (msparsity == 4)
+                            chunks = unique ([1 chunk_orig 65536]) ;
+                        else
+                            chunks = chunk_orig ;
+                        end
 
-                        % C<!M> = A*B
-                        C0 = (A.matrix * B.matrix) .* (1 - M.matrix) ;
-                        C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, dnot) ;
-                        C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, dnot) ;
-                        GB_spec_compare (C1, C2, 0, 1e-12) ;
-                        err = norm (C0 - C2.matrix, 1) ;
-                        assert (err < 1e-12) ;
+                        for chunk = chunks
+                            nthreads_set (nthreads_orig, chunk) ;
 
-                        % C<M,struct> = A*B
-                        C0 = (A.matrix * B.matrix) .* M.matrix ;
-                        C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, desc_s) ;
-                        C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, desc_s) ;
-                        GB_spec_compare (C1, C2, 0, 1e-12) ;
-                        err = norm (C0 - C2.matrix, 1) ;
-                        assert (err < 1e-12) ;
+                            % C<M> = A*B
+                            C0 = (A.matrix * B.matrix) .* M.matrix ;
+                            C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, desc) ;
+                            C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, desc) ;
+                            GB_spec_compare (C1, C2, 0, 1e-12) ;
+                            err = norm (C0 - C2.matrix, 1) ;
+                            assert (err < 1e-12) ;
 
-                        % C<!M,struct> = A*B
-                        C0 = (A.matrix * B.matrix) .* (1 - M.matrix) ;
-                        C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, dnot_s) ;
-                        C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, dnot_s) ;
-                        GB_spec_compare (C1, C2, 0, 1e-12) ;
-                        err = norm (C0 - C2.matrix, 1) ;
-                        assert (err < 1e-12) ;
+                            % C<!M> = A*B
+                            C0 = (A.matrix * B.matrix) .* (1 - M.matrix) ;
+                            C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, dnot) ;
+                            C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, dnot) ;
+                            GB_spec_compare (C1, C2, 0, 1e-12) ;
+                            err = norm (C0 - C2.matrix, 1) ;
+                            assert (err < 1e-12) ;
 
+                            % C<M,struct> = A*B
+                            C0 = (A.matrix * B.matrix) .* M.matrix ;
+                            C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, desc_s) ;
+                            C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, desc_s) ;
+                            GB_spec_compare (C1, C2, 0, 1e-12) ;
+                            err = norm (C0 - C2.matrix, 1) ;
+                            assert (err < 1e-12) ;
+
+                            % C<!M,struct> = A*B
+                            C0 = (A.matrix * B.matrix) .* (1 - M.matrix) ;
+                            C1 = GB_spec_mxm (C0, M, [ ], semiring, A, B, dnot_s) ;
+                            C2 = GB_mex_mxm  (C0, M, [ ], semiring, A, B, dnot_s) ;
+                            GB_spec_compare (C1, C2, 0, 1e-12) ;
+                            err = norm (C0 - C2.matrix, 1) ;
+                            assert (err < 1e-12) ;
+
+                        end
                     end
                 end
             end
@@ -90,8 +101,9 @@ for asparsity = [1 2 4 8]
 end
 
 % restore global settings
-GrB.burble (0) ;
-GB_mex_hack (save) ;
+GB_mex_burble (0) ;
+GB_mex_hack (save_hack) ;
+nthreads_set (nthreads_orig, chunk_orig) ;
 
 fprintf ('\ntest195: all tests passed\n') ;
 

@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_flip_binop:  flip a binary operator for an eWise operation or GrB_mxm
+// GB_flip_binop:  flip a binary operator for GrB_mxm
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2019, All Rights Reserved.
@@ -14,7 +14,6 @@ GrB_BinaryOp GB_flip_binop  // flip a binary operator
 (
     // input:
     GrB_BinaryOp op,        // binary operator to flip
-    bool for_ewise,         // if true: flip for eWise, else for semiring
     // input/output:
     bool *flipxy            // true on input, set to false if op is flipped
 )
@@ -25,23 +24,12 @@ GrB_BinaryOp GB_flip_binop  // flip a binary operator
     //--------------------------------------------------------------------------
 
     if (!(*flipxy))
-    {
+    { 
         // op is not flipped
         return (op) ;
     }
 
     (*flipxy) = false ;     // set below to true if the op is not flipped
-
-    //--------------------------------------------------------------------------
-    // handle positional binary operators for ewise operations
-    //--------------------------------------------------------------------------
-
-    if (for_ewise && GB_IS_BINARYOP_CODE_POSITIONAL (op->opcode))
-    {
-        // built-in positional ops (firsti, firstj, secondi, secondj) are
-        // not flipped for eWise operations
-        return (op) ;
-    }
 
     //--------------------------------------------------------------------------
     // handle the general case: both ewise and mxm

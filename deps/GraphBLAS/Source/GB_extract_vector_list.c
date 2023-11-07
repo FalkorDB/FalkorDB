@@ -2,16 +2,16 @@
 // GB_extract_vector_list: extract vector indices for all entries in a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
+// JIT: not needed, but 3 variants possible (sparse/hyper/full)
+
 // Constructs a list of vector indices for each entry in a matrix.  Creates
 // the output J for GB_extractTuples, and I for GB_transpose when the qsort
 // method is used.
-
-// TODO: use #include "GB_positional_op_ijp.c" here
 
 #include "GB_ek_slice.h"
 
@@ -26,7 +26,7 @@ GrB_Info GB_extract_vector_list     // extract vector list from a matrix
     int64_t *restrict J,         // size nnz(A) or more
     // input:
     const GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -52,7 +52,8 @@ GrB_Info GB_extract_vector_list     // extract vector list from a matrix
     // determine the max number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     //--------------------------------------------------------------------------
     // slice the entries for each task
@@ -60,7 +61,7 @@ GrB_Info GB_extract_vector_list     // extract vector list from a matrix
 
     GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
     int A_ntasks, A_nthreads ;
-    GB_SLICE_MATRIX (A, 2, chunk) ;
+    GB_SLICE_MATRIX (A, 2) ;
 
     //--------------------------------------------------------------------------
     // extract the vector index for each entry

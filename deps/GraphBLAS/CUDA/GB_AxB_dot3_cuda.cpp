@@ -2,9 +2,8 @@
 // GB_AxB_dot3_cuda: compute C<M> = A'*B in parallel, on the GPU(s)
 //------------------------------------------------------------------------------
 
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2019, All Rights Reserved.
-// http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
@@ -13,12 +12,12 @@
 // and B can have any sparsity format.  C is computed as sparse or hypersparse,
 // with the same format as M.
 
+#include "GB_cuda.h"
 extern "C"
 {
     #include "GB_mxm.h"
 }
 
-#include "GB_cuda.h"
 #include "GB_jit_cache.h"
 #include "GB_cuda_common_jitFactory.hpp"
 #include "GB_cuda_reduce_jitFactory.hpp"
@@ -57,6 +56,9 @@ void print_array(void *arr, I size, const char *name) {
     GB_phybix_free (C) ;                                                \
 }
 
+//------------------------------------------------------------------------------
+// GB_AxB_dot3_cuda
+//------------------------------------------------------------------------------
 
 GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
 (
@@ -66,8 +68,7 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
     const GrB_Matrix A,             // input matrix
     const GrB_Matrix B,             // input matrix
     const GrB_Semiring semiring,    // semiring that defines C=A*B
-    const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    GB_Context Context
+    const bool flipxy               // if true, do z=fmult(b,a) vs fmult(a,b)
 )
 {
 
@@ -88,9 +89,9 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
     ASSERT (A != NULL && !(A->static_header)) ;
     ASSERT (B != NULL && !(B->static_header)) ;
 
-    ASSERT_MATRIX_OK (M, "M for dot3 cuda A'*B", GB2) ;
-    ASSERT_MATRIX_OK (A, "A for dot3 cuda A'*B", GB2) ;
-    ASSERT_MATRIX_OK (B, "B for dot3 cuda A'*B", GB2) ;
+    ASSERT_MATRIX_OK (M, "M for dot3 cuda A'*B", GB0) ;
+    ASSERT_MATRIX_OK (A, "A for dot3 cuda A'*B", GB0) ;
+    ASSERT_MATRIX_OK (B, "B for dot3 cuda A'*B", GB0) ;
 
     ASSERT (!GB_PENDING (M)) ;
     ASSERT (GB_JUMBLED_OK (M)) ;
@@ -104,7 +105,7 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
     ASSERT (!GB_ZOMBIES (B)) ;
     ASSERT (!GB_JUMBLED (B)) ;
 
-    ASSERT_SEMIRING_OK (semiring, "semiring for dot3 numeric A'*B", GB2) ;
+    ASSERT_SEMIRING_OK (semiring, "semiring for dot3 numeric A'*B", GB0) ;
 
     ASSERT (A->vlen == B->vlen) ;
     GBURBLE ("(GPU dot3) ") ;
@@ -157,12 +158,13 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
 
     int M_sparsity = (M_is_hyper) ? GxB_HYPERSPARSE : GxB_SPARSE ;
     int C_sparsity = M_sparsity ;
-    bool C_iso = false ;
+    bool C_iso = false ;    // FIXME: pass in C_iso and cscalar
+    bool C_in_iso = false ;    // FIXME: pass in C_in_iso and cscalar
     info = GB_new_bix (&C, // sparse or hyper (from M), existing header
         ctype, cvlen, cvdim, GB_Ap_malloc, true,
         M_sparsity, false, M->hyper_switch, cnvec,
         cnz+1,  // add one to cnz for GB_cumsum of Cwork 
-        true, C_iso, Context) ;
+        true, C_iso) ;
 
     if (info != GrB_SUCCESS)
     { 
@@ -190,8 +192,11 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
     }
     CU_OK (cudaMemAdvise (C->i, (cnz+1) * sizeof ( int64_t),
         cudaMemAdviseSetPreferredLocation, device)) ;
-    CU_OK (cudaMemAdvise (C->x, (C_iso ? 1: (cnz+1)) * C->type->size ,
-        cudaMemAdviseSetPreferredLocation, device)) ;
+    if (!C_iso)
+    {
+        CU_OK (cudaMemAdvise (C->x, (cnz+1) * C->type->size ,
+            cudaMemAdviseSetPreferredLocation, device)) ;
+    }
 
     // prefetch M (if M hypersparse: using M->h not M->Y)
     GB_OK (GB_cuda_matrix_prefetch (M,
@@ -224,7 +229,7 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
     GB_cuda_mxm_factory my_mxm_spec = GB_cuda_mxm_factory ( ) ;
 
     // (1) create the mxm code and name
-    my_mxm_spec.mxm_factory ( C_iso, C_sparsity, ctype,
+    my_mxm_spec.mxm_factory ( C_iso, C_in_iso, C_sparsity, ctype,
         M, Mask_struct, false, semiring, flipxy, A, B) ;
 
     // (2) ensure the jitifier has "GB_mxm_[my_mxm_spec.sr_code].h"
@@ -286,7 +291,8 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
 
         dense_phase1launchFactory dp1lf(my_mxm_spec);
 
-        GBURBLE ("(GPU phase1 start nblk = %d) ", dp1lf.get_number_of_blocks(M)) ;
+        GBURBLE ("(GPU phase1 start nblk = %d) ",
+            dp1lf.get_number_of_blocks(M)) ;
         kernel_timer.Start();
             dp1lf.jitGridBlockLaunch(C, M, A, B, stream);
             CU_OK (cudaStreamSynchronize(stream));
@@ -300,7 +306,7 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
             CU_OK (cudaStreamSynchronize(stream));  // only for timing
         kernel_timer.Stop();
         GBURBLE ("(GPU Dense full x full done %12.6g ms, rate=%12.6g)\n", 
-                   kernel_timer.Elapsed(), (mnvec)/(1000*kernel_timer.Elapsed())) ;  
+               kernel_timer.Elapsed(), (mnvec)/(1000*kernel_timer.Elapsed())) ;  
 
     }
     else
@@ -344,7 +350,7 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
             return (GrB_OUT_OF_MEMORY) ;
         }
 
-        // fixme: do async with streams
+        // FIXME: do async with streams
         // FIXME: do we need any of these?
         //CU_OK (cudaMemsetAsync(Nanobuckets, 0,
         //    nanobuckets_size * sizeof(int64_t), stream));
@@ -375,7 +381,7 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
         // phase1: assign each C(i,j) to a bucket, and count them
         //----------------------------------------------------------------------
 
-        GBURBLE ("(GPU phase1 start nblk = %d) ", p1lf.get_number_of_blocks(M)) ;
+        GBURBLE ("(GPU phase1 start nblk = %d) ", p1lf.get_number_of_blocks(M));
         kernel_timer.Start();
         p1lf.jitGridBlockLaunch(Nanobuckets, Blockbucket, C, M, A, B, stream);
         CU_OK (cudaStreamSynchronize(stream));
@@ -383,9 +389,9 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
 
         GBURBLE ("(GPU phase1 done %12.6g ms )\n", kernel_timer.Elapsed()) ;
 
-        //--------------------------------------------------------------------------
+        //----------------------------------------------------------------------
         // phase2: cumsum across the blockbuckets, propagate to thread level
-        //--------------------------------------------------------------------------
+        //----------------------------------------------------------------------
 
         GBURBLE ("(GPU phase2 start nblk=%d ) ", ntasks) ;
 
@@ -402,7 +408,10 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
         {
             Bucketp[bucket] = s; 
             s += offset[bucket];
-            if ( (Bucketp[bucket] - Bucketp[bucket-1] ) == mnz ) all_in_one = true;
+            if ( (Bucketp[bucket] - Bucketp[bucket-1] ) == mnz )
+            {
+                all_in_one = true;
+            }
         }
 
         GBURBLE ("(GPU phase2 done %12.6g ms )\n", kernel_timer.Elapsed()) ;
@@ -417,13 +426,12 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
 
             CU_OK (cudaStreamSynchronize(stream));
             kernel_timer.Stop();
-            GBURBLE ("(GPU phase2end done %12.6g ms)\n",kernel_timer.Elapsed()) ;
+            GBURBLE ("(GPU phase2end done %12.6g ms)\n",kernel_timer.Elapsed());
         }
 
-        //--------------------------------------------------------------------------
+        //----------------------------------------------------------------------
         // phase3: do the numerical work
-        //--------------------------------------------------------------------------
-
+        //----------------------------------------------------------------------
 
         for ( int bucket = 1 ; bucket < NBUCKETS; ++bucket)
         {
@@ -435,10 +443,13 @@ GrB_Info GB_AxB_dot3_cuda           // C<M> = A'*B using dot product method
                 phase3launchFactory p3lf(my_mxm_spec, (GB_bucket_code)bucket);
                 GBURBLE ("(GPU phase3 bucket %d launch ) ", bucket) ;
                 kernel_timer.Start();
-                p3lf.jitGridBlockLaunch(start, end, Bucketp, Bucket, C, M, A, B, stream);
+                p3lf.jitGridBlockLaunch(start, end, Bucketp, Bucket,
+                    C, M, A, B, stream);
                 CU_OK (cudaStreamSynchronize(stream));  // only for timing
                 kernel_timer.Stop();
-                GBURBLE ("(GPU phase3 bucket %d done %12.6g ms, rate=%12.6g)\n", bucket, kernel_timer.Elapsed(), (end-start)/(1000*kernel_timer.Elapsed())) ; 
+                GBURBLE ("(GPU phase3 bucket %d done %12.6g ms, rate=%12.6g)\n",
+                    bucket, kernel_timer.Elapsed(),
+                    (end-start)/(1000*kernel_timer.Elapsed())) ; 
             }
         }
     }

@@ -1,7 +1,7 @@
 function test128
 %TEST128 test eWiseMult, eWiseAdd, eWiseUnion, special cases
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest128: test eWiseMult, eWiseAdd, eWiseUnion, special cases\n') ;
@@ -49,7 +49,7 @@ A.class = 'single complex' ;
 B.class = 'single complex' ;
 T.matrix = sparse (m,n) ;
 T.class = 'single complex' ;
-GrB.burble (1) ;
+% GB_mex_burble (1) ;
 for B_hyper = 0:1
     for A_hyper = 0:1
         A.is_hyper = A_hyper ;
@@ -62,7 +62,7 @@ for B_hyper = 0:1
         GB_spec_compare (C1, C4) ;
     end
 end
-GrB.burble (0) ;
+% GB_mex_burble (0) ;
 
 A.class = 'double' ;
 B.class = 'double' ;

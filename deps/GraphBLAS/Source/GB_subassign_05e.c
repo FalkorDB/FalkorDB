@@ -2,13 +2,14 @@
 // GB_subassign_05e: C(:,:)<M,struct> = scalar ; no S, C empty, M structural
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
+// JIT: not needed.
+
 // Method 05e: C(:,:)<M,struct> = scalar ; no S
-// compare with Methods 21, 25, and 05d
 
 // M:           present
 // Mask_comp:   false
@@ -26,6 +27,7 @@
 // C is always iso, and its iso value has been assigned by GB_assign_prep.
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 #undef  GB_FREE_ALL
 #define GB_FREE_ALL
@@ -36,8 +38,8 @@ GrB_Info GB_subassign_05e
     // input:
     const GrB_Matrix M,
     const void *scalar,
-    const GrB_Type atype,
-    GB_Context Context
+    const GrB_Type scalar_type,
+    GB_Werk Werk
 )
 { 
 
@@ -45,7 +47,7 @@ GrB_Info GB_subassign_05e
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
     ASSERT (C->iso) ;
 
     //--------------------------------------------------------------------------
@@ -80,9 +82,9 @@ GrB_Info GB_subassign_05e
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
     // set C->iso = true    OK
-    GB_OK (GB_dup_worker (&C, true, M, false, C->type, Context)) ;
+    GB_OK (GB_dup_worker (&C, true, M, false, C->type)) ;
     C->is_csc = C_is_csc ;
-    GB_cast_scalar (C->x, C->type->code, scalar, atype->code, atype->size) ;
+    GB_cast_scalar (C->x, C->type->code, scalar, scalar_type->code, scalar_type->size) ;
 
     C->jumbled = M->jumbled ;       // C is jumbled if M is jumbled
     ASSERT_MATRIX_OK (C, "C output for subassign method_05e", GB0) ;

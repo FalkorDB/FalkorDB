@@ -2,7 +2,7 @@
 // GrB_Matrix_serializeSize: return an upper bound on the blob size
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
     // no descriptor, so assume the default method
     int method = GxB_DEFAULT ;
 
-    // Context will hold the default # of threads, which can be controlled
+    // Werk will hold the default # of threads, which can be controlled
     // by GxB_Global_Option_set.
 
     //--------------------------------------------------------------------------
@@ -45,7 +45,7 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
     //--------------------------------------------------------------------------
 
     size_t blob_size ;
-    GrB_Info info = GB_serialize (NULL, &blob_size, A, method, Context) ;
+    GrB_Info info = GB_serialize (NULL, &blob_size, A, method, Werk) ;
     (*blob_size_handle) = (GrB_Index) blob_size ;
     GB_BURBLE_END ;
     #pragma omp flush

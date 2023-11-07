@@ -2,10 +2,12 @@
 // GB_AxB_saxpy3_slice_balanced: construct balanced tasks for GB_AxB_saxpy3
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed, but some varants possible (matrix sparsity formats)
 
 // If the mask is present but must be discarded, this function returns
 // GrB_NO_VALUE, to indicate that the analysis was terminated early.
@@ -205,7 +207,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     int *ntasks,                    // # of tasks created (coarse and fine)
     int *nfine,                     // # of fine tasks created
     int *nthreads,                  // # of threads to use
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -240,7 +242,8 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     // determine the # of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     bool bitmap_or_full = (GB_IS_FULL (A) || GB_IS_BITMAP (A)
                         || GB_IS_FULL (B) || GB_IS_BITMAP (B)) ;
     if (builtin_semiring && bitmap_or_full)
@@ -267,20 +270,12 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     const int64_t *restrict Ap = A->p ;
     const int64_t *restrict Ah = A->h ;
     const int64_t avlen = A->vlen ;
+    const int64_t anvec = A->nvec ;
     const bool A_is_hyper = GB_IS_HYPERSPARSE (A) ;
-
-    const int64_t *restrict A_Yp = NULL ;
-    const int64_t *restrict A_Yi = NULL ;
-    const int64_t *restrict A_Yx = NULL ;
-    int64_t A_hash_bits = 0 ;
-    if (A_is_hyper)
-    { 
-        ASSERT_MATRIX_OK (A->Y, "A->Y hyper_hash", GB0) ;
-        A_Yp = A->Y->p ;
-        A_Yi = A->Y->i ;
-        A_Yx = A->Y->x ;
-        A_hash_bits = A->Y->vdim - 1 ;
-    }
+    const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+    const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+    const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+    const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
 
     const int64_t *restrict Bp = B->p ;
     const int64_t *restrict Bh = B->h ;
@@ -301,8 +296,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
 
     int64_t Mwork = 0 ;
     int64_t *restrict Bflops = C->p ;    // use C->p as workspace for Bflops
-    GB_OK (GB_AxB_saxpy3_flopcount (&Mwork, Bflops, M, Mask_comp, A, B,
-        Context)) ;
+    GB_OK (GB_AxB_saxpy3_flopcount (&Mwork, Bflops, M, Mask_comp, A, B, Werk)) ;
     double total_flops = (double) Bflops [bnvec] ;
     double axbflops = total_flops - Mwork ;
     GBURBLE ("axbwork %g ", axbflops) ;
@@ -684,8 +678,8 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                             if (A_is_hyper)
                             { 
                                 // A is hypersparse: find A(:,k) in hyper_hash
-                                GB_hyper_hash_lookup (Ap, A_Yp, A_Yi, A_Yx,
-                                    A_hash_bits, k, &pA, &pA_end) ;
+                                GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp,
+                                    A_Yi, A_Yx, A_hash_bits, k, &pA, &pA_end) ;
                             }
                             else
                             { 
@@ -700,7 +694,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
                         }
 
                         // cumulative sum of flops to compute A*B(:,j)
-                        GB_cumsum (Fine_fl, bjnz, NULL, nth, Context) ;
+                        GB_cumsum (Fine_fl, bjnz, NULL, nth, Werk) ;
 
                         // slice B(:,j) into fine tasks
                         int team_size = ceil (jflops / target_fine_size) ;

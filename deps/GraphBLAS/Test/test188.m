@@ -1,7 +1,7 @@
 function test188
 %TEST188 test concat
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test188 ----------- C = concat (Tiles)\n') ;
@@ -70,6 +70,6 @@ for d = [1e-4 0.01 0.2 0.8 inf]
 end
 
 fprintf ('\n') ;
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('test188: all tests passed\n') ;
 

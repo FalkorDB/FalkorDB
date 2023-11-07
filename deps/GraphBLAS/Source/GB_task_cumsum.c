@@ -2,7 +2,7 @@
 // GB_task_cumsum: cumulative sum of Cp and fine tasks in TaskList
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,7 +19,7 @@ void GB_task_cumsum
     GB_task_struct *restrict TaskList,  // array of structs
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -62,7 +62,7 @@ void GB_task_cumsum
     // replace Cp with its cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Cp, Cnvec, Cnvec_nonempty, nthreads, Context) ;
+    GB_cumsum (Cp, Cnvec, Cnvec_nonempty, nthreads, Werk) ;
 
     //--------------------------------------------------------------------------
     // shift the cumulative sum of the fine tasks

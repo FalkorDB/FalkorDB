@@ -2,7 +2,7 @@
 // GB_mex_semiring: parse a semiring, for testing; returns nothing
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,6 +31,7 @@ void mexFunction
     // check inputs
     if (nargin < 1 || nargin > 2 || nargout > 0)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
 
@@ -44,6 +45,7 @@ void mexFunction
     GrB_Info info = GB_Semiring_check (semiring, "semiring", pr, NULL) ;
     if (info != GrB_SUCCESS)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("semiring fail") ;
     }
     FREE_ALL ;

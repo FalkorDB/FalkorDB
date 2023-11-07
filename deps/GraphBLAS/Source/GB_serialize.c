@@ -2,7 +2,7 @@
 // GB_serialize: compress and serialize a GrB_Matrix into a blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,6 +14,7 @@
 // estimate the size of the blob for GrB_Matrix_serializeSize.
 
 #include "GB.h"
+#include "GB_get_set.h"
 #include "GB_serialize.h"
 
 #define GB_FREE_WORKSPACE                       \
@@ -23,11 +24,11 @@
     GB_FREE (&Ab_Sblocks, Ab_Sblocks_size) ;    \
     GB_FREE (&Ai_Sblocks, Ai_Sblocks_size) ;    \
     GB_FREE (&Ax_Sblocks, Ax_Sblocks_size) ;    \
-    GB_serialize_free_blocks (&Ap_Blocks, Ap_Blocks_size, Ap_nblocks, Context);\
-    GB_serialize_free_blocks (&Ah_Blocks, Ah_Blocks_size, Ah_nblocks, Context);\
-    GB_serialize_free_blocks (&Ab_Blocks, Ab_Blocks_size, Ab_nblocks, Context);\
-    GB_serialize_free_blocks (&Ai_Blocks, Ai_Blocks_size, Ai_nblocks, Context);\
-    GB_serialize_free_blocks (&Ax_Blocks, Ax_Blocks_size, Ax_nblocks, Context);\
+    GB_serialize_free_blocks (&Ap_Blocks, Ap_Blocks_size, Ap_nblocks) ; \
+    GB_serialize_free_blocks (&Ah_Blocks, Ah_Blocks_size, Ah_nblocks) ; \
+    GB_serialize_free_blocks (&Ab_Blocks, Ab_Blocks_size, Ab_nblocks) ; \
+    GB_serialize_free_blocks (&Ai_Blocks, Ai_Blocks_size, Ai_nblocks) ; \
+    GB_serialize_free_blocks (&Ax_Blocks, Ax_Blocks_size, Ax_nblocks) ; \
 }
 
 #define GB_FREE_ALL                             \
@@ -50,7 +51,7 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     // input:
     const GrB_Matrix A,             // matrix to serialize
     int32_t method,                 // method to use
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -113,14 +114,14 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     // ensure all pending work is finished
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_wait (A, "A to serialize", Context)) ;
+    GB_OK (GB_wait (A, "A to serialize", Werk)) ;
     ASSERT (A->nvec_nonempty >= 0) ;
 
     //--------------------------------------------------------------------------
     // determine maximum # of threads
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
 
     //--------------------------------------------------------------------------
     // parse the method
@@ -198,27 +199,27 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     GB_OK (GB_serialize_array (&Ap_Blocks, &Ap_Blocks_size,
         &Ap_Sblocks, &Ap_Sblocks_size, &Ap_nblocks, &Ap_method,
         &Ap_compressed_size, dryrun,
-        (GB_void *) A->p, Ap_len, method, algo, level, Context)) ;
+        (GB_void *) A->p, Ap_len, method, algo, level, Werk)) ;
 
     GB_OK (GB_serialize_array (&Ah_Blocks, &Ah_Blocks_size,
         &Ah_Sblocks, &Ah_Sblocks_size, &Ah_nblocks, &Ah_method,
         &Ah_compressed_size, dryrun,
-        (GB_void *) A->h, Ah_len, method, algo, level, Context)) ;
+        (GB_void *) A->h, Ah_len, method, algo, level, Werk)) ;
 
     GB_OK (GB_serialize_array (&Ab_Blocks, &Ab_Blocks_size,
         &Ab_Sblocks, &Ab_Sblocks_size, &Ab_nblocks, &Ab_method,
         &Ab_compressed_size, dryrun,
-        (GB_void *) A->b, Ab_len, method, algo, level, Context)) ;
+        (GB_void *) A->b, Ab_len, method, algo, level, Werk)) ;
 
     GB_OK (GB_serialize_array (&Ai_Blocks, &Ai_Blocks_size,
         &Ai_Sblocks, &Ai_Sblocks_size, &Ai_nblocks, &Ai_method,
         &Ai_compressed_size, dryrun,
-        (GB_void *) A->i, Ai_len, method, algo, level, Context)) ;
+        (GB_void *) A->i, Ai_len, method, algo, level, Werk)) ;
 
     GB_OK (GB_serialize_array (&Ax_Blocks, &Ax_Blocks_size,
         &Ax_Sblocks, &Ax_Sblocks_size, &Ax_nblocks, &Ax_method,
         &Ax_compressed_size, dryrun,
-        (GB_void *) A->x, Ax_len, method, algo, level, Context)) ;
+        (GB_void *) A->x, Ax_len, method, algo, level, Werk)) ;
 
     //--------------------------------------------------------------------------
     // determine the size of the blob
@@ -242,6 +243,14 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     s += Ab_compressed_size ;
     s += Ai_compressed_size ;
     s += Ax_compressed_size ;
+
+    // size of the GrB_NAME and GrB_ELTYPE_STRING, including one nul byte each
+    char *user_name = A->user_name ;
+    size_t user_name_len = (user_name == NULL) ? 0 : strlen (user_name) ;
+    const char *eltype_string = GB_type_name_get (A->type) ;
+    size_t eltype_string_len = (eltype_string == NULL) ? 0 :
+        strlen (eltype_string) ;
+    s += (user_name_len + 1) + (eltype_string_len + 1) ;
 
     //--------------------------------------------------------------------------
     // return the upper bound estimate of the blob size, for dryrun
@@ -362,6 +371,28 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     GB_serialize_to_blob (blob, &s, Ax_Blocks, Ax_Sblocks+1, Ax_nblocks,
         nthreads_max) ;
 
+    //--------------------------------------------------------------------------
+    // append the GrB_NAME and GrB_ELTYPE_STRING to the blob
+    //--------------------------------------------------------------------------
+
+    if (user_name != NULL)
+    { 
+        // write the GrB_NAME of the matrix (including the nul byte)
+//      printf ("serialize user_name %lu:[%s]\n", s, user_name) ;
+        strcpy ((char *) (blob + s), user_name) ;
+        s += user_name_len ;
+    }
+    blob [s++] = 0 ;    // terminate the GrB_NAME with a nul byte
+
+    if (eltype_string != NULL)
+    { 
+        // write the ELTYPE_STRING of the matrix type (including the nul byte)
+//      printf ("serialize eltype_string %lu:[%s]\n", s, eltype_string) ;
+        strcpy ((char *) (blob + s), eltype_string) ;
+        s += eltype_string_len ;
+    }
+    blob [s++] = 0 ;    // terminate the GrB_ELTYPE_STRING with a nul byte
+
     ASSERT (s == blob_size_required) ;
 
     //--------------------------------------------------------------------------
@@ -373,7 +404,7 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
         // GxB_Matrix_serialize: giving the blob to the user; remove it from
         // the list of malloc'd blocks
         #ifdef GB_MEMDUMP
-        printf ("removing blob %p size %ld from memtable\n", blob,
+        printf ("removing blob %p size %ld from memtable\n", blob,  // MEMDUMP
             blob_size_allocated) ;
         #endif
         GB_Global_memtable_remove (blob) ;

@@ -181,9 +181,12 @@ public:
     DECLARE_TYPE_NAME(unsigned char);
     DECLARE_TYPE_NAME(unsigned char&);
     DECLARE_TYPE_NAME(unsigned char*);
-    DECLARE_TYPE_NAME(unsigned int);
-    DECLARE_TYPE_NAME(unsigned int&);
-    DECLARE_TYPE_NAME(unsigned int*);
+//  DECLARE_TYPE_NAME(unsigned int);
+//  DECLARE_TYPE_NAME(unsigned int&);
+//  DECLARE_TYPE_NAME(unsigned int*);
+//  DECLARE_TYPE_NAME(unsigned int32_t);
+//  DECLARE_TYPE_NAME(unsigned int32_t&);
+//  DECLARE_TYPE_NAME(unsigned int32_t*);
     DECLARE_TYPE_NAME(unsigned int64_t);
     DECLARE_TYPE_NAME(unsigned int64_t&);
     DECLARE_TYPE_NAME(unsigned int64_t*);

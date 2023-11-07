@@ -2,17 +2,17 @@
 // GB_assert.h: assertions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-#ifndef GB_ASSERT_H
-#define GB_ASSERT_H
-
 //------------------------------------------------------------------------------
 // debugging definitions
 //------------------------------------------------------------------------------
+
+#undef  GB_ABORT
+#define GB_ABORT GB_Global_abort ( )
 
 #undef ASSERT
 #undef ASSERT_OK
@@ -26,7 +26,7 @@
         if (!(X))                                                           \
         {                                                                   \
             GBDUMP ("assertion failed: " __FILE__ " line %d\n", __LINE__) ; \
-            GB_Global_abort_function ( ) ;                                  \
+            GB_ABORT ;                                                      \
         }                                                                   \
     }
 
@@ -54,42 +54,52 @@
 
 #endif
 
-#define GB_IMPLIES(p,q) (!(p) || (q))
-
 // for finding tests that trigger statement coverage.  If running a test
 // in GraphBLAS/Tcov, the test does not terminate.
-#if 1
+#undef GB_GOTCHA
 #ifdef GBCOVER
-#define GB_GOTCHA                                                   \
-{                                                                   \
-    fprintf (stderr, "Gotcha: " __FILE__ " line: %d\n", __LINE__) ; \
-    GBDUMP ("Gotcha: " __FILE__ " line: %d\n", __LINE__) ;          \
+#define GB_GOTCHA                                                       \
+{                                                                       \
+    fprintf (stderr, "\nGotcha: " __FILE__ " line: %d\n", __LINE__) ;   \
+    GBDUMP ("\nGotcha: " __FILE__ " line: %d\n", __LINE__) ;            \
 }
 #else
-#define GB_GOTCHA                                                   \
-{                                                                   \
-    fprintf (stderr, "gotcha: " __FILE__ " line: %d\n", __LINE__) ; \
-    GBDUMP ("gotcha: " __FILE__ " line: %d\n", __LINE__) ;          \
-    GB_Global_abort_function ( ) ;                                  \
+#define GB_GOTCHA                                                       \
+{                                                                       \
+    fprintf (stderr, "\ngotcha: " __FILE__ " line: %d\n", __LINE__) ;   \
+    GBDUMP ("\ngotcha: " __FILE__ " line: %d\n", __LINE__) ;            \
+    GB_ABORT ;                                                          \
 }
 #endif
-#endif
 
-#ifndef GB_GOTCHA
-#define GB_GOTCHA
-#endif
-
+#undef  GB_HERE
 #define GB_HERE GBDUMP ("%2d: Here: " __FILE__ "\n", __LINE__) ;
-
-// ASSERT (GB_DEAD_CODE) marks code that is intentionally dead, leftover from
-// prior versions of SuiteSparse:GraphBLAS but no longer used in the current
-// version.  The code is kept in case it is required for future versions (in
-// which case, the ASSERT (GB_DEAD_CODE) statement would be removed).
-#define GB_DEAD_CODE 0
 
 //------------------------------------------------------------------------------
 // assertions for checking specific objects
 //------------------------------------------------------------------------------
+
+#undef  ASSERT_TYPE_OK
+#undef  ASSERT_TYPE_OK_OR_NULL
+#undef  ASSERT_BINARYOP_OK
+#undef  ASSERT_INDEXUNARYOP_OK
+#undef  ASSERT_BINARYOP_OK_OR_NULL
+#undef  ASSERT_UNARYOP_OK
+#undef  ASSERT_UNARYOP_OK_OR_NULL
+#undef  ASSERT_SELECTOP_OK
+#undef  ASSERT_SELECTOP_OK_OR_NULL
+#undef  ASSERT_OP_OK
+#undef  ASSERT_OP_OK_OR_NULL
+#undef  ASSERT_MONOID_OK
+#undef  ASSERT_SEMIRING_OK
+#undef  ASSERT_MATRIX_OK
+#undef  ASSERT_MATRIX_OK_OR_NULL
+#undef  ASSERT_VECTOR_OK
+#undef  ASSERT_VECTOR_OK_OR_NULL
+#undef  ASSERT_SCALAR_OK
+#undef  ASSERT_SCALAR_OK_OR_NULL
+#undef  ASSERT_DESCRIPTOR_OK
+#undef  ASSERT_DESCRIPTOR_OK_OR_NULL
 
 #define ASSERT_TYPE_OK(t,name,pr)  \
     ASSERT_OK (GB_Type_check (t, name, pr, NULL))
@@ -154,5 +164,9 @@
 #define ASSERT_DESCRIPTOR_OK_OR_NULL(d,name,pr)  \
     ASSERT_OK_OR_NULL (GB_Descriptor_check (d, name, pr, NULL))
 
-#endif
+#define ASSERT_CONTEXT_OK(c,name,pr)  \
+    ASSERT_OK (GB_context_check (c, name, pr, NULL))
+
+#define ASSERT_CONTEXT_OK_OR_NULL(c,name,pr)  \
+    ASSERT_OK_OR_NULL (GB_context_check (c, name, pr, NULL))
 

@@ -2,10 +2,12 @@
 // GB_ijproperties: check I and determine its properties
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // check a list of indices I and determine its properties
 
@@ -38,7 +40,7 @@ GrB_Info GB_ijproperties        // check I and determine its properties
     bool *I_is_contig,          // true if I is a contiguous list, imin:imax
     int64_t *imin_result,       // min (I)
     int64_t *imax_result,       // max (I)
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -182,7 +184,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         // determine the number of threads to use
         //----------------------------------------------------------------------
 
-        GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+        int nthreads_max = GB_Context_nthreads_max ( ) ;
+        double chunk = GB_Context_chunk ( ) ;
         int nthreads = GB_nthreads (ni, chunk, nthreads_max) ;
         int ntasks = (nthreads == 1) ? 1 : (8 * nthreads) ;
         ntasks = GB_IMIN (ntasks, ni) ;
@@ -314,7 +317,7 @@ GrB_Info GB_ijproperties        // check I and determine its properties
             ASSERT (I_contig   == true) ;
         }
         if (ni == 0)
-        {
+        { 
             // the list is empty
             ASSERT (imin == limit && imax == -1) ;
         }

@@ -2,7 +2,7 @@
 // GB_subref: C = A(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -101,7 +101,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
     const GrB_Index *J,         // index list for C = A(I,J), or GrB_ALL, etc.
     const int64_t nj,           // length of J, or special
     const bool symbolic,        // if true, construct C as symbolic
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -152,7 +152,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
     { 
         // C is constructed with same sparsity as A (bitmap or full)
         return (GB_bitmap_subref (C, C_iso, cscalar, C_is_csc, A, I, ni, J, nj,
-            symbolic, Context)) ;
+            symbolic, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -189,7 +189,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
         &Ch, &Ch_size, &Ap_start, &Ap_start_size, &Ap_end, &Ap_end_size,
         &Cnvec, &need_qsort, &Ikind, &nI, Icolon, &nJ,
         // original input:
-        A, I, ni, J, nj, Context)) ;
+        A, I, ni, J, nj, Werk)) ;
 
     //--------------------------------------------------------------------------
     // phase1: split C=A(I,J) into tasks for phase2 and phase3
@@ -204,7 +204,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
         // computed by phase0:
         Ap_start, Ap_end, Cnvec, need_qsort, Ikind, nI, Icolon,
         // original input:
-        A->vlen, GB_nnz (A), I, Context)) ;
+        A->vlen, GB_nnz (A), I, Werk)) ;
 
     //--------------------------------------------------------------------------
     // phase2: count the number of entries in each vector of C
@@ -218,7 +218,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
         // computed by phase0:
         Ap_start, Ap_end, Cnvec, need_qsort, Ikind, nI, Icolon,
         // original input:
-        A, I, symbolic, Context)) ;
+        A, I, symbolic, Werk)) ;
 
     //--------------------------------------------------------------------------
     // phase3: compute the entries (indices and values) in each vector of C
@@ -237,7 +237,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
         // from the iso test above:
         C_iso, cscalar,
         // original input:
-        C_is_csc, A, I, symbolic, Context)) ;
+        C_is_csc, A, I, symbolic, Werk)) ;
 
     // Cp and Ch have been imported into C->p and C->h, or freed if phase3
     // fails.  Either way, Cp and Ch are set to NULL so that they cannot be

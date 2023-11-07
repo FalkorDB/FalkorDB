@@ -2,7 +2,7 @@ function test125
 %TEST125 test GrB_mxm: row and column scaling
 % all built-in semirings, no typecast, no mask
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [binops, ~, add_ops, types, ~, ~] = GB_spec_opsall ;
@@ -100,7 +100,7 @@ for k1 = 1:length(mult_ops)
             C0 = GB_spec_mxm (C, [ ], [ ], semiring, B, A, dnn);
             GB_spec_compare (C0, C1, identity) ;
 
-            % dump the semiring list to compare with Source/Generated2
+            % dump the semiring list to compare with Source/FactoryKernels
             switch (xtype)
                 case { 'logical' }
                     xtype = 'bool' ;
@@ -136,10 +136,6 @@ for k1 = 1:length(mult_ops)
                             add_opname = 'any' ;
                     end
             end
-
-% This produces a list of all files in Source/Generated1 and Source/Generated2
-% fprintf ('GB_AxB__%s_%s_%s.c\n', add_opname, mult_opname, xtype) ;
-
         end
     end
     fprintf (' %4d', nmult_semirings) ;

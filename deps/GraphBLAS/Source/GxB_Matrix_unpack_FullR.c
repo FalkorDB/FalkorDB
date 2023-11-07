@@ -2,7 +2,7 @@
 // GxB_Matrix_unpack_FullR: unpack a full matrix, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -51,7 +51,7 @@ GrB_Info GxB_Matrix_unpack_FullR  // unpack a full matrix, by row
     { 
         // A = A', done in-place, to put A in by-row format
         GBURBLE ("(transpose) ") ;
-        GB_OK (GB_transpose_in_place (A, false, Context)) ;
+        GB_OK (GB_transpose_in_place (A, false, Werk)) ;
         GB_MATRIX_WAIT (A) ;
     }
 
@@ -80,7 +80,7 @@ GrB_Info GxB_Matrix_unpack_FullR  // unpack a full matrix, by row
         Ax,   Ax_size,  // Ax
         NULL, NULL, NULL,
         &sparsity, &is_csc,                 // full by row
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {

@@ -2,7 +2,7 @@
 // GB_init: initialize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,10 +14,8 @@
 // Result are undefined if multiple user threads simultaneously call GrB_init
 // or GxB_init.
 
-// Per the spec, GrB_finalize must be called as the last GraphBLAS operation.
-// Not even GrB_Matrix_free can be safely called after GrB_finalize.  In the
-// current version of SuiteSparse:GraphBLAS, GrB_finalize does nothing, but in
-// future versions it may do critical work such as freeing a memory pool.
+// GrB_finalize must be called as the last GraphBLAS operation.
+// Not even GrB_Matrix_free can be safely called after GrB_finalize.
 
 // GrB_init or GxB_init define the mode that GraphBLAS will use:  blocking or
 // non-blocking.  With blocking mode, all operations finish before returning to
@@ -25,12 +23,20 @@
 // pending, and are computed only when needed.
 
 // GxB_init is the same as GrB_init except that it also defines the
-// malloc/realloc/free functions to use.
+// malloc/calloc/realloc/free functions to use.
 
 // The realloc function pointer is optional and can be NULL.  If realloc is
 // NULL, it is not used, and malloc/memcpy/free are used instead.
 
+// The calloc function pointer is also optional and can be NULL.
+
+// If the mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU, the 4 function
+// pointers are ignored, and rmm_wrap_malloc/.../rmm_wrap_free are used instead.
+
+#define GB_FREE_ALL ;
 #include "GB.h"
+#include "GB_init.h"
+#include "GB_stringify.h"
 
 //------------------------------------------------------------------------------
 // GB_init
@@ -42,10 +48,11 @@ GrB_Info GB_init            // start up GraphBLAS
 
     // pointers to memory management functions.
     void * (* malloc_function  ) (size_t),          // required
+    void * (* calloc_function  ) (size_t, size_t),  // optional, can be NULL
     void * (* realloc_function ) (void *, size_t),  // optional, can be NULL
     void   (* free_function    ) (void *),          // required
 
-    GB_Context Context      // from GrB_init or GxB_init
+    GB_Werk Werk      // from GrB_init or GxB_init
 )
 {
 
@@ -53,42 +60,63 @@ GrB_Info GB_init            // start up GraphBLAS
     // check inputs
     //--------------------------------------------------------------------------
 
-    #ifdef GBCUDA_DEV
-    printf ("\n==== GBCUDA_DEV enabled: for CUDA development only! ====\n") ;
-    #endif
-
+    GrB_Info info ;
     if (GB_Global_GrB_init_called_get ( ))
     { 
         // GrB_init can only be called once
         return (GrB_INVALID_VALUE) ;
     }
 
-    GB_Global_GrB_init_called_set (true) ;
-
-    if (mode < GrB_NONBLOCKING || mode > GxB_BLOCKING_GPU)
+    if (!(mode == GrB_NONBLOCKING || mode == GrB_BLOCKING ||
+          mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU))
     { 
         // invalid mode
         return (GrB_INVALID_VALUE) ;
     }
 
     //--------------------------------------------------------------------------
+    // establish malloc/calloc/realloc/free
+    //--------------------------------------------------------------------------
+
+    #if defined ( SUITESPARSE_CUDA )
+    if (mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU)
+    {
+        // ignore the memory management function pointers and use rmm_wrap_*
+        malloc_function  = rmm_wrap_malloc ;
+        calloc_function  = rmm_wrap_calloc ;
+        realloc_function = rmm_wrap_realloc ;
+        free_function    = rmm_wrap_free ;
+    }
+    #endif
+
+    if (malloc_function == NULL || free_function == NULL)
+    { 
+        // only malloc and free required.  calloc and/or realloc may be NULL
+        return (GrB_NULL_POINTER) ;
+    }
+
+    GB_Global_GrB_init_called_set (true) ;
+
+    // GrB_init passes in the C11 malloc/calloc/realloc/free.
+
+    GB_Global_malloc_function_set  (malloc_function ) ; // cannot be NULL
+    GB_Global_calloc_function_set  (calloc_function ) ; // ok if NULL
+    GB_Global_realloc_function_set (realloc_function) ; // ok if NULL
+    GB_Global_free_function_set    (free_function   ) ; // cannot be NULL
+
+    GB_Global_malloc_is_thread_safe_set (true) ; // malloc must be thread-safe
+    GB_Global_memtable_clear ( ) ;
+
+    GB_Global_malloc_tracking_set (false) ;
+    GB_Global_nmalloc_clear ( ) ;
+    GB_Global_malloc_debug_set (false) ;
+    GB_Global_malloc_debug_count_set (0) ;
+
+    //--------------------------------------------------------------------------
     // query hardware features for future use
     //--------------------------------------------------------------------------
 
     GB_Global_cpu_features_query ( ) ;
-
-    //--------------------------------------------------------------------------
-    // establish malloc/realloc/free
-    //--------------------------------------------------------------------------
-
-    // GrB_init passes in the ANSI C11 malloc/realloc/free
-
-    GB_Global_malloc_function_set  (malloc_function ) ; // cannot be NULL
-    GB_Global_realloc_function_set (realloc_function) ; // ok if NULL
-    GB_Global_free_function_set    (free_function   ) ; // cannot be NULL
-    GB_Global_malloc_is_thread_safe_set (true) ; // malloc must be thread-safe
-    GB_Global_memtable_clear ( ) ;
-    GB_Global_free_pool_init (true) ;
 
     //--------------------------------------------------------------------------
     // max number of threads
@@ -100,8 +128,9 @@ GrB_Info GB_init            // start up GraphBLAS
     // parallel, from multiple user threads.  The user threads can use
     // any threading library; this has no effect on GraphBLAS.
 
-    GB_Global_nthreads_max_set (GB_Global_omp_get_max_threads ( )) ;
-    GB_Global_chunk_set (GB_CHUNK_DEFAULT) ;
+    GB_Context_nthreads_max_set (NULL, GB_omp_get_max_threads ( )) ;
+    GB_Context_chunk_set        (NULL, GB_CHUNK_DEFAULT) ;
+    GB_Context_gpu_id_set       (NULL, -1) ;
 
     //--------------------------------------------------------------------------
     // initialize the blocking/nonblocking mode
@@ -109,6 +138,23 @@ GrB_Info GB_init            // start up GraphBLAS
 
     // set the mode: blocking or nonblocking
     GB_Global_mode_set (mode) ;
+
+    //--------------------------------------------------------------------------
+    // initialize the GPUs, if present
+    //--------------------------------------------------------------------------
+
+    #if defined ( SUITESPARSE_CUDA )
+    if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
+    {
+        // initialize the GPUs
+        GB_OK (GB_cuda_init ( )) ;
+    }
+    else
+    #endif
+    { 
+        // CUDA not available at compile-time, or not requested at run time
+        GB_Global_gpu_count_set (0) ;
+    }
 
     //--------------------------------------------------------------------------
     // set the global default format
@@ -120,15 +166,6 @@ GrB_Info GB_init            // start up GraphBLAS
     GB_Global_hyper_switch_set (GB_HYPER_SWITCH_DEFAULT) ;
     GB_Global_bitmap_switch_default ( ) ;
     GB_Global_is_csc_set (false) ;
-
-    //--------------------------------------------------------------------------
-    // initialize malloc tracking (testing and debugging only)
-    //--------------------------------------------------------------------------
-
-    GB_Global_malloc_tracking_set (false) ;
-    GB_Global_nmalloc_clear ( ) ;
-    GB_Global_malloc_debug_set (false) ;
-    GB_Global_malloc_debug_count_set (0) ;
 
     //--------------------------------------------------------------------------
     // diagnostic output
@@ -145,29 +182,16 @@ GrB_Info GB_init            // start up GraphBLAS
     GB_Global_timing_clear_all ( ) ;
 
     //--------------------------------------------------------------------------
-    // CUDA initializations
+    // set up the JIT folder locations and compiler flags
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GrB_SUCCESS ;
-    #if defined ( GBCUDA )
-    if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
-    {
-        // initialize the GPUs
-        info = GB_cuda_init ( ) ;
-    }
-    else
-    #endif
-    { 
-        // CUDA not available at compile-time, or not requested at run time
-        GB_Global_gpu_control_set (GxB_GPU_NEVER) ;
-        GB_Global_gpu_count_set (0) ;
-        GB_Global_gpu_chunk_set (GxB_DEFAULT) ;
-    }
+    GB_OK (GB_jitifyer_init ( )) ;
 
     //--------------------------------------------------------------------------
     // return result
     //--------------------------------------------------------------------------
 
-    return (info) ;
+    #pragma omp flush
+    return (GrB_SUCCESS) ;
 }
 

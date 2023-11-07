@@ -2,7 +2,7 @@
 // GB_build: build a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ GrB_Info GB_build               // build matrix
     const GrB_Type xtype,       // type of X array
     const bool is_matrix,       // true if C is a matrix, false if GrB_Vector
     const bool X_iso,           // if true the C is iso and X has size 1 entry
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -290,7 +290,7 @@ GrB_Info GB_build               // build matrix
         dup2,           // operator to assemble duplicates (may be NULL)
         xtype,          // type of the X array
         true,           // burble is OK
-        Context
+        Werk
     )) ;
 
     //--------------------------------------------------------------------------
@@ -321,15 +321,15 @@ GrB_Info GB_build               // build matrix
     // created an iso-valued matrix T, but this is not yet known.  X_iso is
     // false for these methods.  Since it has not yet been conformed to its
     // final sparsity structure, the matrix T is hypersparse, not bitmap.  It
-    // has no zombies or pending tuples, so GB_iso_check does need to handle
+    // has no zombies or pending tuples, so GB_check_if_iso does need to handle
     // those cases.  T->x [0] is the new iso value of T.
 
-    if (!X_iso && GB_iso_check (T, Context))
+    if (!X_iso && GB_check_if_iso (T))
     { 
         // All entries in T are the same; convert T to iso
         GBURBLE ("(post iso) ") ;
         T->iso = true ;
-        GB_OK (GB_convert_any_to_iso (T, NULL, Context)) ;
+        GB_OK (GB_convert_any_to_iso (T, NULL)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -340,6 +340,6 @@ GrB_Info GB_build               // build matrix
     ASSERT (!GB_ZOMBIES (T)) ;
     ASSERT (!GB_JUMBLED (T)) ;
     ASSERT (!GB_PENDING (T)) ;
-    return (GB_transplant_conform (C, C->type, &T, Context)) ;
+    return (GB_transplant_conform (C, C->type, &T, Werk)) ;
 }
 

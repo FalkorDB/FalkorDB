@@ -21,7 +21,7 @@ function gbtest
 %
 % See also GrB.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % gbtest3 requires ../demo/dnn_builtin.m and ../demo/dnn_builtin2gb.m.

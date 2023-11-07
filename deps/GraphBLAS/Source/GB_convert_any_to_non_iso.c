@@ -2,7 +2,7 @@
 // GB_convert_any_to_non_iso: convert a matrix from iso to non-iso
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,8 +12,8 @@
 GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
 (
     GrB_Matrix A,           // input/output matrix
-    bool initialize,        // if true, copy the iso value to all of A->x
-    GB_Context Context
+    bool initialize         // if true, copy the iso value to all of A->x;
+                            // otherise, just copy it back to A->x [0].
 )
 {
 
@@ -34,10 +34,7 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
 
     size_t asize = A->type->size ;
     GB_void scalar [GB_VLA(asize)] ;
-    if (initialize)
-    { 
-        memcpy (scalar, A->x, asize) ;
-    }
+    memcpy (scalar, A->x, asize) ;
 
     //--------------------------------------------------------------------------
     // ensure A->x is large enough, and not shallow
@@ -66,12 +63,18 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
     }
 
     //--------------------------------------------------------------------------
-    // copy the first entry into all of A->x
+    // copy the first entry into all of A->x, or to just A->x [0]
     //--------------------------------------------------------------------------
 
     if (initialize)
     { 
-        GB_iso_expand (A->x, anz, scalar, asize, Context) ;
+        // Ax [0:anz-1] = scalar
+        GB_expand_iso (A->x, anz, scalar, asize) ;
+    }
+    else
+    { 
+        // Ax [0] = scalar
+        memcpy (A->x, scalar, asize) ;
     }
 
     //--------------------------------------------------------------------------

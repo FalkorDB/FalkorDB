@@ -2,7 +2,7 @@
 // GB_Mask_compatible: check input and operators for type compatibility
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ GrB_Info GB_Mask_compatible     // check type and dimensions of mask
     const GrB_Matrix C,         // C<M>= ...
     const GrB_Index nrows,      // size of output if C is NULL (see GB*assign)
     const GrB_Index ncols,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 

@@ -1,7 +1,7 @@
 function test152
 %TEST152 test C = A+B for dense A, B, and C
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest152: test binops with C=A+B, all dense\n') ;
@@ -24,7 +24,9 @@ Bmat = 20 * Bmat5 ;
 C.matrix = sparse (ones (n)) ;
 C.pattern = sparse (true (n)) ;
 A.pattern = sparse (true (n)) ;
+A.sparsity = 8 ;
 B.pattern = sparse (true (n)) ;
+B.sparsity = 8 ;
 
 for k1 = 1:length (binops)
     opname = binops {k1} ;
@@ -68,10 +70,12 @@ for k1 = 1:length (binops)
 
         fprintf ('.') ;
 
-        C1 = GB_spec_Matrix_eWiseAdd (C, [ ], [ ], op, A, B, [ ]) ;
-        C2 = GB_mex_Matrix_eWiseAdd  (C, [ ], [ ], op, A, B, [ ]) ;
-        GB_spec_compare (C1, C2, 0, tol) ;
-
+        for C_sparsity = [2 8]
+            C.sparsity = C_sparsity ;
+            C1 = GB_spec_Matrix_eWiseAdd (C, [ ], [ ], op, A, B, [ ]) ;
+            C2 = GB_mex_Matrix_eWiseAdd  (C, [ ], [ ], op, A, B, [ ]) ;
+            GB_spec_compare (C1, C2, 0, tol) ;
+        end
     end
 end
 

@@ -160,7 +160,8 @@ private:
     {
     private:
         std::string _file_name ;
-        std::string _dir_name = "~/.GraphBLAS_kernel_cache/";
+        // FIXME this isn't used, is it?
+        std::string _dir_name = "~/.GraphBLAS_kernel_cache/";   // FIXME
         bool successful_read = false;
         bool successful_write = false;
     public:

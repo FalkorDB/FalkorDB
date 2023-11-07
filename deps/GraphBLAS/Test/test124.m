@@ -1,7 +1,7 @@
 function test124
 %TEST124 GrB_extract, trigger case 6
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test124: GrB_extract, trigger case 6\n') ;

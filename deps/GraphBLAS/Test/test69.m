@@ -1,7 +1,7 @@
 function test69
 %TEST69 test GrB_assign with aliased inputs, C<C>(:,:) = accum(C(:,:),C)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test69 ------------------  assign alias tests\n') ;

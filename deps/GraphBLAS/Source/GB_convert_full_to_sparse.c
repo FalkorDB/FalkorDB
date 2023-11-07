@@ -2,17 +2,18 @@
 // GB_convert_full_to_sparse: convert a matrix from full to sparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 #include "GB.h"
 
 GrB_Info GB_convert_full_to_sparse      // convert matrix from full to sparse
 (
-    GrB_Matrix A,               // matrix to convert from full to sparse
-    GB_Context Context
+    GrB_Matrix A                // matrix to convert from full to sparse
 )
 {
 
@@ -60,7 +61,8 @@ GrB_Info GB_convert_full_to_sparse      // convert matrix from full to sparse
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (anz, chunk, nthreads_max) ;
 
     //--------------------------------------------------------------------------

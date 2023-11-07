@@ -2,7 +2,7 @@
 // GrB_Matrix_removeElement: remove a single entry from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -76,21 +76,14 @@ static inline bool GB_removeElement     // return true if found
             // C is hypersparse: look for j in hyperlist C->h [0 ... C->nvec-1]
             //------------------------------------------------------------------
 
-            int64_t k ;
-            if (C->Y == NULL)
-            { 
-                // C is sparse but does not yet have a hyper_hash
-                k = 0 ;
-                found = GB_lookup (true, Ch, Cp, C->vlen, &k,
-                    C->nvec-1, j, &pC_start, &pC_end) ;
-            }
-            else
-            { 
-                // C is sparse, with a hyper_hash that is already built
-                k = GB_hyper_hash_lookup (Cp, C->Y->p, C->Y->i, C->Y->x,
-                    C->Y->vdim-1, j, &pC_start, &pC_end) ;
-                found = (k >= 0) ;
-            }
+            const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+            const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+            const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+            const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
+            const int64_t cnvec = C->nvec ;
+            int64_t k = GB_hyper_hash_lookup (Ch, cnvec, Cp, C_Yp, C_Yi, C_Yx,
+                C_hash_bits, j, &pC_start, &pC_end) ;
+            found = (k >= 0) ;
             if (!found)
             { 
                 // vector j is empty
@@ -152,7 +145,7 @@ GrB_Info GB_Matrix_removeElement
     GrB_Matrix C,               // matrix to remove entry from
     GrB_Index row,              // row index
     GrB_Index col,              // column index
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -166,19 +159,19 @@ GrB_Info GB_Matrix_removeElement
         if (GB_IS_FULL (C))
         { 
             // convert C from full to sparse
-            GB_OK (GB_convert_to_nonfull (C, Context)) ;
+            GB_OK (GB_convert_to_nonfull (C, Werk)) ;
         }
         else
         { 
             // C is sparse or hypersparse, and jumbled
-            GB_OK (GB_wait (C, "C (removeElement:jumbled)", Context)) ;
+            GB_OK (GB_wait (C, "C (removeElement:jumbled)", Werk)) ;
         }
         ASSERT (!GB_IS_FULL (C)) ;
         ASSERT (!GB_ZOMBIES (C)) ;
         ASSERT (!GB_JUMBLED (C)) ;
         ASSERT (!GB_PENDING (C)) ;
         // remove the entry
-        return (GB_Matrix_removeElement (C, row, col, Context)) ;
+        return (GB_Matrix_removeElement (C, row, col, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -240,7 +233,7 @@ GrB_Info GB_Matrix_removeElement
     if (C_is_pending)
     { 
         GrB_Info info ;
-        GB_OK (GB_wait (C, "C (removeElement:pending tuples)", Context)) ;
+        GB_OK (GB_wait (C, "C (removeElement:pending tuples)", Werk)) ;
         ASSERT (!GB_ZOMBIES (C)) ;
         ASSERT (!GB_JUMBLED (C)) ;
         ASSERT (!GB_PENDING (C)) ;
@@ -264,6 +257,6 @@ GrB_Info GrB_Matrix_removeElement
 { 
     GB_WHERE (C, "GrB_Matrix_removeElement (C, row, col)") ;
     GB_RETURN_IF_NULL_OR_FAULTY (C) ;
-    return (GB_Matrix_removeElement (C, row, col, Context)) ;
+    return (GB_Matrix_removeElement (C, row, col, Werk)) ;
 }
 

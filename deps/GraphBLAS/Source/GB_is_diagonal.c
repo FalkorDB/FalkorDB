@@ -2,21 +2,21 @@
 // GB_is_diagonal: check if A is a diagonal matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 // Returns true if A is a square diagonal matrix, with all diagonal entries
 // present.  All pending tuples are ignored.  Zombies are treated as entries.
 
 #include "GB_mxm.h"
-#include "GB_atomics.h"
 
 bool GB_is_diagonal             // true if A is diagonal
 (
-    const GrB_Matrix A,         // input matrix to examine
-    GB_Context Context
+    const GrB_Matrix A          // input matrix to examine
 )
 {
 
@@ -52,7 +52,7 @@ bool GB_is_diagonal             // true if A is diagonal
     if (GB_IS_FULL (A))
     { 
         // A is full, and is diagonal only if 1-by-1, but always return
-        // false so that GB_AxB_rowscale and GB_AxB_colscale are not used
+        // false so that GB_rowscale and GB_colscale are not used
         // by GB_reduce_to_vector.
         return (false) ;
     }
@@ -74,7 +74,8 @@ bool GB_is_diagonal             // true if A is diagonal
 
     // Break the work into lots of tasks so the early-exit can be exploited.
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (n, chunk, nthreads_max) ;
     int ntasks = (nthreads == 1) ? 1 : (256 * nthreads) ;
     ntasks = GB_IMIN (ntasks, n) ;

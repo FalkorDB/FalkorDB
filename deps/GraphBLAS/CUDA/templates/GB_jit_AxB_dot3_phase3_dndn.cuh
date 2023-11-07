@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// AxB_dot3_phase3_dndn.cu 
+// GB_jit_AxB_dot3_phase3_dndn.cuh:
 //------------------------------------------------------------------------------
 
-// This CUDA kernel produces the semi-ring product of two
+// This CUDA kernel produces the semiring product of two
 // dense matrices of types T_A and T_B and common index space size n, to a  
 // output matrix of type T_C. The matrices are dense, with uniform
 // non-zeros and sparsity patterns. 
@@ -30,7 +30,7 @@
 //  GrB_Matrix B           <- input matrix B
 //  int sz                 <- size parameter (not used) 
 
-/* fixme: This kernel needs to be split into 4 methods:
+/* FIXME: This kernel needs to be split into 4 methods:
 
         (A bitmap) * (B bitmap)
         (A full ) * (B bitmap)
@@ -47,7 +47,7 @@
 #include <limits>
 #include <cstdint>
 #include "GB_cuda_kernel.h"
-
+#include "GB_mxm_shared_definitions.h"
 #include <cooperative_groups.h>
 
 // Using tile size fixed at compile time, we don't need shared memory
@@ -55,45 +55,28 @@
 
 using namespace cooperative_groups;
 
-template< typename T, int warp_sz>
-__inline__ __device__ T warp_ReduceSum(thread_block_tile<warp_sz> g, T val)
+//------------------------------------------------------------------------------
+// warp_ReduceSum
+//------------------------------------------------------------------------------
+
+template< typename T_Z, int warp_sz>
+__inline__ __device__ T_Z warp_ReduceSum(thread_block_tile<warp_sz> g, T_Z val)
 {
     // Each iteration halves the number of active threads
     // Each thread adds its partial sum[i] to sum[lane+i]
+    // FIXME: only works if sizeof(T_Z) <= 32 bytes
+    // FIXME: the ANY monoid needs the cij_exists for each thread
     for (int i = g.size() / 2; i > 0; i /= 2)
     {
-        T next = g.shfl_down( val, i) ;
+        T_Z next = g.shfl_down( val, i) ;
         GB_ADD( val, val, next ); 
     }
     return val; // note: only thread 0 will return full sum
 }
 
-template<typename T, int warpSize >
-__inline__ __device__
-T block_ReduceSum(thread_block g, T val, T Ident)
-{
-  static __shared__ T shared[warpSize]; // Shared mem for 32 partial sums
-  int lane = threadIdx.x % warpSize;
-  int wid = threadIdx.x / warpSize;
-  thread_block_tile<warpSize> tile = tiled_partition<warpSize>(g);
-
-  // Each warp performs partial reduction
-  val = warp_ReduceSum< T, warpSize>(tile, val);    
-
-  if (lane==0) shared[wid] = val; // Write reduced value to shared memory
-
-  //tile.sync();                    // Wait for all partial reductions
-
-  if (wid > 0 ) return val;
-
-  //read from shared memory only if that warp existed
-  val = (threadIdx.x < blockDim.x / warpSize) ? shared[lane] :  Ident  ;
-
-  if (wid==0) val = warp_ReduceSum< T, warpSize>(tile,val); //Final reduce within first warp
-
-  return val;
-}
-
+//------------------------------------------------------------------------------
+// AxB_dot3_phase3_dndn
+//------------------------------------------------------------------------------
 
 template<
     typename T_C, typename T_A, typename T_B,
@@ -149,19 +132,14 @@ __global__ void AxB_dot3_phase3_dndn
         int64_t i = Mi[pair_id];
         int64_t kk = Ci[pair_id] >> 4;      // FIXME: can remove ">> 4"
         bool cij_exists = false ;
-//      T_Z cij = GB_IDENTITY ;
-        GB_DECLARE_MONOID_IDENTITY (cij) ;
+        GB_DECLARE_IDENTITY (cij) ;         // GB_Z_TYPE cij = identity
 
         // skip if C(i,j) is a prezombie
         if (kk >= 0)
         {
 
             // j = kk or j = Mh [kk] if C and M are hypersparse
-            #if GB_M_IS_HYPER
-            int64_t j = Mh [kk] ;
-            #else
-            int64_t j = kk ;
-            #endif
+            int64_t j = GBH_M (Mh, kk) ;
 
             int64_t pA     = (A->vlen)*i;
             int64_t pA_end = pA +(A->vlen);
@@ -182,11 +160,11 @@ __global__ void AxB_dot3_phase3_dndn
             #if GB_A_IS_FULL && GB_B_IS_FULL
             {
                 cij_exists = true ;
-                for ( k = threadIdx.x ; k < nnzA ; k += s)
+                for (int64_t k = threadIdx.x ; k < nnzA ; k += s)
                 { 
                     // cij += A(k,i) * B(k,j)
-                    GB_GETA (aki, Ax, pA+k) ;           // aki = A(k,i)
-                    GB_GETB (bkj, Bx, pB+k) ;           // bkj = B(k,j)
+                    GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
+                    GB_GETB (bkj, Bx, pB+k, ) ;           // bkj = B(k,j)
                     GB_MULTADD ( cij, aki, bkj, i, k, j ) ; // cij += aki * bkj
                 }
             }
@@ -194,8 +172,8 @@ __global__ void AxB_dot3_phase3_dndn
             {
                 for ( int64_t k = threadIdx.x ; k < nnzA ; k += s)
                 { 
-                    GB_GETA (aki, Ax, pA+k) ;           // aki = A(k,i)
-                    GB_GETB (bkj, Bx, pB+k) ;           // bkj = B(k,j)
+                    GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
+                    GB_GETB (bkj, Bx, pB+k, ) ;           // bkj = B(k,j)
                     int8_t b = (Ab [pA+k] && Bb [pB+k]) ;
                     cij_exists |= b ;
                     if (b)
@@ -210,8 +188,8 @@ __global__ void AxB_dot3_phase3_dndn
                 { 
                     if (Bb [pB+k])
                     {
-                        GB_GETA (aki, Ax, pA+k) ;           // aki = A(k,i)
-                        GB_GETB (bkj, Bx, pB+k) ;           // bkj = B(k,j)
+                        GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
+                        GB_GETB (bkj, Bx, pB+k, ) ;           // bkj = B(k,j)
                         GB_MULTADD ( cij, aki, bkj, i, k, j ) ;        // cij += aki * bkj
                         cij_exists = true ;
                     }
@@ -223,8 +201,8 @@ __global__ void AxB_dot3_phase3_dndn
                 { 
                     if (Ab [pB+k])
                     {
-                        GB_GETA (aki, Ax, pA+k) ;           // aki = A(k,i)
-                        GB_GETB (bkj, Bx, pB+k) ;           // bkj = B(k,j)
+                        GB_GETA (aki, Ax, pA+k, ) ;           // aki = A(k,i)
+                        GB_GETB (bkj, Bx, pB+k, ) ;           // bkj = B(k,j)
                         GB_MULTADD ( cij, aki, bkj, i, k, j ) ;        // cij += aki * bkj
                         cij_exists = true ;
                     }
@@ -233,9 +211,9 @@ __global__ void AxB_dot3_phase3_dndn
             #endif
         }
 
-        //--------------------------------------------------------------------------
+        //----------------------------------------------------------------------
         // reduce per-thread sums to a single scalar
-        //--------------------------------------------------------------------------
+        //----------------------------------------------------------------------
 
         // Do vote here for control.
         thread_block_tile<32> tile = tiled_partition<32>( this_thread_block() );
@@ -243,6 +221,7 @@ __global__ void AxB_dot3_phase3_dndn
         tile.sync();
 
         #if !GB_C_ISO
+        // FIXME: the ANY monoid needs the cij_exists for each thread
         cij = warp_ReduceSum<T_Z, 32> ( tile, cij);
         #endif
 
@@ -251,25 +230,22 @@ __global__ void AxB_dot3_phase3_dndn
         {
             if (cij_exists)
             {
-               //printf("tid: %d final sum after reduce = %d\n", threadIdx.x, sum);
-               GB_PUTC( Cx[pair_id]=(T_C)cij ) ;
-               Ci[pair_id]=i ;
+                GB_PUTC (cij, Cx, pair_id) ;        // Cx [pair_id] = (T_C) cij
+                Ci [pair_id] = i ;
             }
             else
             {
-               zc++;
-               Ci[pair_id]=GB_FLIP (i) ;
+                // cij is a zombie
+                zc++;
+                Ci [pair_id] = GB_FLIP (i) ;
             }
         }
         //__syncthreads ( ) ;
 
-        if( tid ==0 && zc > 0)
+        if( threadIdx.x ==0 && zc > 0)
         {
-    //      printf("warp %d zombie count = %d, nzombies = %d\n", blockIdx.x, zc, C->nzombies);
-            atomicAdd( (unsigned long long int*)&(C->nzombies), (unsigned long long int)zc);
-    //      printf(" Czombie = %lld\n",C->nzombies);
+            GB_cuda_atomic_add <int64_t>( &(C->nzombies), zc) ;
         }
-
     }
 }
 
