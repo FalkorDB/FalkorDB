@@ -191,7 +191,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [jedis][jedis-url] | Java | MIT | [Redis][redis-url] | ![Stars][jedis-stars] | [Maven][jedis-package]||
 | [redis-py][redis-py-url] | Python | MIT | [Redis][redis-url] | ![Stars][redis-py-stars] | [pypi][redis-py-package]||
-| [node-falkordb][node-falkordb-url] | Node.JS | MIT | [Redis][redis-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
+| [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][redis-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
 | [redgraph][redgraph-url]                                  | Ruby       | MIT     | [pzac][redgraph-author]                | [![redgraph-stars]][redgraph-url]                                 | [GitHub][redgraph-url] ||
@@ -209,6 +209,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 | [RedisGraph.jl][RedisGraph.jl-url]                        | Julia      | MIT     | [xyxel][RedisGraph.jl-author]               | [![RedisGraph.jl-stars]][RedisGraph.jl-url]                       | [GitHub][RedisGraph.jl-url] ||
 
 [redis-url]: https://redis.com
+[falkordb-url]: https://www.falkordb.com
 
 [redis-py-url]: https://github.com/redis/redis-py
 [redis-py-stars]: https://img.shields.io/github/stars/redis/redis-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
