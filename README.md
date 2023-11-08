@@ -174,13 +174,13 @@ Depending on your client of choice, the exact method for doing that may vary.
 #### Python example
 
 This code snippet shows how to use FalkorDB with raw Redis commands from Python via
-[redis-py](https://github.com/andymccurdy/redis-py):
+[falkordb-py](https://github.com/andymccurdy/falkordb-py):
 
 ```Python
-import redis
+import falkordb
 
-r = redis.StrictRedis()
-reply = r.execute_command('GRAPH.QUERY', 'social', "CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
+r = falkordb.Redis(host='localhost', port=6379, db=0)
+reply = r.graph().query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
 ```
 
 ### Client libraries
@@ -190,7 +190,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [jedis][jedis-url] | Java | MIT | [Redis][redis-url] | ![Stars][jedis-stars] | [Maven][jedis-package]||
-| [redis-py][redis-py-url] | Python | MIT | [Redis][redis-url] | ![Stars][redis-py-stars] | [pypi][redis-py-package]||
+| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
 | [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
@@ -211,9 +211,9 @@ Some languages have client libraries that provide support for FalkorDB's command
 [redis-url]: https://redis.com
 [falkordb-url]: https://www.falkordb.com
 
-[redis-py-url]: https://github.com/redis/redis-py
-[redis-py-stars]: https://img.shields.io/github/stars/redis/redis-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[redis-py-package]: https://pypi.python.org/pypi/redis
+[falkordb-py-url]: https://github.com/falkordb/falkordb-py
+[falkordb-py-stars]: https://img.shields.io/github/stars/falkordb/falkordb-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-py-package]: https://pypi.python.org/pypi/falkordb
 
 [jedis-url]: https://github.com/redis/jedis
 [jedis-stars]: https://img.shields.io/github/stars/redis/jedis.svg?style=social&amp;label=Star&amp;maxAge=2592000
