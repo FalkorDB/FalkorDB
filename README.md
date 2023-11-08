@@ -174,12 +174,12 @@ Depending on your client of choice, the exact method for doing that may vary.
 #### Python example
 
 This code snippet shows how to use FalkorDB with raw Redis commands from Python via
-[falkordb-py](https://github.com/andymccurdy/falkordb-py):
+[redis-py](https://github.com/redis/redis-py):
 
 ```Python
-import falkordb
+import redis
 
-r = falkordb.Redis(host='localhost', port=6379, db=0)
+r = redis.Redis(host='localhost', port=6379, db=0)
 reply = r.graph().query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
 ```
 
