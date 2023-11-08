@@ -190,7 +190,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [jedis][jedis-url] | Java | MIT | [Redis][redis-url] | ![Stars][jedis-stars] | [Maven][jedis-package]||
-| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
+| [redis-py][redis-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][redis-py-stars] | [pypi][redis-py-package]||
 | [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
@@ -211,9 +211,9 @@ Some languages have client libraries that provide support for FalkorDB's command
 [redis-url]: https://redis.com
 [falkordb-url]: https://www.falkordb.com
 
-[falkordb-py-url]: https://github.com/falkordb/falkordb-py
-[falkordb-py-stars]: https://img.shields.io/github/stars/falkordb/falkordb-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[falkordb-py-package]: https://pypi.python.org/pypi/falkordb
+[redis-py-url]: https://github.com/redis/redis-py
+[redis-py-stars]: https://img.shields.io/github/stars/redis/redis-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[redis-py-package]: https://pypi.python.org/pypi/redis
 
 [jedis-url]: https://github.com/redis/jedis
 [jedis-stars]: https://img.shields.io/github/stars/redis/jedis.svg?style=social&amp;label=Star&amp;maxAge=2592000
