@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "execution_plan_util.h"
@@ -109,16 +108,16 @@ OpBase *ExecutionPlan_LocateOpDepth
 // returns all operations of a certain type in a execution plan
 void ExecutionPlan_LocateOps
 (
-	OpBase ***plans,  // array in which ops are stored
-	OpBase *root,     // root operation of the plan to traverse
-	OPType type       // operation type to search
+	OpBase ***ops,  // array in which ops are stored
+	OpBase *root,   // root operation of the plan to traverse
+	OPType type     // operation type to search
 ) {
 	if(root->type == type) {
-		array_append(*plans, root);
+		array_append(*ops, root);
 	}
 
 	for(uint i = 0; i < root->childCount; i++) {
-		ExecutionPlan_LocateOps(plans, root->children[i], type);
+		ExecutionPlan_LocateOps(ops, root->children[i], type);
 	}
 }
 

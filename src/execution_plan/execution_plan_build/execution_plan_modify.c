@@ -141,28 +141,41 @@ void ExecutionPlan_ReplaceOp(ExecutionPlan *plan, OpBase *a, OpBase *b) {
 	ExecutionPlan_RemoveOp(plan, a);
 }
 
-void ExecutionPlan_RemoveOp(ExecutionPlan *plan, OpBase *op) {
-	if(op->parent == NULL) {
-		// Removing execution plan root.
+void ExecutionPlan_RemoveOp
+(
+	ExecutionPlan *plan,
+	OpBase *op
+) {
+	if(plan->root == op) {
+		// removing plan's root
+		ASSERT(op->parent == NULL);
 		ASSERT(op->childCount == 1);
-		// Assign child as new root.
+		// assign child as new root
 		plan->root = op->children[0];
-		// Remove new root's parent pointer.
+		// remove new root's parent pointer
 		plan->root->parent = NULL;
 	} else {
 		OpBase *parent = op->parent;
-		if(op->childCount > 0) {
-			// In place replacement of the op first branch instead of op.
-			_ExecutionPlan_ParentReplaceChild(op->parent, op, op->children[0]);
-			// Add each of op's children as a child of op's parent.
-			for(int i = 1; i < op->childCount; i++) _OpBase_AddChild(parent, op->children[i]);
+		if(parent != NULL) {
+			if(op->childCount > 0) {
+				// in place replacement of the op first branch instead of op
+				_ExecutionPlan_ParentReplaceChild(op->parent, op,
+						op->children[0]);
+				// add each of op's children as a child of op's parent
+				for(int i = 1; i < op->childCount; i++) {
+					_OpBase_AddChild(parent, op->children[i]);
+				}
+			} else {
+				// remove op from its parent
+				_OpBase_RemoveChild(op->parent, op);
+			}
 		} else {
-			// Remove op from its parent.
-			_OpBase_RemoveChild(op->parent, op);
+			ASSERT(op->childCount == 1);
+			op->children[0]->parent = NULL;
 		}
 	}
 
-	// Clear op.
+	// clear op
 	op->parent = NULL;
 	rm_free(op->children);
 	op->children = NULL;

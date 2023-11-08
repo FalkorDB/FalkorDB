@@ -114,7 +114,6 @@ class testMultiLabel():
 
     # Validate behavior of index scans on multi-labeled nodes
     def test05_index_scan(self):
-
         query_result = create_node_range_index(graph, 'L1', 'v', sync=True)
         self.env.assertEquals(query_result.indices_created, 1)
 
@@ -158,16 +157,22 @@ class testMultiLabel():
 
     # Validate that OPTIONAL MATCH enforces multi-label constraints
     def test07_multi_label_optional_match(self):
-        # Traverse to a multi-label destination in an OPTIONAL MATCH
-        query = """MATCH (a:L1) OPTIONAL MATCH (a)-[]->(b:L2:L1) RETURN labels(a) AS la, labels(b) AS lb ORDER BY la, lb"""
+        # traverse to a multi-label destination in an OPTIONAL MATCH
+        query = """MATCH (a:L1)
+                   OPTIONAL MATCH (a)-[]->(b:L2:L1)
+                   RETURN labels(a) AS la, labels(b) AS lb
+                   ORDER BY la, lb"""
         query_result = graph.query(query)
         expected_result = [[["L0", "L1"], None],
                            [["L1"], ["L1", "L2"]],
                            [["L1", "L2"], None]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
-        # Specify an additional label for the source node in the OPTIONAL MATCH
-        query = """MATCH (a:L0) OPTIONAL MATCH (a:L1)-[]->(b:L1) RETURN labels(a) AS la, labels(b) AS lb ORDER BY la, lb"""
+        # specify an additional label for the source node in the OPTIONAL MATCH
+        query = """MATCH (a:L0)
+                   OPTIONAL MATCH (a:L1)-[]->(b:L1)
+                   RETURN labels(a) AS la, labels(b) AS lb
+                   ORDER BY la, lb"""
         query_result = graph.query(query)
         expected_result = [[["L0", "L1"], ["L1"]]]
         self.env.assertEquals(query_result.result_set, expected_result)

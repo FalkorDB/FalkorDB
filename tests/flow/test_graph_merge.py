@@ -593,9 +593,9 @@ class testGraphMergeFlow(FlowTestsBase):
         graph = Graph(redis_con, "merge_reuse")
         query = """
         CREATE (m:L1 {v: "abc"})
-        CREATE (u:L2 {v: "x"})
-        CREATE (n:L2 {v: "y"})
-        CREATE (:L2 {v: 'y'})
+        CREATE (u:L2 {v: 'x'})
+        CREATE (n:L2 {v: 'y'})
+        CREATE (x:L2 {v: 'y'})
         CREATE (u)-[:R]->(m), (u)-[:R]->(m)
         CREATE (n)-[:R]->(m), (n)-[:R]->(m)"""
         graph.query(query)
@@ -611,8 +611,8 @@ class testGraphMergeFlow(FlowTestsBase):
 
         res = graph.query(query)
         self.env.assertEquals(res.nodes_created, 0)
-        self.env.assertEquals(res.relationships_created, 0)
-        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y']])
+        self.env.assertEquals(res.relationships_created, 2)
+        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y'],['abcd', 'x', 'y']])
 
     def test30_record_clone_under_merge(self):
         # the following operations
