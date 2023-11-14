@@ -197,18 +197,28 @@ bool buffer_socket_read
 // write data from the buffer to the socket
 bool buffer_socket_write
 (
-	buffer_index_t *buf,  // buffer
-	socket_t socket       // socket
+	buffer_index_t *from_buf,  // from buffer
+	buffer_index_t *to_buf,    // to buffer
+	socket_t socket            // socket
 ) {
-	ASSERT(buf != NULL);
+	ASSERT(from_buf != NULL);
+	ASSERT(to_buf != NULL);
+	ASSERT(from_buf->buf == to_buf->buf);
+	ASSERT(buffer_index_diff(to_buf, from_buf) > 0);
 	ASSERT(socket > 0);
 
-	for(int32_t i = 0; i < buf->chunk; i++) {
-		if(!socket_write_all(socket, buf->buf->chunks[i], BUFFER_CHUNK_SIZE)) {
+	if(from_buf->chunk == to_buf->chunk) {
+		return socket_write_all(socket, from_buf->buf->chunks[from_buf->chunk] + from_buf->offset, to_buf->offset - from_buf->offset);
+	}
+	if(!socket_write_all(socket, from_buf->buf->chunks[from_buf->chunk] + from_buf->offset, BUFFER_CHUNK_SIZE - from_buf->offset)) {
+		return false;
+	}
+	for(int32_t i = from_buf->chunk + 1; i < to_buf->chunk; i++) {
+		if(!socket_write_all(socket, from_buf->buf->chunks[i], BUFFER_CHUNK_SIZE)) {
 			return false;
 		}
 	}
-	return socket_write_all(socket, buf->buf->chunks[buf->chunk], buf->offset);
+	return socket_write_all(socket, to_buf->buf->chunks[to_buf->chunk], to_buf->offset);
 }
 
 // write a uint8_t to the buffer
