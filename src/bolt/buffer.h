@@ -95,8 +95,9 @@ bool buffer_socket_read
 // write data from the buffer to the socket
 bool buffer_socket_write
 (
-	buffer_index_t *buf,  // buffer
-	socket_t socket       // socket
+	buffer_index_t *from_buf,  // from buffer
+	buffer_index_t *to_buf,    // to buffer
+	socket_t socket            // socket
 );
 
 // write a uint8_t to the buffer
