@@ -307,9 +307,9 @@ void ResultSet_EmitBoltStats
 	if(set->stats.relationships_deleted > 0) stats++;
 	if(set->stats.relationships_created > 0) stats++;
 	if(stats > 0) {
-		bolt_reply_map(set->bolt_client, 1);
+		bolt_reply_map(set->bolt_client, 2);
 		bolt_reply_string(set->bolt_client, "stats", 5);
-		bolt_reply_map(set->bolt_client, stats + 2);
+		bolt_reply_map(set->bolt_client, stats);
 		if(set->stats.index_creation) {
 			bolt_reply_string(set->bolt_client, "indexes-added", 13);
 			bolt_reply_int(set->bolt_client, set->stats.indices_created);
@@ -359,11 +359,9 @@ void ResultSet_EmitBoltStats
 			bolt_reply_int(set->bolt_client, set->stats.relationships_created);
 		}
 	} else {
-		bolt_reply_map(set->bolt_client, 2);
+		bolt_reply_map(set->bolt_client, 1);
 	}
-	bolt_reply_string(set->bolt_client, "t_last", 5);
-	bolt_reply_int8(set->bolt_client, 1);
-	bolt_reply_string(set->bolt_client, "result_consumed_after", 21);
+	bolt_reply_string(set->bolt_client, "t_last", 6);
 	bolt_reply_int8(set->bolt_client, 1);
 
 	bolt_client_end_message(set->bolt_client);
