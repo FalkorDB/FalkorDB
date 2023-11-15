@@ -11,19 +11,12 @@
 // argument operation holds an internal Record that it will emit exactly once
 typedef struct {
 	OpBase op;
-	Record r;             // record to emit on consume
-	Record reset_record;  // last emitted record
+	OpBase *producer;     // operation providing us with data
 } Argument;
 
 OpBase *NewArgumentOp
 (
 	const ExecutionPlan *plan,
 	const char **variables
-);
-
-void Argument_AddRecord
-(
-	Argument *arg,
-	Record r
 );
 

@@ -325,6 +325,37 @@ uint ExecutionPlan_CollectUpwards
 	return i;
 }
 
+// collect all taps reachable from 'root'
+// retuns an array of operations which caller must free
+OpBase **ExecutionPlan_CollectTaps
+(
+	OpBase *root  // root of operation tree
+) {
+	ASSERT(root != NULL);
+
+	OpBase **ops  = array_new(OpBase*, OpBase_ChildCount(root));
+	OpBase **taps = array_new(OpBase*, OpBase_ChildCount(root));
+
+	array_append(ops, root);
+	while(array_len(ops) != 0) {
+		OpBase *op = array_pop(ops);
+		uint n = OpBase_ChildCount(op);
+
+		// add op to taps if it has no childre
+		if(n == 0) {
+			array_append(taps, op);
+		} else {
+			// traverse op's children
+			for(uint i = 0; i < n; i++) {
+				array_append(ops, OpBase_GetChild(op, i));
+			}
+		}
+	}
+
+	array_free(ops);
+	return taps;
+}
+
 // collect all aliases that have been resolved by the given tree of operations
 void ExecutionPlan_BoundVariables
 (

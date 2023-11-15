@@ -327,8 +327,8 @@ inline uint OpBase_ChildCount
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (
-	OpBase *op,  // op
-	uint i       // child index
+	const OpBase *op,  // op
+	uint i             // child index
 ) {
 	ASSERT(op != NULL);
 	ASSERT(i < op->childCount);

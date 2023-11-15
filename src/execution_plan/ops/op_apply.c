@@ -13,6 +13,20 @@ static OpResult ApplyReset(OpBase *opBase);
 static OpBase *ApplyClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void ApplyFree(OpBase *opBase);
 
+Record Apply_PullArgRecord
+(
+	OpBase *op // apply operation (Apply/OpApplyMultiplexer)
+) {
+	Apply *apply = (Apply*)op;
+
+	ASSERT(apply    != NULL);
+	ASSERT(apply->r != NULL);
+
+	Record r = OpBase_CreateRecord(op);
+	Record_Clone(apply->r, r);
+	return r;
+}
+
 OpBase *NewApplyOp
 (
 	const ExecutionPlan *plan
@@ -33,16 +47,8 @@ static OpResult ApplyInit
 	ASSERT(opBase->childCount == 2);
 
 	Apply *op = (Apply *)opBase;
-	op->records      = array_new(Record, 1);
 	op->rhs_branch   = opBase->children[1];
 	op->bound_branch = opBase->children[0];
-
-	// locate branch's Argument op tap
-	op->args = array_new(Argument*, 1);
-	ExecutionPlan_LocateOps((OpBase***)&op->args, op->rhs_branch,
-			OPType_ARGUMENT);
-
-	ASSERT(array_len(op->args) > 0);
 
 	return OP_OK;
 }
@@ -59,13 +65,6 @@ static Record ApplyConsume
 			op->r = OpBase_Consume(op->bound_branch);
 			if(op->r == NULL) {
 				return NULL; // bound branch and this op are depleted
-			}
-
-			// successfully pulled a new record
-			// propagate to the top of the RHS branch(s)
-			for(uint i = 0; i < array_len(op->args); i++) {
-				Argument *arg = op->args[i];
-				Argument_AddRecord(arg, OpBase_CloneRecord(op->r));
 			}
 		}
 
@@ -98,14 +97,9 @@ static OpResult ApplyReset
 	OpBase *opBase
 ) {
 	Apply *op = (Apply *)opBase;
-	op->r = NULL;
 
-	// free collected records
-	uint32_t n = array_len(op->records);
-	for(uint32_t i = 0; i < n; i++) {
-		OpBase_DeleteRecord(op->records[i]);
-	}
-	array_clear(op->records);
+	if(op->r != NULL) OpBase_DeleteRecord(op->r);
+	op->r = NULL;
 
 	return OP_OK;
 }
@@ -124,22 +118,7 @@ static void ApplyFree
 ) {
 	Apply *op = (Apply *)opBase;
 
-	// free collected records
-	if(op->records != NULL) {
-		uint32_t n = array_len(op->records);
-		for(uint32_t i = 0; i < n; i++) {
-			OpBase_DeleteRecord(op->records[i]);
-		}
-
-		array_free(op->records);
-		op->records = NULL;
-	}
-
-	if(op->args != NULL) {
-		array_free(op->args);
-		op->args = NULL;
-	}
-
+	if(op->r != NULL) OpBase_DeleteRecord(op->r);
 	op->r = NULL;
 }
 

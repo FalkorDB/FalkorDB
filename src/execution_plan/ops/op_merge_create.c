@@ -310,6 +310,31 @@ void MergeCreate_Commit(OpBase *opBase) {
 	CommitNewEntities(opBase, &op->pending);
 }
 
+void MergeCreate_AddRecords
+(
+	OpMergeCreate *op,
+	Record **records
+) {
+	ASSERT(op       != NULL);
+	ASSERT(records  != NULL);
+	ASSERT(*records != NULL);
+
+	int n = array_len((*records));
+
+	for(int i = 0; i < n; i++) {
+		Record r = (*records)[i];
+		// create entities
+		if(!_CreateEntities(op, r, op->gc)) {
+			OpBase_DeleteRecord(r);
+			array_del_fast((*records), i);
+			n--;
+			i--;
+		}
+	}
+
+	CommitNewEntities((OpBase*)op, &op->pending);
+}
+
 static OpBase *MergeCreateClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	ASSERT(opBase->type == OPType_MERGE_CREATE);
 	OpMergeCreate *op = (OpMergeCreate *)opBase;

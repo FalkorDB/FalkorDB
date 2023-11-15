@@ -20,14 +20,18 @@
 typedef struct {
 	OpBase op;
 	Record r;              // bound branch record
-	Record *records;       // LHS records
 	OpBase *bound_branch;  // bound branch
 	OpBase *rhs_branch;    // right-hand branch
-	Argument **args;       // right-hand side taps
 } Apply;
 
 OpBase *NewApplyOp
 (
 	const ExecutionPlan *plan
+);
+
+// Op_Argument pulls "input" record from an Apply operation via this function
+Record Apply_PullArgRecord
+(
+	OpBase *op  // apply operation (Apply/OpApplyMultiplexer)
 );
 

@@ -17,10 +17,9 @@
 // build execution-plan operations which resolves traversal pattern
 static OpBase* _processPattern
 (
-	OpBase **tail,          // [optional] tail of the traversal chain
 	GraphContext *gc,       // graph context
-	QueryGraph *qg,         // pattern
 	ExecutionPlan *plan,    // execution plan
+	QueryGraph *qg,         // pattern
 	rax *bound_vars,        // bound variables
 	FT_FilterNode *filters  // filters
 ) {
@@ -28,8 +27,6 @@ static OpBase* _processPattern
 	ASSERT(qg         != NULL);
 	ASSERT(plan       != NULL);
 	ASSERT(bound_vars != NULL);
-
-	if(tail != NULL) *tail = NULL;
 
 	OpBase *child  = NULL;
 	OpBase *parent = NULL;
@@ -89,8 +86,6 @@ static OpBase* _processPattern
 		}
 	}
 
-	if(tail != NULL) *tail = child;
-
 	// for each expression, build the appropriate traversal operation
 	for(int j = 0; j < expCount; j++) {
 		AlgebraicExpression *exp = exps[j];
@@ -142,97 +137,64 @@ static OpBase* _processPattern
 
 // build execution plan where multiple branches are joined together
 // by a cartesian product operation
-static void _BuildCartesianProduct
+// returns a cartesian product operation
+static OpBase *_BuildCartesianProduct
 (
 	GraphContext *gc,         // graph context
 	ExecutionPlan *plan,      // execution plan to build
 	QueryGraph **components,  // traversal patterns
 	uint n,                   // number of patterns
-	AST *ast,                 // AST
 	rax *bound_vars,          // bound variables
 	FT_FilterNode *ft         // filters
 ) {
 	ASSERT(n          >  1);
 	ASSERT(gc         != NULL);
-	ASSERT(ast        != NULL);
 	ASSERT(plan       != NULL);
 	ASSERT(components != NULL);
 	ASSERT(bound_vars != NULL);
-
-	bool bounded = false;
-	const char **vars = NULL;
-
-	// bound branch exists
-	// MATCH (n) WITH n MATCH (a {v:n.v}), (b {x:n.x}) RETURN *
-	if(plan->root != NULL) {
-		vars    = (const char**)raxKeys(bound_vars);
-		bounded = true;
-	}
 
 	// creat the cartesian product operation
 	OpBase *cp = NewCartesianProductOp(plan);
 
 	for(uint i = 0; i < n; i++) {
-		OpBase *tail = NULL;
-		QueryGraph *p = components[i];
-		OpBase *branch = _processPattern(&tail, gc, p, plan, bound_vars, ft);
+		QueryGraph *p  = components[i];
+		OpBase *branch = _processPattern(gc, plan, p, bound_vars, ft);
 
 		// it is possible to get a NULL branch
 		// MATCH (a) WITH a MATCH (a) RETURN a
-		if(branch == NULL) continue;
-
-		ExecutionPlan_AddOp(cp, branch);
-
-		if(bounded) {
-			OpBase *arg = NewArgumentOp(plan, vars);
-			// connect branch as the right child of cartesian product
-			// and connect the plan's root as the left child
-			ASSERT(tail != NULL);
-			ExecutionPlan_AddOp(tail, arg);
-		}
+		if(branch != NULL) ExecutionPlan_AddOp(cp, branch);
 	}
 
-	OpBase *branch = cp;
-
-	// cartesian product with a single branch is redundant
-	if(unlikely(OpBase_ChildCount(cp) == 1)) {
-		ASSERT(bounded == true);
-		// remove the cartesian product and Argument operations
-		branch = OpBase_GetChild(cp, 0);
-		OpBase *arg = ExecutionPlan_LocateOp(branch, OPType_ARGUMENT);
-		ASSERT(arg != NULL);
-
-		ExecutionPlan_RemoveOp(plan, cp);
-		ExecutionPlan_RemoveOp(plan, arg);
-
+	//--------------------------------------------------------------------------
+	// cartesian product without any branches
+	//--------------------------------------------------------------------------
+	if(unlikely(OpBase_ChildCount(cp) == 0)) {
+		// MATCH (a), (b) WITH a, b MATCH (a), (b) RETURN *
 		OpBase_Free(cp);
-		OpBase_Free(arg);
-
-		// no need to bind, simply directly link branches
-		bounded = false;
+		return NULL;
 	}
 
-	array_free(vars);
+	OpBase *root = cp;  // return value
 
-	// if there are already operations in the plan
-	// then the plan's root becomes a "bound" branch
-	// for the cartesian product
-	if(bounded) {
-		// connect root as the left child of Apply
-		// and connect cartesian product as the right child
-		OpBase *apply = NewApplyOp(plan);
-		ExecutionPlan_UpdateRoot(plan, apply);
-		ExecutionPlan_AddOp(apply, branch);
-	} else {
-		ExecutionPlan_UpdateRoot(plan, branch);
+	//--------------------------------------------------------------------------
+	// cartesian product with a single branch is redundant
+	//--------------------------------------------------------------------------
+	if(unlikely(OpBase_ChildCount(cp) == 1)) {
+		// remove the cartesian product operation
+		root = OpBase_GetChild(cp, 0);
+		ExecutionPlan_RemoveOp(plan, cp);
+		OpBase_Free(cp);
 	}
+
+	return root;
 }
 
-static void _ExecutionPlan_ProcessQueryGraph
+// returns root to sub execution plan traversing MATCH pattern
+static OpBase *_ExecutionPlan_ProcessQueryGraph
 (
-	ExecutionPlan *plan,
-	QueryGraph *qg,
-	AST *ast
+	ExecutionPlan *plan,  // plan to associate operations with
+	QueryGraph *qg,       // traversal patterns
+	AST *ast              // AST
 ) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
@@ -251,22 +213,25 @@ static void _ExecutionPlan_ProcessQueryGraph
 	// if we have multiple graph components
 	// the root operation is a cartesian product
 	// each chain of traversals will be a child of this op
-	if(n  > 1) {
-		_BuildCartesianProduct(gc, plan, cc, n, ast, bound_vars, ft);
+	OpBase *branch = NULL;
+	if(n > 1) {
+		branch = _BuildCartesianProduct(gc, plan, cc, n, bound_vars, ft);
 	} else {
-		OpBase *branch = _processPattern(NULL, gc, cc[0], plan, bound_vars, ft);
-		if(branch) ExecutionPlan_UpdateRoot(plan, branch);
+		branch = _processPattern(gc, plan, cc[0], bound_vars, ft);
 	}
 
 	array_free(cc);
 	FilterTree_Free(ft);
+
+	return branch;
 }
 
+// build traverse operation to resolve OPTIONAL pattern
 static void _buildOptionalMatchOps
 (
-	ExecutionPlan *plan,
-	AST *ast,
-	const cypher_astnode_t *clause
+	ExecutionPlan *plan,            // plan to expand
+	AST *ast,                       // AST
+	const cypher_astnode_t *clause  // OPTIONAL MATCH clause
 ) {
 	const char **arguments = NULL;
 	OpBase *optional = NewOptionalOp(plan);
@@ -287,7 +252,8 @@ static void _buildOptionalMatchOps
 	}
 
 	// build the new Match stream and add it to the Optional stream
-	OpBase *match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments, clause);
+	OpBase *match_stream = ExecutionPlan_BuildOpsFromPath(plan, arguments,
+			clause);
 	array_free(arguments);
 	ExecutionPlan_AddOp(optional, match_stream);
 
@@ -307,30 +273,88 @@ static void _buildOptionalMatchOps
 	}
 }
 
+// connect branch to plan
+static void _ExecutionPlan_ConnectBranch
+(
+	ExecutionPlan *plan,  // plan to connect branch to
+	OpBase *branch        // branch to connect
+) {
+	ASSERT(plan   != NULL);
+	ASSERT(branch != NULL);
+	ASSERT(branch->plan == plan);
+
+	// empty plan
+	if(plan->root == NULL) {
+		ExecutionPlan_UpdateRoot(plan, branch);
+		return;
+	}
+
+	OPType t = OpBase_Type(branch);
+	bool indirect = (t == OPType_OPTIONAL || t == OPType_CARTESIAN_PRODUCT);
+
+	OpBase **taps = ExecutionPlan_CollectTaps(branch);
+	uint n = array_len(taps);
+
+	// connect via an APPLY operation
+	if(indirect) {
+		// collect bound variables
+		rax *bound_vars = raxNew();
+		ExecutionPlan_BoundVariables(plan->root, bound_vars, plan);
+		const char **variables = (const char **)raxValues(bound_vars);
+		raxFree(bound_vars);
+
+		// introduce ARGUMENT operation to each tap
+		for(uint i = 0; i < n; i++) {
+			OpBase *tap = taps[i];
+			OpBase *arg = NewArgumentOp(plan, variables);
+			ExecutionPlan_AddOp(tap, arg);
+		}
+
+		// connect branch via an APPLY operation
+		OpBase *apply = NewApplyOp(plan);
+		ExecutionPlan_UpdateRoot(plan, apply);
+		ExecutionPlan_AddOp(apply, branch);
+	} else {
+		ASSERT(n == 1);
+		ExecutionPlan_UpdateRoot(plan, branch);
+	}
+
+	array_free(taps);
+}
+
 void buildMatchOpTree
 (
 	ExecutionPlan *plan,
 	AST *ast,
 	const cypher_astnode_t *clause
 ) {
-	if(cypher_ast_match_is_optional(clause)) {
-		_buildOptionalMatchOps(plan, ast, clause);
-		return;
-	}
+	ASSERT(ast    != NULL);
+	ASSERT(plan   != NULL);
+	ASSERT(clause != NULL);
 
+	// collect the QueryGraph entities referenced in the clause being converted
 	const cypher_astnode_t *pattern = cypher_ast_match_get_pattern(clause);
-
-	// collect the QueryGraph entities referenced in the clauses being converted
 	QueryGraph *sub_qg =
 		QueryGraph_ExtractPatterns(plan->query_graph, &pattern, 1);
 
-	_ExecutionPlan_ProcessQueryGraph(plan, sub_qg, ast);
+	OpBase *branch = _ExecutionPlan_ProcessQueryGraph(plan, sub_qg, ast);
+	if(unlikely(branch == NULL))    goto cleanup;
 	if(ErrorCtx_EncounteredError()) goto cleanup;
 
-	// build the FilterTree to model any WHERE predicates on these clauses
-	// and place ops appropriately
+	// add OPTIONAL operation if pattern is optional
+	if(cypher_ast_match_is_optional(clause)) {
+		OpBase *optional = NewOptionalOp(plan);
+		ExecutionPlan_AddOp(optional, branch);
+		branch = optional;
+	}
+
+	// connect branch to plan
+	_ExecutionPlan_ConnectBranch(plan, branch);
+
+	// build the FilterTree to model any WHERE predicates on the clause
+	// and place filters appropriately
 	FT_FilterNode *sub_ft = AST_BuildFilterTreeFromClauses(ast, &clause, 1);
-	ExecutionPlan_PlaceFilterOps(plan, plan->root, NULL, sub_ft);
+	ExecutionPlan_PlaceFilterOps(plan, branch, NULL, sub_ft);
 
 	// clean up
 cleanup:

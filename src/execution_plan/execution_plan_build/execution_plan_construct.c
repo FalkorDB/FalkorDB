@@ -31,41 +31,49 @@ static inline void _PushDownPathFilters(ExecutionPlan *plan,
 	}
 }
 
-static void _ExecutionPlan_PlaceApplyOps(ExecutionPlan *plan) {
+static void _ExecutionPlan_PlaceApplyOps
+(
+	ExecutionPlan *plan
+) {
 	OpBase **filter_ops = ExecutionPlan_CollectOps(plan->root, OPType_FILTER);
 	uint filter_ops_count = array_len(filter_ops);
 	for(uint i = 0; i < filter_ops_count; i++) {
 		OpFilter *op = (OpFilter *)filter_ops[i];
 		FT_FilterNode *node;
 		if(FilterTree_ContainsFunc(op->filterTree, "path_filter", &node)) {
-			// If the path filter op has other filter ops above it,
-			// migrate it to be the topmost.
+			// if the path filter op has other filter ops above it,
+			// migrate it to be the topmost
 			_PushDownPathFilters(plan, (OpBase *)op);
-			// Convert the filter op to an Apply operation
+			// convert the filter op to an Apply operation
 			ExecutionPlan_ReduceFilterToApply(plan, op);
 		}
 	}
 	array_free(filter_ops);
 }
 
-void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
-									  const OpBase *upper_bound, OpBase *filter) {
+void ExecutionPlan_RePositionFilterOp
+(
+	ExecutionPlan *plan,
+	OpBase *lower_bound,
+	const OpBase *upper_bound,
+	OpBase *filter
+) {
 	// validate inputs
 	ASSERT(plan != NULL);
 	ASSERT(filter->type == OPType_FILTER);
 
-	/* When placing filters, we should not recurse into certain operation's
-	 * subtrees that would cause logical errors.
-	 * The cases we currently need to be concerned with are:
-	 * Merge - the results which should only be filtered after the entity
-	 * is matched or created.
-	 *
-	 * Apply - which has an Optional child that should project results or NULL
-	 * before being filtered.
-	 *
-	 * The family of SemiApply ops (including the Apply Multiplexers)
-	 * does not require this restriction since they are always exclusively
-	 * performing filtering. */
+	// when placing filters, we should not recurse into certain operation's
+	// subtrees that would cause logical errors
+	// the cases we currently need to be concerned with are:
+	// merge - the results which should only be filtered after the entity
+	// is matched or created
+	//
+	// apply - which has an Optional child that should project results or NULL
+	// before being filtered
+	//
+	// the family of SemiApply ops (including the Apply Multiplexers)
+	// does not require this restriction since they are always exclusively
+	// performing filtering
 
 	OpBase *op = NULL; // Operation after which filter will be located.
 	FT_FilterNode *filter_tree = ((OpFilter *)filter)->filterTree;
@@ -75,20 +83,20 @@ void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
 	uint64_t references_count = raxSize(references);
 
 	if(references_count > 0) {
-		// Scan execution plan, locate the earliest position where all
+		// scan execution plan, locate the earliest position where all
 		// references been resolved
-		op = ExecutionPlan_LocateReferencesExcludingOps(lower_bound, upper_bound, FILTER_RECURSE_BLACKLIST,
-														BLACKLIST_OP_COUNT, references);
+		op = ExecutionPlan_LocateReferencesExcludingOps(lower_bound, upper_bound,
+				FILTER_RECURSE_BLACKLIST, BLACKLIST_OP_COUNT, references);
 		if(!op) {
-			// Failed to resolve all filter references.
+			// failed to resolve all filter references
 			Error_InvalidFilterPlacement(references);
 			OpBase_Free(filter);
 			return;
 		}
 	} else {
-		// The filter tree does not contain references, like:
+		// the filter tree does not contain references, like:
 		// WHERE 1=1
-		// Place the op directly below the first projection if there is one,
+		// place the op directly below the first projection if there is one,
 		// otherwise update the ExecutionPlan root
 		op = plan->root;
 		while(op && op->childCount > 0 && op->type != OPType_PROJECT && op->type != OPType_AGGREGATE) {
@@ -97,27 +105,28 @@ void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
 		if(op == NULL || (op->type != OPType_PROJECT && op->type != OPType_AGGREGATE)) op = plan->root;
 	}
 
-	// In case this is a pre-existing filter (this function is not called out from ExecutionPlan_PlaceFilterOps)
+	// in case this is a pre-existing filter
+	// (this function is not called out from ExecutionPlan_PlaceFilterOps)
 	if(filter->childCount > 0) {
-		// If the located op is not the filter child, re position the filter.
+		// if the located op is not the filter child, re position the filter
 		if(op != filter->children[0]) {
 			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
 			ExecutionPlan_PushBelow(op, (OpBase *)filter);
 		}
 	} else if(op == NULL) {
-		// No root was found, place filter at the root.
+		// no root was found, place filter at the root
 		ExecutionPlan_UpdateRoot(plan, (OpBase *)filter);
 		op = filter;
 	} else {
-		// This is a new filter.
+		// this is a new filter
 		ExecutionPlan_PushBelow(op, (OpBase *)filter);
 	}
 
-	// Filter may have migrated a segment, update the filter segment
-	// and check if the segment root needs to be updated.
-	// The filter should be associated with the op's segment
+	// filter may have migrated a segment, update the filter segment
+	// and check if the segment root needs to be updated
+	// the filter should be associated with the op's segment
 	filter->plan = op->plan;
-	// Re-set the segment root if needed.
+	// re-set the segment root if needed
 	if(op == op->plan->root) {
 		ExecutionPlan *segment = (ExecutionPlan *)op->plan;
 		segment->root = filter;
@@ -126,13 +135,18 @@ void ExecutionPlan_RePositionFilterOp(ExecutionPlan *plan, OpBase *lower_bound,
 	raxFree(references);
 }
 
-void ExecutionPlan_PlaceFilterOps(ExecutionPlan *plan, OpBase *root, const OpBase *recurse_limit,
-								  FT_FilterNode *ft) {
-	// Decompose the filter tree into an array of the smallest possible subtrees
+void ExecutionPlan_PlaceFilterOps
+(
+	ExecutionPlan *plan,
+	OpBase *root,
+	const OpBase *recurse_limit,
+	FT_FilterNode *ft
+) {
+	// decompose the filter tree into an array of the smallest possible subtrees
 	// that do not violate the rules of AND/OR combinations
 	const FT_FilterNode **sub_trees = FilterTree_SubTrees(ft);
 
-	// For each filter tree, find the earliest position in the op tree
+	// for each filter tree, find the earliest position in the op tree
 	// after which the filter tree can be applied
 	uint nfilters = array_len(sub_trees);
 	for(uint i = 0; i < nfilters; i++) {
@@ -143,7 +157,7 @@ void ExecutionPlan_PlaceFilterOps(ExecutionPlan *plan, OpBase *root, const OpBas
 	array_free(sub_trees);
 	FilterTree_Free(ft);
 
-	// Build ops in the Apply family to appropriately process path filters.
+	// build ops in the Apply family to appropriately process path filters
 	_ExecutionPlan_PlaceApplyOps(plan);
 }
 
@@ -284,23 +298,20 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	const char **bound_vars,
 	const cypher_astnode_t *node
 ) {
-	// Initialize an ExecutionPlan that shares this plan's Record mapping.
+	// initialize an ExecutionPlan that shares this plan's Record mapping
 	ExecutionPlan *match_stream_plan = ExecutionPlan_NewEmptyExecutionPlan();
 	match_stream_plan->record_map = plan->record_map;
 
-	// If we have bound variables, build an Argument op that represents them.
-	if(bound_vars) match_stream_plan->root = NewArgumentOp(match_stream_plan,
-															   bound_vars);
-
 	AST *ast = QueryCtx_GetAST();
-	// Build a temporary AST holding a MATCH clause.
+	// build a temporary AST holding a MATCH clause
 	cypher_astnode_type_t type = cypher_astnode_type(node);
 
-	/* The AST node we're building a mock MATCH clause for will be a path
-	 * if we're converting a MERGE clause or WHERE filter, and we must build
-	 * and later free a CYPHER_AST_PATTERN node to contain it.
-	 * If instead we're converting an OPTIONAL MATCH, the node is itself a MATCH clause,
-	 * and we will reuse its CYPHER_AST_PATTERN node rather than building a new one. */
+	// the AST node we're building a mock MATCH clause for will be a path
+	// if we're converting a MERGE clause or WHERE filter, and we must build
+	// and later free a CYPHER_AST_PATTERN node to contain it
+	// If instead we're converting an OPTIONAL MATCH
+	// the node is itself a MATCH clause
+	// and we will reuse its CYPHER_AST_PATTERN node rather than building a new one
 	bool node_is_path = (type == CYPHER_AST_PATTERN_PATH || type == CYPHER_AST_NAMED_PATH);
 	AST *match_stream_ast = AST_MockMatchClause(ast, (cypher_astnode_t *)node, node_is_path);
 
@@ -308,27 +319,48 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	// Build plan's query graph
 	//--------------------------------------------------------------------------
 
-	// Extract pattern from holistic query graph.
-	const cypher_astnode_t **match_clauses = AST_GetClauses(match_stream_ast, CYPHER_AST_MATCH);
+	// extract pattern from holistic query graph
+	const cypher_astnode_t **match_clauses =
+		AST_GetClauses(match_stream_ast, CYPHER_AST_MATCH);
 	ASSERT(array_len(match_clauses) == 1);
-	const cypher_astnode_t *pattern = cypher_ast_match_get_pattern(match_clauses[0]);
+
+	const cypher_astnode_t *pattern =
+		cypher_ast_match_get_pattern(match_clauses[0]);
+
 	array_free(match_clauses);
-	QueryGraph *sub_qg = QueryGraph_ExtractPatterns(plan->query_graph, &pattern, 1);
+
+	QueryGraph *sub_qg =
+		QueryGraph_ExtractPatterns(plan->query_graph, &pattern, 1);
+
 	match_stream_plan->query_graph = sub_qg;
 
 	ExecutionPlan_PopulateExecutionPlan(match_stream_plan);
 
 	AST_MockFree(match_stream_ast, node_is_path);
-	QueryCtx_SetAST(ast); // Reset the AST.
+	QueryCtx_SetAST(ast); // reset the AST
 
-	// Associate all new ops with the correct ExecutionPlan and QueryGraph.
+	// if we have bound variables, build an Argument op that represents them
+	if(bound_vars) {
+		OpBase **taps = ExecutionPlan_CollectTaps(match_stream_plan->root);
+		uint n = array_len(taps);
+		for(uint i = 0; i < n; i++) {
+			OpBase *tap = taps[i];
+			OpBase *arg = NewArgumentOp(match_stream_plan, bound_vars);
+			ExecutionPlan_AddOp(tap, arg);
+		}
+		array_free(taps);
+	}
+
+	// associate all new ops with the correct ExecutionPlan and QueryGraph
 	OpBase *match_stream_root = match_stream_plan->root;
 	ExecutionPlan_BindOpsToPlan(plan, match_stream_root, true);
 
-	// NULL-set variables shared between the match_stream_plan and the overall plan.
-	match_stream_plan->root = NULL;
+	// NULL-set variables shared between the match_stream_plan
+	// and the overall plan
+	match_stream_plan->root       = NULL;
 	match_stream_plan->record_map = NULL;
-	// Free the temporary plan.
+
+	// free the temporary plan
 	ExecutionPlan_Free(match_stream_plan);
 
 	return match_stream_root;

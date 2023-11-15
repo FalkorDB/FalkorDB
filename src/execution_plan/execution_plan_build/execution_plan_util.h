@@ -137,6 +137,13 @@ uint ExecutionPlan_CollectUpwards
     OpBase *op
 );
 
+// collect all taps reachable from 'root'
+// retuns an array of operations which caller must free
+OpBase **ExecutionPlan_CollectTaps
+(
+	OpBase *root  // root of operation tree
+);
+
 //------------------------------------------------------------------------------
 // API for building and relocating operations in transient ExecutionPlans.
 //------------------------------------------------------------------------------

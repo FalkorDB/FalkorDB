@@ -250,7 +250,10 @@ class testGraphMergeFlow(FlowTestsBase):
         # Beginning with an empty graph
         global graph_2
         # Create a new pattern
-        query = """MERGE (a:Person {name: 'a'}) MERGE (b:Person {name: 'b'}) MERGE (a)-[e:FRIEND {val: 1}]->(b) RETURN a.name, e.val, b.name"""
+        query = """MERGE (a:Person {name: 'a'})
+                   MERGE (b:Person {name: 'b'})
+                   MERGE (a)-[e:FRIEND {val: 1}]->(b)
+                   RETURN a.name, e.val, b.name"""
         result = graph_2.query(query)
         expected = [['a', 1, 'b']]
 
@@ -270,7 +273,9 @@ class testGraphMergeFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set, expected)
 
         # Verify that these entities are accessed properly with MATCH...MERGE queries
-        query = """MATCH (a:Person {name: 'a'}), (b:Person {name: 'b'}) MERGE (a)-[e:FRIEND {val: 1}]->(b) RETURN a.name, e.val, b.name"""
+        query = """MATCH (a:Person {name: 'a'}), (b:Person {name: 'b'})
+                   MERGE (a)-[e:FRIEND {val: 1}]->(b)
+                   RETURN a.name, e.val, b.name"""
         result = graph_2.query(query)
         self.env.assertEquals(result.labels_added, 0)
         self.env.assertEquals(result.nodes_created, 0)
@@ -279,7 +284,9 @@ class testGraphMergeFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set, expected)
 
         # Verify that we can bind entities properly in variable-length traversals
-        query = """MATCH (a)-[*]->(b) MERGE (a)-[e:FRIEND {val: 1}]->(b) RETURN a.name, e.val, b.name"""
+        query = """MATCH (a)-[*]->(b)
+                   MERGE (a)-[e:FRIEND {val: 1}]->(b)
+                   RETURN a.name, e.val, b.name"""
         result = graph_2.query(query)
         self.env.assertEquals(result.labels_added, 0)
         self.env.assertEquals(result.nodes_created, 0)
@@ -288,7 +295,10 @@ class testGraphMergeFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set, expected)
 
         # Verify UNWIND...MERGE does not recreate existing entities
-        query = """UNWIND ['a', 'b'] AS names MERGE (a:Person {name: names}) RETURN a.name"""
+        query = """UNWIND ['a', 'b'] AS names
+                   MERGE (a:Person {name: names})
+                   RETURN a.name
+                   ORDER BY a.name"""
         expected = [['a'], ['b']]
 
         result = graph_2.query(query)
@@ -299,7 +309,12 @@ class testGraphMergeFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set, expected)
 
         # Merging entities from an UNWIND list
-        query = """UNWIND ['a', 'b', 'c'] AS names MERGE (a:Person {name: names}) ON MATCH SET a.set_by = 'match' ON CREATE SET a.set_by = 'create' RETURN a.name, a.set_by ORDER BY a.name"""
+        query = """UNWIND ['a', 'b', 'c'] AS names
+                   MERGE (a:Person {name: names})
+                   ON MATCH SET a.set_by = 'match'
+                   ON CREATE SET a.set_by = 'create'
+                   RETURN a.name, a.set_by
+                   ORDER BY a.name"""
         expected = [['a', 'match'],
                     ['b', 'match'],
                     ['c', 'create']]
@@ -314,7 +329,11 @@ class testGraphMergeFlow(FlowTestsBase):
         # One thing to note here is that both `c` and `x` are bounded, which means
         # our current merge distinct validation inspect the created edge only using its relationship, properties and bounded
         # nodes! as such the first created edge is different from the second one (due to changes in the destination node).
-        query = """MATCH (c:Person {name: 'c'}) MATCH (x:Person) WHERE x.name in ['a', 'b'] WITH c, x MERGE(c)-[:FRIEND]->(x)"""
+        query = """MATCH (c:Person {name: 'c'})
+                   MATCH (x:Person)
+                   WHERE x.name in ['a', 'b']
+                   WITH c, x
+                   MERGE(c)-[:FRIEND]->(x)"""
         result = graph_2.query(query)
         self.env.assertEquals(result.labels_added, 0)
         self.env.assertEquals(result.nodes_created, 0)
@@ -322,7 +341,10 @@ class testGraphMergeFlow(FlowTestsBase):
         self.env.assertEquals(result.relationships_created, 2)
 
         # Verify function calls in MERGE do not recreate existing entities
-        query = """UNWIND ['A', 'B'] AS names MERGE (a:Person {name: toLower(names)}) RETURN a.name"""
+        query = """UNWIND ['A', 'B'] AS names
+                   MERGE (a:Person {name: toLower(names)})
+                   RETURN a.name
+                   ORDER BY a.name"""
         expected = [['a'], ['b']]
 
         result = graph_2.query(query)
@@ -332,7 +354,13 @@ class testGraphMergeFlow(FlowTestsBase):
         self.env.assertEquals(result.properties_set, 0)
         self.env.assertEquals(result.result_set, expected)
 
-        query = """MERGE (a:Person {name: 'a'}) ON MATCH SET a.set_by = 'match' ON CREATE SET a.set_by = 'create' MERGE (b:Clone {name: a.name + '_clone'}) ON MATCH SET b.set_by = 'match' ON CREATE SET b.set_by = 'create' RETURN a.name, a.set_by, b.name, b.set_by"""
+        query = """MERGE (a:Person {name: 'a'})
+                   ON MATCH SET a.set_by = 'match'
+                   ON CREATE SET a.set_by = 'create'
+                   MERGE (b:Clone {name: a.name + '_clone'})
+                   ON MATCH SET b.set_by = 'match'
+                   ON CREATE SET b.set_by = 'create'
+                   RETURN a.name, a.set_by, b.name, b.set_by"""
         result = graph_2.query(query)
         expected = [['a', 'match', 'a_clone', 'create']]
 
@@ -440,7 +468,12 @@ class testGraphMergeFlow(FlowTestsBase):
         # Starting with an empty graph.
         # Make sure the pattern ()-[]->()-[]->()-[]->() exists.
         self.env.flush()
-        query = """MERGE (a {v:1}) MERGE (b {v:2}) MERGE (a)-[:KNOWS]->(b) WITH a AS c, b AS d MATCH (c)-[:KNOWS]->(d) MERGE (c)-[:LIKES]->(d)"""
+        query = """MERGE (a {v:1})
+                   MERGE (b {v:2})
+                   MERGE (a)-[:KNOWS]->(b)
+                   WITH a AS c, b AS d
+                   MATCH (c)-[:KNOWS]->(d)
+                   MERGE (c)-[:LIKES]->(d)"""
         result = graph.query(query)
 
         # Verify that every entity was created.

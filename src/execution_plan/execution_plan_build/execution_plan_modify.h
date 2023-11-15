@@ -67,3 +67,4 @@ void ExecutionPlan_MigrateOpsExcludeType
 	uint op_count,              // number of ops in the array
 	const ExecutionPlan *plan   // plan to bind the ops to
 );
+
