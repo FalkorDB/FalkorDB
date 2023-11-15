@@ -46,7 +46,7 @@ static void BoltHelloCommand
 	bolt_client_reply_for(client, BST_HELLO, BST_SUCCESS, 1);
 	bolt_reply_map(client, 2);
 	bolt_reply_string(client, "server", 6);
-	bolt_reply_string(client, "Neo4j/5.11.0", 12);
+	bolt_reply_string(client, "Neo4j/5.13.0", 12);
 	bolt_reply_string(client, "connection_id", 13);
 	char *uuid = UUID_New();
 	bolt_reply_string(client, uuid, strlen(uuid));
@@ -325,13 +325,61 @@ void BoltRunCommand
 	RedisModuleString *query = get_query(ctx, client);
 	RedisModuleString *graph_name = get_graph_name(ctx, client);
 
-	args[0] = COMMAND;
-	args[1] = graph_name;
-	args[2] = query;
-	args[3] = BOLT;
-	args[4] = (RedisModuleString *)client;
+	const char *q = RedisModule_StringPtrLen(query, NULL);
+	if(strcmp(q, "SHOW DATABASES") == 0) {
+		// "fields":["name","type","aliases","access","address","role","writer","requestedStatus","currentStatus","statusMessage","default","home","constituents"]
+		bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+		bolt_reply_map(client, 3);
+		bolt_reply_string(client, "t_first", 7);
+		bolt_reply_int(client, 0);
+		bolt_reply_string(client, "fields", 6);
+		bolt_reply_list(client, 13);
+		bolt_reply_string(client, "name", 4);
+		bolt_reply_string(client, "type", 4);
+		bolt_reply_string(client, "aliases", 7);
+		bolt_reply_string(client, "access", 6);
+		bolt_reply_string(client, "address", 7);
+		bolt_reply_string(client, "role", 4);
+		bolt_reply_string(client, "writer", 6);
+		bolt_reply_string(client, "requestedStatus", 15);
+		bolt_reply_string(client, "currentStatus", 13);
+		bolt_reply_string(client, "statusMessage", 13);
+		bolt_reply_string(client, "default", 7);
+		bolt_reply_string(client, "home", 4);
+		bolt_reply_string(client, "constituents", 12);
+		bolt_reply_string(client, "qid", 3);
+		bolt_reply_int(client, 0);
+		bolt_client_end_message(client);
+		bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+		bolt_reply_list(client, 13);
+		// RECORD {"signature":113,"fields":[["neo4j","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
+		bolt_reply_string(client, "falkordb", 8);
+		bolt_reply_string(client, "standard", 8);
+		bolt_reply_list(client, 0);
+		bolt_reply_string(client, "read-write", 10);
+		bolt_reply_string(client, "localhost:7687", 14);
+		bolt_reply_string(client, "primary", 7);
+		bolt_reply_bool(client, true);
+		bolt_reply_string(client, "online", 6);
+		bolt_reply_string(client, "online", 6);
+		bolt_reply_string(client, "", 0);
+		bolt_reply_bool(client, true);
+		bolt_reply_bool(client, true);
+		bolt_reply_list(client, 0);
+		bolt_client_end_message(client);
+		bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+		bolt_reply_map(client, 0);
+		bolt_client_end_message(client);
+		bolt_client_finish_write(client);
+	} else {
+		args[0] = COMMAND;
+		args[1] = graph_name;
+		args[2] = query;
+		args[3] = BOLT;
+		args[4] = (RedisModuleString *)client;
 
-	CommandDispatch(ctx, args, 5);
+		CommandDispatch(ctx, args, 5);
+	}
 
 	RedisModule_FreeString(ctx, query);
 	RedisModule_FreeString(ctx, graph_name);
@@ -516,6 +564,7 @@ void BoltRequestHandler
 			break;
 		case BST_GOODBYE:
 			client->processing = false;
+			bolt_client_free(client);
 			break;
 		case BST_RUN:
 			BoltRunCommand(client);
@@ -620,34 +669,35 @@ void BoltHandshakeHandler
 	}
 
 	if(!bolt_check_handshake(client)) {
-		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index_t write;
+		buffer_index(&client->write_buf, &write, 0);
+		buffer_index_t start = write;
 		buffer_index(&client->read_buf, &client->read_buf.read, 0);
-		if(!ws_handshake(&client->read_buf.read, &client->write)) {
+		if(!ws_handshake(&client->read_buf.read, &write)) {
 			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 			bolt_client_free(client);
 			return;
 		}
-		buffer_socket_write(&client->write, client->socket);
+		buffer_socket_write(&start, &write, client->socket);
 		client->ws = true;
-		buffer_index(&client->write_buf, &client->write, 0);
+		buffer_index(&client->write_buf, &client->write_buf.write, 0);
 		buffer_index(&client->read_buf, &client->read_buf.read, 0);
 		buffer_index(&client->read_buf, &client->read_buf.write, 0);
-		buffer_write_uint16(&client->write_buf.write, htons(0x0000));
 		return;
 	}
 
 	bolt_version_t version = bolt_read_supported_version(client);
 
+	buffer_index_t write;
+	buffer_index(&client->write_buf, &write, 0);
+	buffer_index_t start = write;
 	if(client->ws) {
-		buffer_write_uint8(&client->write, 0x82);
-		buffer_write_uint8(&client->write, 0x04);
+		buffer_write_uint16(&write, htons(0x8204));
 	}
-	buffer_write_uint8(&client->write, 0x00);
-	buffer_write_uint8(&client->write, 0x00);
-	buffer_write_uint8(&client->write, version.minor);
-	buffer_write_uint8(&client->write, version.major);
-	buffer_socket_write(&client->write, client->socket);
-	buffer_index(&client->write_buf, &client->write, 0);
+	buffer_write_uint16(&write, 0x0000);
+	buffer_write_uint8(&write, version.minor);
+	buffer_write_uint8(&write, version.major);
+	buffer_socket_write(&start, &write, client->socket);
 	buffer_index(&client->read_buf, &client->read_buf.read, 0);
 	buffer_index(&client->read_buf, &client->read_buf.write, 0);
 

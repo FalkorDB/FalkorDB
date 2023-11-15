@@ -23,6 +23,13 @@ typedef enum bolt_client_state {
 	BS_DEFUNCT,
 } bolt_client_state;
 
+typedef struct bolt_message_t {
+	buffer_index_t ws_header; // the websocket header
+	buffer_index_t bolt_header; // the bolt header
+	buffer_index_t start;  // the start of the message
+	buffer_index_t end;    // the end of the message
+} bolt_message_t;
+
 typedef struct bolt_client_t {
 	socket_t socket;                    // the socket file descriptor
 	bolt_client_state state;            // the state of the client
@@ -33,7 +40,7 @@ typedef struct bolt_client_t {
 	buffer_t msg_buf;                   // the message buffer
 	buffer_t read_buf;                  // the read buffer
 	buffer_t write_buf;                 // the write buffer
-	buffer_index_t write;               // last write message index
+	bolt_message_t *write_messages;     // the messages to write
 	buffer_index_t ws_frame;            // last websocket frame index
 	RedisModuleCtx *ctx;                // the redis module context
 	RedisModuleEventLoopFunc on_write;  // the write callback
