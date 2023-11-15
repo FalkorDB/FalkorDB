@@ -564,6 +564,7 @@ void BoltRequestHandler
 			break;
 		case BST_GOODBYE:
 			client->processing = false;
+			bolt_client_free(client);
 			break;
 		case BST_RUN:
 			BoltRunCommand(client);
