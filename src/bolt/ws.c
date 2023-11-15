@@ -114,7 +114,7 @@ uint64_t ws_read_frame
 	uint8_t rsv123 = (frame_header >> 12) & 0x07;
 	ASSERT(rsv123 == 0 && "Reserved bits are not supported");
 	uint8_t opcode = (frame_header >> 8) & 0x0F;
-	ASSERT(opcode == 0x02 && "Only binary frames are supported");
+	ASSERT(opcode == 0x02 || opcode == 0x08 && "Only binary frames are supported");
 	uint64_t payload_len = frame_header & 0x7F;
 	if(payload_len == 126) {
 		payload_len = ntohs(buffer_read_uint16(buf));
