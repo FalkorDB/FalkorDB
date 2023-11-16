@@ -114,7 +114,7 @@
 #define EMSG_SSPATH_REQUIRED "sourceNode is required"
 #define EMSG_SSPATH_INVALID_TYPE "sourceNode must be of type Node"
 #define EMSG_QUERY_MEM_CONSUMPTION "Query's mem consumption exceeded capacity"
-#define EMSG_VECTOR_TYPE_ERROR "vector%df expects an array of numbers"
+#define EMSG_VECTOR_TYPE_ERROR "vectorf%d expects an array of numbers"
 #define EMSG_PROC_INVALID_ARGUMENTS "Invalid arguments for procedure '%s'"
 #define EMSG_FULLTEXT_DROP_INDEX "ERR Unable to drop index on :%s: no such index."
 #define EMSG_UNABLE_TO_DROP_INDEX "ERR Unable to drop index on :%s(%s): no such index."

@@ -123,7 +123,7 @@ static bool _extractArgs
 	*attribute = v.stringval;
 
 	// extract "query"
-	if(!MAP_GET(map, "query", v) && SI_TYPE(v) != T_VECTOR32F) {
+	if(!MAP_GET(map, "query", v) && SI_TYPE(v) != T_VECTOR_F32) {
 		return false;
 	}
 	*query_vector = v;
@@ -335,7 +335,7 @@ ProcedureResult Proc_VectorKNNFree
 // type: 'NODE'/'RELATIONSHIP',
 // label: 'Person',
 // attribute: 'name',
-// query: vector32f([1,2]),
+// query: vecf32([1,2]),
 // k:3 } ) YIELD entity
 
 ProcedureCtx *Proc_VectorKNNGen() {

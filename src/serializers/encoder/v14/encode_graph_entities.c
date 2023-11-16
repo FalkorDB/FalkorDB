@@ -91,7 +91,7 @@ static void _RdbSaveSIValue
 			RedisModule_SaveDouble(rdb, Point_lat(*v));
 			RedisModule_SaveDouble(rdb, Point_lon(*v));
 			break;
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			_RdbSaveSIVector(rdb, *v);
 			break;
 		case T_NULL:

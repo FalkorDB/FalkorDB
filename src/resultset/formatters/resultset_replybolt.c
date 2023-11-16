@@ -87,7 +87,7 @@ void _ResultSet_BoltReplyWithSIValue
 		bolt_reply_float(client, v.point.latitude);
 		bolt_reply_null(client);
 		break;
-	case T_VECTOR32F: {
+	case T_VECTOR_F32: {
 		uint32_t dim = SIVector_Dim(v);
 		bolt_reply_list(client, dim);
 

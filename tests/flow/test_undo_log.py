@@ -88,7 +88,7 @@ class testUndoLog():
             b:'str',
             c:[1, 'str', point({latitude:1, longitude:2})],
             d:point({latitude:1, longitude:2}),
-            e:vector32f([1, 2])
+            e:vecf32([1, 2])
         })
         RETURN n""")
 
@@ -100,7 +100,7 @@ class testUndoLog():
             self.graph.query("""MATCH (n:N {a: 1})
                                 SET n.a = 2, n.b = '', n.c = null,
                                 n.d = point({latitude:2, longitude:1}),
-                                n.e = vector32f([2, 1])
+                                n.e = vecf32([2, 1])
                                 WITH n
                                 RETURN 1 * n""")
             # we're not supposed to be here, expecting query to fail

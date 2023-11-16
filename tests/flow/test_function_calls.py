@@ -2764,15 +2764,15 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test94_vector(self):
         # Test invalid inputs
-        err_msg = "vector32f expects an array of numbers"
+        err_msg = "vectorf32 expects an array of numbers"
         queries_with_errors = [
-                "RETURN vector32f([1.2, 'a'])",
-                "RETURN vector32f([1.2, NULL])",
-                "RETURN vector32f([1.2, true])",
-                "RETURN vector32f([1.2, []])",
-                "RETURN vector32f([1.2, {a:2}])",
-                "RETURN vector32f([1.2, point({latitude:1,longitude:2})])",
-                "RETURN vector32f([1.2, vector32f([1])])",
+                "RETURN vecf32([1.2, 'a'])",
+                "RETURN vecf32([1.2, NULL])",
+                "RETURN vecf32([1.2, true])",
+                "RETURN vecf32([1.2, []])",
+                "RETURN vecf32([1.2, {a:2}])",
+                "RETURN vecf32([1.2, point({latitude:1,longitude:2})])",
+                "RETURN vecf32([1.2, vecf32([1])])",
         ]
 
         for q in queries_with_errors:

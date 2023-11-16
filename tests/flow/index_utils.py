@@ -140,7 +140,7 @@ def query_vector_index(graph, entity_type, label, attribute, k, q):
             type: $type,
             label: $label,
             attribute: $attribute,
-            query: vector32f($query),
+            query: vecf32($query),
             k:$k})""", params=params)
 
 def query_node_vector_index(graph, label, attribute, k, q):

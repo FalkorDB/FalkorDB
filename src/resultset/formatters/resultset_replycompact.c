@@ -34,7 +34,7 @@ static inline ValueType _mapValueType(SIType t) {
 		return VALUE_DOUBLE;
 	case T_ARRAY:
 		return VALUE_ARRAY;
-	case T_VECTOR32F:
+	case T_VECTOR_F32:
 		return VALUE_ARRAY;
 	case T_NODE:
 		return VALUE_NODE;
@@ -81,7 +81,7 @@ static void _ResultSet_CompactReplyWithSIValue
 	case T_ARRAY:
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
 		break;
-	case T_VECTOR32F:
+	case T_VECTOR_F32:
 		_ResultSet_CompactReplyWithVector(ctx, v);
 		break;
 	case T_NULL:

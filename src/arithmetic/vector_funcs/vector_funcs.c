@@ -40,7 +40,7 @@ SIValue AR_VECTOR32F
 
 	// create a vector of the same length as the input array
 	uint32_t n         = SIArray_Length(arr);
-	SIValue  v         = SI_Vector32f(n);
+	SIValue  v         = SI_Vectorf32(n);
 	float    *elements = (float*)SIVector_Elements(v);
 
 	// save each float into the vector's internal values array
@@ -60,7 +60,7 @@ void Register_VectorFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_ARRAY);
 	ret_type = T_NULL | T_VECTOR;
-	func_desc = AR_FuncDescNew("vector32f", AR_VECTOR32F, 1, 1, types, ret_type,
+	func_desc = AR_FuncDescNew("vecf32", AR_VECTOR32F, 1, 1, types, ret_type,
 			false, true);
 	AR_RegFunc(func_desc);
 }

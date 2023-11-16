@@ -34,7 +34,7 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
 		return _RdbLoadPoint(rdb);
-	case T_VECTOR32F:
+	case T_VECTOR_F32:
 		return _RdbLoadVector(rdb, t);
 	case T_NULL:
 	default: // currently impossible
@@ -92,7 +92,7 @@ static SIValue _RdbLoadVector
 
 	uint32_t dim = RedisModule_LoadUnsigned(rdb);
 
-	vector = SI_Vector32f(dim);
+	vector = SI_Vectorf32(dim);
 	float *values = SIVector_Elements(vector);
 
 	for(uint32_t i = 0; i < dim; i++) {
