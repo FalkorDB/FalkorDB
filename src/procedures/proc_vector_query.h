@@ -7,5 +7,6 @@
 
 #include "proc_ctx.h"
 
-ProcedureCtx *Proc_VectorKNNGen(void);
+ProcedureCtx *Proc_VectorQueryRelCtx(void);
+ProcedureCtx *Proc_VectorQueryNodeCtx(void);
 

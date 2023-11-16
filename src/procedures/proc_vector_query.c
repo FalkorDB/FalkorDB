@@ -47,92 +47,53 @@ static VectorKNNCtx *_create_private_data
 	return ctx;
 }
 
-// process user's yield arguments
-static void _process_yield
-(
-	VectorKNNCtx *ctx,
-	const char **yield
-) {
-	ctx->yield_score  = NULL;
-	ctx->yield_entity = NULL;
-
-	int idx = 0;
-	for(uint i = 0; i < array_len(yield); i++) {
-		if(strcasecmp("entity", yield[i]) == 0) {
-			ctx->yield_entity = ctx->output + idx;
-			idx++;
-			continue;
-		}
-
-		if(strcasecmp("score", yield[i]) == 0) {
-			ctx->yield_score = ctx->output + idx;
-			idx++;
-			continue;
-		}
-	}
-}
-
-// extract KNN arguments from map
+// extract KNN arguments from args
 static bool _extractArgs
 (
-	const SIValue map,      // map holding KNN arguments
+	const SIValue *args,    // procedure arguments
 	int *k,                 // number of results to return
-	GraphEntityType *type,  // type of entity to query
 	char **label,           // entity label
 	char **attribute,       // attribute to query
 	SIValue *query_vector   // query vector
 ) {
-	// expecting a map with the following structure:
-	//
-	// {
-	//     type: 'NODE'/'RELATIONSHIP'
-	//     label: 'Person'
-	//     attribute: 'name'
-	//     query: vector32f([1,2])
-	//     k:3
-	// }
+	// expecting four arguments
+	//     arg[0] - label: 'Person'
+	//     arg[1] - attribute: 'name'
+	//     arg[2] - k:3
+	//     arg[3] - query: vector32f([1,2])
 
-	if(Map_KeyCount(map) != 5) {
-		return false;
-	}
+	uint n = array_len((SIValue*)args);
+	ASSERT(n == 4);
 
-	SIValue v;  // current map argument
-
-	// extract "type"
-	if(!MAP_GET(map, "type", v) && SI_TYPE(v) != T_STRING) {
-		return false;
-	}
-	if(strcasecmp(v.stringval, "node") == 0) {
-		*type = GETYPE_NODE;
-	} else if(strcasecmp(v.stringval, "relationship") == 0) {
-		*type = GETYPE_EDGE;
-	} else {
-		return false;
-	}
+	SIValue v;  // current argument
 
 	// extract "label"
-	if(!MAP_GET(map, "label", v) && SI_TYPE(v) != T_STRING) {
+	v = args[0];
+	if(SI_TYPE(v) != T_STRING) {
 		return false;
 	}
 	*label = v.stringval;
 
 	// extract "attribute"
-	if(!MAP_GET(map, "attribute", v) && SI_TYPE(v) != T_STRING) {
+	v = args[1];
+	if(SI_TYPE(v) != T_STRING) {
 		return false;
 	}
 	*attribute = v.stringval;
 
-	// extract "query"
-	if(!MAP_GET(map, "query", v) && SI_TYPE(v) != T_VECTOR_F32) {
-		return false;
-	}
-	*query_vector = v;
-
 	// extract "k"
-	if(!MAP_GET(map, "k", v) && SI_TYPE(v) != T_INT64) {
+	v = args[2];
+	if(SI_TYPE(v) != T_INT64) {
 		return false;
 	}
 	*k = v.longval;
+
+	// extract "query"
+	v = args[3];
+	if(SI_TYPE(v) != T_VECTOR_F32) {
+		return false;
+	}
+	*query_vector = v;
 
 	return true;
 }
@@ -218,35 +179,32 @@ static SIValue *Proc_EdgeStep
 	return pdata->output;
 }
 
-
 // procedure invocation
 // validate arguments and sets up internal context
-ProcedureResult Proc_VectorKNNInvoke
+static ProcedureResult Proc_VectorQueryInvoke
 (
 	ProcedureCtx *ctx,    // procedure context
 	const SIValue *args,  // procedure arguments
-	const char **yield    // procedure output
+	GraphEntityType et
 ) {
-	// expecting a single map argument
-	if(array_len((SIValue *)args) != 1 || SI_TYPE(args[0]) != T_MAP) {
-		return PROCEDURE_ERR;
-	}
-	SIValue map = args[0];
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+
+	// validate args
+	uint argc = array_len((SIValue*)args);
+	if(argc != 4) return PROCEDURE_ERR;
 
 	//--------------------------------------------------------------------------
-	// extract procedure arguments from map
+	// extract procedure arguments
 	//--------------------------------------------------------------------------
 
 	int k;                 // number of results to return
 	char *label;           // entity label
 	char *attribute;       // attribute to query
-	GraphEntityType et;    // entity type
 	SIValue query_vector;  // query vector
 
 	// extract arguments from map
-	if(!_extractArgs(map,
+	if(!_extractArgs(args,
 					 &k,
-					 &et,
 					 &label,
 					 &attribute,
 					 &query_vector)) {
@@ -254,15 +212,13 @@ ProcedureResult Proc_VectorKNNInvoke
 		return PROCEDURE_ERR;
 	}
 
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-
 	// depending on the entity type
 	// set procedure step function and schema type
 	SchemaType st;
 	if(et == GETYPE_NODE) {
 		st = SCHEMA_NODE;
 		ctx->Step = Proc_NodeStep;
-	} else  {
+	} else {
 		st = SCHEMA_EDGE;
 		ctx->Step = Proc_EdgeStep;
 	}
@@ -300,8 +256,79 @@ ProcedureResult Proc_VectorKNNInvoke
 	RSIndex *rsIdx = Index_RSIndex(idx);
 	ctx->privateData = _create_private_data(gc, rsIdx, root, et);
 
+	return PROCEDURE_OK;
+}
+
+// procedure invocation
+// validate arguments and sets up internal context
+ProcedureResult Proc_VectorQueryNodeInvoke
+(
+	ProcedureCtx *ctx,    // procedure context
+	const SIValue *args,  // procedure arguments
+	const char **yield    // procedure output
+) {
+	ProcedureResult res = Proc_VectorQueryInvoke(ctx, args, GETYPE_NODE);
+	if(res != PROCEDURE_OK) return res;
+
+	//--------------------------------------------------------------------------
 	// process yield
-	_process_yield((VectorKNNCtx*)ctx->privateData, yield);
+	//--------------------------------------------------------------------------
+
+	VectorKNNCtx *pdata = ctx->privateData;
+	pdata->yield_score  = NULL;
+	pdata->yield_entity = NULL;
+
+	int idx = 0;
+	for(uint i = 0; i < array_len(yield); i++) {
+		if(strcasecmp("node", yield[i]) == 0) {
+			pdata->yield_entity = pdata->output + idx;
+			idx++;
+			continue;
+		}
+
+		if(strcasecmp("score", yield[i]) == 0) {
+			pdata->yield_score = pdata->output + idx;
+			idx++;
+			continue;
+		}
+	}
+
+	return PROCEDURE_OK;
+}
+
+// procedure invocation
+// validate arguments and sets up internal context
+ProcedureResult Proc_VectorQueryRelInvoke
+(
+	ProcedureCtx *ctx,    // procedure context
+	const SIValue *args,  // procedure arguments
+	const char **yield    // procedure output
+) {
+	ProcedureResult res = Proc_VectorQueryInvoke(ctx, args, GETYPE_EDGE);
+	if(res != PROCEDURE_OK) return res;
+
+	//--------------------------------------------------------------------------
+	// process yield
+	//--------------------------------------------------------------------------
+
+	VectorKNNCtx *pdata = ctx->privateData;
+	pdata->yield_score  = NULL;
+	pdata->yield_entity = NULL;
+
+	int idx = 0;
+	for(uint i = 0; i < array_len(yield); i++) {
+		if(strcasecmp("relationship", yield[i]) == 0) {
+			pdata->yield_entity = pdata->output + idx;
+			idx++;
+			continue;
+		}
+
+		if(strcasecmp("score", yield[i]) == 0) {
+			pdata->yield_score = pdata->output + idx;
+			idx++;
+			continue;
+		}
+	}
 
 	return PROCEDURE_OK;
 }
@@ -331,25 +358,43 @@ ProcedureResult Proc_VectorKNNFree
 //
 // usage:
 //
-// CALL db.idx.vector.query( {
-// type: 'NODE'/'RELATIONSHIP',
-// label: 'Person',
-// attribute: 'name',
-// query: vecf32([1,2]),
-// k:3 } ) YIELD entity
+// CALL db.idx.vector.queryNodes( {
+// label    : STRING,
+// attribute: STRING,
+// k        : INTEGER
+// query    : Vectorf32,
+// options  : map } ) YIELD node, score
 
-ProcedureCtx *Proc_VectorKNNGen() {
-	ProcedureOutput *output    = array_new(ProcedureOutput, 1);
-	ProcedureOutput out_entity = {.name = "entity", .type = SI_GRAPHENTITY};
-	ProcedureOutput out_score  = {.name = "score", .type = T_DOUBLE};
-	array_append(output, out_entity);
+ProcedureCtx *Proc_VectorQueryNodeCtx() {
+	ProcedureOutput *output   = array_new(ProcedureOutput, 2);
+	ProcedureOutput out_node  = {.name = "node", .type = T_NODE};
+	ProcedureOutput out_score = {.name = "score", .type = T_DOUBLE};
+	array_append(output, out_node);
 	array_append(output, out_score);
 
-	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.query",
-								   1,
+	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.queryNodes",
+								   4,
 								   output,
 								   NULL, // step func is determined by invoke
-								   Proc_VectorKNNInvoke,
+								   Proc_VectorQueryNodeInvoke,
+								   Proc_VectorKNNFree,
+								   NULL,
+								   true);
+	return ctx;
+}
+
+ProcedureCtx *Proc_VectorQueryRelCtx() {
+	ProcedureOutput *output    = array_new(ProcedureOutput, 2);
+	ProcedureOutput out_rel = {.name = "relationship", .type = T_EDGE};
+	ProcedureOutput out_score  = {.name = "score", .type = T_DOUBLE};
+	array_append(output, out_rel);
+	array_append(output, out_score);
+
+	ProcedureCtx *ctx = ProcCtxNew("db.idx.vector.queryRelationships",
+								   4,
+								   output,
+								   NULL, // step func is determined by invoke
+								   Proc_VectorQueryRelInvoke,
 								   Proc_VectorKNNFree,
 								   NULL,
 								   true);

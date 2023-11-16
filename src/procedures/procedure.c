@@ -45,7 +45,8 @@ void Proc_Register() {
 	_procRegister("db.idx.fulltext.createNodeIndex", Proc_FulltextCreateNodeIdxGen);
 
 	// register vector search generator
-	_procRegister("db.idx.vector.query", Proc_VectorKNNGen);
+	_procRegister("db.idx.vector.queryNodes", Proc_VectorQueryNodeCtx);
+	_procRegister("db.idx.vector.queryRelationships", Proc_VectorQueryRelCtx);
 }
 
 ProcedureCtx *ProcCtxNew(const char *name,
@@ -88,7 +89,7 @@ ProcedureCtx *Proc_Get(const char *proc_name) {
 
 ProcedureResult Proc_Invoke(ProcedureCtx *proc, const SIValue *args, const char **yield) {
 	ASSERT(proc != NULL);
-	// Procedure is expected to be in the `PROCEDURE_NOT_INIT` state.
+	// procedure is expected to be in the `PROCEDURE_NOT_INIT` state
 	if(proc->state != PROCEDURE_NOT_INIT) {
 		proc->state = PROCEDURE_ERROR;
 		return PROCEDURE_ERR;
@@ -100,7 +101,7 @@ ProcedureResult Proc_Invoke(ProcedureCtx *proc, const SIValue *args, const char 
 	}
 
 	ProcedureResult res = proc->Invoke(proc, args, yield);
-	// Set state to initialized.
+	// set state to initialized
 	if(res == PROCEDURE_OK) proc->state = PROCEDURE_INIT;
 	return res;
 }

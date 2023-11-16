@@ -15,7 +15,7 @@ void setup() {
 
 void test_empty_vector(void) {
 	SIValue v = SIVectorf32_New(0);
-	TEST_ASSERT(SI_TYPE(v) == T_VECTORF32);
+	TEST_ASSERT(SI_TYPE(v) == T_VECTOR_F32);
 	TEST_ASSERT(SI_ALLOCATION(&v) == M_SELF);
 	TEST_ASSERT(SIVector_Dim(v) == 0);
 	SIVector_Free(v);

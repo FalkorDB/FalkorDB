@@ -57,7 +57,6 @@ uint32_t SIVector_Dim
 
 // returns number of bytes used to represent vector's elements
 // for vectorf32 this is 4 * vector's dimension
-// for vectorf64 this is 8 * vector's dimension
 size_t SIVector_ElementsByteSize
 (
 	SIValue vector // vector to get binary size of
