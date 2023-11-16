@@ -22,7 +22,7 @@ static bool _parseOptions
 	
 	// expecting a map with the following fields:
 	// {
-	//     dim:538,
+	//     dimension:538,
 	//     similarityFunction:'euclidean'
 	//  }
 
@@ -37,7 +37,7 @@ static bool _parseOptions
 	// extract vector length
 	//--------------------------------------------------------------------------
 
-	if(!MAP_GET(options, "dim", val) || SI_TYPE(val) != T_INT64) {
+	if(!MAP_GET(options, "dimension", val) || SI_TYPE(val) != T_INT64) {
 		return false;
 	}
 	*dimension = val.longval;
@@ -61,7 +61,7 @@ static bool _parseOptions
 // create a vector index
 //
 // CREATE VECTOR INDEX FOR (n:Person) ON (n.embeddings) OPTIONS {
-//     dim:538,
+//     dimension:538,
 //     similarityFunction:'euclidean'
 // }
 Index Index_VectorCreate
