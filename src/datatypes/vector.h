@@ -8,7 +8,7 @@
 #include "../value.h"
 
 // creates a new float32 vector
-SIValue SIVector32f_New
+SIValue SIVectorf32_New
 (
 	uint32_t dim  // vector's dimension
 );
@@ -56,8 +56,7 @@ uint32_t SIVector_Dim
 );
 
 // returns number of bytes used to represent vector's elements
-// for vector32f this is 4 * vector's dimension
-// for vector64f this is 8 * vector's dimension
+// for vectorf32 this is 4 * vector's dimension
 size_t SIVector_ElementsByteSize
 (
 	SIValue vector // vector to get binary size of

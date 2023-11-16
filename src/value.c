@@ -90,11 +90,11 @@ SIValue SI_Map(u_int64_t initialCapacity) {
 	return Map_New(initialCapacity);
 }
 
-SIValue SI_Vector32f
+SIValue SI_Vectorf32
 (
 	uint32_t dim  // vector's dimension
 ) {
-	return SIVector32f_New(dim);
+	return SIVectorf32_New(dim);
 }
 
 SIValue SI_DuplicateStringVal(const char *s) {
@@ -155,7 +155,7 @@ SIValue SI_CloneValue(const SIValue v) {
 		case T_MAP:
 			return Map_Clone(v);
 
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			return SIVector_Clone(v);
 
 		default:
@@ -279,8 +279,8 @@ const char *SIType_ToString(SIType t) {
 			return "Duration";
 		case T_POINT:
 			return "Point";
-		case T_VECTOR32F:
-			return "Vector32f";
+		case T_VECTOR_F32:
+			return "Vectorf32";
 		case T_NULL:
 			return "Null";
 		default:
@@ -389,7 +389,7 @@ void SIValue_ToString
 			// = 52 bytes that already checked in the header of the function
 			*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "point({latitude: %f, longitude: %f})", Point_lat(v), Point_lon(v));
 			break;
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			SIVector_ToString(v, buf, bufferLen, bytesWritten);
 			break;
 		default:
@@ -645,7 +645,7 @@ int SIValue_Compare
 				return SAFE_COMPARISON_RESULT(Point_lat(a) - Point_lat(b));
 			return lon_diff;
 		}
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 		return SIVector_Compare(a, b);
 		default:
 			// both inputs were of an incomparable type, like a pointer
@@ -772,7 +772,7 @@ void SIValue_HashUpdate(SIValue v, XXH64_state_t *state) {
 			inner_hash = SIPath_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			inner_hash = SIVector_HashCode(v);
 			XXH64_update(state, &inner_hash, sizeof(inner_hash));
 			return;
@@ -851,7 +851,7 @@ SIValue SIValue_FromBinary
 			fread_assert(&d, sizeof(d), stream);
 			v = SI_DoubleVal(d);
 			break;
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			v = SIVector_FromBinary(stream, t);
 			break;
 		case T_NULL:
@@ -886,7 +886,7 @@ void SIValue_Free(SIValue v) {
 	case T_MAP:
 		Map_Free(v);
 		break;
-	case T_VECTOR32F:
+	case T_VECTOR_F32:
 		SIVector_Free(v);
 		return;
 	default:

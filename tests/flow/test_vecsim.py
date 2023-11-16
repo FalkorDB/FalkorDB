@@ -16,13 +16,13 @@ class testVecsim():
         # introduce Person nodes
         n = 1000 # number of Person nodes
         q = """UNWIND range(0, $n) AS i
-               CREATE (:Person {embeddings: vector32f([i,i])})"""
+               CREATE (:Person {embeddings: vecf32([i,i])})"""
 
         self.graph.query(q, params={'n': n})
 
         # introduce self referencing edges
         q = """MATCH (p:Person)
-               WITH vector32f([-ID(p), -ID(p)]) AS embeddings, p
+               WITH vecf32([-ID(p), -ID(p)]) AS embeddings, p
                CREATE (p)-[:Points {embeddings: embeddings}]->(p)"""
         
         self.graph.query(q)

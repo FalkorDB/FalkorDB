@@ -65,7 +65,7 @@ def create_node_fulltext_index(graph, label, *properties, sync=False):
     return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, sync=sync)
 
 def create_node_vector_index(graph, label, *properties, dim=0, similarity_function="euclidean", sync=False):
-    options = {'dim': dim, 'similarityFunction': similarity_function}
+    options = {'dimension': dim, 'similarityFunction': similarity_function}
     return _create_typed_index(graph, "VECTOR", "NODE", label, *properties, options=options, sync=sync)
 
 def create_edge_range_index(graph, relation, *properties, sync=False):
@@ -75,7 +75,7 @@ def create_edge_fulltext_index(graph, relation, *properties, sync=False):
     return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, sync=sync)
 
 def create_edge_vector_index(graph, relation, *properties, dim, similarity_function="euclidean", sync=False):
-    options = {'dim': dim, 'similarityFunction': similarity_function}
+    options = {'dimension': dim, 'similarityFunction': similarity_function}
     return _create_typed_index(graph, "VECTOR", "EDGE", relation, *properties, options=options, sync=sync)
 
 def _drop_index(graph, idx_type, entity_type, label, attribute=None):
@@ -133,19 +133,11 @@ def wait_for_indices_to_sync(graph):
             break
         time.sleep(0.5) # sleep 500ms
 
-def query_vector_index(graph, entity_type, label, attribute, k, q):
-    params = {'type': entity_type, 'label': label, 'attribute': attribute, 'k': k, 'query': q}
-
-    return graph.query("""CALL db.idx.vector.query({
-            type: $type,
-            label: $label,
-            attribute: $attribute,
-            query: vector32f($query),
-            k:$k})""", params=params)
-
 def query_node_vector_index(graph, label, attribute, k, q):
-    return query_vector_index(graph, "NODE", label, attribute, k, q)
+    params = {'lbl': label, 'attr': attribute, 'k': k, 'q': q}
+    return graph.query("CALL db.idx.vector.queryNodes($lbl, $attr, $k, vecf32($q))", params=params)
 
 def query_edge_vector_index(graph, relation, attribute, k, q):
-    return query_vector_index(graph, "RELATIONSHIP", relation, attribute, k, q)
+    params = {'lbl': relation, 'attr': attribute, 'k': k, 'q': q}
+    return graph.query("CALL db.idx.vector.queryRelationships($lbl, $attr, $k, vecf32($q))", params=params)
 

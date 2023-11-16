@@ -15,7 +15,7 @@ typedef struct {
 } SIVector;
 
 // creates a new float32 vector
-SIValue SIVector32f_New
+SIValue SIVectorf32_New
 (
 	uint32_t dim  // vector's dimension
 ) {
@@ -23,7 +23,7 @@ SIValue SIVector32f_New
 	v->dim = dim;
 
 	return (SIValue) {
-		.type       = T_VECTOR32F,
+		.type       = T_VECTOR_F32,
 		.ptrval     = (void*)v,
 		.allocation = M_SELF
 	};
@@ -76,7 +76,7 @@ SIValue SIVector_FromBinary
 	fread_assert(&dim, sizeof(uint32_t), stream);
 
 	// create vector
-	SIValue v = SIVector32f_New(dim);
+	SIValue v = SIVectorf32_New(dim);
 	size_t elem_size = sizeof(float);
 
 	// set vector's elements
