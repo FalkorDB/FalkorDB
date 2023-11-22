@@ -1,9 +1,7 @@
 import csv
 import os
 from datetime import date
-from redis.commands.graph import Graph
-from redis.commands.graph.node import Node
-from redis.commands.graph.edge import Edge
+from falkordb import Graph, Node, Edge
 
 graph_name = "imdb"
 
@@ -25,11 +23,11 @@ def populate_graph(redis_con, redis_graph):
 			rating = float(row[3])
 			year = int(row[4])
 
-			node = Node(label="movie", properties={'title': title,
-												   'genre': genre,
-												   'votes': votes,
-												   'rating': rating,
-												   'year': year})
+			node = Node(labels="movie", properties={'title': title,
+												    'genre': genre,
+												    'votes': votes,
+												    'rating': rating,
+												    'year': year})
 			movies[title] = node
 			redis_graph.add_node(node)
 
@@ -46,7 +44,7 @@ def populate_graph(redis_con, redis_graph):
 			age = 2019 - yearOfBirth
 
 			if name not in actors:
-				node = Node(label="actor", properties={'name': name, 'age': age})
+				node = Node(labels="actor", properties={'name': name, 'age': age})
 				actors[name] = node
 				redis_graph.add_node(node)
 
@@ -54,7 +52,7 @@ def populate_graph(redis_con, redis_graph):
 				edge = Edge(actors[name], "act", movies[movie])
 				redis_graph.add_edge(edge)
 
-	redis_graph.commit()
-	redis_graph.call_procedure("db.idx.fulltext.createNodeIndex", "actor", "name")
+    redis_graph.commit()
+    redis_graph.create_node_fulltext_index("actor", "name")
 
-	return (actors, movies)
+    return (actors, movies)

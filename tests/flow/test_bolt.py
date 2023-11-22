@@ -8,7 +8,7 @@ bolt_con = None
 
 class testBolt():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env,_ = Env()
         port = 7687 + 6379 - self.env.port
         global bolt_con
         bolt_con = GraphDatabase.driver(f"bolt://localhost:{port}", auth=("falkordb", ""))

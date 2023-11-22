@@ -7,7 +7,7 @@ GRAPH_ID = "GraphVersion"
 
 class testGraphVersioning(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
     # Make sure graph version changes once a new label is created
     def test01_version_update_on_label_creation(self):
@@ -104,4 +104,3 @@ class testGraphVersioning(FlowTestsBase):
         q = """CREATE ()-[:R {v:1}]->()"""
         res = con.execute_command("GRAPH.QUERY", GRAPH_ID, q, "version", VERSION)
         self.env.assertFalse(isinstance(res[0], ResponseError))
-

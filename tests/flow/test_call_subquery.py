@@ -3,7 +3,6 @@ from collections import OrderedDict
 from index_utils import create_node_range_index
 from execution_plan_util import locate_operation, count_operation
 
-graph = None
 GRAPH_ID = "call_subquery"
 
 def _assert_subquery_contains_single(plan: ExecutionPlan, operation_name: str, env):
@@ -17,16 +16,13 @@ def _assert_subquery_contains_single(plan: ExecutionPlan, operation_name: str, e
 
 class testCallSubqueryFlow():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global graph
-        global redis_con
-        redis_con = self.env.getConnection()
-        graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
     
     def get_res_and_assertEquals(self, query, expected_result):
         """Run the query and assert the result set is as expected"""
 
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set, expected_result)
         return actual_result
 
@@ -34,7 +30,7 @@ class testCallSubqueryFlow():
         """Run the query and expect an error that contains the given message"""
 
         try:
-            graph.query(query)
+            self.graph.query(query)
             assert(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn(expected_err_msg, str(e))
@@ -137,11 +133,11 @@ updating clause.")
 
         # the graph is empty
         # create a node
-        res = graph.query("CREATE (n:N {name: 'Raz'})")
+        res = self.graph.query("CREATE (n:N {name: 'Raz'})")
         self.env.assertEquals(res.nodes_created, 1)
 
         # find and return a node via CALL {}
-        res = graph.query(
+        res = self.graph.query(
             """CALL
                 {
                     MATCH (n:N {name: 'Raz'})
@@ -155,7 +151,7 @@ updating clause.")
         self.env.assertEquals(len(res.result_set), 1)
         # node labels and props should match created node
         self.env.assertEquals(res.result_set[0][0],
-                              Node(label='N', properties={'name': 'Raz'}))
+                              Node(labels='N', properties={'name': 'Raz'}))
 
     def test03_filter_results(self):
         """Tests that no records return from the subquery for scans that found
@@ -163,12 +159,12 @@ updating clause.")
 
         # the graph has one node with label `N` and prop `name` with val `Raz`
         # add the `v` property to the one node currently existing, with val 4
-        res = graph.query("MATCH (n:N) SET n.v = 4")
+        res = self.graph.query("MATCH (n:N) SET n.v = 4")
         self.env.assertEquals(res.properties_set, 1)
 
         # if a returning subquery doesn't return records, the input record is
         # not passed as well. Here, only one record should be returned
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 UNWIND [1, 2, 3, 4] AS x
@@ -182,13 +178,13 @@ updating clause.")
         # assert correctness of the result
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='N', properties={'name': 'Raz', 'v': 4}))
+            Node(labels='N', properties={'name': 'Raz', 'v': 4}))
 
     def test04_reference_innerReturn_alias(self):
         """Tests that the outer scope can reference the returned projections
         from the subquery"""
 
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND [1, 2, 3, 4] AS x
             MATCH (n)
@@ -202,7 +198,7 @@ updating clause.")
 
         self.env.assertEquals(res.result_set, [[5], [6], [7], [8]])
 
-        res = graph.query (
+        res = self.graph.query (
             """
             UNWIND range(1,4) AS i
             CALL {
@@ -226,7 +222,7 @@ updating clause.")
         that corresponds to a record that is not the first one it gets"""
 
         # first input record to sq yields no records, next inputs do
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND ['Omer', 'Raz', 'Moshe'] as name
             CALL {
@@ -240,7 +236,7 @@ updating clause.")
         # assert correctness of the result
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='N', properties={'name': 'Raz', 'v': 4}))
+            Node(labels='N', properties={'name': 'Raz', 'v': 4}))
 
     def test06_one_to_many(self):
         """Tests the case Call {} changes the amount of records such that there
@@ -248,7 +244,7 @@ updating clause.")
 
         # the graph contains the following node (:N {name: 'Raz', v: 4}})
 
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 as one
             CALL {
@@ -267,7 +263,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][1], 1)
 
         # more than one component in the outer loop
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND [1, 2, 3, 4] AS x
             CALL {
@@ -289,9 +285,9 @@ updating clause.")
         """Tests that OPTIONAL MATCH within the subquery works appropriately,
         i.e., passes records with empty columns in case no match was found"""
 
-        graph.query("CREATE (:N {name: 'Raz', v: 1})")
+        self.graph.query("CREATE (:N {name: 'Raz', v: 1})")
 
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 UNWIND [1, 2, 3, 4] AS x
@@ -305,9 +301,9 @@ updating clause.")
         # validate the results
         self.env.assertEquals(len(res.result_set), 4)
         self.env.assertEquals(res.result_set[0][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 1}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 1}))
         self.env.assertEquals(res.result_set[1][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 4}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 4}))
         self.env.assertEquals(res.result_set[2][0], None)
         self.env.assertEquals(res.result_set[3][0], None)
 
@@ -316,7 +312,7 @@ updating clause.")
 
         # the graph has two nodes, with `name` 'Raz' and `v` 1 and 4
         # test filter using WHERE
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N {v: 1})
@@ -329,14 +325,14 @@ updating clause.")
         # assert the correctness of the results
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 1}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 1}))
 
     def test09_simple_ret_eager(self):
         """Simple test for the eager and returning subquery case"""
 
         # the graph has two nodes, with `name` 'Raz' and `v` 1 and 4
         # execute a query with an eager operation and returning subquery inside
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -349,13 +345,13 @@ updating clause.")
 
         # make sure the wanted actions occurred
         self.env.assertEquals(res.properties_set, 2)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 2}))
-        self.env.assertEquals(res.result_set[1][0], Node(label='N',
+        self.env.assertEquals(res.result_set[1][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 5}))
 
         # import outer-scope aliases, reference them inside and outside the sq
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 2 AS x
             CALL {
@@ -370,7 +366,7 @@ updating clause.")
 
         # make sure the wanted actions occurred
         self.env.assertEquals(res.properties_set, 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N', properties={'name': 'Raz', 'v': 4}))
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N', properties={'name': 'Raz', 'v': 4}))
         self.env.assertEquals(res.result_set[0][1], 2)
 
     # test FOREACH within CALL {} (updating (eager), returning)
@@ -380,7 +376,7 @@ updating clause.")
         # the graph has two nodes with label `N`, with `name` 'Raz' and `v` 4
         # and 5
 
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -395,13 +391,13 @@ updating clause.")
 
         # assert the correctness of the results
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='N', properties={'name': 'Raz', 'v': 5}))
+            Node(labels='N', properties={'name': 'Raz', 'v': 5}))
         self.env.assertEquals(res.result_set[1][0],
-            Node(label='N', properties={'name': 'Raz', 'v': 6}))
+            Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
         # Test with a non-returning subquery
         # Update properties using FOREACH in subquery
-        graph.query(
+        self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -413,19 +409,19 @@ updating clause.")
         )
 
         # assert the correctness of the results
-        res = graph.query("MATCH(n:TEMP) RETURN n ORDER BY n.v ASC")
+        res = self.graph.query("MATCH(n:TEMP) RETURN n ORDER BY n.v ASC")
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='TEMP', properties={'v': 5}))
+            Node(labels='TEMP', properties={'v': 5}))
         self.env.assertEquals(res.result_set[1][0],
-            Node(label='TEMP', properties={'v': 6}))
+            Node(labels='TEMP', properties={'v': 6}))
 
         # delete the nodes with label :TEMP
-        res = graph.query("MATCH (n:TEMP) DELETE n")
+        res = self.graph.query("MATCH (n:TEMP) DELETE n")
         self.env.assertEquals(res.nodes_deleted, 2)
 
         # FOREACH is first clause inside {}
-        graph.query(
+        self.graph.query(
             """
             CALL {
                 FOREACH (m in [1, 2] |
@@ -436,15 +432,15 @@ updating clause.")
         )
 
         # assert the correctness of the results
-        res = graph.query("MATCH(n:TEMP) RETURN n ORDER BY n.v ASC")
+        res = self.graph.query("MATCH(n:TEMP) RETURN n ORDER BY n.v ASC")
         self.env.assertEquals(len(res.result_set), 2)
 
         # delete the nodes with label :TEMP
-        res = graph.query("MATCH (n:TEMP) DELETE n")
+        res = self.graph.query("MATCH (n:TEMP) DELETE n")
         self.env.assertEquals(res.nodes_deleted, 2)
 
         # tests that `FOREACH` is interpreted as an updating clause, properly
-        res = graph.query(
+        res = self.graph.query(
             """
             MATCH (n)
             CALL {
@@ -460,15 +456,15 @@ updating clause.")
         # assert results
         self.env.assertEquals(res.nodes_created, 2)
         self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 5}))
         self.env.assertEquals(res.result_set[0][1], 1)
-        self.env.assertEquals(res.result_set[1][0], Node(label='N',
+        self.env.assertEquals(res.result_set[1][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 6}))
         self.env.assertEquals(res.result_set[1][1], 1)
 
         # delete the nodes with label :TEMP
-        res = graph.query("MATCH (n:TEMP) DELETE n")
+        res = self.graph.query("MATCH (n:TEMP) DELETE n")
 
     def test11_skip_limit(self):
         """Tests that SKIP and LIMIT work properly when placed inside a
@@ -477,7 +473,7 @@ updating clause.")
         # the graph has two nodes, with `name` 'Raz' and `v` 5 and 6
 
         # Test LIMIT
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -492,10 +488,10 @@ updating clause.")
         # assert that only one record was returned
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='N', properties={'name': 'Raz', 'v': 5}))
+            Node(labels='N', properties={'name': 'Raz', 'v': 5}))
 
         # Test SKIP
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -510,15 +506,15 @@ updating clause.")
         # assert that only one record was returned
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='N', properties={'name': 'Raz', 'v': 6}))
+            Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
         # Tests SKIP and LIMIT together
 
         # Create 10 nodes with label :W
-        res = graph.query("UNWIND range(1,10) AS i CREATE(:W {name:tostring(i), value:i})")
+        res = self.graph.query("UNWIND range(1,10) AS i CREATE(:W {name:tostring(i), value:i})")
         self.env.assertEquals(res.nodes_created, 10)
 
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:W)
@@ -534,12 +530,12 @@ updating clause.")
         # assert that only two records were returned
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='W', properties={'name': '6', 'value': 6}))
+            Node(labels='W', properties={'name': '6', 'value': 6}))
         self.env.assertEquals(res.result_set[1][0],
-            Node(label='W', properties={'name': '7', 'value': 7}))
+            Node(labels='W', properties={'name': '7', 'value': 7}))
 
         # delete the nodes with label :W created only for LIMIT tests purpose
-        res = graph.query("MATCH (n:W) DELETE n")
+        res = self.graph.query("MATCH (n:W) DELETE n")
         self.env.assertEquals(res.nodes_deleted, 10)
 
     def test12_order_by(self):
@@ -548,7 +544,7 @@ updating clause.")
         # the graph has two nodes: (:N {name: 'Raz', v: 2}) and
         # (:N {name: 'Raz', v: 5})
 
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 UNWIND range(1, 7) AS x
@@ -562,12 +558,12 @@ updating clause.")
         # validate the results
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 5}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 5}))
         self.env.assertEquals(res.result_set[1][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 6}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
         # same query, but with descending order
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 UNWIND range(1, 7) AS x
@@ -581,12 +577,12 @@ updating clause.")
         # validate the results
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 6}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 6}))
         self.env.assertEquals(res.result_set[1][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 5}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 5}))
 
         # multiple Sort operations, in and outside the CallSubquery op
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 UNWIND range(1, 7) AS x
@@ -600,9 +596,9 @@ updating clause.")
         # validate the results
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 5}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 5}))
         self.env.assertEquals(res.result_set[1][0],
-        Node(label='N', properties={'name': 'Raz', 'v': 6}))
+        Node(labels='N', properties={'name': 'Raz', 'v': 6}))
 
     def test13_midrun_fail(self):
         """Tests that mid-run fails are recovered correctly (free'd)"""
@@ -619,7 +615,7 @@ updating clause.")
         self.expect_error(query, "Division by zero")
 
         # make sure the TEMP node was deleted
-        res = graph.query("MATCH (n:TEMP) RETURN n")
+        res = self.graph.query("MATCH (n:TEMP) RETURN n")
         self.env.assertEquals(len(res.result_set), 0)
 
         # eager non-returning case
@@ -633,7 +629,7 @@ updating clause.")
         self.expect_error(query, "Division by zero")
 
         # make sure the TEMP node was deleted
-        res = graph.query("MATCH (n:TEMP) RETURN n")
+        res = self.graph.query("MATCH (n:TEMP) RETURN n")
         self.env.assertEquals(len(res.result_set), 0)
 
     def test14_nested_call_subquery(self):
@@ -682,11 +678,10 @@ updating clause.")
         """A more complex test, using more data and inner Call {} calls"""
 
         # clean db
-        self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create data
-        graph.query("CREATE (english: Language {name: 'English'}), (spanish: Language {name: 'Spanish'}), (french: Language {name: 'French'}), (coastal: Property {name: 'Coastal'}), (usa: Country {name: 'USA', extra_data: 'foo'}), (cali: State {name: 'California'}), (sacramento: City {name: 'Sacramento', extra_data: 'bar'}), (ny: State {name: 'New York'}), (nyc: City {name: 'New York City'}), (sacramento) - [:CITY_IN_STATE] -> (cali) - [:STATE_IN_COUNTRY] -> (usa), (cali) - [:HAS_STATE_PROP] -> (coastal), (nyc) - [:CITY_IN_STATE] -> (ny) - [:STATE_IN_COUNTRY] -> (usa), (ny) - [:HAS_STATE_PROP] -> (coastal), (nyc) - [:HAS_CITY_PROP] -> (coastal), (canada: Country {name: 'Canada'}), (ontario: State {name: 'Ontario', extra_data: 'baz'}), (toronto: City {name: 'Toronto'}), (bc: State {name: 'British Columbia'}), (victoria: City {name: 'Victoria'}), (toronto) - [:CITY_IN_STATE] -> (ontario) - [:STATE_IN_COUNTRY] -> (canada), (victoria) - [:CITY_IN_STATE] -> (bc) - [:STATE_IN_COUNTRY] -> (canada), (bc) - [:HAS_STATE_PROP] -> (coastal), (victoria) - [:HAS_CITY_PROP] -> (coastal), (canada) - [:OFFICIAL_LANGUAGE] -> (english), (canada) - [:OFFICIAL_LANGUAGE] -> (french), (mexico: Country {name: 'Mexico'}), (coahuila: State {name: 'Coahuila'}), (saltillo: City {name: 'Saltillo'}), (jalisco: State {name: 'Jalisco'}), (guadalajara: City {name: 'Guadalajara'}), (saltillo) - [:CITY_IN_STATE] -> (coahuila) - [:STATE_IN_COUNTRY] -> (mexico), (guadalajara) - [:CITY_IN_STATE] -> (jalisco) - [:STATE_IN_COUNTRY] -> (mexico), (jalisco) - [:HAS_STATE_PROP] -> (coastal), (mexico) - [:OFFICIAL_LANGUAGE] -> (spanish)")
+        self.graph.query("CREATE (english: Language {name: 'English'}), (spanish: Language {name: 'Spanish'}), (french: Language {name: 'French'}), (coastal: Property {name: 'Coastal'}), (usa: Country {name: 'USA', extra_data: 'foo'}), (cali: State {name: 'California'}), (sacramento: City {name: 'Sacramento', extra_data: 'bar'}), (ny: State {name: 'New York'}), (nyc: City {name: 'New York City'}), (sacramento) - [:CITY_IN_STATE] -> (cali) - [:STATE_IN_COUNTRY] -> (usa), (cali) - [:HAS_STATE_PROP] -> (coastal), (nyc) - [:CITY_IN_STATE] -> (ny) - [:STATE_IN_COUNTRY] -> (usa), (ny) - [:HAS_STATE_PROP] -> (coastal), (nyc) - [:HAS_CITY_PROP] -> (coastal), (canada: Country {name: 'Canada'}), (ontario: State {name: 'Ontario', extra_data: 'baz'}), (toronto: City {name: 'Toronto'}), (bc: State {name: 'British Columbia'}), (victoria: City {name: 'Victoria'}), (toronto) - [:CITY_IN_STATE] -> (ontario) - [:STATE_IN_COUNTRY] -> (canada), (victoria) - [:CITY_IN_STATE] -> (bc) - [:STATE_IN_COUNTRY] -> (canada), (bc) - [:HAS_STATE_PROP] -> (coastal), (victoria) - [:HAS_CITY_PROP] -> (coastal), (canada) - [:OFFICIAL_LANGUAGE] -> (english), (canada) - [:OFFICIAL_LANGUAGE] -> (french), (mexico: Country {name: 'Mexico'}), (coahuila: State {name: 'Coahuila'}), (saltillo: City {name: 'Saltillo'}), (jalisco: State {name: 'Jalisco'}), (guadalajara: City {name: 'Guadalajara'}), (saltillo) - [:CITY_IN_STATE] -> (coahuila) - [:STATE_IN_COUNTRY] -> (mexico), (guadalajara) - [:CITY_IN_STATE] -> (jalisco) - [:STATE_IN_COUNTRY] -> (mexico), (jalisco) - [:HAS_STATE_PROP] -> (coastal), (mexico) - [:OFFICIAL_LANGUAGE] -> (spanish)")
 
         query = """
         MATCH (c:City)-[:CITY_IN_STATE]->(state)-[:STATE_IN_COUNTRY]->(country)-[:OFFICIAL_LANGUAGE]->({name: 'English'})
@@ -709,7 +704,7 @@ updating clause.")
         RETURN {name: country.name, langs: langs, states: statesDetails}
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         expected_res = {'name': 'Canada',
@@ -740,7 +735,7 @@ updating clause.")
                 SET x.v = 3 
                 SET x.t ='a'
             }"""
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         # make sure that Update is called only once
         _assert_subquery_contains_single(plan, "Update", self.env)
 
@@ -751,7 +746,7 @@ updating clause.")
                 REMOVE x.v
                 REMOVE x.t
             }"""
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         # make sure that Update is called only once
         _assert_subquery_contains_single(plan, "Update", self.env)
 
@@ -764,7 +759,7 @@ updating clause.")
                 DELETE m
             }
             """
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         # make sure that DELETE is called only once
         _assert_subquery_contains_single(plan, "Delete", self.env)
 
@@ -821,10 +816,10 @@ updating clause.")
 
         # clear the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create a node with label N
-        graph.query("CREATE (:N)")
+        self.graph.query("CREATE (:N)")
 
         query = """
         MATCH (n)
@@ -839,11 +834,11 @@ updating clause.")
         RETURN ns
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N'))
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N'))
 
         query = """
         UNWIND ['a', 'b', 'c', 'a', 'b', 'b'] AS x
@@ -854,7 +849,7 @@ updating clause.")
         RETURN key, count ORDER BY key
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(len(res.result_set), 3)
@@ -869,7 +864,7 @@ updating clause.")
         """Tests that we deal properly with `OPTIONAL MATCH` clauses in a
         subquery"""
 
-        res = graph.query (
+        res = self.graph.query (
             """
             CALL { 
                 UNWIND ['S','T'] AS l1 
@@ -890,7 +885,7 @@ updating clause.")
         """Tests that we deal properly with aggregations in a subquery"""
 
         # Create 3 nodes
-        graph.query("UNWIND range(1, 3) AS i CREATE (n:A {v:i})")
+        self.graph.query("UNWIND range(1, 3) AS i CREATE (n:A {v:i})")
         
         query_to_expected_result = [
             ("""
@@ -924,10 +919,10 @@ updating clause.")
 
         # clear the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # a simple subquery, returning 2 rows
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 RETURN 1 AS num
@@ -944,7 +939,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][0], 2)
 
         # a simple subquery, using input from the outer query
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND range(1, 2) AS i
             WITH i AS i, i AS x
@@ -971,7 +966,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[3][1], 3)
 
         # create nodes in both branches of the UNION
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 CREATE (n:N {v: 1})
@@ -986,13 +981,13 @@ updating clause.")
 
         # assert results
         self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'v': 1}))
-        self.env.assertEquals(res.result_set[1][0], Node(label='M',
+        self.env.assertEquals(res.result_set[1][0], Node(labels='M',
             properties={'v': 2}))
 
         # match nodes in one branch, and create nodes in the other
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -1007,13 +1002,13 @@ updating clause.")
 
         # assert results
         self.env.assertEquals(len(res.result_set), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'v': 1}))
-        self.env.assertEquals(res.result_set[1][0], Node(label='M',
+        self.env.assertEquals(res.result_set[1][0], Node(labels='M',
             properties={'v': 2}))
 
         # use bound data
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND range(1, 2) AS i
             CALL {
@@ -1040,7 +1035,7 @@ updating clause.")
 
         # match nodes in both branches
         # the graph contains: (:N {v: 1}), (:M {v: 2}), (:M {v: 2})
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (n:N)
@@ -1055,15 +1050,15 @@ updating clause.")
 
         # assert results
         self.env.assertEquals(len(res.result_set), 3)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'v': 1}))
-        self.env.assertEquals(res.result_set[1][0], Node(label='M',
+        self.env.assertEquals(res.result_set[1][0], Node(labels='M',
             properties={'v': 2}))
-        self.env.assertEquals(res.result_set[2][0], Node(label='M',
+        self.env.assertEquals(res.result_set[2][0], Node(labels='M',
             properties={'v': 2}))
 
         # simple embedded call with UNION
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 CALL {
@@ -1083,7 +1078,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][0], 2)
 
         # simple embedded call with UNION
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 CALL {
@@ -1111,12 +1106,12 @@ updating clause.")
 
         # # clean the db
         # self.env.flush()
-        # graph = Graph(self.env.getConnection(), GRAPH_ID)
+        # self.graph = self.db.select_graph(GRAPH_ID)
 
         # # create two nodes with label N and property v=1, v=2
-        # graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
+        # self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
 
-        # res = graph.query(
+        # res = self.graph.query(
         #     """
         #     MATCH (n:N)
         #     CALL {
@@ -1138,7 +1133,7 @@ updating clause.")
         # self.env.assertEquals(res.nodes_created, 2)
 
         # union and aggregation function
-        res = graph.query (
+        res = self.graph.query (
             """
             CALL {
                 RETURN 1 AS v
@@ -1156,7 +1151,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[1][0], 1)
 
         # one branch is eager and the other is not
-        res = graph.query (
+        res = self.graph.query (
             """
             CALL {
                 WITH 0 AS i
@@ -1177,7 +1172,7 @@ updating clause.")
         self.env.assertEquals(res.properties_set, 1)
 
         # both branches are eager
-        res = graph.query (
+        res = self.graph.query (
             """
             CALL {
                 MERGE (m:EAGER {v:0})
@@ -1199,9 +1194,9 @@ updating clause.")
         self.env.assertEquals(res.properties_set, 2)
 
         # both branches are not eager
-        graph.query("CREATE (:X {v: 1})")
+        self.graph.query("CREATE (:X {v: 1})")
 
-        res = graph.query (
+        res = self.graph.query (
             """
             CALL {
                 MATCH (n:X)
@@ -1221,7 +1216,7 @@ updating clause.")
         self.env.assertEquals(res.properties_set, 0)
 
         # UNION ALL with more than 2 branches
-        res = graph.query (
+        res = self.graph.query (
             """
             CALL {
                 MERGE (n:EAGER {v:7})
@@ -1257,7 +1252,7 @@ updating clause.")
 
         # single eager & returning branch out of 2, using input data inside and
         # outside the subquery
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND [1, 2] AS data
             CALL {
@@ -1284,7 +1279,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[3][1], 2)
 
         # both branches are eager and returning
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND [1, 2] AS data
             CALL {
@@ -1304,7 +1299,7 @@ updating clause.")
             self.env.assertEquals(res.result_set[i], subres)
 
         # same query with Distinct (UNION instead of UNION ALL)
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND [1, 2] AS data
             CALL {
@@ -1330,13 +1325,13 @@ updating clause.")
 
         # clear the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # polulate the graph
         query = """UNWIND range(10,20) AS i
             CREATE (n:N {v:tostring(i)})-[:R]->(m:M {v:tostring(i+1)})"""
-        graph.query(query)
-        create_node_range_index(graph, "N", "v", sync=True)
+        self.graph.query(query)
+        create_node_range_index(self.graph, "N", "v", sync=True)
 
         # use the index in a scan as the lhs of a CallSubquery op, which
         # contains an eager operation
@@ -1350,12 +1345,12 @@ updating clause.")
         """
 
         # assert that we indeed utilize the index to find the node
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         index_scan = locate_operation(plan.structured_plan,
             "Node By Index Scan")
         self.env.assertNotEqual(index_scan, None)
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(len(res.result_set), 1)
@@ -1367,11 +1362,11 @@ updating clause.")
 
         # clear the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create a node with label N
-        graph.query("CREATE (:N {v: 1})")
-        node = Node(label='N', properties={'v': 1})
+        self.graph.query("CREATE (:N {v: 1})")
+        node = Node(labels='N', properties={'v': 1})
 
         # refer to a named path defined outside of a subquery, from within the
         # subquery
@@ -1384,10 +1379,10 @@ updating clause.")
         RETURN s
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(graph.query(query).result_set), 1)
+        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
         self.env.assertEquals(res.result_set[0][0], node)
 
         # refer a named path defined inside of a subquery, from within the
@@ -1400,10 +1395,10 @@ updating clause.")
         RETURN s
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(graph.query(query).result_set), 1)
+        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
         self.env.assertEquals(res.result_set[0][0], node)
 
         # return a path from a subquery and refer to it outside of the subquery
@@ -1415,10 +1410,10 @@ updating clause.")
         RETURN nodes(p)[0]
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(graph.query(query).result_set), 1)
+        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
         self.env.assertEquals(res.result_set[0][0], node)
 
         # refer to a named path defined in a subquery, from a nested subquery
@@ -1434,10 +1429,10 @@ updating clause.")
         RETURN s
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(graph.query(query).result_set), 1)
+        self.env.assertEquals(len(self.graph.query(query).result_set), 1)
         self.env.assertEquals(res.result_set[0][0], node)
 
         # import named paths inside a subquery containing a UNION clause
@@ -1452,10 +1447,10 @@ updating clause.")
         RETURN node ORDER BY node.v ASC
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(graph.query(query).result_set), 2)
+        self.env.assertEquals(len(self.graph.query(query).result_set), 2)
         self.env.assertEquals(res.result_set[0][0], node)
         self.env.assertEquals(res.result_set[1][0], OrderedDict([('v', 2)]))
 
@@ -1464,7 +1459,7 @@ updating clause.")
 
         # clean the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         query = """
         OPTIONAL MATCH (m)
@@ -1475,13 +1470,13 @@ updating clause.")
         RETURN n
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='N', properties={'name': 'Raz'}))
+            Node(labels='N', properties={'name': 'Raz'}))
 
         # use memory from outer scope after the subquery
         query = """
@@ -1493,15 +1488,15 @@ updating clause.")
         RETURN n, m
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(label='M',
+        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
 
         # nested eager & returning subquery
@@ -1519,17 +1514,17 @@ updating clause.")
         RETURN n, m, o
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(res.nodes_created, 2)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(label='M',
+        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
-        self.env.assertEquals(res.result_set[0][2], Node(label='O',
+        self.env.assertEquals(res.result_set[0][2], Node(labels='O',
             properties={'name': 'Omer'}))
 
         # highly nested eager & returning subquery
@@ -1552,19 +1547,19 @@ updating clause.")
         RETURN n, m, o, p
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(res.nodes_created, 3)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 4)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(label='M',
+        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
-        self.env.assertEquals(res.result_set[0][2], Node(label='O',
+        self.env.assertEquals(res.result_set[0][2], Node(labels='O',
             properties={'name': 'Omer'}))
-        self.env.assertEquals(res.result_set[0][3], Node(label='P',
+        self.env.assertEquals(res.result_set[0][3], Node(labels='P',
             properties={'name': 'Pini'}))
 
         # multiple eager & returning subqueries sequentially
@@ -1581,17 +1576,17 @@ updating clause.")
         RETURN n, m, o
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(res.nodes_created, 2)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 3)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(label='M',
+        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
-        self.env.assertEquals(res.result_set[0][2], Node(label='O',
+        self.env.assertEquals(res.result_set[0][2], Node(labels='O',
             properties={'name': 'Omer'}))
 
         # nested eager & returning subquery in a non-(eager & returning)
@@ -1608,19 +1603,19 @@ updating clause.")
         RETURN n, m
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # assert results
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 2)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz'}))
-        self.env.assertEquals(res.result_set[0][1], Node(label='M',
+        self.env.assertEquals(res.result_set[0][1], Node(labels='M',
             properties={'name': 'Moshe'}))
 
         # outer {} is not eager, inner is
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 WITH 1 AS x
@@ -1641,7 +1636,7 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][1], list(range(1, 6)))
 
         # outer {} is eager, but not returning, inner is
-        res = graph.query(
+        res = self.graph.query(
             """
             MATCH (n:N)
             CALL {
@@ -1661,15 +1656,15 @@ updating clause.")
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Raz', 'v': 1}))
 
         # same concept as the above test, using input data
         # create 3 nodes (:TEMP {v: 1\2\3})
-        res = graph.query("UNWIND range(1, 3) AS x CREATE (n:TEMP {v: x})")
+        res = self.graph.query("UNWIND range(1, 3) AS x CREATE (n:TEMP {v: x})")
         self.env.assertEquals(res.nodes_created, 3)
 
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND range(1, 3) AS x
             CALL {
@@ -1701,10 +1696,10 @@ updating clause.")
 
         # clean the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # using a separating `WITH`
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 CREATE (n:N {name: 'Roi'})
@@ -1718,15 +1713,15 @@ updating clause.")
 
         # assert results
         self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
         # delete the node
-        res = graph.query("MATCH (n) DELETE n")
+        res = self.graph.query("MATCH (n) DELETE n")
         self.env.assertEquals(res.nodes_deleted, 1)
 
         # same query, without a separating `WITH`
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 CREATE (n:N {name: 'Roi'})
@@ -1739,15 +1734,15 @@ updating clause.")
 
         # assert results
         self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
         # delete the node
-        res = graph.query("MATCH (n) DELETE n")
+        res = self.graph.query("MATCH (n) DELETE n")
         self.env.assertEquals(res.nodes_deleted, 1)
 
         # same query, without a separating `WITH`, and without a `RETURN` clause
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 CREATE (n:N {name: 'Roi'})
@@ -1759,7 +1754,7 @@ updating clause.")
 
         # assert results
         self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N',
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N',
             properties={'name': 'Roi'}))
 
     def test28_reset(self):
@@ -1768,13 +1763,13 @@ updating clause.")
 
         # clean the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create 2 nodes (:N {v: 2\4})
-        res = graph.query("UNWIND [2, 4] AS x CREATE (n:N {v: x})")
+        res = self.graph.query("UNWIND [2, 4] AS x CREATE (n:N {v: x})")
 
         # in the following query, the inner call {} is reset (lhs of outer {})
-        res = graph.query(
+        res = self.graph.query(
             """
             UNWIND [1, 2 ,3, 4] AS x
             CALL {
@@ -1793,10 +1788,10 @@ updating clause.")
         # assert results
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(res.result_set[0][0], 2)
-        self.env.assertEquals(res.result_set[0][1], Node(label='N',
+        self.env.assertEquals(res.result_set[0][1], Node(labels='N',
             properties={'v': 2}))
         self.env.assertEquals(res.result_set[1][0], 4)
-        self.env.assertEquals(res.result_set[1][1], Node(label='N',
+        self.env.assertEquals(res.result_set[1][1], Node(labels='N',
             properties={'v': 4}))
 
     def test29_rewrite_star_projections(self):
@@ -1804,10 +1799,10 @@ updating clause.")
 
         # clean the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # import data with *
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
             CALL {
@@ -1825,7 +1820,7 @@ updating clause.")
             self.env.assertEquals(res.result_set[0][i], i + 1)
 
         # return with *
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 WITH 1 AS a, 2 AS b
@@ -1842,7 +1837,7 @@ updating clause.")
             self.env.assertEquals(res.result_set[0][i], i + 1)
 
         # both import with * and return with *
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
             CALL {
@@ -1861,7 +1856,7 @@ updating clause.")
             self.env.assertEquals(res.result_set[0][i], i + 1)
 
         # using union
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a
             CALL {
@@ -1906,9 +1901,9 @@ updating clause.")
         # intermediate with *
 
         # create a node with label N
-        res = graph.query("CREATE (:N)")
+        res = self.graph.query("CREATE (:N)")
 
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
             CALL {
@@ -1926,10 +1921,10 @@ updating clause.")
         self.env.assertEquals(len(res.result_set[0]), 3)
         self.env.assertEquals(res.result_set[0][0], 1)
         self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(label='N'))
+        self.env.assertEquals(res.result_set[0][2], Node(labels='N'))
 
         # create node and project it with star
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
             CALL {
@@ -1947,10 +1942,10 @@ updating clause.")
         self.env.assertEquals(len(res.result_set[0]), 3)
         self.env.assertEquals(res.result_set[0][0], 1)
         self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(label='C'))
+        self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
 
         # merge node and project it with star
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
             CALL {
@@ -1968,10 +1963,10 @@ updating clause.")
         self.env.assertEquals(len(res.result_set[0]), 3)
         self.env.assertEquals(res.result_set[0][0], 1)
         self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(label='C'))
+        self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
 
         # create node and return it with star
-        res = graph.query(
+        res = self.graph.query(
             """
             WITH 1 AS a, 2 AS b
             CALL {
@@ -1989,7 +1984,7 @@ updating clause.")
         self.env.assertEquals(len(res.result_set[0]), 3)
         self.env.assertEquals(res.result_set[0][0], 1)
         self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[0][2], Node(label='C'))
+        self.env.assertEquals(res.result_set[0][2], Node(labels='C'))
 
     def test30_surrounding_matches(self):
         """Tests that in case the call {} is surrounded by matches, the
@@ -1997,11 +1992,11 @@ updating clause.")
 
         # clean the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create two nodes with label N, and one with label I with increasing v
         # property values for the N nodes
-        res = graph.query("CREATE (:N {v: 1}), (:N {v: 2}), (:I)")
+        res = self.graph.query("CREATE (:N {v: 1}), (:N {v: 2}), (:I)")
 
         # query with a surrounding match clauses, such that the right-most match
         # is prioritized (less nodes with its label in the graph)
@@ -2015,18 +2010,18 @@ updating clause.")
             """
 
         # assert that (i:I) was not scanned and inserted to the call {} op
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         # make sure that CREATE is called only once
         label_scan = locate_operation(plan.structured_plan, "Node By Label Scan")
         self.env.assertIsNotNone(label_scan)
         cartesian = locate_operation(plan.structured_plan, "CartesianProduct")
         self.env.assertIsNone(cartesian)
 
-        res = graph.query(query)
+        res = self.graph.query(query)
         # assert results
-        n1 = Node(label='N', properties={'v': 1})
-        n2 = Node(label='N', properties={'v': 2})
-        n3 = Node(label='I')
+        n1 = Node(labels='N', properties={'v': 1})
+        n2 = Node(labels='N', properties={'v': 2})
+        n3 = Node(labels='I')
         self.env.assertEquals(len(res.result_set), 2)
         self.env.assertEquals(len(res.result_set[0]), 3)
         self.env.assertEquals(res.result_set[0][0], n1)
@@ -2042,13 +2037,13 @@ updating clause.")
 
         # clean the db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create the node (:N {v: 1})
-        res = graph.query("CREATE (:N {v: 1})")
+        res = self.graph.query("CREATE (:N {v: 1})")
 
         # query with a match clause following a call {} clause with a scan
-        res = graph.query(
+        res = self.graph.query(
             """
             CALL {
                 MATCH (m:M)
@@ -2060,7 +2055,7 @@ updating clause.")
         )
 
         # assert results
-        n = Node(label='N', properties={'v': 1})
+        n = Node(labels='N', properties={'v': 1})
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 1)
         self.env.assertEquals(res.result_set[0][0], n)
@@ -2079,12 +2074,12 @@ updating clause.")
         # assert that the execution-plan holds a label scan for :M, and not a
         # conditional-traverse. This is true if we have to label-scans in the
         # plan
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         n_label_scans = count_operation(plan.structured_plan,
             "Node By Label Scan")
         self.env.assertEquals(n_label_scans, 2)
 
-        res = graph.query(query)
+        res = self.graph.query(query)
         # assert results
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(len(res.result_set[0]), 1)
@@ -2106,7 +2101,7 @@ updating clause.")
         RETURN n
         """
 
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         self.env.assertEquals(count_operation(plan.structured_plan, "Node By Label Scan"), 2)
         self.env.assertEquals(count_operation(plan.structured_plan, "Conditional Traverse"), 1)
 
@@ -2127,6 +2122,6 @@ updating clause.")
         """
 
         # assert that the execution-plan holds a cond-traverse for :N
-        plan = graph.explain(query)
+        plan = self.graph.explain(query)
         scan = locate_operation(plan.structured_plan, "Conditional Traverse")
         self.env.assertEquals(str(scan), "Conditional Traverse | (n:N)->(n:N)")

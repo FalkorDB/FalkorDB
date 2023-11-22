@@ -2,10 +2,9 @@ from common import *
 
 class testAllShortestPaths():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        redis_con = self.env.getConnection()
-        self.graph = Graph(redis_con, "all_shortest_paths")
-        self.cyclic_graph = Graph(redis_con, "all_shortest_paths_cyclic")
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph("all_shortest_paths")
+        self.cyclic_graph = self.db.select_graph("all_shortest_paths_cyclic")
         self.populate_graph()
         self.populate_cyclic_graph()
 
@@ -15,11 +14,11 @@ class testAllShortestPaths():
         # (v1)-[:E]->(v5)-[:E2]->(v4)
         # (v2)-[:E2]->(v4)
 
-        self.v1 = Node(label="L", properties={"v": 1})
-        self.v2 = Node(label="L", properties={"v": 2})
-        self.v3 = Node(label="L", properties={"v": 3})
-        self.v4 = Node(label="L", properties={"v": 4})
-        self.v5 = Node(label="L", properties={"v": 5})
+        self.v1 = Node(labels="L", properties={"v": 1})
+        self.v2 = Node(labels="L", properties={"v": 2})
+        self.v3 = Node(labels="L", properties={"v": 3})
+        self.v4 = Node(labels="L", properties={"v": 4})
+        self.v5 = Node(labels="L", properties={"v": 5})
 
         self.graph.add_node(self.v1)
         self.graph.add_node(self.v2)
@@ -55,11 +54,11 @@ class testAllShortestPaths():
         # (v3)-[:E2]->(v1)
         # (v4)-[:E2]->(v1)
 
-        self.cyclic_v1 = Node(label="L", properties={"v": 1})
-        self.cyclic_v2 = Node(label="L", properties={"v": 2})
-        self.cyclic_v3 = Node(label="L", properties={"v": 3})
-        self.cyclic_v4 = Node(label="L", properties={"v": 4})
-        self.cyclic_v5 = Node(label="L", properties={"v": 5})
+        self.cyclic_v1 = Node(labels="L", properties={"v": 1})
+        self.cyclic_v2 = Node(labels="L", properties={"v": 2})
+        self.cyclic_v3 = Node(labels="L", properties={"v": 3})
+        self.cyclic_v4 = Node(labels="L", properties={"v": 4})
+        self.cyclic_v5 = Node(labels="L", properties={"v": 5})
 
         self.cyclic_graph.add_node(self.cyclic_v1)
         self.cyclic_graph.add_node(self.cyclic_v2)

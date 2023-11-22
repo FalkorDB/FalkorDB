@@ -9,9 +9,8 @@ people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
 
 def thread_run_query(query, barrier):
-    env = Env(decodeResponses=True)
-    conn = env.getConnection()
-    graph = Graph(conn, GRAPH_ID)
+    env, db = Env()
+    graph = db.select_graph(GRAPH_ID)
 
     if barrier is not None:
         barrier.wait()
@@ -25,9 +24,8 @@ def thread_run_query(query, barrier):
         return str(e)
 
 def delete_graph(graph_id):
-    env = Env(decodeResponses=True)
-    conn = env.getConnection()
-    graph = Graph(conn, graph_id)
+    env, db = Env()
+    graph = db.select_graph(graph_id)
 
     # Try to delete graph.
     try:
@@ -53,13 +51,14 @@ def run_concurrent(queries, f):
 
 class testConcurrentQueryFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         # skip test if we're running under Valgrind
         if VALGRIND:
             self.env.skip() # valgrind is not working correctly with multi processing
 
-        self.conn = self.env.getConnection()
-        self.graph = Graph(self.conn, GRAPH_ID)
+        self.conn  = redis.Redis("localhost", self.env.port)
+        self.graph = self.db.select_graph(GRAPH_ID)
+
         self.populate_graph()
 
     def populate_graph(self):
@@ -67,7 +66,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
         # Create entities
         for p in people:
-            node = Node(label="person", properties={"name": p})
+            node = Node(labels="person", properties={"name": p})
             self.graph.add_node(node)
             nodes[p] = node
 
@@ -353,12 +352,12 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # no need to check
             return
 
-        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         self.graph.query("CREATE (:N)")
 
         def resize_and_query():
-            g = redis.commands.graph.Graph(self.env.getConnection(), GRAPH_ID)
+            g = Graph(self.env.getConnection(), GRAPH_ID)
 
             for j in range(1, 10):
                 g.query("UNWIND range(1, 10000) AS x CREATE (:M)")

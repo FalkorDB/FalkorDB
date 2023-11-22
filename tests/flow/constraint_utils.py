@@ -70,7 +70,7 @@ def wait_on_constraint(g, ct_type, entity_type, lbl, *props):
         time.sleep(0.5) # sleep 500ms
 
 def create_constraint(g, ct_type, entity_type, lbl, *props, sync=False):
-    args = ["GRAPH.CONSTRAINT", "CREATE", g.name, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
+    args = ["GRAPH.CONSTRAINT", "CREATE", g.key, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
     args.extend(props)
     res = g.execute_command(*args)
     if sync:
@@ -112,7 +112,7 @@ def create_mandatory_edge_constraint(g, lbl, *props, sync=False):
     return create_mandatory_constraint(g, "RELATIONSHIP", lbl, *props, sync=sync)
 
 def drop_constraint(g, ct_type, entity_type, lbl, *props):
-    params = ["GRAPH.CONSTRAINT", "DROP", g.name, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
+    params = ["GRAPH.CONSTRAINT", "DROP", g.key, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
     params.extend(props)
     res = g.execute_command(*params)
     return res

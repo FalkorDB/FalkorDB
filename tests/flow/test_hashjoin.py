@@ -5,7 +5,7 @@ GRAPH_ID = "G"
 
 class testHashJoin(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
     def test_multi_hashjoins(self):
         # See issue https://github.com/RedisGraph/RedisGraph/issues/1124
@@ -24,7 +24,7 @@ class testHashJoin(FlowTestsBase):
 
         # Find nodes a,b,c such that a.v = 1, a.v = b.v-1 and b.v = c.v-1
         q = "MATCH (a {val:1}), (b), (c) WHERE a.val = b.val-1 AND b.val = c.val-1 RETURN a.val, b.val, c.val"
-        plan = graph.execution_plan(q)
+        plan = str(graph.explain(q))
 
         # Make sure plan contains 2 Value Hash Join operations
         self.env.assertEquals(plan.count("Value Hash Join"), 2)

@@ -8,10 +8,9 @@ graph3 = None
 class testReturnDistinctFlow1(FlowTestsBase):
 
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         global graph1
-        redis_con = self.env.getConnection()
-        graph1 = Graph(redis_con, "G1")
+        graph1 = self.db.select_graph("G1")
         self.populate_graph()
 
     def populate_graph(self):
@@ -30,11 +29,11 @@ class testReturnDistinctFlow1(FlowTestsBase):
     def test_distinct_optimization(self):
         global graph1
         # Make sure we do not omit distinct when performain none aggregated projection.
-        execution_plan = graph1.execution_plan("MATCH (n) RETURN DISTINCT n.name, n.age")
+        execution_plan = str(graph1.explain("MATCH (n) RETURN DISTINCT n.name, n.age"))
         self.env.assertIn("Distinct", execution_plan)
 
         # Distinct should be omitted when performain aggregation.
-        execution_plan = graph1.execution_plan("MATCH (n) RETURN DISTINCT n.name, max(n.age)")
+        execution_plan = str(graph1.explain("MATCH (n) RETURN DISTINCT n.name, max(n.age)"))
         self.env.assertNotIn("Distinct", execution_plan)
 
     def test_issue_395_scenario(self):
@@ -83,10 +82,9 @@ class testReturnDistinctFlow1(FlowTestsBase):
 class testReturnDistinctFlow2(FlowTestsBase):
 
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         global graph2
-        redis_con = self.env.getConnection()
-        graph2 = Graph(redis_con, "G2")
+        graph2 = self.db.select_graph("G2")
         self.populate_graph()
 
     def populate_graph(self):
@@ -141,10 +139,9 @@ class testReturnDistinctFlow2(FlowTestsBase):
 
 class testDistinct(FlowTestsBase):
     def __init__(self):
+        self.env, self.db = Env()
         global graph3
-        self.env = Env(decodeResponses=True)
-        redis_con = self.env.getConnection()
-        graph3 = Graph(redis_con, "G3")
+        graph3 = self.db.select_graph("G3")
         self.populate_graph()
 
     def populate_graph(self):

@@ -3,17 +3,12 @@ from common import *
 import json
 import math
 
-graph = None
-redis_con = None
 people = ["Roi", "Alon", "Ailon", "Boaz"]
 
 class testFunctionCallsFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global graph
-        global redis_con
-        redis_con = self.env.getConnection()
-        graph = Graph(redis_con, "G")
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph("G")
         self.populate_graph()
 
     def populate_graph(self):
@@ -24,8 +19,8 @@ class testFunctionCallsFlow(FlowTestsBase):
                 labels = ["person"]
             else:
                 labels = ["person", "student"]
-            node = Node(label=labels, properties={"name": p, "val": idx})
-            graph.add_node(node)
+            node = Node(labels=labels, properties={"name": p, "val": idx})
+            self.graph.add_node(node)
             nodes[p] = node
 
         # Fully connected graph
@@ -33,21 +28,21 @@ class testFunctionCallsFlow(FlowTestsBase):
             for dest in nodes:
                 if src != dest:
                     edge = Edge(nodes[src], "know", nodes[dest])
-                    graph.add_edge(edge)
+                    self.graph.add_edge(edge)
 
         for src in nodes:
             for dest in nodes:
                 if src != dest:
                     edge = Edge(nodes[src], "works_with", nodes[dest])
-                    graph.add_edge(edge)
+                    self.graph.add_edge(edge)
 
-        graph.commit()
+        self.graph.commit()
         query = """MATCH (a)-[:know]->(b) CREATE (a)-[:know]->(b)"""
-        graph.query(query)
+        self.graph.query(query)
 
     def expect_error(self, query, expected_err_msg):
         try:
-            graph.query(query)
+            self.graph.query(query)
             assert(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn(expected_err_msg, str(e))
@@ -56,7 +51,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.expect_error(query, "Type mismatch")
     
     def get_res_and_assertEquals(self, query, expected_result):
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     # Validate capturing of errors prior to query execution.
@@ -72,32 +67,32 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test02_boolean_comparisons(self):
         query = """RETURN true = 5"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[False]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """RETURN true <> 'str'"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[True]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """RETURN 'anything' <> NULL"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[None]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """RETURN 'anything' = NULL"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[None]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """RETURN 10 >= 1.5"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[True]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """RETURN -1 < 1"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[True]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -117,22 +112,22 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.expect_type_error(query)
 
         query = "MATCH (a) RETURN ID(a) ORDER BY ID(a) LIMIT 3"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0], [1], [2]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "MATCH (a)-[e]->() RETURN ID(e) ORDER BY ID(e) LIMIT 3"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0], [1], [2]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "RETURN EXISTS(null)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[False]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "RETURN EXISTS('anything')"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[True]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -142,251 +137,251 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test08_apply_all_function(self):
         query = "MATCH () RETURN COUNT(*)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[4]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "UNWIND [1, 2] AS a RETURN COUNT(*)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[2]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # COLLECT should associate false and 'false' to different groups.
         query = "UNWIND [false,'false',0,'0'] AS a RETURN a, count(a) order by a"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['0', 1], ["false", 1], [False, 1], [0, 1]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test09_static_aggregation(self):
         query = "RETURN count(*)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[1]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "RETURN max(2)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[2]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "RETURN max([2])"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[2]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "RETURN min(3)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[3]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "RETURN min([3])"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[3]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test10_modulo_inputs(self):
         # Validate modulo with integer inputs.
         query = "RETURN 5 % 2"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[1]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate modulo with a floating-point dividend.
         query = "RETURN 5.5 % 2"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[1.5]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate modulo with a floating-point divisor.
         query = "RETURN 5 % 2.5"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate modulo with both a floating-point dividen and a floating-point divisor.
         query = "RETURN 5.5 % 2.5"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0.5]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate modulo with negative integer inputs.
         query = "RETURN -5 % -2"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[-1]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate modulo with negative floating-point inputs.
         query = "RETURN -5.5 % -2.5"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[-0.5]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate modulo on edge case -LONG_MIN%-1.
         # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=30484
         query = "RETURN toInteger(1.2289948315394e+19) % -1"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate integer dividend modulo by 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 3 % 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 3 % 0"
         # (error) Division by zero
         query = "RETURN 3 % 0"
         try:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Division by zero", str(e))
 
         # Validate floating-point dividend modulo by 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 1.0 % 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 % 0"
         # 1) 1) "1.0 % 0"
         # 2) 1) 1) "-nan"
         query = "RETURN 1.0 % 0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate integer dividend modulo by 0.0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 1 % 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1 % 0.0"
         # 1) 1) "1 % 0.0"
         # 2) 1) 1) "-nan"
         query = "RETURN 1 % 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate floating-point dividend modulo by 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 1.0 % 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 % 0.0"
         # 1) 1) "1.0 % 0.0"
         # 2) 1) 1) "-nan"       
         query = "RETURN 1.0 % 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate floating-point 0.0 modulo by floating-point different from 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0.0 % 5.1"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 % 5.1"
         # 1) 1) "0.0 % 5.1"
         # 2) 1) 1) "0"
         query = "RETURN 0.0 % 5.1"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate floating-point 0.0 modulo by integer different from 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0.0 % 7"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 % 7"
         # 1) 1) "0.0 % 7"
         # 2) 1) 1) "0"
         query = "RETURN 0.0 % 7"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate integer 0 modulo by floating-point different from 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0 % 7.5"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 % 7.5"
         # 1) 1) "0 % 7.5"
         # 2) 1) 1) "0"
         query = "RETURN 0 % 7.5"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate integer 0 modulo by integer different from 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0 % 7"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 % 7"
         # 1) 1) "0 % 7"
         # 2) 1) 1) (integer) 0
         query = "RETURN 0 % 7"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate floating-point 0.0 modulo by infinite
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0.0 % ( 1 / 0.0 )"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 % ( 1 / 0.0 )"
         # 1) 1) "0.0 % ( 1 / 0.0 )"
         # 2) 1) 1) "0"
         query = "RETURN 0.0 % ( 1 / 0.0 )"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate integer 0 modulo by infinite
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0 % ( 1 / 0.0 )"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 % ( 1 / 0.0 )"
         # 1) 1) "0 % ( 1 / 0.0 )"
         # 2) 1) 1) "0"
         query = "RETURN 0 % ( 1 / 0.0 )"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate integer modulo by infinite
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 3 % ( 1 / 0.0 )"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 3 % ( 1 / 0.0 )"
         # 1) 1) "3 % ( 1 / 0.0 )"
         # 2) 1) 1) "3"
         query = "RETURN 3 % ( 1 / 0.0 )"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[3]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate floating-point modulo by infinite
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 2.5 % ( 1 / 0.0 )"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 2.5 % ( 1 / 0.0 )"
         # 1) 1) "2.5 % ( 1 / 0.0 )"
         # 2) 1) 1) "2.5"
         query = "RETURN 2.5 % ( 1 / 0.0 )"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[2.5]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Validate infinite modulo by integer 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN ( 1 / 0.0 ) % 7"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN ( 1 / 0.0 ) % 7"
         # 1) 1) "( 1 / 0.0 ) % 7"
         # 2) 1) 1) "-nan"
         query = "RETURN ( 1 / 0.0 ) % 7"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate floating-point 0.0 modulo by floating-point 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN  0.0 % 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN  0.0 % 0.0"
         # 1) 1) "0.0 % 0.0"
         # 2) 1) 1) "-nan"
         query = "RETURN 0.0 % 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate integer 0 modulo by floating 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN  0 % 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN  0 % 0.0"
         # 1) 1) "0 % 0.0"
         # 2) 1) 1) "-nan"
         query = "RETURN 0 % 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate floating-point 0.0 modulo by integer 0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN  0.0 % 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN  0.0 % 0"
         # 1) 1) "0 % 0.0"
         # 2) 1) 1) "-nan"
         query = "RETURN  0.0 % 0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate integer 0 modulo by 0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN  0 % 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN  0 % 0"
         # (error) Division by zero
         query = "RETURN 0 % 0"
         try:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Division by zero", str(e))
 
@@ -394,44 +389,44 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test11_null_aggregate_function_inputs(self):
         # SUM should sum all non-null inputs.
         query = """UNWIND [1, NULL, 3] AS a RETURN sum(a)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[4]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # SUM should return 0 given a fully NULL input.
         query = """WITH NULL AS a RETURN sum(a)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # COUNT should count all non-null inputs.
         query = """UNWIND [1, NULL, 3] AS a RETURN count(a)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[2]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # COUNT should return 0 given a fully NULL input.
         query = """WITH NULL AS a RETURN count(a)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # COLLECT should ignore null inputs.
         query = """UNWIND [1, NULL, 3] AS a RETURN collect(a)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[1, 3]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # COLLECT should return an empty array on all null inputs.
         query = """WITH NULL AS a RETURN collect(a)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     # Verify that nested functions that perform heap allocations return properly.
     def test12_nested_heap_functions(self):
         query = """MATCH p = (n) WITH head(nodes(p)) AS node RETURN node.name ORDER BY node.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['Ailon'],
                            ['Alon'],
                            ['Boaz'],
@@ -442,14 +437,14 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test13_case_when_inputs(self):
         # Simple case form: single value evaluation.
         query = """UNWIND [NULL, true, false] AS v RETURN v, CASE v WHEN true THEN v END"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[None, None],
                            [True, True],
                            [False, None]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """UNWIND [NULL, true, false] AS v RETURN v, CASE v WHEN true THEN v WHEN false THEN v END"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[None, None],
                            [True, True],
                            [False, False]]
@@ -457,7 +452,7 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         # Generic case form: evaluation for each case.
         query = """UNWIND [NULL, true, false] AS v RETURN v, CASE WHEN v THEN v END"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         # Only the true value should return non-NULL.
         expected_result = [[None, None],
                            [True, True],
@@ -465,7 +460,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = """UNWIND [NULL, true, false] AS v RETURN v, CASE WHEN v IS NOT NULL THEN v END"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         # The true and false values should both return non-NULL.
         expected_result = [[None, None],
                            [True, True],
@@ -476,12 +471,12 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test14_case_when_memory_management(self):
         # Simple case form: single value evaluation.
         query = """WITH 'A' AS a WITH CASE a WHEN 'A' THEN toString(a) END AS key RETURN toLower(key)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['a']]
         self.env.assertEquals(actual_result.result_set, expected_result)
         # Generic case form: evaluation for each case.
         query = """WITH 'A' AS a WITH CASE WHEN true THEN toString(a) END AS key RETURN toLower(key)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['a']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -515,7 +510,7 @@ class testFunctionCallsFlow(FlowTestsBase):
     # startNode and endNode calls should return the appropriate nodes.
     def test16_edge_endpoints(self):
         query = """MATCH (a)-[e]->(b) RETURN a.name, startNode(e).name, b.name, endNode(e).name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         for row in actual_result.result_set:
             self.env.assertEquals(row[0], row[1])
             self.env.assertEquals(row[2], row[3])
@@ -523,37 +518,37 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test17_to_json(self):
         # Test JSON literal values in an array.
         query = """RETURN toJSON([1, 0.000000000000001, 'str', true, NULL])"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, [1, 0.000000000000001, "str", True, None])
 
         # Test JSON an empty array value.
         query = """WITH [] AS arr RETURN toJSON(arr)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, [])
 
         # Test JSON an empty map value.
         query = """WITH {} AS map RETURN toJSON(map)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, {})
 
         # Test converting a map projection.
         query = """MATCH (n {val: 1}) RETURN toJSON(n {.val, .name})"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, {"name": "Alon", "val": 1})
 
         # Test converting a full node.
         query = """MATCH (n {val: 1}) RETURN toJSON(n)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, {"type": "node", "id": 1, "labels": ["person", "student"], "properties": {"name": "Alon", "val": 1}})
 
         # Test converting a full edge.
         query = """MATCH ({val: 0})-[e:works_with]->({val: 1}) RETURN toJSON(e)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         start = {"id": 0, "labels": ["person"], "properties": {"name": "Roi", "val": 0}}
         end = {"id": 1, "labels": ["person", "student"], "properties": {"name": "Alon", "val": 1}}
         parsed = json.loads(actual_result.result_set[0][0])
@@ -561,21 +556,21 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         # Test converting a path.
         query = """MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN toJSON(path)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected = [{'type': 'node', 'id': 0, 'labels': ['person'], 'properties': {'name': 'Roi', 'val': 0}}, {'type': 'relationship', 'id': 12, 'relationship': 'works_with', 'properties': {}, 'start': {'id': 0, 'labels': ['person'], 'properties': {'name': 'Roi', 'val': 0}}, 'end': {'id': 1, 'labels': ['person', 'student'], 'properties': {'name': 'Alon', 'val': 1}}}, {'type': 'node', 'id': 1, 'labels': ['person', 'student'], 'properties': {'name': 'Alon', 'val': 1}}]
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, expected)
 
         # Test JSON literal values in an point.
         query = """RETURN toJSON(point({ longitude: 167.697555, latitude: 0.402313 }))"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, {"crs": "wgs-84", "latitude": 0.402313, "longitude": 167.697556, "height": None})
 
     # Memory should be freed properly when the key values are heap-allocated.
     def test18_allocated_keys(self):
         query = """UNWIND ['str1', 'str1', 'str2', 'str1'] AS key UNWIND [1, 2, 3] as agg RETURN toUpper(key) AS key, collect(DISTINCT agg) ORDER BY key"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['STR1', [1, 2, 3]],
                            ['STR2', [1, 2, 3]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
@@ -583,80 +578,80 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test19_has_labels(self):
         # Test existing label
         query = """MATCH (n) WHERE n:person RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test not existing label
         query = """MATCH (n) WHERE n:L RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = []
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test multi label
         query = """MATCH (n) WHERE n:person:L RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = []
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test multi label
         query = """MATCH (n) WHERE n:person:student RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['Alon'], ['Boaz']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test or between different labels label
         query = """MATCH (n) WHERE n:person OR n:L RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['Roi'], ['Alon'], ['Ailon'], ['Boaz']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test multi label using functions
         query = """MATCH (n) WHERE hasLabels(n, ['person', 'L']) RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = []
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test multi label using functions
         query = """MATCH (n) WHERE hasLabels(n, ['person', 'student']) RETURN n.name"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result =  [['Alon'], ['Boaz']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test has labels using functions mismatch type
         query = """MATCH (n) WHERE hasLabels(n, ['person', 1]) RETURN n.name"""
         try:
-            graph.query(query)
+            self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
     def test20_keys(self):
         # Test retrieving keys of a nested map
         query = """RETURN keys({a: 5, b: 10})"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[['a', 'b']]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test retrieving keys of a map reference
         query = """WITH {a: 5, b: 10} AS map RETURN keys(map)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test retrieving keys of a node
         query = """MATCH (n:person {name: 'Roi'}) RETURN keys(n)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[['name', 'val']]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test retrieving keys of an (empty) edge
         query = """MATCH (:person {name: 'Roi'})-[e:works_with]->(:person {name: 'Alon'}) RETURN keys(e)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Test a null input
         query = """WITH NULL AS map RETURN keys(map)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[None]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -667,7 +662,7 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test21_distinct_memory_management(self):
         # validate behavior of the DISTINCT function with allocated values
         query = """MATCH (a {val: 0}) RETURN collect(DISTINCT a { .name })"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[{'name': 'Roi'}]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -675,7 +670,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # validate that large lists arguments are not allocated on stack
         large_list = str([1] * 1000000)
         query = f"""RETURN {large_list}"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set[0][0]), 1000000)
     
     def test23_toInteger(self):
@@ -700,7 +695,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger('')"""
         ]
         for query in queries:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
             self.env.assertEquals(actual_result.result_set[0][0], None)
 
     def test24_substring(self):
@@ -742,7 +737,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             ]
         for query in queries:
             try:
-                graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
                 self.env.assertEqual(str(e), "length must be a non-negative integer")
@@ -776,7 +771,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             ]
         for query in queries:
             try:
-                graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError as e:
                 self.env.assertEqual(str(e), "length must be a non-negative integer")
@@ -792,317 +787,317 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test27_string_concat(self):
         larg_double = 1.123456e300
         query = f"""RETURN '' + {larg_double} + {larg_double}"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "%f%f" % (larg_double, larg_double))
 
     def test28_sqrt(self):
         query = """RETURN sqrt(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 0)
 
         query = """RETURN sqrt(9801)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 99)
 
         query = """RETURN sqrt(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         query = """RETURN sqrt(-9)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         query = """RETURN sqrt(-0.0000000001)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         query = """RETURN sqrt(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         query = """RETURN sqrt(2540.95581553)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 50.4078943770715)
     
     def test29_toBoolean(self):
         # all other toBoolean cases (boolean, strings, null, errors) are covered in TCK
         # integers
         query = """RETURN toBoolean(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], False)
         query = """RETURN toBoolean(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
         query = """RETURN toBoolean(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
 
     def test29_toBooleanOrNull(self):
         # boolean
         query = """RETURN toBooleanOrNull(true)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
         query = """RETURN toBooleanOrNull(false)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], False)
 
         # strings
         query = """RETURN toBooleanOrNull('TruE')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
         query = """RETURN toBooleanOrNull('FaLsE')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], False)
         query = """RETURN toBooleanOrNull('not a boolean')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # integers
         query = """RETURN toBooleanOrNull(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], False)
         query = """RETURN toBooleanOrNull(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
         query = """RETURN toBooleanOrNull(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
 
         # null
         query = """RETURN toBooleanOrNull(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # float
         query = """RETURN toBooleanOrNull(0.1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # list
         query = """RETURN toBooleanOrNull([true])"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # node
         query = """CREATE (n) RETURN toBooleanOrNull(n)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # edge
         query = """CREATE ()-[r:R]->() RETURN toBooleanOrNull(r)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
     def test30_toFloatOrNull(self):
         # floats
         query = """RETURN toFloatOrNull(1.2)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.2, 0.0001)
 
         # strings
         query = """RETURN toFloatOrNull('1.23')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.23, 0.0001)
         query = """RETURN toFloatOrNull('1.2.3')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # integers
         query = """RETURN toFloatOrNull(0.1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.1, 0.0001)
         query = """RETURN toFloatOrNull(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
         query = """RETURN toFloatOrNull(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -1.0, 0.0001)
 
         # null
         query = """RETURN toFloatOrNull(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # boolean
         query = """RETURN toFloatOrNull(true)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
         query = """RETURN toFloatOrNull(false)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # list
         query = """RETURN toFloatOrNull([1.0])"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # node
         query = """CREATE (n) RETURN toFloatOrNull(n)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # edge
         query = """CREATE ()-[r:R]->() RETURN toFloatOrNull(r)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
     def test31_toIntegerOrNull(self):
         # integers
         query = """RETURN toIntegerOrNull(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 0)
         query = """RETURN toIntegerOrNull(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 1)
         query = """RETURN toIntegerOrNull(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], -1)
 
         # floats
         query = """RETURN toIntegerOrNull(0.1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 0)
         query = """RETURN toIntegerOrNull(0.9)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 0)
 
         # strings
         query = """RETURN toIntegerOrNull('1')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 1)
         query = """RETURN toIntegerOrNull('1.2')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 1)
 
         # null
         query = """RETURN toIntegerOrNull(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # boolean
         query = """RETURN toIntegerOrNull(true)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 1)
         query = """RETURN toIntegerOrNull(false)"""
-        actual_result =graph.query(query)
+        actual_result =self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], 0)
 
         # list
         query = """RETURN toIntegerOrNull([1])"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # node
         query = """CREATE (n) RETURN toIntegerOrNull(n)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # edge
         query = """CREATE ()-[r:R]->() RETURN toIntegerOrNull(r)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
     def test32_toStringOrNull(self):
         # strings
         query = """RETURN toStringOrNull('1')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "1")
         query = """RETURN toStringOrNull('1.2')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "1.2")
         query = """RETURN toStringOrNull('hello')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "hello")
 
         # integers
         query = """RETURN toStringOrNull(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "0")
         query = """RETURN toStringOrNull(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "1")
         query = """RETURN toStringOrNull(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "-1")
 
         # floats
         query = """RETURN toStringOrNull(0.1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "0.100000")
         query = """RETURN toStringOrNull(0.9)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "0.900000")
 
         # boolean
         query = """RETURN toStringOrNull(true)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "true")
         query = """RETURN toStringOrNull(false)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "false")
         
         # null
         query = """RETURN toStringOrNull(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
   
          # list
         query = """RETURN toStringOrNull([1])"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # node
         query = """CREATE (n) RETURN toStringOrNull(n)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         # edge
         query = """CREATE ()-[r:R]->() RETURN toStringOrNull(r)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
     
     def test33_toString(self):
         # strings
         query = """RETURN toString('1')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "1")
         query = """RETURN toString('1.2')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "1.2")
         query = """RETURN toString('hello')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "hello")
 
         # integers
         query = """RETURN toString(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "0")
         query = """RETURN toString(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "1")
         query = """RETURN toString(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "-1")
 
         # floats
         query = """RETURN toString(0.1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "0.100000")
         query = """RETURN toString(0.9)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "0.900000")
 
         # boolean
         query = """RETURN toString(true)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "true")
         query = """RETURN toString(false)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], "false")
         
         # null
         query = """RETURN toString(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
         queries = [
@@ -1112,7 +1107,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             ]
         for query in queries:
             try:
-                graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting a type error.
@@ -1136,12 +1131,12 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test35_min_max(self):
         query = "UNWIND [[1], [2], [2], [1]] AS x RETURN max(x), min(x)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[[2], [1]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         query = "UNWIND [1, 2, '1' ,'2' ,[1] ,[2] ,1 ,2, '1', '2', NULL, True] AS x RETURN max(x), min(x)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[2, [1]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -1149,42 +1144,42 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         # log(0)
         query = """RETURN log(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isinf(-actual_result.result_set[0][0]))
 
         # log(-1)
         query = """RETURN log(-1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         # log(1)
         query = """RETURN log(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0, 0.0001)
 
         # log(10)
         query = """RETURN log(10)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.30258509299405, 0.0001)
 
         # log10(0)
         query = """RETURN log10(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isinf(-actual_result.result_set[0][0]))
 
         # log10(-11.3)
         query = """RETURN log10(-11.3)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         # log10(100)
         query = """RETURN log10(100)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2, 0.0001)
 
         # log10(110)
         query = """RETURN log10(110)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.04139268515822, 0.0001)
 
         # log(True)
@@ -1198,27 +1193,27 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test37_exp(self):
         # exp(0)
         query = """RETURN exp(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
 
         # exp(1)
         query = """RETURN exp(1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.71828182845905, 0.0001)
 
         # exp(1.4)
         query = """RETURN exp(1.4)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 4.05519996684467, 0.0001)
 
         # exp(-1.2)
         query = """RETURN exp(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1, 0.0001)
 
         # e()
         query = """RETURN e()"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.71828182845905, 0.0001)
 
         # exp(True)
@@ -1228,36 +1223,36 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test38_properties(self):
         # null input
         query = """RETURN properties(null)"""
-        query_result = graph.query(query)
+        query_result = self.graph.query(query)
         expected_result = [[None]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # map input
         query = """WITH {val: 5, nested: {nested_val: 'nested_str'}} AS map RETURN properties(map)"""
-        query_result = graph.query(query)
+        query_result = self.graph.query(query)
         expected_result = [[{'val': 5, 'nested': {'nested_val': 'nested_str'}}]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # node input
         query = """CREATE (p:Person {name: 'Alexa', city: 'Buga', age: 44}) RETURN properties(p)"""
-        query_result = graph.query(query)
+        query_result = self.graph.query(query)
         expected_result = [[{'name': 'Alexa', 'city': 'Buga', 'age': 44}]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # edge input
         query = """CREATE (a:X)-[r:R {name:'R1', len:5}]->(b:Y) RETURN properties(r)"""
-        query_result = graph.query(query)
+        query_result = self.graph.query(query)
         expected_result = [[{'name': 'R1', 'len': 5}]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
         # properies of entity properties subset
         query = """MATCH (p:Person {name: 'Alexa'}) RETURN properties(p{.name, .age})"""
-        query_result = graph.query(query)
+        query_result = self.graph.query(query)
         expected_result = [[{'name': 'Alexa', 'age': 44}]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
         query = """MATCH ()-[r:R {name:'R1', len:5}]->() RETURN properties(r{.name})"""
-        query_result = graph.query(query)
+        query_result = self.graph.query(query)
         expected_result = [[{'name': 'R1'}]]
         self.env.assertEquals(query_result.result_set, expected_result)
 
@@ -1280,22 +1275,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test39_sin(self):
         # sin(0)
         query = """RETURN sin(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # sin(1.5)
         query = """RETURN sin(1.5)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.997494986604054, 0.0001)
 
         # sin(1.5)
         query = """RETURN sin(-2.45)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.637764702134504, 0.0001)
 
         # sin(null)
         query = """RETURN sin(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # sin(True)
@@ -1309,22 +1304,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test40_cos(self):
         # cos(0)
         query = """RETURN cos(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.0, 0.0001)
 
         # cos(1.6)
         query = """RETURN cos(1.6)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.0291995223012888, 0.0001)
 
         # cos(-3.27)
         query = """RETURN cos(-3.27)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.991767098339465, 0.0001)
 
         # cos(null)
         query = """RETURN cos(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # cos(True)
@@ -1338,22 +1333,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test41_tan(self):
         # tan(0)
         query = """RETURN tan(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # tan(3.8)
         query = """RETURN tan(3.8)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.773556090503126, 0.0001)
 
         # tan(-1.97)
         query = """RETURN tan(-1.97)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.37048352994376, 0.0001)
 
         # tan(null)
         query = """RETURN tan(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # tan(True)
@@ -1367,22 +1362,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test42_cot(self):
         # cot(0)
         query = """RETURN cot(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isinf(actual_result.result_set[0][0]))
 
         # cot(5.77)
         query = """RETURN cot(5.77)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -1.77447133917238, 0.0001)
 
         # cot(-4.655)
         query = """RETURN cot(-4.655)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.0574520669374087, 0.0001)
 
         # cot(null)
         query = """RETURN cot(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # cot(True)
@@ -1396,32 +1391,32 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test43_asin(self):
         # asin(0)
         query = """RETURN asin(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # asin(0.89)
         query = """RETURN asin(0.89)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.09734516952283, 0.0001)
 
         # asin(-0.38)
         query = """RETURN asin(-0.38)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.389796296474261, 0.0001)
 
         # asin(1.3)
         query = """RETURN asin(1.3)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         # asin(-1.1)
         query = """RETURN asin(-1.1)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         # asin(null)
         query = """RETURN asin(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # asin(True)
@@ -1435,32 +1430,32 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test44_acos(self):
         # acos(0)
         query = """RETURN acos(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.5707963267949, 0.0001)
 
         # acos(0.45)
         query = """RETURN acos(0.45)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.1040309877476, 0.0001)
 
         # acos(-0.39)
         query = """RETURN acos(-0.39)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.97142791949627, 0.0001)
 
         # acos(1.12)
         query = """RETURN acos(1.12)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         # acos(-1.21)
         query = """RETURN acos(-1.21)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(isnan(actual_result.result_set[0][0]))
 
         # acos(null)
         query = """RETURN acos(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # acos(True)
@@ -1474,22 +1469,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test45_atan(self):
         # atan(0)
         query = """RETURN atan(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # atan(6.95)
         query = """RETURN atan(6.95)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.42789222318575, 0.0001)
 
         # atan(-7.43)
         query = """RETURN atan(-7.43)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -1.43701077132559, 0.0001)
 
         # atan(null)
         query = """RETURN atan(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # atan(True)
@@ -1503,27 +1498,27 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test46_atan2(self):
         # atan2(0,0)
         query = """RETURN atan2(0,0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # atan2(1.7, -2.3)
         query = """RETURN atan2(1.7, -2.3)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2.50508443780184, 0.0001)
 
         # atan2(-3.2, 7.3)
         query = """RETURN atan2(-3.2, 7.3)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -0.413128832278401, 0.0001)
 
         # atan2(1,null)
         query = """RETURN atan2(1,null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # atan2(null,2)
         query = """RETURN atan2(null,2)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # atan2(3,True)
@@ -1542,22 +1537,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test47_degrees(self):
         # degrees(0)
         query = """RETURN degrees(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # degrees(45.67)
         query = """RETURN degrees(45.67)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 2616.69825036247, 0.0001)
 
         # degrees(-44.56)
         query = """RETURN degrees(-44.56)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -2553.09993510295, 0.0001)
 
         # degrees(null)
         query = """RETURN degrees(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # degrees(True)
@@ -1571,22 +1566,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test48_radians(self):
         # radians(0)
         query = """RETURN radians(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # radians(65.78)
         query = """RETURN radians(65.78)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.14807758196187, 0.0001)
 
         # radians(-99.33)
         query = """RETURN radians(-99.33)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], -1.73363554600597, 0.0001)
 
         # radians(null)
         query = """RETURN radians(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # radians(True)
@@ -1601,7 +1596,7 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test49_pi(self):
         # pi()
         query = """RETURN pi()"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 3.14159265358979, 0.0001)
 
         # pi(2)
@@ -1611,22 +1606,22 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test50_haversin(self):
         # haversin(0)
         query = """RETURN haversin(0)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0, 0.0001)
 
         # haversin(6.59)
         query = """RETURN haversin(6.59)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.0233497787816533, 0.0001)
 
         # haversin(-78.53)
         query = """RETURN haversin(-78.53)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 0.999975910061948, 0.0001)
 
         # haversin(null)
         query = """RETURN haversin(null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # haversin(True)
@@ -1640,7 +1635,7 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test51_isempty(self):
         # null input, the expected result is null
         query = "RETURN isEmpty(null)"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertIsNone(actual_result.result_set[0][0])
 
         # inputs with expected result = True
@@ -1650,7 +1645,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             """WITH {} AS map RETURN isEmpty(map)"""
         ]
         for query in queries:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
             self.env.assertEquals(actual_result.result_set, [[True]])
 
         # inputs with expected result = False
@@ -1662,7 +1657,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             """WITH {x:null} AS map RETURN isEmpty(map)"""
         ]
         for query in queries:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
             self.env.assertEquals(actual_result.result_set, [[False]])
 
         # invalid input types
@@ -1904,7 +1899,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} AND {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} AND {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
     
     def test70_OR(self):
@@ -1923,7 +1918,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} OR {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} OR {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
     
     def test71_XOR(self):
@@ -1942,7 +1937,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} XOR {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} XOR {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
 
     def test72_NOT(self):
@@ -1954,7 +1949,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         for i in range(len(scenarios)):
             b = scenarios[i][0]
             expected = scenarios[i][1]
-            actual_result = graph.query(f"RETURN NOT {b}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN NOT {b}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
     
     def test73_LT(self):
@@ -1973,7 +1968,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} < {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} < {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
     
     def test74_LE(self):
@@ -1992,7 +1987,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} <= {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} <= {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
 
     def test75_EQ(self):
@@ -2011,7 +2006,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} = {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} = {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
     
     def test76_NE(self):
@@ -2030,13 +2025,13 @@ class testFunctionCallsFlow(FlowTestsBase):
             lhs = scenarios[i][0]
             rhs = scenarios[i][1]
             expected = scenarios[i][2]
-            actual_result = graph.query(f"RETURN {lhs} <> {rhs}").result_set[0][0]
+            actual_result = self.graph.query(f"RETURN {lhs} <> {rhs}").result_set[0][0]
             self.env.assertEquals(actual_result, expected)
     
     def test77_List(self):
         arr = [1, 2.3, '4', True, False, None]
         query = "RETURN [1,2.3,'4',TRUE,FALSE, NULL]"
-        actual_result = graph.query(query).result_set[0][0]
+        actual_result = self.graph.query(query).result_set[0][0]
         if not type(actual_result) is list:
             assert(False)                   # Fail if the record returned is not a list.
         for i in range(len(arr)):
@@ -2109,7 +2104,7 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test84_RandomUUID(self):
         query = "RETURN randomUUID()"
-        actual_result = graph.query(query).result_set[0][0]
+        actual_result = self.graph.query(query).result_set[0][0]
         self.env.assertEquals(actual_result[8], '-')
         self.env.assertEquals(actual_result[13], '-')
         self.env.assertEquals(actual_result[14], '4')
@@ -2121,102 +2116,102 @@ class testFunctionCallsFlow(FlowTestsBase):
     def test85_division_inputs(self):
         # Validate integer dividend division by 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 3 / 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 3 / 0"
         # (error) Division by zero
         query = "RETURN 3 / 0"
         try:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Division by zero", str(e))
         
         # Validate floating-point dividend division by 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 1.0 / 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 / 0"
         # 1) 1) "1.0 / 0"
         # 2) 1) 1) "inf"
         query = "RETURN 1.0 / 0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
 
         # Validate negative floating-point dividend division by 0
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN -1.0 / 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1.0 / 0"
         # 1) 1) "-1.0 / 0"
         # 2) 1) 1) "-inf"
         query = "RETURN -1.0 / 0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
 
         # Validate integer dividend division by 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 1 / 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1 / 0.0"
         # 1) 1) "1 / 0.0"
         # 2) 1) 1) "inf"
         query = "RETURN 1 / 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
 
         # Validate negative integer dividend division by 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN -1 / 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1 / 0.0"
         # 1) 1) "-1 / 0.0"
         # 2) 1) 1) "-inf"
         query = "RETURN -1 / 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
 
         # Validate floating-point dividend division by 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 1.0 / 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 1.0 / 0.0"
         # 1) 1) "1.0 / 0.0"
         # 2) 1) 1) "inf"
         query = "RETURN 1.0 / 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0],float('inf'))
 
         # Validate negative floating-point dividend division by 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN -1.0 / 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN -1.0 / 0.0"
         # 1) 1) "-1.0 / 0.0"
         # 2) 1) 1) "-inf"
         query = "RETURN -1.0 / 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0],float('-inf'))
 
         # Validate floating-point 0.0 divided by floating-point 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0.0 / 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 / 0.0"
         # 1) 1) "0.0 / 0.0"
         # 2) 1) 1) "-nan"
         query = "RETURN 0.0 / 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate integer 0 divided by floating 0.0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0 / 0.0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 / 0.0"
         # 1) 1) "0 / 0.0"
         # 2) 1) 1) "-nan"
         query = "RETURN 0 / 0.0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate floating-point 0.0 divided by integer 0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0.0 / 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0.0 / 0"
         # 1) 1) "0.0 / 0"
         # 2) 1) 1) "-nan"
         query = "RETURN 0.0 / 0"
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertTrue(math.isnan(actual_result.result_set[0][0]))
 
         # Validate integer 0 divided by 0 
         # redis-cli output example:
-        # 127.0.0.1:6379> GRAPH.QUERY g "RETURN 0 / 0"
+        # 127.0.0.1:6379> self.GRAPH.QUERY g "RETURN 0 / 0"
         # (error) Division by zero
         query = "RETURN 0 / 0"
         try:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Division by zero", str(e))
 
@@ -2254,8 +2249,8 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         # given the graph (a)
         # in/out degree of 'a' is 0
-        graph.query("CREATE (a:A)")
-        result_set = graph.query("MATCH (a:A) RETURN inDegree(a), outDegree(a)").result_set
+        self.graph.query("CREATE (a:A)")
+        result_set = self.graph.query("MATCH (a:A) RETURN inDegree(a), outDegree(a)").result_set
         in_degree = result_set[0][0]
         out_degree = result_set[0][1]
         self.env.assertEqual(in_degree, 0)
@@ -2266,8 +2261,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         # out degree of 'a' is 1
         # in degree of 'b' is 1
         # out degree of 'b' is 0
-        graph.query("MATCH (a:A) CREATE (a)-[:E]->(b:B)")
-        result_set = graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
+        self.graph.query("MATCH (a:A) CREATE (a)-[:E]->(b:B)")
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
         a_in_degree = result_set[0][0]
         a_out_degree = result_set[0][1]
         b_in_degree = result_set[0][2]
@@ -2282,8 +2277,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         # out degree of 'a' is 2
         # in degree of 'b' is 2
         # out degree of 'b' is 0
-        graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E]->(b)")
-        result_set = graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
+        self.graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E]->(b)")
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
         a_in_degree = result_set[0][0]
         a_out_degree = result_set[0][1]
         b_in_degree = result_set[0][2]
@@ -2298,8 +2293,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         # out degree of 'a' is 4
         # in degree of 'b' is 4
         # out degree of 'b' is 0
-        graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E0]->(b), (a)-[:E1]->(b)")
-        result_set = graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
+        self.graph.query("MATCH (a:A), (b:B) CREATE (a)-[:E0]->(b), (a)-[:E1]->(b)")
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a), outDegree(a), inDegree(b), outDegree(b)").result_set
         a_in_degree = result_set[0][0]
         a_out_degree = result_set[0][1]
         b_in_degree = result_set[0][2]
@@ -2314,7 +2309,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # out degree of 'a' for relation 'E' is 2
         # in degree of 'b' for relation 'E' is 2
         # out degree of 'b' for relation 'E' is 0
-        result_set = graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E'), outDegree(a, 'E'), inDegree(b, 'E'), outDegree(b, 'E')").result_set
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E'), outDegree(a, 'E'), inDegree(b, 'E'), outDegree(b, 'E')").result_set
         a_in_degree = result_set[0][0]
         a_out_degree = result_set[0][1]
         b_in_degree = result_set[0][2]
@@ -2329,7 +2324,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # out degree of 'a' for relationships 'E0' and 'E1' is 2
         # in degree of 'b' for relationships 'E0' and 'E1' is 2
         # out degree of 'b' for relationships 'E0' and 'E1' is 0
-        result_set = graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E0', 'E1'), outDegree(a, 'E0', 'E1'), inDegree(b, 'E0', 'E1'), outDegree(b, 'E0', 'E1')").result_set
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E0', 'E1'), outDegree(a, 'E0', 'E1'), inDegree(b, 'E0', 'E1'), outDegree(b, 'E0', 'E1')").result_set
         a_in_degree = result_set[0][0]
         a_out_degree = result_set[0][1]
         b_in_degree = result_set[0][2]
@@ -2344,7 +2339,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # out degree of 'a' for relationships 'E', 'E0' and 'E1' is 4
         # in degree of 'b' for relationships 'E', 'E0' and 'E1' is 4
         # out degree of 'b' for relationships 'E', 'E0' and 'E1' is 0
-        result_set = graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E', 'E0', 'E1'), outDegree(a, 'E', 'E0', 'E1'), inDegree(b, 'E', 'E0', 'E1'), outDegree(b, 'E', 'E0', 'E1')").result_set
+        result_set = self.graph.query("MATCH (a:A), (b:B) RETURN inDegree(a, 'E', 'E0', 'E1'), outDegree(a, 'E', 'E0', 'E1'), inDegree(b, 'E', 'E0', 'E1'), outDegree(b, 'E', 'E0', 'E1')").result_set
         a_in_degree = result_set[0][0]
         a_out_degree = result_set[0][1]
         b_in_degree = result_set[0][2]
@@ -2355,7 +2350,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.env.assertEqual(b_out_degree, 0)
 
         # in/out degree a none existing relationship type is 0
-        result_set = graph.query("MATCH (a:A) RETURN inDegree(a, 'none_existing'), outDegree(a, 'none_existing')").result_set
+        result_set = self.graph.query("MATCH (a:A) RETURN inDegree(a, 'none_existing'), outDegree(a, 'none_existing')").result_set
         in_degree = result_set[0][0]
         out_degree = result_set[0][1]
         self.env.assertEqual(in_degree, 0)
@@ -2366,8 +2361,8 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         # given the graph (a)-[:E]->(a)
         # in/out degree of 'a' is 1
-        graph.query("CREATE (a)-[:E]->(a)")
-        result_set = graph.query("MATCH (a) RETURN inDegree(a), outDegree(a)").result_set
+        self.graph.query("CREATE (a)-[:E]->(a)")
+        result_set = self.graph.query("MATCH (a) RETURN inDegree(a), outDegree(a)").result_set
         in_degree = result_set[0][0]
         out_degree = result_set[0][1]
         self.env.assertEqual(in_degree, 1)
@@ -2376,7 +2371,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # given the graph (a)-[:R]->(b)
         # out degree of 'a' is 1
         # in degree of 'b' is 1
-        graph.query("CREATE (a:A)-[:R]->(b:B)")
+        self.graph.query("CREATE (a:A)-[:R]->(b:B)")
         queries = [
             """MATCH (a:A) RETURN outdegree(a, 'R')""",
             """MATCH (a:A) RETURN outdegree(a, ['R'])""",
@@ -2386,7 +2381,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             """MATCH (b:B) RETURN indegree(b, 'R', 'R')""",
         ]
         for query in queries:
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
             self.env.assertEquals(actual_result.result_set, [[1]])
 
         # test type mismatch
@@ -2400,7 +2395,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             ]
         for query in queries:
             try:
-                graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting a type error.
@@ -2417,7 +2412,7 @@ class testFunctionCallsFlow(FlowTestsBase):
             ]
         for query in queries:
             try:
-                graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting a type error.
@@ -2428,12 +2423,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as list RETURN string.join(null, '')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # 2nd arg should be string
         try:
-            graph.query("RETURN string.join(['HELL','OW'], 2)")
+            self.graph.query("RETURN string.join(['HELL','OW'], 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
@@ -2441,7 +2436,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # Test without input argument
         try:
             query = """RETURN string.join()"""
-            graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Received 0 arguments to function 'string.join', expected at least 1", str(e))
@@ -2449,28 +2444,28 @@ class testFunctionCallsFlow(FlowTestsBase):
         # Test with 3 input argument
         try:
             query = """RETURN string.join(['HELL','OW'], ' ', '')"""
-            graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Received 3 arguments to function 'string.join', expected at most 2", str(e))
 
         # list args should be string
         try:
-            graph.query("RETURN string.join(['HELL', 2], ' ')")
+            self.graph.query("RETURN string.join(['HELL', 2], ' ')")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
         # list args should be string
         try:
-            graph.query("RETURN string.join(['HELL', 'OW', 2, 'now'], ' ')")
+            self.graph.query("RETURN string.join(['HELL', 'OW', 2, 'now'], ' ')")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
 
         # list args should be string
         try:
-            graph.query("RETURN string.join([3, 'OW', 'now'], ' ')")
+            self.graph.query("RETURN string.join([3, 'OW', 'now'], ' ')")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
@@ -2478,22 +2473,22 @@ class testFunctionCallsFlow(FlowTestsBase):
         ### Test valid inputs ###
         expected_result = ['HELLOW']
         query = """RETURN string.join(['HELL','OW'])"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['HELL OW']
         query = """RETURN string.join(['HELL','OW'], ' ')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['HELL']
         query = """RETURN string.join(['HELL'], ' ')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['HELL OW NOW']
         query = """RETURN string.join(['HELL','OW', 'NOW'], ' ')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # join overflow
@@ -2502,7 +2497,7 @@ class testFunctionCallsFlow(FlowTestsBase):
                RETURN string.join(list, 'loooooooooooooooooooooooooooooooooooooooooonggggggggggggggggggggggggggggggggggggggggggggggggggggg delimiterrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
                """
         try:
-            result = graph.query(q)
+            result = self.graph.query(q)
             self.env.assertFalse(True)
         except ResponseError as e:
             self.env.assertContains("String overflow", str(e))
@@ -2520,32 +2515,32 @@ class testFunctionCallsFlow(FlowTestsBase):
         # NULL input should return empty list
         expected_result = [[]]
         query = """WITH NULL as string RETURN string.matchRegEx(null, "bla")"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # NULL input should return empty list
         expected_result = [[]]
         query = """WITH NULL as string RETURN string.matchRegEx("bla", null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # test invalid regex
         try:
             query = """RETURN string.matchRegEx('aa', '?')"""
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
         except ResponseError as e:
             self.env.assertContains("Invalid regex", str(e))
 
         # 1st arg should be string
         try:
-            graph.query("RETURN string.matchRegEx(2, 'bla')")
+            self.graph.query("RETURN string.matchRegEx(2, 'bla')")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # 2nd arg should be string
         try:
-            graph.query("RETURN string.matchRegEx('bla', 2)")
+            self.graph.query("RETURN string.matchRegEx('bla', 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
@@ -2553,7 +2548,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # Test without input argument
         try:
             query = """RETURN string.matchRegEx()"""
-            graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Received 0 arguments to function 'string.matchRegEx', expected at least 2", str(e))
@@ -2561,7 +2556,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # Test with 3 input argument
         try:
             query = """RETURN string.matchRegEx('bla', 'dsds', '')"""
-            graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Received 3 arguments to function 'string.matchRegEx', expected at most 2", str(e))
@@ -2569,98 +2564,98 @@ class testFunctionCallsFlow(FlowTestsBase):
         ### Test valid inputs ###
         expected_result = [[['<header h1>txt1</header>', 'h1', 'txt1']]]
         query = """RETURN string.matchRegEx('blabla <header h1>txt1</header>', '<header (\\w+)>(\\w+)</header>')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[['<header h1>txt1</header>', 'h1', 'txt1'], ['<header h2>txt2</header>', 'h2', 'txt2']]]
         query = """RETURN string.matchRegEx('blabla <header h1>txt1</header> blabla <header h2>txt2</header>', '<header (\\w+)>(\\w+)</header>')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[['?']]]
         query = """RETURN string.matchRegEx('?', '\\\\?')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[['a'], ['a']]]
         query = """RETURN string.matchRegEx('aba', 'a')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[]]
         query = """RETURN string.matchRegEx('', 'a')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[]]
         query = """RETURN string.matchRegEx('bla', '(bla)(bal)')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[['bla9', 'bla']]]
         query = """RETURN string.matchRegEx('bla9', '(bla)[(bal)9]')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[['bla9', 'bla']]]
         query = """RETURN string.matchRegEx('bla9', '(bla)[(bal)9]')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = [[['😉']]]
         query = """RETURN string.matchRegEx('😉', '😉')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # proof for Avi that I need to change the parser
         #expected_result = [[[]]]
         #query = """RETURN string.matchRegEx('aa', '(?:\\?)')"""
-        #actual_result = graph.query(query)
+        #actual_result = self.graph.query(query)
         #self.env.assertEquals(actual_result.result_set[0], expected_result)
 
     def test92_REPLACEREGEX(self):
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as string RETURN string.replaceRegEx(null, "bla")"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as string RETURN string.replaceRegEx("bla", null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as string RETURN string.replaceRegEx("bla", "bla", null)"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         # test invalid regex
         try:
             query = """RETURN string.replaceRegEx('aa', '?')"""
-            actual_result = graph.query(query)
+            actual_result = self.graph.query(query)
         except ResponseError as e:
             self.env.assertContains("Invalid regex", str(e))
 
         # 1st arg should be string
         try:
-            graph.query("RETURN string.replaceRegEx(2, 'bla')")
+            self.graph.query("RETURN string.replaceRegEx(2, 'bla')")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # 2nd arg should be string
         try:
-            graph.query("RETURN string.replaceRegEx('bla', 2)")
+            self.graph.query("RETURN string.replaceRegEx('bla', 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
 
         # 3rd arg should be string
         try:
-            graph.query("RETURN string.replaceRegEx('bla', 'bla', 2)")
+            self.graph.query("RETURN string.replaceRegEx('bla', 'bla', 2)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Type mismatch: expected String or Null but was Integer", str(e))
@@ -2668,7 +2663,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # Test without input argument
         try:
             query = """RETURN string.replaceRegEx()"""
-            graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Received 0 arguments to function 'string.replaceRegEx', expected at least 2", str(e))
@@ -2676,7 +2671,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # Test with 4 input argument
         try:
             query = """RETURN string.replaceRegEx('bla', 'dsds', 'fdsf', '')"""
-            graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Received 4 arguments to function 'string.replaceRegEx', expected at most 3", str(e))
@@ -2684,57 +2679,57 @@ class testFunctionCallsFlow(FlowTestsBase):
         ### Test valid inputs ###
         expected_result = ['blabla hellow']
         query = """RETURN string.replaceRegEx('blabla <header h1>txt1</header>', '<header (\\w+)>(\\w+)</header>', 'hellow')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['blabla hellow blabla hellow']
         query = """RETURN string.replaceRegEx('blabla <header h1>txt1</header> blabla <header h2>txt2</header>', '<header (\\w+)>(\\w+)</header>', 'hellow')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['m']
         query = """RETURN string.replaceRegEx('?', '\\\\?', 'm')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['ac']
         query = """RETURN string.replaceRegEx('abc', '[b]')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['a55c']
         query = """RETURN string.replaceRegEx('abc', '[b]', '55')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['ac']
         query = """RETURN string.replaceRegEx('abc', '[b]', '')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['ac']
         query = """RETURN string.replaceRegEx('abcb', '[b]', '')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['']
         query = """RETURN string.replaceRegEx('', '[b]', 'bla')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['']
         query = """RETURN string.replaceRegEx('', '[b]', 'bla')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['blablala']
         query = """RETURN string.replaceRegEx('bbla', '[b]', 'bla')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
         expected_result = ['bl😀a']
         query = """RETURN string.replaceRegEx('bl😉a', '😉', '😀')"""
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
     def test93_overflow(self):

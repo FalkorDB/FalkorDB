@@ -9,16 +9,16 @@ MONITOR_ATTACHED = False
 class testEffects():
     # enable effects replication
     def effects_enable(self):
-        self.master.execute_command("GRAPH.CONFIG", "SET", "EFFECTS_THRESHOLD", '0')
+       self.db.config_set("EFFECTS_THRESHOLD", 0)
 
     # disable effects replication
     def effects_disable(self):
-        res = self.master.execute_command("GRAPH.CONFIG", "SET", "EFFECTS_THRESHOLD", '999999')
+        self.db.config_set("EFFECTS_THRESHOLD", 999999)
 
     # checks if effects replication is enabled
     def effects_enabled(self):
-        conf = self.master.execute_command("GRAPH.CONFIG", "GET", "EFFECTS_THRESHOLD")
-        return (conf[1] == 0)
+        threshold = self.db.config_get("EFFECTS_THRESHOLD")
+        return (threshold == 0)
 
     # checks if effects replication is enabled
     def effects_disabled(self):
@@ -115,7 +115,7 @@ class testEffects():
         self.env.assertEquals(master_resultset, replica_resultset)
 
     def __init__(self):
-        self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
+        self.env, self.db = Env(env='oss', useSlaves=True)
         self.monitor = []
         self.master = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()

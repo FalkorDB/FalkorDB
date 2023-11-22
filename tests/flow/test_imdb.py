@@ -14,14 +14,14 @@ redis_graph = None
 
 class testImdbFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
     def setUp(self):
         global imdb
         global queries
         global redis_graph
         self.redis_con = self.env.getConnection()
-        redis_graph = Graph(self.redis_con, imdb_utils.graph_name)
+        redis_graph = self.db.select_graph(imdb_utils.graph_name)
         actors, movies = imdb_utils.populate_graph(self.redis_con, redis_graph)
         imdb = imdb_queries.IMDBQueries(actors, movies)
         queries = imdb.queries()
@@ -68,7 +68,7 @@ class testImdbFlow(FlowTestsBase):
         create_node_range_index(redis_graph, 'actor', 'age', sync=True)
 
         q = imdb.actors_over_85_index_scan.query
-        execution_plan = redis_graph.execution_plan(q)
+        execution_plan = str(redis_graph.explain(q))
         self.env.assertIn('Index Scan', execution_plan)
 
         actual_result = redis_graph.query(q)
@@ -98,7 +98,7 @@ class testImdbFlow(FlowTestsBase):
         create_node_range_index(redis_graph, 'movie', 'year', sync=True)
 
         q = imdb.eighties_movies_index_scan.query
-        execution_plan = redis_graph.execution_plan(q)
+        execution_plan = str(redis_graph.explain(q))
         self.env.assertIn('Index Scan', execution_plan)
 
         actual_result = redis_graph.query(q)

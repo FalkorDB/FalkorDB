@@ -1,8 +1,6 @@
 import csv
 import os
-from redis.commands.graph import Graph
-from redis.commands.graph.node import Node
-from redis.commands.graph.edge import Edge
+from falkordb import Graph, Node, Edge
 
 graph_name = "social"
 
@@ -21,7 +19,7 @@ def populate_graph(redis_con, redis_graph):
         reader = csv.reader(f, delimiter=',')
         for row in reader:
             name = row[0]
-            node = Node(label="country", properties={"name": name})
+            node = Node(labels="country", properties={"name": name})
             countries[name] = node
             redis_graph.add_node(node)
 
@@ -33,7 +31,7 @@ def populate_graph(redis_con, redis_graph):
             age = int(row[1])
             gender = row[2]
             status = row[3]
-            node = Node(label="person", properties={"name": name,
+            node = Node(labels="person", properties={"name": name,
                                                     "age": age,
                                                     "gender": gender,
                                                     "status": status})
