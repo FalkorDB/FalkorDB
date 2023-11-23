@@ -1,46 +1,39 @@
 from common import *
 
-dis_redis = None
-redis_graph = None
-redis_con = None
 node_names = ["A", "B", "C", "D"]
 
 # A can reach 3 nodes, B can reach 2 nodes, C can reach 1 node
 max_results = 6
 
+GRAPH_ID = "variable_length_traversals"
 
 class testVariableLengthTraversals(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_con
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, "G")
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
-        global redis_graph
-
         nodes = []
         # Create nodes
         for n in node_names:
-            node = Node(label="node", properties={"name": n})
-            redis_graph.add_node(node)
+            node = Node(labels="node", properties={"name": n})
+            self.graph.add_node(node)
             nodes.append(node)
 
         # Create edges
         for i in range(len(nodes) - 1):
             edge = Edge(nodes[i], "knows", nodes[i+1], properties={"connects": node_names[i] + node_names[i+1]})
-            redis_graph.add_edge(edge)
+            self.graph.add_edge(edge)
 
-        redis_graph.commit()
+        self.graph.commit()
 
     # Sanity check against single-hop traversal
     def test01_conditional_traverse(self):
         query = """MATCH (a)-[e]->(b)
                    RETURN a.name, e.connects, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['A', 'AB', 'B'],
                            ['B', 'BC', 'C'],
                            ['C', 'CD', 'D']]
@@ -51,13 +44,13 @@ class testVariableLengthTraversals(FlowTestsBase):
         query = """MATCH (a)-[*]->(b)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), max_results)
 
         query = """MATCH (a)<-[*]-(b)
                    RETURN a, b
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), max_results)
 
     # Traversal with labeled source
@@ -65,13 +58,13 @@ class testVariableLengthTraversals(FlowTestsBase):
         query = """MATCH (a:node)-[*]->(b)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), max_results)
 
         query = """MATCH (a:node)<-[*]-(b)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), max_results)
 
     # Traversal with labeled dest
@@ -79,19 +72,19 @@ class testVariableLengthTraversals(FlowTestsBase):
         query = """MATCH (a)-[*]->(b:node)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), max_results)
 
         query = """MATCH (a)<-[*]-(b:node)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), max_results)
 
     # Attempt to traverse non-existent relationship type.
     def test05_invalid_traversal(self):
         query = """MATCH (a)-[:no_edge*]->(b) RETURN a.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), 0)
 
     # Test bidirectional traversal
@@ -99,7 +92,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         query = """MATCH (a)-[*]-(b)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         # The undirected traversal should represent every combination twice.
         self.env.assertEquals(len(actual_result.result_set), max_results * 2)
 
@@ -107,7 +100,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         # Verify that zero length traversals always return source, even for non existing edges.
         query = """MATCH (a)-[:not_knows*0..1]->(b)
                    RETURN a"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(len(actual_result.result_set), 4)
 
     # Test traversal with a possibly-null source.
@@ -116,7 +109,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    OPTIONAL MATCH (a)-[*]->(b)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [[None, None]]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -124,7 +117,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    OPTIONAL MATCH (a)-[*]->(b {name: 'B'})
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['A', 'B']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -135,9 +128,9 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         # The filter op should have been optimized out
-        plan = redis_graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertNotIn("Filter", plan)
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['B', 'C']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -147,9 +140,9 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         # The filter op should have been optimized out
-        plan = redis_graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertNotIn("Filter", plan)
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['B', 'C'],
                            ['B', 'D'],
                            ['C', 'D']]
@@ -161,9 +154,9 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         # The filter op should have been optimized out
-        plan = redis_graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertNotIn("Filter", plan)
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         # Expecting the same result
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -173,9 +166,9 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         # The filter op should have been optimized out
-        plan = redis_graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertNotIn("Filter", plan)
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['A', 'B'],
                            ['A', 'C'],
                            ['B', 'C']]
@@ -187,9 +180,9 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
         # The filter op should have been optimized out
-        plan = redis_graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertNotIn("Filter", plan)
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['A', 'B'],
                            ['A', 'C'],
                            ['B', 'C']]
@@ -200,7 +193,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    WHERE e.connects <> 'AB'
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['B', 'D']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -223,7 +216,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    OPTIONAL MATCH (a)-[* {connects: 'AB'}]->(b)
                    RETURN a.name, b.name
                    ORDER BY a.name, b.name"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         expected_result = [['A', 'B']]
         self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -242,7 +235,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         query = """CREATE (a {v:'a'}), (b {v:'b'}), (c {v:'c'}), (d {v:'d'}),
                           (a)-[:R]->(b), (b)-[:R]->(c), (c)-[:R]->(a), (d)-[:R]->(d)"""
 
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
 
         # validation queries
         query_to_expected_result = {
@@ -256,7 +249,7 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         # validate query results
         for query, expected_result in query_to_expected_result.items():
-            actual_result = redis_graph.query(query)
+            actual_result = self.graph.query(query)
             self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test12_close_cycle(self):
@@ -278,7 +271,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                           (a)-[:R]->(b)-[:R]->(c)-[:R]->(a),
                           (a)-[:R]->(d)"""
 
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 4)
         self.env.assertEquals(result.relationships_created, 4)
 
@@ -287,7 +280,7 @@ class testVariableLengthTraversals(FlowTestsBase):
                    RETURN z.v
                    ORDER BY z.v"""
 
-        result = redis_graph.query(query).result_set
+        result = self.graph.query(query).result_set
         self.env.assertEquals(len(result), 2)
         self.env.assertEquals(result[0][0], 'a')
         self.env.assertEquals(result[1][0], 'c')
@@ -316,14 +309,14 @@ class testVariableLengthTraversals(FlowTestsBase):
                UNWIND range(0, 2) AS i
                CREATE (n)-[:R]->(a{l:2, id:n.id*3+i})"""
 
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.nodes_created, 13)
 
         # get all reachable nodes from root
         q = """MATCH (root {l:0})-[*0..]->(n)
                RETURN n.l, n.id
                ORDER BY n.l, n.id"""
-        res = redis_graph.query(q).result_set
+        res = self.graph.query(q).result_set
         self.env.assertEquals(len(res), 13)
 
         # root
@@ -345,39 +338,40 @@ class testVariableLengthTraversals(FlowTestsBase):
             self.env.assertEquals(identity, i)
 
     def test14_no_hops(self):
-        redis_con.flushall()
+        conn = self.env.getConnection()
+        conn.flushall()
 
         # create graph
         # (a)->(b)->(c)
         q = "CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})-[:R {v:4}]->(:C {v:5})"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.nodes_created, 3)
         self.env.assertEquals(res.relationships_created, 2)
 
         # perform 0 hop traversal
         q = "MATCH (a)-[*0]->(b) RETURN a.v, b.v ORDER BY a.v, b.v"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1], [3, 3], [5, 5]])
 
         # specify node label
         q = "MATCH (a:A)-[*0]->(b) RETURN a.v, b.v"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1]])
 
         # reposition label
         q = "MATCH (a)-[*0]->(b:A) RETURN a.v, b.v"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1]])
 
         # conflicting labels
         q = "MATCH (a:A)-[*0]->(b:B) RETURN a.v, b.v"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [])
 
         # return zero length edge
         # 'e' is a path object of length 0
         q = "MATCH (a)-[e:R*0]->(b) RETURN e"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         for row in res.result_set:
             path = row[0]
             self.env.assertEquals(path.edge_count(), 0)
@@ -385,53 +379,53 @@ class testVariableLengthTraversals(FlowTestsBase):
         # filter none existing edge
         # all edges (none) setisfy the filter
         q = "MATCH (a)-[e:R*0]->(b) WHERE e.v = 1 RETURN a.v, b.v ORDER BY a.v, b.v"
-        res = redis_graph.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1], [3, 3], [5, 5]])
 
         # zero length traversal with follow up
         q = "MATCH (a)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 3, 3], [3, 5, 5]])
 
         q = "MATCH (a:A)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 3, 3]])
 
         q = "MATCH (a)-[e0]->(b:B)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 3, 3]])
 
         q = "MATCH (a:A)-[e0]->(b:B)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 3, 3]])
 
         q = "MATCH (a)-[e0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 3, 3], [3, 5, 5]])
 
         # same queries as before, swap zero length edge
         q = "MATCH (a)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 3], [3, 3, 5]])
 
         q = "MATCH (a:A)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 3]])
 
         q = "MATCH (a)-[e0*0]->(b:A)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 3]])
 
         q = "MATCH (a:A)-[e0*0]->(b:A)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 3]])
 
         q = "MATCH (a)-[e0*0]->(b)-[e1]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 3], [3, 3, 5]])
 
         # multi zero length edges
         q = "MATCH (a)-[e0*0]->(b)-[e1*0]->(c) RETURN a.v, b.v, c.v"
-        res  = redis_graph.query(q)
+        res  = self.graph.query(q)
         self.env.assertEquals(res.result_set, [[1, 1, 1], [3, 3, 3], [5, 5, 5]])
 

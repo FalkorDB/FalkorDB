@@ -21,7 +21,7 @@ def issue_query(conn, q):
 
 class testPendingQueryLimit():
     def __init__(self):
-        self.env = Env(decodeResponses=True, moduleArgs="THREAD_COUNT 2")
+        self.env, self.db = Env(moduleArgs="THREAD_COUNT 2")
         # skip test if we're running under Valgrind
         if VALGRIND:
             self.env.skip() # valgrind is not working correctly with multi process
@@ -29,7 +29,7 @@ class testPendingQueryLimit():
         self.conn = self.env.getConnection()
 
     def stress_server(self):
-        threadpool_size = self.conn.execute_command("GRAPH.CONFIG", "GET", "THREAD_COUNT")[1]
+        threadpool_size = self.db.config_get("THREAD_COUNT")
         thread_count = threadpool_size * 5
         qs = [SLOW_QUERY] * thread_count
         connections = []
@@ -49,22 +49,21 @@ class testPendingQueryLimit():
 
     def test_01_query_limit_config(self):
         # read max queued queries config
-        result = self.conn.execute_command("GRAPH.CONFIG", "GET", "MAX_QUEUED_QUERIES")
-        max_queued_queries = result[1]
+        max_queued_queries = self.db.config_get("MAX_QUEUED_QUERIES")
         self.env.assertEquals(max_queued_queries, 4294967295)
 
         # update configuration, set max queued queries
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_QUEUED_QUERIES", 10)
+        self.db.config_set("MAX_QUEUED_QUERIES", 10)
 
         # re-read configuration
         result = self.conn.execute_command("GRAPH.CONFIG", "GET", "MAX_QUEUED_QUERIES")
-        max_queued_queries = result[1]
+        max_queued_queries = self.db.config_get("MAX_QUEUED_QUERIES")
         self.env.assertEquals(max_queued_queries, 10)
 
     def test_02_overflow_no_limit(self):
         # no limit on number of pending queries
         limit = 4294967295
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_QUEUED_QUERIES", limit)
+        self.db.config_set("MAX_QUEUED_QUERIES", limit)
 
         error_encountered = self.stress_server()
 
@@ -73,7 +72,7 @@ class testPendingQueryLimit():
     def test_03_overflow_with_limit(self):
         # limit number of pending queries
         limit = 1
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_QUEUED_QUERIES", limit)
+        self.db.config_set("MAX_QUEUED_QUERIES", limit)
 
         error_encountered = self.stress_server()
 

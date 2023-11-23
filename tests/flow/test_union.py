@@ -1,40 +1,35 @@
 from common import *
 
 GRAPH_ID = "union_test"
-redis_graph = None
-
 
 class testUnion(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
-        global redis_graph
         # Construct a graph with the form:
         # (v1)-[:E1]->(v2)-[:E2]->(v3)
         node_props = ['v1', 'v2', 'v3']
 
         nodes = {}
         for idx, v in enumerate(node_props):
-            node = Node(label="L", properties={"v": v})
+            node = Node(labels="L", properties={"v": v})
             nodes[v] = node
-            redis_graph.add_node(node)
+            self.graph.add_node(node)
 
         edge = Edge(nodes['v1'], "E1", nodes['v2'], properties={"v": "v1_v2"})
-        redis_graph.add_edge(edge)
+        self.graph.add_edge(edge)
 
         edge = Edge(nodes['v2'], "E2", nodes['v3'], properties={"v": "v2_v3"})
-        redis_graph.add_edge(edge)
+        self.graph.add_edge(edge)
 
-        redis_graph.flush()
+        self.graph.flush()
 
     def test01_union(self):
         q = """RETURN 1 as one UNION ALL RETURN 1 as one"""
-        result = redis_graph.query(q)
+        result = self.graph.query(q)
         # Expecting 2 identical records.
         self.env.assertEquals(len(result.result_set), 2)
         expected_result = [[1],
@@ -42,14 +37,14 @@ class testUnion(FlowTestsBase):
         self.env.assertEquals(result.result_set, expected_result)
 
         q = """RETURN 1 as one UNION RETURN 1 as one"""
-        result = redis_graph.query(q)
+        result = self.graph.query(q)
         # Expecting a single record, duplicate removed.
         self.env.assertEquals(len(result.result_set), 1)
         expected_result = [[1]]
         self.env.assertEquals(result.result_set, expected_result)
 
         q = """MATCH a = () return length(a) AS len UNION ALL MATCH b = () RETURN length(b) AS len"""
-        result = redis_graph.query(q)
+        result = self.graph.query(q)
         # 3 records from each sub-query, coresponding to each path matched.
         self.env.assertEquals(len(result.result_set), 6)
 
@@ -57,7 +52,7 @@ class testUnion(FlowTestsBase):
         try:
             # projection must be exactly the same.
             q = """RETURN 1 as one UNION RETURN 1 as two"""
-            redis_graph.query(q)
+            self.graph.query(q)
             assert(False)
         except redis.exceptions.ResponseError:
             # Expecting an error.
@@ -67,12 +62,12 @@ class testUnion(FlowTestsBase):
     # produce the same result as evaluating just one side.
     def test03_union_deduplication(self):
         non_union_query = """MATCH (a)-[]->(b) RETURN a.v, b.v ORDER BY a.v, b.v"""
-        non_union_result = redis_graph.query(non_union_query)
+        non_union_result = self.graph.query(non_union_query)
 
         union_query = """MATCH (a)-[]->(b) RETURN a.v, b.v ORDER BY a.v, b.v
                          UNION
                          MATCH (a)-[]->(b) RETURN a.v, b.v ORDER BY a.v, b.v"""
-        union_result = redis_graph.query(union_query)
+        union_result = self.graph.query(union_query)
         self.env.assertEquals(union_result.result_set, non_union_result.result_set)
 
     # A syntax error should be raised on edge alias reuse in one side of a union.
@@ -81,7 +76,7 @@ class testUnion(FlowTestsBase):
             query = """MATCH ()-[e]->()-[e]->() RETURN e
                        UNION
                        MATCH ()-[e]->() RETURN e"""
-            redis_graph.query(query)
+            self.graph.query(query)
             assert(False)
         except redis.exceptions.ResponseError:
             # Expecting an error.
@@ -94,7 +89,7 @@ class testUnion(FlowTestsBase):
                    MATCH ()-[e]->() RETURN e.v ORDER BY e.v
                    UNION
                    MATCH ()-[e]->() RETURN e.v ORDER BY e.v"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
 
         expected_result = [["v1_v2"],
                            ["v2_v3"]]
@@ -105,7 +100,7 @@ class testUnion(FlowTestsBase):
         query = """MATCH ()-[e]->() RETURN e
                    UNION
                    MATCH (e) RETURN e"""
-        union_result = redis_graph.query(query)
+        union_result = self.graph.query(query)
 
         # All 3 nodes and 2 edges should be returned.
         self.env.assertEquals(len(union_result.result_set), 5)
@@ -113,7 +108,7 @@ class testUnion(FlowTestsBase):
         query = """MATCH ()-[e]->() RETURN e
                    UNION ALL
                    MATCH (e) RETURN e"""
-        union_all_result = redis_graph.query(query)
+        union_all_result = self.graph.query(query)
 
         # The same results should be produced regardless of whether ALL is specified.
         self.env.assertEquals(union_result.result_set, union_all_result.result_set)
@@ -124,7 +119,7 @@ class testUnion(FlowTestsBase):
         query = """UNWIND range(1, 2) AS v RETURN v ORDER BY v DESC
                    UNION
                    UNWIND range(1, 3) AS v RETURN v"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [[2],
                            [1],
                            [3]]
@@ -134,27 +129,27 @@ class testUnion(FlowTestsBase):
         query = """UNWIND range(1, 2) AS a RETURN a AS b ORDER BY a DESC
                    UNION
                    UNWIND range(1, 3) AS b RETURN b"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.result_set, expected_result)
 
         query = """UNWIND range(1, 2) AS a RETURN a AS b ORDER BY b DESC
                    UNION
                    UNWIND range(1, 3) AS b RETURN b"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.result_set, expected_result)
 
     def test08_union_with_index_scan(self):
         query = """UNWIND range(10,20) AS i 
                    CREATE (n:N {v:tostring(i)})-[:R]->(m:M {v:tostring(i+1)})"""
-        redis_graph.query(query)
+        self.graph.query(query)
         query = """CREATE INDEX ON :N(v)"""
-        redis_graph.query(query)
+        self.graph.query(query)
 
         # test MATCH and CREATE
         query = """MATCH (n:N {v:'10'})-[:R]->(m:M) RETURN m.v AS p
                    UNION
                    MATCH (s:M {v:'12'}) CREATE (:N {v:'10'})-[:R]->(s) RETURN s.v AS p"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [['11'],['12']]
         self.env.assertEquals(result.result_set, expected_result)
 
@@ -164,6 +159,6 @@ class testUnion(FlowTestsBase):
                    MATCH (s:M {v:'12'}) CREATE (:N {v:'10'})-[:R]->(s) RETURN s.v AS p 
                    UNION 
                    MERGE(x:N {v:'15'})-[:R]->(:M {v:'18'}) RETURN x.v AS p"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [['10'],['12'],['15']]
         self.env.assertEquals(result.result_set, expected_result)

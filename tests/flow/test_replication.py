@@ -20,7 +20,7 @@ class testReplication(FlowTestsBase):
         if VALGRIND or SANITIZER != "":
             Env.skip(None) # valgrind is not working correctly with replication
 
-        self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
+        self.env, self.db = Env(env='oss', useSlaves=True)
 
     def test_CRUD_replication(self):
         # create a simple graph
@@ -44,8 +44,8 @@ class testReplication(FlowTestsBase):
         src = Graph(source_con, GRAPH_ID)
         replica = Graph(replica_con, GRAPH_ID)
 
-        s = Node(label='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
-        t = Node(label='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
+        s = Node(labels='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
+        t = Node(labels='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
         e = Edge(s, 'R', t)
 
         src.add_node(s)
@@ -106,8 +106,8 @@ class testReplication(FlowTestsBase):
 
         # make sure index is available on replica
         q = "MATCH (s:L {id:2}) RETURN s.name"
-        plan = src.execution_plan(q)
-        replica_plan = replica.execution_plan(q)
+        plan = str(src.explain(q))
+        replica_plan = str(replica.explain(q))
         env.assertIn("Index Scan", plan)
         env.assertEquals(replica_plan, plan)
 
@@ -203,4 +203,3 @@ class testReplication(FlowTestsBase):
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
         env.assertEquals(replica_result, origin_result)
-
