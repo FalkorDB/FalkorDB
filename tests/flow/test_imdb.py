@@ -55,7 +55,7 @@ class testImdbFlow(FlowTestsBase):
             if q.reversible:
                 # assert reversed pattern.
                 self.assert_reversed_pattern(query, actual_result)
-    
+
     def test_index_scan_actors_over_85(self):
         # skip test if we're running under Valgrind
         # drop index is an async operation which can cause Valgraind
