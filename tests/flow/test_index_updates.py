@@ -31,7 +31,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
             node = self.new_node()
             self.graph.add_node(node)
             node_ctr += 1
-        self.graph.commit()
+        self.graph.flush()
 
     def build_indices(self):
         for field in fields:
@@ -106,20 +106,16 @@ class testIndexUpdatesFlow(FlowTestsBase):
 
     #  Add 100 randomized nodes and validate indices
     def test03_node_creation(self):
-        # Reset nodes in the Graph object so that we won't double-commit the originals
-        self.graph.nodes = {}
         global node_ctr
         for i in range(100):
             node = self.new_node()
             self.graph.add_node(node)
             node_ctr += 1
-        self.graph.commit()
+        self.graph.flush()
         self.validate_state()
 
     # Delete every other node in first 100 and validate indices
     def test04_node_deletion(self):
-        # Reset nodes in the Graph object so that we won't double-commit the originals
-        self.graph.nodes = {}
         global node_ctr
         # Delete nodes one at a time
         for i in range(0, 100, 2):
@@ -140,7 +136,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
         # Retrieve a single node
         result = self.graph.query("MATCH (a) RETURN a.unique LIMIT 1")
         unique_prop = result.result_set[0][0]
-        query = """MATCH (a {unique: %s }) SET a.unindexed = 5, a.unique = %s RETURN a.unindexed, a.unique""" % (unique_prop, unique_prop)
+        query = f"""MATCH (a {{unique: {unique_prop} }}) SET a.unindexed = 5, a.unique = {unique_prop} RETURN a.unindexed, a.unique"""
         result = self.graph.query(query)
         expected_result = [[5, unique_prop]]
         self.env.assertEquals(result.result_set, expected_result)
