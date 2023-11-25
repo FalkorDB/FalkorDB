@@ -352,41 +352,53 @@ class testOptimizationsPlan(FlowTestsBase):
 
         # create graph
         query = """UNWIND range(0, 64) AS x CREATE ()-[:R]->()-[:R]->()"""
-        self.graph.query(query)
+        graph.query(query)
 
         # query with LIMIT 1
-        query = """CYPHER l=1 MATCH (a)-[]->(b) WITH b AS b
-        MATCH (b)-[]->(c) RETURN c LIMIT $l"""
-
-        # profile query
-        profile = graph.profile( query)
-        profile = [x[0:x.index(',')].strip() for x in profile]
-
-        # make sure 'a' to 'b' traversal operation is aware of limit
-        self.env.assertIn("Conditional Traverse | (a)->(b) | Records produced: 1", profile)
-
-        # query with LIMIT 1
-        query = """CYPHER l=1 MATCH (a), (b) WITH a AS a, b AS b
-        MATCH (a)-[]->(b) WITH b AS b MATCH (b)-[]->(c) RETURN c LIMIT $l"""
+        query = """CYPHER l=1
+                   MATCH (a)-[]->(b)
+                   WITH b AS b
+                   MATCH (b)-[]->(c)
+                   RETURN c
+                   LIMIT $l"""
 
         # profile query
         profile = graph.profile(query)
-        profile = [x[0:x.index(',')].strip() for x in profile]
+
+        # make sure 'a' to 'b' traversal operation is aware of limit
+        traverse_op = profile.collect_operations("Conditional Traverse")[1]
+        self.env.assertEqual(traverse_op.records_produced, 1)
+        #self.env.assertIn("Conditional Traverse | (a)->(b) | Records produced: 1", profile)
+
+        # query with LIMIT 1
+        query = """CYPHER l=1
+                   MATCH (a), (b)
+                   WITH a AS a, b AS b
+                   MATCH (a)-[]->(b)
+                   WITH b AS b
+                   MATCH (b)-[]->(c)
+                   RETURN c
+                   LIMIT $l"""
+
+        # profile query
+        profile = graph.profile(query)
+        expand_into_op = profile.collect_operations("Expand Into")[0]
+        self.env.assertEqual(expand_into_op.records_produced, 1)
 
         # make sure 'a' to 'b' expand into traversal operation is aware of limit
-        self.env.assertIn("Expand Into | (a)->(b) | Records produced: 1", profile)
+        #self.env.assertIn("Expand Into | (a)->(b) | Records produced: 1", profile)
 
         # aggregation should reset limit, otherwise we'll take a performance hit
         # recall aggregation operations are eager
-        query = """CYPHER l=1 MATCH (a)-[]->(b) WITH count(a) AS src, b AS b
-        MATCH (b)-[]->(c) RETURN c LIMIT $l"""
+        query = """CYPHER l=1 MATCH (a)-[]->(b) WITH count(a) AS src, b AS b MATCH (b)-[]->(c) RETURN c LIMIT $l"""
 
         # profile query
         profile = graph.profile(query)
-        profile = [x[0:x.index(',')].strip() for x in profile]
 
         # traversal from a to b shouldn't be effected by the limit.
-        self.env.assertNotIn("Conditional Traverse | (a)->(b) | Records produced: 64", profile)
+        traverse_op = profile.collect_operations("Conditional Traverse")[0]
+        self.env.assertEqual(traverse_op.records_produced, 130)
+        #self.env.assertNotIn("Conditional Traverse | (a)->(b) | Records produced: 130", profile)
 
     # "WHERE true" predicates should not build filter ops.
     def test24_compact_true_predicates(self):
@@ -476,7 +488,7 @@ class testOptimizationsPlan(FlowTestsBase):
     def test30_optimize_mandatory_labels_order_only(self):
         # clean db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create a node with label N
         query = """CREATE (n:N {v: 1})"""

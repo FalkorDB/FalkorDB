@@ -47,7 +47,7 @@ class testEdgeIndexUpdatesFlow():
             edge = self.new_edge(from_node, to_node)
             edge_ctr += 1
             self.graph.add_edge(edge)
-        self.graph.commit()
+        self.graph.flush()
 
     def build_indices(self):
         for field in fields:
@@ -122,9 +122,6 @@ class testEdgeIndexUpdatesFlow():
 
     #  Add 100 randomized edges and validate indices
     def test03_edge_creation(self):
-        # Reset nodes in the Graph object so that we won't double-commit the originals
-        self.graph.nodes = {}
-        self.graph.edges = []
         global node_ctr
         global edge_ctr
         for i in range(100):
@@ -137,14 +134,11 @@ class testEdgeIndexUpdatesFlow():
             edge = self.new_edge(from_node, to_node)
             self.graph.add_edge(edge)
             edge_ctr += 1
-        self.graph.commit()
+        self.graph.flush()
         self.validate_state()
 
     # Delete every other edge in first 100 and validate indices
     def test04_edge_deletion(self):
-        # Reset nodes in the Graph object so that we won't double-commit the originals
-        self.graph.nodes = {}
-        self.graph.edges = []
         global node_ctr
         global edge_ctr
         # Delete edges one at a time

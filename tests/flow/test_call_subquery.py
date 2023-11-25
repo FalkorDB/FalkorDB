@@ -708,7 +708,7 @@ updating clause.")
 
         # assert results
         expected_res = {'name': 'Canada',
-            'langs': ['English', 'French'],
+            'langs': ['French', 'English'],
             'states':
                 [OrderedDict([
                     ('type', 'State'),
