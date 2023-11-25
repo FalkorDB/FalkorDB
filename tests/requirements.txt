@@ -1,10 +1,7 @@
-# redis~=4.5.5
-# RLTest~=0.6.0
-# ramp-packer~=2.5.4
-
 redisgraph-bulk-loader~=0.12.3
 
 click
 behave~=1.2
 pathos~=0.2.8
+FalkorDB
 neo4j
