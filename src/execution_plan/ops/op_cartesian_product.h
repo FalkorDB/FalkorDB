@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #pragma once
@@ -9,11 +8,15 @@
 #include "op.h"
 #include "../execution_plan.h"
 
-/* Cartesian product AKA Join. */
+// cartesian product
 typedef struct {
 	OpBase op;
 	Record r;
 	bool init;
 } CartesianProduct;
 
-OpBase *NewCartesianProductOp(const ExecutionPlan *plan);
+OpBase *NewCartesianProductOp
+(
+	const ExecutionPlan *plan
+);
+

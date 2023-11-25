@@ -203,13 +203,14 @@ static void _QueryGraph_ExtractEdge
 // clones path from 'qg' into 'graph'
 static void _QueryGraph_ExtractPath
 (
-	const QueryGraph *qg,
-	QueryGraph *graph,
-	const cypher_astnode_t *path
+	const QueryGraph *qg,         // query graph to extract path from
+	QueryGraph *graph,            // query graph to populate
+	const cypher_astnode_t *path  // path to extract
 ) {
-
 	// validate input
-	ASSERT(qg != NULL && graph != NULL && path != NULL);
+	ASSERT(qg    != NULL);
+	ASSERT(path  != NULL);
+	ASSERT(graph != NULL);
 
 	const char *alias;
 	const cypher_astnode_t *ast_node;
@@ -226,12 +227,14 @@ static void _QueryGraph_ExtractPath
 	// edges are at odd indices
 	for(uint i = 1; i < nelems; i += 2) {
 		// retrieve the QGNode corresponding to the node left of this edge
-		const cypher_astnode_t *l_node = cypher_ast_pattern_path_get_element(path, i - 1);
+		const cypher_astnode_t *l_node =
+			cypher_ast_pattern_path_get_element(path, i - 1);
 		const char *l_alias = AST_ToString(l_node);
 		QGNode *left = QueryGraph_GetNodeByAlias(graph, l_alias);
 
 		// retrieve the QGNode corresponding to the node right of this edge
-		const cypher_astnode_t *r_node = cypher_ast_pattern_path_get_element(path, i + 1);
+		const cypher_astnode_t *r_node =
+			cypher_ast_pattern_path_get_element(path, i + 1);
 		const char *r_alias = AST_ToString(r_node);
 		QGNode *right = QueryGraph_GetNodeByAlias(graph, r_alias);
 
@@ -340,13 +343,13 @@ QueryGraph *QueryGraph_ExtractPaths
 // clones patterns from 'qg' into 'graph'
 QueryGraph *QueryGraph_ExtractPatterns
 (
-	const QueryGraph *qg,
-	const cypher_astnode_t **patterns,
-	uint n
+	const QueryGraph *qg,               // query graph to extract patterns from
+	const cypher_astnode_t **patterns,  // patterns to extract
+	uint n                              // number of patterns
 ) {
-
 	// validate inputs
-	ASSERT(qg != NULL && patterns != NULL);
+	ASSERT(qg       != NULL);
+	ASSERT(patterns != NULL);
 
 	// create an empty query graph
 	uint node_count = QueryGraph_NodeCount(qg);
@@ -358,9 +361,9 @@ QueryGraph *QueryGraph_ExtractPatterns
 	for(uint i = 0; i < n; i++) {
 		const cypher_astnode_t *pattern = patterns[i];
 		uint npaths = cypher_ast_pattern_npaths(pattern);
-		for(uint j = 0; j < npaths; j ++) {
-			const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, j);
-			_QueryGraph_ExtractPath(qg, graph, path);
+		for(uint j = 0; j < npaths; j++) {
+			const cypher_astnode_t *p = cypher_ast_pattern_get_path(pattern, j);
+			_QueryGraph_ExtractPath(qg, graph, p);
 		}
 	}
 
@@ -447,26 +450,38 @@ void QueryGraph_MergeGraphs
 	uint node_count = QueryGraph_NodeCount(from);
 	uint edge_count = QueryGraph_EdgeCount(from);
 
+	//--------------------------------------------------------------------------
+	// merge nodes
+	//--------------------------------------------------------------------------
+
 	for(uint i = 0; i < node_count; i++) {
 		QGNode *n = from->nodes[i];
 		// if the entity already exists in the "to" graph, do nothing
-		// we could have more complex logic to merge entity data, but this is not
-		// currently necessary as this logic only benefits toString calls like EXPLAIN
+		// we could have more complex logic to merge entity data
+		// but this is not currently necessary as this logic only benefits
+		// 'toString' calls like in the GRAPH.EXPLAIN command
 		if(QueryGraph_GetNodeByAlias(to, n->alias)) continue;
+
 		// new entity, clone and add it
 		QueryGraph_AddNode(to, QGNode_Clone(n));
 	}
 
+	//--------------------------------------------------------------------------
+	// merge edges
+	//--------------------------------------------------------------------------
+
 	for(uint i = 0; i < edge_count; i++) {
 		QGEdge *e = from->edges[i];
 		// if the entity already exists in the "to" graph, do nothing
-		// we could have more complex logic to merge entity data, but this is not
-		// currently necessary as this logic only benefits toString calls like EXPLAIN
+		// we could have more complex logic to merge entity data
+		// but this is not currently necessary as this logic only benefits
+		// 'toString' calls like in the GRAPH.EXPLAIN command
 		if(QueryGraph_GetEdgeByAlias(to, e->alias)) continue;
 
 		// retrieve the edge's endpoints in the "to" graph
-		QGNode *src = QueryGraph_GetNodeByAlias(to, e->src->alias);
+		QGNode *src  = QueryGraph_GetNodeByAlias(to, e->src->alias);
 		QGNode *dest = QueryGraph_GetNodeByAlias(to, e->dest->alias);
+
 		// clone and add the unmatched edge
 		QGEdge *clone_edge = QGEdge_Clone(e);
 		QueryGraph_ConnectNodes(to, src, dest, clone_edge);

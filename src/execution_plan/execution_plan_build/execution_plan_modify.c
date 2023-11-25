@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include "execution_plan_modify.h"
-#include "../../RG.h"
 #include "../execution_plan.h"
 #include "../ops/ops.h"
 #include "../../query_ctx.h"
@@ -141,28 +141,59 @@ void ExecutionPlan_ReplaceOp(ExecutionPlan *plan, OpBase *a, OpBase *b) {
 	ExecutionPlan_RemoveOp(plan, a);
 }
 
-void ExecutionPlan_RemoveOp(ExecutionPlan *plan, OpBase *op) {
-	if(op->parent == NULL) {
-		// Removing execution plan root.
+void ExecutionPlan_RemoveOp
+(
+	ExecutionPlan *plan,
+	OpBase *op
+) {
+	//--------------------------------------------------------------------------
+	// remove plan's root
+	//--------------------------------------------------------------------------
+
+	if(plan->root == op) {
+		// removing plan's root
+		ASSERT(op->parent == NULL);
 		ASSERT(op->childCount == 1);
-		// Assign child as new root.
+
+		// assign child as new root
 		plan->root = op->children[0];
-		// Remove new root's parent pointer.
+
+		// remove new root's parent pointer
 		plan->root->parent = NULL;
-	} else {
-		OpBase *parent = op->parent;
-		if(op->childCount > 0) {
-			// In place replacement of the op first branch instead of op.
-			_ExecutionPlan_ParentReplaceChild(op->parent, op, op->children[0]);
-			// Add each of op's children as a child of op's parent.
-			for(int i = 1; i < op->childCount; i++) _OpBase_AddChild(parent, op->children[i]);
-		} else {
-			// Remove op from its parent.
-			_OpBase_RemoveChild(op->parent, op);
-		}
+
+		goto cleanup;
 	}
 
-	// Clear op.
+	//--------------------------------------------------------------------------
+	// remove none root operation
+	//--------------------------------------------------------------------------
+
+	OpBase *parent = op->parent;
+
+	// operation doesn't have a parent
+	if(parent == NULL) {
+		// detache all children from removed parent
+		for(int i = 0; i < op->childCount; i++) op->children[i]->parent = NULL;
+
+		goto cleanup;
+	}
+
+	// operation has a parent
+	if(op->childCount > 0) {
+		// in place replacement of the op first child instead of op
+		_ExecutionPlan_ParentReplaceChild(op->parent, op, op->children[0]);
+
+		// add remaining children to op's parent
+		for(int i = 1; i < op->childCount; i++) {
+			_OpBase_AddChild(parent, op->children[i]);
+		}
+	} else {
+		// no children simply remove op from its parent
+		_OpBase_RemoveChild(op->parent, op);
+	}
+
+cleanup:
+	// clear op
 	op->parent = NULL;
 	rm_free(op->children);
 	op->children = NULL;
@@ -179,26 +210,43 @@ void ExecutionPlan_DetachOp(OpBase *op) {
 	op->parent = NULL;
 }
 
-// For all ops in the given tree, associate the provided ExecutionPlan.
+// for all ops in the given tree, associate the provided plan
 // if qg is set, merge the query graphs of the temporary and main plans
 void ExecutionPlan_BindOpsToPlan
 (
-	ExecutionPlan *plan,  // plan to bind the operations to
+	ExecutionPlan *plan,  // plan to bind operations to
 	OpBase *root,         // root operation
 	bool qg               // whether to merge QueryGraphs or not
 ) {
+	ASSERT(plan != NULL);
+
 	if(!root) return;
 
 	if(qg) {
-		// If the temporary execution plan has added new QueryGraph entities,
-		// migrate them to the master plan's QueryGraph.
+		// if the temporary execution plan has added new QueryGraph entities,
+		// migrate them to the master plan's QueryGraph
 		QueryGraph_MergeGraphs(plan->query_graph, root->plan->query_graph);
 	}
 
-	root->plan = plan;
-	for(int i = 0; i < root->childCount; i ++) {
-		ExecutionPlan_BindOpsToPlan(plan, root->children[i], qg);
+	//--------------------------------------------------------------------------
+	// update each operation plan in root tree
+	//--------------------------------------------------------------------------
+
+	OpBase **ops = array_new(OpBase *, 1);
+	array_append(ops, root);
+
+	// as long as there are operations to update
+	while(array_len(ops) != 0) {
+		OpBase *op = array_pop(ops);
+		op->plan = plan;
+
+		// add op's children to stack
+		for(int i = 0; i < op->childCount; i++) {
+			array_append(ops, op->children[i]);
+		}
 	}
+
+	array_free(ops);
 }
 
 // binds all ops in `ops` to `plan`, other than ops of type `exclude_type`

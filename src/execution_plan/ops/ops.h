@@ -27,6 +27,7 @@
 #include "op_aggregate.h"
 #include "op_semi_apply.h"
 #include "op_expand_into.h"
+#include "op_empty_record.h"
 #include "op_merge_create.h"
 #include "op_argument_list.h"
 #include "op_all_node_scan.h"

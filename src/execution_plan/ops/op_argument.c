@@ -1,25 +1,29 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "op_argument.h"
 #include "RG.h"
+#include "op_apply.h"
+#include "op_argument.h"
 
-// Forward declarations
+// forward declarations
+static OpResult ArgumentInit(OpBase *opBase);
 static Record ArgumentConsume(OpBase *opBase);
 static OpResult ArgumentReset(OpBase *opBase);
 static OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opBase);
-static void ArgumentFree(OpBase *opBase);
 
-OpBase *NewArgumentOp(const ExecutionPlan *plan, const char **variables) {
-	Argument *op = rm_malloc(sizeof(Argument));
-	op->r = NULL;
+OpBase *NewArgumentOp
+(
+	const ExecutionPlan *plan,
+	const char **variables
+) {
+	Argument *op = rm_calloc(1, sizeof(Argument));
 
-	// Set our Op operations
-	OpBase_Init((OpBase *)op, OPType_ARGUMENT, "Argument", NULL,
-				ArgumentConsume, ArgumentReset, NULL, ArgumentClone, ArgumentFree, false, plan);
+	// set our Op operations
+	OpBase_Init((OpBase *)op, OPType_ARGUMENT, "Argument", ArgumentInit,
+			ArgumentConsume, ArgumentReset, NULL, ArgumentClone, NULL, false,
+			plan);
 
 	uint variable_count = array_len(variables);
 	for(uint i = 0; i < variable_count; i ++) {
@@ -29,43 +33,82 @@ OpBase *NewArgumentOp(const ExecutionPlan *plan, const char **variables) {
 	return (OpBase *)op;
 }
 
-static Record ArgumentConsume(OpBase *opBase) {
-	Argument *arg = (Argument *)opBase;
+static OpResult ArgumentInit
+(
+	OpBase *opBase
+) {
+	Argument *arg = (Argument*)opBase;
 
-	// Emit the record only once.
-	// arg->r can already be NULL if the op is depleted.
-	Record r = arg->r;
-	arg->r = NULL;
-	return r;
-}
+	ASSERT(arg != NULL);
+	ASSERT(arg->producer == NULL);
 
-static OpResult ArgumentReset(OpBase *opBase) {
-	// Reset operation, freeing the Record if one is held.
-	Argument *arg = (Argument *)opBase;
+	//--------------------------------------------------------------------------
+	// locate producer
+	//--------------------------------------------------------------------------
 
-	if(arg->r) {
-		OpBase_DeleteRecord(arg->r);
-		arg->r = NULL;
+	// scan down the parent tree looking for an Apply operation
+	// which doesn't contains us as its child
+
+	OpBase *parent = opBase->parent;
+	while(parent != NULL) {
+		OPType t = OpBase_Type(parent);
+		if(t == OPType_APPLY           ||
+		   t == OPType_SEMI_APPLY      ||
+		   t == OPType_ANTI_SEMI_APPLY ||
+		   t == OPType_MERGE) {
+			// make sure we're not the apply's left child
+			if(OpBase_GetChild(parent, 0) != opBase) {
+				arg->producer = parent;
+				break;
+			}
+		}
+
+		// advance
+		parent = parent->parent;
 	}
+
+	// make sure producer was found
+	ASSERT(arg->producer != NULL);
 
 	return OP_OK;
 }
 
-void Argument_AddRecord(Argument *arg, Record r) {
-	ASSERT(!arg->r && "tried to insert into a populated Argument op");
-	arg->r = r;
+static Record ArgumentNullConsume
+(
+	OpBase *opBase
+) {
+	return NULL;
 }
 
-static inline OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static Record ArgumentConsume
+(
+	OpBase *opBase
+) {
+	Argument *arg = (Argument *)opBase;
+
+	// emit the record only once
+	// update consume function to a function which always returns NULL
+	Record r = Apply_PullArgRecord(arg->producer);
+	OpBase_UpdateConsume(opBase, ArgumentNullConsume);
+	return r;
+}
+
+static OpResult ArgumentReset
+(
+	OpBase *opBase
+) {
+	Argument *arg = (Argument *)opBase;
+	// reset consume function
+	OpBase_UpdateConsume(opBase, ArgumentConsume);
+	return OP_OK;
+}
+
+static inline OpBase *ArgumentClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_ARGUMENT);
 	return NewArgumentOp(plan, opBase->modifies);
-}
-
-static void ArgumentFree(OpBase *opBase) {
-	Argument *arg = (Argument *)opBase;
-	if(arg->r) {
-		OpBase_DeleteRecord(arg->r);
-		arg->r = NULL;
-	}
 }
 

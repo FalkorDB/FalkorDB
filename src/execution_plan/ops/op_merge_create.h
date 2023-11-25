@@ -28,3 +28,10 @@ OpBase *NewMergeCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCr
 
 // Commit all pending creations and switch to Record handoff mode.
 void MergeCreate_Commit(OpBase *opBase);
+
+void MergeCreate_AddRecords
+(
+	OpMergeCreate *op,
+	Record **records
+);
+

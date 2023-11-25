@@ -60,8 +60,7 @@ static void _plant_records_Arguments
 ) {
 	uint n_branches = array_len(op->feeders.arguments);
 	for(uint i = 0; i < n_branches; i++) {
-		Argument_AddRecord(op->feeders.arguments[i],
-			OpBase_DeepCloneRecord(op->r));
+		//Argument_AddRecord(op->feeders.arguments[i], OpBase_DeepCloneRecord(op->r));
 	}
 }
 

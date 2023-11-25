@@ -59,9 +59,9 @@ OpBase *ExecutionPlan_LocateOpDepth
 // returns all operations of a certain type in a execution plan
 void ExecutionPlan_LocateOps
 (
-	OpBase ***plans,  // array in which ops are stored
-	OpBase *root,     // root operation of the plan to traverse
-	OPType type       // operation type to search
+	OpBase ***ops,  // array in which ops are stored
+	OpBase *root,   // root operation of the plan to traverse
+	OPType type     // operation type to search
 );
 
 // Find the earliest operation above the provided recurse_limit, if any,
@@ -135,6 +135,13 @@ uint ExecutionPlan_CollectUpwards
 (
     OpBase *ops[],
     OpBase *op
+);
+
+// collect all taps reachable from 'root'
+// retuns an array of operations which caller must free
+OpBase **ExecutionPlan_CollectTaps
+(
+	OpBase *root  // root of operation tree
 );
 
 //------------------------------------------------------------------------------
