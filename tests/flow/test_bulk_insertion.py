@@ -6,16 +6,23 @@ import threading
 from click.testing import CliRunner
 from redisgraph_bulk_loader.bulk_insert import bulk_insert
 
-GRAPH_ID = "graph"
-port = None
+GRAPH_ID    = "graph"
+port        = None
 redis_graph = None
 
 
-def run_bulk_loader(graphname, filename):
-    runner = CliRunner()
-    runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
-                                '--nodes', filename,
-                                graphname])
+def ping_server(stop_event, res, self):
+    ping_count = 0
+    while not stop_event.is_set():
+        t0 = time.time()
+        self.db.connection.ping()
+        t1 = time.time() - t0
+        # Verify that pinging the server takes less than 1 second during bulk insertion
+        self.env.assertLess(t1, 2)
+        ping_count += 1
+        time.sleep(0.1)
+
+    res[0] = ping_count
 
 class testGraphBulkInsertFlow(FlowTestsBase):
     def __init__(self):
@@ -369,23 +376,24 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             for i in range(100_000):
                 out.writerow([prop_str])
 
+        runner = CliRunner()
+
         # Instantiate a thread to run the bulk loader
-        thread = threading.Thread(target=run_bulk_loader, args=(graphname, filename))
+        res = [None]
+        stop_event = threading.Event()
+        thread = threading.Thread(target=ping_server, args=(stop_event, res, self))
         thread.start()
 
-        # Ping server while bulk-loader is running
-        ping_count = 0
-        while thread.is_alive():
-            t0 = time.time()
-            self.db.ping()
-            t1 = time.time() - t0
-            # Verify that pinging the server takes less than 1 second during bulk insertion
-            self.env.assertLess(t1, 2)
-            ping_count += 1
+        # Run bulk insert
+        runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}", '--nodes', filename, graphname])
+
+        # Signal the thread to stop
+        stop_event.set()
 
         thread.join()
+        ping_count = res[0]
         # Verify that at least one ping was issued
-        self.env.assertGreaterEqual(ping_count, 1)
+        self.env.assertGreaterEqual(ping_count, 2)
 
     # Verify that nodes with multiple labels are created correctly
     def test10_multiple_labels(self):
