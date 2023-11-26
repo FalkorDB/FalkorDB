@@ -48,10 +48,6 @@ jobs:
         mkdir -p /FalkorDB
         mv $GITHUB_WORKSPACE/* /FalkorDB
 
-    - name: Build
-      working-directory: /FalkorDB
-      run: make
-
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
 
