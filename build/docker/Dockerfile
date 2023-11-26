@@ -1,7 +1,6 @@
-FROM --platform=$BUILDPLATFORM falkordb/falkordb-build:latest
+FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest
 
 ARG TARGETPLATFORM
-ARG BUILDPLATFORM
 
 WORKDIR /FalkorDB
 
