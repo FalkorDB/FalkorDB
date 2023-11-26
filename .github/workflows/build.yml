@@ -67,6 +67,7 @@ jobs:
       with:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
+        platforms: linux/amd64,linux/arm64
         push: true
         tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name }}
 
