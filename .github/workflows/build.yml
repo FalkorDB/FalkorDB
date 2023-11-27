@@ -76,7 +76,6 @@ jobs:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         platforms: ${{ matrix.platform }}
-        push: true
         tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name }}
         outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
@@ -87,10 +86,22 @@ jobs:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         platforms: ${{ matrix.platform }}
-        push: true
         tags: falkordb/falkordb:${{ github.event.release.tag_name }},falkordb/falkordb:latest
         outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
+    - name: Export digest
+      run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"          
+    - name: Upload digest
+      uses: actions/upload-artifact@v3
+      with:
+        name: digests
+        path: /tmp/digests/*
+        if-no-files-found: error
+        retention-days: 1
+   
     - name: Copy bin from docker on PUSH
       if: github.event_name == 'push'
       run: |
