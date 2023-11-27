@@ -24,8 +24,7 @@ class testAccessDelNode():
 
         # create a node
         n = Node(labels="A", properties = {'v':1})
-        self.g.add_node(n)
-        self.g.flush()
+        self.g.query(f"CREATE {n}")
 
         # return a deleted node
         q = "MATCH (n) DELETE n RETURN n"
@@ -191,20 +190,12 @@ class testAccessDelNode():
     def test09_path_with_deleted_node(self):
         # test path with deleted node
         # create a 3 nodes path (a)->(b)->(c)
-        a = Node(labels="A", properties = {'v':'a'})
-        b = Node(labels="B", properties = {'v':'b'})
-        c = Node(labels="C", properties = {'v':'c'})
-        self.g.add_node(a)
-        self.g.add_node(b)
-        self.g.add_node(c)
-
-        r1 = Edge(a, 'R', b)
-        r2 = Edge(b, 'R', c)
-
-        self.g.add_edge(r1)
-        self.g.add_edge(r2)
-
-        self.g.flush()
+        a  = Node(alias="a", labels="A", properties = {'v':'a'})
+        b  = Node(alias="b", labels="B", properties = {'v':'b'})
+        c  = Node(alias="c", labels="C", properties = {'v':'c'})
+        r1 = Edge(a, 'R', b, alias="r1",)
+        r2 = Edge(b, 'R', c, alias="r2")
+        self.g.query(f"CREATE {a}, {b}, {c}, {r1}, {r2}")
 
         # delete the middle node on the path
         q = "MATCH p = (a:A)-[:R]->(b:B)-[:R]->(c:C) DELETE b RETURN nodes(p)"
@@ -246,14 +237,10 @@ class testAccessDelEdge():
         # try to return a deleted edge
 
         # create an edge
-        src  = Node(labels="A", properties = {'v':1})
-        dest = Node(labels="B", properties = {'v':2})
-        self.g.add_node(src)
-        self.g.add_node(dest)
-
-        e = Edge(src, 'R', dest, properties = {'v':3})
-        self.g.add_edge(e)
-        self.g.flush()
+        src  = Node(alias="src",  labels="A", properties = {'v':1})
+        dest = Node(alias="dest", labels="B", properties = {'v':2})
+        e    = Edge(src, 'R', dest, properties = {'v':3})
+        self.g.query(f"CREATE {src}, {dest}, {e}")
 
         # return a deleted edge
         q = "MATCH ()-[e]->() DELETE e RETURN e"
@@ -378,20 +365,13 @@ class testAccessDelEdge():
     def test08_path_with_deleted_edge(self):
         # test path with deleted edge
         # create a 3 nodes path (a)->(b)->(c)
-        a = Node(labels="A", properties = {'v':'a'})
-        b = Node(labels="B", properties = {'v':'b'})
-        c = Node(labels="C", properties = {'v':'c'})
-        self.g.add_node(a)
-        self.g.add_node(b)
-        self.g.add_node(c)
+        a  = Node(alias="a", labels="A",  properties = {'v':'a'})
+        b  = Node(alias="b", labels="B",  properties = {'v':'b'})
+        c  = Node(alias="c", labels="C",  properties = {'v':'c'})
+        r1 = Edge(a, 'R1', b, alias="r1", properties = {'v':1})
+        r2 = Edge(b, 'R2', c, alias="r2", properties = {'v':2})
 
-        r1 = Edge(a, 'R1', b, properties = {'v':1})
-        r2 = Edge(b, 'R2', c, properties = {'v':2})
-
-        self.g.add_edge(r1)
-        self.g.add_edge(r2)
-
-        self.g.flush()
+        self.g.query(f"CREATE {a}, {b}, {c}, {r1}, {r2}")
 
         # delete the middle node on the path
         q = "MATCH p = (:A)-[e1:R1]->(:B)-[e2:R2]->(:C) DELETE e1 RETURN relationships(p)"

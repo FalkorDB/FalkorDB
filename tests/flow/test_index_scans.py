@@ -131,12 +131,21 @@ class testIndexScanFlow():
         self.env.assertEquals(result.result_set, expected_result)
 
         # Validate the transformation of IN filters 1 not on attribute.
-        query = "MATCH (p:person) WHERE id(p) IN [18, 26] AND p.age IN [33, 34, 35] RETURN p.name ORDER BY p.age"
-        plan = str(self.graph.explain(query))
+        query = """MATCH (p:person)
+                   WHERE p.age IN [33, 34, 35]
+                   RETURN ID(p)"""
+        ids = self.graph.ro_query(query).result_set
+        ids = [x[0] for x in ids]
+
+        query = """MATCH (p:person)
+                   WHERE id(p) IN $ids AND p.age IN [33, 34, 35]
+                   RETURN p.name ORDER BY p.age"""
+
+        plan = str(self.graph.explain(query, params={'ids': ids}))
         self.env.assertIn('Node By Index Scan', plan)
 
         expected_result = [['Omri Traub'], ['Noam Nativ']]
-        result = self.graph.query(query)
+        result = self.graph.ro_query(query, params={'ids': ids})
         self.env.assertEquals(result.result_set, expected_result)
 
     # Validate index utilization when filtering on string fields with the `IN` keyword.
@@ -214,25 +223,21 @@ class testIndexScanFlow():
 
     def test07_index_scan_and_id(self):
         self.graph = self.db.select_graph("G")
-        nodes=[]
-        for i in range(10):
-            node = Node(node_id=i, labels='person', properties={'age':i})
-            nodes.append(node)
-            self.graph.add_node(node)
-            self.graph.flush()
-        
+        self.graph.query("UNWIND range(0, 9) AS i CREATE (a:person {age: i})")
+
         query_result = create_node_range_index(self.graph, 'person', 'age', sync=True)
         self.env.assertEqual(1, query_result.indices_created)
 
-        query = """MATCH (n:person) WHERE id(n)>=7 AND n.age<9 RETURN n ORDER BY n.age"""
+        query = """MATCH (n:person)
+                   WHERE id(n)>=7 AND n.age<9
+                   RETURN id(n) ORDER BY n.age"""
         plan = str(self.graph.explain(query))
-        query_result = self.graph.query(query)
         self.env.assertIn('Node By Index Scan', plan)
         self.env.assertIn('Filter', plan)
         query_result = self.graph.query(query)
 
         self.env.assertEqual(2, len(query_result.result_set))
-        expected_result = [[nodes[7]], [nodes[8]]]
+        expected_result = [[7], [8]]
         self.env.assertEquals(expected_result, query_result.result_set)
 
     # Validate placement of index scans and filter ops when not all filters can be replaced.
@@ -623,9 +628,7 @@ class testIndexScanFlow():
         #-----------------------------------------------------------------------
 
         # create a User node with a RediSearch stopword as the id attribute
-        user = Node(labels='User', properties={'id': 'not'})
-        self.graph.add_node(user)
-        self.graph.commit()
+        self.graph.query("CREATE (:User {id:'not'})")
 
         #-----------------------------------------------------------------------
         # query indices
@@ -634,6 +637,7 @@ class testIndexScanFlow():
         # query exact match index for user
         # expecting node to return as stopwords are not enforced
         result = self.graph.query("MATCH (u:User {id: 'not'}) RETURN u")
+        user = Node(labels='User', properties={'id': 'not'})
         self.env.assertEquals(result.result_set[0][0], user)
 
         # query fulltext index for user

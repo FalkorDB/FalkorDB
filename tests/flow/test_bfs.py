@@ -15,23 +15,17 @@ class testBFS(FlowTestsBase):
         global edges
         # Construct a graph with the form:
         # (a)-[:E1]->(b:B)-[:E1]->(c), (b)-[:E2]->(d)-[:E1]->(e)
-        a = Node(labels="A", properties={"v": 'a'})
-        b = Node(labels="A", properties={"v": 'b'})
-        c = Node(labels="A", properties={"v": 'c'})
-        d = Node(labels="A", properties={"v": 'd'})
-        e = Node(labels="A", properties={"v": 'e'})
+        a = Node(alias="a", labels="A", properties={"v": 'a'})
+        b = Node(alias="b", labels="A", properties={"v": 'b'})
+        c = Node(alias="c", labels="A", properties={"v": 'c'})
+        d = Node(alias="d", labels="A", properties={"v": 'd'})
+        e = Node(alias="e", labels="A", properties={"v": 'e'})
 
         nodes['a'] = a
         nodes['b'] = b
         nodes['c'] = c
         nodes['d'] = d
         nodes['e'] = e
-
-        self.graph.add_node(a)
-        self.graph.add_node(b)
-        self.graph.add_node(c)
-        self.graph.add_node(d)
-        self.graph.add_node(e)
 
         # Edges have the same property as their destination
         ab = Edge(a, "E1", b, properties={"v": 'b'})
@@ -44,12 +38,8 @@ class testBFS(FlowTestsBase):
         edges[2] = bd
         edges[3] = de
 
-        self.graph.add_edge(ab)
-        self.graph.add_edge(bc)
-        self.graph.add_edge(bd)
-        self.graph.add_edge(de)
-
-        self.graph.flush()
+        query = f"""CREATE {a}, {b}, {c}, {d}, {e}, {ab}, {bc}, {bd}, {de}"""
+        self.graph.query(query)
 
     # Verify that the contents of two arrays are equal without respect to order.
     def compare_unsorted_arrays(self, a, b):

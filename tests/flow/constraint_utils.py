@@ -43,7 +43,7 @@ def get_constraint(g, ct_type, entity_type, lbl, *props):
             WHERE type = '{ct_type}' AND label = '{lbl}' AND {props_filter}
             RETURN type, label, properties, entitytype, status"""
 
-    result = g.query(q, read_only=True).result_set
+    result = g.ro_query(q).result_set
     c = None
     if len(result) == 1:
         row = result[0]
@@ -64,13 +64,13 @@ def wait_on_constraint(g, ct_type, entity_type, lbl, *props):
     AND {props_filter} RETURN count(1)"""
 
     while True:
-        result = g.query(q, read_only=True)
+        result = g.ro_query(q)
         if result.result_set[0][0] == 0:
             break
         time.sleep(0.5) # sleep 500ms
 
 def create_constraint(g, ct_type, entity_type, lbl, *props, sync=False):
-    args = ["GRAPH.CONSTRAINT", "CREATE", g.key, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
+    args = ["GRAPH.CONSTRAINT", "CREATE", g.name, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
     args.extend(props)
     res = g.execute_command(*args)
     if sync:
@@ -112,7 +112,7 @@ def create_mandatory_edge_constraint(g, lbl, *props, sync=False):
     return create_mandatory_constraint(g, "RELATIONSHIP", lbl, *props, sync=sync)
 
 def drop_constraint(g, ct_type, entity_type, lbl, *props):
-    params = ["GRAPH.CONSTRAINT", "DROP", g.key, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
+    params = ["GRAPH.CONSTRAINT", "DROP", g.name, ct_type, entity_type, lbl, "PROPERTIES", len(props)]
     params.extend(props)
     res = g.execute_command(*params)
     return res
@@ -137,7 +137,7 @@ def drop_mandatory_edge_constraint(g, lbl, *props):
 
 def list_constraints(g):
     q = "CALL db.constraints() YIELD type, label, properties, entitytype, status"
-    results = g.query(q, read_only=True).result_set
+    results = g.ro_query(q).result_set
 
     constraints = []
     for row in results:

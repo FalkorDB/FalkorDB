@@ -13,24 +13,21 @@ class testOptimizationsPlan(FlowTestsBase):
         nodes = {}
         # Create entities
         for idx, p in enumerate(people):
-            node = Node(labels="person", properties={"name": p, "val": idx})
-            self.graph.add_node(node)
+            node = Node(alias=p, labels="person", properties={"name": p, "val": idx})
             nodes[p] = node
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
-                    edge = Edge(nodes[src], "know", nodes[dest])
-                    self.graph.add_edge(edge)
+                    edges.append(Edge(nodes[src], "know", nodes[dest]))
+                    edges.append(Edge(nodes[src], "works_with", nodes[dest]))
 
-        for src in nodes:
-            for dest in nodes:
-                if src != dest:
-                    edge = Edge(nodes[src], "works_with", nodes[dest])
-                    self.graph.add_edge(edge)
+        nodes_str = [str(n) for n in nodes.values()]
+        edges_str = [str(e) for e in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str+edges_str)}")
 
-        self.graph.commit()
         query = """MATCH (a)-[:know]->(b) CREATE (a)-[:know]->(b)"""
         self.graph.query(query)
 

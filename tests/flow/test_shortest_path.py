@@ -15,26 +15,18 @@ class testShortestPath(FlowTestsBase):
 
         global nodes
         for v in range(1, 6):
-            node = Node(labels="L", properties={"v": v})
-            nodes.append(node)
-            self.graph.add_node(node)
+            nodes.append(Node(alias=f"n{v}", labels="L", properties={"v": v}))
 
-        edge = Edge(nodes[0], "E", nodes[1])
-        self.graph.add_edge(edge)
+        edges = []
+        edges.append(Edge(nodes[0], "E", nodes[1]))
+        edges.append(Edge(nodes[1], "E", nodes[2]))
+        edges.append(Edge(nodes[2], "E", nodes[3]))
+        edges.append(Edge(nodes[0], "E", nodes[4]))
+        edges.append(Edge(nodes[4], "E2", nodes[3]))
 
-        edge = Edge(nodes[1], "E", nodes[2])
-        self.graph.add_edge(edge)
-
-        edge = Edge(nodes[2], "E", nodes[3])
-        self.graph.add_edge(edge)
-
-        edge = Edge(nodes[0], "E", nodes[4])
-        self.graph.add_edge(edge)
-
-        edge = Edge(nodes[4], "E2", nodes[3])
-        self.graph.add_edge(edge)
-
-        self.graph.commit()
+        nodes_str = [str(n) for n in nodes]
+        edges_str = [str(e) for e in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     def test01_invalid_shortest_paths(self):
         query = """MATCH (a {v: 1}), (b {v: 4}), p = shortestPath((a)-[*]->(b)) RETURN p"""

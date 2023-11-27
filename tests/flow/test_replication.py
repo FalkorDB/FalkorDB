@@ -44,14 +44,11 @@ class testReplication(FlowTestsBase):
         src = Graph(source_con, GRAPH_ID)
         replica = Graph(replica_con, GRAPH_ID)
 
-        s = Node(labels='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
-        t = Node(labels='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
+        s = Node(alias='s', labels='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
+        t = Node(alias='t', labels='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
         e = Edge(s, 'R', t)
 
-        src.add_node(s)
-        src.add_node(t)
-        src.add_edge(e)
-        src.flush()
+        src.query(f"CREATE {s}, {t}, {e}")
 
         #-----------------------------------------------------------------------
         # create indices
@@ -113,20 +110,20 @@ class testReplication(FlowTestsBase):
 
         # issue query on both source and replica
         # make sure results are the same
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # make sure node count on both primary and replica is the same
         q = "MATCH (n) RETURN count(n)"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # make sure nodes are in sync
         q = "MATCH (n) RETURN n ORDER BY n"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # remove label
@@ -138,8 +135,8 @@ class testReplication(FlowTestsBase):
         source_con.execute_command("WAIT", "1", "0")
 
         q = "MATCH (s:L {id:2}) RETURN s"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEqual(len(result), 0)
         env.assertEquals(replica_result, result)
 
@@ -152,15 +149,15 @@ class testReplication(FlowTestsBase):
         source_con.execute_command("WAIT", "1", "0")
 
         q = "MATCH (s {id:2}) RETURN s"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEqual(len(result), 0)
         env.assertEquals(replica_result, result)
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # drop fulltext index
@@ -173,8 +170,8 @@ class testReplication(FlowTestsBase):
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # make sure both primary and replica have the same set of constraints

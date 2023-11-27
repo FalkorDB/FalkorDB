@@ -14,37 +14,22 @@ class testAllShortestPaths():
         # (v1)-[:E]->(v5)-[:E2]->(v4)
         # (v2)-[:E2]->(v4)
 
-        self.v1 = Node(labels="L", properties={"v": 1})
-        self.v2 = Node(labels="L", properties={"v": 2})
-        self.v3 = Node(labels="L", properties={"v": 3})
-        self.v4 = Node(labels="L", properties={"v": 4})
-        self.v5 = Node(labels="L", properties={"v": 5})
+        self.v1 = Node(alias="v1", labels="L", properties={"v": 1})
+        self.v2 = Node(alias="v2", labels="L", properties={"v": 2})
+        self.v3 = Node(alias="v3", labels="L", properties={"v": 3})
+        self.v4 = Node(alias="v4", labels="L", properties={"v": 4})
+        self.v5 = Node(alias="v5", labels="L", properties={"v": 5})
 
-        self.graph.add_node(self.v1)
-        self.graph.add_node(self.v2)
-        self.graph.add_node(self.v3)
-        self.graph.add_node(self.v4)
-        self.graph.add_node(self.v5)
+        e0 = Edge(self.v1, "E", self.v2, properties={"weight": 1})
+        e1 = Edge(self.v2, "E", self.v3, properties={"weight": 1})
+        e2 = Edge(self.v3, "E", self.v4, properties={"weight": 1})
+        e3 = Edge(self.v1, "E", self.v5, properties={"weight": 1})
+        e4 = Edge(self.v5, "E2", self.v4, properties={"weight": 1})
+        e5 = Edge(self.v2, "E2", self.v4, properties={"weight": 2})
 
-        e = Edge(self.v1, "E", self.v2, properties={"weight": 1})
-        self.graph.add_edge(e)
-
-        e = Edge(self.v2, "E", self.v3, properties={"weight": 1})
-        self.graph.add_edge(e)
-
-        e = Edge(self.v3, "E", self.v4, properties={"weight": 1})
-        self.graph.add_edge(e)
-
-        e = Edge(self.v1, "E", self.v5, properties={"weight": 1})
-        self.graph.add_edge(e)
-
-        e = Edge(self.v5, "E2", self.v4, properties={"weight": 1})
-        self.graph.add_edge(e)
-
-        e = Edge(self.v2, "E2", self.v4, properties={"weight": 2})
-        self.graph.add_edge(e)
-
-        self.graph.flush()
+        query = f"""CREATE {self.v1}, {self.v2}, {self.v3}, {self.v4}, {self.v5},
+        {e0}, {e1}, {e2}, {e3}, {e4}, {e5}"""
+        self.graph.query(query)
 
     def populate_cyclic_graph(self):
         # Construct a graph with the form:
@@ -54,43 +39,24 @@ class testAllShortestPaths():
         # (v3)-[:E2]->(v1)
         # (v4)-[:E2]->(v1)
 
-        self.cyclic_v1 = Node(labels="L", properties={"v": 1})
-        self.cyclic_v2 = Node(labels="L", properties={"v": 2})
-        self.cyclic_v3 = Node(labels="L", properties={"v": 3})
-        self.cyclic_v4 = Node(labels="L", properties={"v": 4})
-        self.cyclic_v5 = Node(labels="L", properties={"v": 5})
+        self.cyclic_v1 = Node(alias="v1", labels="L", properties={"v": 1})
+        self.cyclic_v2 = Node(alias="v2", labels="L", properties={"v": 2})
+        self.cyclic_v3 = Node(alias="v3", labels="L", properties={"v": 3})
+        self.cyclic_v4 = Node(alias="v4", labels="L", properties={"v": 4})
+        self.cyclic_v5 = Node(alias="v5", labels="L", properties={"v": 5})
 
-        self.cyclic_graph.add_node(self.cyclic_v1)
-        self.cyclic_graph.add_node(self.cyclic_v2)
-        self.cyclic_graph.add_node(self.cyclic_v3)
-        self.cyclic_graph.add_node(self.cyclic_v4)
-        self.cyclic_graph.add_node(self.cyclic_v5)
+        e0 = Edge(self.cyclic_v1, "E",  self.cyclic_v2, properties={"weight": 1})
+        e1 = Edge(self.cyclic_v2, "E",  self.cyclic_v3, properties={"weight": 1})
+        e2 = Edge(self.cyclic_v3, "E",  self.cyclic_v4, properties={"weight": 1})
+        e3 = Edge(self.cyclic_v1, "E",  self.cyclic_v5, properties={"weight": 1})
+        e4 = Edge(self.cyclic_v5, "E2", self.cyclic_v4, properties={"weight": 1})
+        e5 = Edge(self.cyclic_v2, "E2", self.cyclic_v4, properties={"weight": 2})
+        e6 = Edge(self.cyclic_v3, "E2", self.cyclic_v1, properties={"weight": 2})
+        e7 = Edge(self.cyclic_v4, "E2", self.cyclic_v1, properties={"weight": 2})
 
-        e = Edge(self.cyclic_v1, "E", self.cyclic_v2, properties={"weight": 1})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v2, "E", self.cyclic_v3, properties={"weight": 1})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v3, "E", self.cyclic_v4, properties={"weight": 1})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v1, "E", self.cyclic_v5, properties={"weight": 1})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v5, "E2", self.cyclic_v4, properties={"weight": 1})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v2, "E2", self.cyclic_v4, properties={"weight": 2})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v3, "E2", self.cyclic_v1, properties={"weight": 2})
-        self.cyclic_graph.add_edge(e)
-
-        e = Edge(self.cyclic_v4, "E2", self.cyclic_v1, properties={"weight": 2})
-        self.cyclic_graph.add_edge(e)
-
-        self.cyclic_graph.flush()
+        query = f"""CREATE {self.cyclic_v1}, {self.cyclic_v2}, {self.cyclic_v3}, {self.cyclic_v4}, {self.cyclic_v5},
+        {e0}, {e1}, {e2}, {e3}, {e4}, {e5}, {e6}, {e7}"""
+        self.cyclic_graph.query(query)
 
     def test01_invalid_shortest_paths(self):
         # running against following graph

@@ -15,17 +15,14 @@ class testUnion(FlowTestsBase):
 
         nodes = {}
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"v": v})
+            node = Node(alias=f"n{idx}", labels="L", properties={"v": v})
             nodes[v] = node
-            self.graph.add_node(node)
 
-        edge = Edge(nodes['v1'], "E1", nodes['v2'], properties={"v": "v1_v2"})
-        self.graph.add_edge(edge)
+        e0 = Edge(nodes['v1'], "E1", nodes['v2'], properties={"v": "v1_v2"})
+        e1 = Edge(nodes['v2'], "E2", nodes['v3'], properties={"v": "v2_v3"})
 
-        edge = Edge(nodes['v2'], "E2", nodes['v3'], properties={"v": "v2_v3"})
-        self.graph.add_edge(edge)
-
-        self.graph.flush()
+        nodes_str = [str(node) for node in nodes.values()]
+        self.graph.query(f"CREATE {','.join(nodes_str)}, {e0}, {e1}")
 
     def test01_union(self):
         q = """RETURN 1 as one UNION ALL RETURN 1 as one"""

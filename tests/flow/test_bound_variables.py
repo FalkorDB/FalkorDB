@@ -18,17 +18,14 @@ class testBoundVariables(FlowTestsBase):
 
         nodes = []
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"val": v})
+            node = Node(alias=f"n_{idx}", labels="L", properties={"val": v})
             nodes.append(node)
-            self.graph.add_node(node)
+        nodes_str = [str(n) for n in nodes]
 
-        edge = Edge(nodes[0], "E", nodes[1])
-        self.graph.add_edge(edge)
+        e0 = Edge(nodes[0], "E", nodes[1])
+        e1 = Edge(nodes[1], "E", nodes[2])
 
-        edge = Edge(nodes[1], "E", nodes[2])
-        self.graph.add_edge(edge)
-
-        self.graph.commit()
+        self.graph.query(f"CREATE {','.join(nodes_str)}, {e0}, {e1}")
 
     def test01_with_projected_entity(self):
         query = """MATCH (a:L {val: 'v1'}) WITH a MATCH (a)-[e]->(b) RETURN b.val"""

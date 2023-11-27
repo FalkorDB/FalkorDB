@@ -11,14 +11,15 @@ class testValueComparison(FlowTestsBase):
         self.populate_graph()
 
     def populate_graph(self):
-        for v in values:
-            node = Node(labels="value", properties={"val": v})
-            self.graph.add_node(node)
+        nodes = []
+        for idx, v in enumerate(values):
+            nodes.append(Node(alias=f"n{idx}", labels="value", properties={"val": v}))
 
         # Add an additional node with no properties
-        self.graph.add_node(Node(labels="value"))
+        nodes.append(Node(labels="value"))
 
-        self.graph.commit()
+        nodes_str = [str(n) for n in nodes]
+        self.graph.query(f"CREATE {','.join(nodes_str)}")
 
     # Verify the ordering of values that can and cannot be directly compared
     def test_orderability(self):
@@ -63,8 +64,7 @@ class testValueComparison(FlowTestsBase):
         query = """MATCH (v:value), (w:value) WHERE ID(v) <> ID(w) AND v.val <> w.val RETURN v"""
         actual_result = self.graph.query(query)
         # Every comparison should produce an inequal result
-        node_count = self.graph.number_of_nodes
-        # The node with value set as "null" should not be returned or be part of evaluation.
+        node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0] # The node with value set as "null" should not be returned or be part of evaluation.
         expected_result_count = (node_count - 1) * (node_count - 2)
         self.env.assertEquals(
             len(actual_result.result_set), expected_result_count)

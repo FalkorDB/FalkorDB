@@ -3,11 +3,11 @@ from index_utils import *
 
 GRAPH_ID = "procedures"
 
-node1 = Node(labels="fruit", properties={"name": "Orange1", "value": 1})
-node2 = Node(labels="fruit", properties={"name": "Orange2", "value": 2})
-node3 = Node(labels="fruit", properties={"name": "Orange3", "value": 3})
-node4 = Node(labels="fruit", properties={"name": "Orange4", "value": 4})
-node5 = Node(labels="fruit", properties={"name": "Banana", "value": 5})
+node1 = Node(alias="n1", labels="fruit", properties={"name": "Orange1", "value": 1})
+node2 = Node(alias="n2", labels="fruit", properties={"name": "Orange2", "value": 2})
+node3 = Node(alias="n3", labels="fruit", properties={"name": "Orange3", "value": 3})
+node4 = Node(alias="n4", labels="fruit", properties={"name": "Orange4", "value": 4})
+node5 = Node(alias="n5", labels="fruit", properties={"name": "Banana", "value": 5})
 
 
 # Tests built in procedures,
@@ -25,13 +25,7 @@ class testProcedures(FlowTestsBase):
             return
 
         edge = Edge(node1, 'goWellWith', node5)
-        self.graph.add_node(node1)
-        self.graph.add_node(node2)
-        self.graph.add_node(node3)
-        self.graph.add_node(node4)
-        self.graph.add_node(node5)
-        self.graph.add_edge(edge)
-        self.graph.commit()
+        self.graph.query(f"CREATE {node1}, {node2}, {node3}, {node4}, {node5}, {edge}")
 
         # Create full-text index.
         create_node_fulltext_index(self.graph, 'fruit', 'name', sync=True)
@@ -70,8 +64,8 @@ class testProcedures(FlowTestsBase):
     # Call procedure specify different outputs.
     def test02_yield(self):
         actual_result = self.graph.call_procedure("db.idx.fulltext.queryNodes",
-                                                  args=["fruit", "Orange1"],
-                                                  emit=["node"])
+                                                  args=['fruit', 'Orange1'],
+                                                  emit=['node'])
         assert(len(actual_result.result_set) == 1)
 
         header = actual_result.header

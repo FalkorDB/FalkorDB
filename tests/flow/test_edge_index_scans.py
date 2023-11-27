@@ -21,24 +21,26 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
 
         # Create entities
         node_id = 0
-        for p in people:
-            node = Node(labels="person", properties={"name": p, "created_at": node_id})
-            self.graph.add_node(node)
-            nodes[p] = node
+        for idx, p in enumerate(people):
+            node = Node(alias=f"n_{idx}", labels="person", properties={"name": p, "created_at": node_id})
+            nodes[node.alias] = node
             node_id = node_id + 1
+        nodes_str = [str(node) for node in nodes.values()]
 
         # Fully connected graph
+        edges = []
         edge_id = 0
         for src in nodes:
             for dest in nodes:
                 if src != dest:
                     edge = Edge(nodes[src], "knows", nodes[dest], properties={"created_at": edge_id * 2})
-                    self.graph.add_edge(edge)
+                    edges.append(edge)
                     edge = Edge(nodes[src], "friend", nodes[dest], properties={"created_at": edge_id * 2 + 1, "updated_at": edge_id * 3})
-                    self.graph.add_edge(edge)
+                    edges.append(edge)
                     edge_id = edge_id + 1
+        edges_str = [str(edge) for edge in edges]
 
-        self.graph.commit()
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     def build_indices(self):
         create_node_range_index(self.graph, "person", "age")

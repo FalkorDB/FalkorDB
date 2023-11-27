@@ -20,7 +20,8 @@ class testEdgeIndexUpdatesFlow():
         self.build_indices()
 
     def new_node(self):
-        return Node(labels = labels[node_ctr % 2],
+        return Node(alias=f"n_{node_ctr}",
+                    labels = labels[node_ctr % 2],
                     properties = {'unique': node_ctr,
                                   'group': random.choice(groups),
                                   'doubleval': round(random.uniform(-1, 1), 2),
@@ -37,17 +38,23 @@ class testEdgeIndexUpdatesFlow():
     def populate_graph(self):
         global node_ctr
         global edge_ctr
+        nodes = []
+        edges = []
+
         for i in range(1000):
             from_node = self.new_node()
             node_ctr += 1
-            self.graph.add_node(from_node)
             to_node = self.new_node()
             node_ctr += 1
-            self.graph.add_node(to_node)
+            nodes.append(to_node)
+            nodes.append(from_node)
             edge = self.new_edge(from_node, to_node)
+            edges.append(edge)
             edge_ctr += 1
-            self.graph.add_edge(edge)
-        self.graph.flush()
+
+        nodes_str = [str(node) for node in nodes]
+        edges_str = [str(edge) for edge in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     def build_indices(self):
         for field in fields:
@@ -124,22 +131,30 @@ class testEdgeIndexUpdatesFlow():
     def test03_edge_creation(self):
         global node_ctr
         global edge_ctr
+
+        nodes = []
+        edges = []
+
         for i in range(100):
             from_node = self.new_node()
-            self.graph.add_node(from_node)
             node_ctr += 1
             to_node = self.new_node()
-            self.graph.add_node(to_node)
             node_ctr += 1
+            nodes.append(to_node)
+            nodes.append(from_node)
+
             edge = self.new_edge(from_node, to_node)
-            self.graph.add_edge(edge)
+            edges.append(edge)
             edge_ctr += 1
-        self.graph.flush()
+
+        nodes_str = [str(node) for node in nodes]
+        edges_str = [str(edge) for edge in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+
         self.validate_state()
 
     # Delete every other edge in first 100 and validate indices
     def test04_edge_deletion(self):
-        global node_ctr
         global edge_ctr
         # Delete edges one at a time
         for i in range(0, 100, 2):

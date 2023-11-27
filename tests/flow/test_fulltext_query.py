@@ -17,25 +17,13 @@ class testFulltextIndexQuery():
         self.graph.query("CALL db.idx.fulltext.createNodeIndex('L5', { field: 'v', nostem: true })")
         wait_for_indices_to_sync(self.graph)
 
-        n = Node(labels="L1", properties={"v": 'hello redis world'})
-        self.graph.add_node(n)
-
-        n = Node(labels="L2", properties={"v": 'hello redis world'})
-        self.graph.add_node(n)
-
-        n = Node(labels="L3", properties={"v1": 'hello world', "v2": 'hello redis'})
-        self.graph.add_node(n)
-
-        n = Node(labels="L3", properties={"v1": 'hello redis', "v2": 'hello world'})
-        self.graph.add_node(n)
-
-        n = Node(labels="L4", properties={"v": 'felix'})
-        self.graph.add_node(n)
-
-        n = Node(labels="L5", properties={"v": 'there are seven words in this sentence'})
-        self.graph.add_node(n)
-
-        self.graph.flush()
+        n0 = Node(labels="L1", properties={"v": 'hello redis world'})
+        n1 = Node(labels="L2", properties={"v": 'hello redis world'})
+        n2 = Node(labels="L3", properties={"v1": 'hello world', "v2": 'hello redis'})
+        n3 = Node(labels="L3", properties={"v1": 'hello redis', "v2": 'hello world'})
+        n4 = Node(labels="L4", properties={"v": 'felix'})
+        n5 = Node(labels="L5", properties={"v": 'there are seven words in this sentence'})
+        self.graph.query(f"CREATE {n0}, {n1}, {n2}, {n3}, {n4}, {n5}")
 
     # full-text query
     def test01_fulltext_query(self):

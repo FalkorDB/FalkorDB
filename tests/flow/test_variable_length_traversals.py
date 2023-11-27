@@ -16,17 +16,18 @@ class testVariableLengthTraversals(FlowTestsBase):
     def populate_graph(self):
         nodes = []
         # Create nodes
-        for n in node_names:
-            node = Node(labels="node", properties={"name": n})
-            self.graph.add_node(node)
+        for idx, n in enumerate(node_names):
+            node = Node(alias=f"n{idx}", labels="node", properties={"name": n})
             nodes.append(node)
 
         # Create edges
+        edges = []
         for i in range(len(nodes) - 1):
-            edge = Edge(nodes[i], "knows", nodes[i+1], properties={"connects": node_names[i] + node_names[i+1]})
-            self.graph.add_edge(edge)
+            edges.append(Edge(nodes[i], "knows", nodes[i+1], properties={"connects": node_names[i] + node_names[i+1]}))
 
-        self.graph.commit()
+        nodes_str = [str(node) for node in nodes]
+        edges_str = [str(edge) for edge in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     # Sanity check against single-hop traversal
     def test01_conditional_traverse(self):

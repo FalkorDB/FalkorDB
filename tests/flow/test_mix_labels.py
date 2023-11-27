@@ -15,22 +15,22 @@ class testGraphMixLabelsFlow(FlowTestsBase):
          # Create entities
         
         for m in male:
-            node = Node(labels="male", properties={"name": m})
-            self.graph.add_node(node)
+            node = Node(alias=m, labels="male", properties={"name": m})
             nodes[m] = node
         
         for f in female:
-            node = Node(labels="female", properties={"name": f})
-            self.graph.add_node(node)
+            node = Node(alias=f, labels="female", properties={"name": f})
             nodes[f] = node
 
+        edges = []
         for n in nodes:
             for m in nodes:
                 if n == m: continue
-                edge = Edge(nodes[n], "knows", nodes[m])
-                self.graph.add_edge(edge)
+                edges.append(Edge(nodes[n], "knows", nodes[m]))
 
-        self.graph.commit()
+        nodes_str = [str(n) for n in nodes.values()]
+        edges_str = [str(e) for e in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     # Connect a single node to all other nodes.
     def test_male_to_all(self):

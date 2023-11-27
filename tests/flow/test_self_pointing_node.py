@@ -11,14 +11,7 @@ class testSelfPointingNode(FlowTestsBase):
     def populate_graph(self):
         # Construct a graph with the form:
         # (v1)-[:e]->(v1)
-
-        node = Node(labels="L")
-        self.graph.add_node(node)
-
-        edge = Edge(node, "e", node)
-        self.graph.add_edge(edge)
-
-        self.graph.commit()
+        self.graph.query("CREATE (n:L), (n)-[:e]->(n)")
 
     # Test patterns that traverse 1 edge.
     def test_self_pointing_node(self):

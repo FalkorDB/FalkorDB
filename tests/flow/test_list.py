@@ -56,9 +56,7 @@ class testList(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_collect(self):
-        for i in range(10):
-            self.graph.add_node(Node())
-        self.graph.commit()
+        self.graph.query("UNWIND range(0, 10) AS x CREATE ()")
 
         query = """MATCH (n) RETURN collect(n)"""
         result = self.graph.query(query)

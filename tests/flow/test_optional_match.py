@@ -18,17 +18,14 @@ class testOptionalFlow(FlowTestsBase):
         node_props = ['v1', 'v2', 'v3', 'v4']
 
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"v": v})
+            node = Node(alias=f"n_{idx}", labels="L", properties={"v": v})
             nodes[v] = node
-            self.graph.add_node(node)
 
-        edge = Edge(nodes['v1'], "E1", nodes['v2'])
-        self.graph.add_edge(edge)
+        e0 = Edge(nodes['v1'], "E1", nodes['v2'])
+        e1 = Edge(nodes['v2'], "E2", nodes['v3'])
 
-        edge = Edge(nodes['v2'], "E2", nodes['v3'])
-        self.graph.add_edge(edge)
-
-        self.graph.flush()
+        nodes_str = [str(node) for node in nodes.values()]
+        self.graph.query(f"CREATE {', '.join(nodes_str)}, {e0}, {e1}")
 
     # Optional MATCH clause that does not interact with the mandatory MATCH.
     def test01_disjoint_optional(self):

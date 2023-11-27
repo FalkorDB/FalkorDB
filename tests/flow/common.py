@@ -6,7 +6,7 @@ from RLTest import Env as Environment, Defaults
 
 import redis
 from redis import ResponseError
-from falkordb import DB, Graph, Node, Edge, Path, ExecutionPlan
+from falkordb import FalkorDB, Graph, Node, Edge, Path, ExecutionPlan
 
 from base import FlowTestsBase
 
@@ -26,7 +26,7 @@ OSNICK = paella.Platform().osnick
 def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False):
     env = Environment(decodeResponses=True, moduleArgs=moduleArgs, env=env,
                       useSlaves=useSlaves, enableDebugCommand=enableDebugCommand)
-    db  = DB("localhost", env.port)
+    db  = FalkorDB("localhost", env.port)
     return (env, db)
 
 def skip(cluster=False, macos=False):

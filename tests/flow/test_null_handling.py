@@ -10,9 +10,7 @@ class testNullHandlingFlow(FlowTestsBase):
 
     def populate_graph(self):
         # Create a single node.
-        node = Node(labels="L", properties={"v": "v1"})
-        self.graph.add_node(node)
-        self.graph.flush()
+        self.graph.query("CREATE (:L {v: 'v1'})")
 
     # Error when attempting to create a relationship with a null endpoint.
     def test01_create_null(self):

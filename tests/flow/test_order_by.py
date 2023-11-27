@@ -9,12 +9,9 @@ class testOrderBy(FlowTestsBase):
         self.populate_graph()
 
     def populate_graph(self):
-        node_props = [(622, "Mo"), (819, "Bing"), (819, "Qiu")]
-        for idx, v in enumerate(node_props):
-            node = Node(labels="Person", properties={"id": v[0], "name": v[1]})
-            self.graph.add_node(node)
-
-        self.graph.commit()
+        self.graph.query("""CREATE (:Person {id: 622, name: 'Mo'}),
+                                   (:Person {id: 819, name: 'Bing'}),
+                                   (:Person {id: 819, name: 'Qiu'})""")
 
     def test01_multiple_order_by(self):
         # Query with multiple order by operation

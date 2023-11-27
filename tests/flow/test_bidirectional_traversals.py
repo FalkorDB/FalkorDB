@@ -14,17 +14,15 @@ class testBidirectionalTraversals(FlowTestsBase):
 
         nodes = []
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"val": v})
+            node = Node(alias=f"n_{idx}", labels="L", properties={"val": v})
             nodes.append(node)
-            self.acyclic_graph.add_node(node)
 
-        edge = Edge(nodes[0], "E", nodes[1], properties={"val": 0})
-        self.acyclic_graph.add_edge(edge)
+        e0 = Edge(nodes[0], "E", nodes[1], properties={"val": 0})
+        e1 = Edge(nodes[1], "E", nodes[2], properties={"val": 1})
 
-        edge = Edge(nodes[1], "E", nodes[2], properties={"val": 1})
-        self.acyclic_graph.add_edge(edge)
-
-        self.acyclic_graph.commit()
+        nodes_str = [str(n) for n in nodes]
+        query = f"CREATE {','.join(nodes_str)}, {e0}, {e1}"
+        self.acyclic_graph.query(query)
 
     def populate_cyclic_graph(self):
         self.graph_with_cycle = self.db.select_graph("H")
@@ -34,21 +32,15 @@ class testBidirectionalTraversals(FlowTestsBase):
 
         nodes = []
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"val": v})
-            nodes.append(node)
-            self.graph_with_cycle.add_node(node)
+            nodes.append(Node(alias=f"n_{idx}", labels="L", properties={"val": v}))
 
-        edge = Edge(nodes[0], "E", nodes[1])
-        self.graph_with_cycle.add_edge(edge)
+        e0 = Edge(nodes[0], "E", nodes[1])
+        e1 = Edge(nodes[1], "E", nodes[2])
+        e3 = Edge(nodes[1], "E", nodes[0]) # Introduce a cycle between v2 and v1.
 
-        edge = Edge(nodes[1], "E", nodes[2])
-        self.graph_with_cycle.add_edge(edge)
-
-        # Introduce a cycle between v2 and v1.
-        edge = Edge(nodes[1], "E", nodes[0])
-        self.graph_with_cycle.add_edge(edge)
-
-        self.graph_with_cycle.commit()
+        nodes_str = [str(n) for n in nodes]
+        query = f"CREATE {','.join(nodes_str)}, {e0}, {e1}, {e3}"
+        self.graph_with_cycle.query(query)
 
     # Test traversals that don't specify an edge direction.
     def test01_bidirectional_traversals(self):
@@ -269,21 +261,14 @@ class testBidirectionalTraversals(FlowTestsBase):
 
         g = self.db.select_graph("multi_edge_type")
 
-        a = Node(properties={'val': 'a'})
-        b = Node(properties={'val': 'b'})
-        c = Node(properties={'val': 'c'})
-        d = Node(properties={'val': 'd'})
-        g.add_node(a)
-        g.add_node(b)
-        g.add_node(c)
-        g.add_node(d)
-
+        a  = Node(alias='a', properties={'val': 'a'})
+        b  = Node(alias='b', properties={'val': 'b'})
+        c  = Node(alias='c', properties={'val': 'c'})
+        d  = Node(alias='d', properties={'val': 'd'})
         ab = Edge(a, "E1", b)
         cd = Edge(c, "E2", d)
-        g.add_edge(ab)
-        g.add_edge(cd)
 
-        g.flush()
+        g.query(f"CREATE {a}, {b}, {c}, {d}, {ab}, {cd}")
 
         query = """MATCH (a)-[:E1|:E2]-(z) RETURN a.val, z.val ORDER BY a.val, z.val"""
         actual_result = g.query(query)

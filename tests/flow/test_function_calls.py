@@ -19,24 +19,25 @@ class testFunctionCallsFlow(FlowTestsBase):
                 labels = ["person"]
             else:
                 labels = ["person", "student"]
-            node = Node(labels=labels, properties={"name": p, "val": idx})
-            self.graph.add_node(node)
-            nodes[p] = node
+            node = Node(alias=f"n_{idx}", labels=labels, properties={"name": p, "val": idx})
+            nodes[node.alias] = node
+        nodes_str = [str(n) for n in nodes.values()]
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
                     edge = Edge(nodes[src], "know", nodes[dest])
-                    self.graph.add_edge(edge)
-
-        for src in nodes:
-            for dest in nodes:
-                if src != dest:
+                    edges.append(edge)
                     edge = Edge(nodes[src], "works_with", nodes[dest])
-                    self.graph.add_edge(edge)
+                    edges.append(edge)
+        edges_str = [str(e) for e in edges]
 
-        self.graph.commit()
+        # create graph entities
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+
+        # Duplicate know edges
         query = """MATCH (a)-[:know]->(b) CREATE (a)-[:know]->(b)"""
         self.graph.query(query)
 
@@ -552,12 +553,12 @@ class testFunctionCallsFlow(FlowTestsBase):
         start = {"id": 0, "labels": ["person"], "properties": {"name": "Roi", "val": 0}}
         end = {"id": 1, "labels": ["person", "student"], "properties": {"name": "Alon", "val": 1}}
         parsed = json.loads(actual_result.result_set[0][0])
-        self.env.assertEquals(parsed, {"type": "relationship", "id": 12, "relationship": "works_with", "properties": {}, "start": start, "end": end})
+        self.env.assertEquals(parsed, {"type": "relationship", "id": 1, "relationship": "works_with", "properties": {}, "start": start, "end": end})
 
         # Test converting a path.
         query = """MATCH path=({val: 0})-[e:works_with]->({val: 1}) RETURN toJSON(path)"""
         actual_result = self.graph.query(query)
-        expected = [{'type': 'node', 'id': 0, 'labels': ['person'], 'properties': {'name': 'Roi', 'val': 0}}, {'type': 'relationship', 'id': 12, 'relationship': 'works_with', 'properties': {}, 'start': {'id': 0, 'labels': ['person'], 'properties': {'name': 'Roi', 'val': 0}}, 'end': {'id': 1, 'labels': ['person', 'student'], 'properties': {'name': 'Alon', 'val': 1}}}, {'type': 'node', 'id': 1, 'labels': ['person', 'student'], 'properties': {'name': 'Alon', 'val': 1}}]
+        expected = [{'type': 'node', 'id': 0, 'labels': ['person'], 'properties': {'name': 'Roi', 'val': 0}}, {'type': 'relationship', 'id': 1, 'relationship': 'works_with', 'properties': {}, 'start': {'id': 0, 'labels': ['person'], 'properties': {'name': 'Roi', 'val': 0}}, 'end': {'id': 1, 'labels': ['person', 'student'], 'properties': {'name': 'Alon', 'val': 1}}}, {'type': 'node', 'id': 1, 'labels': ['person', 'student'], 'properties': {'name': 'Alon', 'val': 1}}]
         parsed = json.loads(actual_result.result_set[0][0])
         self.env.assertEquals(parsed, expected)
 

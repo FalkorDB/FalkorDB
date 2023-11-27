@@ -14,18 +14,19 @@ class testResultSetFlow(FlowTestsBase):
         nodes = {}
         # Create entities
         for idx, p in enumerate(people):
-            node = Node(labels="person", properties={"name": p, "val": idx})
-            self.graph.add_node(node)
+            node = Node(alias=f"n{idx}", labels="person", properties={"name": p, "val": idx})
             nodes[p] = node
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
-                    edge = Edge(nodes[src], "know", nodes[dest])
-                    self.graph.add_edge(edge)
+                    edges.append(Edge(nodes[src], "know", nodes[dest]))
 
-        self.graph.commit()
+        nodes_str = [str(node) for node in nodes.values()]
+        edges_str = [str(edge) for edge in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
 
     # Verify that scalar returns function properly

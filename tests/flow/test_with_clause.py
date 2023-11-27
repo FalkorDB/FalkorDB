@@ -13,14 +13,19 @@ class testWithClause(FlowTestsBase):
     def populate_graph(self):
         # Populate a graph with two labels, each containing the same property values but different keys.
         # Each node pair is connected by an edge from label_a to label_b
+        nodes = []
+        edges = []
         for idx, v in enumerate(values):
-            src = Node(labels="label_a", properties={"a_val": v, "a_idx": idx})
-            dest = Node(labels="label_b", properties={"b_val": v, "b_idx": idx})
-            self.graph.add_node(src)
-            self.graph.add_node(dest)
-            edge = Edge(src, 'connects', dest, properties={"edgeval": idx})
-            self.graph.add_edge(edge)
-        self.graph.commit()
+            src  = Node(alias=f"s{idx}", labels="label_a", properties={"a_val": v, "a_idx": idx})
+            dest = Node(alias=f"t{idx}", labels="label_b", properties={"b_val": v, "b_idx": idx})
+            e    = Edge(src, 'connects', dest, properties={"edgeval": idx})
+            nodes.append(src)
+            nodes.append(dest)
+            edges.append(e)
+
+        nodes_str = [str(n) for n in nodes]
+        edges_str = [str(e) for e in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
     
     # Verify that graph entities specified in a WITH clause are returned properly
     def test01_with_scalar_read_queries(self):

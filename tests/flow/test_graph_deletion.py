@@ -16,22 +16,24 @@ class testGraphDeletionFlow(FlowTestsBase):
         nodes = {}
          # Create entities
         people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
-        for p in people:
-            node = Node(labels="person", properties={"name": p})
-            self.graph.add_node(node)
+        for idx, p in enumerate(people):
+            node = Node(alias=f"n_{idx}",labels="person", properties={"name": p})
             nodes[p] = node
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
                     edge = Edge(nodes[src], "know", nodes[dest])
-                    self.graph.add_edge(edge)
+                    edges.append(edge)
 
         # Connect Roi to Alon via another edge type.
-        edge = Edge(nodes["Roi"], "SameBirthday", nodes["Alon"])
-        self.graph.add_edge(edge)
-        self.graph.commit()
+        edges.append(Edge(nodes["Roi"], "SameBirthday", nodes["Alon"]))
+
+        nodes_str = [str(n) for n in nodes.values()]
+        edges_str = [str(e) for e in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     # Count how many nodes contains the `name` attribute
     # remove the `name` attribute from some nodes
@@ -191,9 +193,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph = Graph(redis_con, "delete_test")
 
         # Create 10 nodes.
-        for i in range(10):
-            self.graph.add_node(Node())
-        self.graph.flush()
+        self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
 
         # Unwind path nodes.
         query = """MATCH p = () UNWIND nodes(p) AS node DELETE node"""
@@ -201,9 +201,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.nodes_deleted, 10)
         self.env.assertEquals(actual_result.relationships_deleted, 0)
 
-        for i in range(10):
-            self.graph.add_node(Node())
-        self.graph.flush()
+        self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
 
         # Unwind collected nodes.
         query = """MATCH (n) WITH collect(n) AS nodes UNWIND nodes AS node DELETE node"""
@@ -215,14 +213,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.flush()
         self.graph = self.db.select_graph("delete_test")
 
-        src = Node()
-        dest = Node()
-        edge = Edge(src, "R", dest)
-
-        self.graph.add_node(src)
-        self.graph.add_node(dest)
-        self.graph.add_edge(edge)
-        self.graph.flush()
+        self.graph.query("CREATE ()-[:R]->()")
 
         # Delete projected
         # Unwind path nodes.
@@ -240,15 +231,15 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Create entities.
         labels = ["Dest", "Src", "Src2"]
         for idx, l in enumerate(labels):
-            node = Node(labels=l, properties={"val": idx})
-            self.graph.add_node(node)
+            node = Node(alias=f"n_{idx}", labels=l, properties={"val": idx})
             nodes[l] = node
 
-        edge = Edge(nodes["Src"], "R", nodes["Dest"])
-        self.graph.add_edge(edge)
-        edge = Edge(nodes["Src2"], "R", nodes["Dest"])
-        self.graph.add_edge(edge)
-        self.graph.commit()
+        edges = [Edge(nodes["Src"], "R", nodes["Dest"]),
+                 Edge(nodes["Src2"], "R", nodes["Dest"])]
+
+        nodes_str = [str(n) for n in nodes.values()]
+        edges_str = [str(e) for e in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
         # Delete a node.
         query = """MATCH (n:Src2) DELETE n"""
@@ -271,15 +262,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.flush()
         redis_con = self.env.getConnection()
         self.graph = self.db.select_graph("delete_test")
-
-        src = Node()
-        dest = Node()
-        edge = Edge(src, "R", dest)
-
-        self.graph.add_node(src)
-        self.graph.add_node(dest)
-        self.graph.add_edge(edge)
-        self.graph.flush()
+        self.graph.query("CREATE ()-[:R]->()")
 
         # Attempt to update entities after deleting them.
         query = """MATCH (a)-[e]->(b) DELETE a, b SET a.v = 1, e.v = 2, b.v = 3"""
@@ -321,10 +304,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.flush()
         redis_con = self.env.getConnection()
         self.graph = self.db.select_graph("delete_test")
-
-        n = Node()
-        self.graph.add_node(n)
-        self.graph.flush()
+        self.graph.query("CREATE ()")
 
         # try to delete a value that's not a graph entity
         try:

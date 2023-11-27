@@ -11,10 +11,8 @@ class testQueryValidationFlow(FlowTestsBase):
         self.populate_graph()
     
     def populate_graph(self):
-         # Create a single graph.
-        node = Node(properties={"age": 34})
-        self.graph.add_node(node)
-        self.graph.commit()
+        # Create a single graph.
+        self.graph.query("CREATE ({age:34})")
 
     # Expect an error when trying to use a function which does not exists.
     def test01_none_existing_function(self):

@@ -65,19 +65,21 @@ class testConcurrentQueryFlow(FlowTestsBase):
         nodes = {}
 
         # Create entities
-        for p in people:
-            node = Node(labels="person", properties={"name": p})
-            self.graph.add_node(node)
-            nodes[p] = node
+        for idx, p in enumerate(people):
+            alias = f"n_{idx}"
+            node = Node(alias=alias, labels="person", properties={"name": p})
+            nodes[alias] = node
+        nodes_str = [str(node) for node in nodes.values()]
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
-                    edge = Edge(nodes[src], "know", nodes[dest])
-                    self.graph.add_edge(edge)
+                    edges.append(Edge(nodes[src], "know", nodes[dest]))
+        edges_str = [str(edge) for edge in edges]
 
-        self.graph.commit()
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     # Count number of nodes in the graph
     def test01_concurrent_aggregation(self):

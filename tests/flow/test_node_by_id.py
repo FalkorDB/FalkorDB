@@ -10,10 +10,7 @@ class testNodeByIDFlow(FlowTestsBase):
 
     def populate_graph(self):
         # Create entities
-        for i in range(10):
-            node = Node(labels="person", properties={"id": i})
-            self.graph.add_node(node)
-        self.graph.commit()
+        self.graph.query("UNWIND range(0, 9) AS i CREATE (n:person {id:i})")
 
         # Make sure node id attribute matches node's internal ID.
         query = """MATCH (n) SET n.id = ID(n)"""

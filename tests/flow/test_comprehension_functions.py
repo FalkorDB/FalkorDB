@@ -23,17 +23,14 @@ class testComprehensionFunctions(FlowTestsBase):
 
         nodes = []
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"val": v})
+            node = Node(alias=f"n_{idx}", labels="L", properties={"val": v})
             nodes.append(node)
-            self.graph.add_node(node)
+        nodes_str = [str(node) for node in nodes]
 
-        edge = Edge(nodes[0], "E", nodes[1], properties={"edge_val": ['v1', 'v2']})
-        self.graph.add_edge(edge)
+        e0 = Edge(nodes[0], "E", nodes[1], properties={"edge_val": ['v1', 'v2']})
+        e1 = Edge(nodes[1], "E", nodes[2], properties={"edge_val": ['v2', 'v3']})
 
-        edge = Edge(nodes[1], "E", nodes[2], properties={"edge_val": ['v2', 'v3']})
-        self.graph.add_edge(edge)
-
-        self.graph.commit()
+        self.graph.query(f"CREATE {', '.join(nodes_str)}, {e0}, {e1}")
 
     # Test list comprehension queries with scalar inputs and a single result row
     def test01_list_comprehension_single_return(self):

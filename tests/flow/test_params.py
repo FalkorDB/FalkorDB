@@ -64,10 +64,7 @@ class testParams(FlowTestsBase):
         p0 = Node(node_id=0, labels="Person", properties={'name': 'a'})
         p1 = Node(node_id=1, labels="Person", properties={'name': 'b'})
         p2 = Node(node_id=2, labels="NoPerson", properties={'name': 'a'})
-        self.graph.add_node(p0)
-        self.graph.add_node(p1)
-        self.graph.add_node(p2)
-        self.graph.flush()
+        self.graph.query(f"CREATE {p0}, {p1}, {p2}")
 
         params = {'name': 'a'}
         query = "MATCH (n :Person {name:$name}) RETURN n"

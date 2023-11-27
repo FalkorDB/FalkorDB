@@ -44,8 +44,8 @@ class testVecsim():
         x = 50
         y = 50
 
-        result = self.graph.query_node_vector_index("Person", "embeddings", k,
-                                                    [x,y]).result_set
+        result = query_node_vector_index(self.graph, "Person", "embeddings", k,
+                                         [x,y]).result_set
 
         assert len(result) == 3
         for row in result:
@@ -57,8 +57,8 @@ class testVecsim():
         k = 3
         x = -50
         y = -50
-        result = self.graph.query_edge_vector_index("Points", "embeddings", k,
-                                                    [x,y]).result_set
+        result = query_edge_vector_index(self.graph, "Points", "embeddings", k,
+                                         [x,y]).result_set
 
         assert len(result) == 3
         for row in result:

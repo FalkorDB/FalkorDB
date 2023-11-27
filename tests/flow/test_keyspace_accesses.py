@@ -15,15 +15,13 @@ class testKeyspaceAccesses(FlowTestsBase):
     
     def test00_test_data_valid_after_rename(self):
         node0 = Node(node_id=0, labels="L", properties={'name':'x', 'age':1})
-        self.graph.add_node(node0)
-        self.graph.flush()
+        self.graph.query(f"CREATE {node0}")
         self.redis_con.rename(GRAPH_ID, NEW_GRAPH_ID)
 
         self.graph = self.db.select_graph(NEW_GRAPH_ID)
 
         node1 = Node(node_id=1, labels="L", properties={'name':'x', 'age':1})
-        self.graph.add_node(node1)
-        self.graph.flush()
+        self.graph.query(f"CREATE {node1}")
 
         query = "MATCH (n) return n"
         expected_results = [[node0], [node1]]

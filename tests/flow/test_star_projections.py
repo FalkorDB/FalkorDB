@@ -149,11 +149,9 @@ class testStarProjections():
     # verify that duplicate aliases only result in a single column
     def test04_duplicate_removal(self):
         # create a single node connected to itself
-        n = Node(node_id=0, labels="L", properties={"v": 1})
+        n = Node(alias='n', node_id=0, labels="L", properties={"v": 1})
         e = Edge(n, "R", n)
-        self.graph.add_node(n)
-        self.graph.add_edge(e)
-        self.graph.flush()
+        self.graph.query(f"CREATE {n}, {e}")
 
         query = """MATCH (a)-[]->(a) RETURN *"""
         actual_result = self.graph.query(query)
@@ -170,8 +168,7 @@ class testStarProjections():
         # create a single node
         self.env.flush()
         n = Node(node_id=0, labels="L", properties={"v": 1})
-        self.graph.add_node(n)
-        self.graph.flush()
+        self.graph.query(f"CREATE {n}")
 
         try:
             query = """WITH 5 AS a RETURN *, NONE(t0 IN TRUE * COUNT(*))"""

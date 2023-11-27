@@ -16,17 +16,13 @@ class testRelationPattern(FlowTestsBase):
 
         nodes = []
         for idx, v in enumerate(node_props):
-            node = Node(labels="L", properties={"val": v})
+            node = Node(alias=f"n_{idx}", labels="L", properties={"val": v})
             nodes.append(node)
-            self.graph.add_node(node)
 
-        edge = Edge(nodes[0], "e", nodes[1])
-        self.graph.add_edge(edge)
+        e0 = Edge(nodes[0], "e", nodes[1])
+        e1 = Edge(nodes[1], "e", nodes[2])
 
-        edge = Edge(nodes[1], "e", nodes[2])
-        self.graph.add_edge(edge)
-
-        self.graph.commit()
+        self.graph.query(f"CREATE {nodes[0]}, {nodes[1]}, {nodes[2]}, {e0}, {e1}")
 
     # Test patterns that traverse 1 edge.
     def test01_one_hop_traversals(self):
@@ -230,29 +226,17 @@ class testRelationPattern(FlowTestsBase):
         g = self.db.select_graph("tran_multi_hop")
 
         # (a)-[R]->(b)-[R]->(c)<-[R]-(d)<-[R]-(e)
-        a = Node(properties={"val": 'a'})
-        b = Node(properties={"val": 'b'})
-        c = Node(properties={"val": 'c'})
-        d = Node(properties={"val": 'd'})
-        e = Node(properties={"val": 'e'})
-        
-        g.add_node(a)
-        g.add_node(b)
-        g.add_node(c)
-        g.add_node(d)
-        g.add_node(e)
-
+        a  = Node(alias='a', properties={"val": 'a'})
+        b  = Node(alias='b', properties={"val": 'b'})
+        c  = Node(alias='c', properties={"val": 'c'})
+        d  = Node(alias='d', properties={"val": 'd'})
+        e  = Node(alias='e', properties={"val": 'e'})
         ab = Edge(a, "R", b)
         bc = Edge(b, "R", c)
         ed = Edge(e, "R", d)
         dc = Edge(d, "R", c)
 
-        g.add_edge(ab)
-        g.add_edge(bc)
-        g.add_edge(ed)
-        g.add_edge(dc)
-
-        g.flush()
+        g.query(f"CREATE {a}, {b}, {c}, {d}, {e}, {ab}, {bc}, {ed}, {dc}")
 
         q = """MATCH (a)-[*2]->(b)<-[*2]-(c) RETURN a.val, b.val, c.val ORDER BY a.val, b.val, c.val"""
         actual_result = g.query(q)

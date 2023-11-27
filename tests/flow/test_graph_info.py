@@ -66,7 +66,7 @@ class LoggedQuery:
         return self.utilized_cache
 
 def StreamName(graph):
-    return f"telemetry{{{graph.key}}}"
+    return f"telemetry{{{graph.name}}}"
 
 class testGraphInfo(FlowTestsBase):
     def __init__(self):

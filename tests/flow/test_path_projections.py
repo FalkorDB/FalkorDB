@@ -15,28 +15,20 @@ class testPathProjections():
         # (v0)-[:E]->(v1)-[:E]->(v2)-[:E]->(v3), (v0)-[:E]->(v4)
 
         global nodes
+        edges = []
         for v in range(0, 5):
-            node = Node(labels="L", properties={"v": v})
+            node = Node(alias=f"n{v}", labels="L", properties={"v": v})
             nodes[v] = node
-            self.graph.add_node(node)
 
-        connects = "01"
-        edge = Edge(nodes[0], "E", nodes[1], properties={"connects": connects})
-        self.graph.add_edge(edge)
+        edges.append(Edge(nodes[0], "E", nodes[1], properties={"connects": "01"}))
+        edges.append(Edge(nodes[1], "E", nodes[2], properties={"connects": "12"}))
+        edges.append(Edge(nodes[2], "E", nodes[3], properties={"connects": "23"}))
+        edges.append(Edge(nodes[0], "E", nodes[4], properties={"connects": "04"}))
 
-        connects = "12"
-        edge = Edge(nodes[1], "E", nodes[2], properties={"connects": connects})
-        self.graph.add_edge(edge)
+        nodes_str = [str(n) for n in nodes.values()]
+        edges_str = [str(e) for e in edges]
 
-        connects = "23"
-        edge = Edge(nodes[2], "E", nodes[3], properties={"connects": connects})
-        self.graph.add_edge(edge)
-
-        connects = "04"
-        edge = Edge(nodes[0], "E", nodes[4], properties={"connects": connects})
-        self.graph.add_edge(edge)
-
-        self.graph.commit()
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     def test01_single_source_projection(self):
         query = """MATCH (a {v: 0}) WITH (a)-[]->() AS paths

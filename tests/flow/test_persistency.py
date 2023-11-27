@@ -19,31 +19,31 @@ class testGraphPersistency():
             return graph
 
         people       = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
-        visits       = [("Roi", "USA"), ("Alon", "Israel"), ("Ailon", "Japan"), ("Boaz", "United Kingdom")]
-        countries    = ["Israel", "USA", "Japan", "United Kingdom"]
+        visits       = [("Roi", "USA"), ("Alon", "Israel"), ("Ailon", "Japan"), ("Boaz", "UK")]
+        countries    = ["Israel", "USA", "Japan", "UK"]
         personNodes  = {}
         countryNodes = {}
 
         # create nodes
         for p in people:
-            person = Node(labels="person", properties={"name": p, "height": random.randint(160, 200)})
-            graph.add_node(person)
+            person = Node(alias=p, labels="person", properties={"name": p, "height": random.randint(160, 200)})
             personNodes[p] = person
 
         for c in countries:
-            country = Node(labels="country", properties={"name": c, "population": random.randint(100, 400)})
-            graph.add_node(country)
+            country = Node(alias=c, labels="country", properties={"name": c, "population": random.randint(100, 400)})
             countryNodes[c] = country
 
         # create edges
+        edges = []
         for v in visits:
             person  = v[0]
             country = v[1]
-            edge = Edge(personNodes[person], 'visit', countryNodes[country], properties={
-                        'purpose': 'pleasure'})
-            graph.add_edge(edge)
+            edges.append(Edge(personNodes[person], 'visit', countryNodes[country], properties={
+                        'purpose': 'pleasure'}))
 
-        graph.commit()
+        edges_str = [str(e) for e in edges]
+        nodes_str = [str(n) for n in personNodes.values()] + [str(n) for n in countryNodes.values()]
+        graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
         # delete nodes, to introduce deleted entries within our datablock
         query = """MATCH (n:person) WHERE n.name = 'Roi' or n.name = 'Ailon' DELETE n"""
@@ -70,15 +70,18 @@ class testGraphPersistency():
 
         nodes = []
         for i in range(10):
-            node = Node(labels="n", properties={"val": i})
-            dense_graph.add_node(node)
+            node = Node(alias=f"n_{i}", labels="n", properties={"val": i})
             nodes.append(node)
 
+        edges = []
         for n_idx, n in enumerate(nodes):
             for m_idx, m in enumerate(nodes[:n_idx]):
-                dense_graph.add_edge(Edge(n, "connected", m))
+                edges.append(Edge(n, "connected", m))
 
-        dense_graph.flush()
+        nodes_str = [str(n) for n in nodes]
+        edges_str = [str(e) for e in edges]
+        dense_graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+
         return dense_graph
 
     def test01_save_load(self):
@@ -180,23 +183,14 @@ class testGraphPersistency():
         graph_names = ["repeated_edges", "{tag}_repeated_edges"]
         for graph_name in graph_names:
             graph = self.db.select_graph(graph_name)
-            src   = Node(labels='p', properties={'name': 'src'})
-            dest  = Node(labels='p', properties={'name': 'dest'})
-            edge1 = Edge(src, 'e', dest, properties={'val': 1})
-            edge2 = Edge(src, 'e', dest, properties={'val': 2})
-
-            graph.add_node(src)
-            graph.add_node(dest)
-            graph.add_edge(edge1)
-            graph.add_edge(edge2)
-            graph.flush()
+            graph.query("""CREATE (src:p {name: 'src'}), (dest:p {name: 'dest'}),
+                        (src)-[:e {val: 1}]->(dest), (src)-[:e {val: 2}]->(dest)""")
 
             # Verify the new edge
             q = """MATCH (a)-[e]->(b) RETURN e.val, a.name, b.name ORDER BY e.val"""
             actual_result = graph.query(q)
 
-            expected_result = [[edge1.properties['val'], src.properties['name'], dest.properties['name']],
-                               [edge2.properties['val'], src.properties['name'], dest.properties['name']]]
+            expected_result = [[1, 'src', 'dest'], [2, 'src', 'dest']]
 
             self.env.assertEquals(actual_result.result_set, expected_result)
 

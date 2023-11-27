@@ -11,14 +11,12 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         self.populate_graph()
 
     def populate_graph(self):
-        nodes = {}
-         # Create entities        
+         # Create entities
+        nodes = []
         for p in people:
-            node = Node(labels="person", properties={"name": p})
-            self.graph.add_node(node)
-            nodes[p] = node
+            nodes.append(Node(labels="person", properties={"name": p}))
 
-        self.graph.commit()
+        self.graph.query(f"CREATE {','.join(map(str, nodes))}")
 
     # Connect a single node to all other nodes.
     def test01_connect_node_to_rest(self):

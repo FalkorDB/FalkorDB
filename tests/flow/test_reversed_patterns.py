@@ -12,13 +12,7 @@ class testReversedPatterns(FlowTestsBase):
     def populate_graph(self):
         if GRAPH_ID not in self.db.list_graphs():
             # Create entities
-            srcNode = Node(labels="L", properties={"name": "SRC"})
-            destNode = Node(labels="L", properties={"name": "DEST"})
-            self.graph.add_node(srcNode)
-            self.graph.add_node(destNode)
-            edge = Edge(srcNode, 'E', destNode)
-            self.graph.add_edge(edge)
-            self.graph.commit()
+            self.graph.query("CREATE (:L {name:'SRC'})-[:E]->(:L {name:'DEST'})")
 
     # Verify that edges are not modified after entity deletion
     def test01_reversed_pattern(self):

@@ -27,11 +27,12 @@ class testIndexUpdatesFlow(FlowTestsBase):
 
     def populate_graph(self):
         global node_ctr
+        nodes = []
         for i in range(1000):
-            node = self.new_node()
-            self.graph.add_node(node)
+            nodes.append(self.new_node())
             node_ctr += 1
-        self.graph.flush()
+        nodes_str = [str(node) for node in nodes]
+        self.graph.query(f"CREATE {','.join(nodes_str)}")
 
     def build_indices(self):
         for field in fields:
@@ -107,11 +108,12 @@ class testIndexUpdatesFlow(FlowTestsBase):
     #  Add 100 randomized nodes and validate indices
     def test03_node_creation(self):
         global node_ctr
+        nodes = []
         for i in range(100):
-            node = self.new_node()
-            self.graph.add_node(node)
+            nodes.append(self.new_node())
             node_ctr += 1
-        self.graph.flush()
+        nodes_str = [str(node) for node in nodes]
+        self.graph.query(f"CREATE {','.join(nodes_str)}")
         self.validate_state()
 
     # Delete every other node in first 100 and validate indices
