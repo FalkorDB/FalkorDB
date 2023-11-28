@@ -76,8 +76,7 @@ jobs:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         platforms: ${{ matrix.platform }}
-        tags: falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name }}
-        outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+        outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=true
 
     - name: Build and push on RELEASE
       if: github.event_name == 'release'
@@ -86,8 +85,7 @@ jobs:
         context: /FalkorDB
         file: /FalkorDB/build/docker/Dockerfile
         platforms: ${{ matrix.platform }}
-        tags: falkordb/falkordb:${{ github.event.release.tag_name }},falkordb/falkordb:latest
-        outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+        outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=true
 
     - name: Export digest
       run: |
@@ -121,24 +119,26 @@ jobs:
           path: /tmp/digests
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY_IMAGE }}
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Create manifest list and push
+      - name: Create manifest list and push on PUSH
+        if: github.event_name == 'push'
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)          
+          docker buildx imagetools create -t ${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name }} \
+            $(printf 'falkordb/falkordb@sha256:%s ' *)
+      - name: Create manifest list and push on RELEASE
+        if: github.event_name == 'push'
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create -t {{ github.event.release.tag_name }} -t latest \
+            $(printf 'falkordb/falkordb@sha256:%s ' *)
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect falkordb/falkordb:latest
 
   unit-tests:
     runs-on: ubuntu-latest
