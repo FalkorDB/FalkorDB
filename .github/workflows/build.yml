@@ -69,17 +69,8 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Build and push on PUSH
-      if: github.event_name == 'push'
-      uses: docker/build-push-action@v5
-      with:
-        context: /FalkorDB
-        file: /FalkorDB/build/docker/Dockerfile
-        platforms: ${{ matrix.platform }}
-        outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=true
-
-    - name: Build and push on RELEASE
-      if: github.event_name == 'release'
+    - name: Build and push
+      id: build
       uses: docker/build-push-action@v5
       with:
         context: /FalkorDB
