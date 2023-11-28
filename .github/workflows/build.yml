@@ -94,6 +94,7 @@ jobs:
    
     - name: Copy bin from docker on PUSH
       if: github.event_name == 'push'
+      working-directory: /FalkorDB
       run: |
         id=$(docker create falkordb/falkordb@${{ steps.build.outputs.digest }})
         docker cp $id:/FalkorDB/bin .
