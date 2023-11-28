@@ -102,8 +102,7 @@ jobs:
 
   merge:
     runs-on: ubuntu-latest
-    needs:
-      - build
+    needs: build
     steps:
       - name: Download digests
         uses: actions/download-artifact@v3
