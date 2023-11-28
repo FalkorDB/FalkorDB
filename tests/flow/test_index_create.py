@@ -28,11 +28,11 @@ class testIndexCreationFlow():
 
     def test02_fulltext_index_creation_label_config(self):
         # create an index over L1:v1
-        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1' }, 'v1')")
+        result = self.graph.create_node_fulltext_index('L1', 'v1')
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L1:v2, v3
-        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1' }, 'v2', 'v3')")
+        result = self.graph.create_node_fulltext_index('L1', 'v2', 'v3')
         self.env.assertEquals(result.indices_created, 2)
 
         # create an index over L2:v1 with stopwords
@@ -40,7 +40,7 @@ class testIndexCreationFlow():
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L2:v2
-        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2' }, 'v2')")
+        result = self.graph.create_node_fulltext_index('L2', 'v2')
         self.env.assertEquals(result.indices_created, 1)
 
         try:
