@@ -20,7 +20,7 @@ class testReplication(FlowTestsBase):
         if VALGRIND or SANITIZER != "":
             Env.skip(None) # valgrind is not working correctly with replication
 
-        self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
+        self.env, self.db = Env(env='oss', useSlaves=True)
 
     def test_CRUD_replication(self):
         # create a simple graph
@@ -44,14 +44,11 @@ class testReplication(FlowTestsBase):
         src = Graph(source_con, GRAPH_ID)
         replica = Graph(replica_con, GRAPH_ID)
 
-        s = Node(label='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
-        t = Node(label='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
+        s = Node(alias='s', labels='L', properties={'id': 0, 'name': 'abcd', 'height' : 178})
+        t = Node(alias='t', labels='L', properties={'id': 1, 'name': 'efgh', 'height' : 178})
         e = Edge(s, 'R', t)
 
-        src.add_node(s)
-        src.add_node(t)
-        src.add_edge(e)
-        src.flush()
+        src.query(f"CREATE {s}, {t}, {e}")
 
         #-----------------------------------------------------------------------
         # create indices
@@ -106,27 +103,27 @@ class testReplication(FlowTestsBase):
 
         # make sure index is available on replica
         q = "MATCH (s:L {id:2}) RETURN s.name"
-        plan = src.execution_plan(q)
-        replica_plan = replica.execution_plan(q)
+        plan = str(src.explain(q))
+        replica_plan = str(replica.explain(q))
         env.assertIn("Index Scan", plan)
         env.assertEquals(replica_plan, plan)
 
         # issue query on both source and replica
         # make sure results are the same
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # make sure node count on both primary and replica is the same
         q = "MATCH (n) RETURN count(n)"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # make sure nodes are in sync
         q = "MATCH (n) RETURN n ORDER BY n"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # remove label
@@ -138,8 +135,8 @@ class testReplication(FlowTestsBase):
         source_con.execute_command("WAIT", "1", "0")
 
         q = "MATCH (s:L {id:2}) RETURN s"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEqual(len(result), 0)
         env.assertEquals(replica_result, result)
 
@@ -152,15 +149,15 @@ class testReplication(FlowTestsBase):
         source_con.execute_command("WAIT", "1", "0")
 
         q = "MATCH (s {id:2}) RETURN s"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEqual(len(result), 0)
         env.assertEquals(replica_result, result)
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # drop fulltext index
@@ -173,8 +170,8 @@ class testReplication(FlowTestsBase):
 
         # make sure both primary and replica have the same set of indexes
         q = "CALL db.indexes() YIELD label, properties, language, stopwords, entitytype"
-        result = src.query(q, read_only=True).result_set
-        replica_result = replica.query(q, read_only=True).result_set
+        result = src.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
         env.assertEquals(replica_result, result)
 
         # make sure both primary and replica have the same set of constraints
@@ -203,4 +200,3 @@ class testReplication(FlowTestsBase):
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
         env.assertEquals(replica_result, origin_result)
-

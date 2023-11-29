@@ -8,12 +8,11 @@ graph_2 = None
 
 class testGraphMergeFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         global redis_graph
         global graph_2
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, "G")
-        graph_2 = Graph(redis_con, "H")
+        redis_graph = self.db.select_graph("G")
+        graph_2 = self.db.select_graph("H")
 
     # Create a single node without any labels or properties.
     def test01_single_node_with_label(self):
@@ -512,7 +511,7 @@ class testGraphMergeFlow(FlowTestsBase):
 
         query = """MERGE (n:L {prop:1}) WITH n WHERE n.prop < 1 RETURN n.prop"""
         result = graph.query(query)
-        plan = graph.execution_plan(query)
+        plan = str(graph.explain(query))
 
         # Verify that the Filter op follows a Project op.
         self.env.assertTrue(re.search('Project\s+Filter', plan))
@@ -671,7 +670,7 @@ class testGraphMergeFlow(FlowTestsBase):
         # should raise an exception
         query = """MERGE ()-[:R2]->(a:L1)-[:R1]->(a:L2) RETURN *"""
         try:
-            graph.execution_plan(query)
+            graph.explain(query)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))

@@ -1,18 +1,15 @@
 from common import *
 from collections import Counter
 
-graph = None
 GRAPH_ID = "G"
 
 class testForeachFlow():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global graph
-        redis_con = self.env.getConnection()
-        graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def get_res_and_assertEquals(self, query, expected_result):
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set, expected_result)
         return actual_result
 
@@ -20,7 +17,7 @@ class testForeachFlow():
         """check that FOREACH with a literal list works properly"""
 
         # graph is empty
-        res = graph.query("FOREACH(i in range(0, 4) | CREATE (n:N {v: i}))")
+        res = self.graph.query("FOREACH(i in range(0, 4) | CREATE (n:N {v: i}))")
 
         # 5 nodes should have been created, and 5 properties set
         self.env.assertEquals(res.nodes_created, 5)
@@ -31,7 +28,7 @@ class testForeachFlow():
                                       [[0], [1], [2], [3], [4]])
 
         # validate MERGE (without creation) and SET
-        res = graph.query(
+        res = self.graph.query(
             'FOREACH(i in range(0, 4) | MERGE (n:N {v: i}) SET n.v=i^2)'
             )
 
@@ -44,7 +41,7 @@ class testForeachFlow():
                                       [[0], [1], [4], [9], [16]])
         
         # validate MERGE creation
-        res = graph.query(
+        res = self.graph.query(
             'FOREACH(i in range(0, 4) | MERGE (m:M {v: i}))'
         )
 
@@ -53,7 +50,7 @@ class testForeachFlow():
         self.env.assertEquals(res.properties_set, 5)
 
         # delete the entities (the four nodes)
-        res = graph.query("""
+        res = self.graph.query("""
         FOREACH(i in range(0, 4) |
             MERGE (m:M {v: i}) DELETE m
         )""")
@@ -62,7 +59,7 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_deleted, 5)
 
         # remove the properties and labels of the nodes using REMOVE
-        res = graph.query("""
+        res = self.graph.query("""
         MATCH (n:N)
         WITH collect(n) as ns
         FOREACH(n in ns |
@@ -72,12 +69,12 @@ class testForeachFlow():
         # validate removal
         self.env.assertEquals(res.properties_removed, 5)
         self.env.assertEquals(res.labels_removed, 5)
-        res = graph.query("MATCH (n) return labels(n), n.v")
+        res = self.graph.query("MATCH (n) return labels(n), n.v")
         self.env.assertEquals(res.result_set, 
                     [[[], None], [[], None],[[], None], [[], None], [[], None]])
 
         # embedded foreach
-        res = graph.query("""
+        res = self.graph.query("""
         FOREACH(i in [0, 1, 2, 3, 4] |
             FOREACH(j in [1, 2] |
                 CREATE (n:N)
@@ -96,9 +93,9 @@ class testForeachFlow():
         # clear db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
-        res = graph.query(
+        res = self.graph.query(
         "CYPHER li = [0, 1, 2, 3, 4] FOREACH(i in $li | CREATE (n:N {v: i}))"
         )
 
@@ -111,7 +108,7 @@ class testForeachFlow():
                                       [[0], [1], [2], [3], [4]])
 
         # validate MERGE (without creation) and SET
-        res = graph.query("""
+        res = self.graph.query("""
         CYPHER li = [0, 1, 2, 3, 4]
         FOREACH(i in $li |
             MERGE (n:N {v: i}) SET n.v=i^2
@@ -127,7 +124,7 @@ class testForeachFlow():
                                       [[0], [1], [4], [9], [16]])
 
         # validate MERGE creation
-        res = graph.query("""
+        res = self.graph.query("""
         CYPHER li = [0, 1, 2, 3, 4]
         FOREACH(i in $li |
             MERGE (m:M {v: i})
@@ -139,7 +136,7 @@ class testForeachFlow():
         self.env.assertEquals(res.properties_set, 5)
 
         # delete the entities (the four nodes)
-        res = graph.query("""
+        res = self.graph.query("""
         CYPHER li = [0, 1, 2, 3, 4]
         FOREACH(i in $li |
             MERGE (m:M {v: i}) DELETE m
@@ -150,7 +147,7 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_deleted, 5)
         
         # remove the properties of the nodes using remove
-        res = graph.query("""
+        res = self.graph.query("""
         MATCH (n:N)
         WITH collect(n) as ns
         FOREACH(n in ns |
@@ -161,12 +158,12 @@ class testForeachFlow():
         # validate removal
         self.env.assertEquals(res.properties_removed, 5)
         self.env.assertEquals(res.labels_removed, 5)
-        res = graph.query("MATCH (n) return labels(n), n.v")
+        res = self.graph.query("MATCH (n) return labels(n), n.v")
         self.env.assertEquals(res.result_set, 
                     [[[], None], [[], None],[[], None], [[], None], [[], None]])
 
         # embedded foreach
-        res = graph.query("""
+        res = self.graph.query("""
         CYPHER li = [0, 1, 2, 3, 4]
         FOREACH(i in $li |
             FOREACH(j in [1, 2] |
@@ -186,10 +183,10 @@ class testForeachFlow():
         # clean db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # perform a conditional query using a CASE expression
-        res = graph.query("""
+        res = self.graph.query("""
         FOREACH(do_perform IN CASE WHEN true THEN [1] ELSE [] END |
             CREATE (:N)
         )"""
@@ -199,7 +196,7 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_created, 1)
 
         # same case with a negative test-clause
-        res = graph.query("""
+        res = self.graph.query("""
         FOREACH(do_perform IN CASE WHEN false THEN [1] ELSE [] END |
             CREATE (:N)
         )"""
@@ -214,10 +211,10 @@ class testForeachFlow():
         # clean db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # populate graph
-        graph.query(
+        self.graph.query(
             "CYPHER li = [0, 1, 2, 3, 4] FOREACH(i in $li | CREATE (n:N {v: i}))"
         )
 
@@ -233,7 +230,7 @@ class testForeachFlow():
         )
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # 5 + 5 = 10 nodes created
         self.env.assertEquals(res.nodes_created, 10)
@@ -246,13 +243,13 @@ class testForeachFlow():
         # clear db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create 5 nodes
-        graph.query("UNWIND range(0, 4) as val CREATE (n:N {v: val})")
+        self.graph.query("UNWIND range(0, 4) as val CREATE (n:N {v: val})")
 
         # execute a FOREACH clause for every node matched
-        res = graph.query("""
+        res = self.graph.query("""
         MATCH (n:N)
         FOREACH(i in [1] |
             CREATE (m:M {v: 2*n.v})
@@ -271,13 +268,13 @@ class testForeachFlow():
         # clean db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create two nodes with list properties
-        graph.query("CREATE (:N {li: [1, 2, 3, 4]}), (:M {li: [1, 2, 3, 4]})")
+        self.graph.query("CREATE (:N {li: [1, 2, 3, 4]}), (:M {li: [1, 2, 3, 4]})")
 
         # run a Foreach clause for every node, accessing its list
-        res = graph.query("""MATCH (n) FOREACH(i in n.li |
+        res = self.graph.query("""MATCH (n) FOREACH(i in n.li |
                            CREATE (t:TEMP {v: i}))""")
 
         # validate the creation
@@ -291,20 +288,20 @@ class testForeachFlow():
         # clean db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         try:
-            graph.query("FOREACH(i in [1, 2, 0, 3] | CREATE (n:N {v: 1/i}))")
+            self.graph.query("FOREACH(i in [1, 2, 0, 3] | CREATE (n:N {v: 1/i}))")
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("Division by zero", str(e))
 
         # assure that no nodes are left (undo-log was applied correctly)
-        res = graph.query("MATCH (n) return count(n)")
+        res = self.graph.query("MATCH (n) return count(n)")
         self.env.assertEquals(res.result_set[0][0], 0)
 
         # collect may not be used inside the list expression of FOREACH
         try:
-            graph.query("""
+            self.graph.query("""
             MATCH (n:N)
             FOREACH(n in collect(n) |
                 CREATE (m:M {v: n.v})
@@ -323,7 +320,7 @@ class testForeachFlow():
         # ----------------------------------------------------------------------
 
         # create a single node
-        graph.query("CREATE (:N {v: 1, name: 'RAZ', li: [1, 2, 3, 4]})")
+        self.graph.query("CREATE (:N {v: 1, name: 'RAZ', li: [1, 2, 3, 4]})")
 
         query = """
         MATCH (n:N {v: 1, name: toUpper('raz')})
@@ -332,7 +329,7 @@ class testForeachFlow():
         )
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # validate the query statistics
         self.env.assertEquals(res.nodes_created, 4)
@@ -343,18 +340,18 @@ class testForeachFlow():
         # there should be one node in the graph, with label N, 
         # properties: {v: 2, name: 'RAZmon', li: [1] and 4 nodes with label M
         # and properties: {v: 1, name: 'raz'} and li from 1 to 4
-        res = graph.query("MATCH (n:N) return n")
-        n = Node(label='N', properties={'v': 1, 'name': 'RAZ', 'li': [1, 2, 3, 4]})
+        res = self.graph.query("MATCH (n:N) return n")
+        n = Node(labels='N', properties={'v': 1, 'name': 'RAZ', 'li': [1, 2, 3, 4]})
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0], n)
-        res = graph.query("MATCH (m:M) return m")
+        res = self.graph.query("MATCH (m:M) return m")
         self.env.assertEquals(len(res.result_set), 4)
         for i in range(len(res.result_set)):
-            m = Node(label= 'M', properties={'v': 1, 'name': 'raz', 'li': [i+1]})
+            m = Node(labels= 'M', properties={'v': 1, 'name': 'raz', 'li': [i+1]})
             self.env.assertEquals(res.result_set[i][0], m)
 
         # clear nodes with label M
-        res = graph.query("MATCH (m:M) DELETE m")
+        res = self.graph.query("MATCH (m:M) DELETE m")
         self.env.assertEquals(res.nodes_deleted, 4)
 
         # ----------------------------------------------------------------------
@@ -373,7 +370,7 @@ class testForeachFlow():
         )
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # validate the query statistics
         self.env.assertEquals(res.nodes_created, 2)
@@ -381,9 +378,9 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_deleted, 0)
 
         # validate that the correct nodes were created
-        n1 = Node(label = 'TEMP',
+        n1 = Node(labels = 'TEMP',
                   properties={'v': 7, 'name': 'raz', 'li': [1, 2, 3, 4, 3]})
-        n2 = Node(label = 'TEMP',
+        n2 = Node(labels = 'TEMP',
                   properties={'v': 9, 'name': 'raz', 'li': [1, 2, 3, 4, 4]})
         res = self.get_res_and_assertEquals("""MATCH (t:TEMP) RETURN t ORDER BY
                                             t.v""",
@@ -396,10 +393,10 @@ class testForeachFlow():
         # clear db
         self.env.flush()
         # Make a new graph object with no cache (problematic label info)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create a single node
-        graph.query("CREATE (:N {v: 1, name: 'RAZ', li: [1, 2, 3, 4]})")
+        self.graph.query("CREATE (:N {v: 1, name: 'RAZ', li: [1, 2, 3, 4]})")
 
         query = """
         MATCH (n:N)
@@ -418,7 +415,7 @@ class testForeachFlow():
         FOREACH(n in ns | CREATE (:TEMP))
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
 
         # validate the correctness of the new state
         self.env.assertEquals(res.nodes_created, 4)
@@ -426,33 +423,33 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_deleted, 0)
 
         # validate that the altered state is correct
-        res = graph.query("MATCH (t:TEMP) RETURN t ORDER BY t.v ASC")
-        t1 = Node(label='TEMP', properties={'v': 3,
+        res = self.graph.query("MATCH (t:TEMP) RETURN t ORDER BY t.v ASC")
+        t1 = Node(labels='TEMP', properties={'v': 3,
                                             'li': [1, 2, 3, 4, 3, 'RAZ'],
                                             'name': 'raz'})
-        t2 = Node(label='TEMP', properties={'v': 4,
+        t2 = Node(labels='TEMP', properties={'v': 4,
                                             'li': [1, 2, 3, 4, 4, 'RAZ'],
                                             'name': 'raz'})
-        t3 = Node(label='TEMP')
-        t4 = Node(label='TEMP')
+        t3 = Node(labels='TEMP')
+        t4 = Node(labels='TEMP')
         nodes = [t1, t2, t3, t4]
         for i in range(4):
             self.env.assertEquals(res.result_set[i][0], nodes[i])
 
         # delete newly created nodes
-        graph.query("MATCH (t:TEMP) DELETE t")
+        self.graph.query("MATCH (t:TEMP) DELETE t")
 
     def test09_clause_order(self):
         """a WITH clause must appear between FOREACH and a reading clause
         (MATCH, UNWIND, CALL)"""
         try:
-            graph.query("FOREACH(i in [1] | CREATE (:M)) MATCH (m:M) RETURN m")
+            self.graph.query("FOREACH(i in [1] | CREATE (:M)) MATCH (m:M) RETURN m")
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("A WITH clause is required to introduce MATCH after an updating clause.", str(e))
 
         try:
-            graph.query("""
+            self.graph.query("""
             FOREACH(i in [1] |
                 CREATE (:M)
             )
@@ -464,7 +461,7 @@ class testForeachFlow():
             self.env.assertIn("A WITH clause is required to introduce UNWIND after an updating clause.", str(e))
 
         try:
-            graph.query("FOREACH(i in [1] | CREATE (:M)) CALL db.labels() YIELD\
+            self.graph.query("FOREACH(i in [1] | CREATE (:M)) CALL db.labels() YIELD\
                 label RETURN label")
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
@@ -477,14 +474,14 @@ class testForeachFlow():
         # clear db and instantiate a new graph object (with an empty cache)
         global graph
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # ----------------------------------------------------------------------
         # create an edge between 2 nodes
         # ----------------------------------------------------------------------
 
         # create two nodes and an edge between them
-        res = graph.query("""
+        res = self.graph.query("""
         CREATE (n1:N {v: 1}), (n2:N {v: 2})
         FOREACH(i in [1] |
             CREATE (n1)-[:R]->(n2)
@@ -498,7 +495,7 @@ class testForeachFlow():
         # ----------------------------------------------------------------------
         
         # delete the edge using FOREACH
-        res = graph.query("MATCH (n1)-[r]-(n2) FOREACH(i in [1] | DELETE r)")
+        res = self.graph.query("MATCH (n1)-[r]-(n2) FOREACH(i in [1] | DELETE r)")
         self.env.assertEquals(res.nodes_deleted, 0)
         self.env.assertEquals(res.relationships_deleted, 1)
 
@@ -508,7 +505,7 @@ class testForeachFlow():
         # ----------------------------------------------------------------------
 
         # create an edge between the two existing nodes
-        res = graph.query("""
+        res = self.graph.query("""
         MERGE (n1:N {v: 1})
         MERGE (n2:N {v: 2})
         FOREACH(i in [1] |
@@ -519,7 +516,7 @@ class testForeachFlow():
         self.env.assertEquals(res.relationships_created, 1)
 
         # delete the nodes with FOREACH
-        res = graph.query("MATCH (n) FOREACH(i in [1] | DELETE n)")
+        res = self.graph.query("MATCH (n) FOREACH(i in [1] | DELETE n)")
         self.env.assertEquals(res.nodes_deleted, 2)
         self.env.assertEquals(res.relationships_deleted, 1)
 
@@ -528,10 +525,10 @@ class testForeachFlow():
 
         # clean db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create some data
-        res = graph.query(
+        res = self.graph.query(
             """
             CREATE (:Actor{id:'Marketing'}),
                    (:Actor{id:'vietld'}),
@@ -543,7 +540,7 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_created, 3)
 
         # reference named paths defined in the outer scope, in the list exp
-        res = graph.query(
+        res = self.graph.query(
             """
             MATCH path = (u:Actor), (g:Actor { id: 'Marketing' })
             WHERE u.id IN ['vietld', 'phuongdd']
@@ -557,7 +554,7 @@ class testForeachFlow():
         self.env.assertEquals(res.relationships_created, 2)
 
         # reference named paths defined in the outer scope, in the list exp
-        res = graph.query(
+        res = self.graph.query(
             """
             MATCH path = (u:Actor), (g:Actor { id: 'Marketing' })
             WHERE u.id = 'vietld' OR u.id = 'phuongdd'
@@ -571,7 +568,7 @@ class testForeachFlow():
         self.env.assertEquals(res.relationships_created, 1)
 
         # reference named paths defined in the outer scope, in the body
-        res = graph.query(
+        res = self.graph.query(
             """
             MATCH path = (u: Actor)
             FOREACH (n IN CASE WHEN u.id = 'vietld' THEN nodes(path) ELSE [] END |
@@ -586,7 +583,7 @@ class testForeachFlow():
         self.env.assertEquals(res.properties_set, 1)
 
         # reference named paths defined in the body
-        res = graph.query(
+        res = self.graph.query(
             """
             FOREACH (n in [1] |
                 MERGE p = (:Actor {id: 'vietld'})
@@ -609,15 +606,15 @@ class testForeachFlow():
 
         # flush the graph, reset cache
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create a node with label `N`
-        res = graph.query("CREATE (:N)")
+        res = self.graph.query("CREATE (:N)")
         self.env.assertEquals(res.nodes_created, 1)
 
         # execute a query in which FOREACH is the first clause, and it is
         # followed by a scan that finds this node
-        res = graph.query(
+        res = self.graph.query(
             """
             FOREACH(i in [1] |
                 MERGE (:N)
@@ -631,12 +628,12 @@ class testForeachFlow():
         # assure that no nodes were created, and one node was returned
         self.env.assertEquals(res.nodes_created, 0)
         self.env.assertEquals(len(res.result_set), 1)
-        self.env.assertEquals(res.result_set[0][0], Node(label='N'))
+        self.env.assertEquals(res.result_set[0][0], Node(labels='N'))
 
     def test13_empty_list(self):
         """Tests that given an empty list, Foreach passes no records"""
 
-        res = graph.query("FOREACH(n IN [] | CREATE (:N))")
+        res = self.graph.query("FOREACH(n IN [] | CREATE (:N))")
 
         # no nodes should have been created
         self.env.assertEquals(res.nodes_created, 0)
@@ -645,14 +642,14 @@ class testForeachFlow():
         """Tests that given an unbound list-var, an error is raised"""
 
         try:
-            graph.query("FOREACH(n in li | CREATE (:N))")
+            self.graph.query("FOREACH(n in li | CREATE (:N))")
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("'li' not defined", str(e))
 
         # same check, when the list-var is the same as the list expression
         try:
-            graph.query("FOREACH(n in n | CREATE (:N))")
+            self.graph.query("FOREACH(n in n | CREATE (:N))")
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("'n' not defined", str(e))
@@ -660,12 +657,12 @@ class testForeachFlow():
     def test15_foreach_and_index_scan(self):
         query = """UNWIND range(1,9) AS i 
                    CREATE (n:N {v:i})-[:R]->(m:M {v:(i+1)})"""
-        graph.query(query)
+        self.graph.query(query)
         query = """CREATE INDEX FOR (n:N) ON (n.v)"""
-        graph.query(query)
+        self.graph.query(query)
         query = """MATCH p=(n:N)-[:R]->(:M) WHERE n.v <= 5 
                    FOREACH( n in nodes(p) | SET n.x = 3) RETURN count(n.v)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         expected_result = [[5]]
         self.env.assertEquals(result.result_set, expected_result)
 
@@ -675,10 +672,10 @@ class testForeachFlow():
 
         # clear db
         self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
         # create a node with property `v` initialized with value 1
-        res = graph.query("CREATE (:N {v: 1})")
+        res = self.graph.query("CREATE (:N {v: 1})")
         self.env.assertEquals(res.nodes_created, 1)
 
         query = """
@@ -690,6 +687,6 @@ class testForeachFlow():
         RETURN n.v
         """
 
-        res = graph.query(query)
+        res = self.graph.query(query)
         # check that the `v` property of the node is now 1 + 0 + 1 + 2 + 3 = 7
         self.env.assertEquals(res.result_set[0][0], 7)

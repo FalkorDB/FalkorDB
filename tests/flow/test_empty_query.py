@@ -1,23 +1,19 @@
 from common import *
 
-graph = None
-
-
 class testEmptyQuery(FlowTestsBase):
     def __init__(self):
-        global graph
-        self.env = Env(decodeResponses=True)
-        graph = Graph(self.env.getConnection(), 'G')
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph('G')
 
     def test01_empty_query(self):
         try:
             # execute empty query
-            graph.query("")
+            self.graph.query("")
         except ResponseError as e:
             self.env.assertIn("Error: empty query.", str(e))
 
     #def test02_query_with_only_params(self):
     #    try:
-    #        graph.query("CYPHER v=1")
+    #        self.graph.query("CYPHER v=1")
     #    except ResponseError as e:
     #        self.env.assertIn("Error: could not parse query", str(e))

@@ -5,12 +5,12 @@ from functools import cmp_to_key
 NODES = 20    # node count
 EDGES = 200   # edge count
 
+GRAPH_ID = "path_algos"
 
 class testAllShortestPaths():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        redis_con = self.env.getConnection()
-        self.graph = Graph(redis_con, "path_algos")
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
         self.init()
 

@@ -1,56 +1,44 @@
 from common import *
 
-GRAPH_ID = "G"
-
-redis_graph = None
-
+GRAPH_ID = "self_pointing_node"
 
 class testSelfPointingNode(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
    
     def populate_graph(self):
         # Construct a graph with the form:
         # (v1)-[:e]->(v1)
-
-        node = Node(label="L")
-        redis_graph.add_node(node)
-
-        edge = Edge(node, "e", node)
-        redis_graph.add_edge(edge)
-
-        redis_graph.commit()
+        self.graph.query("CREATE (n:L), (n)-[:e]->(n)")
 
     # Test patterns that traverse 1 edge.
     def test_self_pointing_node(self):
         # Conditional traversal with label
         query = """MATCH (a)-[:e]->(a) RETURN a"""
-        result_a = redis_graph.query(query)
-        plan_a = redis_graph.execution_plan(query)
+        result_a = self.graph.query(query)
+        plan_a = str(self.graph.explain(query))
 
         query = """MATCH (a:L)-[:e]->(a) RETURN a"""
-        result_b = redis_graph.query(query)
-        plan_b = redis_graph.execution_plan(query)
+        result_b = self.graph.query(query)
+        plan_b = str(self.graph.explain(query))
 
         query = """MATCH (a)-[:e]->(a:L) RETURN a"""
-        result_c = redis_graph.query(query)
-        plan_c = redis_graph.execution_plan(query)
+        result_c = self.graph.query(query)
+        plan_c = str(self.graph.explain(query))
 
         query = """MATCH (a)-[]->(a) RETURN a"""
-        result_d = redis_graph.query(query)
-        plan_d = redis_graph.execution_plan(query)
+        result_d = self.graph.query(query)
+        plan_d = str(self.graph.explain(query))
 
         query = """MATCH (a:L)-[]->(a) RETURN a"""
-        result_e = redis_graph.query(query)
-        plan_e = redis_graph.execution_plan(query)
+        result_e = self.graph.query(query)
+        plan_e = str(self.graph.explain(query))
 
         query = """MATCH (a)-[]->(a:L) RETURN a"""
-        result_f = redis_graph.query(query)
-        plan_f = redis_graph.execution_plan(query)
+        result_f = self.graph.query(query)
+        plan_f = str(self.graph.explain(query))
 
         self.env.assertEquals(len(result_a.result_set), 1)
         n = result_a.result_set[0][0]

@@ -3,13 +3,12 @@ import time
 
 GRAPH_ID = "expire"
 
-
 class testExpiry():
     def test01_expire_graph(self):
         # create a redisgraph object
-        env = Env(decodeResponses=True)
+        env, db = Env()
         redis_con = env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        redis_graph = db.select_graph(GRAPH_ID)
 
         # create a single node
         redis_graph.query("create ()")

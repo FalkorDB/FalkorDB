@@ -11,7 +11,7 @@ keys = {
 
 class testRdbLoad():
     def __init__(self):
-        self.env = Env(decodeResponses=True, moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
+        self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
         self.conn = self.env.getConnection()
 
     # assert that |keyspace| == `n`

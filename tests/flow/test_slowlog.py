@@ -6,16 +6,13 @@ GRAPH_ID = "slowlog_test"
 
 class testSlowLog():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_con
-        global redis_graph
-
+        self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
-        self.redis_graph = Graph(self.redis_con, GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def populate_slowlog(self):
         def _run_query():
-            g = redis.commands.graph.Graph(self.env.getConnection(), GRAPH_ID)
+            g = self.db.select_graph(GRAPH_ID)
             for i in range(1, 4):
                 q = """UNWIND range(0, 1000000) AS x WITH x WHERE x % {mod} = 0 RETURN count(x)""".format(mod=i)
                 g.query(q)
@@ -38,19 +35,19 @@ class testSlowLog():
             self.env.assertIn("Invalid graph operation on empty key", str(e))
 
         # Issue create query twice.
-        self.redis_graph.query("""CREATE ()""")
-        self.redis_graph.query("""CREATE ()""")
+        self.graph.query("""CREATE ()""")
+        self.graph.query("""CREATE ()""")
 
         # Slow log should contain a single entry, no duplicates.
-        slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
+        slowlog = self.graph.slowlog()
         self.env.assertEquals(len(slowlog), 1)
 
         # Saturate slowlog.
         for i in range(1024):
             q = """CREATE ({v:%s})""" % i
-            self.redis_graph.query(q)
-        A = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
-        B = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
+            self.graph.query(q)
+        A = self.graph.slowlog()
+        B = self.graph.slowlog()
 
         # Calling slowlog multiple times should preduce the same result.
         self.env.assertEquals(A, B)
@@ -62,8 +59,8 @@ class testSlowLog():
 
         # Issue a long running query, this should replace an existing entry in the slowlog.
         q = """MATCH (n), (m) WHERE n.v > 0 AND n.v < 500 SET m.v = rand() WITH n, m RETURN SUM(n.v + m.v)"""
-        self.redis_graph.query(q)
-        B = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
+        self.graph.query(q)
+        B = self.graph.slowlog()
 
         self.env.assertNotEqual(A, B)
 
