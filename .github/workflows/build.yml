@@ -120,13 +120,13 @@ jobs:
         if: github.event_name == 'push'
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.ref_name == 'master' && 'master,falkordb/falkordb:edge' || github.ref_name }} \
+          docker buildx imagetools create -t falkordb/falkordb:${{ github.ref_name == 'master' && 'master -t falkordb/falkordb:edge' || github.ref_name }} \
             $(printf 'falkordb/falkordb@sha256:%s ' *)
       - name: Create manifest list and push on RELEASE
         if: github.event_name == 'release'
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t latest \
+          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
             $(printf 'falkordb/falkordb@sha256:%s ' *)
       - name: Inspect image
         run: |
