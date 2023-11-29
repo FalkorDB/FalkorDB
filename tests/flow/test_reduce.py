@@ -16,9 +16,9 @@ GRAPH_ID = "REDUCE"
 
 class testReduce():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         self.conn = self.env.getConnection()
-        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def test_sum_reduction(self):
         # sum = 0, for n in [1,2,3], sum += n

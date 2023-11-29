@@ -7,7 +7,7 @@ def _wait_on_index(graph, label):
     RETURN count(1)"""
 
     while True:
-        result = graph.query(q, read_only=True)
+        result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
 
@@ -28,7 +28,7 @@ def list_indicies(graph, label=None):
 
     q += " RETURN label, properties, types, language, stopwords, entitytype, info, status"
 
-    return graph.query(q, read_only=True)
+    return graph.ro_query(q)
 
 def _create_typed_index(graph, idx_type, entity_type, label, *properties, options=None, sync=False):
     if entity_type == "NODE":
@@ -121,14 +121,14 @@ def drop_edge_vector_index(graph, label, attribute):
 def index_under_construction(graph, label):
     params = {'lbl': label}
     q = "CALL db.indexes() YIELD label, status WHERE label = $lbl RETURN status"
-    res = graph.query(q, params, read_only=True)
+    res = graph.ro_query(q, params)
     return "UNDER CONSTRUCTION" in res.result_set[0][0]
 
 # wait for all graph indices to by operational
 def wait_for_indices_to_sync(graph):
     q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
     while True:
-        result = graph.query(q, read_only=True)
+        result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
         time.sleep(0.5) # sleep 500ms

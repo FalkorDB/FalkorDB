@@ -5,9 +5,9 @@ GRAPH_ID = "undo-log"
 
 class testUndoLog():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
-        self.graph = Graph(self.redis_con, GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
         self.redis_con.flushall()
@@ -314,7 +314,7 @@ class testUndoLog():
 
         # deleted node should be revived, expecting a single node
         query = "MATCH (n:N {v: 0}) RETURN n"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
@@ -334,7 +334,7 @@ class testUndoLog():
 
         # deleted edge should be revived, expecting a single edge
         query = "MATCH ()-[r:R {v: 0}]->() RETURN r"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Edge By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
@@ -354,7 +354,7 @@ class testUndoLog():
 
         # expecting the original attributes to be restored and indexed
         query = "MATCH (n:N {v: 1}) RETURN n.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -374,7 +374,7 @@ class testUndoLog():
 
         # expecting the original attributes to be restored and indexed
         query = "MATCH ()-[r:R {v: 1}]->() RETURN r.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Edge By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -399,7 +399,7 @@ class testUndoLog():
 
     def test14_undo_timeout(self):
         # Change timeout value from default
-        response = self.redis_con.execute_command("GRAPH.CONFIG SET TIMEOUT_DEFAULT 1")
+        response = self.db.config_set("TIMEOUT_DEFAULT", 1)
         self.env.assertEqual(response, "OK")
 
         try:
@@ -410,7 +410,7 @@ class testUndoLog():
             pass
 
         # Restore timeout value to default
-        response = self.redis_con.execute_command("GRAPH.CONFIG SET TIMEOUT_DEFAULT 0")
+        response = self.db.config_set("TIMEOUT_DEFAULT", 0)
         self.env.assertEqual(response, "OK")
 
         # node (n:N) should be removed, expecting an empty graph
@@ -450,7 +450,7 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 0)
         # check index is ok
         query = "MATCH (n:L1 {v: 1}) RETURN n.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -475,7 +475,7 @@ class testUndoLog():
         self.env.assertEquals(["L2"], result.result_set[0][0])
         # check index is ok
         query = "MATCH (n:L2 {v: 1}) RETURN n.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -546,4 +546,3 @@ class testUndoLog():
 
         # drop index over 'L', 'age'
         result = drop_node_range_index(self.graph, 'L', 'age')
-

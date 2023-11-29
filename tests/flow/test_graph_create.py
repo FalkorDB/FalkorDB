@@ -1,23 +1,19 @@
 from common import *
 
 GRAPH_ID = "G"
-redis_graph = None
-
 
 class testGraphCreationFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_create_return(self):
         query = """CREATE (a:person {name:'A'}), (b:person {name:'B'})"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
 
         query = """MATCH (src:person) CREATE (src)-[e:knows]->(dest {name:'C'}) RETURN src,e,dest ORDER BY ID(src) DESC LIMIT 1"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.relationships_created, 2)
         self.env.assertEquals(len(result.result_set), 1)
@@ -25,7 +21,7 @@ class testGraphCreationFlow(FlowTestsBase):
 
     def test02_create_from_prop(self):
         query = """MATCH (p:person)-[e:knows]->() CREATE (c:clone {doublename: p.name + toLower(p.name), source_of: TYPE(e)}) RETURN c.doublename, c.source_of ORDER BY c.doublename"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [['Aa', 'knows'], ['Bb', 'knows']]
 
         self.env.assertEquals(result.labels_added, 1)
@@ -35,14 +31,14 @@ class testGraphCreationFlow(FlowTestsBase):
 
     def test03_create_from_projection(self):
         query = """UNWIND [10,20,30] AS x CREATE (p:person {age:x}) RETURN p.age ORDER BY p.age"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [[10], [20], [30]]
         self.env.assertEquals(result.nodes_created, 3)
         self.env.assertEquals(result.properties_set, 3)
         self.env.assertEquals(result.result_set, expected_result)
 
         query = """UNWIND ['Vancouver', 'Portland', 'Calgary'] AS city CREATE (p:person {birthplace: city}) RETURN p.birthplace ORDER BY p.birthplace"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [['Calgary'], ['Portland'], ['Vancouver']]
         self.env.assertEquals(result.nodes_created, 3)
         self.env.assertEquals(result.properties_set, 3)
@@ -50,8 +46,8 @@ class testGraphCreationFlow(FlowTestsBase):
 
     def test04_create_with_null_properties(self):
         query = """CREATE (a:L {v1: NULL, v2: 'prop'}) RETURN a"""
-        result = redis_graph.query(query)
-        node = Node(label="L", properties={"v2": "prop"})
+        result = self.graph.query(query)
+        node = Node(labels="L", properties={"v2": "prop"})
         expected_result = [[node]]
 
         self.env.assertEquals(result.labels_added, 1)
@@ -61,11 +57,11 @@ class testGraphCreationFlow(FlowTestsBase):
 
         # Create 2 new nodes, one with no properties and one with a property 'v'
         query = """CREATE (:M), (:M {v: 1})"""
-        redis_graph.query(query)
+        self.graph.query(query)
 
         # Verify that a MATCH...CREATE accesses the property correctly.
         query = """MATCH (m:M) WITH m ORDER BY m.v DESC CREATE ({v: m.v})"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.properties_set, 1)
 
@@ -73,7 +69,7 @@ class testGraphCreationFlow(FlowTestsBase):
         # Queries that reference properties before they have been created should emit an error.
         try:
             query = """CREATE (a {val: 2}), (b {val: a.val})"""
-            redis_graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("'a' not defined", str(e))
@@ -81,14 +77,14 @@ class testGraphCreationFlow(FlowTestsBase):
     def test06_create_project_volatile_value(self):
         # The path e is volatile; verify that it can be projected after entity creation.
         query = """MATCH ()-[e*]->() CREATE (:L) WITH e RETURN 5"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [[5], [5]]
 
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.result_set, expected_result)
 
         query = """UNWIND [1, 2] AS val WITH collect(val) AS arr CREATE (:L) RETURN arr"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [[[1, 2]]]
 
         self.env.assertEquals(result.nodes_created, 1)
@@ -104,7 +100,7 @@ class testGraphCreationFlow(FlowTestsBase):
 
         for query in queries:
             try:
-                redis_graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("Property values can only be of primitive types or arrays of primitive types", str(e))
@@ -113,12 +109,12 @@ class testGraphCreationFlow(FlowTestsBase):
     # expecting node with single attribute 'name' with the last mentioned value 'B'
     def test08_create_node_with_2_attr_same_name(self):
         query = """CREATE (a:N {name:'A', name:'B'})"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 1)
         self.env.assertEquals(result.properties_set, 1)
 
         query = """MATCH (a:N) RETURN a.name"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         expected_result = [['B']]
         self.env.assertEquals(result.result_set, expected_result)
 
@@ -127,13 +123,13 @@ class testGraphCreationFlow(FlowTestsBase):
     # also, a node cannot be redeclared unless it is used to create new edges in a pattern
     def test09_create_use_alias_in_many_clauses(self):
         query = """CREATE (n1:Node1) CREATE (n2:Node1) CREATE (n1)-[r:Rel1]->(n2)"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.relationships_created, 1)
 
         # This is a valid query, even though 'n1' is redeclared in the CREATE clause
         query = """MATCH (n1:Node1) CREATE (n1)-[r:Rel1]->(n2)"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.relationships_created, 2)
 
@@ -142,14 +138,14 @@ class testGraphCreationFlow(FlowTestsBase):
                    "MATCH (r) CREATE (r)"]
         for query in queries:
             try:
-                redis_graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
                 self.env.assertContains("The bound variable 'r' can't be redeclared in a CREATE clause", str(e))
 
         query = "CREATE (n1)-[r:Rel1]->(n2), (n2)-[r:Rel1]->(n1)"
         try:
-            redis_graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertContains("Variable `r` already declared", str(e))
@@ -158,7 +154,7 @@ class testGraphCreationFlow(FlowTestsBase):
     # the results can't report duplicates
     def test10_match_duplicated_reltype(self):
         query = """CREATE (a:A)-[r1:R1]->(b:B), (a:A)-[r2:R2]->(b:B)"""
-        result = redis_graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.nodes_created, 2)
         self.env.assertEquals(result.relationships_created, 2)
         self.env.assertEquals(result.labels_added, 2)
@@ -173,7 +169,7 @@ class testGraphCreationFlow(FlowTestsBase):
                    "MATCH (a:A)-[r:R2|R2|R3|R4|R4]->(b:B) RETURN count(r)",
                    ]
         for query in queries:
-            result = redis_graph.query(query)
+            result = self.graph.query(query)
             expected_result = [[1]]
             self.env.assertEquals(result.result_set, expected_result)
 
@@ -186,7 +182,7 @@ class testGraphCreationFlow(FlowTestsBase):
                    "MATCH (a:A)-[r:R2|R2|R1|R1]->(b:B) RETURN count(r)",
                    ]
         for query in queries:
-            result = redis_graph.query(query)
+            result = self.graph.query(query)
             expected_result = [[2]]
             self.env.assertEquals(result.result_set, expected_result)
 
@@ -197,6 +193,6 @@ class testGraphCreationFlow(FlowTestsBase):
                    "MATCH (a:A)-[r:R3|R3|R4|R4]->(b:B) RETURN count(r)",
                    ]
         for query in queries:
-            result = redis_graph.query(query)
+            result = self.graph.query(query)
             expected_result = [[0]]
             self.env.assertEquals(result.result_set, expected_result)

@@ -5,9 +5,8 @@ GRAPH_ID = "create-clause"
 
 class testCreateClause():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        self.con = self.env.getConnection()
-        self.g = Graph(self.con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.g = self.db.select_graph(GRAPH_ID)
     
     def test01_create_dependency(self):
         # create clauses where one entity depends on another

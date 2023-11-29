@@ -9,16 +9,16 @@ MONITOR_ATTACHED = False
 class testEffects():
     # enable effects replication
     def effects_enable(self):
-        self.master.execute_command("GRAPH.CONFIG", "SET", "EFFECTS_THRESHOLD", '0')
+       self.db.config_set("EFFECTS_THRESHOLD", 0)
 
     # disable effects replication
     def effects_disable(self):
-        res = self.master.execute_command("GRAPH.CONFIG", "SET", "EFFECTS_THRESHOLD", '999999')
+        self.db.config_set("EFFECTS_THRESHOLD", 999999)
 
     # checks if effects replication is enabled
     def effects_enabled(self):
-        conf = self.master.execute_command("GRAPH.CONFIG", "GET", "EFFECTS_THRESHOLD")
-        return (conf[1] == 0)
+        threshold = self.db.config_get("EFFECTS_THRESHOLD")
+        return (threshold == 0)
 
     # checks if effects replication is enabled
     def effects_disabled(self):
@@ -81,41 +81,41 @@ class testEffects():
         # labels
         q = "CALL db.labels()"
         master_labels = self.master_graph.query(q).result_set
-        replica_labels = self.replica_graph.query(q, read_only=True).result_set
+        replica_labels = self.replica_graph.ro_query(q).result_set
         self.env.assertEquals(master_labels, replica_labels)
 
         # relationship-types
         q = "CALL db.relationshiptypes()"
         master_relations = self.master_graph.query(q).result_set
-        replica_relations = self.replica_graph.query(q, read_only=True).result_set
+        replica_relations = self.replica_graph.ro_query(q).result_set
         self.env.assertEquals(master_relations, replica_relations)
 
         # properties
         q = "CALL db.propertyKeys()"
         master_props = self.master_graph.query(q).result_set
-        replica_props = self.replica_graph.query(q, read_only=True).result_set
+        replica_props = self.replica_graph.ro_query(q).result_set
         self.env.assertEquals(master_props, replica_props)
 
         # validate nodes
         q = "MATCH (n) RETURN n ORDER BY(n)"
         master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
+        replica_resultset = self.replica_graph.ro_query(q).result_set
         self.env.assertEquals(master_resultset, replica_resultset)
 
         # validate relationships
         q = "MATCH ()-[e]->() RETURN e ORDER BY(e)"
         master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
+        replica_resultset = self.replica_graph.ro_query(q).result_set
         self.env.assertEquals(master_resultset, replica_resultset)
 
         # validate indices
         q = "CALL db.indexes() YIELD label, properties, types, language, stopwords, entitytype"
         master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
+        replica_resultset = self.replica_graph.ro_query(q).result_set
         self.env.assertEquals(master_resultset, replica_resultset)
 
     def __init__(self):
-        self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
+        self.env, self.db = Env(env='oss', useSlaves=True)
         self.monitor = []
         self.master = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
