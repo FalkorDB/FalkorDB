@@ -1,12 +1,16 @@
-FROM falkordb/falkordb-build:latest
+FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest
+
+ARG TARGETPLATFORM
 
 WORKDIR /FalkorDB
 
 ADD . /FalkorDB
 
-EXPOSE 6379/tcp
+RUN make
 
-ENV MODULE_DIR="/FalkorDB/bin/linux-x64-release/src"
+ENV ARCH=${TARGETPLATFORM}
+
+EXPOSE 6379/tcp
 
 ENV FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
 
