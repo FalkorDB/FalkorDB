@@ -66,7 +66,9 @@ static bool is_authenticated
 	if(auth_size < 3) {
 		// if no password provided check we can call PING
 		RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "PING", "");
-		return RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+		bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+		RedisModule_FreeCallReply(reply);
+		return res;
 	}
 
 	uint32_t len;
