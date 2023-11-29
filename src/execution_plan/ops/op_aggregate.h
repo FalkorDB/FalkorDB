@@ -14,6 +14,7 @@
 
 typedef struct {
 	OpBase op;
+	Record r;                     // Input Record being read from (stored to free if we encounter an error).
 	uint *record_offsets;         // record IDs for key and aggregate exps
 	AR_ExpNode **key_exps;        // array of expressions used to calculate the group key
 	AR_ExpNode **aggregate_exps;  // array of expressions that aggregate data for each key
