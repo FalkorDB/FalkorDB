@@ -174,7 +174,7 @@ This code snippet shows how to use FalkorDB with raw Redis commands from Python 
 [redis-py](https://github.com/redis/redis-py):
 
 ```Python
-	import redis
+import redis
 
 r = redis.Redis(host='localhost', port=6379, db=0)
 reply = r.graph().query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
