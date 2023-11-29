@@ -99,7 +99,9 @@ static Record _handoff
 		// persist 'v', as we have no control over it once it is added to 'r'
 		// eventually 'list' will be freed as a result of either pulling from
 		// child or resetting
-		SIValue_Persist(&v);
+		if(unlikely(!(v.type & SI_GRAPHENTITY))) {
+			SIValue_Persist(&v);
+		}
 
 		Record_Add(r, op->unwindRecIdx, v);
 		op->listIdx++;
