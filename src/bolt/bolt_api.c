@@ -72,47 +72,51 @@ static bool is_authenticated
 	}
 
 	uint32_t len;
-	buffer_index_t s = bolt_read_string(&client->msg_buf.read, &len);
-	char *key_ptr = buffer_index_read(&s, len);
+	char s[10];
+	bolt_read_string_size(&client->msg_buf.read, &len);
+	bolt_read_string(&client->msg_buf.read, s);
 	// check if the first key is scheme
-	if(strncmp(key_ptr, "scheme", len) != 0) {
+	if(strncmp(s, "scheme", len) != 0) {
 		return false;
 	}
 	
 	// check if the scheme is basic
-	s = bolt_read_string(&client->msg_buf.read, &len);
-	char *scheme_ptr = buffer_index_read(&s, len);
-	if(strncmp(scheme_ptr, "basic", len) != 0) {
+	bolt_read_string_size(&client->msg_buf.read, &len);
+	bolt_read_string(&client->msg_buf.read, s);
+	if(strncmp(s, "basic", len) != 0) {
 		return false;
 	}
 
 	// check if the second key is principal
-	s = bolt_read_string(&client->msg_buf.read, &len);
-	char *principal_ptr = buffer_index_read(&s, len);
-	if(strncmp(principal_ptr, "principal", len) != 0) {
+	bolt_read_string_size(&client->msg_buf.read, &len);
+	bolt_read_string(&client->msg_buf.read, s);
+	if(strncmp(s, "principal", len) != 0) {
 		return false;
 	}
 	
 	// check if the principal is falkordb
 	uint32_t principal_len;
-	s = bolt_read_string(&client->msg_buf.read, &principal_len);
-	principal_ptr = buffer_index_read(&s, principal_len);
-	if(strncmp(principal_ptr, "falkordb", principal_len) != 0) {
+	bolt_read_string_size(&client->msg_buf.read, &principal_len);
+	bolt_read_string(&client->msg_buf.read, s);
+	if(strncmp(s, "falkordb", principal_len) != 0) {
 		return false;
 	}
 	
 	// check if the third key is credentials
-	s = bolt_read_string(&client->msg_buf.read, &len);
-	char *credentials_ptr = buffer_index_read(&s, len);
-	if(strncmp(credentials_ptr, "credentials", len) != 0) {
+	bolt_read_string_size(&client->msg_buf.read, &len);
+	bolt_read_string(&client->msg_buf.read, s);
+	if(strncmp(s, "credentials", len) != 0) {
 		return false;
 	}
 	
 	// check if the credentials are valid
-	s = bolt_read_string(&client->msg_buf.read, &len);
-	credentials_ptr = buffer_index_read(&s, len);
-	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials_ptr, len);
-	return RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+	bolt_read_string_size(&client->msg_buf.read, &len);
+	char credentials[len];
+	bolt_read_string(&client->msg_buf.read, credentials);
+	RedisModuleCallReply *reply = RedisModule_Call(client->ctx, "AUTH", "b", credentials, len);
+	bool res = RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_ERROR;
+	RedisModule_FreeCallReply(reply);
+	return res;
 }
 
 // handle the LOGON message
@@ -159,17 +163,18 @@ static RedisModuleString *get_graph_name
 	ASSERT(ctx != NULL);
 	ASSERT(client != NULL);
 
-	char *graph_name_str;
-	uint32_t graph_name_len;
 	if(bolt_read_map_size(&client->msg_buf.read) == 0) {
 		// default graph name
-		graph_name_str = "falkordb";
-		graph_name_len = 8;
-	} else {
-		buffer_index_t graph_name = bolt_read_string(&client->msg_buf.read, &graph_name_len);
-		graph_name_str = buffer_index_read(&graph_name, graph_name_len);
+		return RedisModule_CreateString(ctx, "falkordb", 8);
 	}
-	return RedisModule_CreateString(ctx, graph_name_str, graph_name_len);
+	
+	uint32_t graph_name_len;
+	bolt_read_string_size(&client->msg_buf.read, &graph_name_len);
+	char *graph_name_str = rm_malloc(graph_name_len);
+	bolt_read_string(&client->msg_buf.read, graph_name_str);
+	RedisModuleString *res = RedisModule_CreateString(ctx, graph_name_str, graph_name_len);
+	rm_free(graph_name_str);
+	return res;
 }
 
 // write the bolt value to the buffer as string
@@ -200,9 +205,10 @@ int write_value
 			return sprintf(buff, "%f", bolt_read_float(value));
 		case BVT_STRING: {
 			uint32_t len;
-			buffer_index_t str = bolt_read_string(value, &len);
-			char *ptr = buffer_index_read(&str, len);
-			return sprintf(buff, "'%.*s'", len, ptr);
+			bolt_read_string_size(value, &len);
+			char str[len];
+			bolt_read_string(value, str);
+			return sprintf(buff, "'%.*s'", len, str);
 		}
 		case BVT_LIST: {
 			uint32_t size = bolt_read_list_size(value);
@@ -224,15 +230,17 @@ int write_value
 			n += sprintf(buff, "{");
 			if(size > 0) {
 				uint32_t key_len;
-				buffer_index_t key = bolt_read_string(value, &key_len);
-				char *key_ptr = buffer_index_read(&key, key_len);
-				n += sprintf(buff + n, "%.*s: ", key_len, key_ptr);
+				bolt_read_string_size(value, &key_len);
+				char key[key_len];
+				bolt_read_string(value, key);
+				n += sprintf(buff + n, "%.*s: ", key_len, key);
 				n += write_value(buff + n, value);
 				for (int i = 1; i < size; i++) {
-					key = bolt_read_string(value, &key_len);
-					key_ptr = buffer_index_read(&key, key_len);
+					bolt_read_string_size(value, &key_len);
+					char key[key_len];
+					bolt_read_string(value, key);
 					n += sprintf(buff + n, ", ");
-					n += sprintf(buff + n, "%.*s: ", key_len, key_ptr);
+					n += sprintf(buff + n, "%.*s: ", key_len, key);
 					n += write_value(buff + n, value);
 				}
 			}
@@ -263,41 +271,30 @@ RedisModuleString *get_query
 	ASSERT(client != NULL);
 
 	uint32_t query_len;
-	buffer_index_t query = bolt_read_string(&client->msg_buf.read, &query_len);
-	buffer_index_t query_end = query;
-	char *query_ptr = buffer_index_read(&query_end, query_len);
-	if(query.chunk < query_end.chunk) {
-		// query is split between chunks
-		char query_str[query_len];
-		int n = query_len;
-		while(n > BUFFER_CHUNK_SIZE) {
-			query_ptr = buffer_index_read(&query, 0);
-			memcpy(query_str + query_len - n, query_ptr, BUFFER_CHUNK_SIZE - query.offset);
-			n -= BUFFER_CHUNK_SIZE - query.offset;
-			query.chunk++;
-			query.offset = 0;
-		}
-		query_ptr = buffer_index_read(&query, 0);
-		memcpy(query_str + query_len - n, query_ptr, n);
-		return RedisModule_CreateString(ctx, query_str, query_len);
-	}
+	bolt_read_string_size(&client->msg_buf.read, &query_len);
+	char *query = rm_malloc(query_len);
+	bolt_read_string(&client->msg_buf.read, query);
 	uint32_t params_count = bolt_read_map_size(&client->msg_buf.read);
 	if(params_count > 0) {
 		char prametrize_query[4096];
 		int n = sprintf(prametrize_query, "CYPHER ");
 		for (int i = 0; i < params_count; i++) {
 			uint32_t key_len;
-			buffer_index_t key = bolt_read_string(&client->msg_buf.read, &key_len);
-			char *key_ptr = buffer_index_read(&key, key_len);
-			n += sprintf(prametrize_query + n, "%.*s=", key_len, key_ptr);
+			bolt_read_string_size(&client->msg_buf.read, &key_len);
+			char key[key_len];
+			bolt_read_string(&client->msg_buf.read, key);
+			n += sprintf(prametrize_query + n, "%.*s=", key_len, key);
 			n += write_value(prametrize_query + n, &client->msg_buf.read);
 			n += sprintf(prametrize_query + n, " ");
 		}
-		n += sprintf(prametrize_query + n, "%.*s", query_len, query_ptr);
+		n += sprintf(prametrize_query + n, "%.*s", query_len, query);
+		rm_free(query);
 		return RedisModule_CreateString(ctx, prametrize_query, n);
 	}
 
-	return RedisModule_CreateString(ctx, query_ptr, query_len);
+	RedisModuleString *res = RedisModule_CreateString(ctx, query, query_len);
+	rm_free(query);
+	return res;
 }
 
 // handle the RUN message
