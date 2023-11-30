@@ -38,6 +38,10 @@
 #define TINY_SIZE 16
 #define TINY_MARKER_CHECK(base, marker) (marker >= base && marker <= base + 0x0F)
 
+//------------------------------------------------------------------------------
+// Write functions
+//------------------------------------------------------------------------------
+
 // write null to client response buffer
 void bolt_reply_null
 (
@@ -245,6 +249,10 @@ void bolt_reply_structure
 	buffer_write_uint8(&client->write_buf.write, STRUCTURE_BASE_MARKER + size);
 	buffer_write_uint8(&client->write_buf.write, type);
 }
+
+//------------------------------------------------------------------------------
+// Read functions
+//------------------------------------------------------------------------------
 
 // read value type from buffer
 bolt_value_type bolt_read_type
