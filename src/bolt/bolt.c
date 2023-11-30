@@ -495,18 +495,7 @@ void bolt_read_string
 	_bolt_read_string_size(data, &size);
 
 	buffer_index_t start = *data;
-	char *query = buffer_index_read(data, size);
-	buffer_index_t end = *data;
-	int n = size;
-	while(start.chunk < end.chunk) {
-		query = buffer_index_read(&start, 0);
-		memcpy(str + size - n, query, BUFFER_CHUNK_SIZE - start.offset);
-		n -= BUFFER_CHUNK_SIZE - start.offset;
-		start.chunk++;
-		start.offset = 0;
-	}
-	query = buffer_index_read(&start, 0);
-	memcpy(str + size - n, query, n);
+	buffer_index_read(data, str, size);
 }
 
 // read bytes size from buffer

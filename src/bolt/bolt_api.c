@@ -636,7 +636,7 @@ void BoltReadHandler
 			size = ntohs(buffer_read_uint16(&current_read));
 			while(size > 0) {
 				if(buffer_index_diff(&client->read_buf.write, &current_read) < size) break;
-				buffer_index_read(&current_read, size);
+				buffer_index_read(&current_read, NULL, size);
 				size = ntohs(buffer_read_uint16(&current_read));
 			}
 			if(size > 0) break;

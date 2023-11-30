@@ -38,18 +38,29 @@ void buffer_index_add
 	}
 }
 
-// return the pointer to the data and increment the index
-char *buffer_index_read
+// copy the data and increment the index
+void buffer_index_read
 (
 	buffer_index_t *index,  // index
+	char *ptr,              // pointer
 	uint32_t size           // size
 ) {
 	ASSERT(index != NULL);
 	ASSERT(buffer_index_diff(&index->buf->write, index) >= size);
 
-	char *ptr = index->buf->chunks[index->chunk] + index->offset;
+	buffer_index_t start = *index;
+	char *from = index->buf->chunks[index->chunk] + index->offset;
 	buffer_index_add(index, size);
-	return ptr;
+	if(ptr != NULL) {
+		while (start.chunk < index->chunk) {
+			memcpy(ptr, from, BUFFER_CHUNK_SIZE - start.offset);
+			ptr += BUFFER_CHUNK_SIZE - start.offset;
+			start.chunk++;
+			start.offset = 0;
+			from = index->buf->chunks[start.chunk];
+		}
+		memcpy(ptr, from, index->offset - start.offset);
+	}
 }
 
 // the length between two indexes
@@ -86,7 +97,9 @@ uint8_t buffer_read_uint8
 ) {
 	ASSERT(buf != NULL);
 
-	return *buffer_index_read(buf, 1);
+	uint8_t res;
+	buffer_index_read(buf, (char *)&res, 1);
+	return res;
 }
 
 // read a uint16_t from the buffer
@@ -96,7 +109,9 @@ uint16_t buffer_read_uint16
 ) {
 	ASSERT(buf != NULL);
 
-	return *(uint16_t *)buffer_index_read(buf, 2);
+	uint16_t res;
+	buffer_index_read(buf, (char *)&res, 2);
+	return res;
 }
 
 // read a uint32_t from the buffer
@@ -106,7 +121,9 @@ uint32_t buffer_read_uint32
 ) {
 	ASSERT(buf != NULL);
 
-	return *(uint32_t *)buffer_index_read(buf, 4);
+	uint32_t res;
+	buffer_index_read(buf, (char *)&res, 4);
+	return res;
 }
 
 // read a uint64_t from the buffer
@@ -116,7 +133,9 @@ uint64_t buffer_read_uint64
 ) {
 	ASSERT(buf != NULL);
 
-	return *(uint64_t *)buffer_index_read(buf, 8);
+	uint64_t res;
+	buffer_index_read(buf, (char *)&res, 8);
+	return res;
 }
 
 // copy data from the buffer to the destination

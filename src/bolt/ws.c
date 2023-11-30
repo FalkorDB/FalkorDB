@@ -23,7 +23,7 @@ bool parse_headers
 	ASSERT(request != NULL);
 	ASSERT(sec_ws_key != NULL);
 
-	char *data = buffer_index_read(request, 0);
+	char *data = request->buf->chunks[request->chunk] + request->offset;
 	char *line = strtok(data, "\r\n");
 	while (line != NULL) {
 		if (strncmp(line, "Sec-WebSocket-Key: ", 19) == 0) {
@@ -124,7 +124,7 @@ uint64_t ws_read_frame
 	bool mask = (frame_header >> 7) & 0x1;
 	if(mask) {
 		uint32_t masking_key = buffer_read_uint32(buf);
-		char *payload = buffer_index_read(buf, 0);
+		char *payload = buf->buf->chunks[buf->chunk] + buf->offset;
 		for(int i = 0; i < payload_len; i++) {
 			payload[i] ^= ((char*)&masking_key)[i % 4];
 		}

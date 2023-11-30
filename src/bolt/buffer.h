@@ -33,10 +33,11 @@ void buffer_index
 	uint32_t offset         // offset
 );
 
-// return the pointer to the data and increment the index
-char *buffer_index_read
+// copy the data and increment the index
+void buffer_index_read
 (
 	buffer_index_t *index,  // index
+	char *ptr,              // pointer
 	uint32_t size           // size
 );
 

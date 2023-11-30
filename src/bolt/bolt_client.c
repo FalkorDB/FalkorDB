@@ -680,7 +680,8 @@ bolt_version_t bolt_read_supported_version
 ) {
 	ASSERT(client != NULL);
 
-	char *data = buffer_index_read(&client->read_buf.read, 16);
+	char data[16];
+	buffer_index_read(&client->read_buf.read, data, 16);
 	bolt_version_t version;
 	version.minor = data[2];
 	version.major = data[3];
