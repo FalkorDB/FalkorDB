@@ -82,7 +82,7 @@ class testStressFlow():
     def __init__(self):
         # skip test if we're running under Valgrind
         if VALGRIND or SANITIZER != "" or CODE_COVERAGE:
-            Env.skip(None) # valgrind is not working correctly with multi process
+            Environment.skip(None) # valgrind is not working correctly with multi process
 
         self.env, self.db = Env()
 
