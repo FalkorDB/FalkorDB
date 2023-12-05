@@ -2,7 +2,7 @@ from common import *
 import random
 from index_utils import *
 from click.testing import CliRunner
-from redisgraph_bulk_loader.bulk_insert import bulk_insert
+from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 class testGraphPersistency():
     def __init__(self):

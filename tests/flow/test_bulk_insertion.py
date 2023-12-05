@@ -4,7 +4,7 @@ import csv
 import time
 import threading
 from click.testing import CliRunner
-from redisgraph_bulk_loader.bulk_insert import bulk_insert
+from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 GRAPH_ID    = "graph"
 port        = None
