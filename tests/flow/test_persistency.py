@@ -2,7 +2,7 @@ from common import *
 import random
 from index_utils import *
 from click.testing import CliRunner
-from redisgraph_bulk_loader.bulk_insert import bulk_insert
+from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 class testGraphPersistency():
     def __init__(self):
@@ -234,7 +234,7 @@ class testGraphPersistency():
 
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',
