@@ -43,6 +43,7 @@ jobs:
       run: make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
+      id: unit_tests
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
@@ -53,6 +54,7 @@ jobs:
         retention-days: 7
 
     - name: Flow tests
+      id: flow_tests
       run: make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
@@ -63,6 +65,7 @@ jobs:
         retention-days: 7
 
     - name: TCK tests
+      id: tck_tests
       run: make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
@@ -71,3 +74,7 @@ jobs:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
+
+    - name: Check on failures
+        if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
+        run: exit 1
