@@ -10,7 +10,7 @@ class testNodeIndexDeletionFlow():
         # drop index is an async operation which can cause Valgraind
         # to wrongfully report as a leak
         if VALGRIND:
-            Env.skip(None)
+            Environment.skip(None)
 
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
@@ -278,7 +278,7 @@ class testEdgeIndexDeletionFlow():
         # drop index is an async operation which can cause Valgraind
         # to wrongfully report as a leak
         if VALGRIND:
-            Env.skip(None)
+            Environment.skip(None)
 
         self.env, self.db = Env()
         self.g = self.db.select_graph(GRAPH_ID)
