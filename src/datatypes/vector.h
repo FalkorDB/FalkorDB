@@ -62,6 +62,14 @@ size_t SIVector_ElementsByteSize
 	SIValue vector // vector to get binary size of
 );
 
+// computes the euclidean distance between two vectors
+// distance = sqrt(sum((a[i] - b[i])^2))
+float SIVector_EuclideanDistance
+(
+	SIValue a,  // first vector
+	SIValue b   // second vector
+);
+
 // write a string representation of vector to buf
 void SIVector_ToString
 (

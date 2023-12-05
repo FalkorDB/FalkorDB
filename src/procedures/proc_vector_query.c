@@ -22,6 +22,8 @@ typedef struct {
 	Graph *g;                 // graph
 	RSIndex *idx;             // vector index
 	RSResultsIterator *iter;  // iterator over query results
+	SIValue q;                // query vector
+	Attribute_ID attr_id;     // vector attribute ID
 	SIValue output[2];        // yield array
 	SIValue *yield_entity;    // yield node
 	SIValue *yield_score;     // yield score
@@ -30,17 +32,21 @@ typedef struct {
 // create procedure private data
 static VectorKNNCtx *_create_private_data
 (
-	GraphContext *gc,  // graph context
-	RSIndex *idx,      // index
-	RSQNode *root,     // RediSearch query
-	GraphEntityType t  // entity type
+	GraphContext *gc,      // graph context
+	SIValue q,             // query vector
+	Attribute_ID attr_id,  // vector attribute ID
+	RSIndex *idx,          // index
+	RSQNode *root,         // RediSearch query
+	GraphEntityType t      // entity type
 ) {
 	VectorKNNCtx *ctx = (VectorKNNCtx*)rm_calloc(1, sizeof(VectorKNNCtx));
 
-	ctx->t    = t;
-	ctx->g    = gc->g;
-	ctx->idx  = idx;
-	ctx->iter = RediSearch_GetResultsIterator(root, idx);
+	ctx->t       = t;
+	ctx->q       = q;
+	ctx->g       = gc->g;
+	ctx->idx     = idx;
+	ctx->iter    = RediSearch_GetResultsIterator(root, idx);
+	ctx->attr_id = attr_id;
 
 	ASSERT(ctx->iter != NULL);
 
@@ -83,7 +89,7 @@ static bool _extractArgs
 
 	// extract "k"
 	v = args[2];
-	if(SI_TYPE(v) != T_INT64) {
+	if(SI_TYPE(v) != T_INT64 || v.longval <= 0) {
 		return false;
 	}
 	*k = v.longval;
@@ -118,21 +124,21 @@ static SIValue *Proc_NodeStep
 		return NULL;
 	}
 
+	Node *n  = &pdata->n;
+	bool res = Graph_GetNode(pdata->g, *(NodeID*)id, n);
+	ASSERT(res == true);
+
 	// yield graph entity
 	if(pdata->yield_entity) {
-		bool res;
-		// yield node
-		// get graph entity
-		Node *n = &pdata->n;
-		res = Graph_GetNode(pdata->g, *(NodeID*)id, n);
-		ASSERT(res == true);
 		*pdata->yield_entity = SI_Node(n);
 	}
 
 	if(pdata->yield_score) {
-		// get result score
-		double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
-		*pdata->yield_score = SI_DoubleVal(score);
+		SIValue *v = GraphEntity_GetProperty((GraphEntity*)n, pdata->attr_id);
+		ASSERT(v != ATTRIBUTE_NOTFOUND);
+
+		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		*pdata->yield_score = distance;
 	}
 
 	return pdata->output;
@@ -158,22 +164,25 @@ static SIValue *Proc_EdgeStep
 		return NULL;
 	}
 
+	Edge *e = &pdata->e;
+	pdata->e.src_id  = edge_key->src_id;
+	pdata->e.dest_id = edge_key->dest_id;
+	EntityID edge_id = edge_key->edge_id;
+
+	bool res = Graph_GetEdge(pdata->g, edge_id, e);
+	ASSERT(res == true);
+
 	// yield graph entity
 	if(pdata->yield_entity) {
-		bool res;
-		Edge *e = &pdata->e;
-		EntityID edge_id = edge_key->edge_id;
-		pdata->e.src_id  = edge_key->src_id;
-		pdata->e.dest_id = edge_key->dest_id;
-		res = Graph_GetEdge(pdata->g, edge_id, e);
-		ASSERT(res == true);
 		*pdata->yield_entity = SI_Edge(e);
 	}
 
 	if(pdata->yield_score) {
-		// get result score
-		double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
-		*pdata->yield_score = SI_DoubleVal(score);
+		SIValue *v = GraphEntity_GetProperty((GraphEntity*)e, pdata->attr_id);
+		ASSERT(v != ATTRIBUTE_NOTFOUND);
+
+		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		*pdata->yield_score = distance;
 	}
 
 	return pdata->output;
@@ -254,7 +263,8 @@ static ProcedureResult Proc_VectorQueryInvoke
 
 	// create procedure private data
 	RSIndex *rsIdx = Index_RSIndex(idx);
-	ctx->privateData = _create_private_data(gc, rsIdx, root, et);
+	ctx->privateData = _create_private_data(gc, query_vector, attr_id, rsIdx,
+			root, et);
 
 	return PROCEDURE_OK;
 }
@@ -287,6 +297,7 @@ ProcedureResult Proc_VectorQueryNodeInvoke
 		}
 
 		if(strcasecmp("score", yield[i]) == 0) {
+			pdata->q = SI_CloneValue(pdata->q); // clone query vector
 			pdata->yield_score = pdata->output + idx;
 			idx++;
 			continue;
@@ -324,6 +335,7 @@ ProcedureResult Proc_VectorQueryRelInvoke
 		}
 
 		if(strcasecmp("score", yield[i]) == 0) {
+			pdata->q = SI_CloneValue(pdata->q); // clone query vector
 			pdata->yield_score = pdata->output + idx;
 			idx++;
 			continue;
@@ -348,6 +360,9 @@ ProcedureResult Proc_VectorKNNFree
 	if(pdata->iter) {
 		RediSearch_ResultsIteratorFree(pdata->iter);
 	}
+
+	// free query vector
+	SIValue_Free(pdata->q);
 
 	rm_free(pdata);
 
