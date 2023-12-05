@@ -106,7 +106,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_VECTOR);
 	array_append(types, T_NULL | T_VECTOR);
 	ret_type = T_NULL | T_DOUBLE;
-	func_desc = AR_FuncDescNew("euclideanDistance", AR_EUCLIDEAN_DISTANCE, 2, 2, types, ret_type,
+	func_desc = AR_FuncDescNew("vec.euclideanDistance", AR_EUCLIDEAN_DISTANCE, 2, 2, types, ret_type,
 			false, true);
 	AR_RegFunc(func_desc);
 }

@@ -41,7 +41,7 @@ class testVecsim():
 
     def test01_vector_distance(self):
         # compute euclidean distance between two vectors
-        q = """RETURN euclideanDistance(vecf32($a), vecf32($b)) AS dist"""
+        q = """RETURN vec.euclideanDistance(vecf32($a), vecf32($b)) AS dist"""
 
         # distance between NULL and NULL should be NULL
         # distance between NULL and vector should be NULL
@@ -123,7 +123,7 @@ class testVecsim():
         q = """WITH vecf32($q) as v
                CALL db.idx.vector.queryNodes('Person', 'embeddings', $k, v)
                YIELD node, score
-               RETURN score, euclideanDistance(node.embeddings, v) AS dist"""
+               RETURN score, vec.euclideanDistance(node.embeddings, v) AS dist"""
         res = self.graph.ro_query(q, params={'k':k, 'q': [x, y]}).result_set
 
         prev_score = float('-inf')
