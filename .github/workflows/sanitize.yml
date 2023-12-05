@@ -76,5 +76,5 @@ jobs:
         retention-days: 7
 
     - name: Check on failures
-        if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
-        run: exit 1
+      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
+      run: exit 1
