@@ -763,9 +763,10 @@ int BoltApi_Register
 	RedisModuleServerInfoData *data = RedisModule_GetServerInfo(ctx, "Server");
 	uint64_t redis_port = RedisModule_ServerInfoGetFieldUnsigned(data, "tcp_port", NULL);
 	RedisModule_FreeServerInfo(ctx, data);
-    socket_t bolt = socket_bind(7687 + 6379 - redis_port);
+	uint16_t port = 7687 + 6379 - redis_port;
+    socket_t bolt = socket_bind(port);
 	if(bolt == -1) {
-		RedisModule_Log(ctx, "warning", "Failed to bind to port 7687");
+		RedisModule_Log(ctx, "warning", "Failed to bind to port %d", port);
 		return REDISMODULE_ERR;
 	}
 
@@ -775,7 +776,7 @@ int BoltApi_Register
 		RedisModule_Log(ctx, "warning", "Failed to register socket accept handler");
 		return REDISMODULE_ERR;
 	}
-	RedisModule_Log(NULL, "notice", "bolt server initialized");
+	RedisModule_Log(NULL, "notice", "Bolt protocol initialized. Port: %d", port);
 
 	COMMAND = RedisModule_CreateString(global_ctx, "graph.QUERY", 11);
 	BOLT = RedisModule_CreateString(global_ctx, "--bolt", 6);

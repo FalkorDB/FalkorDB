@@ -96,8 +96,9 @@ void bolt_reply_int16
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, INT16_MARKER);
-	buffer_write_uint16(&client->write_buf.write, htons(data));
+	int8_t values[3] = {INT16_MARKER, 0, 0};
+	*(int16_t *)(values + 1) = htons(data);
+	buffer_write(&client->write_buf.write, values, 3);
 }
 
 // write int32 value to client response buffer
@@ -108,8 +109,9 @@ void bolt_reply_int32
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, INT32_MARKER);
-	buffer_write_uint32(&client->write_buf.write, htonl(data));
+	int8_t values[5] = {INT32_MARKER, 0, 0, 0, 0};
+	*(int32_t *)(values + 1) = htonl(data);
+	buffer_write(&client->write_buf.write, values, 5);
 }
 
 // write int64 value to client response buffer
@@ -120,8 +122,9 @@ void bolt_reply_int64
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, INT64_MARKER);
-	buffer_write_uint64(&client->write_buf.write, htonll(data));
+	int8_t values[9] = {INT64_MARKER, 0, 0, 0, 0, 0, 0, 0, 0};
+	*(int64_t *)(values + 1) = htonll(data);
+	buffer_write(&client->write_buf.write, values, 9);
 }
 
 // write int value to client response buffer
@@ -179,11 +182,13 @@ void bolt_reply_string
 		int8_t values[2] = {STRING8_MARKER, size};
     	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
-		buffer_write_uint8(&client->write_buf.write, STRING16_MARKER);
-		buffer_write_uint16(&client->write_buf.write, htons(size));
+		int8_t values[3] = {STRING16_MARKER, 0, 0};
+		*(uint16_t *)(values + 1) = htons(size);
+		buffer_write(&client->write_buf.write, values, 3);
 	} else {
-		buffer_write_uint8(&client->write_buf.write, STRING32_MARKER);
-		buffer_write_uint32(&client->write_buf.write, htonl(size));
+		int8_t values[5] = {STRING32_MARKER, 0, 0, 0, 0};
+		*(uint32_t *)(values + 1) = htonl(size);
+		buffer_write(&client->write_buf.write, values, 5);
 	}
 	buffer_write(&client->write_buf.write, data, size);
 }
@@ -203,11 +208,13 @@ void bolt_reply_list
 		int8_t values[2] = {LIST8_MARKER, size};
     	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
-		buffer_write_uint8(&client->write_buf.write, LIST16_MARKER);
-		buffer_write_uint16(&client->write_buf.write, htons(size));
+		int8_t values[3] = {LIST16_MARKER, 0, 0};
+		*(uint16_t *)(values + 1) = htons(size);
+		buffer_write(&client->write_buf.write, values, 3);
 	} else {
-		buffer_write_uint8(&client->write_buf.write, LIST32_MARKER);
-		buffer_write_uint32(&client->write_buf.write, htonl(size));
+		int8_t values[5] = {LIST32_MARKER, 0, 0, 0, 0};
+		*(uint32_t *)(values + 1) = htonl(size);
+		buffer_write(&client->write_buf.write, values, 5);
 	}
 }
 
@@ -228,11 +235,13 @@ void bolt_reply_map
 		int8_t values[2] = {MAP8_MARKER, size};
     	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
-		buffer_write_uint8(&client->write_buf.write, MAP16_MARKER);
-		buffer_write_uint16(&client->write_buf.write, htons(size));
+		int8_t values[3] = {MAP16_MARKER, 0, 0};
+		*(uint16_t *)(values + 1) = htons(size);
+		buffer_write(&client->write_buf.write, values, 3);
 	} else {
-		buffer_write_uint8(&client->write_buf.write, MAP32_MARKER);
-		buffer_write_uint32(&client->write_buf.write, htonl(size));
+		int8_t values[5] = {MAP32_MARKER, 0, 0, 0, 0};
+		*(uint32_t *)(values + 1) = htonl(size);
+		buffer_write(&client->write_buf.write, values, 5);
 	}
 }
 

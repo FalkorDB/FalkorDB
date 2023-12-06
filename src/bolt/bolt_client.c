@@ -612,7 +612,7 @@ void bolt_client_send
 	if(client->reset) {
 		array_clear(client->write_messages);
 		buffer_index(&client->write_buf, &client->write_buf.write, 0);
-		array_append(client->write_messages, (bolt_message_t){});
+		array_append(client->write_messages, (bolt_message_t){0});
 		bolt_message_t *msg = client->write_messages;
 		msg->bolt_header = client->write_buf.write;
 		buffer_write_uint16(&client->write_buf.write, 0x0000);

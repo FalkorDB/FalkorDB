@@ -46,10 +46,11 @@ void buffer_index_read
 	uint32_t size           // size
 ) {
 	ASSERT(index != NULL);
+	// check if there is enough data to read
 	ASSERT(buffer_index_diff(&index->buf->write, index) >= size);
 
 	buffer_index_t start = *index;
-	char *from = index->buf->chunks[index->chunk] + index->offset;
+	char *from = start.buf->chunks[start.chunk] + start.offset;
 	buffer_index_add(index, size);
 	if(ptr != NULL) {
 		while (start.chunk < index->chunk) {
@@ -71,6 +72,7 @@ uint16_t buffer_index_diff
 ) {
 	ASSERT(a != NULL);
 	ASSERT(b != NULL);
+	ASSERT(a->buf == b->buf);
 
 	uint16_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
 	ASSERT(diff >= 0);
@@ -147,6 +149,7 @@ void buffer_read
 ) {
 	ASSERT(buf != NULL);
 	ASSERT(dst != NULL);
+	// check if there is enough data to read
 	ASSERT(buffer_index_diff(&buf->buf->write, buf) >= size);
 
 	char *src_ptr;
