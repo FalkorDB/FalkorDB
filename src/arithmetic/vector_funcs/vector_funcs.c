@@ -34,7 +34,7 @@ SIValue AR_VECTOR32F
 
 	// validate input contains only floats
 	if(SIArray_AllOfType(arr, SI_NUMERIC) == false) {
-		ErrorCtx_RaiseRuntimeException(EMSG_VECTOR_TYPE_ERROR, 32);
+		ErrorCtx_SetError(EMSG_VECTOR_TYPE_ERROR, 32);
 		return SI_NullVal();
 	}
 
@@ -79,7 +79,7 @@ SIValue AR_EUCLIDEAN_DISTANCE
 	uint32_t n1 = SIVector_Dim(v1);
 	uint32_t n2 = SIVector_Dim(v2);
 	if(n1 != n2) {
-		ErrorCtx_RaiseRuntimeException(EMSG_VECTOR_DIMENSION_MISMATCH);
+		ErrorCtx_SetError(EMSG_VECTOR_DIMENSION_MISMATCH);
 		return SI_NullVal();
 	}
 
