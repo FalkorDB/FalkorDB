@@ -295,11 +295,11 @@ void buffer_write
 	ASSERT(data != NULL);
 
 	while(buf->offset + size > BUFFER_CHUNK_SIZE) {
-		uint32_t first_chunk_size = BUFFER_CHUNK_SIZE - buf->offset;
-		memcpy(buf->buf->chunks[buf->chunk] + buf->offset, data, first_chunk_size);
-		buffer_index_add(buf, first_chunk_size);
-		data += first_chunk_size;
-		size -= first_chunk_size;
+		uint32_t n = BUFFER_CHUNK_SIZE - buf->offset;
+		memcpy(buf->buf->chunks[buf->chunk] + buf->offset, data, n);
+		buffer_index_add(buf, n);
+		data += n;
+		size -= n;
 		buf->chunk++;
 		buf->offset = 0;
 		if(array_len(buf->buf->chunks) == buf->chunk) {

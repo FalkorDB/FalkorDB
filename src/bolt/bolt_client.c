@@ -39,7 +39,7 @@ bolt_client_t *bolt_client_new
 }
 
 // change the client state from BS_NEGOTIATION according to the request and response type
-void bolt_change_negotiation_state
+static void bolt_change_negotiation_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
@@ -62,7 +62,7 @@ void bolt_change_negotiation_state
 }
 
 // change the client state from BS_AUTHENTICATION according to the request and response type
-void bolt_change_authentication_state
+static void bolt_change_authentication_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
@@ -85,7 +85,7 @@ void bolt_change_authentication_state
 }
 
 // change the client state from BS_READY according to the request and response type
-void bolt_change_ready_state
+static void bolt_change_ready_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
@@ -157,7 +157,7 @@ void bolt_change_ready_state
 }
 
 // change the client state from BS_STREAMING according to the request and response type
-void bolt_change_streaming_state
+static void bolt_change_streaming_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
@@ -207,7 +207,7 @@ void bolt_change_streaming_state
 
 
 // change the client state from BS_TX_READY according to the request and response type
-void bolt_change_txready_state
+static void bolt_change_txready_state
 (
 	bolt_client_t *client, 		       // the client
 	bolt_structure_type request_type,  // the request type
@@ -269,7 +269,7 @@ void bolt_change_txready_state
 }
 
 // change the client state from BS_TX_STREAMING according to the request and response type
-void bolt_change_txstreaming_state
+static void bolt_change_txstreaming_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
@@ -344,7 +344,7 @@ void bolt_change_txstreaming_state
 }
 
 // change the client state from BS_FAILED according to the request and response type
-void bolt_change_failed_state
+static void bolt_change_failed_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
@@ -397,7 +397,7 @@ void bolt_change_failed_state
 }
 
 // change the client state from BS_INTERRUPTED according to the request and response type
-void bolt_change_interrupted_state
+static void bolt_change_interrupted_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type

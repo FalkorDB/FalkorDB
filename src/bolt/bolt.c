@@ -84,8 +84,8 @@ void bolt_reply_int8
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, INT8_MARKER);
-	buffer_write_uint8(&client->write_buf.write, data);
+	int8_t values[2] = {INT8_MARKER, data};
+    buffer_write(&client->write_buf.write, values, 2);
 }
 
 // write int16 value to client response buffer
@@ -176,8 +176,8 @@ void bolt_reply_string
 	if (size < TINY_SIZE) {
 		buffer_write_uint8(&client->write_buf.write, TINY_STRING_BASE_MARKER + size);
 	} else if (size <= UINT8_MAX) {
-		buffer_write_uint8(&client->write_buf.write, STRING8_MARKER);
-		buffer_write_uint8(&client->write_buf.write, size);
+		int8_t values[2] = {STRING8_MARKER, size};
+    	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
 		buffer_write_uint8(&client->write_buf.write, STRING16_MARKER);
 		buffer_write_uint16(&client->write_buf.write, htons(size));
@@ -200,8 +200,8 @@ void bolt_reply_list
 	if (size < TINY_SIZE) {
 		buffer_write_uint8(&client->write_buf.write, TINY_LIST_BASE_MARKER + size);
 	} else if (size <= UINT8_MAX) {
-		buffer_write_uint8(&client->write_buf.write, LIST8_MARKER);
-		buffer_write_uint8(&client->write_buf.write, size);
+		int8_t values[2] = {LIST8_MARKER, size};
+    	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
 		buffer_write_uint8(&client->write_buf.write, LIST16_MARKER);
 		buffer_write_uint16(&client->write_buf.write, htons(size));
@@ -225,8 +225,8 @@ void bolt_reply_map
 	if (size < TINY_SIZE) {
 		buffer_write_uint8(&client->write_buf.write, TINY_MAP_BASE_MARKER + size);
 	} else if (size <= UINT8_MAX) {
-		buffer_write_uint8(&client->write_buf.write, MAP8_MARKER);
-		buffer_write_uint8(&client->write_buf.write, size);
+		int8_t values[2] = {MAP8_MARKER, size};
+    	buffer_write(&client->write_buf.write, values, 2);
 	} else if (size <= UINT16_MAX) {
 		buffer_write_uint8(&client->write_buf.write, MAP16_MARKER);
 		buffer_write_uint16(&client->write_buf.write, htons(size));
@@ -246,8 +246,8 @@ void bolt_reply_structure
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, STRUCTURE_BASE_MARKER + size);
-	buffer_write_uint8(&client->write_buf.write, type);
+	int8_t values[2] = {STRUCTURE_BASE_MARKER + size, type};
+    buffer_write(&client->write_buf.write, values, 2);
 }
 
 //------------------------------------------------------------------------------
