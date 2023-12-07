@@ -13,6 +13,7 @@
 
 RedisModuleString *COMMAND;
 RedisModuleString *BOLT;
+rax *clients;
 
 // handle the HELLO message
 static void BoltHelloCommand
@@ -563,6 +564,7 @@ void BoltRequestHandler
 			break;
 		case BST_GOODBYE:
 			client->processing = false;
+			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 			bolt_client_free(client);
 			break;
 		case BST_RUN:
@@ -610,6 +612,7 @@ void BoltReadHandler
 			client->shutdown = true;
 			return;
 		}
+		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
@@ -657,12 +660,14 @@ void BoltHandshakeHandler
 	if(!buffer_socket_read(&client->read_buf, client->socket)) {
 		// client disconnected
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
 
 	if(client->ws && ws_read_frame(&client->read_buf.read) != 20) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
@@ -674,6 +679,7 @@ void BoltHandshakeHandler
 		buffer_index(&client->read_buf, &client->read_buf.read, 0);
 		if(!ws_handshake(&client->read_buf.read, &write)) {
 			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 			bolt_client_free(client);
 			return;
 		}
@@ -718,6 +724,7 @@ void BoltResponseHandler
 
 	if(client->shutdown) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
@@ -751,6 +758,7 @@ void BoltAcceptHandler
 	}
 
 	bolt_client_t *client = bolt_client_new(socket, global_ctx, BoltResponseHandler);
+	raxInsert(clients, (unsigned char *)&socket, sizeof(socket), client, NULL);
 	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
 }
 
@@ -780,6 +788,23 @@ int BoltApi_Register
 
 	COMMAND = RedisModule_CreateString(global_ctx, "graph.QUERY", 11);
 	BOLT = RedisModule_CreateString(global_ctx, "--bolt", 6);
+	clients = raxNew();
 
     return REDISMODULE_OK;
+}
+
+// free connected clients
+int BoltApi_Unregister
+(
+    RedisModuleCtx *ctx  // redis context
+) {
+	raxIterator iter;
+	raxStart(&iter, clients);
+	raxSeek(&iter, "^", NULL, 0);
+	while(raxNext(&iter)) {
+		bolt_client_t *client = iter.data;
+		bolt_client_free(client);
+	}
+	raxStop(&iter);
+	raxFree(clients);
 }
