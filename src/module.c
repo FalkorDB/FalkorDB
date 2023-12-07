@@ -219,9 +219,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 		return REDISMODULE_ERR;
 	}
 
-	if(BoltApi_Register(ctx) == REDISMODULE_ERR) {
-		return REDISMODULE_ERR;
-	}
+	// if(BoltApi_Register(ctx) == REDISMODULE_ERR) {
+	// 	return REDISMODULE_ERR;
+	// }
 
 	// set up global variables scoped to the entire module
 	Globals_Init();
