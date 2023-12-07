@@ -181,6 +181,12 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         expected_result = ["Ailon"]
         self.env.assertEquals(query_result.result_set[0], expected_result)
 
+        query = "MATCH ({created_at:1})-[:friend {created_at:31}]->({created_at:2}) RETURN 1"
+        plan = str(self.graph.explain(query))
+        self.env.assertIn('Edge By Index Scan', plan)
+        self.env.assertNotIn('Conditional Traverse', plan)
+        self.env.assertIn('Filter', plan)
+
     def test07_index_scan_with_params(self):
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at = $time RETURN n.name"
         params = {'time': 31}
