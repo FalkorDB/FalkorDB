@@ -798,6 +798,9 @@ int BoltApi_Unregister
 (
     RedisModuleCtx *ctx  // redis context
 ) {
+	ASSERT(ctx != NULL);
+	ASSERT(clients != NULL);
+
 	raxIterator iter;
 	raxStart(&iter, clients);
 	raxSeek(&iter, "^", NULL, 0);
