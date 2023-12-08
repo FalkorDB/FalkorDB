@@ -94,7 +94,12 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	return REDISMODULE_OK;
 }
 
-int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+int RedisModule_OnLoad
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString **argv,
+	int argc
+) {
 	if(RedisModule_Init(ctx, "graph", REDISGRAPH_MODULE_VERSION,
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
@@ -106,9 +111,11 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 
 	// validate minimum redis-server version
 	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERION_MAJOR,
-									 MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH)) {
-		RedisModule_Log(ctx, "warning", "FalkorDB requires redis-server version %d.%d.%d and up",
-						MIN_REDIS_VERION_MAJOR, MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH);
+				MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH)) {
+		RedisModule_Log(ctx, "warning",
+				"FalkorDB requires redis-server version %d.%d.%d and up",
+				MIN_REDIS_VERION_MAJOR, MIN_REDIS_VERION_MINOR,
+				MIN_REDIS_VERION_PATCH);
 		return REDISMODULE_ERR;
 	}
 
@@ -145,7 +152,8 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) 
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
 	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
-		RedisModule_Log(ctx, "warning", "Failed to set OpenMP thread count to %d", ompThreadCount);
+		RedisModule_Log(ctx, "warning",
+				"Failed to set OpenMP thread count to %d", ompThreadCount);
 		return REDISMODULE_ERR;
 	}
 

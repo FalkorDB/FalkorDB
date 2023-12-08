@@ -64,6 +64,9 @@
 // effects replication threshold
 #define EFFECTS_THRESHOLD "EFFECTS_THRESHOLD"
 
+// bolt protocol port
+#define BOLT_PORT "BOLT_PORT"
+
 
 //------------------------------------------------------------------------------
 // Configuration defaults
@@ -74,6 +77,7 @@
 #define VKEY_MAX_ENTITY_COUNT_DEFAULT      100000
 #define CMD_INFO_DEFAULT                   true
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
+#define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 
 // configuration object
 typedef struct {
@@ -94,6 +98,7 @@ typedef struct {
 	bool cmd_info_on;                  // If true, the GRAPH.INFO is enabled.
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
 	uint32_t max_info_queries_count;   // Maximum number of query info elements.
+	int16_t bolt_port;                 // bolt protocol port
 } RG_Config;
 
 RG_Config config; // global module configuration
@@ -436,10 +441,27 @@ static uint64_t Config_effects_threshold_get (void) {
 	return config.effects_threshold;
 }
 
+//------------------------------------------------------------------------------
+// bolt protocol port
+//------------------------------------------------------------------------------
+
+static void Config_bolt_port_set
+(
+	int16_t port
+) {
+	int16_t p = (port < 0) ? BOLT_PROTOCOL_PORT_DEFAULT : port;
+	config.bolt_port = p;
+}
+
+static int16_t Config_bolt_port_get(void) {
+	return config.bolt_port;
+}
+
+// check if field is a valid configuration option
 bool Config_Contains_field
 (
-	const char *field_str,
-	Config_Option_Field *field
+	const char *field_str,      // configuration option name
+	Config_Option_Field *field  // [out] configuration field
 ) {
 	ASSERT(field_str != NULL);
 
@@ -477,6 +499,8 @@ bool Config_Contains_field
 		f = Config_CMD_INFO_MAX_QUERY_COUNT;
 	} else if (!(strcasecmp(field_str, EFFECTS_THRESHOLD))) {
 		f = Config_EFFECTS_THRESHOLD;
+	} else if (!(strcasecmp(field_str, BOLT_PORT))) {
+		f = Config_BOLT_PORT;
 	} else {
 		return false;
 	}
@@ -549,10 +573,14 @@ const char *Config_Field_name
 
 		case Config_CMD_INFO_MAX_QUERY_COUNT:
 			name = CMD_INFO_MAX_QUERIES_COUNT_OPTION_NAME;
-      break;
+			break;
 
 		case Config_EFFECTS_THRESHOLD:
 			name = EFFECTS_THRESHOLD;
+			break;
+
+		case Config_BOLT_PORT:
+			name = BOLT_PORT;
 			break;
 
 		//----------------------------------------------------------------------
@@ -622,6 +650,9 @@ static void _Config_SetToDefaults(void) {
 
 	// replicate effects if avg change time μs > effects_threshold μs
 	config.effects_threshold = 300 ;
+
+	// bolt protocol port (disabled by default)
+	config.bolt_port = BOLT_PROTOCOL_PORT_DEFAULT;
 }
 
 int Config_Init
@@ -931,6 +962,20 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
+		// bolt protocol port
+		//----------------------------------------------------------------------
+
+		case Config_BOLT_PORT: {
+			va_start(ap, field);
+			int16_t *bolt_port = va_arg(ap, int16_t *);
+			va_end(ap);
+
+			ASSERT(bolt_port != NULL);
+			(*bolt_port) = Config_bolt_port_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
@@ -1157,6 +1202,7 @@ bool Config_Option_set
       }
   		break;
 
+		//----------------------------------------------------------------------
 		// effects threshold
 		//----------------------------------------------------------------------
 				
@@ -1166,6 +1212,19 @@ bool Config_Option_set
 				return false;
 			}
 			Config_effects_threshold_set(threshold);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// bolt protocol port
+		//----------------------------------------------------------------------
+
+		case Config_BOLT_PORT: {
+			long long port;
+			if(!_Config_ParseInteger(val, &port)) {
+				return false;
+			}
+			Config_bolt_port_set(port);
 		}
 		break;
 

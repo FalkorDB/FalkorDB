@@ -8,10 +8,10 @@ bolt_con = None
 
 class testBolt():
     def __init__(self):
-        self.env,_ = Env()
-        port = 7687 + 6379 - self.env.port
         global bolt_con
-        bolt_con = GraphDatabase.driver(f"bolt://localhost:{port}", auth=("falkordb", ""))
+        bolt_port = 7687
+        self.env,_ = Env(moduleArgs=f"BOLT_PORT {bolt_port}")
+        bolt_con = GraphDatabase.driver(f"bolt://localhost:{bolt_port}", auth=("falkordb", ""))
         # self.watcher = watch("neo4j")
 
     def test01_null(self):

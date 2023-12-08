@@ -10,9 +10,10 @@
 #include "bolt_api.h"
 #include "../util/uuid.h"
 #include "../commands/commands.h"
+#include "../configuration/config.h"
 
-RedisModuleString *COMMAND;
 RedisModuleString *BOLT;
+RedisModuleString *COMMAND;
 
 // handle the HELLO message
 static void BoltHelloCommand
@@ -754,16 +755,21 @@ void BoltAcceptHandler
 	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
 }
 
-// listen to bolt port 7687
+// listen on configured bolt port
+// in case bolt port is not configured, bolt is disabled
 // add the socket to the event loop
 int BoltApi_Register
 (
     RedisModuleCtx *ctx  // redis context
 ) {
-	RedisModuleServerInfoData *data = RedisModule_GetServerInfo(ctx, "Server");
-	uint64_t redis_port = RedisModule_ServerInfoGetFieldUnsigned(data, "tcp_port", NULL);
-	RedisModule_FreeServerInfo(ctx, data);
-	uint16_t port = 7687 + 6379 - redis_port;
+	int16_t port;
+	Config_Option_get(Config_BOLT_PORT, &port);
+
+	// bolt disabled
+	if(port == -1) {
+		return REDISMODULE_OK;
+	}
+
     socket_t bolt = socket_bind(port);
 	if(bolt == -1) {
 		RedisModule_Log(ctx, "warning", "Failed to bind to port %d", port);
