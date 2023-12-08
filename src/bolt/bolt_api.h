@@ -15,7 +15,8 @@ int BoltApi_Register
 );
 
 // free connected clients
-int BoltApi_Unregister
+void BoltApi_Unregister
 (
-    RedisModuleCtx *ctx  // redis context
+    void
 );
+

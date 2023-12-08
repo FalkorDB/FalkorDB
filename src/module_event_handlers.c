@@ -359,10 +359,10 @@ static void _ShutdownEventHandler
 	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
 	RediSearch_CleanupModule();
 
+	BoltApi_Unregister();
+
 	// free global variables
 	Globals_Free();
-
-	// BoltApi_Unregister(ctx);	
 }
 
 static void _ModuleLoadedHandler

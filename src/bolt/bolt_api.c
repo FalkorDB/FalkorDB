@@ -763,6 +763,26 @@ void BoltAcceptHandler
 	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
 }
 
+
+// checks if bolt is enabled
+static bool _bolt_enabled
+(
+	int16_t *port  // [output] the bolt port
+) {
+	// get bolt port from configuration
+	int16_t p;
+	Config_Option_get(Config_BOLT_PORT, &p);
+
+	// bolt is disabled if port is -1
+	bool enable = (p != -1);
+
+	// report port if requested
+	if(port != NULL) *port = p;
+
+	return enable;
+}
+
+
 // listen on configured bolt port
 // in case bolt port is not configured, bolt is disabled
 // add the socket to the event loop
@@ -771,7 +791,11 @@ int BoltApi_Register
     RedisModuleCtx *ctx  // redis context
 ) {
 	int16_t port;
-	Config_Option_get(Config_BOLT_PORT, &port);
+
+	// quick return if bolt is disabled
+	if(!_bolt_enabled(&port)) {
+		return REDISMODULE_OK;
+	}
 
 	// bolt disabled
 	if(port == -1) {
@@ -800,12 +824,14 @@ int BoltApi_Register
 }
 
 // free connected clients
-int BoltApi_Unregister
+void BoltApi_Unregister
 (
-    RedisModuleCtx *ctx  // redis context
+    void
 ) {
-	ASSERT(ctx != NULL);
 	ASSERT(clients != NULL);
+
+	// quick return if bolt is disabled
+	if(!_bolt_enabled(NULL)) return;
 
 	raxIterator iter;
 	raxStart(&iter, clients);
@@ -817,3 +843,4 @@ int BoltApi_Unregister
 	raxStop(&iter);
 	raxFree(clients);
 }
+

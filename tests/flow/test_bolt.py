@@ -81,30 +81,30 @@ class testBolt():
             self.env.assertEquals(record[2], 'A' * 255)
             self.env.assertEquals(record[3], 'A' * 256)
 
-     def test06_list(self):
-         with bolt_con.session() as session:
-             result = session.run("RETURN [], [1,2,3], $v8, $v16", {"v8": [1] * 255, "v16": [1] * 256})
-             record = result.single()
-             self.env.assertEquals(record[0], [])
-             self.env.assertEquals(record[1], [1,2,3])
-             self.env.assertEquals(record[2], [1] * 255)
-             self.env.assertEquals(record[3], [1] * 256)
+    def test06_list(self):
+        with bolt_con.session() as session:
+            result = session.run("RETURN [], [1,2,3], $v8, $v16", {"v8": [1] * 255, "v16": [1] * 256})
+            record = result.single()
+            self.env.assertEquals(record[0], [])
+            self.env.assertEquals(record[1], [1,2,3])
+            self.env.assertEquals(record[2], [1] * 255)
+            self.env.assertEquals(record[3], [1] * 256)
 
-     def test07_map(self):
-         with bolt_con.session() as session:
+    def test07_map(self):
+        with bolt_con.session() as session:
              result = session.run("RETURN {}, {foo:'bar'}, $v8", {"v8": {'foo':'bar'} })
              record = result.single()
              self.env.assertEquals(record[0], {})
              self.env.assertEquals(record[1], {'foo':'bar'})
              self.env.assertEquals(record[2], {'foo':'bar'})
 
-     def test08_point(self):
+    def test08_point(self):
          with bolt_con.session() as session:
              result = session.run("RETURN POINT({longitude:1, latitude:2})")
              record = result.single()
              self.env.assertEquals(record[0], WGS84Point((1, 2)))
-    
-     def test09_graph_entities_values(self):
+
+    def test09_graph_entities_values(self):
          with bolt_con.session() as session:
              result = session.run("""CREATE (a:A {v: 1})-[r1:R1]->(b:B)<-[r2:R2]-(c:C) RETURN a, r1, b, r2, c""")
              record = result.single()
