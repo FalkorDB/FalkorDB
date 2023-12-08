@@ -250,6 +250,15 @@ static ProcedureResult Proc_VectorQueryInvoke
 		return PROCEDURE_ERR;
 	}
 
+	// make sure query vector dimension matches index dimension
+	IndexField *f = Index_GetField(NULL, idx, attr_id);
+	uint32_t idx_dim = IndexField_OptionsGetDimension(f);
+	if(idx_dim != SIVector_Dim(query_vector)) {
+		ErrorCtx_SetError(EMSG_VECTOR_DIMENSION_MISMATCH, idx_dim,
+				SIVector_Dim(query_vector));
+		return PROCEDURE_ERR;
+	}
+
 	//--------------------------------------------------------------------------
 	// construct a vector query
 	//--------------------------------------------------------------------------

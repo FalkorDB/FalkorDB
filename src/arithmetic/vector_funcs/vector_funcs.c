@@ -79,7 +79,7 @@ SIValue AR_EUCLIDEAN_DISTANCE
 	uint32_t n1 = SIVector_Dim(v1);
 	uint32_t n2 = SIVector_Dim(v2);
 	if(n1 != n2) {
-		ErrorCtx_SetError(EMSG_VECTOR_DIMENSION_MISMATCH);
+		ErrorCtx_SetError(EMSG_VECTOR_DIMENSION_MISMATCH, n1, n2);
 		return SI_NullVal();
 	}
 
