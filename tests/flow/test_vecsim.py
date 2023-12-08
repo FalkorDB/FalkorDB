@@ -177,3 +177,24 @@ class testVecsim():
             self.env.assertFalse("Expected query to fail")
         except Exception as e:
             self.env.assertContains("Invalid arguments for procedure", str(e))
+
+    def test07_mismatch_vector_dim(self):
+        # try to query a vector index using a query vector with mismatched dimension
+
+        k = 10
+        q = [1,2,3] # query vector with dimension 3, should be 2
+
+        # query node vector index
+        try:
+            result = query_node_vector_index(self.graph, "Person", "embeddings", k, q).result_set
+            self.env.assertFalse("Expected query to fail")
+        except Exception as e:
+            self.env.assertEqual("Vector dimension mismatch, expected 2 but got 3", str(e))
+
+        # query edge vector index
+        try:
+            result = query_edge_vector_index(self.graph, "Points", "embeddings", k, q).result_set
+            self.env.assertFalse("Expected query to fail")
+        except Exception as e:
+            self.env.assertEqual("Vector dimension mismatch, expected 2 but got 3", str(e))
+

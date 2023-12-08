@@ -1,7 +1,7 @@
 from common import *
 
 # Number of options available.
-NUMBER_OF_OPTIONS = 16
+NUMBER_OF_OPTIONS = 17
 
 class testConfig(FlowTestsBase):
     def __init__(self):

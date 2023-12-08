@@ -10,10 +10,11 @@
 #include "bolt_api.h"
 #include "../util/uuid.h"
 #include "../commands/commands.h"
+#include "../configuration/config.h"
 
-RedisModuleString *COMMAND;
-RedisModuleString *BOLT;
 rax *clients;
+RedisModuleString *BOLT;
+RedisModuleString *COMMAND;
 
 // handle the HELLO message
 static void BoltHelloCommand
@@ -762,16 +763,45 @@ void BoltAcceptHandler
 	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
 }
 
-// listen to bolt port 7687
+
+// checks if bolt is enabled
+static bool _bolt_enabled
+(
+	int16_t *port  // [output] the bolt port
+) {
+	// get bolt port from configuration
+	int16_t p;
+	Config_Option_get(Config_BOLT_PORT, &p);
+
+	// bolt is disabled if port is -1
+	bool enable = (p != -1);
+
+	// report port if requested
+	if(port != NULL) *port = p;
+
+	return enable;
+}
+
+
+// listen on configured bolt port
+// in case bolt port is not configured, bolt is disabled
 // add the socket to the event loop
 int BoltApi_Register
 (
     RedisModuleCtx *ctx  // redis context
 ) {
-	RedisModuleServerInfoData *data = RedisModule_GetServerInfo(ctx, "Server");
-	uint64_t redis_port = RedisModule_ServerInfoGetFieldUnsigned(data, "tcp_port", NULL);
-	RedisModule_FreeServerInfo(ctx, data);
-	uint16_t port = 7687 + 6379 - redis_port;
+	int16_t port;
+
+	// quick return if bolt is disabled
+	if(!_bolt_enabled(&port)) {
+		return REDISMODULE_OK;
+	}
+
+	// bolt disabled
+	if(port == -1) {
+		return REDISMODULE_OK;
+	}
+
     socket_t bolt = socket_bind(port);
 	if(bolt == -1) {
 		RedisModule_Log(ctx, "warning", "Failed to bind to port %d", port);
@@ -794,12 +824,14 @@ int BoltApi_Register
 }
 
 // free connected clients
-int BoltApi_Unregister
+void BoltApi_Unregister
 (
-    RedisModuleCtx *ctx  // redis context
+    void
 ) {
-	ASSERT(ctx != NULL);
 	ASSERT(clients != NULL);
+
+	// quick return if bolt is disabled
+	if(!_bolt_enabled(NULL)) return;
 
 	raxIterator iter;
 	raxStart(&iter, clients);
@@ -811,3 +843,4 @@ int BoltApi_Unregister
 	raxStop(&iter);
 	raxFree(clients);
 }
+
