@@ -362,7 +362,7 @@ static void _ShutdownEventHandler
 	// free global variables
 	Globals_Free();
 
-	BoltApi_Unregister(ctx);	
+	// BoltApi_Unregister(ctx);	
 }
 
 static void _ModuleLoadedHandler
