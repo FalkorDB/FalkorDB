@@ -11,6 +11,7 @@
 #include "globals.h"
 #include "util/uuid.h"
 #include "cron/cron.h"
+#include "bolt/bolt_api.h"
 #include "util/thpool/pools.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
@@ -360,6 +361,8 @@ static void _ShutdownEventHandler
 
 	// free global variables
 	Globals_Free();
+
+	// BoltApi_Unregister(ctx);	
 }
 
 static void _ModuleLoadedHandler
