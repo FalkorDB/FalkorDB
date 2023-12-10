@@ -1,6 +1,6 @@
 # SuiteSparse:GraphBLAS
 
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -27,8 +27,6 @@ See the user guide in `Doc/GraphBLAS_UserGuide.pdf` for documentation on the
 SuiteSparse implementation of GraphBLAS, and how to use it in your
 applications.
 
-Note: memory pool has been disabled, to enable compile with _MEMPOOL defined
-
 See http://graphblas.org for more information on GraphBLAS, including the
 GraphBLAS C API.  See https://github.com/GraphBLAS/GraphBLAS-Pointers for
 additional resources on GraphBLAS.
@@ -38,8 +36,8 @@ QUICK START: To compile and install, do these commands in this directory:
     make
     sudo make install
 
-Please be patient; some files can take several minutes to compile.  Requires an
-ANSI C11 compiler, so cmake will fail if your compiler is not C11 compliant.
+Please be patient; some files can take several minutes to compile.  Requires a
+C11 compiler, so cmake will fail if your compiler is not C11 compliant.
 See the User Guide PDF in Doc/ for directions on how to use another compiler.
 
 For faster compilation, do this instead of just "make", which uses 32
@@ -64,6 +62,8 @@ README.md file with further details.
 ## Files and folders in this GraphBLAS directory:
 
 CMakeLists.txt:  cmake instructions to compile GraphBLAS
+
+cmake_modules:  additional cmake files
 
 Config:         version-dependent files used by CMake
 
@@ -93,9 +93,6 @@ Test:           Extensive tests, not meant for general usage.  To compile and
 
 build:          build directory for CMake, initially empty
 
-alternative:    an alternative to CMake; edit the alternative/Makefile and do
-                "make" or "make demo" in the 'alternative' directory.
-
 CUDA:           GPU interface, a work in progress.  This is being developed in
                 collaboration with Joe Eaton, Corey Nolet and others at NVIDIA,
                 with support from NVIDIA.  It appears in this release but the
@@ -108,9 +105,22 @@ cpu_features: (c) Google.com, Apache 2.0 license.
 logo:           the (awesome!) GraphBLAS logo by Jakab Rokob, CC BY 4.0 license
 
 lz4:            LZ4 compression, (c) 2011-2016, Yann Collet, BSD2 license
+zstd:           ZSTD compression, (c) Meta, by Yann Collet, BSD3 license
+xxHash:         xxHash code, (c) 2012-2021, Yann Collet
 
 rmm_wrap:       Rapids Memory Manager, (c) NVIDIA, to use with CUDA.
                 (draft; not yet in use)
+
+
+JITpackage:     a small program that packages the GraphBLAS source code into
+                the GraphBLAS library itself so it can compile the JIT kernels.
+                If you edit the GraphBLAS source code, see the README.txt file
+                in this director for instructions.
+
+LICENSE:        licenses for GraphBLAS and its 3rd party dependencies
+
+PreJIT:         a folder for JIT kernels that are to be integrated into the
+                compiled GraphBLAS library.
 
 --------------------------------------------------------------------------------
 
@@ -118,9 +128,9 @@ rmm_wrap:       Rapids Memory Manager, (c) NVIDIA, to use with CUDA.
 
 Versions v5.2.0 and earlier conform to the version 1.3.0 (Sept 25, 2019) of the
 GraphBLAS C API Specification.  Versions v6.0.0 and later conform to the
-version 2.0.0 (Nov, 2021) of the GraphBLAS C API Specification.  This library
-also includes several additional functions and features as extensions to the
-spec.
+version 2.0.0 (Nov, 2021) of the GraphBLAS C API Specification.   Versions
+9.0.0 and later conform to the v2.1.0 C API.  This library also includes
+several additional functions and features as extensions to the spec.
 
 All functions, objects, and macros with the prefix GxB are extensions to
 the spec.  Functions, objects, and macros with prefix GB must not be accessed
@@ -186,18 +196,53 @@ To support the development of GraphBLAS, contact the author (davis@tamu.edu) or
 the Texas A&M Foundation (True Brown, tbrown@txamfoundation.com; or Kevin
 McGinnis, kmcginnis@txamfoundation.com) for details.
 
-SuiteSparse:GraphBLAS, is copyrighted by Timothy A. Davis, (c) 2017-2022, All
+SuiteSparse:GraphBLAS, is copyrighted by Timothy A. Davis, (c) 2017-2023, All
 Rights Reserved.  davis@tamu.edu.
+
+-----------------------------------------------------------------------------
+
+## For distro maintainers (Linux, homebrew, spack, R, Octave, Trilinos, ...):
+
+Thanks for packaging SuiteSparse!  Here are some suggestions:
+
+    * GraphBLAS takes a long time to compile because it creates many fast
+        "FactoryKernels" at compile-time.  If you want to reduce the compile
+        time and library size, enable the COMPACT mode, but keep the JIT
+        enabled.  Then GraphBLAS will compile the kernels it needs at run-time,
+        via its JIT.  Performance will be the same as the FactoryKernels once
+        the JIT kernels are compiled.  User compiled kernels are placed in
+        ~/.SuiteSparse, by default.  You do not need to distribute the source
+        for GraphBLAS to enable the JIT: just libgraphblas.so and GraphBLAS.h
+        is enough.
+
+    * GraphBLAS needs OpenMP!  It's fundamentally a parallel code so please
+        distribute it with OpenMP enabled.  Performance will suffer
+        otherwise.
 
 --------------------------------------------------------------------------------
 
+## References:
+
+To cite this package, please use the following:
+
+    T. Davis, Algorithm 10xx: SuiteSparse:GraphBLAS: parallel graph
+    algorithms in the language of sparse linear algebra, ACM Trans on
+    Mathematical Software, to appear, 2023.
+    https://doi.org/10.1145/3577195
+
+    T. Davis, Algorithm 1000: SuiteSparse:GraphBLAS: graph algorithms in
+    the language of sparse linear algebra, ACM Trans on Mathematical
+    Software, vol 45, no 4, Dec. 2019, Article No 44.
+    https://doi.org/10.1145/3322125.
+
+--------------------------------------------------------------------------------
 ## Software Acknowledgements
 
 SuiteSparse:GraphBLAS relies on the following packages (details in the LICENSE
 file, and in the GraphBLAS User Guide):
 
-(1) the LZ4 compression package (c) by Yann Collet, appearing here under the
-BSD-2-clause license.
+(1) LZ4, xxHash, and ZSTD by Yann Collet, appearing here under the
+BSD2 or BSD3 licenses.
 
 (2) cpu_features (c) Google, Apache 2.0 license with components (c) IBM and
 Intel (also Apache 2.0), and the cpu_featurer/ndk_compat component (c)

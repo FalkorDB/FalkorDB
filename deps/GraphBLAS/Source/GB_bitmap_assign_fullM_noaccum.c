@@ -2,7 +2,7 @@
 // GB_bitmap_assign_fullM_noaccum:  assign to C bitmap, M is bitmap or full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,8 +28,12 @@
 // A:           matrix (hyper, sparse, bitmap, or full), or scalar
 // kind:        assign, row assign, col assign, or subassign
 
-#include "GB_bitmap_assign_methods.h"
+// JIT: needed.
 
+#include "GB_bitmap_assign_methods.h"
+#include "GB_assign_shared_definitions.h"
+
+#undef  GB_FREE_ALL
 #define GB_FREE_ALL ;
 
 GrB_Info GB_bitmap_assign_fullM_noaccum
@@ -54,7 +58,7 @@ GrB_Info GB_bitmap_assign_fullM_noaccum
     const void *scalar,         // input scalar
     const GrB_Type scalar_type, // type of input scalar
     const int assign_kind,      // row assign, col assign, assign, or subassign
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -83,7 +87,7 @@ GrB_Info GB_bitmap_assign_fullM_noaccum
 
     #undef  GB_GET_MIJ
     #define GB_GET_MIJ(mij,pM)                                  \
-        bool mij = (GBB (Mb, pM) && GB_mcast (Mx, pM, msize)) ^ Mask_comp ;
+        bool mij = (GBB (Mb, pM) && GB_MCAST (Mx, pM, msize)) ^ Mask_comp ;
 
     //--------------------------------------------------------------------------
     // C_replace phase
@@ -127,18 +131,18 @@ GrB_Info GB_bitmap_assign_fullM_noaccum
 
         // for all entries in IxJ
         #undef  GB_IXJ_WORK
-        #define GB_IXJ_WORK(pC,pA)              \
-        {                                       \
-            int64_t pM = GB_GET_pM ;            \
-            GB_GET_MIJ (mij, pM) ;              \
-            if (mij)                            \
-            {                                   \
-                int8_t cb = Cb [pC] ;           \
-                /* Cx [pC] = scalar */          \
-                GB_ASSIGN_SCALAR (pC) ;         \
-                Cb [pC] = 1 ;                   \
-                task_cnvals += (cb == 0) ;      \
-            }                                   \
+        #define GB_IXJ_WORK(pC,pA)                      \
+        {                                               \
+            int64_t pM = GB_GET_pM ;                    \
+            GB_GET_MIJ (mij, pM) ;                      \
+            if (mij)                                    \
+            {                                           \
+                int8_t cb = Cb [pC] ;                   \
+                /* Cx [pC] = scalar */                  \
+                GB_COPY_scalar_to_C (Cx, pC, cwork) ;   \
+                Cb [pC] = 1 ;                           \
+                task_cnvals += (cb == 0) ;              \
+            }                                           \
         }
 
         ASSERT (assign_kind == GB_ASSIGN || assign_kind == GB_SUBASSIGN) ;
@@ -192,18 +196,18 @@ GrB_Info GB_bitmap_assign_fullM_noaccum
 
         // TODO: if A is bitmap or full, use a single pass
 
-        #define GB_AIJ_WORK(pC,pA)              \
-        {                                       \
-            int64_t pM = GB_GET_pM ;            \
-            GB_GET_MIJ (mij, pM) ;              \
-            if (mij)                            \
-            {                                   \
-                int8_t cb = Cb [pC] ;           \
-                /* Cx [pC] = Ax [pA] */         \
-                GB_ASSIGN_AIJ (pC, pA) ;        \
-                Cb [pC] = 4 ;                   \
-                task_cnvals += (cb == 0) ;      \
-            }                                   \
+        #define GB_AIJ_WORK(pC,pA)                                  \
+        {                                                           \
+            int64_t pM = GB_GET_pM ;                                \
+            GB_GET_MIJ (mij, pM) ;                                  \
+            if (mij)                                                \
+            {                                                       \
+                int8_t cb = Cb [pC] ;                               \
+                /* Cx [pC] = Ax [pA] */                             \
+                GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork) ;   \
+                Cb [pC] = 4 ;                                       \
+                task_cnvals += (cb == 0) ;                          \
+            }                                                       \
         }
 
         #undef  GB_IXJ_WORK

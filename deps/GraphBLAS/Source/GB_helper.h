@@ -2,7 +2,7 @@
 // GB_helper.h: helper functions for @GrB interface
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -89,6 +89,8 @@ double GB_helper10       // norm (x-y,p), or -1 on error
     int64_t p,                  // 0, 1, 2, INT64_MIN, or INT64_MAX
     GrB_Index n
 ) ;
+
+void GB_make_shallow (GrB_Matrix A) ;
 
 #endif
 

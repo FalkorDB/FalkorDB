@@ -2,7 +2,7 @@
 // GB_dup_worker: make a deep copy of a sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,11 +11,13 @@
 
 // if numeric is false, C->x is allocated but not initialized.
 
-// If *Chandle is not NULL, the header is reused.  It may be a static or
-// dynamic header, depending on C->static_header.
+// If *Chandle is not NULL on input, the header is reused.  It may be a static
+// or dynamic header, depending on C->static_header.
 
 #include "GB.h"
-#define GB_FREE_ALL ;
+#include "GB_get_set.h"
+#define GB_FREE_ALL \
+    GB_FREE (&C_user_name, C_user_name_size) ;
 
 GrB_Info GB_dup_worker      // make an exact copy of a matrix
 (
@@ -25,8 +27,7 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     const bool numeric,     // if true, duplicate the numeric values; if A is
                             // iso, only the first entry is copied, regardless
                             // of C_iso on input
-    const GrB_Type ctype,   // type of C, if numeric is false
-    GB_Context Context
+    const GrB_Type ctype    // type of C, if numeric is false
 )
 {
 
@@ -45,7 +46,7 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
 
     //--------------------------------------------------------------------------
     // get A
@@ -66,6 +67,23 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     GrB_Type atype = A->type ;
 
     //--------------------------------------------------------------------------
+    // copy the user_name of A, if present
+    //--------------------------------------------------------------------------
+
+    char *C_user_name = NULL ;
+    size_t C_user_name_size = 0 ;
+    if (A->user_name != NULL)
+    { 
+        info = GB_user_name_set (&C_user_name, &C_user_name_size,
+            A->user_name, false) ;
+        if (info != GrB_SUCCESS)
+        { 
+            // out of memory
+            return (info) ;
+        }
+    }
+
+    //--------------------------------------------------------------------------
     // create C
     //--------------------------------------------------------------------------
 
@@ -78,8 +96,7 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     // set C->iso = C_iso   OK: burble in the caller
     GB_OK (GB_new_bix (Chandle, // can be new or existing header
         numeric ? atype : ctype, A->vlen, A->vdim, GB_Ap_malloc, A->is_csc,
-        GB_sparsity (A), false, A->hyper_switch, A->plen, anz, true, C_iso,
-        Context)) ;
+        GB_sparsity (A), false, A->hyper_switch, A->plen, anz, true, C_iso)) ;
     C = (*Chandle) ;
 
     //--------------------------------------------------------------------------
@@ -106,7 +123,7 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
         GB_memcpy (C->b, Ab, anz * sizeof (int8_t), nthreads_max) ;
     }
     if (Ai != NULL)
-    {
+    { 
         GB_memcpy (C->i, Ai, anz * sizeof (int64_t), nthreads_max) ;
     }
     if (numeric)
@@ -117,14 +134,21 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     }
 
     C->magic = GB_MAGIC ;      // C->p and C->h are now initialized
-    #ifdef GB_DEBUG
-    if (numeric) ASSERT_MATRIX_OK (C, "C duplicate of A", GB0) ;
-    #endif
+
+    //--------------------------------------------------------------------------
+    // copy the user_name of A into C, if present
+    //--------------------------------------------------------------------------
+
+    C->user_name = C_user_name ;
+    C->user_name_size = C_user_name_size ;
 
     //--------------------------------------------------------------------------
     // return the result
     //--------------------------------------------------------------------------
 
+    #ifdef GB_DEBUG
+    if (numeric) ASSERT_MATRIX_OK (C, "C duplicate of A", GB0) ;
+    #endif
     return (GrB_SUCCESS) ;
 }
 

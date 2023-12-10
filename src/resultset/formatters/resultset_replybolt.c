@@ -87,7 +87,7 @@ void _ResultSet_BoltReplyWithSIValue
 		bolt_reply_float(client, v.point.latitude);
 		bolt_reply_null(client);
 		break;
-	case T_VECTOR32F: {
+	case T_VECTOR_F32: {
 		uint32_t dim = SIVector_Dim(v);
 		bolt_reply_list(client, dim);
 
@@ -260,7 +260,7 @@ void ResultSet_EmitBoltRow
 	SIValue **row
 ) {
 	bolt_client_t *bolt_client = set->bolt_client;
-	bolt_reply_structure(set->bolt_client, BST_RECORD, 1);
+	bolt_client_reply_for(set->bolt_client, BST_PULL, BST_RECORD, 1);
 	bolt_reply_list(set->bolt_client, set->column_count);
 	for(int i = 0; i < set->column_count; i++) {
 		_ResultSet_BoltReplyWithSIValue(bolt_client, set->gc, *row[i]);
@@ -307,7 +307,7 @@ void ResultSet_EmitBoltStats
 	if(set->stats.relationships_deleted > 0) stats++;
 	if(set->stats.relationships_created > 0) stats++;
 	if(stats > 0) {
-		bolt_reply_map(set->bolt_client, 1);
+		bolt_reply_map(set->bolt_client, 2);
 		bolt_reply_string(set->bolt_client, "stats", 5);
 		bolt_reply_map(set->bolt_client, stats);
 		if(set->stats.index_creation) {
@@ -359,8 +359,10 @@ void ResultSet_EmitBoltStats
 			bolt_reply_int(set->bolt_client, set->stats.relationships_created);
 		}
 	} else {
-		bolt_reply_map(set->bolt_client, 0);
+		bolt_reply_map(set->bolt_client, 1);
 	}
+	bolt_reply_string(set->bolt_client, "t_last", 6);
+	bolt_reply_int8(set->bolt_client, 1);
 
 	bolt_client_end_message(set->bolt_client);
 	bolt_client_finish_write(set->bolt_client);

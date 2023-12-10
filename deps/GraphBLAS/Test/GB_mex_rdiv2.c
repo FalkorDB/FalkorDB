@@ -2,7 +2,7 @@
 // GB_mex_rdiv2: compute C=A*B with the rdiv2 operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -46,7 +46,7 @@ bool done_in_place = false ;
 double C_scalar = 0 ;
 struct GB_Matrix_opaque MT_header, T_header ;
 
-GrB_Info axb (GB_Context Context) ;
+GrB_Info axb (GB_Werk Werk) ;
 
 GrB_Semiring My_plus_rdiv2 = NULL ;
 GrB_BinaryOp My_rdiv2 = NULL ;
@@ -66,7 +66,7 @@ GrB_BinaryOp My_rdiv2 = NULL ;
 
 //------------------------------------------------------------------------------
 
-GrB_Info axb (GB_Context Context)
+GrB_Info axb (GB_Werk Werk)
 {
     // create the rdiv2 operator
 //  info = GrB_BinaryOp_new (&My_rdiv2,
@@ -132,7 +132,7 @@ GrB_Info axb (GB_Context Context)
         &done_in_place,
         AxB_method,
         true,       // do the sort
-        Context) ;
+        Werk) ;
 
     if (info == GrB_SUCCESS)
     {
@@ -184,7 +184,7 @@ void mexFunction
     My_rdiv2 = NULL ;
     My_plus_rdiv2 = NULL ;
 
-    GB_CONTEXT (USAGE) ;
+    GB_WERK (USAGE) ;
 
     // check inputs
     if (nargout > 2 || nargin < 2 || nargin > 7)
@@ -217,10 +217,10 @@ void mexFunction
 
     // get the axb_method
     // 0 or not present: default
-    // 1001: Gustavson
-    // 1003: dot
-    // 1004: hash
-    // 1005: saxpy
+    // 7081: Gustavson
+    // 7083: dot
+    // 7084: hash
+    // 7085: saxpy
     GET_SCALAR (4, GrB_Desc_Value, AxB_method, GxB_DEFAULT) ;
 
     if (! ((AxB_method == GxB_DEFAULT) ||
@@ -261,7 +261,7 @@ void mexFunction
     // B must be completed
     GrB_Matrix_wait (B, GrB_MATERIALIZE) ;
 
-    METHOD (axb (Context)) ;
+    METHOD (axb (Werk)) ;
 
     // return C
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C AxB result", false) ;

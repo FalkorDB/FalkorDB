@@ -2,7 +2,7 @@
 // GxB_Matrix_split: split a matrix into an array of matrices
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -47,7 +47,7 @@ GrB_Info GxB_Matrix_split           // split a matrix into 2D array of matrices
     // Tiles = split (A)
     //--------------------------------------------------------------------------
 
-    info = GB_split (Tiles, m, n, Tile_nrows, Tile_ncols, A, Context) ;
+    info = GB_split (Tiles, m, n, Tile_nrows, Tile_ncols, A, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

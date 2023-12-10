@@ -2,14 +2,14 @@
 // GxB_Global_Option_get: get a global default option for all future matrices
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // GxB_Global_Option_get is a single va_arg-based method for any global option,
-// of any type.  The following functions are alternative methods that do not
-// use va_arg (useful for compilers and interfaces that do not support va_arg):
+// of any type.  The following functions are non-va_arg-based methods
+// (useful for compilers and interfaces that do not support va_arg):
 //
 //  GxB_Global_Option_get_INT32         int32_t scalars or arrays
 //  GxB_Global_Option_get_FP64          double scalars or arrays
@@ -18,6 +18,7 @@
 //  GxB_Global_Option_get_FUNCTION      function pointers (as void **)
 
 #include "GB.h"
+#include "GB_jitifyer.h"
 
 //------------------------------------------------------------------------------
 // GxB_Global_Option_get_INT32: get global options (int32_t scalars or arrays)
@@ -46,12 +47,17 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
 
         case GxB_GLOBAL_NTHREADS :      // same as GxB_NTHREADS
 
-            (*value) = (int32_t) GB_Global_nthreads_max_get ( ) ;
+            (*value) = (int32_t) GB_Context_nthreads_max_get (NULL) ;
+            break ;
+
+        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
+
+            (*value) = (int32_t) GB_Context_gpu_id_get (NULL) ;
             break ;
 
         case GxB_API_VERSION : 
 
-            value [0] = GxB_SPEC_MAJOR ; 
+            value [0] = GxB_SPEC_MAJOR ;
             value [1] = GxB_SPEC_MINOR ;
             value [2] = GxB_SPEC_SUB ;
             break ;
@@ -65,7 +71,7 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
 
         case GxB_COMPILER_VERSION : 
 
-            value [0] = GB_COMPILER_MAJOR ; 
+            value [0] = GB_COMPILER_MAJOR ;
             value [1] = GB_COMPILER_MINOR ;
             value [2] = GB_COMPILER_SUB ;
             break ;
@@ -79,11 +85,6 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
 
             (*value) = (int32_t) (GB_Global_is_csc_get ( )) ?
                     GxB_BY_COL : GxB_BY_ROW ;
-            break ;
-
-        case GxB_GLOBAL_GPU_CONTROL :       // same as GxB_GPU_CONTROL
-
-            (*value) = (int32_t) GB_Global_gpu_control_get ( ) ;
             break ;
 
         case GxB_BURBLE : 
@@ -105,7 +106,17 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
             (*value) = (int32_t) GB_Global_print_one_based_get ( ) ;
             break ;
 
-        default :
+        case GxB_JIT_C_CONTROL : 
+
+            (*value) = (int32_t) GB_jitifyer_get_control ( ) ;
+            break ;
+
+        case GxB_JIT_USE_CMAKE : 
+
+            (*value) = (int32_t) GB_jitifyer_get_use_cmake ( ) ;
+            break ;
+
+        default : 
 
             return (GrB_INVALID_VALUE) ;
     }
@@ -148,21 +159,16 @@ GrB_Info GxB_Global_Option_get_FP64     // gets the current global option
 
             for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
             {
-                value [k] = (double) GB_Global_bitmap_switch_get (k) ; 
+                value [k] = (double) GB_Global_bitmap_switch_get (k) ;
             }
             break ;
 
         case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
 
-            (*value) = GB_Global_chunk_get ( ) ;
+            (*value) = GB_Context_chunk_get (NULL) ;
             break ;
 
-        case GxB_GLOBAL_GPU_CHUNK :         // same as GxB_GPU_CHUNK
-
-            (*value) = GB_Global_gpu_chunk_get ( ) ;
-            break ;
-
-        default :
+        default : 
 
             return (GrB_INVALID_VALUE) ;
     }
@@ -198,13 +204,14 @@ GrB_Info GxB_Global_Option_get_INT64    // gets the current global option
 
         case GxB_MEMORY_POOL : 
 
+            // no longer used: return all zeros
             for (int k = 0 ; k < 64 ; k++)
             { 
-                value [k] = GB_Global_free_pool_limit_get (k) ;
+                value [k] = 0 ;
             }
             break ;
 
-        default :
+        default : 
 
             return (GrB_INVALID_VALUE) ;
     }
@@ -220,7 +227,7 @@ GrB_Info GxB_Global_Option_get_INT64    // gets the current global option
 GrB_Info GxB_Global_Option_get_CHAR     // gets the current global option
 (
     GxB_Option_Field field,         // option to query
-    char **value                    // return value of the global option
+    const char **value              // return value of the global option
 )
 {
 
@@ -293,7 +300,51 @@ GrB_Info GxB_Global_Option_get_CHAR     // gets the current global option
             (*value) = GB_COMPILER_NAME ;
             break ;
 
-        default :
+        //----------------------------------------------------------------------
+        // JIT configuration:
+        //----------------------------------------------------------------------
+
+        case GxB_JIT_C_COMPILER_NAME : 
+
+            (*value) = GB_jitifyer_get_C_compiler ( ) ;
+            break ;
+
+        case GxB_JIT_C_COMPILER_FLAGS : 
+
+            (*value) = GB_jitifyer_get_C_flags ( ) ;
+            break ;
+
+        case GxB_JIT_C_LINKER_FLAGS : 
+
+            (*value) = GB_jitifyer_get_C_link_flags ( ) ;
+            break ;
+
+        case GxB_JIT_C_LIBRARIES : 
+
+            (*value) = GB_jitifyer_get_C_libraries ( ) ;
+            break ;
+
+        case GxB_JIT_C_CMAKE_LIBS : 
+
+            (*value) = GB_jitifyer_get_C_cmake_libs ( ) ;
+            break ;
+
+        case GxB_JIT_C_PREFACE : 
+
+            (*value) = GB_jitifyer_get_C_preface ( ) ;
+            break ;
+
+        case GxB_JIT_ERROR_LOG : 
+
+            (*value) = GB_jitifyer_get_error_log ( ) ;
+            break ;
+
+        case GxB_JIT_CACHE_PATH : 
+
+            (*value) = GB_jitifyer_get_cache_path ( ) ;
+            break ;
+
+        default : 
 
             return (GrB_INVALID_VALUE) ;
     }
@@ -337,7 +388,27 @@ GrB_Info GxB_Global_Option_get_FUNCTION // gets the current global option
             (*value) = (void *) GB_Global_flush_get ( ) ;
             break ;
 
-        default :
+        case GxB_MALLOC_FUNCTION : 
+
+            (*value) = (void *) GB_Global_malloc_function_get ( ) ;
+            break ;
+
+        case GxB_CALLOC_FUNCTION : 
+
+            (*value) = (void *) GB_Global_calloc_function_get ( ) ;
+            break ;
+
+        case GxB_REALLOC_FUNCTION : 
+
+            (*value) = (void *) GB_Global_realloc_function_get ( ) ;
+            break ;
+
+        case GxB_FREE_FUNCTION : 
+
+            (*value) = (void *) GB_Global_free_function_get ( ) ;
+            break ;
+
+        default : 
 
             return (GrB_INVALID_VALUE) ;
     }
@@ -349,6 +420,7 @@ GrB_Info GxB_Global_Option_get_FUNCTION // gets the current global option
 //------------------------------------------------------------------------------
 // GxB_Global_Option_get: based on va_arg
 //------------------------------------------------------------------------------
+
 
 GrB_Info GxB_Global_Option_get      // gets the current global option
 (
@@ -430,32 +502,39 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
             break ;
 
         //----------------------------------------------------------------------
-        // default number of threads
+        // GxB_CONTEXT_WORLD
         //----------------------------------------------------------------------
 
-        case GxB_GLOBAL_NTHREADS :      // same as GxB_NTHREADS
+        case GxB_GLOBAL_NTHREADS :          // same as GxB_NTHREADS
 
             {
                 va_start (ap, field) ;
                 int *nthreads_max = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (nthreads_max) ;
-                (*nthreads_max) = GB_Global_nthreads_max_get ( ) ;
+                (*nthreads_max) = GB_Context_nthreads_max_get (NULL) ; 
             }
             break ;
 
-        //----------------------------------------------------------------------
-        // default chunk size
-        //----------------------------------------------------------------------
+        case GxB_GLOBAL_GPU_ID :            // same as GxB_GPU_ID
 
-        case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
+            {
+                va_start (ap, field) ;
+                int *value = va_arg (ap, int *) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (value) ;
+                (*value) = GB_Context_gpu_id_get (NULL) ; 
+            }
+            break ;
+
+        case GxB_GLOBAL_CHUNK :             // same as GxB_CHUNK
 
             {
                 va_start (ap, field) ;
                 double *chunk = va_arg (ap, double *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (chunk) ;
-                (*chunk) = GB_Global_chunk_get ( ) ;
+                (*chunk) = GB_Context_chunk_get (NULL) ;
             }
             break ;
 
@@ -465,14 +544,15 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
 
         case GxB_MEMORY_POOL : 
 
+            // no longer used: return all zeros
             {
                 va_start (ap, field) ;
-                int64_t *free_pool_limit = va_arg (ap, int64_t *) ;
+                int64_t *value = va_arg (ap, int64_t *) ;
                 va_end (ap) ;
-                GB_RETURN_IF_NULL (free_pool_limit) ;
+                GB_RETURN_IF_NULL (value) ;
                 for (int k = 0 ; k < 64 ; k++)
                 { 
-                    free_pool_limit [k] = GB_Global_free_pool_limit_get (k) ;
+                    value [k] = 0 ;
                 }
             }
             break ;
@@ -713,28 +793,164 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
             break ;
 
         //----------------------------------------------------------------------
-        // CUDA (DRAFT: in progress, do not use)
+        // memory functions
         //----------------------------------------------------------------------
 
-        case GxB_GLOBAL_GPU_CONTROL :       // same as GxB_GPU_CONTROL
+        case GxB_MALLOC_FUNCTION : 
 
             {
                 va_start (ap, field) ;
-                GrB_Desc_Value *gpu_control = va_arg (ap, GrB_Desc_Value *) ;
+                void ** malloc_function = va_arg (ap, void **) ;
                 va_end (ap) ;
-                GB_RETURN_IF_NULL (gpu_control) ;
-                (*gpu_control) = GB_Global_gpu_control_get ( ) ;
+                GB_RETURN_IF_NULL (malloc_function) ;
+                (*malloc_function) = GB_Global_malloc_function_get ( ) ;
             }
             break ;
 
-        case GxB_GLOBAL_GPU_CHUNK :         // same as GxB_GPU_CHUNK
+        case GxB_CALLOC_FUNCTION : 
 
             {
                 va_start (ap, field) ;
-                double *gpu_chunk = va_arg (ap, double *) ;
+                void ** calloc_function = va_arg (ap, void **) ;
                 va_end (ap) ;
-                GB_RETURN_IF_NULL (gpu_chunk) ;
-                (*gpu_chunk) = GB_Global_gpu_chunk_get ( ) ;
+                GB_RETURN_IF_NULL (calloc_function) ;
+                (*calloc_function) = GB_Global_calloc_function_get ( ) ;
+            }
+            break ;
+
+        case GxB_REALLOC_FUNCTION : 
+
+            {
+                va_start (ap, field) ;
+                void ** realloc_function = va_arg (ap, void **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (realloc_function) ;
+                (*realloc_function) = GB_Global_realloc_function_get ( ) ;
+            }
+            break ;
+
+        case GxB_FREE_FUNCTION : 
+
+            {
+                va_start (ap, field) ;
+                void ** free_function = va_arg (ap, void **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (free_function) ;
+                (*free_function) = GB_Global_free_function_get ( ) ;
+            }
+            break ;
+
+        //----------------------------------------------------------------------
+        // JIT configuruation
+        //----------------------------------------------------------------------
+
+        case GxB_JIT_C_COMPILER_NAME : 
+
+            {
+                va_start (ap, field) ;
+                const char **compiler_name = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (compiler_name) ;
+                (*compiler_name) = GB_jitifyer_get_C_compiler ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_C_COMPILER_FLAGS : 
+
+            {
+                va_start (ap, field) ;
+                const char **compiler_flags = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (compiler_flags) ;
+                (*compiler_flags) = GB_jitifyer_get_C_flags ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_C_LINKER_FLAGS : 
+
+            {
+                va_start (ap, field) ;
+                const char **linker_flags = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (linker_flags) ;
+                (*linker_flags) = GB_jitifyer_get_C_link_flags ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_C_LIBRARIES : 
+
+            {
+                va_start (ap, field) ;
+                const char **libraries = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (libraries) ;
+                (*libraries) = GB_jitifyer_get_C_libraries ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_C_CMAKE_LIBS : 
+
+            {
+                va_start (ap, field) ;
+                const char **libraries = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (libraries) ;
+                (*libraries) = GB_jitifyer_get_C_cmake_libs ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_C_PREFACE : 
+
+            {
+                va_start (ap, field) ;
+                const char **preface = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (preface) ;
+                (*preface) = GB_jitifyer_get_C_preface ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_C_CONTROL : 
+
+            {
+                va_start (ap, field) ;
+                int *control = va_arg (ap, int *) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (control) ;
+                (*control) = (int) GB_jitifyer_get_control ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_USE_CMAKE : 
+
+            {
+                va_start (ap, field) ;
+                bool *use_cmake = va_arg (ap, bool *) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (use_cmake) ;
+                (*use_cmake) = GB_jitifyer_get_use_cmake ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_ERROR_LOG : 
+
+            {
+                va_start (ap, field) ;
+                const char **error_log = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (error_log) ;
+                (*error_log) = GB_jitifyer_get_error_log ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_CACHE_PATH : 
+
+            {
+                va_start (ap, field) ;
+                const char **cache_path = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (cache_path) ;
+                (*cache_path) = GB_jitifyer_get_cache_path ( ) ;
             }
             break ;
 

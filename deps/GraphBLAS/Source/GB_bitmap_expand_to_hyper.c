@@ -2,10 +2,12 @@
 // GB_bitmap_expand_to_hyper:  expand a compact bitmap C to hypersparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed.  Only one variant possible.
 
 #define GB_FREE_ALL                 \
 {                                   \
@@ -26,7 +28,7 @@ GrB_Info GB_bitmap_expand_to_hyper
     int64_t cvdim_final,
     GrB_Matrix A,
     GrB_Matrix B,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -78,7 +80,8 @@ GrB_Info GB_bitmap_expand_to_hyper
     // construct the hyperlist of C, if B is hypersparse
     //----------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (cvdim, chunk, nthreads_max) ;
     if (B_is_hyper)
     { 

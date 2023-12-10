@@ -2,7 +2,7 @@
 // GB_hyper_shallow: create a sparse shallow version of a hypersparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,6 +44,10 @@ GrB_Matrix GB_hyper_shallow         // return C
     // restore the C header status
     C->static_header = C_static_header  ;
     C->header_size = C_header_size ;
+
+    // remove the user_name
+    C->user_name = NULL ;
+    C->user_name_size = 0 ;
 
     // remove the hyperlist and the hyper_hash
     C->h = NULL ;

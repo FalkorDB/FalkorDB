@@ -10,9 +10,9 @@ class testNodeIndexDeletionFlow():
         # drop index is an async operation which can cause Valgraind
         # to wrongfully report as a leak
         if VALGRIND:
-            Env.skip(None)
+            Environment.skip(None)
 
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
         self.g = Graph(self.redis_con, GRAPH_ID)
 
@@ -215,7 +215,7 @@ class testNodeIndexDeletionFlow():
 
             if i < end_idx / 2:
                 # validate execution-plan + indexes report
-                plan = self.g.execution_plan(q)
+                plan = str(self.g.explain(q))
                 self.env.assertIn("Index", plan)
 
                 indicies = list_indicies(self.g).result_set
@@ -227,7 +227,7 @@ class testNodeIndexDeletionFlow():
 
             else:
                 # validate execution-plan + indexes report
-                plan = self.g.execution_plan(q)
+                plan = str(self.g.explain(q))
                 self.env.assertNotIn("Index", plan)
 
                 indicies = list_indicies(self.g).result_set
@@ -270,7 +270,7 @@ class testNodeIndexDeletionFlow():
         self.env.assertEquals(res.relationships_deleted, 1)
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0],
-            Node(label='X', properties={'uid': '10'}))
+            Node(labels='X', properties={'uid': '10'}))
 
 class testEdgeIndexDeletionFlow():
     def __init__(self):
@@ -278,11 +278,10 @@ class testEdgeIndexDeletionFlow():
         # drop index is an async operation which can cause Valgraind
         # to wrongfully report as a leak
         if VALGRIND:
-            Env.skip(None)
+            Environment.skip(None)
 
-        self.env = Env(decodeResponses=True)
-        self.redis_con = self.env.getConnection()
-        self.g = Graph(self.redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.g = self.db.select_graph(GRAPH_ID)
 
     def test_01_drop_missing_index(self):
         # drop range, fulltext and vector index

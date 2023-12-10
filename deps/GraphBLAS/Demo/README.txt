@@ -1,4 +1,4 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 This is the GraphBLAS/Demo folder.  It contains a set of simple demo programs
@@ -19,19 +19,6 @@ Files in this folder:
 
     README.txt              this file
     demo                    run all demos
-
---------------------------------------------------------------------------------
-in Demo/Source:
---------------------------------------------------------------------------------
-
-    get_matrix.c            get a matrix (file, Wathen, or random)
-    random_matrix.c         create a random matrix
-    read_matrix.c           read a matrix from a file (Matrix/*)
-    simple_rand.c           a very simple random number generator
-    usercomplex.c           user-defined double complex type
-    wathen.c                GraphBLAS version of wathen.m
-    import_test.c           test import/export
-    isequal.c               test if 2 matrices are equal
 
 --------------------------------------------------------------------------------
 in Demo/Program:
@@ -61,6 +48,15 @@ in Demo/Include:
     graphblas_demos.h       include file for all demos
     simple_rand.h           include file for simple_rand.c
     usercomplex.h           include file for usercomplex.h
+
+    get_matrix.c            get a matrix (file, Wathen, or random)
+    random_matrix.c         create a random matrix
+    read_matrix.c           read a matrix from a file (Matrix/*)
+    simple_rand.c           a very simple random number generator
+    usercomplex.c           user-defined double complex type
+    wathen.c                GraphBLAS version of wathen.m
+    import_test.c           test import/export
+    isequal.c               test if 2 matrices are equal
 
 --------------------------------------------------------------------------------
 in Demo/Matrix:

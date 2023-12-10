@@ -2,7 +2,7 @@
 // GB_mex_Matrix_subref: C=A(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ void mexFunction
     bool ignore ;
 
     // check inputs
-    GB_CONTEXT (USAGE) ;
+    GB_WERK (USAGE) ;
     if (nargout > 1 || nargin != 3)
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
@@ -68,7 +68,7 @@ void mexFunction
     }
 
     // C = A(I,J), numeric not symbolic
-    METHOD (GB_subref (C, C->iso, true, A, I, ni, J, nj, false, Context)) ;
+    METHOD (GB_subref (C, C->iso, true, A, I, ni, J, nj, false, Werk)) ;
 
     // return C
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C subref result", false) ;

@@ -50,13 +50,13 @@ if ( NOT TEST_FOR_STDATOMIC )
     check_c_source_compiles ( "${atomic_source}" TEST_FOR_STDATOMIC_WITH_LIBATOMIC )
     if ( NOT TEST_FOR_STDATOMIC_WITH_LIBATOMIC )
         # fails with -latomic
-        message ( FATAL_ERROR "ANSI C11 atomics: failed" )
+        message ( FATAL_ERROR "C11 atomics: failed" )
     endif ( )
     # source compiles but -latomic is required
     set ( LIBATOMIC_REQUIRED true )
-    message ( STATUS "ANSI C11 atomics: OK, but -latomic required" )
+    message ( STATUS "C11 atomics: OK, but -latomic required" )
 else ( )
     set ( LIBATOMIC_REQUIRED false )
-    message ( STATUS "ANSI C11 atomics: OK. -latomic not needed" )
+    message ( STATUS "C11 atomics: OK. -latomic not needed" )
 endif ( )
 

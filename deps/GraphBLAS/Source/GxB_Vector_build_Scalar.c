@@ -2,7 +2,7 @@
 // GxB_Vector_build_Scalar: build a sparse GraphBLAS vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ GrB_Info GxB_Vector_build_Scalar    // build a vector from (i,scalar) tuples
     //--------------------------------------------------------------------------
 
     GrB_Info info = GB_build ((GrB_Matrix) w, I, NULL, scalar->x, nvals,
-        GxB_IGNORE_DUP, scalar->type, false, true, Context) ;
+        GxB_IGNORE_DUP, scalar->type, false, true, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

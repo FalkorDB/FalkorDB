@@ -24,9 +24,9 @@ class testReplicationState():
     def __init__(self):
         # skip test if we're running under Valgrind
         if VALGRIND or SANITIZER != "":
-            Env.skip(None) # valgrind is not working correctly with replication
+            Environment.skip(None) # valgrind is not working correctly with replication
 
-        self.env = Env(useSlaves=True, decodeResponses=True, env='oss', moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
+        self.env, self.db = Env(useSlaves=True, env='oss', moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
         self.master = self.env.getConnection()
         self.slave = self.env.getSlaveConnection()
         info = self.slave.info("Replication")

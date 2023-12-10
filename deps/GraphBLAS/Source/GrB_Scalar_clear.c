@@ -2,7 +2,7 @@
 // GrB_Scalar_clear: clears the content of a GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -27,7 +27,7 @@ GrB_Info GrB_Scalar_clear   // clear a GrB_Scalar of its entry
     // clear the GrB_Scalar
     //--------------------------------------------------------------------------
 
-    return (GB_clear ((GrB_Matrix) s, Context)) ;
+    return (GB_clear ((GrB_Matrix) s, Werk)) ;
 }
 
 //------------------------------------------------------------------------------

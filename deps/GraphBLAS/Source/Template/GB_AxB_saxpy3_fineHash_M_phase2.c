@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_fineHash_M_phase2: C<M>=A*B, fine Hash, phase2
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -46,10 +46,10 @@
                 int64_t hf ;                                                  \
                 GB_ATOMIC_READ                                                \
                 hf = Hf [hash] ;        /* grab the entry */                  \
-                if (GB_HAS_ATOMIC && (hf == i_unlocked))                      \
+                if (GB_Z_HAS_ATOMIC_UPDATE && (hf == i_unlocked))             \
                 {                                                             \
                     /* Hx [hash] += t */                                      \
-                    GB_ATOMIC_UPDATE_HX (hash, t) ;                           \
+                    GB_Z_ATOMIC_UPDATE_HX (hash, t) ;                         \
                     break ;     /* C(i,j) has been updated */                 \
                 }                                                             \
                 if (hf == 0) break ; /* M(i,j)=0; ignore Cij */               \
@@ -64,12 +64,12 @@
                     if ((hf & 3) == 1) /* f == 1 */                           \
                     {                                                         \
                         /* C(i,j) is a new entry in C(:,j) */                 \
-                        GB_ATOMIC_WRITE_HX (hash, t) ; /* Hx [hash] = t */    \
+                        GB_Z_ATOMIC_WRITE_HX (hash, t) ; /* Hx [hash] = t */  \
                     }                                                         \
                     else /* f == 2 */                                         \
                     {                                                         \
                         /* C(i,j) already appears in C(:,j) */                \
-                        GB_ATOMIC_UPDATE_HX (hash, t) ; /* Hx [hash] += t */  \
+                        GB_Z_ATOMIC_UPDATE_HX (hash, t) ; /* Hx [hash] += t */\
                     }                                                         \
                     GB_ATOMIC_WRITE                                           \
                     Hf [hash] = i_unlocked ; /* unlock entry */               \

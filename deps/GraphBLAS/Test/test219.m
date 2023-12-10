@@ -1,12 +1,12 @@
 function test219
 %TEST219 test reduce to scalar
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
-GrB.burble (1) ;
+GB_mex_burble (1) ;
 
 n = 103 ;
 
@@ -21,6 +21,6 @@ assert (c1 == c2) ;
 
 nthreads_set (save) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('\ntest219: all tests passed\n') ;
 

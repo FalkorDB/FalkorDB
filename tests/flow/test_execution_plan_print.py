@@ -1,23 +1,20 @@
 from common import *
 
-graph = None
 GRAPH_KEY = "execution_plan_print"
 
 class test_execution_plan_print():
     def __init__(self):
-        global graph
-        self.env = Env(decodeResponses=True)
-        redis_con = self.env.getConnection()
-        graph = Graph(redis_con, GRAPH_KEY)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_KEY)
 
         # create key
-        graph.query("RETURN 1")
+        self.graph.query("RETURN 1")
     
     # 'conditional traverse' after a 'label scan' should not print
     # the label scanned
     def test01_conditional_traverse(self):
         # empty graph (first test) --> order of traversal stays as in query (A --> B).
-        plan = graph.execution_plan("MATCH (n:A:B) RETURN n")
+        plan = str(self.graph.explain("MATCH (n:A:B) RETURN n"))
 
         # label A is scanned
         self.env.assertIn("Node By Label Scan | (n:A)", plan)
@@ -27,7 +24,7 @@ class test_execution_plan_print():
     
     # 'expand into' should not print the label scanned
     def test02_expand_into(self):
-        plan = graph.execution_plan("MATCH (n:A:B:C) RETURN n")
+        plan = str(self.graph.explain("MATCH (n:A:B:C) RETURN n"))
 
         # label A is scanned
         self.env.assertIn("Node By Label Scan | (n:A)", plan)
@@ -38,7 +35,7 @@ class test_execution_plan_print():
     # Make sure the 'conditional traverse' and 'expand into' operations
     # which do not come after a 'label scan' print all labels
     def test03_operations_not_after_scan(self):
-        plan = graph.execution_plan("match p=(n:A:B)-[*]-(m:C:D) RETURN p")
+        plan = str(self.graph.explain("match p=(n:A:B)-[*]-(m:C:D) RETURN p"))
 
         # A is scanned
         self.env.assertIn("Node By Label Scan | (n:A)", plan)

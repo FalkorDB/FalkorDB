@@ -2,7 +2,7 @@
 // GB_enumify_monoid: enumify a monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2021, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ void GB_enumify_monoid  // enumerate a monoid
     int add_opcode,     // binary operator of the monoid
     int zcode           // type of the monoid (x, y, and z)
 )
-{
+{ 
 
     GB_enumify_binop (add_ecode, add_opcode, zcode, false) ;
     ASSERT (*add_ecode < 32) ;

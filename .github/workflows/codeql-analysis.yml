@@ -28,6 +28,7 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    container: falkordb/falkordb-build:latest
     permissions:
       actions: read
       contents: read
@@ -87,9 +88,6 @@ jobs:
     # If this step fails, then you should remove it and run the build manually (see below)
     - name: Build
       run: |
-        sudo ln -sf /usr/bin/gcc /usr/bin/gcc-5
-        ./deps/readies/bin/getpy3
-        ./sbin/system-setup.py # --no-rmpytools
         make build
 
     # ℹ️ Command-line programs to run using the OS shell.

@@ -2,10 +2,12 @@
 // GB_subassign_12_and_20: C(I,J)<M or !M,repl> += A ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 12: C(I,J)<M,repl> += A ; using S
 // Method 20: C(I,J)<!M,repl> += A ; using S
@@ -21,6 +23,7 @@
 // M, A: any sparsity structure.
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 GrB_Info GB_subassign_12_and_20
 (
@@ -41,7 +44,7 @@ GrB_Info GB_subassign_12_and_20
     const bool Mask_comp,           // if true, !M, else use M
     const GrB_BinaryOp accum,
     const GrB_Matrix A,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -50,8 +53,8 @@ GrB_Info GB_subassign_12_and_20
     //--------------------------------------------------------------------------
 
     ASSERT (!GB_IS_BITMAP (C)) ; ASSERT (!GB_IS_FULL (C)) ;
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
-    ASSERT (!GB_aliased (C, A)) ;   // NO ALIAS of C==A
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, A)) ;   // NO ALIAS of C==A
 
     //--------------------------------------------------------------------------
     // S = C(I,J)
@@ -59,7 +62,7 @@ GrB_Info GB_subassign_12_and_20
 
     GB_EMPTY_TASKLIST ;
     GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Context)) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Werk)) ;
 
     //--------------------------------------------------------------------------
     // get inputs
@@ -71,9 +74,8 @@ GrB_Info GB_subassign_12_and_20
     GB_GET_C ;      // C must not be bitmap
     GB_GET_MASK ;
     GB_GET_MASK_HYPER_HASH ;
-    GB_GET_A ;
     GB_GET_S ;
-    GB_GET_ACCUM ;
+    GB_GET_ACCUM_MATRIX ;
 
     //--------------------------------------------------------------------------
     // Method 12: C(I,J)<M,repl> += A ; using S

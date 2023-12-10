@@ -2,7 +2,7 @@
 // GB_apply: apply a unary operator; optionally transpose a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@
 #include "GB_binop.h"
 #include "GB_transpose.h"
 #include "GB_accum_mask.h"
-#include "GB_scalar.h"
+#include "GB_scalar_wrap.h"
 
 GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
 (
@@ -32,7 +32,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
         bool binop_bind1st,             // if true, binop(x,A) else binop(A,y)
     const GrB_Matrix A,             // first or 2nd input:  matrix A
     bool A_transpose,               // A matrix descriptor
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -68,7 +68,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
     if (op_is_unop)
     {
         // apply a unary operator: scalar is ignored
-        ASSERT_UNARYOP_OK (op, "unop for GB_apply", GB0) ;
+        ASSERT_OP_OK ( op, "unop for GB_apply", GB0) ;
         if (!op_is_positional)
         {
             // A must also be compatible with op->xtype
@@ -85,7 +85,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
     else if (op_is_binop)
     {
         // apply a binary operator, with one input bound to a scalar
-        ASSERT_BINARYOP_OK (op, "binop for GB_apply", GB0) ;
+        ASSERT_OP_OK (op, "binop for GB_apply", GB0) ;
         ASSERT_SCALAR_OK (scalar, "scalar for GB_apply", GB0) ;
         if (!op_is_positional)
         {
@@ -145,7 +145,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
     else // op_is_idxunop
     {
         // apply an idxunop operator, with a thunk scalar
-        ASSERT_INDEXUNARYOP_OK (op, "idxunop for GB_apply", GB0) ;
+        ASSERT_OP_OK (op, "idxunop for GB_apply", GB0) ;
         ASSERT_SCALAR_OK (scalar, "thunk for GB_apply", GB0) ;
         // A must be compatible with op->xtype
         if (!GB_Type_compatible (A->type, op->xtype))
@@ -169,7 +169,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
 
     // check domains and dimensions for C<M> = accum (C,T)
     GrB_Info info ;
-    GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, T_type, Context)) ;
+    GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, T_type, Werk)) ;
 
     // check the dimensions
     int64_t tnrows = (A_transpose) ? GB_NCOLS (A) : GB_NROWS (A) ;
@@ -267,7 +267,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
         GBURBLE ("(transpose-op) ") ;
         GB_CLEAR_STATIC_HEADER (T, &T_header) ;
         info = GB_transpose (T, T_type, T_is_csc, A, op, scalar,
-            binop_bind1st, flipij, Context) ;
+            binop_bind1st, flipij, Werk) ;
         ASSERT (GB_JUMBLED_OK (T)) ;
         // A positional op is applied to C after the transpose is computed,
         // using the T_is_csc format.  The ijflip is handled above.
@@ -282,26 +282,25 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
         if (opcode != GB_IDENTITY_unop_code)
         {
             // the output Cx is aliased with C->x in GB_apply_op.
-            GB_iso_code C_code_iso = GB_iso_unop_code (C, op, binop_bind1st) ;
+            GB_iso_code C_code_iso = GB_unop_code_iso (C, op, binop_bind1st) ;
             info = GrB_SUCCESS ;
             if (C_code_iso == GB_NON_ISO && C->iso)
             { 
                 // expand C to non-iso; initialize C->x unless the op
                 // is positional
-                info = GB_convert_any_to_non_iso (C, !op_is_positional,
-                    Context) ;
+                info = GB_convert_any_to_non_iso (C, !op_is_positional) ;
             }
             if (info == GrB_SUCCESS)
             { 
                 // C->x = op (C->x) in place
                 info = GB_apply_op ((GB_void *) C->x, C->type, C_code_iso,
-                    op, scalar, binop_bind1st, flipij, C, Context) ;
+                    op, scalar, binop_bind1st, flipij, C, Werk) ;
             }
             if (info == GrB_SUCCESS && C_code_iso != GB_NON_ISO)
             { 
                 // compact the iso values of C
-                C->iso = true ; // OK
-                info = GB_convert_any_to_iso (C, NULL, Context) ;
+                C->iso = true ;
+                info = GB_convert_any_to_iso (C, NULL) ;
             }
         }
         return (info) ;
@@ -312,7 +311,7 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
         GBURBLE ("(shallow-op) ") ;
         GB_CLEAR_STATIC_HEADER (T, &T_header) ;
         info = GB_shallow_op (T, T_is_csc, op, scalar, binop_bind1st, flipij,
-            A, Context) ;
+            A, Werk) ;
     }
 
     if (info != GrB_SUCCESS)
@@ -328,6 +327,6 @@ GrB_Info GB_apply                   // C<M> = accum (C, op(A)) or op(A')
     //--------------------------------------------------------------------------
 
     return (GB_accum_mask (C, M, NULL, accum, &T, C_replace, Mask_comp,
-        Mask_struct, Context)) ;
+        Mask_struct, Werk)) ;
 }
 

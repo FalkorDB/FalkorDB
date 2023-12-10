@@ -2,10 +2,14 @@
 // GB_assign_zombie3: delete entries in C(:,j) for C_replace_phase
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed, but 36 variants possible, one for each mask type (6: 1, 2,
+// 4, 8, 16 bytes and structural), for each matrix type (3: bitmap/full/sparse
+// & hyper), mask comp (2).  No variants needed for C.
 
 // For GrB_Row_assign or GrB_Col_assign, C(I,j)<#M,repl>=any must delete all
 // entries C(i,j) outside of C(I,j), if the mask M(i,0) (or its complement) is
@@ -21,9 +25,10 @@
 
 #include "GB_assign.h"
 #include "GB_assign_zombie.h"
+#include "GB_assign_shared_definitions.h"
 #include "GB_subassign_methods.h"
 
-void GB_assign_zombie3
+GrB_Info GB_assign_zombie3
 (
     GrB_Matrix C,                   // the matrix C, or a copy
     const GrB_Matrix M,
@@ -33,8 +38,7 @@ void GB_assign_zombie3
     const GrB_Index *I,
     const int64_t nI,
     const int Ikind,
-    const int64_t Icolon [3],
-    GB_Context Context
+    const int64_t Icolon [3]
 )
 {
 
@@ -50,20 +54,26 @@ void GB_assign_zombie3
     ASSERT (!GB_ZOMBIES (M)) ; 
     ASSERT (!GB_JUMBLED (M)) ;      // binary search on M
     ASSERT (!GB_PENDING (M)) ; 
-    ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS of C==M
+    ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS of C==M
 
     //--------------------------------------------------------------------------
     // get C (:,j)
     //--------------------------------------------------------------------------
 
-    const int64_t *restrict Cp = C->p ;
     int64_t *restrict Ci = C->i ;
+    const int64_t *restrict Ch = C->h ;
+    const int64_t *restrict Cp = C->p ;
     int64_t pC_start, pC_end ;
+    const int64_t cnvec = C->nvec ;
 
-    if (C->h != NULL)
+    if (Ch != NULL)
     { 
         // C is hypersparse
-        GB_hyper_hash_lookup (Cp, C->Y->p, C->Y->i, C->Y->x, C->Y->vdim-1,
+        const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+        const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+        const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+        const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
+        GB_hyper_hash_lookup (Ch, cnvec, Cp, C_Yp, C_Yi, C_Yx, C_hash_bits,
             j, &pC_start, &pC_end) ;
     }
     else
@@ -83,7 +93,7 @@ void GB_assign_zombie3
     const int64_t *restrict Mp = M->p ;
     const int8_t  *restrict Mb = M->b ;
     const int64_t *restrict Mi = M->i ;
-    const GB_void *restrict Mx = (GB_void *) (Mask_struct ? NULL : (M->x)) ;
+    const GB_M_TYPE *restrict Mx = (GB_M_TYPE *) (Mask_struct ? NULL : (M->x)) ;
     const size_t msize = M->type->size ;
     const int64_t Mvlen = M->vlen ;
     int64_t pM_start = 0 ; // Mp [0]
@@ -95,7 +105,8 @@ void GB_assign_zombie3
     // determine the number of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (zjnz, chunk, nthreads_max) ;
     int ntasks = (nthreads == 1) ? 1 : (64 * nthreads) ;
 
@@ -156,5 +167,6 @@ void GB_assign_zombie3
     //--------------------------------------------------------------------------
 
     C->nzombies = nzombies ;
+    return (GrB_SUCCESS) ;
 }
 

@@ -1,7 +1,7 @@
 function [I, J, X] = GB_spec_extractTuples (A, xclass)
 %GB_SPEC_EXTRACTTUPLES a mimic of GrB_*_extractTuples
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 A = GB_spec_matrix (A) ;

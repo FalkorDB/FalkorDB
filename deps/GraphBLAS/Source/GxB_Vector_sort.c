@@ -2,7 +2,7 @@
 // GxB_Vector_sort: sort the values in a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ GrB_Info GxB_Vector_sort
     GrB_Vector u,           // vector to sort
     const GrB_Descriptor desc
 )
-{
+{ 
 
     //--------------------------------------------------------------------------
     // check inputs
@@ -37,7 +37,7 @@ GrB_Info GxB_Vector_sort
     //--------------------------------------------------------------------------
 
     GrB_Info info = GB_sort ((GrB_Matrix) w, (GrB_Matrix) p, op,
-        (GrB_Matrix) u, true, Context) ;
+        (GrB_Matrix) u, true, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

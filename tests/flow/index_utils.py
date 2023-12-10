@@ -7,7 +7,7 @@ def _wait_on_index(graph, label):
     RETURN count(1)"""
 
     while True:
-        result = graph.query(q, read_only=True)
+        result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
 
@@ -28,7 +28,7 @@ def list_indicies(graph, label=None):
 
     q += " RETURN label, properties, types, language, stopwords, entitytype, info, status"
 
-    return graph.query(q, read_only=True)
+    return graph.ro_query(q)
 
 def _create_typed_index(graph, idx_type, entity_type, label, *properties, options=None, sync=False):
     if entity_type == "NODE":
@@ -65,7 +65,7 @@ def create_node_fulltext_index(graph, label, *properties, sync=False):
     return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, sync=sync)
 
 def create_node_vector_index(graph, label, *properties, dim=0, similarity_function="euclidean", sync=False):
-    options = {'dim': dim, 'similarityFunction': similarity_function}
+    options = {'dimension': dim, 'similarityFunction': similarity_function}
     return _create_typed_index(graph, "VECTOR", "NODE", label, *properties, options=options, sync=sync)
 
 def create_edge_range_index(graph, relation, *properties, sync=False):
@@ -75,7 +75,7 @@ def create_edge_fulltext_index(graph, relation, *properties, sync=False):
     return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, sync=sync)
 
 def create_edge_vector_index(graph, relation, *properties, dim, similarity_function="euclidean", sync=False):
-    options = {'dim': dim, 'similarityFunction': similarity_function}
+    options = {'dimension': dim, 'similarityFunction': similarity_function}
     return _create_typed_index(graph, "VECTOR", "EDGE", relation, *properties, options=options, sync=sync)
 
 def _drop_index(graph, idx_type, entity_type, label, attribute=None):
@@ -121,31 +121,23 @@ def drop_edge_vector_index(graph, label, attribute):
 def index_under_construction(graph, label):
     params = {'lbl': label}
     q = "CALL db.indexes() YIELD label, status WHERE label = $lbl RETURN status"
-    res = graph.query(q, params, read_only=True)
+    res = graph.ro_query(q, params)
     return "UNDER CONSTRUCTION" in res.result_set[0][0]
 
 # wait for all graph indices to by operational
 def wait_for_indices_to_sync(graph):
     q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
     while True:
-        result = graph.query(q, read_only=True)
+        result = graph.ro_query(q)
         if result.result_set[0][0] == 0:
             break
         time.sleep(0.5) # sleep 500ms
 
-def query_vector_index(graph, entity_type, label, attribute, k, q):
-    params = {'type': entity_type, 'label': label, 'attribute': attribute, 'k': k, 'query': q}
-
-    return graph.query("""CALL db.idx.vector.query({
-            type: $type,
-            label: $label,
-            attribute: $attribute,
-            query: vector32f($query),
-            k:$k})""", params=params)
-
 def query_node_vector_index(graph, label, attribute, k, q):
-    return query_vector_index(graph, "NODE", label, attribute, k, q)
+    params = {'lbl': label, 'attr': attribute, 'k': k, 'q': q}
+    return graph.query("CALL db.idx.vector.queryNodes($lbl, $attr, $k, vecf32($q))", params=params)
 
 def query_edge_vector_index(graph, relation, attribute, k, q):
-    return query_vector_index(graph, "RELATIONSHIP", relation, attribute, k, q)
+    params = {'lbl': relation, 'attr': attribute, 'k': k, 'q': q}
+    return graph.query("CALL db.idx.vector.queryRelationships($lbl, $attr, $k, vecf32($q))", params=params)
 

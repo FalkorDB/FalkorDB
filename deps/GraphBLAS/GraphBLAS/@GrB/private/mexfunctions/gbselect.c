@@ -2,12 +2,12 @@
 // gbselect: select entries from a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// gbselect is an interface to GrB_Matrix_select and GxB_Matrix_select.
+// gbselect is an interface to GrB_Matrix_select.
 
 // Usage:
 
@@ -31,7 +31,7 @@
 
 // If op is '==' or '~=' and b is a NaN, and A has type GrB_FP32, GrB_FP64,
 // GxB_FC32, or GxB_FC64, then a user-defined operator is used instead of
-// GxB_EQ_THUNK, GxB_NE_THUNK, GrB_VALUEEQ* or GrB_VALUENE*.
+// G*B_VALUEEQ* or G*B_VALUENE*.
 
 // The 'tril', 'triu', 'diag', 'offdiag', and 2-input operators all require
 // the b scalar.  The b scalar must not appear for the '*0' operators.
@@ -47,50 +47,107 @@
 void gb_isnan32 (bool *z, const float *aij,
                  int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = (isnan (*aij)) ;
+    (*z) = isnan (*aij) ;
 }
+
+#define GB_ISNAN32_DEFN                                             \
+"void gb_isnan32 (bool *z, const float *aij,                    \n" \
+"                 int64_t i, int64_t j, const void *thunk)      \n" \
+"{                                                              \n" \
+"    (*z) = isnan (*aij) ;                                      \n" \
+"}"
 
 void gb_isnan64 (bool *z, const double *aij,
                  int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = (isnan (*aij)) ;
+    (*z) = isnan (*aij) ;
 }
+
+#define GB_ISNAN64_DEFN                                             \
+"void gb_isnan64 (bool *z, const double *aij,                   \n" \
+"                 int64_t i, int64_t j, const void *thunk)      \n" \
+"{                                                              \n" \
+"    (*z) = isnan (*aij) ;                                      \n" \
+"}"
 
 void gb_isnotnan32 (bool *z, const float *aij,
                     int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = (!isnan (*aij)) ;
+    (*z) = !isnan (*aij) ;
 }
+
+#define GB_ISNOTNAN32_DEFN                                          \
+"void gb_isnotnan32 (bool *z, const float *aij,                 \n" \
+"                    int64_t i, int64_t j, const void *thunk)   \n" \
+"{                                                              \n" \
+"    (*z) = !isnan (*aij) ;                                     \n" \
+"}"
 
 void gb_isnotnan64 (bool *z, const double *aij,
                     int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = (!isnan (*aij)) ;
+    (*z) = !isnan (*aij) ;
 }
+
+#define GB_ISNOTNAN64_DEFN                                          \
+"void gb_isnotnan64 (bool *z, const double *aij,                \n" \
+"                    int64_t i, int64_t j, const void *thunk)   \n" \
+"{                                                              \n" \
+"    (*z) = !isnan (*aij) ;                                     \n" \
+"}"
 
 void gb_isnanfc32 (bool *z, const GxB_FC32_t *aij,
                    int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = GB_cisnanf (*aij) ;
+    (*z) = isnan (GB_crealf (*aij)) || isnan (GB_cimagf (*aij)) ;
 }
+
+
+#define GB_ISNANFC32_DEFN                                           \
+"void gb_isnanfc32 (bool *z, const GxB_FC32_t *aij,             \n" \
+"                   int64_t i, int64_t j, const void *thunk)    \n" \
+"{                                                              \n" \
+"    (*z) = isnan (GB_crealf (*aij)) || isnan (GB_cimagf (*aij)) ;  \n" \
+"}"
 
 void gb_isnanfc64 (bool *z, const GxB_FC64_t *aij,
                    int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = GB_cisnan (*aij) ;
+    (*z) = isnan (GB_creal (*aij)) || isnan (GB_cimag (*aij)) ;
 }
+
+#define GB_ISNANFC64_DEFN                                           \
+"void gb_isnanfc64 (bool *z, const GxB_FC64_t *aij,             \n" \
+"                   int64_t i, int64_t j, const void *thunk)    \n" \
+"{                                                              \n" \
+"    (*z) = isnan (GB_creal (*aij)) || isnan (GB_cimag (*aij)) ;\n" \
+"}"
 
 void gb_isnotnanfc32 (bool *z, const GxB_FC32_t *aij,
                       int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = !GB_cisnanf (*aij) ;
+    (*z) = !isnan (GB_crealf (*aij)) && !isnan (GB_cimag (*aij)) ;
 }
+
+#define GB_ISNOTNANFC32_DEFN                                        \
+"void gb_isnotnanfc32 (bool *z, const GxB_FC32_t *aij,          \n" \
+"                      int64_t i, int64_t j, const void *thunk) \n" \
+"{                                                              \n" \
+"    (*z) = !isnan (GB_crealf (*aij)) && !isnan (GB_cimag (*aij)) ; \n" \
+"}"
 
 void gb_isnotnanfc64 (bool *z, const GxB_FC64_t *aij,
                       int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = !GB_cisnan (*aij) ;
+    (*z) = !isnan (GB_creal (*aij)) && !isnan (GB_cimag (*aij)) ;
 }
+
+#define GB_ISNOTNANFC64_DEFN                                        \
+"void gb_isnotnanfc64 (bool *z, const GxB_FC64_t *aij,          \n" \
+"                      int64_t i, int64_t j, const void *thunk) \n" \
+"{                                                              \n" \
+"    (*z) = !isnan (GB_creal (*aij)) && !isnan (GB_cimag (*aij)) ;  \n" \
+"}"
 
 //------------------------------------------------------------------------------
 // gbselect mexFunction
@@ -132,13 +189,12 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     int64_t ithunk = 0 ;
-    GxB_SelectOp selop = NULL ;
     GrB_IndexUnaryOp idxunop = NULL ;
-    bool thunk_required = false ; 
+    bool thunk_zero = false ; 
     bool op_is_positional = false ;
 
-    gb_mxstring_to_selectop (&idxunop, &selop, &thunk_required,
-        &op_is_positional, &ithunk, String [nstrings-1], NULL) ;
+    gb_mxstring_to_idxunop (&idxunop, &thunk_zero,
+        &op_is_positional, &ithunk, String [nstrings-1], GrB_FP64) ;
 
     //--------------------------------------------------------------------------
     // get the matrices
@@ -147,32 +203,7 @@ void mexFunction
     GrB_Type atype, ctype = NULL ;
     GrB_Matrix C = NULL, M = NULL, A, b = NULL ;
 
-    if (thunk_required)
-    {
-        if (nmatrices == 1)
-        { 
-            ERROR ("select operator input is missing") ;
-        }
-        else if (nmatrices == 2)
-        { 
-            A = gb_get_shallow (Matrix [0]) ;
-            b = gb_get_shallow (Matrix [1]) ;
-        }
-        else if (nmatrices == 3)
-        { 
-            C = gb_get_deep    (Matrix [0]) ;
-            A = gb_get_shallow (Matrix [1]) ;
-            b = gb_get_shallow (Matrix [2]) ;
-        }
-        else // if (nmatrices == 4)
-        { 
-            C = gb_get_deep    (Matrix [0]) ;
-            M = gb_get_shallow (Matrix [1]) ;
-            A = gb_get_shallow (Matrix [2]) ;
-            b = gb_get_shallow (Matrix [3]) ;
-        }
-    }
-    else
+    if (thunk_zero)
     {
         if (nmatrices == 1)
         { 
@@ -192,6 +223,31 @@ void mexFunction
         else // if (nmatrices == 4)
         { 
             ERROR (USAGE) ;
+        }
+    }
+    else
+    {
+        if (nmatrices == 1)
+        { 
+            ERROR ("operator input is missing") ;
+        }
+        else if (nmatrices == 2)
+        { 
+            A = gb_get_shallow (Matrix [0]) ;
+            b = gb_get_shallow (Matrix [1]) ;
+        }
+        else if (nmatrices == 3)
+        { 
+            C = gb_get_deep    (Matrix [0]) ;
+            A = gb_get_shallow (Matrix [1]) ;
+            b = gb_get_shallow (Matrix [2]) ;
+        }
+        else // if (nmatrices == 4)
+        { 
+            C = gb_get_deep    (Matrix [0]) ;
+            M = gb_get_shallow (Matrix [1]) ;
+            A = gb_get_shallow (Matrix [2]) ;
+            b = gb_get_shallow (Matrix [3]) ;
         }
     }
 
@@ -217,7 +273,7 @@ void mexFunction
         }
     }
 
-    gb_mxstring_to_selectop (&idxunop, &selop, &thunk_required,
+    gb_mxstring_to_idxunop (&idxunop, &thunk_zero,
         &op_is_positional, &ithunk, String [nstrings-1], atype) ;
 
     //--------------------------------------------------------------------------
@@ -230,6 +286,18 @@ void mexFunction
         // if accum appears, then Cin must also appear
         CHECK_ERROR (C == NULL, USAGE) ;
         accum = gb_mxstring_to_binop (String [0], ctype, ctype) ;
+    }
+
+    //--------------------------------------------------------------------------
+    // construct the zero thunk scalar, if needed
+    //--------------------------------------------------------------------------
+
+    GrB_Scalar Zero = NULL ;
+    if (thunk_zero)
+    {
+        OK (GrB_Scalar_new (&Zero, atype)) ;
+        OK (GrB_Scalar_setElement_INT32 (Zero, 0)) ;
+        b = (GrB_Matrix) Zero ;
     }
 
     //--------------------------------------------------------------------------
@@ -314,68 +382,67 @@ void mexFunction
             // instead of the built-in GxB_EQ_THUNK, GxB_NE_THUNK, GrB_VALUEEQ*
             // or GrB_VALUENE* operators.
 
-            if (idxunop == GrB_VALUEEQ_FP32 ||
-                selop == GxB_EQ_THUNK && atype == GrB_FP32)
+            if (idxunop == GrB_VALUEEQ_FP32)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnan32,
-                    GrB_BOOL, GrB_FP32, GrB_FP32)) ;
+                    GrB_BOOL, GrB_FP32, GrB_FP32,
+                    "gb_isnan32", GB_ISNAN32_DEFN)) ;
             }
-            else if (idxunop == GrB_VALUEEQ_FP64 ||
-                     selop == GxB_EQ_THUNK && atype == GrB_FP64)
+            else if (idxunop == GrB_VALUEEQ_FP64)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnan64,
-                    GrB_BOOL, GrB_FP64, GrB_FP64)) ;
+                    GrB_BOOL, GrB_FP64, GrB_FP64,
+                    "gb_isnan64", GB_ISNAN64_DEFN)) ;
             }
-            else if (idxunop == GxB_VALUEEQ_FC32 ||
-                     selop == GxB_EQ_THUNK && atype == GxB_FC32)
+            else if (idxunop == GxB_VALUEEQ_FC32)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnanfc32,
-                    GrB_BOOL, GxB_FC32, GxB_FC32)) ;
+                    GrB_BOOL, GxB_FC32, GxB_FC32,
+                    "gb_isnanfc32", GB_ISNANFC32_DEFN)) ;
             }
-            else if (idxunop == GxB_VALUEEQ_FC64 ||
-                     selop == GxB_EQ_THUNK && atype == GxB_FC64)
+            else if (idxunop == GxB_VALUEEQ_FC64)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnanfc64,
-                    GrB_BOOL, GxB_FC64, GxB_FC64)) ;
+                    GrB_BOOL, GxB_FC64, GxB_FC64,
+                    "gb_isnanfc64", GB_ISNANFC64_DEFN)) ;
             }
-            else if (idxunop == GrB_VALUENE_FP32 ||
-                     selop == GxB_NE_THUNK && atype == GrB_FP32)
+            else if (idxunop == GrB_VALUENE_FP32)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnotnan32,
-                    GrB_BOOL, GrB_FP32, GrB_FP32)) ;
+                    GrB_BOOL, GrB_FP32, GrB_FP32,
+                    "gb_isnotnan32", GB_ISNOTNAN32_DEFN)) ;
             }
-            else if (idxunop == GrB_VALUENE_FP64 ||
-                     selop == GxB_NE_THUNK && atype == GrB_FP64)
+            else if (idxunop == GrB_VALUENE_FP64)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnotnan64,
-                    GrB_BOOL, GrB_FP64, GrB_FP64)) ;
+                    GrB_BOOL, GrB_FP64, GrB_FP64,
+                    "gb_isnotnan64", GB_ISNOTNAN64_DEFN)) ;
             }
-            else if (idxunop == GxB_VALUENE_FC32 ||
-                     selop == GxB_NE_THUNK && atype == GxB_FC32)
+            else if (idxunop == GxB_VALUENE_FC32)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnotnanfc32,
-                    GrB_BOOL, GxB_FC32, GxB_FC32)) ;
+                    GrB_BOOL, GxB_FC32, GxB_FC32,
+                    "gb_isnotnanfc32", GB_ISNOTNANFC32_DEFN)) ;
             }
-            else if (idxunop == GxB_VALUENE_FC64 ||
-                     selop == GxB_NE_THUNK && atype == GxB_FC64)
+            else if (idxunop == GxB_VALUENE_FC64)
             { 
-                OK (GrB_IndexUnaryOp_new (&nan_test,
+                OK (GxB_IndexUnaryOp_new (&nan_test,
                     (GxB_index_unary_function) gb_isnotnanfc64,
-                    GrB_BOOL, GxB_FC64, GxB_FC64)) ;
+                    GrB_BOOL, GxB_FC64, GxB_FC64,
+                    "gb_isnotnanfc64", GB_ISNOTNANFC64_DEFN)) ;
             }
         }
 
         if (nan_test != NULL)
         { 
             // use the new operator instead of the built-in one
-            selop = NULL ;
             idxunop = nan_test ;
         }
     }
@@ -384,29 +451,21 @@ void mexFunction
     // compute C<M> += select (A, b2)
     //--------------------------------------------------------------------------
 
-    if (selop != NULL)
-    { 
-        OK1 (C, GxB_Matrix_select (C, M, accum, selop, A,
-            (GrB_Scalar) b2, desc)) ;
-    }
-    else
-    { 
-        // typecast the b2 scalar to the idxunop->ytype
-        GrB_Type ytype ;
-        char ytype_name [GxB_MAX_NAME_LEN] ;
-        OK (GxB_IndexUnaryOp_ytype_name (ytype_name, idxunop)) ;
-        OK (GxB_Type_from_name (&ytype, ytype_name)) ;
-        OK (GrB_Matrix_new (&b4, ytype, 1, 1)) ;
-        OK (GrB_Matrix_assign (b4, NULL, NULL, b2, GrB_ALL, 1, GrB_ALL, 1,
-            NULL)) ;
-        OK1 (C, GrB_Matrix_select_Scalar (C, M, accum, idxunop, A,
-            (GrB_Scalar) b4, desc)) ;
-    }
+    // typecast the b2 scalar to the idxunop->ytype
+    GrB_Type ytype ;
+    char ytype_name [GxB_MAX_NAME_LEN] ;
+    OK (GxB_IndexUnaryOp_ytype_name (ytype_name, idxunop)) ;
+    OK (GxB_Type_from_name (&ytype, ytype_name)) ;
+    OK (GrB_Matrix_new (&b4, ytype, 1, 1)) ;
+    OK (GrB_Matrix_assign (b4, NULL, NULL, b2, GrB_ALL, 1, GrB_ALL, 1, NULL)) ;
+    OK1 (C, GrB_Matrix_select_Scalar (C, M, accum, idxunop, A,
+        (GrB_Scalar) b4, desc)) ;
 
     //--------------------------------------------------------------------------
     // free shallow copies
     //--------------------------------------------------------------------------
 
+    OK (GrB_Scalar_free (&Zero)) ;
     OK (GrB_Matrix_free (&M)) ;
     OK (GrB_Matrix_free (&A)) ;
     OK (GrB_Matrix_free (&b)) ;

@@ -3,7 +3,7 @@ function gbcovmake
 %
 % See also: gbcover, gbcov_edit
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('Compiling @GrB interface for mexFunction statement coverage...\n') ;
@@ -77,7 +77,7 @@ here = pwd ;
 
 if (need_rename)
     % use renamed version for all MATLAB versions:
-    flags = [flags ' -DGBRENAME=1 ' ] ;
+    flags = [flags ' -DGBMATLAB=1 ' ] ;
     inc = sprintf ('-I%s/../../rename ', here) ;
     libraries = '-L../../../../../build -L. -L/usr/local/lib -lgraphblas_matlab' ;
 else

@@ -2,13 +2,13 @@ function test185
 %TEST185 test dot4 for all sparsity formats
 % GB_AxB_dot4 computes C+=A'*B when C is dense.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test185 -------------------- C+=A''*B when C is dense\n') ;
 
 rng ('default') ;
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 
 semiring.add = 'plus' ;
 semiring.multiply = 'times' ;
@@ -24,6 +24,7 @@ dtn_sax = struct ('axb', 'saxpy', 'inp0', 'tran') ;
 
 n = 20 ;
 C = GB_spec_random (n, n, inf, 1, 'double') ;
+C.sparsity = 8 ;
 C0 = sparse (n, n) ;
 maxerr = 0 ;
 
@@ -86,14 +87,13 @@ for da = [0.01 0.1 .5 0.9 inf]
                 err = norm (C3 - C2.matrix, 1) ;
                 maxerr = max (maxerr, err) ;
                 assert (err < 1e-12) ;
-
             end
         end
     end
 end
 
 fprintf ('\n') ;
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 fprintf ('maxerr: %g\n', maxerr) ;
 fprintf ('test185: all tests passed\n') ;
 

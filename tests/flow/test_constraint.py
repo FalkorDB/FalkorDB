@@ -7,9 +7,9 @@ GRAPH_ID = "constraints"
 
 class testConstraintNodes():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         self.con = self.env.getConnection()
-        self.g = Graph(self.con, GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
@@ -552,10 +552,10 @@ class testConstraintNodes():
 
 class testConstraintEdges():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         self.con = self.env.getConnection()
         self.con.flushall() # clear DB
-        self.g = Graph(self.con, GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
@@ -968,11 +968,11 @@ MONITOR_ATTACHED = False
 
 class testConstraintReplication():
     def __init__(self):
-        self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
-        self.source = self.env.getConnection()
+        self.env, self.db = Env(env='oss', useSlaves=True)
+        self.source  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
         self.monitor = []
-        self.g = Graph(self.source, GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
 
         self.monitor_thread = threading.Thread(target=self.monitor_thread)
         self.monitor_thread.start()
@@ -1035,4 +1035,3 @@ class testConstraintReplication():
             elapsed -= 0.2
 
         self.env.assertEqual(len(self.monitor), 12)
-

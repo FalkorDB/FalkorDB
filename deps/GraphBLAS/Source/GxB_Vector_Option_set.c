@@ -2,7 +2,7 @@
 // GxB_Vector_Option_set: set an option in a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,8 +14,8 @@
 //------------------------------------------------------------------------------
 
 // GxB_Vector_Option_set is a single va_arg-based method for any vector option,
-// of any type.  The following functions are alternative methods that do not
-// use va_arg (useful for compilers and interfaces that do not support va_arg):
+// of any type.  The following functions are non-va_arg-based methods
+// (useful for compilers and interfaces that do not support va_arg):
 //
 //  GxB_Vector_Option_set_INT32         int32_t scalars
 //  GxB_Vector_Option_set_FP64          double scalars
@@ -63,7 +63,7 @@ GrB_Info GxB_Vector_Option_set_INT32    // set an option in a vector
     // conform the vector to its new desired sparsity structure
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_conform ((GrB_Matrix) v, Context)) ;
+    GB_OK (GB_conform ((GrB_Matrix) v, Werk)) ;
     GB_BURBLE_END ;
     ASSERT_VECTOR_OK (v, "v set", GB0) ;
     return (info) ;
@@ -112,7 +112,7 @@ GrB_Info GxB_Vector_Option_set_FP64    // set an option in a vector
     // conform the vector to its new desired sparsity structure
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_conform ((GrB_Matrix) v, Context)) ;
+    GB_OK (GB_conform ((GrB_Matrix) v, Werk)) ;
     GB_BURBLE_END ;
     ASSERT_VECTOR_OK (v, "v set", GB0) ;
     return (info) ;
@@ -179,7 +179,7 @@ GrB_Info GxB_Vector_Option_set      // set an option in a vector
     // conform the vector to its new desired sparsity structure
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_conform ((GrB_Matrix) v, Context)) ;
+    GB_OK (GB_conform ((GrB_Matrix) v, Werk)) ;
     GB_BURBLE_END ;
     ASSERT_VECTOR_OK (v, "v set", GB0) ;
     return (info) ;

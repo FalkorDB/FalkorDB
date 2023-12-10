@@ -2,7 +2,7 @@
 // GB_serialize_free_blocks: free the set of blocks used to compress an array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,7 @@ void GB_serialize_free_blocks
 (
     GB_blocks **Blocks_handle,      // array of size nblocks
     size_t Blocks_size,             // size of Blocks
-    int32_t nblocks,                // # of blocks, or zero if no blocks
-    GB_Context Context
+    int32_t nblocks                 // # of blocks, or zero if no blocks
 )
 {
 

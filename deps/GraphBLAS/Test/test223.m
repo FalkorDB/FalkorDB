@@ -1,7 +1,7 @@
 function test223
 %TEST223 test matrix multiply, C<!M>=A*B
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % tests the Coarse Gustavson method for C<!M>=A*B, for the case when
@@ -9,7 +9,7 @@ function test223
 
 rng ('default') ;
 
-GrB.burble (1) ;
+GB_mex_burble (1) ;
 n = 100 ;
 m = 10000 ;
 
@@ -46,7 +46,7 @@ C2 = A*B ;
 C2 (1,1) = 0 ;
 assert (isequal (C1.matrix, C2)) ;
 
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 nthreads_set (save1, save2) ;
 fprintf ('\ntest223: all tests passed\n') ;
 

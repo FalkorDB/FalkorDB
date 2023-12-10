@@ -2,7 +2,7 @@
 // GxB_Matrix_build_Scalar: build a sparse GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,7 +44,7 @@ GrB_Info GxB_Matrix_build_Scalar
     //--------------------------------------------------------------------------
 
     GrB_Info info = GB_build (C, I, J, scalar->x, nvals, GxB_IGNORE_DUP,
-        scalar->type, true, true, Context) ;
+        scalar->type, true, true, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

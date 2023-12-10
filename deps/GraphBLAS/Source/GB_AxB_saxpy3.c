@@ -2,10 +2,12 @@
 // GB_AxB_saxpy3: compute C=A*B, C<M>=A*B, or C<!M>=A*B in parallel
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: done.
 
 // GB_AxB_saxpy3 computes C=A*B, C<M>=A*B, or C<!M>=A*B in parallel.  If the
 // mask matrix M has too many entries compared to the work to compute A*B, then
@@ -88,10 +90,11 @@
 //------------------------------------------------------------------------------
 
 #include "GB_mxm.h"
+#include "GB_stringify.h"
 #include "GB_AxB_saxpy_generic.h"
 #include "GB_control.h"
 #include "GB_AxB__include1.h"
-#ifndef GBCUDA_DEV
+#ifndef GBCOMPACT
 #include "GB_AxB__include2.h"
 #endif
 #include "GB_unused.h"
@@ -130,13 +133,9 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     bool *mask_applied,             // if true, then mask was applied
     GrB_Desc_Value AxB_method,      // Default, Gustavson, or Hash
     const int do_sort,              // if nonzero, try to sort in saxpy3
-    GB_Context Context
+    GB_Werk Werk
 )
 {
-
-    #ifdef GB_TIMING
-    double ttt = omp_get_wtime ( ) ;
-    #endif
 
     //--------------------------------------------------------------------------
     // check inputs
@@ -176,7 +175,8 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     // determine the # of threads to use
     //--------------------------------------------------------------------------
 
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
 
     //--------------------------------------------------------------------------
     // define workspace
@@ -191,8 +191,8 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     // construct the hyper hashes for M and A
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_hyper_hash_build (M, Context)) ;    // does nothing if M is NULL
-    GB_OK (GB_hyper_hash_build (A, Context)) ;
+    GB_OK (GB_hyper_hash_build (M, Werk)) ;    // does nothing if M is NULL
+    GB_OK (GB_hyper_hash_build (A, Werk)) ;
 
     //--------------------------------------------------------------------------
     // get the semiring operators
@@ -242,7 +242,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 
     info = GB_new (&C, // sparse or hyper, existing header
         ctype, cvlen, cvdim, GB_Ap_malloc, true,
-        C_sparsity, B->hyper_switch, cnvec, Context) ;
+        C_sparsity, B->hyper_switch, cnvec) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
@@ -268,12 +268,6 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         ASSERT (C_sparsity == GxB_SPARSE) ;
     }
 
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (3, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
-
     //==========================================================================
     // phase0: create parallel tasks and allocate workspace
     //==========================================================================
@@ -292,7 +286,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         GBURBLE ("(single-threaded Gustavson) ") ;
         info = GB_AxB_saxpy3_slice_quick (C, A, B,
             &SaxpyTasks, &SaxpyTasks_size, &ntasks, &nfine, &nthreads,
-            Context) ;
+            Werk) ;
     }
     else
     { 
@@ -302,27 +296,21 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         info = GB_AxB_saxpy3_slice_balanced (C, M, Mask_comp, A, B, AxB_method,
             builtin_semiring,
             &SaxpyTasks, &SaxpyTasks_size, &apply_mask, &M_in_place,
-            &ntasks, &nfine, &nthreads, Context) ;
+            &ntasks, &nfine, &nthreads, Werk) ;
     }
-
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (4, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
 
     if (info == GrB_NO_VALUE)
     { 
         // The mask is present but has been discarded; need to discard the
         // analysis so far and redo it without the mask.  This may result in
-        // GB_bitmap_AxB_saxpy being called instead of GB_AxB_saxpy3.
+        // GB_AxB_saxbit being called instead of GB_AxB_saxpy3.
         ASSERT (M != NULL && !apply_mask) ;
         GB_FREE_ALL ;
         return (GrB_NO_VALUE) ;
     }
     else if (info != GrB_SUCCESS)
     { 
-        // out of memory
+        // out of memory or other error
         GB_FREE_ALL ;
         return (info) ;
     }
@@ -601,22 +589,8 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     // a total of 5.9 second for phase 7 (the numerical work below).
     // Figure out a faster method.
 
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (5, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
-
     GB_AxB_saxpy3_symbolic (C, M, Mask_comp, Mask_struct, M_in_place,
         A, B, SaxpyTasks, ntasks, nfine, nthreads) ;
-
-// the above phase takes 1.6 seconds for 64 trials of the web graph.
-
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (6, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
 
     //==========================================================================
     // C = A*B, via saxpy3 method, phases 2 to 5
@@ -626,13 +600,13 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     {
 
         //----------------------------------------------------------------------
-        // C is iso; compute the pattern of C<#>=A*B with the any_pair semiring
+        // via the iso kernel
         //----------------------------------------------------------------------
 
         GBURBLE ("(iso sparse saxpy) ") ;
         info = GB (_Asaxpy3B__any_pair_iso) (C, M, Mask_comp, Mask_struct,
             M_in_place, A, B, SaxpyTasks, ntasks, nfine,
-            nthreads, do_sort, Context) ;
+            nthreads, do_sort, Werk) ;
         if (info == GrB_SUCCESS)
         { 
             memcpy (C->x, cscalar, csize) ;
@@ -643,13 +617,15 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     {
 
         //----------------------------------------------------------------------
-        // C is non-iso
+        // via the factory kernel
         //----------------------------------------------------------------------
 
+        info = GrB_NO_VALUE ;
         GBURBLE ("(sparse saxpy) ") ;
-        bool done = false ;
 
-        #ifndef GBCUDA_DEV
+        #ifndef GBCOMPACT
+        GB_IF_FACTORY_KERNELS_ENABLED
+        { 
 
             //------------------------------------------------------------------
             // define the worker for the switch factory
@@ -662,9 +638,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
             {                                                               \
                 info = GB_Asaxpy3B (add,mult,xname) (C, M, Mask_comp,       \
                     Mask_struct, M_in_place, A, B,                          \
-                    SaxpyTasks, ntasks, nfine, nthreads,                    \
-                    do_sort, Context) ;                                     \
-                done = (info != GrB_NO_VALUE) ;                             \
+                    SaxpyTasks, ntasks, nfine, nthreads, do_sort, Werk) ;   \
             }                                                               \
             break ;
 
@@ -676,53 +650,53 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
             { 
                 #include "GB_AxB_factory.c"
             }
-
+        }
         #endif
 
         //----------------------------------------------------------------------
-        // generic saxpy3 method
+        // via the JIT or PreJIT kernel
         //----------------------------------------------------------------------
 
-        if (!done)
+        if (info == GrB_NO_VALUE)
+        { 
+            info = GB_AxB_saxpy3_jit (C, M, Mask_comp,
+                Mask_struct, M_in_place, A, B, semiring, flipxy,
+                SaxpyTasks, ntasks, nfine, nthreads, do_sort, Werk) ;
+        }
+
+        //----------------------------------------------------------------------
+        // via the generic kernel
+        //----------------------------------------------------------------------
+
+        if (info == GrB_NO_VALUE)
         { 
             info = GB_AxB_saxpy_generic (C, M, Mask_comp, Mask_struct,
                 M_in_place, A, A_is_pattern, B, B_is_pattern, semiring,
-                flipxy, GB_SAXPY_METHOD_3,
-                SaxpyTasks, ntasks, nfine, nthreads, do_sort,
-                Context) ;
+                flipxy, GB_SAXPY_METHOD_3, ntasks, nthreads,
+                SaxpyTasks, nfine, do_sort, Werk,
+                // unused:
+                0, 0, 0, NULL, 0, 0, NULL, NULL, NULL, NULL) ;
         }
     }
 
     if (info != GrB_SUCCESS)
     { 
-        // out of memory
+        // out of memory, or other error
         GB_FREE_ALL ;
-        return (GrB_OUT_OF_MEMORY) ;
+        return (info) ;
     }
 
     //--------------------------------------------------------------------------
     // prune empty vectors, free workspace, and return result
     //--------------------------------------------------------------------------
 
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (7, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
-
     C->magic = GB_MAGIC ;
     GB_FREE_WORKSPACE ;
-    GB_OK (GB_hypermatrix_prune (C, Context)) ;
+    GB_OK (GB_hypermatrix_prune (C, Werk)) ;
     ASSERT_MATRIX_OK (C, "saxpy3: output", GB0) ;
     ASSERT (!GB_ZOMBIES (C)) ;
     ASSERT (!GB_PENDING (C)) ;
     (*mask_applied) = apply_mask ;
-
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (8, ttt) ;
-    #endif
-
     return (info) ;
 }
 

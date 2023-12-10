@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Program/complex_demo.c: demo for user-defined complex type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,6 +12,10 @@
 // to check the results.
 
 #include "graphblas_demos.h"
+#include "usercomplex.h"
+#include "usercomplex.c"
+#include "simple_rand.c"
+#include "random_matrix.c"
 
 //------------------------------------------------------------------------------
 // print a complex matrix
@@ -132,15 +136,4 @@ int main (int argc, char **argv)
     // finalize GraphBLAS
     GrB_finalize ( ) ;
 }
-
-//------------------------------------------------------------------------------
-
-#if 0
-
-int main ( )
-{
-    printf ("complex data type not available (ANSI C11 or higher required)\n") ;
-}
-
-#endif
 

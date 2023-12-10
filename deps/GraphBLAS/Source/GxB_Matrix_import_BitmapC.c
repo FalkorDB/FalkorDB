@@ -2,7 +2,7 @@
 // GxB_Matrix_import_BitmapC: import a matrix in bitmap format, held by column
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,7 +33,7 @@ GrB_Info GxB_Matrix_import_BitmapC  // import a bitmap matrix, held by column
 
     GB_WHERE1 ("GxB_Matrix_import_BitmapC (&A, type, nrows, ncols, "
         "&Ab, &Ax, Ab_size, Ax_size, iso, nvals, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_import_BitmapC") ;
+    // GB_BURBLE_START ("GxB_Matrix_import_BitmapC") ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
 
@@ -49,9 +49,9 @@ GrB_Info GxB_Matrix_import_BitmapC  // import a bitmap matrix, held by column
         Ax,   Ax_size,  // Ax
         nvals, false, 0,                    // nvals for bitmap
         GxB_BITMAP, true,                   // bitmap by col
-        iso, fast_import, true, Context) ;
+        iso, fast_import, true, Werk) ;
 
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

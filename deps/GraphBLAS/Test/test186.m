@@ -1,7 +1,7 @@
 function test186 (dohack)
 %TEST186 test saxpy for all sparsity formats
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test186 --------------- C<!M>A*B for all sparsity formats\n') ;
@@ -108,7 +108,7 @@ for A_sparsity = [1 2 4 8]
 end
 
 % restore global settings
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 GB_mex_hack (save) ;
 
 fprintf ('\n') ;

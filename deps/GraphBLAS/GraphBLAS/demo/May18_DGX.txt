@@ -1,0 +1,499 @@
+mxm_demo
+{Invalid MEX-file
+'/home/faculty/d/davis/master/GraphBLAS/GraphBLAS/@GrB/private/gbclear.mexa64':
+/home/faculty/d/davis/bin/libgraphblas_matlab.so.8: undefined symbol:
+__svml_ldexp2
+
+Error in GrB.clear (line 12)
+gbclear ;
+
+Error in mxm_demo (line 11)
+GrB.clear ;
+} 
+diary off
+100799 / 3600
+
+ans =
+
+   27.9997
+
+
+
+clear all
+mxm_demo
+
+Prob = 
+
+  struct with fields:
+
+         A: [9000x9000 double]
+      name: 'ND/nd3k'
+     title: 'ND problem set, matrix nd3k'
+        id: 936
+      date: '2003'
+    author: 'author unknown'
+        ed: 'T. Davis'
+      kind: '2D/3D problem'
+
+
+Prob2 = 
+
+  struct with fields:
+
+      name: 'Freescale/Freescale2'
+     title: 'circuit simulation matrix from Freescale'
+         A: [2999349x2999349 double]
+     Zeros: [2999349x2999349 double]
+        id: 2662
+      date: '2015'
+    author: 'K. Gullapalli'
+        ed: 'T. Davis'
+      kind: 'circuit simulation matrix'
+     notes: [4x59 char]
+
+hypersparse.engr.tamu.edu
+GraphBLAS version: 8.0.0 (May 18, 2023)
+
+-------------------------------------------------
+Testing single-threaded performance of C=A*B:
+-------------------------------------------------
+
+=== builtin: double (real) vs GraphBLAS: single
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     3.4751 GrB:     2.9457 speedup:       1.18 err: 1.63154e-07
+trial 2: builtin:     3.4769 GrB:     2.9603 speedup:       1.17 err: 1.63154e-07
+trial 3: builtin:     3.4812 GrB:     2.9578 speedup:       1.18 err: 1.63154e-07
+trial 4: builtin:     3.4754 GrB:     2.9581 speedup:       1.17 err: 1.63154e-07
+average: builtin:     3.4772 GrB:     2.9555 speedup:       1.18
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.1220 GrB:     0.0684 speedup:       1.78 err: 3.60006e-08
+trial 2: builtin:     0.1132 GrB:     0.0545 speedup:       2.08 err: 3.60006e-08
+trial 3: builtin:     0.1045 GrB:     0.0544 speedup:       1.92 err: 3.60006e-08
+trial 4: builtin:     0.1133 GrB:     0.0545 speedup:       2.08 err: 3.60006e-08
+average: builtin:     0.1132 GrB:     0.0580 speedup:       1.95
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.0421 GrB:     0.0327 speedup:       1.29 err: 4.86966e-08
+trial 2: builtin:     0.0374 GrB:     0.0322 speedup:       1.16 err: 4.86966e-08
+trial 3: builtin:     0.0366 GrB:     0.0321 speedup:       1.14 err: 4.86966e-08
+trial 4: builtin:     0.0365 GrB:     0.0321 speedup:       1.14 err: 4.86966e-08
+average: builtin:     0.0382 GrB:     0.0323 speedup:       1.18
+
+=== builtin: double (real) vs GraphBLAS: double
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     3.4587 GrB:     3.1754 speedup:       1.09 err: 0
+trial 2: builtin:     3.4747 GrB:     3.1809 speedup:       1.09 err: 0
+trial 3: builtin:     3.4609 GrB:     3.2828 speedup:       1.05 err: 0
+trial 4: builtin:     3.4629 GrB:     3.2217 speedup:       1.07 err: 0
+average: builtin:     3.4643 GrB:     3.2152 speedup:       1.08
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.1174 GrB:     0.0795 speedup:       1.48 err: 0
+trial 2: builtin:     0.1010 GrB:     0.0593 speedup:       1.70 err: 0
+trial 3: builtin:     0.1003 GrB:     0.0596 speedup:       1.68 err: 0
+trial 4: builtin:     0.1001 GrB:     0.0591 speedup:       1.69 err: 0
+average: builtin:     0.1047 GrB:     0.0644 speedup:       1.63
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.0386 GrB:     0.0399 speedup:       0.97 err: 0
+trial 2: builtin:     0.0373 GrB:     0.0408 speedup:       0.91 err: 0
+trial 3: builtin:     0.0372 GrB:     0.0394 speedup:       0.94 err: 0
+trial 4: builtin:     0.0376 GrB:     0.0402 speedup:       0.94 err: 0
+average: builtin:     0.0377 GrB:     0.0401 speedup:       0.94
+
+=== builtin: double complex vs GraphBLAS: single complex
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:    18.3004 GrB:     4.3678 speedup:       4.19 err: 1.70413e-07
+trial 2: builtin:    18.3275 GrB:     4.3966 speedup:       4.17 err: 1.70413e-07
+trial 3: builtin:    18.3979 GrB:     4.3929 speedup:       4.19 err: 1.70413e-07
+trial 4: builtin:    18.3337 GrB:     4.3922 speedup:       4.17 err: 1.70413e-07
+average: builtin:    18.3398 GrB:     4.3874 speedup:       4.18
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.4566 GrB:     0.0823 speedup:       5.55 err: 4.56897e-08
+trial 2: builtin:     0.4494 GrB:     0.0623 speedup:       7.22 err: 4.56897e-08
+trial 3: builtin:     0.4502 GrB:     0.0625 speedup:       7.20 err: 4.56897e-08
+trial 4: builtin:     0.4455 GrB:     0.0624 speedup:       7.14 err: 4.56897e-08
+average: builtin:     0.4504 GrB:     0.0674 speedup:       6.69
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.1376 GrB:     0.0484 speedup:       2.84 err: 5.75158e-08
+trial 2: builtin:     0.1211 GrB:     0.0489 speedup:       2.47 err: 5.75158e-08
+trial 3: builtin:     0.1345 GrB:     0.0484 speedup:       2.78 err: 5.75158e-08
+trial 4: builtin:     0.1208 GrB:     0.0490 speedup:       2.47 err: 5.75158e-08
+average: builtin:     0.1285 GrB:     0.0487 speedup:       2.64
+
+=== builtin: double complex vs GraphBLAS: double complex
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:    18.3637 GrB:     4.4487 speedup:       4.13 err: 0
+trial 2: builtin:    18.3766 GrB:     4.4696 speedup:       4.11 err: 0
+trial 3: builtin:    18.3299 GrB:     4.4670 speedup:       4.10 err: 0
+trial 4: builtin:    18.3523 GrB:     4.4640 speedup:       4.11 err: 0
+average: builtin:    18.3556 GrB:     4.4623 speedup:       4.11
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.4530 GrB:     0.1494 speedup:       3.03 err: 0
+trial 2: builtin:     0.4736 GrB:     0.1065 speedup:       4.45 err: 0
+trial 3: builtin:     0.4759 GrB:     0.1216 speedup:       3.91 err: 0
+trial 4: builtin:     0.4294 GrB:     0.1070 speedup:       4.01 err: 0
+average: builtin:     0.4580 GrB:     0.1211 speedup:       3.78
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.1340 GrB:     0.0702 speedup:       1.91 err: 0
+trial 2: builtin:     0.1379 GrB:     0.0859 speedup:       1.61 err: 0
+trial 3: builtin:     0.1214 GrB:     0.0894 speedup:       1.36 err: 0
+trial 4: builtin:     0.1351 GrB:     0.0709 speedup:       1.91 err: 0
+average: builtin:     0.1321 GrB:     0.0791 speedup:       1.67
+
+-------------------------------------------------
+Testing performance of C=A*B using 20 threads:
+-------------------------------------------------
+
+=== builtin: double (real) vs GraphBLAS: single
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     0.2478 GrB:     0.1868 speedup:       1.33 err: 1.66754e-07
+trial 2: builtin:     0.2612 GrB:     0.1851 speedup:       1.41 err: 1.66754e-07
+trial 3: builtin:     0.2294 GrB:     0.1715 speedup:       1.34 err: 1.66754e-07
+trial 4: builtin:     0.2328 GrB:     0.1735 speedup:       1.34 err: 1.66754e-07
+average: builtin:     0.2428 GrB:     0.1792 speedup:       1.35
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0306 GrB:     0.0202 speedup:       1.52 err: 3.59121e-08
+trial 2: builtin:     0.0163 GrB:     0.0060 speedup:       2.71 err: 3.59405e-08
+trial 3: builtin:     0.0122 GrB:     0.0066 speedup:       1.83 err: 3.59462e-08
+trial 4: builtin:     0.0111 GrB:     0.0059 speedup:       1.88 err: 3.59468e-08
+average: builtin:     0.0175 GrB:     0.0097 speedup:       1.81
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.0371 GrB:     0.0118 speedup:       3.14 err: 4.87298e-08
+trial 2: builtin:     0.0366 GrB:     0.0101 speedup:       3.61 err: 4.8749e-08
+trial 3: builtin:     0.0364 GrB:     0.0109 speedup:       3.33 err: 4.87928e-08
+trial 4: builtin:     0.0370 GrB:     0.0103 speedup:       3.60 err: 4.87015e-08
+average: builtin:     0.0368 GrB:     0.0108 speedup:       3.41
+
+=== builtin: double (real) vs GraphBLAS: double
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     0.3468 GrB:     0.2361 speedup:       1.47 err: 0
+trial 2: builtin:     0.3229 GrB:     0.2456 speedup:       1.31 err: 0
+trial 3: builtin:     0.3195 GrB:     0.1949 speedup:       1.64 err: 0
+trial 4: builtin:     0.2312 GrB:     0.2329 speedup:       0.99 err: 0
+average: builtin:     0.3051 GrB:     0.2274 speedup:       1.34
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0289 GrB:     0.0277 speedup:       1.04 err: 1.93123e-18
+trial 2: builtin:     0.0119 GrB:     0.0075 speedup:       1.59 err: 1.88548e-18
+trial 3: builtin:     0.0115 GrB:     0.0077 speedup:       1.48 err: 1.99516e-18
+trial 4: builtin:     0.0116 GrB:     0.0078 speedup:       1.49 err: 1.93926e-18
+average: builtin:     0.0160 GrB:     0.0127 speedup:       1.26
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.0380 GrB:     0.0104 speedup:       3.64 err: 5.49315e-18
+trial 2: builtin:     0.0373 GrB:     0.0104 speedup:       3.57 err: 5.31686e-18
+trial 3: builtin:     0.0373 GrB:     0.0104 speedup:       3.58 err: 5.43357e-18
+trial 4: builtin:     0.0373 GrB:     0.0104 speedup:       3.57 err: 5.22295e-18
+average: builtin:     0.0375 GrB:     0.0104 speedup:       3.59
+
+=== builtin: double complex vs GraphBLAS: single complex
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     1.2257 GrB:     0.3514 speedup:       3.49 err: 1.67076e-07
+trial 2: builtin:     1.0804 GrB:     0.2511 speedup:       4.30 err: 1.67076e-07
+trial 3: builtin:     1.0224 GrB:     0.3205 speedup:       3.19 err: 1.67076e-07
+trial 4: builtin:     1.1051 GrB:     0.2550 speedup:       4.33 err: 1.67076e-07
+average: builtin:     1.1084 GrB:     0.2945 speedup:       3.76
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0574 GrB:     0.0274 speedup:       2.10 err: 4.57909e-08
+trial 2: builtin:     0.0311 GrB:     0.0079 speedup:       3.95 err: 4.57959e-08
+trial 3: builtin:     0.0347 GrB:     0.0079 speedup:       4.41 err: 4.58046e-08
+trial 4: builtin:     0.0356 GrB:     0.0081 speedup:       4.38 err: 4.58689e-08
+average: builtin:     0.0397 GrB:     0.0128 speedup:       3.10
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.1166 GrB:     0.0191 speedup:       6.10 err: 5.73858e-08
+trial 2: builtin:     0.1168 GrB:     0.0192 speedup:       6.09 err: 5.73767e-08
+trial 3: builtin:     0.1167 GrB:     0.0192 speedup:       6.09 err: 5.73927e-08
+trial 4: builtin:     0.1168 GrB:     0.0193 speedup:       6.04 err: 5.74127e-08
+average: builtin:     0.1167 GrB:     0.0192 speedup:       6.08
+
+=== builtin: double complex vs GraphBLAS: double complex
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     1.0827 GrB:     0.2867 speedup:       3.78 err: 0
+trial 2: builtin:     1.0004 GrB:     0.2743 speedup:       3.65 err: 0
+trial 3: builtin:     1.0849 GrB:     0.2706 speedup:       4.01 err: 0
+trial 4: builtin:     1.0010 GrB:     0.2742 speedup:       3.65 err: 0
+average: builtin:     1.0422 GrB:     0.2764 speedup:       3.77
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0635 GrB:     0.0389 speedup:       1.63 err: 1.66254e-18
+trial 2: builtin:     0.0438 GrB:     0.0127 speedup:       3.45 err: 1.61814e-18
+trial 3: builtin:     0.0407 GrB:     0.0159 speedup:       2.57 err: 1.76037e-18
+trial 4: builtin:     0.0438 GrB:     0.0137 speedup:       3.19 err: 1.92635e-18
+average: builtin:     0.0479 GrB:     0.0203 speedup:       2.36
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.1434 GrB:     0.0266 speedup:       5.40 err: 5.19486e-18
+trial 2: builtin:     0.1378 GrB:     0.0258 speedup:       5.35 err: 5.57016e-18
+trial 3: builtin:     0.1421 GrB:     0.0274 speedup:       5.19 err: 5.11162e-18
+trial 4: builtin:     0.1377 GrB:     0.0241 speedup:       5.70 err: 5.24804e-18
+average: builtin:     0.1402 GrB:     0.0260 speedup:       5.40
+
+-------------------------------------------------
+Testing performance of C=A*B using 40 threads:
+-------------------------------------------------
+
+=== builtin: double (real) vs GraphBLAS: single
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     0.2307 GrB:     0.1484 speedup:       1.55 err: 1.66299e-07
+trial 2: builtin:     0.2198 GrB:     0.1616 speedup:       1.36 err: 1.66299e-07
+trial 3: builtin:     0.2191 GrB:     0.1580 speedup:       1.39 err: 1.66299e-07
+trial 4: builtin:     0.2233 GrB:     0.1620 speedup:       1.38 err: 1.66299e-07
+average: builtin:     0.2232 GrB:     0.1575 speedup:       1.42
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0292 GrB:     0.0196 speedup:       1.49 err: 3.59165e-08
+trial 2: builtin:     0.0115 GrB:     0.0054 speedup:       2.13 err: 3.59301e-08
+trial 3: builtin:     0.0122 GrB:     0.0052 speedup:       2.35 err: 3.59222e-08
+trial 4: builtin:     0.0115 GrB:     0.0054 speedup:       2.14 err: 3.58931e-08
+average: builtin:     0.0161 GrB:     0.0089 speedup:       1.81
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.0372 GrB:     0.0076 speedup:       4.91 err: 4.84861e-08
+trial 2: builtin:     0.0363 GrB:     0.0098 speedup:       3.69 err: 4.84463e-08
+trial 3: builtin:     0.0365 GrB:     0.0098 speedup:       3.72 err: 4.84783e-08
+trial 4: builtin:     0.0364 GrB:     0.0097 speedup:       3.73 err: 4.8449e-08
+average: builtin:     0.0366 GrB:     0.0092 speedup:       3.96
+
+=== builtin: double (real) vs GraphBLAS: double
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     0.2066 GrB:     0.1641 speedup:       1.26 err: 0
+trial 2: builtin:     0.2298 GrB:     0.1785 speedup:       1.29 err: 0
+trial 3: builtin:     0.2224 GrB:     0.1795 speedup:       1.24 err: 0
+trial 4: builtin:     0.2233 GrB:     0.1807 speedup:       1.24 err: 0
+average: builtin:     0.2205 GrB:     0.1757 speedup:       1.26
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0299 GrB:     0.0269 speedup:       1.11 err: 4.81502e-18
+trial 2: builtin:     0.0114 GrB:     0.0072 speedup:       1.59 err: 4.80003e-18
+trial 3: builtin:     0.0113 GrB:     0.0071 speedup:       1.59 err: 4.91053e-18
+trial 4: builtin:     0.0119 GrB:     0.0071 speedup:       1.68 err: 4.65674e-18
+average: builtin:     0.0161 GrB:     0.0120 speedup:       1.34
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.0378 GrB:     0.0093 speedup:       4.05 err: 8.89072e-18
+trial 2: builtin:     0.0374 GrB:     0.0080 speedup:       4.67 err: 9.32181e-18
+trial 3: builtin:     0.0378 GrB:     0.0101 speedup:       3.75 err: 9.19689e-18
+trial 4: builtin:     0.0373 GrB:     0.0092 speedup:       4.06 err: 8.49156e-18
+average: builtin:     0.0376 GrB:     0.0091 speedup:       4.11
+
+=== builtin: double complex vs GraphBLAS: single complex
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     0.8682 GrB:     0.2183 speedup:       3.98 err: 1.71854e-07
+trial 2: builtin:     0.9032 GrB:     0.2406 speedup:       3.75 err: 1.71854e-07
+trial 3: builtin:     0.9006 GrB:     0.2921 speedup:       3.08 err: 1.71854e-07
+trial 4: builtin:     0.9015 GrB:     0.2437 speedup:       3.70 err: 1.71854e-07
+average: builtin:     0.8934 GrB:     0.2486 speedup:       3.59
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0560 GrB:     0.0267 speedup:       2.10 err: 4.57941e-08
+trial 2: builtin:     0.0351 GrB:     0.0072 speedup:       4.87 err: 4.58281e-08
+trial 3: builtin:     0.0359 GrB:     0.0074 speedup:       4.87 err: 4.58168e-08
+trial 4: builtin:     0.0385 GrB:     0.0074 speedup:       5.18 err: 4.57602e-08
+average: builtin:     0.0414 GrB:     0.0122 speedup:       3.40
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.1199 GrB:     0.0158 speedup:       7.61 err: 5.73795e-08
+trial 2: builtin:     0.1335 GrB:     0.0154 speedup:       8.64 err: 5.73463e-08
+trial 3: builtin:     0.1201 GrB:     0.0165 speedup:       7.27 err: 5.74224e-08
+trial 4: builtin:     0.1334 GrB:     0.0155 speedup:       8.59 err: 5.73832e-08
+average: builtin:     0.1267 GrB:     0.0158 speedup:       8.02
+
+=== builtin: double complex vs GraphBLAS: double complex
+C=A*B: sparse matrix times sparse matrix:
+trial 1: builtin:     0.9197 GrB:     0.2441 speedup:       3.77 err: 0
+trial 2: builtin:     0.8913 GrB:     0.2738 speedup:       3.26 err: 0
+trial 3: builtin:     0.8977 GrB:     0.2754 speedup:       3.26 err: 0
+trial 4: builtin:     0.8970 GrB:     0.2732 speedup:       3.28 err: 0
+average: builtin:     0.9014 GrB:     0.2666 speedup:       3.38
+C=A*x: sparse matrix times sparse vector:
+trial 1: builtin:     0.0571 GrB:     0.0413 speedup:       1.38 err: 5.01533e-18
+trial 2: builtin:     0.0366 GrB:     0.0154 speedup:       2.39 err: 5.26305e-18
+trial 3: builtin:     0.0397 GrB:     0.0135 speedup:       2.94 err: 5.09918e-18
+trial 4: builtin:     0.0330 GrB:     0.0165 speedup:       2.01 err: 5.04029e-18
+average: builtin:     0.0416 GrB:     0.0216 speedup:       1.92
+C=A*x: sparse matrix times dense vector:
+trial 1: builtin:     0.1374 GrB:     0.0223 speedup:       6.16 err: 9.24044e-18
+trial 2: builtin:     0.1386 GrB:     0.0194 speedup:       7.15 err: 9.29754e-18
+trial 3: builtin:     0.1234 GrB:     0.0227 speedup:       5.44 err: 9.19132e-18
+trial 4: builtin:     0.1368 GrB:     0.0211 speedup:       6.48 err: 9.67817e-18
+average: builtin:     0.1340 GrB:     0.0214 speedup:       6.27
+
+
+
+
+
+dir
+
+.                        demo_octave.m            html                     
+..                       demo_whoami.m            mxm_demo.m               
+Contents.m               dnn_builtin.m            mxm_demo_DGXStation.txt  
+May18_DGX.txt            dnn_builtin2gb.m         mxm_demo_DellXPS13.txt   
+benchmark                dnn_run.m                tmask.m                  
+bfs_builtin.m            gbdemo.m                 tmask_diary.txt          
+cats_demo.m              gbdemo2.m                
+cats_output.txt          graphblas_demo.m         
+demo_nproc.m             graphblas_demo2.m        
+
+cd benchmark/
+dobench2
+S: large input sparse matrix (m-by-n)
+x: dense vector (1-by-m or n-by-1)
+F: dense matrix (4-by-m or n-by-4)
+L: 8-by-m sparse matrix, about 1000 entries
+R: n-by-8 sparse matrix, about 1000 entries
+B: m-by-n sparse matrix, about nnz(S)/10 entries
+p,q: random permutation vectors
+
+ND/nd3k: n: 0.009 million nnz: 3.27969 million
+y=S*x:   MAT:   0.0049 GrB:   0.0012 speedup:     4.20
+y=x*S:   MAT:   0.0046 GrB:   0.0010 speedup:     4.63
+C=S*F:   MAT:   0.0099 GrB:   0.0023 speedup:     4.24
+C=F*S:   MAT:   0.0065 GrB:   0.0011 speedup:     6.03
+C=L*S:   MAT:   0.0067 GrB:   0.0030 speedup:     2.25
+C=S*R:   MAT:   0.0008 GrB:   0.0008 speedup:     1.06
+C=S'     MAT:   0.0429 GrB:   0.0073 speedup:     5.86
+C=S+S:   MAT:   0.0247 GrB:   0.0057 speedup:     4.31
+C=S+B:   MAT:   0.0142 GrB:   0.0044 speedup:     3.24
+C=S(p,q) MAT:   0.1268 GrB:   0.0237 speedup:     5.36
+C=S^2:   MAT:   0.2360 GrB:   0.1961 speedup:     1.20
+
+ND/nd24k: n: 0.072 million nnz: 28.7156 million
+y=S*x:   MAT:   0.0408 GrB:   0.0089 speedup:     4.57
+y=x*S:   MAT:   0.0422 GrB:   0.0075 speedup:     5.65
+C=S*F:   MAT:   0.0898 GrB:   0.0195 speedup:     4.61
+C=F*S:   MAT:   0.0619 GrB:   0.0076 speedup:     8.11
+C=L*S:   MAT:   0.0332 GrB:   0.0148 speedup:     2.24
+C=S*R:   MAT:   0.0018 GrB:   0.0016 speedup:     1.10
+C=S'     MAT:   0.5806 GrB:   0.1837 speedup:     3.16
+C=S+S:   MAT:   0.2908 GrB:   0.0581 speedup:     5.00
+C=S+B:   MAT:   0.3126 GrB:   0.0638 speedup:     4.90
+C=S(p,q) MAT:   1.3527 GrB:   0.2170 speedup:     6.23
+C=S^2:   MAT:   2.7055 GrB:   2.4829 speedup:     1.09
+
+SNAP/roadNet-CA: n: 1.97128 million nnz: 5.53321 million
+y=S*x:   MAT:   0.0263 GrB:   0.0073 speedup:     3.60
+y=x*S:   MAT:   0.0258 GrB:   0.0060 speedup:     4.30
+C=S*F:   MAT:   0.1199 GrB:   0.0259 speedup:     4.62
+C=F*S:   MAT:   0.0667 GrB:   0.0152 speedup:     4.39
+C=L*S:   MAT:   0.0525 GrB:   0.0105 speedup:     5.01
+C=S*R:   MAT:   0.0005 GrB:   0.0003 speedup:     1.44
+C=S'     MAT:   0.1001 GrB:   0.0298 speedup:     3.36
+C=S+S:   MAT:   0.0778 GrB:   0.0188 speedup:     4.14
+C=S+B:   MAT:   0.0837 GrB:   0.0191 speedup:     4.37
+C=S(p,q) MAT:   0.7118 GrB:   0.0973 speedup:     7.31
+
+Freescale/Freescale2: n: 2.99935 million nnz: 14.3132 million
+y=S*x:   MAT:   0.0381 GrB:   0.0117 speedup:     3.25
+y=x*S:   MAT:   0.0347 GrB:   0.0073 speedup:     4.73
+C=S*F:   MAT:   0.1934 GrB:   0.0558 speedup:     3.47
+C=F*S:   MAT:   0.1136 GrB:   0.0238 speedup:     4.78
+C=L*S:   MAT:   0.0754 GrB:   0.0168 speedup:     4.49
+C=S*R:   MAT:   0.0008 GrB:   0.0008 speedup:     0.94
+C=S'     MAT:   0.2781 GrB:   0.0749 speedup:     3.71
+C=S+S:   MAT:   0.1766 GrB:   0.0405 speedup:     4.36
+C=S+B:   MAT:   0.1949 GrB:   0.0414 speedup:     4.70
+C=S(p,q) MAT:   1.4117 GrB:   0.2139 speedup:     6.60
+
+LAW/indochina-2004: n: 7.41487 million nnz: 194.109 million
+y=S*x:   MAT:   0.3763 GrB:   0.1431 speedup:     2.63
+y=x*S:   MAT:   0.3653 GrB:   0.0681 speedup:     5.36
+C=S*F:   MAT:   0.9936 GrB:   0.5240 speedup:     1.90
+C=F*S:   MAT:   0.6564 GrB:   0.0896 speedup:     7.32
+C=L*S:   MAT:   0.5830 GrB:   0.0907 speedup:     6.43
+C=S*R:   MAT:   0.0020 GrB:   0.0012 speedup:     1.69
+C=S'     MAT:   5.4699 GrB:   1.2037 speedup:     4.54
+C=S+S:   MAT:   2.0053 GrB:   0.3793 speedup:     5.29
+C=S+B:   MAT:   2.1563 GrB:   0.3625 speedup:     5.95
+C=S(p,q) MAT:   9.1997 GrB:   1.8847 speedup:     4.88
+
+SNAP/com-Orkut: n: 3.07244 million nnz: 234.37 million
+y=S*x:   MAT:   1.4687 GrB:   0.3814 speedup:     3.85
+y=x*S:   MAT:   1.2500 GrB:   0.0938 speedup:    13.33
+C=S*F:   MAT:   3.0915 GrB:   1.2057 speedup:     2.56
+C=F*S:   MAT:   2.7655 GrB:   0.1770 speedup:    15.62
+C=L*S:   MAT:   1.5107 GrB:   0.2085 speedup:     7.24
+C=S*R:   MAT:   0.0072 GrB:   0.0076 speedup:     0.95
+C=S'     MAT:  18.8396 GrB:   2.4406 speedup:     7.72
+C=S+S:   MAT:   2.3505 GrB:   0.4101 speedup:     5.73
+C=S+B:   MAT:   2.5833 GrB:   0.4325 speedup:     5.97
+C=S(p,q) MAT:  11.5258 GrB:   1.8468 speedup:     6.24
+
+GAP/GAP-road: n: 23.9473 million nnz: 57.7086 million
+y=S*x:   MAT:   0.4139 GrB:   0.0780 speedup:     5.31
+y=x*S:   MAT:   0.3987 GrB:   0.0776 speedup:     5.14
+C=S*F:   MAT:   1.4912 GrB:   0.2668 speedup:     5.59
+C=F*S:   MAT:   0.8644 GrB:   0.1538 speedup:     5.62
+C=L*S:   MAT:   0.5674 GrB:   0.1178 speedup:     4.82
+C=S*R:   MAT:   0.0036 GrB:   0.0007 speedup:     4.96
+C=S'     MAT:   1.3792 GrB:   0.3210 speedup:     4.30
+C=S+S:   MAT:   0.9530 GrB:   0.2061 speedup:     4.63
+C=S+B:   MAT:   0.9940 GrB:   0.2073 speedup:     4.80
+C=S(p,q) MAT:  11.5309 GrB:   1.7451 speedup:     6.61
+
+GAP/GAP-twitter: n: 61.5784 million nnz: 1468.36 million
+y=S*x:   MAT:  23.2072 GrB:   2.4002 speedup:     9.67
+y=x*S:   MAT:  16.4310 GrB:   1.1749 speedup:    13.98
+C=S*F:   MAT:  31.5221 GrB:   9.7130 speedup:     3.25
+C=F*S:   MAT:  27.4244 GrB:   1.6020 speedup:    17.12
+C=L*S:   MAT:  19.9730 GrB:   2.4405 speedup:     8.18
+C=S*R:   MAT:   0.0104 GrB:   0.0027 speedup:     3.84
+C=S'     MAT: 228.8814 GrB:  23.6702 speedup:     9.67
+C=S+S:   MAT:  15.3501 GrB:   2.6471 speedup:     5.80
+C=S+B:   MAT:  16.8879 GrB:   2.7294 speedup:     6.19
+C=S(p,q) MAT:  97.4644 GrB:  17.0265 speedup:     5.72
+
+GAP/GAP-web: n: 50.6362 million nnz: 1930.29 million
+y=S*x:   MAT:   4.3472 GrB:   1.6949 speedup:     2.56
+y=x*S:   MAT:   3.8570 GrB:   0.6286 speedup:     6.14
+C=S*F:   MAT:  10.0596 GrB:   2.9981 speedup:     3.36
+C=F*S:   MAT:   7.0247 GrB:   1.0071 speedup:     6.98
+C=L*S:   MAT:   5.4695 GrB:   0.8081 speedup:     6.77
+C=S*R:   MAT:   0.0077 GrB:   0.0014 speedup:     5.37
+C=S'     MAT:  56.9091 GrB:  10.9665 speedup:     5.19
+
+GAP/GAP-urand: n: 134.218 million nnz: 4294.97 million
+y=S*x:   MAT: 120.8071 GrB:  10.9556 speedup:    11.03
+y=x*S:   MAT:  71.9293 GrB:   5.5096 speedup:    13.06
+C=S*F:   MAT: 131.6579 GrB:  44.1377 speedup:     2.98
+C=F*S:   MAT: 109.3780 GrB:   6.7943 speedup:    16.10
+C=L*S:   MAT:  87.6512 GrB:  11.4950 speedup:     7.63
+C=S*R:   MAT:   0.0189 GrB:   0.0038 speedup:     5.01
+
+GAP/GAP-kron: n: 134.218 million nnz: 4223.26 million
+y=S*x:   MAT:  96.0042 GrB:   7.7326 speedup:    12.42
+y=x*S:   MAT:  62.7697 GrB:   4.0700 speedup:    15.42
+C=S*F:   MAT: 112.2519 GrB:  31.7725 speedup:     3.53
+C=F*S:   MAT:  98.2054 GrB:   4.8640 speedup:    20.19
+C=L*S:   MAT:  78.3682 GrB:   8.9206 speedup:     8.79
+C=S*R:   MAT:   0.0196 GrB:   0.0031 speedup:     6.35
+
+
+
+
+diary off
+cd benchmark/
+type build_bench.m
+
+
+clear all
+Prob = ssget ('GAP/GAP-twitter') ;
+A = Prob.A ;
+clear Prob
+
+n = size (A,1) ;
+
+tic
+[I,J,X] = find (A) ;
+toc
+
+I64 = int64 (I) ;
+J64 = int64 (J) ;
+
+tic ; C = sparse (I, J, X, n, n) ; toc ; clear C
+tic ; C = GrB.build (I, J, X, n, n) ; toc ; clear C
+tic ; C = GrB.build (I64, J64, X, n, n) ; toc ; clear C
+
+% build the transpose (to force a sort)
+tic ; C = sparse (J, I, X, n, n) ; toc ; clear C
+tic ; C = GrB.build (J, I, X, n, n) ; toc ; clear C
+tic ; C = GrB.build (J64, I64, X, n, n) ; toc ; clear C
+
+
+
+build_bench
+Elapsed time is 19.050442 seconds.
+Elapsed time is 32.634218 seconds.
+Elapsed time is 4.229561 seconds.
+Elapsed time is 3.688016 seconds.
+Elapsed time is 175.234154 seconds.
+Elapsed time is 33.248950 seconds.
+Elapsed time is 33.264097 seconds.
+diary off

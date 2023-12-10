@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_cpu_features_impl.c: cpu features for GraphBLAS
+// GB_cpu_features_impl.c: Google's cpu_features package for GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,6 +28,7 @@
 // one for each architecture (and multiple ones for x86).  The supporting
 // files for cpu_features are #include'd by GB_cpu_features_support.c.
 
+#include "GB_compiler.h"
 #include "GB_cpu_features.h"
 
 #if !defined ( GBNCPUFEAT )

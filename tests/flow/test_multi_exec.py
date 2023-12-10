@@ -1,7 +1,6 @@
 from common import *
 
 GRAPH_ID = "multiexec-graph"
-redis_con = None
 
 # Fully connected 3 nodes graph,
 CREATE_QUERY = """CREATE (al:person {name:'Al'}), (betty:person {name:'Betty'}), (michael:person {name:'Michael'}),
@@ -22,42 +21,41 @@ UPDATE_QUERY = "MATCH (al:person {name:'Al'}) SET al.name = 'Steve'"
 
 class testMultiExecFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_con
-        redis_con = self.env.getConnection()
+        self.env, self.db = Env()
+        self.redis_con = self.env.getConnection()
 
     def test_graph_entities(self):
         # Delete previous graph if exists.
-        redis_con.execute_command("DEL", GRAPH_ID)
+        self.redis_con.execute_command("DEL", GRAPH_ID)
 
         # Start a multi exec transaction.
-        redis_con.execute_command("MULTI")
+        self.redis_con.execute_command("MULTI")
 
         # Create graph.
-        redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, CREATE_QUERY)
+        self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, CREATE_QUERY)
 
         # Count outgoing connections from Al, expecting 2 edges.
         # (Al)-[e]->() count (e)
-        redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
+        self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
 
         # Disconnect edge connecting Al to Betty.
         # (Al)-[e]->(Betty) delete (e)
-        redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, DEL_QUERY)
+        self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, DEL_QUERY)
 
         # Count outgoing connections from Al, expecting 1 edges.
         # (Al)-[e]->() count (e)
-        redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
+        self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
 
         # Change Al name from Al to Steve.
         # (Al) set Al.name = Steve
-        redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, UPDATE_QUERY)
+        self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, UPDATE_QUERY)
 
         # Count outgoing connections from Al, expecting 0 edges.
         # (Al)-[e]->() count (e)
-        redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
+        self.redis_con.execute_command("GRAPH.QUERY", GRAPH_ID, MATCH_QUERY)
 
         # Commit transaction.
-        results = redis_con.execute_command("EXEC")
+        results = self.redis_con.execute_command("EXEC")
 
         # [
         #   [

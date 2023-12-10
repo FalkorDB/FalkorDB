@@ -2,7 +2,7 @@
 // GrB_Scalar_setElement: set an entry in a GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ GrB_Info GB_EVAL2 (GRB (Scalar_setElement_), T)    /* s = x */              \
     GB_RETURN_IF_NULL_OR_FAULTY (s) ;                                       \
     ASSERT (GB_SCALAR_OK (s)) ;                                             \
     return (GB_setElement ((GrB_Matrix) s, NULL, ampersand x, 0, 0,         \
-        GB_ ## T ## _code, Context)) ;                                      \
+        GB_ ## T ## _code, Werk)) ;                                         \
 }
 
 GB_SET (bool      , BOOL   , &)
@@ -54,7 +54,7 @@ GrB_Info GB_EVAL2 (GXB (Scalar_setElement_), T)    /* s = x */              \
     GB_RETURN_IF_NULL_OR_FAULTY (s) ;                                       \
     ASSERT (GB_SCALAR_OK (s)) ;                                             \
     return (GB_setElement ((GrB_Matrix) s, NULL, ampersand x, 0, 0,         \
-        GB_ ## T ## _code, Context)) ;                                      \
+        GB_ ## T ## _code, Werk)) ;                                         \
 }
 
 GXB_SET (GxB_FC32_t, FC32  , &)
@@ -76,3 +76,4 @@ GrB_Info GxB_Scalar_setElement_UINT64 (GrB_Scalar s, uint64_t x) { return (GrB_S
 GrB_Info GxB_Scalar_setElement_FP32   (GrB_Scalar s, float    x) { return (GrB_Scalar_setElement_FP32   (s,x)) ; }
 GrB_Info GxB_Scalar_setElement_FP64   (GrB_Scalar s, double   x) { return (GrB_Scalar_setElement_FP64   (s,x)) ; }
 GrB_Info GxB_Scalar_setElement_UDT    (GrB_Scalar s, void    *x) { return (GrB_Scalar_setElement_UDT    (s,x)) ; }
+

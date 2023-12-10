@@ -1,7 +1,7 @@
 function test138
 %TEST138 test assign, with coarse-only tasks in IxJ slice
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -28,3 +28,4 @@ C2 = GB_spec_assign (C, [ ], [ ], scalar, I , J , [ ], true) ;
 GB_spec_compare (C1, C2) ;
 assert (isequal (C0, C1.matrix)) ;
 
+fprintf ('test138: all tests pass\n') ;

@@ -2,7 +2,7 @@
 // GB_mex_init: initialize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,11 +25,15 @@ void mexFunction
 {
     mexPrintf ("usage:\n%s\n", USAGE) ;
 
+    // finalize GraphBLAS but tell it that it can be called again
+    GB_mx_at_exit ( ) ;
+
+    // initialize GraphBLAS
     GxB_init (GrB_NONBLOCKING, mxMalloc, NULL, NULL, mxFree) ;
 
     // mxMalloc, mxCalloc, mxRealloc, and mxFree are not thread safe
     GB_Global_malloc_is_thread_safe_set (false) ;
-    GB_Global_abort_function_set (GB_mx_abort) ;
+    GB_Global_abort_set (GB_mx_abort) ;
     GB_Global_malloc_tracking_set (true) ;
 
     // built-in default is by column
@@ -122,8 +126,7 @@ void mexFunction
         }
     }
 
-    // #include "GB_Test_init_mkl_template.c"
-
-    GrB_finalize ( ) ;
+    // finalize GraphBLAS but tell it that it can be called again
+    GB_mx_at_exit ( ) ;
 }
 

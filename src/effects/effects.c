@@ -189,7 +189,7 @@ static void EffectsBuffer_WriteSIValue
 		case T_NULL:
 			// no additional data is required to represent NULL
 			break;
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			EffectsBuffer_WriteSIVector(v, buff);
 			break;
 		default:

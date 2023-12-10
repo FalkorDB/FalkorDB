@@ -9,9 +9,8 @@ GRAPH_ID = "G"
 
 class testExpandInto():
     def __init__(self):
-        self.env   = Env(decodeResponses=True)
-        self.con   = self.env.getConnection()
-        self.graph = Graph(self.con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     # test expand into single hop no multi-edge
     # (:A)-[:R]->(:B)
@@ -22,13 +21,13 @@ class testExpandInto():
 
         # make sure (a) is connected to (b) via a 'R' edge
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[:R]->(b) RETURN count(a)"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
         self.env.assertEquals(1, result.result_set[0][0])
 
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN e.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
         self.env.assertEquals(1, result.result_set[0][0])
@@ -46,13 +45,13 @@ class testExpandInto():
         # make sure (a) is connected to (b) via a 'R' edge
         # there are multiple edges of type 'R' connecting the two
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN count(e)"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
         self.env.assertEquals(2, result.result_set[0][0])
 
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN e.v ORDER BY e.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
         self.env.assertEquals(1, result.result_set[0][0])
@@ -71,7 +70,7 @@ class testExpandInto():
         # make sure (a) is connected to (b) via a 'R' edge
         # expand-into inspects the result of (F*R*ADJ)[a,b]
         query = "MATCH (a:A)-[*]->(b:B) WITH a,b MATCH (a)-[:R]->()-[]->(b) RETURN count(a)"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
         self.env.assertEquals(1, result.result_set[0][0])
@@ -89,7 +88,7 @@ class testExpandInto():
         # make sure (a) is connected to (b) via a 'R' edge
         # there are multiple ways to reach (b) from (a)
         query = "MATCH (a:A)-[*]->(b:B) WITH a,b MATCH (a)-[:R]->()-[]->(b) RETURN count(1)"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         result = self.graph.query(query)
         self.env.assertIn("Expand Into", plan)
         self.env.assertEquals(4, result.result_set[0][0])
@@ -110,7 +109,7 @@ class testExpandInto():
                    "MATCH (a:C:B:A) RETURN count(a)"]
 
         for q in queries:
-            plan = self.graph.execution_plan(q)
+            plan = str(self.graph.explain(q))
             result = self.graph.query(q)
             self.env.assertIn("Label Scan", plan)
             self.env.assertIn("Expand Into", plan)

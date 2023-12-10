@@ -2,7 +2,7 @@
 // GB_bitmap_assign_M_accum:  assign to C bitmap 
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,8 +22,12 @@
 // A:           matrix (hyper, sparse, bitmap, or full), or scalar
 // kind:        assign, row assign, col assign, or subassign
 
-#include "GB_bitmap_assign_methods.h"
+// JIT: needed.
 
+#include "GB_bitmap_assign_methods.h"
+#include "GB_assign_shared_definitions.h"
+
+#undef  GB_FREE_ALL
 #define GB_FREE_ALL                         \
 {                                           \
     GB_WERK_POP (M_ek_slicing, int64_t) ;   \
@@ -51,7 +55,7 @@ GrB_Info GB_bitmap_assign_M_accum
     const void *scalar,         // input scalar
     const GrB_Type scalar_type, // type of input scalar
     const int assign_kind,      // row assign, col assign, assign, or subassign
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -94,22 +98,22 @@ GrB_Info GB_bitmap_assign_M_accum
 
         // for all entries in the mask M:
         #undef  GB_MASK_WORK
-        #define GB_MASK_WORK(pC)            \
-        {                                   \
-            int8_t cb = Cb [pC] ;           \
-            /* keep this entry */           \
-            Cb [pC] = keep ;                \
-            if (cb == 0)                    \
-            {                               \
-                /* Cx [pC] = scalar */      \
-                GB_ASSIGN_SCALAR (pC) ;     \
-                task_cnvals++ ;             \
-            }                               \
-            else /* (cb == 1) */            \
-            {                               \
-                /* Cx [pC] += scalar */     \
-                GB_ACCUM_SCALAR (pC) ;      \
-            }                               \
+        #define GB_MASK_WORK(pC)                        \
+        {                                               \
+            int8_t cb = Cb [pC] ;                       \
+            /* keep this entry */                       \
+            Cb [pC] = keep ;                            \
+            if (cb == 0)                                \
+            {                                           \
+                /* Cx [pC] = scalar */                  \
+                GB_COPY_scalar_to_C (Cx, pC, cwork) ;   \
+                task_cnvals++ ;                         \
+            }                                           \
+            else /* (cb == 1) */                        \
+            {                                           \
+                /* Cx [pC] += scalar */                 \
+                GB_ACCUMULATE_scalar (Cx, pC, ywork) ;  \
+            }                                           \
         }
         #include "GB_bitmap_assign_M_sub_template.c"
 
@@ -137,7 +141,7 @@ GrB_Info GB_bitmap_assign_M_accum
         // Cb [pC] += 2 for each entry M(i,j) in the mask
         GB_bitmap_M_scatter (C, I, nI, Ikind, Icolon, J, nJ, Jkind, Jcolon,
             M, Mask_struct, assign_kind, GB_BITMAP_M_SCATTER_PLUS_2,
-            M_ek_slicing, M_ntasks, M_nthreads, Context) ;
+            M_ek_slicing, M_ntasks, M_nthreads) ;
         // the bitmap of C now contains:
         //  Cb (i,j) = 0:   cij not present, mij zero
         //  Cb (i,j) = 1:   cij present, mij zero
@@ -154,21 +158,21 @@ GrB_Info GB_bitmap_assign_M_accum
             ASSERT (assign_kind == GB_ASSIGN) ;
             // for all entries in IxJ
             #undef  GB_IXJ_WORK
-            #define GB_IXJ_WORK(pC,ignore)      \
-            {                                   \
-                int8_t cb = Cb [pC] ;           \
-                if (cb == 2)                    \
-                {                               \
-                    /* Cx [pC] = scalar */      \
-                    GB_ASSIGN_SCALAR (pC) ;     \
-                    Cb [pC] = 3 ;               \
-                    task_cnvals++ ;             \
-                }                               \
-                else if (cb == 3)               \
-                {                               \
-                    /* Cx [pC] += scalar */     \
-                    GB_ACCUM_SCALAR (pC) ;      \
-                }                               \
+            #define GB_IXJ_WORK(pC,ignore)                  \
+            {                                               \
+                int8_t cb = Cb [pC] ;                       \
+                if (cb == 2)                                \
+                {                                           \
+                    /* Cx [pC] = scalar */                  \
+                    GB_COPY_scalar_to_C (Cx, pC, cwork) ;   \
+                    Cb [pC] = 3 ;                           \
+                    task_cnvals++ ;                         \
+                }                                           \
+                else if (cb == 3)                           \
+                {                                           \
+                    /* Cx [pC] += scalar */                 \
+                    GB_ACCUMULATE_scalar (Cx, pC, ywork) ;  \
+                }                                           \
             }
             #include "GB_bitmap_assign_IxJ_template.c"
 
@@ -191,21 +195,21 @@ GrB_Info GB_bitmap_assign_M_accum
             //          Cx(p) += aij    // C(iC,jC) still present, updated
             //          Cb(p) still 3
 
-            #define GB_AIJ_WORK(pC,pA)          \
-            {                                   \
-                int8_t cb = Cb [pC] ;           \
-                if (cb == 2)                    \
-                {                               \
-                    /* Cx [pC] = Ax [pA] */     \
-                    GB_ASSIGN_AIJ (pC, pA) ;    \
-                    Cb [pC] = 3 ;               \
-                    task_cnvals++ ;             \
-                }                               \
-                else if (cb == 3)               \
-                {                               \
-                    /* Cx [pC] += Ax [pA] */    \
-                    GB_ACCUM_AIJ (pC, pA) ;     \
-                }                               \
+            #define GB_AIJ_WORK(pC,pA)                                  \
+            {                                                           \
+                int8_t cb = Cb [pC] ;                                   \
+                if (cb == 2)                                            \
+                {                                                       \
+                    /* Cx [pC] = Ax [pA] */                             \
+                    GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork) ;   \
+                    Cb [pC] = 3 ;                                       \
+                    task_cnvals++ ;                                     \
+                }                                                       \
+                else if (cb == 3)                                       \
+                {                                                       \
+                    /* Cx [pC] += Ax [pA] */                            \
+                    GB_ACCUMULATE_aij (Cx, pC, Ax, pA, A_iso, ywork) ;  \
+                }                                                       \
             }
             #include "GB_bitmap_assign_A_template.c"
         }
@@ -239,7 +243,7 @@ GrB_Info GB_bitmap_assign_M_accum
             // Cb [pC] -= 2 for each entry M(i,j) in the mask
             GB_bitmap_M_scatter (C, I, nI, Ikind, Icolon, J, nJ, Jkind, Jcolon,
                 M, Mask_struct, assign_kind, GB_BITMAP_M_SCATTER_MINUS_2,
-                M_ek_slicing, M_ntasks, M_nthreads, Context) ;
+                M_ek_slicing, M_ntasks, M_nthreads) ;
         }
     }
 

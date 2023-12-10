@@ -2,7 +2,7 @@
 // GB_mex_select: C<M> = accum(C,select(A,k)) or select(A',k)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,18 +19,26 @@
     GrB_Matrix_free_(&C) ;              \
     GrB_Matrix_free_(&M) ;              \
     GrB_Matrix_free_(&A) ;              \
-    GxB_SelectOp_free_(&isnanop) ;      \
+    GrB_IndexUnaryOp_free_(&isnanop) ;  \
     GrB_Descriptor_free_(&desc) ;       \
     GB_mx_put_global (true) ;           \
 }
 
+#if 0
 bool isnan64 (GrB_Index i, GrB_Index j, const void *x, const void *b) ;
-
 bool isnan64 (GrB_Index i, GrB_Index j, const void *x, const void *b)
 { 
     double aij = * ((double *) x) ;
     return (isnan (aij)) ;
 }
+#else
+void isnan64 (bool *z, const void *x, GrB_Index i, GrB_Index j, const void *b) ;
+void isnan64 (bool *z, const void *x, GrB_Index i, GrB_Index j, const void *b)
+{ 
+    double aij = * ((double *) x) ;
+    (*z) = (isnan (aij)) ;
+}
+#endif
 
 void mexFunction
 (
@@ -47,7 +55,7 @@ void mexFunction
     GrB_Matrix A = NULL ;
     GrB_Descriptor desc = NULL ;
     GrB_Scalar Thunk = NULL ;
-    GxB_SelectOp isnanop = NULL ;
+    GrB_IndexUnaryOp isnanop = NULL ;
 
     // check inputs
     if (nargout > 1 || nargin < 5 || nargin > 8)
@@ -105,8 +113,8 @@ void mexFunction
     if (op == NULL)
     {
         // user-defined isnan operator, with no Thunk
-        GxB_SelectOp_new (&isnanop, isnan64, GrB_FP64, NULL) ;
-        op = isnanop ;
+        GrB_IndexUnaryOp_new (&isnanop, (void *) isnan64,
+            GrB_BOOL, GrB_FP64, GrB_FP64) ;
     }
     else if (nargin > 5)
     {
@@ -152,12 +160,29 @@ void mexFunction
     if (C->vdim == 1 && (desc == NULL || desc->in0 == GxB_DEFAULT))
     {
         // this is just to test the Vector version
-        METHOD (GxB_Vector_select_((GrB_Vector) C, (GrB_Vector) M, accum, op,
-            (GrB_Vector) A, Thunk, desc)) ; // C
+        if (op == NULL)
+        {
+            METHOD (GrB_Vector_select_FP64 ((GrB_Vector) C, (GrB_Vector) M,
+                accum, isnanop, (GrB_Vector) A, 0, desc)) ;
+        }
+        else
+        {
+            // GxB_print (op, 3) ; GxB_print (Thunk, 3) ;
+            METHOD (GxB_Vector_select_((GrB_Vector) C, (GrB_Vector) M, accum,
+                op, (GrB_Vector) A, Thunk, desc)) ;
+        }
     }
     else
     {
-        METHOD (GxB_Matrix_select_(C, M, accum, op, A, Thunk, desc)) ; // C
+        if (op == NULL)
+        {
+            METHOD (GrB_Matrix_select_FP64 (C, M, accum, isnanop, A, 0, desc)) ;
+        }
+        else
+        {
+            // GxB_print (op, 3) ; GxB_print (Thunk, 3) ;
+            METHOD (GxB_Matrix_select_(C, M, accum, op, A, Thunk, desc)) ;
+        }
     }
 
     // return C as a struct and free the GraphBLAS C

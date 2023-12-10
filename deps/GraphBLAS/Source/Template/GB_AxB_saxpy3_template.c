@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_template: C=A*B, C<M>=A*B, or C<!M>=A*B via saxpy3 method
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,21 +18,12 @@
 
 {
 
-    #ifdef GB_TIMING
-    double ttt = omp_get_wtime ( ) ;
-    #endif
-
-    //--------------------------------------------------------------------------
-    // get the chunk size
-    //--------------------------------------------------------------------------
-
-    GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
-
     //--------------------------------------------------------------------------
     // get M, A, B, and C
     //--------------------------------------------------------------------------
 
     int64_t *restrict Cp = C->p ;
+    ASSERT (Cp != NULL) ;
     // const int64_t *restrict Ch = C->h ;
     const int64_t cvlen = C->vlen ;
     const int64_t cnvec = C->nvec ;
@@ -41,12 +32,20 @@
     const int64_t *restrict Bh = B->h ;
     const int8_t  *restrict Bb = B->b ;
     const int64_t *restrict Bi = B->i ;
-    const bool B_iso = B->iso ;
     const int64_t bvlen = B->vlen ;
+    #ifdef GB_JIT_KERNEL
+    #define B_iso GB_B_ISO
+    #define B_is_sparse GB_B_IS_SPARSE
+    #define B_is_hyper  GB_B_IS_HYPER
+    #define B_is_bitmap GB_B_IS_BITMAP
+    #define B_is_sparse_or_hyper (GB_B_IS_SPARSE || GB_B_IS_HYPER)
+    #else
+    const bool B_iso = B->iso ;
     const bool B_is_sparse = GB_IS_SPARSE (B) ;
     const bool B_is_hyper = GB_IS_HYPERSPARSE (B) ;
     const bool B_is_bitmap = GB_IS_BITMAP (B) ;
     const bool B_is_sparse_or_hyper = B_is_sparse || B_is_hyper ;
+    #endif
 
     const int64_t *restrict Ap = A->p ;
     const int64_t *restrict Ah = A->h ;
@@ -54,61 +53,55 @@
     const int64_t *restrict Ai = A->i ;
     const int64_t anvec = A->nvec ;
     const int64_t avlen = A->vlen ;
+    #ifdef GB_JIT_KERNEL
+    #define A_iso GB_A_ISO
+    #define A_is_sparse GB_A_IS_SPARSE
+    #define A_is_hyper  GB_A_IS_HYPER
+    #define A_is_bitmap GB_A_IS_BITMAP
+    #else
+    const bool A_iso = A->iso ;
     const bool A_is_sparse = GB_IS_SPARSE (A) ;
     const bool A_is_hyper = GB_IS_HYPERSPARSE (A) ;
     const bool A_is_bitmap = GB_IS_BITMAP (A) ;
-    const bool A_iso = A->iso ;
+    #endif
     const bool A_jumbled = A->jumbled ;
     const bool A_ok_for_binary_search = 
         ((A_is_sparse || A_is_hyper) && !A_jumbled) ;
 
-    const int64_t *restrict A_Yp = NULL ;
-    const int64_t *restrict A_Yi = NULL ;
-    const int64_t *restrict A_Yx = NULL ;
-    int64_t A_hash_bits = 0 ;
-    if (A_is_hyper)
-    {
-        ASSERT_MATRIX_OK (A->Y, "A->Y hyper_hash", GB0) ;
-        A_Yp = A->Y->p ;
-        A_Yi = A->Y->i ;
-        A_Yx = A->Y->x ;
-        A_hash_bits = A->Y->vdim - 1 ;
-    }
+    const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+    const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+    const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+    const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
 
     #if ( !GB_NO_MASK )
     const int64_t *restrict Mp = M->p ;
     const int64_t *restrict Mh = M->h ;
     const int8_t  *restrict Mb = M->b ;
     const int64_t *restrict Mi = M->i ;
-    const GB_void *restrict Mx = (GB_void *) (Mask_struct ? NULL : (M->x)) ;
+    const GB_M_TYPE *restrict Mx = (GB_M_TYPE *) (Mask_struct ? NULL : (M->x)) ;
+    #ifdef GB_JIT_KERNEL
+    #define M_is_hyper  GB_M_IS_HYPER
+    #define M_is_bitmap GB_M_IS_BITMAP
+    #else
     const bool M_is_hyper = GB_IS_HYPERSPARSE (M) ;
     const bool M_is_bitmap = GB_IS_BITMAP (M) ;
+    #endif
     const bool M_jumbled = GB_JUMBLED (M) ;
     size_t msize = M->type->size ;
     int64_t mnvec = M->nvec ;
     int64_t mvlen = M->vlen ;
     // get the M hyper_hash
-    const int64_t *restrict M_Yp = NULL ;
-    const int64_t *restrict M_Yi = NULL ;
-    const int64_t *restrict M_Yx = NULL ;
-    int64_t M_hash_bits = 0 ;
-    { 
-        if (M_is_hyper)
-        {
-            // mask is present, and hypersparse
-            M_Yp = M->Y->p ;
-            M_Yi = M->Y->i ;
-            M_Yx = M->Y->x ;
-            M_hash_bits = M->Y->vdim - 1 ;
-        }
-    }
+    const int64_t *restrict M_Yp = (M->Y == NULL) ? NULL : M->Y->p ;
+    const int64_t *restrict M_Yi = (M->Y == NULL) ? NULL : M->Y->i ;
+    const int64_t *restrict M_Yx = (M->Y == NULL) ? NULL : M->Y->x ;
+    const int64_t M_hash_bits = (M->Y == NULL) ? 0 : (M->Y->vdim - 1) ;
     #endif
 
     #if !GB_A_IS_PATTERN
-    const GB_ATYPE *restrict Ax = (GB_ATYPE *) A->x ;
+    const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
     #endif
     #if !GB_B_IS_PATTERN
-    const GB_BTYPE *restrict Bx = (GB_BTYPE *) B->x ;
+    const GB_B_TYPE *restrict Bx = (GB_B_TYPE *) B->x ;
     #endif
 
     //==========================================================================
@@ -133,12 +126,12 @@
         bool use_Gustavson = (hash_size == cvlen) ;
         int64_t pB     = SaxpyTasks [taskid].start ;
         int64_t pB_end = SaxpyTasks [taskid].end + 1 ;
-        int64_t j = GBH (Bh, kk) ;
+        int64_t j = GBH_B (Bh, kk) ;
 
         GB_GET_T_FOR_SECONDJ ;
 
         #if !GB_IS_ANY_PAIR_SEMIRING
-        GB_CTYPE *restrict Hx = (GB_CTYPE *) SaxpyTasks [taskid].Hx ;
+        GB_C_TYPE *restrict Hx = (GB_C_TYPE *) SaxpyTasks [taskid].Hx ;
         #endif
 
         #if GB_IS_PLUS_FC32_MONOID
@@ -177,17 +170,17 @@
                 Hf = (int8_t *restrict) SaxpyTasks [taskid].Hf ;
 
             #if ( GB_NO_MASK )
-            {
+            { 
                 // phase2: fine Gustavson task, C(:,j)=A*B(:,j)
                 #include "GB_AxB_saxpy3_fineGus_phase2.c"
             }
             #elif ( !GB_MASK_COMP )
-            {
+            { 
                 // phase2: fine Gustavson task, C(:,j)<M(:,j)>=A*B(:,j)
                 #include "GB_AxB_saxpy3_fineGus_M_phase2.c"
             }
             #else
-            {
+            { 
                 // phase2: fine Gustavson task, C(:,j)<!M(:,j)>=A*B(:,j)
                 #include "GB_AxB_saxpy3_fineGus_notM_phase2.c"
             }
@@ -319,23 +312,11 @@
         }
     }
 
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (9, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
-
     //==========================================================================
     // phase3/phase4: count nnz(C(:,j)) for fine tasks, cumsum of Cp
     //==========================================================================
 
-    GB_AxB_saxpy3_cumsum (C, SaxpyTasks, nfine, chunk, nthreads, Context) ;
-
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (10, ttt) ;
-    ttt = omp_get_wtime ( ) ;
-    #endif
+    GB_AxB_saxpy3_cumsum (C, SaxpyTasks, nfine, chunk, nthreads, Werk) ;
 
     //==========================================================================
     // phase5: numeric phase for coarse tasks, gather for fine tasks
@@ -344,27 +325,22 @@
     // C is iso for the ANY_PAIR semiring, and non-iso otherwise
     // allocate Ci and Cx
     int64_t cnz = Cp [cnvec] ;
+
     // set C->iso = GB_IS_ANY_PAIR_SEMIRING     OK
     GrB_Info info = GB_bix_alloc (C, cnz, GxB_SPARSE, false, true,
-        GB_IS_ANY_PAIR_SEMIRING, Context) ;
+        GB_IS_ANY_PAIR_SEMIRING) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
+        // note the C->p and C->h are not freed if GB_bix_alloc fails
+        ASSERT (C->p != NULL) ;
         return (GrB_OUT_OF_MEMORY) ;
     }
     C->nvals = cnz ;
 
     int64_t  *restrict Ci = C->i ;
     #if ( !GB_IS_ANY_PAIR_SEMIRING )
-    GB_CTYPE *restrict Cx = (GB_CTYPE *) C->x ;
-    #endif
-
-    ASSERT (C->i_size == GB_Global_memtable_size (C->i)) ;
-
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (11, ttt) ;
-    ttt = omp_get_wtime ( ) ;
+    GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
     #endif
 
     bool C_jumbled = false ;
@@ -378,7 +354,7 @@
         //----------------------------------------------------------------------
 
         #if !GB_IS_ANY_PAIR_SEMIRING
-        GB_CTYPE *restrict Hx = (GB_CTYPE *) SaxpyTasks [taskid].Hx ;
+        GB_C_TYPE *restrict Hx = (GB_C_TYPE *) SaxpyTasks [taskid].Hx ;
         #endif
         int64_t hash_size = SaxpyTasks [taskid].hsize ;
         bool use_Gustavson = (hash_size == cvlen) ;
@@ -486,18 +462,25 @@
                 // phase5: coarse Gustavson task
                 //--------------------------------------------------------------
 
+                #if !defined ( GB_GENERIC ) && !GB_IS_ANY_PAIR_SEMIRING
+                // declare the monoid identity value, for GB_COMPUTE_DENSE_C_j,
+                // needed only for the 3 kinds of coarseGus_*_phase5 below.
+                // Not used for generic case, nor for (any,pair) semiring.
+                GB_DECLARE_IDENTITY_CONST (zidentity) ;
+                #endif
+
                 #if ( GB_NO_MASK )
-                {
+                { 
                     // phase5: coarse Gustavson task, C=A*B
                     #include "GB_AxB_saxpy3_coarseGus_noM_phase5.c"
                 }
                 #elif ( !GB_MASK_COMP )
-                {
+                { 
                     // phase5: coarse Gustavson task, C<M>=A*B
                     #include "GB_AxB_saxpy3_coarseGus_M_phase5.c"
                 }
                 #else
-                {
+                { 
                     // phase5: coarse Gustavson task, C<!M>=A*B
                     #include "GB_AxB_saxpy3_coarseGus_notM_phase5.c"
                 }
@@ -610,12 +593,6 @@
     //--------------------------------------------------------------------------
 
     C->jumbled = C_jumbled ;    // C is jumbled if any task left it jumbled
-
-    #ifdef GB_TIMING
-    ttt = omp_get_wtime ( ) - ttt ;
-    GB_Global_timing_add (12, ttt) ;
-    #endif
-
 }
 
 #undef GB_NO_MASK

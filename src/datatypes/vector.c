@@ -8,6 +8,8 @@
 #include "xxhash.h"
 #include "../util/rmalloc.h"
 
+#include <math.h>
+
 // vector struct
 typedef struct {
 	uint32_t dim;     // vector's dimension
@@ -15,7 +17,7 @@ typedef struct {
 } SIVector;
 
 // creates a new float32 vector
-SIValue SIVector32f_New
+SIValue SIVectorf32_New
 (
 	uint32_t dim  // vector's dimension
 ) {
@@ -23,7 +25,7 @@ SIValue SIVector32f_New
 	v->dim = dim;
 
 	return (SIValue) {
-		.type       = T_VECTOR32F,
+		.type       = T_VECTOR_F32,
 		.ptrval     = (void*)v,
 		.allocation = M_SELF
 	};
@@ -76,7 +78,7 @@ SIValue SIVector_FromBinary
 	fread_assert(&dim, sizeof(uint32_t), stream);
 
 	// create vector
-	SIValue v = SIVector32f_New(dim);
+	SIValue v = SIVectorf32_New(dim);
 	size_t elem_size = sizeof(float);
 
 	// set vector's elements
@@ -175,6 +177,34 @@ size_t SIVector_ElementsByteSize
 	SIValue vector // vector to get binary size of
 ) {
 	return SIVector_Dim(vector) * sizeof(float);
+}
+
+// computes the euclidean distance between two vectors
+// distance = sqrt(sum((a[i] - b[i])^2))
+float SIVector_EuclideanDistance
+(
+	SIValue a,  // first vector
+	SIValue b   // second vector
+) {
+	// euclideanDistance(vecf32([0.2, 0.12, 0.3178]), vecf32([0.1, 0.2, 0.3]))
+	ASSERT(SI_TYPE(a) & T_VECTOR);
+	ASSERT(SI_TYPE(b) & T_VECTOR);
+
+	// validate input vectors are of the same length
+	uint32_t n1 = SIVector_Dim(a);
+	uint32_t n2 = SIVector_Dim(b);
+	ASSERT(n1 == n2);
+
+	// compute the euclidean distance between the two vectors
+	float sum        = 0;
+	float *elements1 = (float*)SIVector_Elements(a);
+	float *elements2 = (float*)SIVector_Elements(b);
+	for(uint32_t i = 0; i < n1; i++) {
+		float diff = elements1[i] - elements2[i];
+		sum += diff * diff;
+	}
+
+	return sqrtf(sum);
 }
 
 // write a string representation of vector to buf

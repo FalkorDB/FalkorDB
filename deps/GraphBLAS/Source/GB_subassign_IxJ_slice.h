@@ -2,7 +2,7 @@
 // GB_subassign_IxJ_slice.h: definitions for GB_subassign_IxJ_slice
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,7 +33,7 @@ GrB_Info GB_subassign_IxJ_slice
     const int64_t nJ,
 //  const int Jkind,
 //  const int64_t Jcolon [3],
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

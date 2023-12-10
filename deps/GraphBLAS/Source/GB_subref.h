@@ -2,7 +2,7 @@
 // GB_subref.h: definitions for GB_subref_* functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,7 +24,7 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
     const GrB_Index *J,         // index list for C = A(I,J), or GrB_ALL, etc.
     const int64_t nj,           // length of J, or special
     const bool symbolic,        // if true, construct C as symbolic
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_subref_phase0
@@ -49,7 +49,7 @@ GrB_Info GB_subref_phase0
     const GrB_Index *J,     // index list for C = A(I,J), or GrB_ALL, etc.
     const int64_t nj,       // length of J, or special
 //  const bool must_sort,   // true if C must be returned sorted
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_subref_slice    // phase 1 of GB_subref
@@ -77,7 +77,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     const int64_t avlen,            // A->vlen
     const int64_t anz,              // nnz (A)
     const GrB_Index *I,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
@@ -105,7 +105,7 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
     const GrB_Matrix A,
     const GrB_Index *I,         // index list for C = A(I,J), or GrB_ALL, etc.
     const bool symbolic,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_subref_phase3   // C=A(I,J)
@@ -142,7 +142,7 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     const GrB_Matrix A,
     const GrB_Index *I,
     const bool symbolic,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
@@ -156,7 +156,7 @@ GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
     int64_t *restrict *p_Inext, // next pointers for buckets, size nI
     size_t *p_Inext_size,
     int64_t *p_ndupl,           // number of duplicate entries in I
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_bitmap_subref       // C = A(I,J): either symbolic or numeric
@@ -173,7 +173,7 @@ GrB_Info GB_bitmap_subref       // C = A(I,J): either symbolic or numeric
     const GrB_Index *J,         // index list for C = A(I,J), or GrB_ALL, etc.
     const int64_t nj,           // length of J, or special
     const bool symbolic,        // if true, construct C as symbolic
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------

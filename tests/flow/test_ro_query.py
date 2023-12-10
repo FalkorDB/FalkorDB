@@ -12,9 +12,9 @@ def checkSlaveSynced(env, masterConn, slaveConn, graph_name):
 class test_read_only_query(FlowTestsBase):
     def __init__(self):
         if VALGRIND or SANITIZER != "":
-            Env.skip(None) # valgrind is not working correctly with replication
+            Environment.skip(None) # valgrind is not working correctly with replication
 
-        self.env = Env(decodeResponses=True, useSlaves=True)
+        self.env, self.db = Env(useSlaves=True)
         global master_con
         global slave_con
         master_con = self.env.getConnection()
@@ -25,12 +25,11 @@ class test_read_only_query(FlowTestsBase):
         graph_name = "Test_RO_QUERY_command"
         graph = Graph(master_con, graph_name)
         graph.query("UNWIND range(0,20) as i CREATE ()")
-        raw_result_set = master_con.execute_command("GRAPH.RO_QUERY", graph_name, "MATCH (n) RETURN COUNT(n)", "--compact")
-        result_set = query_result.QueryResult(graph, raw_result_set).result_set
+        result_set = graph.ro_query("MATCH (n) RETURN COUNT(n)").result_set
         self.env.assertEqual(21, result_set[0][0])
         # Try execute write commands with RO_QUERY
         try:
-            graph.query("CREATE()", read_only=True)
+            graph.ro_query("CREATE()")
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
@@ -55,7 +54,7 @@ class test_read_only_query(FlowTestsBase):
         # Try execute write commands with RO_QUERY
         for query in queries:
             try:
-                graph.query(query, read_only=True)
+                graph.ro_query(query)
                 assert(False)
             except redis.exceptions.ResponseError as e:
                 # Expecting an error.
@@ -65,15 +64,16 @@ class test_read_only_query(FlowTestsBase):
     def test03_test_replica_read_only(self):
         # This test checks that only RO_QUERY is valid on replicas.
         graph_name = "Test_RO_QUERY_command_on_replica"
-        graph = Graph(master_con, graph_name)
-        graph.query("UNWIND range(0,20) as i CREATE ()")
+        master_graph = Graph(master_con, graph_name)
+        slave_graph = Graph(slave_con, graph_name)
+
+        master_graph.query("UNWIND range(0,20) as i CREATE ()")
         checkSlaveSynced(self.env, master_con, slave_con, graph_name)
-        raw_result_set = slave_con.execute_command("GRAPH.RO_QUERY", graph_name, "MATCH (n) RETURN COUNT(n)", "--compact")
-        result_set = query_result.QueryResult(graph, raw_result_set).result_set
+        result_set = slave_graph.ro_query("MATCH (n) RETURN COUNT(n)").result_set
         self.env.assertEqual(21, result_set[0][0])
         try:
             # Every GRAPH.QUERY command is a write command, see that replica connection throws an exception.
-            slave_con.execute_command("GRAPH.QUERY", graph_name, "MATCH (n) RETURN COUNT(n)", "--compact")
+            slave_graph.query("MATCH (n) RETURN COUNT(n)")
             assert(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.
@@ -84,7 +84,7 @@ class test_read_only_query(FlowTestsBase):
         graph_name = "Test_RO_QUERY_should_not_create_graph"
         graph = Graph(master_con, graph_name)
         try:
-            graph.query("MATCH (n) RETURN n", read_only=True)
+            graph.ro_query("MATCH (n) RETURN n")
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             # Expecting an error.

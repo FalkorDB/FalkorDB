@@ -1,7 +1,7 @@
 function test246 (dohack)
 %TEST246 test GrB_mxm with different kinds of parallelism
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -21,7 +21,7 @@ if (nargin < 1)
 end
 hack (1) = dohack ;     % modify "very_costly" in GxB_AxB_saxpy3_slice_balanced
 GB_mex_hack (hack) ;
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 
 semiring.multiply = 'times' ;
 semiring.add = 'plus' ;
@@ -59,6 +59,7 @@ for k = [1 2 4 16 128]
 
                 for threads = [1 4 16]
                     nthreads_set (threads, 1) ;
+                    fprintf ('.') ;
 
                     % no mask
                     C1 = A*B ;
@@ -84,7 +85,7 @@ for k = [1 2 4 16 128]
 end
 
 % restore global settings
-GrB.burble (0) ;
+GB_mex_burble (0) ;
 nthreads_set (nthreads_save, chunk_save) ;
 GB_mex_hack (save) ;
 

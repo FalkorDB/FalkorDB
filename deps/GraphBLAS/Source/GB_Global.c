@@ -2,7 +2,7 @@
 // GB_Global: global values in GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,8 @@
 // or non-blocking), for pointers to malloc/realloc/free functions,
 // global matrix options, and other settings.
 
-#include "GB_atomics.h"
+#include "GB.h"
+#include "GB_cpu_features.h"
 
 //------------------------------------------------------------------------------
 // Global storage: for all threads in a user application that uses GraphBLAS
@@ -28,14 +29,7 @@ typedef struct
 
     GrB_Mode mode ;             // GrB_NONBLOCKING, GrB_BLOCKING
                                 // GxB_NONBLOCKING_GPU, or GxB_BLOCKING_GPU
-    bool GrB_init_called ;      // true if GrB_init already called
-
-    //--------------------------------------------------------------------------
-    // threading control
-    //--------------------------------------------------------------------------
-
-    int nthreads_max ;          // max number of threads to use
-    double chunk ;              // chunk size for determining # threads to use
+    bool init_called ;          // true if GrB_init already called
 
     //--------------------------------------------------------------------------
     // hypersparsity and CSR/CSC format control
@@ -44,6 +38,7 @@ typedef struct
     float bitmap_switch [GxB_NBITMAP_SWITCH] ; // default bitmap_switch
     float hyper_switch ;        // default hyper_switch for new matrices
     bool is_csc ;               // default CSR/CSC format for new matrices
+    int64_t hyper_hash ;        // controls when A->Y hyper_hash is created
 
     //--------------------------------------------------------------------------
     // abort function: only used for debugging
@@ -52,16 +47,23 @@ typedef struct
     void (* abort_function ) (void) ;
 
     //--------------------------------------------------------------------------
-    // malloc/realloc/free: memory management functions
+    // malloc/calloc/realloc/free: memory management functions
     //--------------------------------------------------------------------------
 
     // All threads must use the same malloc/realloc/free functions.
-    // They default to the ANSI C11 functions, but can be defined by GxB_init.
+    // They default to the C11 functions, but can be defined by GxB_init.
 
     void * (* malloc_function  ) (size_t)         ;     // required
+    void * (* calloc_function  ) (size_t, size_t) ;     // may be NULL
     void * (* realloc_function ) (void *, size_t) ;     // may be NULL
     void   (* free_function    ) (void *)         ;     // required
     bool malloc_is_thread_safe ;   // default is true
+
+    //--------------------------------------------------------------------------
+    // tell MATLAB to make memory persistent
+    //--------------------------------------------------------------------------
+
+    void (* persistent_function ) (void *) ;
 
     //--------------------------------------------------------------------------
     // memory usage tracking: for testing and debugging only
@@ -94,7 +96,7 @@ typedef struct
     // for testing and development
     //--------------------------------------------------------------------------
 
-    int64_t hack [2] ;              // settings for testing/development only
+    int64_t hack [4] ;              // settings for testing/development only
 
     //--------------------------------------------------------------------------
     // diagnostic output
@@ -124,21 +126,6 @@ typedef struct
     int nmemtable ;
 
     //--------------------------------------------------------------------------
-    // internal memory pool
-    //--------------------------------------------------------------------------
-
-    // free_pool [k] is a pointer to a link list of freed blocks, all of size
-    // exactly equal to 2^k.  The total number of blocks in the kth pool is
-    // given by free_pool_nblocks [k], and the upper bound on this is given by
-    // free_pool_limit [k].  If any additional blocks of size 2^k above that
-    // limit are freed by GB_dealloc_memory, they are not placed in the pool,
-    // but actually freed instead.
-
-    void *free_pool [64] ;
-    int64_t free_pool_nblocks [64] ;
-    int64_t free_pool_limit [64] ;
-
-    //--------------------------------------------------------------------------
     // CPU features
     //--------------------------------------------------------------------------
 
@@ -146,12 +133,10 @@ typedef struct
     bool cpu_features_avx512f ;     // x86_64 with AVX512f
 
     //--------------------------------------------------------------------------
-    // CUDA (DRAFT: in progress)
+    // CUDA (DRAFT: in progress):
     //--------------------------------------------------------------------------
 
     int gpu_count ;                 // # of GPUs in the system
-    GrB_Desc_Value gpu_control ;    // always, never, or default
-    double gpu_chunk ;              // min problem size for using a GPU
     // properties of each GPU:
     GB_cuda_device gpu_properties [GB_CUDA_MAX_GPUS] ;
 
@@ -165,11 +150,7 @@ static GB_Global_struct GB_Global =
     .mode = GrB_NONBLOCKING,    // default is nonblocking, no GPU
 
     // initialization flag
-    .GrB_init_called = false,   // GrB_init has not yet been called
-
-    // max number of threads and chunk size
-    .nthreads_max = 1,
-    .chunk = GB_CHUNK_DEFAULT,
+    .init_called = false,       // GrB_init has not yet been called
 
     // min dimension                density
     #define GB_BITSWITCH_1          ((float) 0.04)
@@ -195,14 +176,19 @@ static GB_Global_struct GB_Global =
 
     .is_csc = false,    // default is GxB_BY_ROW
 
+    .hyper_hash = GB_HYPER_HASH_DEFAULT,
+
     // abort function for debugging only
     .abort_function   = abort,
 
-    // malloc/realloc/free functions: default to ANSI C11 functions
+    // malloc/realloc/free functions: default to C11 functions
     .malloc_function  = malloc,
     .realloc_function = realloc,
     .free_function    = free,
     .malloc_is_thread_safe = true,
+
+    // tell MATLAB to make memory persistent
+    .persistent_function = NULL,
 
     // malloc tracking, for testing, statistics, and debugging only
     .malloc_tracking = false,
@@ -211,7 +197,7 @@ static GB_Global_struct GB_Global =
     .malloc_debug_count = 0,     // counter for testing memory handling
 
     // for testing and development only
-    .hack = {0, 0},
+    .hack = {0, 0, 0, 0},
 
     // diagnostics
     .burble = false,
@@ -226,125 +212,12 @@ static GB_Global_struct GB_Global =
     // for malloc debugging only
     .nmemtable = 0,     // memtable is empty
 
-    // all free_pool lists start out empty
-    .free_pool = {
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
-
-    .free_pool_nblocks = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-
-    // default limits on the number of free blocks in each list:
-    .free_pool_limit =
-
-    #ifdef _OPENMP
-    {   0,      // size 2^0 = 1 byte   none
-        0,      // size 2^1 = 2        none
-        0,      // size 2^2 = 4        none
-
-        16483,  // size 2^3 = 8        (2^14 blocks * 2^3  = 128 KB total)
-        16483,  // size 2^4 = 16 bytes (2^14 blocks * 2^4  = 256 KB total)
-        16483,  // size 2^5 = 32       (2^14 blocks * 2^5  = 512 KB total)
-        16483,  // size 2^6 = 64       (2^14 blocks * 2^6  = 1 MB total)
-        16483,  // size 2^7 = 128      (2^14 blocks * 2^7  = 2 MB total)
-
-        16483,  // size 2^8 = 256      (2^14 blocks * 2^8  = 4 MB total)
-        8192,   // size 2^9 = 512      (2^13 blocks * 2^9  = 4 MB total)
-        4096,   // size 2^10 = 1 KB    (2^12 blocks * 2^10 = 4 MB total)
-        2048,   // size 2^11 = 2 KB    (2^11 blocks * 2^11 = 4 MB total)
-
-        1024,   // size 2^12 = 4 KB    (2^10 blocks * 2^12 = 4 MB total)
-        512,    // size 2^13 = 8 KB    (2^9  blocks * 2^13 = 4 MB total)
-        256,    // size 2^14 = 16 KB   (2^8  blocks * 2^14 = 4 MB total)
-        128,    // size 2^15 = 32 KB   (2^7  blocks * 2^15 = 4 MB total)
-
-        // maximum total size = about 36 MB
-        // by default, no blocks larger than 32 KB are kept in the free_pool
-
-        0,      // size 2^16 = 64 KB
-        0,      // size 2^17 = 128 KB
-        0,      // size 2^18 = 256 KB
-        0,      // size 2^19 = 512 KB
-
-        0,      // size 2^20 = 1 MB
-        0,      // size 2^21
-        0,      // size 2^22
-        0,      // size 2^23
-        0,      // size 2^24
-        0,      // size 2^25
-        0,      // size 2^26
-        0,      // size 2^27
-        0,      // size 2^28
-        0,      // size 2^29
-
-        0,      // size 2^30 (1 GB)
-        0,      // size 2^31
-        0,      // size 2^32
-        0,      // size 2^33
-        0,      // size 2^34
-        0,      // size 2^35
-        0,      // size 2^36
-        0,      // size 2^37
-        0,      // size 2^38
-        0,      // size 2^39
-
-        // These larger sizes are of course unlikely to appear, but adding all
-        // 64 possibilities means that the free_pool does not need to check an
-        // upper bound.
-
-        0,      // size 2^40 (1 TB)
-        0,      // size 2^41
-        0,      // size 2^42
-        0,      // size 2^43
-        0,      // size 2^44
-        0,      // size 2^45
-        0,      // size 2^46
-        0,      // size 2^47
-        0,      // size 2^48
-        0,      // size 2^49
-
-        0,      // size 2^50 (1 PB)
-        0,      // size 2^51
-        0,      // size 2^52
-        0,      // size 2^53
-        0,      // size 2^54
-        0,      // size 2^55
-        0,      // size 2^56
-        0,      // size 2^57
-        0,      // size 2^58
-        0,      // size 2^59
-
-        0,      // size 2^60 (1 exabyte)
-        0,      // size 2^61
-        0,      // size 2^62
-        0 },    // size 2^63 (4 exabytes!)
-
-#else
-    // the free pool requires an OpenMP critical section,
-    // so disable it if OpenMP is not available.
-      { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
-#endif
-
     // CPU features
     .cpu_features_avx2 = false,         // x86_64 with AVX2
     .cpu_features_avx512f = false,      // x86_64 with AVX512f
 
     // CUDA environment (DRAFT: in progress)
     .gpu_count = 0,                     // # of GPUs in the system
-    .gpu_control = GxB_DEFAULT,         // always, never, or default
-    .gpu_chunk = GB_GPU_CHUNK_DEFAULT,  // min problem size for using a GPU
 
 } ;
 
@@ -367,17 +240,17 @@ GrB_Mode GB_Global_mode_get (void)
 }
 
 //------------------------------------------------------------------------------
-// GrB_init_called
+// init_called
 //------------------------------------------------------------------------------
 
-void GB_Global_GrB_init_called_set (bool GrB_init_called)
+void GB_Global_GrB_init_called_set (bool init_called)
 { 
-    GB_Global.GrB_init_called = GrB_init_called ;
+    GB_Global.init_called = init_called ;
 }
 
 bool GB_Global_GrB_init_called_get (void)
 { 
-    return (GB_Global.GrB_init_called) ;
+    return (GB_Global.init_called) ;
 }
 
 //------------------------------------------------------------------------------
@@ -459,44 +332,6 @@ bool GB_Global_cpu_features_avx512f (void)
 }
 
 //------------------------------------------------------------------------------
-// nthreads_max
-//------------------------------------------------------------------------------
-
-void GB_Global_nthreads_max_set (int nthreads_max)
-{ 
-    GB_Global.nthreads_max = GB_IMAX (nthreads_max, 1) ;
-}
-
-int GB_Global_nthreads_max_get (void)
-{ 
-    return (GB_Global.nthreads_max) ;
-}
-
-//------------------------------------------------------------------------------
-// OpenMP max_threads
-//------------------------------------------------------------------------------
-
-int GB_Global_omp_get_max_threads (void)
-{ 
-    return (GB_OPENMP_MAX_THREADS) ;
-}
-
-//------------------------------------------------------------------------------
-// chunk
-//------------------------------------------------------------------------------
-
-void GB_Global_chunk_set (double chunk)
-{ 
-    if (chunk <= GxB_DEFAULT) chunk = GB_CHUNK_DEFAULT ;
-    GB_Global.chunk = fmax (chunk, 1) ;
-}
-
-double GB_Global_chunk_get (void)
-{ 
-    return (GB_Global.chunk) ;
-}
-
-//------------------------------------------------------------------------------
 // hyper_switch
 //------------------------------------------------------------------------------
 
@@ -508,6 +343,20 @@ void GB_Global_hyper_switch_set (float hyper_switch)
 float GB_Global_hyper_switch_get (void)
 { 
     return (GB_Global.hyper_switch) ;
+}
+
+//------------------------------------------------------------------------------
+// hyper_hash
+//------------------------------------------------------------------------------
+
+void GB_Global_hyper_hash_set (int64_t hyper_hash)
+{ 
+    GB_Global.hyper_hash = hyper_hash ;
+}
+
+int64_t GB_Global_hyper_hash_get (void)
+{ 
+    return (GB_Global.hyper_hash) ;
 }
 
 //------------------------------------------------------------------------------
@@ -571,12 +420,12 @@ bool GB_Global_is_csc_get (void)
 // abort_function
 //------------------------------------------------------------------------------
 
-void GB_Global_abort_function_set (void (* abort_function) (void))
+void GB_Global_abort_set (void (* abort_function) (void))
 { 
     GB_Global.abort_function = abort_function ;
 }
 
-void GB_Global_abort_function (void)
+void GB_Global_abort (void)
 {
     GB_Global.abort_function ( ) ;
 }
@@ -591,11 +440,11 @@ void GB_Global_abort_function (void)
 void GB_Global_memtable_dump (void)
 {
     #ifdef GB_DEBUG
-    printf ("\nmemtable dump: %d nmalloc " GBd "\n", GB_Global.nmemtable,
-        GB_Global.nmalloc) ;
+    printf ("\nmemtable dump: %d nmalloc " GBd "\n",    // MEMDUMP
+        GB_Global.nmemtable, GB_Global.nmalloc) ;
     for (int k = 0 ; k < GB_Global.nmemtable ; k++)
     {
-        printf ("  %4d: %12p : %ld\n", k,
+        printf ("  %4d: %12p : %ld\n", k,               // MEMDUMP
             GB_Global.memtable_p [k],
             GB_Global.memtable_s [k]) ;
     }
@@ -625,7 +474,7 @@ void GB_Global_memtable_add (void *p, size_t size)
     #ifdef GB_DEBUG
     bool fail = false ;
     #ifdef GB_MEMDUMP
-    printf ("memtable add %p size %ld\n", p, size) ;
+    printf ("memtable add %p size %ld\n", p, size) ;    // MEMDUMP
     #endif
     #pragma omp critical(GB_memtable)
     {
@@ -637,9 +486,9 @@ void GB_Global_memtable_add (void *p, size_t size)
             {
                 if (p == GB_Global.memtable_p [i])
                 {
-                    printf ("\nadd duplicate %p size %ld\n", p, size) ;
+                    printf ("\nadd duplicate %p size %ld\n",    // MEMDUMP
+                        p, size) ;
                     GB_Global_memtable_dump ( ) ;
-                    printf ("Hey %d %p\n", i,p) ;
                     fail = true ;
                     break ;
                 }
@@ -683,7 +532,7 @@ size_t GB_Global_memtable_size (void *p)
     }
     if (!found)
     {
-        printf ("\nFAIL: %p not found\n", p) ;
+        printf ("\nFAIL: %p not found\n", p) ;      // MEMDUMP
         GB_Global_memtable_dump ( ) ;
         ASSERT (0) ;
     }
@@ -729,7 +578,7 @@ void GB_Global_memtable_remove (void *p)
     #ifdef GB_DEBUG
     bool found = false ;
     #ifdef GB_MEMDUMP
-    printf ("memtable remove %p ", p) ;
+    printf ("memtable remove %p ", p) ;             // MEMDUMP
     #endif
     #pragma omp critical(GB_memtable)
     {
@@ -749,7 +598,7 @@ void GB_Global_memtable_remove (void *p)
     }
     if (!found)
     {
-        printf ("remove %p NOT FOUND\n", p) ;
+        printf ("remove %p NOT FOUND\n", p) ;       // MEMDUMP
         GB_Global_memtable_dump ( ) ;
     }
     ASSERT (found) ;
@@ -767,6 +616,11 @@ void GB_Global_memtable_remove (void *p)
 void GB_Global_malloc_function_set (void * (* malloc_function) (size_t))
 { 
     GB_Global.malloc_function = malloc_function ;
+}
+
+void * GB_Global_malloc_function_get (void)
+{ 
+    return ((void *) GB_Global.malloc_function) ;
 }
 
 void * GB_Global_malloc_function (size_t size)
@@ -788,6 +642,20 @@ void * GB_Global_malloc_function (size_t size)
 }
 
 //------------------------------------------------------------------------------
+// calloc_function
+//------------------------------------------------------------------------------
+
+void GB_Global_calloc_function_set (void * (* calloc_function) (size_t, size_t))
+{ 
+    GB_Global.calloc_function = calloc_function ;
+}
+
+void * GB_Global_calloc_function_get (void)
+{ 
+    return ((void *) GB_Global.calloc_function) ;
+}
+
+//------------------------------------------------------------------------------
 // realloc_function
 //------------------------------------------------------------------------------
 
@@ -797,6 +665,11 @@ void GB_Global_realloc_function_set
 )
 { 
     GB_Global.realloc_function = realloc_function ;
+}
+
+void * GB_Global_realloc_function_get (void)
+{ 
+    return ((void *) GB_Global.realloc_function) ;
 }
 
 bool GB_Global_have_realloc_function (void)
@@ -835,6 +708,11 @@ void GB_Global_free_function_set (void (* free_function) (void *))
     GB_Global.free_function = free_function ;
 }
 
+void * GB_Global_free_function_get (void)
+{ 
+    return ((void *) GB_Global.free_function) ;
+}
+
 void GB_Global_free_function (void *p)
 { 
     if (GB_Global.malloc_is_thread_safe)
@@ -849,6 +727,42 @@ void GB_Global_free_function (void *p)
         }
     }
     GB_Global_memtable_remove (p) ;
+}
+
+//------------------------------------------------------------------------------
+// malloc/free persistent memory: malloc and make the memory persistent
+//------------------------------------------------------------------------------
+
+// By default, MATLAB frees any memory allocated by mxMalloc when a mexFunction
+// returns, except for any memory passed back to the MATLAB caller.  This is
+// fine for all of GraphBLAS, except for the JIT hash table.
+
+void * GB_Global_persistent_malloc (size_t size)
+{
+    // malloc persistent memory
+    void *p = GB_Global.malloc_function (size) ;
+    if (p != NULL && GB_Global.persistent_function != NULL)
+    { 
+        // tell MATLAB to make this memory persistent
+        GB_Global.persistent_function (p) ;
+    }
+    return (p) ;
+}
+
+void GB_Global_persistent_set (void (* persistent_function) (void *))
+{ 
+    // set the persistent function for MATLAB
+    GB_Global.persistent_function = persistent_function ;
+}
+
+void GB_Global_persistent_free (void **p)
+{
+    // free persistent memory
+    if (p != NULL && *p != NULL)
+    { 
+        GB_Global.free_function (*p) ;
+    }
+    (*p) = NULL ;
 }
 
 //------------------------------------------------------------------------------
@@ -1016,53 +930,11 @@ bool GB_Global_print_mem_shallow_get (void)
 // CUDA (DRAFT: in progress)
 //------------------------------------------------------------------------------
 
-void GB_Global_gpu_control_set (GrB_Desc_Value gpu_control)
-{ 
-    // set the GPU control to always, never, or default
-    if (GB_Global.gpu_count > 0)
-    {
-        // one or more GPUs are available: set gpu_control to
-        // always, never, or default.
-        if (gpu_control == GxB_GPU_ALWAYS || gpu_control == GxB_GPU_NEVER)
-        {
-            GB_Global.gpu_control = gpu_control ;
-        }
-        else
-        {
-            GB_Global.gpu_control = GxB_DEFAULT ;
-        }
-    }
-    else
-    {
-        // no GPUs available: never use a GPU
-        GB_Global.gpu_control = GxB_GPU_NEVER ;
-    }
-}
-
-GrB_Desc_Value GB_Global_gpu_control_get (void)
-{ 
-    // get the GPU control parameter
-    return (GB_Global.gpu_control) ;
-}
-
-void GB_Global_gpu_chunk_set (double gpu_chunk)
-{ 
-    // set the GPU chunk factor
-    if (gpu_chunk < 1) gpu_chunk = GB_GPU_CHUNK_DEFAULT ;
-    GB_Global.gpu_chunk = gpu_chunk ;
-}
-
-double GB_Global_gpu_chunk_get (void)
-{ 
-    // get the GPU chunk factor
-    return (GB_Global.gpu_chunk) ;
-}
-
 bool GB_Global_gpu_count_set (bool enable_cuda)
 { 
     // set the # of GPUs in the system;
     // this function is only called once, by GB_init.
-    #if defined ( GBCUDA )
+    #if defined ( SUITESPARSE_CUDA )
     if (enable_cuda)
     {
         return (GB_cuda_get_device_count (&GB_Global.gpu_count)) ;
@@ -1132,7 +1004,7 @@ bool GB_Global_gpu_device_properties_get (int device)
     // get all properties of a specific GPU;
     // this function is only called once per GPU, by GB_init.
     GB_GPU_DEVICE_CHECK (false) ;   // fail if invalid GPU
-    #if defined ( GBCUDA )
+    #if defined ( SUITESPARSE_CUDA )
     return (GB_cuda_get_device_properties (device,
         &(GB_Global.gpu_properties [device]))) ;
     #else
@@ -1171,225 +1043,6 @@ void GB_Global_timing_add (int k, double t)
 double GB_Global_timing_get (int k)
 {
     return (GB_Global.timing [k]) ;
-}
-
-//------------------------------------------------------------------------------
-// free_pool: fast access to free memory blocks
-//------------------------------------------------------------------------------
-
-// each free block contains a pointer to the next free block.  This requires
-// the free block to be at least 8 bytes in size.
-#define GB_NEXT(p) ((void **) p) [0]
-
-// free_pool_init: initialize the free_pool
-void GB_Global_free_pool_init (bool clear)
-{ 
-    #ifdef _OPENMP
-        if (clear)
-        {
-            // clear the free pool
-            #pragma omp critical(GB_free_pool)
-            {
-                for (int k = 0 ; k < 64 ; k++)
-                {
-                    GB_Global.free_pool [k] = NULL ;
-                    GB_Global.free_pool_nblocks [k] = 0 ;
-                }
-            }
-            #pragma omp flush
-        }
-        // set the default free_pool_limit
-        for (int k = 0 ; k < 3 ; k++)
-        {
-            GB_ATOMIC_WRITE
-            GB_Global.free_pool_limit [k] = 0 ;
-        }
-        int64_t n = 16384 ;
-        for (int k = 3 ; k <= 8 ; k++)
-        {
-            GB_ATOMIC_WRITE
-            GB_Global.free_pool_limit [k] = n ;
-        }
-        for (int k = 9 ; k <= 19 ; k++)
-        {
-            n = n/2 ;
-            GB_ATOMIC_WRITE
-            GB_Global.free_pool_limit [k] = n ;
-        }
-        for (int k = 20 ; k < 64 ; k++)
-        {
-            GB_ATOMIC_WRITE
-            GB_Global.free_pool_limit [k] = 0 ;
-        }
-    #else
-        // OpenMP not available: disable the free pool
-        for (int k = 0 ; k < 64 ; k++)
-        {
-            GB_Global.free_pool [k] = NULL ;
-            GB_Global.free_pool_nblocks [k] = 0 ;
-        }
-    #endif
-}
-
-#ifdef GB_DEBUG
-// check if a block is valid
-static inline void GB_Global_free_pool_check (void *p, int k, char *where)
-{
-    // check the size of the block
-    ASSERT (k >= 3 && k < 64) ;
-    ASSERT (p != NULL) ;
-    size_t size = GB_Global_memtable_size (p) ;
-    ASSERT (size == ((size_t) 1) << k) ;
-}
-#endif
-
-// free_pool_get: get a block from the free_pool, or return NULL if none
-void *GB_Global_free_pool_get (int k)
-{ 
-    #if defined _MEMPOOL && defined _OPENMP
-        void *p = NULL ;
-        ASSERT (k >= 3 && k < 64) ;
-        #pragma omp critical(GB_free_pool)
-        {
-            p = GB_Global.free_pool [k] ;
-            if (p != NULL)
-            {
-                // remove the block from the kth free_pool
-                GB_Global.free_pool_nblocks [k]-- ;
-                GB_Global.free_pool [k] = GB_NEXT (p) ;
-            }
-        }
-        if (p != NULL)
-        {
-            // clear the next pointer inside the block, since the block needs
-            // to be all zero
-            #ifdef GB_DEBUG
-            GB_Global_free_pool_check (p, k, "get") ;
-            #endif
-        }
-        return (p) ;
-    #else
-        // OpenMP not available: free pool not in use
-        return (NULL) ;
-    #endif
-}
-
-// free_pool_put: put a block in the free_pool, unless it is full
-bool GB_Global_free_pool_put (void *p, int k)
-{ 
-    #if defined _MEMPOOL && defined _OPENMP
-        #ifdef GB_DEBUG
-        GB_Global_free_pool_check (p, k, "put") ;
-        #endif
-        bool returned_to_pool = false ;
-        int64_t limit ;
-        GB_ATOMIC_READ
-        limit = GB_Global.free_pool_limit [k] ;
-        if (limit > 0)
-        {
-            #pragma omp critical(GB_free_pool)
-            {
-                returned_to_pool = (GB_Global.free_pool_nblocks [k] < limit) ;
-                if (returned_to_pool)
-                {
-                    // add the block to the head of the free_pool list
-                    GB_Global.free_pool_nblocks [k]++ ;
-                    GB_NEXT (p) = GB_Global.free_pool [k] ;
-                    GB_Global.free_pool [k] = p ;
-                }
-            }
-        }
-        return (returned_to_pool) ;
-    #else
-        return (false) ;
-    #endif
-}
-
-// free_pool_dump: check the validity of the free_pool
-void GB_Global_free_pool_dump (int pr)
-{
-    #if defined _MEMPOOL && defined _OPENMP
-    #ifdef GB_DEBUG
-    bool fail = false ;
-    #pragma omp critical(GB_free_pool)
-    {
-        for (int k = 0 ; k < 64 && !fail ; k++)
-        {
-            int64_t nblocks = GB_Global.free_pool_nblocks [k] ;
-            int64_t limit ;
-            GB_ATOMIC_READ
-            limit = GB_Global.free_pool_limit [k] ;
-            if (nblocks != 0 && pr > 0)
-            {
-                printf ("pool %2d: " GBd " blocks, " GBd " limit\n",
-                    k, nblocks, limit) ;
-            }
-            int64_t nblocks_actual = 0 ;
-            void *p = GB_Global.free_pool [k] ;
-            for ( ; p != NULL && !fail ; p = GB_NEXT (p))
-            {
-                if (pr > 1) printf ("  %16p ", p) ;
-                size_t size = GB_Global_memtable_size (p) ;
-                if (pr > 1) printf ("size: %ld\n", size) ;
-                nblocks_actual++ ;
-                fail = fail || (size != ((size_t) 1) << k) ;
-                if (fail && pr > 0) printf ("    fail\n") ;
-                fail = fail || (nblocks_actual > nblocks) ;
-            }
-            if (nblocks_actual != nblocks)
-            {
-                if (pr > 0) printf ("fail: # blocks " GBd " " GBd " \n",
-                    nblocks_actual, nblocks) ;
-                fail = true ;
-            }
-        }
-    }
-    ASSERT (!fail) ;
-    #endif
-    #endif
-}
-
-// free_pool_limit_get: get the limit on the # of blocks in the kth pool
-int64_t GB_Global_free_pool_limit_get (int k)
-{
-    int64_t limit ;
-    if (k < 3) return (0) ;
-    GB_ATOMIC_READ
-    limit = GB_Global.free_pool_limit [k] ;
-    return (limit) ;
-}
-
-// free_pool_limit_set: set the limit on the # of blocks in the kth pool
-void GB_Global_free_pool_limit_set (int64_t *limit)
-{ 
-    #ifdef _OPENMP
-        for (int k = 3 ; k < 64 ; k++)
-        {
-            GB_ATOMIC_WRITE
-            GB_Global.free_pool_limit [k] = limit [k] ;
-        }
-    #else
-        for (int k = 0 ; k < 64 ; k++)
-        {
-            GB_Global.free_pool_limit [k] = 0 ;
-        }
-    #endif
-}
-
-// free_pool_nblocks_total:  total # of blocks in free_pool (for debug only)
-int64_t GB_Global_free_pool_nblocks_total (void)
-{
-    int64_t nblocks = 0 ;
-    #if defined _MEMPOOL && defined _OPENMP
-    #pragma omp critical(GB_free_pool)
-    {
-        for (int k = 0 ; k < 64 ; k++)
-        {
-            nblocks += GB_Global.free_pool_nblocks [k] ;
-        }
-    }
-    #endif
-    return (nblocks) ;
 }
 
 //------------------------------------------------------------------------------

@@ -93,8 +93,17 @@ static Record _handoff
 ) {
 	// if there is a new value ready, return it
 	if(op->listIdx < op->listLen) {
-		Record r = OpBase_CloneRecord(op->currentRecord);
-		Record_Add(r, op->unwindRecIdx, SIArray_Get(op->list, op->listIdx));
+		Record  r = OpBase_CloneRecord(op->currentRecord);
+		SIValue v = SIArray_Get(op->list, op->listIdx);
+
+		// persist 'v', as we have no control over it once it is added to 'r'
+		// eventually 'list' will be freed as a result of either pulling from
+		// child or resetting
+		if(unlikely(!(v.type & SI_GRAPHENTITY))) {
+			SIValue_Persist(&v);
+		}
+
+		Record_Add(r, op->unwindRecIdx, v);
 		op->listIdx++;
 		return r;
 	}

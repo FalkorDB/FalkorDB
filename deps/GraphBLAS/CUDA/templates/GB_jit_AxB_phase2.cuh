@@ -4,15 +4,18 @@
 
 // TODO describe me
 #pragma once
-
-#define GB_CUDA_KERNEL
-
-#include "GB_cuda_buckets.h"
 #include "GB_cuda_kernel.h"
+#include "GB_mxm_shared_definitions.h"
+#include "GB_cuda_buckets.h"
+#include <stdint.h>
 #include <cooperative_groups.h>
 #include <cub/block/block_scan.cuh>
 
 using namespace cooperative_groups;
+
+//------------------------------------------------------------------------------
+// BlockPrefixCallbackOp
+//------------------------------------------------------------------------------
 
 // A stateful callback functor that maintains a running prefix to be applied
 // during consecutive scan operations.
@@ -32,6 +35,10 @@ struct BlockPrefixCallbackOp
      return old_prefix;
    }
 };
+
+//------------------------------------------------------------------------------
+// blockBucketExclusiveSum
+//------------------------------------------------------------------------------
 
 __inline__
 __device__ void blockBucketExclusiveSum(int bucketId, int64_t *d_data, int nblocks)
@@ -83,9 +90,12 @@ __device__ void blockBucketExclusiveSum(int bucketId, int64_t *d_data, int nbloc
    }
 }
 
+//------------------------------------------------------------------------------
+// warp_ReduceSumPlus_uint64
+//------------------------------------------------------------------------------
 
-template< typename T, int tile_sz>
-__inline__ __device__ T warp_ReduceSumPlus( thread_block_tile<tile_sz> tile, T val)
+template< int tile_sz>
+__inline__ __device__ uint64_t warp_ReduceSumPlus_uint64( thread_block_tile<tile_sz> tile, uint64_t val)
 {
     // Each iteration halves the number of active threads
     // Each thread adds its partial sum[i] to sum[lane+i]
@@ -95,34 +105,9 @@ __inline__ __device__ T warp_ReduceSumPlus( thread_block_tile<tile_sz> tile, T v
     return val; // note: only thread 0 will return full sum
 }
 
-template<typename T, int warpSize>
-__inline__ __device__ T block_ReduceSum(thread_block g, T val)
-{
-  static __shared__ T shared[warpSize]; // Shared mem for 32 partial sums
-  int lane = threadIdx.x % warpSize;
-  int wid = threadIdx.x / warpSize;
-  thread_block_tile<warpSize> tile = tiled_partition<warpSize>( g );
-
-  // Each warp performs partial reduction
-  val = warp_ReduceSumPlus<T, warpSize>( tile, val);
-
-  // Wait for all partial reductions
-  if (lane==0) {
-     //printf("thd%d warp%d sum is %d\n", threadIdx.x, wid, val);
-     shared[wid]=val; // Write reduced value to shared memory
-     //printf("thd%d stored warp %d sum %d\n", threadIdx.x, wid, val);
-  }
-  this_thread_block().sync(); // Wait for all partial reductions
-
-  if (wid > 0 ) return val ;git2
-
-  //read from shared memory only if that warp existed
-  val = (threadIdx.x <  (blockDim.x / warpSize ) ) ? shared[lane] : 0;
-  //Final reduce within first warp
-  if (wid==0) val = warp_ReduceSumPlus<T, warpSize>( tile, val) ;
-
-  return val;
-}
+//------------------------------------------------------------------------------
+// AxB_phase2
+//------------------------------------------------------------------------------
 
 // GB_AxB_cuda_dot3_phase2 is a CUDA kernel that takes as input the
 // nanobuckets and blockbucket arrays computed by the first phase kernel,
@@ -171,7 +156,7 @@ __global__ void AxB_phase2
          }
          this_thread_block().sync(); 
 
-         s[b]  = warp_ReduceSumPlus<uint64_t , 32>( tile, s[b]);
+         s[b]  = warp_ReduceSumPlus_uint64<32>( tile, s[b]);
      }
 
     if (threadIdx.x ==0 )

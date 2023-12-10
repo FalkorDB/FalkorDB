@@ -2,10 +2,12 @@
 // GB_reshape:  reshape a matrix into another matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: not needed, but variants possible.
 
 // If the input matrix is nrows-by-ncols, and the size of the newly-created
 // matrix C is nrows_new-by-ncols_new, then nrows*ncols must equal
@@ -52,7 +54,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
     bool by_col,            // true if reshape by column, false if by row
     int64_t nrows_new,      // number of rows of C
     int64_t ncols_new,      // number of columns of C
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -106,7 +108,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         if (in_place)
         { 
             // transpose A in-place
-            GB_OK (GB_transpose_in_place (A, by_col, Context)) ;
+            GB_OK (GB_transpose_in_place (A, by_col, Werk)) ;
             T = A ;
         }
         else
@@ -114,8 +116,8 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             // T = A'
             GB_OK (GB_new (&T,  // new header
                 type, A->vdim, A->vlen, GB_Ap_null, by_col, GxB_AUTO_SPARSITY,
-                GB_Global_hyper_switch_get ( ), 0, Context)) ;
-            GB_OK (GB_transpose_cast (T, type, by_col, A, false, Context)) ;
+                GB_Global_hyper_switch_get ( ), 0)) ;
+            GB_OK (GB_transpose_cast (T, type, by_col, A, false, Werk)) ;
             // now T can be reshaped in-place to construct C
             in_place = true ;
         }
@@ -167,7 +169,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         else
         { 
             // copy T into C
-            GB_OK (GB_dup (&C, T, Context)) ;
+            GB_OK (GB_dup (&C, T, Werk)) ;
         }
         // change the size of C
         C->vlen = vlen_new ;
@@ -191,9 +193,10 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
         int64_t tvlen = T->vlen ;
         bool T_jumbled = T->jumbled ;
 
-        GB_GET_NTHREADS_MAX (nthreads_max, chunk, Context) ;
+        int nthreads_max = GB_Context_nthreads_max ( ) ;
+        double chunk = GB_Context_chunk ( ) ;
         int T_nthreads, T_ntasks ;
-        GB_SLICE_MATRIX (T, 1, chunk) ;
+        GB_SLICE_MATRIX (T, 1) ;
 
         //----------------------------------------------------------------------
         // allocate output and workspace
@@ -229,8 +232,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             // create the output matrix (just the header; no content)
             GB_OK (GB_new (&C, // new header
                 type, vlen_new, vdim_new, GB_Ap_null, T_is_csc,
-                GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 0,
-                Context)) ;
+                GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 0)) ;
             // allocate new space for the future C->i
             I_work = GB_MALLOC (nvals, int64_t, &I_work_size) ;
             if (I_work == NULL)
@@ -362,7 +364,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
             NULL,           // no dup operator
             type,           // type of S_work and S_input
             true,           // burble is allowed
-            Context
+            Werk
         )) ;
 
         ASSERT (I_work == NULL) ;   // transplanted into C->i
@@ -378,7 +380,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
     ASSERT (C->is_csc == T_is_csc) ;
     if (A_is_csc != T_is_csc)
     { 
-        GB_OK (GB_transpose_in_place (C, A_is_csc, Context)) ;
+        GB_OK (GB_transpose_in_place (C, A_is_csc, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -386,7 +388,7 @@ GrB_Info GB_reshape         // reshape a GrB_Matrix into another GrB_Matrix
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    GB_OK (GB_conform (C, Context)) ;
+    GB_OK (GB_conform (C, Werk)) ;
     ASSERT_MATRIX_OK (C, "C result for reshape", GB0) ;
     if (Chandle != NULL)
     { 

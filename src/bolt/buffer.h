@@ -33,10 +33,11 @@ void buffer_index
 	uint32_t offset         // offset
 );
 
-// return the pointer to the data and increment the index
-char *buffer_index_read
+// copy the data and increment the index
+void buffer_index_read
 (
 	buffer_index_t *index,  // index
+	char *ptr,              // pointer
 	uint32_t size           // size
 );
 
@@ -95,8 +96,9 @@ bool buffer_socket_read
 // write data from the buffer to the socket
 bool buffer_socket_write
 (
-	buffer_index_t *buf,  // buffer
-	socket_t socket       // socket
+	buffer_index_t *from_buf,  // from buffer
+	buffer_index_t *to_buf,    // to buffer
+	socket_t socket            // socket
 );
 
 // write a uint8_t to the buffer

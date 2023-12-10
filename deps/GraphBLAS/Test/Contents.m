@@ -3,10 +3,8 @@
 
 % Primary functiuns
 
-%   make          - compiles the interface to GraphBLAS (for testing only)
-%   testall       - run all GraphBLAS tests
-%   nthreads_get  - get # of threads and chunk to use in GraphBLAS
-%   nthreads_set  - set # of threads and chunk to use in GraphBLAS
+%   make    - compiles the test interface to GraphBLAS
+%   testall - run all GraphBLAS tests
 
 % mimics of GraphBLAS operations:
 %
@@ -31,7 +29,7 @@
 %   GB_spec_extractTuples         - a mimic of GrB_*_extractTuples
 %   GB_spec_identity              - the additive identity of a monoid
 %   GB_spec_kron                  - a mimic of GrB_kronecker
-%   GB_spec_mask                  - a pure implementation of GrB_mask
+%   GB_spec_mask                  - mimic of GrB_mask
 %   GB_spec_matrix                - a mimic that conforms a matrix to the GraphBLAS spec
 %   GB_spec_mxm                   - a mimic of GrB_mxm
 %   GB_spec_mxv                   - a mimic of GrB_mxv
@@ -47,237 +45,213 @@
 %   GB_spec_subassign             - a mimic of GxB_subassign
 %   GB_spec_transpose             - a mimic of GrB_transpose
 %   GB_spec_vxm                   - a mimic of GrB_vxm
-%   GB_complex_compare            - compare GraphBLAS results for complex types
+%   GB_spec_Matrix_eWiseUnion     - a mimic of GxB_Matrix_eWiseUnion
+%   GB_spec_Matrix_sort           - a mimic of GxB_Matrix_sort
+%   GB_spec_Vector_eWiseUnion     - a mimic of GxB_Vector_eWiseUnion
+%   GB_spec_Vector_sort           - a mimic of GxB_Vector_sort
+%   GB_spec_binop_positional      - compute a binary positional op
+%   GB_spec_concat                - a mimic of GxB_Matrix_concat
+%   GB_spec_idxunop               - apply an idxunop
+%   GB_spec_is_idxunop            - determine if an op is an idxunop
+%   GB_spec_is_positional         - determine if an op is positional
+%   GB_spec_mdiag                 - a mimic of GxB_Matrix_diag
+%   GB_spec_nbits                 - number of bits in an integer type
+%   GB_spec_ones                  - all-ones matrix of a given type.
+%   GB_spec_select_idxunop        - a mimic of GrB_select
+%   GB_spec_split                 - a mimic of GxB_Matrix_split
+%   GB_spec_type                  - determine the class of a built-in matrix
+%   GB_spec_unop_positional       - compute a unary positional op
+%   GB_spec_vdiag                 - a mimic of GxB_Vector_diag
+%   GB_spec_zeros                 - all-zero matrix of a given type.
+%   GB_spec_getmask               - return the mask, typecasted to logical
+
 %   GB_user_op                    - apply a complex binary and unary operator
 %   GB_user_opsall                - return list of complex operators
-%   accum_mask                    - apply the mask
-%   accum_mask2                   - a simpler version of GB_spec_accum_mask
 %   GB_random_mask                - Mask = GB_random_mask (m, n, d, M_is_csc, M_is_hyper)
-%   GB_spec_getmask               - return the mask, typecasted to logical
+%   GB_builtin_complex_get        - get the flag that determines the GrB_Type Complex
+%   GB_builtin_complex_set        - set a global flag to determine the GrB Complex type 
+%   GB_sparsity                   - a string describing the sparsity
+%   GB_spok                       - check if a matrix is valid
 
 % Test scripts:
 
-%   test01   - test GraphBLAS error handling
-%   test02   - test GrB_*_dup
-%   test03   - test GB_*_check functions
-%   test04   - test and demo for accumulator/mask and transpose
-%   test05   - test GrB_*_setElement
-%   test06   - test GrB_mxm on all semirings
-%   test07   - test GxB_subassign with a single pending tuple
-%   test07b  - test GrB_assign with a single pending tuple
-%   test08   - test GxB_subassign
-%   test08b  - test GrB_assign
-%   test09   - test GxB_subassign
-%   test09b  - test GrB_assign
-%   test10   - test GrB_apply
-%   test11   - test GrB_*_extractTuples
-%   test12   - test Wathen matrix generation
-%   test13   - test GrB_tranpsose
-%   test14   - test GrB_reduce
-%   test15   - test AxB and AdotB internal functions
-%   test16   - test user-defined complex type (runs all testc*.m)
-%   test17   - test GrB_*_extractElement
-%   test18   - test GrB_eWiseAdd and GrB_eWiseMult
-%   test19   - test GxB_subassign and GrB_*_setElement with many pending operations
-%   test19b  - test GrB_assign and GrB_*_setElement with many pending operations
-%   test20   - test GrB_mxm, mxv, and vxm
-%   test21   - test GxB_subassign
-%   test21b  - test GrB_assign
-%   test22   - test GrB_transpose
-%   test23   - test GrB_*_build
-%   test24   - test GrB_reduce
-%   test25   - test GxB_select
-%   test26   - performance test for GxB_select
-%   test27   - test GxB_select with user-defined select op (LoHi_band)
-%   test28   - test mxm with aliased inputs, C<C> = accum(C,C*C)
-%   test29   - GrB_reduce with zombies
-%   test30   - test GxB_subassign
-%   test30b  - performance test GB_mex_assign, scalar expansionb
-%   test31   - test GrB_transpose
-%   test32   - test GrB_mxm
-%   test33   - test a semiring
-%   test34   - test GrB_eWiseAdd
-%   test35   - test GrB_*_extractTuples
-%   test36   - performance test of matrix subref
-%   test38   - test GrB_transpose
-%   test39   - performance test for GrB_transpose
-%   test40   - test GrB_Matrix_extractElement
-%   test41   - test AxB
-%   test42   - test GrB_Matrix_build
-%   test43   - test subref
-%   test44   - test qsort
-%   test45   - test GrB_*_setElement and GrB_*_*build
-%   test46   - performance test of GxB_subassign
-%   test46b  - performance test of GrB_assign
-%   test47   - prformance test of GrB_vxm
-%   test48   - performance test of GrB_mxm
-%   test49   - performance test of GrB_mxm (dot product method, A'*B)
-%   test50   - test AxB numeric and symbolic
-%   test51   - test GxB_subassign, multiply operations
-%   test51b  - test GrB_assign, multiply operations
-%   test52   - test AdotB vs AxB
-%   test53   - test GrB_Matrix_extract
-%   test54   - test GB_subref (numeric case) with I=lo:hi, J=lo:hi
-%   test55   - test GxB_subassign, illustrate duplicate indices
-%   test55b  - test GrB_assign, illustrate duplicate indices
-%   test56   - test GrB_*_build
-%   test57   - test operator on large uint32 values
-%   test58   - test GrB_eWiseAdd
-%   test59   - test GrB_mxm
-%   test60   - test min and max operators with NaNs
-%   test61   - performance test of GrB_eWiseMult
-%   test62   - test GrB_apply
-%   test63   - test GraphBLAS binary operators
-%   test64   - test GxB_*_subassign, scalar expansion, with and without duplicates
-%   test64b  - test GrB_*_assign, scalar expansion, with and without duplicates
-%   test65   - test type casting
-%   test66   - test GrB_reduce
-%   test67   - test GrB_apply
-%   test68   - performance tests for eWiseMult
-%   test69   - test GrB_assign with aliased inputs, C<C>(:,:) = accum(C(:,:),C)
-%   test72   - special cases for mxm, ewise, ...
-%   test73   - performance of C = A*B, with mask
-%   test74   - test GrB_mxm: all built-in semirings
-%   test75   - test GrB_mxm and GrB_vxm on all semirings
-%   test75b  - GrB_mxm and GrB_vxm on all semirings (shorter test than test75)
-%   test76   - test GxB_resize
-%   test77   - test GrB_kronecker
-%   test78   - test subref
-%   test79   - run all matrices with test06
-%   test80   - rerun test06 with different matrices
-%   test81   - test GrB_Matrix_extract with index range, stride, & backwards
-%   test82   - test GrB_Matrix_extract with index range (hypersparse)
-%   test83   - test GrB_assign with J=lo:0:hi, an empty list, and C_replace true
-%   test84   - test GrB_assign (row and column with C in CSR format)
-%   test85   - test GrB_transpose: 1-by-n with typecasting
-%   test86   - performance test of of GrB_Matrix_extract
-%   test87   - performance test of GrB_mxm
-%   test88   - test hypersparse matrices with hash-based method
-%   test89   - performance test of complex A*B
-%   test90   - test AxB with user-defined semirings: plus_rdiv and plus_rdiv2
-%   test91   - test subref performance on dense vectors
-%   test92   - test GB_subref (symbolic case)
-%   test95   - performance test for GrB_transpose
-%   test96   - test dot product
-%   test97   - test GB_assign, scalar expansion and zombies
-%   test98   - test GrB_mxm, typecasting on the fly
-%   test99   - test GB_mex_transpose with explicit zeros in the Mask
-%   test101  - test import/export
-%   test102  - test GB_AxB_saxpy3_flopcount
-%   test103  - test aliases in GrB_transpose
-%   test104  - export/import
-%   test105  - eWiseAdd with hypersparse matrices
-%   test106  - GxB_subassign with alias
-%   test107  - user-defined terminal monoid
-%   test108  - test boolean monoids
-%   test109  - terminal monoid with user-defined type
-%   test110  - test accum/mask (binary search of M(:,j))
-%   test111  - performance test for eWiseAdd
-%   test112  - test row/col scale
-%   test113  - performance tests for GrB_kron
-%   test114  - performance of reduce-to-scalar
-%   test115  - test GB_assign, scalar expansion and zombies, with duplicates
-%   test116  - performance tests for GrB_assign
-%   test117  - performance tests for GrB_assign
-%   test118  - performance tests for GrB_assign
-%   test119  - performance tests for GrB_assign
-%   test120  - performance tests for GrB_assign
-%   test121  - performance tests for GrB_assign
-%   test122  - performance tests for GrB_assign
-%   test124  - GrB_extract, trigger case 6
-%   test125  - test GrB_mxm: row and column scaling
-%   test126  - test GrB_reduce to vector on a very sparse matrix 
-%   test127  - test GrB_eWiseAdd and GrB_eWiseMult (all types and operators)
-%   test128  - test eWiseMult and eWiseAdd, special cases
-%   test129  - test GxB_select (tril and nonzero, hypersparse)
-%   test130  - test GrB_apply (hypersparse cases)
-%   test131  - test GrB_Matrix_clear
-%   test132  - test GrB_*_setElement and GrB_*_*build
-%   test133  - test mask operations (GB_masker)
-%   test134  - test GxB_select
-%   test135  - reduce-to-scalar, built-in monoids with terminal values
-%   test136  - GxB_subassign, method 08, 09, 11
-%   test137  - GrB_eWiseMult with FIRST and SECOND operators
-%   test138  - test assign, with coarse-only tasks in IxJ slice
-%   test139  - merge sort, special cases
-%   test140  - test assign with duplicates
-%   test141  - test GrB_eWiseAdd (all types and operators) for dense matrices
-%   test142  - test GrB_assign for dense matrices
-%   test143  - test special cases for C<!M>=A*B and C<M>=A*B
-%   test144  - test GB_cumsum
-%   test145  - test dot4
-%   test146  - test C<M,struct> = scalar
-%   test147  - test C<M>A*B with very sparse M
-%   test148  - eWiseAdd with aliases
-%   test149  - test fine hash method for C<!M>=A*B
-%   test150  - test GrB_mxm with typecasting and zombies (dot3 and saxpy)
-%   test151  - test bitwise operators
-%   test152  - test C = A+B for dense A, B, and C
-%   test153  - list all possible semirings
-%   test154  - test GrB_apply with scalar binding
-%   test155  - test GrB_*_setElement and GrB_*_removeElement
-%   test156  - test assign C=A with typecasting
+%   test01      - test GraphBLAS error handling
+%   test02      - test GrB_*_dup
+%   test04      - test and demo for accumulator/mask and transpose
+%   test06      - test GrB_mxm on all semirings
+%   test09      - test GxB_subassign
 
-% TODO:: add new tests here
+%   test10      - test GrB_apply
+%   test11      - test GrB_*_extractTuples
+%   test14      - test GrB_reduce
+%   test17      - test GrB_*_extractElement
+%   test18      - test GrB_eWiseAdd, GxB_eWiseUnion, and GrB_eWiseMult
+%   test19      - test GxB_subassign and GrB_*_setElement with many pending operations
+%   test19b     - test GrB_assign and GrB_*_setElement with many pending operations
 
-%   testc1   - test complex operators
-%   testc2   - test complex A*B, A'*B, A*B', A'*B', A+B
-%   testc3   - test complex GrB_extract
-%   testc4   - test complex extractElement and setElement
-%   testc5   - test complex subref
-%   testc6   - test complex apply
-%   testc7   - test complex assign
-%   testc8   - test complex eWiseAdd and eWiseMult
-%   testc9   - test complex extractTuples
-%   testca   - test complex mxm, mxv, and vxm
-%   testcb   - test complex reduce
-%   testcc   - test complex transpose
+%   test21b     - test GrB_assign
+%   test23      - test GrB_*_build
+%   test29      - GrB_reduce with zombies
 
-% Other tests:
+%   test53      - test GrB_Matrix_extract
+%   test54      - test GB_subref: numeric case with I=lo:hi, J=lo:hi
 
-%   t74       - run test20 and test74
-%   testperf  - run all performance tests
-%   atest     - test GrB_assign and GxB_subassign
-%   atest11   - test GrB_assign and GxB_subassign
-%   btest     - test GrB_build
-%   etest     - test eWise
-%   ee        - eWiseMult and eWiseAdd performance tests
-%   grbinfo   - print info about the GraphBLAS version
-%   mtest     - test mxm
-%   longtests - very long tests
+%   test69      - test GrB_assign with aliased inputs, C<C>(:,:) = accum(C(:,:),C)
 
-%   rtest     - test GrB_reduce to vector and scalar
-%   ss        - test GxB_select
-%   stest     - test GxB_select
-%   testall2  - run testall with different # of threads
-%   testall3  - run testall with different # of threads
-%   tt        - test eWiseMult and A+B
-%   ttest     - test GrB_extractTuples
-%   xtest     - test GrB_extract
-%   ztest     - test zombie deletion
-%   testsort  - test qsort and msort
+%   test74      - test GrB_mxm: all built-in semirings
+%   test75b     - GrB_mxm and GrB_vxm on all semirings (shorter test than test75)
+%   test76      - test GxB_resize
+
+%   test80      - rerun test06 with different matrices
+%   test81      - test GrB_Matrix_extract with index range, stride, & backwards
+%   test82      - test GrB_Matrix_extract with index range (hypersparse)
+%   test83      - test GrB_assign with J=lo:0:hi, an empty list, and C_replace true
+%   test84      - test GrB_assign (row and column with C in CSR/CSC format)
+
+%   test104     - export/import
+%   test108     - test boolean monoids
+%   test109     - terminal monoid with user-defined type
+
+%   test124     - GrB_extract, trigger case 6
+%   test125     - test GrB_mxm: row and column scaling
+%   test127     - test GrB_eWiseAdd and GrB_eWiseMult (all types and operators)
+%   test128     - test eWiseMult, eWiseAdd, eWiseUnion, special cases
+
+%   test129     - test GxB_select (tril and nonzero, hypersparse)
+
+%   test130     - test GrB_apply (hypersparse cases)
+%   test132     - test GrB_*_setElement and GrB_*_*build
+%   test133     - test mask operations (GB_masker)
+%   test135     - reduce-to-scalar, built-in monoids with terminal values
+%   test136     - GxB_subassign, method 08, 09, 11
+%   test137     - GrB_eWiseMult with FIRST and SECOND operators
+%   test138     - test assign, with coarse-only tasks in IxJ slice
+%   test139     - merge sort, special cases
+
+%   test141     - test GrB_eWiseAdd (all types and operators) for dense matrices
+%   test142     - test GrB_assign for dense matrices
+%   test144     - test GB_cumsum
+%   test145     - test dot4
+%   test148     - eWiseAdd with aliases
+
+%   test150     - test GrB_mxm with typecasting and zombies (dot3 and saxpy)
+%   test151     - test bitwise operators
+%   test151b    - test bitshift operators
+%   test152     - test C = A+B for dense A, B, and C
+%   test154     - test GrB_apply with scalar binding
+%   test155     - test GrB_*_setElement and GrB_*_removeElement
+%   test156     - test assign C=A with typecasting
+%   test157     - test sparsity formats
+%   test159     - test dot and saxpy with positional ops
+
+%   testc2      - test complex A*B, A'*B, A*B', A'*B', A+B
+%   testc4      - test complex extractElement and setElement
+%   testc7      - test complex assign
+%   testca      - test complex mxm, mxv, and vxm
+%   testcc      - test complex transpose
+
+%   test160     - test GrB_mxm
+%   test162     - test C<M>=A*B with very sparse M
+%   test165     - test C=A*B' where A is diagonal and B becomes bitmap
+
+%   test172     - eWiseMult with M bitmap/full
+%   test173     - test GrB_assign C<A>=A
+%   test174     - bitmap assignment, C<!,repl>+=A
+%   test176     - test C(I,J)<M,repl> = scalar (method 09, 11), M bitmap
+%   test179     - bitmap select
+
+%   test180     - subassign and assign
+%   test181     - test transpose with explicit zeros in the Mask
+%   test182     - test for internal wait that changes w from sparse/hyper to bitmap/full
+%   test183     - test GrB_eWiseMult with a hypersparse mask
+%   test184     - test special cases for mxm, transpose, and build
+%   test185     - test dot4 for all sparsity formats
+%   test186     - test saxpy for all sparsity formats
+%   test187     - test dup/assign for all sparsity formats
+%   test188     - test concat
+%   test189     - test large assignment
+
+%   test191     - test split
+%   test192     - test GrB_assign C<C,struct>=scalar
+%   test193     - test GxB_Matrix_diag and GrB_Matrix_diag
+%   test194     - test GxB_Vector_diag
+%   test195     - test all variants of saxpy3
+%   test196     - test large hypersparse concat
+%   test197     - test large sparse split
+%   test199     - test dot2 with hypersparse
+
+%   test200     - test iso full matrix multiply
+%   test201     - test iso reduce to vector and reduce to scalar
+%   test202     - test iso add and emult
+%   test203     - test iso subref
+%   test204     - test iso diag
+%   test206     - test iso select
+%   test207     - test iso subref
+%   test208     - test iso apply, bind 1st and 2nd
+%   test209     - test iso build
+
+%   test210     - test iso assign25: C<M,struct>=A, C empty, A dense, M structural
+%   test211     - test iso assign
+%   test212     - test iso mask all zero
+%   test213     - test iso assign (method 05d)
+%   test214     - test C<M>=A'*B (tricount)
+%   test215     - test C<M>=A'*B (dot2, ANY_PAIR semiring)
+%   test216     - test C<A>=A, iso case
+%   test219     - test reduce to scalar
+
+%   test220     - test mask C<M>=Z, iso case
+%   test221     - test C += A where C is bitmap and A is full
+%   test222     - test user selectop for iso matrices
+%   test223     - test matrix multiply, C<!M>=A*B
+%   test224     - unpack/pack
+%   test225     - test mask operations (GB_masker)
+%   test226     - test kron with iso matrices
+%   test227     - test kron
+%   test228     - test serialize/deserialize for all sparsity formats
+%   test229     - set setElement
+
+%   test230     - test GrB_apply with idxunop
+%   test231     - test GrB_select with idxunp
+%   test232     - test assign with GrB_Scalar
+%   test234     - test GxB_eWiseUnion
+%   test235     - test GxB_eWiseUnion and GrB_eWiseAdd
+%   test236     - test GxB_Matrix_sort and GxB_Vector_sort
+%   test237     - test GrB_mxm (saxpy4)
+%   test238     - test GrB_mxm (dot4 and dot2)
+%   test239     - test GxB_eWiseUnion
+
+%   test240     - test GrB_mxm: dot4, saxpy4, saxpy5
+%   test241     - test GrB_mxm: swap_rule
+%   test242     - test GxB_Iterator for matrices
+%   test243     - test GxB_Vector_Iterator
+%   test244     - test reshape
+%   test245     - test colscale (A*D) and rowscale (D*B) with complex types
+%   test246     - test GrB_mxm with different kinds of parallelism
+%   test247     - test saxpy3 fine-hash method
+%   test249     - GxB_Context object tests
+
+%   test250     - basic tests
 
 % Helper functions
 
-%   debug_off        - turn off malloc debugging
-%   debug_on         - turn on malloc debugging
+%   nthreads_get        - get # of threads and chunk to use in GraphBLAS
+%   nthreads_set        - set # of threads and chunk to use in GraphBLAS
+%   test10_compare      - check results for test10
+%   test_cast           - z = cast (x,type) but handle complex types
+%   test_contains       - same as contains (text, pattern)
+%   debug_off           - turn off malloc debugging
+%   debug_on            - turn on malloc debugging
+%   grbinfo             - print info about the GraphBLAS version
+%   irand               - construct a random integer matrix 
+%   logstat             - run a GraphBLAS test and log the results to log.txt 
+%   runtest             - run a single GraphBLAS test
+%   stat                - report status of statement coverage and malloc debugging
+%   isequal_roundoff    - compare two matrices, allowing for roundoff errors
+%   grb_clear_coverage  - clear current statement coverage
+%   grb_get_coverage    - return current statement coverage
+%   feature_numcores    - determine # of cores the system has
+%   jit_reset           - turn off the JIT and then set it back to its original state
 
-%   irand            - construct a random integer matrix 
-%   logstat          - run a GraphBLAS test and log the results to log.txt 
-%   runtest          - run a single GraphBLAS test
-%   stat             - report status of statement coverage and malloc debugging
-%   GB_define        - create C source code for GraphBLAS.h
-
-%   isequal_roundoff - compare two matrices, allowing for roundoff errors
-
-%   test_other       - installs all packages needed for extensive tests
-
-%   grb_clear_coverage - clear current statement coverage
-%   grb_get_coverage   - return current statement coverage
-
-%   flopcount        - cumulative sum of flop counts for A*B, C<M>=A*B, C<!M>=A*B
-%   floptest         - compare flopcount with GB_mex_mxm_flops
-
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 

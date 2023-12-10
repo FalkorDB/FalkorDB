@@ -2,7 +2,7 @@
 // GB_mex_mxm_generic: C<Mask> = accum(C,A*B)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -158,11 +158,19 @@ void mexFunction
         GrB_BinaryOp mult = semiring->multiply ;
         GrB_Monoid_free_(&(semiring->add)) ;
         GrB_Semiring_free_(&semiring) ;
-//      GrB_BinaryOp_new (&myplus, My_Plus_int64,
-//          GrB_INT64, GrB_INT64, GrB_INT64) ;
-        GxB_BinaryOp_new (&myplus, My_Plus_int64,
+
+        // try with a NULL function pointer to test the JIT
+        GrB_Info info = GxB_BinaryOp_new (&myplus, NULL,
             GrB_INT64, GrB_INT64, GrB_INT64,
             "My_Plus_int64", MY_PLUS_INT64) ;
+        if (info == GrB_NULL_POINTER)
+        {
+            // try again with non-NULL function pointer
+            GxB_BinaryOp_new (&myplus, My_Plus_int64,
+                GrB_INT64, GrB_INT64, GrB_INT64,
+                "My_Plus_int64", MY_PLUS_INT64) ;
+        }
+
         // add a spurious terminal value
         GxB_Monoid_terminal_new_INT64 (&myplus_monoid, myplus,
             (int64_t) 0, (int64_t) -111) ;

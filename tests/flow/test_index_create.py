@@ -6,96 +6,91 @@ from collections import OrderedDict
 from execution_plan_util import locate_operation
 
 GRAPH_ID = "index_create"
-con = None
-graph = None
 
 class testIndexCreationFlow():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global con
-        global graph
-        con = self.env.getConnection()
-        graph = Graph(con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     # full-text index creation
     def test01_fulltext_index_creation(self):
         # create an index over L:v0
-        result = create_node_fulltext_index(graph, 'L', 'v0')
+        result = create_node_fulltext_index(self.graph, 'L', 'v0')
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L:v1 and L:v2
-        result = create_node_fulltext_index(graph, 'L', 'v1', 'v2')
+        result = create_node_fulltext_index(self.graph, 'L', 'v1', 'v2')
         self.env.assertEquals(result.indices_created, 2)
 
         # create an index over L:v3, L:v4, L:v5 and L:v6
-        result = create_node_fulltext_index(graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
+        result = create_node_fulltext_index(self.graph, 'L', 'v3', 'v4', 'v5', 'v6', sync=True)
         self.env.assertEquals(result.indices_created, 4)
 
     def test02_fulltext_index_creation_label_config(self):
         # create an index over L1:v1
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1' }, 'v1')")
+        result = self.graph.create_node_fulltext_index('L1', 'v1')
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L1:v2, v3
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1' }, 'v2', 'v3')")
+        result = self.graph.create_node_fulltext_index('L1', 'v2', 'v3')
         self.env.assertEquals(result.indices_created, 2)
 
         # create an index over L2:v1 with stopwords
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', stopwords: ['The'] }, 'v1')")
+        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', stopwords: ['The'] }, 'v1')")
         self.env.assertEquals(result.indices_created, 1)
 
         # create an index over L2:v2
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2' }, 'v2')")
+        result = self.graph.create_node_fulltext_index('L2', 'v2')
         self.env.assertEquals(result.indices_created, 1)
 
         try:
             # try to create an index, without specifying the label
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ stopwords: ['The'] }, 'v4')")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ stopwords: ['The'] }, 'v4')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Label is missing", str(e))
 
         # create an index over L1:v4 with stopwords
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v4')")
+        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v4')")
         self.env.assertEquals(result.indices_created, 1)
 
         # try to update L1 index stopwords should failed
         try:
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v5')")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', stopwords: ['The'] }, 'v5')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Can not override index configuration", str(e))
 
         # create an index over L1:v5 with language
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v5')")
+        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v5')")
         self.env.assertEquals(result.indices_created, 1)
 
         # try to update L1 index language should failed
         try:
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'italian' }, 'v6')")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'italian' }, 'v6')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Can not override index configuration", str(e))
 
         # drop L1 index
-        result = graph.query("CALL db.idx.fulltext.drop('L1')")
+        result = self.graph.query("CALL db.idx.fulltext.drop('L1')")
         self.env.assertEquals(result.indices_deleted, 5)
 
         try:
             # create an index over L2:v4 with an unsupported language, expecting to failed
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', language: 'x' }, 'v4')")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L2', language: 'x' }, 'v4')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Language is not supported", str(e))
 
         # create an index over L1:v4 with language
-        result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v4')")
+        result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L1', language: 'english' }, 'v4')")
         self.env.assertEquals(result.indices_created, 1)
 
         try:
             # create an index over L3:v1 with stopwords should failed
             # stopwords must be provided as an array of strings
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L3', stopwords: 'The' }, 'v1')")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L3', stopwords: 'The' }, 'v1')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Stopwords must be array", str(e))
@@ -103,14 +98,14 @@ class testIndexCreationFlow():
         try:
             # create an index over L3:v1 with language should failed
             # language must be provided as a string
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L3', language: ['english'] }, 'v1')")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex({ label: 'L3', language: ['english'] }, 'v1')")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Language must be string", str(e))
 
         try:
             # create an index over L3 should failed, missing field(s)
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { })")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { })")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Field is missing", str(e))
@@ -118,7 +113,7 @@ class testIndexCreationFlow():
         try:
             # create an index over L3:v1 with weight of type string should failed
             # weight must be provided as numeric
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', weight: '1' })")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', weight: '1' })")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Weight must be numeric", str(e))
@@ -126,7 +121,7 @@ class testIndexCreationFlow():
         try:
             # create an index over L3:v1 with nostem of type string should failed
             # nostem must be boolean
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', nostem: 'true' })")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', nostem: 'true' })")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Nostem must be bool", str(e))
@@ -134,26 +129,26 @@ class testIndexCreationFlow():
         try:
             # create an index over L3:v1 with phonetic of type bool should failed
             # phonetic must be a string
-            result = graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', phonetic: true })")
+            result = self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', phonetic: true })")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Phonetic must be string", str(e))
 
     def test03_multi_prop_index_creation(self):
         # create an index over person:age and person:name
-        result = graph.query("CREATE INDEX ON :person(age, name)")
+        result = self.graph.query("CREATE INDEX ON :person(age, name)")
         self.env.assertEquals(result.indices_created, 2)
 
         # try to create an index over person:age and person:name, index shouldn't be created as it already exist
         try:
-            result = graph.query("CREATE INDEX ON :person(age, name)")
+            result = self.graph.query("CREATE INDEX ON :person(age, name)")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Attribute 'age' is already indexed", str(e))
 
         # try to create an index over person:name and person:age, index shouldn't be created as it already exist
         try:
-            result = graph.query("CREATE INDEX ON :person(name, age)")
+            result = self.graph.query("CREATE INDEX ON :person(name, age)")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Attribute 'name' is already indexed", str(e))
@@ -161,7 +156,7 @@ class testIndexCreationFlow():
         # try to create an index over person: age, name height,
         # operation should fail as 'age' and 'name' are already indexed
         try:
-            result = graph.query("CREATE INDEX ON :person(age, name, height)")
+            result = self.graph.query("CREATE INDEX ON :person(age, name, height)")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Attribute 'age' is already indexed", str(e))
@@ -169,25 +164,25 @@ class testIndexCreationFlow():
         # try to create an index over person: gender, name and height
         # operation should fail as 'name' is already indexed
         try:
-            result = graph.query("CREATE INDEX ON :person(gender, name, height)")
+            result = self.graph.query("CREATE INDEX ON :person(gender, name, height)")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Attribute 'name' is already indexed", str(e))
 
         # try to create an index with a duplicated field
         try:
-            result = graph.query("CREATE INDEX ON :person(height, height)")
+            result = self.graph.query("CREATE INDEX ON :person(height, height)")
             assert(False)
         except ResponseError as e:
             self.env.assertIn("Attribute 'height' is already indexed", str(e))
 
     def test04_index_creation_pattern_syntax(self):
         # create an index over user:age and user:name
-        result = graph.query("CREATE INDEX FOR (p:user) ON (p.age, p.name)")
+        result = self.graph.query("CREATE INDEX FOR (p:user) ON (p.age, p.name)")
         self.env.assertEquals(result.indices_created, 2)
 
         # create an index over follow:prop1 and follow:prop2
-        result = graph.query("CREATE INDEX FOR ()-[r:follow]-() ON (r.prop1, r.prop2)")
+        result = self.graph.query("CREATE INDEX FOR ()-[r:follow]-() ON (r.prop1, r.prop2)")
         self.env.assertEquals(result.indices_created, 2)
 
     def test05_index_delete(self):
@@ -195,7 +190,7 @@ class testIndexCreationFlow():
             self.env.skip()
 
         def create_drop_index(graph_id):
-            env = Env(decodeResponses=True)
+            env, db = Env()
             con = env.getConnection()
             for _ in range(1, 100):
                 pipe = con.pipeline()
@@ -218,56 +213,56 @@ class testIndexCreationFlow():
     def test06_syntax_error_index_creation(self):
         # create index on invalid property name
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON (p.m.n, p.p.q)")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON (p.m.n, p.p.q)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input '.': expected ',' or ')'", str(e))
 
         # create index on invalid identifier
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON (1.b)")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON (1.b)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input '1': expected an identifier", str(e))
 
         # create index on invalid property name: number
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON (b.1)")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON (b.1)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input '1': expected a property name", str(e))
 
         # create index without label
         try:
-            graph.query("CREATE INDEX FOR (Person) ON (surname)")
+            self.graph.query("CREATE INDEX FOR (Person) ON (surname)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input ')': expected a label", str(e))
 
         # create index without property name
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON (surname)")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON (surname)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input ')': expected '.'", str(e))
 
         # create index without identifier
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON ()")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON ()")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input ')': expected an identifier", str(e))
 
         # create index for relationship on invalid property name
         try:
-            graph.query("CREATE INDEX FOR ()-[n:T]-() ON (n.p.q)")
+            self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (n.p.q)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input '.': expected ',' or ')'", str(e))
 
         # create index for relationship on invalid identifier
         try:
-            graph.query("CREATE INDEX FOR ()-[n:T]-() ON (1.b)")
+            self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (1.b)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("Invalid input '1': expected an identifier", str(e))
@@ -275,28 +270,28 @@ class testIndexCreationFlow():
     def test07_index_creation_undefined_identifier(self):   
         # create index on undefined identifier
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON (a.b)")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON (a.b)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("'a' not defined", str(e))
 
         # create index on undefined identifier after defined identifier
         try:
-            graph.query("CREATE INDEX FOR (p:Person) ON (p.x, a.b)")
+            self.graph.query("CREATE INDEX FOR (p:Person) ON (p.x, a.b)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("'a' not defined", str(e))
         
         # create index for relationship on undefined identifier
         try:
-            graph.query("CREATE INDEX FOR ()-[n:T]-() ON (a.b)")
+            self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (a.b)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("'a' not defined", str(e))
 
         # create index for relationship on undefined identifier after defined identifier
         try:
-            graph.query("CREATE INDEX FOR ()-[n:T]-() ON (n.x, a.b)")
+            self.graph.query("CREATE INDEX FOR ()-[n:T]-() ON (n.x, a.b)")
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("'a' not defined", str(e))
@@ -542,7 +537,7 @@ class testIndexCreationFlow():
         conn = self.env.getConnection()
 
         # clear DB
-        conn.flushall()
+        self.env.flush()
 
         g = Graph(self.env.getConnection(), key)
 
@@ -593,9 +588,9 @@ class testIndexCreationFlow():
         conn = self.env.getConnection()
 
         # clear DB
-        conn.flushall()
+        self.env.flush()
 
-        g = Graph(self.env.getConnection(), key)
+        g = self.db.select_graph(key)
 
         #-----------------------------------------------------------------------
         # create a large graph
@@ -646,9 +641,9 @@ class testIndexCreationFlow():
         conn = self.env.getConnection()
 
         # clear DB
-        conn.flushall()
+        self.env.flush()
 
-        g = Graph(self.env.getConnection(), key)
+        g = self.db.select_graph(key)
 
         #-----------------------------------------------------------------------
         # create a large graph
@@ -727,9 +722,9 @@ class testIndexCreationFlow():
         conn = self.env.getConnection()
 
         # clear DB
-        conn.flushall()
+        self.env.flush()
 
-        g = Graph(self.env.getConnection(), key)
+        g = self.db.select_graph(key)
 
         #-----------------------------------------------------------------------
         # create a large graph
@@ -793,7 +788,7 @@ class testIndexCreationFlow():
 
     def test14_multi_type_index_listing(self):
         # clear DB
-        con.flushall()
+        self.env.flush()
 
         # create index of multiple types
         # Label | Attributes | Types
@@ -806,12 +801,12 @@ class testIndexCreationFlow():
         # L     | f          | fulltext, vector
         # L     | g          | vector, range, fulltext
 
-        create_node_range_index(graph, 'L', 'a', 'd', 'e', 'g')
-        create_node_fulltext_index(graph, 'L', 'c', 'e', 'f', 'g')
-        create_node_vector_index(graph, 'L', 'b', 'd', 'f', 'g')
+        create_node_range_index(self.graph, 'L', 'a', 'd', 'e', 'g')
+        create_node_fulltext_index(self.graph, 'L', 'c', 'e', 'f', 'g')
+        create_node_vector_index(self.graph, 'L', 'b', 'd', 'f', 'g')
 
         # list all indices
-        res = list_indicies(graph).result_set
+        res = list_indicies(self.graph).result_set
 
         label      = res[0][0]
         properties = res[0][1]
@@ -853,4 +848,3 @@ class testIndexCreationFlow():
         self.env.assertEquals(types, expected_types)
         self.env.assertEquals(language, 'english')
         self.env.assertEquals(entitytype, 'NODE')
-

@@ -2,7 +2,7 @@
 // GxB_Matrix_export_FullR: export a full matrix, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ GrB_Info GxB_Matrix_export_FullR  // export and free a full matrix, by row
 
     GB_WHERE1 ("GxB_Matrix_export_FullR (&A, &type, &nrows, &ncols, "
         "&Ax, &Ax_size, &iso, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_export_FullR") ;
+    // GB_BURBLE_START ("GxB_Matrix_export_FullR") ;
     GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL_OR_FAULTY (*A) ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
@@ -56,8 +56,8 @@ GrB_Info GxB_Matrix_export_FullR  // export and free a full matrix, by row
     if ((*A)->is_csc)
     { 
         // A = A', done in-place, to put A in by-row format
-        GBURBLE ("(transpose) ") ;
-        GB_OK (GB_transpose_in_place (*A, false, Context)) ;
+        GBURBLE ("(export transpose) ") ;
+        GB_OK (GB_transpose_in_place (*A, false, Werk)) ;
         GB_MATRIX_WAIT (*A) ;
     }
 
@@ -84,14 +84,14 @@ GrB_Info GxB_Matrix_export_FullR  // export and free a full matrix, by row
         Ax,   Ax_size,  // Ax
         NULL, NULL, NULL,
         &sparsity, &is_csc,                 // full by row
-        iso, Context) ;
+        iso, Werk) ;
 
     if (info == GrB_SUCCESS)
     {
         ASSERT (sparsity == GxB_FULL) ;
         ASSERT (!is_csc) ;
     }
-    GB_BURBLE_END ;
+    // GB_BURBLE_END ;
     return (info) ;
 }
 

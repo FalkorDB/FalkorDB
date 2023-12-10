@@ -2,7 +2,7 @@
 // GrB_Matrix_resize: change the size of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,7 +29,7 @@ GrB_Info GrB_Matrix_resize      // change the size of a matrix
     // resize the matrix
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GB_resize (C, nrows_new, ncols_new, Context) ;
+    GrB_Info info = GB_resize (C, nrows_new, ncols_new, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

@@ -63,7 +63,7 @@ static void _ResultSet_VerboseReplyWithSIValue
 	case T_POINT:
 		_ResultSet_VerboseReplyWithPoint(ctx, v);
 		return;
-	case T_VECTOR32F:
+	case T_VECTOR_F32:
 		_ResultSet_VerboseReplyWithVector(ctx, v);
 		return;
 	default:

@@ -339,6 +339,7 @@ classdef GrB
 %   t = GrB.threads (t)          set/get # of threads to use in GraphBLAS
 %   c = GrB.chunk (c)            set/get chunk size to use in GraphBLAS
 %   b = GrB.burble (b)           set/get burble (diagnostic output)
+%   [s,path] = GrB.jit (s,path)  control the GraphBLAS JIT
 %
 %   info:
 %   GrB.binopinfo (op, type)     list properties of a binary operator
@@ -568,7 +569,7 @@ classdef GrB
 %
 % See also sparse.
 %
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 properties (SetAccess = private, GetAccess = private)
@@ -744,7 +745,7 @@ methods
     %       condensation inedges isdag predecessors successors toposort
     %       transclosure transreduction
 
-    % methods in LAGraph: (see the LAGraph/Source folder)
+    % methods in LAGraph: (see the LAGraph/src folder)
 
     %---------------------------------------------------------------------
     % operator overloading
@@ -1033,6 +1034,7 @@ methods (Static)
     C = speye (m, n, type) ;
     C = subassign (Cin, M, accum, A, I, J, desc) ;
     nthreads = threads (nthreads) ;
+    [s,path] = jit (s,path) ;
     C = trans (Cin, M, accum, A, desc) ;
     s = tricount (A, check, d) ;                % uses GrB matrices
     s = type (A) ;

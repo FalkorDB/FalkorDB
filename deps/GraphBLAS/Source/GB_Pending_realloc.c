@@ -2,7 +2,7 @@
 // GB_Pending_realloc: reallocate a list of pending tuples
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,7 +15,7 @@ bool GB_Pending_realloc     // reallocate a list of pending tuples
 (
     GB_Pending *PHandle,    // Pending tuple list to reallocate
     int64_t nnew,           // # of new tuples to accomodate
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -49,18 +49,16 @@ bool GB_Pending_realloc     // reallocate a list of pending tuples
         bool ok2 = true ;
         bool ok3 = true ;
 
-        GB_REALLOC (Pending->i, newsize, int64_t, &(Pending->i_size), &ok1,
-            Context) ;
+        GB_REALLOC (Pending->i, newsize, int64_t, &(Pending->i_size), &ok1) ;
         if (Pending->j != NULL)
         { 
-            GB_REALLOC (Pending->j, newsize, int64_t, &(Pending->j_size), &ok2,
-                Context) ;
+            GB_REALLOC (Pending->j, newsize, int64_t, &(Pending->j_size), &ok2);
         }
         size_t s = Pending->size ;
         if (Pending->x != NULL)
         { 
             GB_REALLOC (Pending->x, newsize*s, GB_void, &(Pending->x_size),
-                &ok3, Context) ;
+                &ok3) ;
         }
         if (!ok1 || !ok2 || !ok3)
         { 

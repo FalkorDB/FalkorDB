@@ -2,10 +2,12 @@
 // GB_subassign_01: C(I,J) = scalar ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// JIT: needed.
 
 // Method 01: C(I,J) = scalar ; using S
 
@@ -19,6 +21,7 @@
 // C: not bitmap
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 
 GrB_Info GB_subassign_01
 (
@@ -35,8 +38,8 @@ GrB_Info GB_subassign_01
     const int Jkind,
     const int64_t Jcolon [3],
     const void *scalar,
-    const GrB_Type atype,
-    GB_Context Context
+    const GrB_Type scalar_type,
+    GB_Werk Werk
 )
 {
 
@@ -52,7 +55,7 @@ GrB_Info GB_subassign_01
 
     GB_EMPTY_TASKLIST ;
     GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Context)) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Werk)) ;
 
     //--------------------------------------------------------------------------
     // get inputs

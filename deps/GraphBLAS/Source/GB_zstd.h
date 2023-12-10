@@ -2,7 +2,7 @@
 // GB_zstd.h: definitions for a wrapper for the ZSTD compression library
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,7 +19,7 @@
 // to rename the ZSTD functions.
 #undef GB
 
-#ifdef GBRENAME
+#ifdef GBMATLAB
     #define GBZSTD(x) GB_EVAL2 (GM_, x)
 #else
     #define GBZSTD(x) GB_EVAL2 (GB_, x)

@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3.h: definitions for C=A*B saxpy3 method
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,8 +12,8 @@
 
 #ifndef GB_AXB_SAXPY3_H
 #define GB_AXB_SAXPY3_H
+
 #include "GB.h"
-#include "GB_hash.h"
 
 GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 (
@@ -31,7 +31,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     bool *mask_applied,             // if true, then mask was applied
     GrB_Desc_Value AxB_method,      // Default, Gustavson, or Hash
     const int do_sort,              // if nonzero, try to sort in saxpy3
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------
@@ -59,20 +59,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 // Hash method is not used, and Gustavson's method is used, with the hash size
 // is set to C->vlen.
 
-typedef struct
-{
-    int64_t start ;     // starting vector for coarse task, p for fine task
-    int64_t end ;       // ending vector for coarse task, p for fine task
-    int64_t vector ;    // -1 for coarse task, vector j for fine task
-    int64_t hsize ;     // size of hash table
-    int64_t *Hi ;       // Hi array for hash table (coarse hash tasks only)
-    GB_void *Hf ;       // Hf array for hash table (int8_t or int64_t)
-    GB_void *Hx ;       // Hx array for hash table
-    int64_t my_cjnz ;   // # entries in C(:,j) found by this fine task
-    int leader ;        // leader fine task for the vector C(:,j)
-    int team_size ;     // # of fine tasks in the team for vector C(:,j)
-}
-GB_saxpy3task_struct ;
+#include "GB_saxpy3task_struct.h"
 
 //------------------------------------------------------------------------------
 // GB_AxB_saxpy3_flopcount:  compute flops for GB_AxB_saxpy3
@@ -86,22 +73,14 @@ GrB_Info GB_AxB_saxpy3_flopcount
     const bool Mask_comp,       // if true, mask is complemented
     const GrB_Matrix A,
     const GrB_Matrix B,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------
 // GB_AxB_saxpy3_cumsum: cumulative sum of C->p for GB_AxB_saxpy3
 //------------------------------------------------------------------------------
 
-void GB_AxB_saxpy3_cumsum
-(
-    GrB_Matrix C,               // finalize C->p
-    GB_saxpy3task_struct *SaxpyTasks, // list of tasks, and workspace
-    int nfine,                  // number of fine tasks
-    double chunk,               // chunk size
-    int nthreads,               // number of threads
-    GB_Context Context
-) ;
+// GB_CALLBACK_SAXPY3_CUMSUM_PROTO (GB_AxB_saxpy3_cumsum) ;
 
 //------------------------------------------------------------------------------
 // GB_AxB_saxpy3_slice_balanced: create balanced parallel tasks for saxpy3
@@ -125,7 +104,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     int *ntasks,                    // # of tasks created (coarse and fine)
     int *nfine,                     // # of fine tasks created
     int *nthreads,                  // # of threads to use
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------
@@ -144,7 +123,7 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     int *ntasks,                    // # of tasks created (coarse and fine)
     int *nfine,                     // # of fine tasks created
     int *nthreads,                  // # of threads to use
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------

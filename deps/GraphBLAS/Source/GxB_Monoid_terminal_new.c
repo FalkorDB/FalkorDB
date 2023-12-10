@@ -2,7 +2,7 @@
 // GxB_Monoid_terminal_new:  create a new monoid with a terminal value
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -27,7 +27,7 @@ GrB_Info GB_EVAL2 (GXB (Monoid_terminal_new_), T) /* create a new monoid */ \
         " (&monoid, op, identity, terminal)") ;                             \
     type id = identity ;                                                    \
     type tr = terminal ;                                                    \
-    return (GB_Monoid_new (monoid, op, &id, &tr, GB_ ## T ## _code, Context)) ;\
+    return (GB_Monoid_new (monoid, op, &id, &tr, GB_ ## T ## _code, Werk)) ;\
 }
 
 GB_MONOID_TERMINAL_NEW (bool      , BOOL   )
@@ -56,6 +56,6 @@ GrB_Info GxB_Monoid_terminal_new_UDT        // create a monoid with a user type
         "(&monoid, op, identity, terminal)") ;
     GB_RETURN_IF_NULL (terminal) ;
     return (GB_Monoid_new (monoid, op, identity, terminal, GB_UDT_code,
-        Context)) ;
+        Werk)) ;
 }
 

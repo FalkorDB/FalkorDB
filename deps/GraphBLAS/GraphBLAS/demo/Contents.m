@@ -16,10 +16,10 @@
 %   tmask           - performance tests for logical indexing
 %
 %   mxm_demo_DellXPS13.txt   - mxm_demo results on Intel Core i7-8565U (4 core)
-%   mxm_demo_DGX_Station.txt - mxm_demo results on Intel Xeon E5-2689 (20 core)
+%   mxm_demo_DGXStation.txt  - mxm_demo results on Intel Xeon E5-2689 (20 core)
 %
 % The html folder contains the output of graphblas_demo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 

@@ -2,7 +2,7 @@
 // GB_AxB_meta_adotb_control: determine method for computing C=A'*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,8 +25,7 @@ void GB_AxB_meta_adotb_control
     bool can_do_in_place,
     bool allow_scale,
     bool B_is_diagonal,
-    GrB_Desc_Value AxB_method,
-    GB_Context Context
+    GrB_Desc_Value AxB_method
 )
 {
 
@@ -53,7 +52,7 @@ void GB_AxB_meta_adotb_control
     }
     else if (allow_scale && M == NULL
         && !GB_IS_BITMAP (B)     // TODO: D*B rowscale with B bitmap
-        && GB_is_diagonal (A, Context))
+        && GB_is_diagonal (A))
     { 
         // C = D*B, row scale
         (*axb_method) = GB_USE_ROWSCALE ;
@@ -67,7 +66,7 @@ void GB_AxB_meta_adotb_control
             // check if C will be iso on output (for dot4 control only).
             // Ignored if dot4 C_in is not present or C cannot be
             // computed in-place.
-            C_out_iso = GB_iso_AxB (NULL, A, B, A->vlen, semiring, flipxy,
+            C_out_iso = GB_AxB_iso (NULL, A, B, A->vlen, semiring, flipxy,
                 false) ;
         }
         if (GB_AxB_dot4_control (C_out_iso, can_do_in_place ? C_in : NULL,
@@ -81,7 +80,7 @@ void GB_AxB_meta_adotb_control
             // C<M>=A'*B uses the masked dot product method (dot3)
             (*axb_method) = GB_USE_DOT ;
         }
-        else if (GB_AxB_dot2_control (A, B, Context))
+        else if (GB_AxB_dot2_control (A, B))
         { 
             // C=A'*B or C<!M>=A'B* can efficiently use the dot2 method
             (*axb_method) = GB_USE_DOT ;

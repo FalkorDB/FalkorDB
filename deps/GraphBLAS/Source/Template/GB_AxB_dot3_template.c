@@ -2,12 +2,12 @@
 // GB_AxB_dot3_template: C<M>=A'*B via dot products, where C is sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// C and M are both sparse or hyper, and C->h is a copy of M->h.
+// C and M are both sparse or both hyper, and C->h is a copy of M->h.
 // M is present, and not complemented.  It may be valued or structural.
 
 {
@@ -39,12 +39,12 @@
             // get C(:,k) and M(:k)
             //------------------------------------------------------------------
 
-            #if defined ( GB_MASK_SPARSE_AND_STRUCTURAL )
-            // M and C are sparse
+            #if defined ( GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED )
+            // M and C are both sparse
             const int64_t j = k ;
             #else
             // M and C are either both sparse or both hypersparse
-            const int64_t j = GBH (Ch, k) ;
+            const int64_t j = GBH_C (Ch, k) ;
             #endif
 
             int64_t pC_start = Cp [k] ;
@@ -72,8 +72,8 @@
             #if GB_B_IS_HYPER
                 // B is hyper: find B(:,j) using the B->Y hyper hash
                 int64_t pB_start, pB_end ;
-                GB_hyper_hash_lookup (Bp, B_Yp, B_Yi, B_Yx, B_hash_bits,
-                    j, &pB_start, &pB_end) ;
+                GB_hyper_hash_lookup (Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx,
+                    B_hash_bits, j, &pB_start, &pB_end) ;
             #elif GB_B_IS_SPARSE
                 // B is sparse
                 const int64_t pB_start = Bp [j] ;
@@ -117,12 +117,15 @@
 
                 bool cij_exists = false ;
                 GB_CIJ_DECLARE (cij) ;
+                #if GB_IS_PLUS_PAIR_REAL_SEMIRING
+                cij = 0 ;
+                #endif
 
                 // get the value of M(i,j)
                 int64_t i = Mi [pC] ;
-                #if !defined ( GB_MASK_SPARSE_AND_STRUCTURAL )
+                #if !defined ( GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED )
                 // if M is structural, no need to check its values
-                if (GB_mcast (Mx, pC, msize))
+                if (GB_MCAST (Mx, pC, msize))
                 #endif
                 { 
 
@@ -133,8 +136,8 @@
                     #if GB_A_IS_HYPER
                     // A is hyper: find A(:,i) using the A->Y hyper hash
                     int64_t pA, pA_end ;
-                    GB_hyper_hash_lookup (Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
-                        i, &pA, &pA_end) ;
+                    GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx,
+                        A_hash_bits, i, &pA, &pA_end) ;
                     const int64_t ainz = pA_end - pA ;
                     if (ainz > 0)
                     #elif GB_A_IS_SPARSE

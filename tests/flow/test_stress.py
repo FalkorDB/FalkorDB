@@ -5,7 +5,7 @@ from index_utils import *
 from pathos.pools import ProcessPool as Pool
 
 graphs   = None # one graph object per client
-GRAPH_ID = "G"  # graph identifier
+GRAPH_ID = "stress"  # graph identifier
 
 
 def query_crud(graph, query_id):
@@ -82,9 +82,9 @@ class testStressFlow():
     def __init__(self):
         # skip test if we're running under Valgrind
         if VALGRIND or SANITIZER != "" or CODE_COVERAGE:
-            Env.skip(None) # valgrind is not working correctly with multi process
+            Environment.skip(None) # valgrind is not working correctly with multi process
 
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
         global graphs
         graphs = []

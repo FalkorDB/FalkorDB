@@ -2,7 +2,7 @@
 // GB_assign: submatrix assignment: C<M>(Rows,Cols) = accum (C(Rows,Cols),A)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -26,9 +26,9 @@
 
 #define GB_FREE_ALL                 \
 {                                   \
-    GB_Matrix_free (&C2) ;          \
-    GB_Matrix_free (&M2) ;          \
-    GB_Matrix_free (&A2) ;          \
+    GB_Matrix_free (&Cwork) ;       \
+    GB_Matrix_free (&Mwork) ;       \
+    GB_Matrix_free (&Awork) ;       \
     GB_Matrix_free (&SubMask) ;     \
     GB_FREE_WORK (&I2, I2_size) ;   \
     GB_FREE_WORK (&J2, J2_size) ;   \
@@ -59,7 +59,7 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand
     int assign_kind,                // row assign, col assign, or assign
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -68,33 +68,34 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    GrB_Matrix C = NULL ;           // C_in or C2
-    GrB_Matrix M = NULL ;           // M_in or M2
-    GrB_Matrix A = NULL ;           // A_in or A2
+    GrB_Matrix C = NULL ;           // C_in or Cwork
+    GrB_Matrix M = NULL ;           // M_in or Mwork
+    GrB_Matrix A = NULL ;           // A_in or Awork
     GrB_Index *I = NULL ;           // Rows, Cols, or I2
     GrB_Index *J = NULL ;           // Rows, Cols, or J2
 
     // temporary matrices and arrays
-    GrB_Matrix C2 = NULL, M2 = NULL, A2 = NULL, SubMask = NULL ;
-    struct GB_Matrix_opaque C2_header, M2_header, A2_header, MT_header,
-        AT_header, SubMask_header ;
+    GrB_Matrix Cwork = NULL, Mwork = NULL, Awork = NULL, SubMask = NULL ;
+    struct GB_Matrix_opaque Cwork_header, Mwork_header, Awork_header,
+        MT_header, AT_header, SubMask_header ;
     GrB_Index *I2 = NULL ; size_t I2_size = 0 ;
     GrB_Index *J2 = NULL ; size_t J2_size = 0 ;
 
-    GrB_Type atype = NULL ;
+    GrB_Type scalar_type = NULL ;
     int64_t ni, nj, nI, nJ, Icolon [3], Jcolon [3] ;
     int Ikind, Jkind ;
     ASSERT_MATRIX_OK (C_in, "C_in for assign", GB0) ;
     int subassign_method ;
 
-    GB_OK (GB_assign_prep (&C, &M, &A, &subassign_method, &C2, &M2, &A2,
-        &C2_header, &M2_header, &A2_header, &MT_header, &AT_header,
+    GB_OK (GB_assign_prep (&C, &M, &A, &subassign_method,
+        &Cwork, &Mwork, &Awork,
+        &Cwork_header, &Mwork_header, &Awork_header, &MT_header, &AT_header,
         &I, &I2, &I2_size, &ni, &nI, &Ikind, Icolon,
         &J, &J2, &J2_size, &nj, &nJ, &Jkind, Jcolon,
-        &atype, C_in, &C_replace, &assign_kind,
+        &scalar_type, C_in, &C_replace, &assign_kind,
         M_in, Mask_comp, Mask_struct, M_transpose, accum,
         A_in, A_transpose, Rows, nRows_in, Cols, nCols_in,
-        scalar_expansion, scalar, scalar_code, Context)) ;
+        scalar_expansion, scalar, scalar_code, Werk)) ;
 
     ASSERT_MATRIX_OK (C, "initial C for assign", GB0) ;
     ASSERT_MATRIX_OK_OR_NULL (M, "initial M for assign", GB0) ;
@@ -165,7 +166,7 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
         GB_OK (GB_bitmap_assign (C, C_replace,
             I, nI, Ikind, Icolon, J, nJ, Jkind, Jcolon,
             M, Mask_comp, Mask_struct, accum, A,
-            scalar, atype, assign_kind, Context)) ;
+            scalar, scalar_type, assign_kind, Werk)) ;
 
     }
     else
@@ -196,7 +197,7 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
             GB_OK (GB_subassigner (C, subassign_method, C_replace,
                 M, Mask_comp, Mask_struct, accum, A,
                 I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
-                scalar_expansion, scalar, atype, Context)) ;
+                scalar_expansion, scalar, scalar_type, Werk)) ;
 
         }
         else
@@ -235,7 +236,7 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
             // if Mask_struct is true then SubMask is extracted as iso
             GB_OK (GB_subref (SubMask, Mask_struct,
                 true, M, I_SubMask, ni_SubMask, J_SubMask, nj_SubMask,
-                false, Context)) ;
+                false, Werk)) ;
 
             // GB_subref can return a jumbled result
             ASSERT (GB_JUMBLED_OK (SubMask)) ;
@@ -252,12 +253,12 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
 
             subassign_method = GB_subassigner_method (NULL, NULL, C,
                 C_replace, SubMask, Mask_comp, Mask_struct, accum, A,
-                Ikind, Jkind, scalar_expansion, scalar, atype) ;
+                Ikind, Jkind, scalar_expansion, scalar, scalar_type) ;
 
             GB_OK (GB_subassigner (C, subassign_method, C_replace,
                 SubMask, Mask_comp, Mask_struct, accum, A,
                 I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
-                scalar_expansion, scalar, atype, Context)) ;
+                scalar_expansion, scalar, scalar_type, Werk)) ;
 
             GB_Matrix_free (&SubMask) ;
         }
@@ -285,7 +286,7 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
 
             // This code requires C and M not to be aliased to each other.
             ASSERT (M != NULL) ;
-            ASSERT (!GB_aliased (C, M)) ;   // NO ALIAS C==M in C_replace_phase
+            ASSERT (!GB_any_aliased (C, M)) ;   // NO ALIAS C==M in C_replace_phase
             ASSERT (!whole_submatrix) ;
             ASSERT (!GB_IS_BITMAP (C)) ;
             ASSERT (!GB_IS_FULL (C)) ;
@@ -320,9 +321,9 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
                 int64_t j = GB_ijlist (J, 0, Jkind, Jcolon) ;
                 GBURBLE ("assign zombies outside C(I,j) ") ;
                 GB_MATRIX_WAIT (M) ;
-                GB_OK (GB_hyper_hash_build (C, Context)) ;
-                GB_assign_zombie3 (C, M, Mask_comp, Mask_struct,
-                    j, I, nI, Ikind, Icolon, Context) ;
+                GB_OK (GB_hyper_hash_build (C, Werk)) ;
+                GB_OK (GB_assign_zombie3 (C, M, Mask_comp, Mask_struct,
+                    j, I, nI, Ikind, Icolon)) ;
 
             }
             else if (assign_kind == GB_ROW_ASSIGN)
@@ -340,9 +341,9 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
                 GBURBLE ("assign zombies outside C(i,J) ") ;
                 GB_MATRIX_WAIT_IF_JUMBLED (C) ;
                 GB_MATRIX_WAIT (M) ;
-                GB_OK (GB_hyper_hash_build (M, Context)) ;
-                GB_assign_zombie4 (C, M, Mask_comp, Mask_struct,
-                    i, J, nJ, Jkind, Jcolon, Context) ;
+                GB_OK (GB_hyper_hash_build (M, Werk)) ;
+                GB_OK (GB_assign_zombie4 (C, M, Mask_comp, Mask_struct,
+                    i, J, nJ, Jkind, Jcolon)) ;
 
             }
             else
@@ -356,24 +357,24 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
                 ASSERT (M->vlen == C->vlen && M->vdim == C->vdim) ;
                 GBURBLE ("assign zombies outside C(I,J) ") ;
                 GB_MATRIX_WAIT (M) ;
-                GB_OK (GB_hyper_hash_build (M, Context)) ;
+                GB_OK (GB_hyper_hash_build (M, Werk)) ;
                 GB_OK (GB_assign_zombie5 (C, M, Mask_comp, Mask_struct,
-                    I, nI, Ikind, Icolon, J, nJ, Jkind, Jcolon, Context)) ;
+                    I, nI, Ikind, Icolon, J, nJ, Jkind, Jcolon, Werk)) ;
             }
             ASSERT_MATRIX_OK (C, "C for C-replace-phase done", GB_FLIP (GB0)) ;
         }
     }
 
     //--------------------------------------------------------------------------
-    // transplant C2 back into C_in
+    // transplant Cwork back into C_in
     //--------------------------------------------------------------------------
 
-    if (C == C2)
+    if (C == Cwork)
     { 
-        // Transplant the content of C2 into C_in and free C2.  Zombies and
-        // pending tuples can be transplanted from C2 into C_in, and if C2 is
-        // jumbled, C_in becomes jumbled too.
-        GB_OK (GB_transplant (C_in, C_in->type, &C2, Context)) ;
+        // Transplant the content of Cwork into C_in and free Cwork.  Zombies
+        // and pending tuples can be transplanted from Cwork into C_in, and if
+        // Cwork is jumbled, C_in becomes jumbled too.
+        GB_OK (GB_transplant (C_in, C_in->type, &Cwork, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -381,9 +382,9 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     //--------------------------------------------------------------------------
 
     ASSERT_MATRIX_OK (C_in, "C to conform", GB0) ;
-    GB_OK (GB_conform (C_in, Context)) ;
+    GB_OK (GB_conform (C_in, Werk)) ;
     ASSERT_MATRIX_OK (C_in, "Final C for assign", GB0) ;
     GB_FREE_ALL ;
-    return (GB_block (C_in, Context)) ;
+    return (GB_block (C_in, Werk)) ;
 }
 

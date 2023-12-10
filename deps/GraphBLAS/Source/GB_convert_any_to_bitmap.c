@@ -2,7 +2,7 @@
 // GB_convert_any_to_bitmap: convert any matrix to bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 GrB_Info GB_convert_any_to_bitmap   // convert to bitmap
 (
     GrB_Matrix A,           // matrix to convert to bitmap
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -38,12 +38,12 @@ GrB_Info GB_convert_any_to_bitmap   // convert to bitmap
     if (GB_IS_HYPERSPARSE (A))
     { 
         // convert from hypersparse to bitmap
-        GB_OK (GB_convert_sparse_to_bitmap (A, Context)) ;
+        GB_OK (GB_convert_s2b (A, Werk)) ;
     }
     else if (GB_IS_FULL (A))
     { 
         // convert from full to bitmap
-        GB_OK (GB_convert_full_to_bitmap (A, Context)) ;
+        GB_OK (GB_convert_full_to_bitmap (A)) ;
     }
     else if (GB_IS_BITMAP (A))
     { 
@@ -53,7 +53,7 @@ GrB_Info GB_convert_any_to_bitmap   // convert to bitmap
     else
     { 
         // convert from sparse to bitmap
-        GB_OK (GB_convert_sparse_to_bitmap (A, Context)) ;
+        GB_OK (GB_convert_s2b (A, Werk)) ;
     }
 
     //--------------------------------------------------------------------------

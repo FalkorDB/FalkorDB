@@ -43,9 +43,6 @@ void Optimizer_CompileTimeOptimize
 
 	// try to reduce distinct if it follows aggregation
 	reduceDistinct(plan);
-
-	// try to reduce execution plan incase it perform node or edge counting
-	reduceCount(plan);
 }
 
 // apply runtime optimizations
@@ -75,5 +72,9 @@ void Optimizer_RuntimeOptimize
 	// depend on the fact that filters are broken down into their simplest form
 	// TODO: turn this into a compile-time optimization
 	reduceFilters(plan);
+
+	// try to reduce execution plan incase it perform node or edge counting
+	// TODO: turn this into a compile-time optimization
+	reduceCount(plan);
 }
 

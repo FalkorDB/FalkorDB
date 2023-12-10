@@ -231,6 +231,7 @@ OpBase *NewAggregateOp
 
 	op->groups               = HashTableCreate(&_dt);
 	op->group_iter           = NULL;
+	op->r 				     = NULL;
 
 	OpBase_Init((OpBase *)op, OPType_AGGREGATE, "Aggregate", NULL,
 			AggregateConsume, AggregateReset, NULL, AggregateClone,
@@ -282,9 +283,10 @@ static Record AggregateConsume
 	} else {
 		OpBase *child = op->op.children[0];
 		// eager consumption!
-		while((r = OpBase_Consume(child))) {
-			_aggregateRecord(op, r);
+		while((op->r = OpBase_Consume(child))) {
+			_aggregateRecord(op, op->r);
 		}
+		op->r = NULL;
 	}
 
 	// did we process any records?
@@ -433,5 +435,10 @@ static void AggregateFree
 	if(op->record_offsets) {
 		array_free(op->record_offsets);
 		op->record_offsets = NULL;
+	}
+
+	if(op->r) {
+		OpBase_DeleteRecord(op->r);
+		op->r = NULL;
 	}
 }

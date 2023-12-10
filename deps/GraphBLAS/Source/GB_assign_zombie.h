@@ -2,7 +2,7 @@
 // GB_assign_zombie.h: definitions for GB_assign_zombie* functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,21 +11,19 @@
 #define GB_ASSIGN_ZOMBIE_H
 #include "GB_ij.h"
 
-void GB_assign_zombie1
+GrB_Info GB_assign_zombie1
 (
     GrB_Matrix C,
-    const int64_t j,
-    GB_Context Context
+    const int64_t j
 ) ;
 
-void GB_assign_zombie2
+GrB_Info GB_assign_zombie2
 (
     GrB_Matrix C,
-    const int64_t i,
-    GB_Context Context
+    const int64_t i
 ) ;
 
-void GB_assign_zombie3
+GrB_Info GB_assign_zombie3
 (
     GrB_Matrix C,
     const GrB_Matrix M,
@@ -35,11 +33,10 @@ void GB_assign_zombie3
     const GrB_Index *I,
     const int64_t nI,
     const int Ikind,
-    const int64_t Icolon [3],
-    GB_Context Context
+    const int64_t Icolon [3]
 ) ;
 
-void GB_assign_zombie4
+GrB_Info GB_assign_zombie4
 (
     GrB_Matrix C,
     const GrB_Matrix M,
@@ -49,8 +46,7 @@ void GB_assign_zombie4
     const GrB_Index *J,
     const int64_t nJ,
     const int Jkind,
-    const int64_t Jcolon [3],
-    GB_Context Context
+    const int64_t Jcolon [3]
 ) ;
 
 GrB_Info GB_assign_zombie5
@@ -67,7 +63,7 @@ GrB_Info GB_assign_zombie5
     const int64_t nJ,
     const int Jkind,
     const int64_t Jcolon [3],
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 #endif

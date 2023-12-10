@@ -2,12 +2,19 @@
 // GB_math.c: declaring functions from GB_math.h
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB.h"
+
+#if !GB_HAS_CMPLX_MACROS
+// complex constructors when the C compiler does not provide CMPLX and CMPLXF
+// macros.  See Source/Shared/GB_complex.h
+extern GxB_FC32_t GB_complexf (float  xreal, float  ximag) ;
+extern GxB_FC64_t GB_complex  (double xreal, double ximag) ;
+#endif
 
 // integer division
 extern int8_t   GB_idiv_int8   (int8_t   x, int8_t   y) ;
@@ -20,8 +27,6 @@ extern uint32_t GB_idiv_uint32 (uint32_t x, uint32_t y) ;
 extern uint64_t GB_idiv_uint64 (uint64_t x, uint64_t y) ;
 
 // complex division
-extern int GB_divcomplex (double xr, double xi, double yr, double yi,
-    double *zr, double *zi) ;
 extern GxB_FC32_t GB_FC32_div (GxB_FC32_t x, GxB_FC32_t y) ;
 extern GxB_FC64_t GB_FC64_div (GxB_FC64_t x, GxB_FC64_t y) ;
 
@@ -54,10 +59,10 @@ extern bool GB_cisfinitef (GxB_FC32_t x) ;
 extern bool GB_cisfinite  (GxB_FC64_t x) ;
 
 // z = pow (x,y) for floating-point types
-extern float      GB_powf  (float      x, float      y) ;
-extern double     GB_pow   (double     x, double     y) ;
-extern GxB_FC32_t GB_cpowf (GxB_FC32_t x, GxB_FC32_t y) ;
-extern GxB_FC64_t GB_cpow  (GxB_FC64_t x, GxB_FC64_t y) ;
+extern float      GB_powf     (float      x, float      y) ;
+extern double     GB_pow      (double     x, double     y) ;
+extern GxB_FC32_t GB_FC32_pow (GxB_FC32_t x, GxB_FC32_t y) ;
+extern GxB_FC64_t GB_FC64_pow (GxB_FC64_t x, GxB_FC64_t y) ;
 
 // z = pow (x,y) for integers
 extern int8_t   GB_pow_int8   (int8_t   x, int8_t   y) ;

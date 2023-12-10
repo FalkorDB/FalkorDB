@@ -2,12 +2,13 @@
 // GB_subassign_symbolic: S = C(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_subassign_methods.h"
+#include "GB_assign_shared_definitions.h"
 #include "GB_subref.h"
 
 #undef  GB_FREE_ALL
@@ -24,7 +25,7 @@ GrB_Info GB_subassign_symbolic
     const GrB_Index *J,         // index list for S = C(I,J), or GrB_ALL, etc.
     const int64_t nj,           // length of J, or special
     const bool S_must_not_be_jumbled,
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -64,7 +65,7 @@ GrB_Info GB_subassign_symbolic
     // in the same hypersparse form as C (unless S is empty, in which case
     // it is always returned as hypersparse). This also checks I and J.
     // S is not iso, even if C is iso.
-    GB_OK (GB_subref (S, false, C->is_csc, C, I, ni, J, nj, true, Context)) ;
+    GB_OK (GB_subref (S, false, C->is_csc, C, I, ni, J, nj, true, Werk)) ;
     ASSERT (GB_JUMBLED_OK (S)) ;    // GB_subref can return S as unsorted
 
     //--------------------------------------------------------------------------
@@ -75,7 +76,7 @@ GrB_Info GB_subassign_symbolic
     { 
         GB_MATRIX_WAIT_IF_JUMBLED (S) ; // but the caller requires S sorted
         ASSERT (!GB_JUMBLED (S)) ;
-        GB_OK (GB_hyper_hash_build (S, Context)) ;    // construct S->Y
+        GB_OK (GB_hyper_hash_build (S, Werk)) ;    // construct S->Y
     }
 
     //--------------------------------------------------------------------------

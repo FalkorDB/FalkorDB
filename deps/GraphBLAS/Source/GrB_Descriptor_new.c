@@ -2,7 +2,7 @@
 // GrB_Descriptor_new: create a new descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -42,6 +42,8 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
     GrB_Descriptor desc = *descriptor ;
     desc->magic = GB_MAGIC ;
     desc->header_size = header_size ;
+    desc->user_name = NULL ;       // user_name for GrB_get/GrB_set
+    desc->user_name_size = 0 ;
     desc->logger = NULL ;          // error string
     desc->logger_size = 0 ;
     desc->out  = GxB_DEFAULT ;     // descriptor for output
@@ -49,8 +51,6 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
     desc->in0  = GxB_DEFAULT ;     // descriptor for the first input
     desc->in1  = GxB_DEFAULT ;     // descriptor for the second input
     desc->axb  = GxB_DEFAULT ;     // descriptor for selecting the C=A*B method
-    desc->nthreads_max = GxB_DEFAULT ;  // max # of threads to use
-    desc->chunk = GxB_DEFAULT ;         // chunk for auto-tuning of # threads
     desc->do_sort = false ;        // do not sort in GrB_mxm and others
     desc->compression = GxB_DEFAULT ;
     desc->import = GxB_DEFAULT ;   // trust input data in GxB import/deserialize

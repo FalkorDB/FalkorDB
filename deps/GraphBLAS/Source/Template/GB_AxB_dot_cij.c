@@ -2,7 +2,7 @@
 // GB_AxB_dot_cij: compute C(i,j) = A(:,i)'*B(:,j)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,18 +30,19 @@
 // found, so these optimizations can be used only if A(:,i) and/or B(:,j) are
 // entirely populated.
 
+// The #include'ing file must use GB_DECLARE_TERMINAL_CONST (zterminal),
+// or define zterminal another way (see Template/GB_AxB_dot_generic.c).
+
+#ifndef GB_MXM_SHARED_DEFINITIONS_H
+#error "undefined"
+#endif
+
 #undef GB_A_INDEX
 #ifdef GB_A_NOT_TRANSPOSED
 #define GB_A_INDEX(k) (pA+(k)*vlen)
 #else
 #define GB_A_INDEX(k) (pA+(k))
 #endif
-
-// MIN_FIRSTJ or MIN_FIRSTJ1 semirings:
-#define GB_IS_MIN_FIRSTJ_SEMIRING (GB_IS_IMIN_MONOID && GB_IS_FIRSTJ_MULTIPLIER)
-// MAX_FIRSTJ or MAX_FIRSTJ1 semirings:
-#define GB_IS_MAX_FIRSTJ_SEMIRING (GB_IS_IMAX_MONOID && GB_IS_FIRSTJ_MULTIPLIER)
-// GB_OFFSET is 1 for the MIN/MAX_FIRSTJ1 semirings, and 0 otherwise.
 
 //------------------------------------------------------------------------------
 // C(i,j) = A(:,i)'*B(:,j): a single dot product
@@ -64,19 +65,45 @@
         // both A and B are full
         //----------------------------------------------------------------------
 
-        #if GB_IS_PAIR_MULTIPLIER
+        #if GB_IS_ANY_PAIR_SEMIRING
         { 
-            #if ( GB_IS_ANY_PAIR_SEMIRING )
             // nothing to do; C is iso
-            #elif (GB_CTYPE_BITS > 0)
-            // PLUS, XOR monoids: A(:,i)'*B(:,j) is nnz(A(:,i)),
-            // for bool, 8-bit, 16-bit, or 32-bit integer
-            cij = (GB_CTYPE) (((uint64_t) vlen) & GB_CTYPE_BITS) ;
-            #else
-            // PLUS monoid for float, double, or 64-bit integers 
-            cij = GB_CTYPE_CAST (vlen, 0) ;
-            #endif
         }
+        #elif GB_IS_LXOR_PAIR_SEMIRING
+        { 
+            // (boolean XOR monoid)_PAIR semiring
+            cij = (GB_C_TYPE) (((uint64_t) vlen) & 0x1L) ;
+        }
+        #elif GB_IS_PLUS_PAIR_8_SEMIRING
+        { 
+            // (PLUS int8, uint8 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) vlen) & 0xFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_16_SEMIRING
+        { 
+            // (PLUS int16, uint16 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) vlen) & 0xFFFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_32_SEMIRING
+        { 
+            // (PLUS int32, uint32 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) vlen) & 0xFFFFFFFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_BIG_SEMIRING
+        { 
+            // (PLUS int64, uint64, float, or double)_PAIR semirings
+            cij = (GB_C_TYPE) vlen ;
+        }
+//      #elif GB_IS_PLUS_PAIR_FC32_SEMIRING
+//      {
+//          // (PLUS monoid for float complex)_PAIR semiring
+//          cij = GJ_CMPLX32 ((float) vlen, 0) ;
+//      }
+//      #elif GB_IS_PLUS_PAIR_FC64_SEMIRING
+//      {
+//          // (PLUS monoid for double complex)_PAIR semiring
+//          cij = GJ_CMPLX64 ((double) vlen, 0) ;
+//      }
         #elif GB_IS_MIN_FIRSTJ_SEMIRING
         { 
             // MIN_FIRSTJ semiring: take the first entry
@@ -90,13 +117,16 @@
         #else
         {
             // cij = A(0,i) * B(0,j)
+            GB_DECLAREA (aki) ;
             GB_GETA (aki, Ax, pA, A_iso) ;      // aki = A(0,i)
+            GB_DECLAREB (bkj) ;
             GB_GETB (bkj, Bx, pB, B_iso) ;      // bkj = B(0,j)
             GB_MULT (cij, aki, bkj, i, 0, j) ;  // cij = aki * bkj
-            GB_PRAGMA_SIMD_DOT (cij)
+            GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
             for (int64_t k = 1 ; k < vlen ; k++)
             { 
-                GB_DOT_TERMINAL (cij) ;             // break if cij terminal
+                // break if cij terminal
+                GB_IF_TERMINAL_BREAK (cij, zterminal) ;
                 // cij += A(k,i) * B(k,j)
                 GB_GETA (aki, Ax, pA+k, A_iso) ;    // aki = A(k,i)
                 GB_GETB (bkj, Bx, pB+k, B_iso) ;    // bkj = B(k,j)
@@ -161,19 +191,45 @@
         // A is full and B is sparse/hyper (C = A'*B or A*B)
         //----------------------------------------------------------------------
 
-        #if GB_IS_PAIR_MULTIPLIER
-        {
-            #if ( GB_IS_ANY_PAIR_SEMIRING )
+        #if GB_IS_ANY_PAIR_SEMIRING
+        { 
             // nothing to do; C is iso
-            #elif (GB_CTYPE_BITS > 0)
-            // PLUS, XOR monoids: A(:,i)'*B(:,j) is nnz(A(:,i)),
-            // for bool, 8-bit, 16-bit, or 32-bit integer
-            cij = (GB_CTYPE) (((uint64_t) bjnz) & GB_CTYPE_BITS) ;
-            #else
-            // PLUS monoid for float, double, or 64-bit integers 
-            cij = GB_CTYPE_CAST (bjnz, 0) ;
-            #endif
         }
+        #elif GB_IS_LXOR_PAIR_SEMIRING
+        { 
+            // (boolean XOR monoid)_PAIR semiring
+            cij = (GB_C_TYPE) (((uint64_t) bjnz) & 0x1L) ;
+        }
+        #elif GB_IS_PLUS_PAIR_8_SEMIRING
+        { 
+            // (PLUS int8, uint8 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) bjnz) & 0xFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_16_SEMIRING
+        { 
+            // (PLUS int16, uint16 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) bjnz) & 0xFFFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_32_SEMIRING
+        { 
+            // (PLUS int32, uint32 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) bjnz) & 0xFFFFFFFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_BIG_SEMIRING
+        { 
+            // (PLUS int64, uint64, float, or double)_PAIR semirings
+            cij = (GB_C_TYPE) bjnz ;
+        }
+//      #elif GB_IS_PLUS_PAIR_FC32_SEMIRING
+//      {
+//          // (PLUS monoid for float complex)_PAIR semiring
+//          cij = GJ_CMPLX32 ((float) bjnz, 0) ;
+//      }
+//      #elif GB_IS_PLUS_PAIR_FC64_SEMIRING
+//      {
+//          // (PLUS monoid for double complex)_PAIR semiring
+//          cij = GJ_CMPLX64 ((double) bjnz, 0) ;
+//      }
         #elif GB_IS_MIN_FIRSTJ_SEMIRING
         { 
             // MIN_FIRSTJ semiring: take the first entry in B(:,j)
@@ -188,13 +244,16 @@
         {
             int64_t k = Bi [pB] ;               // first row index of B(:,j)
             // cij = (A(k,i) or A(i,k)) * B(k,j)
+            GB_DECLAREA (aki) ;
             GB_GETA (aki, Ax, GB_A_INDEX(k), A_iso) ; // aki = A(k,i) or A(i,k)
+            GB_DECLAREB (bkj) ;
             GB_GETB (bkj, Bx, pB  , B_iso) ;    // bkj = B(k,j)
             GB_MULT (cij, aki, bkj, i, k, j) ;  // cij = aki * bkj
-            GB_PRAGMA_SIMD_DOT (cij)
+            GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
             for (int64_t p = pB+1 ; p < pB_end ; p++)
             { 
-                GB_DOT_TERMINAL (cij) ;             // break if cij terminal
+                // break if cij terminal
+                GB_IF_TERMINAL_BREAK (cij, zterminal) ;
                 int64_t k = Bi [p] ;
                 // cij += (A(k,i) or A(i,k)) * B(k,j)
                 GB_GETA (aki, Ax, GB_A_INDEX(k), A_iso) ; //aki=A(k,i) or A(i,k)
@@ -357,19 +416,45 @@
         // A is sparse/hyper and B is full
         //----------------------------------------------------------------------
 
-        #if GB_IS_PAIR_MULTIPLIER
+        #if GB_IS_ANY_PAIR_SEMIRING
         { 
-            #if ( GB_IS_ANY_PAIR_SEMIRING )
             // nothing to do; C is iso
-            #elif (GB_CTYPE_BITS > 0)
-            // PLUS, XOR monoids: A(:,i)'*B(:,j) is nnz(A(:,i)),
-            // for bool, 8-bit, 16-bit, or 32-bit integer
-            cij = (GB_CTYPE) (((uint64_t) ainz) & GB_CTYPE_BITS) ;
-            #else
-            // PLUS monoid for float, double, or 64-bit integers 
-            cij = GB_CTYPE_CAST (ainz, 0) ;
-            #endif
         }
+        #elif GB_IS_LXOR_PAIR_SEMIRING
+        { 
+            // (boolean XOR monoid)_PAIR semiring
+            cij = (GB_C_TYPE) (((uint64_t) ainz) & 0x1L) ;
+        }
+        #elif GB_IS_PLUS_PAIR_8_SEMIRING
+        { 
+            // (PLUS int8, uint8 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) ainz) & 0xFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_16_SEMIRING
+        { 
+            // (PLUS int16, uint16 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) ainz) & 0xFFFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_32_SEMIRING
+        { 
+            // (PLUS int32, uint32 monoids)_PAIR semirings
+            cij = (GB_C_TYPE) (((uint64_t) ainz) & 0xFFFFFFFFL) ;
+        }
+        #elif GB_IS_PLUS_PAIR_BIG_SEMIRING
+        { 
+            // (PLUS int64, uint64, float, or double)_PAIR semirings
+            cij = (GB_C_TYPE) ainz ;
+        }
+//      #elif GB_IS_PLUS_PAIR_FC32_SEMIRING
+//      {
+//          // (PLUS monoid for float complex)_PAIR semiring
+//          cij = GJ_CMPLX32 ((float) ainz, 0) ;
+//      }
+//      #elif GB_IS_PLUS_PAIR_FC64_SEMIRING
+//      {
+//          // (PLUS monoid for double complex)_PAIR semiring
+//          cij = GJ_CMPLX64 ((double) ainz, 0) ;
+//      }
         #elif GB_IS_MIN_FIRSTJ_SEMIRING
         { 
             // MIN_FIRSTJ semiring: take the first entry in A(:,i)
@@ -384,13 +469,16 @@
         {
             int64_t k = Ai [pA] ;               // first row index of A(:,i)
             // cij = A(k,i) * B(k,j)
+            GB_DECLAREA (aki) ;
             GB_GETA (aki, Ax, pA  , A_iso) ;    // aki = A(k,i)
+            GB_DECLAREB (bkj) ;
             GB_GETB (bkj, Bx, pB+k, B_iso) ;    // bkj = B(k,j)
             GB_MULT (cij, aki, bkj, i, k, j) ;  // cij = aki * bkj
-            GB_PRAGMA_SIMD_DOT (cij)
+            GB_PRAGMA_SIMD_REDUCTION_MONOID (cij)
             for (int64_t p = pA+1 ; p < pA_end ; p++)
             { 
-                GB_DOT_TERMINAL (cij) ;             // break if cij terminal
+                // break if cij terminal
+                GB_IF_TERMINAL_BREAK (cij, zterminal) ;
                 int64_t k = Ai [p] ;
                 // cij += A(k,i) * B(k,j)
                 GB_GETA (aki, Ax, p   , A_iso) ;    // aki = A(k,i)

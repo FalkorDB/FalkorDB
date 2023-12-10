@@ -28,7 +28,7 @@ function [I, whole] = gb_index (I)
 % If I is a built-in matrix or vector (not a cell array), then it is
 % wrapped in a cell array, { I }, to denote A(I).
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 whole = false ;

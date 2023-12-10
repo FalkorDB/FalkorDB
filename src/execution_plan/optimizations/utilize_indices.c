@@ -90,14 +90,19 @@ static bool _validateInExpression(AR_ExpNode *exp) {
 }
 
 // return true if filter can be resolved by an index query
-static bool _applicable_predicate(const char* filtered_entity,
-		FT_FilterNode *filter) {
+static bool _applicable_predicate
+(
+	const char* filtered_entity,
+	FT_FilterNode *filter
+) {
+	ASSERT(filter          != NULL);
+	ASSERT(filtered_entity != NULL);
 
 	SIValue v;
-	bool res              =  false;
-	AR_ExpNode  *exp      =  NULL;
-	AR_ExpNode  *lhs_exp  =  NULL;
-	AR_ExpNode  *rhs_exp  =  NULL;
+	bool res             = false;
+	AR_ExpNode  *exp     = NULL;
+	AR_ExpNode  *lhs_exp = NULL;
+	AR_ExpNode  *rhs_exp = NULL;
 
 	if(isInFilter(filter)) {
 		return _validateInExpression(filter->exp.exp);
@@ -106,66 +111,68 @@ static bool _applicable_predicate(const char* filtered_entity,
 	if(isDistanceFilter(filter)) return true;
 
 	switch(filter->t) {
-	case FT_N_PRED:
-		lhs_exp = filter->pred.lhs;
-		rhs_exp = filter->pred.rhs;
-		// filter should be in the form of:
-		//
-		// attr_lookup OP exp
-		// or
-		// exp OP attr_lookup
-		//
-		// find out which part of the filter performs entity attribute access
+		case FT_N_PRED:
+			lhs_exp = filter->pred.lhs;
+			rhs_exp = filter->pred.rhs;
+			// filter should be in the form of:
+			//
+			// attr_lookup OP exp
+			// or
+			// exp OP attr_lookup
+			//
+			// find out which part of the filter performs entity attribute access
 
-		// make sure filtered entity isn't mentioned on both ends of the filter
-		// n.v = n.x
-		rax *aliases = raxNew();
-		bool mentioned_on_lhs = false;
-		bool mentioned_on_rhs = false;
+			// make sure filtered entity isn't mentioned on both ends of the filter
+			// n.v = n.x
+			rax *aliases = raxNew();
+			bool mentioned_on_lhs = false;
+			bool mentioned_on_rhs = false;
 
-		AR_EXP_CollectEntities(lhs_exp, aliases);
-		mentioned_on_lhs = raxFind(aliases, (unsigned char *)filtered_entity,
-				strlen(filtered_entity)) != raxNotFound;
+			AR_EXP_CollectEntities(lhs_exp, aliases);
+			mentioned_on_lhs = raxFind(aliases, (unsigned char *)filtered_entity,
+					strlen(filtered_entity)) != raxNotFound;
 
-		raxRemove(aliases, (unsigned char *)filtered_entity,
-				strlen(filtered_entity), NULL);
+			raxRemove(aliases, (unsigned char *)filtered_entity,
+					strlen(filtered_entity), NULL);
 
-		AR_EXP_CollectEntities(rhs_exp, aliases);
-		mentioned_on_rhs = raxFind(aliases, (unsigned char *)filtered_entity,
-				strlen(filtered_entity)) != raxNotFound;
+			AR_EXP_CollectEntities(rhs_exp, aliases);
+			mentioned_on_rhs = raxFind(aliases, (unsigned char *)filtered_entity,
+					strlen(filtered_entity)) != raxNotFound;
 
-		raxFree(aliases);
+			raxFree(aliases);
 
-		if(mentioned_on_lhs == true && mentioned_on_rhs == true) {
-			res = false;
+			if(mentioned_on_lhs == mentioned_on_rhs) {
+				// either filtered_entity is mentioned on both filter ends
+				// or it's not mentioned at all
+				res = false;
+				break;
+			}
+
+			if(AR_EXP_IsAttribute(lhs_exp, NULL)) exp = rhs_exp;      // n.v = exp
+																	  // filter is not of the form n.v = exp or exp = n.v
+			if(exp == NULL) {
+				res = false;
+				break;
+			}
+
+			// determine whether 'exp' represents a scalar
+			bool scalar = AR_EXP_ReduceToScalar(exp, true, &v);
+			if(scalar) {
+				// validate constant type
+				SIType t = SI_TYPE(v);
+				res = (t & (SI_NUMERIC | T_STRING | T_BOOL));
+			} else {
+				// value type can only be determined at runtime!
+				res = true;
+			}
 			break;
-		}
-
-		if(AR_EXP_IsAttribute(lhs_exp, NULL)) exp = rhs_exp;      // n.v = exp
-		// filter is not of the form n.v = exp or exp = n.v
-		if(exp == NULL) {
-			res = false;
+		case FT_N_COND:
+			// require both ends of the filter to be applicable
+			res = (_applicable_predicate(filtered_entity, filter->cond.left) &&
+					_applicable_predicate(filtered_entity, filter->cond.right));
 			break;
-		}
-
-		// determine whether 'exp' represents a scalar
-		bool scalar = AR_EXP_ReduceToScalar(exp, true, &v);
-		if(scalar) {
-			// validate constant type
-			SIType t = SI_TYPE(v);
-			res = (t & (SI_NUMERIC | T_STRING | T_BOOL));
-		} else {
-			// value type can only be determined at runtime!
-			res = true;
-		}
-		break;
-	case FT_N_COND:
-		// require both ends of the filter to be applicable
-		res = (_applicable_predicate(filtered_entity, filter->cond.left) &&
-				_applicable_predicate(filtered_entity, filter->cond.right));
-		break;
-	default:
-		break;
+		default:
+			break;
 	}
 
 	return res;

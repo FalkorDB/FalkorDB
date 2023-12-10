@@ -2,7 +2,7 @@
 // GB_zstd: wrapper for the ZSTD compression library
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,7 +39,9 @@ void ZSTD_free (void *p)
 }
 
 // ZSTD uses switch statements with no default case.
+#if GB_COMPILER_GCC
 #pragma GCC diagnostic ignored "-Wswitch-default"
+#endif
 
 // Include the unmodified zstd, version 1.5.3.  This
 // allows the ZSTD_* functions to be renamed via GB_zstd.h, and avoids any

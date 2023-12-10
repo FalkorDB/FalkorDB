@@ -2,7 +2,7 @@
 // GrB_Matrix_build: build a sparse GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ GrB_Info GB_EVAL3 (prefix, _Matrix_build_, T) /* build a matrix from tuples */\
     GB_BURBLE_START ("GrB_Matrix_build_" GB_STR(T)) ;                         \
     GB_RETURN_IF_NULL_OR_FAULTY (C) ;  /* check now so C->type can be done */ \
     GrB_Info info = GB_build (C, I, J, X, nvals, dup,                         \
-        xtype, true, false, Context) ;                                        \
+        xtype, true, false, Werk) ;                                           \
     GB_BURBLE_END ;                                                           \
     return (info) ;                                                           \
 }

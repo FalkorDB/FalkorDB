@@ -4,33 +4,38 @@ import csv
 import time
 import threading
 from click.testing import CliRunner
-from redisgraph_bulk_loader.bulk_insert import bulk_insert
+from falkordb_bulk_loader.bulk_insert import bulk_insert
 
-redis_con = None
-port = None
+GRAPH_ID    = "graph"
+port        = None
 redis_graph = None
 
 
-def run_bulk_loader(graphname, filename):
-    runner = CliRunner()
-    runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
-                                '--nodes', filename,
-                                graphname])
+def ping_server(stop_event, res, self):
+    ping_count = 0
+    while not stop_event.is_set():
+        t0 = time.time()
+        self.db.connection.ping()
+        t1 = time.time() - t0
+        # Verify that pinging the server takes less than 1 second during bulk insertion
+        self.env.assertLess(t1, 2)
+        ping_count += 1
+        time.sleep(0.1)
+
+    res[0] = ping_count
 
 class testGraphBulkInsertFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
         # skip test if we're running under Valgrind
         if VALGRIND:
             self.env.skip() # valgrind is not working correctly with replication
 
         global redis_graph
-        global redis_con
         global port
-        redis_con = self.env.getConnection()
         port = self.env.envRunner.port
-        redis_graph = Graph(redis_con, "graph")
+        redis_graph = self.db.select_graph(GRAPH_ID)
 
     # Run bulk loader script and validate terminal output
     def test01_run_script(self):
@@ -38,7 +43,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         runner = CliRunner()
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',
@@ -172,7 +177,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow([5, 3])
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           '--relations', '/tmp/relations.tmp',
                                           graphname])
@@ -186,7 +191,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         os.remove('/tmp/nodes.tmp')
         os.remove('/tmp/relations.tmp')
 
-        tmp_graph = Graph(redis_con, graphname)
+        tmp_graph = self.db.select_graph(graphname)
         # The field "_identifier" should not be a property in the graph
         query_result = tmp_graph.query('MATCH (a) RETURN a')
 
@@ -208,7 +213,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow([0, 3])
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           '--relations', '/tmp/relations.tmp',
                                           graphname])
@@ -219,7 +224,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # Run the script again without creating relations
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           graphname])
 
@@ -237,7 +242,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         runner = CliRunner()
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',
@@ -249,7 +254,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         # The script should report statistics multiple times
         self.env.assertGreater(res.output.count('nodes created'), 1)
 
-        new_graph = Graph(redis_con, graphname)
+        new_graph = self.db.select_graph(graphname)
 
         # Newly-created graph should be identical to graph created in single query
         original_result = redis_graph.query('MATCH (p:Person) RETURN p, ID(p) ORDER BY p.name')
@@ -269,7 +274,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow([0]) # Wrong number of properites
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           graphname])
 
@@ -289,7 +294,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow([0])
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           '--relations', '/tmp/relations.tmp',
                                           graphname])
@@ -304,7 +309,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow([0, "fakeidentifier"])
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           '--relations', '/tmp/relations.tmp',
                                           graphname])
@@ -317,7 +322,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # Test passing invalid arguments directly to the GRAPH.BULK endpoint
         try:
-            redis_con.execute_command("GRAPH.BULK", "a", "a", "a")
+            self.db.execute_command("GRAPH.BULK", "a", "a", "a")
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("Invalid graph operation on empty key", str(e))
@@ -340,7 +345,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow([7, 0, ''])
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/nodes.tmp',
                                           '--relations', '/tmp/relations.tmp',
                                           graphname])
@@ -349,7 +354,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertIn('3 nodes created', res.output)
         self.env.assertIn('3 relations created', res.output)
 
-        graph = Graph(redis_con, graphname)
+        graph = self.db.select_graph(graphname)
         query_result = graph.query('MATCH (a)-[e]->() RETURN a.numeric, a.mixed, a.bool, e.prop ORDER BY a.numeric, e.prop')
         expected_result = [[0, None, True, True],
                            [5, 'notnull', False, 3.5],
@@ -371,23 +376,24 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             for i in range(100_000):
                 out.writerow([prop_str])
 
+        runner = CliRunner()
+
         # Instantiate a thread to run the bulk loader
-        thread = threading.Thread(target=run_bulk_loader, args=(graphname, filename))
+        res = [None]
+        stop_event = threading.Event()
+        thread = threading.Thread(target=ping_server, args=(stop_event, res, self))
         thread.start()
 
-        # Ping server while bulk-loader is running
-        ping_count = 0
-        while thread.is_alive():
-            t0 = time.time()
-            redis_con.ping()
-            t1 = time.time() - t0
-            # Verify that pinging the server takes less than 1 second during bulk insertion
-            self.env.assertLess(t1, 2)
-            ping_count += 1
+        # Run bulk insert
+        runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}", '--nodes', filename, graphname])
+
+        # Signal the thread to stop
+        stop_event.set()
 
         thread.join()
+        ping_count = res[0]
         # Verify that at least one ping was issued
-        self.env.assertGreaterEqual(ping_count, 1)
+        self.env.assertGreaterEqual(ping_count, 2)
 
     # Verify that nodes with multiple labels are created correctly
     def test10_multiple_labels(self):
@@ -421,7 +427,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
             out.writerow(["Connecticut", "US"])
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', '/tmp/City:Place.tmp',
                                           '--nodes', '/tmp/Place:State.tmp',
                                           '--nodes', '/tmp/Place:Country.tmp',
@@ -432,7 +438,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         self.env.assertIn('6 nodes created', res.output)
         self.env.assertIn('5 relations created', res.output)
 
-        graph = Graph(redis_con, graphname)
+        graph = self.db.select_graph(graphname)
 
         #-----------------------------------------------------------------------
         expected_result = [["Binghamton"],
@@ -524,11 +530,11 @@ class testGraphBulkInsertFlow(FlowTestsBase):
     def test11_social_multiple_labels(self):
         # Create the social graph with multi-labeled nodes
         graphname = "multilabel_social"
-        graph = Graph(redis_con, graphname)
+        graph = self.db.select_graph(graphname)
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
 
         runner = CliRunner()
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes-with-label', "Person:Visitor", csv_path + 'Person.csv',
                                           '--nodes-with-label', "Country:Place", csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',

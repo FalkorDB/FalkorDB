@@ -2,7 +2,7 @@
 // GB_compatible: check input and operators for type compatibility
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,7 +21,7 @@ GrB_Info GB_compatible          // SUCCESS if all is OK, *_MISMATCH otherwise
     const bool Mask_struct,     // true if M is structural
     const GrB_BinaryOp accum,   // C<M> = accum(C,T) is computed
     const GrB_Type ttype,       // type of T
-    GB_Context Context
+    GB_Werk Werk
 )
 {
 
@@ -50,7 +50,7 @@ GrB_Info GB_compatible          // SUCCESS if all is OK, *_MISMATCH otherwise
         // when accum is NULL.
 
         GB_OK (GB_BinaryOp_compatible (accum, ctype, ctype, ttype,
-            GB_ignore_code, Context)) ;
+            GB_ignore_code, Werk)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -71,6 +71,6 @@ GrB_Info GB_compatible          // SUCCESS if all is OK, *_MISMATCH otherwise
     // check the mask
     //--------------------------------------------------------------------------
 
-    return (GB_Mask_compatible (M, Mask_struct, C, 1, 1, Context)) ;
+    return (GB_Mask_compatible (M, Mask_struct, C, 1, 1, Werk)) ;
 }
 

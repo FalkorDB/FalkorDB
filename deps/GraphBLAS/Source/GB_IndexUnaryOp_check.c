@@ -2,7 +2,7 @@
 // GB_IndexUnaryOp_check: check and print a index_unary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,17 +43,27 @@ GrB_Info GB_IndexUnaryOp_check  // check a GraphBLAS index_unary operator
     }
     if (opcode == GB_USER_idxunop_code)
     { 
-        GBPR0 ("(user-defined) ") ;
+        GBPR0 ("(user-defined): ") ;
     }
     else
     { 
-        GBPR0 ("(built-in) ") ;
+        GBPR0 ("(built-in): ") ;
     }
-    GBPR0 ("z=%s(x,i,j,y)\n", op->name) ;
+
+    int32_t name_len = op->name_len ;
+    int32_t actual_len = (int32_t) strlen (op->name) ;
+    char *op_name = (actual_len > 0) ? op->name : "f" ;
+    GBPR0 ("z=%s(x,i,j,y)\n", op_name) ;
 
     if (op->idxunop_function == NULL)
     { 
         GBPR0 ("    IndexUnaryOp has a NULL function pointer\n") ;
+        return (GrB_INVALID_OBJECT) ;
+    }
+
+    if (opcode == GB_USER_idxunop_code && name_len != actual_len)
+    { 
+        GBPR0 ("    IndexUnaryOp has an invalid name_len\n") ;
         return (GrB_INVALID_OBJECT) ;
     }
 

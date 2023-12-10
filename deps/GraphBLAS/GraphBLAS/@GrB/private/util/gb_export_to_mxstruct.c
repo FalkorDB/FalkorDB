@@ -2,7 +2,7 @@
 // gb_export_to_mxstruct: export a GrB_Matrix to a built-in struct
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -166,9 +166,12 @@ mxArray *gb_export_to_mxstruct  // return exported built-in struct G
             // export and free the A->Y hyper_hash.  It is always sparse,
             // GrB_UINT64, held by column, and non-iso
             OK (GxB_unpack_HyperHash (A, &Y, NULL)) ;
-            OK (GxB_Matrix_export_CSC (&Y, &ytype, &ynrows, &yvdim,
-                &Yp, &Yi, &Yx, &Yp_size, &Yi_size, &Yx_size,
-                NULL, NULL, NULL)) ;
+            if (Y != NULL)
+            {
+                OK (GxB_Matrix_export_CSC (&Y, &ytype, &ynrows, &yvdim,
+                    &Yp, &Yi, &Yx, &Yp_size, &Yi_size, &Yx_size,
+                    NULL, NULL, NULL)) ;
+            }
 
             // export and free the rest of the hypersparse matrix
             if (by_col)
@@ -223,9 +226,10 @@ mxArray *gb_export_to_mxstruct  // return exported built-in struct G
             break ;
 
         case GxB_HYPERSPARSE :
-            // A is hypersparse, with 9 fields: GraphBLAS*, s, x, p, i, h,
+            // A is hypersparse, with 6 or 9 fields: GraphBLAS*, s, x, p, i, h,
             // Yp, Yi, Yx
-            G = mxCreateStructMatrix (1, 1, 9, MatrixFields) ;
+            G = mxCreateStructMatrix (1, 1, (Yp == NULL) ? 6 : 9,
+                MatrixFields) ;
             break ;
 
         case GxB_BITMAP :
@@ -308,26 +312,33 @@ mxArray *gb_export_to_mxstruct  // return exported built-in struct G
         }
         mxSetFieldByNumber (G, 0, 5, Ah_mx) ;
 
-        // export Yp, of size yvdim+1
-        mxArray *Yp_mx = mxCreateNumericMatrix (1, 0, mxUINT64_CLASS, mxREAL) ;
-        mxSetN (Yp_mx, yvdim+1) ;
-        void *p = (void *) mxGetData (Yp_mx) ; gb_mxfree (&p) ;
-        mxSetData (Yp_mx, Yp) ;
-        mxSetFieldByNumber (G, 0, 6, Yp_mx) ;
+        if (Yp != NULL)
+        {
 
-        // export Yi, of size nvec
-        mxArray *Yi_mx = mxCreateNumericMatrix (1, 0, mxUINT64_CLASS, mxREAL) ;
-        mxSetN (Yi_mx, nvec) ;
-        p = (void *) mxGetData (Yi_mx) ; gb_mxfree (&p) ;
-        mxSetData (Yi_mx, Yi) ;
-        mxSetFieldByNumber (G, 0, 7, Yi_mx) ;
+            // export Yp, of size yvdim+1
+            mxArray *Yp_mx = mxCreateNumericMatrix (1, 0, mxUINT64_CLASS,
+                mxREAL) ;
+            mxSetN (Yp_mx, yvdim+1) ;
+            void *p = (void *) mxGetData (Yp_mx) ; gb_mxfree (&p) ;
+            mxSetData (Yp_mx, Yp) ;
+            mxSetFieldByNumber (G, 0, 6, Yp_mx) ;
 
-        // export Yx, of size nvec
-        mxArray *Yx_mx = mxCreateNumericMatrix (1, 0, mxUINT64_CLASS, mxREAL) ;
-        mxSetN (Yx_mx, nvec) ;
-        p = (void *) mxGetData (Yx_mx) ; gb_mxfree (&p) ;
-        mxSetData (Yx_mx, Yx) ;
-        mxSetFieldByNumber (G, 0, 8, Yx_mx) ;
+            // export Yi, of size nvec
+            mxArray *Yi_mx = mxCreateNumericMatrix (1, 0, mxUINT64_CLASS,
+                mxREAL) ;
+            mxSetN (Yi_mx, nvec) ;
+            p = (void *) mxGetData (Yi_mx) ; gb_mxfree (&p) ;
+            mxSetData (Yi_mx, Yi) ;
+            mxSetFieldByNumber (G, 0, 7, Yi_mx) ;
+
+            // export Yx, of size nvec
+            mxArray *Yx_mx = mxCreateNumericMatrix (1, 0, mxUINT64_CLASS,
+                mxREAL) ;
+            mxSetN (Yx_mx, nvec) ;
+            p = (void *) mxGetData (Yx_mx) ; gb_mxfree (&p) ;
+            mxSetData (Yx_mx, Yx) ;
+            mxSetFieldByNumber (G, 0, 8, Yx_mx) ;
+        }
     }
 
     if (sparsity_status == GxB_BITMAP)

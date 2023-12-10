@@ -2,7 +2,7 @@
 // GB_mex_dup: copy a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,6 +10,7 @@
 // copy and typecast a matrix
 
 #include "GB_mex.h"
+#include "GB_mex_errors.h"
 
 #define USAGE "C = GB_mex_dup (A, type, method, sparsity)"
 
@@ -40,16 +41,11 @@ void mexFunction
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
 
-    #define GET_DEEP_COPY  ;
+    #define GET_DEEP_COPY ;
     #define FREE_DEEP_COPY ;
 
-    // get A (shallow copy)
     A = GB_mx_mxArray_to_Matrix (pargin [0], "A input", false, true) ;
-    if (A == NULL)
-    {
-        FREE_ALL ;
-        mexErrMsgTxt ("A failed") ;
-    }
+    GrB_Matrix_set_String (A, "A input", GrB_NAME) ;
 
     // get ctype of output matrix
     GrB_Type ctype = GB_mx_string_to_Type (PARGIN (1), A->type) ;
@@ -66,6 +62,12 @@ void mexFunction
         if (method == 0 && sparsity == GxB_DEFAULT)
         {
             METHOD (GrB_Matrix_dup (&C, A)) ;
+
+            // get the name of the C matrix
+            char name [256] ;
+            GrB_Matrix_get_String (C, name, GrB_NAME) ;
+            CHECK (MATCH (name, "A input")) ;
+
         }
         else
         {

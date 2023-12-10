@@ -2,7 +2,7 @@
 // GxB_Matrix_reshapeDup:  reshape a matrix into another matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ GrB_Info GxB_Matrix_reshapeDup // reshape a GrB_Matrix into another GrB_Matrix
     // reshape the matrix
     //--------------------------------------------------------------------------
 
-    info = GB_reshape (C, A, by_col, nrows_new, ncols_new, Context) ;
+    info = GB_reshape (C, A, by_col, nrows_new, ncols_new, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

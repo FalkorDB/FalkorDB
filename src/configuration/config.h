@@ -32,8 +32,9 @@ typedef enum {
 	Config_NODE_CREATION_BUFFER      = 12,  // size of buffer to maintain as margin in matrices
 	Config_CMD_INFO                  = 13,  // toggle on/off the GRAPH.INFO
 	Config_CMD_INFO_MAX_QUERY_COUNT  = 14,  // the max number of info queries count
-	Config_EFFECTS_THRESHOLD         = 15,  // replicate queries via effects
-	Config_END_MARKER                = 16
+	Config_EFFECTS_THRESHOLD         = 15,  // bolt protocol port
+	Config_BOLT_PORT                 = 16,  // replicate queries via effects
+	Config_END_MARKER                = 17
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of

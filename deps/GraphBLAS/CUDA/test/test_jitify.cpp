@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
     jit::launcher( hashable_name,
                    string_to_be_jitted.str(),
                    header_names,
-                   compiler_flags,
+                   GB_jit_cuda_compiler_flags,
                    file_callback)
             .set_kernel_inst( kernel_name, {})
             .configure(grid, block)

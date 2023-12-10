@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: Apache-2.0
 GrB_Info GB (_Adot2B)
 (
@@ -20,16 +21,21 @@ GrB_Info GB (_Adot3B)
     const int nthreads
 ) ;
 
-if_dot4_enabled
+m4_divert(if_dot4_enabled)
 GrB_Info GB (_Adot4B)
 (
     GrB_Matrix C,
-    const GrB_Matrix A, int64_t *restrict A_slice, int naslice,
-    const GrB_Matrix B, int64_t *restrict B_slice, int nbslice,
+    const bool C_in_iso,
+    const GrB_Matrix A,
+    const GrB_Matrix B,
+    const int64_t *restrict A_slice,
+    const int64_t *restrict B_slice,
+    const int naslice,
+    const int nbslice,
     const int nthreads,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
-#endif
+m4_divert(0)
 
 GrB_Info GB (_Asaxpy3B)
 (
@@ -40,7 +46,7 @@ GrB_Info GB (_Asaxpy3B)
     const GrB_Matrix B,
     GB_saxpy3task_struct *restrict SaxpyTasks,
     const int ntasks, const int nfine, const int nthreads, const int do_sort,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB (_Asaxpy3B_noM)
@@ -51,7 +57,7 @@ GrB_Info GB (_Asaxpy3B_noM)
     GB_saxpy3task_struct *restrict SaxpyTasks,
     const int ntasks, const int nfine, const int nthreads,
     const int do_sort,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB (_Asaxpy3B_M)
@@ -63,7 +69,7 @@ GrB_Info GB (_Asaxpy3B_M)
     GB_saxpy3task_struct *restrict SaxpyTasks,
     const int ntasks, const int nfine, const int nthreads,
     const int do_sort,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB (_Asaxpy3B_notM)
@@ -75,19 +81,32 @@ GrB_Info GB (_Asaxpy3B_notM)
     GB_saxpy3task_struct *restrict SaxpyTasks,
     const int ntasks, const int nfine, const int nthreads,
     const int do_sort,
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB (_AsaxbitB)
 (
-    GrB_Matrix C,   // C<any M>=A*B, C bitmap or full
-    const GrB_Matrix M, const bool Mask_comp, const bool Mask_struct,
+    GrB_Matrix C,
+    const GrB_Matrix M,
+    const bool Mask_comp,
+    const bool Mask_struct,
     const GrB_Matrix A,
     const GrB_Matrix B,
-    GB_Context Context
+    const int ntasks,
+    const int nthreads,
+    const int nfine_tasks_per_vector,
+    const bool use_coarse_tasks,
+    const bool use_atomics,
+    const int64_t *restrict M_ek_slicing,
+    const int M_nthreads,
+    const int M_ntasks,
+    const int64_t *restrict A_slice,
+    const int64_t *restrict H_slice,
+    GB_void *restrict Wcx,
+    int8_t *restrict Wf
 ) ;
 
-if_saxpy4_enabled
+m4_divert(if_saxpy4_enabled)
 GrB_Info GB (_Asaxpy4B)
 (
     GrB_Matrix C,
@@ -99,11 +118,13 @@ GrB_Info GB (_Asaxpy4B)
     const bool use_coarse_tasks,
     const bool use_atomics,
     const int64_t *A_slice,
-    GB_Context Context
+    const int64_t *H_slice,
+    GB_void *restrict Wcx,
+    int8_t *restrict Wf
 ) ;
-#endif
+m4_divert(0)
 
-if_saxpy5_enabled
+m4_divert(if_saxpy5_enabled)
 GrB_Info GB (_Asaxpy5B)
 (
     GrB_Matrix C,
@@ -111,8 +132,7 @@ GrB_Info GB (_Asaxpy5B)
     const GrB_Matrix B,
     const int ntasks,
     const int nthreads,
-    const int64_t *B_slice,
-    GB_Context Context
+    const int64_t *B_slice
 ) ;
-#endif
+m4_divert(0)
 

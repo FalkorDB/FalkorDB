@@ -2,7 +2,7 @@
 // GxB_Type_new: create a new user-defined type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,15 +28,19 @@
 //      "typedef struct { float x [4][4] ; int color ; } myquaternion ;") ;
 
 // The type_name and type_defn are optional and may by NULL, but they are
-// required for the JIT.
+// required for the JIT.  If the type size is passed in as zero, it means the
+// size is unknown; in this case, the type size is determined via the JIT.
+// If the type size is zero but the JIT is disabled, of the two strings are not
+// provided, then an error is returned (GrB_INVALID_VALUE). 
 
 #include "GB.h"
+#include "GB_stringify.h"
 
 GrB_Info GxB_Type_new
 (
     GrB_Type *type,             // handle of user type to create
-    size_t sizeof_ctype,        // size of the user type
-    const char *type_name,      // name of the user type, or "sizeof (ctype)"
+    size_t sizeof_type,         // size of the user type
+    const char *type_name,      // name of the user type
     const char *type_defn       // typedef of the C type (any length)
 )
 {
@@ -46,21 +50,16 @@ GrB_Info GxB_Type_new
     //--------------------------------------------------------------------------
 
     GB_WHERE1 ("GxB_Type_new (&type, sizeof (ctype), type_name, type_defn)") ;
+    GB_BURBLE_START ("GxB_Type_new") ;
     GB_RETURN_IF_NULL (type) ;
     (*type) = NULL ;
 
-    #if ( ! GB_HAS_VLA )
-    {
-        // Microsoft Visual Studio does not support VLAs allocating
-        // automatically on the stack.  These arrays are used for scalar values
-        // for a given type.  If VLA is not supported, user-defined types can
-        // be no larger than GB_VLA_MAXSIZE.
-        if (sizeof_ctype > GB_VLA_MAXSIZE)
-        {
-            return (GrB_INVALID_VALUE) ;
-        }
+    if (sizeof_type == 0 && (type_defn == NULL || type_name == NULL))
+    { 
+        // the JIT is required to determine size of the type, but this
+        // requires two valid strings: the type name and the type definition
+        return (GrB_INVALID_VALUE) ;
     }
-    #endif
 
     //--------------------------------------------------------------------------
     // create the type
@@ -77,57 +76,32 @@ GrB_Info GxB_Type_new
 
     // initialize the type
     t->header_size = header_size ;
-    t->size = GB_IMAX (sizeof_ctype, 1) ;
+    t->user_name = NULL ;
+    t->user_name_size = 0 ;
+    t->size = sizeof_type ;
     t->code = GB_UDT_code ;         // user-defined type
     memset (t->name, 0, GxB_MAX_NAME_LEN) ;   // no name yet
     t->defn = NULL ;                // no definition yet
     t->defn_size = 0 ;
 
     //--------------------------------------------------------------------------
-    // get the name: as a type_name or "sizeof (type_name)"
+    // get the name
     //--------------------------------------------------------------------------
 
     if (type_name != NULL)
     {
         // copy the type_name into the working name
-        char working [GxB_MAX_NAME_LEN] ;
-        memset (working, 0, GxB_MAX_NAME_LEN) ;
-        strncpy (working, type_name, GxB_MAX_NAME_LEN-1) ;
-
-        // look for "sizeof" in the name
-        char *p = NULL ;
-        p = strstr (working, "sizeof") ;
-        if (p != NULL)
-        { 
-            // "sizeof" appears in the input string, advance past it
-            p += 6 ;
-
-            // find leading "(" if it appears, and advance to one char past it
-            char *p2 = strstr (p, "(") ;
-            if (p2 != NULL) p = p2 + 1 ;
-
-            // find trailing ")" if it appears, and delete it
-            p2 = strstr (p, ")") ;
-            if (p2 != NULL) *p2 = '\0' ;
-
-            // p now contains the final name, copy it to the output name
-            strncpy (t->name, p, GxB_MAX_NAME_LEN-1) ;
-        }
-        else
-        { 
-            // "sizeof" does not appear, take the input type_name as-is
-            memcpy (t->name, working, GxB_MAX_NAME_LEN) ;
-        }
-    }
-    else
-    { 
-        // no type name, so give it a generic name, with the typesize only
-        snprintf (t->name, GxB_MAX_NAME_LEN-1, "user_type_of_size_" GBu,
-            (uint64_t) sizeof_ctype) ;
+        strncpy (t->name, type_name, GxB_MAX_NAME_LEN-1) ;
     }
 
     // ensure t->name is null-terminated
     t->name [GxB_MAX_NAME_LEN-1] = '\0' ;
+
+    // get the type name length and hash the name
+    t->name_len = (int32_t) strlen (t->name) ;
+    // type can be JIT'd only if it has a name and defn
+    t->hash = GB_jitifyer_hash (t->name, t->name_len,
+        (t->name_len > 0 && type_defn != NULL)) ;
 
     //--------------------------------------------------------------------------
     // get the typedef, if present
@@ -136,10 +110,10 @@ GrB_Info GxB_Type_new
     if (type_defn != NULL)
     { 
         // determine the string length of the typedef
-        size_t len = strlen (type_defn) ;
+        size_t defn_len = strlen (type_defn) ;
 
         // allocate space for the typedef
-        t->defn = GB_MALLOC (len+1, char, &(t->defn_size)) ;
+        t->defn = GB_MALLOC (defn_len+1, char, &(t->defn_size)) ;
         if (t->defn == NULL)
         { 
             // out of memory
@@ -148,33 +122,53 @@ GrB_Info GxB_Type_new
         }
 
         // copy the typedef into the new type
-        memcpy (t->defn, type_defn, len+1) ;
+        memcpy (t->defn, type_defn, defn_len+1) ;
     }
+
+    // the type is valid, except perhaps for the typesize
+    t->magic = GB_MAGIC ;
+
+    //--------------------------------------------------------------------------
+    // determine the type size via the JIT, if necessary
+    //--------------------------------------------------------------------------
+
+    if (sizeof_type == 0)
+    { 
+        GrB_Info info = GB_user_type_jit (&sizeof_type, t) ;
+        if (info != GrB_SUCCESS)
+        { 
+            // unable to determine the type size
+            GrB_Type_free (&t) ;
+            return (GrB_INVALID_VALUE) ;
+        }
+        t->size = sizeof_type ;
+    }
+
+    //--------------------------------------------------------------------------
+    // typesize is limited on MS Visual Studio
+    //--------------------------------------------------------------------------
+
+    #if ( ! GB_HAS_VLA )
+    {
+        // Microsoft Visual Studio does not support VLAs allocating
+        // automatically on the stack.  These arrays are used for scalar values
+        // for a given type.  If VLA is not supported, user-defined types can
+        // be no larger than GB_VLA_MAXSIZE.
+        if (sizeof_type > GB_VLA_MAXSIZE)
+        {
+            GrB_Type_free (&t) ;
+            return (GrB_INVALID_VALUE) ;
+        }
+    }
+    #endif
 
     //--------------------------------------------------------------------------
     // return result
     //--------------------------------------------------------------------------
 
-    t->magic = GB_MAGIC ;
     (*type) = t ;
     ASSERT_TYPE_OK (t, "new user-defined type", GB0) ;
+    GB_BURBLE_END ;
     return (GrB_SUCCESS) ;
-}
-
-//------------------------------------------------------------------------------
-// GB_Type_new: create a new user-defined type (historical)
-//------------------------------------------------------------------------------
-
-// This method was only accessible via the GrB_Type_new macro in v5.1.x and
-// earlier.  The GrB_Type_new macro in v5.2.x and later calls GxB_Type_new.
-
-GrB_Info GB_Type_new            // create a new GraphBLAS type
-(
-    GrB_Type *type,             // handle of user type to create
-    size_t sizeof_ctype,        // size = sizeof (ctype) of the C type
-    const char *name            // name of the type
-)
-{
-    return (GxB_Type_new (type, sizeof_ctype, name, NULL)) ;
 }
 

@@ -2,7 +2,7 @@
 // GB_mx_object_to_mxArray
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,7 +43,6 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
     const bool create_struct        // if true, then return a struct
 )
 {
-    GB_CONTEXT ("GB_mx_object_to_mxArray") ;
 
     // get the inputs
     mxArray *A, *Astruct, *X = NULL ;
@@ -113,7 +112,7 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
     bool C_iso = C->iso ;
     if (C_iso)
     {
-        GB_convert_any_to_non_iso (C, true, NULL) ;
+        GB_convert_any_to_non_iso (C, true) ;
         ASSERT_MATRIX_OK (C, "TO mxArray, non-iso non-hyper CSC", GB0) ;
     }
 
@@ -274,7 +273,7 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
         A = mxCreateSparse (C->vlen, C->vdim, cnz, mxCOMPLEX) ;
         GB_void *Ax = (GB_void *) mxGetComplexDoubles (A) ;
         if (Ax == NULL && cnz > 0) mexErrMsgTxt ("Ax is NULL!\n") ;
-        GB_cast_array (Ax, GB_FC64_code, C->x, C->type->code, NULL, cnz, 1) ;
+        GB_cast_array (Ax, GB_FC64_code, C, 1) ;
 
     }
     else
@@ -286,8 +285,7 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
         double *Sx = (double *) GB_malloc_memory (cnz+1, sizeof (double),
             &Sx_size) ;
         if (Sx == NULL && cnz > 0) mexErrMsgTxt ("Sx is NULL!\n") ;
-        GB_cast_array ((GB_void *) Sx, GB_FP64_code, C->x, C->type->code,
-            NULL, cnz, 1) ;
+        GB_cast_array ((GB_void *) Sx, GB_FP64_code, C, 1) ;
         mexMakeMemoryPersistent (Sx) ;
         mxSetPr (A, Sx) ;
 

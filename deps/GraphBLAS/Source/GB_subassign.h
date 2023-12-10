@@ -2,7 +2,7 @@
 // GB_subassign.h: definitions for GB_subassign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_subassign_scalar        // C(Rows,Cols)<M> += x
@@ -45,7 +45,7 @@ GrB_Info GB_subassign_scalar        // C(Rows,Cols)<M> += x
     const GrB_Index *Cols,          // column indices
     const GrB_Index nCols,          // number of column indices
     const GrB_Descriptor desc,      // descriptor for C(Rows,Cols) and M
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 int GB_subassigner_method           // return method to use in GB_subassigner
@@ -65,7 +65,7 @@ int GB_subassigner_method           // return method to use in GB_subassigner
     const int Jkind,
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,
-    const GrB_Type atype            // type of A, or the type of the scalar
+    const GrB_Type scalar_type      // type of the scalar
 ) ;
 
 GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
@@ -92,27 +92,27 @@ GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
     const int64_t Jcolon [3],
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
-    const GrB_Type atype,           // type code of scalar to expand
-    GB_Context Context
+    const GrB_Type scalar_type,     // type code of scalar to expand
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_assign_prep
 (
     // output:
-    GrB_Matrix *Chandle,            // C_in, or C2 if C is aliased to M or A
-    GrB_Matrix *Mhandle,            // M_in, or a modified version M2
-    GrB_Matrix *Ahandle,            // A_in, or a modified version A2
+    GrB_Matrix *Chandle,            // C_in, or Cwork if C is aliased to M or A
+    GrB_Matrix *Mhandle,            // M_in, or a modified version Mwork
+    GrB_Matrix *Ahandle,            // A_in, or a modified version Awork
     int *subassign_method,          // subassign method to use
 
     // modified versions of the matrices C, M, and A:
-    GrB_Matrix *C2_handle,          // NULL, or a copy of C
-    GrB_Matrix *M2_handle,          // NULL, or a temporary matrix
-    GrB_Matrix *A2_handle,          // NULL, or a temporary matrix
+    GrB_Matrix *Cwork_handle,          // NULL, or a copy of C
+    GrB_Matrix *Mwork_handle,          // NULL, or a temporary matrix
+    GrB_Matrix *Awork_handle,          // NULL, or a temporary matrix
 
-    // static headers for C2, M2, A2, MT and AT
-    GrB_Matrix C2_header_handle,
-    GrB_Matrix M2_header_handle,
-    GrB_Matrix A2_header_handle,
+    // static headers for Cwork, Mwork, Awork, MT and AT
+    GrB_Matrix Cwork_header_handle,
+    GrB_Matrix Mwork_header_handle,
+    GrB_Matrix Awork_header_handle,
     GrB_Matrix MT_header_handle,
     GrB_Matrix AT_header_handle,
 
@@ -133,7 +133,7 @@ GrB_Info GB_assign_prep
     int *Jkind_handle,
     int64_t Jcolon [3],
 
-    GrB_Type *atype_handle,         // type of A or the scalar
+    GrB_Type *scalar_type_handle,   // type of the scalar, or NULL if no scalar
 
     // input/output
     GrB_Matrix C_in,                // input/output matrix for results
@@ -155,7 +155,7 @@ GrB_Info GB_assign_prep
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scode,       // type code of scalar to expand
-    GB_Context Context
+    GB_Werk Werk
 ) ;
 
 //------------------------------------------------------------------------------

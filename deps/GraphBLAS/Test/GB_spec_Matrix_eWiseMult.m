@@ -1,5 +1,5 @@
 function C = GB_spec_Matrix_ewiseMult (C, Mask, accum, mult, A, B, descriptor)
-%GB_SPEC_MATRIX_EWISEMULT a mimic of GrB_Matrix_ewiseMult
+%GB_SPEC_MATRIX_EWISEMULT a mimic of GrB_Matrix_eWiseMult
 %
 % Usage:
 % C = GB_spec_Matrix_ewiseMult (C, Mask, accum, mult, A, B, descriptor)
@@ -7,7 +7,7 @@ function C = GB_spec_Matrix_ewiseMult (C, Mask, accum, mult, A, B, descriptor)
 % Computes C<Mask> = accum(C,T), in GraphBLAS notation, where T =A.*B, A'.*B,
 % A.*B' or A'.*B'.  The pattern of T is the union of A and B.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------
@@ -70,4 +70,5 @@ T.class = ztype ;
 
 % C<Mask> = accum (C,T): apply the accum, then Mask, and return the result
 C = GB_spec_accum_mask (C, Mask, accum, T, C_replace, Mask_comp, 0) ;
+
 

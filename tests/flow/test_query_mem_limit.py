@@ -16,7 +16,6 @@ from pathos.pools import ProcessPool as Pool
 # 5. test a mixture of queries, ~90% successful ones and the rest are expected
 #    to fail due to out of memory error
 
-g                 = None
 GRAPH_NAME        = "max_query_mem"
 MEM_HOG_QUERY     = """UNWIND range(0, 100000) AS x RETURN x, count(x)"""
 MEM_THRIFTY_QUERY = """RETURN 1"""
@@ -32,7 +31,7 @@ def issue_query(conn, q, should_fail):
 
 class testQueryMemoryLimit():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         # skip test if we're running under Valgrind
         if VALGRIND:
             self.env.skip() # valgrind is not working correctly with multi process
@@ -40,11 +39,11 @@ class testQueryMemoryLimit():
         self.conn = self.env.getConnection()
 
     def stress_server(self, queries):
-        qs = []
-        connections = []
-        should_fails = []
+        qs                 = []
+        connections        = []
+        should_fails       = []
         shared_connections = []
-        thread_count = self.conn.execute_command("GRAPH.CONFIG", "GET", "THREAD_COUNT")[1]
+        thread_count = self.db.config_get("THREAD_COUNT")
         pool = Pool(nodes=thread_count)
 
         # init shared connections
@@ -67,46 +66,44 @@ class testQueryMemoryLimit():
 
     def test_01_read_memory_limit_config(self):
         # read configuration, test default value, expecting unlimited memory cap
-        result = self.conn.execute_command("GRAPH.CONFIG", "GET", "QUERY_MEM_CAPACITY")
-        query_mem_capacity = result[1]
+        query_mem_capacity = self.db.config_get("QUERY_MEM_CAPACITY")
         self.env.assertEquals(query_mem_capacity, 0)
 
         # update configuration, set memory limit to 1MB
         MB = 1024*1024
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "QUERY_MEM_CAPACITY", MB)
+        self.db.config_set("QUERY_MEM_CAPACITY", MB)
 
         # re-read configuration
-        result = self.conn.execute_command("GRAPH.CONFIG", "GET", "QUERY_MEM_CAPACITY")
-        query_mem_capacity = result[1]
+        query_mem_capacity = self.db.config_get("QUERY_MEM_CAPACITY")
         self.env.assertEquals(query_mem_capacity, MB)
 
     def test_02_overflow_no_limit(self):
         # execute query on each one of the threads
-        n_queries_to_execute = self.conn.execute_command("GRAPH.CONFIG", "GET", "THREAD_COUNT")[1]
+        n_queries_to_execute = self.db.config_get("THREAD_COUNT")
 
         # set query memory limit as UNLIMITED
         limit = 0
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "QUERY_MEM_CAPACITY", limit) 
+        self.db.config_set("QUERY_MEM_CAPACITY", limit) 
 
         self.stress_server([(MEM_HOG_QUERY, False)] * n_queries_to_execute)
 
     def test_03_no_overflow_with_limit(self):
         # execute query on each one of the threads
-        n_queries_to_execute = self.conn.execute_command("GRAPH.CONFIG", "GET", "THREAD_COUNT")[1]
+        n_queries_to_execute = self.db.config_get("THREAD_COUNT")
 
         # set query memory limit to 1GB
         limit = 1024*1024*1024
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "QUERY_MEM_CAPACITY", limit) 
+        self.db.config_set("QUERY_MEM_CAPACITY", limit) 
 
         self.stress_server([(MEM_HOG_QUERY, False)] * n_queries_to_execute)
 
     def test_04_overflow_with_limit(self):
         # execute query on each one of the threads
-        n_queries_to_execute = self.conn.execute_command("GRAPH.CONFIG", "GET", "THREAD_COUNT")[1]
+        n_queries_to_execute = self.db.config_get("THREAD_COUNT")
 
         # set query memory limit to 1MB
         limit = 1024*1024
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "QUERY_MEM_CAPACITY", limit)
+        self.db.config_set("QUERY_MEM_CAPACITY", limit)
 
         self.stress_server([(MEM_HOG_QUERY, True)] * n_queries_to_execute)
 
@@ -115,11 +112,11 @@ class testQueryMemoryLimit():
         total_query_count = 100
 
         # Query the threadpool_size
-        threadpool_size = self.conn.execute_command("GRAPH.CONFIG", "GET", "THREAD_COUNT")[1]
+        threadpool_size = self.db.config_get("THREAD_COUNT")
 
         # set query memory limit to 1MB
         limit = 1024*1024
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "QUERY_MEM_CAPACITY", limit)
+        self.db.config_set("QUERY_MEM_CAPACITY", limit)
 
         for i in range(total_query_count):
             should_fail = False

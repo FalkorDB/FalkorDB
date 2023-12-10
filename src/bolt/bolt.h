@@ -25,28 +25,32 @@ typedef enum bolt_value_type {
 } bolt_value_type;
 
 typedef enum bolt_structure_type {
-	BST_HELLO = 0x01,
-	BST_LOGON = 0x6A,
-	BST_LOGOFF = 0x6B,
-	BST_GOODBYE = 0x02,
-	BST_RESET = 0x0F,
-	BST_RUN = 0x10,
-	BST_DISCARD = 0x2F,
-	BST_PULL = 0x3F,
-	BST_BEGIN = 0x11,
-	BST_COMMIT = 0x12,
-	BST_ROLLBACK = 0x13,
-	BST_ROUTE = 0x66,
-	BST_SUCCESS = 0x70,
-	BST_IGNORED = 0x7E,
-	BST_FAILURE = 0x7F,
-	BST_RECORD = 0x71,
-	BST_NODE = 0x4E,
-	BST_RELATIONSHIP = 0x52,
-	BST_UNBOUND_RELATIONSHIP = 0x72,
-	BST_PATH = 0x50,
-	BST_POINT2D = 0x58
+	BST_HELLO = 0x01,                 // hello message from client
+	BST_GOODBYE = 0x02,               // goodbye message from client
+	BST_RESET = 0x0F,                 // reset message from client
+	BST_RUN = 0x10,                   // run query message from client
+	BST_BEGIN = 0x11,                 // begin transaction message from client
+	BST_COMMIT = 0x12,                // commit transaction message from client
+	BST_ROLLBACK = 0x13,              // rollback transaction message from client
+	BST_DISCARD = 0x2F,               // discard all message from client
+	BST_PULL = 0x3F,                  // pull records message from client
+	BST_NODE = 0x4E,                  // node value
+	BST_PATH = 0x50,                  // path value
+	BST_RELATIONSHIP = 0x52,          // relationship value
+	BST_POINT2D = 0x58,               // point2d value
+	BST_ROUTE = 0x66,                 // route message from client
+	BST_LOGON = 0x6A,                 // logon message from client
+	BST_LOGOFF = 0x6B,                // logoff message from client
+	BST_SUCCESS = 0x70,               // success message
+	BST_RECORD = 0x71,                // record message
+	BST_UNBOUND_RELATIONSHIP = 0x72,  // unbound relationship value
+	BST_IGNORED = 0x7E,               // ignored message
+	BST_FAILURE = 0x7F,               // failure message
 } bolt_structure_type;
+
+//------------------------------------------------------------------------------
+// Write functions
+//------------------------------------------------------------------------------
 
 // write null to client response buffer
 void bolt_reply_null
@@ -66,7 +70,7 @@ void bolt_reply_bool
 void bolt_reply_tiny_int
 (
 	bolt_client_t *client,  // client to write to
-	int8_t data            // tiny int value to write
+	int8_t data             // tiny int value to write
 );
 
 // write int8 value to client response buffer
@@ -149,6 +153,10 @@ void bolt_reply_structure
 	uint32_t size              // number of items to follow
 );
 
+//------------------------------------------------------------------------------
+// Read functions
+//------------------------------------------------------------------------------
+
 // read value type from buffer
 bolt_value_type bolt_read_type
 (
@@ -197,12 +205,19 @@ double bolt_read_float
 	buffer_index_t *data  // buffer to read from
 );
 
-// read string value from buffer
-// notice: the string is not null terminated
-buffer_index_t bolt_read_string
+// read string size from buffer
+void bolt_read_string_size
 (
 	buffer_index_t *data,  // buffer to read from
 	uint32_t *size         // string size
+);
+
+// read string value from buffer
+// notice: the string is not null terminated
+void bolt_read_string
+(
+	buffer_index_t *data,  // buffer to read from
+	char *str              // string buffer
 );
 
 // read list size from buffer

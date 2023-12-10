@@ -1,3 +1,4 @@
+
 [![Dockerhub](https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker)](https://hub.docker.com/r/falkordb/falkordb/)
 [![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/ErBEqN9E)
 [![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
@@ -46,42 +47,38 @@ To quickly try out FalkorDB, launch an instance using docker:
 docker run -p 6379:6379 -it --rm falkordb/falkordb:edge
 ```
 
-Once loaded you can interact with FalkorDB using redis-cli.
+Once loaded you can interact with FalkorDB using any of the supported [client libraries](#Client-libraries)
 
-Here we'll quickly create a small graph representing a subset of motorcycle riders and teams taking part in the MotoGP league,
-once created we'll start querying our data.
+Here we'll use [FalkorDB Python client](https://pypi.org/project/FalkorDB/) to create a small graph representing a subset of motorcycle riders and teams taking part in the MotoGP league, once created we'll start querying our data.
 
-### With `redis-cli`
+```python
+from falkordb import FalkorDB
 
-```sh
-$ redis-cli
-127.0.0.1:6379> GRAPH.QUERY MotoGP "CREATE (:Rider {name:'Valentino Rossi'})-[:rides]->(:Team {name:'Yamaha'}), (:Rider {name:'Dani Pedrosa'})-[:rides]->(:Team {name:'Honda'}), (:Rider {name:'Andrea Dovizioso'})-[:rides]->(:Team {name:'Ducati'})"
-1) 1) Labels added: 2
-   2) Nodes created: 6
-   3) Properties set: 6
-   4) Relationships created: 3
-   5) "Query internal execution time: 0.399000 milliseconds"
-```
+# Connect to FalkorDB
+db = FalkorDB(host='localhost', port=6379)
 
-Now that our MotoGP graph is created, we can start asking questions, for example:
-Who's riding for team Yamaha?
+# Create the 'MotoGP' graph
+g = db.select_graph('MotoGP')
+g.query("""CREATE (:Rider {name:'Valentino Rossi'})-[:rides]->(:Team {name:'Yamaha'}),
+                  (:Rider {name:'Dani Pedrosa'})-[:rides]->(:Team {name:'Honda'}),
+                  (:Rider {name:'Andrea Dovizioso'})-[:rides]->(:Team {name:'Ducati'})""")
 
-```sh
-127.0.0.1:6379> GRAPH.QUERY MotoGP "MATCH (r:Rider)-[:rides]->(t:Team) WHERE t.name = 'Yamaha' RETURN r.name, t.name"
-1) 1) "r.name"
-   2) "t.name"
-2) 1) 1) "Valentino Rossi"
-      2) "Yamaha"
-3) 1) "Query internal execution time: 0.625399 milliseconds"
-```
+# Query which riders represents Yamaha?
+res = g.query("""MATCH (r:Rider)-[:rides]->(t:Team)
+                 WHERE t.name = 'Yamaha'
+                 RETURN r.name""")
 
-How many riders represent team Ducati?
+for row in res.result_set:
+	print(row[0])
 
-```sh
-127.0.0.1:6379> GRAPH.QUERY MotoGP "MATCH (r:Rider)-[:rides]->(t:Team {name:'Ducati'}) RETURN count(r)"
-1) 1) "count(r)"
-2) 1) 1) (integer) 1
-3) 1) "Query internal execution time: 0.624435 milliseconds"
+# Prints: "Valentino Rossi"
+
+# Query how many riders represent team Ducati ?
+res = g.query("""MATCH (r:Rider)-[:rides]->(t:Team {name:'Ducati'})
+                 RETURN count(r)""")
+
+print(row[0])
+# Prints: 1
 ```
 
 ## Building
@@ -137,7 +134,7 @@ Alternatively, you can have Redis load FalkorDB using the following command line
 
 Lastly, you can also use the [`MODULE LOAD`](http://redis.io/commands/module-load) command. Note, however, that `MODULE LOAD` is a dangerous command and may be blocked/deprecated in the future due to security considerations.
 
-Once you've successfully loaded FalkorDB your Redis log should have lines similar to:
+Once you've successfully loaded FalkorDB your Redis log should see lines similar to:
 
 ```
 ...
@@ -174,13 +171,13 @@ Depending on your client of choice, the exact method for doing that may vary.
 #### Python example
 
 This code snippet shows how to use FalkorDB with raw Redis commands from Python via
-[redis-py](https://github.com/andymccurdy/redis-py):
+[redis-py](https://github.com/redis/redis-py):
 
 ```Python
 import redis
 
-r = redis.StrictRedis()
-reply = r.execute_command('GRAPH.QUERY', 'social', "CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
+r = redis.Redis(host='localhost', port=6379, db=0)
+reply = r.graph().query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
 ```
 
 ### Client libraries
@@ -190,10 +187,11 @@ Some languages have client libraries that provide support for FalkorDB's command
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [jedis][jedis-url] | Java | MIT | [Redis][redis-url] | ![Stars][jedis-stars] | [Maven][jedis-package]||
-| [redis-py][redis-py-url] | Python | MIT | [Redis][redis-url] | ![Stars][redis-py-stars] | [pypi][redis-py-package]||
-| [node-redis][node-redis-url] | Node.JS | MIT | [Redis][redis-url] | ![Stars][node-redis-stars] | [npm][node-redis-package]||
+| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
+| [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
+| [redgraph][redgraph-url]                                  | Ruby       | MIT     | [pzac][redgraph-author]                | [![redgraph-stars]][redgraph-url]                                 | [GitHub][redgraph-url] ||
 | [redisgraph-go][redisgraph-go-url]                        | Go         | BSD     | [Redis][redisgraph-go-author]          | [![redisgraph-go-stars]][redisgraph-go-url]                       | [GitHub][redisgraph-go-url]||
 | [rueidis][rueidis-url]                                    | Go         | Apache 2.0 | [Rueian][rueidis-author]          | [![rueidis-stars]][rueidis-url]                       | [GitHub][rueidis-url] ||
 | [ioredisgraph][ioredisgraph-url]                          | JavaScript | ISC     | [Jonah][ioredisgraph-author]                | [![ioredisgraph-stars]][ioredisgraph-url]                         | [GitHub][ioredisgraph-url] ||
@@ -208,10 +206,11 @@ Some languages have client libraries that provide support for FalkorDB's command
 | [RedisGraph.jl][RedisGraph.jl-url]                        | Julia      | MIT     | [xyxel][RedisGraph.jl-author]               | [![RedisGraph.jl-stars]][RedisGraph.jl-url]                       | [GitHub][RedisGraph.jl-url] ||
 
 [redis-url]: https://redis.com
+[falkordb-url]: https://www.falkordb.com
 
-[redis-py-url]: https://github.com/redis/redis-py
-[redis-py-stars]: https://img.shields.io/github/stars/redis/redis-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[redis-py-package]: https://pypi.python.org/pypi/redis
+[falkordb-py-url]: http://github.com/falkorDB/falkordb-py
+[falkordb-py-stars]: https://img.shields.io/github/stars/falkorDB/falkordb-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-py-package]: https://pypi.org/project/FalkorDB
 
 [jedis-url]: https://github.com/redis/jedis
 [jedis-stars]: https://img.shields.io/github/stars/redis/jedis.svg?style=social&amp;label=Star&amp;maxAge=2592000
@@ -221,14 +220,17 @@ Some languages have client libraries that provide support for FalkorDB's command
 [nredisstack-stars]: https://img.shields.io/github/stars/redis/nredisstack.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [nredisstack-package]: https://www.nuget.org/packages/nredisstack/
 
-[node-redis-url]: https://github.com/redis/node-redis
-[node-redis-stars]: https://img.shields.io/github/stars/redis/node-redis.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[node-redis-package]: https://www.npmjs.com/package/redis
-
+[node-falkordb-url]: https://github.com/falkordb/node-falkordb
+[node-falkordb-stars]: https://img.shields.io/github/stars/falkordb/node-falkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[node-falkordb-package]: https://www.npmjs.com/package/falkordb
 
 [redisgraph-rb-author]: https://redislabs.com
 [redisgraph-rb-url]: https://github.com/RedisGraph/redisgraph-rb
 [redisgraph-rb-stars]: https://img.shields.io/github/stars/RedisGraph/redisgraph-rb.svg?style=social&amp;label=Star&amp;maxAge=2592000
+
+[redgraph-author]: https://github.com/pzac
+[redgraph-url]: https://github.com/pzac/redgraph
+[redgraph-stars]: https://img.shields.io/github/stars/pzac/redgraph.svg?style=social&amp;label=Star&amp;maxAge=2592000
 
 [redisgraph-go-author]: https://redislabs.com
 [redisgraph-go-url]: https://github.com/RedisGraph/redisgraph-go

@@ -20,3 +20,9 @@ uint64_t ws_read_frame
 (
     buffer_index_t *buf  // the buffer to read from
 );
+
+// write a websocket frame header
+uint64_t ws_write_empty_header
+(
+    buffer_index_t *buf  // the buffer to write to
+);
