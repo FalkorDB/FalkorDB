@@ -828,10 +828,10 @@ void BoltApi_Unregister
 (
     void
 ) {
-	ASSERT(clients != NULL);
-
 	// quick return if bolt is disabled
 	if(!_bolt_enabled(NULL)) return;
+
+	ASSERT(clients != NULL);
 
 	raxIterator iter;
 	raxStart(&iter, clients);
