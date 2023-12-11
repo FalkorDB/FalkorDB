@@ -314,12 +314,13 @@ void buffer_write
 	buffer_index_add(buf, size);
 }
 
+// apply the mask to a single chunk in the buffer
 static void buffer_apply_mask_single
 (
-	buffer_index_t buf,
-	uint32_t masking_key,
-	uint32_t payload_len,
-	int *offset
+	buffer_index_t buf,    // buffer
+	uint32_t masking_key,  // masking key
+	uint32_t payload_len,  // payload length
+	int *offset            // in/out offset
 ) {
 	char *payload = buf.buf->chunks[buf.chunk] + buf.offset;
 	int local_offset = *offset;
