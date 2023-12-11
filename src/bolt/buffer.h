@@ -48,6 +48,12 @@ uint64_t buffer_index_diff
 	buffer_index_t *b   // index b
 );
 
+// the length of the buffer index
+uint64_t buffer_index_length
+(
+	buffer_index_t *index  // index
+);
+
 // initialize a new buffer
 void buffer_new
 (

@@ -525,7 +525,7 @@ void BoltRequestHandler
 
 	// if there is a message already in process or
 	// not enough data to read the message
-	if(client->processing || buffer_index_diff(&client->read_buf.write, &client->read_buf.read) <= 2) {
+	if(client->processing || buffer_index_length(&client->read_buf.read) <= 2) {
 		return;
 	}
 
@@ -540,12 +540,12 @@ void BoltRequestHandler
 	uint16_t size = ntohs(buffer_read_uint16(&current_read));
 	ASSERT(size > 0);
 	while(size > 0) {
-		if(buffer_index_diff(&client->read_buf.write, &current_read) < size) return;
+		if(buffer_index_length(&current_read) < size) return;
 		buffer_read(&current_read, &client->msg_buf.write, size);
 		size = ntohs(buffer_read_uint16(&current_read));
 	}
 	client->read_buf.read = current_read;
-	if(buffer_index_diff(&client->read_buf.read, &client->read_buf.write) == 0) {
+	if(buffer_index_length(&client->read_buf.read) == 0) {
 		buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
 		client->read_buf.write = client->read_buf.read;
 		client->ws_frame = client->read_buf.read;
@@ -620,9 +620,9 @@ void BoltReadHandler
 
 	// process interrupt message
 	buffer_index_t current_read = client->read_buf.read;
-	while(buffer_index_diff(&client->read_buf.write, &current_read) > 0) {
+	while(buffer_index_length(&current_read) > 0) {
 		uint16_t size = ntohs(buffer_read_uint16(&current_read));
-		if(buffer_index_diff(&client->read_buf.write, &current_read) < size) break;
+		if(buffer_index_length(&current_read) < size) break;
 		bolt_structure_type request_type = bolt_read_structure_type(&current_read);
 		if(request_type == BST_RESET) {
 			ASSERT(size == 2);
@@ -631,7 +631,7 @@ void BoltReadHandler
 			ASSERT(res == 0);
 			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
 			char *dst = src - size - 4;
-			size = buffer_index_diff(&client->read_buf.write, &current_read);
+			size = buffer_index_length(&current_read);
 			memmove(dst, src, size);
 			current_read.offset -= 6;
 			client->read_buf.write.offset -= 6;
@@ -639,7 +639,7 @@ void BoltReadHandler
 		} else {
 			size = ntohs(buffer_read_uint16(&current_read));
 			while(size > 0) {
-				if(buffer_index_diff(&client->read_buf.write, &current_read) < size) break;
+				if(buffer_index_length(&current_read) < size) break;
 				buffer_index_read(&current_read, NULL, size);
 				size = ntohs(buffer_read_uint16(&current_read));
 			}

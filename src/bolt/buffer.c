@@ -47,7 +47,7 @@ void buffer_index_read
 ) {
 	ASSERT(index != NULL);
 	// check if there is enough data to read
-	ASSERT(buffer_index_diff(&index->buf->write, index) >= size);
+	ASSERT(buffer_index_length(index) >= size);
 
 	buffer_index_t start = *index;
 	char *from = start.buf->chunks[start.chunk] + start.offset;
@@ -77,6 +77,16 @@ uint64_t buffer_index_diff
 	uint64_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
 	ASSERT(diff >= 0);
 	return diff;
+}
+
+// the length of the buffer index
+uint64_t buffer_index_length
+(
+	buffer_index_t *index  // index
+) {
+	ASSERT(index != NULL);
+
+	return buffer_index_diff(&index->buf->write, index);
 }
 
 // initialize a new buffer
@@ -150,7 +160,7 @@ void buffer_read
 	ASSERT(buf != NULL);
 	ASSERT(dst != NULL);
 	// check if there is enough data to read
-	ASSERT(buffer_index_diff(&buf->buf->write, buf) >= size);
+	ASSERT(buffer_index_length(buf) >= size);
 
 	char *src_ptr;
 	char *dst_ptr;
@@ -343,7 +353,7 @@ void buffer_apply_mask
 	uint32_t masking_key,  // masking key
 	uint64_t payload_len   // payload length
 ) {
-	ASSERT(buffer_index_diff(&buf.buf->write, &buf) >= payload_len);
+	ASSERT(buffer_index_length(&buf) >= payload_len);
 
 	buffer_index_t end = buf;
 	buffer_index_add(&end, payload_len);

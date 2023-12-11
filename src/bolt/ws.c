@@ -35,7 +35,7 @@ static bool parse_headers
 	ASSERT(request != NULL);
 	ASSERT(headers != NULL);
 
-	uint32_t size = buffer_index_diff(&request->buf->write, request);
+	uint32_t size = buffer_index_length(request);
 	char *data = rm_malloc(size + 1);
 	buffer_index_read(request, data, size);
 	data[size] = '\0';
