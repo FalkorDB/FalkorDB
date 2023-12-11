@@ -334,11 +334,11 @@ static void buffer_apply_mask_single
 ) {
 	char *payload = buf.buf->chunks[buf.chunk] + buf.offset;
 	int local_offset = *offset;
-	uint32_t double_mask[2] = {masking_key, masking_key};
-	uint32_t offset_mask = *(uint32_t *)((char *)double_mask + local_offset);
+	uint32_t double_mask[4] = {masking_key, masking_key, masking_key, masking_key};
+	uint64_t offset_mask = *(uint64_t *)((char *)double_mask + local_offset);
 	int i = 0;
-	for(; i + 4 <= payload_len; i+=4) {
-		*(uint32_t *)(payload + i) ^= offset_mask;
+	for(; i + 8 <= payload_len; i+=8) {
+		*(uint64_t *)(payload + i) ^= offset_mask;
 	}
 	for(; i < payload_len; i++) {
 		payload[i] ^= ((char*)double_mask)[local_offset++];

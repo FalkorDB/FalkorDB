@@ -41,8 +41,9 @@ static bool parse_headers
 	data[size] = '\0';
 	bool is_ws = false;
 	uint start_line = 0;
-	uint end_line = strchr(data, '\r') - data;
+	uint end_line;
 	while(start_line < size) {
+		end_line = strchr(data + start_line, '\r') - data;
 		if(strncmp(data + start_line, "GET ", 4) == 0) {
 			headers->request_uri = rm_strndup(data + start_line + 4, end_line - start_line - 4);
 		} else if(strncmp(data + start_line, "Host: ", 6) == 0) {
@@ -62,7 +63,6 @@ static bool parse_headers
 			headers->sec_ws_version = atoi(data + start_line + 23);
 		}
 		start_line = end_line + 2;
-		end_line = strchr(data + start_line, '\r') - data;
 	}
 	rm_free(data);
 	return is_ws;
