@@ -65,7 +65,7 @@ void buffer_index_read
 }
 
 // the length between two indexes
-uint16_t buffer_index_diff
+uint64_t buffer_index_diff
 (
 	buffer_index_t *a,  // index a
 	buffer_index_t *b   // index b
@@ -74,7 +74,7 @@ uint16_t buffer_index_diff
 	ASSERT(b != NULL);
 	ASSERT(a->buf == b->buf);
 
-	uint16_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
+	uint64_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
 	ASSERT(diff >= 0);
 	return diff;
 }
@@ -312,6 +312,45 @@ void buffer_write
 	char *ptr = buf->buf->chunks[buf->chunk] + buf->offset;
 	memcpy(ptr, data, size);
 	buffer_index_add(buf, size);
+}
+
+static void buffer_apply_mask_single
+(
+	buffer_index_t buf,
+	uint32_t masking_key,
+	uint32_t payload_len,
+	int *offset
+) {
+	char *payload = buf.buf->chunks[buf.chunk] + buf.offset;
+	int local_offset = *offset;
+	uint32_t double_mask[2] = {masking_key, masking_key};
+	uint32_t offset_mask = *(uint32_t *)((char *)double_mask + local_offset);
+	int i = 0;
+	for(; i + 4 <= payload_len; i+=4) {
+		*(uint32_t *)(payload + i) ^= offset_mask;
+	}
+	for(; i < payload_len; i++) {
+		payload[i] ^= ((char*)double_mask)[local_offset++];
+	}
+	*offset = local_offset % 4;
+}
+
+// apply the mask to the buffer
+void buffer_apply_mask
+(
+	buffer_index_t buf,    // buffer
+	uint32_t masking_key,  // masking key
+	uint64_t payload_len   // payload length
+) {
+	buffer_index_t end = buf;
+	buffer_index_add(&end, payload_len);
+	int offset = 0;
+	while(buf.chunk < end.chunk) {
+		buffer_apply_mask_single(buf, masking_key, BUFFER_CHUNK_SIZE - buf.offset, &offset);
+		buf.chunk++;
+		buf.offset = 0;
+	}
+	buffer_apply_mask_single(buf, masking_key, end.offset - buf.offset, &offset);
 }
 
 // free the buffer

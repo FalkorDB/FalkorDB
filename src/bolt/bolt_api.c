@@ -74,7 +74,7 @@ static bool is_authenticated
 	}
 
 	uint32_t len;
-	char s[10];
+	char s[64];
 	bolt_read_string_size(&client->msg_buf.read, &len);
 	bolt_read_string(&client->msg_buf.read, s);
 	// check if the first key is scheme

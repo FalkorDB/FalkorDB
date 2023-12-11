@@ -42,7 +42,7 @@ void buffer_index_read
 );
 
 // the length between two indexes
-uint16_t buffer_index_diff
+uint64_t buffer_index_diff
 (
 	buffer_index_t *a,  // index a
 	buffer_index_t *b   // index b
@@ -135,6 +135,14 @@ void buffer_write
 	buffer_index_t *buf,  // buffer
 	const char *data,     // data
 	uint32_t size         // size
+);
+
+// apply the mask to the buffer
+void buffer_apply_mask
+(
+	buffer_index_t buf,    // buffer
+	uint32_t masking_key,  // masking key
+	uint64_t payload_len   // payload length
 );
 
 // free the buffer
