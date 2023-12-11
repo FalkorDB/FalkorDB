@@ -8,10 +8,10 @@
 #include "../util/arr.h"
 
 // set buffer index to offset
-void buffer_index
+void buffer_index_set
 (
-	buffer_t *buf,          // buffer
 	buffer_index_t *index,  // index
+	buffer_t *buf,          // buffer
 	uint32_t offset         // offset
 ) {
 	ASSERT(buf != NULL);
@@ -88,8 +88,8 @@ void buffer_new
 
 	buf->chunks = array_new(char *, 0);
 	array_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
-	buffer_index(buf, &buf->read, 0);
-	buffer_index(buf, &buf->write, 0);
+	buffer_index_set(&buf->read, buf, 0);
+	buffer_index_set(&buf->write, buf, 0);
 }
 
 // read a uint8_t from the buffer

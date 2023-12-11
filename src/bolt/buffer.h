@@ -26,10 +26,10 @@ struct buffer_t {
 };
 
 // set buffer index to offset
-void buffer_index
+void buffer_index_set
 (
-	buffer_t *buf,          // buffer
 	buffer_index_t *index,  // index
+	buffer_t *buf,          // buffer
 	uint32_t offset         // offset
 );
 

@@ -530,8 +530,8 @@ void BoltRequestHandler
 	}
 
 	// read chunked message
-	buffer_index(&client->msg_buf, &client->msg_buf.read, 0);
-	buffer_index(&client->msg_buf, &client->msg_buf.write, 0);
+	buffer_index_set(&client->msg_buf.read, &client->msg_buf, 0);
+	buffer_index_set(&client->msg_buf.write, &client->msg_buf, 0);
 	buffer_index_t current_read = client->read_buf.read;
 	if(client->ws && buffer_index_diff(&client->ws_frame, &current_read) == 0) {
 		ws_read_frame(&current_read);
@@ -546,7 +546,7 @@ void BoltRequestHandler
 	}
 	client->read_buf.read = current_read;
 	if(buffer_index_diff(&client->read_buf.read, &client->read_buf.write) == 0) {
-		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
 		client->read_buf.write = client->read_buf.read;
 		client->ws_frame = client->read_buf.read;
 	}
@@ -675,9 +675,9 @@ void BoltHandshakeHandler
 
 	if(!bolt_check_handshake(client)) {
 		buffer_index_t write;
-		buffer_index(&client->write_buf, &write, 0);
+		buffer_index_set(&write, &client->write_buf, 0);
 		buffer_index_t start = write;
-		buffer_index(&client->read_buf, &client->read_buf.read, 0);
+		buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
 		if(!ws_handshake(&client->read_buf.read, &write)) {
 			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
@@ -686,16 +686,16 @@ void BoltHandshakeHandler
 		}
 		buffer_socket_write(&start, &write, client->socket);
 		client->ws = true;
-		buffer_index(&client->write_buf, &client->write_buf.write, 0);
-		buffer_index(&client->read_buf, &client->read_buf.read, 0);
-		buffer_index(&client->read_buf, &client->read_buf.write, 0);
+		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
+		buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
+		buffer_index_set(&client->read_buf.write, &client->read_buf, 0);
 		return;
 	}
 
 	bolt_version_t version = bolt_read_supported_version(client);
 
 	buffer_index_t write;
-	buffer_index(&client->write_buf, &write, 0);
+	buffer_index_set(&write, &client->write_buf, 0);
 	buffer_index_t start = write;
 	if(client->ws) {
 		buffer_write_uint16(&write, htons(0x8204));
@@ -704,8 +704,8 @@ void BoltHandshakeHandler
 	buffer_write_uint8(&write, version.minor);
 	buffer_write_uint8(&write, version.major);
 	buffer_socket_write(&start, &write, client->socket);
-	buffer_index(&client->read_buf, &client->read_buf.read, 0);
-	buffer_index(&client->read_buf, &client->read_buf.write, 0);
+	buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
+	buffer_index_set(&client->read_buf.write, &client->read_buf, 0);
 
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);

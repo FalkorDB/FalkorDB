@@ -12,7 +12,7 @@ from behave.__main__ import main as behave_main
 
 
 def test_tck():
-    env = Env(decodeResponses=True)
+    env = Env(decodeResponses=True, moduleArgs=f"BOLT_PORT 7687")
     cmd = ["./features/", '--tags=-crash', '--tags=-skip', "--no-capture"]
     #  cmd = ["./features/", '--tags=-crash'] # Run all tests except crashing tests
     if 'TCK_PROTOCOL' in os.environ and os.environ['TCK_PROTOCOL'] == 'BOLT':

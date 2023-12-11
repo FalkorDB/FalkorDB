@@ -35,7 +35,7 @@ bolt_client_t *bolt_client_new
 	buffer_new(&client->msg_buf);
 	buffer_new(&client->read_buf);
 	buffer_new(&client->write_buf);
-	buffer_index(&client->read_buf, &client->ws_frame, 0);
+	buffer_index_set(&client->ws_frame, &client->read_buf, 0);
 	return client;
 }
 
@@ -604,7 +604,7 @@ void bolt_client_send
 
 	if(client->reset) {
 		array_clear(client->write_messages);
-		buffer_index(&client->write_buf, &client->write_buf.write, 0);
+		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 		array_append(client->write_messages, (bolt_message_t){0});
 		bolt_message_t *msg = client->write_messages;
 		msg->bolt_header = client->write_buf.write;
@@ -625,7 +625,7 @@ void bolt_client_send
 		bolt_client_end_message(client);
 		buffer_socket_write(&msg->bolt_header, &msg->end, client->socket);
 
-		buffer_index(&client->write_buf, &client->write_buf.write, 0);
+		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 		msg->bolt_header = client->write_buf.write;
 		buffer_write_uint16(&client->write_buf.write, 0x0000);
 		msg->start = client->write_buf.write;
@@ -653,7 +653,7 @@ void bolt_client_send
 	}
 
 	array_clear(client->write_messages);
-	buffer_index(&client->write_buf, &client->write_buf.write, 0);
+	buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 }
 
 // validate bolt handshake
