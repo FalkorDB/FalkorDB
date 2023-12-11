@@ -104,12 +104,12 @@ static void free_headers
 ) {
 	ASSERT(headers != NULL);
 
-	rm_free(headers->request_uri);
 	rm_free(headers->host);
+	rm_free(headers->origin);
 	rm_free(headers->upgrade);
 	rm_free(headers->connection);
 	rm_free(headers->sec_ws_key);
-	rm_free(headers->origin);
+	rm_free(headers->request_uri);
 	rm_free(headers->sec_ws_protocol);
 }
 

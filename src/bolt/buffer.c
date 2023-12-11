@@ -343,6 +343,8 @@ void buffer_apply_mask
 	uint32_t masking_key,  // masking key
 	uint64_t payload_len   // payload length
 ) {
+	ASSERT(buffer_index_diff(&buf.buf->write, &buf) >= payload_len);
+
 	buffer_index_t end = buf;
 	buffer_index_add(&end, payload_len);
 	int offset = 0;
