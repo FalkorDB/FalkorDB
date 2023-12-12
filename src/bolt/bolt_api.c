@@ -696,6 +696,12 @@ void BoltHandshakeHandler
 	}
 
 	bolt_version_t version = bolt_read_supported_version(client);
+	if(version.major != 5 || version.minor < 1) {
+		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
+		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+		bolt_client_free(client);
+		return;
+	}
 
 	buffer_index_t write;
 	buffer_index_set(&write, &client->write_buf, 0);
