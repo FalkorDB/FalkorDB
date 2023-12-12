@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "ws.h"
 #include "endian.h"
+#include "rax/rax.h"
 #include "util/rmalloc.h"
 #include <string.h>
 #include <openssl/bio.h>
@@ -14,103 +15,73 @@
 
 #define WS_GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-typedef struct ws_upgrade_request {
-	char *request_uri;
-	char *host;
-	char *upgrade;
-	char *connection;
-	char *sec_ws_key;
-	char *origin;
-	char *sec_ws_protocol;
-	int sec_ws_version;
-} ws_upgrade_request_t;
-
 // parse the headers of a websocket handshake
 // return true if the request is a websocket handshake
 static bool parse_headers
 (
-	buffer_index_t *request,       // the request buffer
-	ws_upgrade_request_t *headers  // the headers value
+	buffer_index_t *request, // the request buffer
+	rax *headers             // the headers value
 ) {
 	ASSERT(request != NULL);
 	ASSERT(headers != NULL);
 
 	uint32_t size = buffer_index_length(request);
-	char *data = rm_malloc(size + 1);
-	buffer_index_read(request, data, size);
-	data[size] = '\0';
-	bool is_ws = false;
-	uint start_line = 0;
-	uint end_line;
-	while(start_line < size) {
-		end_line = strchr(data + start_line, '\r') - data;
-		if(strncmp(data + start_line, "GET ", 4) == 0) {
-			headers->request_uri = rm_strndup(data + start_line + 4, end_line - start_line - 4);
-		} else if(strncmp(data + start_line, "Host: ", 6) == 0) {
-			headers->host = rm_strndup(data + start_line + 6, end_line - start_line - 6);
-		} else if(strncmp(data + start_line, "Upgrade: ", 9) == 0) {
-			headers->upgrade = rm_strndup(data + start_line + 9, end_line - start_line - 9);
-		} else if(strncmp(data + start_line, "Connection: ", 12) == 0) {
-			headers->connection = rm_strndup(data + start_line + 12, end_line - start_line - 12);
-		} else if(strncmp(data + start_line, "Sec-WebSocket-Key: ", 19) == 0) {
-			headers->sec_ws_key = rm_strndup(data + start_line + 19, end_line - start_line - 19);
-			is_ws = true;
-		} else if(strncmp(data + start_line, "Origin: ", 8) == 0) {
-			headers->origin = rm_strndup(data + start_line + 8, end_line - start_line - 8);
-		} else if(strncmp(data + start_line, "Sec-WebSocket-Protocol: ", 24) == 0) {
-			headers->sec_ws_protocol = rm_strndup(data + start_line + 24, end_line - start_line - 24);
-		} else if(strncmp(data + start_line, "Sec-WebSocket-Version: ", 23) == 0) {
-			headers->sec_ws_version = atoi(data + start_line + 23);
+	if(size < 18) {
+		return false;
+	}
+	char request_line[16];
+	buffer_index_read(request, request_line, 16);
+	if(strncmp(request_line, "GET / HTTP/1.1\r\n", 16) != 0) {
+		return false;
+	}
+	while(buffer_index_length(request) > 0) {
+		char *field = buffer_index_read_until(request, ':');
+		if(field == NULL) {
+			break;
 		}
-		start_line = end_line + 2;
-	}
-	rm_free(data);
-	return is_ws;
-}
-
-static bool validate_headers
-(
-	ws_upgrade_request_t *headers  // the headers value
-) {
-	ASSERT(headers != NULL);
-
-	if(headers->request_uri == NULL || strcmp(headers->request_uri, "/ HTTP/1.1") != 0) {
-		return false;
-	}
-	if(headers->host == NULL) {
-		return false;
-	}
-	if(headers->upgrade == NULL || strcmp(headers->upgrade, "websocket") != 0) {
-		return false;
-	}
-	if(headers->connection == NULL || strcmp(headers->connection, "keep-alive, Upgrade") != 0) {
-		return false;
-	}
-	if(headers->sec_ws_key == NULL) {
-		return false;
-	}
-	if(headers->origin == NULL) {
-		return false;
-	}
-	if(headers->sec_ws_version != 13) {
-		return false;
+		buffer_index_read(request, NULL, 2);
+		char *value = buffer_index_read_until(request, '\r');
+		if(value == NULL) {
+			break;
+		}
+		buffer_index_read(request, NULL, 2);
+		raxInsert(headers, (unsigned char *)field, strlen(field), (void *)rm_strdup(value), NULL);
+		rm_free(field);
 	}
 	return true;
 }
 
-static void free_headers
+static bool validate_headers
 (
-	ws_upgrade_request_t *headers  // the headers value
+	rax *headers  // the headers value
 ) {
 	ASSERT(headers != NULL);
 
-	rm_free(headers->host);
-	rm_free(headers->origin);
-	rm_free(headers->upgrade);
-	rm_free(headers->connection);
-	rm_free(headers->sec_ws_key);
-	rm_free(headers->request_uri);
-	rm_free(headers->sec_ws_protocol);
+	void *v = raxFind(headers, "Host", 4);
+	if(v == raxNotFound) {
+		return false;
+	}
+	v = raxFind(headers, "Upgrade", 7);
+	if(v == raxNotFound || strcmp((char *)v, "websocket") != 0) {
+		return false;
+	}
+	v = raxFind(headers, "Connection", 10);
+	if(v == raxNotFound || strcmp((char *)v, "keep-alive, Upgrade") != 0) {
+		return false;
+	}
+	v = raxFind(headers, "Sec-WebSocket-Key", 17);
+	if(v == raxNotFound) {
+		return false;
+	}
+	v = raxFind(headers, "Sec-WebSocket-Version", 21);
+	if(v == raxNotFound || strcmp((char *)v, "13") != 0) {
+		return false;
+	}
+	v = raxFind(headers, "Origin", 6);
+	if(v == raxNotFound) {
+		return false;
+	}
+	return true;
 }
 
 // check if the request is a websocket handshake
@@ -123,8 +94,8 @@ bool ws_handshake
 	ASSERT(request != NULL);
 	ASSERT(response != NULL);
 
-	ws_upgrade_request_t headers = {0};
-	if(!parse_headers(request, &headers) || !validate_headers(&headers)) {
+	rax *headers = raxNew();
+	if(!parse_headers(request, headers) || !validate_headers(headers)) {
 		return false;
 	}
 
@@ -132,7 +103,8 @@ bool ws_handshake
 	unsigned char hash[SHA_DIGEST_LENGTH];
 	EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 	EVP_DigestInit_ex(mdctx, EVP_sha1(), NULL);
-	EVP_DigestUpdate(mdctx, headers.sec_ws_key, strlen(headers.sec_ws_key));
+	char *sec_ws_key = raxFind(headers, "Sec-WebSocket-Key", 17);
+	EVP_DigestUpdate(mdctx, sec_ws_key, strlen(sec_ws_key));
 	EVP_DigestUpdate(mdctx, WS_GUID, strlen(WS_GUID));
 	EVP_DigestFinal_ex(mdctx, hash, NULL);
 	EVP_MD_CTX_free(mdctx);
@@ -157,7 +129,7 @@ bool ws_handshake
 	buffer_write(response, encoded, len);
 	buffer_write(response, "\r\n\r\n", 4);
 	BIO_free_all(b64);
-	free_headers(&headers);
+	raxFreeWithCallback(headers, rm_free);
 	return true;
 }
 

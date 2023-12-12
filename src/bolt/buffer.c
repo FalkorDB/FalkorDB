@@ -89,6 +89,42 @@ uint64_t buffer_index_length
 	return buffer_index_diff(&index->buf->write, index);
 }
 
+// read until a delimiter
+char *buffer_index_read_until
+(
+	buffer_index_t *index,  // index
+	char delimiter          // delimiter
+) {
+	ASSERT(index != NULL);
+
+	char *res = NULL;
+	buffer_index_t start = *index;
+	char *from = index->buf->chunks[index->chunk] + index->offset;
+	uint32_t size = 0;
+	while(index->chunk < index->buf->write.chunk) {
+		char *p = memchr(from, delimiter, BUFFER_CHUNK_SIZE - index->offset);
+		if(p != NULL) {
+			size += p - from;
+			res = rm_malloc(size + 1);
+			buffer_index_read(index, res, size);
+			res[size] = '\0';
+			return res;
+		}
+		size += BUFFER_CHUNK_SIZE - index->offset;
+		index->chunk++;
+		index->offset = 0;
+		from = index->buf->chunks[start.chunk];
+	}
+	char *p = memchr(from, delimiter, index->buf->write.offset - index->offset);
+	if(p != NULL) {
+		size += p - from;
+		res = rm_malloc(size + 1);
+		buffer_index_read(index, res, size);
+		res[size] = '\0';
+	}
+	return res;
+}
+
 // initialize a new buffer
 void buffer_new
 (

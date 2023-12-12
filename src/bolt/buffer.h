@@ -54,6 +54,13 @@ uint64_t buffer_index_length
 	buffer_index_t *index  // index
 );
 
+// read until a delimiter
+char *buffer_index_read_until
+(
+	buffer_index_t *index,  // index
+	char delimiter          // delimiter
+);
+
 // initialize a new buffer
 void buffer_new
 (
