@@ -66,7 +66,19 @@ static bool validate_headers
 		return false;
 	}
 	v = raxFind(headers, "Connection", 10);
-	if(v == raxNotFound || strcmp((char *)v, "keep-alive, Upgrade") != 0) {
+	if(v == raxNotFound) {
+		return false;
+	}
+	char *i = v;
+	bool is_upgrade = false;
+	while (strlen(i) > 0) {
+		if(strncmp(i, "Upgrade", 7) == 0) {
+			is_upgrade = true;
+			break;
+		}
+		i = strchr(i, ',') + 2;
+	}
+	if(!is_upgrade) {
 		return false;
 	}
 	v = raxFind(headers, "Sec-WebSocket-Key", 17);
