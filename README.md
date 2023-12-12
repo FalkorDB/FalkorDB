@@ -186,7 +186,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
-| [jedis][jedis-url] | Java | MIT | [Redis][redis-url] | ![Stars][jedis-stars] | [Maven][jedis-package]||
+| [jfalkordb][jfalkordb-url] | Java | MIT | [FalkorDB][falkordb-url] | ![Stars][jfalkordb-stars] | [Maven][jfalkordb-package]||
 | [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
 | [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
@@ -212,9 +212,9 @@ Some languages have client libraries that provide support for FalkorDB's command
 [falkordb-py-stars]: https://img.shields.io/github/stars/falkorDB/falkordb-py.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [falkordb-py-package]: https://pypi.org/project/FalkorDB
 
-[jedis-url]: https://github.com/redis/jedis
-[jedis-stars]: https://img.shields.io/github/stars/redis/jedis.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[Jedis-package]: https://search.maven.org/artifact/redis.clients/jedis
+[jfalkordb-url]: https://github.com/falkordb/jfalkordb
+[jfalkordb-stars]: https://img.shields.io/github/stars/falkordb/jfalkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[jfalkordb-package]: https://search.maven.org/artifact/com.falkordb/jfalkordb
 
 [nredisstack-url]: https://github.com/redis/nredisstack
 [nredisstack-stars]: https://img.shields.io/github/stars/redis/nredisstack.svg?style=social&amp;label=Star&amp;maxAge=2592000
