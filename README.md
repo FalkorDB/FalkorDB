@@ -186,7 +186,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
-| [jfalkordb][jfalkordb-url] | Java | MIT | [FalkorDB][falkordb-url] | ![Stars][jfalkordb-stars] | [Maven][jfalkordb-package]||
+| [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | ![Stars][jfalkordb-stars] | [Maven][jfalkordb-package]||
 | [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
 | [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
