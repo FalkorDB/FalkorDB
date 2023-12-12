@@ -71,7 +71,7 @@ static bool validate_headers
 	}
 	char *i = v;
 	bool is_upgrade = false;
-	while (strlen(i) > 0) {
+	while (i != NULL && strlen(i) > 0) {
 		if(strncmp(i, "Upgrade", 7) == 0) {
 			is_upgrade = true;
 			break;
