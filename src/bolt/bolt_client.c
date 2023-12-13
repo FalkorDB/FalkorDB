@@ -663,22 +663,28 @@ bool bolt_check_handshake
 ) {
 	ASSERT(client != NULL);
 
-	return ntohl(buffer_read_uint32(&client->read_buf.read)) == 0x6060B017;
+	uint32_t magic;
+	if(!buffer_read_uint32(&client->read_buf.read, &magic)) {
+		return false;
+	}
+	return ntohl(magic) == 0x6060B017;
 }
 
 // return the latest supported bolt version
-bolt_version_t bolt_read_supported_version
+bool bolt_read_supported_version
 (
-	bolt_client_t *client  // the client
+	bolt_client_t *client,   // the client
+	bolt_version_t *version  // the version
 ) {
 	ASSERT(client != NULL);
 
 	char data[16];
-	buffer_index_read(&client->read_buf.read, data, 16);
-	bolt_version_t version;
-	version.minor = data[2];
-	version.major = data[3];
-	return version;
+	if(!buffer_index_read(&client->read_buf.read, data, 16)) {
+		return false;
+	}
+	version->minor = data[2];
+	version->major = data[3];
+	return true;
 }
 
 // free the bolt client

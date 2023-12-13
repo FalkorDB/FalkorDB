@@ -94,9 +94,10 @@ bool bolt_check_handshake
 );
 
 // return the latest supported bolt version
-bolt_version_t bolt_read_supported_version
+bool bolt_read_supported_version
 (
-	bolt_client_t *client  // the client
+	bolt_client_t *client,   // the client
+	bolt_version_t *version  // the version
 );
 
 // free the bolt client

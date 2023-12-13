@@ -41,29 +41,32 @@ void buffer_index_advance
 }
 
 // copy the data and increment the index
-void buffer_index_read
+bool buffer_index_read
 (
 	buffer_index_t *index,  // index
 	char *ptr,              // pointer
 	uint32_t size           // size
 ) {
 	ASSERT(index != NULL);
+	ASSERT(ptr != NULL);
 	// check if there is enough data to read
-	ASSERT(buffer_index_length(index) >= size);
+	if(buffer_index_length(index) < size) {
+		ASSERT(false);
+		return false;
+	}
 
 	buffer_index_t start = *index;
 	char *from = start.buf->chunks[start.chunk] + start.offset;
 	buffer_index_advance(index, size);
-	if(ptr != NULL) {
-		while (start.chunk < index->chunk) {
-			memcpy(ptr, from, BUFFER_CHUNK_SIZE - start.offset);
-			ptr += BUFFER_CHUNK_SIZE - start.offset;
-			start.chunk++;
-			start.offset = 0;
-			from = index->buf->chunks[start.chunk];
-		}
-		memcpy(ptr, from, index->offset - start.offset);
+	while (start.chunk < index->chunk) {
+		memcpy(ptr, from, BUFFER_CHUNK_SIZE - start.offset);
+		ptr += BUFFER_CHUNK_SIZE - start.offset;
+		start.chunk++;
+		start.offset = 0;
+		from = index->buf->chunks[start.chunk];
 	}
+	memcpy(ptr, from, index->offset - start.offset);
+	return true;
 }
 
 // the length between two indexes
@@ -92,12 +95,14 @@ uint64_t buffer_index_length
 }
 
 // read until a delimiter
-char *buffer_index_read_until
+bool buffer_index_read_until
 (
 	buffer_index_t *index,  // index
-	char delimiter          // delimiter
+	char delimiter,         // delimiter
+	char **ptr              // pointer
 ) {
 	ASSERT(index != NULL);
+	ASSERT(ptr != NULL && *ptr == NULL);
 
 	char *res = NULL;
 	char *from = index->buf->chunks[index->chunk] + index->offset;
@@ -107,9 +112,13 @@ char *buffer_index_read_until
 		if(p != NULL) {
 			size += p - from;
 			res = rm_malloc(size + 1);
-			buffer_index_read(index, res, size);
+			if(!buffer_index_read(index, res, size)) {
+				rm_free(res);
+				return false;
+			}
 			res[size] = '\0';
-			return res;
+			*ptr = res;
+			return true;
 		}
 		size += BUFFER_CHUNK_SIZE - index->offset;
 		index->chunk++;
@@ -120,10 +129,15 @@ char *buffer_index_read_until
 	if(p != NULL) {
 		size += p - from;
 		res = rm_malloc(size + 1);
-		buffer_index_read(index, res, size);
+		if(!buffer_index_read(index, res, size)) {
+			rm_free(res);
+			return false;
+		}
 		res[size] = '\0';
+		*ptr = res;
+		return true;
 	}
-	return res;
+	return false;
 }
 
 // initialize a new buffer
@@ -140,51 +154,47 @@ void buffer_new
 }
 
 // read a uint8_t from the buffer
-uint8_t buffer_read_uint8
+bool buffer_read_uint8
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint8_t *value        // value
 ) {
 	ASSERT(buf != NULL);
 
-	uint8_t res;
-	buffer_index_read(buf, (char *)&res, 1);
-	return res;
+	return buffer_index_read(buf, (char *)value, 1);
 }
 
 // read a uint16_t from the buffer
-uint16_t buffer_read_uint16
+bool buffer_read_uint16
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint16_t *value       // value
 ) {
 	ASSERT(buf != NULL);
 
-	uint16_t res;
-	buffer_index_read(buf, (char *)&res, 2);
-	return res;
+	return buffer_index_read(buf, (char *)value, 2);
 }
 
 // read a uint32_t from the buffer
-uint32_t buffer_read_uint32
+bool buffer_read_uint32
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint32_t *value       // value
 ) {
 	ASSERT(buf != NULL);
 
-	uint32_t res;
-	buffer_index_read(buf, (char *)&res, 4);
-	return res;
+	return buffer_index_read(buf, (char *)value, 4);
 }
 
 // read a uint64_t from the buffer
-uint64_t buffer_read_uint64
+bool buffer_read_uint64
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint64_t *value       // value
 ) {
 	ASSERT(buf != NULL);
 
-	uint64_t res;
-	buffer_index_read(buf, (char *)&res, 8);
-	return res;
+	return buffer_index_read(buf, (char *)value, 8);
 }
 
 // copy data from the buffer to the destination

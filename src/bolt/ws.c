@@ -25,23 +25,21 @@ static bool parse_headers
 	ASSERT(request != NULL);
 	ASSERT(headers != NULL);
 
-	uint32_t size = buffer_index_length(request);
-	if(size < 18) {
+	char request_line[16];
+	if(!buffer_index_read(request, request_line, 16)) {
 		return false;
 	}
-	char request_line[16];
-	buffer_index_read(request, request_line, 16);
 	if(strncmp(request_line, "GET / HTTP/1.1\r\n", 16) != 0) {
 		return false;
 	}
 	while(buffer_index_length(request) > 2) {
-		char *field = buffer_index_read_until(request, ':');
-		if(field == NULL) {
+		char *field;
+		if(!buffer_index_read_until(request, ':', &field)) {
 			return false;
 		}
 		buffer_index_advance(request, 2);
-		char *value = buffer_index_read_until(request, '\r');
-		if(value == NULL) {
+		char *value;;
+		if(!buffer_index_read_until(request, '\r', &value)) {
 			rm_free(field);
 			return false;
 		}
@@ -149,9 +147,10 @@ bool ws_handshake
 }
 
 // read a websocket frame header returning the payload length
-uint64_t ws_read_frame
+bool ws_read_frame
 (
-	buffer_index_t *buf  // the buffer to read from
+	buffer_index_t *buf,   // the buffer to read from
+	uint64_t *payload_len  // the payload length
 ) {
 	ASSERT(buf != NULL);
 
@@ -175,25 +174,41 @@ uint64_t ws_read_frame
 	//  |                     Payload Data continued ...                |
 	//  +---------------------------------------------------------------+
 
-	uint16_t frame_header = ntohs(buffer_read_uint16(buf));
+	uint16_t frame_header;
+	if(!buffer_read_uint16(buf, &frame_header)) {
+		return false;
+	}
+	frame_header = ntohs(frame_header);
 	bool fin = frame_header >> 15;
 	ASSERT(fin && "Fragmented frames are not supported");
 	uint8_t rsv123 = (frame_header >> 12) & 0x07;
 	ASSERT(rsv123 == 0 && "Reserved bits are not supported");
 	uint8_t opcode = (frame_header >> 8) & 0x0F;
 	ASSERT(opcode == 0x02 || opcode == 0x08 && "Only binary frames are supported");
-	uint64_t payload_len = frame_header & 0x7F;
-	if(payload_len == 126) {
-		payload_len = ntohs(buffer_read_uint16(buf));
-	} else if(payload_len == 127) {
-		payload_len = ntohll(buffer_read_uint64(buf));
+	if(frame_header & 0x7F == 126) {
+		uint16_t _payload_len;
+		if(!buffer_read_uint16(buf, &_payload_len)) {
+			return false;
+		}
+		_payload_len = ntohs(_payload_len);
+	} else if(frame_header & 0x7F == 127) {
+		uint64_t _payload_len;
+		if(!buffer_read_uint64(buf, &_payload_len)) {
+			return false;
+		}
+		_payload_len = ntohll(_payload_len);
+	} else {
+		*payload_len = frame_header & 0x7F;
 	}
 	bool mask = (frame_header >> 7) & 0x1;
 	if(mask) {
-		uint32_t masking_key = buffer_read_uint32(buf);
-		buffer_apply_mask(*buf, masking_key, payload_len);
+		uint32_t masking_key;
+		if(!buffer_read_uint32(buf, &masking_key)) {
+			return false;
+		}
+		buffer_apply_mask(*buf, masking_key, *payload_len);
 	}
-	return payload_len;
+	return true;
 }
 
 // write an empty websocket frame header

@@ -264,89 +264,122 @@ void bolt_reply_structure
 //------------------------------------------------------------------------------
 
 // read value type from buffer
-bolt_value_type bolt_read_type
+bool bolt_read_type
 (
-	buffer_index_t data  // buffer to read from
+	buffer_index_t data,   // buffer to read from
+	bolt_value_type *type  // value type
 ) {
-	uint8_t marker = buffer_read_uint8(&data);
+	ASSERT(type != NULL);
+
+	uint8_t marker;
+	if(!buffer_read_uint8(&data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case NULL_MARKER:
-			return BVT_NULL;
+			*type = BVT_NULL;
+			return true;
 		case FLOAT_MARKER:
-			return BVT_FLOAT;
+			*type = BVT_FLOAT;
+			return true;
 		case TRUE_MARKER:
 		case FALSE_MARKER:
-			return BVT_BOOL;
+			*type = BVT_BOOL;
+			return true;
 		case INT8_MARKER:
-			return BVT_INT8;
+			*type = BVT_INT8;
+			return true;
 		case INT16_MARKER:
-			return BVT_INT16;
+			*type = BVT_INT16;
+			return true;
 		case INT32_MARKER:
-			return BVT_INT32;
+			*type = BVT_INT32;
+			return true;
 		case INT64_MARKER:
-			return BVT_INT64;
+			*type = BVT_INT64;
+			return true;
 		case BYTES8_MARKER:
 		case BYTES16_MARKER:
 		case BYTES32_MARKER:
-			return BVT_BYTES;
+			*type = BVT_BYTES;
+			return true;
 		case STRING8_MARKER:
 		case STRING16_MARKER:
 		case STRING32_MARKER:
-			return BVT_STRING;
+			*type = BVT_STRING;
+			return true;
 		case LIST8_MARKER:
 		case LIST16_MARKER:
 		case LIST32_MARKER:
-			return BVT_LIST;
+			*type = BVT_LIST;
+			return true;
 		case MAP8_MARKER:
 		case MAP16_MARKER:
 		case MAP32_MARKER:
-			return BVT_MAP;
+			*type = BVT_MAP;
+			return true;
 		default:
 			if(marker >= TINY_INT8_MIN || marker <= TINY_INT8_MAX) {
-				return BVT_INT8;
+				*type = BVT_INT8;
+				return true;
 			}
 			if(TINY_MARKER_CHECK(TINY_STRING_BASE_MARKER, marker)) {
-				return BVT_STRING;
+				*type = BVT_STRING;
+				return true;
 			}
 			if(TINY_MARKER_CHECK(TINY_LIST_BASE_MARKER, marker)) {
-				return BVT_LIST;
+				*type = BVT_LIST;
+				return true;
 			}
 			if(TINY_MARKER_CHECK(TINY_MAP_BASE_MARKER, marker)) {
-				return BVT_MAP;
+				*type = BVT_MAP;
+				return true;
 			}
 			if(TINY_MARKER_CHECK(STRUCTURE_BASE_MARKER, marker)) {
-				return BVT_STRUCTURE;
+				*type = BVT_STRUCTURE;
+				return true;
 			}
 			ASSERT(false);
-			return BVT_NULL;
+			return false;
 	}
 }
 
 // read null value from buffer
-void bolt_read_null
+bool bolt_read_null
 (
 	buffer_index_t *data  // buffer to read from
 ) {
 	ASSERT(data != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	ASSERT(marker == NULL_MARKER);
+	return marker == NULL_MARKER;
 }
 
 // read bool value from buffer
 bool bolt_read_bool
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	bool *value            // bool value
 ) {
 	ASSERT(data != NULL);
+	ASSERT(value != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case FALSE_MARKER:
-			return false;
+			*value = false;
+			return true;
 		case TRUE_MARKER:
+			*value = true;
 			return true;
 		default:
 			ASSERT(false);
@@ -355,140 +388,196 @@ bool bolt_read_bool
 }
 
 // read int8 value from buffer
-int8_t bolt_read_int8
+bool bolt_read_int8
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int8_t *value          // int8 value
 ) {
 	ASSERT(data != NULL);
+	ASSERT(value != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case INT8_MARKER:
-			return buffer_read_uint8(data);
+			return buffer_read_uint8(data, value);
 		default:
 			if(marker >= TINY_INT8_MIN || marker <= TINY_INT8_MAX) {
-				return marker;
+				*value = marker;
+				return true;
 			}
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read int16 value from buffer
-int16_t bolt_read_int16
+bool bolt_read_int16
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int16_t *value         // int16 value
 ) {
 	ASSERT(data != NULL);
+	ASSERT(value != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case INT16_MARKER:
-			return ntohs(buffer_read_uint16(data));
+			if(!buffer_read_uint16(data, value)) {
+				return false;
+			}
+			*value = ntohs(*value);
+			return true;
 		default:
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read int32 value from buffer
-int32_t bolt_read_int32
+bool bolt_read_int32
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int32_t *value         // int32 value
 ) {
 	ASSERT(data != NULL);
+	ASSERT(value != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case INT32_MARKER:
-			return ntohl(buffer_read_uint32(data));
+			if(!buffer_read_uint32(data, value)) {
+				return false;
+			}
+			*value = ntohl(*value);
+			return true;
 		default:
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read int64 value from buffer
-int64_t bolt_read_int64
+bool bolt_read_int64
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int64_t *value         // int64 value
 ) {
 	ASSERT(data != NULL);
+	ASSERT(value != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case INT64_MARKER:
-			return ntohll(buffer_read_uint64(data));
+			if(!buffer_read_uint64(data, value)) {
+				return false;
+			}
+			*value = ntohll(*value);
+			return true;
 		default:
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read float value from buffer
-double bolt_read_float
+bool bolt_read_float
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	double *value          // float value
 ) {
 	ASSERT(data != NULL);
+	ASSERT(value != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case FLOAT_MARKER: {
 			double d;
 			char *buf = (char *)&d;
 			for (int i = sizeof(double); i > 0; i--) {
-				buf[i - 1] = buffer_read_uint8(data);
+				if(!buffer_read_uint8(data, buf + i - 1)) {
+					return false;
+				}
 			}
-			return d;
+			*value = d;
+			return true;
 		}
 		default:
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read string size from buffer
-void _bolt_read_string_size
+bool _bolt_read_string_size
 (
 	buffer_index_t *data,  // buffer to read from
 	uint32_t *size         // string size
 ) {
 	ASSERT(data != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
 		case STRING8_MARKER: {
-			*size = buffer_read_uint8(data);
-			break;
+			uint8_t _size;
+			if(!buffer_read_uint8(data, &_size)) {
+				return false;
+			}
+			*size = _size;
+			return true;
 		}
 		case STRING16_MARKER: {
-			*size = ntohs(buffer_read_uint16(data));
-			break;
+			uint16_t _size;
+			if(!buffer_read_uint16(data, &_size)) {
+				return false;
+			}
+			*size = ntohs(_size);
+			return true;
 		}
 		case STRING32_MARKER: {
-			*size = ntohl(buffer_read_uint32(data));
-			break;
+			uint32_t _size;
+			if(!buffer_read_uint32(data, &_size)) {
+				return false;
+			}
+			*size = ntohl(_size);
+			return true;
 		}
 		default:
 			if(TINY_MARKER_CHECK(TINY_STRING_BASE_MARKER, marker)) {
 				*size = marker - TINY_STRING_BASE_MARKER;
-				break;
+				return true;
 			}
 			ASSERT(false);
 			*size = 0;
-			break;
+			return false;
 	}
 }
 
 // read string size from buffer
-void bolt_read_string_size
+bool bolt_read_string_size
 (
 	buffer_index_t *data,  // buffer to read from
 	uint32_t *size         // string size
@@ -496,103 +585,166 @@ void bolt_read_string_size
 	ASSERT(data != NULL);
 
 	buffer_index_t _data = *data;
-	_bolt_read_string_size(&_data, size);
+	return _bolt_read_string_size(&_data, size);
 }
 
 // read string value from buffer
 // notice: the string is not null terminated
-void bolt_read_string
+bool bolt_read_string
 (
 	buffer_index_t *data,  // buffer to read from
 	char *str              // string buffer
 ) {
 	ASSERT(data != NULL);
+	ASSERT(str != NULL);
 
 	uint32_t size;
-	_bolt_read_string_size(data, &size);
+	if(!_bolt_read_string_size(data, &size)) {
+		return false;
+	}
 
 	buffer_index_t start = *data;
-	buffer_index_read(data, str, size);
+	return buffer_index_read(data, str, size);
 }
 
 // read bytes size from buffer
-uint32_t bolt_read_list_size
+bool bolt_read_list_size
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // list size
 ) {
 	ASSERT(data != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
-		case LIST8_MARKER:
-			return buffer_read_uint8(data);
-		case LIST16_MARKER:
-			return ntohs(buffer_read_uint16(data));
-		case LIST32_MARKER:
-			return ntohl(buffer_read_uint32(data));
+		case LIST8_MARKER: {
+			uint8_t _size;
+			if(!buffer_read_uint8(data, &_size)) {
+				return false;
+			}
+			*size = _size;
+			return true;
+		}
+		case LIST16_MARKER: {
+			uint16_t _size;
+			if(!buffer_read_uint16(data, &_size)) {
+				return false;
+			}
+			*size = ntohs(_size);
+			return true;
+		}
+		case LIST32_MARKER: {
+			uint32_t _size;
+			if(!buffer_read_uint32(data, &_size)) {
+				return false;
+			}
+			*size = ntohl(_size);
+			return true;
+		}
 		default:
 			if(TINY_MARKER_CHECK(TINY_LIST_BASE_MARKER, marker)) {
-				return marker - TINY_LIST_BASE_MARKER;
+				*size = marker - TINY_LIST_BASE_MARKER;
+				return true;
 			}
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read map size from buffer
-uint32_t bolt_read_map_size
+bool bolt_read_map_size
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // map size
 ) {
 	ASSERT(data != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	switch (marker)
 	{
-		case MAP8_MARKER:
-			return buffer_read_uint8(data);
-		case MAP16_MARKER:
-			return ntohs(buffer_read_uint16(data));
-		case MAP32_MARKER:
-			return ntohs(buffer_read_uint32(data));
+		case MAP8_MARKER: {
+			uint8_t _size;
+			if(!buffer_read_uint8(data, &_size)) {
+				return false;
+			}
+			*size = _size;
+			return true;
+		}
+		case MAP16_MARKER: {
+			uint16_t _size;
+			if(!buffer_read_uint16(data, &_size)) {
+				return false;
+			}
+			*size = ntohs(_size);
+			return true;
+		}
+		case MAP32_MARKER: {
+			uint32_t _size;
+			if(!buffer_read_uint32(data, &_size)) {
+				return false;
+			}
+			*size = ntohl(_size);
+			return true;
+		}
 		default:
 			if(TINY_MARKER_CHECK(TINY_MAP_BASE_MARKER, marker)) {
-				return marker - TINY_MAP_BASE_MARKER;
+				*size = marker - TINY_MAP_BASE_MARKER;
+				return true;
 			}
 			ASSERT(false);
-			return 0;
+			return false;
 	}
 }
 
 // read structure type from buffer
-bolt_structure_type bolt_read_structure_type
+bool bolt_read_structure_type
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,      // buffer to read from
+	bolt_structure_type *type  // structure type
 ) {
 	ASSERT(data != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	if(TINY_MARKER_CHECK(STRUCTURE_BASE_MARKER, marker)) {
-		return buffer_read_uint8(data);
+		uint8_t _type;
+		if(!buffer_read_uint8(data, &_type)) {
+			return false;
+		}
+		*type = _type;
+		return true;
 	}
 
 	ASSERT(false);
-	return 0;
+	return false;
 }
 
 // read structure size from buffer
-uint32_t bolt_read_structure_size
+bool bolt_read_structure_size
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // structure size
 ) {
 	ASSERT(data != NULL);
 
-	uint8_t marker = buffer_read_uint8(data);
+	uint8_t marker;
+	if(!buffer_read_uint8(data, &marker)) {
+		return false;
+	}
 	if(TINY_MARKER_CHECK(STRUCTURE_BASE_MARKER, marker)) {
-		return marker - STRUCTURE_BASE_MARKER;
+		*size = marker - STRUCTURE_BASE_MARKER;
+		return true;
 	}
 
 	ASSERT(false);
-	return 0;
+	return false;
 }

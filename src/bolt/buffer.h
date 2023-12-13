@@ -34,7 +34,7 @@ void buffer_index_set
 );
 
 // copy the data and increment the index
-void buffer_index_read
+bool buffer_index_read
 (
 	buffer_index_t *index,  // index
 	char *ptr,              // pointer
@@ -62,10 +62,11 @@ uint64_t buffer_index_length
 );
 
 // read until a delimiter
-char *buffer_index_read_until
+bool buffer_index_read_until
 (
 	buffer_index_t *index,  // index
-	char delimiter          // delimiter
+	char delimiter,         // delimiter
+	char **ptr              // pointer
 );
 
 // initialize a new buffer
@@ -75,27 +76,31 @@ void buffer_new
 );
 
 // read a uint8_t from the buffer
-uint8_t buffer_read_uint8
+bool buffer_read_uint8
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint8_t *value        // value
 );
 
 // read a uint16_t from the buffer
-uint16_t buffer_read_uint16
+bool buffer_read_uint16
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint16_t *value       // value
 );
 
 // read a uint32_t from the buffer
-uint32_t buffer_read_uint32
+bool buffer_read_uint32
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint32_t *value       // value
 );
 
 // read a uint64_t from the buffer
-uint64_t buffer_read_uint64
+bool buffer_read_uint64
 (
-	buffer_index_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	uint64_t *value       // value
 );
 
 // copy data from the buffer to the destination
