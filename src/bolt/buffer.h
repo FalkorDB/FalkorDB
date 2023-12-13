@@ -41,6 +41,13 @@ void buffer_index_read
 	uint32_t size           // size
 );
 
+// advance the index
+void buffer_index_advance
+(
+	buffer_index_t *index,  // index
+	uint32_t size           // size
+);
+
 // the length between two indexes
 uint64_t buffer_index_diff
 (

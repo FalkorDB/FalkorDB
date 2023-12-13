@@ -24,7 +24,7 @@ void buffer_index_set
 }
 
 // add offset to index
-void buffer_index_add
+void buffer_index_advance
 (
 	buffer_index_t *index,
 	uint32_t offset
@@ -51,7 +51,7 @@ void buffer_index_read
 
 	buffer_index_t start = *index;
 	char *from = start.buf->chunks[start.chunk] + start.offset;
-	buffer_index_add(index, size);
+	buffer_index_advance(index, size);
 	if(ptr != NULL) {
 		while (start.chunk < index->chunk) {
 			memcpy(ptr, from, BUFFER_CHUNK_SIZE - start.offset);
@@ -209,8 +209,8 @@ void buffer_read
 		src_available_size = BUFFER_CHUNK_SIZE - buf->offset;
 		if(size < src_available_size && size < dst_available_size) {
 			memcpy(dst_ptr, src_ptr, size);
-			buffer_index_add(buf, size);
-			buffer_index_add(dst, size);
+			buffer_index_advance(buf, size);
+			buffer_index_advance(dst, size);
 			return;
 		}
 		
@@ -248,7 +248,7 @@ bool buffer_socket_read
 		return false;
 	}
 
-	buffer_index_add(&buf->write, nread);
+	buffer_index_advance(&buf->write, nread);
 	while(buf->write.offset == BUFFER_CHUNK_SIZE) {
 		buf->write.offset = 0;
 		buf->write.chunk++;
@@ -257,7 +257,7 @@ bool buffer_socket_read
 		if(nread < 0) {
 			return false;
 		}
-		buffer_index_add(&buf->write, nread);
+		buffer_index_advance(&buf->write, nread);
 	}
 	return true;
 }
@@ -346,7 +346,7 @@ void buffer_write
 	while(buf->offset + size > BUFFER_CHUNK_SIZE) {
 		uint32_t n = BUFFER_CHUNK_SIZE - buf->offset;
 		memcpy(buf->buf->chunks[buf->chunk] + buf->offset, data, n);
-		buffer_index_add(buf, n);
+		buffer_index_advance(buf, n);
 		data += n;
 		size -= n;
 		buf->chunk++;
@@ -357,7 +357,7 @@ void buffer_write
 	}
 	char *ptr = buf->buf->chunks[buf->chunk] + buf->offset;
 	memcpy(ptr, data, size);
-	buffer_index_add(buf, size);
+	buffer_index_advance(buf, size);
 }
 
 // apply the mask to a single chunk in the buffer
@@ -392,7 +392,7 @@ void buffer_apply_mask
 	ASSERT(buffer_index_length(&buf) >= payload_len);
 
 	buffer_index_t end = buf;
-	buffer_index_add(&end, payload_len);
+	buffer_index_advance(&end, payload_len);
 	int offset = 0;
 	while(buf.chunk < end.chunk) {
 		buffer_apply_mask_single(buf, masking_key, BUFFER_CHUNK_SIZE - buf.offset, &offset);

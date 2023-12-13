@@ -39,17 +39,17 @@ static bool parse_headers
 		if(field == NULL) {
 			return false;
 		}
-		buffer_index_read(request, NULL, 2);
+		buffer_index_advance(request, 2);
 		char *value = buffer_index_read_until(request, '\r');
 		if(value == NULL) {
 			rm_free(field);
 			return false;
 		}
-		buffer_index_read(request, NULL, 2);
+		buffer_index_advance(request, 2);
 		raxInsert(headers, (unsigned char *)field, strlen(field), (void *)value, NULL);
 		rm_free(field);
 	}
-	buffer_index_read(request, NULL, 2);
+	buffer_index_advance(request, 2);
 	return true;
 }
 
