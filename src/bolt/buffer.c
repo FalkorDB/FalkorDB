@@ -210,8 +210,8 @@ void buffer_read
 		src_available_size = BUFFER_CHUNK_SIZE - buf->offset;
 		if(size < src_available_size && size < dst_available_size) {
 			memcpy(dst_ptr, src_ptr, size);
-			buffer_index_advance(buf, size);
-			buffer_index_advance(dst, size);
+			buf->offset += size;
+			dst->offset += size;
 			return;
 		}
 		
@@ -358,7 +358,7 @@ void buffer_write
 	}
 	char *ptr = buf->buf->chunks[buf->chunk] + buf->offset;
 	memcpy(ptr, data, size);
-	buffer_index_advance(buf, size);
+	buf->offset += size;
 }
 
 // apply the mask to a single chunk in the buffer
