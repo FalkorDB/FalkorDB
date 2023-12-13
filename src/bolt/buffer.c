@@ -8,10 +8,10 @@
 #include "../util/arr.h"
 
 // set buffer index to offset
-void buffer_index
+void buffer_index_set
 (
-	buffer_t *buf,          // buffer
 	buffer_index_t *index,  // index
+	buffer_t *buf,          // buffer
 	uint32_t offset         // offset
 ) {
 	ASSERT(buf != NULL);
@@ -24,14 +24,16 @@ void buffer_index
 }
 
 // add offset to index
-void buffer_index_add
+void buffer_index_advance
 (
 	buffer_index_t *index,
-	uint32_t offset
+	uint32_t n
 ) {
 	ASSERT(index != NULL);
+	// check if there is enough data to read
+	ASSERT(buffer_index_length(index) >= n);
 
-	index->offset += offset;
+	index->offset += n;
 	if(index->offset > BUFFER_CHUNK_SIZE) {
 		index->chunk += index->offset / BUFFER_CHUNK_SIZE;
 		index->offset %= BUFFER_CHUNK_SIZE;
@@ -47,11 +49,11 @@ void buffer_index_read
 ) {
 	ASSERT(index != NULL);
 	// check if there is enough data to read
-	ASSERT(buffer_index_diff(&index->buf->write, index) >= size);
+	ASSERT(buffer_index_length(index) >= size);
 
 	buffer_index_t start = *index;
 	char *from = start.buf->chunks[start.chunk] + start.offset;
-	buffer_index_add(index, size);
+	buffer_index_advance(index, size);
 	if(ptr != NULL) {
 		while (start.chunk < index->chunk) {
 			memcpy(ptr, from, BUFFER_CHUNK_SIZE - start.offset);
@@ -65,7 +67,7 @@ void buffer_index_read
 }
 
 // the length between two indexes
-uint16_t buffer_index_diff
+uint64_t buffer_index_diff
 (
 	buffer_index_t *a,  // index a
 	buffer_index_t *b   // index b
@@ -74,9 +76,54 @@ uint16_t buffer_index_diff
 	ASSERT(b != NULL);
 	ASSERT(a->buf == b->buf);
 
-	uint16_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
+	uint64_t diff = (a->chunk - b->chunk) * BUFFER_CHUNK_SIZE + (a->offset - b->offset);
 	ASSERT(diff >= 0);
 	return diff;
+}
+
+// the length of the buffer index
+uint64_t buffer_index_length
+(
+	buffer_index_t *index  // index
+) {
+	ASSERT(index != NULL);
+
+	return buffer_index_diff(&index->buf->write, index);
+}
+
+// read until a delimiter
+char *buffer_index_read_until
+(
+	buffer_index_t *index,  // index
+	char delimiter          // delimiter
+) {
+	ASSERT(index != NULL);
+
+	char *res = NULL;
+	char *from = index->buf->chunks[index->chunk] + index->offset;
+	uint32_t size = 0;
+	while(index->chunk < index->buf->write.chunk) {
+		char *p = memchr(from, delimiter, BUFFER_CHUNK_SIZE - index->offset);
+		if(p != NULL) {
+			size += p - from;
+			res = rm_malloc(size + 1);
+			buffer_index_read(index, res, size);
+			res[size] = '\0';
+			return res;
+		}
+		size += BUFFER_CHUNK_SIZE - index->offset;
+		index->chunk++;
+		index->offset = 0;
+		from = index->buf->chunks[index->chunk];
+	}
+	char *p = memchr(from, delimiter, index->buf->write.offset - index->offset);
+	if(p != NULL) {
+		size += p - from;
+		res = rm_malloc(size + 1);
+		buffer_index_read(index, res, size);
+		res[size] = '\0';
+	}
+	return res;
 }
 
 // initialize a new buffer
@@ -88,8 +135,8 @@ void buffer_new
 
 	buf->chunks = array_new(char *, 0);
 	array_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
-	buffer_index(buf, &buf->read, 0);
-	buffer_index(buf, &buf->write, 0);
+	buffer_index_set(&buf->read, buf, 0);
+	buffer_index_set(&buf->write, buf, 0);
 }
 
 // read a uint8_t from the buffer
@@ -150,7 +197,7 @@ void buffer_read
 	ASSERT(buf != NULL);
 	ASSERT(dst != NULL);
 	// check if there is enough data to read
-	ASSERT(buffer_index_diff(&buf->buf->write, buf) >= size);
+	ASSERT(buffer_index_length(buf) >= size);
 
 	char *src_ptr;
 	char *dst_ptr;
@@ -163,8 +210,8 @@ void buffer_read
 		src_available_size = BUFFER_CHUNK_SIZE - buf->offset;
 		if(size < src_available_size && size < dst_available_size) {
 			memcpy(dst_ptr, src_ptr, size);
-			buffer_index_add(buf, size);
-			buffer_index_add(dst, size);
+			buf->offset += size;
+			dst->offset += size;
 			return;
 		}
 		
@@ -202,7 +249,7 @@ bool buffer_socket_read
 		return false;
 	}
 
-	buffer_index_add(&buf->write, nread);
+	buf->write.offset += nread;
 	while(buf->write.offset == BUFFER_CHUNK_SIZE) {
 		buf->write.offset = 0;
 		buf->write.chunk++;
@@ -211,7 +258,7 @@ bool buffer_socket_read
 		if(nread < 0) {
 			return false;
 		}
-		buffer_index_add(&buf->write, nread);
+		buf->write.offset += nread;
 	}
 	return true;
 }
@@ -300,7 +347,7 @@ void buffer_write
 	while(buf->offset + size > BUFFER_CHUNK_SIZE) {
 		uint32_t n = BUFFER_CHUNK_SIZE - buf->offset;
 		memcpy(buf->buf->chunks[buf->chunk] + buf->offset, data, n);
-		buffer_index_add(buf, n);
+		buffer_index_advance(buf, n);
 		data += n;
 		size -= n;
 		buf->chunk++;
@@ -311,7 +358,49 @@ void buffer_write
 	}
 	char *ptr = buf->buf->chunks[buf->chunk] + buf->offset;
 	memcpy(ptr, data, size);
-	buffer_index_add(buf, size);
+	buf->offset += size;
+}
+
+// apply the mask to a single chunk in the buffer
+static void buffer_apply_mask_single
+(
+	buffer_index_t buf,    // buffer
+	uint32_t masking_key,  // masking key
+	uint32_t payload_len,  // payload length
+	int *offset            // in/out offset
+) {
+	char *payload = buf.buf->chunks[buf.chunk] + buf.offset;
+	int local_offset = *offset;
+	uint32_t double_mask[4] = {masking_key, masking_key, masking_key, masking_key};
+	uint64_t offset_mask = *(uint64_t *)((char *)double_mask + local_offset);
+	int i = 0;
+	for(; i + 8 <= payload_len; i+=8) {
+		*(uint64_t *)(payload + i) ^= offset_mask;
+	}
+	for(; i < payload_len; i++) {
+		payload[i] ^= ((char*)double_mask)[local_offset++];
+	}
+	*offset = local_offset % 4;
+}
+
+// apply the mask to the buffer
+void buffer_apply_mask
+(
+	buffer_index_t buf,    // buffer
+	uint32_t masking_key,  // masking key
+	uint64_t payload_len   // payload length
+) {
+	ASSERT(buffer_index_length(&buf) >= payload_len);
+
+	buffer_index_t end = buf;
+	buffer_index_advance(&end, payload_len);
+	int offset = 0;
+	while(buf.chunk < end.chunk) {
+		buffer_apply_mask_single(buf, masking_key, BUFFER_CHUNK_SIZE - buf.offset, &offset);
+		buf.chunk++;
+		buf.offset = 0;
+	}
+	buffer_apply_mask_single(buf, masking_key, end.offset - buf.offset, &offset);
 }
 
 // free the buffer
