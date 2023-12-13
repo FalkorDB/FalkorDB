@@ -34,20 +34,22 @@ static bool parse_headers
 	if(strncmp(request_line, "GET / HTTP/1.1\r\n", 16) != 0) {
 		return false;
 	}
-	while(buffer_index_length(request) > 0) {
+	while(buffer_index_length(request) > 2) {
 		char *field = buffer_index_read_until(request, ':');
 		if(field == NULL) {
-			break;
+			return false;
 		}
 		buffer_index_read(request, NULL, 2);
 		char *value = buffer_index_read_until(request, '\r');
 		if(value == NULL) {
-			break;
+			rm_free(field);
+			return false;
 		}
 		buffer_index_read(request, NULL, 2);
-		raxInsert(headers, (unsigned char *)field, strlen(field), (void *)rm_strdup(value), NULL);
+		raxInsert(headers, (unsigned char *)field, strlen(field), (void *)value, NULL);
 		rm_free(field);
 	}
+	buffer_index_read(request, NULL, 2);
 	return true;
 }
 
@@ -108,6 +110,7 @@ bool ws_handshake
 
 	rax *headers = raxNew();
 	if(!parse_headers(request, headers) || !validate_headers(headers)) {
+		raxFreeWithCallback(headers, rm_free);
 		return false;
 	}
 
