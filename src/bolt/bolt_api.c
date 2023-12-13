@@ -98,10 +98,10 @@ static bool is_authenticated
 	
 	// check if the principal is falkordb
 	uint32_t principal_len;
+	bolt_read_string_size(&client->msg_buf.read, &principal_len);
 	if(principal_len > 64) {
 		return false;
 	}
-	bolt_read_string_size(&client->msg_buf.read, &principal_len);
 	bolt_read_string(&client->msg_buf.read, s);
 	if(strncmp(s, "falkordb", principal_len) != 0) {
 		return false;
