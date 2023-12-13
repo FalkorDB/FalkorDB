@@ -306,7 +306,6 @@ ProcedureResult Proc_VectorQueryNodeInvoke
 		}
 
 		if(strcasecmp("score", yield[i]) == 0) {
-			pdata->q = SI_CloneValue(pdata->q); // clone query vector
 			pdata->yield_score = pdata->output + idx;
 			idx++;
 			continue;
@@ -344,7 +343,6 @@ ProcedureResult Proc_VectorQueryRelInvoke
 		}
 
 		if(strcasecmp("score", yield[i]) == 0) {
-			pdata->q = SI_CloneValue(pdata->q); // clone query vector
 			pdata->yield_score = pdata->output + idx;
 			idx++;
 			continue;
@@ -369,9 +367,6 @@ ProcedureResult Proc_VectorKNNFree
 	if(pdata->iter) {
 		RediSearch_ResultsIteratorFree(pdata->iter);
 	}
-
-	// free query vector
-	SIValue_Free(pdata->q);
 
 	rm_free(pdata);
 

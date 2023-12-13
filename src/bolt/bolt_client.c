@@ -35,6 +35,7 @@ bolt_client_t *bolt_client_new
 	buffer_new(&client->msg_buf);
 	buffer_new(&client->read_buf);
 	buffer_new(&client->write_buf);
+	buffer_index_set(&client->ws_frame, &client->read_buf, 0);
 	return client;
 }
 
@@ -571,17 +572,9 @@ void bolt_client_end_message
 
 	bolt_message_t *msg = client->write_messages + array_len(client->write_messages) - 1;
 	msg->end = client->write_buf.write;
-	uint16_t n = buffer_index_diff(&msg->end, &msg->start);
+	uint64_t n = buffer_index_diff(&msg->end, &msg->start);
 	if(client->ws) {
-		buffer_index_t write_ws_header = msg->ws_header;
-		if(n + 4 > 125) {
-			buffer_write_uint32(&write_ws_header, htonl(0x827E0000 + n + 4));
-		} else {
-			buffer_write_uint16(&msg->ws_header, 0x0000);
-			write_ws_header = msg->ws_header;
-			buffer_write_uint8(&write_ws_header, 0x82);
-			buffer_write_uint8(&write_ws_header, n + 4);
-		}
+		ws_write_frame_header(&msg->ws_header, n + 4);
 	} else {
 		msg->ws_header = msg->bolt_header;
 	}
@@ -611,7 +604,7 @@ void bolt_client_send
 
 	if(client->reset) {
 		array_clear(client->write_messages);
-		buffer_index(&client->write_buf, &client->write_buf.write, 0);
+		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 		array_append(client->write_messages, (bolt_message_t){0});
 		bolt_message_t *msg = client->write_messages;
 		msg->bolt_header = client->write_buf.write;
@@ -632,7 +625,7 @@ void bolt_client_send
 		bolt_client_end_message(client);
 		buffer_socket_write(&msg->bolt_header, &msg->end, client->socket);
 
-		buffer_index(&client->write_buf, &client->write_buf.write, 0);
+		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 		msg->bolt_header = client->write_buf.write;
 		buffer_write_uint16(&client->write_buf.write, 0x0000);
 		msg->start = client->write_buf.write;
@@ -660,7 +653,7 @@ void bolt_client_send
 	}
 
 	array_clear(client->write_messages);
-	buffer_index(&client->write_buf, &client->write_buf.write, 0);
+	buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 }
 
 // validate bolt handshake
