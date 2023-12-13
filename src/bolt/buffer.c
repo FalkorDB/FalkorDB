@@ -98,7 +98,6 @@ char *buffer_index_read_until
 	ASSERT(index != NULL);
 
 	char *res = NULL;
-	buffer_index_t start = *index;
 	char *from = index->buf->chunks[index->chunk] + index->offset;
 	uint32_t size = 0;
 	while(index->chunk < index->buf->write.chunk) {
@@ -113,7 +112,7 @@ char *buffer_index_read_until
 		size += BUFFER_CHUNK_SIZE - index->offset;
 		index->chunk++;
 		index->offset = 0;
-		from = index->buf->chunks[start.chunk];
+		from = index->buf->chunks[index->chunk];
 	}
 	char *p = memchr(from, delimiter, index->buf->write.offset - index->offset);
 	if(p != NULL) {
