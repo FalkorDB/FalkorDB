@@ -27,11 +27,13 @@ void buffer_index_set
 void buffer_index_advance
 (
 	buffer_index_t *index,
-	uint32_t offset
+	uint32_t n
 ) {
 	ASSERT(index != NULL);
+	// check if there is enough data to read
+	ASSERT(buffer_index_length(index) >= n);
 
-	index->offset += offset;
+	index->offset += n;
 	if(index->offset > BUFFER_CHUNK_SIZE) {
 		index->chunk += index->offset / BUFFER_CHUNK_SIZE;
 		index->offset %= BUFFER_CHUNK_SIZE;
@@ -247,7 +249,7 @@ bool buffer_socket_read
 		return false;
 	}
 
-	buffer_index_advance(&buf->write, nread);
+	buf->write.offset += nread;
 	while(buf->write.offset == BUFFER_CHUNK_SIZE) {
 		buf->write.offset = 0;
 		buf->write.chunk++;
@@ -256,7 +258,7 @@ bool buffer_socket_read
 		if(nread < 0) {
 			return false;
 		}
-		buffer_index_advance(&buf->write, nread);
+		buf->write.offset += nread;
 	}
 	return true;
 }
