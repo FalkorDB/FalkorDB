@@ -75,6 +75,17 @@ jobs:
         path: ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
 
+    - name: BOLT TCK tests
+      id: bolt_tck_tests
+      run: make tck-tests CLEAR_LOGS=0 TCK_PROTOCOL=BOLT SAN=address
+      continue-on-error: true
+  
+    - uses: actions/upload-artifact@v3
+      with:
+        name: Upload TCK tests logs
+        path: ${{ github.workspace }}/tests/tck/logs/
+        retention-days: 7
+
     - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
+      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success' || steps.bolt_tck_tests.outcome != 'success'
       run: exit 1
