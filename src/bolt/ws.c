@@ -33,12 +33,12 @@ static bool parse_headers
 		return false;
 	}
 	while(buffer_index_length(request) > 2) {
-		char *field;
+		char *field = NULL;
 		if(!buffer_index_read_until(request, ':', &field)) {
 			return false;
 		}
 		buffer_index_advance(request, 2);
-		char *value;;
+		char *value = NULL;
 		if(!buffer_index_read_until(request, '\r', &value)) {
 			rm_free(field);
 			return false;
@@ -185,18 +185,18 @@ bool ws_read_frame
 	ASSERT(rsv123 == 0 && "Reserved bits are not supported");
 	uint8_t opcode = (frame_header >> 8) & 0x0F;
 	ASSERT(opcode == 0x02 || opcode == 0x08 && "Only binary frames are supported");
-	if(frame_header & 0x7F == 126) {
+	if((frame_header & 0x7F) == 126) {
 		uint16_t _payload_len;
 		if(!buffer_read_uint16(buf, &_payload_len)) {
 			return false;
 		}
-		_payload_len = ntohs(_payload_len);
-	} else if(frame_header & 0x7F == 127) {
+		*payload_len = ntohs(_payload_len);
+	} else if((frame_header & 0x7F) == 127) {
 		uint64_t _payload_len;
 		if(!buffer_read_uint64(buf, &_payload_len)) {
 			return false;
 		}
-		_payload_len = ntohll(_payload_len);
+		*payload_len = ntohll(_payload_len);
 	} else {
 		*payload_len = frame_header & 0x7F;
 	}

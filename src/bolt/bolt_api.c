@@ -436,6 +436,60 @@ bool get_query
 	return true;
 }
 
+// handle the SHOW DATABASES query
+static void BoltShowDatabases
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	// "fields":["name","type","aliases","access","address","role","writer","requestedStatus","currentStatus","statusMessage","default","home","constituents"]
+	bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "t_first", 7);
+	bolt_reply_int(client, 0);
+	bolt_reply_string(client, "fields", 6);
+	bolt_reply_list(client, 13);
+	bolt_reply_string(client, "name", 4);
+	bolt_reply_string(client, "type", 4);
+	bolt_reply_string(client, "aliases", 7);
+	bolt_reply_string(client, "access", 6);
+	bolt_reply_string(client, "address", 7);
+	bolt_reply_string(client, "role", 4);
+	bolt_reply_string(client, "writer", 6);
+	bolt_reply_string(client, "requestedStatus", 15);
+	bolt_reply_string(client, "currentStatus", 13);
+	bolt_reply_string(client, "statusMessage", 13);
+	bolt_reply_string(client, "default", 7);
+	bolt_reply_string(client, "home", 4);
+	bolt_reply_string(client, "constituents", 12);
+	bolt_reply_string(client, "qid", 3);
+	bolt_reply_int(client, 0);
+	bolt_client_end_message(client);
+	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+	bolt_reply_list(client, 13);
+
+	// RECORD {"signature":113,"fields":[["neo4j","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
+	bolt_reply_string(client, "falkordb", 8);
+	bolt_reply_string(client, "standard", 8);
+	bolt_reply_list(client, 0);
+	bolt_reply_string(client, "read-write", 10);
+	bolt_reply_string(client, "localhost:7687", 14);
+	bolt_reply_string(client, "primary", 7);
+	bolt_reply_bool(client, true);
+	bolt_reply_string(client, "online", 6);
+	bolt_reply_string(client, "online", 6);
+	bolt_reply_string(client, "", 0);
+	bolt_reply_bool(client, true);
+	bolt_reply_bool(client, true);
+	bolt_reply_list(client, 0);
+	bolt_client_end_message(client);
+
+	// SUCCESS {}
+	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+	bolt_reply_map(client, 0);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
 // handle the RUN message
 void BoltRunCommand
 (
@@ -474,50 +528,7 @@ void BoltRunCommand
 
 	const char *q = RedisModule_StringPtrLen(query, NULL);
 	if(strcmp(q, "SHOW DATABASES") == 0) {
-		// "fields":["name","type","aliases","access","address","role","writer","requestedStatus","currentStatus","statusMessage","default","home","constituents"]
-		bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
-		bolt_reply_map(client, 3);
-		bolt_reply_string(client, "t_first", 7);
-		bolt_reply_int(client, 0);
-		bolt_reply_string(client, "fields", 6);
-		bolt_reply_list(client, 13);
-		bolt_reply_string(client, "name", 4);
-		bolt_reply_string(client, "type", 4);
-		bolt_reply_string(client, "aliases", 7);
-		bolt_reply_string(client, "access", 6);
-		bolt_reply_string(client, "address", 7);
-		bolt_reply_string(client, "role", 4);
-		bolt_reply_string(client, "writer", 6);
-		bolt_reply_string(client, "requestedStatus", 15);
-		bolt_reply_string(client, "currentStatus", 13);
-		bolt_reply_string(client, "statusMessage", 13);
-		bolt_reply_string(client, "default", 7);
-		bolt_reply_string(client, "home", 4);
-		bolt_reply_string(client, "constituents", 12);
-		bolt_reply_string(client, "qid", 3);
-		bolt_reply_int(client, 0);
-		bolt_client_end_message(client);
-		bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
-		bolt_reply_list(client, 13);
-		// RECORD {"signature":113,"fields":[["neo4j","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
-		bolt_reply_string(client, "falkordb", 8);
-		bolt_reply_string(client, "standard", 8);
-		bolt_reply_list(client, 0);
-		bolt_reply_string(client, "read-write", 10);
-		bolt_reply_string(client, "localhost:7687", 14);
-		bolt_reply_string(client, "primary", 7);
-		bolt_reply_bool(client, true);
-		bolt_reply_string(client, "online", 6);
-		bolt_reply_string(client, "online", 6);
-		bolt_reply_string(client, "", 0);
-		bolt_reply_bool(client, true);
-		bolt_reply_bool(client, true);
-		bolt_reply_list(client, 0);
-		bolt_client_end_message(client);
-		bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
-		bolt_reply_map(client, 0);
-		bolt_client_end_message(client);
-		bolt_client_finish_write(client);
+		BoltShowDatabases(client);
 	} else {
 		args[0] = COMMAND;
 		args[1] = graph_name;
@@ -693,8 +704,9 @@ void BoltRequestHandler
 	size = ntohs(size);
 	ASSERT(size > 0);
 	while(size > 0) {
-		if(buffer_index_length(&current_read) < size) return;
-		buffer_read(&current_read, &client->msg_buf.write, size);
+		if(!buffer_read(&current_read, &client->msg_buf.write, size)) {
+			return;
+		}
 		if(!buffer_read_uint16(&current_read, &size)) {
 			return;
 		}

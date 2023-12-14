@@ -198,7 +198,7 @@ bool buffer_read_uint64
 }
 
 // copy data from the buffer to the destination
-void buffer_read
+bool buffer_read
 (
 	buffer_index_t *buf,  // buffer
 	buffer_index_t *dst,  // destination
@@ -206,8 +206,9 @@ void buffer_read
 ) {
 	ASSERT(buf != NULL);
 	ASSERT(dst != NULL);
-	// check if there is enough data to read
-	ASSERT(buffer_index_length(buf) >= size);
+	if(buffer_index_length(buf) < size) {
+		return false;
+	}
 
 	char *src_ptr;
 	char *dst_ptr;
@@ -222,7 +223,7 @@ void buffer_read
 			memcpy(dst_ptr, src_ptr, size);
 			buf->offset += size;
 			dst->offset += size;
-			return;
+			return true;
 		}
 		
 		if(src_available_size < dst_available_size) {
@@ -242,6 +243,7 @@ void buffer_read
 			buf->offset += dst_available_size;
 		}
 	}
+	return true;
 }
 
 // read data from the socket to the buffer

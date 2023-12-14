@@ -104,7 +104,7 @@ bool buffer_read_uint64
 );
 
 // copy data from the buffer to the destination
-void buffer_read
+bool buffer_read
 (
 	buffer_index_t *buf,  // buffer
 	buffer_index_t *dst,  // destination
