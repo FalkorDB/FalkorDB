@@ -358,7 +358,7 @@ bool write_value
 			*n += sprintf(buff + *n, "}");
 			return true;
 		}
-		case BVT_STRUCTURE:
+		case BVT_STRUCTURE: {
 			bolt_structure_type type;
 			if(!bolt_read_structure_type(value, &type)) {
 				return false;
@@ -373,6 +373,7 @@ bool write_value
 			}
 			ASSERT(false);
 			return false;
+		}
 		default:
 			ASSERT(false);
 			return false;
