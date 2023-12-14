@@ -239,14 +239,14 @@ bool write_value
 			if(!bolt_read_null(value)) {
 				return false;
 			}
-			*n += sprintf(buff, "NULL");
+			*n += sprintf(buff + *n, "NULL");
 			return true;
 		case BVT_BOOL: {
 			bool b;
 			if(!bolt_read_bool(value, &b)) {
 				return false;
 			}
-			*n += sprintf(buff, "%s", b ? "true" : "false");
+			*n += sprintf(buff + *n, "%s", b ? "true" : "false");
 			return true;
 		}
 		case BVT_INT8: {
@@ -254,7 +254,7 @@ bool write_value
 			if(!bolt_read_int8(value, &i8)) {
 				return false;
 			}
-			*n += sprintf(buff, "%d", i8);
+			*n += sprintf(buff + *n, "%d", i8);
 			return true;
 		}
 		case BVT_INT16: {
@@ -262,7 +262,7 @@ bool write_value
 			if(!bolt_read_int16(value, &i16)) {
 				return false;
 			}
-			*n += sprintf(buff, "%d", i16);
+			*n += sprintf(buff + *n, "%d", i16);
 			return true;
 		}
 		case BVT_INT32: {
@@ -270,7 +270,7 @@ bool write_value
 			if(!bolt_read_int32(value, &i32)) {
 				return false;
 			}
-			*n += sprintf(buff, "%d", i32);
+			*n += sprintf(buff + *n, "%d", i32);
 			return true;
 		}
 		case BVT_INT64: {
@@ -278,7 +278,7 @@ bool write_value
 			if(!bolt_read_int64(value, &i64)) {
 				return false;
 			}
-			*n += sprintf(buff, "%lld", i64);
+			*n += sprintf(buff + *n, "%lld", i64);
 			return true;
 		}
 		case BVT_FLOAT: {
@@ -286,7 +286,7 @@ bool write_value
 			if(!bolt_read_float(value, &f)) {
 				return false;
 			}
-			*n += sprintf(buff, "%f", f);
+			*n += sprintf(buff + *n, "%f", f);
 			return true;
 		}
 		case BVT_STRING: {
@@ -298,7 +298,7 @@ bool write_value
 			if(!bolt_read_string(value, str)) {
 				return false;
 			}
-			*n += sprintf(buff, "'%.*s'", len, str);
+			*n += sprintf(buff + *n, "'%.*s'", len, str);
 			return true;
 		}
 		case BVT_LIST: {
@@ -306,14 +306,14 @@ bool write_value
 			if(!bolt_read_list_size(value, &size)) {
 				return false;
 			}
-			*n += sprintf(buff, "[");
+			*n += sprintf(buff + *n, "[");
 			if(size > 0) {
-				if(!write_value(buff + *n, value, n)) {
+				if(!write_value(buff, value, n)) {
 					return false;
 				}
 				for (int i = 1; i < size; i++) {
 					*n += sprintf(buff + *n, ", ");
-					if(!write_value(buff + *n, value, n)) {
+					if(!write_value(buff, value, n)) {
 						return false;
 					}
 				}
@@ -326,7 +326,7 @@ bool write_value
 			if(!bolt_read_map_size(value, &size)) {
 				return false;
 			}
-			*n += sprintf(buff, "{");
+			*n += sprintf(buff + *n, "{");
 			if(size > 0) {
 				uint32_t key_len;
 				if(!bolt_read_string_size(value, &key_len)) {
@@ -337,7 +337,7 @@ bool write_value
 					return false;
 				}
 				*n += sprintf(buff + *n, "%.*s: ", key_len, key);
-				if(!write_value(buff + *n, value, n)) {
+				if(!write_value(buff, value, n)) {
 					return false;
 				}
 				for (int i = 1; i < size; i++) {
@@ -350,7 +350,7 @@ bool write_value
 					}
 					n += sprintf(buff + *n, ", ");
 					n += sprintf(buff + *n, "%.*s: ", key_len, key);
-					if(!write_value(buff + *n, value, n)) {
+					if(!write_value(buff, value, n)) {
 						return false;
 					}
 				}
@@ -368,7 +368,7 @@ bool write_value
 				if(!bolt_read_float(value, &x) || !bolt_read_float(value, &y)) {
 					return false;
 				}
-				*n += sprintf(buff, "POINT({longitude: %f, latitude: %f})", x, y);
+				*n += sprintf(buff + *n, "POINT({longitude: %f, latitude: %f})", x, y);
 				return true;
 			}
 			ASSERT(false);
@@ -419,7 +419,7 @@ bool get_query
 				return false;
 			}
 			n += sprintf(prametrize_query + n, "%.*s=", key_len, key);
-			if(!write_value(prametrize_query + n, &client->msg_buf.read, &n)) {
+			if(!write_value(prametrize_query, &client->msg_buf.read, &n)) {
 				rm_free(query_str);
 				return false;
 			}
@@ -464,11 +464,29 @@ static void BoltShowDatabases
 	bolt_reply_string(client, "qid", 3);
 	bolt_reply_int(client, 0);
 	bolt_client_end_message(client);
+
+	// RECORD {"signature":113,"fields":[["falkordb","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
 	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
 	bolt_reply_list(client, 13);
-
-	// RECORD {"signature":113,"fields":[["neo4j","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
 	bolt_reply_string(client, "falkordb", 8);
+	bolt_reply_string(client, "standard", 8);
+	bolt_reply_list(client, 0);
+	bolt_reply_string(client, "read-write", 10);
+	bolt_reply_string(client, "localhost:7687", 14);
+	bolt_reply_string(client, "primary", 7);
+	bolt_reply_bool(client, true);
+	bolt_reply_string(client, "online", 6);
+	bolt_reply_string(client, "online", 6);
+	bolt_reply_string(client, "", 0);
+	bolt_reply_bool(client, true);
+	bolt_reply_bool(client, true);
+	bolt_reply_list(client, 0);
+	bolt_client_end_message(client);
+
+	// RECORD {"signature":113,"fields":[["aviavni","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
+	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+	bolt_reply_list(client, 13);
+	bolt_reply_string(client, "aviavni", 7);
 	bolt_reply_string(client, "standard", 8);
 	bolt_reply_list(client, 0);
 	bolt_reply_string(client, "read-write", 10);
