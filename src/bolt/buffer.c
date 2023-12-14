@@ -50,8 +50,7 @@ bool buffer_index_read
 	ASSERT(index != NULL);
 	ASSERT(ptr != NULL);
 	// check if there is enough data to read
-	if(buffer_index_length(index) < size) {
-		ASSERT(false);
+	if(size > buffer_index_length(index)) {
 		return false;
 	}
 
