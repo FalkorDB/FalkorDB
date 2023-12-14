@@ -7,6 +7,7 @@
 #include "ws.h"
 #include "bolt.h"
 #include "endian.h"
+#include "globals.h"
 #include "bolt_api.h"
 #include "../util/uuid.h"
 #include "../commands/commands.h"
@@ -48,7 +49,7 @@ static void BoltHelloCommand
 	bolt_client_reply_for(client, BST_HELLO, BST_SUCCESS, 1);
 	bolt_reply_map(client, 2);
 	bolt_reply_string(client, "server", 6);
-	bolt_reply_string(client, "Neo4j/5.13.0", 12);
+	bolt_reply_string(client, "Neo4j/5.14.0", 12);
 	bolt_reply_string(client, "connection_id", 13);
 	char *uuid = UUID_New();
 	bolt_reply_string(client, uuid, strlen(uuid));
@@ -465,29 +466,58 @@ static void BoltShowDatabases
 	bolt_reply_int(client, 0);
 	bolt_client_end_message(client);
 
-	// RECORD {"signature":113,"fields":[["falkordb","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
-	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
-	bolt_reply_list(client, 13);
-	bolt_reply_string(client, "falkordb", 8);
-	bolt_reply_string(client, "standard", 8);
-	bolt_reply_list(client, 0);
-	bolt_reply_string(client, "read-write", 10);
-	bolt_reply_string(client, "localhost:7687", 14);
-	bolt_reply_string(client, "primary", 7);
-	bolt_reply_bool(client, true);
-	bolt_reply_string(client, "online", 6);
-	bolt_reply_string(client, "online", 6);
-	bolt_reply_string(client, "", 0);
-	bolt_reply_bool(client, true);
-	bolt_reply_bool(client, true);
-	bolt_reply_list(client, 0);
-	bolt_client_end_message(client);
+	KeySpaceGraphIterator it;
+	GraphContext *gc = NULL;
+	Globals_ScanGraphs(&it);
+	int i = 0;
+	while((gc = GraphIterator_Next(&it)) != NULL) {
+		i++;
+		// RECORD {"signature":113,"fields":[["falkordb","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
+		bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+		bolt_reply_list(client, 13);
+		bolt_reply_string(client, gc->graph_name, strlen(gc->graph_name));
+		bolt_reply_string(client, "standard", 8);
+		bolt_reply_list(client, 0);
+		bolt_reply_string(client, "read-write", 10);
+		bolt_reply_string(client, "localhost:7687", 14);
+		bolt_reply_string(client, "primary", 7);
+		bolt_reply_bool(client, true);
+		bolt_reply_string(client, "online", 6);
+		bolt_reply_string(client, "online", 6);
+		bolt_reply_string(client, "", 0);
+		bolt_reply_bool(client, true);
+		bolt_reply_bool(client, true);
+		bolt_reply_list(client, 0);
+		bolt_client_end_message(client);
+
+		GraphContext_DecreaseRefCount(gc);
+	}
+
+	if(i == 0) {
+		// RECORD {"signature":113,"fields":[["falkordb","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
+		bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+		bolt_reply_list(client, 13);
+		bolt_reply_string(client, "falkordb", 8);
+		bolt_reply_string(client, "standard", 8);
+		bolt_reply_list(client, 0);
+		bolt_reply_string(client, "read-write", 10);
+		bolt_reply_string(client, "localhost:7687", 14);
+		bolt_reply_string(client, "primary", 7);
+		bolt_reply_bool(client, true);
+		bolt_reply_string(client, "online", 6);
+		bolt_reply_string(client, "online", 6);
+		bolt_reply_string(client, "", 0);
+		bolt_reply_bool(client, true);
+		bolt_reply_bool(client, true);
+		bolt_reply_list(client, 0);
+		bolt_client_end_message(client);
+	}
 
 	// RECORD {"signature":113,"fields":[["aviavni","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
 	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
 	bolt_reply_list(client, 13);
-	bolt_reply_string(client, "aviavni", 7);
-	bolt_reply_string(client, "standard", 8);
+	bolt_reply_string(client, "system", 7);
+	bolt_reply_string(client, "system", 8);
 	bolt_reply_list(client, 0);
 	bolt_reply_string(client, "read-write", 10);
 	bolt_reply_string(client, "localhost:7687", 14);
@@ -496,14 +526,171 @@ static void BoltShowDatabases
 	bolt_reply_string(client, "online", 6);
 	bolt_reply_string(client, "online", 6);
 	bolt_reply_string(client, "", 0);
-	bolt_reply_bool(client, true);
-	bolt_reply_bool(client, true);
+	bolt_reply_bool(client, false);
+	bolt_reply_bool(client, false);
 	bolt_reply_list(client, 0);
 	bolt_client_end_message(client);
 
 	// SUCCESS {}
 	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
-	bolt_reply_map(client, 0);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "t_last", 6);
+	bolt_reply_int8(client, 1);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
+// handle the CALL dbms.clientConfig() query
+void BoltDbmsClientConfig
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	// "fields":["name","versions","edition"],"qid":{"low":0,"high":0}}]}
+	bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "t_first", 7);
+	bolt_reply_int(client, 0);
+	bolt_reply_string(client, "fields", 6);
+	bolt_reply_list(client, 2);
+	bolt_reply_string(client, "name", 4);
+	bolt_reply_string(client, "value", 8);
+	bolt_reply_string(client, "qid", 3);
+	bolt_reply_int(client, 0);
+	bolt_client_end_message(client);
+
+	// SUCCESS {}
+	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "t_last", 6);
+	bolt_reply_int8(client, 1);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
+// handle the CALL dbms.security.showCurrentUser() query
+void BoltDbmsSecurityShowCurremtUser
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	// "fields":["name","versions","edition"],"qid":{"low":0,"high":0}}]}
+	bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "t_first", 7);
+	bolt_reply_int(client, 0);
+	bolt_reply_string(client, "fields", 6);
+	bolt_reply_list(client, 3);
+	bolt_reply_string(client, "username", 8);
+	bolt_reply_string(client, "roles", 5);
+	bolt_reply_string(client, "flags", 5);
+	bolt_reply_string(client, "qid", 3);
+	bolt_reply_int(client, 0);
+	bolt_client_end_message(client);
+
+	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+	bolt_reply_list(client, 3);
+	bolt_reply_string(client, "falkordb", 7);
+	bolt_reply_null(client);
+	bolt_reply_list(client, 0);
+	bolt_client_end_message(client);
+
+	// SUCCESS {}
+	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "t_last", 6);
+	bolt_reply_int8(client, 1);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
+// handle the CALL dbms.components() YIELD name, versions, edition query
+void BoltDbmsComponents
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	// "fields":["name","versions","edition"],"qid":{"low":0,"high":0}}]}
+	bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "t_first", 7);
+	bolt_reply_int(client, 0);
+	bolt_reply_string(client, "fields", 6);
+	bolt_reply_list(client, 3);
+	bolt_reply_string(client, "name", 4);
+	bolt_reply_string(client, "versions", 8);
+	bolt_reply_string(client, "edition", 7);
+	bolt_reply_string(client, "qid", 3);
+	bolt_reply_int(client, 0);
+	bolt_client_end_message(client);
+
+	// RECORD {"signature":113,"fields":[["Neo4j Kernel",["5.14.0"],"community"]]}
+	bolt_client_reply_for(client, BST_PULL, BST_RECORD, 1);
+	bolt_reply_list(client, 3);
+	bolt_reply_string(client, "Neo4j Kernel", 12);
+	bolt_reply_list(client, 1);
+	bolt_reply_string(client, "5.14.0", 6);
+	bolt_reply_string(client, "community", 9);
+	bolt_client_end_message(client);
+
+	// SUCCESS {}
+	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "t_last", 6);
+	bolt_reply_int8(client, 1);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
+// handle the SHOW PROCEDURES yield name, description, signature query
+void BoltShowProcedures
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	// "fields":["name","versions","edition"],"qid":{"low":0,"high":0}}]}
+	bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "t_first", 7);
+	bolt_reply_int(client, 0);
+	bolt_reply_string(client, "fields", 6);
+	bolt_reply_list(client, 3);
+	bolt_reply_string(client, "name", 4);
+	bolt_reply_string(client, "description", 11);
+	bolt_reply_string(client, "signature", 9);
+	bolt_reply_string(client, "qid", 3);
+	bolt_reply_int(client, 0);
+	bolt_client_end_message(client);
+
+	// SUCCESS {}
+	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "t_last", 6);
+	bolt_reply_int8(client, 1);
+	bolt_client_end_message(client);
+	bolt_client_finish_write(client);
+}
+
+// handle the SHOW FUNCTIONS yield name, description, signature query
+void BoltShowFunctions
+(
+	bolt_client_t *client  // the client that sent the message
+) {
+	// "fields":["name","versions","edition"],"qid":{"low":0,"high":0}}]}
+	bolt_client_reply_for(client, BST_RUN, BST_SUCCESS, 1);
+	bolt_reply_map(client, 3);
+	bolt_reply_string(client, "t_first", 7);
+	bolt_reply_int(client, 0);
+	bolt_reply_string(client, "fields", 6);
+	bolt_reply_list(client, 3);
+	bolt_reply_string(client, "name", 4);
+	bolt_reply_string(client, "description", 11);
+	bolt_reply_string(client, "signature", 9);
+	bolt_reply_string(client, "qid", 3);
+	bolt_reply_int(client, 0);
+	bolt_client_end_message(client);
+
+	// SUCCESS {}
+	bolt_client_reply_for(client, BST_PULL, BST_SUCCESS, 1);
+	bolt_reply_map(client, 1);
+	bolt_reply_string(client, "t_last", 6);
+	bolt_reply_int8(client, 1);
 	bolt_client_end_message(client);
 	bolt_client_finish_write(client);
 }
@@ -543,10 +730,20 @@ void BoltRunCommand
 		bolt_client_free(client);
 		return;
 	}
-
+ 
 	const char *q = RedisModule_StringPtrLen(query, NULL);
 	if(strcmp(q, "SHOW DATABASES") == 0) {
 		BoltShowDatabases(client);
+	} else if(strcmp(q, "CALL dbms.clientConfig()") == 0) {
+		BoltDbmsClientConfig(client);
+	} else if(strcmp(q, "CALL dbms.security.showCurrentUser()") == 0) {
+		BoltDbmsSecurityShowCurremtUser(client);
+	} else if(strcmp(q, "CALL dbms.components() YIELD name, versions, edition") == 0) {
+		BoltDbmsComponents(client);
+	} else if(strcmp(q, "SHOW PROCEDURES yield name, description, signature") == 0) {
+		BoltShowProcedures(client);
+	} else if(strcmp(q, "SHOW FUNCTIONS yield name, description, signature") == 0) {
+		BoltShowFunctions(client);
 	} else {
 		args[0] = COMMAND;
 		args[1] = graph_name;
