@@ -31,10 +31,15 @@ static Record _yield(OpProcCall *op) {
 	return clone;
 }
 
-static void _evaluate_proc_args(OpProcCall *op) {
+static void _evaluate_proc_args
+(
+	OpProcCall *op
+) {
 	// evaluate arguments, free args from previous call
 	uint arg_count = array_len(op->args);
-	for(uint i = 0; i < arg_count; i++) SIValue_Free(op->args[i]);
+	for(uint i = 0; i < arg_count; i++) {
+		SIValue_Free(op->args[i]);
+	}
 
 	array_clear(op->args);
 
@@ -94,13 +99,16 @@ OpBase *NewProcCallOp
 	return (OpBase *)op;
 }
 
-static Record ProcCallConsume(OpBase *opBase) {
+static Record ProcCallConsume
+(
+	OpBase *opBase
+) {
 	OpProcCall *op = (OpProcCall *)opBase;
 
 	Record yield_record = NULL;
 	while(!(yield_record = _yield(op))) {
-		// Free old record.
-		if(op->r) {
+		// free old record
+		if(op->r != NULL) {
 			OpBase_DeleteRecord(op->r);
 			op->r = NULL;
 		}
