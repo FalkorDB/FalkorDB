@@ -334,7 +334,7 @@ bool write_value
 					return false;
 				}
 				char key[key_len];
-				if(bolt_read_string(value, key)) {
+				if(!bolt_read_string(value, key)) {
 					return false;
 				}
 				*n += sprintf(buff + *n, "%.*s: ", key_len, key);
