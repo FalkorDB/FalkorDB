@@ -470,6 +470,10 @@ static void BoltShowDatabases
 	GraphContext *gc = NULL;
 	Globals_ScanGraphs(&it);
 	int i = 0;
+	char address[32];
+	int16_t p;
+	Config_Option_get(Config_BOLT_PORT, &p);
+	int len = sprintf(address, "localhost:%d", p);
 	while((gc = GraphIterator_Next(&it)) != NULL) {
 		i++;
 		// RECORD {"signature":113,"fields":[["falkordb","standard",[],"read-write","localhost:7687","primary",true,"online","online","",true,true,[]]]}
@@ -479,7 +483,7 @@ static void BoltShowDatabases
 		bolt_reply_string(client, "standard", 8);
 		bolt_reply_list(client, 0);
 		bolt_reply_string(client, "read-write", 10);
-		bolt_reply_string(client, "localhost:7687", 14);
+		bolt_reply_string(client, address, len);
 		bolt_reply_string(client, "primary", 7);
 		bolt_reply_bool(client, true);
 		bolt_reply_string(client, "online", 6);
@@ -501,7 +505,7 @@ static void BoltShowDatabases
 		bolt_reply_string(client, "standard", 8);
 		bolt_reply_list(client, 0);
 		bolt_reply_string(client, "read-write", 10);
-		bolt_reply_string(client, "localhost:7687", 14);
+		bolt_reply_string(client, address, len);
 		bolt_reply_string(client, "primary", 7);
 		bolt_reply_bool(client, true);
 		bolt_reply_string(client, "online", 6);
@@ -520,7 +524,7 @@ static void BoltShowDatabases
 	bolt_reply_string(client, "system", 8);
 	bolt_reply_list(client, 0);
 	bolt_reply_string(client, "read-write", 10);
-	bolt_reply_string(client, "localhost:7687", 14);
+	bolt_reply_string(client, address, len);
 	bolt_reply_string(client, "primary", 7);
 	bolt_reply_bool(client, true);
 	bolt_reply_string(client, "online", 6);
@@ -736,7 +740,7 @@ void BoltRunCommand
 		BoltShowDatabases(client);
 	} else if(strcmp(q, "CALL dbms.clientConfig()") == 0) {
 		BoltDbmsClientConfig(client);
-	} else if(strcmp(q, "CALL dbms.security.showCurrentUser()") == 0) {
+	} else if(strcmp(q, "CALL dbms.security.showCurrentUser()") == 0 || strcmp(q, "CALL dbms.showCurrentUser()") == 0) {
 		BoltDbmsSecurityShowCurremtUser(client);
 	} else if(strcmp(q, "CALL dbms.components() YIELD name, versions, edition") == 0) {
 		BoltDbmsComponents(client);
