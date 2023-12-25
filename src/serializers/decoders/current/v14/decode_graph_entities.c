@@ -114,7 +114,7 @@ static void _RdbLoadEntity
 
 	uint64_t n = RedisModule_LoadUnsigned(rdb);
 	SIValue vals[n];
-	Attribute_ID ids[n];
+	AttributeID ids[n];
 
 	for(int i = 0; i < n; i++) {
 		ids[i]  = RedisModule_LoadUnsigned(rdb);

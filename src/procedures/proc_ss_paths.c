@@ -47,8 +47,8 @@ typedef struct {
 	GRAPH_EDGE_DIR dir;          // traverse direction.
 	uint minLen;                 // path minimum length.
 	uint maxLen;                 // path max length.
-	Attribute_ID weight_prop;    // weight attribute id
-	Attribute_ID cost_prop;      // cost attribuite id
+	AttributeID weight_prop;     // weight attribute id
+	AttributeID cost_prop;       // cost attribuite id
 	double max_cost;             // maximum cost of path
 	uint64_t path_count;         // path to return
 	union {
@@ -410,7 +410,7 @@ static void addNeighbors
 static inline SIValue _get_value_or_defualt
 (
 	GraphEntity *ge,
-	Attribute_ID id,
+	AttributeID id,
 	SIValue default_value
 ) {
 	SIValue *v = GraphEntity_GetProperty(ge, id);

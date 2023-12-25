@@ -265,7 +265,7 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 		// retrieve entity property
 		GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
 		const char *prop_name     = argv[1].stringval;
-		Attribute_ID prop_idx     = argv[2].longval;
+		AttributeID prop_idx     = argv[2].longval;
 
 		// We have the property string, attempt to look up the index now.
 		if(prop_idx == ATTRIBUTE_ID_NONE) {

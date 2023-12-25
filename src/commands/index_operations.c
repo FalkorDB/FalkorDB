@@ -126,7 +126,7 @@ static bool index_delete
 	//--------------------------------------------------------------------------
 
 	// quickly return if attribute doesn't exist
-	Attribute_ID attr_id = GraphContext_GetAttributeID(gc, attr);
+	AttributeID attr_id = GraphContext_GetAttributeID(gc, attr);
 	if(attr_id == ATTRIBUTE_ID_NONE) {
 		ErrorCtx_SetError(EMSG_UNABLE_TO_DROP_INDEX, lbl, attr);
 		return false;

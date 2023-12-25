@@ -1,0 +1,2 @@
+
+export FalkorDBRS=$(FalkorDBRS_BINDIR)/libFalkorDB_rs.a

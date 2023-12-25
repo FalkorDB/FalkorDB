@@ -26,7 +26,7 @@
 // can use the graph version to understand if the schema was modified
 // and take action accordingly
 
-typedef struct {
+typedef struct GraphContext {
 	Graph *g;                              // container for all matrices and entity properties
 	int ref_count;                         // number of active references
 	rax *attributes;                       // from strings to attribute IDs
@@ -205,7 +205,7 @@ uint GraphContext_AttributeCount
 );
 
 // retrieve an attribute ID given a string, creating one if not found
-Attribute_ID GraphContext_FindOrAddAttribute
+AttributeID GraphContext_FindOrAddAttribute
 (
 	GraphContext *gc,
 	const char *attribute,
@@ -216,12 +216,12 @@ Attribute_ID GraphContext_FindOrAddAttribute
 const char *GraphContext_GetAttributeString
 (
 	GraphContext *gc,
-	Attribute_ID id
+	AttributeID id
 );
 
 // retrieve an attribute ID given a string
 // or ATTRIBUTE_NOTFOUND if attribute doesn't exist
-Attribute_ID GraphContext_GetAttributeID
+AttributeID GraphContext_GetAttributeID
 (
 	GraphContext *gc,
 	const char *str
@@ -231,7 +231,7 @@ Attribute_ID GraphContext_GetAttributeID
 void GraphContext_RemoveAttribute
 (
 	GraphContext *gc,
-	Attribute_ID id
+	AttributeID id
 );
 
 //------------------------------------------------------------------------------
@@ -261,7 +261,7 @@ Index GraphContext_GetIndexByID
 (
 	const GraphContext *gc,      // graph context
 	int lbl_id,                  // label / rel-type ID
-	const Attribute_ID *attrs,   // attributes
+	const AttributeID *attrs,    // attributes
 	uint n,                      // attributes count
 	IndexFieldType t,            // all index attributes must be of this type
 	GraphEntityType entity_type  // schema type NODE / EDGE
@@ -272,7 +272,7 @@ Index GraphContext_GetIndex
 (
 	const GraphContext *gc,
 	const char *label,
-	Attribute_ID *attrs,
+	AttributeID *attrs,
 	uint n,
 	IndexFieldType type,
 	SchemaType schema_type
@@ -295,8 +295,31 @@ void GraphContext_DeleteNodeFromIndices
 	Node *n
 );
 
+// delete all references to a node from any relevant index
+void GraphContext_DeleteNodeFromIndicesByLabels
+(
+	GraphContext *gc,
+	Node *n,
+	LabelID *labels,
+	uint label_count
+);
+
 // remove a single edge from all indices that refer to it
 void GraphContext_DeleteEdgeFromIndices
+(
+	GraphContext *gc,
+	Edge *e
+);
+
+// add node to any relevant index
+void GraphContext_AddNodeToIndices
+(
+	GraphContext *gc,
+	Node *n
+);
+
+// add edge to any relevant index
+void GraphContext_AddEdgeToIndices
 (
 	GraphContext *gc,
 	Edge *e

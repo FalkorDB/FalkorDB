@@ -14,7 +14,7 @@
 
 // type of index field
 // multiple types can be combined via bitwise OR
-typedef enum {
+typedef enum IndexFieldType {
 	INDEX_FLD_UNKNOWN  = 0x00,  // unknown field type
 	INDEX_FLD_FULLTEXT = 0x01,  // full text field
 	INDEX_FLD_NUMERIC  = 0x02,  // numeric field
@@ -28,7 +28,7 @@ typedef enum {
 
 typedef struct {
 	char *name;              // field name
-	Attribute_ID id;         // field id
+	AttributeID id;          // field id
 	IndexFieldType type;     // field type(s)
 	struct {
 		double weight;       // the importance of text
@@ -50,7 +50,7 @@ void IndexField_Init
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id,     // attribute ID
+	AttributeID id,      // attribute ID
 	IndexFieldType type  // field type
 );
 
@@ -66,7 +66,7 @@ void IndexField_NewRangeField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id      // field id
+	AttributeID id       // field id
 );
 
 // create a new full text index field
@@ -74,7 +74,7 @@ void IndexField_NewFullTextField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id      // field id
+	AttributeID id       // field id
 );
 
 // create a new vector index field
@@ -82,7 +82,7 @@ void IndexField_NewVectorField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id,     // field id
+	AttributeID id,      // field id
 	uint32_t dimension   // vector dimension
 );
 

@@ -462,7 +462,7 @@ uint GraphContext_AttributeCount(GraphContext *gc) {
 	return size;
 }
 
-Attribute_ID GraphContext_FindOrAddAttribute
+AttributeID GraphContext_FindOrAddAttribute
 (
 	GraphContext *gc,
 	const char *attribute,
@@ -517,7 +517,7 @@ Attribute_ID GraphContext_FindOrAddAttribute
 const char *GraphContext_GetAttributeString
 (
 	GraphContext *gc,
-	Attribute_ID id
+	AttributeID id
 ) {
 	ASSERT(gc != NULL);
 	ASSERT(id >= 0 && id < array_len(gc->string_mapping));
@@ -528,7 +528,7 @@ const char *GraphContext_GetAttributeString
 	return name;
 }
 
-Attribute_ID GraphContext_GetAttributeID
+AttributeID GraphContext_GetAttributeID
 (
 	GraphContext *gc,
 	const char *attribute
@@ -548,7 +548,7 @@ Attribute_ID GraphContext_GetAttributeID
 void GraphContext_RemoveAttribute
 (
 	GraphContext *gc,
-	Attribute_ID id
+	AttributeID id
 ) {
 	ASSERT(gc);
 	ASSERT(id == array_len(gc->string_mapping) - 1);
@@ -594,7 +594,7 @@ Index GraphContext_GetIndexByID
 (
 	const GraphContext *gc,      // graph context
 	int lbl_id,                  // label / rel-type ID
-	const Attribute_ID *attrs,   // attributes
+	const AttributeID *attrs,    // attributes
 	uint n,                      // attributes count
 	IndexFieldType t,            // all index attributes must be of this type
 	GraphEntityType entity_type  // schema type NODE / EDGE
@@ -618,7 +618,7 @@ Index GraphContext_GetIndex
 (
 	const GraphContext *gc,
 	const char *label,
-	Attribute_ID *attrs,
+	AttributeID *attrs,
 	uint n,
 	IndexFieldType type,
 	SchemaType schema_type
@@ -658,6 +658,106 @@ int GraphContext_DeleteIndex
 	}
 
 	return res;
+}
+
+// delete all references to a node from any relevant index
+void GraphContext_DeleteNodeFromIndicesByLabels
+(
+	GraphContext *gc,
+	Node *n,
+	LabelID *labels,
+	uint label_count
+) {
+	ASSERT(n  != NULL);
+	ASSERT(gc != NULL);
+
+	Schema   *s      = NULL;
+	EntityID node_id = ENTITY_GET_ID(n);
+
+	for(uint i = 0; i < label_count; i++) {
+		int label_id = labels[i];
+		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
+		ASSERT(s != NULL);
+
+		// update any indices this entity is represented in
+		Schema_RemoveNodeFromIndex(s, n);
+	}
+}
+
+// delete all references to a node from any relevant index
+void GraphContext_DeleteNodeFromIndices
+(
+	GraphContext *gc,
+	Node *n
+) {
+	ASSERT(n  != NULL);
+	ASSERT(gc != NULL);
+
+	Graph *g = gc->g;
+
+	// retrieve node labels
+	uint label_count;
+	NODE_GET_LABELS(g, n, label_count);
+
+	GraphContext_DeleteNodeFromIndicesByLabels(gc, n, labels, label_count);
+}
+
+void GraphContext_DeleteEdgeFromIndices
+(
+	GraphContext *gc,
+	Edge *e
+) {
+	Schema *s = NULL;
+	Graph  *g = gc->g;
+
+	int relation_id = Edge_GetRelationID(e);
+
+	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
+
+	// update any indices this entity is represented in
+	Schema_RemoveEdgeFromIndex(s, e);
+}
+
+// add node to any relevant index
+void GraphContext_AddNodeToIndices
+(
+	GraphContext *gc,
+	Node *n
+) {
+	ASSERT(n  != NULL);
+	ASSERT(gc != NULL);
+
+	Schema   *s      = NULL;
+	Graph    *g      = gc->g;
+	EntityID node_id = ENTITY_GET_ID(n);
+
+	// retrieve node labels
+	uint label_count;
+	NODE_GET_LABELS(g, n, label_count);
+
+	for(uint i = 0; i < label_count; i++) {
+		int label_id = labels[i];
+		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
+		ASSERT(s != NULL);
+		Schema_AddNodeToIndex(s, n);
+	}
+}
+
+// add edge to any relevant index
+void GraphContext_AddEdgeToIndices
+(
+	GraphContext *gc,
+	Edge *e
+) {
+	Schema *s = NULL;
+	Graph  *g = gc->g;
+
+	int relation_id = Edge_GetRelationID(e);
+
+	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
+	ASSERT(s != NULL);
+
+	Schema_AddEdgeToIndex(s, e);
 }
 
 //------------------------------------------------------------------------------

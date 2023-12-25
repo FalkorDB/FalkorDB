@@ -24,7 +24,7 @@ typedef struct _Constraint {
 	Constraint_SetPrivateDataCB set_pdata;  // set private data
 	Constraint_GetPrivateDataCB get_pdata;  // get private data
 	int schema_id;                          // enforced label/relationship-type
-	Attribute_ID *attrs;                    // enforced attributes
+	AttributeID *attrs;                     // enforced attributes
 	const char **attr_names;                // enforced attribute names
 	ConstraintStatus status;                // constraint status
 	uint _Atomic pending_changes;           // number of pending changes
@@ -37,7 +37,7 @@ typedef struct _Constraint {
 extern Constraint Constraint_UniqueNew
 (
 	LabelID l,                // label/relation ID
-	Attribute_ID *fields,     // enforced fields
+	AttributeID *fields,      // enforced fields
 	const char **attr_names,  // enforced attribute names
 	uint8_t n_fields,         // number of fields
 	GraphEntityType et,       // entity type
@@ -48,7 +48,7 @@ extern Constraint Constraint_UniqueNew
 extern Constraint Constraint_MandatoryNew
 (
 	LabelID l,                // label/relation ID
-	Attribute_ID *fields,     // enforced fields
+	AttributeID *fields,      // enforced fields
 	const char **attr_names,  // enforced attribute names
 	uint8_t n_fields,         // number of fields
 	GraphEntityType et        // entity type
@@ -88,7 +88,7 @@ Constraint Constraint_New
 	struct GraphContext *gc,
 	ConstraintType t,         // type of constraint
 	int schema_id,            // schema ID
-	Attribute_ID *fields,     // enforced fields
+	AttributeID *fields,      // enforced fields
 	const char **attr_names,  // enforced attribute names
 	uint8_t n_fields,         // number of fields
 	GraphEntityType et,       // entity type
@@ -237,9 +237,9 @@ void *Constraint_GetPrivateData
 // returns a shallow copy of constraint attributes
 uint8_t Constraint_GetAttributes
 (
-	const Constraint c,             // constraint from which to get attributes
-	const Attribute_ID **attr_ids,  // array of constraint attribute IDs
-	const char ***attr_names        // array of constraint attribute names
+	const Constraint c,            // constraint from which to get attributes
+	const AttributeID **attr_ids,  // array of constraint attribute IDs
+	const char ***attr_names       // array of constraint attribute names
 ) {
 	ASSERT(c != NULL);
 
@@ -257,8 +257,8 @@ uint8_t Constraint_GetAttributes
 // checks if constraint enforces attribute
 bool Constraint_ContainsAttribute
 (
-	Constraint c,         // constraint to query
-	Attribute_ID attr_id  // enforced attribute
+	Constraint c,        // constraint to query
+	AttributeID attr_id  // enforced attribute
 ) {
 	for(uint8_t i = 0; i < c->n_attr; i++) {
 		if(c->attrs[i] == attr_id) {

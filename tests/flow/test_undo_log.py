@@ -12,7 +12,29 @@ class testUndoLog():
     def tearDown(self):
         self.redis_con.flushall()
 
+    def test00_undo_schema(self):
+        try:
+            self.graph.query("""CREATE (s:N {v: 1}), (t:N {v: 2})
+                                MATCH (s:N {v: 1}), (t:N {v: 2})
+                                CREATE (s)-[r:R]->(t)
+                                WITH r
+                                RETURN 1 * r""")
+            # we're not supposed to be here, expecting query to fail
+            self.env.assertTrue(False) 
+        except:
+            pass
+
+        # no label should be created
+        result = self.graph.query("CALL db.labels")
+        self.env.assertEquals(len(result.result_set), 0)
+
+        # no relation should be added
+        result = self.graph.query("CALL db.relationshipTypes")
+        self.env.assertEquals(len(result.result_set), 0)
+
     def test01_undo_create_node(self):
+        self.graph.query("CREATE (n:N)")
+
         try:
             self.graph.query("CREATE (n:N) WITH n RETURN 1 * n")
             # we're not supposed to be here, expecting query to fail
@@ -22,15 +44,11 @@ class testUndoLog():
 
         # node (n:N) should be removed, expecting an empty graph
         result = self.graph.query("MATCH (n:N) RETURN n")
-        self.env.assertEquals(len(result.result_set), 0)
-
-        # no label should be created
-        result = self.graph.query("CALL db.labels")
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEquals(len(result.result_set), 1)
 
 
     def test02_undo_create_edge(self):
-        self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
+        self.graph.query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})")
         try:
             self.graph.query("""MATCH (s:N {v: 1}), (t:N {v: 2})
                                 CREATE (s)-[r:R]->(t)
@@ -43,11 +61,7 @@ class testUndoLog():
 
         # edge [r:R] should have been removed
         result = self.graph.query("MATCH ()-[r:R]->() RETURN r")
-        self.env.assertEquals(len(result.result_set), 0)
-
-        # no relation should be added
-        result = self.graph.query("CALL db.relationshipTypes")
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEquals(len(result.result_set), 1)
 
     def test03_undo_delete_node(self):
         self.graph.query("CREATE (:N)")

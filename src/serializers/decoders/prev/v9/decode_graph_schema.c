@@ -29,7 +29,7 @@ static Schema *_RdbLoadSchema
 		IndexField field;
 		IndexType type = RedisModule_LoadUnsigned(rdb);
 		char *field_name = RedisModule_LoadStringBuffer(rdb, NULL);
-		Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc, field_name,
+		AttributeID field_id = GraphContext_FindOrAddAttribute(gc, field_name,
 				NULL);
 
 		if(type == IDX_EXACT_MATCH) {

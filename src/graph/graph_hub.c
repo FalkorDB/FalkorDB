@@ -6,92 +6,6 @@
 
 #include "graph_hub.h"
 #include "../query_ctx.h"
-#include "../undo_log/undo_log.h"
-
-// delete all references to a node from any relevant index
-static void _DeleteNodeFromIndices
-(
-	GraphContext *gc,
-	Node *n
-) {
-	ASSERT(n  != NULL);
-	ASSERT(gc != NULL);
-
-	Schema   *s      = NULL;
-	Graph    *g      = gc->g;
-	EntityID node_id = ENTITY_GET_ID(n);
-
-	// retrieve node labels
-	uint label_count;
-	NODE_GET_LABELS(g, n, label_count);
-
-	for(uint i = 0; i < label_count; i++) {
-		int label_id = labels[i];
-		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
-		ASSERT(s != NULL);
-
-		// update any indices this entity is represented in
-		Schema_RemoveNodeFromIndex(s, n);
-	}
-}
-
-static void _DeleteEdgeFromIndices
-(
-	GraphContext *gc,
-	Edge *e
-) {
-	Schema *s = NULL;
-	Graph  *g = gc->g;
-
-	int relation_id = Edge_GetRelationID(e);
-
-	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
-
-	// update any indices this entity is represented in
-	Schema_RemoveEdgeFromIndex(s, e);
-}
-
-// add node to any relevant index
-static void _AddNodeToIndices
-(
-	GraphContext *gc,
-	Node *n
-) {
-	ASSERT(n  != NULL);
-	ASSERT(gc != NULL);
-
-	Schema   *s      = NULL;
-	Graph    *g      = gc->g;
-	EntityID node_id = ENTITY_GET_ID(n);
-
-	// retrieve node labels
-	uint label_count;
-	NODE_GET_LABELS(g, n, label_count);
-
-	for(uint i = 0; i < label_count; i++) {
-		int label_id = labels[i];
-		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
-		ASSERT(s != NULL);
-		Schema_AddNodeToIndex(s, n);
-	}
-}
-
-// add edge to any relevant index
-static void _AddEdgeToIndices
-(
-	GraphContext *gc,
-	Edge *e
-) {
-	Schema *s = NULL;
-	Graph  *g = gc->g;
-
-	int relation_id = Edge_GetRelationID(e);
-
-	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
-	ASSERT(s != NULL);
-
-	Schema_AddEdgeToIndex(s, e);
-}
 
 void CreateNode
 (
@@ -177,12 +91,15 @@ void DeleteNodes
 
 		if(log) {
 			// add node deletion operation to undo log
-			UndoLog_DeleteNode(undo_log, n);
+			Graph *g = QueryCtx_GetGraph();
+			size_t label_count;
+			NODE_GET_LABELS(g, n, label_count);
+			UndoLog_DeleteNode(undo_log, n, labels, label_count);
 			EffectsBuffer_AddDeleteNodeEffect(eb, n);
 		}
 
 		if(has_indices) {
-			_DeleteNodeFromIndices(gc, n);
+			GraphContext_DeleteNodeFromIndices(gc, n);
 		}
 	}
 
@@ -214,7 +131,7 @@ void DeleteEdges
 			}
 
 			if(has_indecise == true) {
-				_DeleteEdgeFromIndices(gc, edges + i);
+				GraphContext_DeleteEdgeFromIndices(gc, edges + i);
 			}
 		}
 	}
@@ -239,15 +156,19 @@ void UpdateEntityProperties
 
 	if(log == true) {
 		UndoLog log = QueryCtx_GetUndoLog();
-		UndoLog_UpdateEntity(log, ge, old_set, entity_type);
+		if(entity_type == GETYPE_NODE) {
+			UndoLog_UpdateNode(log, (Node *)ge, old_set);
+		} else {
+			UndoLog_UpdateEdge(log, (Edge *)ge, old_set);
+		}
 	}
 
 	*ge->attributes = set;
 
 	if(entity_type == GETYPE_NODE) {
-		_AddNodeToIndices(gc, (Node *)ge);
+		GraphContext_AddNodeToIndices(gc, (Node *)ge);
 	} else {
-		_AddEdgeToIndices(gc, (Edge *)ge);
+		GraphContext_AddEdgeToIndices(gc, (Edge *)ge);
 	}
 }
 
@@ -255,7 +176,7 @@ void UpdateNodeProperty
 (
 	GraphContext *gc,             // graph context
 	NodeID id,                    // node ID
-	Attribute_ID attr_id,         // attribute ID
+	AttributeID attr_id,          // attribute ID
 	SIValue v                     // new attribute value
 ) {
 	ASSERT(gc      != NULL);
@@ -302,7 +223,7 @@ void UpdateEdgeProperty
 	RelationID r_id,              // relation ID
 	NodeID src_id,                // source node ID
 	NodeID dest_id,               // destination node ID
-	Attribute_ID attr_id,         // attribute ID
+	AttributeID attr_id,          // attribute ID
 	SIValue v                     // new attribute value
 ) {
 	ASSERT(gc      != NULL);
@@ -494,7 +415,7 @@ Schema *AddSchema
 	return s;
 }
 
-Attribute_ID FindOrAddAttribute
+AttributeID FindOrAddAttribute
 (
 	GraphContext *gc,       // graph context to add the attribute
 	const char *attribute,  // attribute name
@@ -504,7 +425,7 @@ Attribute_ID FindOrAddAttribute
 	ASSERT(attribute != NULL);
 
 	bool created;
-	Attribute_ID attr_id = GraphContext_FindOrAddAttribute(gc, attribute,
+	AttributeID attr_id = GraphContext_FindOrAddAttribute(gc, attribute,
 			&created);
 
 	// in case there was an append, the latest id should be tracked
@@ -555,7 +476,7 @@ Index AddIndex
 	//--------------------------------------------------------------------------
 
 	// creating an index will create the attribute
-	Attribute_ID attr_id = FindOrAddAttribute(gc, attr, log);
+	AttributeID attr_id = FindOrAddAttribute(gc, attr, log);
 
 	//--------------------------------------------------------------------------
 	// create index field
