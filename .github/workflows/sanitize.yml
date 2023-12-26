@@ -41,13 +41,13 @@ jobs:
 
     - name: Build
       run:
-        . "$HOME/.cargo/env"
+        . "/root/.cargo/env"
         make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
       run:
-        . ./venv/bin/activate
+        . /venv/bin/activate
         make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
@@ -60,7 +60,7 @@ jobs:
     - name: Flow tests
       id: flow_tests
       run:
-        . ./venv/bin/activate
+        . /venv/bin/activate
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
@@ -73,7 +73,7 @@ jobs:
     - name: TCK tests
       id: tck_tests
       run:
-        . ./venv/bin/activate
+        . /venv/bin/activate
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
