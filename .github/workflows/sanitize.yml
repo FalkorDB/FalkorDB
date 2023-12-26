@@ -7,7 +7,7 @@ on:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:alpine
     steps:
 
     - name: Safe dir
@@ -44,7 +44,9 @@ jobs:
 
     - name: Unit tests
       id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
+      run: 
+        source ./venv/bin/activate
+        make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v3
@@ -55,7 +57,9 @@ jobs:
 
     - name: Flow tests
       id: flow_tests
-      run: make flow-tests CLEAR_LOGS=0 SAN=address
+      run: 
+        source ./venv/bin/activate
+        make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v3
@@ -66,7 +70,9 @@ jobs:
 
     - name: TCK tests
       id: tck_tests
-      run: make tck-tests CLEAR_LOGS=0 SAN=address
+      run: 
+        source ./venv/bin/activate
+        make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v3
