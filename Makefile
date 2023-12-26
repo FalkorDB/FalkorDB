@@ -138,7 +138,7 @@ export REDISEARCH_BINROOT=$(BINROOT)
 include $(ROOT)/build/RediSearch/Makefile.defs
 
 FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-rs
-export FalkorDBRS_BINDIR=$(DEPS_BINDIR)/FalkorDB-rs
+export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-rs
 include $(ROOT)/build/FalkorDB-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
@@ -275,9 +275,15 @@ $(REDISEARCH_LIBS):
 
 falkordbrs: $(FalkorDBRS)
 
+ifeq ($(DEBUG),1)
+CARGO_FLAGS=
+else
+CARGO_FLAGS=--release
+endif
+
 $(FalkorDBRS):
 	@echo Building $@ ...
-	cd deps/FalkorDB-rs && cargo build --features falkordb_allocator -Z unstable-options --out-dir $(FalkorDBRS_BINDIR) && \
+	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator -Z unstable-options --out-dir $(FalkorDBRS_BINDIR) && \
 		cbindgen --config cbindgen.toml --crate FalkorDB-rs --output $(FalkorDBRS_BINDIR)/FalkorDBRS.h --lang=c
 
 .PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma falkordbrs
