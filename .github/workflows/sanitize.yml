@@ -40,11 +40,13 @@ jobs:
         key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
-      run: make CLANG=1 SAN=address NPROC=16
+      run:
+        source "$HOME/.cargo/env"
+        make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
-      run: 
+      run:
         source ./venv/bin/activate
         make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
@@ -57,7 +59,7 @@ jobs:
 
     - name: Flow tests
       id: flow_tests
-      run: 
+      run:
         source ./venv/bin/activate
         make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
@@ -70,7 +72,7 @@ jobs:
 
     - name: TCK tests
       id: tck_tests
-      run: 
+      run:
         source ./venv/bin/activate
         make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
