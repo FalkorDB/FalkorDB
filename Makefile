@@ -281,6 +281,10 @@ else
 CARGO_FLAGS=--release
 endif
 
+ifeq ($(SAN), address)
+export RUSTFLAGS=-Zsanitizer=address
+endif
+
 $(FalkorDBRS):
 	@echo Building $@ ...
 	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator -Z unstable-options --out-dir $(FalkorDBRS_BINDIR) && \
