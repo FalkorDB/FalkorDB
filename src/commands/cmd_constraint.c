@@ -20,7 +20,7 @@ typedef enum {
 	CT_DROP     // drop constraint
 } ConstraintOp;
 
-static inline int _cmp_Attribute_ID
+static inline int _cmp_AttributeID
 (
 	const void *a,
 	const void *b
@@ -271,7 +271,7 @@ static bool _Constraint_Create
 
 	// sort the properties for an easy comparison later
 	bool dups = false;
-	qsort(attr_ids, n, sizeof(AttributeID), _cmp_Attribute_ID);
+	qsort(attr_ids, n, sizeof(AttributeID), _cmp_AttributeID);
 	for(uint i = 0; i < n - 1; i++) {
 		if(attr_ids[i] == attr_ids[i+1]) {
 			dups = true;

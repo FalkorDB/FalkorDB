@@ -665,12 +665,12 @@ void _DeleteNodeFromIndices
 (
 	GraphContext *gc,  // graph context
 	Node *n, 		   // node to remove from index
-	LabelID *lbls,   // [optional] node labels to remove from index
+	LabelID *lbls,     // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 ) {
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
-	ASSERT(lbls != NULL && label_count > 0);
+	ASSERT(lbls != NULL);
 
 	Schema   *s      = NULL;
 	EntityID node_id = ENTITY_GET_ID(n);

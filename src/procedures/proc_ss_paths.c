@@ -490,7 +490,6 @@ static void SSpaths_next
 
 	// couldn't find a path.
 	p->path = NULL;
-	return;
 }
 
 // compare path by weight, cost and path length
