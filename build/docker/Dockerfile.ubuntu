@@ -6,8 +6,6 @@ WORKDIR /FalkorDB
 
 ADD . /FalkorDB
 
-RUN rustup default nightly
-
 RUN make
 
 # FROM --platform=$TARGETPLATFORM redis:7.2.3
