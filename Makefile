@@ -283,12 +283,12 @@ endif
 
 ifeq ($(SAN), address)
 export RUSTFLAGS=-Zsanitizer=address
-CARGO_FLAGS=--target x86_64-unknown-linux-gnu -Z unstable-options --out-dir $(FalkorDBRS_BINDIR)
+CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
 
 $(FalkorDBRS):
 	@echo Building $@ ...
-	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
+	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR) -Z unstable-options --out-dir $(FalkorDBRS_BINDIR)
 
 .PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma falkordbrs
 
