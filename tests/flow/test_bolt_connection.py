@@ -6,8 +6,9 @@ import threading
 from neo4j import GraphDatabase
 
 local_port = random.randint(10000, 20000)
-# pipe communication between two sockets
-def pipe_sockets(source_socket, destination_socket, capture_communication, buffer_size=4096):
+
+# forward data from source socket to destination socket
+def pipe_client(source_socket, destination_socket, capture_communication, buffer_size=4096):
     try:
         while True:
             # read from source
@@ -18,7 +19,13 @@ def pipe_sockets(source_socket, destination_socket, capture_communication, buffe
 
             # forward to destination
             destination_socket.sendall(data)
+    except Exception as e:
+        pass
 
+# forward data from destination socket to source socket
+def pipe_server(source_socket, destination_socket, capture_communication, buffer_size=4096):
+    try:
+        while True:
             # read from destination
             data = destination_socket.recv(buffer_size)
             capture_communication['server'].append([data])
@@ -60,22 +67,28 @@ def bolt_communication(query, params={}, bolt_port=6380):
     # Waiting for connection
     print("Waiting for connection")
     source_socket, source_address = server_socket.accept()
+    # source_socket.setblocking(0)
 
     communication = {'client': [], 'server': []}
 
-    forwarding_thread = threading.Thread(target=pipe_sockets,
+    forwarding_client_thread = threading.Thread(target=pipe_client,
     args=(source_socket, destination_socket, communication))
-    forwarding_thread.start()
+    forwarding_server_thread = threading.Thread(target=pipe_server,
+    args=(source_socket, destination_socket, communication))
+    forwarding_client_thread.start()
+    forwarding_server_thread.start()
 
     # Wait for the thread to finish (optional)
     client_thread.join()
+    print("Client thread finished")
 
     # Close sockets
     source_socket.close()
     destination_socket.close()
     server_socket.close()
 
-    forwarding_thread.join()
+    forwarding_client_thread.join()
+    forwarding_server_thread.join()
 
     return communication
 
@@ -170,6 +183,7 @@ class testBoltConnection():
         #        while recv_with_timeout(s, timeout=0.2, buffer_size=1024) is not None:
         #            pass
 
+        # sent_data = b'``\xb0\x17\x00\x03\x03\x05\x00\x02\x04\x04\x00\x00\x01\x04\x00\x00\x00\x03\x01\x08\xb1\x01\xa2\x8auser_agent\xd01neo4j-python/5.12.0 Python/3.11.6-final-0 (linux)\x8abolt_agent\xa4\x87product\xd0\x13neo4j-python/5.12.0\x88platform\xd0\x1eLinux 6.5.0-14-generic; x86_64\x88language\xd0\x15Python/3.11.6-final-0\xd0\x10language_details\xd0ACPython; 3.11.6-final-0 (main, Oct  8 2023 05:06:43) [GCC 13.2.0]\x00\x00\x00\x03\xb1j\xa0\x00\x00\x00\r\xb3\x10\x88RETURN 1\xa0\xa0\x00\x00\x00\x08\xb1?\xa1\x81n\xc9\x03\xe8\x00\x00\x00\x02\xb0\x02\x00\x00'
         # send entire message
         input("Press Enter to continue...")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
