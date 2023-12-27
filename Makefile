@@ -283,7 +283,7 @@ endif
 
 ifeq ($(SAN), address)
 export RUSTFLAGS=-Zsanitizer=address
-CARGO_FLAGS=--target x86_64-unknown-linux-gnu
+CARGO_FLAGS=--target x86_64-unknown-linux-gnu -Z unstable-options --out-dir $(FalkorDBRS_BINDIR)
 endif
 
 $(FalkorDBRS):
