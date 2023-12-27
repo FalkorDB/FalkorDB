@@ -15,39 +15,42 @@
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,                   // the socket file descriptor
-	RedisModuleCtx *ctx,               // the redis module context
 	RedisModuleEventLoopFunc on_write  // the write callback
 ) {
-	ASSERT(socket > 0);
-	ASSERT(ctx != NULL);
+	ASSERT(socket   > 0);
 	ASSERT(on_write != NULL);
 
 	bolt_client_t *client = rm_malloc(sizeof(bolt_client_t));
-	client->ws         = false;
-	client->ctx        = ctx;
-	client->state      = BS_NEGOTIATION;
-	client->reset      = false;
-	client->socket     = socket;
-	client->on_write   = on_write;
-	client->shutdown   = false;
-	client->processing = false;
+
+	client->ws             = false;
+	client->ctx            = RedisModule_GetThreadSafeContext(NULL);
+	client->state          = BS_NEGOTIATION;
+	client->reset          = false;
+	client->socket         = socket;
+	client->on_write       = on_write;
+	client->shutdown       = false;
+	client->processing     = false;
 	client->write_messages = array_new(bolt_message_t, 1);
+
 	buffer_new(&client->msg_buf);
 	buffer_new(&client->read_buf);
 	buffer_new(&client->write_buf);
 	buffer_index_set(&client->ws_frame, &client->read_buf, 0);
+
 	return client;
 }
 
-// change the client state from BS_NEGOTIATION according to the request and response type
+// change the client state from BS_NEGOTIATION according to the request
+// and response type
 static void bolt_change_negotiation_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
 	bolt_structure_type response_type  // the response type
 ) {
-	ASSERT(client != NULL);
-	ASSERT(client->state == BS_NEGOTIATION && request_type == BST_HELLO);
+	ASSERT(client        != NULL);
+	ASSERT(request_type  == BST_HELLO);
+	ASSERT(client->state == BS_NEGOTIATION);
 
 	switch (response_type)
 	{
@@ -62,15 +65,17 @@ static void bolt_change_negotiation_state
 	}
 }
 
-// change the client state from BS_AUTHENTICATION according to the request and response type
+// change the client state from BS_AUTHENTICATION according to the request
+// and response type
 static void bolt_change_authentication_state
 (
 	bolt_client_t *client,             // the client
 	bolt_structure_type request_type,  // the request type
 	bolt_structure_type response_type  // the response type
 ) {
-	ASSERT(client != NULL);
-	ASSERT(client->state == BS_AUTHENTICATION && request_type == BST_LOGON);
+	ASSERT(client        != NULL);
+	ASSERT(request_type  == BST_LOGON);
+	ASSERT(client->state == BS_AUTHENTICATION);
 
 	switch (response_type)
 	{
@@ -85,7 +90,8 @@ static void bolt_change_authentication_state
 	}
 }
 
-// change the client state from BS_READY according to the request and response type
+// change the client state from BS_READY according to the request
+// and response type
 static void bolt_change_ready_state
 (
 	bolt_client_t *client,             // the client
@@ -157,7 +163,8 @@ static void bolt_change_ready_state
 	}
 }
 
-// change the client state from BS_STREAMING according to the request and response type
+// change the client state from BS_STREAMING according to the request
+// and response type
 static void bolt_change_streaming_state
 (
 	bolt_client_t *client,             // the client
@@ -207,7 +214,8 @@ static void bolt_change_streaming_state
 }
 
 
-// change the client state from BS_TX_READY according to the request and response type
+// change the client state from BS_TX_READY according to the request
+// and response type
 static void bolt_change_txready_state
 (
 	bolt_client_t *client, 		       // the client
@@ -269,7 +277,8 @@ static void bolt_change_txready_state
 	}
 }
 
-// change the client state from BS_TX_STREAMING according to the request and response type
+// change the client state from BS_TX_STREAMING according to the request
+// and response type
 static void bolt_change_txstreaming_state
 (
 	bolt_client_t *client,             // the client
@@ -344,7 +353,8 @@ static void bolt_change_txstreaming_state
 	}
 }
 
-// change the client state from BS_FAILED according to the request and response type
+// change the client state from BS_FAILED according to the request
+// and response type
 static void bolt_change_failed_state
 (
 	bolt_client_t *client,             // the client
@@ -397,7 +407,8 @@ static void bolt_change_failed_state
 	}
 }
 
-// change the client state from BS_INTERRUPTED according to the request and response type
+// change the client state from BS_INTERRUPTED according to the request
+// and response type
 static void bolt_change_interrupted_state
 (
 	bolt_client_t *client,             // the client
@@ -490,7 +501,8 @@ static void bolt_change_interrupted_state
 	}
 }
 
-// change the client state according to the request and response type
+// change the client state according to the request
+// and response type
 void bolt_change_client_state
 (
 	bolt_client_t *client,             // the client
@@ -535,7 +547,6 @@ void bolt_change_client_state
 	}
 }
 
-
 // reply the response type
 // and change the client state according to the request and response type
 void bolt_client_reply_for
@@ -549,12 +560,14 @@ void bolt_client_reply_for
 
 	// prepare for the current message
 	bolt_message_t msg;
+
 	if(client->ws) {
 		msg.ws_header = client->write_buf.write;
 		ws_write_empty_header(&client->write_buf.write);
 	}
+
 	msg.bolt_header = client->write_buf.write;
-	buffer_write_uint16(&client->write_buf.write, 0x0000);
+	buffer_write_uint16_t(&client->write_buf.write, 0x0000);
 	msg.start = client->write_buf.write;
 	msg.end = client->write_buf.write;
 	array_append(client->write_messages, msg);
@@ -570,7 +583,8 @@ void bolt_client_end_message
 ) {
 	ASSERT(client != NULL);
 
-	bolt_message_t *msg = client->write_messages + array_len(client->write_messages) - 1;
+	bolt_message_t *msg =
+		client->write_messages + array_len(client->write_messages) - 1;
 	msg->end = client->write_buf.write;
 	uint64_t n = buffer_index_diff(&msg->end, &msg->start);
 	if(client->ws) {
@@ -580,8 +594,8 @@ void bolt_client_end_message
 	}
 	
 	buffer_index_t write_bolt_header = msg->bolt_header;
-	buffer_write_uint16(&write_bolt_header, htons(n));
-	buffer_write_uint16(&client->write_buf.write, 0x0000);
+	buffer_write_uint16_t(&write_bolt_header, htons(n));
+	buffer_write_uint16_t(&client->write_buf.write, 0x0000);
 	msg->end = client->write_buf.write;
 }
 
@@ -592,7 +606,8 @@ void bolt_client_finish_write
 ) {
 	ASSERT(client != NULL);
 
-	RedisModule_EventLoopAdd(client->socket, REDISMODULE_EVENTLOOP_WRITABLE, client->on_write, client);
+	RedisModule_EventLoopAdd(client->socket, REDISMODULE_EVENTLOOP_WRITABLE,
+			client->on_write, client);
 }
 
 // write all messages to the socket
@@ -608,7 +623,7 @@ void bolt_client_send
 		array_append(client->write_messages, (bolt_message_t){0});
 		bolt_message_t *msg = client->write_messages;
 		msg->bolt_header = client->write_buf.write;
-		buffer_write_uint16(&client->write_buf.write, 0x0000);
+		buffer_write_uint16_t(&client->write_buf.write, 0x0000);
 		msg->start = client->write_buf.write;
 		msg->end = client->write_buf.write;
 		if(client->state != BS_FAILED) {
@@ -627,7 +642,7 @@ void bolt_client_send
 
 		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
 		msg->bolt_header = client->write_buf.write;
-		buffer_write_uint16(&client->write_buf.write, 0x0000);
+		buffer_write_uint16_t(&client->write_buf.write, 0x0000);
 		msg->start = client->write_buf.write;
 		msg->end = client->write_buf.write;
 
@@ -648,8 +663,10 @@ void bolt_client_send
 		}
 	} else {
 		bolt_message_t *first_msg = client->write_messages;
-		bolt_message_t *last_msg = client->write_messages + array_len(client->write_messages) - 1;
-		buffer_socket_write(&first_msg->bolt_header, &last_msg->end, client->socket);
+		bolt_message_t *last_msg =
+			client->write_messages + array_len(client->write_messages) - 1;
+		buffer_socket_write(&first_msg->bolt_header, &last_msg->end,
+				client->socket);
 	}
 
 	array_clear(client->write_messages);
@@ -664,9 +681,10 @@ bool bolt_check_handshake
 	ASSERT(client != NULL);
 
 	uint32_t magic;
-	if(!buffer_read_uint32(&client->read_buf.read, &magic)) {
+	if(!buffer_read(&client->read_buf.read, &magic)) {
 		return false;
 	}
+
 	return ntohl(magic) == 0x6060B017;
 }
 
@@ -679,11 +697,14 @@ bool bolt_read_supported_version
 	ASSERT(client != NULL);
 
 	char data[16];
-	if(!buffer_index_read(&client->read_buf.read, data, 16)) {
+
+	if(!buffer_read_n(&client->read_buf.read, data, 16)) {
 		return false;
 	}
+
 	version->minor = data[2];
 	version->major = data[3];
+
 	return true;
 }
 
@@ -695,6 +716,7 @@ void bolt_client_free
 	ASSERT(client != NULL);
 
 	RedisModule_EventLoopDel(client->socket, REDISMODULE_EVENTLOOP_WRITABLE);
+
 	socket_close(client->socket);
 	buffer_free(&client->read_buf);
 	buffer_free(&client->write_buf);
@@ -702,3 +724,4 @@ void bolt_client_free
 	array_free(client->write_messages);
 	rm_free(client);
 }
+

@@ -7,6 +7,35 @@
 #include "buffer.h"
 #include "../util/arr.h"
 
+// pointer to buffer's read position
+#define BUFFER_READ_POSITION(buff) \
+	buff->chunks[buff->read.chunk] + buff->read.offset
+
+// pointer to buffer's write position
+#define BUFFER_WRITE_POSITION(buff) \
+	buff->chunks[buff->write.chunk] + buff->write.offset
+
+// compute how much space is available in the buffer's current write chunk
+#define BUFFER_CHUNK_AVAILABLE_SIZE(buff) \
+	(BUFFER_CHUNK_SIZE - buff->write.offset)
+
+#define BUFFER_ADVANCE_WRITE(buff, n) \
+	buff->write.offset += n;
+
+// reset buffer's read and write pointers
+static void _buffer_reset_pointers
+(
+	buffer_t *buf  // buffer to reset
+) {
+	ASSERT(buf != NULL);
+
+	// set read & write chunk and offset to 0
+	buf->read.chunk   = 0;
+	buf->read.offset  = 0;
+	buf->write.chunk  = 0;
+	buf->write.offset = 0;
+}
+
 // set buffer index to offset
 void buffer_index_set
 (
@@ -40,16 +69,17 @@ void buffer_index_advance
 	}
 }
 
-// copy the data and increment the index
-bool buffer_index_read
+// read n bytes from buffer
+bool buffer_read_n
 (
-	buffer_index_t *index,  // index
-	char *ptr,              // pointer
-	uint32_t size           // size
+	buffer_index_t *index,  // buffer to read from
+	char *ptr,              // read data into this pointer
+	uint32_t size           // number of bytes to read
 ) {
+	ASSERT(ptr   != NULL);
 	ASSERT(index != NULL);
-	ASSERT(ptr != NULL);
-	// check if there is enough data to read
+
+	// return false if there is not enough data to read
 	if(size > buffer_index_length(index)) {
 		return false;
 	}
@@ -57,13 +87,15 @@ bool buffer_index_read
 	buffer_index_t start = *index;
 	char *from = start.buf->chunks[start.chunk] + start.offset;
 	buffer_index_advance(index, size);
-	while (start.chunk < index->chunk) {
+
+	while(start.chunk < index->chunk) {
 		memcpy(ptr, from, BUFFER_CHUNK_SIZE - start.offset);
 		ptr += BUFFER_CHUNK_SIZE - start.offset;
 		start.chunk++;
 		start.offset = 0;
 		from = index->buf->chunks[start.chunk];
 	}
+
 	memcpy(ptr, from, index->offset - start.offset);
 	return true;
 }
@@ -111,7 +143,7 @@ bool buffer_index_read_until
 		if(p != NULL) {
 			size += p - from;
 			res = rm_malloc(size + 1);
-			if(!buffer_index_read(index, res, size)) {
+			if(!buffer_read_n(index, res, size)) {
 				rm_free(res);
 				return false;
 			}
@@ -128,7 +160,7 @@ bool buffer_index_read_until
 	if(p != NULL) {
 		size += p - from;
 		res = rm_malloc(size + 1);
-		if(!buffer_index_read(index, res, size)) {
+		if(!buffer_read_n(index, res, size)) {
 			rm_free(res);
 			return false;
 		}
@@ -152,52 +184,30 @@ void buffer_new
 	buffer_index_set(&buf->write, buf, 0);
 }
 
-// read a uint8_t from the buffer
-bool buffer_read_uint8
-(
-	buffer_index_t *buf,  // buffer
-	uint8_t *value        // value
-) {
-	ASSERT(buf != NULL);
+// declare buffer read function
+#define buffer_read_t(type)                                      \
+bool buffer_read_##type                                          \
+(                                                                \
+	buffer_index_t *buf,  /* buffer */                           \
+	type *value           /* value */                            \
+) {                                                              \
+	ASSERT(buf != NULL);                                         \
+	ASSERT(value != NULL);                                       \
+	return buffer_read_n(buf, (char *)value, sizeof(type));      \
+}                                                                \
 
-	return buffer_index_read(buf, (char *)value, 1);
-}
-
-// read a uint16_t from the buffer
-bool buffer_read_uint16
-(
-	buffer_index_t *buf,  // buffer
-	uint16_t *value       // value
-) {
-	ASSERT(buf != NULL);
-
-	return buffer_index_read(buf, (char *)value, 2);
-}
-
-// read a uint32_t from the buffer
-bool buffer_read_uint32
-(
-	buffer_index_t *buf,  // buffer
-	uint32_t *value       // value
-) {
-	ASSERT(buf != NULL);
-
-	return buffer_index_read(buf, (char *)value, 4);
-}
-
-// read a uint64_t from the buffer
-bool buffer_read_uint64
-(
-	buffer_index_t *buf,  // buffer
-	uint64_t *value       // value
-) {
-	ASSERT(buf != NULL);
-
-	return buffer_index_read(buf, (char *)value, 8);
-}
+// declare all buffer read functions
+buffer_read_t(int8_t)
+buffer_read_t(uint8_t)
+buffer_read_t(int16_t)
+buffer_read_t(uint16_t)
+buffer_read_t(int32_t)
+buffer_read_t(uint32_t)
+buffer_read_t(int64_t)
+buffer_read_t(uint64_t)
 
 // copy data from the buffer to the destination
-bool buffer_read
+bool buffer_copy
 (
 	buffer_index_t *buf,  // buffer
 	buffer_index_t *dst,  // destination
@@ -224,7 +234,7 @@ bool buffer_read
 			dst->offset += size;
 			return true;
 		}
-		
+
 		if(src_available_size < dst_available_size) {
 			memcpy(dst_ptr, src_ptr, src_available_size);
 			size -= src_available_size;
@@ -254,23 +264,46 @@ bool buffer_socket_read
 	ASSERT(buf != NULL);
 	ASSERT(socket > 0);
 
-	char *ptr = buf->chunks[buf->write.chunk] + buf->write.offset;
-	int nread = socket_read(socket, ptr, BUFFER_CHUNK_SIZE - buf->write.offset);
+	// in case the buffer is empty, reset the read and write pointers
+	if(BUFFER_READ_POSITION(buf) == BUFFER_WRITE_POSITION(buf)) {
+		_buffer_reset_pointers(buf);
+	}
+
+	char *ptr = BUFFER_WRITE_POSITION(buf);
+	int nread = socket_read(socket, ptr, BUFFER_CHUNK_AVAILABLE_SIZE(buf));
+
 	if(nread < 0 || (nread == 0 && buf->write.offset < BUFFER_CHUNK_SIZE)) {
+		// failed to read from socket
 		return false;
 	}
 
-	buf->write.offset += nread;
+	// update write position
+	BUFFER_ADVANCE_WRITE(buf, nread);
+
+	// TODO: what happens if we've read exactly BUFFER_CHUNK_SIZE bytes?
+	// and there's no more data to read from the socket?
+	// will socket_read block forever?
 	while(buf->write.offset == BUFFER_CHUNK_SIZE) {
+		// create a new chunk
+		char *chunk = rm_malloc(BUFFER_CHUNK_SIZE);
+
+		// add chunk to the buffer
+		array_append(buf->chunks, chunk);
+
+		// update write position
 		buf->write.offset = 0;
-		buf->write.chunk++;
-		array_append(buf->chunks, rm_malloc(BUFFER_CHUNK_SIZE));
-		nread = socket_read(socket, buf->chunks[buf->write.chunk], BUFFER_CHUNK_SIZE);
+		buf->write.chunk  = array_len(buf->chunks) - 1;
+
+		// read from socket into the new chunk
+		nread = socket_read(socket, chunk, BUFFER_CHUNK_SIZE);
 		if(nread < 0) {
 			return false;
 		}
-		buf->write.offset += nread;
+
+		// update write position
+		BUFFER_ADVANCE_WRITE(buf, nread);
 	}
+
 	return true;
 }
 
@@ -301,52 +334,29 @@ bool buffer_socket_write
 	return socket_write_all(socket, to_buf->buf->chunks[to_buf->chunk], to_buf->offset);
 }
 
-// write a uint8_t to the buffer
-void buffer_write_uint8
-(
-	buffer_index_t *buf,  // buffer
-	uint8_t value         // value
-) {
-	ASSERT(buf != NULL);
+#define buffer_write_t(type)                                      \
+void buffer_write_##type                                          \
+(                                                                 \
+	buffer_index_t *buf,  /* buffer */                            \
+	type value            /* value */                             \
+) {                                                               \
+	ASSERT(buf != NULL);                                          \
+	buffer_write_n(buf, (char *)&value, sizeof(type));            \
+}                                                                 \
 
-	buffer_write(buf, (char *)&value, 1);
-}
-
-// write a uint16_t to the buffer
-void buffer_write_uint16
-(
-	buffer_index_t *buf,  // buffer
-	uint16_t value        // value
-) {
-	ASSERT(buf != NULL);
-
-	buffer_write(buf, (char *)&value, 2);
-}
-
-// write a uint32_t to the buffer
-void buffer_write_uint32
-(
-	buffer_index_t *buf,  // buffer
-	uint32_t value        // value
-) {
-	ASSERT(buf != NULL);
-
-	buffer_write(buf, (char *)&value, 4);
-}
-
-// write a uint64_t to the buffer
-void buffer_write_uint64
-(
-	buffer_index_t *buf,  // buffer
-	uint64_t value        // value
-) {
-	ASSERT(buf != NULL);
-
-	buffer_write(buf, (char *)&value, 8);
-}
+// declare all buffer write functions
+buffer_write_t(int8_t)
+buffer_write_t(uint8_t)
+buffer_write_t(int16_t)
+buffer_write_t(uint16_t)
+buffer_write_t(int32_t)
+buffer_write_t(uint32_t)
+buffer_write_t(int64_t)
+buffer_write_t(uint64_t)
+buffer_write_t(double)
 
 // write data to the buffer
-void buffer_write
+void buffer_write_n
 (
 	buffer_index_t *buf,  // buffer
 	const char *data,     // data

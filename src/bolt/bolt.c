@@ -49,7 +49,7 @@ void bolt_reply_null
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, NULL_MARKER);
+	buffer_write_uint8_t(&client->write_buf.write, NULL_MARKER);
 }
 
 // write bool value to client response buffer
@@ -60,7 +60,7 @@ void bolt_reply_bool
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, data ? TRUE_MARKER : FALSE_MARKER);
+	buffer_write_uint8_t(&client->write_buf.write, data ? TRUE_MARKER : FALSE_MARKER);
 }
 
 // write tiny int value to client response buffer
@@ -71,10 +71,14 @@ void bolt_reply_tiny_int
 	int8_t data             // tiny int value to write
 ) {
 	ASSERT(client != NULL);
-	ASSERT(data >= TINY_INT8_MIN && data <= TINY_INT8_MAX);
+	ASSERT((uint8_t)data >= TINY_INT8_MIN && (uint8_t)data <= TINY_INT8_MAX);
 
-	buffer_write_uint8(&client->write_buf.write, data);
+	buffer_write_uint8_t(&client->write_buf.write, data);
 }
+
+#define BUFFER_WRITE_ARRAY(buff, data)              \
+	buffer_write_n((buff), ((const char *)(data)),  \
+			(sizeof((data)) / sizeof((data)[0])))
 
 // write int8 value to client response buffer
 void bolt_reply_int8
@@ -85,7 +89,7 @@ void bolt_reply_int8
 	ASSERT(client != NULL);
 
 	int8_t values[2] = {INT8_MARKER, data};
-    buffer_write(&client->write_buf.write, values, 2);
+	BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 }
 
 // write int16 value to client response buffer
@@ -98,7 +102,7 @@ void bolt_reply_int16
 
 	int8_t values[3] = {INT16_MARKER, 0, 0};
 	*(int16_t *)(values + 1) = htons(data);
-	buffer_write(&client->write_buf.write, values, 3);
+	BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 }
 
 // write int32 value to client response buffer
@@ -111,7 +115,7 @@ void bolt_reply_int32
 
 	int8_t values[5] = {INT32_MARKER, 0, 0, 0, 0};
 	*(int32_t *)(values + 1) = htonl(data);
-	buffer_write(&client->write_buf.write, values, 5);
+	BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 }
 
 // write int64 value to client response buffer
@@ -124,7 +128,7 @@ void bolt_reply_int64
 
 	int8_t values[9] = {INT64_MARKER, 0, 0, 0, 0, 0, 0, 0, 0};
 	*(int64_t *)(values + 1) = htonll(data);
-	buffer_write(&client->write_buf.write, values, 9);
+	BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 }
 
 // write int value to client response buffer
@@ -158,11 +162,18 @@ void bolt_reply_float
 ) {
 	ASSERT(client != NULL);
 
-	buffer_write_uint8(&client->write_buf.write, FLOAT_MARKER);
+	buffer_write_uint8_t(&client->write_buf.write, FLOAT_MARKER);
 	char *buf = (char *)&data;
-	for (int i = sizeof(double); i > 0; i--) {
-		buffer_write_uint8(&client->write_buf.write, buf[i - 1]);
+
+	double rev; // reverse byte order
+	char *rev_buf = (char *)&rev;
+
+	// reverse byte order
+	for(int i = sizeof(double); i > 0; i--) {
+		rev_buf[sizeof(double) - i] = buf[i - 1];
 	}
+
+	buffer_write_double(&client->write_buf.write, rev);
 }
 
 // write string value to client response buffer
@@ -173,24 +184,25 @@ void bolt_reply_string
 	const char *data,       // string value to write
 	uint32_t size           // string size
 ) {
+	ASSERT(data   != NULL);
 	ASSERT(client != NULL);
-	ASSERT(data != NULL);
 
 	if (size < TINY_SIZE) {
-		buffer_write_uint8(&client->write_buf.write, TINY_STRING_BASE_MARKER + size);
+		buffer_write_uint8_t(&client->write_buf.write,
+				TINY_STRING_BASE_MARKER + size);
 	} else if (size <= UINT8_MAX) {
 		int8_t values[2] = {STRING8_MARKER, size};
-    	buffer_write(&client->write_buf.write, values, 2);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	} else if (size <= UINT16_MAX) {
 		int8_t values[3] = {STRING16_MARKER, 0, 0};
 		*(uint16_t *)(values + 1) = htons(size);
-		buffer_write(&client->write_buf.write, values, 3);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	} else {
 		int8_t values[5] = {STRING32_MARKER, 0, 0, 0, 0};
 		*(uint32_t *)(values + 1) = htonl(size);
-		buffer_write(&client->write_buf.write, values, 5);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	}
-	buffer_write(&client->write_buf.write, data, size);
+	buffer_write_n(&client->write_buf.write, data, size);
 }
 
 // write list header to client response buffer
@@ -203,18 +215,18 @@ void bolt_reply_list
 	ASSERT(client != NULL);
 
 	if (size < TINY_SIZE) {
-		buffer_write_uint8(&client->write_buf.write, TINY_LIST_BASE_MARKER + size);
+		buffer_write_uint8_t(&client->write_buf.write, TINY_LIST_BASE_MARKER + size);
 	} else if (size <= UINT8_MAX) {
 		int8_t values[2] = {LIST8_MARKER, size};
-    	buffer_write(&client->write_buf.write, values, 2);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	} else if (size <= UINT16_MAX) {
 		int8_t values[3] = {LIST16_MARKER, 0, 0};
 		*(uint16_t *)(values + 1) = htons(size);
-		buffer_write(&client->write_buf.write, values, 3);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	} else {
 		int8_t values[5] = {LIST32_MARKER, 0, 0, 0, 0};
 		*(uint32_t *)(values + 1) = htonl(size);
-		buffer_write(&client->write_buf.write, values, 5);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	}
 }
 
@@ -230,18 +242,18 @@ void bolt_reply_map
 	ASSERT(client != NULL);
 
 	if (size < TINY_SIZE) {
-		buffer_write_uint8(&client->write_buf.write, TINY_MAP_BASE_MARKER + size);
+		buffer_write_uint8_t(&client->write_buf.write, TINY_MAP_BASE_MARKER + size);
 	} else if (size <= UINT8_MAX) {
 		int8_t values[2] = {MAP8_MARKER, size};
-    	buffer_write(&client->write_buf.write, values, 2);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	} else if (size <= UINT16_MAX) {
 		int8_t values[3] = {MAP16_MARKER, 0, 0};
 		*(uint16_t *)(values + 1) = htons(size);
-		buffer_write(&client->write_buf.write, values, 3);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	} else {
 		int8_t values[5] = {MAP32_MARKER, 0, 0, 0, 0};
 		*(uint32_t *)(values + 1) = htonl(size);
-		buffer_write(&client->write_buf.write, values, 5);
+		BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 	}
 }
 
@@ -256,7 +268,7 @@ void bolt_reply_structure
 	ASSERT(client != NULL);
 
 	int8_t values[2] = {STRUCTURE_BASE_MARKER + size, type};
-    buffer_write(&client->write_buf.write, values, 2);
+	BUFFER_WRITE_ARRAY(&client->write_buf.write, values);
 }
 
 //------------------------------------------------------------------------------
@@ -272,9 +284,10 @@ bool bolt_read_type
 	ASSERT(type != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(&data, &marker)) {
+	if(!buffer_read(&data, &marker)) {
 		return false;
 	}
+
 	switch (marker)
 	{
 		case NULL_MARKER:
@@ -353,7 +366,7 @@ bool bolt_read_null
 	ASSERT(data != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	ASSERT(marker == NULL_MARKER);
@@ -370,7 +383,7 @@ bool bolt_read_bool
 	ASSERT(value != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
@@ -397,13 +410,13 @@ bool bolt_read_int8
 	ASSERT(value != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case INT8_MARKER:
-			return buffer_read_uint8(data, value);
+			return buffer_read(data, value);
 		default:
 			if(marker >= TINY_INT8_MIN || marker <= TINY_INT8_MAX) {
 				*value = marker;
@@ -424,13 +437,13 @@ bool bolt_read_int16
 	ASSERT(value != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case INT16_MARKER:
-			if(!buffer_read_uint16(data, value)) {
+			if(!buffer_read(data, value)) {
 				return false;
 			}
 			*value = ntohs(*value);
@@ -451,13 +464,13 @@ bool bolt_read_int32
 	ASSERT(value != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case INT32_MARKER:
-			if(!buffer_read_uint32(data, value)) {
+			if(!buffer_read(data, value)) {
 				return false;
 			}
 			*value = ntohl(*value);
@@ -478,13 +491,13 @@ bool bolt_read_int64
 	ASSERT(value != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case INT64_MARKER:
-			if(!buffer_read_uint64(data, value)) {
+			if(!buffer_read(data, value)) {
 				return false;
 			}
 			*value = ntohll(*value);
@@ -505,7 +518,7 @@ bool bolt_read_float
 	ASSERT(value != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
@@ -513,11 +526,20 @@ bool bolt_read_float
 		case FLOAT_MARKER: {
 			double d;
 			char *buf = (char *)&d;
-			for (int i = sizeof(double); i > 0; i--) {
-				if(!buffer_read_uint8(data, buf + i - 1)) {
-					return false;
-				}
+			if(!buffer_read_n(data, buf, sizeof(double))) {
+				return false;
 			}
+
+			// reverse byte order
+			// TODO: only apply when needed!
+			for (int i = 0; i < sizeof(double)/2; i++) {
+				char tmp = buf[i]; // backup byte
+
+				// swap bytes
+				buf[i - 1] = buf[sizeof(double)-i-1];
+				buf[sizeof(double)-i-1] = tmp;
+			}
+
 			*value = d;
 			return true;
 		}
@@ -536,14 +558,14 @@ bool _bolt_read_string_size
 	ASSERT(data != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case STRING8_MARKER: {
 			uint8_t _size;
-			if(!buffer_read_uint8(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = _size;
@@ -551,7 +573,7 @@ bool _bolt_read_string_size
 		}
 		case STRING16_MARKER: {
 			uint16_t _size;
-			if(!buffer_read_uint16(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = ntohs(_size);
@@ -559,7 +581,7 @@ bool _bolt_read_string_size
 		}
 		case STRING32_MARKER: {
 			uint32_t _size;
-			if(!buffer_read_uint32(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = ntohl(_size);
@@ -604,7 +626,7 @@ bool bolt_read_string
 	}
 
 	buffer_index_t start = *data;
-	return buffer_index_read(data, str, size);
+	return buffer_read_n(data, str, size);
 }
 
 // read bytes size from buffer
@@ -616,14 +638,14 @@ bool bolt_read_list_size
 	ASSERT(data != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case LIST8_MARKER: {
 			uint8_t _size;
-			if(!buffer_read_uint8(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = _size;
@@ -631,7 +653,7 @@ bool bolt_read_list_size
 		}
 		case LIST16_MARKER: {
 			uint16_t _size;
-			if(!buffer_read_uint16(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = ntohs(_size);
@@ -639,7 +661,7 @@ bool bolt_read_list_size
 		}
 		case LIST32_MARKER: {
 			uint32_t _size;
-			if(!buffer_read_uint32(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = ntohl(_size);
@@ -664,14 +686,14 @@ bool bolt_read_map_size
 	ASSERT(data != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	switch (marker)
 	{
 		case MAP8_MARKER: {
 			uint8_t _size;
-			if(!buffer_read_uint8(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = _size;
@@ -679,7 +701,7 @@ bool bolt_read_map_size
 		}
 		case MAP16_MARKER: {
 			uint16_t _size;
-			if(!buffer_read_uint16(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = ntohs(_size);
@@ -687,7 +709,7 @@ bool bolt_read_map_size
 		}
 		case MAP32_MARKER: {
 			uint32_t _size;
-			if(!buffer_read_uint32(data, &_size)) {
+			if(!buffer_read(data, &_size)) {
 				return false;
 			}
 			*size = ntohl(_size);
@@ -712,14 +734,16 @@ bool bolt_read_structure_type
 	ASSERT(data != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
+
 	if(TINY_MARKER_CHECK(STRUCTURE_BASE_MARKER, marker)) {
 		uint8_t _type;
-		if(!buffer_read_uint8(data, &_type)) {
+		if(!buffer_read(data, &_type)) {
 			return false;
 		}
+
 		*type = _type;
 		return true;
 	}
@@ -737,7 +761,7 @@ bool bolt_read_structure_size
 	ASSERT(data != NULL);
 
 	uint8_t marker;
-	if(!buffer_read_uint8(data, &marker)) {
+	if(!buffer_read(data, &marker)) {
 		return false;
 	}
 	if(TINY_MARKER_CHECK(STRUCTURE_BASE_MARKER, marker)) {

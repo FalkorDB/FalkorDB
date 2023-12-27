@@ -25,20 +25,18 @@ struct buffer_t {
 	buffer_index_t write;  // write index
 };
 
+// initialize a new buffer
+void buffer_new
+(
+	buffer_t *buf  // buffer
+);
+
 // set buffer index to offset
 void buffer_index_set
 (
 	buffer_index_t *index,  // index
 	buffer_t *buf,          // buffer
 	uint32_t offset         // offset
-);
-
-// copy the data and increment the index
-bool buffer_index_read
-(
-	buffer_index_t *index,  // index
-	char *ptr,              // pointer
-	uint32_t size           // size
 );
 
 // advance the index
@@ -61,6 +59,18 @@ uint64_t buffer_index_length
 	buffer_index_t *index  // index
 );
 
+//------------------------------------------------------------------------------
+// read functions
+//------------------------------------------------------------------------------
+
+// read n bytes from buffer
+bool buffer_read_n
+(
+	buffer_index_t *index,  // buffer to read from
+	char *ptr,              // read data into this pointer
+	uint32_t size           // number of bytes to read
+);
+
 // read until a delimiter
 bool buffer_index_read_until
 (
@@ -69,42 +79,80 @@ bool buffer_index_read_until
 	char **ptr              // pointer
 );
 
-// initialize a new buffer
-void buffer_new
+// read a int8_t from the buffer
+bool buffer_read_int8_t
 (
-	buffer_t *buf  // buffer
+	buffer_index_t *buf,  // buffer
+	int8_t *value         // value
 );
 
 // read a uint8_t from the buffer
-bool buffer_read_uint8
+bool buffer_read_uint8_t
 (
 	buffer_index_t *buf,  // buffer
 	uint8_t *value        // value
 );
 
 // read a uint16_t from the buffer
-bool buffer_read_uint16
+bool buffer_read_int16_t
+(
+	buffer_index_t *buf,  // buffer
+	int16_t *value        // value
+);
+
+// read a uint16_t from the buffer
+bool buffer_read_uint16_t
 (
 	buffer_index_t *buf,  // buffer
 	uint16_t *value       // value
 );
 
+// read a int32_t from the buffer
+bool buffer_read_int32_t
+(
+	buffer_index_t *buf,  // buffer
+	int32_t *value        // value
+);
+
 // read a uint32_t from the buffer
-bool buffer_read_uint32
+bool buffer_read_uint32_t
 (
 	buffer_index_t *buf,  // buffer
 	uint32_t *value       // value
 );
 
 // read a uint64_t from the buffer
-bool buffer_read_uint64
+bool buffer_read_int64_t
+(
+	buffer_index_t *buf,  // buffer
+	int64_t *value        // value
+);
+
+// read a uint64_t from the buffer
+bool buffer_read_uint64_t
 (
 	buffer_index_t *buf,  // buffer
 	uint64_t *value       // value
 );
 
+// buffer_read (buffer, value) polymorphic function:
+#define buffer_read(buffer,value)                     \
+    _Generic                                          \
+    (                                                 \
+        (value),                                      \
+                  int8_t*   : buffer_read_int8_t   ,  \
+                  uint8_t*  : buffer_read_uint8_t  ,  \
+                  int16_t*  : buffer_read_int16_t  ,  \
+                  uint16_t* : buffer_read_uint16_t ,  \
+                  int32_t*  : buffer_read_int32_t  ,  \
+                  uint32_t* : buffer_read_uint32_t ,  \
+                  int64_t*  : buffer_read_int64_t  ,  \
+                  uint64_t* : buffer_read_uint64_t    \
+    )                                                 \
+    (buffer, value)
+
 // copy data from the buffer to the destination
-bool buffer_read
+bool buffer_copy
 (
 	buffer_index_t *buf,  // buffer
 	buffer_index_t *dst,  // destination
@@ -118,6 +166,10 @@ bool buffer_socket_read
 	socket_t socket  // socket
 );
 
+//------------------------------------------------------------------------------
+// write functions
+//------------------------------------------------------------------------------
+
 // write data from the buffer to the socket
 bool buffer_socket_write
 (
@@ -126,36 +178,71 @@ bool buffer_socket_write
 	socket_t socket            // socket
 );
 
+// write a int8_t to the buffer
+void buffer_write_int8_t
+(
+	buffer_index_t *buf,  // buffer
+	int8_t value          // value
+);
+
 // write a uint8_t to the buffer
-void buffer_write_uint8
+void buffer_write_uint8_t
 (
 	buffer_index_t *buf,  // buffer
 	uint8_t value         // value
 );
 
+// write a int16_t to the buffer
+void buffer_write_int16_t
+(
+	buffer_index_t *buf,  // buffer
+	int16_t value         // value
+);
+
 // write a uint16_t to the buffer
-void buffer_write_uint16
+void buffer_write_uint16_t
 (
 	buffer_index_t *buf,  // buffer
 	uint16_t value        // value
 );
 
+// write a int32_t to the buffer
+void buffer_write_int32_t
+(
+	buffer_index_t *buf,  // buffer
+	int32_t value         // value
+);
+
 // write a uint32_t to the buffer
-void buffer_write_uint32
+void buffer_write_uint32_t
 (
 	buffer_index_t *buf,  // buffer
 	uint32_t value        // value
 );
 
+// write a int64_t to the buffer
+void buffer_write_int64_t
+(
+	buffer_index_t *buf,  // buffer
+	int64_t value        // value
+);
+
 // write a uint64_t to the buffer
-void buffer_write_uint64
+void buffer_write_uint64_t
 (
 	buffer_index_t *buf,  // buffer
 	uint64_t value        // value
 );
 
+// write a double to the buffer
+void buffer_write_double
+(
+	buffer_index_t *buf,  // buffer
+	double value          // value
+);
+
 // write data to the buffer
-void buffer_write
+void buffer_write_n
 (
 	buffer_index_t *buf,  // buffer
 	const char *data,     // data
@@ -175,3 +262,4 @@ void buffer_free
 (
 	buffer_t *buf  // buffer
 );
+

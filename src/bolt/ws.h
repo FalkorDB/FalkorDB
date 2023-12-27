@@ -23,7 +23,7 @@ bool ws_read_frame
 );
 
 // write an empty websocket frame header
-uint64_t ws_write_empty_header
+void ws_write_empty_header
 (
     buffer_index_t *buf  // the buffer to write to
 );

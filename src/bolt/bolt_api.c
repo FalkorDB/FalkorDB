@@ -905,9 +905,14 @@ void BoltRequestHandler
 		return;
 	}
 
+	//--------------------------------------------------------------------------
 	// read chunked message
+	//--------------------------------------------------------------------------
+
+	// reset message buffer
 	buffer_index_set(&client->msg_buf.read, &client->msg_buf, 0);
 	buffer_index_set(&client->msg_buf.write, &client->msg_buf, 0);
+
 	buffer_index_t current_read = client->read_buf.read;
 	if(client->ws && buffer_index_diff(&client->ws_frame, &current_read) == 0) {
 		uint64_t payload_length;
@@ -916,25 +921,39 @@ void BoltRequestHandler
 		}
 		client->ws_frame = current_read;
 	}
+
 	uint16_t size;
-	if(!buffer_read_uint16(&current_read, &size)) {
+	if(!buffer_read(&current_read, &size)) {
 		return;
 	}
+
 	size = ntohs(size);
 	ASSERT(size > 0);
+
+	//--------------------------------------------------------------------------
+	// read message from READ buffer
+	//--------------------------------------------------------------------------
+
 	while(size > 0) {
-		if(!buffer_read(&current_read, &client->msg_buf.write, size)) {
+		// copy message from READ buffer into the message buffer
+		if(!buffer_copy(&current_read, &client->msg_buf.write, size)) {
 			return;
 		}
-		if(!buffer_read_uint16(&current_read, &size)) {
+
+		// see if there is more data in the READ buffer
+		if(!buffer_read(&current_read, &size)) {
 			return;
 		}
+
+		// a message ends with 0x00 0x00
 		size = ntohs(size);
 	}
+
+	// update client READ buffer
 	client->read_buf.read = current_read;
+
+	// no more data in the READ buffer
 	if(buffer_index_length(&client->read_buf.read) == 0) {
-		buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
-		client->read_buf.write = client->read_buf.read;
 		client->ws_frame = client->read_buf.read;
 	}
 
@@ -942,10 +961,13 @@ void BoltRequestHandler
 
 	bolt_structure_type type;
 	if(!bolt_read_structure_type(&client->msg_buf.read, &type)) {
-		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+		raxRemove(clients, (unsigned char *)&client->socket,
+				sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
+
+	// handle message
 	switch(type)
 	{
 		case BST_HELLO:
@@ -988,6 +1010,72 @@ void BoltRequestHandler
 	}
 }
 
+static bool _BoltProcessRawMessage
+(
+	bolt_client_t *client
+) {
+	buffer_index_t current_read = client->read_buf.read;
+	while(buffer_index_length(&current_read) > 0) {
+		uint16_t size;
+
+		if(!buffer_read(&current_read, &size)) {
+			raxRemove(clients, (unsigned char *)&client->socket,
+					sizeof(client->socket), NULL);
+			bolt_client_free(client);
+			return false;
+		}
+
+		size = ntohs(size);
+		if(buffer_index_length(&current_read) < size) break;
+
+		bolt_structure_type request_type;
+		if(!bolt_read_structure_type(&current_read, &request_type)) {
+			raxRemove(clients, (unsigned char *)&client->socket,
+					sizeof(client->socket), NULL);
+			bolt_client_free(client);
+			return false;
+		}
+
+		if(request_type == BST_RESET) {
+			ASSERT(size == 2);
+			client->reset = true;
+			uint16_t res;
+			if(!buffer_read(&current_read, &res)) {
+				raxRemove(clients, (unsigned char *)&client->socket,
+						sizeof(client->socket), NULL);
+				bolt_client_free(client);
+				return false;
+			}
+
+			ASSERT(res == 0);
+			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
+			char *dst = src - size - 4;
+			size = buffer_index_length(&current_read);
+			memmove(dst, src, size);
+			current_read.offset -= 6;
+			client->read_buf.write.offset -= 6;
+			bolt_client_finish_write(client);
+		} else {
+			// make sure all messages are present in their entirety
+			if(!buffer_read(&current_read, &size)) return false;
+
+			size = ntohs(size);
+			while(size > 0) {
+				if(buffer_index_length(&current_read) < size) break;
+
+				buffer_index_advance(&current_read, size);
+				if(!buffer_read(&current_read, &size)) return false;
+
+				size = ntohs(size);
+			}
+
+			if(size > 0) break;
+		}
+	}
+
+	return true;
+}
+
 // read data from socket to client buffer
 void BoltReadHandler
 (
@@ -1012,61 +1100,9 @@ void BoltReadHandler
 	}
 
 	// process interrupt message
-	buffer_index_t current_read = client->read_buf.read;
-	while(buffer_index_length(&current_read) > 0) {
-		uint16_t size;
-		if(!buffer_read_uint16(&current_read, &size)) {
-			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
-			bolt_client_free(client);
-			return;
-		}
-		size = ntohs(size);
-		if(buffer_index_length(&current_read) < size) break;
-		bolt_structure_type request_type;
-		if(!bolt_read_structure_type(&current_read, &request_type)) {
-			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
-			bolt_client_free(client);
-			return;
-		}
-		if(request_type == BST_RESET) {
-			ASSERT(size == 2);
-			client->reset = true;
-			uint16_t res;
-			if(!buffer_read_uint16(&current_read, &res)) {
-				raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
-				bolt_client_free(client);
-				return;
-			}
-			ASSERT(res == 0);
-			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
-			char *dst = src - size - 4;
-			size = buffer_index_length(&current_read);
-			memmove(dst, src, size);
-			current_read.offset -= 6;
-			client->read_buf.write.offset -= 6;
-			bolt_client_finish_write(client);
-		} else {
-			if(!buffer_read_uint16(&current_read, &size)) {
-				raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
-				bolt_client_free(client);
-				return;
-			}
-			size = ntohs(size);
-			while(size > 0) {
-				if(buffer_index_length(&current_read) < size) break;
-				buffer_index_advance(&current_read, size);
-				if(!buffer_read_uint16(&current_read, &size)) {
-					raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
-					bolt_client_free(client);
-					return;
-				}
-				size = ntohs(size);
-			}
-			if(size > 0) break;
-		}
+	if(_BoltProcessRawMessage(client)) {
+		BoltRequestHandler(client);
 	}
-
-	BoltRequestHandler(client);
 }
 
 // handle the handshake process
@@ -1077,18 +1113,26 @@ void BoltHandshakeHandler
 	int mask          // the event mask
 ) {
 	bolt_client_t *client = (bolt_client_t *)user_data;
+
+	//--------------------------------------------------------------------------
+	// read data from socket to client buffer
+	//--------------------------------------------------------------------------
+
 	if(!buffer_socket_read(&client->read_buf, client->socket)) {
 		// client disconnected
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+		raxRemove(clients, (unsigned char *)&client->socket,
+				sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
 
 	uint64_t payload_length;
-	if(client->ws && (!ws_read_frame(&client->read_buf.read, &payload_length) || payload_length != 20)) {
+	if(client->ws && (!ws_read_frame(&client->read_buf.read, &payload_length) ||
+				payload_length != 20)) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+		raxRemove(clients, (unsigned char *)&client->socket,
+				sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
@@ -1100,10 +1144,12 @@ void BoltHandshakeHandler
 		buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
 		if(!ws_handshake(&client->read_buf.read, &write)) {
 			RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+			raxRemove(clients, (unsigned char *)&client->socket,
+					sizeof(client->socket), NULL);
 			bolt_client_free(client);
 			return;
 		}
+
 		buffer_socket_write(&start, &write, client->socket);
 		client->ws = true;
 		buffer_index_set(&client->write_buf.write, &client->write_buf, 0);
@@ -1115,13 +1161,16 @@ void BoltHandshakeHandler
 	bolt_version_t version;
 	if(!bolt_read_supported_version(client, &version)) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+		raxRemove(clients, (unsigned char *)&client->socket,
+				sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
+
 	if(version.major != 5 || version.minor < 1) {
 		RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
-		raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
+		raxRemove(clients, (unsigned char *)&client->socket,
+				sizeof(client->socket), NULL);
 		bolt_client_free(client);
 		return;
 	}
@@ -1129,18 +1178,25 @@ void BoltHandshakeHandler
 	buffer_index_t write;
 	buffer_index_set(&write, &client->write_buf, 0);
 	buffer_index_t start = write;
+
 	if(client->ws) {
-		buffer_write_uint16(&write, htons(0x8204));
+		buffer_write_uint16_t(&write, htons(0x8204));
 	}
-	buffer_write_uint16(&write, 0x0000);
-	buffer_write_uint8(&write, version.minor);
-	buffer_write_uint8(&write, version.major);
+
+	buffer_write_uint16_t(&write, 0x0000);
+	buffer_write_uint8_t(&write, version.minor);
+	buffer_write_uint8_t(&write, version.major);
 	buffer_socket_write(&start, &write, client->socket);
-	buffer_index_set(&client->read_buf.read, &client->read_buf, 0);
-	buffer_index_set(&client->read_buf.write, &client->read_buf, 0);
 
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);
+
+	if(buffer_index_length(&client->read_buf.read) > 0) {
+		// process interrupt message
+		if(_BoltProcessRawMessage(client)) {
+			BoltRequestHandler(client);
+		}
+	}
 }
 
 // write data from client buffer to socket
@@ -1178,9 +1234,6 @@ void BoltAcceptHandler
 	int mask          // the event mask
 ) {
 	ASSERT(fd != -1);
-	ASSERT(user_data != NULL);
-
-	RedisModuleCtx *global_ctx = (RedisModuleCtx*)user_data;
 
 	socket_t socket = socket_accept(fd);
 	if(socket == -1) return;
@@ -1190,9 +1243,13 @@ void BoltAcceptHandler
 		return;
 	}
 
-	bolt_client_t *client = bolt_client_new(socket, global_ctx, BoltResponseHandler);
+	bolt_client_t *client = bolt_client_new(socket, BoltResponseHandler);
+
 	raxInsert(clients, (unsigned char *)&socket, sizeof(socket), client, NULL);
-	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE, BoltHandshakeHandler, client);
+
+	// add client socket to event loop
+	RedisModule_EventLoopAdd(socket, REDISMODULE_EVENTLOOP_READABLE,
+			BoltHandshakeHandler, client);
 }
 
 
@@ -1214,7 +1271,6 @@ static bool _bolt_enabled
 	return enable;
 }
 
-
 // listen on configured bolt port
 // in case bolt port is not configured, bolt is disabled
 // add the socket to the event loop
@@ -1229,27 +1285,26 @@ int BoltApi_Register
 		return REDISMODULE_OK;
 	}
 
-	// bolt disabled
-	if(port == -1) {
-		return REDISMODULE_OK;
-	}
-
+	// bind to Bolt port
     socket_t bolt = socket_bind(port);
 	if(bolt == -1) {
 		RedisModule_Log(ctx, "warning", "Failed to bind to port %d", port);
 		return REDISMODULE_ERR;
 	}
 
-	RedisModuleCtx *global_ctx = RedisModule_GetDetachedThreadSafeContext(ctx);
-
-	if(RedisModule_EventLoopAdd(bolt, REDISMODULE_EVENTLOOP_READABLE, BoltAcceptHandler, global_ctx) == REDISMODULE_ERR) {
-		RedisModule_Log(ctx, "warning", "Failed to register socket accept handler");
+	// add Bolt socket to event loop
+	if(RedisModule_EventLoopAdd(bolt, REDISMODULE_EVENTLOOP_READABLE,
+				BoltAcceptHandler, NULL) == REDISMODULE_ERR) {
+		RedisModule_Log(ctx, "warning",
+				"Failed to register socket accept handler");
 		return REDISMODULE_ERR;
 	}
-	RedisModule_Log(NULL, "notice", "Bolt protocol initialized. Port: %d", port);
 
-	COMMAND = RedisModule_CreateString(global_ctx, "graph.QUERY", 11);
-	BOLT = RedisModule_CreateString(global_ctx, "--bolt", 6);
+	RedisModule_Log(ctx, "notice", "Bolt protocol initialized. Port: %d", port);
+
+	BOLT    = RedisModule_CreateString(ctx, "--bolt", 6);
+	COMMAND = RedisModule_CreateString(ctx, "graph.QUERY", 11);
+
 	clients = raxNew();
 
     return REDISMODULE_OK;
