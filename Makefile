@@ -287,8 +287,7 @@ endif
 
 $(FalkorDBRS):
 	@echo Building $@ ...
-	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator -Z unstable-options --out-dir $(FalkorDBRS_BINDIR) && \
-		cbindgen --config cbindgen.toml --crate FalkorDB-rs --output $(FalkorDBRS_BINDIR)/FalkorDBRS.h --lang=c
+	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator -Z unstable-options --out-dir $(FalkorDBRS_BINDIR)
 
 .PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma falkordbrs
 
