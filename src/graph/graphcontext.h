@@ -292,7 +292,7 @@ int GraphContext_DeleteIndex
 void GraphContext_DeleteNodeFromIndices
 (
 	GraphContext *gc,  // graph context
-	Node *n, 		   // node to remove from index
+	Node *n,           // node to remove from index
 	LabelID *labels,   // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 );
@@ -301,21 +301,21 @@ void GraphContext_DeleteNodeFromIndices
 void GraphContext_DeleteEdgeFromIndices
 (
 	GraphContext *gc,  // graph context
-	Edge *e 		   // edge to remove from index
+	Edge *e            // edge to remove from index
 );
 
 // add node to any relevant index
 void GraphContext_AddNodeToIndices
 (
 	GraphContext *gc,  // graph context
-	Node *n 		   // node to add to index
+	Node *n            // node to add to index
 );
 
 // add edge to any relevant index
 void GraphContext_AddEdgeToIndices
 (
 	GraphContext *gc,  // graph context
-	Edge *e 		   // edge to add to index
+	Edge *e            // edge to add to index
 );
 
 // add GraphContext to global array
@@ -355,8 +355,8 @@ void GraphContext_LogQuery
 	double report_duration,       // reporting time
 	bool parameterized,           // uses parameters
 	bool utilized_cache,          // utilized cache
-	bool write,    		          // write query
-	bool timeout,    		      // timeout query
+	bool write,                   // write query
+	bool timeout,                 // timeout query
 	const char *query             // query string
 );
 

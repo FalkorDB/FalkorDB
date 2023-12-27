@@ -664,7 +664,7 @@ int GraphContext_DeleteIndex
 void _DeleteNodeFromIndices
 (
 	GraphContext *gc,  // graph context
-	Node *n, 		   // node to remove from index
+	Node *n,           // node to remove from index
 	LabelID *lbls,     // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 ) {
@@ -677,6 +677,7 @@ void _DeleteNodeFromIndices
 
 	for(uint i = 0; i < label_count; i++) {
 		int label_id = lbls[i];
+		ASSERT(Graph_IsNodeLabeled(gc->g, ENTITY_GET_ID(n), label_id));
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
 
@@ -689,8 +690,8 @@ void _DeleteNodeFromIndices
 void GraphContext_DeleteNodeFromIndices
 (
 	GraphContext *gc,  // graph context
-	Node *n, 		   // node to remove from index
-	LabelID *lbls,   // [optional] node labels to remove from index
+	Node *n,           // node to remove from index
+	LabelID *lbls,     // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 ) {
 	ASSERT(n  != NULL);
@@ -711,7 +712,7 @@ void GraphContext_DeleteNodeFromIndices
 void GraphContext_DeleteEdgeFromIndices
 (
 	GraphContext *gc,  // graph context
-	Edge *e 		   // edge to remove from index
+	Edge *e            // edge to remove from index
 ) {
 	Schema *s = NULL;
 	Graph  *g = gc->g;
@@ -728,7 +729,7 @@ void GraphContext_DeleteEdgeFromIndices
 void GraphContext_AddNodeToIndices
 (
 	GraphContext *gc,  // graph context
-	Node *n 		   // node to add to index
+	Node *n            // node to add to index
 ) {
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
@@ -753,7 +754,7 @@ void GraphContext_AddNodeToIndices
 void GraphContext_AddEdgeToIndices
 (
 	GraphContext *gc,  // graph context
-	Edge *e 		   // edge to add to index
+	Edge *e            // edge to add to index
 ) {
 	Schema *s = NULL;
 	Graph  *g = gc->g;
@@ -825,8 +826,8 @@ void GraphContext_LogQuery
 	double report_duration,       // reporting time
 	bool parameterized,           // uses parameters
 	bool utilized_cache,          // utilized cache
-	bool write,    		          // write query
-	bool timeout,    		      // timeout query
+	bool write,                   // write query
+	bool timeout,                 // timeout query
 	const char *query             // query string
 ) {
 	ASSERT(gc != NULL);
