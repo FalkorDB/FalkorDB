@@ -273,7 +273,7 @@ void QueryCtx_Rollback(void) {
 
 	if(ctx->undo_log == NULL) return;
 	
-	UndoLog_Rollback(ctx->undo_log, ctx->gc, ctx->gc->g);
+	UndoLog_Rollback(ctx->undo_log, ctx->gc);
 	ctx->undo_log = NULL;
 }
 
