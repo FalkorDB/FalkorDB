@@ -18,7 +18,7 @@ jobs:
           - linux/arm64
         os:
           - ubuntu
-          # - alpine
+          - alpine
     steps:
 
     - name: Safe dir
