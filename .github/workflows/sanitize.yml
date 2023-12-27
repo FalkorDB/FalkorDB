@@ -41,14 +41,13 @@ jobs:
 
     - name: Build
       run: |
-        . "/root/.cargo/env"
+        rustup toolchain list
+        rustup default stable
         make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
-      run:
-        . /venv/bin/activate
-        make unit-tests CLEAR_LOGS=0 SAN=address
+      run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v3
@@ -59,9 +58,7 @@ jobs:
 
     - name: Flow tests
       id: flow_tests
-      run: |
-        . /venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
+      run: make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v3
@@ -72,9 +69,7 @@ jobs:
 
     - name: TCK tests
       id: tck_tests
-      run: |
-        . /venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
+      run: make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v3
