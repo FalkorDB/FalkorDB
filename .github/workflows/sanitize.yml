@@ -42,7 +42,7 @@ jobs:
     - name: Build
       run: |
         rustup toolchain list
-        rustup default stable
+        rustup default nightly
         make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
