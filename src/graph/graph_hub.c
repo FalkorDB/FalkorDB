@@ -99,7 +99,7 @@ void DeleteNodes
 		}
 
 		if(has_indices) {
-			GraphContext_DeleteNodeFromIndices(gc, n);
+			GraphContext_DeleteNodeFromIndices(gc, n, NULL, 0);
 		}
 	}
 

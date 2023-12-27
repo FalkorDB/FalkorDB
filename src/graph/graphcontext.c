@@ -660,19 +660,24 @@ int GraphContext_DeleteIndex
 	return res;
 }
 
-// delete all references to a node from any relevant index
-void GraphContext_DeleteNodeFromIndicesByLabels
+// remove a single node from all indices that refer to it
+void GraphContext_DeleteNodeFromIndices
 (
-	GraphContext *gc,
-	Node *n,
-	LabelID *labels,
-	uint label_count
+	GraphContext *gc,  // graph context
+	Node *n, 		   // node to remove from index
+	LabelID *labels,   // [optional] node labels to remove from index
+	uint label_count   // [optional] number of labels
 ) {
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
+	ASSERT(labels != NULL || label_count == 0);
 
 	Schema   *s      = NULL;
 	EntityID node_id = ENTITY_GET_ID(n);
+	if(labels == NULL) {
+		// retrieve node labels
+		NODE_GET_LABELS(gc->g, n, label_count);
+	}
 
 	for(uint i = 0; i < label_count; i++) {
 		int label_id = labels[i];
@@ -684,28 +689,11 @@ void GraphContext_DeleteNodeFromIndicesByLabels
 	}
 }
 
-// delete all references to a node from any relevant index
-void GraphContext_DeleteNodeFromIndices
-(
-	GraphContext *gc,
-	Node *n
-) {
-	ASSERT(n  != NULL);
-	ASSERT(gc != NULL);
-
-	Graph *g = gc->g;
-
-	// retrieve node labels
-	uint label_count;
-	NODE_GET_LABELS(g, n, label_count);
-
-	GraphContext_DeleteNodeFromIndicesByLabels(gc, n, labels, label_count);
-}
-
+// remove a single edge from all indices that refer to it
 void GraphContext_DeleteEdgeFromIndices
 (
-	GraphContext *gc,
-	Edge *e
+	GraphContext *gc,  // graph context
+	Edge *e 		   // edge to remove from index
 ) {
 	Schema *s = NULL;
 	Graph  *g = gc->g;
@@ -721,8 +709,8 @@ void GraphContext_DeleteEdgeFromIndices
 // add node to any relevant index
 void GraphContext_AddNodeToIndices
 (
-	GraphContext *gc,
-	Node *n
+	GraphContext *gc,  // graph context
+	Node *n 		   // node to add to index
 ) {
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
@@ -746,8 +734,8 @@ void GraphContext_AddNodeToIndices
 // add edge to any relevant index
 void GraphContext_AddEdgeToIndices
 (
-	GraphContext *gc,
-	Edge *e
+	GraphContext *gc,  // graph context
+	Edge *e 		   // edge to add to index
 ) {
 	Schema *s = NULL;
 	Graph  *g = gc->g;

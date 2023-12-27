@@ -291,38 +291,31 @@ int GraphContext_DeleteIndex
 // remove a single node from all indices that refer to it
 void GraphContext_DeleteNodeFromIndices
 (
-	GraphContext *gc,
-	Node *n
-);
-
-// delete all references to a node from any relevant index
-void GraphContext_DeleteNodeFromIndicesByLabels
-(
-	GraphContext *gc,
-	Node *n,
-	LabelID *labels,
-	uint label_count
+	GraphContext *gc,  // graph context
+	Node *n, 		   // node to remove from index
+	LabelID *labels,   // [optional] node labels to remove from index
+	uint label_count   // [optional] number of labels
 );
 
 // remove a single edge from all indices that refer to it
 void GraphContext_DeleteEdgeFromIndices
 (
-	GraphContext *gc,
-	Edge *e
+	GraphContext *gc,  // graph context
+	Edge *e 		   // edge to remove from index
 );
 
 // add node to any relevant index
 void GraphContext_AddNodeToIndices
 (
-	GraphContext *gc,
-	Node *n
+	GraphContext *gc,  // graph context
+	Node *n 		   // node to add to index
 );
 
 // add edge to any relevant index
 void GraphContext_AddEdgeToIndices
 (
-	GraphContext *gc,
-	Edge *e
+	GraphContext *gc,  // graph context
+	Edge *e 		   // edge to add to index
 );
 
 // add GraphContext to global array
