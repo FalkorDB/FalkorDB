@@ -661,31 +661,49 @@ int GraphContext_DeleteIndex
 }
 
 // remove a single node from all indices that refer to it
-void GraphContext_DeleteNodeFromIndices
+void _DeleteNodeFromIndices
 (
 	GraphContext *gc,  // graph context
 	Node *n, 		   // node to remove from index
-	LabelID *labels,   // [optional] node labels to remove from index
+	LabelID *lbls,   // [optional] node labels to remove from index
 	uint label_count   // [optional] number of labels
 ) {
 	ASSERT(n  != NULL);
 	ASSERT(gc != NULL);
-	ASSERT(labels != NULL || label_count == 0);
+	ASSERT(lbls != NULL && label_count > 0);
 
 	Schema   *s      = NULL;
 	EntityID node_id = ENTITY_GET_ID(n);
-	if(labels == NULL) {
-		// retrieve node labels
-		NODE_GET_LABELS(gc->g, n, label_count);
-	}
 
 	for(uint i = 0; i < label_count; i++) {
-		int label_id = labels[i];
+		int label_id = lbls[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
 		ASSERT(s != NULL);
 
 		// update any indices this entity is represented in
 		Schema_RemoveNodeFromIndex(s, n);
+	}
+}
+
+// remove a single node from all indices that refer to it
+void GraphContext_DeleteNodeFromIndices
+(
+	GraphContext *gc,  // graph context
+	Node *n, 		   // node to remove from index
+	LabelID *lbls,   // [optional] node labels to remove from index
+	uint label_count   // [optional] number of labels
+) {
+	ASSERT(n  != NULL);
+	ASSERT(gc != NULL);
+	ASSERT(lbls != NULL || label_count == 0);
+
+	EntityID node_id = ENTITY_GET_ID(n);
+	if(lbls == NULL) {
+		// retrieve node labels
+		NODE_GET_LABELS(gc->g, n, label_count);
+		_DeleteNodeFromIndices(gc, n, labels, label_count);
+	} else {
+		_DeleteNodeFromIndices(gc, n, lbls, label_count);
 	}
 }
 
