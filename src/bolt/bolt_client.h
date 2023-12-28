@@ -40,6 +40,7 @@ typedef struct bolt_client_t {
 	buffer_t msg_buf;                   // the message buffer
 	buffer_t read_buf;                  // the read buffer
 	buffer_t write_buf;                 // the write buffer
+	bolt_message_t *read_messages;      // the messages to read
 	bolt_message_t *write_messages;     // the messages to write
 	buffer_index_t ws_frame;            // last websocket frame index
 	RedisModuleCtx *ctx;                // the redis module context

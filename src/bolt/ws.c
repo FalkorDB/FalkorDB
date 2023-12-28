@@ -47,8 +47,7 @@ static bool parse_headers
 		raxInsert(headers, (unsigned char *)field, strlen(field), (void *)value, NULL);
 		rm_free(field);
 	}
-	buffer_index_advance(request, 2);
-	return true;
+	return buffer_index_advance(request, 2);
 }
 
 static bool validate_headers

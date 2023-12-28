@@ -40,7 +40,7 @@ void buffer_index_set
 );
 
 // advance the index
-void buffer_index_advance
+bool buffer_index_advance
 (
 	buffer_index_t *index,  // index
 	uint32_t n              // # bytes

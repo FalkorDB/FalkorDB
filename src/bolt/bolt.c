@@ -536,7 +536,7 @@ bool bolt_read_float
 				char tmp = buf[i]; // backup byte
 
 				// swap bytes
-				buf[i - 1] = buf[sizeof(double)-i-1];
+				buf[i] = buf[sizeof(double)-i-1];
 				buf[sizeof(double)-i-1] = tmp;
 			}
 

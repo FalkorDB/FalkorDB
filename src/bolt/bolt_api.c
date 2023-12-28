@@ -892,6 +892,58 @@ void BoltRouteCommand
 	bolt_client_finish_write(client);
 }
 
+static bool _BoltProcessRawMessage
+(
+	bolt_client_t *client
+) {
+	int len = array_len(client->read_messages);
+	buffer_index_t current_read = client->read_buf.read;
+
+	while(buffer_index_length(&current_read) > 0) {
+		uint16_t size;
+		bolt_message_t msg;
+		msg.bolt_header = current_read;
+
+		// skip to next message
+		if(!buffer_read(&current_read, &size)) break;
+		msg.start = current_read;
+
+		while(size > 0) {
+			size = ntohs(size);
+			if(!buffer_index_advance(&current_read, size)) break;
+
+			if(!buffer_read(&current_read, &size)) break;
+		}
+
+		if(size > 0) break;
+
+		msg.end = current_read;
+		array_append(client->read_messages, msg);
+		client->read_buf.read = current_read;
+	}
+
+	for (int i = len; i < array_len(client->read_messages); i++) {
+		bolt_message_t *msg = client->read_messages + i;
+		bolt_structure_type request_type;
+		buffer_index_t current_request = msg->start;
+		if(!bolt_read_structure_type(&current_request, &request_type)) {
+			raxRemove(clients, (unsigned char *)&client->socket,
+					sizeof(client->socket), NULL);
+			bolt_client_free(client);
+			return false;
+		}
+
+		if(request_type == BST_RESET) {
+			client->reset = true;
+			array_del(client->read_messages, i);
+			bolt_client_finish_write(client);
+			return false;
+		} 
+	}
+
+	return array_len(client->read_messages) > 0;
+}
+
 // process next message from the client
 void BoltRequestHandler
 (
@@ -901,7 +953,7 @@ void BoltRequestHandler
 
 	// if there is a message already in process or
 	// not enough data to read the message
-	if(client->processing || buffer_index_length(&client->read_buf.read) <= 2) {
+	if(client->processing || !_BoltProcessRawMessage(client)) {
 		return;
 	}
 
@@ -913,7 +965,9 @@ void BoltRequestHandler
 	buffer_index_set(&client->msg_buf.read, &client->msg_buf, 0);
 	buffer_index_set(&client->msg_buf.write, &client->msg_buf, 0);
 
-	buffer_index_t current_read = client->read_buf.read;
+	bolt_message_t msg = client->read_messages[0];
+	array_del(client->read_messages, 0);
+	buffer_index_t current_read = msg.bolt_header;
 	if(client->ws && buffer_index_diff(&client->ws_frame, &current_read) == 0) {
 		uint64_t payload_length;
 		if(!ws_read_frame(&current_read, &payload_length)) {
@@ -947,14 +1001,6 @@ void BoltRequestHandler
 
 		// a message ends with 0x00 0x00
 		size = ntohs(size);
-	}
-
-	// update client READ buffer
-	client->read_buf.read = current_read;
-
-	// no more data in the READ buffer
-	if(buffer_index_length(&client->read_buf.read) == 0) {
-		client->ws_frame = client->read_buf.read;
 	}
 
 	client->processing = true;
@@ -1010,72 +1056,6 @@ void BoltRequestHandler
 	}
 }
 
-static bool _BoltProcessRawMessage
-(
-	bolt_client_t *client
-) {
-	buffer_index_t current_read = client->read_buf.read;
-	while(buffer_index_length(&current_read) > 0) {
-		uint16_t size;
-
-		if(!buffer_read(&current_read, &size)) {
-			raxRemove(clients, (unsigned char *)&client->socket,
-					sizeof(client->socket), NULL);
-			bolt_client_free(client);
-			return false;
-		}
-
-		size = ntohs(size);
-		if(buffer_index_length(&current_read) < size) break;
-
-		bolt_structure_type request_type;
-		if(!bolt_read_structure_type(&current_read, &request_type)) {
-			raxRemove(clients, (unsigned char *)&client->socket,
-					sizeof(client->socket), NULL);
-			bolt_client_free(client);
-			return false;
-		}
-
-		if(request_type == BST_RESET) {
-			ASSERT(size == 2);
-			client->reset = true;
-			uint16_t res;
-			if(!buffer_read(&current_read, &res)) {
-				raxRemove(clients, (unsigned char *)&client->socket,
-						sizeof(client->socket), NULL);
-				bolt_client_free(client);
-				return false;
-			}
-
-			ASSERT(res == 0);
-			char *src = client->read_buf.chunks[current_read.chunk] + current_read.offset;
-			char *dst = src - size - 4;
-			size = buffer_index_length(&current_read);
-			memmove(dst, src, size);
-			current_read.offset -= 6;
-			client->read_buf.write.offset -= 6;
-			bolt_client_finish_write(client);
-		} else {
-			// make sure all messages are present in their entirety
-			if(!buffer_read(&current_read, &size)) return false;
-
-			size = ntohs(size);
-			while(size > 0) {
-				if(buffer_index_length(&current_read) < size) break;
-
-				buffer_index_advance(&current_read, size);
-				if(!buffer_read(&current_read, &size)) return false;
-
-				size = ntohs(size);
-			}
-
-			if(size > 0) break;
-		}
-	}
-
-	return true;
-}
-
 // read data from socket to client buffer
 void BoltReadHandler
 (
@@ -1100,9 +1080,7 @@ void BoltReadHandler
 	}
 
 	// process interrupt message
-	if(_BoltProcessRawMessage(client)) {
-		BoltRequestHandler(client);
-	}
+	BoltRequestHandler(client);
 }
 
 // handle the handshake process
@@ -1191,12 +1169,8 @@ void BoltHandshakeHandler
 	RedisModule_EventLoopDel(fd, REDISMODULE_EVENTLOOP_READABLE);
 	RedisModule_EventLoopAdd(fd, REDISMODULE_EVENTLOOP_READABLE, BoltReadHandler, client);
 
-	if(buffer_index_length(&client->read_buf.read) > 0) {
-		// process interrupt message
-		if(_BoltProcessRawMessage(client)) {
-			BoltRequestHandler(client);
-		}
-	}
+	// process interrupt message
+	BoltRequestHandler(client);
 }
 
 // write data from client buffer to socket

@@ -30,6 +30,7 @@ bolt_client_t *bolt_client_new
 	client->on_write       = on_write;
 	client->shutdown       = false;
 	client->processing     = false;
+	client->read_messages  = array_new(bolt_message_t, 1);
 	client->write_messages = array_new(bolt_message_t, 1);
 
 	buffer_new(&client->msg_buf);

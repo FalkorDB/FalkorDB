@@ -53,20 +53,23 @@ void buffer_index_set
 }
 
 // add offset to index
-void buffer_index_advance
+bool buffer_index_advance
 (
 	buffer_index_t *index,
 	uint32_t n
 ) {
 	ASSERT(index != NULL);
 	// check if there is enough data to read
-	ASSERT(buffer_index_length(index) >= n);
+	if(buffer_index_length(index) < n) {
+		return false;
+	}
 
 	index->offset += n;
 	if(index->offset > BUFFER_CHUNK_SIZE) {
 		index->chunk += index->offset / BUFFER_CHUNK_SIZE;
 		index->offset %= BUFFER_CHUNK_SIZE;
 	}
+	return true;
 }
 
 // read n bytes from buffer
@@ -284,15 +287,19 @@ bool buffer_socket_read
 	// and there's no more data to read from the socket?
 	// will socket_read block forever?
 	while(buf->write.offset == BUFFER_CHUNK_SIZE) {
-		// create a new chunk
-		char *chunk = rm_malloc(BUFFER_CHUNK_SIZE);
-
-		// add chunk to the buffer
-		array_append(buf->chunks, chunk);
-
 		// update write position
 		buf->write.offset = 0;
-		buf->write.chunk  = array_len(buf->chunks) - 1;
+		buf->write.chunk++;
+		char *chunk;
+		if(array_len(buf->chunks) == buf->write.chunk) {
+			// create a new chunk
+			chunk = rm_malloc(BUFFER_CHUNK_SIZE);
+			
+			// add chunk to the buffer
+			array_append(buf->chunks, chunk);
+		} else {
+			chunk = buf->chunks[buf->write.chunk];
+		}
 
 		// read from socket into the new chunk
 		nread = socket_read(socket, chunk, BUFFER_CHUNK_SIZE);
