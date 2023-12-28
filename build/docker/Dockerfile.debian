@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:alpine as build
+FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:debian as build
 
 ARG TARGETPLATFORM
 
@@ -8,7 +8,7 @@ ADD . /FalkorDB
 
 RUN make
 
-FROM --platform=$TARGETPLATFORM redis:7.2.3-alpine
+FROM --platform=$TARGETPLATFORM redis:7.2.3-bookworm
 
 ARG TARGETPLATFORM
 
@@ -18,7 +18,8 @@ COPY --from=build /FalkorDB/build/docker/run.sh /FalkorDB/build/docker/run.sh
 ENV ARCH=${TARGETPLATFORM}
 
 # install dependencies
-RUN apk add openmp-dev
+RUN apt-get update -y && \
+	apt-get install libgomp1 -y
 
 EXPOSE 6379/tcp
 

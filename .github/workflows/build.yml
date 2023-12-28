@@ -18,7 +18,7 @@ jobs:
           - linux/arm64
         os:
           - ubuntu
-          - alpine
+          - debian
     steps:
 
     - name: Safe dir
@@ -111,7 +111,7 @@ jobs:
       matrix:
         os:
           - ubuntu
-          - alpine
+          - debian
     steps:
       - name: Download digests
         uses: actions/download-artifact@v3
@@ -129,13 +129,13 @@ jobs:
         if: github.event_name == 'push'
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{github.ref_name }}-${{ matrix.os }}${{ github.ref_name == 'master' && '-t falkordb/falkordb:edge-' || '' }}${{ github.ref_name == 'master' && matrix.os || '' }} \
+          docker buildx imagetools create -t falkordb/falkordb:${{github.ref_name }}${{ matrix.os == 'debian' && '' || format('-{0}', matrix.os) }}${{ github.ref_name == 'master' && '-t falkordb/falkordb:edge' || '' }}${{ (github.ref_name == 'master' && matrix.os != 'debian') && format('-{0}', matrix.os) || '' }} \
             $(printf 'falkordb/falkordb@sha256:%s ' *)
       - name: Create manifest list and push on RELEASE
         if: github.event_name == 'release'
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }}-${{ matrix.os }} -t falkordb/falkordb:latest-${{ matrix.os }} \
+          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }}${{ matrix.os == 'debian' && '' || format('-{0}', matrix.os) }} \
             $(printf 'falkordb/falkordb@sha256:%s ' *)
       - name: Inspect image
         run: |
