@@ -16,13 +16,14 @@ bool ws_handshake
 );
 
 // read a websocket frame header returning the payload length
-uint64_t ws_read_frame
+bool ws_read_frame
 (
-    buffer_index_t *buf  // the buffer to read from
+	buffer_index_t *buf,   // the buffer to read from
+	uint64_t *payload_len  // the payload length
 );
 
 // write an empty websocket frame header
-uint64_t ws_write_empty_header
+void ws_write_empty_header
 (
     buffer_index_t *buf  // the buffer to write to
 );

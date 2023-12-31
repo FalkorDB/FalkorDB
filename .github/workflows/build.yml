@@ -158,6 +158,9 @@ jobs:
       - name: TCK tests
         working-directory: /FalkorDB
         run: make CLEAR_LOGS=0 tck-tests
+      - name: BOLT TCK tests
+        working-directory: /FalkorDB
+        run: make CLEAR_LOGS=0 TCK_PROTOCOL=BOLT tck-tests
 
   fuzz-tests:
     runs-on: ubuntu-latest

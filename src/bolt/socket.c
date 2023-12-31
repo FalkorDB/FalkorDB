@@ -21,39 +21,38 @@ socket_t socket_bind
 ) {
 	int on = 1;
 	socket_t fd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-	if (fd == -1) {
+	if(fd == -1) {
 		return -1;
 	}
 
 	if(!socket_set_non_blocking(fd)) {
-		close(fd);
-		return -1;
+		goto cleanup;
 	}
 
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) != 0)
-	{
-		close(fd);
-		return -1;
+	if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (void *)&on, sizeof(on)) != 0) {
+		goto cleanup;
 	}
 
 	struct sockaddr_in6 serveraddr, cli;
 	memset(&serveraddr, 0, sizeof(serveraddr));
 
+	serveraddr.sin6_addr   = in6addr_any;
+	serveraddr.sin6_port   = htons(port);
 	serveraddr.sin6_family = AF_INET6;
-	serveraddr.sin6_addr = in6addr_any;
-	serveraddr.sin6_port = htons(port);
 
-	if (bind(fd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) != 0) {
-		close(fd);
-		return -1;
+	if(bind(fd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) != 0) {
+		goto cleanup;
 	}
 
-	if (listen(fd, CLIENT_QUEUE_LEN) != 0) {
-		close(fd);
-		return -1;
+	if(listen(fd, CLIENT_QUEUE_LEN) != 0) {
+		goto cleanup;
 	}
 
 	return fd;
+
+cleanup:
+	close(fd);
+	return -1;
 }
 
 bool socket_set_non_blocking

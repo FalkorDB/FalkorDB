@@ -158,13 +158,14 @@ void bolt_reply_structure
 //------------------------------------------------------------------------------
 
 // read value type from buffer
-bolt_value_type bolt_read_type
+bool bolt_read_type
 (
-	buffer_index_t data  // buffer to read from
+	buffer_index_t data,   // buffer to read from
+	bolt_value_type *type  // value type
 );
 
 // read null value from buffer
-void bolt_read_null
+bool bolt_read_null
 (
 	buffer_index_t *data  // buffer to read from
 );
@@ -172,41 +173,47 @@ void bolt_read_null
 // read bool value from buffer
 bool bolt_read_bool
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	bool *value            // bool value
 );
 
 // read int8 value from buffer
-int8_t bolt_read_int8
+bool bolt_read_int8
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int8_t *value          // int8 value
 );
 
 // read int16 value from buffer
-int16_t bolt_read_int16
+bool bolt_read_int16
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int16_t *value         // int16 value
 );
 
 // read int32 value from buffer
-int32_t bolt_read_int32
+bool bolt_read_int32
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int32_t *value         // int32 value
 );
 
 // read int64 value from buffer
-int64_t bolt_read_int64
+bool bolt_read_int64
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	int64_t *value         // int64 value
 );
 
 // read float value from buffer
-double bolt_read_float
+bool bolt_read_float
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	double *value          // float value
 );
 
 // read string size from buffer
-void bolt_read_string_size
+bool bolt_read_string_size
 (
 	buffer_index_t *data,  // buffer to read from
 	uint32_t *size         // string size
@@ -214,32 +221,36 @@ void bolt_read_string_size
 
 // read string value from buffer
 // notice: the string is not null terminated
-void bolt_read_string
+bool bolt_read_string
 (
 	buffer_index_t *data,  // buffer to read from
 	char *str              // string buffer
 );
 
 // read list size from buffer
-uint32_t bolt_read_list_size
+bool bolt_read_list_size
 (
-	buffer_index_t *data
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // list size
 );
 
 // read map size from buffer
-uint32_t bolt_read_map_size
+bool bolt_read_map_size
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // map size
 );
 
 // read structure type from buffer
-bolt_structure_type bolt_read_structure_type
+bool bolt_read_structure_type
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,      // buffer to read from
+	bolt_structure_type *type  // structure type
 );
 
 // read structure size from buffer
-uint32_t bolt_read_structure_size
+bool bolt_read_structure_size
 (
-	buffer_index_t *data  // buffer to read from
+	buffer_index_t *data,  // buffer to read from
+	uint32_t *size         // structure size
 );

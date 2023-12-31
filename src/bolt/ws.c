@@ -25,23 +25,21 @@ static bool parse_headers
 	ASSERT(request != NULL);
 	ASSERT(headers != NULL);
 
-	uint32_t size = buffer_index_length(request);
-	if(size < 18) {
+	char request_line[16];
+	if(!buffer_read_n(request, request_line, 16)) {
 		return false;
 	}
-	char request_line[16];
-	buffer_index_read(request, request_line, 16);
 	if(strncmp(request_line, "GET / HTTP/1.1\r\n", 16) != 0) {
 		return false;
 	}
 	while(buffer_index_length(request) > 2) {
-		char *field = buffer_index_read_until(request, ':');
-		if(field == NULL) {
+		char *field = NULL;
+		if(!buffer_index_read_until(request, ':', &field)) {
 			return false;
 		}
 		buffer_index_advance(request, 2);
-		char *value = buffer_index_read_until(request, '\r');
-		if(value == NULL) {
+		char *value = NULL;
+		if(!buffer_index_read_until(request, '\r', &value)) {
 			rm_free(field);
 			return false;
 		}
@@ -49,8 +47,7 @@ static bool parse_headers
 		raxInsert(headers, (unsigned char *)field, strlen(field), (void *)value, NULL);
 		rm_free(field);
 	}
-	buffer_index_advance(request, 2);
-	return true;
+	return buffer_index_advance(request, 2);
 }
 
 static bool validate_headers
@@ -59,42 +56,49 @@ static bool validate_headers
 ) {
 	ASSERT(headers != NULL);
 
-	void *v = raxFind(headers, "Host", 4);
-	if(v == raxNotFound) {
-		return false;
-	}
-	v = raxFind(headers, "Upgrade", 7);
+	void *v = NULL;
+	char *k = NULL;
+
+	// locate host
+	k = "Host";
+	if(raxFind(headers, (unsigned char *)k, 4) == raxNotFound) return false;
+
+	// make sure upgrade is set to websocket
+	k = "Upgrade";
+	v = raxFind(headers, (unsigned char *)k, 7);
 	if(v == raxNotFound || strcmp((char *)v, "websocket") != 0) {
 		return false;
 	}
-	v = raxFind(headers, "Connection", 10);
-	if(v == raxNotFound) {
-		return false;
-	}
+
+	// locate connection
+	k = "Connection";
+	v = raxFind(headers, (unsigned char *)k, 10);
+	if(v == raxNotFound) return false;
+
+	// make sure connection is set to upgrade
 	char *i = v;
 	bool is_upgrade = false;
-	while (i != NULL && strlen(i) > 0) {
-		if(strncmp(i, "Upgrade", 7) == 0) {
-			is_upgrade = true;
-			break;
-		}
+	while(i != NULL && strlen(i) > 0) {
+		is_upgrade = (strncmp(i, "Upgrade", 7) == 0);
+		if(is_upgrade) break;
 		i = strchr(i, ',') + 2;
 	}
-	if(!is_upgrade) {
-		return false;
-	}
-	v = raxFind(headers, "Sec-WebSocket-Key", 17);
-	if(v == raxNotFound) {
-		return false;
-	}
-	v = raxFind(headers, "Sec-WebSocket-Version", 21);
-	if(v == raxNotFound || strcmp((char *)v, "13") != 0) {
-		return false;
-	}
-	v = raxFind(headers, "Origin", 6);
-	if(v == raxNotFound) {
-		return false;
-	}
+
+	if(!is_upgrade) return false;
+
+	// locate Sec-WebSocket-Key
+	k = "Sec-WebSocket-Key";
+	if(raxFind(headers, (unsigned char *)k, 17) == raxNotFound) return false;
+
+	// make sure Sec-WebSocket-Version is set to 13
+	k = "Sec-WebSocket-Version";
+	v = raxFind(headers, (unsigned char *)k, 21);
+	if(v == raxNotFound || strcmp((char *)v, "13") != 0) return false;
+
+	// locate Origin
+	k = "Origin";
+	if(raxFind(headers, (unsigned char*)k, 6) == raxNotFound) return false;
+
 	return true;
 }
 
@@ -118,7 +122,8 @@ bool ws_handshake
 	unsigned char hash[SHA_DIGEST_LENGTH];
 	EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
 	EVP_DigestInit_ex(mdctx, EVP_sha1(), NULL);
-	char *sec_ws_key = raxFind(headers, "Sec-WebSocket-Key", 17);
+	char *key = "Sec-WebSocket-Key";
+	char *sec_ws_key = raxFind(headers, (unsigned char*)key, 17);
 	EVP_DigestUpdate(mdctx, sec_ws_key, strlen(sec_ws_key));
 	EVP_DigestUpdate(mdctx, WS_GUID, strlen(WS_GUID));
 	EVP_DigestFinal_ex(mdctx, hash, NULL);
@@ -137,21 +142,22 @@ bool ws_handshake
 	encoded[len] = '\0';
 
 	// write the response
-	buffer_write(response, "HTTP/1.1 101 Switching Protocols\r\n", 34);
-	buffer_write(response, "Upgrade: websocket\r\n", 20);
-	buffer_write(response, "Connection: Upgrade\r\n", 21);
-	buffer_write(response, "Sec-WebSocket-Accept: ", 22);
-	buffer_write(response, encoded, len);
-	buffer_write(response, "\r\n\r\n", 4);
+	buffer_write_n(response, "HTTP/1.1 101 Switching Protocols\r\n", 34);
+	buffer_write_n(response, "Upgrade: websocket\r\n", 20);
+	buffer_write_n(response, "Connection: Upgrade\r\n", 21);
+	buffer_write_n(response, "Sec-WebSocket-Accept: ", 22);
+	buffer_write_n(response, encoded, len);
+	buffer_write_n(response, "\r\n\r\n", 4);
 	BIO_free_all(b64);
 	raxFreeWithCallback(headers, rm_free);
 	return true;
 }
 
 // read a websocket frame header returning the payload length
-uint64_t ws_read_frame
+bool ws_read_frame
 (
-	buffer_index_t *buf  // the buffer to read from
+	buffer_index_t *buf,   // the buffer to read from
+	uint64_t *payload_len  // the payload length
 ) {
 	ASSERT(buf != NULL);
 
@@ -175,35 +181,51 @@ uint64_t ws_read_frame
 	//  |                     Payload Data continued ...                |
 	//  +---------------------------------------------------------------+
 
-	uint16_t frame_header = ntohs(buffer_read_uint16(buf));
+	uint16_t frame_header;
+	if(!buffer_read(buf, &frame_header)) {
+		return false;
+	}
+	frame_header = ntohs(frame_header);
 	bool fin = frame_header >> 15;
 	ASSERT(fin && "Fragmented frames are not supported");
 	uint8_t rsv123 = (frame_header >> 12) & 0x07;
 	ASSERT(rsv123 == 0 && "Reserved bits are not supported");
 	uint8_t opcode = (frame_header >> 8) & 0x0F;
 	ASSERT(opcode == 0x02 || opcode == 0x08 && "Only binary frames are supported");
-	uint64_t payload_len = frame_header & 0x7F;
-	if(payload_len == 126) {
-		payload_len = ntohs(buffer_read_uint16(buf));
-	} else if(payload_len == 127) {
-		payload_len = ntohll(buffer_read_uint64(buf));
+	if((frame_header & 0x7F) == 126) {
+		uint16_t _payload_len;
+		if(!buffer_read(buf, &_payload_len)) {
+			return false;
+		}
+		*payload_len = ntohs(_payload_len);
+	} else if((frame_header & 0x7F) == 127) {
+		uint64_t _payload_len;
+		if(!buffer_read(buf, &_payload_len)) {
+			return false;
+		}
+		*payload_len = ntohll(_payload_len);
+	} else {
+		*payload_len = frame_header & 0x7F;
 	}
 	bool mask = (frame_header >> 7) & 0x1;
 	if(mask) {
-		uint32_t masking_key = buffer_read_uint32(buf);
-		buffer_apply_mask(*buf, masking_key, payload_len);
+		uint32_t masking_key;
+		if(!buffer_read(buf, &masking_key)) {
+			return false;
+		}
+		buffer_apply_mask(*buf, masking_key, *payload_len);
 	}
-	return payload_len;
+	return true;
 }
 
 // write an empty websocket frame header
-uint64_t ws_write_empty_header
+void ws_write_empty_header
 (
 	buffer_index_t *buf  // the buffer to write to
 ) {
 	ASSERT(buf != NULL);
 
-	buffer_write_uint32(buf, 0x00000000);
+	buffer_write_uint32_t(buf, 0x00000000);
 }
 
 // write a websocket frame header
@@ -216,11 +238,12 @@ void ws_write_frame_header
 
 	buffer_index_t msg = *buf;
 	if(n > 125) {
-		buffer_write_uint32(&msg, htonl(0x827E0000 + n));
+		buffer_write_uint32_t(&msg, htonl(0x827E0000 + n));
 	} else {
-		buffer_write_uint16(buf, 0x0000);
+		buffer_write_uint16_t(buf, 0x0000);
 		msg = *buf;
-		buffer_write_uint8(&msg, 0x82);
-		buffer_write_uint8(&msg, n);
+		buffer_write_uint8_t(&msg, 0x82);
+		buffer_write_uint8_t(&msg, n);
 	}
 }
+

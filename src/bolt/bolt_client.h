@@ -24,10 +24,10 @@ typedef enum bolt_client_state {
 } bolt_client_state;
 
 typedef struct bolt_message_t {
-	buffer_index_t ws_header; // the websocket header
-	buffer_index_t bolt_header; // the bolt header
-	buffer_index_t start;  // the start of the message
-	buffer_index_t end;    // the end of the message
+	buffer_index_t ws_header;    // the websocket header
+	buffer_index_t bolt_header;  // the bolt header
+	buffer_index_t start;        // the start of the message
+	buffer_index_t end;          // the end of the message
 } bolt_message_t;
 
 typedef struct bolt_client_t {
@@ -40,6 +40,7 @@ typedef struct bolt_client_t {
 	buffer_t msg_buf;                   // the message buffer
 	buffer_t read_buf;                  // the read buffer
 	buffer_t write_buf;                 // the write buffer
+	bolt_message_t *read_messages;      // the messages to read
 	bolt_message_t *write_messages;     // the messages to write
 	buffer_index_t ws_frame;            // last websocket frame index
 	RedisModuleCtx *ctx;                // the redis module context
@@ -47,15 +48,14 @@ typedef struct bolt_client_t {
 } bolt_client_t;
 
 typedef struct bolt_version_t {
-	uint32_t major;  // the major version
-	uint32_t minor;  // the minor version
+	uint8_t major;  // the major version
+	uint8_t minor;  // the minor version
 } bolt_version_t;
 
 // create a new bolt client
 bolt_client_t *bolt_client_new
 (
 	socket_t socket,                   // the socket file descriptor
-	RedisModuleCtx *ctx,               // the redis module context
 	RedisModuleEventLoopFunc on_write  // the write callback
 );
 
@@ -94,9 +94,10 @@ bool bolt_check_handshake
 );
 
 // return the latest supported bolt version
-bolt_version_t bolt_read_supported_version
+bool bolt_read_supported_version
 (
-	bolt_client_t *client  // the client
+	bolt_client_t *client,   // the client
+	bolt_version_t *version  // the version
 );
 
 // free the bolt client
