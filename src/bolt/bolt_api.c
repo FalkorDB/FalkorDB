@@ -1026,6 +1026,7 @@ void BoltRequestHandler
 			break;
 		case BST_GOODBYE:
 			client->processing = false;
+			RedisModule_EventLoopDel(client->socket, REDISMODULE_EVENTLOOP_READABLE);
 			raxRemove(clients, (unsigned char *)&client->socket, sizeof(client->socket), NULL);
 			bolt_client_free(client);
 			break;
