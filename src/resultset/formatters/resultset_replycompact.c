@@ -117,7 +117,7 @@ static void _ResultSet_CompactReplyWithProperties(RedisModuleCtx *ctx, GraphCont
 	for(int i = 0; i < prop_count; i ++) {
 		// Compact replies include the value's type; verbose replies do not
 		RedisModule_ReplyWithArray(ctx, 3);
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		// Emit the string index
 		RedisModule_ReplyWithLongLong(ctx, attr_id);

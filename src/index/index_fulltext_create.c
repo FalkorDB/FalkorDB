@@ -116,7 +116,7 @@ Index Index_FulltextCreate
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
 	const char *attr,             // attribute to index
-	Attribute_ID attr_id,		  // attribute id
+	AttributeID attr_id,          // attribute id
 	const SIValue options         // index options
 ) {
 	ASSERT(label       != NULL);

@@ -20,7 +20,7 @@ Index Index_RangeCreate
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
 	const char *attr,             // attribute to index
-	Attribute_ID attr_id 		  // attribute id
+	AttributeID attr_id           // attribute id
 ) {
 	ASSERT(label       != NULL);
 	ASSERT(attr        != NULL);

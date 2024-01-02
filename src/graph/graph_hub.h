@@ -84,7 +84,7 @@ void UpdateNodeProperty
 (
 	GraphContext *gc,             // graph context
 	NodeID id,                    // node ID
-	Attribute_ID attr_id,         // attribute ID
+	AttributeID attr_id,          // attribute ID
 	SIValue v                     // new attribute value
 );
 
@@ -99,7 +99,7 @@ void UpdateEdgeProperty
 	RelationID r_id,              // relation ID
 	NodeID src_id,                // source node ID
 	NodeID dest_id,               // destination node ID
-	Attribute_ID attr_id,         // attribute ID
+	AttributeID attr_id,          // attribute ID
 	SIValue v                     // new attribute value
 );
 
@@ -130,7 +130,7 @@ Schema *AddSchema
 
 // Find or adding attribute. If there is a need to add an attribute to the graph
 // the attribute is tracked by the undo log so in case of error it will be deleted.
-Attribute_ID FindOrAddAttribute
+AttributeID FindOrAddAttribute
 (
 	GraphContext *gc,       // graph context to add the attribute
 	const char *attribute,  // attribute name

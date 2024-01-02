@@ -679,7 +679,7 @@ RSQNode *Index_BuildUniqueConstraintQuery
 (
 	const Index idx,       // index to query
 	const GraphEntity *e,  // entity being validated
-	Attribute_ID *attrs,   // constraint attributes
+	AttributeID *attrs,    // constraint attributes
 	uint8_t n              // number of constraint attributes
 ) {
 	RSQNode *node;
@@ -692,7 +692,7 @@ RSQNode *Index_BuildUniqueConstraintQuery
 	//--------------------------------------------------------------------------
 
 	for(uint8_t i = 0; i < n; i++) {
-		Attribute_ID attr_id = attrs[i];
+		AttributeID attr_id = attrs[i];
 		const IndexField *f = Index_GetField(NULL, idx, attr_id);
 
 		// field must exist and be of type INDEX_FLD_RANGE

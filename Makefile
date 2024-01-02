@@ -137,9 +137,13 @@ REDISEARCH_DIR = $(ROOT)/deps/RediSearch
 export REDISEARCH_BINROOT=$(BINROOT)
 include $(ROOT)/build/RediSearch/Makefile.defs
 
+FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-rs
+export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-rs
+include $(ROOT)/build/FalkorDB-rs/Makefile.defs
+
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA)
+LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 #----------------------------------------------------------------------------------------------
 
@@ -189,11 +193,15 @@ ifneq ($(call files_missing,$(REDISEARCH_LIBS)),)
 MISSING_DEPS += $(REDISEARCH_LIBS)
 endif
 
+ifeq ($(wildcard $(FalkorDBRS)),)
+MISSING_DEPS += $(FalkorDBRS)
+endif
+
 ifneq ($(MISSING_DEPS),)
 DEPS=1
 endif
 
-DEPENDENCIES=libcypher-parser graphblas redisearch rax libxxhash utf8proc oniguruma
+DEPENDENCIES=libcypher-parser graphblas redisearch rax libxxhash utf8proc oniguruma falkordbrs
 
 ifneq ($(filter all deps $(DEPENDENCIES) pack,$(MAKECMDGOALS)),)
 DEPS=1
@@ -219,7 +227,7 @@ include $(MK)/rules
 
 ifeq ($(DEPS),1)
 
-deps: $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA)
+deps: $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 libxxhash: $(LIBXXHASH)
 
@@ -265,7 +273,24 @@ $(REDISEARCH_LIBS):
 	@echo Building $@ ...
 	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) STATIC=1 BINROOT=$(REDISEARCH_BINROOT) CC=$(CC) CXX=$(CXX)
 
-.PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma
+falkordbrs: $(FalkorDBRS)
+
+ifeq ($(DEBUG),1)
+CARGO_FLAGS=
+else
+CARGO_FLAGS=--release
+endif
+
+ifneq ($(SAN),)
+export RUSTFLAGS=-Zsanitizer=$(SAN)
+CARGO_FLAGS=--target x86_64-unknown-linux-gnu
+endif
+
+$(FalkorDBRS):
+	@echo Building $@ ...
+	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
+
+.PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma falkordbrs
 
 #----------------------------------------------------------------------------------------------
 

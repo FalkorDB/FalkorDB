@@ -235,7 +235,7 @@ AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity,
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	SIValue prop_idx = SI_LongVal(ATTRIBUTE_ID_NONE);
 	SIValue prop_name = SI_ConstStringVal((char *)attr);
-	Attribute_ID idx = GraphContext_GetAttributeID(gc, attr);
+	AttributeID idx = GraphContext_GetAttributeID(gc, attr);
 
 	if(idx != ATTRIBUTE_ID_NONE) prop_idx = SI_LongVal(idx);
 

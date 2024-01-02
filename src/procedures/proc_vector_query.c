@@ -23,7 +23,7 @@ typedef struct {
 	RSIndex *idx;             // vector index
 	RSResultsIterator *iter;  // iterator over query results
 	SIValue q;                // query vector
-	Attribute_ID attr_id;     // vector attribute ID
+	AttributeID attr_id;      // vector attribute ID
 	SIValue output[2];        // yield array
 	SIValue *yield_entity;    // yield node
 	SIValue *yield_score;     // yield score
@@ -32,12 +32,12 @@ typedef struct {
 // create procedure private data
 static VectorKNNCtx *_create_private_data
 (
-	GraphContext *gc,      // graph context
-	SIValue q,             // query vector
-	Attribute_ID attr_id,  // vector attribute ID
-	RSIndex *idx,          // index
-	RSQNode *root,         // RediSearch query
-	GraphEntityType t      // entity type
+	GraphContext *gc,     // graph context
+	SIValue q,            // query vector
+	AttributeID attr_id,  // vector attribute ID
+	RSIndex *idx,         // index
+	RSQNode *root,        // RediSearch query
+	GraphEntityType t     // entity type
 ) {
 	VectorKNNCtx *ctx = (VectorKNNCtx*)rm_calloc(1, sizeof(VectorKNNCtx));
 
@@ -237,7 +237,7 @@ static ProcedureResult Proc_VectorQueryInvoke
 	//--------------------------------------------------------------------------
 
 	// get attribute ID
-	Attribute_ID attr_id = GraphContext_GetAttributeID(gc, attribute);
+	AttributeID attr_id = GraphContext_GetAttributeID(gc, attribute);
 	if(attr_id == ATTRIBUTE_ID_NONE) {
 		ErrorCtx_SetError(EMSG_ACCESS_UNDEFINED_ATTRIBUTE);
 		return PROCEDURE_ERR;

@@ -29,7 +29,7 @@ static sds _JsonEncoder_Properties(const GraphEntity *ge, sds s) {
 	uint prop_count = AttributeSet_Count(set);
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	for(uint i = 0; i < prop_count; i ++) {
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		s = sdscatfmt(s, "\"%s\": ", key);

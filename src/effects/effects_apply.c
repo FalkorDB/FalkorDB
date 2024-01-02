@@ -45,11 +45,11 @@ static AttributeSet ReadAttributeSet
 	//--------------------------------------------------------------------------
 
 	SIValue values[attr_count];
-	Attribute_ID ids[attr_count];
+	AttributeID ids[attr_count];
 
 	for(ushort i = 0; i < attr_count; i++) {
 		// read attribute ID
-		fread_assert(ids + i, sizeof(Attribute_ID), stream);
+		fread_assert(ids + i, sizeof(AttributeID), stream);
 		
 		// read attribute value
 		values[i] = SIValue_FromBinary(stream);
@@ -306,10 +306,10 @@ static void ApplyUpdateEdge
 	//    attribute value
 	//--------------------------------------------------------------------------
 	
-	SIValue v;             // updated value
-	uint props_set;        // number of attributes updated
-	uint props_removed;    // number of attributes removed
-	Attribute_ID attr_id;  // entity ID
+	SIValue v;            // updated value
+	uint props_set;       // number of attributes updated
+	uint props_removed;   // number of attributes removed
+	AttributeID attr_id;  // entity ID
 
 	NodeID     s_id = INVALID_ENTITY_ID;       // edge src node ID
 	NodeID     t_id = INVALID_ENTITY_ID;       // edge dest node ID
@@ -349,7 +349,7 @@ static void ApplyUpdateEdge
 	// read attribute ID
 	//--------------------------------------------------------------------------
 
-	fread_assert(&attr_id, sizeof(Attribute_ID), stream);
+	fread_assert(&attr_id, sizeof(AttributeID), stream);
 
 	//--------------------------------------------------------------------------
 	// read attribute value
@@ -375,10 +375,10 @@ static void ApplyUpdateNode
 	//    attribute value
 	//--------------------------------------------------------------------------
 
-	SIValue v;             // updated value
-	uint props_set;        // number of attributes updated
-	uint props_removed;    // number of attributes removed
-	Attribute_ID attr_id;  // entity ID
+	SIValue v;            // updated value
+	uint props_set;       // number of attributes updated
+	uint props_removed;   // number of attributes removed
+	AttributeID attr_id;  // entity ID
 
 	EntityID id = INVALID_ENTITY_ID;
 
@@ -392,7 +392,7 @@ static void ApplyUpdateNode
 	// read attribute ID
 	//--------------------------------------------------------------------------
 
-	fread_assert(&attr_id, sizeof(Attribute_ID), stream);
+	fread_assert(&attr_id, sizeof(AttributeID), stream);
 
 	//--------------------------------------------------------------------------
 	// read attribute ID

@@ -42,7 +42,7 @@ static void _RdbLoadFullTextIndex
 
 		if(!already_loaded) {
 			IndexField field;
-			Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc,
+			AttributeID field_id = GraphContext_FindOrAddAttribute(gc,
 					field_name, NULL);
 
 			// create new index field
@@ -88,7 +88,7 @@ static void _RdbLoadExactMatchIndex
 		char *field_name = RedisModule_LoadStringBuffer(rdb, NULL);
 		if(!already_loaded) {
 			IndexField field;
-			Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc, field_name, NULL);
+			AttributeID field_id = GraphContext_FindOrAddAttribute(gc, field_name, NULL);
 			IndexField_NewRangeField(&field, field_name, field_id);
 			Schema_AddIndex(&idx, s, &field);
 		}

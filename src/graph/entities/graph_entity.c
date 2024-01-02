@@ -16,7 +16,7 @@
 bool GraphEntity_AddProperty
 (
 	GraphEntity *e,
-	Attribute_ID attr_id,
+	AttributeID attr_id,
 	SIValue value
 ) {
 	ASSERT(e);
@@ -29,7 +29,7 @@ bool GraphEntity_AddProperty
 SIValue *GraphEntity_GetProperty
 (
 	const GraphEntity *e,
-	Attribute_ID attr_id
+	AttributeID attr_id
 ) {
 	ASSERT(e);
 
@@ -54,7 +54,7 @@ SIValue GraphEntity_Keys
 	int prop_count = AttributeSet_Count(set);
 	SIValue keys = SIArray_New(prop_count);
 	for(int i = 0; i < prop_count; i++) {
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		AttributeSet_GetIdx(set, i, &attr_id);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		SIArray_Append(&keys, SI_ConstStringVal(key));
@@ -72,7 +72,7 @@ SIValue GraphEntity_Properties
 	int propCount = AttributeSet_Count(set);
 	SIValue map = SI_Map(propCount);
 	for(int i = 0; i < propCount; i++) {
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		Map_Add(&map, SI_ConstStringVal(key), value);
@@ -99,7 +99,7 @@ size_t GraphEntity_PropertiesToString
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
 	for(int i = 0; i < propCount; i++) {
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		// print key
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);

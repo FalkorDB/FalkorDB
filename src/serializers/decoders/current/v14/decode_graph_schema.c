@@ -90,7 +90,7 @@ static void _RdbLoadIndex
 
 		if(!already_loaded) {
 			IndexField field;
-			Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc,
+			AttributeID field_id = GraphContext_FindOrAddAttribute(gc,
 					field_name, NULL);
 
 			// create new index field
@@ -152,12 +152,12 @@ static void _RdbLoadConstaint
 	// decode constraint fields
 	//--------------------------------------------------------------------------
 
-	Attribute_ID attr_ids[n];
+	AttributeID attr_ids[n];
 	const char *attr_strs[n];
 
 	// read fields
 	for(uint8_t i = 0; i < n; i++) {
-		Attribute_ID attr = RedisModule_LoadUnsigned(rdb);
+		AttributeID attr = RedisModule_LoadUnsigned(rdb);
 		attr_ids[i]  = attr;
 		attr_strs[i] = GraphContext_GetAttributeString(gc, attr);
 	}

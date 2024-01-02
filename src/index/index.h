@@ -56,7 +56,7 @@ Index Index_RangeCreate
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
 	const char *attr,             // attribute to index
-	Attribute_ID attr_id 		  // attribute id
+	AttributeID attr_id           // attribute id
 );
 
 // create fulltext index
@@ -65,7 +65,7 @@ Index Index_FulltextCreate
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
 	const char *attribute,        // attribute to index
-	Attribute_ID attr_id,         // attribute id
+	AttributeID attr_id,          // attribute id
 	const SIValue options         // index options
 );
 
@@ -75,7 +75,7 @@ Index Index_VectorCreate
 	const char *label,            // label/relationship type
 	GraphEntityType entity_type,  // entity type (node/edge)
 	const char *attr,             // attribute to index
-	Attribute_ID attr_id,         // attribute id
+	AttributeID attr_id,          // attribute id
 	SIValue options               // index options
 );
 
@@ -136,7 +136,7 @@ int Index_AddField
 void Index_RemoveField
 (
 	Index idx,             // index modified
-	Attribute_ID attr_id,  // field to remove
+	AttributeID attr_id,   // field to remove
 	IndexFieldType t       // field type
 );
 
@@ -195,7 +195,7 @@ RSQNode *Index_BuildUniqueConstraintQuery
 (
 	const Index idx,       // index to query
 	const GraphEntity *e,  // entity being validated
-	Attribute_ID *attrs,   // constraint attributes
+	AttributeID *attrs,    // constraint attributes
 	uint8_t n              // number of constraint attributes
 );
 
@@ -231,15 +231,15 @@ IndexField *Index_GetField
 (
 	int *pos,         // [optional out] field index
 	const Index idx,  // index to get field from
-	Attribute_ID id   // field attribute id
+	AttributeID id    // field attribute id
 );
 
 // returns indexed field type
 // if field is not indexed, INDEX_FLD_UNKNOWN is returned
 IndexFieldType Index_GetFieldType
 (
-	const Index idx,      // index to query
-	Attribute_ID attr_id  // field to retrieve type of
+	const Index idx,     // index to query
+	AttributeID attr_id  // field to retrieve type of
 );
 
 // checks if index contains field
@@ -247,7 +247,7 @@ IndexFieldType Index_GetFieldType
 bool Index_ContainsField
 (
 	const Index idx,     // index to query
-	Attribute_ID id,     // field to look for
+	AttributeID id,      // field to look for
 	IndexFieldType type  // field type to look for
 );
 

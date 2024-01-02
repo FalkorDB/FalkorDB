@@ -7,7 +7,7 @@ on:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:ubuntu
     steps:
 
     - name: Safe dir
@@ -40,7 +40,10 @@ jobs:
         key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
-      run: make CLANG=1 SAN=address NPROC=16
+      run: |
+        rustup toolchain list
+        rustup default nightly
+        make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests

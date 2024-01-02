@@ -9,7 +9,6 @@
 #include "../query_ctx.h"
 #include "../index/indexer.h"
 #include "../graph/graph_hub.h"
-#include "../undo_log/undo_log.h"
 #include "../graph/graphcontext.h"
 #include "constraint/constraint.h"
 
@@ -21,13 +20,13 @@ typedef enum {
 	CT_DROP     // drop constraint
 } ConstraintOp;
 
-static inline int _cmp_Attribute_ID
+static inline int _cmp_AttributeID
 (
 	const void *a,
 	const void *b
 ) {
-	const Attribute_ID *_a = a;
-	const Attribute_ID *_b = b;
+	const AttributeID *_a = a;
+	const AttributeID *_b = b;
 	return *_a - *_b;
 }
 
@@ -146,7 +145,7 @@ static bool _Constraint_Drop
 	const char **props      // properties
 ) {
 	bool res = true;  // optimistic
-	Attribute_ID attrs[n];
+	AttributeID attrs[n];
 
 	//--------------------------------------------------------------------------
 	// try to get graph
@@ -179,7 +178,7 @@ static bool _Constraint_Drop
 		const char *prop = props[i];
 
 		// try to get property ID
-		Attribute_ID id = GraphContext_GetAttributeID(gc, prop);
+		AttributeID id = GraphContext_GetAttributeID(gc, prop);
 
 		if(id == ATTRIBUTE_ID_NONE) {
 			// attribute missing
@@ -261,7 +260,7 @@ static bool _Constraint_Create
 	// convert attribute name to attribute ID
 	//--------------------------------------------------------------------------
 
-	Attribute_ID attr_ids[n];
+	AttributeID attr_ids[n];
 	for(uint i = 0; i < n; i++) {
 		attr_ids[i] = FindOrAddAttribute(gc, props[i], true);
 	}
@@ -272,7 +271,7 @@ static bool _Constraint_Create
 
 	// sort the properties for an easy comparison later
 	bool dups = false;
-	qsort(attr_ids, n, sizeof(Attribute_ID), _cmp_Attribute_ID);
+	qsort(attr_ids, n, sizeof(AttributeID), _cmp_AttributeID);
 	for(uint i = 0; i < n - 1; i++) {
 		if(attr_ids[i] == attr_ids[i+1]) {
 			dups = true;
@@ -291,7 +290,7 @@ static bool _Constraint_Create
 	// must be aligned with attribute names array
 	for(uint i = 0; i < n; i++) {
 		// get attribute id for attribute name
-		Attribute_ID attr_id = attr_ids[i];
+		AttributeID attr_id = attr_ids[i];
 
 		// update props to hold graph context's attribute name
 		props[i] = GraphContext_GetAttributeString(gc, attr_id);

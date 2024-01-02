@@ -21,7 +21,7 @@ struct _MandatoryConstraint {
 	Constraint_SetPrivateDataCB set_pdata;  // set private data
 	Constraint_GetPrivateDataCB get_pdata;  // get private data
 	int schema_id;                          // enforced schema ID
-    Attribute_ID *attrs;                    // enforced attributes
+    AttributeID *attrs;                     // enforced attributes
 	const char **attr_names;                // enforced attribute names
     ConstraintStatus status;                // constraint status
     uint _Atomic pending_changes;           // number of pending changes
@@ -47,7 +47,7 @@ bool Constraint_EnforceMandatory
 
 	// TODO: switch to attribute matrix
 	for(uint8_t i = 0; i < _c->n_attr; i++) {
-		Attribute_ID attr_id = _c->attrs[i];
+		AttributeID attr_id = _c->attrs[i];
 		if(GraphEntity_GetProperty(e, attr_id) == ATTRIBUTE_NOTFOUND) {
 			// entity violates constraint
 			if(err_msg != NULL) {
@@ -79,7 +79,7 @@ bool Constraint_EnforceMandatory
 Constraint Constraint_MandatoryNew
 (
 	int schema_id,            // schema ID
-	Attribute_ID *fields,     // enforced fields
+	AttributeID *fields,      // enforced fields
 	const char **attr_names,  // enforced attribute names
 	uint8_t n_fields,         // number of fields
 	GraphEntityType et        // entity type
@@ -87,8 +87,8 @@ Constraint Constraint_MandatoryNew
     MandatoryConstraint c = rm_malloc(sizeof(struct _MandatoryConstraint));
 
 	// introduce constraint attributes
-	c->attrs = rm_malloc(sizeof(Attribute_ID) * n_fields);
-    memcpy(c->attrs, fields, sizeof(Attribute_ID) * n_fields);
+	c->attrs = rm_malloc(sizeof(AttributeID) * n_fields);
+    memcpy(c->attrs, fields, sizeof(AttributeID) * n_fields);
 
 	c->attr_names = rm_malloc(sizeof(char*) * n_fields);
     memcpy(c->attr_names, attr_names, sizeof(char*) * n_fields);

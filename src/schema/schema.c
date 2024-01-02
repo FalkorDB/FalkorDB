@@ -139,11 +139,11 @@ unsigned short Schema_GetIndicies
 // returns NULL if index wasn't found
 Index Schema_GetIndex
 (
-	const Schema *s,            // schema to get index from
-	const Attribute_ID *attrs,  // indexed attributes
-	uint n,                     // number of attributes
-	IndexFieldType t,           // all index attributes must be of this type
-	bool include_pending        // take into considiration pending indicies
+	const Schema *s,           // schema to get index from
+	const AttributeID *attrs,  // indexed attributes
+	uint n,                    // number of attributes
+	IndexFieldType t,          // all index attributes must be of this type
+	bool include_pending       // take into considiration pending indicies
 ) {
 	// validations
 	ASSERT(s != NULL);
@@ -259,7 +259,7 @@ int Schema_RemoveIndex
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
 	// convert attribute name to attribute ID
-	Attribute_ID attr_id = GraphContext_GetAttributeID(gc, f);
+	AttributeID attr_id = GraphContext_GetAttributeID(gc, f);
 	if(attr_id == ATTRIBUTE_ID_NONE) {
 		return INDEX_FAIL;
 	}
@@ -412,10 +412,10 @@ bool Schema_HasConstraints
 // checks if schema constains constraint
 bool Schema_ContainsConstraint
 (
-	const Schema *s,            // schema to search
-	ConstraintType t,           // constraint type
-	const Attribute_ID *attrs,  // constraint attributes
-	uint attr_count             // number of attributes
+	const Schema *s,           // schema to search
+	ConstraintType t,          // constraint type
+	const AttributeID *attrs,  // constraint attributes
+	uint attr_count            // number of attributes
 ) {
 	// validations
 	ASSERT(s          != NULL);
@@ -430,10 +430,10 @@ bool Schema_ContainsConstraint
 // returns NULL if constraint was not found
 Constraint Schema_GetConstraint
 (
-	const Schema *s,            // schema from which to get constraint
-	ConstraintType t,           // constraint type
-	const Attribute_ID *attrs,  // constraint attributes
-	uint attr_count             // number of attributes
+	const Schema *s,           // schema from which to get constraint
+	ConstraintType t,          // constraint type
+	const AttributeID *attrs,  // constraint attributes
+	uint attr_count            // number of attributes
 ) {
 	// validations
 	ASSERT(s          != NULL);
@@ -451,7 +451,7 @@ Constraint Schema_GetConstraint
 		}
 
 		// make sure constraint attribute count matches
-		const Attribute_ID *c_attrs;
+		const AttributeID *c_attrs;
 		uint n = Constraint_GetAttributes(c, &c_attrs, NULL);
 		if(n != attr_count) {
 			continue;

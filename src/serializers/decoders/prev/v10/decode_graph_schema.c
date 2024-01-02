@@ -38,7 +38,7 @@ static Schema *_RdbLoadSchema
 		}
 
 		IndexField field;
-		Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc, field_name,
+		AttributeID field_id = GraphContext_FindOrAddAttribute(gc, field_name,
 				NULL);
 
 		if(type == IDX_EXACT_MATCH) {

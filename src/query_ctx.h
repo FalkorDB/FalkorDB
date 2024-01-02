@@ -15,7 +15,6 @@
 #include "resultset/resultset.h"
 #include "commands/cmd_context.h"
 #include "execution_plan/ops/op.h"
-#include "undo_log/undo_log.h"
 #include "effects/effects.h"
 #include <pthread.h>
 
