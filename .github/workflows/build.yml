@@ -21,7 +21,7 @@ jobs:
     - name: Safe dir
       run: git config --global --add safe.directory '*'
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         set-safe-directory: '*'
         submodules: recursive
@@ -166,4 +166,30 @@ jobs:
     steps:
       - name: Fuzz tests
         working-directory: /FalkorDB
-        run: make fuzz TIMEOUT=180
+        run: make fuzz TIMEOUT=
+        
+  performance-tests:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb:${{ github.ref_name }}
+    needs: merge
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - uses: actions/checkout@v4
+        with:
+          repository: FalkorDB/falkordb-benchmark-go
+          path: falkordb-benchmark-go
+          set-safe-directory: '*'
+          submodules: recursive
+
+      - name: Build benchmark
+        run: |
+          cd $GITHUB_WORKSPACE/falkordb-benchmark-go
+          make
+
+      - name: Run benchmark
+        run: | 
+          cd $GITHUB_WORKSPACE/falkordb-benchmark-go
+          ./falkordb-benchmark-go -n 100000 -graph-key graph -query "CREATE (u:User)" 
