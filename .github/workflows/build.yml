@@ -32,7 +32,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/GraphBLAS
-        key: graphblas-${{ runner.os }}-${{ hashFiles('**/GraphBLAS/Include/GraphBLAS.h') }}
+        key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('~/**/deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser ${{ matrix.platform }}
       if: github.event_name == 'push'
@@ -40,7 +40,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/libcypher-parser
-        key: parser-${{ runner.os }}-${{ hashFiles('**/libcypher-parser/lib/src/parser.c') }}
+        key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('~/**/deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search ${{ matrix.platform }}
       if: github.event_name == 'push'
@@ -48,7 +48,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/search-static
-        key: search-${{ runner.os }}-${{ hashFiles('**/RediSearch/src/version.h') }}
+        key: search-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('~/**/deps/RediSearch/src/version.h') }}
 
     # Make sure the working directory is static between runs 
     # and always the same for the CMake cache
