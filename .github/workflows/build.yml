@@ -166,4 +166,23 @@ jobs:
     steps:
       - name: Fuzz tests
         working-directory: /FalkorDB
-        run: make fuzz TIMEOUT=180
+        run: make fuzz TIMEOUT=
+        
+  performance-tests:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb:${{ github.ref_name }}
+    needs: merge
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Build benchmark
+        run: |
+          go get github.com/RedisGraph/falkordb-benchmark-go
+          cd $GOPATH/src/github.com/RedisGraph/falkordb-benchmark-go
+          make
+
+      - name: Run benchmark
+        run: |
+          cd $GOPATH/src/github.com/RedisGraph/falkordb-benchmark-go
+          ./redisgraph-benchmark-go -n 100000 -graph-key graph -query "CREATE (u:User)" 
