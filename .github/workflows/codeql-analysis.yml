@@ -58,21 +58,21 @@ jobs:
       uses: actions/cache@v3
       with:
         path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
-        key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}    
+        key: graphblas-codeql-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}    
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v3
       with:
         path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
-        key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        key: parser-codeql-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@v3
       with:
         path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
-        key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-codeql-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
