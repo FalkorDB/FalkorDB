@@ -15,7 +15,7 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          # - linux/arm64
+          - linux/arm64
     steps:
 
     - name: Safe dir
@@ -132,41 +132,41 @@ jobs:
         run: |
           docker buildx imagetools inspect falkordb/falkordb:latest
 
-  # unit-tests:
-  #   runs-on: ubuntu-latest
-  #   container: falkordb/falkordb:${{ github.ref_name }}
-  #   needs: merge
-  #   steps:
-  #     - name: Unit tests
-  #       working-directory: /FalkorDB
-  #       run: make unit-tests CLEAR_LOGS=0
+  unit-tests:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb:${{ github.ref_name }}
+    needs: merge
+    steps:
+      - name: Unit tests
+        working-directory: /FalkorDB
+        run: make unit-tests CLEAR_LOGS=0
 
-  # flow-tests:
-  #   runs-on: ubuntu-latest
-  #   container: falkordb/falkordb:${{ github.ref_name }}
-  #   needs: merge
-  #   steps:
-  #     - name: Flow tests
-  #       working-directory: /FalkorDB
-  #       run: make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+  flow-tests:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb:${{ github.ref_name }}
+    needs: merge
+    steps:
+      - name: Flow tests
+        working-directory: /FalkorDB
+        run: make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
-  # tck-tests:
-  #   runs-on: ubuntu-latest
-  #   container: falkordb/falkordb:${{ github.ref_name }}
-  #   needs: merge
-  #   steps:
-  #     - name: TCK tests
-  #       working-directory: /FalkorDB
-  #       run: make CLEAR_LOGS=0 tck-tests
+  tck-tests:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb:${{ github.ref_name }}
+    needs: merge
+    steps:
+      - name: TCK tests
+        working-directory: /FalkorDB
+        run: make CLEAR_LOGS=0 tck-tests
 
-  # fuzz-tests:
-  #   runs-on: ubuntu-latest
-  #   container: falkordb/falkordb:${{ github.ref_name }}
-  #   needs: merge
-  #   steps:
-  #     - name: Fuzz tests
-  #       working-directory: /FalkorDB
-  #       run: make fuzz TIMEOUT=
+  fuzz-tests:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb:${{ github.ref_name }}
+    needs: merge
+    steps:
+      - name: Fuzz tests
+        working-directory: /FalkorDB
+        run: make fuzz TIMEOUT=
         
   performance-tests:
     runs-on: ubuntu-latest
@@ -192,4 +192,4 @@ jobs:
       - name: Run benchmark
         run: | 
           cd $GITHUB_WORKSPACE/falkordb-benchmark-go
-          ./redisgraph-benchmark-go -n 100000 -graph-key graph -query "CREATE (u:User)" 
+          ./falkordb-benchmark-go -n 100000 -graph-key graph -query "CREATE (u:User)" 
