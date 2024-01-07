@@ -36,7 +36,7 @@ SIValue AR_LABELS(SIValue *argv, int argc, void *private_data) {
 	SIValue res = SI_Array(label_count);
 
 	for(uint i = 0; i < label_count; i++) {
-		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		Schema s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		ASSERT(s != NULL);
 		const char *name = Schema_GetName(s);
 		SIArray_Append(&res, SI_ConstStringVal(name));
@@ -65,7 +65,7 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 			return SI_NullVal();
 		}
 		char *label = label_value.stringval;
-		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+		Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 
 		// validate schema exists
 		if(!s) {
@@ -90,11 +90,11 @@ SIValue AR_HAS_LABELS(SIValue *argv, int argc, void *private_data) {
 /* returns a string representation of the type of a relation. */
 SIValue AR_TYPE(SIValue *argv, int argc, void *private_data) {
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	char *type = "";
+	const char *type = "";
 	Edge *e = argv[0].ptrval;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	int id = Edge_GetRelationID(e);
-	if(id != GRAPH_NO_RELATION) type = gc->relation_schemas[id]->name;
+	if(id != GRAPH_NO_RELATION) type = Schema_GetName(gc->relation_schemas[id]);
 	return SI_ConstStringVal(type);
 }
 
@@ -192,13 +192,13 @@ static SIValue _AR_NodeDegree
 			SIValue elem = SIArray_Get(labels, i);
 			const char *label = elem.stringval;
 			// make sure relationship exists.
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
+			Schema s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
 			if(s == NULL) {
 				continue;
 			}
 
 			// count edges
-			count += Graph_GetNodeDegree(gc->g, n, dir, s->id);
+			count += Graph_GetNodeDegree(gc->g, n, dir, Schema_GetID(s));
 		}
 		SIArray_Free(labels);
 	} else {

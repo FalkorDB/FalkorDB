@@ -34,15 +34,15 @@ static void _CommitNodesBlueprint
 
 		for(uint j = 0; j < label_count; j++) {
 			const char *label = node_ctx->labels[j];
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 
 			if(s == NULL) {
 				s = AddSchema(gc, label, SCHEMA_NODE, true);
 				QueryCtx_GetResultSetStatistics()->labels_added++;
 			}
 
-			node_ctx->labelsId[j] = s->id;
-			pending->node_labels[i][j] = s->id;
+			node_ctx->labelsId[j] = Schema_GetID(s);
+			pending->node_labels[i][j] = Schema_GetID(s);
 
 			// sync matrix, make sure label matrix is of the right dimensions
 			Graph_GetLabelMatrix(g, Schema_GetID(s));
@@ -82,7 +82,7 @@ static void _CommitNodes
 
 		if(constraint_violation == false) {
 			for(uint j = 0; j < label_count; j++) {
-				Schema *s = GraphContext_GetSchemaByID(gc, labels[j], SCHEMA_NODE);
+				Schema s = GraphContext_GetSchemaByID(gc, labels[j], SCHEMA_NODE);
 				char *err_msg = NULL;
 				if(!Schema_EnforceConstraints(s, (GraphEntity*)n, &err_msg)) {
 					// constraint violation
@@ -117,7 +117,7 @@ static void _CommitEdgesBlueprint
 		EdgeCreateCtx *edge_ctx = blueprints + i;
 
 		const char *relation = edge_ctx->relation;
-		Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
+		Schema s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 		if(s == NULL) s = AddSchema(gc, relation, SCHEMA_EDGE, true);
 
 		// calling Graph_GetRelationMatrix will make sure relationship matrix
@@ -150,7 +150,7 @@ static void _CommitEdges
 		NodeID dest_id = Edge_GetDestNodeID(e);
 		AttributeSet attr = pending->edge_attributes[i];
 
-		Schema *s = GraphContext_GetSchema(gc, e->relationship, SCHEMA_EDGE);
+		Schema s = GraphContext_GetSchema(gc, e->relationship, SCHEMA_EDGE);
 		// all schemas have been created in the edge blueprint loop or earlier
 		ASSERT(s != NULL);
 		int relation_id = Schema_GetID(s);

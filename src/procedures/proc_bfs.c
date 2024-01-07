@@ -99,12 +99,12 @@ static ProcedureResult Proc_BFS_Invoke
 	if(reltype == NULL) {
 		RG_Matrix_export(&R, Graph_GetAdjacencyMatrix(gc->g, false));
 	} else {
-		Schema *s = GraphContext_GetSchema(gc, reltype, SCHEMA_EDGE);
+		Schema s = GraphContext_GetSchema(gc, reltype, SCHEMA_EDGE);
 		// failed to find schema, first step will return NULL
 		if(!s) return PROCEDURE_OK;
 
-		bfs_ctx->reltype_id = s->id;
-		RG_Matrix_export(&R, Graph_GetRelationMatrix(gc->g, s->id, false));
+		bfs_ctx->reltype_id = Schema_GetID(s);
+		RG_Matrix_export(&R, Graph_GetRelationMatrix(gc->g, Schema_GetID(s), false));
 	}
 
 	// if we're not collecting edges, pass a NULL parent pointer

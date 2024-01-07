@@ -11,7 +11,7 @@ static void _RdbLoadFullTextIndex
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
-	Schema *s,
+	Schema s,
 	bool already_loaded
 ) {
 	/* Format:
@@ -80,7 +80,7 @@ static void _RdbLoadExactMatchIndex
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
-	Schema *s,
+	Schema s,
 	bool already_loaded
 ) {
 	/* Format:
@@ -111,7 +111,7 @@ static void _RdbLoadConstaint
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,    // graph context
-	Schema *s,           // schema to populate
+	Schema s,            // schema to populate
 	bool already_loaded  // constraints already loaded
 ) {
 	/* Format:
@@ -171,7 +171,7 @@ static void _RdbLoadConstaints
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,    // graph context
-	Schema *s,           // schema to populate
+	Schema s,            // schema to populate
 	bool already_loaded  // constraints already loaded
 ) {
 	// read number of constraints
@@ -198,12 +198,12 @@ static void _RdbLoadSchema
 	 * (constraint type, constraint fields) X N
 	 */
 
-	Schema *s    = NULL;
+	Schema  s    = NULL;
 	int     id   = RedisModule_LoadUnsigned(rdb);
 	char   *name = RedisModule_LoadStringBuffer(rdb, NULL);
 
 	if(!already_loaded) {
-		s = Schema_New(type, id, name);
+		s = Schema_New(type, id, rm_strdup(name));
 		if(type == SCHEMA_NODE) {
 			ASSERT(array_len(gc->node_schemas) == id);
 			array_append(gc->node_schemas, s);

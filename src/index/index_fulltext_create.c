@@ -156,7 +156,7 @@ Index Index_FulltextCreate
 	// get schema
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema(gc, label, st);
+	Schema s = GraphContext_GetSchema(gc, label, st);
 	ASSERT(s != NULL);
 
 	Index idx = NULL;

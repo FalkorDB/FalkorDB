@@ -26,7 +26,7 @@ typedef struct {
 
 // index population context
 typedef struct {
-	Schema *s;         // schema containing the index
+	Schema s;          // schema containing the index
 	Index idx;         // index to populate
 	GraphContext *gc;  // graph holding entities to index
 } IndexPopulateCtx;
@@ -382,7 +382,7 @@ cleanup:
 void Indexer_PopulateIndex
 (
 	GraphContext *gc, // graph to operate on
-	Schema *s,        // schema containing the idx
+	Schema s,         // schema containing the idx
 	Index idx         // index to populate
 ) {
 	ASSERT(s       != NULL);

@@ -53,7 +53,7 @@ SIValue *Proc_LabelsStep
 		return NULL;
 
 	// get schema label
-	Schema *s = GraphContext_GetSchemaByID(pdata->gc, pdata->schema_id++, SCHEMA_NODE);
+	Schema s = GraphContext_GetSchemaByID(pdata->gc, pdata->schema_id++, SCHEMA_NODE);
 	char *label = (char *)Schema_GetName(s);
 	pdata->output[0] = SI_ConstStringVal(label);
 	return pdata->output;

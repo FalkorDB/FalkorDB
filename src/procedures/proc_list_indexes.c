@@ -126,7 +126,7 @@ ProcedureResult Proc_IndexesInvoke
 	unsigned short n;            // number of schemas
 	Schema         *s;           // current schema
 	unsigned short idx_count;    // number of indicies in schema
-	Index          indicies[4];  // schema indicies
+	Index          indicies[2];  // schema indicies
 
 	// collect indices from node schemas
 	n = GraphContext_SchemaCount(gc, SCHEMA_NODE);

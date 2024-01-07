@@ -153,7 +153,7 @@ cleanup:
 		// entity violates constraint, compose error message
 		GraphContext *gc = QueryCtx_GetGraphCtx();
 		SchemaType st = (_c->et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-		Schema *s = GraphContext_GetSchemaByID(gc, _c->schema_id, st);
+		Schema s = GraphContext_GetSchemaByID(gc, _c->schema_id, st);
 		if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 			res = asprintf(err_msg, _node_violation_err_msg, Schema_GetName(s));
 		} else {

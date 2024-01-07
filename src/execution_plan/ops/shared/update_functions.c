@@ -99,7 +99,7 @@ void CommitUpdates
 
 			SchemaType stype = type == ENTITY_NODE ? SCHEMA_NODE : SCHEMA_EDGE;
 			for(uint i = 0; i < label_count; i ++) {
-				Schema *s = GraphContext_GetSchemaByID(gc, labels[i], stype);
+				Schema s = GraphContext_GetSchemaByID(gc, labels[i], stype);
 				// TODO: a bit wasteful need to target relevant constraints only
 				char *err_msg = NULL;
 				if(!Schema_EnforceConstraints(s, update->ge, &err_msg)) {
@@ -129,7 +129,7 @@ void EvalEntityUpdates
 	const EntityUpdateEvalCtx *ctx,
 	bool allow_null
 ) {
-	Schema *s = NULL;
+	Schema s = NULL;
 
 	//--------------------------------------------------------------------------
 	// validate entity type

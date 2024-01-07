@@ -71,9 +71,9 @@ static OpResult IndexScanInit(OpBase *opBase) {
 	// resolve label ID now if it is still unknown
 	if(op->n->label_id == GRAPH_UNKNOWN_LABEL) {
 		GraphContext *gc = QueryCtx_GetGraphCtx();
-		Schema *schema = GraphContext_GetSchema(gc, op->n->label, SCHEMA_NODE);
-		ASSERT(schema != NULL);
-		op->n->label_id = schema->id;
+		Schema s = GraphContext_GetSchema(gc, op->n->label, SCHEMA_NODE);
+		ASSERT(s != NULL);
+		op->n->label_id = Schema_GetID(s);
 	}
 
 	return OP_OK;

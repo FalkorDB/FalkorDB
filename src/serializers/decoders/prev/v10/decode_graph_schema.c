@@ -6,7 +6,7 @@
 
 #include "decode_v10.h"
 
-static Schema *_RdbLoadSchema
+static Schema _RdbLoadSchema
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -21,7 +21,7 @@ static Schema *_RdbLoadSchema
 
 	int id = RedisModule_LoadUnsigned(rdb);
 	char *name = RedisModule_LoadStringBuffer(rdb, NULL);
-	Schema *s = already_loaded ? NULL : Schema_New(type, id, name);
+	Schema s = already_loaded ? NULL : Schema_New(type, id, rm_strdup(name));
 	RedisModule_Free(name);
 
 	Index idx = NULL;
@@ -109,7 +109,7 @@ void RdbLoadGraphSchema_v10
 	// load each node schema
 	gc->node_schemas = array_ensure_cap(gc->node_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
-		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
+		Schema s = _RdbLoadSchema(rdb, gc, SCHEMA_NODE, already_loaded);
 		if(!already_loaded) array_append(gc->node_schemas, s);
 	}
 
@@ -119,7 +119,7 @@ void RdbLoadGraphSchema_v10
 	// load each edge schema
 	gc->relation_schemas = array_ensure_cap(gc->relation_schemas, schema_count);
 	for(uint i = 0; i < schema_count; i ++) {
-		Schema *s = _RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
+		Schema s = _RdbLoadSchema(rdb, gc, SCHEMA_EDGE, already_loaded);
 		if(!already_loaded) array_append(gc->relation_schemas, s);
 	}
 }

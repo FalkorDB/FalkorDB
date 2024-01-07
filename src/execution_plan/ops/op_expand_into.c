@@ -151,7 +151,7 @@ static OpResult ExpandIntoInit
 			// try to retrieve relationship matrix
 			// it is OK if the relationship doesn't exists, in this case
 			// we won't use this single operand optimization
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
+			Schema s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
 			if(s != NULL) {
 				// stream records as they enter
 				op->M = Graph_GetRelationMatrix(op->graph, Schema_GetID(s), false);

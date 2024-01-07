@@ -102,8 +102,8 @@ bool _reduceNodeCount
 
 	// if label is specified, count only labeled entities
 	if(label) {
-		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-		if(s) nodeCount = SI_LongVal(Graph_LabeledNodeCount(gc->g, s->id));
+		Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+		if(s) nodeCount = SI_LongVal(Graph_LabeledNodeCount(gc->g, Schema_GetID(s)));
 		else nodeCount = SI_LongVal(0); // specified Label doesn't exists
 	} else {
 		nodeCount = SI_LongVal(Graph_NodeCount(gc->g));

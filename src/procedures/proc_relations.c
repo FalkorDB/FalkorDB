@@ -51,7 +51,7 @@ SIValue *Proc_RelationsStep
 		return NULL;
 
 	// get schema name
-	Schema *s = GraphContext_GetSchemaByID(pdata->gc, pdata->schema_id++, SCHEMA_EDGE);
+	Schema s = GraphContext_GetSchemaByID(pdata->gc, pdata->schema_id++, SCHEMA_EDGE);
 	pdata->output[0] = SI_ConstStringVal(Schema_GetName(s));
 	return pdata->output;
 }

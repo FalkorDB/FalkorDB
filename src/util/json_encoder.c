@@ -48,7 +48,7 @@ static sds _JsonEncoder_Node(const Node *n, sds s) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	NODE_GET_LABELS(gc->g, n, label_count);
 	for(uint i = 0; i < label_count; i ++) {
-		Schema *schema = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		Schema schema = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		ASSERT(schema);
 		const char *label = Schema_GetName(schema);
 		ASSERT(label);
@@ -65,7 +65,7 @@ static sds _JsonEncoder_Edge(Edge *e, sds s) {
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	// Retrieve reltype data.
 	int id = Edge_GetRelationID(e);
-	Schema *schema = GraphContext_GetSchemaByID(gc, id, SCHEMA_EDGE);
+	Schema schema = GraphContext_GetSchemaByID(gc, id, SCHEMA_EDGE);
 	ASSERT(schema);
 	const char *relationship = Schema_GetName(schema);
 	ASSERT(relationship);

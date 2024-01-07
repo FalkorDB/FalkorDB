@@ -7,7 +7,6 @@
 #pragma once
 
 #include <stdint.h>
-#include "../value.h"
 #include "../schema/schema.h"
 #include "../graph/graphcontext.h"
 #include "../graph/entities/node.h"

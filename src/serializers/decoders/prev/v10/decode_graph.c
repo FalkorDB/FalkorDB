@@ -207,7 +207,7 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
 
 			Index idx;
-			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
+			Schema s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
 			if(idx != NULL) {
 				Index_Enable(idx);
@@ -218,7 +218,7 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 		// enable all edge indices
 		for(uint i = 0; i < rel_count; i++) {
 			Index idx;
-			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
+			Schema s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
 			if(idx != NULL) {
 				Index_Enable(idx);

@@ -101,7 +101,7 @@ Constraint Constraint_New
 	if(t == CT_UNIQUE) {
 		// a unique constraints requires an index, try to get supporting index
 		SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-		Schema *s = GraphContext_GetSchemaByID((GraphContext*)gc, schema_id, st);
+		Schema s = GraphContext_GetSchemaByID((GraphContext*)gc, schema_id, st);
 		Index idx = Schema_GetIndex(s, fields, n_fields, INDEX_FLD_RANGE, true);
 
 		// supporting index is missing, can't create constraint
@@ -360,7 +360,7 @@ void Constraint_Replicate
 	}
 
 	// label
-	Schema *s = GraphContext_GetSchemaByID(_gc, Constraint_GetSchemaID(c), st);
+	Schema s = GraphContext_GetSchemaByID(_gc, Constraint_GetSchemaID(c), st);
 	const char *label = Schema_GetName(s);
 
 	// properties

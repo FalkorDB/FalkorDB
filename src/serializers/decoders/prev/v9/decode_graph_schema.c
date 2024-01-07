@@ -6,7 +6,7 @@
 
 #include "decode_v9.h"
 
-static Schema *_RdbLoadSchema
+static Schema _RdbLoadSchema
 (
 	RedisModuleIO *rdb,
 	GraphContext *gc,
@@ -20,7 +20,7 @@ static Schema *_RdbLoadSchema
 
 	int id = RedisModule_LoadUnsigned(rdb);
 	char *name = RedisModule_LoadStringBuffer(rdb, NULL);
-	Schema *s = Schema_New(type, id, name);
+	Schema s = Schema_New(type, id, rm_strdup(name));
 	RedisModule_Free(name);
 
 	Index idx = NULL;

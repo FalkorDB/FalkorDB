@@ -27,7 +27,7 @@ static void _QueryGraphSetNodeLabel
 							cypher_ast_node_pattern_get_label(ast_entity, i));
 
 		// if a schema is found, the AST refers to an existing label
-		Schema *s = GraphContext_GetSchema(gc, l, SCHEMA_NODE);
+		Schema s = GraphContext_GetSchema(gc, l, SCHEMA_NODE);
 		int l_id = (s) ? Schema_GetID(s) : GRAPH_UNKNOWN_LABEL;
 		QGNode_AddLabel(n, l, l_id);
 	}
@@ -81,7 +81,7 @@ static void _QueryGraphAddEdge
 		const char *reltype = cypher_ast_reltype_get_name(cypher_ast_rel_pattern_get_reltype(ast_entity,
 														  i));
 		bool found = false;
-		Schema *s = GraphContext_GetSchema(gc, reltype, SCHEMA_EDGE);
+		Schema s = GraphContext_GetSchema(gc, reltype, SCHEMA_EDGE);
 		if(!s) {
 			// unknown relationship
 			// search if reltype exists in edge->reltypes to don't insert duplicated reltype
@@ -104,14 +104,14 @@ static void _QueryGraphAddEdge
 		// search if s-id exists in edge->reltypeIDs to don't insert duplicated ids
 		int len = array_len(edge->reltypeIDs);
 		for (int j = 0; j < len; j++) {
-			if(edge->reltypeIDs[j] == s->id) {
+			if(edge->reltypeIDs[j] == Schema_GetID(s)) {
 				found = true;
 				break;
 			}
 		}
 		if(!found) {
 			array_append(edge->reltypes, reltype);
-			array_append(edge->reltypeIDs, s->id);
+			array_append(edge->reltypeIDs, Schema_GetID(s));
 		}
 	}
 
@@ -514,7 +514,7 @@ void QueryGraph_ResolveUnknownRelIDs
 	// no unknown relationships - no need to updated
 	if(!qg->unknown_reltype_ids) return;
 
-	Schema *s = NULL;
+	Schema s = NULL;
 	bool unkown_relationships = false;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	uint edge_count = QueryGraph_EdgeCount(qg);
@@ -526,7 +526,7 @@ void QueryGraph_ResolveUnknownRelIDs
 		for(uint j = 0; j < rel_types_count; j++) {
 			if(edge->reltypeIDs[j] == GRAPH_UNKNOWN_RELATION) {
 				s = GraphContext_GetSchema(gc, edge->reltypes[j], SCHEMA_EDGE);
-				if(s) edge->reltypeIDs[j] = s->id;
+				if(s) edge->reltypeIDs[j] = Schema_GetID(s);
 				else unkown_relationships = true; // cannot update the unkown relationship
 			}
 		}

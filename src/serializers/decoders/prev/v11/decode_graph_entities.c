@@ -124,7 +124,7 @@ void RdbLoadNodes_v11
 
 		// introduce n to each relevant index
 		for (int i = 0; i < nodeLabelCount; i++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+			Schema s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 			ASSERT(s != NULL);
 			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
 		}
@@ -173,7 +173,7 @@ void RdbLoadEdges_v11
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
-		Schema *s = GraphContext_GetSchemaByID(gc, relation, SCHEMA_EDGE);
+		Schema s = GraphContext_GetSchemaByID(gc, relation, SCHEMA_EDGE);
 		ASSERT(s != NULL);
 		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
 	}

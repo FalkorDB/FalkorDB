@@ -253,7 +253,7 @@ static ProcedureResult validate_config
 			for (uint i = 0; i < types_count; i++) {
 				SIValue rel = SIArray_Get(relationships, i);
 				const char *type = rel.stringval;
-				Schema *s = GraphContext_GetSchema(gc, type, SCHEMA_EDGE);
+				Schema s = GraphContext_GetSchema(gc, type, SCHEMA_EDGE);
 				if(s == NULL) continue;
 				array_append(types, Schema_GetID(s));
 			}

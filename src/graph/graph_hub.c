@@ -24,7 +24,7 @@ void CreateNode
 
 	// add node labels
 	for(uint i = 0; i < label_count; i++) {
-		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		Schema s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		ASSERT(s);
 		Schema_AddNodeToIndex(s, n);
 	}
@@ -54,7 +54,7 @@ void CreateEdge
 	Graph_CreateEdge(gc->g, src, dst, r, e);
 	*e->attributes = set;
 
-	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
+	Schema s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	// all schemas have been created in the edge blueprint loop or earlier
 	ASSERT(s != NULL);
 	Schema_AddEdgeToIndex(s, e);
@@ -199,7 +199,7 @@ void UpdateNodeProperty
 	uint label_count;
 	NODE_GET_LABELS(gc->g, &n, label_count);
 
-	Schema *s;
+	Schema s;
 	for(uint i = 0; i < label_count; i++) {
 		int label_id = labels[i];
 		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
@@ -245,7 +245,7 @@ void UpdateEdgeProperty
 	Edge_SetDestNodeID(&e, dest_id);
 
 	// get edge schema
-	Schema *s = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
+	Schema s = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
 	// clear all attributes
@@ -317,7 +317,7 @@ void UpdateNodeLabels
 		for (uint i = 0; i < n_add_labels; i++) {
 			const char *label = add_labels[i];
 			// get or create label matrix
-			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			bool schema_created = false;
 			if(s == NULL) {
 				s = AddSchema(gc, label, SCHEMA_NODE, log);
@@ -363,7 +363,7 @@ void UpdateNodeLabels
 
 			// label removal
 			// get or create label matrix
-			const Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			const Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s == NULL) {
 				// skip removal of none existing label
 				continue;
@@ -394,7 +394,7 @@ void UpdateNodeLabels
 	}
 }
 
-Schema *AddSchema
+Schema AddSchema
 (
 	GraphContext *gc,   // graph context to add the schema
 	const char *label,  // schema label
@@ -403,13 +403,13 @@ Schema *AddSchema
 ) {
 	ASSERT(gc != NULL);
 	ASSERT(label != NULL);
-	Schema *s = GraphContext_AddSchema(gc, label, t);
+	Schema s = GraphContext_AddSchema(gc, label, t);
 
 	if(log == true) {
 		UndoLog undo_log = QueryCtx_GetUndoLog();
-		UndoLog_AddSchema(undo_log, s->id, s->type);
+		UndoLog_AddSchema(undo_log, Schema_GetID(s), Schema_GetType(s));
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
-		EffectsBuffer_AddNewSchemaEffect(eb, Schema_GetName(s), s->type);
+		EffectsBuffer_AddNewSchemaEffect(eb, Schema_GetName(s), Schema_GetType(s));
 	}
 
 	return s;
@@ -463,7 +463,7 @@ Index AddIndex
 	//--------------------------------------------------------------------------
 
 	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema(gc, label, st);
+	Schema s = GraphContext_GetSchema(gc, label, st);
 
 	// schema missing, creating an index will create the schema
 	if(s == NULL) {

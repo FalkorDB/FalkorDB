@@ -33,8 +33,8 @@ typedef struct GraphContext {
 	pthread_rwlock_t _attribute_rwlock;    // read-write lock to protect access to the attribute maps
 	char *graph_name;                      // string associated with graph
 	char **string_mapping;                 // from attribute IDs to strings
-	Schema **node_schemas;                 // array of schemas for each node label
-	Schema **relation_schemas;             // array of schemas for each relation type
+	Schema *node_schemas;                  // array of schemas for each node label
+	Schema *relation_schemas;              // array of schemas for each relation type
 	unsigned short index_count;            // number of indicies
 	SlowLog *slowlog;                      // slowlog associated with graph
 	QueriesLog queries_log;                // log last x executed queries
@@ -152,7 +152,7 @@ void GraphContext_DisableConstrains
 );
 
 // retrieve the specific schema for the provided ID
-Schema *GraphContext_GetSchemaByID
+Schema GraphContext_GetSchemaByID
 (
 	const GraphContext *gc,
 	int id,
@@ -161,7 +161,7 @@ Schema *GraphContext_GetSchemaByID
 
 // retrieve the specific schema for the provided node label
 // or relation type string
-Schema *GraphContext_GetSchema
+Schema GraphContext_GetSchema
 (
 	const GraphContext *gc,
 	const char *label,
@@ -169,7 +169,7 @@ Schema *GraphContext_GetSchema
 );
 
 // add a new schema and matrix for the given label
-Schema *GraphContext_AddSchema
+Schema GraphContext_AddSchema
 (
 	GraphContext *gc,
 	const char *label,

@@ -36,7 +36,7 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 	// try to get relevant index
 	const char *lbl = arg.stringval;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Schema *s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
+	Schema s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
 
 	if(s == NULL) {
 		ErrorCtx_SetError(EMSG_FULLTEXT_DROP_INDEX, lbl);

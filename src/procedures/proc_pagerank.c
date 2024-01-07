@@ -83,7 +83,7 @@ ProcedureResult Proc_PagerankInvoke
 	GrB_Index n = 0;               // node count
 	GrB_Index nvals;               // number of entries in 'r'
 	GrB_Index nrows;               // relation matrix row count
-	Schema *s = NULL;
+	Schema s = NULL;
 	GrB_Matrix l = NULL;           // label matrix
 	GrB_Matrix r = NULL;           // relation matrix
 	GrB_Index *mapping = NULL;     // mapping, array for returning row indices of tuples
@@ -109,7 +109,7 @@ ProcedureResult Proc_PagerankInvoke
 		s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 		// unknown label, quickly return
 		if(!s) return PROCEDURE_OK;
-		RG_Matrix_export(&l, Graph_GetLabelMatrix(g, s->id));
+		RG_Matrix_export(&l, Graph_GetLabelMatrix(g, Schema_GetID(s)));
 	}
 
 	// get relation matrix
@@ -117,7 +117,7 @@ ProcedureResult Proc_PagerankInvoke
 		s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 		// unknown relation, quickly return
 		if(!s) return PROCEDURE_OK;
-		RG_Matrix_export(&r, Graph_GetRelationMatrix(g, s->id, false));
+		RG_Matrix_export(&r, Graph_GetRelationMatrix(g, Schema_GetID(s), false));
 
 		// convert the values to true
 		info = GrB_Matrix_apply(r, NULL, NULL, GxB_ONE_BOOL, r, GrB_DESC_R);

@@ -82,7 +82,7 @@ static void _ExecutionPlan_ProcessQueryGraph
 			ASSERT(alias != NULL);
 
 			int label_id = GRAPH_UNKNOWN_LABEL;
-			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+			Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 			if(s != NULL) label_id = Schema_GetID(s);
 
 			// resolve source node by performing label scan

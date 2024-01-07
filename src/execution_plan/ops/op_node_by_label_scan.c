@@ -37,7 +37,7 @@ static void _update_label_id
 	if(op->n->label_id != GRAPH_UNKNOWN_LABEL) return;
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Schema *s = GraphContext_GetSchema(gc, op->n->label, SCHEMA_NODE);
+	Schema s = GraphContext_GetSchema(gc, op->n->label, SCHEMA_NODE);
 	if(s != NULL) op->n->label_id = Schema_GetID(s);
 }
 

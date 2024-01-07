@@ -321,7 +321,7 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		Index_Disable(idx);
 
 		// populate index
-		Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
+		Schema s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 		ASSERT(s != NULL);
 		Indexer_PopulateIndex(gc, s, idx);
 	}

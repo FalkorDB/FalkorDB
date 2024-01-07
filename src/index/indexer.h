@@ -27,7 +27,7 @@ bool Indexer_Init(void);
 void Indexer_PopulateIndex
 (
 	GraphContext *gc, // graph to operate on
-	Schema *s,        // schema containing the idx
+	Schema s,         // schema containing the idx
 	Index idx         // index to populate
 );
 

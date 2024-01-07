@@ -266,11 +266,11 @@ static void _AlgebraicExpression_PopulateOperand(AlgebraicExpression *operand,
 	} else if(operand->operand.diagonal) {
 		// diagonal operand refers to label matrix
 		s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
-		if(s) m = Graph_GetLabelMatrix(g, s->id);
+		if(s) m = Graph_GetLabelMatrix(g, Schema_GetID(s));
 	} else {
 		// none diagonal matrix, use relationship matrix
 		s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
-		if(s) m = Graph_GetRelationMatrix(g, s->id, false);
+		if(s) m = Graph_GetRelationMatrix(g, Schema_GetID(s), false);
 	}
 
 	// m is unset, use zero matrix
@@ -297,7 +297,7 @@ static void _AlgebraicExpression_PopulateTransposedOperand(AlgebraicExpression *
 	// TODO: Redesign _AlgebraicExpression_FromString to remove this condition
 	if(operand->operand.matrix != NULL) return;
 
-	Schema *s = NULL;
+	Schema s = NULL;
 	RG_Matrix m = NULL;
 	const char *label = operand->operand.label;
 
@@ -306,7 +306,7 @@ static void _AlgebraicExpression_PopulateTransposedOperand(AlgebraicExpression *
 	} else {
 		s = GraphContext_GetSchema(gc, operand->operand.label, SCHEMA_EDGE);
 		if(!s) m = Graph_GetZeroMatrix(gc->g);
-		else m = Graph_GetRelationMatrix(gc->g, s->id, true);
+		else m = Graph_GetRelationMatrix(gc->g, Schema_GetID(s), true);
 	}
 
 	operand->operand.matrix = m;

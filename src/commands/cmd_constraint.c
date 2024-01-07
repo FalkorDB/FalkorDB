@@ -164,7 +164,7 @@ static bool _Constraint_Drop
 	// determine schema type
 	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
 
-	Schema *s = GraphContext_GetSchema(gc, lbl, st);
+	Schema s = GraphContext_GetSchema(gc, lbl, st);
 	if(s == NULL) {
 		res = false;
 		goto cleanup;
@@ -301,7 +301,7 @@ static bool _Constraint_Create
 	//--------------------------------------------------------------------------
 
 	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema(gc, lbl, st);
+	Schema s = GraphContext_GetSchema(gc, lbl, st);
 	if(s == NULL) {
 		s = AddSchema(gc, lbl, st, true);
 	}

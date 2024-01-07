@@ -118,7 +118,7 @@ static void _ResultSet_VerboseReplyWithNode(RedisModuleCtx *ctx, GraphContext *g
 	NODE_GET_LABELS(gc->g, n, lbls_count);
 	RedisModule_ReplyWithArray(ctx, lbls_count);
 	for(int i = 0; i < lbls_count; i++) {
-		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		Schema s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 		const char *lbl_name = Schema_GetName(s);
 		RedisModule_ReplyWithStringBuffer(ctx, lbl_name, strlen(lbl_name));
 	}
@@ -151,7 +151,7 @@ static void _ResultSet_VerboseReplyWithEdge(RedisModuleCtx *ctx, GraphContext *g
 	RedisModule_ReplyWithArray(ctx, 2);
 	RedisModule_ReplyWithStringBuffer(ctx, "type", 4);
 	// Retrieve relation type
-	Schema *s = GraphContext_GetSchemaByID(gc, Edge_GetRelationID(e), SCHEMA_EDGE);
+	Schema s = GraphContext_GetSchemaByID(gc, Edge_GetRelationID(e), SCHEMA_EDGE);
 	const char *reltype = Schema_GetName(s);
 	RedisModule_ReplyWithStringBuffer(ctx, reltype, strlen(reltype));
 

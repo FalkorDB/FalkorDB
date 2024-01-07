@@ -170,7 +170,7 @@ void GraphEntity_ToString
 				uint label_count;
 				NODE_GET_LABELS(gc->g, n, label_count);
 				for(uint i = 0; i < label_count; i ++) {
-					Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
+					Schema s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 					const char *name = Schema_GetName(s);
 
 					// allocate space if needed

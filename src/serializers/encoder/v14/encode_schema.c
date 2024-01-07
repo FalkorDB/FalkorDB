@@ -175,7 +175,7 @@ static void _RdbSaveConstraintsData
 	array_free(active_constraints);
 }
 
-static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
+static void _RdbSaveSchema(RedisModuleIO *rdb, Schema s) {
 	/* Format:
 	 * id
 	 * name
@@ -186,10 +186,10 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 	 */
 
 	// Schema ID.
-	RedisModule_SaveUnsigned(rdb, s->id);
+	RedisModule_SaveUnsigned(rdb, Schema_GetID(s));
 
 	// Schema name.
-	RedisModule_SaveStringBuffer(rdb, s->name, strlen(s->name) + 1);
+	RedisModule_SaveStringBuffer(rdb, Schema_GetName(s), strlen(Schema_GetName(s)) + 1);
 
 	// Number of indices.
 	RedisModule_SaveUnsigned(rdb, Schema_HasIndices(s));
@@ -199,10 +199,10 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 		? PENDING_IDX(s)
 		: ACTIVE_IDX(s);
 
-	_RdbSaveIndexData(rdb, s->type, idx);
+	_RdbSaveIndexData(rdb, Schema_GetType(s), idx);
 
 	// constraints
-	_RdbSaveConstraintsData(rdb, s->constraints);
+	_RdbSaveConstraintsData(rdb, (void *)Schema_GetConstraints(s));
 }
 
 void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
@@ -223,7 +223,7 @@ void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
 
 	// Name of label X #node schemas.
 	for(int i = 0; i < schema_count; i++) {
-		Schema *s = gc->node_schemas[i];
+		Schema s = gc->node_schemas[i];
 		_RdbSaveSchema(rdb, s);
 	}
 
@@ -233,7 +233,7 @@ void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
 
 	// Name of label X #relation schemas.
 	for(unsigned short i = 0; i < relation_count; i++) {
-		Schema *s = gc->relation_schemas[i];
+		Schema s = gc->relation_schemas[i];
 		_RdbSaveSchema(rdb, s);
 	}
 }

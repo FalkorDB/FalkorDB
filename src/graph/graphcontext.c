@@ -32,13 +32,13 @@ static void _GraphContext_Free(void *arg);
 static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str);
 static void _DeleteTelemetryStream(RedisModuleCtx *ctx, const GraphContext *gc);
 
-static uint64_t _count_indices_from_schemas(const Schema** schemas) {
+static uint64_t _count_indices_from_schemas(const Schema* schemas) {
 	ASSERT(schemas);
 	uint64_t count = 0;
 
-	const uint32_t length = array_len(schemas);
+	const uint32_t length = array_len((void *)schemas);
 	for (uint32_t i = 0; i < length; ++i) {
-		const Schema *s = schemas[i];
+		const Schema s = schemas[i];
 		ASSERT(s != NULL);
 		if(Schema_HasIndices(s)) {
 			count++;
@@ -120,8 +120,8 @@ GraphContext *GraphContext_New
 			TELEMETRY_FORMAT, gc->graph_name);
 
 	// allocate the default space for schemas and indices
-	gc->node_schemas = array_new(Schema *, GRAPH_DEFAULT_LABEL_CAP);
-	gc->relation_schemas = array_new(Schema *, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	gc->node_schemas = array_new(Schema, GRAPH_DEFAULT_LABEL_CAP);
+	gc->relation_schemas = array_new(Schema, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 
 	// initialize the read-write lock to protect access to the attributes rax
 	int rc1 = pthread_rwlock_init(&gc->_attribute_rwlock, NULL);
@@ -327,11 +327,11 @@ static void _GraphContext_UpdateVersion(GraphContext *gc, const char *str) {
 // Find the ID associated with a label for schema and matrix access
 int _GraphContext_GetLabelID(const GraphContext *gc, const char *label, SchemaType t) {
 	// Choose the appropriate schema array given the entity type
-	Schema **schemas = (t == SCHEMA_NODE) ? gc->node_schemas : gc->relation_schemas;
+	Schema *schemas = (t == SCHEMA_NODE) ? gc->node_schemas : gc->relation_schemas;
 
 	// TODO optimize lookup
 	for(uint32_t i = 0; i < array_len(schemas); i ++) {
-		if(!strcmp(label, schemas[i]->name)) return i;
+		if(!strcmp(label, Schema_GetName(schemas[i]))) return i;
 	}
 	return GRAPH_NO_LABEL; // equivalent to GRAPH_NO_RELATION
 }
@@ -348,16 +348,18 @@ void GraphContext_EnableConstrains
 	const GraphContext *gc
 ) {
 	for(uint i = 0; i < array_len(gc->node_schemas); i ++) {
-		Schema *s = gc->node_schemas[i];
-		for(uint j = 0; j < array_len(s->constraints); j ++) {
-			Constraint_Enable(s->constraints[j]);
+		Schema s = gc->node_schemas[i];
+		const Constraint *constraints = Schema_GetConstraints(s);
+		for(uint j = 0; j < array_len((void *)constraints); j ++) {
+			Constraint_Enable(constraints[j]);
 		}
 	}
 
 	for(uint i = 0; i < array_len(gc->relation_schemas); i ++) {
-		Schema *s = gc->relation_schemas[i];
-		for(uint j = 0; j < array_len(s->constraints); j ++) {
-			Constraint_Enable(s->constraints[j]);
+		Schema s = gc->relation_schemas[i];
+		const Constraint *constraints = Schema_GetConstraints(s);
+		for(uint j = 0; j < array_len((void *)constraints); j ++) {
+			Constraint_Enable(constraints[j]);
 		}
 	}
 }
@@ -368,21 +370,23 @@ void GraphContext_DisableConstrains
 	GraphContext *gc
 ) {
 	for(uint i = 0; i < array_len(gc->node_schemas); i ++) {
-		Schema *s = gc->node_schemas[i];
-		for(uint j = 0; j < array_len(s->constraints); j ++) {
-			Constraint_Disable(s->constraints[j]);
+		Schema s = gc->node_schemas[i];
+		const Constraint *constraints = Schema_GetConstraints(s);
+		for(uint j = 0; j < array_len((void *)constraints); j ++) {
+			Constraint_Disable(constraints[j]);
 		}
 	}
 
 	for(uint i = 0; i < array_len(gc->relation_schemas); i ++) {
-		Schema *s = gc->relation_schemas[i];
-		for(uint j = 0; j < array_len(s->constraints); j ++) {
-			Constraint_Disable(s->constraints[j]);
+		Schema s = gc->relation_schemas[i];
+		const Constraint *constraints = Schema_GetConstraints(s);
+		for(uint j = 0; j < array_len((void *)constraints); j ++) {
+			Constraint_Disable(constraints[j]);
 		}
 	}
 }
 
-Schema *GraphContext_GetSchemaByID
+Schema GraphContext_GetSchemaByID
 (
 	const GraphContext *gc,
 	int id,
@@ -392,14 +396,14 @@ Schema *GraphContext_GetSchemaByID
 		return NULL;
 	}
 
-	Schema **schemas = (t == SCHEMA_NODE) ?
+	Schema *schemas = (t == SCHEMA_NODE) ?
 		gc->node_schemas :
 		gc->relation_schemas;
 
 	return schemas[id];
 }
 
-Schema *GraphContext_GetSchema
+Schema GraphContext_GetSchema
 (
 	const GraphContext *gc,
 	const char *label,
@@ -409,7 +413,7 @@ Schema *GraphContext_GetSchema
 	return GraphContext_GetSchemaByID(gc, id, t);
 }
 
-Schema *GraphContext_AddSchema
+Schema GraphContext_AddSchema
 (
 	GraphContext *gc,
 	const char *label,
@@ -419,15 +423,15 @@ Schema *GraphContext_AddSchema
 	ASSERT(label != NULL);
 
 	int id;
-	Schema *schema;
+	Schema schema;
 
 	if(t == SCHEMA_NODE) {
 		id = Graph_AddLabel(gc->g);
-		schema = Schema_New(SCHEMA_NODE, id, label);
+		schema = Schema_New(SCHEMA_NODE, id, rm_strdup(label));
 		array_append(gc->node_schemas, schema);
 	} else {
 		id = Graph_AddRelationType(gc->g);
-		schema = Schema_New(SCHEMA_EDGE, id, label);
+		schema = Schema_New(SCHEMA_EDGE, id, rm_strdup(label));
 		array_append(gc->relation_schemas, schema);
 	}
 
@@ -439,11 +443,11 @@ Schema *GraphContext_AddSchema
 
 void GraphContext_RemoveSchema(GraphContext *gc, int schema_id, SchemaType t) {
 	if(t == SCHEMA_NODE) {
-		Schema *schema = gc->node_schemas[schema_id];
+		Schema schema = gc->node_schemas[schema_id];
 		Schema_Free(schema);
 		gc->node_schemas = array_del(gc->node_schemas, schema_id);
 	} else {
-		Schema *schema = gc->relation_schemas[schema_id];
+		Schema schema = gc->relation_schemas[schema_id];
 		Schema_Free(schema);
 		gc->relation_schemas = array_del(gc->relation_schemas, schema_id);
 	}
@@ -452,7 +456,7 @@ void GraphContext_RemoveSchema(GraphContext *gc, int schema_id, SchemaType t) {
 const char *GraphContext_GetEdgeRelationType(const GraphContext *gc, Edge *e) {
 	int reltype_id = Edge_GetRelationID(e);
 	ASSERT(reltype_id != GRAPH_NO_RELATION);
-	return gc->relation_schemas[reltype_id]->name;
+	return Schema_GetName(gc->relation_schemas[reltype_id]);
 }
 
 uint GraphContext_AttributeCount(GraphContext *gc) {
@@ -578,7 +582,7 @@ uint64_t GraphContext_NodeIndexCount
 	const GraphContext *gc
 ) {
 	ASSERT(gc);
-	return _count_indices_from_schemas((const Schema**)gc->node_schemas);
+	return _count_indices_from_schemas((const Schema*)gc->node_schemas);
 }
 
 uint64_t GraphContext_EdgeIndexCount
@@ -586,7 +590,7 @@ uint64_t GraphContext_EdgeIndexCount
 	const GraphContext *gc
 ) {
 	ASSERT(gc);
-	return _count_indices_from_schemas((const Schema**)gc->relation_schemas);
+	return _count_indices_from_schemas((const Schema*)gc->relation_schemas);
 }
 
 // attempt to retrieve an index on the given label and attribute IDs
@@ -605,7 +609,7 @@ Index GraphContext_GetIndexByID
 
 	// retrieve the schema for given id
 	SchemaType st = (entity_type == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchemaByID(gc, lbl_id, st);
+	Schema s = GraphContext_GetSchemaByID(gc, lbl_id, st);
 	if(s == NULL) {
 		return NULL;
 	}
@@ -627,7 +631,7 @@ Index GraphContext_GetIndex
 	ASSERT(label != NULL);
 
 	// Retrieve the schema for this label
-	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
+	Schema s = GraphContext_GetSchema(gc, label, schema_type);
 	if(s == NULL) return NULL;
 
 	return Schema_GetIndex(s, attrs, n, type, false);
@@ -646,7 +650,7 @@ int GraphContext_DeleteIndex
 
 	// retrieve the schema for this label
 	int res = INDEX_FAIL;
-	Schema *s = GraphContext_GetSchema(gc, label, schema_type);
+	Schema s = GraphContext_GetSchema(gc, label, schema_type);
 
 	if(s != NULL) {
 		res = Schema_RemoveIndex(s, field, t);
@@ -714,7 +718,7 @@ void GraphContext_DeleteEdgeFromIndices
 	GraphContext *gc,  // graph context
 	Edge *e            // edge to remove from index
 ) {
-	Schema *s = NULL;
+	Schema  s = NULL;
 	Graph  *g = gc->g;
 
 	int relation_id = Edge_GetRelationID(e);
@@ -756,7 +760,7 @@ void GraphContext_AddEdgeToIndices
 	GraphContext *gc,  // graph context
 	Edge *e            // edge to add to index
 ) {
-	Schema *s = NULL;
+	Schema  s = NULL;
 	Graph  *g = gc->g;
 
 	int relation_id = Edge_GetRelationID(e);

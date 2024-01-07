@@ -225,7 +225,7 @@ static void ApplyLabels
 	for(ushort i = 0; i < lbl_count; i++) {
 		LabelID l;
 		fread_assert(&l, sizeof(LabelID), stream);
-		Schema *s = GraphContext_GetSchemaByID(gc, l, SCHEMA_NODE);
+		Schema s = GraphContext_GetSchemaByID(gc, l, SCHEMA_NODE);
 		ASSERT(s != NULL);
 		lbl[i] = Schema_GetName(s);
 	}

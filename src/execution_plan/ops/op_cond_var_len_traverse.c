@@ -44,8 +44,8 @@ static void _setupTraversedRelations(CondVarLenTraverse *op) {
 				array_append(op->edgeRelationTypes, rel_id);
 			} else {
 				const char *rel_type = e->reltypes[i];
-				Schema *s = GraphContext_GetSchema(gc, rel_type, SCHEMA_EDGE);
-				if(s) array_append(op->edgeRelationTypes, s->id);
+				Schema s = GraphContext_GetSchema(gc, rel_type, SCHEMA_EDGE);
+				if(s) array_append(op->edgeRelationTypes, Schema_GetID(s));
 			}
 		}
 

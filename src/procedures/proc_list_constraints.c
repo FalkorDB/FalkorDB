@@ -127,7 +127,7 @@ static void _EmitConstraint
 	if(ctx->yield_label) {
 		SchemaType t = (Constraint_GetEntityType(c) == GETYPE_NODE) ?
 			SCHEMA_NODE : SCHEMA_EDGE;
-		Schema *s = GraphContext_GetSchemaByID(gc, Constraint_GetSchemaID(c), t);
+		Schema s = GraphContext_GetSchemaByID(gc, Constraint_GetSchemaID(c), t);
 		*ctx->yield_label = SI_ConstStringVal((char *)Schema_GetName(s));
 	}
 
@@ -209,7 +209,7 @@ ProcedureResult Proc_ConstraintsInvoke
 
 		// foreach schema
 		for(ushort j = 0; j < n; j++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, j, schema_type);
+			Schema s = GraphContext_GetSchemaByID(gc, j, schema_type);
 			const Constraint *cs = Schema_GetConstraints(s);
 			// foreach schema's constraint
 

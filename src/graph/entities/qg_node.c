@@ -90,7 +90,7 @@ int QGNode_GetLabelID
 		ASSERT(gc != NULL);
 
 		// get schema by name
-		Schema *s = GraphContext_GetSchema(gc, n->labels[idx], SCHEMA_NODE);
+		Schema s = GraphContext_GetSchema(gc, n->labels[idx], SCHEMA_NODE);
 		if(s != NULL) {
 			labelId = Schema_GetID(s);
 			n->labelsID[idx] = labelId;

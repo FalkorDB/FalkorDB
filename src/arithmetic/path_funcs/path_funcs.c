@@ -149,7 +149,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 			// Retrieve IDs of traversed relationship types.
 			ctx->reltypes = array_new(int, ctx->reltype_count);
 			for(uint i = 0; i < ctx->reltype_count; i ++) {
-				Schema *s = GraphContext_GetSchema(gc, ctx->reltype_names[i], SCHEMA_EDGE);
+				Schema s = GraphContext_GetSchema(gc, ctx->reltype_names[i], SCHEMA_EDGE);
 				// Skip missing schemas
 				if(s) array_append(ctx->reltypes, Schema_GetID(s));
 			}

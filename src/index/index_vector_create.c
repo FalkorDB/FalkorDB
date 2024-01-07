@@ -84,7 +84,7 @@ Index Index_VectorCreate
 	// get schema
 	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	Schema *s = GraphContext_GetSchema(gc, label, st);
+	Schema s = GraphContext_GetSchema(gc, label, st);
 	ASSERT(s != NULL);
 
 	//--------------------------------------------------------------------------
