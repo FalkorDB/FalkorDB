@@ -11,8 +11,7 @@ RUN make
 
 FROM redis:7.2.4
 
-RUN apt-get update
-RUN apt-get install -y libgomp1
+RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
 
 ARG TARGETPLATFORM
 
@@ -28,8 +27,6 @@ ENV ARCH=${TARGETPLATFORM}
 EXPOSE 6379/tcp
 
 ENV FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
-
-RUN echo ${MODULE_DIR}
 
 CMD /FalkorDB/build/docker/run.sh
                  
