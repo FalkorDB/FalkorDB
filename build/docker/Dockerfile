@@ -8,6 +8,23 @@ ADD . /FalkorDB
 
 RUN make
 
+
+FROM redis/redis-stack-server
+
+RUN apt-get update -y
+RUN apt-get upgrade -y
+
+RUN apt-get install -y libgomp1
+
+ARG TARGETPLATFORM
+
+WORKDIR /FalkorDB
+
+COPY --from=builder /FalkorDB/build/docker/run.sh /FalkorDB/build/docker/run.sh
+COPY --from=builder /FalkorDB/build/docker/gen-certs.sh /FalkorDB/build/docker/gen-certs.sh
+
+COPY --from=builder /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
+
 ENV ARCH=${TARGETPLATFORM}
 
 EXPOSE 6379/tcp
