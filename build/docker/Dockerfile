@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest
+FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest as builder
 
 ARG TARGETPLATFORM
 
