@@ -9,11 +9,9 @@ ADD . /FalkorDB
 RUN make
 
 
-FROM redis/redis-stack-server
+FROM redis:7.2.4
 
-RUN apt-get update -y
-RUN apt-get upgrade -y
-
+RUN apt-get update
 RUN apt-get install -y libgomp1
 
 ARG TARGETPLATFORM
