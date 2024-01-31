@@ -72,6 +72,13 @@ jobs:
           outputs: type=docker,push=false,dest=/tmp/falkordb.tar
           tags: falkordb/falkordb
 
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb.tar
+          digest = $(docker inspect falkordb/falkordb --format='{{index .RepoDigests 0}}')
+          echo "digest=$digest" >> $GITHUB_ENV
+  
       - name: Upload image
         uses: actions/upload-artifact@v3
         with:
@@ -93,13 +100,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # - name: Copy bin from docker on PUSH
-      #   if: github.event_name == 'push'
-      #   working-directory: /FalkorDB
-      #   run: |
-      #     id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.build.outputs.digest }})
-      #     docker cp $id:/FalkorDB/bin .
-      #     docker rm -v $id
+      - name: Copy bin from docker for caching
+        working-directory: /FalkorDB
+        run: |
+          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.load_image.outputs.digest }})
+          docker cp $id:/FalkorDB/bin .
+          docker rm -v $id
 
   merge:
     runs-on: ubuntu-latest
