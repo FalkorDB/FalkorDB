@@ -104,11 +104,20 @@ jobs:
           id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb)
           docker cp $id:/FalkorDB/bin /FalkorDB/bin
           docker rm -v $id
+          ls -l /FalkorDB/bin
 
   merge:
     runs-on: ubuntu-latest
     needs: build
     steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@v3
+        with:
+          set-safe-directory: "*"
+          submodules: recursive
+
       - name: Download image
         uses: actions/download-artifact@v3
         with:
