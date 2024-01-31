@@ -25,26 +25,26 @@ jobs:
           set-safe-directory: "*"
           submodules: recursive
 
-      - name: Cache GraphBLAS ${{ matrix.platform }}
+      - name: Restore cache GraphBLAS ${{ matrix.platform }}
         if: github.event_name == 'push'
         id: cache_graphblas
-        uses: actions/cache@v3
+        uses: actions/cache/restore@v3
         with:
           path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/GraphBLAS
           key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
-      - name: Cache parser ${{ matrix.platform }}
+      - name: Restore cache parser ${{ matrix.platform }}
         if: github.event_name == 'push'
         id: cache_parser
-        uses: actions/cache@v3
+        uses: actions/cache/restore@v3
         with:
           path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/libcypher-parser
           key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
-      - name: Cache search ${{ matrix.platform }}
+      - name: Restore cache search ${{ matrix.platform }}
         if: github.event_name == 'push'
         id: cache_search
-        uses: actions/cache@v3
+        uses: actions/cache/restore@v3
         with:
           path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/search-static
           key: search-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
@@ -73,6 +73,27 @@ jobs:
           load: true
           tags: falkordb/falkordb
           push: false
+
+      - name: Save cache GraphBLAS ${{ matrix.platform }}
+        id: save_cache_graphblas
+        uses: actions/cache/save@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/GraphBLAS
+          key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+      - name: Save cache parser ${{ matrix.platform }}
+        id: save_cache_parser
+        uses: actions/cache/save@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/libcypher-parser
+          key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Save cache search ${{ matrix.platform }}
+        id: save_cache_search
+        uses: actions/cache/save@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/search-static
+          key: search-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Export image
         uses: ishworkh/container-image-artifact-upload@v1.0.0
