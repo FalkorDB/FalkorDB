@@ -69,14 +69,9 @@ jobs:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile.compiler
           platforms: ${{ matrix.platform }}
-          outputs: type=docker,push=false,dest=/tmp/falkordb-compiler.tar
           tags: falkordb/falkordb-compiler
+          push: true
 
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-compiler.tar
-  
       - name: Build base image
         id: build
         uses: docker/build-push-action@v5
@@ -84,8 +79,10 @@ jobs:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=docker,push=false,dest=/tmp/falkordb.tar
+          outputs: type=docker,dest=/tmp/falkordb.tar
           tags: falkordb/falkordb
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
 
       - name: Export digest
         run: |

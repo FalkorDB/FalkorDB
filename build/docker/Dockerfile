@@ -1,4 +1,5 @@
-FROM falkordb/falkordb-compiler:latest as compiler
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} as compiler
 
 FROM redis:7.2.4
 
