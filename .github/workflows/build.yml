@@ -73,7 +73,6 @@ jobs:
           file: /FalkorDB/build/docker/Dockerfile.compiler
           platforms: ${{ matrix.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
-          outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
 
       - name: Build base image
