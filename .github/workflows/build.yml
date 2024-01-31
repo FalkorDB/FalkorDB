@@ -104,7 +104,7 @@ jobs:
           id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb)
           docker cp $id:/FalkorDB/bin /FalkorDB/bin
           docker rm -v $id
-          ls -l /FalkorDB/bin
+          ls -l -R /FalkorDB/bin
 
   merge:
     runs-on: ubuntu-latest

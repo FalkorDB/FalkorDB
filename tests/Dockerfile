@@ -1,6 +1,6 @@
 FROM --platform=$TARGETPLATFORM falkordb/falkordb as builder
 
-ENV DEPS "automake peg libtool autoconf python python-setuptools python-pip python-dev wget build-essential cmake m4 git valgrind"
+ENV DEPS "automake peg libtool autoconf python-setuptools python-pip wget build-essential cmake m4 git valgrind"
 
 # Set up a build environment
 RUN set -ex ;\
