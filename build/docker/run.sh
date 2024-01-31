@@ -1,12 +1,4 @@
-if [ "$ARCH" = "linux/amd64" ]
-then
-    export MODULE_DIR=/FalkorDB/bin/linux-x64-release/src
-elif [ "$ARCH" = "linux/arm64" ]
-then
-    export MODULE_DIR=/FalkorDB/bin/linux-arm64v8-release/src
-else
-    echo "Platform not supported"
-fi
+export MODULE_DIR=/FalkorDB/bin/src
 
 if [ ${TLS} -eq 1 ]
 then
