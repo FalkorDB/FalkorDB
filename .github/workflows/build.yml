@@ -102,7 +102,7 @@ jobs:
         working-directory: /FalkorDB
         run: |
           id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb)
-          docker cp $id:/FalkorDB/bin .
+          docker cp $id:/FalkorDB/bin /FalkorDB/bin
           docker rm -v $id
 
   merge:
@@ -127,8 +127,8 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: /FalkorDB
-          file: /FalkorDB/tests/Dockerfile
+          context: .
+          file: ./tests/Dockerfile
           outputs: type=docker,push=false,dest=/tmp/falkordb-tests.tar
           tags: falkordb/falkordb-tests
 
