@@ -90,7 +90,7 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb.tar
           tags: falkordb/falkordb
           build-args: |
-            BASE_IMAGE=docker-image://localhost:5000/falkordb/falkordb-compiler
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
 
       - name: Export digest
         run: |
