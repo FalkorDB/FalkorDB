@@ -59,8 +59,11 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # - name: Set up Docker Buildx
-      #   uses: docker/setup-buildx-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          # network=host driver-opt needed to push to local registry
+          driver-opts: network=host
 
       - name: Build compiler image
         id: build_compiler
@@ -69,10 +72,9 @@ jobs:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile.compiler
           platforms: ${{ matrix.platform }}
-          tags: falkordb/falkordb-compiler
+          tags: localhost:5000/falkordb/falkordb-compiler
           outputs: type=docker,dest=/tmp/falkordb-compiler.tar
-          push: false
-          load: true
+          push: true
 
       - name: Build base image
         id: build
@@ -84,7 +86,7 @@ jobs:
           outputs: type=docker,dest=/tmp/falkordb.tar
           tags: falkordb/falkordb
           build-args: |
-            BASE_IMAGE=falkordb/falkordb-compiler
+            BASE_IMAGE=docker-image://localhost:5000/falkordb/falkordb-compiler
 
       - name: Export digest
         run: |
