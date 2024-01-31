@@ -17,7 +17,3 @@ COPY tests/requirements.txt /tmp/requirements.txt
 
 RUN set -ex ;\
     pip install -r /tmp/requirements.txt
-
-RUN set -ex ;\
-    make clean ALL=1 ;\
-    make -j `nproc`

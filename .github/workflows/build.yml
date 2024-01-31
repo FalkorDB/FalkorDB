@@ -62,6 +62,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
+      - name: Build compiler image
+        id: build_compiler
+        uses: docker/build-push-action@v5
+        with:
+          context: /FalkorDB
+          file: /FalkorDB/build/docker/Dockerfile.compiler
+          platforms: ${{ matrix.platform }}
+          outputs: type=docker,push=false,dest=/tmp/falkordb-compiler.tar
+          tags: falkordb/falkordb-compiler
+
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-compiler.tar
+  
       - name: Build base image
         id: build
         uses: docker/build-push-action@v5
@@ -72,11 +87,6 @@ jobs:
           outputs: type=docker,push=false,dest=/tmp/falkordb.tar
           tags: falkordb/falkordb
 
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb.tar
-  
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
@@ -101,7 +111,7 @@ jobs:
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         run: |
-          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb)
+          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb-compiler)
           docker cp $id:/FalkorDB/bin /FalkorDB/bin
           docker rm -v $id
           ls -l -R /FalkorDB/bin
