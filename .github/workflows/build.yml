@@ -93,13 +93,13 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Copy bin from docker on PUSH
-        if: github.event_name == 'push'
-        working-directory: /FalkorDB
-        run: |
-          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.build.outputs.digest }})
-          docker cp $id:/FalkorDB/bin .
-          docker rm -v $id
+      # - name: Copy bin from docker on PUSH
+      #   if: github.event_name == 'push'
+      #   working-directory: /FalkorDB
+      #   run: |
+      #     id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.build.outputs.digest }})
+      #     docker cp $id:/FalkorDB/bin .
+      #     docker rm -v $id
 
   merge:
     runs-on: ubuntu-latest
