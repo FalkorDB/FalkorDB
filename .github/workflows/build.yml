@@ -76,16 +76,7 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb.tar
-          digest = $(docker inspect falkordb/falkordb --format='{{index .RepoDigests 0}}')
-          echo "digest=$digest" >> $GITHUB_ENV
   
-      - name: Upload image
-        uses: actions/upload-artifact@v3
-        with:
-          name: falkordb
-          path: /tmp/falkordb.tar
-          if-no-files-found: error
-
       - name: Export digest
         run: |
           mkdir -p /tmp/digests
@@ -100,10 +91,17 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload image
+        uses: actions/upload-artifact@v3
+        with:
+          name: falkordb
+          path: /tmp/falkordb.tar
+          if-no-files-found: error
+
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         run: |
-          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.load_image.outputs.digest }})
+          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb)
           docker cp $id:/FalkorDB/bin .
           docker rm -v $id
 
@@ -130,8 +128,6 @@ jobs:
       - name: Build test image
         id: build
         uses: docker/build-push-action@v5
-        env:
-          IMAGE_DIGEST: ${{ steps.load_image.outputs.digest }}
         with:
           context: /FalkorDB
           file: /FalkorDB/tests/Dockerfile
@@ -159,13 +155,11 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-tests.tar
-          digest = $(docker inspect falkordb/falkordb-tests --format='{{index .RepoDigests 0}}')
-          echo "digest=$digest" >> $GITHUB_ENV
 
       - name: Unit tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.load_image.outputs.digest }} make CLEAR_LOGS=0  unit-tests
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make CLEAR_LOGS=0  unit-tests
 
   flow-tests:
     runs-on: ubuntu-latest
@@ -181,13 +175,11 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-tests.tar
-          digest = $(docker inspect falkordb/falkordb-tests --format='{{index .RepoDigests 0}}')
-          echo "digest=$digest" >> $GITHUB_ENV
 
       - name: Flow tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.load_image.outputs.digest }} make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
   tck-tests:
     runs-on: ubuntu-latest
@@ -203,13 +195,11 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-tests.tar
-          digest = $(docker inspect falkordb/falkordb-tests --format='{{index .RepoDigests 0}}')
-          echo "digest=$digest" >> $GITHUB_ENV
 
       - name: TCK tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.load_image.outputs.digest }} make CLEAR_LOGS=0 tck-tests
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
   fuzz-tests:
     runs-on: ubuntu-latest
@@ -225,10 +215,8 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-tests.tar
-          digest = $(docker inspect falkordb/falkordb-tests --format='{{index .RepoDigests 0}}')
-          echo "digest=$digest" >> $GITHUB_ENV
 
       - name: Fuzz tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.load_image.outputs.digest }} make fuzz TIMEOUT=180
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make fuzz TIMEOUT=180

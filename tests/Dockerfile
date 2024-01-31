@@ -1,4 +1,4 @@
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-build@sha256:$IMAGE_DIGEST as builder
+FROM --platform=$TARGETPLATFORM falkordb/falkordb as builder
 
 ENV DEPS "automake peg libtool autoconf python python-setuptools python-pip python-dev wget build-essential cmake m4 git valgrind"
 
