@@ -59,8 +59,8 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v2
 
       - name: Build compiler image
         id: build_compiler
@@ -72,6 +72,7 @@ jobs:
           tags: falkordb/falkordb-compiler
           outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: false
+          load: true
 
       - name: Build base image
         id: build
