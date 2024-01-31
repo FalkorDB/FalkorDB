@@ -17,88 +17,88 @@ jobs:
           - linux/amd64
           - linux/arm64
     steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
 
-    - name: Safe dir
-      run: git config --global --add safe.directory '*'
+      - uses: actions/checkout@v3
+        with:
+          set-safe-directory: "*"
+          submodules: recursive
 
-    - uses: actions/checkout@v3
-      with:
-        set-safe-directory: '*'
-        submodules: recursive
+      - name: Cache GraphBLAS ${{ matrix.platform }}
+        if: github.event_name == 'push'
+        id: cache_graphblas
+        uses: actions/cache@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/GraphBLAS
+          key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
-    - name: Cache GraphBLAS ${{ matrix.platform }}
-      if: github.event_name == 'push'
-      id: cache_graphblas
-      uses: actions/cache@v3
-      with:
-        path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/GraphBLAS
-        key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+      - name: Cache parser ${{ matrix.platform }}
+        if: github.event_name == 'push'
+        id: cache_parser
+        uses: actions/cache@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/libcypher-parser
+          key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
-    - name: Cache parser ${{ matrix.platform }}
-      if: github.event_name == 'push'
-      id: cache_parser
-      uses: actions/cache@v3
-      with:
-        path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/libcypher-parser
-        key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+      - name: Cache search ${{ matrix.platform }}
+        if: github.event_name == 'push'
+        id: cache_search
+        uses: actions/cache@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/search-static
+          key: search-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
-    - name: Cache search ${{ matrix.platform }}
-      if: github.event_name == 'push'
-      id: cache_search
-      uses: actions/cache@v3
-      with:
-        path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/search-static
-        key: search-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+      # Make sure the working directory is static between runs
+      # and always the same for the CMake cache
+      - name: Relocate source
+        run: |
+          mkdir -p /FalkorDB
+          mv $GITHUB_WORKSPACE/* /FalkorDB
 
-    # Make sure the working directory is static between runs 
-    # and always the same for the CMake cache
-    - name: Relocate source
-      run: |
-        mkdir -p /FalkorDB
-        mv $GITHUB_WORKSPACE/* /FalkorDB
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      - name: Build base image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: /FalkorDB
+          file: /FalkorDB/build/docker/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=false
+          load: true
+          push: false
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Export image
+        uses: ishworkh/container-image-artifact-upload@v1.0.0
+        with:
+          image: falkordb/falkordb@${{ steps.build.outputs.digest }}
 
-    - name: Build and push
-      id: build
-      uses: docker/build-push-action@v5
-      with:
-        context: /FalkorDB
-        file: /FalkorDB/build/docker/Dockerfile
-        platforms: ${{ matrix.platform }}
-        outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=true
-
-    - name: Export digest
-      run: |
+      - name: Export digest
+        run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
-    - name: Upload digest
-      uses: actions/upload-artifact@v3
-      with:
-        name: digests
-        path: /tmp/digests/*
-        if-no-files-found: error
-        retention-days: 1
-   
-    - name: Copy bin from docker on PUSH
-      if: github.event_name == 'push'
-      working-directory: /FalkorDB
-      run: |
-        id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.build.outputs.digest }})
-        docker cp $id:/FalkorDB/bin .
-        docker rm -v $id
+      - name: Upload digest
+        uses: actions/upload-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Copy bin from docker on PUSH
+        if: github.event_name == 'push'
+        working-directory: /FalkorDB
+        run: |
+          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb@${{ steps.build.outputs.digest }})
+          docker cp $id:/FalkorDB/bin .
+          docker rm -v $id
 
   merge:
     runs-on: ubuntu-latest
@@ -109,61 +109,152 @@ jobs:
         with:
           name: digests
           path: /tmp/digests
+
+      - name: Set digest
+        id: set_digest
+        run: |
+          digest=$(cat /tmp/digests/*)
+          echo "digest=$digest" >> $GITHUB_ENV
+
+      - name: Download image
+        uses: ishworkh/container-image-artifact-download@v1.0.0
+        with:
+          image: falkordb/falkordb@sha256:${{ steps.set_digest.outputs.digest }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+
+      - name: Build test image
+        id: build
+        uses: docker/build-push-action@v5
+        env:
+          IMAGE_DIGEST: ${{ steps.set_digest.outputs.digest }}
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Create manifest list and push on PUSH
-        if: github.event_name == 'push'
-        working-directory: /tmp/digests
+          context: /FalkorDB
+          file: /FalkorDB/tests/Dockerfile
+          outputs: type=image,name=falkordb/falkordb-tests,push-by-digest=true,name-canonical=true,push=false
+          load: true
+          push: false
+
+      - name: Export digest
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.ref_name == 'master' && 'master -t falkordb/falkordb:edge' || github.ref_name }} \
-            $(printf 'falkordb/falkordb@sha256:%s ' *)
-      - name: Create manifest list and push on RELEASE
-        if: github.event_name == 'release'
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
-            $(printf 'falkordb/falkordb@sha256:%s ' *)
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect falkordb/falkordb:latest
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Export test image
+        uses: ishworkh/container-image-artifact-upload@v1.0.0
+        with:
+          image: falkordb/falkordb-tests@${{ steps.build.outputs.digest }}
 
   unit-tests:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb:${{ github.ref_name }}
     needs: merge
     steps:
+      - name: Download digests
+        uses: actions/download-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests
+
+      - name: Set digest
+        id: set_digest
+        run: |
+          digest=$(cat /tmp/digests/*)
+          echo "digest=$digest" >> $GITHUB_ENV
+
+      - name: Download image
+        uses: ishworkh/container-image-artifact-download@v1.0.0
+        with:
+          image: falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }}
+
       - name: Unit tests
         working-directory: /FalkorDB
-        run: make unit-tests CLEAR_LOGS=0
+        run: |
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }} make CLEAR_LOGS=0  unit-tests
 
   flow-tests:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb:${{ github.ref_name }}
     needs: merge
     steps:
+      - name: Download digests
+        uses: actions/download-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests
+
+      - name: Set digest
+        id: set_digest
+        run: |
+          digest=$(cat /tmp/digests/*)
+          echo "digest=$digest" >> $GITHUB_ENV
+
+      - name: Download image
+        uses: ishworkh/container-image-artifact-download@v1.0.0
+        with:
+          image: falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }}
+
       - name: Flow tests
         working-directory: /FalkorDB
-        run: make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+        run: |
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }} make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
   tck-tests:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb:${{ github.ref_name }}
     needs: merge
     steps:
+      - name: Download digests
+        uses: actions/download-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests
+
+      - name: Set digest
+        id: set_digest
+        run: |
+          digest=$(cat /tmp/digests/*)
+          echo "digest=$digest" >> $GITHUB_ENV
+
+      - name: Download image
+        uses: ishworkh/container-image-artifact-download@v1.0.0
+        with:
+          image: falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }}
+
       - name: TCK tests
         working-directory: /FalkorDB
-        run: make CLEAR_LOGS=0 tck-tests
+        run: |
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }} make CLEAR_LOGS=0 tck-tests
 
   fuzz-tests:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb:${{ github.ref_name }}
     needs: merge
     steps:
+      - name: Download digests
+        uses: actions/download-artifact@v3
+        with:
+          name: digests
+          path: /tmp/digests
+
+      - name: Set digest
+        id: set_digest
+        run: |
+          digest=$(cat /tmp/digests/*)
+          echo "digest=$digest" >> $GITHUB_ENV
+
+      - name: Download image
+        uses: ishworkh/container-image-artifact-download@v1.0.0
+        with:
+          image: falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }}
+
       - name: Fuzz tests
         working-directory: /FalkorDB
-        run: make fuzz TIMEOUT=180
+        run: |
+          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests@sha256:${{ steps.set_digest.outputs.digest }} make fuzz TIMEOUT=180
