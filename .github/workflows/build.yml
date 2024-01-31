@@ -69,8 +69,9 @@ jobs:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=false
+          # outputs: type=image,name=falkordb/falkordb,push-by-digest=true,name-canonical=true,push=false
           load: true
+          tags: falkordb/falkordb
           push: false
 
       - name: Export image
@@ -132,8 +133,9 @@ jobs:
         with:
           context: /FalkorDB
           file: /FalkorDB/tests/Dockerfile
-          outputs: type=image,name=falkordb/falkordb-tests,push-by-digest=true,name-canonical=true,push=false
+          # outputs: type=image,name=falkordb/falkordb-tests,push-by-digest=true,name-canonical=true,push=false
           load: true
+          tags: falkordb/falkordb-tests
           push: false
 
       - name: Export digest
