@@ -10,6 +10,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     strategy:
       fail-fast: false
       matrix:
