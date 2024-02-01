@@ -80,10 +80,6 @@ jobs:
           tags: localhost:5000/falkordb/falkordb-compiler
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
-          cache-from: |
-            type=registry,ref=falkordb-compiler:cache
-          cache-to: |
-            type=registry,ref=falkordb-compiler:cache,mode=max
           
       - name: Save compiler image
         run: |
