@@ -24,6 +24,7 @@ def make_connection(module):
 
 def issue_queries(graph, timeout):
     os.environ["PATH"] = os.pathsep.join([ENV['PATH'], site.getuserbase() + '/bin'])
+    os.environ["PATH"] = os.pathsep.join([ENV['PATH'], '/venv/bin'])
     os.environ["PYTHONPATH"] = os.pathsep.join([ENV['PYTHONPATH'],  HERE + "/generator"])
     cmd = ["grammarinator-generate", "CustomCypherGenerator.CustomCypherGenerator",
            "--sys-path", "generator/", "--jobs", "1", "-r", "oC_Query", "--stdout", "-d", "30"]

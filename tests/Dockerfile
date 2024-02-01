@@ -1,19 +1,23 @@
-FROM --platform=$TARGETPLATFORM falkordb/falkordb as builder
+FROM --platform=$TARGETPLATFORM falkordb/falkordb-compiler
 
-ENV DEPS "automake peg libtool autoconf python-setuptools python-pip wget build-essential cmake m4 git valgrind"
+ENV DEPS "automake peg libtool autoconf python-is-python3 2to3 python3.10-venv python3-pip wget build-essential cmake m4 git valgrind gcc musl-dev python3-dev"
 
 # Set up a build environment
 RUN set -ex ;\
     deps="$DEPS ";\
     apt-get update -qq ;\
-    apt-get install -y --no-install-recommends $deps ;\
-    pip install wheel ;\
-    pip install Click rmtest backports.csv psutil behave ;\
-    pip install redis-py-cluster ;\
-    pip install git+https://github.com/RedisGraph/redisgraph-py.git@master ;\
-    pip install git+https://github.com/RedisLabsModules/RLTest.git@master
+    apt-get install -y --no-install-recommends $deps ;
 
-COPY tests/requirements.txt /tmp/requirements.txt
+# Create venv
+RUN set -ex ;\
+    python3 -m venv /venv ;\
+    . /venv/bin/activate ;
 
 RUN set -ex ;\
-    pip install -r /tmp/requirements.txt
+    /venv/bin/pip3 install --upgrade pip ;\
+    /venv/bin/pip3 install --upgrade setuptools
+
+COPY tests /FalkorDB/tests
+
+RUN set -ex ;\
+    /venv/bin/pip3 install -r /FalkorDB/tests/requirements.txt

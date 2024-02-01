@@ -79,6 +79,14 @@ jobs:
           platforms: ${{ matrix.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
           push: true
+          outputs: type=docker,dest=/tmp/falkordb-compiler.tar
+
+      - name: Upload compiler image (for testing)
+        uses: actions/upload-artifact@v3
+        with:
+          name: falkordb-compiler
+          path: /tmp/falkordb-compiler.tar
+          if-no-files-found: error
 
       - name: Build base image
         id: build
@@ -136,13 +144,13 @@ jobs:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb
+          name: falkordb-compiler
           path: /tmp
 
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb.tar
+          docker load --input /tmp/falkordb-compiler.tar
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -181,7 +189,7 @@ jobs:
       - name: Unit tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make CLEAR_LOGS=0  unit-tests
+          docker run --rm make CLEAR_LOGS=0 unit-tests
 
   flow-tests:
     runs-on: ubuntu-latest
@@ -201,7 +209,7 @@ jobs:
       - name: Flow tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run --rm make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
   tck-tests:
     runs-on: ubuntu-latest
@@ -221,7 +229,7 @@ jobs:
       - name: TCK tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          docker run --rm make CLEAR_LOGS=0 tck-tests
 
   fuzz-tests:
     runs-on: ubuntu-latest
@@ -241,4 +249,4 @@ jobs:
       - name: Fuzz tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm -v $PWD:/FalkorDB falkordb/falkordb-tests make fuzz TIMEOUT=180
+          docker run --rm make fuzz TIMEOUT=180
