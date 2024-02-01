@@ -78,18 +78,11 @@ jobs:
           file: /FalkorDB/build/docker/Dockerfile.compiler
           platforms: ${{ matrix.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
-          push: true
+          outputs: type=oci,dest=/tmp/falkordb-compiler.tar 
           
       - name: Load compiler image
         run: |
-          docker save -o /tmp/falkordb-compiler.tar localhost:5000/falkordb/falkordb-compiler
-
-      - name: Upload compiler image (for tests)
-        uses: actions/upload-artifact@v3
-        with:
-          name: falkordb-compiler
-          path: /tmp/falkordb-compiler.tar
-          if-no-files-found: error
+          docker load --input /tmp/falkordb-compiler.tar
 
       - name: Build base image
         id: build
@@ -102,6 +95,13 @@ jobs:
           tags: falkordb/falkordb
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
+
+      - name: Upload compiler image (for tests)
+        uses: actions/upload-artifact@v3
+        with:
+          name: falkordb-compiler
+          path: /tmp/falkordb-compiler.tar
+          if-no-files-found: error
 
       - name: Export digest
         run: |
