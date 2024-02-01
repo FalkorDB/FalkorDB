@@ -6,7 +6,7 @@ on:
     types: [published]
 
 env:
-  BUILD_WORKFLOW_NAME: build.yaml
+  BUILD_WORKFLOW_NAME: build.yml
 
 jobs:
   release:
