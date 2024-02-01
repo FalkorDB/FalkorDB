@@ -78,8 +78,11 @@ jobs:
           file: /FalkorDB/build/docker/Dockerfile.compiler
           platforms: ${{ matrix.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
-          push: true
-          outputs: dest=/tmp/falkordb-compiler.tar
+          outputs: type=docker,dest=/tmp/falkordb-compiler.tar
+
+      - name: Load compiler image
+        run: |
+          docker load --input /tmp/falkordb-compiler.tar
 
       - name: Upload compiler image (for testing)
         uses: actions/upload-artifact@v3
