@@ -19,7 +19,7 @@ jobs:
           branch: ${{ github.event.release.target_commitish }}
           workflow_conclusion: success
           name: digests
-          path: /tmp
+          path: /tmp/digests
           if_no_artifact_found: error
 
       - name: Retrieve built image
