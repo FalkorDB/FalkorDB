@@ -220,7 +220,6 @@ jobs:
           docker load --input /tmp/falkordb-tests.tar
 
       - name: Unit tests
-        working-directory: /FalkorDB
         run: |
           docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
@@ -240,7 +239,6 @@ jobs:
           docker load --input /tmp/falkordb-tests.tar
 
       - name: Flow tests
-        working-directory: /FalkorDB
         run: |
           docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
@@ -260,7 +258,6 @@ jobs:
           docker load --input /tmp/falkordb-tests.tar
 
       - name: TCK tests
-        working-directory: /FalkorDB
         run: |
           docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
@@ -280,6 +277,5 @@ jobs:
           docker load --input /tmp/falkordb-tests.tar
 
       - name: Fuzz tests
-        working-directory: /FalkorDB
         run: |
           docker run --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
