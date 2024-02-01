@@ -83,8 +83,9 @@ jobs:
       - name: Load compiler image
         run: |
           docker load --input /tmp/falkordb-compiler.tar
+          docker tag localhost:5000/falkordb/falkordb-compiler falkordb/falkordb-compiler
 
-      - name: Upload compiler image (for testing)
+      - name: Upload compiler image (for tests)
         uses: actions/upload-artifact@v3
         with:
           name: falkordb-compiler
