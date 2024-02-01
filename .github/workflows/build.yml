@@ -154,6 +154,12 @@ jobs:
           name: falkordb-compiler
           path: /tmp
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # network=host driver-opt needed to push to local registry
+          driver-opts: network=host
+
       - name: Load image
         id: load_image
         run: |
@@ -163,12 +169,10 @@ jobs:
         run: |
           docker tag localhost:5000/falkordb/falkordb-compiler falkordb/falkordb-compiler
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          # network=host driver-opt needed to push to local registry
-          driver-opts: network=host
-
+      - name: List images
+        run: |
+          echo "$(docker images)"
+  
       - name: Build test image
         id: build
         uses: docker/build-push-action@v5
