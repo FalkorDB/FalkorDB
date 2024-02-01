@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || github.event.review.state == 'approved'
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.base.ref == 'master' && github.event.review.state == 'approved')
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:latest
     services:
@@ -88,14 +88,13 @@ jobs:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=docker,dest=/tmp/falkordb.tar
-          tags: falkordb/falkordb
+          outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          tags: falkordb/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
 
       - name: Export compiler image
         run: |
-          mkdir -p /tmp
           docker pull localhost:5000/falkordb/falkordb-compiler
           docker save localhost:5000/falkordb/falkordb-compiler -o /tmp/falkordb-compiler.tar
 
@@ -106,25 +105,11 @@ jobs:
           path: /tmp/falkordb-compiler.tar
           if-no-files-found: error
 
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        uses: actions/upload-artifact@v3
-        with:
-          name: digests
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Upload image
         uses: actions/upload-artifact@v3
         with:
           name: falkordb
-          path: /tmp/falkordb.tar
+          path: /tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
           if-no-files-found: error
 
       - name: Copy bin from docker for caching

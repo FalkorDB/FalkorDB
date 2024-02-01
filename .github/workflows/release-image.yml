@@ -22,31 +22,30 @@ jobs:
           path: /tmp/digests
           if_no_artifact_found: error
 
-      - name: Retrieve built image
+      - name: Retrieve built image AMD
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           branch: ${{ github.event.release.target_commitish }}
           workflow_conclusion: success
-          name: falkordb
+          name: falkordb-x64
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built image ARM
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          branch: ${{ github.event.release.target_commitish }}
+          workflow_conclusion: success
+          name: falkordb-arm64v8
           path: /tmp
           if_no_artifact_found: error
 
       - name: Load image
-        run: docker load -i /tmp/falkordb.tar
-
-      - name: List images with sha
-        run: docker images --digests
-
-      - name: Create manifest list and push
-        working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
-          $(printf 'falkordb/falkordb@sha256:%s ' *)
-
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect falkordb/falkordb:latest
+            docker load -i /tmp/falkordb-x64.tar
+            docker load -i /tmp/falkordb-arm64v8.tar
 
       - name: Login to DockerHub
         uses: docker/login-action@v1
@@ -54,7 +53,13 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Push image
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
         run: |
-            docker buildx imagetools push falkordb/falkordb:latest
-            docker buildx imagetools push falkordb/falkordb:${{ github.event.release.tag_name }}
+          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
+            falkordb/falkordb-x64 \
+            falkordb/falkordb-arm64v8 
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect falkordb/falkordb:latest
