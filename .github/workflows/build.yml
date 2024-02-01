@@ -129,6 +129,7 @@ jobs:
 
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
+        if: steps.cache_graphblas.outputs.cache-hit == 'false' || steps.cache_parser.outputs.cache-hit == 'false' || steps.cache_search.outputs.cache-hit == 'false'
         run: |
           id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
           docker cp $id:/FalkorDB/bin /FalkorDB/bin
@@ -157,10 +158,16 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-compiler.tar
+      
+      - name: Tag image
+        run: |
           docker tag localhost:5000/falkordb/falkordb-compiler falkordb/falkordb-compiler
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # network=host driver-opt needed to push to local registry
+          driver-opts: network=host
 
       - name: Build test image
         id: build
