@@ -139,6 +139,11 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     needs: build
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
