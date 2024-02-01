@@ -79,7 +79,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
           push: true
-          outputs: type=docker,dest=/tmp/falkordb-compiler.tar
+          outputs: dest=/tmp/falkordb-compiler.tar
 
       - name: Upload compiler image (for testing)
         uses: actions/upload-artifact@v3
