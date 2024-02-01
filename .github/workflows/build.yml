@@ -80,11 +80,6 @@ jobs:
           tags: localhost:5000/falkordb/falkordb-compiler
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
-          
-      - name: Save compiler image
-        run: |
-          docker buildx imagetools inspect localhost:5000/falkordb/falkordb-compiler
-          docker save localhost:5000/falkordb/falkordb-compiler -o /tmp/falkordb-compiler.tar
 
       - name: Build base image
         id: build
@@ -97,10 +92,6 @@ jobs:
           tags: falkordb/falkordb
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-          cache-from: |
-            type=registry,ref=falkordb:cache
-          cache-to: |
-            type=registry,ref=falkordb:cache,mode=max
 
       - name: Upload compiler image (for tests)
         uses: actions/upload-artifact@v3
