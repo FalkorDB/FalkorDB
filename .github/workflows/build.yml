@@ -116,7 +116,7 @@ jobs:
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
         run: |
-          id=$(docker create --platform=${{ matrix.platform }} falkordb/falkordb-compiler)
+          id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
           docker cp $id:/FalkorDB/bin /FalkorDB/bin
           docker rm -v $id
           ls -l -R /FalkorDB/bin
