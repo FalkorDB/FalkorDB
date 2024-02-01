@@ -178,6 +178,10 @@ jobs:
         run: |
           echo "$(docker images)"
   
+      - name: Pull image
+        run: |
+          docker pull localhost:5000/falkordb/falkordb-compiler
+
       - name: Build test image
         id: build
         uses: docker/build-push-action@v5
