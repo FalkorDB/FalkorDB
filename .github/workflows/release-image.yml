@@ -16,7 +16,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ github.event.release.target_commitish }}
+          branch: ${{ github.event.release.target_commitish }}
           workflow_conclusion: success
           name: digests
           path: /tmp/digests
@@ -26,7 +26,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          commit: ${{ github.event.release.target_commitish }}
+          branch: ${{ github.event.release.target_commitish }}
           workflow_conclusion: success
           name: falkordb
           path: /tmp/falkordb.tar
