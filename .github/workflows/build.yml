@@ -1,13 +1,13 @@
 name: Build on ubuntu
 
 on:
-  push:
   workflow_dispatch:
-  release:
-    types: [published]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.review.state == 'approved'
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:latest
     services:
@@ -169,7 +169,7 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-compiler.tar
-      
+
       - name: Tag image
         run: |
           docker tag localhost:5000/falkordb/falkordb-compiler falkordb/falkordb-compiler
@@ -177,11 +177,11 @@ jobs:
       - name: List images
         run: |
           echo "$(docker images)"
-  
+
       - name: Push image
         run: |
           docker push localhost:5000/falkordb/falkordb-compiler
-  
+
       - name: Pull image
         run: |
           docker pull localhost:5000/falkordb/falkordb-compiler
