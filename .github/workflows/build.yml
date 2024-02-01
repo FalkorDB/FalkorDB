@@ -93,6 +93,11 @@ jobs:
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
 
+      - name: Export compiler image
+        run: |
+          mkdir -p /tmp
+          docker save localhost:5000/falkordb/falkordb-compiler -o /tmp/falkordb-compiler.tar
+
       - name: Upload compiler image (for tests)
         uses: actions/upload-artifact@v3
         with:
