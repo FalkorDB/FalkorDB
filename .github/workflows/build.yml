@@ -157,6 +157,7 @@ jobs:
         id: load_image
         run: |
           docker load --input /tmp/falkordb-compiler.tar
+          docker tag localhost:5000/falkordb/falkordb-compiler falkordb/falkordb-compiler
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -195,7 +196,7 @@ jobs:
       - name: Unit tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm make CLEAR_LOGS=0 unit-tests
+          docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
   flow-tests:
     runs-on: ubuntu-latest
@@ -215,7 +216,7 @@ jobs:
       - name: Flow tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
   tck-tests:
     runs-on: ubuntu-latest
@@ -235,7 +236,7 @@ jobs:
       - name: TCK tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm make CLEAR_LOGS=0 tck-tests
+          docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
   fuzz-tests:
     runs-on: ubuntu-latest
@@ -255,4 +256,4 @@ jobs:
       - name: Fuzz tests
         working-directory: /FalkorDB
         run: |
-          docker run --rm make fuzz TIMEOUT=180
+          docker run --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
