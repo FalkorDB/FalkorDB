@@ -179,8 +179,10 @@ jobs:
         with:
           context: .
           file: ./tests/Dockerfile
-          outputs: type=docker,push=false,dest=/tmp/falkordb-tests.tar
+          outputs: type=docker,dest=/tmp/falkordb-tests.tar
           tags: falkordb/falkordb-tests
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
 
       - name: Upload tests image
         uses: actions/upload-artifact@v3
