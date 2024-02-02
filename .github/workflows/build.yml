@@ -31,7 +31,6 @@ jobs:
           submodules: recursive
 
       - name: Cache GraphBLAS ${{ matrix.platform }}
-        if: github.event_name == 'push'
         id: cache_graphblas
         uses: actions/cache@v3
         with:
@@ -39,7 +38,6 @@ jobs:
           key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
       - name: Cache parser ${{ matrix.platform }}
-        if: github.event_name == 'push'
         id: cache_parser
         uses: actions/cache@v3
         with:
@@ -47,7 +45,6 @@ jobs:
           key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search ${{ matrix.platform }}
-        if: github.event_name == 'push'
         id: cache_search
         uses: actions/cache@v3
         with:
