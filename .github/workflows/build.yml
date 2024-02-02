@@ -81,6 +81,15 @@ jobs:
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
 
+      - name: Copy bin from docker for caching
+        working-directory: /FalkorDB
+        if: steps.cache_graphblas.outputs.cache-hit == 'false' || steps.cache_parser.outputs.cache-hit == 'false' || steps.cache_search.outputs.cache-hit == 'false'
+        run: |
+          id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
+          docker cp $id:/FalkorDB/bin /FalkorDB/bin
+          docker rm -v $id
+          ls -l -R /FalkorDB/bin
+
       - name: Build base image
         id: build
         uses: docker/build-push-action@v5
@@ -93,18 +102,6 @@ jobs:
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
 
-      - name: Export compiler image
-        run: |
-          docker pull localhost:5000/falkordb/falkordb-compiler
-          docker save localhost:5000/falkordb/falkordb-compiler -o /tmp/falkordb-compiler.tar
-
-      - name: Upload compiler image (for tests)
-        uses: actions/upload-artifact@v3
-        with:
-          name: falkordb-compiler
-          path: /tmp/falkordb-compiler.tar
-          if-no-files-found: error
-
       - name: Upload image
         uses: actions/upload-artifact@v3
         with:
@@ -112,14 +109,19 @@ jobs:
           path: /tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
           if-no-files-found: error
 
-      - name: Copy bin from docker for caching
-        working-directory: /FalkorDB
-        if: steps.cache_graphblas.outputs.cache-hit == 'false' || steps.cache_parser.outputs.cache-hit == 'false' || steps.cache_search.outputs.cache-hit == 'false'
+      - name: Export compiler image
+        if: matrix.platform == 'linux/amd64'
         run: |
-          id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
-          docker cp $id:/FalkorDB/bin /FalkorDB/bin
-          docker rm -v $id
-          ls -l -R /FalkorDB/bin
+          docker pull --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler
+          docker save localhost:5000/falkordb/falkordb-compiler -o /tmp/falkordb-compiler.tar
+
+      - name: Upload compiler image (for tests)
+        uses: actions/upload-artifact@v3
+        if: matrix.platform == 'linux/amd64'
+        with:
+          name: falkordb-compiler
+          path: /tmp/falkordb-compiler.tar
+          if-no-files-found: error
 
   merge:
     runs-on: ubuntu-latest
