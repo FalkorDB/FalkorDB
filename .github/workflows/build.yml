@@ -102,7 +102,7 @@ jobs:
       - name: Upload image
         uses: actions/upload-artifact@v3
         with:
-          name: falkordb
+          name: falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
           if-no-files-found: error
 
