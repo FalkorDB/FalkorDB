@@ -1,4 +1,4 @@
-name: Release image
+name: Release image to DockerHub 
 
 on:
   workflow_dispatch:

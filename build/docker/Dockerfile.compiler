@@ -1,9 +1,9 @@
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest as builder
-
 ARG TARGETPLATFORM
+
+FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest as builder
 
 WORKDIR /FalkorDB
 
-ADD . /FalkorDB
+COPY . /FalkorDB
 
 RUN make
