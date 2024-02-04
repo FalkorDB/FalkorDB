@@ -186,6 +186,7 @@ jobs:
           tags: falkordb/falkordb-tests
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
+            TARGETPLATFORM=linux/amd64
 
       - name: Upload tests image
         uses: actions/upload-artifact@v3
