@@ -131,6 +131,7 @@ jobs:
           if-no-files-found: error
 
   unit-tests:
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -155,6 +156,7 @@ jobs:
           docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
   flow-tests:
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -179,6 +181,7 @@ jobs:
           docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
   tck-tests:
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -203,6 +206,7 @@ jobs:
           docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
   fuzz-tests:
+    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
