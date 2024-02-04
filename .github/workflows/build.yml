@@ -147,6 +147,10 @@ jobs:
           name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
 
+      - name: Set up QEMU
+        if: ${{ matrix.platform == 'linux/arm64' }}
+        uses: docker/setup-qemu-action@v3
+
       - name: Load image
         id: load_image
         run: |
@@ -171,6 +175,10 @@ jobs:
         with:
           name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
+
+      - name: Set up QEMU
+        if: ${{ matrix.platform == 'linux/arm64' }}
+        uses: docker/setup-qemu-action@v3
 
       - name: Load image
         id: load_image
@@ -197,6 +205,10 @@ jobs:
           name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
 
+      - name: Set up QEMU
+        if: ${{ matrix.platform == 'linux/arm64' }}
+        uses: docker/setup-qemu-action@v3
+
       - name: Load image
         id: load_image
         run: |
@@ -221,6 +233,10 @@ jobs:
         with:
           name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
+
+      - name: Set up QEMU
+        if: ${{ matrix.platform == 'linux/arm64' }}
+        uses: docker/setup-qemu-action@v3
 
       - name: Load image
         id: load_image
