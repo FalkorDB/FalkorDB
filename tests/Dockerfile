@@ -1,6 +1,6 @@
 ARG BASE_IMAGE=falkordb/falkordb-compiler
 
-ARG TARGETPLATFORM
+ARG TARGETPLATFORM=linux/amd64
 
 FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
 

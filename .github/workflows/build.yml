@@ -92,6 +92,24 @@ jobs:
           docker rm -v $id
           ls -l -R /FalkorDB/bin
 
+      - name: Build test image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./tests/Dockerfile
+          outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          tags: falkordb/falkordb-tests
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
+            TARGETPLATFORM=${{ matrix.platform }}
+
+      - name: Upload tests image
+        uses: actions/upload-artifact@v3
+        with:
+          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
+          path: /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          if-no-files-found: error
+
       - name: Build base image
         id: build
         uses: docker/build-push-action@v5
@@ -112,103 +130,25 @@ jobs:
           path: /tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
           if-no-files-found: error
 
-      - name: Export compiler image
-        if: matrix.platform == 'linux/amd64'
-        run: |
-          docker pull --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler
-          docker save localhost:5000/falkordb/falkordb-compiler -o /tmp/falkordb-compiler.tar
-
-      - name: Upload compiler image (for tests)
-        uses: actions/upload-artifact@v3
-        if: matrix.platform == 'linux/amd64'
-        with:
-          name: falkordb-compiler
-          path: /tmp/falkordb-compiler.tar
-          if-no-files-found: error
-
-  merge:
-    runs-on: ubuntu-latest
-    needs: build
-    services:
-      registry:
-        image: registry:2
-        ports:
-          - 5000:5000
-    steps:
-      - name: Safe dir
-        run: git config --global --add safe.directory '*'
-
-      - uses: actions/checkout@v3
-        with:
-          set-safe-directory: "*"
-          submodules: recursive
-
-      - name: Download image
-        uses: actions/download-artifact@v3
-        with:
-          name: falkordb-compiler
-          path: /tmp
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          # network=host driver-opt needed to push to local registry
-          driver-opts: network=host
-
-      - name: Load image
-        id: load_image
-        run: |
-          docker load --input /tmp/falkordb-compiler.tar
-
-      - name: Tag image
-        run: |
-          docker tag localhost:5000/falkordb/falkordb-compiler falkordb/falkordb-compiler
-
-      - name: List images
-        run: |
-          echo "$(docker images)"
-
-      - name: Push image
-        run: |
-          docker push localhost:5000/falkordb/falkordb-compiler
-
-      - name: Pull image
-        run: |
-          docker pull localhost:5000/falkordb/falkordb-compiler
-
-      - name: Build test image
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./tests/Dockerfile
-          outputs: type=docker,dest=/tmp/falkordb-tests.tar
-          tags: falkordb/falkordb-tests
-          build-args: |
-            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-            TARGETPLATFORM=linux/amd64
-
-      - name: Upload tests image
-        uses: actions/upload-artifact@v3
-        with:
-          name: falkordb-tests
-          path: /tmp/falkordb-tests.tar
-          if-no-files-found: error
-
   unit-tests:
     runs-on: ubuntu-latest
-    needs: merge
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests
+          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
 
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests.tar
+          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
 
       - name: Unit tests
         run: |
@@ -216,18 +156,23 @@ jobs:
 
   flow-tests:
     runs-on: ubuntu-latest
-    needs: merge
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests
+          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
 
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests.tar
+          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
 
       - name: Flow tests
         run: |
@@ -235,18 +180,23 @@ jobs:
 
   tck-tests:
     runs-on: ubuntu-latest
-    needs: merge
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests
+          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
 
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests.tar
+          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
 
       - name: TCK tests
         run: |
@@ -254,18 +204,23 @@ jobs:
 
   fuzz-tests:
     runs-on: ubuntu-latest
-    needs: merge
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests
+          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           path: /tmp
 
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests.tar
+          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
 
       - name: Fuzz tests
         run: |
