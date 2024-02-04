@@ -99,6 +99,7 @@ jobs:
           file: /FalkorDB/tests/Dockerfile
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
           tags: falkordb/falkordb-tests
+          platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
             TARGETPLATFORM=${{ matrix.platform }}
