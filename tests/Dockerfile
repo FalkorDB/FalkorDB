@@ -21,7 +21,5 @@ RUN set -ex ;\
     /venv/bin/pip3 install --upgrade pip ;\
     /venv/bin/pip3 install --upgrade setuptools
 
-COPY tests /FalkorDB/tests
-
 RUN set -ex ;\
     /venv/bin/pip3 install -r /FalkorDB/tests/requirements.txt
