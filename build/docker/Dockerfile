@@ -1,6 +1,8 @@
+ARG BASE_IMAGE=falkordb/falkordb-compiler
+
 ARG TARGETPLATFORM
 
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-compiler:latest as compiler
+FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
 
 
 
