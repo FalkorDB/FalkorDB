@@ -92,11 +92,11 @@ jobs:
           docker rm -v $id
           ls -l -R /FalkorDB/bin
 
-      - name: Build test image
+      - name: Build tests image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./tests/Dockerfile
+          file: /FalkorDB/tests/Dockerfile
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
           tags: falkordb/falkordb-tests
           build-args: |
