@@ -1,4 +1,7 @@
 ARG BASE_IMAGE=falkordb/falkordb-compiler
+
+ARG TARGETPLATFORM
+
 FROM --platform=$TARGETPLATFORM ${BASE_IMAGE} as compiler
 
 ENV DEPS "automake peg libtool autoconf python-is-python3 2to3 python3.10-venv python3-pip wget build-essential cmake m4 git valgrind gcc musl-dev python3-dev"
