@@ -1,10 +1,11 @@
+ARG TARGETPLATFORM
+
 FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest as builder
 
 FROM redis:7.2.4
 
 RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETPLATFORM
 
 WORKDIR /FalkorDB
 

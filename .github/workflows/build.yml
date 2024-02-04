@@ -77,6 +77,8 @@ jobs:
           tags: localhost:5000/falkordb/falkordb-compiler
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
+          build-args: |
+            TARGETPLATFORM=${{ matrix.platform }}
 
       - name: Copy bin from docker for caching
         working-directory: /FalkorDB
@@ -98,6 +100,7 @@ jobs:
           tags: falkordb/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
+            TARGETPLATFORM=${{ matrix.platform }}
 
       - name: Upload image
         uses: actions/upload-artifact@v3
