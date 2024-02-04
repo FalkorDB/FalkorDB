@@ -153,7 +153,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
   flow-tests:
     needs: build
@@ -178,7 +178,7 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
 
   tck-tests:
     needs: build
@@ -203,7 +203,7 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
   fuzz-tests:
     needs: build
@@ -228,4 +228,4 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          docker run --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
