@@ -45,6 +45,27 @@ jobs:
           path: /tmp/falkordb-compiler-${{ env.ARCH_SUFFIX }}.tar
           key: falkordb-compiler-${{ env.ARCH_SUFFIX }}-${{ hashFiles('./build/docker/Dockerfile.compiler') }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
+      - name: Cache GraphBLAS ${{ matrix.platform }}
+        id: cache_graphblas
+        uses: actions/cache@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/GraphBLAS
+          key: graphblas-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+      - name: Cache parser ${{ matrix.platform }}
+        id: cache_parser
+        uses: actions/cache@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/libcypher-parser
+          key: parser-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Cache search ${{ matrix.platform }}
+        id: cache_search
+        uses: actions/cache@v3
+        with:
+          path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/search-static
+          key: search-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
       # Make sure the working directory is static between runs
       # and always the same for the CMake cache
       - name: Relocate source
@@ -79,6 +100,15 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-compiler-${{ env.ARCH_SUFFIX }}.tar
           docker push localhost:5000/falkordb/falkordb-compiler
+
+      - name: Copy bin from docker for caching
+        working-directory: /FalkorDB
+        if: steps.cache_compiler_image.outputs.cache-hit == false && (steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false)
+        run: |
+          id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
+          docker cp $id:/FalkorDB/bin /FalkorDB/bin
+          docker rm -v $id
+          ls -l -R /FalkorDB/bin
 
       - name: Build tests image
         uses: docker/build-push-action@v5
