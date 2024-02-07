@@ -2,15 +2,18 @@ name: Build on ubuntu
 
 on:
   workflow_dispatch:
-  pull_request_review:
-    types: [submitted]
+  pull_request:
+    branches: [master]
   push:
     branches:
       - master
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.base.ref == 'master' && github.event.review.state == 'approved')
     runs-on: ubuntu-latest
     container: falkordb/falkordb-build:latest
     services:
@@ -24,6 +27,8 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
+    env:
+      ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -37,22 +42,22 @@ jobs:
         id: cache_graphblas
         uses: actions/cache@v3
         with:
-          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/GraphBLAS
-          key: graphblas-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+          path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/GraphBLAS
+          key: graphblas-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
       - name: Cache parser ${{ matrix.platform }}
         id: cache_parser
         uses: actions/cache@v3
         with:
-          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/libcypher-parser
-          key: parser-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/libcypher-parser
+          key: parser-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search ${{ matrix.platform }}
         id: cache_search
         uses: actions/cache@v3
         with:
-          path: /FalkorDB/bin/linux-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-release/search-static
-          key: search-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/search-static
+          key: search-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       # Make sure the working directory is static between runs
       # and always the same for the CMake cache
@@ -97,7 +102,7 @@ jobs:
         with:
           context: .
           file: /FalkorDB/tests/Dockerfile
-          outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          outputs: type=docker,dest=/tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
           tags: falkordb/falkordb-tests
           platforms: ${{ matrix.platform }}
           build-args: |
@@ -107,8 +112,8 @@ jobs:
       - name: Upload tests image
         uses: actions/upload-artifact@v3
         with:
-          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
-          path: /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          name: falkordb-tests-${{ env.ARCH_SUFFIX }}
+          path: /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
           if-no-files-found: error
 
       - name: Build base image
@@ -118,8 +123,8 @@ jobs:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
           platforms: ${{ matrix.platform }}
-          outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
-          tags: falkordb/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
+          outputs: type=docker,dest=/tmp/falkordb-${{ env.ARCH_SUFFIX }}.tar
+          tags: falkordb/falkordb-${{ env.ARCH_SUFFIX }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
             TARGETPLATFORM=${{ matrix.platform }}
@@ -127,8 +132,8 @@ jobs:
       - name: Upload image
         uses: actions/upload-artifact@v3
         with:
-          name: falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
-          path: /tmp/falkordb-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          name: falkordb-${{ env.ARCH_SUFFIX }}
+          path: /tmp/falkordb-${{ env.ARCH_SUFFIX }}.tar
           if-no-files-found: error
 
   unit-tests:
@@ -140,11 +145,13 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
+    env:
+      ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
+          name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
 
       - name: Set up QEMU
@@ -154,7 +161,7 @@ jobs:
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          docker load --input /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
 
       - name: Unit tests
         run: |
@@ -169,11 +176,13 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
+    env:
+      ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
+          name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
 
       - name: Set up QEMU
@@ -183,7 +192,7 @@ jobs:
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          docker load --input /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
 
       - name: Flow tests
         run: |
@@ -198,11 +207,13 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
+    env:
+      ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
+          name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
 
       - name: Set up QEMU
@@ -212,7 +223,7 @@ jobs:
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          docker load --input /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
 
       - name: TCK tests
         run: |
@@ -227,11 +238,13 @@ jobs:
         platform:
           - linux/amd64
           - linux/arm64
+    env:
+      ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
       - name: Download image
         uses: actions/download-artifact@v3
         with:
-          name: falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}
+          name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
 
       - name: Set up QEMU
@@ -241,7 +254,7 @@ jobs:
       - name: Load image
         id: load_image
         run: |
-          docker load --input /tmp/falkordb-tests-${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8'}}.tar
+          docker load --input /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
 
       - name: Fuzz tests
         run: |
