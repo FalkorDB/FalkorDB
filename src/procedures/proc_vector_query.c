@@ -283,8 +283,10 @@ ProcedureResult Proc_VectorQueryNodeInvoke
 ) {
 	ProcedureResult res = Proc_VectorQueryInvoke(ctx, args, GETYPE_NODE);
 	if(res != PROCEDURE_OK) {
-		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
-				"db.idx.vector.queryNodes");
+		if(!ErrorCtx_EncounteredError()) {
+			ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
+					"db.idx.vector.queryNodes");
+		}
 		return res;
 	}
 
@@ -324,8 +326,10 @@ ProcedureResult Proc_VectorQueryRelInvoke
 ) {
 	ProcedureResult res = Proc_VectorQueryInvoke(ctx, args, GETYPE_EDGE);
 	if(res != PROCEDURE_OK) {
-		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
-				"db.idx.vector.queryRelationships");
+		if(!ErrorCtx_EncounteredError()) {
+			ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
+					"db.idx.vector.queryRelationships");
+		}
 		return res;
 	}
 
