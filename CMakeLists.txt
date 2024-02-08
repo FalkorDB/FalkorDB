@@ -1,70 +1,21 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required ( VERSION 3.20 )
 
-get_filename_component(root ${CMAKE_CURRENT_LIST_DIR} ABSOLUTE)
-include(${root}/deps/readies/cmake/main)
+project ( falkordb )
 
-SET(CMAKE_EXPORT_COMPILE_COMMANDS on)
+include_directories ( "deps/rax" "deps/xxHash" "deps/GraphBLAS/Include" "src" )
 
-if (NOT DEFINED UNIT_TESTS)
-	set(UNIT_TESTS OFF)
-endif()
+file ( GLOB_RECURSE SOURCES "src/*.c" )
 
-project(falkordb)
+include(ExternalProject)
 
-setup_cc_options()
+# libcypher-parser
+ExternalProject_Add ( libcypher-parser
+	PREFIX ${CMAKE_BINARY_DIR}/libcypher-parser
+	DOWNLOAD_COMMAND ""  # Skip download
+    CONFIGURE_COMMAND ${CMAKE_SOURCE_DIR}/deps/libcypher-parser/autogen.sh && ${CMAKE_SOURCE_DIR}/deps/libcypher-parser/configure
+    BUILD_COMMAND make CFLAGS="-Wno-error=ignored-qualifiers"
+)
 
-file(GLOB_RECURSE SOURCES "src/*.c")
+# GraphBLAS
 
-add_library(falkordb SHARED ${SOURCES})
-
-include_directories(
-	${root}/src
-	${root}
-	${root}/deps
-	${root}/deps/rax
-	${root}/deps/xxHash
-	${root}/deps/utf8proc
-	${root}/deps/oniguruma
-	${root}/deps/RediSearch/src
-	${root}/deps/GraphBLAS/Include
-	${root}/deps/libcypher-parser/lib/src
-	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
-
-add_compile_definitions(
-	_GNU_SOURCE
-	REDIS_MODULE_TARGET
-	REDISMODULE_EXPERIMENTAL_API
-	XXH_STATIC_LINKING_ONLY)
-
-if (DEBUG)
-	add_compile_definitions(RG_DEBUG)
-endif()
-
-if (MEMCHECK)
-	add_compile_definitions(MEMCHECK)
-endif()
-
-setup_shared_object_target(falkordb "")
-
-set_target_properties(falkordb PROPERTIES LINKER_LANGUAGE CXX)
-
-set(FALKORDB_OBJECTS $<TARGET_OBJECTS:falkordb>)
-
-find_package(OpenSSL)
-
-lists_from_env(GRAPHBLAS LIBXXHASH RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA)
-set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
-
-target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
-
-extract_debug_symbols(falkordb)
-
-if (APPLE)
-	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
-endif()
-
-if (UNIT_TESTS)
-	add_subdirectory(${root}/tests/unit tests/unit)
-endif()
-
+add_library ( falkordb SHARED ${SOURCES} )

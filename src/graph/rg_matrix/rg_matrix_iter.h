@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 #include "./rg_matrix.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include "GraphBLAS.h"
 
 #define RG_ITER_MIN_ROW 0
 #define RG_ITER_MAX_ROW ULLONG_MAX
