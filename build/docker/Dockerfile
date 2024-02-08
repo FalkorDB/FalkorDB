@@ -1,26 +1,21 @@
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:latest as builder
+ARG BASE_IMAGE=falkordb/falkordb-compiler
 
-ARG TARGETPLATFORM
+ARG TARGETPLATFORM=linux/amd64
 
-WORKDIR /FalkorDB
+FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
 
-ADD . /FalkorDB
-
-RUN make
 
 
 FROM redis:7.2.4
 
 RUN apt-get update && apt-get install -y libgomp1 && rm -rf /var/lib/apt/lists/*
 
-ARG TARGETPLATFORM
-
 WORKDIR /FalkorDB
 
-COPY --from=builder /FalkorDB/build/docker/run.sh /FalkorDB/build/docker/run.sh
-COPY --from=builder /FalkorDB/build/docker/gen-certs.sh /FalkorDB/build/docker/gen-certs.sh
+COPY --from=compiler /FalkorDB/build/docker/run.sh /FalkorDB/build/docker/run.sh
+COPY --from=compiler /FalkorDB/build/docker/gen-certs.sh /FalkorDB/build/docker/gen-certs.sh
 
-COPY --from=builder /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
+COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
 
 ENV ARCH=${TARGETPLATFORM}
 
