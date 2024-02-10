@@ -2,10 +2,16 @@ cmake_minimum_required ( VERSION 3.20 )
 
 project ( falkordb )
 
+find_package(OpenSSL REQUIRED)
+
 file ( GLOB_RECURSE SOURCES "src/*.c" )
-include_directories ( "deps/rax" "deps/xxHash" "deps/GraphBLAS/Include" "src" )
+include_directories ( "src" "deps/rax" "deps/xxHash" "deps/oniguruma/src" )
 
 add_library ( falkordb SHARED ${SOURCES} )
+set_target_properties(falkordb PROPERTIES LIBRARY_OUTPUT_NAME falkordb)
+
+# define REDIS_MODULE_TARGET
+add_definitions ( -DREDIS_MODULE_TARGET )
 
 ################################################################################
 # libcypher-parser
@@ -24,9 +30,9 @@ ExternalProject_Add ( parser
 add_library(libcypher-parser STATIC IMPORTED)
 add_dependencies(libcypher-parser parser)
 
-# Set properties for library B
+# Set properties for library libcypher-parser
 set_target_properties(libcypher-parser PROPERTIES
-	IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/deps/libcypher-parser/lib/src/libcypher-parser.a
+	IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/deps/libcypher-parser/lib/src/libcypher-parser.la
     INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/deps/libcypher-parser/lib/src
 )
 
@@ -37,6 +43,16 @@ set_target_properties(libcypher-parser PROPERTIES
 add_custom_target ( GraphBLAS
 	COMMAND ${CMAKE_MAKE_PROGRAM} -C ${CMAKE_SOURCE_DIR}/deps/GraphBLAS
 	COMMENT "Building GraphBLAS"
+)
+
+# Define library lib-GraphBLAS target
+add_library(lib-GraphBLAS STATIC IMPORTED)
+add_dependencies(lib-GraphBLAS GraphBLAS)
+
+# Set properties for library lib-GraphBLAS
+set_target_properties(lib-GraphBLAS PROPERTIES
+	IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/deps/GraphBLAS/build/libgraphblas.dylib
+	INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/deps/GraphBLAS/Include
 )
 
 ################################################################################
@@ -63,6 +79,16 @@ add_custom_target ( RediSearch
 	COMMENT "Building RediSearch"
 )
 
+# Define library lib-RediSearch target
+add_library ( lib-RediSearch STATIC IMPORTED )
+add_dependencies ( lib-RediSearch RediSearch )
+
+# Set properties for library lib-RediSearch
+set_target_properties(lib-RediSearch PROPERTIES
+	IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/deps/RediSearch/bin/macos-arm64v8-release/search-static/libredisearch-static.a
+	INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/deps/RediSearch/src
+)
+
 ################################################################################
 # utf8proc
 ################################################################################
@@ -70,6 +96,14 @@ add_custom_target ( RediSearch
 add_custom_target ( utf8proc
 	COMMAND ${CMAKE_MAKE_PROGRAM} -C ${CMAKE_SOURCE_DIR}/deps/utf8proc
 	COMMENT "Building utf8proc"
+)
+
+add_library ( lib-utf8proc STATIC IMPORTED )
+add_dependencies ( lib-utf8proc utf8proc )
+
+set_target_properties(lib-utf8proc PROPERTIES
+	IMPORTED_LOCATION ${CMAKE_SOURCE_DIR}/deps/utf8proc/libutf8proc.a
+	INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_SOURCE_DIR}/deps/utf8proc
 )
 
 ################################################################################
@@ -81,13 +115,30 @@ add_custom_target ( xxHash
 	COMMENT "Building xxHash"
 )
 
-add_dependencies ( falkordb libcypher-parser GraphBLAS onig rax RediSearch utf8proc xxHash )
+add_dependencies ( falkordb
+	rax
+	onig
+	xxHash
+	lib-utf8proc
+	lib-GraphBLAS
+	lib-RediSearch
+	libcypher-parser 
+)
+
+# Link with OpenSSL
+target_link_libraries ( falkordb PRIVATE OpenSSL::SSL )
 
 # Link with libcypher-parser
 target_link_libraries ( falkordb PRIVATE libcypher-parser )
 
 # Link with GraphBLAS
-target_link_libraries ( falkordb PRIVATE libcypher-parser )
+target_link_libraries ( falkordb PRIVATE lib-GraphBLAS )
+
+# Link with RediSearch
+target_link_libraries ( falkordb PRIVATE lib-RediSearch )
+
+# Link with utf8proc
+target_link_libraries ( falkordb PRIVATE lib-utf8proc )
 
 # Set linker flags for static linking
 target_link_options ( falkordb PUBLIC "-static" )
