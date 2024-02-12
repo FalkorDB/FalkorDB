@@ -5,8 +5,8 @@
 
 #include "RG.h"
 #include "ws.h"
+#include "rax.h"
 #include "endian.h"
-#include "rax/rax.h"
 #include "util/rmalloc.h"
 #include <string.h>
 #include <openssl/bio.h>

@@ -5,10 +5,10 @@
  */
 
 #include "string_funcs.h"
+#include "utf8proc.h"
 #include "../func_desc.h"
 #include "../../util/arr.h"
 #include "../../util/uuid.h"
-#include "utf8proc/utf8proc.h"
 #include "../../util/rmalloc.h"
 #include "../../util/strutil.h"
 #include "../../errors/errors.h"

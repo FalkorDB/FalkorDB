@@ -8,8 +8,8 @@
 #include <ctype.h>
 #include "RG.h"
 #include "rmalloc.h"
-#include "utf8proc/utf8proc.h"
-#include "oniguruma/src/oniguruma.h"
+#include "utf8proc.h"
+#include "oniguruma.h"
 
 // convert ascii str to a lower case string and save it in lower
 void str_tolower_ascii
