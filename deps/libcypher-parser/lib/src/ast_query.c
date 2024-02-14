@@ -26,7 +26,7 @@ struct query
     unsigned int noptions;
     const cypher_astnode_t **options;
     unsigned int nclauses;
-    const cypher_astnode_t *clauses[];
+    cypher_astnode_t *clauses[];
 };
 
 
@@ -219,7 +219,7 @@ ssize_t detailstr(const cypher_astnode_t *self, char *str, size_t size)
     size_t n = 8;
 
     ssize_t r = snprint_sequence(str + 8, (size > 8)? size-8 : 0,
-            node->clauses, node->nclauses);
+            (const cypher_astnode_t * const *)node->clauses, node->nclauses);
     if (r < 0)
     {
         return -1;
