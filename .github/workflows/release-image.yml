@@ -66,22 +66,22 @@ jobs:
         if: ${{ github.event_name == 'workflow_run' }}
         run: |
           docker buildx imagetools create -t falkordb/falkordb:edge \
-            falkordb/falkordb-x64 \
-            falkordb/falkordb-arm64v8
+            falkordb/falkordb-x64:latest \
+            falkordb/falkordb-arm64v8:latest
 
       - name: Create manifest on RELEASE
         if: ${{ github.event_name == 'release' }}
         run: |
           docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
-            falkordb/falkordb-x64 \
-            falkordb/falkordb-arm64v8
+            falkordb/falkordb-x64:latest \
+            falkordb/falkordb-arm64v8:latest
 
       - name: Create manifest on DISPATCH
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           docker buildx imagetools create -t falkordb/falkordb:${{ github.event.inputs.tag }} \
-            falkordb/falkordb-x64 \
-            falkordb/falkordb-arm64v8
+            falkordb/falkordb-x64:latest \
+            falkordb/falkordb-arm64v8:latest
 
       - name: Inspect image
         run: |
