@@ -137,7 +137,7 @@ setup_rltest() {
 		fi
 	fi
 	
-	RLTEST_ARGS+=" --enable-debug-command"
+	RLTEST_ARGS+=" --enable-debug-command --no-progress"
 
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
 		RLTEST_ARGS+=" -v"

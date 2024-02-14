@@ -93,9 +93,9 @@ class testReplicationState():
 
     def test_replication_permutations(self):
         for scenario in self._choose_random(permutations(keys.keys()), 2):
-            print(f"scenario: {scenario}")
+            #print(f"scenario: {scenario}")
             for connection_permutation in self._choose_random(self._permutation(2, 5), 3):
-                print(f"connection_permutation: {connection_permutation}")
+                #print(f"connection_permutation: {connection_permutation}")
                 self.master.flushall()
                 self._check(0, 0)
 

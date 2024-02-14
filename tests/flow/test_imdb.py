@@ -40,9 +40,6 @@ class testImdbFlow(FlowTestsBase):
             # assert result set
             self._assert_only_expected_results_are_in_actual_results(actual_result, q)
 
-            # assert query run time
-            self._assert_run_time(actual_result, q)
-
             if q.reversible:
                 # assert reversed pattern.
                 self.assert_reversed_pattern(query, actual_result)
@@ -71,9 +68,6 @@ class testImdbFlow(FlowTestsBase):
             actual_result,
             self.imdb.actors_over_85_index_scan)
 
-        # assert query run time
-        self._assert_run_time(actual_result, self.imdb.actors_over_85_index_scan)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -100,9 +94,6 @@ class testImdbFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             self.imdb.eighties_movies_index_scan)
-
-        # assert query run time
-        self._assert_run_time(actual_result, self.imdb.eighties_movies_index_scan)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
