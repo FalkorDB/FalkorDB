@@ -19,10 +19,15 @@ on:
 
 env:
   BUILD_WORKFLOW_NAME: build.yml
+  # Get the commit SHA from the event that triggered the workflow
+  # If the event is a workflow_dispatch, use the input value
+  # If the event is a workflow_run, use the head_commit.id
+  # If the event is a release, use the target_commitish
   COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.event_name == 'release' && github.event.release.target_commitish || github.sha }}
 
 jobs:
   release:
+    # Only run this job if the workflow_run event is successful or if the event is not a workflow_run
     if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' || true}}
     runs-on: ubuntu-latest
     steps:
