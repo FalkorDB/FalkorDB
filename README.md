@@ -3,7 +3,7 @@
 [![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/6M4QwDXn2w)
 [![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
 
-# FalkorDB
+alkorDB
 
 > **Note**
 > The team behind RedisGraph decided to take a stab at bringing this disruptive technology back to market.
