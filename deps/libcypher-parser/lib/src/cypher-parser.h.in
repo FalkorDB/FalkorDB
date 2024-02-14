@@ -535,7 +535,7 @@ enum cypher_rel_direction
  */
 __cypherlang_must_check
 cypher_astnode_t *cypher_ast_statement(cypher_astnode_t * const *options,
-        unsigned int noptions, const cypher_astnode_t *body,
+        unsigned int noptions, cypher_astnode_t *body,
         cypher_astnode_t **children, unsigned int nchildren,
         struct cypher_input_range range);
 
@@ -550,7 +550,7 @@ cypher_astnode_t *cypher_ast_statement(cypher_astnode_t * const *options,
  * @return A `CYPHER_AST_QUERY` or `CYPHER_AST_SCHEMA_COMMAND` node.
  */
 void cypher_ast_statement_replace_body(cypher_astnode_t *astnode,
-        const cypher_astnode_t *body);
+        cypher_astnode_t *body);
 
 /**
  * Get the number of options in a `CYPHER_AST_STATEMENT` node.
