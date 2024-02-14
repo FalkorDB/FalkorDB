@@ -2,25 +2,35 @@ name: Release image to DockerHub
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag"
+        required: true
+      commit_sha:
+        description: "Commit SHA"
+        required: true
+  workflow_run:
+    workflows: ["Build on ubuntu"]
+    types:
+      - completed
+    branches: [master]
   release:
     types: [published]
-  push:
-    branches:
-      - master
 
 env:
   BUILD_WORKFLOW_NAME: build.yml
-  BRANCH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'master' || github.event.release.target_commitish }}
+  COMMIT_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.commit_sha || github.event_name == 'workflow_run' && github.event.workflow_run.head_commit.id || github.event_name == 'release' && github.event.release.target_commitish || github.sha }}
 
 jobs:
   release:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' || true}}
     runs-on: ubuntu-latest
     steps:
       - name: Retrieve built image AMD
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          branch: ${{ env.BRANCH }}
+          branch: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-x64
           path: /tmp
@@ -30,7 +40,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          branch: ${{ env.BRANCH }}
+          branch: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-arm64v8
           path: /tmp
@@ -47,8 +57,8 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Create manifest on PUSH
-        if: ${{ github.event_name == 'push' }}
+      - name: Create manifest on PUSH to master
+        if: ${{ github.event_name == 'workflow_run' }}
         run: |
           docker buildx imagetools create -t falkordb/falkordb:edge \
             falkordb/falkordb-x64 \
@@ -58,6 +68,13 @@ jobs:
         if: ${{ github.event_name == 'release' }}
         run: |
           docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
+            falkordb/falkordb-x64 \
+            falkordb/falkordb-arm64v8
+
+      - name: Create manifest on DISPATCH
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.inputs.tag }} \
             falkordb/falkordb-x64 \
             falkordb/falkordb-arm64v8
 
