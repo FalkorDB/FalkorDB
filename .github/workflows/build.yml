@@ -70,7 +70,7 @@ jobs:
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
         with:
           # network=host driver-opt needed to push to local registry
           driver-opts: network=host

@@ -22,7 +22,7 @@
 struct statement
 {
     cypher_astnode_t _astnode;
-    const cypher_astnode_t *body;
+    cypher_astnode_t *body;
     unsigned int noptions;
     const cypher_astnode_t *options[];
 };
@@ -41,7 +41,7 @@ const struct cypher_astnode_vt cypher_statement_astnode_vt =
 
 
 cypher_astnode_t *cypher_ast_statement(cypher_astnode_t * const *options,
-        unsigned int noptions, const cypher_astnode_t *body,
+        unsigned int noptions, cypher_astnode_t *body,
         cypher_astnode_t **children, unsigned int nchildren,
         struct cypher_input_range range)
 {
@@ -80,7 +80,7 @@ cleanup:
 void cypher_ast_statement_replace_body
 (
     cypher_astnode_t *astnode,
-    const cypher_astnode_t *body
+    cypher_astnode_t *body
 )
 {
     REQUIRE_TYPE(astnode, CYPHER_AST_STATEMENT, NULL);

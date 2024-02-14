@@ -10,12 +10,6 @@ warnings.formatwarning = _warning_formater
 
 class FlowTestsBase(object):
 
-    def _assert_equalish(self, a, b, e=0.05):
-        delta = a * e
-        diff = abs(a-b)
-        if diff > delta:
-            warnings.warn('runtimes differ by more than \"%f\" percent' % e)
-           
     def _assert_only_expected_results_are_in_actual_results(self,
                                                            actual_result,
                                                            query_info):

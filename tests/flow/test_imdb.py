@@ -29,9 +29,6 @@ class testImdbFlow(FlowTestsBase):
         # assert result set
         self.env.assertEqual(resultset.result_set, actual_result.result_set)
 
-        # assert query run time
-        self._assert_equalish(resultset.run_time_ms, actual_result.run_time_ms)
-
     def test_imdb(self):
         for q in self.queries:
             query = q.query

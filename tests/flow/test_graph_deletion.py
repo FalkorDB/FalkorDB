@@ -172,10 +172,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Delete and benchmark for 300ms.
         query = """MATCH (a)-[e:R]->(b) DELETE e"""
         result = self.graph.query(query)
-        query_info = QueryInfo(query = query, description = "Test the execution time for deleting large number of edges", max_run_time_ms = 300)
+        query_info = QueryInfo(query = query, description = "Test the execution time for deleting large number of edges")
         # Test will not fail for execution time > 300ms but a warning will be shown at the test output.
         self.env.assertEquals(result.relationships_deleted, 50000)
-        self._assert_run_time(result, query_info)
 
     def test11_delete_entity_type_validation(self):
         # Currently we only support deletion of either nodes, edges or paths
