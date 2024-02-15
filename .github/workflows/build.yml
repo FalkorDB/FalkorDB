@@ -242,7 +242,7 @@ jobs:
       ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
       - name: Download image
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
