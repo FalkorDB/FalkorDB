@@ -35,7 +35,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          branch: ${{ env.COMMIT_SHA }}
+          commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-x64
           path: /tmp
@@ -45,7 +45,7 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
-          branch: ${{ env.COMMIT_SHA }}
+          commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-arm64v8
           path: /tmp
