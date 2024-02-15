@@ -62,27 +62,62 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Set tag name
+        id: set_tag
+        run: |
+          # If the event is a release, use the release tag name
+          if [ "${{ github.event_name }}" == "release" ]; then
+            TAG_NAME=${{ github.event.release.tag_name }}
+          fi
+          
+          # If the event is a workflow_dispatch, use the input value
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          fi
+
+          # If the event is a workflow_run, and branch is master, set to "edge"
+          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" == "master" ]; then
+            TAG_NAME="edge"
+          fi
+
+          # If the event is a workflow_run, and branch is not master, set to the branch name
+          if [ "${{ github.event_name }}" == "workflow_run" ] && [ "${{ github.event.workflow_run.head_branch }}" != "master" ]; then
+            TAG_NAME="v${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+      
+      - name: Tag x64 and ARM images
+        run: |
+          docker tag falkordb/falkordb-x64 falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64
+          docker tag falkordb/falkordb-arm64v8 falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
+
+      - name: Push x64 and ARM images
+        run: |
+          docker push falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64
+          docker push falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
+        
       - name: Create manifest on PUSH to master
         if: ${{ github.event_name == 'workflow_run' }}
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:edge \
-            falkordb/falkordb-x64:latest \
-            falkordb/falkordb-arm64v8:latest
+          docker buildx imagetools create -t falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }} \
+            falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64 \
+            falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
 
       - name: Create manifest on RELEASE
         if: ${{ github.event_name == 'release' }}
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.release.tag_name }} -t falkordb/falkordb:latest \
-            falkordb/falkordb-x64:latest \
-            falkordb/falkordb-arm64v8:latest
+          docker buildx imagetools create -t falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }} -t falkordb/falkordb:latest \
+          falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64 \
+          falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
 
       - name: Create manifest on DISPATCH
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          docker buildx imagetools create -t falkordb/falkordb:${{ github.event.inputs.tag }} \
-            falkordb/falkordb-x64:latest \
-            falkordb/falkordb-arm64v8:latest
+          docker buildx imagetools create -t falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }} \
+          falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64 \
+          falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect falkordb/falkordb:latest
+          docker buildx imagetools inspect falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}
