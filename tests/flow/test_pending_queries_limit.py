@@ -1,5 +1,7 @@
 from common import *
-from pathos.pools import ProcessPool as Pool
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
+import asyncio
 
 # 1.test getting and setting config
 # 2. test overflowing the server when there's a limit
@@ -7,45 +9,42 @@ from pathos.pools import ProcessPool as Pool
 # 3. test overflowing the server when there's no limit
 #    expect not to get any exceptions
 
-GRAPH_NAME = "max_pending_queries"
+GRAPH_ID = "max_pending_queries"
 SLOW_QUERY = "UNWIND range (0, 1000000) AS x WITH x WHERE (x / 2) = 50 RETURN x"
 
 
-def issue_query(conn, q):
+async def issue_query(self, g, q):
     try:
-        conn.execute_command("GRAPH.QUERY", GRAPH_NAME, q)
-        return False
+        await g.query(q)
+        return False # no failures
     except Exception as e:
-        assert "Max pending queries exceeded" in str(e)
-        return True
+        self.env.assertIn("Max pending queries exceeded", str(e))
+        return True # failed due to internal queries queue limit
 
 class testPendingQueryLimit():
     def __init__(self):
         self.env, self.db = Env(moduleArgs="THREAD_COUNT 2")
-        # skip test if we're running under Valgrind
-        if VALGRIND:
-            self.env.skip() # valgrind is not working correctly with multi process
-
         self.conn = self.env.getConnection()
 
     def stress_server(self):
-        threadpool_size = self.db.config_get("THREAD_COUNT")
-        thread_count = threadpool_size * 5
-        qs = [SLOW_QUERY] * thread_count
-        connections = []
-        pool = Pool(nodes=thread_count)
+        async def run(self):
+            # connection pool with 16 connections
+            # blocking when there's no connections available
+            n = self.db.config_get("THREAD_COUNT") * 5
+            pool = BlockingConnectionPool(max_connections=n, timeout=None)
+            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        # init connections
-        for i in range(thread_count):
-            connections.append(self.env.getConnection())
+            tasks = []
+            for i in range(0, n):
+                tasks.append(asyncio.create_task(issue_query(self, g, SLOW_QUERY)))
 
-        # invoke queries
-        result = pool.map(issue_query, connections, qs)
-       
-        pool.clear()
+            results = await asyncio.gather(*tasks)
 
-        # return if error encountered
-        return any(result)
+            # return if error encountered
+            return any(results)
+
+        return asyncio.run(run(self))
 
     def test_01_query_limit_config(self):
         # read max queued queries config
