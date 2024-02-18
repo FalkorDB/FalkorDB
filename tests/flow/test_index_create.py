@@ -3,7 +3,10 @@ from common import *
 from index_utils import *
 from time import sleep, time
 from collections import OrderedDict
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 from execution_plan_util import locate_operation
+
 
 GRAPH_ID = "index_create"
 
@@ -186,29 +189,24 @@ class testIndexCreationFlow():
         self.env.assertEquals(result.indices_created, 2)
 
     def test05_index_delete(self):
-        if SANITIZER != "":
-            self.env.skip()
+        async def create_drop_index(g):
+            for _ in range(1, 30):
+                await g.query("CREATE (n:L)-[:T]->(a:L)")
+                await g.create_edge_range_index('T', 'p')
+                await g.delete()
 
-        def create_drop_index(graph_id):
-            env, db = Env()
-            con = env.getConnection()
-            for _ in range(1, 100):
-                pipe = con.pipeline()
-                pipe.execute_command("GRAPH.QUERY", graph_id, "CREATE (a:L), (n:L), (n)-[:T]->(a)")
-                pipe.execute_command("GRAPH.QUERY", graph_id, "CREATE INDEX FOR ()-[n:T]-() ON (n.p)")
-                pipe.execute()
-                wait_for_indices_to_sync(Graph(con, graph_id))
-                con.execute_command("GRAPH.DELETE", graph_id)
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=16, timeout=None)
+            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
 
-        if "to_thread" not in dir(asyncio):
-            create_drop_index(1)
-        else:
-            loop = asyncio.get_event_loop()
             tasks = []
-            for i in range(1, 20):
-                tasks.append(loop.create_task(asyncio.to_thread(create_drop_index, i)))
+            for i in range(1, 16):
+                g = db.select_graph(str(i))
+                tasks.append(create_drop_index(g))
 
-            loop.run_until_complete(asyncio.wait(tasks))
+            await asyncio.gather(*tasks)
+
+        asyncio.run(run(self))
 
     def test06_syntax_error_index_creation(self):
         # create index on invalid property name

@@ -1020,9 +1020,11 @@ class testList(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-        query = """WITH {a: 1, b: 2, c: 3} as map RETURN list.sort([map, 1, [1,2,3]])"""
+        query = """WITH {a: 1, b: 2, c: 3} as map RETURN list.sort([map, 1, [2,1,3]])"""
         actual_result = self.graph.query(query)
-        assert str(actual_result.result_set[0]) == "[[OrderedDict({'a': 1, 'b': 2, 'c': 3}), [1, 2, 3], 1]]"
+        self.env.assertEquals(actual_result.result_set[0][0][0], {'a': 1, 'b': 2, 'c': 3})
+        self.env.assertEquals(actual_result.result_set[0][0][1], [2,1,3])
+        self.env.assertEquals(actual_result.result_set[0][0][2], 1)
 
     def test11_insert(self):
         # NULL input should return NULL

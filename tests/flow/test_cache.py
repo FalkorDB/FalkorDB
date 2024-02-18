@@ -1,6 +1,8 @@
 import asyncio
 from common import *
 from index_utils import *
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 
 CACHE_SIZE = 16
 
@@ -248,10 +250,6 @@ class testCache():
         # we want to make sure the execution of a recently evicted query
         # runs to completion successfuly
 
-        # skip if 'to_thread' is missing or if test under valgrind
-        if VALGRIND or "to_thread" not in dir(asyncio):
-            self.env.skip()
-
         # stop previous env
         self.env.flush()
         self.env.stop()
@@ -259,25 +257,24 @@ class testCache():
         self.env, self.db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')
 
         # eviction
-        graph = self.db.select_graph('cache_eviction')
+        # connection pool with 16 connections
+        # blocking when there's no connections available
+        pool = BlockingConnectionPool(max_connections=16, timeout=None)
+        db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+        g = db.select_graph('cache_eviction')
 
-        # populate graph
-        graph.query("UNWIND range(0, 10000) as x CREATE ({v:'/'})")
+        async def run(g):
+            tasks = []
+            for i in range(1, 50):
+                # random param name
+                param_name = 'p_' + str(i)
+                q = f"UNWIND range(0, 50000) as x WITH x WHERE x >= ${param_name} RETURN count(x)"
+                params = {param_name : 0}
+                tasks.append(asyncio.create_task(g.query(q,params)))
 
-        # _run_query is expected to be issued by multiple threads
-        def _run_query(i):
-            #random param name
-            param_name = 'p_' + str(i)
-            q = f"MATCH (n) WHERE n.v = ${param_name} RETURN count(n)"
-            params = {param_name : '/'}
-            g = self.db.select_graph('cache_eviction')
-            count = g.query(q, params).result_set[0][0]
-            self.env.assertEqual(count, 10001)
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                self.env.assertEqual(r.result_set[0][0], 50001)
 
-        tasks = []
-        loop = asyncio.get_event_loop()
-        for i in range(1, 50):
-            tasks.append(loop.create_task(asyncio.to_thread(_run_query, i)))
-
-        loop.run_until_complete(asyncio.wait(tasks))
+        asyncio.run(run(g))
 

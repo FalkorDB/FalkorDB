@@ -1,6 +1,8 @@
 import asyncio
 from common import *
 from index_utils import *
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 
 GRAPH_ID = "timeout"
 
@@ -283,25 +285,24 @@ class testQueryTimeout():
         self.env.assertEquals(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
-        # skip test if we're running under Valgrind
-        if VALGRIND or "to_thread" not in dir(asyncio):
-            self.env.skip() # valgrind is not working correctly with multi processing
-
         self.env.flush()
         self.env.stop()
         self.env, self.db = Env()
 
         self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 
-        def query():
-            g = Graph(self.env.getConnection(), GRAPH_ID)
+        async def query():
+            # connection pool with 16 connections
+            # blocking when there's no connections available
+            pool = BlockingConnectionPool(max_connections=16, timeout=None)
+            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-            for i in range(1, 1000):
-                g.query(f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)", timeout=1000)
+            tasks = []
+            for i in range(1, 10000):
+                q = f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)"
+                tasks.append(asyncio.create_task(g.query(q, timeout=1000)))
 
-        loop = asyncio.get_event_loop()
-        tasks = []
-        for i in range(1, 10):
-            tasks.append(loop.create_task(asyncio.to_thread(query)))
+            return await asyncio.gather(*tasks)
 
-        loop.run_until_complete(asyncio.wait(tasks))
+        asyncio.run(query())
