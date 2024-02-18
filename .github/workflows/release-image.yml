@@ -90,18 +90,18 @@ jobs:
 
       - name: Tag x64 and ARM images
         run: |
-          docker tag falkordb/falkordb-x64 falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64
-          docker tag falkordb/falkordb-arm64v8 falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
+          docker tag falkordb/falkordb-x64 falkordb/falkordb:${{ env.TAG_NAME }}-x64
+          docker tag falkordb/falkordb-arm64v8 falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
 
       - name: Push x64 and ARM images & create manifest
         run: |
-          docker push falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64
-          docker push falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-x64
+          docker push falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
 
-          docker buildx imagetools create -t falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }} ${{ steps.set_tag.outputs.IS_LATEST == '1' && '-t falkordb/falkordb:latest' || '' }} \
-          falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-x64 \
-          falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}-arm64v8
+          docker buildx imagetools create -t falkordb/falkordb:${{ env.TAG_NAME }} ${{ env.IS_LATEST == '1' && '-t falkordb/falkordb:latest' || '' }} \
+          falkordb/falkordb:${{ env.TAG_NAME }}-x64 \
+          falkordb/falkordb:${{ env.TAG_NAME }}-arm64v8
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect falkordb/falkordb:${{ steps.set_tag.outputs.TAG_NAME }}
+          docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}
