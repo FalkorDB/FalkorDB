@@ -25,6 +25,9 @@ class testSlowLog():
 
             await asyncio.gather(*tasks)
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(populate(self, n))
 
     def test01_slowlog(self):

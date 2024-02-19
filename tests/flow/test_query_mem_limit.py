@@ -56,6 +56,9 @@ class testQueryMemoryLimit():
                     # make sure query did not throw an exception
                     self.env.assertNotEqual(type(res), redis.exceptions.ResponseError)
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self, queries))
 
     def test_01_read_memory_limit_config(self):

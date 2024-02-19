@@ -43,6 +43,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
             # wait for all tasks to complete
             results = await asyncio.gather(*tasks)
+
+            # close the connection pool
+            await pool.aclose()
+
             return results
 
         return asyncio.run(run(self, queries))
@@ -121,15 +125,18 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # Exactly one thread should have successfully deleted the graph.
             self.env.assertEquals(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self))
 
     # Try to delete a graph while multiple queries are executing.
     def test_05_concurrent_read_delete(self):
-        pool = BlockingConnectionPool(max_connections=16, timeout=None)
-        db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
-        g = db.select_graph(GRAPH_ID)
-
         async def run(self):
+            pool = BlockingConnectionPool(max_connections=16, timeout=None)
+            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
             #-------------------------------------------------------------------
             # Delete graph via Redis DEL key.
             #-------------------------------------------------------------------
@@ -205,6 +212,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
             self.env.assertEquals(resultset[0][0], 0)
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self))
 
     def test_06_concurrent_write_delete(self):
@@ -237,6 +247,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 self.env.assertIn(str(result), possible_exceptions)
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
+
+            # close the connection pool
+            await pool.aclose()
 
         asyncio.run(run(self))
     
@@ -284,6 +297,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self))
 
     def test_08_concurrent_write_replace(self):
@@ -317,6 +333,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 self.env.assertIn(str(result), possible_exceptions)
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
+
+            # close the connection pool
+            await pool.aclose()
 
         asyncio.run(run(self))
 
@@ -396,6 +415,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # delete the key
             self.conn.delete(GRAPH_ID)
 
+            # close the connection pool
+            await pool.aclose()
+
         return asyncio.run(run(self))
 
     def test_11_concurrent_resize_zero_matrix(self):
@@ -414,6 +436,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
                     tasks.append(asyncio.create_task(g.ro_query(read_q)))
 
             await asyncio.gather(*tasks)
+
+            # close the connection pool
+            await pool.aclose()
 
         asyncio.run(run(self))
 

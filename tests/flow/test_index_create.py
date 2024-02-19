@@ -206,6 +206,9 @@ class testIndexCreationFlow():
 
             await asyncio.gather(*tasks)
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self))
 
     def test06_syntax_error_index_creation(self):

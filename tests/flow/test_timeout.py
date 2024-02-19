@@ -303,6 +303,9 @@ class testQueryTimeout():
                 q = f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)"
                 tasks.append(asyncio.create_task(g.query(q, timeout=1000)))
 
+            # close the connection pool
+            await pool.aclose()
+
             return await asyncio.gather(*tasks)
 
         asyncio.run(query())

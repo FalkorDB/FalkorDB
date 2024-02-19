@@ -116,6 +116,9 @@ class testStressFlow():
             # wait for all tasks to complete
             await asyncio.gather(*tasks)
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self))
 
     def test01_bgsave_stress(self):
@@ -153,6 +156,9 @@ class testStressFlow():
             # cancel BGSAVE task
             bgsave_task.cancel()
 
+            # close the connection pool
+            await pool.aclose()
+
         asyncio.run(run(self))
 
     def test02_write_only_workload(self):
@@ -185,5 +191,8 @@ class testStressFlow():
             conn = self.env.getConnection()
             conn.ping()
             conn.close()
+
+            # close the connection pool
+            await pool.aclose()
 
         asyncio.run(run(self))

@@ -257,13 +257,14 @@ class testCache():
         self.env, self.db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')
 
         # eviction
-        # connection pool with 16 connections
-        # blocking when there's no connections available
-        pool = BlockingConnectionPool(max_connections=16, timeout=None)
-        db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
-        g = db.select_graph('cache_eviction')
 
-        async def run(g):
+        async def run(self):
+            # connection pool with 16 connections
+            # blocking when there's no connections available
+            pool = BlockingConnectionPool(max_connections=16, timeout=None)
+            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+            g = db.select_graph('cache_eviction')
+
             tasks = []
             for i in range(1, 50):
                 # random param name
@@ -276,5 +277,7 @@ class testCache():
             for r in results:
                 self.env.assertEqual(r.result_set[0][0], 50001)
 
-        asyncio.run(run(g))
+            await pool.aclose()
+
+        asyncio.run(run(self))
 

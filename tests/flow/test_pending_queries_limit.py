@@ -41,6 +41,9 @@ class testPendingQueryLimit():
 
             results = await asyncio.gather(*tasks)
 
+            # close the connection pool
+            await pool.aclose()
+
             # return if error encountered
             return any(results)
 
