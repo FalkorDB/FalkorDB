@@ -60,7 +60,9 @@ jobs:
 
     - name: Flow tests
       id: flow_tests
-      run: make flow-tests CLEAR_LOGS=0 SAN=address
+      run: |
+        . venv/bin/activate
+        make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -71,7 +73,9 @@ jobs:
 
     - name: TCK tests
       id: tck_tests
-      run: make tck-tests CLEAR_LOGS=0 SAN=address
+      run: |
+        . venv/bin/activate
+        make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
