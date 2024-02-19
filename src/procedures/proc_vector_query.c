@@ -212,12 +212,7 @@ static ProcedureResult Proc_VectorQueryInvoke
 	SIValue query_vector;  // query vector
 
 	// extract arguments from map
-	if(!_extractArgs(args,
-					 &k,
-					 &label,
-					 &attribute,
-					 &query_vector)) {
-		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS);
+	if(!_extractArgs(args, &k, &label, &attribute, &query_vector)) {
 		return PROCEDURE_ERR;
 	}
 
@@ -287,7 +282,13 @@ ProcedureResult Proc_VectorQueryNodeInvoke
 	const char **yield    // procedure output
 ) {
 	ProcedureResult res = Proc_VectorQueryInvoke(ctx, args, GETYPE_NODE);
-	if(res != PROCEDURE_OK) return res;
+	if(res != PROCEDURE_OK) {
+		if(!ErrorCtx_EncounteredError()) {
+			ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
+					"db.idx.vector.queryNodes");
+		}
+		return res;
+	}
 
 	//--------------------------------------------------------------------------
 	// process yield
@@ -324,7 +325,13 @@ ProcedureResult Proc_VectorQueryRelInvoke
 	const char **yield    // procedure output
 ) {
 	ProcedureResult res = Proc_VectorQueryInvoke(ctx, args, GETYPE_EDGE);
-	if(res != PROCEDURE_OK) return res;
+	if(res != PROCEDURE_OK) {
+		if(!ErrorCtx_EncounteredError()) {
+			ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS,
+					"db.idx.vector.queryRelationships");
+		}
+		return res;
+	}
 
 	//--------------------------------------------------------------------------
 	// process yield

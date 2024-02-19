@@ -1,23 +1,25 @@
-FROM redis:latest as builder
+ARG BASE_IMAGE=falkordb/falkordb-compiler
 
-ENV DEPS "automake peg libtool autoconf python python-setuptools python-pip python-dev wget build-essential cmake m4 git valgrind"
+ARG TARGETPLATFORM=linux/amd64
+
+FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
+
+ENV DEPS "automake peg libtool autoconf python-is-python3 2to3 python3.10-venv python3-pip wget build-essential cmake m4 git valgrind gcc python3-dev"
 
 # Set up a build environment
 RUN set -ex ;\
     deps="$DEPS ";\
     apt-get update -qq ;\
-    apt-get install -y --no-install-recommends $deps ;\
-    pip install wheel ;\
-    pip install Click rmtest backports.csv psutil behave ;\
-    pip install redis-py-cluster ;\
-    pip install git+https://github.com/RedisGraph/redisgraph-py.git@master ;\
-    pip install git+https://github.com/RedisLabsModules/RLTest.git@master
-    
-# Build the source
-ADD ./ /redisgraph
+    apt-get install -y --no-install-recommends $deps ;
 
-# Build RedisGraph
-WORKDIR /redisgraph
+# Create venv
 RUN set -ex ;\
-    make clean ALL=1 ;\
-    make -j `nproc`
+    python3 -m venv /venv ;\
+    . /venv/bin/activate ;
+
+RUN set -ex ;\
+    /venv/bin/pip3 install --upgrade pip ;\
+    /venv/bin/pip3 install --upgrade setuptools
+
+RUN set -ex ;\
+    /venv/bin/pip3 install -r /FalkorDB/tests/requirements.txt
