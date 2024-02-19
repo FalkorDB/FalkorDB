@@ -197,7 +197,7 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
   tck-tests:
     needs: build
