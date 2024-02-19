@@ -4,7 +4,7 @@ ARG TARGETPLATFORM=linux/amd64
 
 FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
 
-ENV DEPS "curl automake peg libtool autoconf python-is-python3 2to3 python3.10-venv python3-pip wget build-essential cmake m4 git valgrind gcc python3-dev"
+ENV DEPS "curl lsb_release automake peg libtool autoconf python-is-python3 2to3 python3.10-venv python3-pip wget build-essential cmake m4 git valgrind gcc python3-dev"
 
 # Set up a build environment
 RUN set -ex ;\
@@ -14,7 +14,7 @@ RUN set -ex ;\
 
 # Set up redis
 RUN curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg ;\
-    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/redis.list ;\
+    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list ;\
     apt-get update -qq ;\
     apt-get install -y redis
 
