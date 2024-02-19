@@ -41,7 +41,7 @@ jobs:
 
     - name: Build
       run: |
-        apt-get install -y clang libc6-dbg python3-venv
+        apt-get install -y clang libomp-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
