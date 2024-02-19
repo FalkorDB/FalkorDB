@@ -20,12 +20,13 @@ RUN curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyri
 
 # Create venv
 RUN set -ex ;\
-    python3 -m venv /venv ;\
-    . /venv/bin/activate ;
+    python3 -m venv /venv
+
+ENV PATH=/venv/bin:$PATH
 
 RUN set -ex ;\
-    /venv/bin/pip3 install --upgrade pip ;\
-    /venv/bin/pip3 install --upgrade setuptools
+    pip3 install --upgrade pip ;\
+    pip3 install --upgrade setuptools
 
 RUN set -ex ;\
-    /venv/bin/pip3 install -r /FalkorDB/tests/requirements.txt
+    pip3 install -r /FalkorDB/tests/requirements.txt
