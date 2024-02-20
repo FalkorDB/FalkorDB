@@ -13,28 +13,28 @@ jobs:
     - name: Safe dir
       run: git config --global --add safe.directory '*'
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         set-safe-directory: '*'
         submodules: recursive
 
     - name: Cache GraphBLAS
       id: cache_graphblas
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
         key: graphblas-sanitizer-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser
       id: cache_parser
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
         key: parser-sanitizer-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/search-static
         key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
@@ -47,7 +47,7 @@ jobs:
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: Upload unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
@@ -58,7 +58,7 @@ jobs:
       run: make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: Upload flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
@@ -69,7 +69,7 @@ jobs:
       run: make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/

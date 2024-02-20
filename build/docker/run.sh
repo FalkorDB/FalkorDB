@@ -1,6 +1,6 @@
 export MODULE_DIR=/FalkorDB/bin/src
 
-if [[ ${BROWSER} -eq 1 ]]
+if [ ${BROWSER:-1} -eq 1 ]
 then
     if [ -d /FalkorDBBrowser ]
     then
@@ -8,7 +8,7 @@ then
     fi
 fi
 
-if [[ ${!TLS} -eq 1 ]]
+if [ ${TLS:-0} -eq 1 ]
 then
     /FalkorDB/build/docker/gen-certs.sh
     redis-server --protected-mode no ${REDIS_ARGS:-""} \
