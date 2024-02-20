@@ -24,7 +24,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         self.conn = redis.Redis("localhost", self.env.port)
-        self.async_conn = AsyncRedis()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def setUp(self):
@@ -133,9 +132,17 @@ class testConcurrentQueryFlow(FlowTestsBase):
     # Try to delete a graph while multiple queries are executing.
     def test_05_concurrent_read_delete(self):
         async def run(self):
+            #-------------------------------------------------------------------
+            # create async connections
+            #-------------------------------------------------------------------
+
+            # create async connection pool
             pool = BlockingConnectionPool(max_connections=16, timeout=None)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
+
+            # create a single async connection
+            async_conn = AsyncRedis(port=self.env.port)
 
             #-------------------------------------------------------------------
             # Delete graph via Redis DEL key.
@@ -151,7 +158,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             for i in range(CLIENT_COUNT):
                 tasks.append(asyncio.create_task(g.query(q)))
                 if i == CLIENT_COUNT / 2:
-                    del_task = asyncio.create_task(self.async_conn.delete(GRAPH_ID))
+                    del_task = asyncio.create_task(async_conn.delete(GRAPH_ID))
 
             # wait for all async tasks
             results = await asyncio.gather(*tasks)
@@ -175,7 +182,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             for i in range (CLIENT_COUNT):
                 tasks.append(asyncio.create_task(g.query(q)))
                 if i == CLIENT_COUNT / 2:
-                    del_task = asyncio.create_task(self.async_conn.flushall())
+                    del_task = asyncio.create_task(async_conn.flushall())
 
             # wait for all async tasks
             results = await asyncio.gather(*tasks)
@@ -212,19 +219,32 @@ class testConcurrentQueryFlow(FlowTestsBase):
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
             self.env.assertEquals(resultset[0][0], 0)
 
+            #-------------------------------------------------------------------
+            # close connctions
+            #-------------------------------------------------------------------
+
             # close the connection pool
             await pool.aclose()
+
+            # close connection
+            await async_conn.close()
 
         asyncio.run(run(self))
 
     def test_06_concurrent_write_delete(self):
         async def run(self):
-            # connect to async graph via a connection pool
-            # which will block if there are no available connections
+            #-------------------------------------------------------------------
+            # create async connections
+            #-------------------------------------------------------------------
+
+            # create async connection pool
             connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, **connection_kwargs)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
+
+            # create a single async connection
+            async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             self.graph.query("MATCH (n) RETURN n")
@@ -236,7 +256,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 if idx == i:
                     tasks.append(asyncio.create_task(g.query(heavy_write_query)))
                 else:
-                    tasks.append(asyncio.create_task(self.async_conn.delete(GRAPH_ID)))
+                    tasks.append(asyncio.create_task(async_conn.delete(GRAPH_ID)))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -248,19 +268,34 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
+
+            #-------------------------------------------------------------------
+            # close connctions
+            #-------------------------------------------------------------------
+
             # close the connection pool
             await pool.aclose()
+
+            # close connection
+            await async_conn.close()
 
         asyncio.run(run(self))
     
     def test_07_concurrent_write_rename(self):
         async def run(self):
+            #-------------------------------------------------------------------
+            # create async connections
+            #-------------------------------------------------------------------
+
             # connect to async graph via a connection pool
             # which will block if there are no available connections
             connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, **connection_kwargs)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
+
+            # create a single async connection
+            async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             # Create new empty graph with id GRAPH_ID + "2"
@@ -276,7 +311,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 if i == idx:
                     tasks.append(asyncio.create_task(g.query(heavy_write_query)))
                 else:
-                    tasks.append(asyncio.create_task(self.async_conn.rename(GRAPH_ID, new_graph_id)))
+                    tasks.append(asyncio.create_task(async_conn.rename(GRAPH_ID, new_graph_id)))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -297,19 +332,33 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
+            #-------------------------------------------------------------------
+            # close connctions
+            #-------------------------------------------------------------------
+
             # close the connection pool
             await pool.aclose()
+
+            # close connection
+            await async_conn.close()
 
         asyncio.run(run(self))
 
     def test_08_concurrent_write_replace(self):
         async def run(self):
+            #-------------------------------------------------------------------
+            # create async connections
+            #-------------------------------------------------------------------
+
             # connect to async graph via a connection pool
             # which will block if there are no available connections
             connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, **connection_kwargs)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
+
+            # create a single async connection
+            async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
             self.graph.query("MATCH (n) RETURN n")
@@ -322,7 +371,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 if i == idx:
                     tasks.append(asyncio.create_task(g.query(heavy_write_query)))
                 else:
-                    tasks.append(asyncio.create_task(self.async_conn.set(GRAPH_ID, 1)))
+                    tasks.append(asyncio.create_task(async_conn.set(GRAPH_ID, 1)))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -334,8 +383,15 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
+            #-------------------------------------------------------------------
+            # close connctions
+            #-------------------------------------------------------------------
+
             # close the connection pool
             await pool.aclose()
+
+            # close connection
+            await async_conn.close()
 
         asyncio.run(run(self))
 
