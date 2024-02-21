@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     container: falkordb/falkordb-build:latest
     services:
       registry:
@@ -66,9 +66,6 @@ jobs:
         run: |
           mkdir -p /FalkorDB
           mv $GITHUB_WORKSPACE/* /FalkorDB
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -139,7 +136,7 @@ jobs:
 
   unit-tests:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -154,11 +151,7 @@ jobs:
         with:
           name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
-
-      - name: Set up QEMU
-        if: ${{ matrix.platform == 'linux/arm64' }}
-        uses: docker/setup-qemu-action@v3
-
+  
       - name: Load image
         id: load_image
         run: |
@@ -170,13 +163,13 @@ jobs:
 
   flow-tests:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
         platform:
           - linux/amd64
-          # - linux/arm64
+          - linux/arm64
     env:
       ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
@@ -185,10 +178,6 @@ jobs:
         with:
           name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
-
-      - name: Set up QEMU
-        if: ${{ matrix.platform == 'linux/arm64' }}
-        uses: docker/setup-qemu-action@v3
 
       - name: Load image
         id: load_image
@@ -201,7 +190,7 @@ jobs:
 
   tck-tests:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,10 +205,6 @@ jobs:
         with:
           name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
-
-      - name: Set up QEMU
-        if: ${{ matrix.platform == 'linux/arm64' }}
-        uses: docker/setup-qemu-action@v3
 
       - name: Load image
         id: load_image
@@ -232,7 +217,7 @@ jobs:
 
   fuzz-tests:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -247,10 +232,6 @@ jobs:
         with:
           name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
-
-      - name: Set up QEMU
-        if: ${{ matrix.platform == 'linux/arm64' }}
-        uses: docker/setup-qemu-action@v3
 
       - name: Load image
         id: load_image
