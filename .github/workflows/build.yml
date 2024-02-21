@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     container: falkordb/falkordb-build:latest
     services:
       registry:
@@ -136,7 +136,7 @@ jobs:
 
   unit-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -163,7 +163,7 @@ jobs:
 
   flow-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -190,7 +190,7 @@ jobs:
 
   tck-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
@@ -217,7 +217,7 @@ jobs:
 
   fuzz-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'self-hosted' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
     strategy:
       fail-fast: false
       matrix:
