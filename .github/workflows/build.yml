@@ -169,7 +169,7 @@ jobs:
       matrix:
         platform:
           - linux/amd64
-          # - linux/arm64
+          - linux/arm64
     env:
       ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
     steps:
