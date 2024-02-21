@@ -14,8 +14,8 @@ class testSlowLog():
 
     def populate_slowlog(self, n):
         async def populate(self, n):
-            pool = BlockingConnectionPool(max_connections=16, timeout=None)
-            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+            pool = BlockingConnectionPool(max_connections=n, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             tasks = []

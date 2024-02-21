@@ -28,7 +28,7 @@ class testPendingQueryLimit():
         self.env, self.db = Env(moduleArgs="THREAD_COUNT 2")
         # create graph
         self.g = self.db.select_graph(GRAPH_ID)
-        res = self.g.query("RETURN 3")
+        self.g.query("RETURN 3")
 
     def stress_server(self):
         async def run(self):
@@ -36,8 +36,8 @@ class testPendingQueryLimit():
             # blocking when there's no connections available
             n = self.db.config_get("THREAD_COUNT") * 5
             limit = self.db.config_get("MAX_QUEUED_QUERIES")
-            pool = BlockingConnectionPool(max_connections=n, timeout=None)
-            db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
+            pool = BlockingConnectionPool(max_connections=n, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             tasks = []
