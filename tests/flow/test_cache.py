@@ -4,12 +4,21 @@ from index_utils import *
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 
+GRAPH_IDS = ["Cache_Test_plans", "Cache_Sanity_Check", 'Cache_Test_Create',
+        'Cache_Test_Create_With_Params', 'Cache_Test_Delete', 'Cache_Test_Merge',
+        'Cache_Test_Path_Filter', 'Cache_Test_Index', 'Cache_Test_ID_Scan',
+        'Cache_Test_Join', 'Cache_Test_Edge_Merge', 'Cache_test_labelscan_update',
+        'Cache_test_index_scan_update', 'Cache_Empty_Key', 'cache_eviction']
 CACHE_SIZE = 16
 
 class testCache():
     def __init__(self):
         # Have only one thread handling queries
         self.env, self.db = Env(moduleArgs=f"THREAD_COUNT 8 CACHE_SIZE {CACHE_SIZE}")
+        self.conn = self.env.getConnection()
+
+    def setUp(self):
+        self.conn.delete(*GRAPH_IDS)
 
     def compare_uncached_to_cached_query_plans(self, query, params=None):
         plan_graph = self.db.select_graph('Cache_Test_plans')
@@ -18,7 +27,7 @@ class testCache():
         uncached_plan = str(plan_graph.explain(query, params))
         cached_plan = str(plan_graph.explain(query, params))
         self.env.assertEqual(uncached_plan, cached_plan)
-        plan_graph.delete()
+        #plan_graph.delete()
 
     def test_01_sanity_check(self):
         graph = self.db.select_graph('Cache_Sanity_Check')
@@ -33,7 +42,7 @@ class testCache():
         result = graph.query("MATCH (n) WHERE n.value = 0 RETURN n")
         self.env.assertFalse(result.cached_execution)
 
-        graph.delete()
+        #graph.delete()
 
     def test_02_test_create(self):
         # Both queries do exactly the same operations
@@ -45,7 +54,7 @@ class testCache():
         self.env.assertFalse(uncached_result.cached_execution)
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual(uncached_result.nodes_created, cached_result.nodes_created)
-        graph.delete()
+        #graph.delete()
         
     def test_03_test_create_with_params(self):
         # Both queries do exactly the same operations
@@ -59,7 +68,7 @@ class testCache():
         self.env.assertFalse(uncached_result.cached_execution)
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual(uncached_result.nodes_created, cached_result.nodes_created)
-        graph.delete()
+        #graph.delete()
 
     def test_04_test_delete(self):
         # Both queries do exactly the same operations
@@ -79,7 +88,7 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual(uncached_result.relationships_deleted, cached_result.relationships_deleted)
         self.env.assertEqual(uncached_result.nodes_deleted, cached_result.nodes_deleted)
-        graph.delete()
+        #graph.delete()
 
     def test_05_test_merge(self):
         # Different outcome, same execution plan.
@@ -97,7 +106,7 @@ class testCache():
         self.env.assertEqual([[1]], cached_result.result_set)
         self.env.assertEqual(0, cached_result.nodes_created)
 
-        graph.delete()
+        #graph.delete()
 
     def test_06_test_branching_with_path_filter(self):
         # Different outcome, same execution plan.
@@ -114,7 +123,7 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[1]], uncached_result.result_set)
         self.env.assertEqual([[2]], cached_result.result_set)
-        graph.delete()
+        #graph.delete()
 
 
     def test_07_test_optimizations_index(self):
@@ -132,7 +141,7 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[1]], uncached_result.result_set)
         self.env.assertEqual([[2]], cached_result.result_set)
-        graph.delete()
+        #graph.delete()
 
 
     def test_08_test_optimizations_id_scan(self):
@@ -149,7 +158,7 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[0]], uncached_result.result_set)
         self.env.assertEqual([[1]], cached_result.result_set)
-        graph.delete()
+        #graph.delete()
 
 
     def test_09_test_join(self):
@@ -166,7 +175,7 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[1, 2]], uncached_result.result_set)
         self.env.assertEqual([[3, 4]], cached_result.result_set)
-        graph.delete()
+        #graph.delete()
 
     def test_10_test_edge_merge(self):
         # In this scenario, the same query is executed twice.
@@ -251,7 +260,6 @@ class testCache():
         # runs to completion successfuly
 
         # stop previous env
-        self.env.flush()
         self.env.stop()
 
         self.env, self.db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')

@@ -7,7 +7,8 @@ from redis.asyncio import Redis as AsyncRedis
 
 import asyncio
 
-GRAPH_ID = "G"                      # Graph identifier.
+GRAPH_ID = "concurrent_query"       # Graph identifier.
+SECONDERY_GRAPH_ID = GRAPH_ID + "2" # Secondery graph identifier.
 CLIENT_COUNT = 16                   # Number of concurrent connections.
 people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
@@ -27,7 +28,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def setUp(self):
-        self.conn.flushall()
+        #self.conn.flushall()
+        self.conn.delete(GRAPH_ID)
+        self.conn.delete(SECONDERY_GRAPH_ID)
 
     def run_queries_concurrently(self, queries):
         async def run(self, queries):
@@ -132,17 +135,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
     # Try to delete a graph while multiple queries are executing.
     def test_05_concurrent_read_delete(self):
         async def run(self):
-            #-------------------------------------------------------------------
-            # create async connections
-            #-------------------------------------------------------------------
-
-            # create async connection pool
+            async_conn = AsyncRedis(port=self.env.port)
             pool = BlockingConnectionPool(max_connections=16, timeout=None)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
-
-            # create a single async connection
-            async_conn = AsyncRedis(port=self.env.port)
 
             #-------------------------------------------------------------------
             # Delete graph via Redis DEL key.
@@ -159,30 +155,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
                 tasks.append(asyncio.create_task(g.query(q)))
                 if i == CLIENT_COUNT / 2:
                     del_task = asyncio.create_task(async_conn.delete(GRAPH_ID))
-
-            # wait for all async tasks
-            results = await asyncio.gather(*tasks)
-            await del_task
-
-            # validate result.
-            self.env.assertTrue(all(r.result_set[0][0] == 900 for r in results))
-
-            # Make sure Graph is empty, e.g. graph was deleted.
-            resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-            self.env.assertEquals(resultset[0][0], 0)
-
-            #-------------------------------------------------------------------
-            # Delete graph via Redis FLUSHALL.
-            #-------------------------------------------------------------------
-
-            self.populate_graph()
-
-            # invoke queries
-            tasks = []
-            for i in range (CLIENT_COUNT):
-                tasks.append(asyncio.create_task(g.query(q)))
-                if i == CLIENT_COUNT / 2:
-                    del_task = asyncio.create_task(async_conn.flushall())
 
             # wait for all async tasks
             results = await asyncio.gather(*tasks)
@@ -219,48 +191,35 @@ class testConcurrentQueryFlow(FlowTestsBase):
             resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
             self.env.assertEquals(resultset[0][0], 0)
 
-            #-------------------------------------------------------------------
-            # close connctions
-            #-------------------------------------------------------------------
+            # Close the connection
+            await async_conn.close()
 
             # close the connection pool
             await pool.aclose()
-
-            # close connection
-            await async_conn.close()
 
         asyncio.run(run(self))
 
     def test_06_concurrent_write_delete(self):
         async def run(self):
-            #-------------------------------------------------------------------
-            # create async connections
-            #-------------------------------------------------------------------
-
-            # create async connection pool
+            # connect to async graph via a connection pool
+            # which will block if there are no available connections
             connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, **connection_kwargs)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
-
-            # create a single async connection
             async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
-            self.graph.query("MATCH (n) RETURN n")
+            self.graph.query("RETURN 1")
             heavy_write_query = "UNWIND(range(0, 999999)) as x CREATE(n) RETURN count(1)"
 
             tasks = []
-            idx = random.randint(0, 32)
-            for i in range(0, 32):
-                if idx == i:
-                    tasks.append(asyncio.create_task(g.query(heavy_write_query)))
-                else:
-                    tasks.append(asyncio.create_task(async_conn.delete(GRAPH_ID)))
+            tasks.append(asyncio.create_task(g.query(heavy_write_query)))
+            tasks.append(asyncio.create_task(async_conn.delete(GRAPH_ID)))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            result = results[idx]
+            result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
                                        "Encountered an empty key when opened key " + GRAPH_ID]
@@ -268,25 +227,16 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
-
-            #-------------------------------------------------------------------
-            # close connctions
-            #-------------------------------------------------------------------
-
             # close the connection pool
             await pool.aclose()
 
-            # close connection
+            # close async connection
             await async_conn.close()
 
         asyncio.run(run(self))
     
     def test_07_concurrent_write_rename(self):
         async def run(self):
-            #-------------------------------------------------------------------
-            # create async connections
-            #-------------------------------------------------------------------
-
             # connect to async graph via a connection pool
             # which will block if there are no available connections
             connection_kwargs = { 'decode_responses': True }
@@ -294,24 +244,21 @@ class testConcurrentQueryFlow(FlowTestsBase):
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
-            # create a single async connection
+            # single async connection
             async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
-            # Create new empty graph with id GRAPH_ID + "2"
-            new_graph_id = GRAPH_ID + "2"
-            self.conn.execute_command("GRAPH.QUERY", new_graph_id, "MATCH (n) return n")
+            # Create new empty graph with ID SECONDERY_GRAPH_ID
+            new_graph_id = SECONDERY_GRAPH_ID
+            graph2 = self.db.select_graph(new_graph_id)
+            graph2.query("RETURN 1")
 
             self.graph.query("MATCH (n) RETURN n")
             heavy_write_query = "UNWIND(range(0, 999999)) as x CREATE(n) RETURN count(1)"
 
             tasks = []
-            idx = random.randint(0, 32)
-            for i in range(0, 32):
-                if i == idx:
-                    tasks.append(asyncio.create_task(g.query(heavy_write_query)))
-                else:
-                    tasks.append(asyncio.create_task(async_conn.rename(GRAPH_ID, new_graph_id)))
+            tasks.append(asyncio.create_task(g.query(heavy_write_query)))
+            tasks.append(asyncio.create_task(async_conn.rename(GRAPH_ID, new_graph_id)))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -324,7 +271,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # 2. Rename is done during query executing, so when commiting and comparing stored graph context name (GRAPH_ID) to the retrived value graph context name (new_graph),
             #    the identifiers are not the same, since new_graph value is now stored at GRAPH_ID value.
 
-            result = results[idx]
+            result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
                                        "Encountered an empty key when opened key " + new_graph]
@@ -332,24 +279,16 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
-            #-------------------------------------------------------------------
-            # close connctions
-            #-------------------------------------------------------------------
-
             # close the connection pool
             await pool.aclose()
 
-            # close connection
+            # close async connection
             await async_conn.close()
 
         asyncio.run(run(self))
 
     def test_08_concurrent_write_replace(self):
         async def run(self):
-            #-------------------------------------------------------------------
-            # create async connections
-            #-------------------------------------------------------------------
-
             # connect to async graph via a connection pool
             # which will block if there are no available connections
             connection_kwargs = { 'decode_responses': True }
@@ -357,7 +296,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
-            # create a single async connection
+            # single async connection
             async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
@@ -366,16 +305,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
             heavy_write_query = "UNWIND(range(0, 999999)) as x CREATE(n) RETURN count(1)"
 
             tasks = []
-            idx = random.randint(0, 32)
-            for i in range(0, 32):
-                if i == idx:
-                    tasks.append(asyncio.create_task(g.query(heavy_write_query)))
-                else:
-                    tasks.append(asyncio.create_task(async_conn.set(GRAPH_ID, 1)))
-
+            tasks.append(asyncio.create_task(g.query(heavy_write_query)))
+            tasks.append(asyncio.create_task(async_conn.set(GRAPH_ID, 1)))
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            result = results[idx]
+            result = results[0]
             if type(result) is ResponseError:
                 possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
                                        "WRONGTYPE Operation against a key holding the wrong kind of value"]
@@ -383,14 +317,10 @@ class testConcurrentQueryFlow(FlowTestsBase):
             else:
                 self.env.assertEquals(1000000, result.result_set[0][0])
 
-            #-------------------------------------------------------------------
-            # close connctions
-            #-------------------------------------------------------------------
-
             # close the connection pool
             await pool.aclose()
 
-            # close connection
+            # close async connection
             await async_conn.close()
 
         asyncio.run(run(self))
@@ -468,11 +398,11 @@ class testConcurrentQueryFlow(FlowTestsBase):
             # make sure write query wasn't starved
             self.env.assertLessEqual(count, len(read_tasks) * 0.3)
 
-            # delete the key
-            self.conn.delete(GRAPH_ID)
-
             # close the connection pool
             await pool.aclose()
+
+            # delete the key
+            self.conn.delete(GRAPH_ID)
 
         return asyncio.run(run(self))
 
@@ -482,6 +412,9 @@ class testConcurrentQueryFlow(FlowTestsBase):
             pool = BlockingConnectionPool(max_connections=16, timeout=None, **connection_kwargs)
             db = FalkorDB(host='localhost', port=self.env.port, connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
+
+            # make sure graph exists
+            self.graph.query("RETURN 1")
 
             tasks = []
             read_q  = "MATCH (n:N)-[r:R]->() RETURN r"

@@ -1,5 +1,4 @@
-from common import *
-from index_utils import *
+from common import Env, Graph
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 
@@ -74,18 +73,16 @@ async def BGSAVE_loop(env, conn):
 
 class testStressFlow():
     def __init__(self):
-        global graph
         self.env, _ = Env()
         self.graph = Graph(self.env.getConnection(), GRAPH_ID)
 
     # called before each test function
     def setUp(self):
-        # flush DB after each test
-        self.env.flush()
-
         # create index
-        conn = self.env.getConnection()
-        create_node_range_index(self.graph, 'Node', 'v', sync=True)
+        self.graph.create_node_range_index("Node", "v")
+
+    def tearDown(self):
+        self.graph.delete()
 
     # Count number of nodes in the graph
     def test00_stress(self):

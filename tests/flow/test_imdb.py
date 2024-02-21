@@ -7,18 +7,20 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/imdb')
 import imdb_queries
 import imdb_utils
 
+GRAPH_ID = imdb_utils.graph_name
+
 class testImdbFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
 
     def setUp(self):
-        self.graph     = self.db.select_graph(imdb_utils.graph_name)
+        self.graph     = self.db.select_graph(GRAPH_ID)
         actors, movies = imdb_utils.populate_graph(self.db, self.graph)
         self.imdb      = imdb_queries.IMDBQueries(actors, movies)
         self.queries   = self.imdb.queries()
 
     def tearDown(self):
-        self.env.cmd('flushall')
+        self.graph.delete()
 
     def assert_reversed_pattern(self, query, resultset):
         # Test reversed pattern query.

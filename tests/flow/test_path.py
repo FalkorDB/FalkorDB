@@ -9,6 +9,7 @@ GRAPH_ID = "path"
 class testPath(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def path_to_string(self, path):
@@ -16,7 +17,7 @@ class testPath(FlowTestsBase):
         return str_path
 
     def setUp(self):
-        self.env.flush()
+        self.conn.delete(GRAPH_ID)
     
     def test_simple_path(self):
         node0  = Node(alias="n0", node_id=0, labels="L1")

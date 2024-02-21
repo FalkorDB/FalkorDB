@@ -107,9 +107,6 @@ class testQueryTimeout():
                 timeout = min(max(int(timeouts[i]), 1), 10)
                 res = self.graph.query(q, timeout=timeout)
                 self.env.assertTrue(False)
-                print(q)
-                print(res.run_time_ms)
-                print(timeout)
             except ResponseError as error:
                 self.env.assertContains("Query timed out", str(error))
 
@@ -131,9 +128,6 @@ class testQueryTimeout():
             self.env.assertContains("Query timed out", str(error))
 
     def test05_invalid_loadtime_config(self):
-        self.env.flush()
-        self.env.stop()
-
         try:
             env, db = Env(moduleArgs="TIMEOUT 10 TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
             env.getConnection().ping()
@@ -220,7 +214,6 @@ class testQueryTimeout():
                 self.env.assertContains("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value", str(error))
 
     def test09_fallback(self):
-        self.env.flush()
         self.env.stop()
         self.env, self.db = Env(moduleArgs="TIMEOUT 1")
 
@@ -261,7 +254,6 @@ class testQueryTimeout():
     # should return to user
     def test11_profile_no_double_response(self):
         # reset timeout params to default
-        self.env.flush()
         self.env.stop()
         self.env, self.db = Env()
 
@@ -285,7 +277,6 @@ class testQueryTimeout():
         self.env.assertEquals(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
-        self.env.flush()
         self.env.stop()
         self.env, self.db = Env()
 

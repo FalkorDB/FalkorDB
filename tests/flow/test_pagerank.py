@@ -6,10 +6,13 @@ GRAPH_ID = "pagerank"
 class testPagerankFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
+    def setUp(self):
+        self.conn.delete(GRAPH_ID)
+
     def test_pagerank_no_label_no_relation(self):
-        self.env.cmd('flushall')
         q = "CREATE (a:L0 {v:0})-[:R0]->(b:L1 {v:1})-[:R1]->(c:L2 {v:2})"
         self.graph.query(q)
         q = """CALL algo.pageRank(NULL, NULL) YIELD node, score RETURN node.v, score"""
@@ -24,7 +27,6 @@ class testPagerankFlow(FlowTestsBase):
         self.env.assertAlmostEqual(resultset[2][1], 0.103661172091961, 0.0001)
 
     def test_pagerank_no_label(self):
-        self.env.cmd('flushall')
         q = "CREATE (a:L0 {v:0})-[:R]->(b:L1 {v:1})-[:R0]->(c:L2 {v:2})"
         self.graph.query(q)
         q = """CALL algo.pageRank(NULL, 'R') YIELD node, score RETURN node.v, score"""
@@ -39,7 +41,6 @@ class testPagerankFlow(FlowTestsBase):
         self.env.assertAlmostEqual(resultset[2][1], 0.169648125767708, 0.0001)
 
     def test_pagerank_no_relation(self):
-        self.env.cmd('flushall')
         q = "CREATE (a:L {v:0})-[:R]->(b:L {v:1})-[:R0]->(c:L2 {v:2})"
         self.graph.query(q)
         q = """CALL algo.pageRank('L', NULL) YIELD node, score RETURN node.v, score"""
@@ -64,7 +65,7 @@ class testPagerankFlow(FlowTestsBase):
         ]
 
         for q in queries:
-            self.env.cmd('flushall')
+            self.conn.delete(GRAPH_ID)
             self.graph.query(q)
             q = """CALL algo.pageRank('L', 'R') YIELD node, score RETURN node.v, score"""
             resultset = self.graph.query(q).result_set
@@ -87,7 +88,7 @@ class testPagerankFlow(FlowTestsBase):
         ]
 
         for q in queries:
-            self.env.cmd('flushall')
+            self.conn.delete(GRAPH_ID)
             self.graph.query(q)
             q = """CALL algo.pageRank('L', 'R') YIELD node, score RETURN node.v, score"""
             resultset = self.graph.query(q).result_set
