@@ -99,7 +99,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
     def test_03_concurrent_write(self):        
         self.populate_graph()
 
-        q = """MATCH (p:person)-[know]->(n:person) RETURN n.name"""
         queries = ["CREATE (:country {id:%d})" % i for i in range(CLIENT_COUNT)]
         results = self.run_queries_concurrently(queries)
         for result in results:
