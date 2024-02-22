@@ -5,10 +5,8 @@ from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 from redis.asyncio import Redis as AsyncRedis
 
-import asyncio
-
 GRAPH_ID = "concurrent_query"       # Graph identifier.
-SECONDERY_GRAPH_ID = GRAPH_ID + "2" # Secondery graph identifier.
+SECONDARY_GRAPH_ID = GRAPH_ID + "2" # Secondery graph identifier.
 CLIENT_COUNT = 16                   # Number of concurrent connections.
 people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
@@ -28,9 +26,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def setUp(self):
-        #self.conn.flushall()
         self.conn.delete(GRAPH_ID)
-        self.conn.delete(SECONDERY_GRAPH_ID)
+        self.conn.delete(SECONDARY_GRAPH_ID)
 
     def run_queries_concurrently(self, queries):
         async def run(self, queries):
@@ -247,8 +244,8 @@ class testConcurrentQueryFlow(FlowTestsBase):
             async_conn = AsyncRedis(port=self.env.port)
 
             # Test setup - validate that graph exists and possible results are None
-            # Create new empty graph with ID SECONDERY_GRAPH_ID
-            new_graph_id = SECONDERY_GRAPH_ID
+            # Create new empty graph with ID SECONDARY_GRAPH_ID
+            new_graph_id = SECONDARY_GRAPH_ID
             graph2 = self.db.select_graph(new_graph_id)
             graph2.query("RETURN 1")
 

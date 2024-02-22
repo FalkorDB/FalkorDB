@@ -76,7 +76,7 @@ class testPendingQueryLimit():
 
         self.env.assertFalse(error_encountered)
 
-    def _test_03_overflow_with_limit(self):
+    def test_03_overflow_with_limit(self):
         # limit number of pending queries
         limit = 1
         self.db.config_set("MAX_QUEUED_QUERIES", limit)

@@ -46,7 +46,7 @@ class testSlowLog():
         self.env.assertEquals(len(slowlog), 1)
 
         # Saturate slowlog.
-        self.populate_slowlog(1024)
+        self.populate_slowlog(128)
         A = self.graph.slowlog()
         B = self.graph.slowlog()
 
