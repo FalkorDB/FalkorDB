@@ -36,6 +36,16 @@ class testRdbLoad():
 
         self.restore_key(b'{x}x_a244836f-fe81-4f8d-8ee2-83fc3fbcf102')
         self.restore_key(b'{x}x_53ab30bb-1dbb-47b2-a41d-cac3acd68b8c')
+
+        self.conn.flushall()
+
+        self.validate_key_count(0)
+
+        aux = self.conn.execute_command("GRAPH.DEBUG", "AUX", "START")
+        self.env.assertEqual(aux, 1)
+
+        self.restore_key(b'{x}x_a244836f-fe81-4f8d-8ee2-83fc3fbcf102')
+        self.restore_key(b'{x}x_53ab30bb-1dbb-47b2-a41d-cac3acd68b8c')
         self.restore_key(b'x')
 
         aux = self.conn.execute_command("GRAPH.DEBUG", "AUX", "END")
@@ -43,3 +53,5 @@ class testRdbLoad():
 
         self.validate_key_count(1)
         self._test_data()
+
+        self.conn.save()
