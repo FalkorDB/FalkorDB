@@ -214,8 +214,6 @@ class test_encode_decode(FlowTestsBase):
 
         log = logfile.read()
 
-        #matches = re.findall(
-        #    "Created (.) virtual keys for graph vkey_max_entity_count", log)
         matches = re.findall(
             f"Created (.) virtual keys for graph {GRAPH_ID}", log)
 
