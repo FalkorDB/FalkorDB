@@ -362,7 +362,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         # test random graph deletion added as a result of a crash found in Graph_GetNodeEdges
         # when iterating RG_Matrix of type BOOL with RG_MatrixTupleIter_next_UINT64
         for i in range(1, 10):
-            self.conn.delete(GRAPH_ID)
+            self.graph.delete()
 
             query = """UNWIND range(0, 10000) AS x CREATE (src:N {v: x}), (src)-[:R]->(:N), (src)-[:R]->(:N), (src)-[:R]->(:N)"""
             self.graph.query(query)
@@ -431,8 +431,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
 
         # clean the db
-        self.conn.delete(GRAPH_ID)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete(GRAPH_ID)
 
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEquals(res.nodes_created, 11)
