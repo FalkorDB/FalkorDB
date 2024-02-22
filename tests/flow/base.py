@@ -10,12 +10,6 @@ warnings.formatwarning = _warning_formater
 
 class FlowTestsBase(object):
 
-    def _assert_equalish(self, a, b, e=0.05):
-        delta = a * e
-        diff = abs(a-b)
-        if diff > delta:
-            warnings.warn('runtimes differ by more than \"%f\" percent' % e)
-           
     def _assert_only_expected_results_are_in_actual_results(self,
                                                            actual_result,
                                                            query_info):
@@ -67,11 +61,6 @@ class FlowTestsBase(object):
         actual_result_set = actual_result.result_set or []
         self.env.assertEqual(actual_result_set, query_info.expected_result)
 
-    def _assert_run_time(self, actual_result, query_info):
-            if actual_result.run_time_ms > query_info.max_run_time_ms:
-                warnings.warn('Maximum runtime for query \"%s\" was: %s, but should be %s' %
-                             (query_info.description, str(actual_result.run_time_ms), str(query_info.max_run_time_ms)))
-    
     # function which run the query and expects an specific error message
     def _assert_exception(self, graph, query, expected_err_msg):
         try:

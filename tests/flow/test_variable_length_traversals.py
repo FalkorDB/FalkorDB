@@ -224,8 +224,7 @@ class testVariableLengthTraversals(FlowTestsBase):
     # Test range-length edges
     def test11_range_length_edges(self):
         # clear previous data
-        conn = self.env.getConnection()
-        conn.flushall()
+        self.graph.delete()
 
         # populate graph
         # create a graph with 4 nodes
@@ -264,8 +263,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         # can't be matched
 
         # clear previous data
-        conn = self.env.getConnection()
-        conn.flushall()
+        self.graph.delete()
 
         # create graph
         query = """CREATE (a:A {v:'a'}), (b:B {v:'b'}), (c:C {v:'c'}), (d:D {v:'d'}),
@@ -297,8 +295,7 @@ class testVariableLengthTraversals(FlowTestsBase):
         # ...
         # a3->d3
 
-        conn = self.env.getConnection()
-        conn.flushall()
+        self.graph.delete()
 
         # create a tree structure with a fanout of 3
         q = """CREATE (root {l:0, id:0})
@@ -339,8 +336,7 @@ class testVariableLengthTraversals(FlowTestsBase):
             self.env.assertEquals(identity, i)
 
     def test14_no_hops(self):
-        conn = self.env.getConnection()
-        conn.flushall()
+        self.graph.delete()
 
         # create graph
         # (a)->(b)->(c)

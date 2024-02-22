@@ -38,29 +38,35 @@ class testReplicationState():
     def _check(self, keys_master, keys_slave):
         if keys_master is not None:
             keys = self.master.keys('*')
-            self.env.assertEqual(len(keys), keys_master)
+            if len(keys) != keys_master:
+                return False
         if keys_slave is not None:
             # the WAIT command forces master slave sync to complete
             self.master.execute_command("WAIT", "1", "0")
             keys = self.slave.keys('*')
-            self.env.assertEqual(len(keys), keys_slave)
+            if len(keys) != keys_slave:
+                return False
             if keys_master is not None:
                 keys = self.master.keys('*')
-                self.env.assertEqual(len(keys), keys_master)
+                if len(keys) != keys_master:
+                    return False
+        return True
 
     # restore the key data and validate the # of keys
     def _step(self, key, keys_master):
         self.master.restore(key, '0', keys[key])
-        self._check(keys_master, None)
+        return self._check(keys_master, None)
 
     # validate that the imported data exists in both master and slave
     def _test_data(self):
         expected = [[i] for i in range(1, 31)]
         q = "MATCH (n:N) RETURN n.v"
         result = self.master.execute_command("GRAPH.RO_QUERY", "x", q)
-        self.env.assertEqual(result[1], expected)
+        if result[1] != expected:
+            return False
+
         result = self.slave.execute_command("GRAPH.RO_QUERY", "x", q)
-        self.env.assertEqual(result[1], expected)
+        return result[1] == expected
     
     def _connect_replication(self):
         if self.connection_state == Connection.Disconnected:
@@ -93,11 +99,12 @@ class testReplicationState():
 
     def test_replication_permutations(self):
         for scenario in self._choose_random(permutations(keys.keys()), 2):
-            print(f"scenario: {scenario}")
             for connection_permutation in self._choose_random(self._permutation(2, 5), 3):
-                print(f"connection_permutation: {connection_permutation}")
                 self.master.flushall()
-                self._check(0, 0)
+                if not self._check(0, 0):
+                    print(f"scenario: {scenario}")
+                    print(f"connection_permutation: {connection_permutation}")
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 0)
 
@@ -106,15 +113,24 @@ class testReplicationState():
 
                 self._connection_permutation(connection_permutation, 1)
 
-                self._step(scenario[0], 1)
+                if not self._step(scenario[0], 1):
+                    print(f"scenario: {scenario}")
+                    print(f"connection_permutation: {connection_permutation}")
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 2)
 
-                self._step(scenario[1], 2)
+                if not self._step(scenario[1], 2):
+                    print(f"scenario: {scenario}")
+                    print(f"connection_permutation: {connection_permutation}")
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 3)
 
-                self._step(scenario[2], 3)
+                if not self._step(scenario[2], 3):
+                    print(f"scenario: {scenario}")
+                    print(f"connection_permutation: {connection_permutation}")
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 4)
 
@@ -123,5 +139,13 @@ class testReplicationState():
 
                 self._connect_replication()
 
-                self._check(1, 1)
-                self._test_data()
+                if not self._check(1, 1):
+                    print(f"scenario: {scenario}")
+                    print(f"connection_permutation: {connection_permutation}")
+                    self.assertTrue(False)
+
+                if not self._test_data():
+                    print(f"scenario: {scenario}")
+                    print(f"connection_permutation: {connection_permutation}")
+                    self.assertTrue(False)
+

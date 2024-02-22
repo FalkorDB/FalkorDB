@@ -432,8 +432,6 @@ class testOptimizationsPlan(FlowTestsBase):
 
     # Labels' order should be replaced properly.
     def test28_optimize_label_scan_switch_labels(self):
-        self.env.flush()
-
         # Create three nodes with label N, two with label M, one of them in common.
         self.graph.query("CREATE (:N), (:N), (:N:M), (:M)")
 
@@ -455,7 +453,7 @@ class testOptimizationsPlan(FlowTestsBase):
     # (populating our execution-plan cache) which afterwards is being 
     # created. once created we want to make sure the correct label ID is used.
     def test29_optimize_label_scan_cached_label_id(self):
-        self.env.flush()
+        self.graph.delete()
 
         # Create node with label Q
         self.graph.query("CREATE (n:Q)")
@@ -484,8 +482,7 @@ class testOptimizationsPlan(FlowTestsBase):
     # optimize-label-scan
     def test30_optimize_mandatory_labels_order_only(self):
         # clean db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a node with label N
         query = """CREATE (n:N {v: 1})"""
@@ -522,10 +519,6 @@ class testOptimizationsPlan(FlowTestsBase):
     def test31_optimize_optional_labels(self):
         """Tests that the optimization of the Label-Scan op works on optional
         labels properly"""
-
-        # clean db
-        self.env.flush()
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
 
         # create a node with label `N`
         self.graph.query("CREATE (:N)")

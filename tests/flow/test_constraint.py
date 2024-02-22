@@ -9,6 +9,7 @@ class testConstraintNodes():
     def __init__(self):
         self.env, self.db = Env()
         self.con = self.env.getConnection()
+        self.con.delete(GRAPH_ID)
         self.g = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -428,8 +429,6 @@ class testConstraintNodes():
         # test that a failing constraint can be recreated successfully once
         # all conflicts are resolved
 
-        #self.con.flushall()
-
         # create a Person node without any attributes
         self.g.query("CREATE (:Person)")
 
@@ -554,7 +553,7 @@ class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
         self.con = self.env.getConnection()
-        self.con.flushall() # clear DB
+        self.con.delete(GRAPH_ID)
         self.g = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -982,7 +981,7 @@ class testConstraintReplication():
             time.sleep(0.2)
 
         # clear DB
-        self.source.flushall()
+        self.source.delete(GRAPH_ID)
 
         # the WAIT command forces master slave sync to complete
         self.source.execute_command("WAIT", 1, 0)

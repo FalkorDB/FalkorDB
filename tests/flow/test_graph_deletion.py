@@ -3,12 +3,12 @@ from common import *
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
 from demo import QueryInfo
 
-GRAPH_ID = "G"
-
+GRAPH_ID = "graph_deletion"
 
 class testGraphDeletionFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
@@ -172,10 +172,8 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Delete and benchmark for 300ms.
         query = """MATCH (a)-[e:R]->(b) DELETE e"""
         result = self.graph.query(query)
-        query_info = QueryInfo(query = query, description = "Test the execution time for deleting large number of edges", max_run_time_ms = 300)
-        # Test will not fail for execution time > 300ms but a warning will be shown at the test output.
+        query_info = QueryInfo(query = query, description = "Test the execution time for deleting large number of edges")
         self.env.assertEquals(result.relationships_deleted, 50000)
-        self._assert_run_time(result, query_info)
 
     def test11_delete_entity_type_validation(self):
         # Currently we only support deletion of either nodes, edges or paths
@@ -189,8 +187,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             self.env.assertTrue("Delete type mismatch" in str(error))
 
     def test12_delete_unwind_entity(self):
-        redis_con = self.env.getConnection()
-        self.graph = Graph(redis_con, "delete_test")
+        self.graph.delete()
 
         # Create 10 nodes.
         self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
@@ -210,9 +207,6 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.relationships_deleted, 0)
 
     def test13_delete_path_elements(self):
-        self.env.flush()
-        self.graph = self.db.select_graph("delete_test")
-
         self.graph.query("CREATE ()-[:R]->()")
 
         # Delete projected
@@ -224,9 +218,6 @@ class testGraphDeletionFlow(FlowTestsBase):
 
     # Verify that variable-length traversals in each direction produce the correct results after deletion.
     def test14_post_deletion_traversal_directions(self):
-        self.env.flush()
-        self.graph = self.db.select_graph("G")
-
         nodes = {}
         # Create entities.
         labels = ["Dest", "Src", "Src2"]
@@ -259,9 +250,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test15_update_deleted_entities(self):
-        self.env.flush()
-        redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph("delete_test")
+        self.graph.delete()
         self.graph.query("CREATE ()-[:R]->()")
 
         # Attempt to update entities after deleting them.
@@ -280,9 +269,6 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test16_repeated_entity_deletion(self):
-        self.env.flush()
-        self.graph = self.db.select_graph("repeated_edge_deletion")
-
         # create 2 nodes cyclically connected by 2 edges
         actual_result = self.graph.query("CREATE (x1:A)-[r:R]->(n2:B)-[t:T]->(x1)")
         self.env.assertEquals(actual_result.nodes_created, 2)
@@ -301,9 +287,6 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.nodes_deleted, 2)
 
     def test17_invalid_deletions(self):
-        self.env.flush()
-        redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph("delete_test")
         self.graph.query("CREATE ()")
 
         # try to delete a value that's not a graph entity
@@ -352,10 +335,6 @@ class testGraphDeletionFlow(FlowTestsBase):
                 self.env.assertContains("Delete type mismatch", str(e))
 
     def test18_delete_self_edge(self):
-        self.env.flush()
-        redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph("delete_self_edge_test")
-
         self.graph.query("CREATE (:person{name:'roi',age:32})")
         self.graph.query("CREATE (:person{name:'amit',age:30})")
         self.graph.query("MATCH (a:person) WHERE (a.name = 'roi') DELETE a")
@@ -371,7 +350,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         # test random graph deletion added as a result of a crash found in Graph_GetNodeEdges
         # when iterating RG_Matrix of type BOOL with RG_MatrixTupleIter_next_UINT64
         for i in range(1, 10):
-            self.env.getConnection().flushall()
+            self.graph.delete()
 
             query = """UNWIND range(0, 10000) AS x CREATE (src:N {v: x}), (src)-[:R]->(:N), (src)-[:R]->(:N), (src)-[:R]->(:N)"""
             self.graph.query(query)
@@ -384,8 +363,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         """Tests that consecutive `DELETE` clauses are handled correctly."""
 
         # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a graph with 2 nodes, with labels N and M
         self.graph.query("CREATE (n:N) CREATE (m:M)")
@@ -406,10 +384,6 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.nodes_deleted, 2)
 
     def test21_not_existed_label(self):
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
-        
         res = self.graph.query("CREATE (n:Foo:Bar)")
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(res.labels_added, 2)
@@ -425,8 +399,7 @@ class testGraphDeletionFlow(FlowTestsBase):
 
     def test22_delete_reserve_id(self):
         # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEquals(res.nodes_created, 11)
@@ -443,8 +416,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
 
         # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEquals(res.nodes_created, 11)

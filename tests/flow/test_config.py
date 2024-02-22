@@ -2,12 +2,13 @@ from common import *
 
 # Number of options available.
 NUMBER_OF_OPTIONS = 17
+GRAPH_ID = "config"
 
 class testConfig(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
-        self.redis_graph = self.db.select_graph("config")
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_config_get(self):
         # Try reading 'QUERY_MEM_CAPACITY' from config
@@ -194,7 +195,7 @@ class testConfig(FlowTestsBase):
         self.env.assertEqual(response, "OK")
 
         # Validate modified resultset_size
-        result = self.redis_graph.query("UNWIND range(1, 10) AS v RETURN v")
+        result = self.graph.query("UNWIND range(1, 10) AS v RETURN v")
         self.env.assertEqual(len(result.result_set), 2)
 
         # Revert resultset_size to unlimited with a negative argument
@@ -262,7 +263,7 @@ class testConfig(FlowTestsBase):
 
     def test11_set_get_node_creation_buffer(self):
         # flush and stop is needed for memcheck for clean shutdown
-        self.env.flush()
+        self.graph.delete()
         self.env.stop()
 
         self.env, self.db = Env(moduleArgs='NODE_CREATION_BUFFER 0')
@@ -275,7 +276,6 @@ class testConfig(FlowTestsBase):
         self.env.assertEqual(creation_buffer_size, expected_response)
 
         # restart the server with a buffer argument of 600
-        self.env.flush()
         self.env, self.db = Env(moduleArgs='NODE_CREATION_BUFFER 600')
         self.redis_con = self.env.getConnection()
 

@@ -1,6 +1,8 @@
 from common import *
 from index_utils import *
 
+GRAPH_ID = "edge_index_scan"
+
 people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
 class testEdgeByIndexScanFlow(FlowTestsBase):
@@ -8,13 +10,12 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env, self.db = Env()
 
     def setUp(self):
-        redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph("social")
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
         self.build_indices()
 
     def tearDown(self):
-        self.env.cmd('flushall')
+        self.graph.delete()
     
     def populate_graph(self):
         nodes = {}
@@ -463,8 +464,6 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(query_result.result_set[0], expected_result)
 
     def test12_index_scan_numeric_accuracy(self):
-        self.graph = Graph(self.env.getConnection(), 'large_index_values')
-
         create_edge_range_index(self.graph, 'R1', 'id', sync=True)
         create_edge_range_index(self.graph, 'R2', 'id1', 'id2', sync=True)
         self.graph.query("UNWIND range(1, 5) AS v CREATE ()-[:R1 {id: 990000000262240068 + v}]->()")
@@ -506,8 +505,6 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set, expected_result)
 
     def test13_create_index_multi_edge(self):
-        self.graph = self.db.select_graph('index_multi_edge')
-
         result = self.graph.query("CREATE (a:A), (b:B)")
         self.env.assertEquals(result.nodes_created, 2)
 
@@ -521,11 +518,11 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(result.result_set[0][0], 500)
 
     def test14_self_referencing_edge(self):
+        self.graph.delete()
         # make sure edge connecting node 0 to itself is indexed
         # (0)->(0)
-        g = Graph(self.env.getConnection(), 'self_ref_edge')
 
-        res = g.query("CREATE (a)-[e:R{v:1}]->(a) RETURN a, e")
+        res = self.graph.query("CREATE (a)-[e:R{v:1}]->(a) RETURN a, e")
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(res.relationships_created, 1)
 
@@ -534,22 +531,22 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.env.assertEquals(res.result_set[0][1].id, 0)
 
         # create index over R.v
-        create_edge_range_index(g, "R", "v", sync=True)
+        create_edge_range_index(self.graph, "R", "v", sync=True)
 
         # make sure edge can be located via index scan
         q = "MATCH ()-[e:R{v:1}]->() RETURN e"
 
         # validate index is utilized
-        plan = str(g.explain(q))
+        plan = str(self.graph.explain(q))
         self.env.assertIn("Edge By Index Scan", plan)
 
         # get result using index scan
-        res = g.query(q)
+        res = self.graph.query(q)
         self.env.assertEquals(len(res.result_set), 1)
         actual = res.result_set
 
         # get results without index
-        res = g.query("MATCH ()-[e]->() RETURN e")
+        res = self.graph.query("MATCH ()-[e]->() RETURN e")
         expected = res.result_set
 
         # make sure the same edge is returned
