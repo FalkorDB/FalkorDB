@@ -1,22 +1,79 @@
-struct SerializerIO {
-	void SaveUnsigned(void* unint64_t);
-	void SaveSigned(void*, int64_t);
-	void SaveString(void*, RedisModuleString*);
-	void SaveBuffer(void*, const char*, size_t);
-	void SaveDouble(void*, double);
-	void SaveFloat(void*, float);
-	void SaveLongDouble(void*, long double);
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
 
-	void *stream;  // either RedisModuleIO* or ...
+// generic serializer
+// contains a number of function pointers for data serialization
+struct SerializerIO {
+	void SaveUnsigned(void* unint64_t);           // save unsigned int
+	void SaveSigned(void*, int64_t);              // save signed int
+	void SaveString(void*, RedisModuleString*);   // save RedisModuleString
+	void SaveBuffer(void*, const char*, size_t);  // save bytes
+	void SaveDouble(void*, double);               // save dobule
+	void SaveFloat(void*, float);                 // save float
+	void SaveLongDouble(void*, long double);      // save long double
+
+	void *stream;  // either RedisModuleIO* or Pipe
 };
 
-SerializerIO *SeializerIO_FromRedisModuleIO
+#define PIPE_WRITE(suffix, t)                      \
+static void Pipe_Write##suffix(void *pipe, t v) {   \
+	int pipefd = (int)pipe;                        \
+	write(pipefd, &v, sizeof(t));                  \
+}
+
+// create pipe write functions
+PIPE_WRITE(Unsigned, uint64_t)          // Pipe_WriteUnsigned
+PIPE_WRITE(Signed, int64_t)             // Pipe_WriteSigned
+PIPE_WRITE(Double, double)              // Pipe_WriteDouble
+PIPE_WRITE(Float, float)                // Pipe_WriteFloat
+PIPE_WRITE(LongDouble, long double)     // Pipe_WriteLongDouble
+PIPE_WRITE(String, RedisModuleString*)  // Pipe_WriteString
+
+static void Pipe_WriteBuffer
 (
-	RedisModuleIO *io
+	void *pipe,
+	const char *buff,
+	size_t n
+) {
+	int pipefd = (int)pipe;
+	write(pipefd, buff, n);
+}
+
+// create a serializer which uses pipe
+SerializerIO *SerializerIO_FromPipe
+(
+	int pipefd
 ) {
 	SerializerIO *io = rm_calloc(1, sizeof(SerializerIO));
 
-	io->stream         = io;
+	io->stream = (void*)pipefd;
+
+	// set serializer function pointers
+	io->SaveUnsigned   = Pipe_SaveUnsigned;
+	io->SaveSigned     = Pipe_SaveSigned;
+	io->SaveString     = Pipe_SaveString;
+	io->SaveBuffer     = Pipe_SaveStringBuffer;
+	io->SaveDouble     = Pipe_SaveDouble;
+	io->SaveFloat      = Pipe_SaveFloat;
+	io->SaveLongDouble = Pipe_SaveLongDouble;
+	
+	return io;
+}
+
+// create a serializer which uses RedisIO
+SerializerIO *SerializerIO_FromRedisModuleIO
+(
+	RedisModuleIO *io
+) {
+	ASSERT(io != NULL);
+
+	SerializerIO *io = rm_calloc(1, sizeof(SerializerIO));
+
+	io->stream = io;
+
+	// set serializer function pointers
 	io->SaveUnsigned   = RedisModule_SaveUnsigned;
 	io->SaveSigned     = RedisModule_SaveSigned;
 	io->SaveString     = RedisModule_SaveString;
@@ -134,3 +191,5 @@ long double SerializerIO_LoadLongDouble
 (
 	SerializerIO *io  // stream
 );
+
+
