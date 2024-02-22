@@ -521,7 +521,6 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         self.graph.delete()
         # make sure edge connecting node 0 to itself is indexed
         # (0)->(0)
-        #g = Graph(self.env.getConnection(), 'self_ref_edge')
 
         res = self.graph.query("CREATE (a)-[e:R{v:1}]->(a) RETURN a, e")
         self.env.assertEquals(res.nodes_created, 1)
