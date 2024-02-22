@@ -6,11 +6,11 @@ GRAPH_ID = "undo-log"
 class testUndoLog():
     def __init__(self):
         self.env, self.db = Env()
-        self.redis_con = self.env.getConnection()
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
-        self.redis_con.flushall()
+        self.graph.delete()
 
     def test01_undo_create_node(self):
         try:

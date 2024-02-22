@@ -11,8 +11,8 @@ class testParams(FlowTestsBase):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
 
-    def setUp(self):
-        self.env.flush()
+    def tearDown(self):
+        self.graph.delete()
     
     def test_simple_params(self):
         params = [1, 2.3, -1, -2.3, "str", True, False, None, [0, 1, 2]]

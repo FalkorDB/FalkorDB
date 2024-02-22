@@ -1,6 +1,6 @@
 from common import *
 
-GRAPH_ID = "G"
+GRAPH_ID = "graph_list"
 
 
 # tests the GRAPH.LIST command
@@ -17,25 +17,25 @@ class testGraphList(FlowTestsBase):
         graphs = self.db.list_graphs()
         self.env.assertEquals(graphs, [])
 
-        # create graph key "G"
-        self.create_graph("G", con)
+        # create graph key GRAPH_ID
+        self.create_graph(GRAPH_ID, con)
         graphs = self.db.list_graphs()
-        self.env.assertEquals(graphs, ["G"])
+        self.env.assertEquals(graphs, [GRAPH_ID])
 
         # create a second graph key "X"
         self.create_graph("X", con)
         graphs = self.db.list_graphs()
         graphs.sort()
-        self.env.assertEquals(graphs, ["G", "X"])
+        self.env.assertEquals(graphs, ["X", GRAPH_ID])
 
         # create a string key "str", graph list shouldn't be effected
         con.set("str", "some string")
         graphs = self.db.list_graphs()
         graphs.sort()
-        self.env.assertEquals(graphs, ["G", "X"])
+        self.env.assertEquals(graphs, ["X", GRAPH_ID])
 
-        # delete graph key "G"
-        con.delete("G")
+        # delete graph key GRAPH_ID
+        con.delete(GRAPH_ID)
         graphs = self.db.list_graphs()
         self.env.assertEquals(graphs, ["X"])
 
@@ -1020,9 +1020,11 @@ class testList(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0], expected_result)
 
-        query = """WITH {a: 1, b: 2, c: 3} as map RETURN list.sort([map, 1, [1,2,3]])"""
+        query = """WITH {a: 1, b: 2, c: 3} as map RETURN list.sort([map, 1, [2,1,3]])"""
         actual_result = self.graph.query(query)
-        assert str(actual_result.result_set[0]) == "[[OrderedDict([('a', 1), ('b', 2), ('c', 3)]), [1, 2, 3], 1]]"
+        self.env.assertEquals(actual_result.result_set[0][0][0], {'a': 1, 'b': 2, 'c': 3})
+        self.env.assertEquals(actual_result.result_set[0][0][1], [2,1,3])
+        self.env.assertEquals(actual_result.result_set[0][0][2], 1)
 
     def test11_insert(self):
         # NULL input should return NULL

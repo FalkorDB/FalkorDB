@@ -324,8 +324,8 @@ class testGraphInfo(FlowTestsBase):
     def test07_current_queries(self):
         """test currently running queries"""
 
-        # flush DB
-        self.conn.flushall()
+        # clear graph
+        self.conn.delete(GRAPH_ID)
 
         # shared variable, single consumer thread to exit
         alive = True
