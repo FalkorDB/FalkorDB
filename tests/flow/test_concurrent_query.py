@@ -30,8 +30,7 @@ class testConcurrentQueryFlow(FlowTestsBase):
         self.conn.delete(SECONDARY_GRAPH_ID)
 
     def run_queries_concurrently(self, queries):
-        async def run(self, queries):
-            connection_kwargs = { 'decode_responses': True }
+        async def run(self, queries):            
             pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
@@ -198,7 +197,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
@@ -234,7 +232,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
@@ -286,7 +283,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             # connect to async graph via a connection pool
             # which will block if there are no available connections
-            connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
@@ -351,7 +347,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
         async def run(self):
             self.graph.query("RETURN 1")
 
-            connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
@@ -403,7 +398,6 @@ class testConcurrentQueryFlow(FlowTestsBase):
 
     def test_11_concurrent_resize_zero_matrix(self):
         async def run(self):
-            connection_kwargs = { 'decode_responses': True }
             pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
