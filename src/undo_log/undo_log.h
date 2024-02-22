@@ -130,7 +130,7 @@ void UndoLog_CreateIndex
 void UndoLog_Rollback
 (
 	UndoLog log,
-    GraphContext *gc
+	GraphContext *gc
 );
 
 // free UndoLog
