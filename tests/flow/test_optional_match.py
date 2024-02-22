@@ -265,7 +265,7 @@ class testOptionalFlow(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
     def test23_optional_after_apply(self):
-        self.env.flush()
+        self.graph.delete()
         query = """WITH [0, 0] AS n0 OPTIONAL MATCH () MERGE ()"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.nodes_created, 1)

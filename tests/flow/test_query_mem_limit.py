@@ -1,6 +1,8 @@
 from common import *
 import random
-from pathos.pools import ProcessPool as Pool
+import asyncio
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 
 # 1. test reading and setting query memory limit configuration
 
@@ -16,53 +18,48 @@ from pathos.pools import ProcessPool as Pool
 # 5. test a mixture of queries, ~90% successful ones and the rest are expected
 #    to fail due to out of memory error
 
-GRAPH_NAME        = "max_query_mem"
+GRAPH_ID          = "max_query_mem"
 MEM_HOG_QUERY     = """UNWIND range(0, 100000) AS x RETURN x, count(x)"""
 MEM_THRIFTY_QUERY = """RETURN 1"""
-
-def issue_query(conn, q, should_fail):
-    try:
-        g = Graph(conn, GRAPH_NAME)
-        g.query(q)
-        return not should_fail
-    except Exception as e:
-        assert "Query's mem consumption exceeded capacity" in str(e)
-        return should_fail
 
 class testQueryMemoryLimit():
     def __init__(self):
         self.env, self.db = Env()
-        # skip test if we're running under Valgrind
-        if VALGRIND:
-            self.env.skip() # valgrind is not working correctly with multi process
-
-        self.conn = self.env.getConnection()
 
     def stress_server(self, queries):
-        qs                 = []
-        connections        = []
-        should_fails       = []
-        shared_connections = []
-        thread_count = self.db.config_get("THREAD_COUNT")
-        pool = Pool(nodes=thread_count)
+        async def run(self, queries):
+            qs           = []  # queries
+            should_fails = []  # should query i fail
+            thread_count = self.db.config_get("THREAD_COUNT")
 
-        # init shared connections
-        for t in range(thread_count):
-            shared_connections.append(self.env.getConnection())
+            # connection pool blocking when there's no available connections 
+            pool = BlockingConnectionPool(max_connections=thread_count, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        for idx, q in enumerate(queries):
-            qs.append(q[0])
-            should_fails.append(q[1])
-            connections.append(shared_connections[idx%len(shared_connections)])
+            for q in queries:
+                qs.append(q[0])
+                should_fails.append(q[1])
 
-        # invoke queries
-        result = pool.map(issue_query, connections, qs, should_fails)
+            tasks = []
+            for q in qs:
+                tasks.append(asyncio.create_task(g.query(q)))
 
-        # validate all process return true
-        self.env.assertTrue(all(result))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # clear pool
-        pool.clear()
+            # validate results
+            for i, res in enumerate(results):
+                if should_fails[i]:
+                    # query should have failed
+                    self.env.assertIn("Query's mem consumption exceeded capacity", str(res))
+                else:
+                    # make sure query did not throw an exception
+                    self.env.assertNotEqual(type(res), redis.exceptions.ResponseError)
+
+            # close the connection pool
+            await pool.aclose()
+
+        asyncio.run(run(self, queries))
 
     def test_01_read_memory_limit_config(self):
         # read configuration, test default value, expecting unlimited memory cap

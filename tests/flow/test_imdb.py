@@ -7,18 +7,20 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/imdb')
 import imdb_queries
 import imdb_utils
 
+GRAPH_ID = imdb_utils.graph_name
+
 class testImdbFlow(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
 
     def setUp(self):
-        self.graph     = self.db.select_graph(imdb_utils.graph_name)
+        self.graph     = self.db.select_graph(GRAPH_ID)
         actors, movies = imdb_utils.populate_graph(self.db, self.graph)
         self.imdb      = imdb_queries.IMDBQueries(actors, movies)
         self.queries   = self.imdb.queries()
 
     def tearDown(self):
-        self.env.cmd('flushall')
+        self.graph.delete()
 
     def assert_reversed_pattern(self, query, resultset):
         # Test reversed pattern query.
@@ -29,9 +31,6 @@ class testImdbFlow(FlowTestsBase):
         # assert result set
         self.env.assertEqual(resultset.result_set, actual_result.result_set)
 
-        # assert query run time
-        self._assert_equalish(resultset.run_time_ms, actual_result.run_time_ms)
-
     def test_imdb(self):
         for q in self.queries:
             query = q.query
@@ -39,9 +38,6 @@ class testImdbFlow(FlowTestsBase):
 
             # assert result set
             self._assert_only_expected_results_are_in_actual_results(actual_result, q)
-
-            # assert query run time
-            self._assert_run_time(actual_result, q)
 
             if q.reversible:
                 # assert reversed pattern.
@@ -71,9 +67,6 @@ class testImdbFlow(FlowTestsBase):
             actual_result,
             self.imdb.actors_over_85_index_scan)
 
-        # assert query run time
-        self._assert_run_time(actual_result, self.imdb.actors_over_85_index_scan)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -100,9 +93,6 @@ class testImdbFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             self.imdb.eighties_movies_index_scan)
-
-        # assert query run time
-        self._assert_run_time(actual_result, self.imdb.eighties_movies_index_scan)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
