@@ -13,10 +13,10 @@ class testPathFilter(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def setUp(self):
         self.conn.delete(GRAPH_ID)
-        self.graph = self.db.select_graph(GRAPH_ID)
 
     def test00_simple_path_filter(self):
         node0 = Node(alias="n0", node_id=0, labels="L")
