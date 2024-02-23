@@ -51,7 +51,7 @@ static void _InitGraphDataStructure
 
 static GraphContext *_DecodeHeader
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
 	// Header format:
 	// Graph name
@@ -66,24 +66,24 @@ static GraphContext *_DecodeHeader
 	// Schema
 
 	// graph name
-	char *graph_name = RedisModule_LoadStringBuffer(rdb, NULL);
+	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
-	uint64_t  node_count          =  RedisModule_LoadUnsigned(rdb);
-	uint64_t  edge_count          =  RedisModule_LoadUnsigned(rdb);
-	uint64_t  deleted_node_count  =  RedisModule_LoadUnsigned(rdb);
-	uint64_t  deleted_edge_count  =  RedisModule_LoadUnsigned(rdb);
-	uint64_t  label_count         =  RedisModule_LoadUnsigned(rdb);
-	uint64_t  relation_count      =  RedisModule_LoadUnsigned(rdb);
+	uint64_t  node_count          =  SerializerIO_ReadUnsigned(rdb);
+	uint64_t  edge_count          =  SerializerIO_ReadUnsigned(rdb);
+	uint64_t  deleted_node_count  =  SerializerIO_ReadUnsigned(rdb);
+	uint64_t  deleted_edge_count  =  SerializerIO_ReadUnsigned(rdb);
+	uint64_t  label_count         =  SerializerIO_ReadUnsigned(rdb);
+	uint64_t  relation_count      =  SerializerIO_ReadUnsigned(rdb);
 	uint64_t  multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
-		multi_edge[i] = RedisModule_LoadUnsigned(rdb);
+		multi_edge[i] = SerializerIO_ReadUnsigned(rdb);
 	}
 
 	// total keys representing the graph
-	uint64_t key_number = RedisModule_LoadUnsigned(rdb);
+	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
 	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
 	Graph *g = gc->g;
@@ -116,7 +116,7 @@ static GraphContext *_DecodeHeader
 
 static PayloadInfo *_RdbLoadKeySchema
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
 	// Format:
 	// #Number of payloads info - N
@@ -124,15 +124,15 @@ static PayloadInfo *_RdbLoadKeySchema
 	//     Encode state
 	//     Number of entities encoded in this state.
 
-	uint64_t payloads_count = RedisModule_LoadUnsigned(rdb);
+	uint64_t payloads_count = SerializerIO_ReadUnsigned(rdb);
 	PayloadInfo *payloads = array_new(PayloadInfo, payloads_count);
 
 	for(uint i = 0; i < payloads_count; i++) {
 		// for each payload
 		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
-		payload_info.state =  RedisModule_LoadUnsigned(rdb);
-		payload_info.entities_count =  RedisModule_LoadUnsigned(rdb);
+		payload_info.state =  SerializerIO_ReadUnsigned(rdb);
+		payload_info.entities_count =  SerializerIO_ReadUnsigned(rdb);
 		array_append(payloads, payload_info);
 	}
 	return payloads;
@@ -140,7 +140,8 @@ static PayloadInfo *_RdbLoadKeySchema
 
 GraphContext *RdbLoadGraphContext_v14
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb,
+	const RedisModuleString *rm_key_name
 ) {
 
 	// Key format:
@@ -197,7 +198,6 @@ GraphContext *RdbLoadGraphContext_v14
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
 
 	// before finalizing keep encountered meta keys names, for future deletion
-	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
 	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
 
 	// the virtual key name is not equal the graph name
@@ -251,9 +251,6 @@ GraphContext *RdbLoadGraphContext_v14
 		ASSERT(Graph_Pending(g) == false);
 
 		GraphDecodeContext_Reset(gc->decoding_context);
-
-		RedisModuleCtx *ctx = RedisModule_GetContextFromIO(rdb);
-		RedisModule_Log(ctx, "notice", "Done decoding graph %s", gc->graph_name);
 	}
 
 	return gc;

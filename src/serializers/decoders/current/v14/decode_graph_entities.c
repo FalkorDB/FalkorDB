@@ -7,29 +7,29 @@
 #include "decode_v14.h"
 
 // forward declarations
-static SIValue _RdbLoadPoint(RedisModuleIO *rdb);
-static SIValue _RdbLoadSIArray(RedisModuleIO *rdb);
-static SIValue _RdbLoadVector(RedisModuleIO *rdb, SIType t);
+static SIValue _RdbLoadPoint(SerializerIO rdb);
+static SIValue _RdbLoadSIArray(SerializerIO rdb);
+static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
 
 static SIValue _RdbLoadSIValue
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
 	// Format:
 	// SIType
 	// Value
-	SIType t = RedisModule_LoadUnsigned(rdb);
+	SIType t = SerializerIO_ReadUnsigned(rdb);
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(RedisModule_LoadSigned(rdb));
+		return SI_LongVal(SerializerIO_ReadSigned(rdb));
 	case T_DOUBLE:
-		return SI_DoubleVal(RedisModule_LoadDouble(rdb));
+		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(RedisModule_LoadStringBuffer(rdb, NULL));
+		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
 	case T_BOOL:
-		return SI_BoolVal(RedisModule_LoadSigned(rdb));
+		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
@@ -44,16 +44,16 @@ static SIValue _RdbLoadSIValue
 
 static SIValue _RdbLoadPoint
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
-	double lat = RedisModule_LoadDouble(rdb);
-	double lon = RedisModule_LoadDouble(rdb);
+	double lat = SerializerIO_ReadDouble(rdb);
+	double lon = SerializerIO_ReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
 static SIValue _RdbLoadSIArray
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
 	/* loads array as
 	   unsinged : array legnth
@@ -63,7 +63,7 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = RedisModule_LoadUnsigned(rdb);
+	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
@@ -75,7 +75,7 @@ static SIValue _RdbLoadSIArray
 
 static SIValue _RdbLoadVector
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	SIType t
 ) {
 	ASSERT(t & T_VECTOR);
@@ -90,13 +90,13 @@ static SIValue _RdbLoadVector
 
 	SIValue vector;
 
-	uint32_t dim = RedisModule_LoadUnsigned(rdb);
+	uint32_t dim = SerializerIO_ReadUnsigned(rdb);
 
 	vector = SI_Vectorf32(dim);
 	float *values = SIVector_Elements(vector);
 
 	for(uint32_t i = 0; i < dim; i++) {
-		values[i] = RedisModule_LoadFloat(rdb);
+		values[i] = SerializerIO_ReadFloat(rdb);
 	}
 
 	return vector;
@@ -104,7 +104,7 @@ static SIValue _RdbLoadVector
 
 static void _RdbLoadEntity
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	GraphEntity *e
 ) {
@@ -112,12 +112,12 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = RedisModule_LoadUnsigned(rdb);
+	uint64_t n = SerializerIO_ReadUnsigned(rdb);
 	SIValue vals[n];
 	Attribute_ID ids[n];
 
 	for(int i = 0; i < n; i++) {
-		ids[i]  = RedisModule_LoadUnsigned(rdb);
+		ids[i]  = SerializerIO_ReadUnsigned(rdb);
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
@@ -126,7 +126,7 @@ static void _RdbLoadEntity
 
 void RdbLoadNodes_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t node_count
 ) {
@@ -139,15 +139,15 @@ void RdbLoadNodes_v14
 
 	for(uint64_t i = 0; i < node_count; i++) {
 		Node n;
-		NodeID id = RedisModule_LoadUnsigned(rdb);
+		NodeID id = SerializerIO_ReadUnsigned(rdb);
 
 		// #labels M
-		uint64_t nodeLabelCount = RedisModule_LoadUnsigned(rdb);
+		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned(rdb);
 
 		// * (labels) x M
 		LabelID labels[nodeLabelCount];
 		for(uint64_t i = 0; i < nodeLabelCount; i ++){
-			labels[i] = RedisModule_LoadUnsigned(rdb);
+			labels[i] = SerializerIO_ReadUnsigned(rdb);
 		}
 
 		Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
@@ -166,21 +166,21 @@ void RdbLoadNodes_v14
 
 void RdbLoadDeletedNodes_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_node_count
 ) {
 	// Format:
 	// node id X N
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
-		NodeID id = RedisModule_LoadUnsigned(rdb);
+		NodeID id = SerializerIO_ReadUnsigned(rdb);
 		Serializer_Graph_MarkNodeDeleted(gc->g, id);
 	}
 }
 
 void RdbLoadEdges_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t edge_count
 ) {
@@ -196,10 +196,10 @@ void RdbLoadEdges_v14
 	// construct connections
 	for(uint64_t i = 0; i < edge_count; i++) {
 		Edge e;
-		EdgeID    edgeId   = RedisModule_LoadUnsigned(rdb);
-		NodeID    srcId    = RedisModule_LoadUnsigned(rdb);
-		NodeID    destId   = RedisModule_LoadUnsigned(rdb);
-		uint64_t  relation = RedisModule_LoadUnsigned(rdb);
+		EdgeID    edgeId   = SerializerIO_ReadUnsigned(rdb);
+		NodeID    srcId    = SerializerIO_ReadUnsigned(rdb);
+		NodeID    destId   = SerializerIO_ReadUnsigned(rdb);
+		uint64_t  relation = SerializerIO_ReadUnsigned(rdb);
 
 		Serializer_Graph_SetEdge(gc->g,
 				gc->decoding_context->multi_edge[relation], edgeId, srcId,
@@ -216,14 +216,14 @@ void RdbLoadEdges_v14
 
 void RdbLoadDeletedEdges_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_edge_count
 ) {
 	// Format:
 	// edge id X N
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
-		EdgeID id = RedisModule_LoadUnsigned(rdb);
+		EdgeID id = SerializerIO_ReadUnsigned(rdb);
 		Serializer_Graph_MarkEdgeDeleted(gc->g, id);
 	}
 }
