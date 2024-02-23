@@ -235,6 +235,7 @@ void SerializerIO_Free
 	ASSERT(io  != NULL);
 	ASSERT(*io != NULL);
 
+	// TODO: close pipe
 	rm_free(*io);
 	*io = NULL;
 }
