@@ -27,7 +27,8 @@ typedef enum {
 	CMD_LIST        = 9,
 	CMD_DEBUG       = 10,
 	CMD_INFO        = 11,
-	CMD_EFFECT      = 12
+	CMD_EFFECT      = 12,
+	CMD_COPY        = 13
 } GRAPH_Commands;
 
 //------------------------------------------------------------------------------
@@ -42,6 +43,7 @@ void Graph_Explain(void *args);
 
 int Graph_List(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Info(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_Copy(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Debug(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Delete(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Effect(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);

@@ -10,6 +10,7 @@
 GRAPH_Commands CommandFromString(const char *cmd_name) {
 	if (!strcasecmp(cmd_name, "graph.INFO"))     return CMD_INFO;
 	if (!strcasecmp(cmd_name, "graph.LIST"))     return CMD_LIST;
+	if (!strcasecmp(cmd_name, "graph.COPY"))     return CMD_COPY;
 	if (!strcasecmp(cmd_name, "graph.QUERY"))    return CMD_QUERY;
 	if (!strcasecmp(cmd_name, "graph.DEBUG"))    return CMD_DEBUG;
 	if (!strcasecmp(cmd_name, "graph.EFFECT"))   return CMD_EFFECT;
