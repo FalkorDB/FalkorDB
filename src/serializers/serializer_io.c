@@ -117,7 +117,6 @@ static char *Pipe_ReadBuffer
 	void *pipe,
 	size_t *n
 ) {
-	ASSERT(n    != NULL);
 	ASSERT(pipe != NULL);
 
 	int pipefd = (intptr_t)pipe;

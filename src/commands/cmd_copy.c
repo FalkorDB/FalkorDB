@@ -14,7 +14,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-static void child
+// encode graph into pipe
+static void _encode_graph
 (
 	RedisModuleCtx *ctx,
 	int pipe_write_end,
@@ -39,7 +40,8 @@ static void child
 	SerializerIO_Free(&writer);
 }
 
-static void parent
+// decode graph from pipe
+static void _decode_graph
 (
 	RedisModuleCtx *ctx,
 	int pipe_read_end,
@@ -76,25 +78,22 @@ int Graph_Copy
 	const char *src  = RedisModule_StringPtrLen(argv[1], NULL);
 	const char *dest = RedisModule_StringPtrLen(argv[2], NULL);
 
-	printf("src: %s\n", src);
-	printf("dest: %s\n", dest);
-
 	// TODO: lock GIL
 
 	// make sure dest graph does not exists
-	GraphContext *dest_graph = GraphContext_Retrieve(ctx, argv[2], true, false);
-	if(dest_graph != NULL) {
-		GraphContext_DecreaseRefCount(dest_graph);
-		//RedisModule_ReplyWithError(EMSG_GRAPH_EXISTS, dest);
-		printf(EMSG_GRAPH_EXISTS, dest);
+	RedisModuleKey *dest_key =
+		RedisModule_OpenKey(ctx, argv[2], REDISMODULE_READ);
+	int dest_key_type = RedisModule_KeyType(dest_key);
+	RedisModule_CloseKey(dest_key);
+	if(dest_key_type != REDISMODULE_KEYTYPE_EMPTY) {
+		RedisModule_ReplyWithError(ctx, "destination key already exists");
 		return REDISMODULE_OK;
 	}
 
 	// make sure src graph exists
 	GraphContext *src_graph = GraphContext_Retrieve(ctx, argv[1], true, false);
 	if(src_graph == NULL) {
-		//RedisModule_ReplyWithError(EMSG_NON_GRAPH_KEY, src);
-		printf(EMSG_NON_GRAPH_KEY, src);
+		RedisModule_ReplyWithError(ctx, "missing source graph");
 		return REDISMODULE_OK;
 	}
 
@@ -122,14 +121,14 @@ int Graph_Copy
 	int pid = RedisModule_Fork(NULL, NULL);
 	if(pid == 0) {
 		// child process
-		child(ctx, pipefd[1], src_graph, dest);
+		_encode_graph(ctx, pipefd[1], src_graph, dest);
 
 		// all done, Redis require us to call 'RedisModule_ExitFromChild'
 		RedisModule_ExitFromChild(0);
 		return REDISMODULE_OK;
 	} else {
 		// parent process
-		parent(ctx, pipefd[0], argv[2]);
+		_decode_graph(ctx, pipefd[0], argv[2]);
 	}
 
 	// close pipe
