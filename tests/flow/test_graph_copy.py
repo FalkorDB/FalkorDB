@@ -1,7 +1,6 @@
-from common import Env
+from common import Env, FalkorDB
 from random_graph import create_random_schema, create_random_graph
-#nodes, edges = create_random_schema()
-#res = create_random_graph(redis_graph, nodes, edges)
+import time
 
 GRAPH_ID = "graph_copy"
 
@@ -12,7 +11,34 @@ class testGraphCopy():
         self.conn = self.env.getConnection()
 
     def graph_copy(self, src, dest):
-        self.conn.execute_command("GRAPH.COPY", src, dest)
+        while True:
+            try:
+                # it is possible for GRAPH.COPY to fail in case FalkorDB was unable
+                # to create a fork (Redis restricts us to a single fork at a time)
+                self.conn.execute_command("GRAPH.COPY", src, dest)
+                break
+            except Exception as e:
+                # retry if FalkorDB failed to fork
+                # otherwise raise an exception
+                if str(e) == "Graph copy failed, could not fork, please retry":
+                    time.sleep(0.1)
+                    continue
+                else:
+                    raise e
+
+    # compare graphs
+    def compare_graphs(self, A, B):
+        # compare nodes
+        q = "MATCH (n) RETURN n ORDER BY ID(n)"
+        A_nodes = A.ro_query(q).result_set
+        B_nodes = B.ro_query(q).result_set
+        self.env.assertEqual(A_nodes, B_nodes)
+
+        # compare edges
+        q = "MATCH ()-[e]->() RETURN e ORDER BY ID(e)"
+        A_edges = A.ro_query(q).result_set
+        B_edges = B.ro_query(q).result_set
+        self.env.assertEqual(A_edges, B_edges)
 
     def test_01_invalid_invocation(self):
         # missing src graph
@@ -98,12 +124,86 @@ class testGraphCopy():
 
         src_graph = self.db.select_graph(src)
         nodes, edges = create_random_schema()
-        res = create_random_graph(src_graph, nodes, edges)
+        create_random_graph(src_graph, nodes, edges)
 
         # copy src graph to dest graph
         self.graph_copy(src, dest)
         dest_graph = self.db.select_graph(dest)
 
+        # validate src and dest graphs are the same
+        self.compare_graphs(src_graph, dest_graph)
+
+        # clean up
         src_graph.delete()
         dest_graph.delete()
 
+    def test_04_chain_of_copies(self):
+        # make multiple copies of essentially the same graph
+        # start with graph A
+        # copy A to B, copy B to C and so on and so forth un to J
+        # A == B == C == ... J
+        src = 'A'
+
+        # create a random graph
+        src_graph = self.db.select_graph(src)
+        nodes, edges = create_random_schema()
+        create_random_graph(src_graph, nodes, edges)
+
+        # clone graph multiple times
+        for key in range(ord('B'), ord('J')+1):
+            dest = chr(key)
+            self.graph_copy(src, dest)
+            src = dest
+
+        # validate src and dest graphs are the same
+        src_graph = self.db.select_graph('A')
+        dest_graph = self.db.select_graph('J')
+        self.compare_graphs(src_graph, dest_graph)
+
+        # clean up
+        for key in range(ord('A'), ord('J')+1):
+            i = chr(key)
+            graph = self.db.select_graph(chr(key))
+            graph.delete()
+
+    def test_05_write_to_copy(self):
+        # make sure copied graph is writeable and loadable
+        src_graph = self.db.select_graph(GRAPH_ID)
+        src_graph.query("CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})"
+
+    def test_06_replicated_copy(self):
+        # make sure the GRAPH.COPY command is replicated
+
+        # stop old environment
+        self.env.stop()
+
+        # start a new environment, one which have a master and a replica
+        self.env, self.db = Env(env='oss', useSlaves=True)
+
+        source_con = self.env.getConnection()
+
+        # create a random graph
+        src_graph_id  = GRAPH_ID
+        copy_graph_id = "copy_" + GRAPH_ID
+
+        src_graph = self.db.select_graph(src_graph_id)
+        nodes, edges = create_random_schema()
+        create_random_graph(src_graph, nodes, edges)
+
+        # copy graph
+        self.graph_copy(src_graph_id, copy_graph_id)
+
+        # the WAIT command forces master slave sync to complete
+        source_con.execute_command("WAIT", "1", "0")
+
+        # make sure dest graph was replicated
+        # assuming replica port is env port+1
+        replica_db = FalkorDB("localhost", self.env.port+1)
+        replica_cloned_graph = replica_db.select_graph(copy_graph_id)
+        
+        # make sure src graph on master is the same as cloned graph on replica
+        self.compare_graphs(src_graph, replica_cloned_graph)
+
+        # clean up
+        self.env.stop()
+        
