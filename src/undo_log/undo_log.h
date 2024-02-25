@@ -56,8 +56,8 @@ void UndoLog_DeleteNode
 (
 	UndoLog log,      // undo log
 	Node *node,       // node deleted
-    LabelID *labels,  // labels attached to deleted entity
-    uint label_count  // number of labels attached to deleted entity
+	LabelID *labels,  // labels attached to deleted entity
+	uint label_count  // number of labels attached to deleted entity
 );
 
 // undo edge deletion
