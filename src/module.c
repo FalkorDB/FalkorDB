@@ -228,7 +228,7 @@ int RedisModule_OnLoad
 	}
 
 	if(RedisModule_CreateCommand(ctx, "graph.COPY", Graph_Copy,
-				"write deny-oom", 1, 1, 1) == REDISMODULE_ERR) {
+				"write deny-oom", 1, 2, 1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
