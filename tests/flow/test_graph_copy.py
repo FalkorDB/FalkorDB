@@ -12,37 +12,38 @@ class testGraphCopy():
 
     def graph_copy(self, src, dest):
         # invokes the GRAPH.COPY command
-        # handels exception when the command failed due to failure in creating
-        # a fork, in which case the command is retried
-        while True:
-            try:
-                # it is possible for GRAPH.COPY to fail in case FalkorDB was unable
-                # to create a fork (Redis restricts us to a single fork at a time)
-                self.conn.execute_command("GRAPH.COPY", src, dest)
-                break
-            except Exception as e:
-                # retry if FalkorDB failed to fork
-                # otherwise raise an exception
-                if str(e) == "Graph copy failed, could not fork, please retry":
-                    time.sleep(0.1)
-                    continue
-                else:
-                    raise e
+        self.conn.execute_command("GRAPH.COPY", src, dest)
 
     # compare graphs
     def compare_graphs(self, A, B):
         # tests that the same set of nodes and edges exists in both graphs
         # compare nodes
-        q = "MATCH (n) RETURN n ORDER BY ID(n)"
-        A_nodes = A.ro_query(q).result_set
-        B_nodes = B.ro_query(q).result_set
-        self.env.assertEqual(A_nodes, B_nodes)
+        while True:
+            try:
+                q = "MATCH (n) RETURN n ORDER BY ID(n)"
+                A_nodes = A.ro_query(q).result_set
+                B_nodes = B.ro_query(q).result_set
+                self.env.assertEqual(A_nodes, B_nodes)
+                break
+            except Exception as e:
+                # retry if query was issued while redis is loading
+                if str(e) == "Redis is loading the dataset in memory":
+                    print("Retry!")
+                    continue
 
         # compare edges
-        q = "MATCH ()-[e]->() RETURN e ORDER BY ID(e)"
-        A_edges = A.ro_query(q).result_set
-        B_edges = B.ro_query(q).result_set
-        self.env.assertEqual(A_edges, B_edges)
+        while True:
+            try:
+                q = "MATCH ()-[e]->() RETURN e ORDER BY ID(e)"
+                A_edges = A.ro_query(q).result_set
+                B_edges = B.ro_query(q).result_set
+                self.env.assertEqual(A_edges, B_edges)
+                break
+            except Exception as e:
+                # retry if query was issued while redis is loading
+                if str(e) == "Redis is loading the dataset in memory":
+                    print("Retry!")
+                    continue
 
     def test_01_invalid_invocation(self):
         # validate invalid invocations of the GRAPH.COPY command

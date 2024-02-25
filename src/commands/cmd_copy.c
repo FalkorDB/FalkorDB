@@ -164,29 +164,30 @@ static void _Graph_Copy
 	// child process will encode src graph to stream
 	// parent process will decode cloned graph from stream
 
-	int pid = RedisModule_Fork(NULL, NULL);
-	if(pid < 0) {
-		error = true;
-		// failed to fork!
-		RedisModule_ReplyWithError(ctx,
-				"Graph copy failed, could not fork, please retry");
-		goto cleanup;
-	} else if(pid == 0) {
-		// child process
-		_encode_graph(ctx, pipe_write_end, src_graph, dest);
+	int pid = -1;
+	while(pid == -1) {
+		pid = RedisModule_Fork(NULL, NULL);
+		if(pid < 0) {
+			// failed to fork! retry
+			// go to sleep for 1.0ms
+			struct timespec sleep_time;
+			sleep_time.tv_sec = 0;
+			sleep_time.tv_nsec = 1000000;
+			nanosleep(&sleep_time, NULL);
+		} else if(pid == 0) {
+			// child process
+			_encode_graph(ctx, pipe_write_end, src_graph, dest);
 
-		// all done, Redis require us to call 'RedisModule_ExitFromChild'
-		RedisModule_ExitFromChild(0);
-		return;
-	} else {
-		// parent process
-		_decode_graph(ctx, pipe_read_end, rm_dest);
+			// all done, Redis require us to call 'RedisModule_ExitFromChild'
+			RedisModule_ExitFromChild(0);
+			return;
+		} else {
+			// parent process
+			_decode_graph(ctx, pipe_read_end, rm_dest);
+		}
 	}
 
 	// replicate command
-	// TODO: on the replica's end
-	// there's no guarantee for the command to succeed
-	// for example RedisModule_Fork might fail...
 	RedisModule_ThreadSafeContextLock(ctx);
 	RedisModule_ReplicateVerbatim(ctx);
 	RedisModule_ThreadSafeContextUnlock(ctx);
