@@ -143,7 +143,7 @@ include $(ROOT)/build/FalkorDB-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) falkordbrs
+LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
 
 #----------------------------------------------------------------------------------------------
 
@@ -225,7 +225,7 @@ include $(MK)/rules
 
 ifeq ($(DEPS),1)
 
-deps: $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
+deps: $(LIBCYPHER_PARSER) $(GRAPHBLAS) $(LIBXXHASH) $(RAX) $(REDISEARCH_LIBS) $(UTF8PROC) $(ONIGURUMA) falkordbrs
 
 libxxhash: $(LIBXXHASH)
 
