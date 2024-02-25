@@ -1,4 +1,4 @@
-from common import Env, FalkorDB
+from common import Env, FalkorDB, SANITIZER, VALGRIND
 from random_graph import create_random_schema, create_random_graph
 import time
 
