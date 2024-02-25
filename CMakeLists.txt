@@ -25,7 +25,6 @@ include_directories(
 	${root}/deps/xxHash
 	${root}/deps/utf8proc
 	${root}/deps/oniguruma
-	$ENV{FalkorDBRS_BINDIR}
 	${root}/deps/RediSearch/src
 	${root}/deps/GraphBLAS/Include
 	${root}/deps/libcypher-parser/lib/src

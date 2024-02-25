@@ -143,7 +143,7 @@ include $(ROOT)/build/FalkorDB-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
-LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) $(FalkorDBRS)
+LIBS=$(RAX) $(LIBXXHASH) $(GRAPHBLAS) $(REDISEARCH_LIBS) $(LIBCYPHER_PARSER) $(UTF8PROC) $(ONIGURUMA) falkordbrs
 
 #----------------------------------------------------------------------------------------------
 
@@ -193,9 +193,7 @@ ifneq ($(call files_missing,$(REDISEARCH_LIBS)),)
 MISSING_DEPS += $(REDISEARCH_LIBS)
 endif
 
-ifeq ($(wildcard $(FalkorDBRS)),)
-MISSING_DEPS += $(FalkorDBRS)
-endif
+MISSING_DEPS += falkordbrs
 
 ifneq ($(MISSING_DEPS),)
 DEPS=1
@@ -273,7 +271,6 @@ $(REDISEARCH_LIBS):
 	@echo Building $@ ...
 	$(SHOW)$(MAKE) -C $(REDISEARCH_DIR) STATIC=1 BINROOT=$(REDISEARCH_BINROOT) CC=$(CC) CXX=$(CXX)
 
-falkordbrs: $(FalkorDBRS)
 
 ifeq ($(DEBUG),1)
 CARGO_FLAGS=
@@ -286,7 +283,7 @@ export RUSTFLAGS=-Zsanitizer=$(SAN)
 CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
 
-$(FalkorDBRS):
+falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
 
