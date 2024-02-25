@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "../redismodule.h"
+#include "../util/thpool/pools.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
 #include "../serializers/encoder/v14/encode_v14.h"
@@ -79,43 +80,37 @@ static void _decode_graph
 	SerializerIO_Free(&reader);
 }
 
-// clone a graph
-//
-// usage:
-// GRAPH.COPY <src_graph> <dest_graph>
-//
-// src_graph must exists
-// dest_graph mustn't exists
-int Graph_Copy
+// GRAPH.COPY command context
+typedef struct {
+	char *src;                     // src graph id
+	char *dest;                    // dest graph id
+	RedisModuleBlockedClient *bc;  // blocked client
+} GraphCopyContext;
+
+// implements GRAPH.COPY logic
+// this function is expected to run on a worker thread
+// avoiding blocking redis main thread while the graph is being copied
+static void _Graph_Copy
 (
-	RedisModuleCtx *ctx,      // redis module context
-	RedisModuleString **argv, // command argument
-	int argc                  // number of argument
+	void *context
 ) {
-	// validations
-	ASSERT(ctx  != NULL);
-	ASSERT(argv != NULL);
 
-	// expecting exactly 3 arguments:
-	// argv[0] command name
-	// argv[1] src_graph_id
-	// argv[2] dest_graph_id
-	if(argc != 3) {
-		return RedisModule_WrongArity(ctx);
-	}
+	GraphCopyContext *_context = (GraphCopyContext*)context;
 
-	// TODO: I think we need to copy these strings
 	bool error = false;
 	int pipefd[2] = {-1, -1};
 	GraphContext *src_graph = NULL;
-	const char *src  = RedisModule_StringPtrLen(argv[1], NULL);
-	const char *dest = RedisModule_StringPtrLen(argv[2], NULL);
+
+	char *src                    = _context->src;
+	char *dest                   = _context->dest;
+    RedisModuleBlockedClient *bc = _context->bc;
+	RedisModuleCtx *ctx          = RedisModule_GetThreadSafeContext(bc);
 
 	// TODO: lock GIL
 
 	// make sure dest key does not exists
 	RedisModuleKey *dest_key =
-		RedisModule_OpenKey(ctx, argv[2], REDISMODULE_READ);
+		RedisModule_OpenKey(ctx, dest, REDISMODULE_READ);
 	int dest_key_type = RedisModule_KeyType(dest_key);
 	RedisModule_CloseKey(dest_key);
 
@@ -127,7 +122,7 @@ int Graph_Copy
 	}
 
 	// make sure src key is a graph
-	src_graph = GraphContext_Retrieve(ctx, argv[1], true, false);
+	src_graph = GraphContext_Retrieve(ctx, src, true, false);
 	if(src_graph == NULL) {
 		// src graph is missing, abort
 		error = true;
@@ -165,10 +160,10 @@ int Graph_Copy
 
 		// all done, Redis require us to call 'RedisModule_ExitFromChild'
 		RedisModule_ExitFromChild(0);
-		return REDISMODULE_OK;
+		return;
 	} else {
 		// parent process
-		_decode_graph(ctx, pipe_read_end, argv[2]);
+		_decode_graph(ctx, pipe_read_end, dest);
 	}
 
 	// replicate command
@@ -176,6 +171,12 @@ int Graph_Copy
 
 	// clean up
 cleanup:
+
+	// free command context
+	rm_free(_context->src);
+	rm_free(_context->dest);
+	rm_free(_context);
+
 	// decrease src graph ref-count
 	if(src_graph != NULL) {
 		GraphContext_DecreaseRefCount(src_graph);
@@ -190,6 +191,56 @@ cleanup:
 	// reply "OK" if no error was encountered
 	if(!error) {
 		RedisModule_ReplyWithCString(ctx, "OK");
+	}
+
+	// unblock the client
+    RedisModule_UnblockClient(bc, NULL);
+}
+
+// clone a graph
+//
+// usage:
+// GRAPH.COPY <src_graph> <dest_graph>
+int Graph_Copy
+(
+	RedisModuleCtx *ctx,      // redis module context
+	RedisModuleString **argv, // command argument
+	int argc                  // number of argument
+) {
+	// validations
+	ASSERT(ctx  != NULL);
+	ASSERT(argv != NULL);
+
+	// expecting exactly 3 arguments:
+	// argv[0] command name
+	// argv[1] src_graph_id
+	// argv[2] dest_graph_id
+	if(argc != 3) {
+		return RedisModule_WrongArity(ctx);
+	}
+
+	// make a copy of arguments
+	char *src  = rm_strdup(RedisModule_StringPtrLen(argv[1], NULL));
+	char *dest = rm_strdup(RedisModule_StringPtrLen(argv[2], NULL));
+
+	// block the client
+    RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
+			NULL, 0);
+
+	// create command context
+	GraphCopyContext *context = rm_malloc(sizeof(GraphCopyContext));
+
+	context->bc   = bc;
+	context->src  = src;
+	context->dest = dest;
+
+	// add copy command to thread-pool
+	// to avoid hogging our only write thread, we'll run the GRAPH.COPY command
+	// on a READ thread, usually there are multiple READ threads available
+	if(ThreadPools_AddWorkReader(_Graph_Copy, context, false)
+			== THPOOL_QUEUE_FULL) {
+		// thread-pool queue is full, back off
+		RedisModule_ReplyWithError(ctx, "Max pending queries exceeded");
 	}
 
 	return REDISMODULE_OK;

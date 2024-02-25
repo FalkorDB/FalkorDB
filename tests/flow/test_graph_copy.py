@@ -4,13 +4,16 @@ import time
 
 GRAPH_ID = "graph_copy"
 
-# tests the GRAPH.LIST command
+# tests the GRAPH.COPY command
 class testGraphCopy():
     def __init__(self):
-        self.env, self.db = Env()
+        self.env, self.db = Env(enableDebugCommand=True)
         self.conn = self.env.getConnection()
 
     def graph_copy(self, src, dest):
+        # invokes the GRAPH.COPY command
+        # handels exception when the command failed due to failure in creating
+        # a fork, in which case the command is retried
         while True:
             try:
                 # it is possible for GRAPH.COPY to fail in case FalkorDB was unable
@@ -28,6 +31,7 @@ class testGraphCopy():
 
     # compare graphs
     def compare_graphs(self, A, B):
+        # tests that the same set of nodes and edges exists in both graphs
         # compare nodes
         q = "MATCH (n) RETURN n ORDER BY ID(n)"
         A_nodes = A.ro_query(q).result_set
@@ -41,6 +45,8 @@ class testGraphCopy():
         self.env.assertEqual(A_edges, B_edges)
 
     def test_01_invalid_invocation(self):
+        # validate invalid invocations of the GRAPH.COPY command
+
         # missing src graph
         src = 'A'
         dest = 'Z'
@@ -119,6 +125,7 @@ class testGraphCopy():
         dest_graph.delete()
 
     def test_03_copy_random_graph(self):
+        # make sure copying of a random graph is working as expected
         src = 'a'
         dest = 'z'
 
@@ -168,10 +175,62 @@ class testGraphCopy():
 
     def test_05_write_to_copy(self):
         # make sure copied graph is writeable and loadable
-        src_graph = self.db.select_graph(GRAPH_ID)
-        src_graph.query("CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})"
+        src_graph_id = GRAPH_ID
+        copy_graph_id = GRAPH_ID + "_copy"
 
-    def test_06_replicated_copy(self):
+        query = "CREATE (:A {v:1})-[:R {v:2}]->(:B {v:3})"
+        src_graph = self.db.select_graph(src_graph_id)
+        src_graph.query(query)
+
+        # create a copy
+        self.graph_copy(src_graph_id, copy_graph_id)
+        copy_graph = self.db.select_graph(copy_graph_id)
+
+        query = "MATCH (b:B {v:3}) CREATE (b)-[:R {v:4}]->(:C {v:5})"
+        src_graph.query(query)
+        copy_graph.query(query)
+
+        # reload entire keyspace
+        self.conn.execute_command("DEBUG", "RELOAD")
+
+        # make sure both src and copy exists and functional
+        self.compare_graphs(src_graph, copy_graph)
+
+        # clean up
+        src_graph.delete()
+        copy_graph.delete()
+
+    def test_06_copy_uneffected_by_vkey_size(self):
+        # set size of virtual key to 1
+        # i.e. number of entities per virtual key is 1.
+        vkey_max_entity_count = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
+        self.db.config_set("VKEY_MAX_ENTITY_COUNT", 1)
+
+        # make sure configuration chnaged
+        self.env.assertEqual(self.db.config_get("VKEY_MAX_ENTITY_COUNT"), 1)
+
+        src_graph_id  = GRAPH_ID
+        copy_graph_id = GRAPH_ID + "_copy"
+
+        # create graph
+        src_graph = self.db.select_graph(src_graph_id)
+        nodes, edges = create_random_schema()
+        create_random_graph(src_graph, nodes, edges)
+
+        # restore original VKEY_MAX_ENTITY_COUNT
+        self.db.config_set("VKEY_MAX_ENTITY_COUNT", vkey_max_entity_count)
+
+        # make a copy
+        self.graph_copy(src_graph_id, copy_graph_id)
+        copy_graph = self.db.select_graph(copy_graph_id)
+
+        # validate src_graph and copy_graph are the same
+        self.compare_graphs(src_graph, copy_graph)
+
+        # clean up
+        src_graph.delete()
+
+    def test_07_replicated_copy(self):
         # make sure the GRAPH.COPY command is replicated
 
         # stop old environment
@@ -206,4 +265,4 @@ class testGraphCopy():
 
         # clean up
         self.env.stop()
-        
+
