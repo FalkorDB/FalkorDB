@@ -4,8 +4,8 @@
  */
 
 #include "RG.h"
+#include "../cron/cron.h"
 #include "../redismodule.h"
-#include "../util/thpool/pools.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
 #include "../serializers/encoder/v14/encode_v14.h"
@@ -309,19 +309,8 @@ int Graph_Copy
 	context->src  = src;
 	context->dest = dest;
 
-	// add copy command to thread-pool
-	// to avoid hogging our only write thread, we'll run the GRAPH.COPY command
-	// on a READ thread, usually there are multiple READ threads available
-	if(ThreadPools_AddWorkReader(_Graph_Copy, context, false)
-			== THPOOL_QUEUE_FULL) {
-		// thread-pool queue is full, back off
-		RedisModule_ReplyWithError(ctx, "Max pending queries exceeded");
-
-		// free command context
-		rm_free(context->src);
-		rm_free(context->dest);
-		rm_free(context);
-	}
+	// add GRAPH.COPY as a cron task to run as soon as possible
+	Cron_AddTask(0, _Graph_Copy, NULL, context);
 
 	return REDISMODULE_OK;
 }
