@@ -1,5 +1,6 @@
 from common import Env, FalkorDB, SANITIZER, VALGRIND
 from random_graph import create_random_schema, create_random_graph
+from graph_utils import graph_eq
 import time
 
 GRAPH_ID = "graph_copy"
@@ -15,29 +16,11 @@ class testGraphCopy():
         self.conn.execute_command("GRAPH.COPY", src, dest)
 
     # compare graphs
-    def compare_graphs(self, A, B):
-        # tests that the same set of nodes and edges exists in both graphs
-        # compare nodes
+    def assert_graph_eq(self, A, B):
+        # tests that the graphs are the same
         while True:
             try:
-                q = "MATCH (n) RETURN n ORDER BY ID(n)"
-                A_nodes = A.ro_query(q).result_set
-                B_nodes = B.ro_query(q).result_set
-                self.env.assertEqual(A_nodes, B_nodes)
-                break
-            except Exception as e:
-                # retry if query was issued while redis is loading
-                if str(e) == "Redis is loading the dataset in memory":
-                    print("Retry!")
-                    continue
-
-        # compare edges
-        while True:
-            try:
-                q = "MATCH ()-[e]->() RETURN e ORDER BY ID(e)"
-                A_edges = A.ro_query(q).result_set
-                B_edges = B.ro_query(q).result_set
-                self.env.assertEqual(A_edges, B_edges)
+                self.env.assertTrue(graph_eq(A, B))
                 break
             except Exception as e:
                 # retry if query was issued while redis is loading
@@ -139,16 +122,41 @@ class testGraphCopy():
         dest_graph = self.db.select_graph(dest)
 
         # validate src and dest graphs are the same
-        self.compare_graphs(src_graph, dest_graph)
+        self.assert_graph_eq(src_graph, dest_graph)
 
         # clean up
         src_graph.delete()
         dest_graph.delete()
 
-    def test_04_chain_of_copies(self):
+    def test_04_copy_constraints(self):
+        # make sure constrains and indexes are copied
+
+        src_id = GRAPH_ID
+        clone_id = GRAPH_ID + "_copy"
+
+        src_graph = self.db.select_graph(src_id)
+        clone_graph = self.db.select_graph(clone_id)
+
+        # create graph with both indices and constrains
+        src_graph.create_node_range_index("Person", "name", "age")
+
+        self.conn.execute_command("GRAPH.CONSTRAINT", "CREATE", src_id, "UNIQUE",
+                                  "NODE", "Person", "PROPERTIES", 1, "name")
+
+        # copy graph
+        self.graph_copy(src_id, clone_id)
+
+        # make sure src and cloned graph are the same
+        self.assert_graph_eq(src_graph, clone_graph)
+
+        # clean up
+        src_graph.delete()
+        clone_graph.delete()
+
+    def test_05_chain_of_copies(self):
         # make multiple copies of essentially the same graph
         # start with graph A
-        # copy A to B, copy B to C and so on and so forth un to J
+        # copy A to B, copy B to C and so on and so forth up to J
         # A == B == C == ... J
         src = 'A'
 
@@ -166,7 +174,7 @@ class testGraphCopy():
         # validate src and dest graphs are the same
         src_graph = self.db.select_graph('A')
         dest_graph = self.db.select_graph('J')
-        self.compare_graphs(src_graph, dest_graph)
+        self.assert_graph_eq(src_graph, dest_graph)
 
         # clean up
         for key in range(ord('A'), ord('J')+1):
@@ -174,7 +182,7 @@ class testGraphCopy():
             graph = self.db.select_graph(chr(key))
             graph.delete()
 
-    def test_05_write_to_copy(self):
+    def test_06_write_to_copy(self):
         # make sure copied graph is writeable and loadable
         src_graph_id = GRAPH_ID
         copy_graph_id = GRAPH_ID + "_copy"
@@ -195,13 +203,13 @@ class testGraphCopy():
         self.conn.execute_command("DEBUG", "RELOAD")
 
         # make sure both src and copy exists and functional
-        self.compare_graphs(src_graph, copy_graph)
+        self.assert_graph_eq(src_graph, copy_graph)
 
         # clean up
         src_graph.delete()
         copy_graph.delete()
 
-    def test_06_copy_uneffected_by_vkey_size(self):
+    def test_07_copy_uneffected_by_vkey_size(self):
         # set size of virtual key to 1
         # i.e. number of entities per virtual key is 1.
         vkey_max_entity_count = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
@@ -218,20 +226,20 @@ class testGraphCopy():
         nodes, edges = create_random_schema()
         create_random_graph(src_graph, nodes, edges)
 
-        # restore original VKEY_MAX_ENTITY_COUNT
-        self.db.config_set("VKEY_MAX_ENTITY_COUNT", vkey_max_entity_count)
-
         # make a copy
         self.graph_copy(src_graph_id, copy_graph_id)
         copy_graph = self.db.select_graph(copy_graph_id)
 
+        # restore original VKEY_MAX_ENTITY_COUNT
+        self.db.config_set("VKEY_MAX_ENTITY_COUNT", vkey_max_entity_count)
+
         # validate src_graph and copy_graph are the same
-        self.compare_graphs(src_graph, copy_graph)
+        self.assert_graph_eq(src_graph, copy_graph)
 
         # clean up
         src_graph.delete()
 
-    def test_07_replicated_copy(self):
+    def test_08_replicated_copy(self):
         # skip test if we're running under Valgrind or sanitizer
         if VALGRIND or SANITIZER != "":
             self.env.skip() # valgrind is not working correctly with replication
@@ -244,7 +252,7 @@ class testGraphCopy():
         # start a new environment, one which have a master and a replica
         self.env, self.db = Env(env='oss', useSlaves=True)
 
-        source_con = self.env.getConnection()
+        master_con = self.env.getConnection()
 
         # create a random graph
         src_graph_id  = GRAPH_ID
@@ -258,7 +266,7 @@ class testGraphCopy():
         self.graph_copy(src_graph_id, copy_graph_id)
 
         # the WAIT command forces master slave sync to complete
-        source_con.execute_command("WAIT", "1", "0")
+        master_con.execute_command("WAIT", "1", "0")
 
         # make sure dest graph was replicated
         # assuming replica port is env port+1
@@ -266,8 +274,5 @@ class testGraphCopy():
         replica_cloned_graph = replica_db.select_graph(copy_graph_id)
         
         # make sure src graph on master is the same as cloned graph on replica
-        self.compare_graphs(src_graph, replica_cloned_graph)
-
-        # clean up
-        self.env.stop()
+        self.assert_graph_eq(src_graph, replica_cloned_graph)
 

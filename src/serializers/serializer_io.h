@@ -7,6 +7,15 @@
 
 #include "../redismodule.h"
 
+// SerializerIO
+// acts as an abstraction layer for both graph encoding and decoding
+// there are two types of serializers:
+// 1. RedisIO serializer
+// 2. PIPE serializer
+//
+// The graph encoding / decoding logic uses this abstraction without knowing
+// what is the underline serializer
+
 typedef struct SerializerIO_Opaque *SerializerIO;
 
 // create a serializer which uses pipe

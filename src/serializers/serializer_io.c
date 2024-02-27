@@ -78,19 +78,22 @@ PIPE_WRITE(Float, float)                // Pipe_WriteFloat
 PIPE_WRITE(LongDouble, long double)     // Pipe_WriteLongDouble
 PIPE_WRITE(String, RedisModuleString*)  // Pipe_WriteString
 
+// write buffer to pipe
 static void Pipe_WriteBuffer
 (
-	void *pipe,
-	const char *buff,
-	size_t n
+	void *pipe,        // pipe to write to
+	const char *buff,  // buffer
+	size_t n           // number of bytes to write
 ) {
 	int pipefd = (intptr_t)pipe;
 
 	// write size
-	write(pipefd, &n , sizeof(size_t));
+	ssize_t written = write(pipefd, &n , sizeof(size_t));
+	ASSERT(written == sizeof(size_t));
 
 	// write data
-	write(pipefd, buff, n);
+	written = write(pipefd, buff, n);
+	ASSERT(written == n);
 }
 
 // macro for creating pipe serializer read functions
@@ -112,10 +115,11 @@ PIPE_READ(Float, float)                // Pipe_ReadFloat
 PIPE_READ(LongDouble, long double)     // Pipe_ReadLongDouble
 PIPE_READ(String, RedisModuleString*)  // Pipe_ReadString
 
+// read buffer from pipe
 static char *Pipe_ReadBuffer
 (
-	void *pipe,
-	size_t *n
+	void *pipe,  // pipe to read from
+	size_t *n    // [optional] number of bytes read
 ) {
 	ASSERT(pipe != NULL);
 
@@ -234,7 +238,6 @@ void SerializerIO_Free
 	ASSERT(io  != NULL);
 	ASSERT(*io != NULL);
 
-	// TODO: close pipe
 	rm_free(*io);
 	*io = NULL;
 }

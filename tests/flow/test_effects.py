@@ -2,6 +2,7 @@ import time
 import threading
 from common import *
 from index_utils import *
+from graph_utils import graph_eq
 
 GRAPH_ID = "effects"
 MONITOR_ATTACHED = False
@@ -77,42 +78,7 @@ class testEffects():
 
     # asserts that master and replica have the same view over the graph
     def assert_graph_eq(self):
-        #validate schema:
-        # labels
-        q = "CALL db.labels()"
-        master_labels = self.master_graph.query(q).result_set
-        replica_labels = self.replica_graph.ro_query(q).result_set
-        self.env.assertEquals(master_labels, replica_labels)
-
-        # relationship-types
-        q = "CALL db.relationshiptypes()"
-        master_relations = self.master_graph.query(q).result_set
-        replica_relations = self.replica_graph.ro_query(q).result_set
-        self.env.assertEquals(master_relations, replica_relations)
-
-        # properties
-        q = "CALL db.propertyKeys()"
-        master_props = self.master_graph.query(q).result_set
-        replica_props = self.replica_graph.ro_query(q).result_set
-        self.env.assertEquals(master_props, replica_props)
-
-        # validate nodes
-        q = "MATCH (n) RETURN n ORDER BY(n)"
-        master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.ro_query(q).result_set
-        self.env.assertEquals(master_resultset, replica_resultset)
-
-        # validate relationships
-        q = "MATCH ()-[e]->() RETURN e ORDER BY(e)"
-        master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.ro_query(q).result_set
-        self.env.assertEquals(master_resultset, replica_resultset)
-
-        # validate indices
-        q = "CALL db.indexes() YIELD label, properties, types, language, stopwords, entitytype"
-        master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.ro_query(q).result_set
-        self.env.assertEquals(master_resultset, replica_resultset)
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
