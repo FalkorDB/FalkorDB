@@ -70,13 +70,13 @@ static GraphContext *_DecodeHeader
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
-	uint64_t  node_count          =  SerializerIO_ReadUnsigned(rdb);
-	uint64_t  edge_count          =  SerializerIO_ReadUnsigned(rdb);
-	uint64_t  deleted_node_count  =  SerializerIO_ReadUnsigned(rdb);
-	uint64_t  deleted_edge_count  =  SerializerIO_ReadUnsigned(rdb);
-	uint64_t  label_count         =  SerializerIO_ReadUnsigned(rdb);
-	uint64_t  relation_count      =  SerializerIO_ReadUnsigned(rdb);
-	uint64_t  multi_edge[relation_count];
+	uint64_t node_count         = SerializerIO_ReadUnsigned(rdb);
+	uint64_t edge_count         = SerializerIO_ReadUnsigned(rdb);
+	uint64_t deleted_node_count = SerializerIO_ReadUnsigned(rdb);
+	uint64_t deleted_edge_count = SerializerIO_ReadUnsigned(rdb);
+	uint64_t label_count        = SerializerIO_ReadUnsigned(rdb);
+	uint64_t relation_count     = SerializerIO_ReadUnsigned(rdb);
+	uint64_t multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
 		multi_edge[i] = SerializerIO_ReadUnsigned(rdb);

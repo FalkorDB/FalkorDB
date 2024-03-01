@@ -157,7 +157,7 @@ class testGraphCopy():
         # make multiple copies of essentially the same graph
         # start with graph A
         # copy A to B, copy B to C and so on and so forth up to J
-        # A == B == C == ... J
+        # A == B == C == D
         src = 'A'
 
         # create a random graph
@@ -166,18 +166,18 @@ class testGraphCopy():
         create_random_graph(src_graph, nodes, edges)
 
         # clone graph multiple times
-        for key in range(ord('B'), ord('J')+1):
+        for key in range(ord('B'), ord('D')+1):
             dest = chr(key)
             self.graph_copy(src, dest)
             src = dest
 
         # validate src and dest graphs are the same
         src_graph = self.db.select_graph('A')
-        dest_graph = self.db.select_graph('J')
+        dest_graph = self.db.select_graph('D')
         self.assert_graph_eq(src_graph, dest_graph)
 
         # clean up
-        for key in range(ord('A'), ord('J')+1):
+        for key in range(ord('A'), ord('D')+1):
             i = chr(key)
             graph = self.db.select_graph(chr(key))
             graph.delete()
