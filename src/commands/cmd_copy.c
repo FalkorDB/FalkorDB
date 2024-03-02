@@ -3,6 +3,56 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+// copying a graph is performed in a number of steps:
+//
+// 1. a cron task is created with the responsibility of creating a fork
+//
+// 2. the forked child process encodes the graph into a temporary file
+//    once done the child exists and a callback is invoked on Redis main thread
+//
+// 3. a second cron task is created with the responsibility of decoding the
+//    dumped file and creating a new graph key
+//
+//
+//
+// ┌────────────────┐                  ┌────────────────┐
+// │                │                  │                │
+// │   Cron Task    │                  │     Child      │
+// │                │                  │                │
+// │                │                  │                │       ┌────────┐
+// │                │                  │                │       │        │
+// │                │                  │                │       │ Dump   │
+// │      Fork      ├─────────────────►│                ├──────►│ Graph  │
+// │                │                  │                │       │        │
+// │                │                  │                │       │        │
+// └────────────────┘                  └───────┬────────┘       │        │
+//                                             │                │        │
+//                                             │                └────────┘
+//                                             │                    ▲
+// ┌────────────────┐                          │                    │
+// │                │                          │                    │
+// │  Main thread   │      Done callback       │                    │
+// │                │◄─────────────────────────┘                    │
+// │                │                                               │
+// │                │                                               │
+// │                │                                               │
+// └────────┬───────┘                                               │
+//          │                                                       │
+//          │                                                       │
+//          ▼                                                       │
+// ┌────────────────┐                                               │
+// │                │                                               │
+// │   Cron Task    │                                               │
+// │                │                                               │
+// │                │                                               │
+// │  Decode Graph  ├───────────────────────────────────────────────┘
+// │                │
+// │                │
+// │                │
+// │                │
+// └────────────────┘
+
+
 #include "RG.h"
 #include "../cron/cron.h"
 #include "../util/uuid.h"
@@ -21,17 +71,17 @@ extern RedisModuleType *GraphContextRedisModuleType;
 
 // GRAPH.COPY command context
 typedef struct {
-	const char *src;             // src graph id
-	const char *dest;            // dest graph id
-	char *path;                  // path to dumped graph on disk
-	RedisModuleString *rm_src;   // redismodule string src
-	RedisModuleString *rm_dest;  // redismodule string dest
-
+	const char *src;               // src graph id
+	const char *dest;              // dest graph id
+	char *path;                    // path to dumped graph on disk
+	RedisModuleString *rm_src;     // redismodule string src
+	RedisModuleString *rm_dest;    // redismodule string dest
 	RedisModuleBlockedClient *bc;  // blocked client
 } GraphCopyContext;
 
+// return a full path to a temporary dump file
+// e.g. /tmp/<UUID>.dump
 static char *_temp_file(void) {
-	// /tmp/<UUID>.dump
 	char *uuid = UUID_New();
 	char *path;
 	asprintf(&path, "/tmp/%s.dump", uuid);
@@ -40,11 +90,12 @@ static char *_temp_file(void) {
 	return path;
 }
 
-GraphCopyContext *GraphCopyContext_New
+// create a new graph copy context
+static GraphCopyContext *GraphCopyContext_New
 (
-	RedisModuleBlockedClient *bc,
-	RedisModuleString *src,
-	RedisModuleString *dest
+	RedisModuleBlockedClient *bc,  // blocked client
+	RedisModuleString *src,        // src graph key name
+	RedisModuleString *dest        // destination graph key name
 ) {
 	ASSERT(bc   != NULL);
 	ASSERT(src  != NULL);
@@ -62,13 +113,16 @@ GraphCopyContext *GraphCopyContext_New
 	return ctx;
 }
 
-void GraphCopyContext_Free
+// free graph copy context
+static void GraphCopyContext_Free
 (
-	GraphCopyContext *copy_ctx
+	GraphCopyContext *copy_ctx  // context to free
 ) {
 	ASSERT(copy_ctx != NULL);
 
 	// delete file in case it exists, no harm if file is missing
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"deleting dumped graph file: %s", copy_ctx->path);
 	remove(copy_ctx->path);
 
 	free(copy_ctx->path);
@@ -87,7 +141,7 @@ void GraphCopyContext_Free
 // 1. the cloned graph wouldn't change
 // 2. due to memory seperation we do not need to hold any locks
 // 3. we're allowed to make modification to the graph e.g. rename
-static int _encode_graph
+static int encode_graph
 (
 	RedisModuleCtx *ctx,         // redis module context
 	GraphContext *gc,            // graph to clone
@@ -123,6 +177,8 @@ static int _encode_graph
 	ASSERT(io != NULL);
 
 	// encode graph to disk
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE, "dump graph: %s to: %s",
+			copy_ctx->src, copy_ctx->path);
 	RdbSaveGraph_v14(io, gc);
 
 cleanup:
@@ -138,7 +194,7 @@ cleanup:
 }
 
 // load graph from file
-static void _LoadGraphFromFile
+static void LoadGraphFromFile
 (
 	void *pdata  // graph copy context
 ) {
@@ -165,6 +221,8 @@ static void _LoadGraphFromFile
 	ASSERT(io != NULL);
 
 	// decode graph from io
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
+			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 	GraphContext *gc = RdbLoadGraphContext_v14(io, copy_ctx->rm_dest);
 	ASSERT(gc != NULL);
 
@@ -200,8 +258,7 @@ static void _LoadGraphFromFile
 
 		RedisModule_CloseKey(key);
 
-		// release GIL
-		RedisModule_ThreadSafeContextUnlock(ctx);
+		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
 
 		// register graph context for BGSave
 		GraphContext_RegisterWithModule(gc);
@@ -225,7 +282,7 @@ cleanup:
 
 // fork done handler
 // this function runs on Redis main thread
-static void _ForkDoneHandler
+static void ForkDoneHandler
 (
 	int exitcode,    // fork return code
 	int bysignal,    // how did fork terminated
@@ -244,7 +301,7 @@ static void _ForkDoneHandler
 	}
 
 	// perform decoding on a different thread to avoid blocking Redis
-	Cron_AddTask(0, _LoadGraphFromFile, NULL, user_data);
+	Cron_AddTask(0, LoadGraphFromFile, NULL, user_data);
 }
 
 // implements GRAPH.COPY logic
@@ -315,7 +372,7 @@ static void _Graph_Copy
 		Graph_AcquireReadLock(gc->g);
 
 		// try to fork
-		pid = RedisModule_Fork(_ForkDoneHandler, copy_ctx);
+		pid = RedisModule_Fork(ForkDoneHandler, copy_ctx);
 		if(pid < 0) {
 			// failed to fork! retry in a bit
 
@@ -330,7 +387,7 @@ static void _Graph_Copy
 		} else if(pid == 0) {
 			// managed to fork, in child process
 			// encode graph to disk
-			int res = _encode_graph(ctx, gc, copy_ctx);
+			int res = encode_graph(ctx, gc, copy_ctx);
 			// all done, Redis require us to call 'RedisModule_ExitFromChild'
 			RedisModule_ExitFromChild(res);
 			return;
@@ -354,7 +411,6 @@ cleanup:
 		GraphContext_DecreaseRefCount(gc);
 	}
 
-	// reply "OK" if no error was encountered
 	if(error) {
 		// free command context only in the case of an error
 		// otherwise the fork callback is responsible for freeing this context
@@ -365,7 +421,7 @@ cleanup:
 }
 
 // clone a graph
-// function executes on Redis main thread
+// this function executes on Redis main thread
 //
 // usage:
 // GRAPH.COPY <src_graph> <dest_graph>
