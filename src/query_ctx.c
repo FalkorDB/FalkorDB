@@ -10,7 +10,6 @@
 #include "util/simple_timer.h"
 #include "arithmetic/arithmetic_expression.h"
 #include "serializers/graphcontext_type.h"
-#include "undo_log/undo_log.h"
 
 // GraphContext type as it is registered at Redis
 extern RedisModuleType *GraphContextRedisModuleType;
@@ -274,7 +273,8 @@ void QueryCtx_Rollback(void) {
 
 	if(ctx->undo_log == NULL) return;
 	
-	UndoLog_Rollback(&ctx->undo_log);
+	UndoLog_Rollback(ctx->undo_log, ctx->gc);
+	ctx->undo_log = NULL;
 }
 
 // retrieve effects-buffer
@@ -462,7 +462,10 @@ void QueryCtx_Free(void) {
 	QueryCtx *ctx = _QueryCtx_GetCtx();
 	ASSERT(ctx != NULL);
 
-	UndoLog_Free(&ctx->undo_log);
+	if(ctx->undo_log) {
+		UndoLog_Free(ctx->undo_log);
+		ctx->undo_log = NULL;
+	}
 	EffectsBuffer_Free(ctx->effects_buffer);
 
 	if(ctx->query_data.params != NULL) {

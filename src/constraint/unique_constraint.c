@@ -22,7 +22,7 @@ struct _UniqueConstraint {
 	Constraint_SetPrivateDataCB set_pdata;  // set private data
 	Constraint_GetPrivateDataCB get_pdata;  // get private data
 	int schema_id;                          // enforced schema ID
-	Attribute_ID *attrs;                    // enforced attributes
+	AttributeID *attrs;                     // enforced attributes
 	const char **attr_names;                // enforced attribute names
 	ConstraintStatus status;                // constraint status
 	uint _Atomic pending_changes;           // number of pending changes
@@ -83,7 +83,7 @@ bool EnforceUniqueEntity
 	const AttributeSet attributes = GraphEntity_GetAttributes(e);
 
 	for(uint8_t i = 0; i < _c->n_attr; i++) {
-		Attribute_ID attr_id = _c->attrs[i];
+		AttributeID attr_id = _c->attrs[i];
 
 		// make sure entity possesses attribute
 		SIValue *v = AttributeSet_Get(attributes, attr_id);
@@ -167,7 +167,7 @@ cleanup:
 Constraint Constraint_UniqueNew
 (
 	int schema_id,            // schema ID
-	Attribute_ID *fields,     // enforced fields
+	AttributeID *fields,     // enforced fields
 	const char **attr_names,  // enforced attribute names
 	uint8_t n_fields,         // number of fields
 	GraphEntityType et,       // entity type
@@ -176,8 +176,8 @@ Constraint Constraint_UniqueNew
 	UniqueConstraint c = rm_malloc(sizeof(struct _UniqueConstraint));
 
 	// introduce constraint attributes
-	c->attrs = rm_malloc(sizeof(Attribute_ID) * n_fields);
-	memcpy(c->attrs, fields, sizeof(Attribute_ID) * n_fields);
+	c->attrs = rm_malloc(sizeof(AttributeID) * n_fields);
+	memcpy(c->attrs, fields, sizeof(AttributeID) * n_fields);
 
 	c->attr_names = rm_malloc(sizeof(char*) * n_fields);
 	memcpy(c->attr_names, attr_names, sizeof(char*) * n_fields);

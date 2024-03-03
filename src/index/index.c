@@ -497,9 +497,9 @@ int Index_AddField
 // removes fields from index
 void Index_RemoveField
 (
-	Index idx,             // index modified
-	Attribute_ID attr_id,  // field to remove
-	IndexFieldType t       // field type
+	Index idx,            // index modified
+	AttributeID attr_id,  // field to remove
+	IndexFieldType t      // field type
 ) {
 	ASSERT(idx != NULL);
 	ASSERT(t & (INDEX_FLD_RANGE | INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR));
@@ -571,7 +571,7 @@ IndexField *Index_GetField
 (
 	int *pos,         // [optional out] field index
 	const Index idx,  // index to get field from
-	Attribute_ID id   // field attribute id
+	AttributeID id    // field attribute id
 ) {
 	ASSERT(idx     != NULL);
 	ASSERT(id != ATTRIBUTE_ID_NONE && id != ATTRIBUTE_ID_ALL);
@@ -600,7 +600,7 @@ IndexField *Index_GetField
 IndexFieldType Index_GetFieldType
 (
 	const Index idx,  // index to query
-	Attribute_ID id   // field to retrieve type of
+	AttributeID id    // field to retrieve type of
 ) {
 	ASSERT(idx != NULL);
 
@@ -613,7 +613,7 @@ IndexFieldType Index_GetFieldType
 bool Index_ContainsField
 (
 	const Index idx,     // index to query
-	Attribute_ID id,     // field to look for
+	AttributeID id,      // field to look for
 	IndexFieldType type  // field type to look for
 ) {
 	ASSERT(idx != NULL);

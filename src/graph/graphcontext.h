@@ -205,7 +205,7 @@ uint GraphContext_AttributeCount
 );
 
 // retrieve an attribute ID given a string, creating one if not found
-Attribute_ID GraphContext_FindOrAddAttribute
+AttributeID GraphContext_FindOrAddAttribute
 (
 	GraphContext *gc,
 	const char *attribute,
@@ -216,12 +216,12 @@ Attribute_ID GraphContext_FindOrAddAttribute
 const char *GraphContext_GetAttributeString
 (
 	GraphContext *gc,
-	Attribute_ID id
+	AttributeID id
 );
 
 // retrieve an attribute ID given a string
 // or ATTRIBUTE_NOTFOUND if attribute doesn't exist
-Attribute_ID GraphContext_GetAttributeID
+AttributeID GraphContext_GetAttributeID
 (
 	GraphContext *gc,
 	const char *str
@@ -231,7 +231,7 @@ Attribute_ID GraphContext_GetAttributeID
 void GraphContext_RemoveAttribute
 (
 	GraphContext *gc,
-	Attribute_ID id
+	AttributeID id
 );
 
 //------------------------------------------------------------------------------
@@ -261,7 +261,7 @@ Index GraphContext_GetIndexByID
 (
 	const GraphContext *gc,      // graph context
 	int lbl_id,                  // label / rel-type ID
-	const Attribute_ID *attrs,   // attributes
+	const AttributeID *attrs,    // attributes
 	uint n,                      // attributes count
 	IndexFieldType t,            // all index attributes must be of this type
 	GraphEntityType entity_type  // schema type NODE / EDGE
@@ -272,7 +272,7 @@ Index GraphContext_GetIndex
 (
 	const GraphContext *gc,
 	const char *label,
-	Attribute_ID *attrs,
+	AttributeID *attrs,
 	uint n,
 	IndexFieldType type,
 	SchemaType schema_type
@@ -291,15 +291,31 @@ int GraphContext_DeleteIndex
 // remove a single node from all indices that refer to it
 void GraphContext_DeleteNodeFromIndices
 (
-	GraphContext *gc,
-	Node *n
+	GraphContext *gc,  // graph context
+	Node *n,           // node to remove from index
+	LabelID *labels,   // [optional] node labels to remove from index
+	uint label_count   // [optional] number of labels
 );
 
 // remove a single edge from all indices that refer to it
 void GraphContext_DeleteEdgeFromIndices
 (
-	GraphContext *gc,
-	Edge *e
+	GraphContext *gc,  // graph context
+	Edge *e            // edge to remove from index
+);
+
+// add node to any relevant index
+void GraphContext_AddNodeToIndices
+(
+	GraphContext *gc,  // graph context
+	Node *n            // node to add to index
+);
+
+// add edge to any relevant index
+void GraphContext_AddEdgeToIndices
+(
+	GraphContext *gc,  // graph context
+	Edge *e            // edge to add to index
 );
 
 // add GraphContext to global array
@@ -339,8 +355,8 @@ void GraphContext_LogQuery
 	double report_duration,       // reporting time
 	bool parameterized,           // uses parameters
 	bool utilized_cache,          // utilized cache
-	bool write,    		          // write query
-	bool timeout,    		      // timeout query
+	bool write,                   // write query
+	bool timeout,                 // timeout query
 	const char *query             // query string
 );
 
