@@ -8,9 +8,10 @@
 
 #include <stdint.h>
 #include "../value.h"
+#include "../schema/schema.h"
+#include "../graph/graphcontext.h"
 #include "../graph/entities/node.h"
 #include "../graph/entities/edge.h"
-#include "../schema/schema.h"
 
 // UndoLog
 // matains a list of undo operation reverting all changes
@@ -20,106 +21,8 @@
 // operations within the undo log to rollback the graph to its
 // original state
 
-// UndoLog operation types
-typedef enum {
-	UNDO_UPDATE = 0,     // undo entity update
-	UNDO_CREATE_NODE,    // undo node creation
-	UNDO_CREATE_EDGE,    // undo edge creation
-	UNDO_DELETE_NODE,    // undo node deletion
-	UNDO_DELETE_EDGE,    // undo edge deletion
-	UNDO_SET_LABELS,     // undo set labels
-	UNDO_REMOVE_LABELS,  // undo remove labels
-	UNDO_ADD_SCHEMA,     // undo schema addition
-	UNDO_ADD_ATTRIBUTE,  // undo property addition
-	UNDO_CREATE_INDEX,   // undo index addition
-} UndoOpType;
-
-//------------------------------------------------------------------------------
-// Undo operations
-//------------------------------------------------------------------------------
-
-// undo node/edge creation
-typedef struct UndoCreateOp UndoCreateOp;
-struct UndoCreateOp {
-	union {
-		Node n;
-		Edge e;
-	};
-};
-
-// undo node deletion
-typedef struct UndoDeleteNodeOp UndoDeleteNodeOp;
-struct UndoDeleteNodeOp {
-	EntityID id;
-	AttributeSet set;
-	LabelID *labels;   // labels attached to deleted entity
-	uint label_count;  // number of labels attached to deleted entity
-};
-
-// undo edge deletion
-typedef struct UndoDeleteEdgeOp UndoDeleteEdgeOp;
-struct UndoDeleteEdgeOp {
-	EntityID id;
-	int relationID;          // Relation ID
-	NodeID src_id;           // Source node ID
-	NodeID dest_id;          // Destination node ID
-	AttributeSet set;
-};
-
-// undo graph entity update
-typedef struct UndoUpdateOp UndoUpdateOp;
-struct UndoUpdateOp {
-	union {
-		Node n;
-		Edge e;
-	};
-	GraphEntityType entity_type;  // node/edge
-	AttributeSet set;             // old attribute set
-};
-
-typedef struct UndoLabelsOp UndoLabelsOp;
-struct UndoLabelsOp {
-	Node node;
-	LabelID* label_ids;
-	ushort labels_count;
-};
-
-typedef struct UndoAddSchemaOp UndoAddSchemaOp;
-struct UndoAddSchemaOp {
-	int schema_id;
-	SchemaType t;
-};
-
-typedef struct UndoAddAttributeOp UndoAddAttributeOp;
-struct UndoAddAttributeOp {
-	Attribute_ID attribute_id;
-};
-
-typedef struct UndoCreateIndexOp UndoCreateIndexOp;
-struct UndoCreateIndexOp {
-	SchemaType st;      // schema type
-	const char *label;  // label / relationship
-	const char *field;  // field
-	IndexFieldType t;   // type of index
-};
-
-// Undo operation
-typedef struct {
-	union {
-		UndoCreateOp create_op;
-		UndoDeleteNodeOp delete_node_op;
-		UndoDeleteEdgeOp delete_edge_op;
-		UndoUpdateOp update_op;
-		UndoLabelsOp labels_op;
-		UndoAddSchemaOp schema_op;
-		UndoAddAttributeOp attribute_op;
-		UndoCreateIndexOp index_op;
-	};
-	UndoOpType type;  // type of undo operation
-} UndoOp;
-
 // container for undo_list
-typedef DataBlock *UndoLog;
+typedef struct Opaque_UndoLog *UndoLog;
 
 // create a new undo-log
 UndoLog UndoLog_New(void);
@@ -151,8 +54,10 @@ void UndoLog_CreateEdge
 // undo node deletion
 void UndoLog_DeleteNode
 (
-	UndoLog log,   // undo log
-	Node *node     // node deleted
+	UndoLog log,      // undo log
+	Node *node,       // node deleted
+	LabelID *labels,  // labels attached to deleted entity
+	uint label_count  // number of labels attached to deleted entity
 );
 
 // undo edge deletion
@@ -162,13 +67,20 @@ void UndoLog_DeleteEdge
 	Edge *edge     // edge deleted
 );
 
-// undo entity update
-void UndoLog_UpdateEntity
+// undo node update
+void UndoLog_UpdateNode
 (
 	UndoLog log,                 // undo log
-	GraphEntity *ge,             // updated entity
-	AttributeSet set,            // old attribute set
-	GraphEntityType entity_type  // entity type
+	Node *n,                     // updated node
+	AttributeSet set             // old attribute set
+);
+
+// undo entity update
+void UndoLog_UpdateEdge
+(
+	UndoLog log,                 // undo log
+	Edge *ge,                    // updated edge
+	AttributeSet set             // old attribute set
 );
 
 // undo node add label
@@ -201,7 +113,7 @@ void UndoLog_AddSchema
 void UndoLog_AddAttribute
 (
 	UndoLog log,                 // undo log
-	Attribute_ID attribute_id    // id of the attribute
+	AttributeID attribute_id     // id of the attribute
 );
 
 // undo index creation
@@ -217,12 +129,12 @@ void UndoLog_CreateIndex
 // rollback all modifications tracked by this undo log
 void UndoLog_Rollback
 (
-	UndoLog *log
+	UndoLog log,
+	GraphContext *gc
 );
 
 // free UndoLog
 void UndoLog_Free
 (
-	UndoLog *log
+	UndoLog log
 );
-

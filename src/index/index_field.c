@@ -38,7 +38,7 @@ void IndexField_Init
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id,     // attribute ID
+	AttributeID id,      // attribute ID
 	IndexFieldType type  // field type
 ) {
 	ASSERT(name     != NULL);
@@ -106,7 +106,7 @@ void IndexField_NewRangeField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id      // field id
+	AttributeID id       // field id
 ) {
 	IndexFieldType t = INDEX_FLD_RANGE;
 	IndexField_Init(field, name, id, t);
@@ -117,7 +117,7 @@ void IndexField_NewFullTextField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id      // field id
+	AttributeID id       // field id
 ) {
 	IndexFieldType t = INDEX_FLD_FULLTEXT;
 	IndexField_Init(field, name, id, t);
@@ -128,7 +128,7 @@ void IndexField_NewVectorField
 (
 	IndexField *field,   // field to initialize
 	const char *name,    // field name
-	Attribute_ID id,     // field id
+	AttributeID id,      // field id
 	uint32_t dimension   // vector dimension
 ) {
 	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);

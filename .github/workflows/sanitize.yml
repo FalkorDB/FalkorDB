@@ -41,6 +41,8 @@ jobs:
 
     - name: Build
       run: |
+        rustup toolchain list
+        rustup default nightly
         apt-get update
         apt-get install -y clang libomp-dev libc6-dbg python3-venv
         python3 -m venv venv

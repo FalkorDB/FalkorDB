@@ -29,7 +29,7 @@ SIValue *ATTRIBUTE_NOTFOUND = &(SIValue) {
 static bool _AttributeSet_Remove
 (
 	AttributeSet *set,
-	Attribute_ID attr_id
+	AttributeID attr_id
 ) {
 	AttributeSet _set = *set;
 	const uint16_t attr_count = _set->attr_count;
@@ -89,7 +89,7 @@ uint16_t AttributeSet_Count
 SIValue *AttributeSet_Get
 (
 	const AttributeSet set,  // set to retieve attribute from
-	Attribute_ID attr_id     // attribute identifier
+	AttributeID attr_id      // attribute identifier
 ) {
 	// in case attribute-set is marked as read-only, clear marker
 	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
@@ -125,7 +125,7 @@ SIValue AttributeSet_GetIdx
 (
 	const AttributeSet set,  // set to retieve attribute from
 	uint16_t i,              // index of the property
-	Attribute_ID *attr_id    // attribute identifier
+	AttributeID *attr_id     // attribute identifier
 ) {
 	ASSERT(attr_id != NULL);
 
@@ -170,7 +170,7 @@ static AttributeSet AttributeSet_AddPrepare
 void AttributeSet_AddNoClone
 (
 	AttributeSet *set,  // set to update
-	Attribute_ID *ids,  // identifiers
+	AttributeID *ids,   // identifiers
 	SIValue *values,    // values
 	ushort n,           // number of values to add
 	bool allowNull		// accept NULLs
@@ -217,9 +217,9 @@ void AttributeSet_AddNoClone
 // adds an attribute to the set
 void AttributeSet_Add
 (
-	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
-	SIValue value          // attribute value
+	AttributeSet *set,    // set to update
+	AttributeID attr_id,  // attribute identifier
+	SIValue value         // attribute value
 ) {
 	ASSERT(set != NULL);
 
@@ -251,9 +251,9 @@ void AttributeSet_Add
 // returns the type of change performed
 AttributeSetChangeType AttributeSet_Set_Allow_Null
 (
-	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
-	SIValue value          // attribute value
+	AttributeSet *set,    // set to update
+	AttributeID attr_id,  // attribute identifier
+	SIValue value         // attribute value
 ) {
 	ASSERT(set != NULL);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
@@ -304,7 +304,7 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 bool AttributeSet_UpdateNoClone
 (
 	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
+	AttributeID attr_id,   // attribute identifier
 	SIValue value          // new value
 ) {
 	ASSERT(set != NULL);
@@ -335,7 +335,7 @@ bool AttributeSet_UpdateNoClone
 bool AttributeSet_Update
 (
 	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
+	AttributeID attr_id,   // attribute identifier
 	SIValue value          // new value
 ) {
 	ASSERT(set != NULL);

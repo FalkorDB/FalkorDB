@@ -49,7 +49,7 @@ typedef struct {
 bool GraphEntity_AddProperty
 (
 	GraphEntity *e,
-	Attribute_ID attr_id,
+	AttributeID attr_id,
 	SIValue value
 );
 
@@ -59,7 +59,7 @@ bool GraphEntity_AddProperty
 SIValue *GraphEntity_GetProperty
 (
 	const GraphEntity *e,
-	Attribute_ID attr_id
+	AttributeID attr_id
 );
 
 // returns an SIArray of all keys in graph entity properties

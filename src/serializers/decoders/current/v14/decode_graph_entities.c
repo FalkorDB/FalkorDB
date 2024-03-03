@@ -114,7 +114,7 @@ static void _RdbLoadEntity
 
 	uint64_t n = SerializerIO_ReadUnsigned(rdb);
 	SIValue vals[n];
-	Attribute_ID ids[n];
+	AttributeID ids[n];
 
 	for(int i = 0; i < n; i++) {
 		ids[i]  = SerializerIO_ReadUnsigned(rdb);

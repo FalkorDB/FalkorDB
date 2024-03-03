@@ -272,7 +272,7 @@ void ConvertPropertyMap
 ) {
 	uint property_count = array_len(map->keys);
 	SIValue vals[property_count];
-	Attribute_ID ids[property_count];
+	AttributeID ids[property_count];
 	uint attrs_count = 0;
 	for(int i = 0; i < property_count; i++) {
 		// note that AR_EXP_Evaluate may raise a run-time exception

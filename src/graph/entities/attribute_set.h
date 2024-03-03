@@ -21,7 +21,7 @@
 // check if attribute-set is read-only
 #define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
 
-typedef unsigned short Attribute_ID;
+typedef unsigned short AttributeID;
 
 // type of change performed on the attribute-set
 typedef enum {
@@ -32,8 +32,8 @@ typedef enum {
 } AttributeSetChangeType;
 
 typedef struct {
-	Attribute_ID id;  // attribute identifier
-	SIValue value;    // attribute value
+	AttributeID id;  // attribute identifier
+	SIValue value;   // attribute value
 } Attribute;
 
 typedef struct {
@@ -55,7 +55,7 @@ uint16_t AttributeSet_Count
 SIValue *AttributeSet_Get
 (
 	const AttributeSet set,  // set to retieve attribute from
-	Attribute_ID attr_id     // attribute identifier
+	AttributeID attr_id      // attribute identifier
 );
 
 // retrieves a value from set by index
@@ -63,14 +63,14 @@ SIValue AttributeSet_GetIdx
 (
 	const AttributeSet set,  // set to retieve attribute from
 	uint16_t i,              // index of the property
-	Attribute_ID *attr_id    // attribute identifier
+	AttributeID *attr_id     // attribute identifier
 );
 
 // adds an attribute to the set without cloning the SIValue
 void AttributeSet_AddNoClone
 (
 	AttributeSet *set,  // set to update
-	Attribute_ID *ids,  // identifiers
+	AttributeID *ids,   // identifiers
 	SIValue *values,    // values
 	ushort n,           // number of values to add
 	bool allowNull		// accept NULLs
@@ -80,7 +80,7 @@ void AttributeSet_AddNoClone
 void AttributeSet_Add
 (
 	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
+	AttributeID attr_id,   // attribute identifier
 	SIValue value          // attribute value
 );
 
@@ -90,7 +90,7 @@ void AttributeSet_Add
 AttributeSetChangeType AttributeSet_Set_Allow_Null
 (
 	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
+	AttributeID attr_id,   // attribute identifier
 	SIValue value          // attribute value
 );
 
@@ -99,7 +99,7 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 bool AttributeSet_UpdateNoClone
 (
 	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
+	AttributeID attr_id,   // attribute identifier
 	SIValue value          // new value
 );
 
@@ -108,7 +108,7 @@ bool AttributeSet_UpdateNoClone
 bool AttributeSet_Update
 (
 	AttributeSet *set,     // set to update
-	Attribute_ID attr_id,  // attribute identifier
+	AttributeID attr_id,   // attribute identifier
 	SIValue value          // new value
 );
 

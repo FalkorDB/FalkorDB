@@ -97,7 +97,7 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 (
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
-	Attribute_ID attr_id,        // updated attribute ID
+	AttributeID attr_id,         // updated attribute ID
 	GraphEntityType entity_type  // entity type
 );
 
@@ -106,7 +106,7 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 (
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
-	Attribute_ID attr_id,        // updated attribute ID
+	AttributeID attr_id,         // updated attribute ID
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 );
@@ -116,7 +116,7 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 (
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
-	Attribute_ID attr_id,        // updated attribute ID
+	AttributeID attr_id,         // updated attribute ID
  	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 );

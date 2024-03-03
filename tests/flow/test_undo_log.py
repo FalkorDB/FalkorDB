@@ -12,7 +12,30 @@ class testUndoLog():
     def tearDown(self):
         self.graph.delete()
 
+    def test00_undo_schema(self):
+        try:
+            self.graph.query("""CREATE (s:N {v: 1}), (t:N {v: 2})
+                                MATCH (s:N {v: 1}), (t:N {v: 2})
+                                CREATE (s)-[r:R]->(t)
+                                WITH r
+                                RETURN 1 * r""")
+            # we're not supposed to be here, expecting query to fail
+            self.env.assertTrue(False) 
+        except:
+            pass
+
+        # no label should be created
+        result = self.graph.query("CALL db.labels")
+        self.env.assertEquals(len(result.result_set), 0)
+
+        # no relation should be added
+        result = self.graph.query("CALL db.relationshipTypes")
+        self.env.assertEquals(len(result.result_set), 0)
+
     def test01_undo_create_node(self):
+        # test undo create node only by creating a node first so the schema is created
+        self.graph.query("CREATE (n:N)")
+
         try:
             self.graph.query("CREATE (n:N) WITH n RETURN 1 * n")
             # we're not supposed to be here, expecting query to fail
@@ -20,17 +43,14 @@ class testUndoLog():
         except:
             pass
 
-        # node (n:N) should be removed, expecting an empty graph
+        # node (n:N) should be removed
         result = self.graph.query("MATCH (n:N) RETURN n")
-        self.env.assertEquals(len(result.result_set), 0)
-
-        # no label should be created
-        result = self.graph.query("CALL db.labels")
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEquals(len(result.result_set), 1)
 
 
     def test02_undo_create_edge(self):
-        self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
+        # test undo create edge only by creating a node first so the schema is created
+        self.graph.query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})")
         try:
             self.graph.query("""MATCH (s:N {v: 1}), (t:N {v: 2})
                                 CREATE (s)-[r:R]->(t)
@@ -43,11 +63,7 @@ class testUndoLog():
 
         # edge [r:R] should have been removed
         result = self.graph.query("MATCH ()-[r:R]->() RETURN r")
-        self.env.assertEquals(len(result.result_set), 0)
-
-        # no relation should be added
-        result = self.graph.query("CALL db.relationshipTypes")
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEquals(len(result.result_set), 1)
 
     def test03_undo_delete_node(self):
         self.graph.query("CREATE (:N)")
@@ -155,7 +171,7 @@ class testUndoLog():
 
         # clear all attributes of `n`
         try:
-            self.graph.query(f"""MATCH (n:N {a: 1})
+            self.graph.query(f"""MATCH (n:N {{a: 1}})
                                 WHERE ID(n) = {n_v0.id}
                                 SET n = {{}}
                                 WITH n
@@ -176,7 +192,7 @@ class testUndoLog():
         try:
             self.graph.query(f"""MATCH (n:N)
                                 WHERE ID(n) = {n_v0.id}
-                                SET n += {f: 1}
+                                SET n += {{f: 1}}
                                 WITH n
                                 RETURN n * 1""")
             # we're not supposed to be here, expecting query to fail

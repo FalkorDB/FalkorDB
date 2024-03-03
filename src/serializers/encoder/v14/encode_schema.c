@@ -131,7 +131,7 @@ static void _RdbSaveConstraint
 	// encode constraint fields count
 	//--------------------------------------------------------------------------
 
-	const Attribute_ID *attrs;
+	const AttributeID *attrs;
 	uint8_t n = Constraint_GetAttributes(c, &attrs, NULL);
 	SerializerIO_WriteUnsigned(rdb, n);
 
@@ -140,7 +140,7 @@ static void _RdbSaveConstraint
 	//--------------------------------------------------------------------------
 
 	for(uint8_t i = 0; i < n; i++) {
-		Attribute_ID attr = attrs[i];
+		AttributeID attr = attrs[i];
 		SerializerIO_WriteUnsigned(rdb, attr);
 	}
 }
