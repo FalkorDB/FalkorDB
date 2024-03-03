@@ -14,7 +14,7 @@
 
 // type of index field
 // multiple types can be combined via bitwise OR
-typedef enum IndexFieldType {
+typedef enum {
 	INDEX_FLD_UNKNOWN  = 0x00,  // unknown field type
 	INDEX_FLD_FULLTEXT = 0x01,  // full text field
 	INDEX_FLD_NUMERIC  = 0x02,  // numeric field

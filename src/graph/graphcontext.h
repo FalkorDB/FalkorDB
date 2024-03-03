@@ -26,7 +26,7 @@
 // can use the graph version to understand if the schema was modified
 // and take action accordingly
 
-typedef struct GraphContext {
+typedef struct {
 	Graph *g;                              // container for all matrices and entity properties
 	int ref_count;                         // number of active references
 	rax *attributes;                       // from strings to attribute IDs

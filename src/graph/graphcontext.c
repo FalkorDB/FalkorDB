@@ -661,7 +661,7 @@ int GraphContext_DeleteIndex
 }
 
 // remove a single node from all indices that refer to it
-void _DeleteNodeFromIndices
+static void _DeleteNodeFromIndices
 (
 	GraphContext *gc,  // graph context
 	Node *n,           // node to remove from index
@@ -720,6 +720,7 @@ void GraphContext_DeleteEdgeFromIndices
 	int relation_id = Edge_GetRelationID(e);
 
 	s = GraphContext_GetSchemaByID(gc, relation_id, SCHEMA_EDGE);
+	ASSERT(s != NULL);
 
 	// update any indices this entity is represented in
 	Schema_RemoveEdgeFromIndex(s, e);
