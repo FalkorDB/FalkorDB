@@ -68,9 +68,10 @@ void test_serializer(void) {
 
 	// read buffer
 	size_t read_len;
-	const char *read_buff = SerializerIO_ReadBuffer(reader, &read_len);
+	char *read_buff = SerializerIO_ReadBuffer(reader, &read_len);
 	TEST_ASSERT(read_len == write_len);
 	TEST_ASSERT(strcmp(read_buff, write_buff) == 0);
+	rm_free(read_buff);
 
 	// read double
 	TEST_ASSERT(SerializerIO_ReadDouble(reader) == double_v);
