@@ -22,7 +22,7 @@
 // original state
 
 // container for undo_list
-typedef void *UndoLog;
+typedef struct Opaque_UndoLog *UndoLog;
 
 // create a new undo-log
 UndoLog UndoLog_New(void);
