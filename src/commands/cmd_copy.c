@@ -152,7 +152,9 @@ static int encode_graph
 	ASSERT(ctx      != NULL);
 	ASSERT(copy_ctx != NULL);
 
-	int res = 0;  // 0 indicates success
+	int          res = 0;  // 0 indicates success
+	FILE         *f  = NULL;
+	SerializerIO io  = NULL;
 
 	// rename graph, needed by the decoding procedure
 	// when the graph is decoded it is already holds the target name
@@ -165,7 +167,7 @@ static int encode_graph
 	// open dump file
 	// write only, create if missing, truncate if exists
 	// grant READ access to group (0644)
-	FILE *f = fopen(copy_ctx->path, "wb");
+	f = fopen(copy_ctx->path, "wb");
 	if(f == NULL) {
 		// failed to open file
 		res = 1;  // indicate error
@@ -173,12 +175,13 @@ static int encode_graph
 	}
 
 	// create serializer
-	SerializerIO io = SerializerIO_FromStream(f);
+	io = SerializerIO_FromStream(f);
 	ASSERT(io != NULL);
 
 	// encode graph to disk
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE, "dump graph: %s to: %s",
 			copy_ctx->src, copy_ctx->path);
+
 	RdbSaveGraph_v14(io, gc);
 
 cleanup:
@@ -198,6 +201,7 @@ static void LoadGraphFromFile
 (
 	void *pdata  // graph copy context
 ) {
+	printf("In LoadGraphFromFile\n");
 	ASSERT(pdata != NULL);
 
 	GraphCopyContext *copy_ctx = (GraphCopyContext*)pdata;
@@ -232,12 +236,10 @@ static void LoadGraphFromFile
     rewind(f);
 
 	// allocate buffer to hold entire dumped graph
-	buffer = rm_malloc(sizeof(char) * fileLength + 1);
+	buffer = rm_malloc(sizeof(char) * fileLength);
 
 	// read file content into buffer
     fread(buffer, 1, fileLength, f);
-
-	buffer[fileLength] = '\0';  // Null-terminate the buffer
 
 	fclose(f);  // close file
 
@@ -296,7 +298,9 @@ static void LoadGraphFromFile
 		RedisModule_CloseKey(key);
 
 		// replicate graph
-		RedisModule_Replicate(ctx, "RESTORE", "c", buffer);
+		// GRAPH.RESTORE dest <payload>
+		RedisModule_Replicate(ctx, "GRAPH.RESTORE", "cb", copy_ctx->dest, buffer,
+				fileLength);
 
 		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
 
