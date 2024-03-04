@@ -165,15 +165,15 @@ static int encode_graph
 	// open dump file
 	// write only, create if missing, truncate if exists
 	// grant READ access to group (0644)
-	int fd = open(copy_ctx->path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-	if(fd == -1) {
+	FILE *f = fopen(copy_ctx->path, "wb");
+	if(f == NULL) {
 		// failed to open file
 		res = 1;  // indicate error
 		goto cleanup;
 	}
 
 	// create serializer
-	SerializerIO io = SerializerIO_FromPipe(fd);
+	SerializerIO io = SerializerIO_FromStream(f);
 	ASSERT(io != NULL);
 
 	// encode graph to disk
@@ -187,7 +187,7 @@ cleanup:
 	if(io != NULL) SerializerIO_Free(&io);
 
 	// close file
-	if(fd != -1) close(fd);
+	if(f != NULL) fclose(f);
 
 	// all done, no errors
 	return res;
@@ -202,31 +202,68 @@ static void LoadGraphFromFile
 
 	GraphCopyContext *copy_ctx = (GraphCopyContext*)pdata;
 
-	SerializerIO   io   = NULL;
-	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(copy_ctx->bc);
+	SerializerIO   io      = NULL;  // graph decode stream
+	char           *buffer = NULL;  // dumped graph
+	FILE           *stream = NULL;  // memory stream over buffer
+	RedisModuleCtx *ctx    = RedisModule_GetThreadSafeContext(copy_ctx->bc);
 
 	//--------------------------------------------------------------------------
 	// decode graph from disk
 	//--------------------------------------------------------------------------
 
 	// open file
-	int fd = open(copy_ctx->path, O_RDONLY);
-	if(fd == -1) {
+	FILE *f = fopen(copy_ctx->path, "rb");
+	if(f == NULL) {
+		RedisModule_ReplyWithError(ctx, "copy failed");
+		goto cleanup;
+	}
+
+	//--------------------------------------------------------------------------
+	// load dumped file to memory
+	//--------------------------------------------------------------------------
+
+	// seek to the end of the file
+    fseek(f, 0, SEEK_END);
+
+	// get current position, which is the size of the file
+    long fileLength = ftell(f);
+
+	// seek to the beginning of the file
+    rewind(f);
+
+	// allocate buffer to hold entire dumped graph
+	buffer = rm_malloc(sizeof(char) * fileLength + 1);
+
+	// read file content into buffer
+    fread(buffer, 1, fileLength, f);
+
+	buffer[fileLength] = '\0';  // Null-terminate the buffer
+
+	fclose(f);  // close file
+
+	//--------------------------------------------------------------------------
+	// create memory stream
+	//--------------------------------------------------------------------------
+
+	stream = fmemopen(buffer, fileLength, "r");
+	if(stream == NULL) {
 		RedisModule_ReplyWithError(ctx, "copy failed");
 		goto cleanup;
 	}
 
 	// create serializer ontop of file descriptor
-	io = SerializerIO_FromPipe(fd);
+	io = SerializerIO_FromStream(stream);
 	ASSERT(io != NULL);
 
 	// decode graph from io
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
+
 	GraphContext *gc = RdbLoadGraphContext_v14(io, copy_ctx->rm_dest);
 	ASSERT(gc != NULL);
 
 	// TODO: should we decrase gc ref count?
+	// TODO: validate by performing graph deletions
 
 	//--------------------------------------------------------------------------
 	// add cloned graph to keyspace
@@ -258,6 +295,9 @@ static void LoadGraphFromFile
 
 		RedisModule_CloseKey(key);
 
+		// replicate graph
+		RedisModule_Replicate(ctx, "RESTORE", "c", buffer);
+
 		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
 
 		// register graph context for BGSave
@@ -272,7 +312,10 @@ cleanup:
 	if(io != NULL) SerializerIO_Free(&io);
 
 	// close file descriptor
-	if(fd != -1) close(fd);
+	if(stream != NULL) fclose(stream);
+
+	// free buffer
+	if(buffer != NULL) rm_free(buffer);
 
 	// free copy context
 	GraphCopyContext_Free(copy_ctx);
@@ -290,7 +333,8 @@ static void ForkDoneHandler
 ) {
 	ASSERT(user_data != NULL);
 
-	if(exitcode == 1 || bysignal != 0) {
+	// check fork exit code
+	if(exitcode != 0 || bysignal != 0) {
 		GraphCopyContext *copy_ctx = (GraphCopyContext*)user_data;
 		RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(copy_ctx->bc);
 		RedisModule_ReplyWithError(ctx, "copy failed");
@@ -306,7 +350,7 @@ static void ForkDoneHandler
 
 // implements GRAPH.COPY logic
 // this function is expected to run on a cron thread
-// avoiding blocking redis main thread while the graph is being copied
+// avoiding blocking redis main thread while trying to create a fork
 static void _Graph_Copy
 (
 	void *context  // graph copy context
@@ -396,12 +440,6 @@ static void _Graph_Copy
 
 	// release READ lock
 	Graph_ReleaseLock(gc->g);
-
-	// replicate command
-	// TODO: handle cases where GRAPH.COPY fails on the master
-	RedisModule_ThreadSafeContextLock(ctx);
-	RedisModule_ReplicateVerbatim(ctx);
-	RedisModule_ThreadSafeContextUnlock(ctx);
 
 	// clean up
 cleanup:

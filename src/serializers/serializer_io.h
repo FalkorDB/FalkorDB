@@ -11,17 +11,17 @@
 // acts as an abstraction layer for both graph encoding and decoding
 // there are two types of serializers:
 // 1. RedisIO serializer
-// 2. PIPE serializer
+// 2. Stream serializer
 //
 // The graph encoding / decoding logic uses this abstraction without knowing
 // what is the underline serializer
 
 typedef struct SerializerIO_Opaque *SerializerIO;
 
-// create a serializer which uses pipe
-SerializerIO SerializerIO_FromPipe
+// create a serializer which uses a stream
+SerializerIO SerializerIO_FromStream
 (
-	int pipefd  // either the read or write end of a pipe
+	FILE *stream  // stream
 );
 
 // create a serializer which uses RedisIO

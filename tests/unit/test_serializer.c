@@ -21,9 +21,13 @@ void test_serializer(void) {
 	// create pipe
 	int pipefd[2];  // read and write ends of a pipe
 	TEST_ASSERT(pipe(pipefd) != -1);
+
+	// create a FILE* stream both ends of the pipe
+    FILE *fs_read_stream  = fdopen(pipefd[0], "w");
+    FILE *fs_write_stream = fdopen(pipefd[1], "w");
 	
-	SerializerIO reader = SerializerIO_FromPipe(pipefd[0]);
-	SerializerIO writer = SerializerIO_FromPipe(pipefd[1]);
+	SerializerIO reader = SerializerIO_FromStream(fs_read_stream);
+	SerializerIO writer = SerializerIO_FromStream(fs_write_stream);
 	TEST_ASSERT(reader != NULL);
 	TEST_ASSERT(writer != NULL);
 
@@ -82,6 +86,10 @@ void test_serializer(void) {
 	// read long double
 	TEST_ASSERT(SerializerIO_ReadLongDouble(reader) == longdouble_v);
 
+	// close file streams
+	fclose(fs_read_stream);
+	fclose(fs_write_stream);
+
 	// close pipe
 	close(pipefd[0]);
 	close(pipefd[1]);
@@ -95,9 +103,13 @@ void test_serializer_generic_write(void) {
 	// create pipe
 	int pipefd[2];  // read and write ends of a pipe
 	TEST_ASSERT(pipe(pipefd) != -1);
+
+	// create a FILE* stream both ends of the pipe
+    FILE *fs_read_stream  = fdopen(pipefd[0], "w");
+    FILE *fs_write_stream = fdopen(pipefd[1], "w");
 	
-	SerializerIO reader = SerializerIO_FromPipe(pipefd[0]);
-	SerializerIO writer = SerializerIO_FromPipe(pipefd[1]);
+	SerializerIO reader = SerializerIO_FromStream(fs_read_stream);
+	SerializerIO writer = SerializerIO_FromStream(fs_write_stream);
 	TEST_ASSERT(reader != NULL);
 	TEST_ASSERT(writer != NULL);
 
@@ -143,6 +155,10 @@ void test_serializer_generic_write(void) {
 
 	// read long double
 	TEST_ASSERT(SerializerIO_ReadLongDouble(reader) == longdouble_v);
+
+	// close file streams
+	fclose(fs_read_stream);
+	fclose(fs_write_stream);
 
 	// close pipe
 	close(pipefd[0]);

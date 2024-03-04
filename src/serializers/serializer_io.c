@@ -30,14 +30,14 @@ struct SerializerIO_Opaque {
 	long double	(*ReadLongDouble)(void*);             // read long double
 	RedisModuleString* (*ReadString)(void*);          // read RedisModuleString
 
-	void *stream;  // RedisModuleIO* or a Pipe
+	void *stream;  // RedisModuleIO* or a Stream descriptor
 };
 
 //------------------------------------------------------------------------------
 // Serializer Write API
 //------------------------------------------------------------------------------
 
-// macro for creating the pipe serializer write functions
+// macro for creating the stream serializer write functions
 #define SERIALIZERIO_WRITE(suffix, t)                          \
 void SerializerIO_Write##suffix(SerializerIO io, t value) {    \
 	ASSERT(io != NULL);                                        \
@@ -62,77 +62,79 @@ void SerializerIO_WriteBuffer
 	io->WriteBuffer(io->stream, buff, len);
 }
 
-// macro for creating pipe serializer write functions
-#define PIPE_WRITE(suffix, t)                       \
-static void Pipe_Write##suffix(void *pipe, t v) {   \
-	int pipefd = (intptr_t)pipe;                    \
-	ssize_t n = write(pipefd, &v, sizeof(t));       \
-	ASSERT(n == sizeof(t));                         \
+// macro for creating stream serializer write functions
+#define STREAM_WRITE(suffix, t)                         \
+static void Stream_Write##suffix(void *stream, t v) {   \
+	FILE *f = (FILE*)stream;                            \
+	size_t n = fwrite(&v, sizeof(t), 1 , f);            \
+	ASSERT(n == 1);                                     \
 }
 
-// create pipe write functions
-PIPE_WRITE(Unsigned, uint64_t)          // Pipe_WriteUnsigned
-PIPE_WRITE(Signed, int64_t)             // Pipe_WriteSigned
-PIPE_WRITE(Double, double)              // Pipe_WriteDouble
-PIPE_WRITE(Float, float)                // Pipe_WriteFloat
-PIPE_WRITE(LongDouble, long double)     // Pipe_WriteLongDouble
-PIPE_WRITE(String, RedisModuleString*)  // Pipe_WriteString
+// create stream write functions
+STREAM_WRITE(Unsigned, uint64_t)          // Stream_WriteUnsigned
+STREAM_WRITE(Signed, int64_t)             // Stream_WriteSigned
+STREAM_WRITE(Double, double)              // Stream_WriteDouble
+STREAM_WRITE(Float, float)                // Stream_WriteFloat
+STREAM_WRITE(LongDouble, long double)     // Stream_WriteLongDouble
+STREAM_WRITE(String, RedisModuleString*)  // Stream_WriteString
 
-// write buffer to pipe
-static void Pipe_WriteBuffer
+// write buffer to stream
+static void Stream_WriteBuffer
 (
-	void *pipe,        // pipe to write to
+	void *stream,      // stream to write to
 	const char *buff,  // buffer
 	size_t n           // number of bytes to write
 ) {
-	int pipefd = (intptr_t)pipe;
+	FILE *f = (FILE*)stream;
 
 	// write size
-	ssize_t written = write(pipefd, &n , sizeof(size_t));
-	ASSERT(written == sizeof(size_t));
+	size_t written = fwrite(&n, sizeof(size_t), 1, f);
+	ASSERT(written == 1);
 
 	// write data
-	written = write(pipefd, buff, n);
-	ASSERT(written == n);
+	written = fwrite(buff, n, 1, f);
+	ASSERT(written == 1);
 }
 
-// macro for creating pipe serializer read functions
-#define PIPE_READ(suffix, t)                        \
-	static t Pipe_Read##suffix(void *pipe) {        \
-		ASSERT(pipe != NULL);                       \
-		int pipefd = (intptr_t)pipe;                \
+// macro for creating stream serializer read functions
+#define STREAM_READ(suffix, t)                      \
+	static t Stream_Read##suffix(void *stream) {    \
+		ASSERT(stream != NULL);                     \
+		FILE *f = (FILE*)stream;                    \
 		t v;                                        \
-		ssize_t n = read(pipefd, &v, sizeof(t));    \
-		ASSERT(n == sizeof(t));                     \
+		size_t n = fread(&v, sizeof(t), 1, f);      \
+		ASSERT(n == 1);                             \
 		return v;                                   \
 	}
 
-// create pipe read functions
-PIPE_READ(Unsigned, uint64_t)          // Pipe_ReadUnsigned
-PIPE_READ(Signed, int64_t)             // Pipe_ReadSigned
-PIPE_READ(Double, double)              // Pipe_ReadDouble
-PIPE_READ(Float, float)                // Pipe_ReadFloat
-PIPE_READ(LongDouble, long double)     // Pipe_ReadLongDouble
-PIPE_READ(String, RedisModuleString*)  // Pipe_ReadString
+// create stream read functions
+STREAM_READ(Unsigned, uint64_t)          // Stream_ReadUnsigned
+STREAM_READ(Signed, int64_t)             // Stream_ReadSigned
+STREAM_READ(Double, double)              // Stream_ReadDouble
+STREAM_READ(Float, float)                // Stream_ReadFloat
+STREAM_READ(LongDouble, long double)     // Stream_ReadLongDouble
+STREAM_READ(String, RedisModuleString*)  // Stream_ReadString
 
-// read buffer from pipe
-static char *Pipe_ReadBuffer
+// read buffer from stream
+static char *Stream_ReadBuffer
 (
-	void *pipe,  // pipe to read from
-	size_t *n    // [optional] number of bytes read
+	void *stream,  // stream to read from
+	size_t *n      // [optional] number of bytes read
 ) {
-	ASSERT(pipe != NULL);
+	ASSERT(stream != NULL);
 
-	int pipefd = (intptr_t)pipe;
+	FILE *f = (FILE*)stream;
 
 	// read buffer's size
 	size_t len;
-	read(pipefd, &len, sizeof(size_t));
+	size_t read = fread(&len, sizeof(size_t), 1, f);
+	ASSERT(read == 1);
 
 	char *data = rm_malloc(sizeof(char) * len);
 
 	// read data
-	read(pipefd, data, len);
+	read = fread(data, len, 1, f);
+	ASSERT(read == 1);
 
 	if(n != NULL) *n = len;
 
@@ -143,7 +145,7 @@ static char *Pipe_ReadBuffer
 // Serializer Read API
 //------------------------------------------------------------------------------
 
-// macro for creating the pipe serializer write functions
+// macro for creating the serializer read functions
 #define SERIALIZERIO_READ(suffix, t)              \
 t SerializerIO_Read##suffix(SerializerIO io) {    \
 	ASSERT(io != NULL);                           \
@@ -170,31 +172,31 @@ char *SerializerIO_ReadBuffer
 // Serializer Create API
 //------------------------------------------------------------------------------
 
-// create a serializer which uses pipe
-SerializerIO SerializerIO_FromPipe
+// create a serializer which uses stream
+SerializerIO SerializerIO_FromStream
 (
-	int pipefd  // either the read or write end of a pipe
+	FILE *f  // stream
 ) {
 	SerializerIO serializer = rm_calloc(1, sizeof(struct SerializerIO_Opaque));
 
-	serializer->stream = (void*)(intptr_t)pipefd;
+	serializer->stream = (void*)f;
 
 	// set serializer function pointers
-	serializer->WriteUnsigned   = Pipe_WriteUnsigned;
-	serializer->WriteSigned     = Pipe_WriteSigned;
-	serializer->WriteString     = Pipe_WriteString;
-	serializer->WriteBuffer     = Pipe_WriteBuffer;
-	serializer->WriteDouble     = Pipe_WriteDouble;
-	serializer->WriteFloat      = Pipe_WriteFloat;
-	serializer->WriteLongDouble = Pipe_WriteLongDouble;
+	serializer->WriteUnsigned   = Stream_WriteUnsigned;
+	serializer->WriteSigned     = Stream_WriteSigned;
+	serializer->WriteString     = Stream_WriteString;
+	serializer->WriteBuffer     = Stream_WriteBuffer;
+	serializer->WriteDouble     = Stream_WriteDouble;
+	serializer->WriteFloat      = Stream_WriteFloat;
+	serializer->WriteLongDouble = Stream_WriteLongDouble;
 
-	serializer->ReadFloat       = Pipe_ReadFloat;
-	serializer->ReadDouble      = Pipe_ReadDouble;
-	serializer->ReadSigned      = Pipe_ReadSigned;
-	serializer->ReadBuffer      = Pipe_ReadBuffer;
-	serializer->ReadString      = Pipe_ReadString;
-	serializer->ReadUnsigned    = Pipe_ReadUnsigned;
-	serializer->ReadLongDouble  = Pipe_ReadLongDouble;
+	serializer->ReadFloat       = Stream_ReadFloat;
+	serializer->ReadDouble      = Stream_ReadDouble;
+	serializer->ReadSigned      = Stream_ReadSigned;
+	serializer->ReadBuffer      = Stream_ReadBuffer;
+	serializer->ReadString      = Stream_ReadString;
+	serializer->ReadUnsigned    = Stream_ReadUnsigned;
+	serializer->ReadLongDouble  = Stream_ReadLongDouble;
 	
 	return serializer;
 }
