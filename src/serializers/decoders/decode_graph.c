@@ -8,6 +8,12 @@
 #include "current/v14/decode_v14.h"
 
 GraphContext *RdbLoadGraph(RedisModuleIO *rdb) {
-	return RdbLoadGraphContext_v14(rdb);
+	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
+
+	SerializerIO io = SerializerIO_FromRedisModuleIO(rdb);
+	GraphContext *gc = RdbLoadGraphContext_latest(io, rm_key_name);
+	SerializerIO_Free(&io);
+
+	return gc;
 }
 

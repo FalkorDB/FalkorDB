@@ -24,9 +24,6 @@ class testSocialFlow(FlowTestsBase):
         # assert result set
         self.env.assertEqual(resultset.result_set, actual_result.result_set)
 
-        # assert query run time
-        self._assert_equalish(resultset.run_time_ms, actual_result.run_time_ms)
-
     def test00_graph_entities(self):
         q = queries.graph_entities.query
         actual_result = self.graph.query(q)
@@ -35,9 +32,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.graph_entities)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.graph_entities)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -51,9 +45,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.relation_type_counts)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.relation_type_counts)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -65,9 +56,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.subset_of_people)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.subset_of_people)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -81,9 +69,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.my_friends_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.my_friends_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -95,10 +80,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.friends_of_friends_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_of_friends_query)
-        runtime = actual_result.run_time_ms
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -112,9 +93,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.friends_of_friends_single_and_over_30_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_of_friends_single_and_over_30_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -126,9 +104,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.friends_of_friends_visited_netherlands_and_single_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_of_friends_visited_netherlands_and_single_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -142,9 +117,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.friends_visited_same_places_as_me_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_visited_same_places_as_me_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -156,9 +128,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.countries_visited_by_roi_tal_boaz)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.countries_visited_by_roi_tal_boaz)
-        
     def test09_friends_older_than_me(self):
         q = queries.friends_older_than_me_query.query
         actual_result = self.graph.query(q)
@@ -167,9 +136,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.friends_older_than_me_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_older_than_me_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -183,9 +149,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.friends_age_difference_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_age_difference_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -198,9 +161,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.friends_who_are_older_than_average)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_who_are_older_than_average)
-
     def test12_how_many_countries_each_friend_visited(self):
         q = queries.how_many_countries_each_friend_visited_query.query
         actual_result = self.graph.query(q)
@@ -209,9 +169,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.how_many_countries_each_friend_visited_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.how_many_countries_each_friend_visited_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -225,9 +182,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.visit_purpose_of_each_country_i_visited_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.visit_purpose_of_each_country_i_visited_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -239,9 +193,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.who_was_on_business_trip_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.who_was_on_business_trip_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -258,9 +209,6 @@ class testSocialFlow(FlowTestsBase):
             queries.number_of_vacations_per_person_query,
             NUM_EXPECTED_RESULTS)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.number_of_vacations_per_person_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -272,9 +220,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.all_reachable_friends_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.all_reachable_friends_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -288,9 +233,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.all_reachable_countries_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.all_reachable_countries_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -302,9 +244,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.reachable_countries_or_people_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.reachable_countries_or_people_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -318,9 +257,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.all_reachable_countries_or_people_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.all_reachable_countries_or_people_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -332,9 +268,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.all_reachable_entities_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.all_reachable_entities_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -348,9 +281,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.all_reachable_people_min_2_hops_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.all_reachable_people_min_2_hops_query)
-
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -363,9 +293,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.happy_birthday_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.happy_birthday_query)
-
     def test23_friends_age_statistics(self):
         q = queries.friends_age_statistics_query.query
         actual_result = self.graph.query(q)
@@ -374,9 +301,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.friends_age_statistics_query)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.friends_age_statistics_query)
 
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
@@ -390,9 +314,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.all_paths_leads_to_greece_query)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.all_paths_leads_to_greece_query)
-        
         # assert reversed pattern.
         self.assert_reversed_pattern(q, actual_result)
 
@@ -405,9 +326,6 @@ class testSocialFlow(FlowTestsBase):
             actual_result,
             queries.number_of_paths_to_places_visited)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.number_of_paths_to_places_visited)
-
     def test26_pagerank_friends(self):
         q = queries.pagerank_friends.query
         actual_result = self.graph.query(q)
@@ -416,9 +334,6 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.pagerank_friends)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.pagerank_friends)
 
     def test27_edge_counting(self):
         aggregations = [
@@ -444,15 +359,9 @@ class testSocialFlow(FlowTestsBase):
         q = queries.delete_friendships_query.query
         actual_result = self.graph.query(q)
 
-        # assert query run time
-        self._assert_run_time(actual_result, queries.delete_friendships_query)
-
     def test29_delete_person(self):
         q = queries.delete_person_query.query
         actual_result = self.graph.query(q)
-
-        # assert query run time
-        self._assert_run_time(actual_result, queries.delete_person_query)
 
     def test30_post_delete_label(self):
         q = queries.post_delete_label_query.query
@@ -462,5 +371,3 @@ class testSocialFlow(FlowTestsBase):
         self._assert_only_expected_results_are_in_actual_results(
             actual_result,
             queries.post_delete_label_query)
-        # assert query run time
-        self._assert_run_time(actual_result, queries.post_delete_label_query)

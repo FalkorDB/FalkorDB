@@ -28,10 +28,6 @@ class testOrderBy(FlowTestsBase):
     def test02_foreach(self):
         """Tests that ORDER BY works properly with FOREACH before it"""
 
-        # clean db
-        self.env.flush()
-        self.graph = Graph(self.env.getConnection(), GRAPH_ID)
-
         res = self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
         self.env.assertEquals(res.nodes_created, 2)
 

@@ -11,6 +11,7 @@
 #include "GraphBLAS.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
+#include "serializer_io.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
 #include "graph_extensions.h"

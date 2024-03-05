@@ -1,7 +1,7 @@
 from common import *
 from collections import Counter
 
-GRAPH_ID = "G"
+GRAPH_ID = "foreach"
 
 class testForeachFlow():
     def __init__(self):
@@ -91,9 +91,7 @@ class testForeachFlow():
         """tests that FOREACH with an aliased list works properly"""
 
         # clear db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         res = self.graph.query(
         "CYPHER li = [0, 1, 2, 3, 4] FOREACH(i in $li | CREATE (n:N {v: i}))"
@@ -180,10 +178,7 @@ class testForeachFlow():
     def test03_case(self):
         """tests a CASE WHEN THEN ELSE"""
 
-        # clean db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # perform a conditional query using a CASE expression
         res = self.graph.query("""
@@ -208,10 +203,7 @@ class testForeachFlow():
     def test04_tie_with_foreach(self):
         """test the tieing of different segments with FOREACH"""
 
-        # clean db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # populate graph
         self.graph.query(
@@ -240,10 +232,7 @@ class testForeachFlow():
         namely, the Foreach clause should run once for every record passed to it
         """
 
-        # clear db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create 5 nodes
         self.graph.query("UNWIND range(0, 4) as val CREATE (n:N {v: val})")
@@ -265,10 +254,7 @@ class testForeachFlow():
     def test06_field_access(self):
         """validate that Foreach accesses fields correctly"""
 
-        # clean db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create two nodes with list properties
         self.graph.query("CREATE (:N {li: [1, 2, 3, 4]}), (:M {li: [1, 2, 3, 4]})")
@@ -285,10 +271,7 @@ class testForeachFlow():
     def test07_midfail(self):
         """mid-evaluation failure (memory free'd appropriately)"""
 
-        # clean db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         try:
             self.graph.query("FOREACH(i in [1, 2, 0, 3] | CREATE (n:N {v: 1/i}))")
@@ -313,11 +296,9 @@ class testForeachFlow():
     def test08_complex(self):
         """complicate things up"""
 
-        global graph
-
-        # ----------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         # addressing node properties in the record sent to Foreach
-        # ----------------------------------------------------------------------
+        #-----------------------------------------------------------------------
 
         # create a single node
         self.graph.query("CREATE (:N {v: 1, name: 'RAZ', li: [1, 2, 3, 4]})")
@@ -390,10 +371,7 @@ class testForeachFlow():
         # triple embedded Foreach clause followed by reading and writing clauses
         # ----------------------------------------------------------------------
 
-        # clear db
-        self.env.flush()
-        # Make a new graph object with no cache (problematic label info)
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a single node
         self.graph.query("CREATE (:N {v: 1, name: 'RAZ', li: [1, 2, 3, 4]})")
@@ -471,10 +449,7 @@ class testForeachFlow():
         """validate that edge (relationship) manipulation (creation, deletion update)
         operations work correctly when embedded in a FOREACH clause"""
 
-        # clear db and instantiate a new graph object (with an empty cache)
-        global graph
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # ----------------------------------------------------------------------
         # create an edge between 2 nodes
@@ -523,9 +498,7 @@ class testForeachFlow():
     def test11_path_reference(self):
         """reference a named path in the FOREACH clause"""
 
-        # clean db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create some data
         res = self.graph.query(
@@ -604,9 +577,7 @@ class testForeachFlow():
         on an empty record so that the rest of the execution-plan is executed
         as well"""
 
-        # flush the graph, reset cache
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a node with label `N`
         res = self.graph.query("CREATE (:N)")
@@ -670,9 +641,7 @@ class testForeachFlow():
         """Tests that updates in between cycles of body execution are treated
         correctly"""
 
-        # clear db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a node with property `v` initialized with value 1
         res = self.graph.query("CREATE (:N {v: 1})")

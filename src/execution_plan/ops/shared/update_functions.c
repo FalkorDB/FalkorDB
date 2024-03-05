@@ -249,7 +249,7 @@ void EvalEntityUpdates
 				break;
 			}
 
-			Attribute_ID attr_id = FindOrAddAttribute(gc, attribute, true);
+			AttributeID attr_id = FindOrAddAttribute(gc, attribute, true);
 
 			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
 			{
@@ -318,7 +318,7 @@ void EvalEntityUpdates
 					break;
 				}
 
-				Attribute_ID attr_id = FindOrAddAttribute(gc, key.stringval, true);
+				AttributeID attr_id = FindOrAddAttribute(gc, key.stringval, true);
 				// TODO: would have been nice we just sent n = {v:2}
 				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, value))
 				{
@@ -364,7 +364,7 @@ void EvalEntityUpdates
 		const AttributeSet set = GraphEntity_GetAttributes(ge);
 
 		for(uint j = 0; j < AttributeSet_Count(set); j++) {
-			Attribute_ID attr_id;
+			AttributeID attr_id;
 			SIValue v = AttributeSet_GetIdx(set, j, &attr_id);
 
 			// simple assignment, no need to validate value

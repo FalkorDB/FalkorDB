@@ -814,9 +814,7 @@ updating clause.")
         """Tests that we deal properly with returning aggregations instead of
         regular projections"""
 
-        # clear the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a node with label N
         self.graph.query("CREATE (:N)")
@@ -917,9 +915,7 @@ updating clause.")
     def test21_union(self):
         """Tests that UNION works properly within a subquery"""
 
-        # clear the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # a simple subquery, returning 2 rows
         res = self.graph.query(
@@ -1104,9 +1100,7 @@ updating clause.")
         # as it requires the changes of one input record to be visible to the
         # next input record
 
-        # # clean the db
-        # self.env.flush()
-        # self.graph = self.db.select_graph(GRAPH_ID)
+        # self.graph.delete()
 
         # # create two nodes with label N and property v=1, v=2
         # self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
@@ -1323,9 +1317,7 @@ updating clause.")
         """Tests that operations on indexes are properly executed (and reset)
         in subqueries"""
 
-        # clear the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # polulate the graph
         query = """UNWIND range(10,20) AS i
@@ -1360,9 +1352,7 @@ updating clause.")
         """Tests that named paths are handled correctly, when defined/referred
         inside or outside of a subquery"""
 
-        # clear the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create a node with label N
         self.graph.query("CREATE (:N {v: 1})")
@@ -1457,9 +1447,7 @@ updating clause.")
     def test26_eager_returning(self):
         """Tests the eager and returning case of Call {}"""
 
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         query = """
         OPTIONAL MATCH (m)
@@ -1694,9 +1682,7 @@ updating clause.")
         """Tests that a read clause following a writing subquery is handled
         correctly with\without a separating `WITH` clause"""
 
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # using a separating `WITH`
         res = self.graph.query(
@@ -1761,9 +1747,7 @@ updating clause.")
         """Tests that the resetting of a call {} operation is handled
         correctly"""
 
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create 2 nodes (:N {v: 2\4})
         res = self.graph.query("UNWIND [2, 4] AS x CREATE (n:N {v: x})")
@@ -1797,9 +1781,7 @@ updating clause.")
     def test29_rewrite_star_projections(self):
         """Tests that star projections within call {}are rewritten correctly"""
 
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # import data with *
         res = self.graph.query(
@@ -1990,9 +1972,7 @@ updating clause.")
         """Tests that in case the call {} is surrounded by matches, the
         following match does not affect the input records to the call {} op"""
 
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create two nodes with label N, and one with label I with increasing v
         # property values for the N nodes
@@ -2035,9 +2015,7 @@ updating clause.")
         """Tests that in case the call {} is followed by scans, the
         following scans are planned and executed properly"""
 
-        # clean the db
-        self.env.flush()
-        self.graph = self.db.select_graph(GRAPH_ID)
+        self.graph.delete()
 
         # create the node (:N {v: 1})
         res = self.graph.query("CREATE (:N {v: 1})")

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#define EMSG_GRAPH_EXISTS "Graph %s already exists"
 #define EMSG_EMPTY_KEY "Encountered an empty key when opened key %s"
 #define EMSG_NON_GRAPH_KEY "Encountered a non-graph value type when opened key %s"
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"

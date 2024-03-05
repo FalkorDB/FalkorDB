@@ -9,7 +9,7 @@
 
 static void _RdbDecodeIndexField
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	char **name,           // index field name
 	IndexFieldType *type,  // index field type
 	double *weight,        // index field option weight
@@ -27,31 +27,31 @@ static void _RdbDecodeIndexField
 	//   dimension
 
 	// decode field name
-	*name = RedisModule_LoadStringBuffer(rdb, NULL);
+	*name = SerializerIO_ReadBuffer(rdb, NULL);
 
 	// docode field type
-	*type = RedisModule_LoadUnsigned(rdb);
+	*type = SerializerIO_ReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode field options
 	//--------------------------------------------------------------------------
 
 	// decode field weight
-	*weight = RedisModule_LoadDouble(rdb);
+	*weight = SerializerIO_ReadDouble(rdb);
 
 	// decode field nostem
-	*nostem = RedisModule_LoadUnsigned(rdb);
+	*nostem = SerializerIO_ReadUnsigned(rdb);
 
 	// decode field phonetic
-	*phonetic = RedisModule_LoadStringBuffer(rdb, NULL);
+	*phonetic = SerializerIO_ReadBuffer(rdb, NULL);
 
 	// decode field dimension
-	*dimension = RedisModule_LoadUnsigned(rdb);
+	*dimension = SerializerIO_ReadUnsigned(rdb);
 }
 
 static void _RdbLoadIndex
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	Schema *s,
 	bool already_loaded
@@ -64,19 +64,19 @@ static void _RdbLoadIndex
 	 * M * property: {options} */
 
 	Index idx        = NULL;
-	char *language   = RedisModule_LoadStringBuffer(rdb, NULL);
+	char *language   = SerializerIO_ReadBuffer(rdb, NULL);
 	char **stopwords = NULL;
 	
-	uint stopwords_count = RedisModule_LoadUnsigned(rdb);
+	uint stopwords_count = SerializerIO_ReadUnsigned(rdb);
 	if(stopwords_count > 0) {
 		stopwords = array_new(char *, stopwords_count);
 		for (uint i = 0; i < stopwords_count; i++) {
-			char *stopword = RedisModule_LoadStringBuffer(rdb, NULL);
+			char *stopword = SerializerIO_ReadBuffer(rdb, NULL);
 			array_append(stopwords, stopword);
 		}
 	}
 
-	uint fields_count = RedisModule_LoadUnsigned(rdb);
+	uint fields_count = SerializerIO_ReadUnsigned(rdb);
 	for(uint i = 0; i < fields_count; i++) {
 		IndexFieldType type;
 		double         weight;
@@ -90,7 +90,7 @@ static void _RdbLoadIndex
 
 		if(!already_loaded) {
 			IndexField field;
-			Attribute_ID field_id = GraphContext_FindOrAddAttribute(gc,
+			AttributeID field_id = GraphContext_FindOrAddAttribute(gc,
 					field_name, NULL);
 
 			// create new index field
@@ -124,7 +124,7 @@ static void _RdbLoadIndex
 
 static void _RdbLoadConstaint
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,    // graph context
 	Schema *s,           // schema to populate
 	bool already_loaded  // constraints already loaded
@@ -140,24 +140,24 @@ static void _RdbLoadConstaint
 	// decode constraint type
 	//--------------------------------------------------------------------------
 
-	ConstraintType t = RedisModule_LoadUnsigned(rdb);
+	ConstraintType t = SerializerIO_ReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields count
 	//--------------------------------------------------------------------------
 	
-	uint8_t n = RedisModule_LoadUnsigned(rdb);
+	uint8_t n = SerializerIO_ReadUnsigned(rdb);
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields
 	//--------------------------------------------------------------------------
 
-	Attribute_ID attr_ids[n];
+	AttributeID attr_ids[n];
 	const char *attr_strs[n];
 
 	// read fields
 	for(uint8_t i = 0; i < n; i++) {
-		Attribute_ID attr = RedisModule_LoadUnsigned(rdb);
+		AttributeID attr = SerializerIO_ReadUnsigned(rdb);
 		attr_ids[i]  = attr;
 		attr_strs[i] = GraphContext_GetAttributeString(gc, attr);
 	}
@@ -184,13 +184,13 @@ static void _RdbLoadConstaint
 // load schema's constraints
 static void _RdbLoadConstaints
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,    // graph context
 	Schema *s,           // schema to populate
 	bool already_loaded  // constraints already loaded
 ) {
 	// read number of constraints
-	uint constraint_count = RedisModule_LoadUnsigned(rdb);
+	uint constraint_count = SerializerIO_ReadUnsigned(rdb);
 
 	for (uint i = 0; i < constraint_count; i++) {
 		_RdbLoadConstaint(rdb, gc, s, already_loaded);
@@ -199,7 +199,7 @@ static void _RdbLoadConstaints
 
 static void _RdbLoadSchema
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	SchemaType type,
 	bool already_loaded
@@ -214,8 +214,8 @@ static void _RdbLoadSchema
 	 */
 
 	Schema *s    = NULL;
-	int     id   = RedisModule_LoadUnsigned(rdb);
-	char   *name = RedisModule_LoadStringBuffer(rdb, NULL);
+	int     id   = SerializerIO_ReadUnsigned(rdb);
+	char   *name = SerializerIO_ReadBuffer(rdb, NULL);
 
 	if(!already_loaded) {
 		s = Schema_New(type, id, name);
@@ -234,7 +234,7 @@ static void _RdbLoadSchema
 	// load indices
 	//--------------------------------------------------------------------------
 
-	uint index_count = RedisModule_LoadUnsigned(rdb);
+	uint index_count = SerializerIO_ReadUnsigned(rdb);
 	for(uint index = 0; index < index_count; index++) {
 		_RdbLoadIndex(rdb, gc, s, already_loaded);
 	}
@@ -246,15 +246,19 @@ static void _RdbLoadSchema
 	_RdbLoadConstaints(rdb, gc, s, already_loaded);
 }
 
-static void _RdbLoadAttributeKeys(RedisModuleIO *rdb, GraphContext *gc) {
+static void _RdbLoadAttributeKeys
+(
+	SerializerIO rdb,
+	GraphContext *gc
+) {
 	/* Format:
 	 * #attribute keys
 	 * attribute keys
 	 */
 
-	uint count = RedisModule_LoadUnsigned(rdb);
+	uint count = SerializerIO_ReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
-		char *attr = RedisModule_LoadStringBuffer(rdb, NULL);
+		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
 		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
 	}
@@ -262,7 +266,7 @@ static void _RdbLoadAttributeKeys(RedisModuleIO *rdb, GraphContext *gc) {
 
 void RdbLoadGraphSchema_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	bool already_loaded
 ) {
@@ -279,7 +283,7 @@ void RdbLoadGraphSchema_v14
 	_RdbLoadAttributeKeys(rdb, gc);
 
 	// #Node schemas
-	uint schema_count = RedisModule_LoadUnsigned(rdb);
+	uint schema_count = SerializerIO_ReadUnsigned(rdb);
 
 	// Load each node schema
 	gc->node_schemas = array_ensure_cap(gc->node_schemas, schema_count);
@@ -288,7 +292,7 @@ void RdbLoadGraphSchema_v14
 	}
 
 	// #Edge schemas
-	schema_count = RedisModule_LoadUnsigned(rdb);
+	schema_count = SerializerIO_ReadUnsigned(rdb);
 
 	// Load each edge schema
 	gc->relation_schemas = array_ensure_cap(gc->relation_schemas, schema_count);

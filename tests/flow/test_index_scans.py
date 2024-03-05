@@ -4,6 +4,8 @@ from index_utils import *
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social')
 import social_utils
 
+GRAPH_ID = social_utils.graph_name
+
 
 class testIndexScanFlow():
     def __init__(self):
@@ -11,16 +13,16 @@ class testIndexScanFlow():
 
     def setUp(self):
         redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph(social_utils.graph_name)
+        self.graph = self.db.select_graph(GRAPH_ID)
         social_utils.populate_graph(redis_con, self.graph)
         self.build_indices()
 
     def tearDown(self):
-        self.env.cmd('flushall')
+        self.graph.delete()
 
     def build_indices(self):
-        create_node_range_index(self.graph, 'person', 'age')
-        create_node_range_index(self.graph, 'country', 'name')
+        self.graph.create_node_range_index('person', 'age')
+        self.graph.create_node_range_index('country', 'name')
         wait_for_indices_to_sync(self.graph)
 
     # Validate that Cartesian products using index and label scans succeed
@@ -205,8 +207,6 @@ class testIndexScanFlow():
     # we've updated our separator to '\0' this test verifies issue 696:
     # https://github.com/RedisGraph/RedisGraph/issues/696
     def test06_tag_separator(self):
-        self.graph = self.db.select_graph("G")
-
         # Create a single node with a long string property, introduce a comma as part of the string.
         query = """CREATE (:Node{value:"A ValuePartition is a pattern that describes a restricted set of classes from which a property can be associated. The parent class is used in restrictions, and the covering axiom means that only members of the subclasses may be used as values."})"""
         self.graph.query(query)
@@ -222,7 +222,7 @@ class testIndexScanFlow():
         self.env.assertEqual(len(result_set), 1)
 
     def test07_index_scan_and_id(self):
-        self.graph = self.db.select_graph("G")
+        self.graph.delete()
         self.graph.query("UNWIND range(0, 9) AS i CREATE (a:person {age: i})")
 
         query_result = create_node_range_index(self.graph, 'person', 'age', sync=True)
@@ -559,8 +559,6 @@ class testIndexScanFlow():
 
     # test for https://github.com/RedisGraph/RedisGraph/issues/1980
     def test18_index_scan_inside_apply(self):
-        self.graph = self.db.select_graph('g')
-
         create_node_range_index(self.graph, 'L1', 'id', sync=True)
         self.graph.query("UNWIND range(1, 5) AS v CREATE (:L1 {id: v})")
         result = self.graph.query("UNWIND range(1, 5) AS id OPTIONAL MATCH (u:L1{id: 5}) RETURN u.id")
@@ -569,8 +567,6 @@ class testIndexScanFlow():
         self.env.assertEquals(result.result_set, expected_result)
 
     def test19_index_scan_numeric_accuracy(self):
-        self.graph = self.db.select_graph('large_index_values')
-
         create_node_range_index(self.graph, 'L1', 'id', sync=True)
         create_node_range_index(self.graph, 'L2', 'id1', 'id2', sync=True)
         self.graph.query("UNWIND range(1, 5) AS v CREATE (:L1 {id: 990000000262240068 + v})")
@@ -612,8 +608,6 @@ class testIndexScanFlow():
         self.env.assertEquals(result.result_set, expected_result)
 
     def test20_index_scan_stopwords(self):
-        self.graph = self.db.select_graph('stopword')
-
         #-----------------------------------------------------------------------
         # create indices
         #-----------------------------------------------------------------------
@@ -646,8 +640,6 @@ class testIndexScanFlow():
         self.env.assertEquals(result.result_set, [])
     
     def test21_invalid_distance_query(self):
-        self.graph = self.db.select_graph('invalid_distance')
-
         # create exact match index over User id
         create_node_range_index(self.graph, 'User', 'loc', sync=True)
         
@@ -687,25 +679,23 @@ class testIndexScanFlow():
         self.env.assertIn('Node By Index Scan', plan)
 
     def test_23_do_not_utilize_index_(self):
-        g = Graph(self.env.getConnection(), 'late_index_creation')
-
         # create graph
-        g.query("RETURN 1")
+        self.graph.query("RETURN 1")
 
         # issue query which not utilize an index
         q = "MATCH (n:N) WHERE id(n) IN [0] RETURN n"
-        plan = str(g.explain(q))
+        plan = str(self.graph.explain(q))
 
         # expecting no index scan operation
         self.env.assertNotIn('Node By Index Scan', plan)
 
         # create an index
-        resultset = create_node_range_index(g, 'N', 'v', sync=True)
+        resultset = create_node_range_index(self.graph, 'N', 'v', sync=True)
         self.env.assertEqual(1, resultset.indices_created)
 
         # re-issue the same query
         q = "MATCH (n:N) WHERE id(n) IN [0] RETURN n"
-        plan = str(g.explain(q))
+        plan = str(self.graph.explain(q))
 
         # expecting an no index scan operation
         self.env.assertNotIn('Node By Index Scan', plan)
@@ -714,8 +704,6 @@ class testIndexScanFlow():
         # create index with multiple types
         # 1. RANGE
         # 2. FULLTEXT
-        redis_con = self.env.getConnection()
-        self.graph = self.db.select_graph(social_utils.graph_name)
         create_node_range_index(self.graph, 'person', 'name')
         create_node_fulltext_index(self.graph, 'person', 'name', sync=True)
 

@@ -3,7 +3,7 @@ from index_utils import *
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-GRAPH_ID = "G"
+GRAPH_ID = "bound_variables"
 
 class testBoundVariables(FlowTestsBase):
     def __init__(self):
@@ -93,7 +93,7 @@ class testBoundVariables(FlowTestsBase):
         label"""
 
         # clear the db
-        self.env.flush()
+        self.graph.delete()
 
         # create one node with label `N`
         res = self.graph.query("CREATE (:N)")

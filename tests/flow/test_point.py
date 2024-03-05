@@ -8,9 +8,6 @@ class testPath():
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
 
-    def setUp(self):
-        self.env.flush()
-
     def assert_distance(self, a, b, expected_distance):
         # A is 18.07 km away from B
         q = """WITH point({latitude:%f, longitude:%f}) AS a,
