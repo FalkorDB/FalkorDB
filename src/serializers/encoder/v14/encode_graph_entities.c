@@ -10,13 +10,13 @@
 // forword decleration
 static void _RdbSaveSIValue
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	const SIValue *v
 );
 
 static void _RdbSaveSIArray
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	const SIValue list
 ) {
 	// saves array as
@@ -28,7 +28,7 @@ static void _RdbSaveSIArray
 	// array[array length -1]
 
 	uint arrayLen = SIArray_Length(list);
-	RedisModule_SaveUnsigned(rdb, arrayLen);
+	SerializerIO_WriteUnsigned(rdb, arrayLen);
 	for(uint i = 0; i < arrayLen; i ++) {
 		SIValue value = SIArray_Get(list, i);
 		_RdbSaveSIValue(rdb, &value);
@@ -37,7 +37,7 @@ static void _RdbSaveSIArray
 
 static void _RdbSaveSIVector
 (
-	RedisModuleIO *rdb, 
+	SerializerIO rdb, 
 	SIValue v
 ) {
 	// saves a vector
@@ -49,7 +49,7 @@ static void _RdbSaveSIVector
 	// vector[vector dimension -1]
 
 	uint32_t dim = SIVector_Dim(v);
-	RedisModule_SaveUnsigned(rdb, dim);
+	SerializerIO_WriteUnsigned(rdb, dim);
 
 	// get vector elements
 	void *elements = SIVector_Elements(v);
@@ -57,39 +57,39 @@ static void _RdbSaveSIVector
 	// save individual elements
 	float *values = (float*)elements;
 	for(uint32_t i = 0; i < dim; i ++) {
-		RedisModule_SaveFloat(rdb, values[i]);
+		SerializerIO_WriteFloat(rdb, values[i]);
 	}
 }
 
 static void _RdbSaveSIValue
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	const SIValue *v
 ) {
 	// Format:
 	// SIType
 	// Value
 
-	RedisModule_SaveUnsigned(rdb, v->type);
+	SerializerIO_WriteUnsigned(rdb, v->type);
 
 	switch(v->type) {
 		case T_BOOL:
 		case T_INT64:
-			RedisModule_SaveSigned(rdb, v->longval);
+			SerializerIO_WriteSigned(rdb, v->longval);
 			break;
 		case T_DOUBLE:
-			RedisModule_SaveDouble(rdb, v->doubleval);
+			SerializerIO_WriteDouble(rdb, v->doubleval);
 			break;
 		case T_STRING:
-			RedisModule_SaveStringBuffer(rdb, v->stringval,
+			SerializerIO_WriteBuffer(rdb, v->stringval,
 					strlen(v->stringval) + 1);
 			break;
 		case T_ARRAY:
 			_RdbSaveSIArray(rdb, *v);
 			break;
 		case T_POINT:
-			RedisModule_SaveDouble(rdb, Point_lat(*v));
-			RedisModule_SaveDouble(rdb, Point_lon(*v));
+			SerializerIO_WriteDouble(rdb, Point_lat(*v));
+			SerializerIO_WriteDouble(rdb, Point_lon(*v));
 			break;
 		case T_VECTOR_F32:
 			_RdbSaveSIVector(rdb, *v);
@@ -103,7 +103,7 @@ static void _RdbSaveSIValue
 
 static void _RdbSaveEntity
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	const GraphEntity *e
 ) {
 	// Format:
@@ -113,19 +113,19 @@ static void _RdbSaveEntity
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	uint16_t attr_count = AttributeSet_Count(set);
 
-	RedisModule_SaveUnsigned(rdb, attr_count);
+	SerializerIO_WriteUnsigned(rdb, attr_count);
 
 	for(int i = 0; i < attr_count; i++) {
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		RedisModule_SaveUnsigned(rdb, attr_id);
+		SerializerIO_WriteUnsigned(rdb, attr_id);
 		_RdbSaveSIValue(rdb, &value);
 	}
 }
 
 static void _RdbSaveEdge
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	const Graph *g,
 	const Edge *e,
 	int r
@@ -138,16 +138,16 @@ static void _RdbSaveEdge
 	//  relation type
 	//  edge properties
 
-	RedisModule_SaveUnsigned(rdb, ENTITY_GET_ID(e));
+	SerializerIO_WriteUnsigned(rdb, ENTITY_GET_ID(e));
 
 	// source node ID
-	RedisModule_SaveUnsigned(rdb, Edge_GetSrcNodeID(e));
+	SerializerIO_WriteUnsigned(rdb, Edge_GetSrcNodeID(e));
 
 	// destination node ID
-	RedisModule_SaveUnsigned(rdb, Edge_GetDestNodeID(e));
+	SerializerIO_WriteUnsigned(rdb, Edge_GetDestNodeID(e));
 
 	// relation type
-	RedisModule_SaveUnsigned(rdb, r);
+	SerializerIO_WriteUnsigned(rdb, r);
 
 	// edge properties
 	_RdbSaveEntity(rdb, (GraphEntity *)e);
@@ -155,7 +155,7 @@ static void _RdbSaveEdge
 
 static void _RdbSaveNode_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	GraphEntity *n
 ) {
@@ -168,15 +168,15 @@ static void _RdbSaveNode_v14
 
 	// save ID
 	EntityID id = ENTITY_GET_ID(n);
-	RedisModule_SaveUnsigned(rdb, id);
+	SerializerIO_WriteUnsigned(rdb, id);
 
 	// retrieve node labels
 	uint l_count;
 	NODE_GET_LABELS(gc->g, (Node *)n, l_count);
-	RedisModule_SaveUnsigned(rdb, l_count);
+	SerializerIO_WriteUnsigned(rdb, l_count);
 
 	// save labels
-	for(uint i = 0; i < l_count; i++) RedisModule_SaveUnsigned(rdb, labels[i]);
+	for(uint i = 0; i < l_count; i++) SerializerIO_WriteUnsigned(rdb, labels[i]);
 
 	// properties N
 	// (name, value type, value) X N
@@ -185,7 +185,7 @@ static void _RdbSaveNode_v14
 
 static void _RdbSaveDeletedEntities_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_entities_to_encode,
 	uint64_t *deleted_id_list
@@ -195,13 +195,13 @@ static void _RdbSaveDeletedEntities_v14
 
 	// Iterated over the required range in the datablock deleted items.
 	for(uint64_t i = offset; i < offset + deleted_entities_to_encode; i++) {
-		RedisModule_SaveUnsigned(rdb, deleted_id_list[i]);
+		SerializerIO_WriteUnsigned(rdb, deleted_id_list[i]);
 	}
 }
 
 void RdbSaveDeletedNodes_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_nodes_to_encode
 ) {
@@ -216,7 +216,7 @@ void RdbSaveDeletedNodes_v14
 
 void RdbSaveDeletedEdges_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_edges_to_encode
 ) {
@@ -232,7 +232,7 @@ void RdbSaveDeletedEdges_v14
 
 void RdbSaveNodes_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t nodes_to_encode
 ) {
@@ -277,7 +277,7 @@ void RdbSaveNodes_v14
 // returns true if the number of encoded edges has reached the capacity
 static void _RdbSaveMultipleEdges
 (
-	RedisModuleIO *rdb,                  // RDB IO.
+	SerializerIO rdb,                  // RDB IO.
 	GraphContext *gc,                    // Graph context.
 	uint r,                              // Edges relation id.
 	EdgeID *multiple_edges_array,        // Multiple edges array (passed by ref).
@@ -312,7 +312,7 @@ static void _RdbSaveMultipleEdges
 
 void RdbSaveEdges_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t edges_to_encode
 ) {

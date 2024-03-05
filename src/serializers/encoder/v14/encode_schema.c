@@ -9,7 +9,7 @@
 
 static void _RdbSaveAttributeKeys
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc
 ) {
 	/* Format:
@@ -18,17 +18,17 @@ static void _RdbSaveAttributeKeys
 	*/
 
 	uint count = GraphContext_AttributeCount(gc);
-	RedisModule_SaveUnsigned(rdb, count);
+	SerializerIO_WriteUnsigned(rdb, count);
 	for(uint i = 0; i < count; i ++) {
 		char *key = gc->string_mapping[i];
-		RedisModule_SaveStringBuffer(rdb, key, strlen(key) + 1);
+		SerializerIO_WriteBuffer(rdb, key, strlen(key) + 1);
 	}
 }
 
 // encode index field
 static void _RdbSaveIndexField
 (
-	RedisModuleIO *rdb,  // redis io
+	SerializerIO rdb,    // io
 	const IndexField *f  // index field to encode
 ) {
 	// format:
@@ -43,32 +43,32 @@ static void _RdbSaveIndexField
 	ASSERT(f != NULL);
 
 	// encode field name
-	RedisModule_SaveStringBuffer(rdb, f->name, strlen(f->name) + 1);
+	SerializerIO_WriteBuffer(rdb, f->name, strlen(f->name) + 1);
 
 	// encode field type
-	RedisModule_SaveUnsigned(rdb, f->type);
+	SerializerIO_WriteUnsigned(rdb, f->type);
 
 	//--------------------------------------------------------------------------
 	// encode field options
 	//--------------------------------------------------------------------------
 
 	// encode field weight
-	RedisModule_SaveDouble(rdb, f->options.weight);
+	SerializerIO_WriteDouble(rdb, f->options.weight);
 
 	// encode field nostem
-	RedisModule_SaveUnsigned(rdb, f->options.nostem);
+	SerializerIO_WriteUnsigned(rdb, f->options.nostem);
 
 	// encode field phonetic
-	RedisModule_SaveStringBuffer(rdb, f->options.phonetic,
+	SerializerIO_WriteBuffer(rdb, f->options.phonetic,
 			strlen(f->options.phonetic) + 1);
 
 	// encode field dimension
-	RedisModule_SaveUnsigned(rdb, f->options.dimension);
+	SerializerIO_WriteUnsigned(rdb, f->options.dimension);
 }
 
 static inline void _RdbSaveIndexData
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	SchemaType type,
 	Index idx
 ) {
@@ -83,22 +83,22 @@ static inline void _RdbSaveIndexData
 
 	// encode language
 	const char *language = Index_GetLanguage(idx);
-	RedisModule_SaveStringBuffer(rdb, language, strlen(language) + 1);
+	SerializerIO_WriteBuffer(rdb, language, strlen(language) + 1);
 
 	size_t stopwords_count;
 	char **stopwords = Index_GetStopwords(idx, &stopwords_count);
 	// encode stopwords count
-	RedisModule_SaveUnsigned(rdb, stopwords_count);
+	SerializerIO_WriteUnsigned(rdb, stopwords_count);
 	for (size_t i = 0; i < stopwords_count; i++) {
 		char *stopword = stopwords[i];
-		RedisModule_SaveStringBuffer(rdb, stopword, strlen(stopword) + 1);
+		SerializerIO_WriteBuffer(rdb, stopword, strlen(stopword) + 1);
 		rm_free(stopword);
 	}
 	rm_free(stopwords);
 
 	// encode field count
 	uint fields_count = Index_FieldsCount(idx);
-	RedisModule_SaveUnsigned(rdb, fields_count);
+	SerializerIO_WriteUnsigned(rdb, fields_count);
 
 	// encode fields
 	const IndexField *fields = Index_GetFields(idx);
@@ -109,7 +109,7 @@ static inline void _RdbSaveIndexData
 
 static void _RdbSaveConstraint
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	const Constraint c
 ) {
 	/* Format:
@@ -125,7 +125,7 @@ static void _RdbSaveConstraint
 	//--------------------------------------------------------------------------
 
 	ConstraintType t = Constraint_GetType(c);
-	RedisModule_SaveUnsigned(rdb, t);
+	SerializerIO_WriteUnsigned(rdb, t);
 
 	//--------------------------------------------------------------------------
 	// encode constraint fields count
@@ -133,7 +133,7 @@ static void _RdbSaveConstraint
 
 	const AttributeID *attrs;
 	uint8_t n = Constraint_GetAttributes(c, &attrs, NULL);
-	RedisModule_SaveUnsigned(rdb, n);
+	SerializerIO_WriteUnsigned(rdb, n);
 
 	//--------------------------------------------------------------------------
 	// encode constraint fields
@@ -141,13 +141,13 @@ static void _RdbSaveConstraint
 
 	for(uint8_t i = 0; i < n; i++) {
 		AttributeID attr = attrs[i];
-		RedisModule_SaveUnsigned(rdb, attr);
+		SerializerIO_WriteUnsigned(rdb, attr);
 	}
 }
 
 static void _RdbSaveConstraintsData
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	Constraint *constraints
 ) {
 	uint n_constraints = array_len(constraints);
@@ -163,7 +163,7 @@ static void _RdbSaveConstraintsData
 
 	// encode number of active constraints
 	uint n_active_constraints = array_len(active_constraints);
-	RedisModule_SaveUnsigned(rdb, n_active_constraints);
+	SerializerIO_WriteUnsigned(rdb, n_active_constraints);
 
 	// encode constraints
 	for (uint i = 0; i < n_active_constraints; i++) {
@@ -175,7 +175,7 @@ static void _RdbSaveConstraintsData
 	array_free(active_constraints);
 }
 
-static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
+static void _RdbSaveSchema(SerializerIO rdb, Schema *s) {
 	/* Format:
 	 * id
 	 * name
@@ -186,13 +186,13 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 	 */
 
 	// Schema ID.
-	RedisModule_SaveUnsigned(rdb, s->id);
+	SerializerIO_WriteUnsigned(rdb, s->id);
 
 	// Schema name.
-	RedisModule_SaveStringBuffer(rdb, s->name, strlen(s->name) + 1);
+	SerializerIO_WriteBuffer(rdb, s->name, strlen(s->name) + 1);
 
 	// Number of indices.
-	RedisModule_SaveUnsigned(rdb, Schema_HasIndices(s));
+	SerializerIO_WriteUnsigned(rdb, Schema_HasIndices(s));
 
 	// index, prefer pending over active
 	Index idx = PENDING_IDX(s)
@@ -205,7 +205,7 @@ static void _RdbSaveSchema(RedisModuleIO *rdb, Schema *s) {
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
+void RdbSaveGraphSchema_v14(SerializerIO rdb, GraphContext *gc) {
 	/* Format:
 	 * attribute keys (unified schema)
 	 * #node schemas
@@ -219,7 +219,7 @@ void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
 
 	// #Node schemas.
 	unsigned short schema_count = GraphContext_SchemaCount(gc, SCHEMA_NODE);
-	RedisModule_SaveUnsigned(rdb, schema_count);
+	SerializerIO_WriteUnsigned(rdb, schema_count);
 
 	// Name of label X #node schemas.
 	for(int i = 0; i < schema_count; i++) {
@@ -229,7 +229,7 @@ void RdbSaveGraphSchema_v14(RedisModuleIO *rdb, GraphContext *gc) {
 
 	// #Relation schemas.
 	unsigned short relation_count = GraphContext_SchemaCount(gc, SCHEMA_EDGE);
-	RedisModule_SaveUnsigned(rdb, relation_count);
+	SerializerIO_WriteUnsigned(rdb, relation_count);
 
 	// Name of label X #relation schemas.
 	for(unsigned short i = 0; i < relation_count; i++) {
