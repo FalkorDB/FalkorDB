@@ -415,22 +415,26 @@ static void _Graph_Copy
 
 	int pid = -1;
 	while(pid == -1) {
+		// try to fork
+		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
+
 		// acquire READ lock on gc
 		// we do not want to fork while the graph is modified
+		// might be redundant, see: GraphContext_LockForCommit
 		Graph_AcquireReadLock(gc->g);
 
-		// try to fork
 		pid = RedisModule_Fork(ForkDoneHandler, copy_ctx);
+		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
+
+		// release graph READ lock
+		Graph_ReleaseLock(gc->g);
+
 		if(pid < 0) {
 			// failed to fork! retry in a bit
-
-			// release graph READ lock
-			Graph_ReleaseLock(gc->g);
-
-			// go to sleep for 1.0ms
+			// go to sleep for 5.0ms
 			struct timespec sleep_time;
 			sleep_time.tv_sec = 0;
-			sleep_time.tv_nsec = 1000000;
+			sleep_time.tv_nsec = 5000000;
 			nanosleep(&sleep_time, NULL);
 		} else if(pid == 0) {
 			// managed to fork, in child process
@@ -441,9 +445,6 @@ static void _Graph_Copy
 			return;
 		}
 	}
-
-	// release READ lock
-	Graph_ReleaseLock(gc->g);
 
 	// clean up
 cleanup:
