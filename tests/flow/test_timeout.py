@@ -1,6 +1,8 @@
 import asyncio
 from common import *
 from index_utils import *
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 
 GRAPH_ID = "timeout"
 
@@ -105,9 +107,6 @@ class testQueryTimeout():
                 timeout = min(max(int(timeouts[i]), 1), 10)
                 res = self.graph.query(q, timeout=timeout)
                 self.env.assertTrue(False)
-                print(q)
-                print(res.run_time_ms)
-                print(timeout)
             except ResponseError as error:
                 self.env.assertContains("Query timed out", str(error))
 
@@ -129,9 +128,6 @@ class testQueryTimeout():
             self.env.assertContains("Query timed out", str(error))
 
     def test05_invalid_loadtime_config(self):
-        self.env.flush()
-        self.env.stop()
-
         try:
             env, db = Env(moduleArgs="TIMEOUT 10 TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
             env.getConnection().ping()
@@ -218,7 +214,6 @@ class testQueryTimeout():
                 self.env.assertContains("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value", str(error))
 
     def test09_fallback(self):
-        self.env.flush()
         self.env.stop()
         self.env, self.db = Env(moduleArgs="TIMEOUT 1")
 
@@ -259,7 +254,6 @@ class testQueryTimeout():
     # should return to user
     def test11_profile_no_double_response(self):
         # reset timeout params to default
-        self.env.flush()
         self.env.stop()
         self.env, self.db = Env()
 
@@ -283,25 +277,27 @@ class testQueryTimeout():
         self.env.assertEquals(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
-        # skip test if we're running under Valgrind
-        if VALGRIND or "to_thread" not in dir(asyncio):
-            self.env.skip() # valgrind is not working correctly with multi processing
-
-        self.env.flush()
         self.env.stop()
         self.env, self.db = Env()
 
         self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 
-        def query():
-            g = Graph(self.env.getConnection(), GRAPH_ID)
+        async def query():
+            # connection pool with 16 connections
+            # blocking when there's no connections available
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-            for i in range(1, 1000):
-                g.query(f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)", timeout=1000)
+            tasks = []
+            for i in range(1, 10000):
+                q = f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)"
+                tasks.append(asyncio.create_task(g.query(q, timeout=1000)))
 
-        loop = asyncio.get_event_loop()
-        tasks = []
-        for i in range(1, 10):
-            tasks.append(loop.create_task(asyncio.to_thread(query)))
+            # wait for tasks to finish
+            await asyncio.gather(*tasks)
 
-        loop.run_until_complete(asyncio.wait(tasks))
+            # close the connection pool
+            await pool.aclose()
+
+        asyncio.run(query())

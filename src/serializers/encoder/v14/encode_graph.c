@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "encode_v14.h"
@@ -15,7 +14,7 @@ static inline bool _shouldAcquireLocks(void) {
 
 static void _RdbSaveHeader
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc
 ) {
 	// Header format:
@@ -35,34 +34,34 @@ static void _RdbSaveHeader
 	GraphEncodeHeader *header = &(gc->encoding_context->header);
 
 	// graph name
-	RedisModule_SaveStringBuffer(rdb, header->graph_name, strlen(header->graph_name) + 1);
+	SerializerIO_WriteBuffer(rdb, header->graph_name, strlen(header->graph_name) + 1);
 
 	// node count
-	RedisModule_SaveUnsigned(rdb, header->node_count);
+	SerializerIO_WriteUnsigned(rdb, header->node_count);
 
 	// edge count
-	RedisModule_SaveUnsigned(rdb, header->edge_count);
+	SerializerIO_WriteUnsigned(rdb, header->edge_count);
 
 	// deleted node count
-	RedisModule_SaveUnsigned(rdb, header->deleted_node_count);
+	SerializerIO_WriteUnsigned(rdb, header->deleted_node_count);
 
 	// deleted edge count
-	RedisModule_SaveUnsigned(rdb, header->deleted_edge_count);
+	SerializerIO_WriteUnsigned(rdb, header->deleted_edge_count);
 
 	// label matrix count
-	RedisModule_SaveUnsigned(rdb, header->label_matrix_count);
+	SerializerIO_WriteUnsigned(rdb, header->label_matrix_count);
 
 	// relation matrix count
-	RedisModule_SaveUnsigned(rdb, header->relationship_matrix_count);
+	SerializerIO_WriteUnsigned(rdb, header->relationship_matrix_count);
 
 	// does relationship Ri holds mutiple edges under a single entry X N
 	for(int i = 0; i < header->relationship_matrix_count; i++) {
 		// true if R[i] contain a multi edge entry
-		RedisModule_SaveUnsigned(rdb, header->multi_edge[i]);
+		SerializerIO_WriteUnsigned(rdb, header->multi_edge[i]);
 	}
 
 	// number of keys
-	RedisModule_SaveUnsigned(rdb, header->key_count);
+	SerializerIO_WriteUnsigned(rdb, header->key_count);
 
 	// save graph schemas
 	RdbSaveGraphSchema_v14(rdb, gc);
@@ -112,7 +111,7 @@ static PayloadInfo _StatePayloadInfo
 // and returns it so the encoder can know how to encode the key
 static PayloadInfo *_RdbSaveKeySchema
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc
 ) {
 	//  Format:
@@ -156,21 +155,21 @@ static PayloadInfo *_RdbSaveKeySchema
 
 	// save the number of payloads
 	uint payloads_count = array_len(payloads);
-	RedisModule_SaveUnsigned(rdb, payloads_count);
+	SerializerIO_WriteUnsigned(rdb, payloads_count);
 	for(uint i = 0; i < payloads_count; i++) {
 		// for each payload
 		// save its type and the number of entities it contains
 		PayloadInfo payload_info = payloads[i];
-		RedisModule_SaveUnsigned(rdb, payload_info.state);
-		RedisModule_SaveUnsigned(rdb, payload_info.entities_count);
+		SerializerIO_WriteUnsigned(rdb, payload_info.state);
+		SerializerIO_WriteUnsigned(rdb, payload_info.entities_count);
 	}
 
 	return payloads;
 }
 
-void RdbSaveGraph_v14
+void RdbSaveGraph_latest
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	void *value
 ) {
 	// Encoding format for graph context and graph meta key:
@@ -253,8 +252,6 @@ void RdbSaveGraph_v14
 	GraphEncodeContext_IncreaseProcessedKeyCount(gc->encoding_context);
 	if(GraphEncodeContext_Finished(gc->encoding_context)) {
 		GraphEncodeContext_Reset(gc->encoding_context);
-		RedisModuleCtx *ctx = RedisModule_GetContextFromIO(rdb);
-		RedisModule_Log(ctx, "notice", "Done encoding graph %s", gc->graph_name);
 	}
 
 	// if a lock was acquired, release it

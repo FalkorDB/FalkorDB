@@ -83,7 +83,7 @@ static void _ResultSet_VerboseReplyWithProperties
 	// iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
 		RedisModule_ReplyWithArray(ctx, 2);
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		// Emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);

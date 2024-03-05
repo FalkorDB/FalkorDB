@@ -166,7 +166,7 @@ class testStarProjections():
     # alongside a star projection does not result in errors
     def test05_star_and_nonpredicate_children(self):
         # create a single node
-        self.env.flush()
+        self.graph.delete()
         n = Node(node_id=0, labels="L", properties={"v": 1})
         self.graph.query(f"CREATE {n}")
 

@@ -371,8 +371,7 @@ class testComprehensionFunctions(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Clear data
-        redis_con = self.env.getConnection()
-        redis_con.flushall()
+        self.graph.delete()
 
         # Create 10 nodes with incremental v attribute
         self.graph.query("UNWIND range(1, 10) AS x CREATE (:N{v:x})")
@@ -419,8 +418,7 @@ class testComprehensionFunctions(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set, expected_result)
 
         # Clear data
-        redis_con = self.env.getConnection()
-        redis_con.flushall()
+        self.graph.delete()
 
         # Create:
         # Node a with 2 outgoing relationships to b and c

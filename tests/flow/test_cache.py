@@ -1,13 +1,24 @@
 import asyncio
 from common import *
 from index_utils import *
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 
+GRAPH_IDS = ["Cache_Test_plans", "Cache_Sanity_Check", 'Cache_Test_Create',
+        'Cache_Test_Create_With_Params', 'Cache_Test_Delete', 'Cache_Test_Merge',
+        'Cache_Test_Path_Filter', 'Cache_Test_Index', 'Cache_Test_ID_Scan',
+        'Cache_Test_Join', 'Cache_Test_Edge_Merge', 'Cache_test_labelscan_update',
+        'Cache_test_index_scan_update', 'Cache_Empty_Key', 'cache_eviction']
 CACHE_SIZE = 16
 
 class testCache():
     def __init__(self):
         # Have only one thread handling queries
         self.env, self.db = Env(moduleArgs=f"THREAD_COUNT 8 CACHE_SIZE {CACHE_SIZE}")
+        self.conn = self.env.getConnection()
+
+    def setUp(self):
+        self.conn.delete(*GRAPH_IDS)
 
     def compare_uncached_to_cached_query_plans(self, query, params=None):
         plan_graph = self.db.select_graph('Cache_Test_plans')
@@ -16,7 +27,6 @@ class testCache():
         uncached_plan = str(plan_graph.explain(query, params))
         cached_plan = str(plan_graph.explain(query, params))
         self.env.assertEqual(uncached_plan, cached_plan)
-        plan_graph.delete()
 
     def test_01_sanity_check(self):
         graph = self.db.select_graph('Cache_Sanity_Check')
@@ -31,7 +41,6 @@ class testCache():
         result = graph.query("MATCH (n) WHERE n.value = 0 RETURN n")
         self.env.assertFalse(result.cached_execution)
 
-        graph.delete()
 
     def test_02_test_create(self):
         # Both queries do exactly the same operations
@@ -43,7 +52,6 @@ class testCache():
         self.env.assertFalse(uncached_result.cached_execution)
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual(uncached_result.nodes_created, cached_result.nodes_created)
-        graph.delete()
         
     def test_03_test_create_with_params(self):
         # Both queries do exactly the same operations
@@ -57,7 +65,6 @@ class testCache():
         self.env.assertFalse(uncached_result.cached_execution)
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual(uncached_result.nodes_created, cached_result.nodes_created)
-        graph.delete()
 
     def test_04_test_delete(self):
         # Both queries do exactly the same operations
@@ -77,7 +84,6 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual(uncached_result.relationships_deleted, cached_result.relationships_deleted)
         self.env.assertEqual(uncached_result.nodes_deleted, cached_result.nodes_deleted)
-        graph.delete()
 
     def test_05_test_merge(self):
         # Different outcome, same execution plan.
@@ -95,7 +101,6 @@ class testCache():
         self.env.assertEqual([[1]], cached_result.result_set)
         self.env.assertEqual(0, cached_result.nodes_created)
 
-        graph.delete()
 
     def test_06_test_branching_with_path_filter(self):
         # Different outcome, same execution plan.
@@ -112,7 +117,6 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[1]], uncached_result.result_set)
         self.env.assertEqual([[2]], cached_result.result_set)
-        graph.delete()
 
 
     def test_07_test_optimizations_index(self):
@@ -130,7 +134,6 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[1]], uncached_result.result_set)
         self.env.assertEqual([[2]], cached_result.result_set)
-        graph.delete()
 
 
     def test_08_test_optimizations_id_scan(self):
@@ -147,7 +150,6 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[0]], uncached_result.result_set)
         self.env.assertEqual([[1]], cached_result.result_set)
-        graph.delete()
 
 
     def test_09_test_join(self):
@@ -164,7 +166,6 @@ class testCache():
         self.env.assertTrue(cached_result.cached_execution)
         self.env.assertEqual([[1, 2]], uncached_result.result_set)
         self.env.assertEqual([[3, 4]], cached_result.result_set)
-        graph.delete()
 
     def test_10_test_edge_merge(self):
         # In this scenario, the same query is executed twice.
@@ -248,36 +249,33 @@ class testCache():
         # we want to make sure the execution of a recently evicted query
         # runs to completion successfuly
 
-        # skip if 'to_thread' is missing or if test under valgrind
-        if VALGRIND or "to_thread" not in dir(asyncio):
-            self.env.skip()
-
         # stop previous env
-        self.env.flush()
         self.env.stop()
 
         self.env, self.db = Env(moduleArgs='THREAD_COUNT 8 CACHE_SIZE 1')
 
         # eviction
-        graph = self.db.select_graph('cache_eviction')
 
-        # populate graph
-        graph.query("UNWIND range(0, 10000) as x CREATE ({v:'/'})")
+        async def run(self):
+            # connection pool with 16 connections
+            # blocking when there's no connections available
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph('cache_eviction')
 
-        # _run_query is expected to be issued by multiple threads
-        def _run_query(i):
-            #random param name
-            param_name = 'p_' + str(i)
-            q = f"MATCH (n) WHERE n.v = ${param_name} RETURN count(n)"
-            params = {param_name : '/'}
-            g = self.db.select_graph('cache_eviction')
-            count = g.query(q, params).result_set[0][0]
-            self.env.assertEqual(count, 10001)
+            tasks = []
+            for i in range(1, 50):
+                # random param name
+                param_name = 'p_' + str(i)
+                q = f"UNWIND range(0, 50000) as x WITH x WHERE x >= ${param_name} RETURN count(x)"
+                params = {param_name : 0}
+                tasks.append(asyncio.create_task(g.query(q,params)))
 
-        tasks = []
-        loop = asyncio.get_event_loop()
-        for i in range(1, 50):
-            tasks.append(loop.create_task(asyncio.to_thread(_run_query, i)))
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                self.env.assertEqual(r.result_set[0][0], 50001)
 
-        loop.run_until_complete(asyncio.wait(tasks))
+            await pool.aclose()
+
+        asyncio.run(run(self))
 

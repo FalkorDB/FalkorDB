@@ -238,10 +238,6 @@ class testNodeIndexDeletionFlow():
         reset before the writing ops (otherwise we write while a read-lock is
         held)."""
 
-        # clear the db
-        self.env.flush()
-        self.g = Graph(self.env.getConnection(), GRAPH_ID)
-
         # create data
         self.g.query(
             """

@@ -2246,7 +2246,7 @@ class testFunctionCallsFlow(FlowTestsBase):
 
     def test88_in_out_degree(self):
         # clear graph
-        self.env.flush()
+        self.graph.delete()
 
         # given the graph (a)
         # in/out degree of 'a' is 0
@@ -2358,7 +2358,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.env.assertEqual(out_degree, 0)
 
         # clear graph
-        self.env.flush()
+        self.graph.delete()
 
         # given the graph (a)-[:E]->(a)
         # in/out degree of 'a' is 1

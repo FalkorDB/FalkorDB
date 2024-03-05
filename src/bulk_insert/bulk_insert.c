@@ -86,7 +86,7 @@ static int* _BulkInsert_ReadHeaderLabels
 }
 
 // read the property keys from a header
-static Attribute_ID* _BulkInsert_ReadHeaderProperties
+static AttributeID* _BulkInsert_ReadHeaderProperties
 (
 	GraphContext* gc,
 	SchemaType t,
@@ -105,7 +105,7 @@ static Attribute_ID* _BulkInsert_ReadHeaderProperties
 
     if (*prop_count == 0) return NULL;
 
-    Attribute_ID* prop_indices = rm_malloc(*prop_count * sizeof(Attribute_ID));
+    AttributeID* prop_indices = rm_malloc(*prop_count * sizeof(AttributeID));
 
     // the rest of the line is [char *prop_key] * prop_count
 	for (uint j = 0; j < *prop_count; j++) {
@@ -207,7 +207,7 @@ static int _BulkInsert_ProcessNodeFile
     int* label_ids = _BulkInsert_ReadHeaderLabels(gc, SCHEMA_NODE, data, &data_idx);
     uint label_count = array_len(label_ids);
     // read the CSV header properties and collect their indices
-    Attribute_ID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_NODE, data,
+    AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_NODE, data,
 	&data_idx, &prop_count);
 
     // sync each matrix once
@@ -266,7 +266,7 @@ static int _BulkInsert_ProcessEdgeFile
     ASSERT(type_count == 1);
 
     int type_id = type_ids[0];
-    Attribute_ID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_EDGE,
+    AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_EDGE,
 	data, &data_idx, &prop_count);
 
     // sync matrix once

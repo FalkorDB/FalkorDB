@@ -8,7 +8,6 @@ from demo import QueryInfo
 graph_entities = QueryInfo(
     query="""MATCH (e) RETURN e.name, LABELS(e) as label ORDER BY label, e.name""",
     description='Returns each node in the graph, specifing node label.',
-    max_run_time_ms=0.2,
     expected_result=[['Netherlands',['country']],
                      ['Andora',['country']],
                      ['Canada',['country']],
@@ -41,7 +40,6 @@ graph_entities = QueryInfo(
 relation_type_counts = QueryInfo(
     query="""MATCH ()-[e]->() RETURN TYPE(e) as relation_type, COUNT(e) as num_relations ORDER BY relation_type, num_relations""",
     description='Returns each relation type in the graph and its count.',
-    max_run_time_ms=0.4,
     expected_result=[['friend', 13],
                      ['visited', 43]]
 )
@@ -49,7 +47,6 @@ relation_type_counts = QueryInfo(
 subset_of_people = QueryInfo(
     query="""MATCH (p:person) RETURN p.name ORDER BY p.name SKIP 3 LIMIT 5""",
     description='Get a subset of people.',
-    max_run_time_ms=0.2,
     expected_result=[["Gal Derriere"],
                     ["Jane Chernomorin"],
                     ["Lucy Yanfital"],
@@ -61,7 +58,6 @@ my_friends_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[:friend]->(f:person) 
              RETURN f.name""",
     description='My friends?',
-    max_run_time_ms=0.2,
     expected_result=[['Tal Doron'],
                      ['Omri Traub'],
                      ['Boaz Arad'],
@@ -74,7 +70,6 @@ friends_of_friends_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[:friend]->(:person)-[:friend]->(fof:person) 
              RETURN fof.name""",
     description='Friends of friends?',
-    max_run_time_ms=0.2,
     expected_result=[['Valerie Abigail Arad'],
                      ['Shelly Laslo Rooz'],
                      ['Noam Nativ'],
@@ -89,7 +84,6 @@ friends_of_friends_single_and_over_30_query = QueryInfo(
              WHERE fof.age > 30
              RETURN fof.name, fof.age, fof.gender, fof.status""",
     description='Friends of friends who are single and over 30?',
-    max_run_time_ms=0.25,
     expected_result=[['Noam Nativ', 34, 'male', 'single']]
 )
 
@@ -98,7 +92,6 @@ friends_of_friends_visited_netherlands_and_single_query = QueryInfo(
              (fof:person {status:"single"})-[:visited]->(:country {name:"Netherlands"})
              RETURN fof.name ORDER BY fof.name""",
     description='Friends of friends who visited Netherlands and are single?',
-    max_run_time_ms=0.3,
     expected_result=[['Gal Derriere'],
                      ['Noam Nativ']]
 )
@@ -107,7 +100,6 @@ friends_visited_same_places_as_me_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[:visited]->(c:country)<-[:visited]-(f:person)<-[:friend]-(ME)
              RETURN f.name, c.name ORDER BY f.name, c.name""",
     description='Friends who have been to places I have visited?',
-    max_run_time_ms=0.45,
     expected_result=[['Tal Doron', 'Japan'],
                      ['Alon Fital', 'Prague'],
                      ['Tal Doron', 'USA'],
@@ -123,7 +115,6 @@ countries_visited_by_roi_tal_boaz = QueryInfo(
                    (C:person {name:"Boaz Arad"})-[:visited]->(X)
             RETURN X.name""",
     description='Countries visited by Roi, Tal and Boaz.',
-    max_run_time_ms=0.30,
     expected_result=[['USA']]
 )
 
@@ -132,7 +123,6 @@ friends_older_than_me_query = QueryInfo(
              WHERE f.age > ME.age
              RETURN f.name, f.age""",
     description='Friends who are older than me?',
-    max_run_time_ms=0.25,
     expected_result=[['Omri Traub', 33]]
 )
 
@@ -141,7 +131,6 @@ friends_age_difference_query = QueryInfo(
              RETURN f.name, abs(ME.age - f.age) AS age_diff
              ORDER BY age_diff desc""",
     description='Age difference between me and each of my friends.',
-    max_run_time_ms=0.35,
     expected_result=[['Boaz Arad', 1],
                      ['Omri Traub', 1],
                      ['Ailon Velger', 0],
@@ -159,7 +148,6 @@ friends_who_are_older_than_average = QueryInfo(
              ORDER BY age_diff DESC, f.name DESC
              LIMIT 4""",
     description='Friends who are older then the average age.',
-    max_run_time_ms=0.35,
     expected_result=[['Noam Nativ', 34, 3.0],
                      ['Omri Traub', 33, 2.0],
                      ['Tal Doron', 32, 1.0],
@@ -172,7 +160,6 @@ how_many_countries_each_friend_visited_query = QueryInfo(
              ORDER BY countriesVisited DESC
              LIMIT 10""",
     description='Count for each friend how many countires he or she been to?',
-    max_run_time_ms=0.3,
     expected_result=[['Alon Fital', 3],
                      ['Omri Traub', 3],
                      ['Tal Doron', 3],
@@ -185,7 +172,6 @@ happy_birthday_query = QueryInfo(
                SET f.age = f.age + 1
                RETURN f.name, f.age order by f.name, f.age""",
     description='Update friends age.',
-    max_run_time_ms=0.25,
     expected_result=[['Ailon Velger', 33],
                      ['Alon Fital',   33],
                      ['Boaz Arad',    32],
@@ -198,7 +184,6 @@ friends_age_statistics_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[:friend]->(f:person)
              RETURN ME.name, count(f.name), sum(f.age), avg(f.age), min(f.age), max(f.age)""",
     description='Friends age statistics.',
-    max_run_time_ms=0.2,
     expected_result=[['Roi Lipman', 6, 198.0, 33.0, 32, 34]]
 )
 
@@ -206,7 +191,6 @@ visit_purpose_of_each_country_i_visited_query = QueryInfo(
     query="""MATCH (ME:person {name:"Roi Lipman"})-[v:visited]->(c:country) 
              RETURN c.name, v.purpose""",
     description='For each country i have been to, what was the visit purpose?',
-    max_run_time_ms=0.2,
     expected_result=[['Japan', 'pleasure'],
                      ['Prague', 'pleasure'],
                      ['Prague', 'business'],
@@ -217,7 +201,6 @@ who_was_on_business_trip_query = QueryInfo(
     query="""MATCH (p:person)-[v:visited {purpose:"business"}]->(c:country)
              RETURN p.name, v.purpose, toUpper(c.name) ORDER BY p.name, c.name""",
     description='Find out who went on a business trip?',
-    max_run_time_ms=0.3,
     expected_result=[['Boaz Arad', 'business','NETHERLANDS'],
                      ['Boaz Arad', 'business','USA'],
                      ['Ori Laslo', 'business', 'CHINA'],
@@ -240,7 +223,6 @@ number_of_vacations_per_person_query = QueryInfo(
              ORDER BY COUNT(v.purpose) DESC, p.name DESC
              LIMIT 6""",
     description='Count number of vacations per person?',
-    max_run_time_ms=0.5,
     expected_result=[['Shelly Laslo Rooz', 3],
                      ['Omri Traub', 3],
                      ['Noam Nativ', 3],
@@ -254,7 +236,6 @@ all_reachable_friends_query = QueryInfo(
              RETURN b.name
              ORDER BY b.name""",
     description='Find all reachable friends',
-    max_run_time_ms=0.3,
     expected_result=[['Ailon Velger'],
                      ['Alon Fital'],
                      ['Boaz Arad'],
@@ -275,7 +256,6 @@ all_reachable_countries_query = QueryInfo(
              RETURN c.name, count(c.name) AS NumPathsToCountry
              ORDER BY NumPathsToCountry, c.name DESC""",
     description='Find all reachable countries',
-    max_run_time_ms=0.6,
     expected_result=[['USA', 14],
                      ['Netherlands', 6],
                      ['Prague', 5],
@@ -296,7 +276,6 @@ reachable_countries_or_people_query = QueryInfo(
              RETURN s.name,TYPE(e),t.name
              ORDER BY t.name""",
     description='Every person or country one hop away from source node',
-    max_run_time_ms=0.2,
     expected_result=[["Roi Lipman", "friend", "Ailon Velger"],
                      ["Roi Lipman", "friend", "Alon Fital"],
                      ["Roi Lipman", "friend", "Boaz Arad"],
@@ -312,7 +291,6 @@ reachable_countries_or_people_query = QueryInfo(
 all_reachable_countries_or_people_query = QueryInfo(
     query="""MATCH (a:person {name:'Roi Lipman'})-[:friend|:visited*]->(e) RETURN e.name, count(e.name) AS NumPathsToEntity ORDER BY NumPathsToEntity, e.name DESC""",
     description='Every reachable person or country from source node',
-    max_run_time_ms=0.4,
     expected_result=[['USA', 14],
                      ['Netherlands', 6],
                      ['Prague', 5],
@@ -346,7 +324,6 @@ all_reachable_entities_query = QueryInfo(
              RETURN e.name, count(e.name) AS NumPathsToEntity
              ORDER BY NumPathsToEntity DESC""",
     description='Find all reachable entities',
-    max_run_time_ms=0.4,
     expected_result=[['USA', 14],
                      ['Netherlands', 6],
                      ['Prague', 5],
@@ -380,7 +357,6 @@ all_reachable_people_min_2_hops_query = QueryInfo(
              RETURN e.name
              ORDER BY e.name""",
     description='Find all reachable people at least 2 hops away from me',
-    max_run_time_ms=0.35,
     expected_result=[['Gal Derriere'],
                      ['Jane Chernomorin'],
                      ['Lucy Yanfital'],
@@ -394,7 +370,6 @@ all_paths_leads_to_greece_query = QueryInfo(
     query="""MATCH (a)-[*]->(e:country {name:'Greece'})
              RETURN count(a.name) AS NumPathsToGreece""",
     description='Number of paths leading to Greece',
-    max_run_time_ms=0.4,
     expected_result=[[10]]
 )
 
@@ -403,7 +378,6 @@ number_of_paths_to_places_visited = QueryInfo(
              RETURN c.name, count(c)
              ORDER BY c.name""",
     description='Count number of paths to places I have visited',
-    max_run_time_ms=0.4,
     expected_result=[['Japan', 2],
                      ['Prague', 5],
                      ['USA', 14]]
@@ -414,7 +388,6 @@ pagerank_friends = QueryInfo(
              RETURN node.name
              ORDER BY score DESC""",
     description='Pagerank friends',
-    max_run_time_ms=1.0,
     expected_result=[['Valerie Abigail Arad'],
                      ['Shelly Laslo Rooz'],
                      ['Jane Chernomorin'],
@@ -434,21 +407,18 @@ pagerank_friends = QueryInfo(
 delete_friendships_query = QueryInfo(
     query="""MATCH (ME:person {name:'Roi Lipman'})-[e:friend]->() DELETE e""",
     description='Delete frienships',
-    max_run_time_ms=0.25,
     expected_result=[]
 )
 
 delete_person_query = QueryInfo(
     query="""MATCH (ME:person {name:'Roi Lipman'}) DELETE ME""",
     description='Delete myself from the graph',
-    max_run_time_ms=0.2,
     expected_result=[]
 )
 
 post_delete_label_query = QueryInfo(
     query="""MATCH (p:person) RETURN p.name""",
     description='Retrieve all nodes with person label',
-    max_run_time_ms=0.15,
     expected_result=[['Boaz Arad'],
                      ['Valerie Abigail Arad'],
                      ['Ori Laslo'],

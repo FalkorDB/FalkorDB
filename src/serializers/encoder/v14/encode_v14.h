@@ -8,43 +8,43 @@
 
 #include "../../serializers_include.h"
 
-void RdbSaveGraph_v14
+void RdbSaveGraph_latest
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	void *value
 );
 
 void RdbSaveNodes_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t nodes_to_encode
 );
 
 void RdbSaveDeletedNodes_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_nodes_to_encode
 );
 
 void RdbSaveEdges_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t edges_to_encode
 );
 
 void RdbSaveDeletedEdges_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_edges_to_encode
 );
 
 void RdbSaveGraphSchema_v14
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc
 );
 

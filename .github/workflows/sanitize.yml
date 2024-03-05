@@ -7,7 +7,7 @@ on:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:ubuntu
     steps:
 
     - name: Safe dir
@@ -40,7 +40,15 @@ jobs:
         key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
-      run: make CLANG=1 SAN=address NPROC=16
+      run: |
+        rustup toolchain list
+        rustup default nightly
+        apt-get update
+        apt-get install -y clang libomp-dev libc6-dbg python3-venv
+        python3 -m venv venv
+        . venv/bin/activate
+        pip install -r tests/requirements.txt
+        make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
@@ -55,7 +63,9 @@ jobs:
 
     - name: Flow tests
       id: flow_tests
-      run: make flow-tests CLEAR_LOGS=0 SAN=address
+      run: |
+        . venv/bin/activate
+        make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -66,7 +76,9 @@ jobs:
 
     - name: TCK tests
       id: tck_tests
-      run: make tck-tests CLEAR_LOGS=0 SAN=address
+      run: |
+        . venv/bin/activate
+        make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
