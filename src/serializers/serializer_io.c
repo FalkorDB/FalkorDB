@@ -177,6 +177,8 @@ SerializerIO SerializerIO_FromStream
 (
 	FILE *f  // stream
 ) {
+	ASSERT(f != NULL);
+
 	SerializerIO serializer = rm_calloc(1, sizeof(struct SerializerIO_Opaque));
 
 	serializer->stream = (void*)f;
