@@ -11,7 +11,7 @@ GraphContext *RdbLoadGraph(RedisModuleIO *rdb) {
 	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
 
 	SerializerIO io = SerializerIO_FromRedisModuleIO(rdb);
-	GraphContext *gc = RdbLoadGraphContext_v14(io, rm_key_name);
+	GraphContext *gc = RdbLoadGraphContext_latest(io, rm_key_name);
 	SerializerIO_Free(&io);
 
 	return gc;

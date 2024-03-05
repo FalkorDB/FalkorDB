@@ -10,7 +10,7 @@
 
 void RdbSaveGraph(RedisModuleIO *rdb, void *value) {
 	SerializerIO io = SerializerIO_FromRedisModuleIO(rdb);
-	RdbSaveGraph_v14(io, value);
+	RdbSaveGraph_latest(io, value);
 	SerializerIO_Free(&io);
 }
 

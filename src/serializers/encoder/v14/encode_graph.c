@@ -167,7 +167,7 @@ static PayloadInfo *_RdbSaveKeySchema
 	return payloads;
 }
 
-void RdbSaveGraph_v14
+void RdbSaveGraph_latest
 (
 	SerializerIO rdb,
 	void *value

@@ -182,7 +182,7 @@ static int encode_graph
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE, "dump graph: %s to: %s",
 			copy_ctx->src, copy_ctx->path);
 
-	RdbSaveGraph_v14(io, gc);
+	RdbSaveGraph_latest(io, gc);
 
 cleanup:
 
@@ -201,7 +201,6 @@ static void LoadGraphFromFile
 (
 	void *pdata  // graph copy context
 ) {
-	printf("In LoadGraphFromFile\n");
 	ASSERT(pdata != NULL);
 
 	GraphCopyContext *copy_ctx = (GraphCopyContext*)pdata;
@@ -227,19 +226,19 @@ static void LoadGraphFromFile
 	//--------------------------------------------------------------------------
 
 	// seek to the end of the file
-    fseek(f, 0, SEEK_END);
+	fseek(f, 0, SEEK_END);
 
 	// get current position, which is the size of the file
-    long fileLength = ftell(f);
+	long fileLength = ftell(f);
 
 	// seek to the beginning of the file
-    rewind(f);
+	rewind(f);
 
 	// allocate buffer to hold entire dumped graph
 	buffer = rm_malloc(sizeof(char) * fileLength);
 
 	// read file content into buffer
-    fread(buffer, 1, fileLength, f);
+	fread(buffer, 1, fileLength, f);
 
 	fclose(f);  // close file
 
@@ -261,11 +260,8 @@ static void LoadGraphFromFile
 	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE,
 			"Decoding graph: %s from: %s", copy_ctx->dest, copy_ctx->path);
 
-	GraphContext *gc = RdbLoadGraphContext_v14(io, copy_ctx->rm_dest);
+	GraphContext *gc = RdbLoadGraphContext_latest(io, copy_ctx->rm_dest);
 	ASSERT(gc != NULL);
-
-	// TODO: should we decrase gc ref count?
-	// TODO: validate by performing graph deletions
 
 	//--------------------------------------------------------------------------
 	// add cloned graph to keyspace
@@ -368,7 +364,7 @@ static void _Graph_Copy
 
 	RedisModuleString *rm_src    = copy_ctx->rm_src;
 	RedisModuleString *rm_dest   = copy_ctx->rm_dest;
-    RedisModuleBlockedClient *bc = copy_ctx->bc;
+	RedisModuleBlockedClient *bc = copy_ctx->bc;
 	RedisModuleCtx *ctx          = RedisModule_GetThreadSafeContext(bc);
 
 	//--------------------------------------------------------------------------
@@ -487,7 +483,7 @@ int Graph_Copy
 	}
 
 	// block the client
-    RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
+	RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
 			NULL, 0);
 
 	// retain arguments

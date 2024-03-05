@@ -8,7 +8,7 @@
 
 #include "../../../serializers_include.h"
 
-GraphContext *RdbLoadGraphContext_v14
+GraphContext *RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
 	const RedisModuleString *rm_key_name
