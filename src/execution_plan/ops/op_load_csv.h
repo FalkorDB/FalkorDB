@@ -11,7 +11,8 @@
 // load CSV
 typedef struct {
 	OpBase op;            // op base must be the first field in this struct
-	char *path;           // full path to CSV file
+	AR_ExpNode *exp;      // expression evaluated to CSV path
+	char *path;           // CSV path
 	char *alias;          // CSV row alias
 	int recIdx;           // record index to populate with CSV row
 	OpBase *child;        // child operation
@@ -22,7 +23,8 @@ typedef struct {
 OpBase *NewLoadCSVOp
 (
 	const ExecutionPlan *plan,  // execution plan
-	const char *path,           // full path to CSV file
+	AR_ExpNode *exp,            // CSV URI path expression
 	const char *alias           // CSV row alias
+	bool with_headers           // CSV contains header row
 );
 

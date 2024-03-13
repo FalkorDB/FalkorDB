@@ -504,6 +504,23 @@ static VISITOR_STRATEGY _Validate_pattern_comprehension
 	return VISITOR_CONTINUE;
 }
 
+// validate LOAD CSV clause
+static VISITOR_STRATEGY _Validate_load_csv
+(
+	const cypher_astnode_t *n,  // ast-node (LOAD CSV)
+	bool start,                 // first traversal
+	ast_visitor *visitor        // visitor
+) {
+	validations_ctx *vctx = AST_Visitor_GetContext(visitor);
+
+	const cypher_astnode_t *node = cypher_ast_load_csv_get_identifier(n);
+	const char *alias = cypher_ast_identifier_get_name(node);
+
+	_IdentifierAdd(vctx, alias, NULL);
+
+	return VISITOR_CONTINUE;
+}
+
 // validate that an identifier is bound
 static VISITOR_STRATEGY _Validate_identifier
 (
@@ -2256,6 +2273,7 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_REMOVE]                     = _Validate_REMOVE_Clause;
 	validations_mapping[CYPHER_AST_REDUCE]                     = _Validate_reduce;
 	validations_mapping[CYPHER_AST_FOREACH]                    = _Validate_FOREACH_Clause;
+	validations_mapping[CYPHER_AST_LOAD_CSV]                   = _Validate_load_csv;
 	validations_mapping[CYPHER_AST_IDENTIFIER]                 = _Validate_identifier;
 	validations_mapping[CYPHER_AST_PROJECTION]                 = _Validate_projection;
 	validations_mapping[CYPHER_AST_NAMED_PATH]                 = _Validate_named_path;
@@ -2279,7 +2297,6 @@ bool AST_ValidationsMappingInit(void) {
 	validations_mapping[CYPHER_AST_FILTER]                      = _visit_break;
 	validations_mapping[CYPHER_AST_EXTRACT]                     = _visit_break;
 	validations_mapping[CYPHER_AST_COMMAND]                     = _visit_break;
-	validations_mapping[CYPHER_AST_LOAD_CSV]                    = _visit_break;
 	validations_mapping[CYPHER_AST_MATCH_HINT]                  = _visit_break;
 	validations_mapping[CYPHER_AST_USING_JOIN]                  = _visit_break;
 	validations_mapping[CYPHER_AST_USING_SCAN]                  = _visit_break;

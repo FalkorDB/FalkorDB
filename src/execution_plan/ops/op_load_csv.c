@@ -12,22 +12,23 @@ static OpResult LoadCSVInit(OpBase *opBase);
 static Record LoadCSVConsume(OpBase *opBase);
 static Record LoadCSVConsumeFromChild(OpBase *opBase);
 static OpBase *LoadCSVClone(const ExecutionPlan *plan, const OpBase *opBase);
+static OpResult LoadCSVReset(OpBase *opBase);
 static void LoadCSVFree(OpBase *opBase);
 
 // create a new load CSV operation
 OpBase *NewLoadCSVOp
 (
 	const ExecutionPlan *plan,  // execution plan
-	const char *path,           // path to CSV file
+	AR_ExpNode *exp,            // CSV URI path expression
 	const char *alias           // CSV row alias
 ) {
+	ASSERT(exp   != NULL);
 	ASSERT(plan  != NULL);
-	ASSERT(path  != NULL);
 	ASSERT(alias != NULL);
 
 	OpLoadCSV *op = rm_calloc(1, sizeof(OpLoadCSV));
 
-	op->path  = strdup(path);
+	op->exp   = exp;
 	op->alias = strdup(alias);
 
 	// Set our Op operations
@@ -51,6 +52,26 @@ static OpResult LoadCSVInit
 	}
 
 	return OP_OK;
+}
+
+// evaluate path expression
+// expression must evaluate to string representing a valid URI
+// if that's not the case an exception is raised
+static bool _compute_path
+(
+	OpLoadCSV *op
+) {
+	ASSERT(op != NULL);
+
+	SIValue v = AR_EXP_Evaluate(op->exp, NULL);
+	if(SI_TYPE(v) != T_STRING) {
+		ErrorCtx_RaiseRuntimeException("path to CSV must be a string");
+		return false;
+	}
+
+	op->path = v.stringval;
+
+	return true;
 }
 
 static const char *A = "AAA";
@@ -86,6 +107,13 @@ static Record LoadCSVConsumeFromChild
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 
 pull_from_child:
+
+	// first call, evaluate CSV path
+	if(op->path == NULL && !_compute_path(op)) {
+		// failed to evaluate CSV path, quickly return
+		return NULL;
+	}
+
 	// in case a record is missing ask child to provide one
 	if(op->child_record == NULL) {
 		op->child_record = OpBase_Consume(op->child);
@@ -106,6 +134,10 @@ pull_from_child:
 		// reset CSV reader and free current child record
 		OpBase_DeleteRecord(op->child_record);
 		op->child_record = NULL;
+
+		// free CSV path, just in case it relies on record data
+		rm_free(op->path);
+		op->path = NULL;
 
 		// try to get a new record from child
 		goto pull_from_child;
@@ -128,6 +160,12 @@ static Record LoadCSVConsume
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 
+	// first call, evaluate CSV path
+	if(op->path == NULL && !_compute_path(op)) {
+		// failed to evaluate CSV path, quickly return
+		return NULL;
+	}
+
 	SIValue row;
 	Record r = NULL;
 
@@ -147,7 +185,25 @@ static inline OpBase *LoadCSVClone
 	ASSERT(opBase->type == OPType_LOAD_CSV);
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
-	return NewLoadCSVOp(plan, op->path, op->alias);
+	return NewLoadCSVOp(plan, AR_EXP_Clone(op->exp), op->alias);
+}
+
+static OpResult LoadCSVReset (
+	OpBase *opBase
+) {
+	OpLoadCSV *op = (OpLoadCSV*)opBase;
+
+	if(op->path != NULL) {
+		rm_free(op->path);
+		op->path = NULL;
+	}
+
+	if(op->child_record != NULL) {
+		OpBase_DeleteRecord(op->child_record);
+		op->child_record = NULL;
+	}
+
+	return OP_OK;
 }
 
 // free Load CSV operation
@@ -159,9 +215,14 @@ static void LoadCSVFree
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 
+	if(op->exp != NULL) {
+		AR_EXP_Free(op->exp);
+		op->exp = NULL;
+	}
+
 	if(op->path != NULL) {
 		rm_free(op->path);
-		op->path = NULL;	
+		op->path = NULL;
 	}
 
 	if(op->alias != NULL) {
