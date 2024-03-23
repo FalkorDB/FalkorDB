@@ -35,7 +35,7 @@ static bool _FilterTreeToQueryNode
 (
 	RSQNode**root,             // array of query nodes to populate
 	const FT_FilterNode *tree, // filter to convert into an index query
-	RSIndex *idx               // queried index
+	IndexRS*idx               // queried index
 );
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ static bool _FilterTreeToQueryNode
 // create a RediSearch query node out of a numeric range object
 static RSQNode *_NumericRangeToQueryNode
 (
-	RSIndex *idx,              // queried index
+	IndexRS*idx,              // queried index
 	const char *field,         // queried field
 	const NumericRange *range  // range to query
 ) {
@@ -61,7 +61,7 @@ static RSQNode *_NumericRangeToQueryNode
 // create a RediSearch query node out of a string range object
 static RSQNode *_StringRangeToQueryNode
 (
-	RSIndex *idx,             // queried index
+	IndexRS*idx,             // queried index
 	const char *field,        // queried field
 	const StringRange *range  // range to query
 ) {
@@ -92,7 +92,7 @@ static RSQNode *_StringRangeToQueryNode
 static RSQNode *_FilterTreeToDistanceQueryNode
 (
 	const FT_FilterNode *filter,  // filter to convert
-	RSIndex *idx            // queried index
+	IndexRS*idx            // queried index
 ) {
 	char     *field  =  NULL;         // field being filtered
 	SIValue  origin  =  SI_NullVal(); // center of circle
@@ -111,7 +111,7 @@ static RSQNode *_FilterTreeToDistanceQueryNode
 static RSQNode *_FilterTreeToInQueryNode
 (
 	const FT_FilterNode *filter,  // filter to convert
-	RSIndex *idx                  // queried index
+	IndexRS*idx                  // queried index
 ) {
 	ASSERT(idx    != NULL);
 	ASSERT(filter != NULL);
@@ -231,7 +231,7 @@ static bool _predicateTreeToRange
 // connect all RediSearch query nodes
 static RSQNode *_concat_query_nodes
 (
-	RSIndex *idx,     // queried index
+	IndexRS*idx,     // queried index
 	RSQNode **nodes,  // query nodes to concat
 	uint count        // number of nodes
 ) {
@@ -254,7 +254,7 @@ static RSQNode *_concat_query_nodes
 // compose index query from ranges
 static RSQNode *_ranges_to_query_nodes
 (
-	RSIndex *idx,        // index to query
+	IndexRS*idx,        // index to query
 	rax *string_ranges,  // string ranges
 	rax *numeric_ranges  // numerical ranges
 ) {
@@ -381,7 +381,7 @@ static bool _FilterTreeConditionToQueryNode
 (
 	RSQNode **root,            // [output] query node
 	const FT_FilterNode *tree, // filter to convert
-	RSIndex *idx               // queried index
+	IndexRS*idx               // queried index
 ) {
 
 	ASSERT(idx != NULL);
@@ -424,7 +424,7 @@ static bool _FilterTreePredicateToQueryNode
 (
 	RSQNode **root,            // [output] query node
 	const FT_FilterNode *tree, // filter to convert
-	RSIndex *idx               // queried index
+	IndexRS*idx               // queried index
 ) {
 
 	ASSERT(idx  != NULL);
@@ -538,7 +538,7 @@ static bool _FilterTreeToQueryNode
 (
 	RSQNode **root,            // [output] query node
 	const FT_FilterNode *tree, // filter to convert into an index query
-	RSIndex *idx               // queried index
+	IndexRS*idx               // queried index
 ) {
 	ASSERT(idx  != NULL);
 	ASSERT(root != NULL);
@@ -585,7 +585,7 @@ RSQNode *Index_BuildQueryTree
 	ASSERT(tree != NULL);
 	ASSERT(none_converted_filters != NULL);
 
-	RSIndex             *rsIdx  = Index_RSIndex(idx);
+	IndexRS            *rsIdx  = Index_RSIndex(idx);
 	RSQNode             **nodes = array_new(RSQNode*, 1);     // intermidate nodes
 	const FT_FilterNode **trees = FilterTree_SubTrees(tree);  // individual subtrees
 
@@ -663,7 +663,7 @@ RSQNode *Index_BuildVectorQueryTree
 	ASSERT(field  != NULL);
 
 	// create a redisearch query node
-	RSIndex *rsIdx = Index_RSIndex(idx);
+	IndexRS*rsIdx = Index_RSIndex(idx);
 
 	char type_aware_field_name[512];
 	Index_VectorFieldName(type_aware_field_name, field);
@@ -684,7 +684,7 @@ RSQNode *Index_BuildUniqueConstraintQuery
 ) {
 	RSQNode *node;
 	RSQNode *nodes[n];
-	RSIndex *rsIdx = Index_RSIndex(idx);
+	IndexRS*rsIdx = Index_RSIndex(idx);
 	AttributeSet attr_set = GraphEntity_GetAttributes(e);
 
 	//--------------------------------------------------------------------------

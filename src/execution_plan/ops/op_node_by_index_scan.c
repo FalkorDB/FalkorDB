@@ -95,7 +95,7 @@ static inline bool _PassUnresolvedFilters(const IndexScan *op, Record r) {
 
 static Record IndexScanConsumeFromChild(OpBase *opBase) {
 	IndexScan *op = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	IndexRS*rsIdx = Index_RSIndex(op->idx);
 	const EntityID *nodeId = NULL;
 
 pull_index:
@@ -193,7 +193,7 @@ pull_index:
 
 static Record IndexScanConsume(OpBase *opBase) {
 	IndexScan *op = (IndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	IndexRS*rsIdx = Index_RSIndex(op->idx);
 
 	// create iterator on first call
 	if(op->iter == NULL) {

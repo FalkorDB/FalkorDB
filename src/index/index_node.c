@@ -24,7 +24,7 @@ void Index_IndexNode
 
 	EntityID key             = ENTITY_GET_ID(n);
 	RSDoc    *doc            = NULL;
-	RSIndex  *rsIdx          = Index_RSIndex(idx);
+	IndexRS *rsIdx          = Index_RSIndex(idx);
 	size_t   key_len         = sizeof(EntityID);
 	uint     doc_field_count = 0;
 
@@ -54,7 +54,7 @@ void Index_RemoveNode
 	ASSERT(idx != NULL);
 
 	EntityID id     = ENTITY_GET_ID(n);
-	RSIndex  *rsIdx = Index_RSIndex(idx);
+	IndexRS *rsIdx = Index_RSIndex(idx);
 
 	RediSearch_DeleteDocument(rsIdx, &id, sizeof(EntityID));
 }

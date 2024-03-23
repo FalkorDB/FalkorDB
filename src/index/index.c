@@ -62,7 +62,7 @@ struct _Index {
 	char *language;                // language
 	char **stopwords;              // stopwords
 	GraphEntityType entity_type;   // entity type (node/edge) indexed
-	RSIndex *rsIdx;                // RediSearch index
+	IndexRS rsIdx;                // RediSearch index
 	uint _Atomic pending_changes;  // number of pending changes
 };
 
@@ -95,13 +95,15 @@ static void _Index_MergeFields
 	}
 }
 
-static void _Index_ConstructStructure
+static IndexSchema _Index_Schema
 (
-	Index idx,
-	RSIndex *rsIdx
+	Index idx
+	// IndexRS*rsIdx
 ) {
 	ASSERT(idx != NULL);
 	ASSERT(rsIdx != NULL);
+
+	SchemaBuilder builder = schema_builder_new();
 
 	uint fields_count = array_len(idx->fields);
 
@@ -125,36 +127,42 @@ static void _Index_ConstructStructure
 				options |= RSFLDOPT_TXTPHONETIC;
 			}
 
-			RSFieldID fieldID = RediSearch_CreateField(rsIdx,
-					field->fulltext_name, RSFLDTYPE_FULLTEXT, options);
+			schema_builder_add_text_field(builder, field->fulltext_name, false);
 
-			RediSearch_TextFieldSetWeight(rsIdx, fieldID, field->options.weight);
+			// RSFieldID fieldID = RediSearch_CreateField(rsIdx,
+			// 		field->fulltext_name, RSFLDTYPE_FULLTEXT, options);
+
+			// RediSearch_TextFieldSetWeight(rsIdx, fieldID, field->options.weight);
 		}
 
 		//----------------------------------------------------------------------
 		// vector field
 		//----------------------------------------------------------------------
 
-		if(field->type & INDEX_FLD_VECTOR) {
-			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
-					field->vector_name);
+		// #TODO 
+		// if(field->type & INDEX_FLD_VECTOR) {
+		// 	RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
+		// 			field->vector_name);
 
-			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
-		}
+		// 	RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
+		// }
 
 		//----------------------------------------------------------------------
 		// numeric, string and geo fields
 		//----------------------------------------------------------------------
 
 		if(field->type & INDEX_FLD_RANGE) {
+			// #TODO 
 			// introduce both text, numeric and geo fields
-			unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
+			// unsigned types = RSFLDTYPE_NUMERIC | RSFLDTYPE_GEO | RSFLDTYPE_TAG;
 
-			RSFieldID fieldID = RediSearch_CreateField(rsIdx, field->range_name,
-					types, RSFLDOPT_NONE);
+			// RSFieldID fieldID = RediSearch_CreateField(rsIdx, field->range_name,
+					// types, RSFLDOPT_NONE);
 
-			RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
-			RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
+			schema_builder_add_numeric_field(builder, field->range_name);
+
+			// RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
+			// RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
 		}
 	}
 
@@ -165,10 +173,12 @@ static void _Index_ConstructStructure
 	// for none indexable types e.g. Array introduce an additional field
 	// "none_indexable_fields" which will hold a list of attribute names
 	// that were not indexed
-	RSFieldID fieldID = RediSearch_CreateField(rsIdx, INDEX_FIELD_NONE_INDEXED,
-			RSFLDTYPE_TAG, RSFLDOPT_NONE);
-	RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
-	RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
+
+	// #TODO 
+	// RSFieldID fieldID = RediSearch_CreateField(rsIdx, INDEX_FIELD_NONE_INDEXED,
+	// 		RSFLDTYPE_TAG, RSFLDOPT_NONE);
+	// RediSearch_TagFieldSetSeparator(rsIdx, fieldID, INDEX_SEPARATOR);
+	// RediSearch_TagFieldSetCaseSensitive(rsIdx, fieldID, 1);
 
 	//--------------------------------------------------------------------------
 	// edge index specifics
@@ -176,11 +186,16 @@ static void _Index_ConstructStructure
 
 	// introduce edge src and dest node ids as additional index fields
 	if(idx->entity_type == GETYPE_EDGE) {
-		RediSearch_CreateField(rsIdx, "range:_src_id", RSFLDTYPE_NUMERIC,
-				RSFLDOPT_NONE);
-		RediSearch_CreateField(rsIdx, "range:_dest_id", RSFLDTYPE_NUMERIC,
-				RSFLDOPT_NONE);
+		schema_builder_add_numeric_field(builder, "range:_src_id");
+		schema_builder_add_numeric_field(builder, "range:_dest_id");
+
+		// RediSearch_CreateField(rsIdx, "range:_src_id", RSFLDTYPE_NUMERIC,
+		// 		RSFLDOPT_NONE);
+		// RediSearch_CreateField(rsIdx, "range:_dest_id", RSFLDTYPE_NUMERIC,
+		// 		RSFLDOPT_NONE);
 	}
+
+	return schema_builder_build(builder);
 }
 
 // responsible for creating the index structure only!
@@ -192,33 +207,36 @@ void Index_ConstructStructure
 	ASSERT(idx != NULL);
 	ASSERT(idx->rsIdx == NULL);
 
-	RSIndex *rsIdx = NULL;
-	RSIndexOptions *idx_options = RediSearch_CreateIndexOptions();
-	RediSearch_IndexOptionsSetLanguage(idx_options, idx->language);
-	// TODO: Remove this comment when https://github.com/RediSearch/RediSearch/issues/1100 is closed
-	// RediSearch_IndexOptionsSetGetValueCallback(idx_options, _getNodeAttribute, gc);
+	// IndexRS*rsIdx = NULL;
+	// RSIndexOptions *idx_options = RediSearch_CreateIndexOptions();
+	// RediSearch_IndexOptionsSetLanguage(idx_options, idx->language);
+	// // TODO: Remove this comment when https://github.com/RediSearch/RediSearch/issues/1100 is closed
+	// // RediSearch_IndexOptionsSetGetValueCallback(idx_options, _getNodeAttribute, gc);
 
-	#ifndef MEMCHECK
-	// enable GC, every 30 seconds gc will check if there's garbage
-	// if there are over 100 docs to remove GC will perform clean up
-	RediSearch_IndexOptionsSetGCPolicy(idx_options, GC_POLICY_FORK);
-	#endif
+	// #ifndef MEMCHECK
+	// // enable GC, every 30 seconds gc will check if there's garbage
+	// // if there are over 100 docs to remove GC will perform clean up
+	// RediSearch_IndexOptionsSetGCPolicy(idx_options, GC_POLICY_FORK);
+	// #endif
 
-	RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
-	if(idx->stopwords) {
-		RediSearch_IndexOptionsSetStopwords(idx_options,
-				(const char**)idx->stopwords, array_len(idx->stopwords));
-	}
+	// RediSearch_IndexOptionsSetStopwords(idx_options, NULL, 0);
+	// if(idx->stopwords) {
+	// 	RediSearch_IndexOptionsSetStopwords(idx_options,
+	// 			(const char**)idx->stopwords, array_len(idx->stopwords));
+	// }
 
-	rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
-	RediSearch_FreeIndexOptions(idx_options);
+	// rsIdx = RediSearch_CreateIndex(idx->label, idx_options);
+	// RediSearch_FreeIndexOptions(idx_options);
 
-	// create indexed fields
-	_Index_ConstructStructure(idx, rsIdx);
+	// create indexed Schema from fields
+	IndexSchema schema = _Index_Schema(idx);
+
+	// create index
+	IndexRS index = create_index(schema, "", true);
 
 	// set RediSearch index
 	ASSERT(idx->rsIdx == NULL);
-	idx->rsIdx = rsIdx;
+	idx->rsIdx = index;
 }
 
 // index a graph entity
@@ -446,7 +464,7 @@ void Index_Disable
 
 	// drop index if exists
 	if(idx->rsIdx != NULL) {
-		RediSearch_DropIndex(idx->rsIdx);
+		index_free(idx->rsIdx);
 		idx->rsIdx = NULL;
 	}
 
@@ -650,7 +668,7 @@ const char *Index_GetLanguage
 ) {
 	ASSERT(idx != NULL);
 
-	RSIndex *_idx = Index_RSIndex(idx);
+	IndexRS*_idx = Index_RSIndex(idx);
 	if(_idx == NULL) return NULL;
 
 	return RediSearch_IndexGetLanguage(_idx);
@@ -673,7 +691,7 @@ char **Index_GetStopwords
 ) {
 	ASSERT(idx != NULL);
 
-	RSIndex *_idx = Index_RSIndex(idx);
+	IndexRS*_idx = Index_RSIndex(idx);
 	if(_idx == NULL) return NULL;
 
 	return RediSearch_IndexGetStopwords(_idx, size);
@@ -730,7 +748,7 @@ bool Index_Enabled
 }
 
 // returns RediSearch index
-RSIndex *Index_RSIndex
+IndexRS*Index_RSIndex
 (
 	const Index idx  // index to get internal RediSearch index from
 ) {
@@ -747,7 +765,7 @@ void Index_Free
 	ASSERT(idx != NULL);
 
 	if(idx->rsIdx) {
-		RediSearch_DropIndex(idx->rsIdx);
+		index_free(idx->rsIdx);
 	}
 
 	if(idx->language != NULL) {

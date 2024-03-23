@@ -20,7 +20,7 @@ typedef struct {
 	Edge e;                   // retrieved edge
 	GraphEntityType t;        // entity type
 	Graph *g;                 // graph
-	RSIndex *idx;             // vector index
+	IndexRS*idx;             // vector index
 	RSResultsIterator *iter;  // iterator over query results
 	SIValue q;                // query vector
 	AttributeID attr_id;      // vector attribute ID
@@ -35,7 +35,7 @@ static VectorKNNCtx *_create_private_data
 	GraphContext *gc,     // graph context
 	SIValue q,            // query vector
 	AttributeID attr_id,  // vector attribute ID
-	RSIndex *idx,         // index
+	IndexRS*idx,         // index
 	RSQNode *root,        // RediSearch query
 	GraphEntityType t     // entity type
 ) {
@@ -266,7 +266,7 @@ static ProcedureResult Proc_VectorQueryInvoke
 	RSQNode *root = Index_BuildVectorQueryTree(idx, attribute, vec, nbytes, k);
 
 	// create procedure private data
-	RSIndex *rsIdx = Index_RSIndex(idx);
+	IndexRS*rsIdx = Index_RSIndex(idx);
 	ctx->privateData = _create_private_data(gc, query_vector, attr_id, rsIdx,
 			root, et);
 

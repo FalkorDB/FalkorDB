@@ -23,7 +23,7 @@ void Index_IndexEdge
 	ASSERT(e    !=  NULL);
 
 	RSDoc    *doc    = NULL;
-	RSIndex  *rsIdx  = Index_RSIndex(idx);
+	IndexRS *rsIdx  = Index_RSIndex(idx);
 	EntityID src_id  = Edge_GetSrcNodeID(e);
 	EntityID dest_id = Edge_GetDestNodeID(e);
 	EntityID edge_id = ENTITY_GET_ID(e);
@@ -61,7 +61,7 @@ void Index_RemoveEdge
 	ASSERT(e   != NULL);
 	ASSERT(idx != NULL);
 
-	RSIndex  *rsIdx  = Index_RSIndex(idx);
+	IndexRS *rsIdx  = Index_RSIndex(idx);
 	EntityID src_id  = Edge_GetSrcNodeID(e);
 	EntityID dest_id = Edge_GetDestNodeID(e);
 	EntityID edge_id = ENTITY_GET_ID(e);

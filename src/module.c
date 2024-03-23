@@ -16,7 +16,6 @@
 #include "query_ctx.h"
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
-#include "redisearch_api.h"
 #include "arithmetic/funcs.h"
 #include "commands/commands.h"
 #include "util/thpool/pools.h"

@@ -8,7 +8,6 @@
 
 #include "../redismodule.h"
 #include "../index/index.h"
-#include "redisearch_api.h"
 #include "../constraint/constraint.h"
 #include "../graph/entities/graph_entity.h"
 #include "../graph/entities/attribute_set.h"
