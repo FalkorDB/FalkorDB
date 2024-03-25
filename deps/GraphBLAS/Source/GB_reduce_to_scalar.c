@@ -105,8 +105,8 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
 
     info = GrB_NO_VALUE ;
 
-    #if defined ( SUITESPARSE_CUDA )
-    if (GB_reduce_to_scalar_cuda_branch (monoid, A))
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+    if (GB_cuda_reduce_to_scalar_branch (monoid, A))
     {
 
         //----------------------------------------------------------------------
@@ -114,7 +114,7 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
         //----------------------------------------------------------------------
 
         GrB_Matrix V = NULL ;
-        info = GB_reduce_to_scalar_cuda (z, &V, monoid, A) ;
+        info = GB_cuda_reduce_to_scalar (z, &V, monoid, A) ;
 
         if (V != NULL)
         {
@@ -137,11 +137,12 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
             }
         }
 
-        // GB_reduce_to_scalar_cuda may refuse to do the reduction and indicate
-        // this by returning GrB_NO_VALUE.  If so, the CPU will do it below.
+        // GB_cuda_reduce_to_scalar may refuse to do the reduction and
+        // indicate this by returning GrB_NO_VALUE.  If so, the CPU will do it
+        // below.
         if (!(info == GrB_SUCCESS || info == GrB_NO_VALUE))
         {
-            // GB_reduce_to_scalar_cuda has returned an error
+            // GB_cuda_reduce_to_scalar has returned an error
             // (out of memory, or other error)
             return (info) ;
         }

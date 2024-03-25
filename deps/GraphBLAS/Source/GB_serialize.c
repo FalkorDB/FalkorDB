@@ -244,7 +244,7 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     s += Ai_compressed_size ;
     s += Ax_compressed_size ;
 
-    // size of the GrB_NAME and GrB_ELTYPE_STRING, including one nul byte each
+    // size of the GrB_NAME and GrB_EL_TYPE_STRING, including one nul byte each
     char *user_name = A->user_name ;
     size_t user_name_len = (user_name == NULL) ? 0 : strlen (user_name) ;
     const char *eltype_string = GB_type_name_get (A->type) ;
@@ -372,7 +372,7 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
         nthreads_max) ;
 
     //--------------------------------------------------------------------------
-    // append the GrB_NAME and GrB_ELTYPE_STRING to the blob
+    // append the GrB_NAME and GrB_EL_TYPE_STRING to the blob
     //--------------------------------------------------------------------------
 
     if (user_name != NULL)
@@ -386,12 +386,12 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
 
     if (eltype_string != NULL)
     { 
-        // write the ELTYPE_STRING of the matrix type (including the nul byte)
+        // write the EL_TYPE_STRING of the matrix type (including the nul byte)
 //      printf ("serialize eltype_string %lu:[%s]\n", s, eltype_string) ;
         strcpy ((char *) (blob + s), eltype_string) ;
         s += eltype_string_len ;
     }
-    blob [s++] = 0 ;    // terminate the GrB_ELTYPE_STRING with a nul byte
+    blob [s++] = 0 ;    // terminate the GrB_EL_TYPE_STRING with a nul byte
 
     ASSERT (s == blob_size_required) ;
 

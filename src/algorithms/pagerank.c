@@ -79,7 +79,7 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	float *X = NULL ;
 	LAGraph_PageRank *P = NULL ;
 	GrB_BinaryOp op_diff = NULL ;
-	GrB_Index n, nvals, *I = NULL ;
+	GrB_Index n, nvals, *i = NULL ;
 	GrB_Vector r = NULL, t = NULL, d = NULL ;
 	GrB_Matrix C = NULL, D = NULL, T = NULL ;
 	GrB_Info rc;
@@ -117,16 +117,16 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	GrB_Index vi_size;
 	GrB_Index vx_size;
 
-	rc = GxB_Vector_export_CSC(&d, &type, &n, &I, (void **)(&X), &vi_size,
+	rc = GxB_Vector_export_CSC(&d, &type, &n, &i, (void **)(&X), &vi_size,
 				               &vx_size, &iso, &nvals, &jumbled, NULL) ;
 	assert(rc == GrB_SUCCESS) ;
 
 	for(int64_t k = 0 ; k < nvals ; k++) X [k] = DAMPING / X [k] ;
 	rc = GrB_Matrix_new(&D, GrB_FP32, n, n) ;
 	assert(rc == GrB_SUCCESS) ;
-	rc = GrB_Matrix_build(D, I, I, X, nvals, GrB_PLUS_FP32) ;
+	rc = GrB_Matrix_build(D, i, i, X, nvals, GrB_PLUS_FP32) ;
 	assert(rc == GrB_SUCCESS) ;
-	rm_free(I) ;
+	rm_free(i) ;
 	rm_free(X) ;
 
 	// C = diagonal matrix with all zeros on the diagonal.  This ensures that
@@ -239,7 +239,7 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	// [r,irank] = sort (r, 'descend') ;
 
 	// extract the contents of r
-	rc = GxB_Vector_export_CSC(&r, &type, &n, &I, (void **)(&X), &vi_size,
+	rc = GxB_Vector_export_CSC(&r, &type, &n, &i, (void **)(&X), &vi_size,
 							   &vx_size, &iso, &nvals, &jumbled, NULL) ;
 	assert(rc == GrB_SUCCESS) ;
 
@@ -270,7 +270,7 @@ GrB_Info Pagerank               // GrB_SUCCESS or error condition
 	(*Phandle) = P ;
 
 	// Clean up.
-	rm_free(I) ;
+	rm_free(i) ;
 	rm_free(X) ;
 	GrB_free(&T) ;
 	GrB_free(&D) ;

@@ -17,6 +17,7 @@ uint64_t GB_encodify_reduce // encode a GrB_reduce problem
                                 // except for the suffix
     char **suffix,              // suffix for user-defined kernel
     // input:
+    const GB_jit_kcode kcode,   // kernel to encode
     GrB_Monoid monoid,      // the monoid to enumify
     GrB_Matrix A            // input matrix to reduce
 )
@@ -40,7 +41,7 @@ uint64_t GB_encodify_reduce // encode a GrB_reduce problem
 
     GB_enumify_reduce (&encoding->code, monoid, A) ;
     bool builtin = (monoid->hash == 0) ;
-    encoding->kcode = GB_JIT_KERNEL_REDUCE ;
+    encoding->kcode = kcode ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

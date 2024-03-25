@@ -31,7 +31,8 @@
 // The calloc function pointer is also optional and can be NULL.
 
 // If the mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU, the 4 function
-// pointers are ignored, and rmm_wrap_malloc/.../rmm_wrap_free are used instead.
+// pointers are ignored, and rmm_wrap_malloc/.../rmm_wrap_free are used
+// instead.
 
 #define GB_FREE_ALL ;
 #include "GB.h"
@@ -44,7 +45,7 @@
 
 GrB_Info GB_init            // start up GraphBLAS
 (
-    const GrB_Mode mode,    // blocking or non-blocking mode
+    GrB_Mode mode,          // blocking or non-blocking mode
 
     // pointers to memory management functions.
     void * (* malloc_function  ) (size_t),          // required
@@ -78,7 +79,9 @@ GrB_Info GB_init            // start up GraphBLAS
     // establish malloc/calloc/realloc/free
     //--------------------------------------------------------------------------
 
-    #if defined ( SUITESPARSE_CUDA )
+    bool malloc_is_thread_safe = true ;
+
+    #if defined ( GRAPHBLAS_HAS_CUDA )
     if (mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU)
     {
         // ignore the memory management function pointers and use rmm_wrap_*
@@ -86,6 +89,8 @@ GrB_Info GB_init            // start up GraphBLAS
         calloc_function  = rmm_wrap_calloc ;
         realloc_function = rmm_wrap_realloc ;
         free_function    = rmm_wrap_free ;
+        // the rmm_wrap methods are not thread-safe
+        malloc_is_thread_safe = false ;
     }
     #endif
 
@@ -104,7 +109,7 @@ GrB_Info GB_init            // start up GraphBLAS
     GB_Global_realloc_function_set (realloc_function) ; // ok if NULL
     GB_Global_free_function_set    (free_function   ) ; // cannot be NULL
 
-    GB_Global_malloc_is_thread_safe_set (true) ; // malloc must be thread-safe
+    GB_Global_malloc_is_thread_safe_set (malloc_is_thread_safe) ;
     GB_Global_memtable_clear ( ) ;
 
     GB_Global_malloc_tracking_set (false) ;
@@ -143,7 +148,7 @@ GrB_Info GB_init            // start up GraphBLAS
     // initialize the GPUs, if present
     //--------------------------------------------------------------------------
 
-    #if defined ( SUITESPARSE_CUDA )
+    #if defined ( GRAPHBLAS_HAS_CUDA )
     if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
     {
         // initialize the GPUs
@@ -182,7 +187,7 @@ GrB_Info GB_init            // start up GraphBLAS
     GB_Global_timing_clear_all ( ) ;
 
     //--------------------------------------------------------------------------
-    // set up the JIT folder locations and compiler flags
+    // set up the JIT setting and emit the source to the cache folder
     //--------------------------------------------------------------------------
 
     GB_OK (GB_jitifyer_init ( )) ;

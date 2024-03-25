@@ -150,7 +150,7 @@ GrB_Info GxB_Context_get_INT
     // get the field
     //--------------------------------------------------------------------------
 
-    switch (field)
+    switch ((int) field)
     {
 
         case GxB_CONTEXT_NTHREADS :         // same as GxB_NTHREADS

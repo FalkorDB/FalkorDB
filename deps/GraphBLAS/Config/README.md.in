@@ -1,6 +1,6 @@
 # SuiteSparse:GraphBLAS
 
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 
 SPDX-License-Identifier: Apache-2.0
 
@@ -63,7 +63,7 @@ README.md file with further details.
 
 CMakeLists.txt:  cmake instructions to compile GraphBLAS
 
-cmake_modules:  additional cmake files
+`cmake_modules`:  additional cmake files
 
 Config:         version-dependent files used by CMake
 
@@ -100,7 +100,7 @@ CUDA:           GPU interface, a work in progress.  This is being developed in
 
 CONTRIBUTOR-LICENSE.txt:    how to contribute to SuiteSparse:GraphBLAS
 
-cpu_features: (c) Google.com, Apache 2.0 license.
+`cpu_features`: (c) Google.com, Apache 2.0 license.
 
 logo:           the (awesome!) GraphBLAS logo by Jakab Rokob, CC BY 4.0 license
 
@@ -108,7 +108,7 @@ lz4:            LZ4 compression, (c) 2011-2016, Yann Collet, BSD2 license
 zstd:           ZSTD compression, (c) Meta, by Yann Collet, BSD3 license
 xxHash:         xxHash code, (c) 2012-2021, Yann Collet
 
-rmm_wrap:       Rapids Memory Manager, (c) NVIDIA, to use with CUDA.
+`rmm_wrap`:     Rapids Memory Manager, (c) NVIDIA, to use with CUDA.
                 (draft; not yet in use)
 
 
@@ -196,7 +196,7 @@ To support the development of GraphBLAS, contact the author (davis@tamu.edu) or
 the Texas A&M Foundation (True Brown, tbrown@txamfoundation.com; or Kevin
 McGinnis, kmcginnis@txamfoundation.com) for details.
 
-SuiteSparse:GraphBLAS, is copyrighted by Timothy A. Davis, (c) 2017-2023, All
+SuiteSparse:GraphBLAS, is copyrighted by Timothy A. Davis, (c) 2017-2024, All
 Rights Reserved.  davis@tamu.edu.
 
 -----------------------------------------------------------------------------
@@ -207,13 +207,13 @@ Thanks for packaging SuiteSparse!  Here are some suggestions:
 
     * GraphBLAS takes a long time to compile because it creates many fast
         "FactoryKernels" at compile-time.  If you want to reduce the compile
-        time and library size, enable the COMPACT mode, but keep the JIT
-        enabled.  Then GraphBLAS will compile the kernels it needs at run-time,
-        via its JIT.  Performance will be the same as the FactoryKernels once
-        the JIT kernels are compiled.  User compiled kernels are placed in
-        ~/.SuiteSparse, by default.  You do not need to distribute the source
-        for GraphBLAS to enable the JIT: just libgraphblas.so and GraphBLAS.h
-        is enough.
+        time and library size, enable the GRAPHBLAS_COMPACT mode, but keep the
+        JIT enabled.  Then GraphBLAS will compile the kernels it needs at
+        run-time, via its JIT.  Performance will be the same as the
+        FactoryKernels once the JIT kernels are compiled.  User compiled
+        kernels are placed in ~/.SuiteSparse, by default.  You do not need to
+        distribute the source for GraphBLAS to enable the JIT: just
+        libgraphblas.so and GraphBLAS.h is enough.
 
     * GraphBLAS needs OpenMP!  It's fundamentally a parallel code so please
         distribute it with OpenMP enabled.  Performance will suffer
@@ -225,9 +225,9 @@ Thanks for packaging SuiteSparse!  Here are some suggestions:
 
 To cite this package, please use the following:
 
-    T. Davis, Algorithm 10xx: SuiteSparse:GraphBLAS: parallel graph
-    algorithms in the language of sparse linear algebra, ACM Trans on
-    Mathematical Software, to appear, 2023.
+    T. A. Davis. Algorithm 1037: SuiteSparse:GraphBLAS: Parallel Graph
+    Algorithms in the Language of Sparse Linear Algebra. ACM Trans. Math.
+    Softw. 49, 3, Article 28 (September 2023), 30 pages.
     https://doi.org/10.1145/3577195
 
     T. Davis, Algorithm 1000: SuiteSparse:GraphBLAS: graph algorithms in
@@ -244,7 +244,7 @@ file, and in the GraphBLAS User Guide):
 (1) LZ4, xxHash, and ZSTD by Yann Collet, appearing here under the
 BSD2 or BSD3 licenses.
 
-(2) cpu_features (c) Google, Apache 2.0 license with components (c) IBM and
-Intel (also Apache 2.0), and the cpu_featurer/ndk_compat component (c)
+(2) `cpu_features` (c) Google, Apache 2.0 license with components (c) IBM and
+Intel (also Apache 2.0), and the `cpu_featurer/ndk_compat` component (c)
 The Android Open Source Project (BSD-2-clause)
 

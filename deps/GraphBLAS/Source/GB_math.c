@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "GB.h"
+#include "GB_math.h"
 
 #if !GB_HAS_CMPLX_MACROS
 // complex constructors when the C compiler does not provide CMPLX and CMPLXF

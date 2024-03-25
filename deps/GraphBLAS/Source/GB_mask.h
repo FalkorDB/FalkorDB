@@ -10,6 +10,7 @@
 #ifndef GB_MASK_H
 #define GB_MASK_H
 #include "GB.h"
+#include "GB_math.h"
 
 GrB_Info GB_mask                // C<M> = Z
 (

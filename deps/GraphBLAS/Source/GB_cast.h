@@ -11,6 +11,18 @@
 #define GB_CAST_H
 
 //------------------------------------------------------------------------------
+// pointer casting function, returned by GB_cast_factory.
+//------------------------------------------------------------------------------
+
+typedef void (*GB_cast_function) (void *, const void *, size_t) ;
+
+GB_cast_function GB_cast_factory   // returns pointer to function to cast x to z
+(
+    const GB_Type_code code1,      // the type of z, the output value
+    const GB_Type_code code2       // the type of x, the input value
+) ;
+
+//------------------------------------------------------------------------------
 // GB_cast_scalar: typecast or copy a scalar
 //------------------------------------------------------------------------------
 

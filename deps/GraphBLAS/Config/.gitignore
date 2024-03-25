@@ -1,0 +1,5 @@
+# Ignore these files:
+
+# cmake constructs GB_config.h from GB_config.h.in with the name of the
+# compiler, its flags, and other platform-specific properties.
+GB_config.h

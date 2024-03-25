@@ -18,7 +18,7 @@ GrB_Info GB_matvec_enum_get (GrB_Matrix A, int32_t *value, int field)
             (*value) = (A->is_csc) ? GrB_COLMAJOR : GrB_ROWMAJOR ;
             break ;
 
-        case GrB_ELTYPE_CODE : 
+        case GrB_EL_TYPE_CODE : 
 
             (*value) = GB_type_code_get (A->type->code) ;
             break ;

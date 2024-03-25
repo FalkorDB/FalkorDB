@@ -430,3 +430,15 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.nodes_deleted, 11)
         self.env.assertEquals(res.nodes_created, 11)
         self.env.assertEquals(res.result_set, [[10, 10], [9, 9], [8, 8], [7, 7], [6, 6], [5, 5], [4, 4], [3, 3], [2, 2], [1, 1], [0, 0]])
+
+    def test23_delete_edges(self):
+        # clean the db
+        self.graph.delete()
+
+        # test deleting edges delete the matrix entries correctly
+        # GraphBLAS bug fixed in v9.1.0 https://github.com/DrTimothyAldenDavis/GraphBLAS/commit/01a3b746f29ea3bf03e7599b54d5e9a2b5e9dddb
+        self.graph.query("UNWIND range(1, 1000000) AS v CREATE (:N {v: v})")
+
+        for i in range(1, 1000):
+            self.graph.query("MATCH (n:N) WITH n LIMIT 10000 DELETE n")
+            self.graph.query("MATCH (n:N) RETURN n.v LIMIT 1")

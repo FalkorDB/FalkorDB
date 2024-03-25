@@ -10,7 +10,7 @@
 // All atomic operations used by SuiteSparse:GraphBLAS appear in this file.
 // OpenMP 4.0 or later is preferred.
 
-// These atomic operations assume either an C11 compiler that supports
+// These atomic operations assume either an ANSI C11 compiler that supports
 // OpenMP 3.1 or later, or Microsoft Visual Studio on 64-bit Windows (which
 // only supports OpenMP 2.0).  SuiteSparse:GraphBLAS is not supported on 32-bit
 // Windows.
@@ -62,7 +62,12 @@
 // OpenMP 4.0 or later) with the "update" clause.  For MS Visual Studio, the
 // "update" clause is removed since it supports OpenMP 2.0.
 
-#if ( _OPENMP >= 201307 )
+#if (! defined (_OPENMP)) || (_OPENMP < 199810)
+
+    // no OpenMP at all
+    #define GB_ATOMIC_UPDATE
+
+#elif ( _OPENMP >= 201307 )
 
     // OpenMP 4.0 or later: seq_cst added
     #define GB_ATOMIC_UPDATE GB_PRAGMA (omp atomic seq_cst update)
@@ -72,15 +77,10 @@
     // OpenMP 3.1: no seq_cst keyword
     #define GB_ATOMIC_UPDATE GB_PRAGMA (omp atomic update)
 
-#elif ( _OPENMP >= 199810 )
+#else // ( _OPENMP >= 199810 )
 
     // OpenMP 1.0 to 3.0: no optional clauses, "update" is assumed
     #define GB_ATOMIC_UPDATE GB_PRAGMA (omp atomic)
-
-#else
-
-    // no OpenMP at all
-    #define GB_ATOMIC_UPDATE
 
 #endif
 
@@ -100,9 +100,10 @@
 // is no need for atomic reads/writes when compiling GraphBLAS on Windows
 // with MS Visual Studio.
 
-#if GBX86
+#if GBX86 || ! defined (_OPENMP) || (_OPENMP < 201107 )
 
-    // x86_64: no atomic read/write is needed.
+    // For x86_64, no atomic read/write is needed,
+    // or OpenMP 3.0 or earlier, or no OpenMP at all
     #define GB_ATOMIC_READ
     #define GB_ATOMIC_WRITE
 
@@ -112,17 +113,11 @@
     #define GB_ATOMIC_READ    GB_PRAGMA (omp atomic seq_cst read)
     #define GB_ATOMIC_WRITE   GB_PRAGMA (omp atomic seq_cst write)
 
-#elif ( _OPENMP >= 201107 )
+#else // ( _OPENMP >= 201107 )
 
     // OpenMP 3.1 and later have atomic reads and writes, but no seq_cst clause
     #define GB_ATOMIC_READ    GB_PRAGMA (omp atomic read)
     #define GB_ATOMIC_WRITE   GB_PRAGMA (omp atomic write)
-
-#else
-
-    // OpenMP 3.0 or earlier, or no OpenMP at all
-    #define GB_ATOMIC_READ
-    #define GB_ATOMIC_WRITE
 
 #endif
 
@@ -173,7 +168,12 @@
 // https://docs.microsoft.com/en-us/cpp/intrinsics/interlockedexchange-intrinsic-functions
 // https://docs.microsoft.com/en-us/cpp/intrinsics/interlockedor-intrinsic-functions
 
-#if ( _OPENMP >= 201307 )
+#if (! defined (_OPENMP)) || (_OPENMP < 199810)
+
+    // no OpenMP at all
+    #define GB_ATOMIC_CAPTURE
+
+#elif ( _OPENMP >= 201307 )
 
     // OpenMP 4.0 or later: added seq_cst feature
     #define GB_ATOMIC_CAPTURE GB_PRAGMA (omp atomic seq_cst capture)
@@ -183,16 +183,11 @@
     // OpenMP 3.1: no seq_cst clause
     #define GB_ATOMIC_CAPTURE GB_PRAGMA (omp atomic capture)
 
-#elif ( _OPENMP >= 199810 )
+#else // ( _OPENMP >= 199810 )
 
     // OpenMP 1.0 to 3.0: generate an intentional compile-time error if any
     // attempt is made to use the atomic capture.
     #define GB_ATOMIC_CAPTURE atomic capture not available
-
-#else
-
-    // no OpenMP at all
-    #define GB_ATOMIC_CAPTURE
 
 #endif
 
