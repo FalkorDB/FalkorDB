@@ -10,6 +10,7 @@
 // Creates a random sparse matrix, using either setElement or build.
 
 #include "GraphBLAS.h"
+#undef I
 
 #undef  FREE_ALL
 #define FREE_ALL                    \

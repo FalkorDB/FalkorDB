@@ -105,7 +105,9 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xdf8cbb0c0ac7ce22 ;
-    v [0] = 9 ; v [1] = 0 ; v [2] = 0 ;
+    v [0] = GxB_IMPLEMENTATION_MAJOR ;      // keep at current version
+    v [1] = GxB_IMPLEMENTATION_MINOR ;
+    v [2] = GxB_IMPLEMENTATION_SUB ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

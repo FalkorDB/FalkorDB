@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_cuda_upscale_identity: return the identity, at least 16 bits in size
+// GraphBLAS/CUDA/GB_cuda_upscale_identity: return identity, >= 16 bits in size
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,7 +11,7 @@
 // for 2-byte values.  This method initializes the identity value of a monoid,
 // scaling up the 1-byte and 2-byte cases to 4-bytes.
 
-#include "GB_cuda.h"
+#include "GB_cuda.hpp"
 extern "C"
 {
     #include "GB_binop.h"

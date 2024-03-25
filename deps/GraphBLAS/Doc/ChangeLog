@@ -1,12 +1,40 @@
-Oct 13, 2023: version 9.0.0
+Mar 22, 2024: version 9.1.0
+
+    * minor updates to build system
+    * C11 complex type detection:  this is now detected and configured by
+        cmake, instead of using an #if ... in the GraphBLAS.h header.
+        This change was required to port GraphBLAS to the clang-cl compiler
+        on Windows when it simulates the MSVC compiler.  Also added a new
+        feature (thus the minor version update to 9.1.0): GxB_HAVE_COMPLEX* to
+        GraphBLAS.h to indicate which kind of complex data types are available
+        in C11 or MSVC.  Contributed by Markus Mützel.
+    * port to clang-cl: fixing the GxB_get and GxB_set macro
+    * (53) bug fix: eWiseAdd C<M>=A+B when M, A, and B are all hypersparse;
+        access to M was incorrect (also affects C<M>+=T for any operation, if
+        M and T are both hypersparse).  Caught by Roi Lipman.
+
+Mar 1, 2024: version 9.0.3
+
+    * (52) performance bug fix: JIT kernels since v8.3.1 were not compiled with
+        OpenMP.
+
+Feb 26, 2024: version 9.0.2
+
+    * (51) bug fix: GraphBLAS/Makefile "make static" was incorrect.
+
+Jan 20, 2024: version 9.0.1
+
+    * minor updates to build system
+
+Jan 10, 2024: version 9.0.0
 
     * GrB_get/GrB_set: new functions from the v2.1 C API.
     * GrB_Type_new, GrB_UnaryOp_new, GrB_IndexUnaryOp_new: no longer macros,
         since GrB_set can be used to set the names of the operators.  These
         methods no longer extract the name, so the default name is now the
         empty string.  This is because GrB_get/set can only set these names
-        once.  This is a non-compatible change of behaviour for these 3
-        methods, so SuiteSprase:GraphBLAS must become v9.0.0.
+        once.  This is a non-compatible change of behavior for these 3
+        methods, so SuiteSparse:GraphBLAS must become v9.0.0.
     * historical methods:  many methods are replaced by GrB_get and GrB_set.
         They remain in SuiteSparse:GraphBLAS but have been declared historical.
         Terse prototypes exist in GraphBLAS.h, and any discussion is removed
@@ -17,6 +45,12 @@ Oct 13, 2023: version 9.0.0
         GrB_STORAGE_ORIENTATION_HINT in place of GxB_FORMAT.
     * hyper_hash: constructed only if the # of non-empty vectors in a
         hypersparse matrix is large (> 1024, by default)
+    * minor updates to build system: *.pc files for pkgconfig
+
+Dec 30, 2023: version 8.3.1
+
+    * major change to build system: by Markus Mützel
+    * GraphBLAS.h: remove "undef I" 
 
 Oct 7, 2023: version 8.2.1
 

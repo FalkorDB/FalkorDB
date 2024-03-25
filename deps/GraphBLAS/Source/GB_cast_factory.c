@@ -16,6 +16,7 @@
 // function GB_copy_user_user.
 
 #include "GB.h"
+#include "GB_casting.h"
 
 GB_cast_function GB_cast_factory   // returns pointer to function to cast x to z
 (

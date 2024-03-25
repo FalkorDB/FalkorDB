@@ -128,7 +128,7 @@ void GB_macrofy_ewise           // construct all macros for GrB_eWise
 
     fprintf (fp, "\n// binary operator%s:\n", flipxy ? " (flipped)" : "") ;
     GB_macrofy_binop (fp, "GB_BINOP", flipxy, false, true, binop_ecode, C_iso,
-        binaryop, NULL, NULL) ;
+        binaryop, NULL, NULL, NULL) ;
 
     if (binaryop->opcode == GB_SECOND_binop_code)
     { 

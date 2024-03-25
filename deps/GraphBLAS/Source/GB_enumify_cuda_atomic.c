@@ -37,12 +37,11 @@ bool GB_enumify_cuda_atomic
     {
 
         // user defined monoid: can apply GB_ADD via atomicCAS if the ztype has
-        // 16, 32, or 64 bits
+        // 32 or 64 bits
         case  0 :
 
             (*user_monoid_atomically) =
-                (zsize == sizeof (uint16_t) ||
-                 zsize == sizeof (uint32_t) ||
+                (zsize == sizeof (uint32_t) ||
                  zsize == sizeof (uint64_t))  ;
             break ;
 
@@ -234,14 +233,10 @@ bool GB_enumify_cuda_atomic
     { 
 
         //----------------------------------------------------------------------
-        // user-defined monoid with a type of 16, 32, or 64 bits
+        // user-defined monoid with a type of 32 or 64 bits
         //----------------------------------------------------------------------
 
-        if (zsize == sizeof (uint16_t))
-        {
-            (*cuda_type) = "unsigned short int" ;
-        }
-        else if (zsize == sizeof (uint32_t))
+        if (zsize == sizeof (uint32_t))
         {
             (*cuda_type) = "unsigned int" ;
         }
@@ -261,7 +256,7 @@ bool GB_enumify_cuda_atomic
         //----------------------------------------------------------------------
 
         // either built-in (GxB_ANY_FC64_MONOID or GxB_TIMES_FC64_MONOID),
-        // or user-defined where the type is not 16, 32, or 64 bits in size
+        // or user-defined where the type is not 32 or 64 bits in size
 
         has_cheeseburger = false ;
 

@@ -15,7 +15,7 @@
 //------------------------------------------------------------------------------
 
 #define GB_JIT_QUERY_PROTO(query_func)                                  \
-bool query_func (uint64_t *hash, int v [3], char *defn [5],             \
+bool query_func (uint64_t *hash, int v [3], const char *defn [5],       \
     void *id, void *term, size_t id_size, size_t term_size)
 
 #define GB_JIT_KERNEL_USER_OP_PROTO(GB_jit_kernel_user_op)              \
@@ -558,6 +558,34 @@ GrB_Info GB_jit_kernel_union                                            \
 )
 
 //------------------------------------------------------------------------------
+// CUDA JIT prototypes
+//------------------------------------------------------------------------------
+
+#define GB_JIT_CUDA_KERNEL_REDUCE_PROTO(GB_jit_kernel_reduce)           \
+GrB_Info GB_jit_kernel_reduce                                           \
+(                                                                       \
+    GB_void *zscalar,                                                   \
+    GrB_Matrix V,                                                       \
+    const GrB_Matrix A,                                                 \
+    cudaStream_t stream,                                                \
+    int32_t gridsz,                                                     \
+    int32_t blocksz                                                     \
+)
+
+#define GB_JIT_CUDA_KERNEL_DOT3_PROTO(GB_jit_kernel_AxB_dot3)           \
+GrB_Info GB_jit_kernel_AxB_dot3                                         \
+(                                                                       \
+    GrB_Matrix C,                                                       \
+    const GrB_Matrix M,                                                 \
+    const GrB_Matrix A,                                                 \
+    const GrB_Matrix B,                                                 \
+    cudaStream_t stream,                                                \
+    int device,                                                         \
+    int number_of_sms,                                                  \
+    const GB_callback_struct *restrict my_callback                      \
+)
+
+//------------------------------------------------------------------------------
 // shorthand macros for GB_prejit.c:
 //------------------------------------------------------------------------------
 
@@ -602,6 +630,13 @@ GrB_Info GB_jit_kernel_union                                            \
 #define JIT_UOP(g)  GB_JIT_KERNEL_USER_OP_PROTO(g) ;
 #define JIT_UTYP(g) GB_JIT_KERNEL_USER_TYPE_PROTO(g) ;
 #define JIT_Q(q)    GB_JIT_QUERY_PROTO(q) ;
+
+//------------------------------------------------------------------------------
+// shorthand macros for GB_cuda_prejit.c:
+//------------------------------------------------------------------------------
+
+#define JIT_CUDA_RED(g)  GB_JIT_CUDA_KERNEL_REDUCE_PROTO(g) ;
+#define JIT_CUDA_DOT3(g) GB_JIT_CUDA_KERNEL_DOT3_PROTO(g) ;
 
 #endif
 

@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 // for code development only:
-#ifdef SUITESPARSE_CUDA
+#ifdef GRAPHBLAS_HAS_CUDA
 // when CUDA kernels enabled:
 #define GB_DEVELOPER 0
 #else

@@ -24,9 +24,9 @@ GrB_Info GB_monoid_get
 
     switch ((int) field)
     {
-        case GrB_INPUT1TYPE_CODE : 
-        case GrB_INPUT2TYPE_CODE : 
-        case GrB_OUTPUTTYPE_CODE : 
+        case GrB_INP0_TYPE_CODE : 
+        case GrB_INP1_TYPE_CODE : 
+        case GrB_OUTP_TYPE_CODE : 
 
             return (GB_op_scalar_get ((GB_Operator) monoid->op, value, field,
                 Werk)) ;

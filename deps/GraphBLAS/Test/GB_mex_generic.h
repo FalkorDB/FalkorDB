@@ -733,6 +733,147 @@
 // testing the non-polymorphic versions
 //------------------------------------------------------------------------------
 
+// GrB_get:
+#define GrB_Scalar_get_Scalar_(...)             GrB_Scalar_get_Scalar (__VA_ARGS__ )             
+#define GrB_Scalar_get_String_(...)             GrB_Scalar_get_String (__VA_ARGS__ )             
+#define GrB_Scalar_get_INT32_(...)              GrB_Scalar_get_INT32 (__VA_ARGS__ )              
+#define GrB_Scalar_get_SIZE_(...)               GrB_Scalar_get_SIZE (__VA_ARGS__ )               
+#define GrB_Scalar_get_VOID_(...)               GrB_Scalar_get_VOID (__VA_ARGS__ )               
+
+#define GrB_Vector_get_Scalar_(...)             GrB_Vector_get_Scalar (__VA_ARGS__ )             
+#define GrB_Vector_get_String_(...)             GrB_Vector_get_String (__VA_ARGS__ )             
+#define GrB_Vector_get_INT32_(...)              GrB_Vector_get_INT32 (__VA_ARGS__ )              
+#define GrB_Vector_get_SIZE_(...)               GrB_Vector_get_SIZE (__VA_ARGS__ )               
+#define GrB_Vector_get_VOID_(...)               GrB_Vector_get_VOID (__VA_ARGS__ )               
+
+#define GrB_Matrix_get_Scalar_(...)             GrB_Matrix_get_Scalar (__VA_ARGS__ )             
+#define GrB_Matrix_get_String_(...)             GrB_Matrix_get_String (__VA_ARGS__ )             
+#define GrB_Matrix_get_INT32_(...)              GrB_Matrix_get_INT32 (__VA_ARGS__ )              
+#define GrB_Matrix_get_SIZE_(...)               GrB_Matrix_get_SIZE (__VA_ARGS__ )               
+#define GrB_Matrix_get_VOID_(...)               GrB_Matrix_get_VOID (__VA_ARGS__ )               
+
+#define GxB_Serialized_get_Scalar_(...)         GxB_Serialized_get_Scalar (__VA_ARGS__ )         
+#define GxB_Serialized_get_String_(...)         GxB_Serialized_get_String (__VA_ARGS__ )         
+#define GxB_Serialized_get_INT32_(...)          GxB_Serialized_get_INT32 (__VA_ARGS__ )          
+#define GxB_Serialized_get_SIZE_(...)           GxB_Serialized_get_SIZE (__VA_ARGS__ )           
+#define GxB_Serialized_get_VOID_(...)           GxB_Serialized_get_VOID (__VA_ARGS__ )           
+
+#define GrB_UnaryOp_get_Scalar_(...)            GrB_UnaryOp_get_Scalar (__VA_ARGS__ )            
+#define GrB_UnaryOp_get_String_(...)            GrB_UnaryOp_get_String (__VA_ARGS__ )            
+#define GrB_UnaryOp_get_INT32_(...)             GrB_UnaryOp_get_INT32 (__VA_ARGS__ )             
+#define GrB_UnaryOp_get_SIZE_(...)              GrB_UnaryOp_get_SIZE (__VA_ARGS__ )              
+#define GrB_UnaryOp_get_VOID_(...)              GrB_UnaryOp_get_VOID (__VA_ARGS__ )              
+
+#define GrB_IndexUnaryOp_get_Scalar_(...)       GrB_IndexUnaryOp_get_Scalar (__VA_ARGS__ )       
+#define GrB_IndexUnaryOp_get_String_(...)       GrB_IndexUnaryOp_get_String (__VA_ARGS__ )       
+#define GrB_IndexUnaryOp_get_INT32_(...)        GrB_IndexUnaryOp_get_INT32 (__VA_ARGS__ )        
+#define GrB_IndexUnaryOp_get_SIZE_(...)         GrB_IndexUnaryOp_get_SIZE (__VA_ARGS__ )         
+#define GrB_IndexUnaryOp_get_VOID_(...)         GrB_IndexUnaryOp_get_VOID (__VA_ARGS__ )         
+
+#define GrB_BinaryOp_get_Scalar_(...)           GrB_BinaryOp_get_Scalar (__VA_ARGS__ )           
+#define GrB_BinaryOp_get_String_(...)           GrB_BinaryOp_get_String (__VA_ARGS__ )           
+#define GrB_BinaryOp_get_INT32_(...)            GrB_BinaryOp_get_INT32 (__VA_ARGS__ )            
+#define GrB_BinaryOp_get_SIZE_(...)             GrB_BinaryOp_get_SIZE (__VA_ARGS__ )             
+#define GrB_BinaryOp_get_VOID_(...)             GrB_BinaryOp_get_VOID (__VA_ARGS__ )             
+
+#define GrB_Monoid_get_Scalar_(...)             GrB_Monoid_get_Scalar (__VA_ARGS__ )             
+#define GrB_Monoid_get_String_(...)             GrB_Monoid_get_String (__VA_ARGS__ )             
+#define GrB_Monoid_get_INT32_(...)              GrB_Monoid_get_INT32 (__VA_ARGS__ )              
+#define GrB_Monoid_get_SIZE_(...)               GrB_Monoid_get_SIZE (__VA_ARGS__ )               
+#define GrB_Monoid_get_VOID_(...)               GrB_Monoid_get_VOID (__VA_ARGS__ )               
+
+#define GrB_Semiring_get_Scalar_(...)           GrB_Semiring_get_Scalar (__VA_ARGS__ )           
+#define GrB_Semiring_get_String_(...)           GrB_Semiring_get_String (__VA_ARGS__ )           
+#define GrB_Semiring_get_INT32_(...)            GrB_Semiring_get_INT32 (__VA_ARGS__ )            
+#define GrB_Semiring_get_SIZE_(...)             GrB_Semiring_get_SIZE (__VA_ARGS__ )             
+#define GrB_Semiring_get_VOID_(...)             GrB_Semiring_get_VOID (__VA_ARGS__ )             
+
+#define GrB_Descriptor_get_Scalar_(...)         GrB_Descriptor_get_Scalar (__VA_ARGS__ )         
+#define GrB_Descriptor_get_String_(...)         GrB_Descriptor_get_String (__VA_ARGS__ )         
+#define GrB_Descriptor_get_INT32_(...)          GrB_Descriptor_get_INT32 (__VA_ARGS__ )          
+#define GrB_Descriptor_get_SIZE_(...)           GrB_Descriptor_get_SIZE (__VA_ARGS__ )           
+#define GrB_Descriptor_get_VOID_(...)           GrB_Descriptor_get_VOID (__VA_ARGS__ )           
+
+#define GrB_Type_get_Scalar_(...)               GrB_Type_get_Scalar (__VA_ARGS__ )               
+#define GrB_Type_get_String_(...)               GrB_Type_get_String (__VA_ARGS__ )               
+#define GrB_Type_get_INT32_(...)                GrB_Type_get_INT32 (__VA_ARGS__ )                
+#define GrB_Type_get_SIZE_(...)                 GrB_Type_get_SIZE (__VA_ARGS__ )                 
+#define GrB_Type_get_VOID_(...)                 GrB_Type_get_VOID (__VA_ARGS__ )                 
+
+#define GrB_Global_get_Scalar_(...)             GrB_Global_get_Scalar (__VA_ARGS__ )             
+#define GrB_Global_get_String_(...)             GrB_Global_get_String (__VA_ARGS__ )             
+#define GrB_Global_get_INT32_(...)              GrB_Global_get_INT32 (__VA_ARGS__ )              
+#define GrB_Global_get_SIZE_(...)               GrB_Global_get_SIZE (__VA_ARGS__ )               
+#define GrB_Global_get_VOID_(...)               GrB_Global_get_VOID (__VA_ARGS__ )               
+
+#define GxB_Context_get_Scalar_(...)            GxB_Context_get_Scalar (__VA_ARGS__ )            
+#define GxB_Context_get_String_(...)            GxB_Context_get_String (__VA_ARGS__ )            
+#define GxB_Context_get_INT_(...)               GxB_Context_get_INT (__VA_ARGS__ )               
+#define GxB_Context_get_SIZE_(...)              GxB_Context_get_SIZE (__VA_ARGS__ )              
+#define GxB_Context_get_VOID_(...)              GxB_Context_get_VOID (__VA_ARGS__ )              
+
+// GrB_set:
+
+#define GrB_Scalar_set_Scalar_(...)             GrB_Scalar_set_Scalar (__VA_ARGS__ )             
+#define GrB_Scalar_set_String_(...)             GrB_Scalar_set_String (__VA_ARGS__ )             
+#define GrB_Scalar_set_INT32_(...)              GrB_Scalar_set_INT32 (__VA_ARGS__ )              
+#define GrB_Scalar_set_VOID_(...)               GrB_Scalar_set_VOID (__VA_ARGS__ )               
+
+#define GrB_Vector_set_Scalar_(...)             GrB_Vector_set_Scalar (__VA_ARGS__ )             
+#define GrB_Vector_set_String_(...)             GrB_Vector_set_String (__VA_ARGS__ )             
+#define GrB_Vector_set_INT32_(...)              GrB_Vector_set_INT32 (__VA_ARGS__ )              
+#define GrB_Vector_set_VOID_(...)               GrB_Vector_set_VOID (__VA_ARGS__ )               
+
+#define GrB_Matrix_set_Scalar_(...)             GrB_Matrix_set_Scalar (__VA_ARGS__ )             
+#define GrB_Matrix_set_String_(...)             GrB_Matrix_set_String (__VA_ARGS__ )             
+#define GrB_Matrix_set_INT32_(...)              GrB_Matrix_set_INT32 (__VA_ARGS__ )              
+#define GrB_Matrix_set_VOID_(...)               GrB_Matrix_set_VOID (__VA_ARGS__ )               
+
+#define GrB_UnaryOp_set_Scalar_(...)            GrB_UnaryOp_set_Scalar (__VA_ARGS__ )            
+#define GrB_UnaryOp_set_String_(...)            GrB_UnaryOp_set_String (__VA_ARGS__ )            
+#define GrB_UnaryOp_set_INT32_(...)             GrB_UnaryOp_set_INT32 (__VA_ARGS__ )             
+#define GrB_UnaryOp_set_VOID_(...)              GrB_UnaryOp_set_VOID (__VA_ARGS__ )              
+
+#define GrB_IndexUnaryOp_set_Scalar_(...)       GrB_IndexUnaryOp_set_Scalar (__VA_ARGS__ )       
+#define GrB_IndexUnaryOp_set_String_(...)       GrB_IndexUnaryOp_set_String (__VA_ARGS__ )       
+#define GrB_IndexUnaryOp_set_INT32_(...)        GrB_IndexUnaryOp_set_INT32 (__VA_ARGS__ )        
+#define GrB_IndexUnaryOp_set_VOID_(...)         GrB_IndexUnaryOp_set_VOID (__VA_ARGS__ )         
+
+#define GrB_BinaryOp_set_Scalar_(...)           GrB_BinaryOp_set_Scalar (__VA_ARGS__ )           
+#define GrB_BinaryOp_set_String_(...)           GrB_BinaryOp_set_String (__VA_ARGS__ )           
+#define GrB_BinaryOp_set_INT32_(...)            GrB_BinaryOp_set_INT32 (__VA_ARGS__ )            
+#define GrB_BinaryOp_set_VOID_(...)             GrB_BinaryOp_set_VOID (__VA_ARGS__ )             
+
+#define GrB_Monoid_set_Scalar_(...)             GrB_Monoid_set_Scalar (__VA_ARGS__ )             
+#define GrB_Monoid_set_String_(...)             GrB_Monoid_set_String (__VA_ARGS__ )             
+#define GrB_Monoid_set_INT32_(...)              GrB_Monoid_set_INT32 (__VA_ARGS__ )              
+#define GrB_Monoid_set_VOID_(...)               GrB_Monoid_set_VOID (__VA_ARGS__ )               
+
+#define GrB_Semiring_set_Scalar_(...)           GrB_Semiring_set_Scalar (__VA_ARGS__ )           
+#define GrB_Semiring_set_String_(...)           GrB_Semiring_set_String (__VA_ARGS__ )           
+#define GrB_Semiring_set_INT32_(...)            GrB_Semiring_set_INT32 (__VA_ARGS__ )            
+#define GrB_Semiring_set_VOID_(...)             GrB_Semiring_set_VOID (__VA_ARGS__ )             
+
+#define GrB_Descriptor_set_Scalar_(...)         GrB_Descriptor_set_Scalar (__VA_ARGS__ )         
+#define GrB_Descriptor_set_String_(...)         GrB_Descriptor_set_String (__VA_ARGS__ )         
+#define GrB_Descriptor_set_INT32_(...)          GrB_Descriptor_set_INT32 (__VA_ARGS__ )          
+#define GrB_Descriptor_set_VOID_(...)           GrB_Descriptor_set_VOID (__VA_ARGS__ )           
+
+#define GrB_Type_set_Scalar_(...)               GrB_Type_set_Scalar (__VA_ARGS__ )               
+#define GrB_Type_set_String_(...)               GrB_Type_set_String (__VA_ARGS__ )               
+#define GrB_Type_set_INT32_(...)                GrB_Type_set_INT32 (__VA_ARGS__ )                
+#define GrB_Type_set_VOID_(...)                 GrB_Type_set_VOID (__VA_ARGS__ )                 
+
+#define GrB_Global_set_Scalar_(...)             GrB_Global_set_Scalar (__VA_ARGS__ )             
+#define GrB_Global_set_String_(...)             GrB_Global_set_String (__VA_ARGS__ )             
+#define GrB_Global_set_INT32_(...)              GrB_Global_set_INT32 (__VA_ARGS__ )              
+#define GrB_Global_set_VOID_(...)               GrB_Global_set_VOID (__VA_ARGS__ )               
+
+#define GxB_Context_set_Scalar_(...)            GxB_Context_set_Scalar (__VA_ARGS__ )            
+#define GxB_Context_set_String_(...)            GxB_Context_set_String (__VA_ARGS__ )            
+#define GxB_Context_set_INT_(...)               GxB_Context_set_INT (__VA_ARGS__ )               
+#define GxB_Context_set_VOID_(...)              GxB_Context_set_VOID (__VA_ARGS__ )              
+
 // GrB_free:
 #define GrB_Type_free_(...)                         GrB_Type_free (__VA_ARGS__)
 #define GrB_UnaryOp_free_(...)                      GrB_UnaryOp_free (__VA_ARGS__)

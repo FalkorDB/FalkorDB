@@ -20,7 +20,8 @@ void GB_macrofy_query
     GrB_Type type0,
     GrB_Type type1,
     GrB_Type type2,
-    uint64_t hash       // hash code for the kernel
+    uint64_t hash,      // hash code for the kernel
+    GB_jit_kcode kcode
 )
 {
 
@@ -28,8 +29,21 @@ void GB_macrofy_query
     // create the function header, and query the version
     //--------------------------------------------------------------------------
 
-    fprintf (fp, 
-        "GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;\n"
+    if (kcode >= GB_JIT_CUDA_KERNEL)
+    {
+        // ensure the query function can be called from a C function
+        fprintf (fp, "extern \"C\"\n{\n") ;
+    }
+
+    fprintf (fp,
+        "GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;\n") ;
+
+    if (kcode >= GB_JIT_CUDA_KERNEL)
+    {
+        fprintf (fp, "}\n") ;
+    }
+
+    fprintf (fp,
         "GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)\n"
         "{\n"
         "    (*hash) = 0x%016" PRIx64 " ;\n"

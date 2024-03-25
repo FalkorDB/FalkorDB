@@ -2,7 +2,7 @@
 # GraphBLAS/GraphBLAS_JIT_paths.cmake:  configure the JIT paths
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0.
 
 #-------------------------------------------------------------------------------
@@ -35,33 +35,33 @@ else ( )
 endif ( )
 
 #-------------------------------------------------------------------------------
-# NJIT and COMPACT options
+# GRAPHBLAS_USE_JIT and GRAPHBLAS_COMPACT options
 #-------------------------------------------------------------------------------
 
-if ( SUITESPARSE_CUDA )
+if ( SUITESPARSE_HAS_CUDA AND GRAPHBLAS_USE_CUDA )
     # FOR NOW: do not compile FactoryKernels when developing the CUDA kernels
-    set ( COMPACT on )
+    set ( GRAPHBLAS_COMPACT on )
 endif ( )
 
-option ( COMPACT "ON: do not compile FactoryKernels.  OFF (default): compile FactoryKernels" off )
-option ( NJIT "ON: do not use the CPU JIT.  OFF (default): enable the CPU JIT" off )
+option ( GRAPHBLAS_COMPACT "ON: do not compile FactoryKernels.  OFF (default): compile FactoryKernels" OFF )
+option ( GRAPHBLAS_USE_JIT "ON (default): use the CPU JIT.  OFF: do not use the CPU JIT" ON )
 
-if ( NJIT )
+if ( GRAPHBLAS_USE_JIT )
+    message ( STATUS "GraphBLAS CPU JIT: enabled")
+else ( )
     # disable the CPU JIT (but keep any PreJIT kernels enabled)
     add_compile_definitions ( NJIT )
     message ( STATUS "GraphBLAS CPU JIT: disabled (any PreJIT kernels will still be enabled)")
-else ( )
-    message ( STATUS "GraphBLAS CPU JIT: enabled")
 endif ( )
 
-if ( COMPACT )
+if ( GRAPHBLAS_COMPACT )
     add_compile_definitions ( GBCOMPACT )
     message ( STATUS "GBCOMPACT: enabled; FactoryKernels will not be built" )
 endif ( )
 
-set ( JITINIT 4
+set ( GRAPHBLAS_JITINIT 4
     CACHE STRING "Initial JIT control 4:on, 3:load, 2:run, 1:pause, 0:off (default 4)" )
-if ( NOT ( ${JITINIT} EQUAL 4 ))
-    add_compile_definitions ( JITINIT=${JITINIT} )
+if ( NOT ( ${GRAPHBLAS_JITINIT} EQUAL 4 ))
+    add_compile_definitions ( JITINIT=${GRAPHBLAS_JITINIT} )
 endif ( )
 

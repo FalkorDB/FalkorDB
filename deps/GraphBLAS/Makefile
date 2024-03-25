@@ -32,15 +32,15 @@ library:
 
 # install only in SuiteSparse/lib and SuiteSparse/include
 local:
-	( cd build && cmake $(CMAKE_OPTIONS) -DLOCAL_INSTALL=1 .. && cmake --build . --config Release -j${JOBS} )
+	( cd build && cmake $(CMAKE_OPTIONS) -USUITESPARSE_PKGFILEDIR -DSUITESPARSE_LOCAL_INSTALL=1 .. && cmake --build . --config Release -j${JOBS} )
 
 # install only in /usr/local (default)
 global:
-	( cd build && cmake $(CMAKE_OPTIONS) -DLOCAL_INSTALL=0 .. && cmake --build . --config Release -j${JOBS} )
+	( cd build && cmake $(CMAKE_OPTIONS) -USUITESPARSE_PKGFILEDIR -DSUITESPARSE_LOCAL_INSTALL=0 .. && cmake --build . --config Release -j${JOBS} )
 
 # enable CUDA (NOTE: not ready for production use)
 cuda:
-	( cd build && cmake $(CMAKE_OPTIONS) -DENABLE_CUDA=1 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(CMAKE_OPTIONS) -DGRAPHBLAS_USE_CUDA=1 .. && cmake --build . --config Release -j$(JOBS) )
 
 # compile with -g 
 debug:
@@ -48,15 +48,15 @@ debug:
 
 # compile without FactoryKernels
 compact:
-	( cd build && cmake $(CMAKE_OPTIONS) -DCOMPACT=1 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(CMAKE_OPTIONS) -DGRAPHBLAS_COMPACT=1 .. && cmake --build . --config Release -j$(JOBS) )
 
 # compile with -g, and without FactoryKernels
 cdebug:
-	( cd build && cmake -DCMAKE_BUILD_TYPE=Debug -DCOMPACT=1 $(CMAKE_OPTIONS) .. && cmake --build . --config Debug -j$(JOBS) )
+	( cd build && cmake -DCMAKE_BUILD_TYPE=Debug -DGRAPHBLAS_COMPACT=1 $(CMAKE_OPTIONS) .. && cmake --build . --config Debug -j$(JOBS) )
 
 # build the dynamic library and the demos
 all:
-	( cd build && cmake $(CMAKE_OPTIONS) -DDEMO=1 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(CMAKE_OPTIONS) -DSUITESPARSE_DEMOS=1 .. && cmake --build . --config Release -j$(JOBS) )
 
 # run the demos
 demos: all
@@ -65,10 +65,10 @@ demos: all
 # diff the demo output
 demodiffs: demos
 	echo "Comparing demo output:"
-	- diff -w Demo/Output/simple_demo.out       Demo/simple_demo.out
-	- diff -w Demo/Output/complex_demo_out.m    Demo/complex_demo_out.m
-	- diff -w Demo/Output/wildtype_demo.out     Demo/wildtype_demo.out
-	- diff -w Demo/Output/gauss_demo.out        Demo/gauss_demo.out
+	- diff -w Demo/Output/simple_demo.out       build/simple_demo.out
+	- diff -w Demo/Output/complex_demo_out.m    build/complex_demo_out.m
+	- diff -w Demo/Output/wildtype_demo.out     build/wildtype_demo.out
+	- diff -w Demo/Output/gauss_demo.out        build/gauss_demo.out
 
 # just do 'make' in build; do not rerun the cmake script
 remake:
@@ -80,7 +80,7 @@ setup:
 
 # build the static library
 static:
-	( cd build && cmake $(CMAKE_OPTIONS) -DNSTATIC=0 .. && cmake --build . --config Release -j$(JOBS) )
+	( cd build && cmake $(CMAKE_OPTIONS) -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF .. && cmake --build . --config Release -j$(JOBS) )
 
 # installs GraphBLAS to the install location defined by cmake, usually
 # /usr/local/lib and /usr/local/include

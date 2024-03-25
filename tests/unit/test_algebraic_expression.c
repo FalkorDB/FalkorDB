@@ -210,13 +210,13 @@ void _print_matrix(GrB_Matrix mat) {
     printf("ncols: %lu, nrows: %lu, nvals: %lu\n", ncols, nrows, nvals);
 #endif
 
-	GrB_Index I[nvals];     // array for returning row indices of tuples
+	GrB_Index II[nvals];    // array for returning row indices of tuples
 	GrB_Index J[nvals];     // array for returning col indices of tuples
 	bool X[nvals];          // array for returning values of tuples
 
-	GrB_Matrix_extractTuples_BOOL(I, J, X, &nvals, mat);
+	GrB_Matrix_extractTuples_BOOL(II, J, X, &nvals, mat);
 	for(int i = 0; i < nvals; i++) {
-		printf("[%lu,%lu,%d]\n", I[i], J[i], X[i]);
+		printf("[%lu,%lu,%d]\n", II[i], J[i], X[i]);
 	}
 }
 
@@ -650,7 +650,7 @@ void test_Exp_OP_ADD() {
 void test_Exp_OP_MUL() {
 	// Exp = A * I
 	RG_Matrix A;
-	RG_Matrix I;
+	RG_Matrix i;
 	RG_Matrix res;
 
 	// A
@@ -664,13 +664,13 @@ void test_Exp_OP_MUL() {
 	// I
 	// 1 0
 	// 0 1
-	RG_Matrix_new(&I, GrB_BOOL, 2, 2, false);
-	RG_Matrix_setElement_BOOL(I, 0, 0);
-	RG_Matrix_setElement_BOOL(I, 1, 1);
+	RG_Matrix_new(&i, GrB_BOOL, 2, 2, false);
+	RG_Matrix_setElement_BOOL(i, 0, 0);
+	RG_Matrix_setElement_BOOL(i, 1, 1);
 
 	rax *matrices = raxNew();
 	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
-	raxInsert(matrices, (unsigned char *)"I", strlen("I"), I, NULL);
+	raxInsert(matrices, (unsigned char *)"I", strlen("I"), i, NULL);
 	AlgebraicExpression *exp = AlgebraicExpression_FromString("A*I", matrices);
 
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
@@ -686,7 +686,7 @@ void test_Exp_OP_MUL() {
 
 	raxFree(matrices);
 	RG_Matrix_free(&A);
-	RG_Matrix_free(&I);
+	RG_Matrix_free(&i);
 	RG_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	AlgebraicExpression_Free(exp);

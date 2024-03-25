@@ -28,7 +28,7 @@ GrB_Info GB_matvec_name_get (GrB_Matrix A, char *name, int field)
             strcpy (name, A->type->name) ;
             break ;
 
-        case GrB_ELTYPE_STRING : 
+        case GrB_EL_TYPE_STRING : 
             typename = GB_type_name_get (A->type) ;
             if (typename != NULL)
             {

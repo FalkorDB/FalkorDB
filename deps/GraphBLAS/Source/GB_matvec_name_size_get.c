@@ -24,7 +24,7 @@ GrB_Info GB_matvec_name_size_get (GrB_Matrix A, size_t *value, int field)
             name = A->type->name ;
             break ;
 
-        case GrB_ELTYPE_STRING : 
+        case GrB_EL_TYPE_STRING : 
             name = GB_type_name_get (A->type) ;
             break ;
 

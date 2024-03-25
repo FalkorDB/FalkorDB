@@ -1,4 +1,4 @@
-# GraphBLAS_CUDA, Copyright (c) 2017-2023, Timothy A. Davis.
+# GraphBLAS_CUDA, Copyright (c) 2017-2024, FIXME
 # All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
@@ -13,5 +13,5 @@ Name: GraphBLAS_CUDA
 URL: https://github.com/DrTimothyAldenDavis/SuiteSparse
 Description: CUDA support library for GraphBLAS in SuiteSparse
 Version: @GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@GraphBLAS_VERSION_SUB@
-Libs: -L${libdir} -lgraphblascuda
-Cflags: -I${includedir} -DSUITESPARSE_CUDA
+Libs: -L${libdir} -lgraphblascuda@CMAKE_RELEASE_POSTFIX@
+Cflags: -I${includedir} -DGRAPHBLAS_HAS_CUDA

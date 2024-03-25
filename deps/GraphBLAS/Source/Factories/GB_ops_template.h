@@ -858,7 +858,7 @@ inline void GB_FUNC (POW) (GB_Z_X_Y_ARGS)
     }
     inline void GB_FUNC (CMPLX) (GxB_FC32_t *z, const float *x, const float *y)
     {
-        #if defined ( __cplusplus ) || GB_COMPILER_MSC || defined (CMPLX)
+        #if defined ( __cplusplus ) || defined (GxB_HAVE_COMPLEX_MSVC) || defined (CMPLX)
         (*z) = GxB_CMPLXF ((*x),(*y)) ;
         #else
         ((float *) z) [0] = (*x) ;
@@ -887,7 +887,7 @@ inline void GB_FUNC (POW) (GB_Z_X_Y_ARGS)
     inline void GB_FUNC (CMPLX) (GxB_FC64_t *z,
         const double *x, const double *y)
     {
-        #if defined ( __cplusplus ) || GB_COMPILER_MSC || defined (CMPLX)
+        #if defined ( __cplusplus ) || defined (GxB_HAVE_COMPLEX_MSVC) || defined (CMPLX)
         (*z) = GxB_CMPLX ((*x),(*y)) ;
         #else
         ((double *) z) [0] = (*x) ;

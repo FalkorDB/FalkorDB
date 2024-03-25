@@ -99,6 +99,7 @@ malloc_debugging = stat ;
 % tests with high rates (over 100/sec)
 %----------------------------------------
 
+logstat ('test169'    ,t, j0  , f1  ) ; % C<M>=A+B with many formats
 logstat ('test250'    ,t, j44 , f10 ) ; % JIT tests, set/get, other tests
 logstat ('test279'    ,t, j0  , f1  ) ; % blob get/set
 logstat ('test278'    ,t, j0  , f1  ) ; % descriptor get/set
