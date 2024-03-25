@@ -137,79 +137,26 @@ void test_RGMatrix_new() {
 	GrB_Matrix M     = NULL;
 	GrB_Matrix DP    = NULL;
 	GrB_Matrix DM    = NULL;
-	GrB_Type   t     = GrB_UINT64;
+	GrB_Type   t     = GrB_BOOL;
 	GrB_Info   info  = GrB_SUCCESS;
 	GrB_Index  nvals = 0;
 	GrB_Index  nrows = 100;
 	GrB_Index  ncols = 100;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M  = RG_MATRIX_M(A);
-	DP = RG_MATRIX_DELTA_PLUS(A);
-	DM = RG_MATRIX_DELTA_MINUS(A);
-
-	// uint64 matrix always maintain transpose
-	TEST_ASSERT(RG_MATRIX_MAINTAIN_TRANSPOSE(A));
-
-	// uint64 matrix always multi edge
-	TEST_ASSERT(RG_MATRIX_MULTI_EDGE(A));
-
-	// a new empty matrix should be synced
-	// no data in either DP or DM
-	TEST_ASSERT(RG_Matrix_Synced(A));
-
-	// test M, DP and DM hyper switch
-	int format;
-	double hyper_switch;
-
-	// M should be either hyper-sparse or sparse
-	GxB_Matrix_Option_get(M, GxB_SPARSITY_CONTROL, &format);
-	TEST_ASSERT(format == (GxB_SPARSE | GxB_HYPERSPARSE));
-
-	// DP should always be hyper
-	GxB_Matrix_Option_get(DP, GxB_HYPER_SWITCH, &hyper_switch);
-	TEST_ASSERT(hyper_switch == GxB_ALWAYS_HYPER);
-	GxB_Matrix_Option_get(DP, GxB_SPARSITY_CONTROL, &format);
-	TEST_ASSERT(format == GxB_HYPERSPARSE);
-
-	// DM should always be hyper
-	GxB_Matrix_Option_get(DM, GxB_HYPER_SWITCH, &hyper_switch);
-	TEST_ASSERT(hyper_switch == GxB_ALWAYS_HYPER);
-	GxB_Matrix_Option_get(DM, GxB_SPARSITY_CONTROL, &format);
-	TEST_ASSERT(format == GxB_HYPERSPARSE);
-
-	// matrix should be empty
-	M_EMPTY();
-	DP_EMPTY(); 
-	DM_EMPTY();
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	RG_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
-
-	t = GrB_BOOL;
-
-	info = RG_Matrix_new(&A, t, nrows, ncols);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	DP  =  RG_MATRIX_DELTA_PLUS(A);
-	DM  =  RG_MATRIX_DELTA_MINUS(A);
+	M   =  RG_Matrix_m(A);
+	DP  =  RG_Matrix_dp(A);
+	DM  =  RG_Matrix_dm(A);
 
 	// bool matrix do not maintain transpose
-	TEST_ASSERT(!(RG_MATRIX_MAINTAIN_TRANSPOSE(A)));
-
-	// bool matrix always not multi edge
-	TEST_ASSERT(!RG_MATRIX_MULTI_EDGE(A));
+	TEST_ASSERT(RG_Matrix_getTranspose(A) == NULL);
 
 	// a new empty matrix should be synced
 	// no data in either DP or DM
-	TEST_ASSERT(RG_Matrix_Synced(A));
+	TEST_ASSERT(!RG_Matrix_isDirty(A));
 
 	// matrix should be empty
 	M_EMPTY();
@@ -217,488 +164,6 @@ void test_RGMatrix_new() {
 	DM_EMPTY();
 	RG_Matrix_nvals(&nvals, A);
 	TEST_ASSERT(nvals == 0);
-
-	RG_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
-}
-
-// setting an empty entry
-// M[i,j] = 1
-void test_RGMatrix_simple_set() {
-	GrB_Type    t                   =  GrB_UINT64;
-	RG_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	uint64_t    x                   =  1;
-
-	info = RG_Matrix_new(&A, t, nrows, ncols);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// set element at position i,j
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// make sure element at position i,j exists
-	info = RG_Matrix_extractElement_UINT64(&x, A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(x == 1);
-	
-	// matrix should contain a single element
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 1);
-
-	// matrix should be mark as dirty
-	TEST_ASSERT(RG_Matrix_isDirty(A));
-
-	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	DP  =  RG_MATRIX_DELTA_PLUS(A);
-	DM  =  RG_MATRIX_DELTA_MINUS(A);
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should contain a single element
-	DP_NOT_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// set already existing entry
-	//--------------------------------------------------------------------------
-
-	// flush matrix
-	RG_Matrix_wait(A, false);
-
-	// introduce existing entry
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should contain a multi-value entry
-	DP_NOT_EMPTY();
-
-	// clean up
-	RG_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
-}
-
-// multiple delete scenarios
-void test_RGMatrix_del() {
-	GrB_Type    t                   =  GrB_UINT64;
-	RG_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	uint64_t    x                   =  1;
-
-	info = RG_Matrix_new(&A, t, nrows, ncols);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	DP  =  RG_MATRIX_DELTA_PLUS(A);
-	DM  =  RG_MATRIX_DELTA_MINUS(A);
-
-	//--------------------------------------------------------------------------
-	// remove none existing entry
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_removeElement_UINT64(A, i, j);
-	TEST_ASSERT(info == GrB_NO_VALUE);
-
-	// matrix should not contain any entries in either DP or DM
-	TEST_ASSERT(RG_Matrix_Synced(A));
-
-	//--------------------------------------------------------------------------
-	// remove none flushed addition
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// remove element at position i,j
-	info = RG_Matrix_removeElement_UINT64(A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// matrix should be mark as dirty
-	TEST_ASSERT(RG_Matrix_isDirty(A));
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// A should be empty
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// remove flushed addition
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// force sync
-	// entry should migrated from 'delta-plus' to 'M'
-	info = RG_Matrix_wait(A, true);
-
-	// remove element at position i,j
-	info = RG_Matrix_removeElement_UINT64(A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// A should be empty
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	// M should contain a single element
-	M_NOT_EMPTY();
-
-	// DM should contain a single element
-	DM_NOT_EMPTY();
-
-	// DP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// flush
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_wait(A, true);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// entry should be removed from both 'delta-minus' and 'M'
-	// A should be empty
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-
-	// commit an entry M[i,j] = 1
-	// delete entry del DM[i,j] = true
-	// re-introduce entry DM[i,j] = 0, M[i,j] = 2
-	// delete entry DM[i,j] = true
-	// commit
-	// M[i,j] = 0, DP[i,j] = 0, DM[i,j] = 0
-
-	//--------------------------------------------------------------------------
-	// commit an entry M[i,j] = 1
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, 1, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// force sync
-	info = RG_Matrix_wait(A, true);
-
-	// M should contain a single element
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// delete entry del DM[i,j] = true
-	//--------------------------------------------------------------------------
-
-	// remove element at position i,j
-	info = RG_Matrix_removeElement_UINT64(A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_NOT_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// introduce an entry DP[i,j] = 2
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, 2, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// M should contain a single element
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// commit
-	//--------------------------------------------------------------------------
-
-	// force sync
-	info = RG_Matrix_wait(A, true);
-
-	//--------------------------------------------------------------------------
-	// M[i,j] = 2, DP[i,j] = 0, DM[i,j] = 0
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_extractElement_UINT64(&x, A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(2 == x);
-
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// clean up
-	//--------------------------------------------------------------------------
-
-	RG_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
-}
-
-// multiple delete entry scenarios
-void test_RGMatrix_del_entry() {
-	GrB_Type    t                   =  GrB_UINT64;
-	RG_Matrix   A                   =  NULL;
-	GrB_Matrix  M                   =  NULL;
-	GrB_Matrix  DP                  =  NULL;
-	GrB_Matrix  DM                  =  NULL;
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	uint64_t    x                   =  1;
-	bool        entry_deleted       =  false;
-
-	info = RG_Matrix_new(&A, t, nrows, ncols);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	DP  =  RG_MATRIX_DELTA_PLUS(A);
-	DM  =  RG_MATRIX_DELTA_MINUS(A);
-
-	//--------------------------------------------------------------------------
-	// remove none existing entry
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x, &entry_deleted);
-	TEST_ASSERT(info == GrB_NO_VALUE);
-
-	// matrix should not contain any entries in either DP or DM
-	TEST_ASSERT(RG_Matrix_Synced(A));
-
-	//--------------------------------------------------------------------------
-	// remove none flushed addition
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// remove element at position i,j
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x, &entry_deleted);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// matrix should be mark as dirty
-	TEST_ASSERT(RG_Matrix_isDirty(A));
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// A should be empty
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// remove flushed addition
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// force sync
-	// entry should migrated from 'delta-plus' to 'M'
-	info = RG_Matrix_wait(A, true);
-
-	// remove element at position i,j
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x, &entry_deleted);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// A should be empty
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	// M should contain a single element
-	M_NOT_EMPTY();
-
-	// DM should contain a single element
-	DM_NOT_EMPTY();
-
-	// DP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// flush
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_wait(A, true);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// entry should be removed from both 'delta-minus' and 'M'
-	// A should be empty
-	RG_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 0);
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-
-	// commit an entry M[i,j] = 1
-	// delete entry del DM[i,j] = true
-	// re-introduce entry DM[i,j] = 0, M[i,j] = 2
-	// delete entry DM[i,j] = true
-	// commit
-	// M[i,j] = 0, DP[i,j] = 0, DM[i,j] = 0
-
-	//--------------------------------------------------------------------------
-	// commit an entry M[i,j] = 1
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, 1, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// force sync
-	info = RG_Matrix_wait(A, true);
-
-	// M should contain a single element
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// delete entry del DM[i,j] = true
-	//--------------------------------------------------------------------------
-
-	// remove element at position i,j
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x, &entry_deleted);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_NOT_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// introduce an entry DP[i,j] = 2
-	//--------------------------------------------------------------------------
-
-	// set element at position i,j
-	info = RG_Matrix_setElement_UINT64(A, 2, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// M should contain a single element
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// commit
-	//--------------------------------------------------------------------------
-
-	// force sync
-	info = RG_Matrix_wait(A, true);
-
-	//--------------------------------------------------------------------------
-	// M[i,j] = 2, DP[i,j] = 0, DM[i,j] = 0
-	//--------------------------------------------------------------------------
-
-	M_NOT_EMPTY();
-	DP_EMPTY();
-	DM_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// clean up
-	//--------------------------------------------------------------------------
 
 	RG_Matrix_free(&A);
 	TEST_ASSERT(A == NULL);
@@ -717,13 +182,13 @@ void test_RGMatrix_set() {
 	GrB_Index   i                   =  0;
 	GrB_Index   j                   =  1;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	DP  =  RG_MATRIX_DELTA_PLUS(A);
-	DM  =  RG_MATRIX_DELTA_MINUS(A);
+	M   =  RG_Matrix_m(A);
+	DP  =  RG_Matrix_dp(A);
+	DM  =  RG_Matrix_dm(A);
 
 	//--------------------------------------------------------------------------
 	// Set element that marked for deletion
@@ -772,7 +237,7 @@ void test_RGMatrix_set() {
 }
 
 // flush simple addition
-void test_RGMatrix_flus() {
+void test_RGMatrix_flush() {
 	GrB_Type    t                   =  GrB_BOOL;
 	RG_Matrix   A                   =  NULL;
 	GrB_Matrix  M                   =  NULL;
@@ -786,7 +251,7 @@ void test_RGMatrix_flus() {
 	GrB_Index   j                   =  1;
 	bool        sync                =  false;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set element at position i,j
@@ -794,9 +259,9 @@ void test_RGMatrix_flus() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	DP  =  RG_MATRIX_DELTA_PLUS(A);
-	DM  =  RG_MATRIX_DELTA_MINUS(A);
+	M   =  RG_Matrix_m(A);
+	DP  =  RG_Matrix_dp(A);
+	DM  =  RG_Matrix_dm(A);
 
 	//--------------------------------------------------------------------------
 	// flush matrix, no sync
@@ -841,200 +306,6 @@ void test_RGMatrix_flus() {
 }
 
 //------------------------------------------------------------------------------
-// transpose test
-//------------------------------------------------------------------------------
-
-// M[i,j] = x, M[i,j] = y
-void test_GRMatrix_managed_transposed() {
-	GrB_Type    t                   =  GrB_UINT64;
-	RG_Matrix   A                   =  NULL;
-	RG_Matrix   T                   =  NULL;  // A transposed
-	GrB_Matrix  M                   =  NULL;  // primary internal matrix
-	GrB_Matrix  DP                  =  NULL;  // delta plus
-	GrB_Matrix  DM                  =  NULL;  // delta minus
-	GrB_Info    info                =  GrB_SUCCESS;
-	GrB_Index   nvals               =  0;
-	GrB_Index   nrows               =  100;
-	GrB_Index   ncols               =  100;
-	GrB_Index   i                   =  0;
-	GrB_Index   j                   =  1;
-	uint64_t    x                   =  0;  // M[i,j] = x
-	bool        b                   =  false;
-	bool        entry_deleted       =  false;
-
-	//--------------------------------------------------------------------------
-	// create RGMatrix
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_new(&A, t, nrows, ncols);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// make sure transposed was created
-	T = RG_Matrix_getTranspose(A);
-	TEST_ASSERT(T != A);
-	TEST_ASSERT(T != NULL);
-
-	// get internal matrices
-	M   =  RG_MATRIX_M(T);
-	DP  =  RG_MATRIX_DELTA_PLUS(T);
-	DM  =  RG_MATRIX_DELTA_MINUS(T);
-
-	//--------------------------------------------------------------------------
-	// set element at position i,j
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// make sure element at position j,i exists
-	info = RG_Matrix_extractElement_BOOL(&b, T, j, i);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
-	
-	// matrix should contain a single element
-	RG_Matrix_nvals(&nvals, T);
-	TEST_ASSERT(nvals == 1);
-
-	// matrix should be mark as dirty
-	TEST_ASSERT(RG_Matrix_isDirty(T));
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// TM should be empty
-	M_EMPTY();
-
-	// TDM should be empty
-	DM_EMPTY();
-
-	// TDP should contain a single element
-	DP_NOT_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// flush matrix
-	//--------------------------------------------------------------------------
-
-	RG_Matrix_wait(A, true);
-
-	// flushing 'A' should flush 'T' aswell
-
-	// TM should contain a single element
-	M_NOT_EMPTY();
-
-	// TDM should be empty
-	DM_EMPTY();
-
-	// TDP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// delete element at position i,j
-	//--------------------------------------------------------------------------
-	
-	info = RG_Matrix_removeElement_UINT64(A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// matrix should be mark as dirty
-	TEST_ASSERT(RG_Matrix_isDirty(T));
-
-	//--------------------------------------------------------------------------
-	// validations
-	//--------------------------------------------------------------------------
-
-	// TM should contain a single element
-	M_NOT_EMPTY();
-
-	// TDM should contain a single element
-	DM_NOT_EMPTY();
-
-	// TDP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// flush matrix
-	//--------------------------------------------------------------------------
-
-	// flushing 'A' should flush 'T' aswell
-
-	RG_Matrix_wait(A, true);
-
-	// TM should be empty
-	M_EMPTY();
-
-	// TDM should be empty
-	DM_EMPTY();
-
-	// TDP should be empty
-	DP_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// delete entry at position i,j
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	info = RG_Matrix_setElement_UINT64(A, x + 1, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x, &entry_deleted);
-
-	// make sure element at position j,i exists
-	info = RG_Matrix_extractElement_BOOL(&b, T, j, i);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
-
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x + 1, &entry_deleted);
-	info = RG_Matrix_extractElement_BOOL(&b, T, j, i);
-	TEST_ASSERT(info == GrB_NO_VALUE);
-
-	//--------------------------------------------------------------------------
-	// delete flushed entry at position i,j
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	info = RG_Matrix_setElement_UINT64(A, x + 1, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	RG_Matrix_wait(A, true);
-
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x, &entry_deleted);
-
-	// make sure element at position j,i exists
-	info = RG_Matrix_extractElement_BOOL(&b, T, j, i);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
-
-	info = RG_Matrix_removeEntry_UINT64(A, i, j, x + 1, &entry_deleted);
-	info = RG_Matrix_extractElement_BOOL(&b, T, j, i);
-	TEST_ASSERT(info == GrB_NO_VALUE);
-
-	//--------------------------------------------------------------------------
-	// revive deleted entry at position i,j
-	//--------------------------------------------------------------------------
-
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	RG_Matrix_wait(A, true);
-
-	info = RG_Matrix_removeElement_UINT64(A, i, j);
-
-	info = RG_Matrix_setElement_UINT64(A, x, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// make sure element at position j,i exists
-	info = RG_Matrix_extractElement_BOOL(&b, T, j, i);
-	TEST_ASSERT(info == GrB_SUCCESS);
-	TEST_ASSERT(true == b);
-
-	// clean up
-	RG_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
-}
-
-//------------------------------------------------------------------------------
 // fuzzy test compare RG_Matrix to GrB_Matrix
 //------------------------------------------------------------------------------
 
@@ -1064,8 +335,7 @@ void test_RGMatrix_fuzzy() {
 	I = (GrB_Index*) malloc(sizeof(GrB_Index) * operations);
 	J = (GrB_Index*) malloc(sizeof(GrB_Index) * operations);
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
-	info = RG_Matrix_new(&A->transposed, t, ncols, nrows);
+	info = RG_Matrix_new(&A, t, nrows, ncols, true);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// make sure transposed was created
@@ -1074,8 +344,8 @@ void test_RGMatrix_fuzzy() {
 	TEST_ASSERT(T != NULL);
 
 	// get internal matrices
-	M   =  RG_MATRIX_M(A);
-	MT  =  RG_MATRIX_M(T);
+	M   =  RG_Matrix_m(A);
+	MT  =  RG_Matrix_m(T);
 
 	info = GrB_Matrix_new(&N, t, nrows, ncols);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -1168,11 +438,11 @@ void test_RGMatrix_export_no_changes() {
 	GrB_Index   ncols               =  100;
 	bool        sync                =  false;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M = RG_MATRIX_M(A);
+	M = RG_Matrix_m(A);
 
 	//--------------------------------------------------------------------------
 	// export empty matrix
@@ -1234,11 +504,11 @@ void test_RGMatrix_export_pending_changes() {
 	GrB_Index   ncols               =  100;
 	bool        sync                =  false;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M = RG_MATRIX_M(A);
+	M = RG_Matrix_m(A);
 
 	// set elements
 	info = RG_Matrix_setElement_BOOL(A, 0, 0);
@@ -1308,10 +578,10 @@ void test_RGMatrix_copy() {
 	GrB_Index   ncols               =  100;
 	bool        sync                =  false;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = RG_Matrix_new(&B, t, nrows, ncols);
+	info = RG_Matrix_new(&B, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set elements
@@ -1351,12 +621,12 @@ void test_RGMatrix_copy() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	A_M  = RG_MATRIX_M(A);
-	B_M  = RG_MATRIX_M(B);
-	A_DP = RG_MATRIX_DELTA_PLUS(A);
-	B_DP = RG_MATRIX_DELTA_PLUS(B);
-	A_DM = RG_MATRIX_DELTA_MINUS(A);
-	B_DM = RG_MATRIX_DELTA_MINUS(B);
+	A_M  = RG_Matrix_m(A);
+	B_M  = RG_Matrix_m(B);
+	A_DP = RG_Matrix_dp(A);
+	B_DP = RG_Matrix_dp(B);
+	A_DM = RG_Matrix_dm(A);
+	B_DM = RG_Matrix_dm(B);
 	
 	ASSERT_GrB_Matrices_EQ(A_M, B_M);
 	ASSERT_GrB_Matrices_EQ(A_DP, B_DP);
@@ -1382,16 +652,16 @@ void test_RGMatrix_mxm() {
 	GrB_Index   ncols               =  100;
 	bool        sync                =  false;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = RG_Matrix_new(&B, t, nrows, ncols);
+	info = RG_Matrix_new(&B, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = RG_Matrix_new(&C, t, nrows, ncols);
+	info = RG_Matrix_new(&C, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	info = RG_Matrix_new(&D, t, nrows, ncols);
+	info = RG_Matrix_new(&D, t, nrows, ncols, false);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set elements
@@ -1421,7 +691,7 @@ void test_RGMatrix_mxm() {
 	info = RG_Matrix_removeElement_BOOL(B, 1, 2);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	// set element at position 2,2
+	// set element at position 1,3
 	info = RG_Matrix_setElement_BOOL(B, 1, 3);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
@@ -1439,8 +709,8 @@ void test_RGMatrix_mxm() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	C_M  = RG_MATRIX_M(C);
-	D_M  = RG_MATRIX_M(D);
+	C_M  = RG_Matrix_m(C);
+	D_M  = RG_Matrix_m(D);
 	
 	ASSERT_GrB_Matrices_EQ(C_M, D_M);
 
@@ -1459,11 +729,11 @@ void test_RGMatrix_resize() {
 	RG_Matrix  A        =  NULL;
 	RG_Matrix  T        =  NULL;
 	GrB_Info   info     =  GrB_SUCCESS;
-	GrB_Type   t        =  GrB_UINT64;
+	GrB_Type   t        =  GrB_BOOL;
 	GrB_Index  nrows    =  10;
 	GrB_Index  ncols    =  20;
 
-	info = RG_Matrix_new(&A, t, nrows, ncols);
+	info = RG_Matrix_new(&A, t, nrows, ncols, true);
 	T = RG_Matrix_getTranspose(A);
 
 	GrB_Index  A_nrows;
@@ -1541,12 +811,8 @@ void test_RGMatrix_resize() {
 
 TEST_LIST = {
 	{"RGMatrix_new", test_RGMatrix_new},
-	{"RGMatrix_simple_set", test_RGMatrix_simple_set},
-	{"RGMatrix_del", test_RGMatrix_del},
-	{"RGMatrix_del_entry", test_RGMatrix_del_entry},
 	{"RGMatrix_set", test_RGMatrix_set},
-	{"RGMatrix_flus", test_RGMatrix_flus},
-	{"GRMatrix_managed_transposed", test_GRMatrix_managed_transposed},
+	{"RGMatrix_flush", test_RGMatrix_flush},
 	{"RGMatrix_fuzzy", test_RGMatrix_fuzzy},
 	{"RGMatrix_export_no_changes", test_RGMatrix_export_no_changes},
 	{"RGMatrix_export_pending_changes", test_RGMatrix_export_pending_changes},

@@ -12,11 +12,6 @@
 #include "../util/datablock/oo_datablock.h"
 
 //------------------------------------------------------------------------------
-// Forward declarations
-//------------------------------------------------------------------------------
-void _MatrixResizeToCapacity(const Graph *g, RG_Matrix m);
-
-//------------------------------------------------------------------------------
 // Synchronization functions
 //------------------------------------------------------------------------------
 
@@ -95,42 +90,6 @@ static inline size_t _Graph_NodeCap(const Graph *g) {
 	return g->nodes->itemCap;
 }
 
-static void _CollectEdgesFromEntry
-(
-	const Graph *g,
-	NodeID src,
-	NodeID dest,
-	RelationID r,
-	EdgeID edgeId,
-	Edge **edges
-) {
-	Edge e = {0};
-
-	e.src_id     =  src;
-	e.dest_id    =  dest;
-	e.relationID =  r;
-
-	if(SINGLE_EDGE(edgeId)) {
-		e.id          =  edgeId;
-		e.attributes  =  DataBlock_GetItem(g->edges, edgeId);
-		ASSERT(e.attributes);
-		array_append(*edges, e);
-	} else {
-		// multiple edges connecting src to dest,
-		// entry is a pointer to an array of edge IDs
-		EdgeID *edgeIds = (EdgeID *)(CLEAR_MSB(edgeId));
-		uint edgeCount = array_len(edgeIds);
-
-		for(uint i = 0; i < edgeCount; i++) {
-			edgeId       = edgeIds[i];
-			e.id         = edgeId;
-			e.attributes = DataBlock_GetItem(g->edges, edgeId);
-			ASSERT(e.attributes);
-			array_append(*edges, e);
-		}
-	}
-}
-
 // Locates edges connecting src to destination.
 void _Graph_GetEdgesConnectingNodes
 (
@@ -147,14 +106,44 @@ void _Graph_GetEdgesConnectingNodes
 	ASSERT(dest < Graph_RequiredMatrixDim(g));
 
 	// relation map, maps (src, dest, r) to edge IDs.
-	EdgeID      id    =  INVALID_ENTITY_ID;
 	RG_Matrix   M     =  Graph_GetRelationMatrix(g, r, false);
-	GrB_Info    res   =  RG_Matrix_extractElement_UINT64(&id, M, src, dest);
+	GrB_Info    res   =  RG_Matrix_extractElement_BOOL(NULL, M, src, dest);
 
 	// no entry at [dest, src], src is not connected to dest with relation R
 	if(res == GrB_NO_VALUE) return;
 
-	_CollectEdgesFromEntry(g, src, dest, r, id, edges);
+	Edge     e   = {.src_id = src, .dest_id = dest, .relationID = r};
+	RG_Matrix S = Graph_GetSourceRelationMatrix(g, r, false);
+	RG_Matrix T = Graph_GetTargetRelationMatrix(g, r, true);
+	GrB_Vector src_vec;
+	GrB_Vector dst_vec;
+	GrB_Info info;
+	info = GrB_Vector_new(&src_vec, GrB_BOOL, g->edges->itemCap);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Vector_new(&dst_vec, GrB_BOOL, g->edges->itemCap);
+	ASSERT(info == GrB_SUCCESS);
+	info = RG_Matrix_extract_row(S, src_vec, src);
+	ASSERT(info == GrB_SUCCESS);
+	info = RG_Matrix_extract_row(T, dst_vec, dest);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Vector_eWiseMult_Semiring(src_vec, NULL, NULL, GxB_ANY_PAIR_BOOL, src_vec, dst_vec, GrB_DESC_R);
+	ASSERT(info == GrB_SUCCESS);
+	struct GB_Iterator_opaque it;
+	info = GxB_Vector_Iterator_attach(&it, src_vec, NULL);
+	ASSERT(info == GrB_SUCCESS);
+	info = GxB_Vector_Iterator_seek((&it), 0);
+    while (info != GxB_EXHAUSTED) {
+        GrB_Index edgeId = GxB_Vector_Iterator_getIndex((&it));
+		e.id          =  edgeId;
+		e.relationID  =  r;
+		e.attributes  =  DataBlock_GetItem(g->edges, edgeId);
+		ASSERT(e.attributes);
+		array_append(*edges, e);
+
+        info = GxB_Vector_Iterator_next((&it));
+    }
+	GrB_Vector_free(&src_vec);
+	GrB_Vector_free(&dst_vec);
 }
 
 static inline AttributeSet *_Graph_GetEntity(const DataBlock *entities, EntityID id) {
@@ -171,80 +160,30 @@ static inline AttributeSet *_Graph_GetEntity(const DataBlock *entities, EntityID
 void _MatrixSynchronize
 (
 	const Graph *g,
-	RG_Matrix m
+	RG_Matrix m,
+	GrB_Index nrows,
+	GrB_Index ncols
 ) {
-	GrB_Info  info;
-	GrB_Index n_rows;
-	GrB_Index n_cols;
-
-	RG_Matrix_nrows(&n_rows, m);
-	RG_Matrix_ncols(&n_cols, m);
-
-	bool      dirty = RG_Matrix_isDirty(m);
-	GrB_Index dims  = Graph_RequiredMatrixDim(g);
-
-	UNUSED(info);
-
-	// matrix must be resized if its dimensions missmatch required dimensions
-	bool require_resize = (n_rows != dims || n_cols != dims);
-
-	// matrix fully synced, nothing to do
-	if(!require_resize && !dirty) {
-		return;
-	}
-
-	// lock matrix
-	RG_Matrix_Lock(m);
-
-	// recheck
-	RG_Matrix_nrows(&n_rows, m);
-	RG_Matrix_ncols(&n_cols, m);
-	dirty = RG_Matrix_isDirty(m);
-	dims = Graph_RequiredMatrixDim(g);
-	require_resize = (n_rows != dims || n_cols != dims);
-
-	// some other thread performed sync
-	if(!require_resize && !dirty) {
-		goto cleanup;
-	}
-
-	// resize if required
-	if(require_resize) {
-		info = RG_Matrix_resize(m, dims, dims);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	// flush pending changes if dirty
-	// we need to call 'RG_Matrix_isDirty' again
-	// as 'RG_Matrix_resize' might require 'wait' for HyperSparse matrices
-	if(RG_Matrix_isDirty(m)) {
-		info = RG_Matrix_wait(m, false);
-		ASSERT(info == GrB_SUCCESS);
-	}
-
-	ASSERT(RG_Matrix_isDirty(m) == false);
-
-cleanup:
-	// unlock matrix mutex
-	RG_Matrix_Unlock(m);
+	RG_Matrix_synchronize(m, nrows, ncols);
 }
 
 // resize matrix to node capacity
 void _MatrixResizeToCapacity
 (
 	const Graph *g,
-	RG_Matrix m
+	RG_Matrix m,
+	GrB_Index nrows,
+	GrB_Index ncols
 ) {
-	GrB_Index nrows;
-	GrB_Index ncols;
-	RG_Matrix_ncols(&ncols, m);
-	RG_Matrix_nrows(&nrows, m);
-	GrB_Index cap = Graph_RequiredMatrixDim(g);
+	GrB_Index n_rows;
+	GrB_Index n_cols;
+	RG_Matrix_nrows(&n_rows, m);
+	RG_Matrix_ncols(&n_cols, m);
 
 	// this policy should only be used in a thread-safe context,
 	// so no locking is required
-	if(nrows != cap || ncols != cap) {
-		GrB_Info res = RG_Matrix_resize(m, cap, cap);
+	if(n_rows < nrows || n_cols < ncols) {
+		GrB_Info res = RG_Matrix_resize(m, nrows, ncols);
 		ASSERT(res == GrB_SUCCESS);
 	}
 }
@@ -253,7 +192,9 @@ void _MatrixResizeToCapacity
 void _MatrixNOP
 (
 	const Graph *g,
-	RG_Matrix matrix
+	RG_Matrix matrix,
+	GrB_Index nrows,
+	GrB_Index ncols
 ) {
 	return;
 }
@@ -351,6 +292,10 @@ void Graph_ApplyAllPending
 	for(int i = 0; i < n; i ++) {
 		M = Graph_GetRelationMatrix(g, i, false);
 		RG_Matrix_wait(M, force_flush);
+		M = Graph_GetSourceRelationMatrix(g, i, false);
+		RG_Matrix_wait(M, force_flush);
+		M = Graph_GetTargetRelationMatrix(g, i, false);
+		RG_Matrix_wait(M, force_flush);
 	}
 
 	// restore previous matrix sync policy
@@ -423,7 +368,7 @@ bool Graph_Pending
 
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
-		M = g->relations[i];
+		M = g->relations[i].R;
 		info = RG_Matrix_pending(M, &pending);
 		ASSERT(info == GrB_SUCCESS);
 		if(pending) {
@@ -450,19 +395,15 @@ Graph *Graph_New
 	g->nodes     = DataBlock_New(node_cap, node_cap, sizeof(AttributeSet), cb);
 	g->edges     = DataBlock_New(edge_cap, edge_cap, sizeof(AttributeSet), cb);
 	g->labels    = array_new(RG_Matrix, GRAPH_DEFAULT_LABEL_CAP);
-	g->relations = array_new(RG_Matrix, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	g->relations = array_new(Relation, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 
 	GrB_Info info;
 	UNUSED(info);
 
 	GrB_Index n = Graph_RequiredMatrixDim(g);
-	RG_Matrix_new(&g->node_labels, GrB_BOOL, n, n);
-	RG_Matrix_new(&g->adjacency_matrix, GrB_BOOL, n, n);
-	RG_Matrix_new(&g->adjacency_matrix->transposed, GrB_BOOL, n, n);
-	RG_Matrix_new(&g->_zero_matrix, GrB_BOOL, n, n);
-
-	// init graph statistics
-	GraphStatistics_init(&g->stats);
+	RG_Matrix_new(&g->node_labels, GrB_BOOL, n, n, false);
+	RG_Matrix_new(&g->adjacency_matrix, GrB_BOOL, n, n, true);
+	RG_Matrix_new(&g->_zero_matrix, GrB_BOOL, n, n, false);
 
 	// initialize a read-write lock scoped to the individual graph
 	_CreateRWLock(g);
@@ -499,7 +440,13 @@ uint64_t Graph_LabeledNodeCount
 	const Graph *g,
 	LabelID label
 ) {
-	return GraphStatistics_NodeCount(&g->stats, label);
+	ASSERT(g);
+
+	RG_Matrix L = Graph_GetLabelMatrix(g, label);
+	GrB_Index nvals;
+	GrB_Info info = RG_Matrix_nvals(&nvals, L);
+	ASSERT(info == GrB_SUCCESS);
+	return nvals;
 }
 
 size_t Graph_EdgeCount(const Graph *g) {
@@ -512,7 +459,14 @@ uint64_t Graph_RelationEdgeCount
 	const Graph *g,
 	RelationID relation
 ) {
-	return GraphStatistics_EdgeCount(&g->stats, relation);
+	ASSERT(g);
+
+	RG_Matrix S = Graph_GetSourceRelationMatrix(g, relation, false);
+	ASSERT(S != NULL);
+	GrB_Index nvals;
+	GrB_Info info = RG_Matrix_nvals(&nvals, S);
+	ASSERT(info == GrB_SUCCESS);
+	return nvals;
 }
 
 uint Graph_DeletedEdgeCount(const Graph *g) {
@@ -588,29 +542,17 @@ RelationID Graph_GetEdgeRelation
 	for(uint i = 0; i < n; i++) {
 		EdgeID edgeId = 0;
 		RG_Matrix M = Graph_GetRelationMatrix(g, i, false);
-		info = RG_Matrix_extractElement_UINT64(&edgeId, M, src_id, dest_id);
+		RG_Matrix S = Graph_GetSourceRelationMatrix(g, i, false);
+		RG_Matrix T = Graph_GetTargetRelationMatrix(g, i, false);
+		info = RG_Matrix_extractElement_BOOL(NULL, M, src_id, dest_id);
 		if(info != GrB_SUCCESS) continue;
-
-		if(SINGLE_EDGE(edgeId)) {
-			EdgeID curEdgeID = edgeId;
-			if(curEdgeID == id) {
-				Edge_SetRelationID(e, i);
-				rel = i;
-				break;
-			}
-		} else {
-			// multiple edges exists between src and dest
-			// see if given edge is one of them
-			EdgeID *edges = (EdgeID *)(CLEAR_MSB(edgeId));
-			int edge_count = array_len(edges);
-			for(int j = 0; j < edge_count; j++) {
-				if(edges[j] == id) {
-					Edge_SetRelationID(e, i);
-					rel = i;
-					break;
-				}
-			}
-		}
+		info = RG_Matrix_extractElement_BOOL(NULL, S, src_id, id);
+		if(info != GrB_SUCCESS) continue;
+		info = RG_Matrix_extractElement_BOOL(NULL, T, id, dest_id);
+		if(info != GrB_SUCCESS) continue;
+		Edge_SetRelationID(e, i);
+		rel = i;
+		break;
 	}
 
 	// we must be able to find edge relation
@@ -735,9 +677,6 @@ void Graph_LabelNode
 		// map this label in this node's set of labels
 		info = RG_Matrix_setElement_BOOL(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
-
-		// update labels statistics
-		GraphStatistics_IncNodeCount(&g->stats, l, 1);
 	}
 }
 
@@ -787,9 +726,6 @@ void Graph_RemoveNodeLabels
 		// remove this label from node's set of labels
 		info = RG_Matrix_removeElement_BOOL(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
-
-		// a label was removed from node, update statistics
-		GraphStatistics_DecNodeCount(&g->stats, l, 1);
 	}
 }
 
@@ -806,6 +742,8 @@ bool Graph_FormConnection
 	GrB_Info info;
 	UNUSED(info);
 	RG_Matrix M   = Graph_GetRelationMatrix(g, r, false);
+	RG_Matrix S   = Graph_GetSourceRelationMatrix(g, r, false);
+	RG_Matrix T   = Graph_GetTargetRelationMatrix(g, r, false);
 	RG_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
@@ -814,13 +752,14 @@ bool Graph_FormConnection
 	// exit early
 	if(info != GrB_SUCCESS) return false;
 
-	info = RG_Matrix_setElement_UINT64(M, edge_id, src, dest);
+	info = RG_Matrix_setElement_BOOL(M, src, dest);
 	if(info != GrB_SUCCESS) return false;
 
-	// an edge of type r has just been created, update statistics
-	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
+	info = RG_Matrix_setElement_BOOL(S, src, edge_id);
+	if(info != GrB_SUCCESS) return false;
 
-	return true;
+	info = RG_Matrix_setElement_BOOL(T, edge_id, dest);
+	return info == GrB_SUCCESS;
 }
 
 void Graph_CreateEdge
@@ -854,6 +793,109 @@ void Graph_CreateEdge
 	Graph_FormConnection(g, src, dest, id, r);
 }
 
+void _GetOutgoingNodeEdges
+(
+	const Graph *g,       // graph to collect edges from
+	const Node *n,        // either source or destination node
+	GRAPH_EDGE_DIR dir,   // edge direction ->, <-, <->
+	RelationID edgeType,  // relationship type
+	Edge **edges          // [output] array of edges
+) {
+	ASSERT(g);
+	ASSERT(n);
+	ASSERT(edges);
+	ASSERT(edgeType != GRAPH_NO_RELATION && edgeType != GRAPH_UNKNOWN_RELATION);
+
+	GrB_Info info;
+	RG_MatrixTupleIter   it_s     =  {0};
+	RG_MatrixTupleIter   it_t     =  {0};
+	RG_Matrix            S        =  NULL;
+	RG_Matrix            T        =  NULL;
+	NodeID               src_id   =  ENTITY_GET_ID(n);
+	NodeID               dest_id  =  INVALID_ENTITY_ID;
+	EdgeID               edge_id  =  INVALID_ENTITY_ID;
+	UNUSED(info);
+
+	S = Graph_GetSourceRelationMatrix(g, edgeType, false);
+	T = Graph_GetTargetRelationMatrix(g, edgeType, false);
+
+	info = RG_MatrixTupleIter_AttachRange(&it_s, S, src_id, src_id);
+	ASSERT(info == GrB_SUCCESS);
+	info = RG_MatrixTupleIter_attach(&it_t, T);
+	ASSERT(info == GrB_SUCCESS);
+
+	while(RG_MatrixTupleIter_next_BOOL(&it_s, NULL, &edge_id, NULL) == GrB_SUCCESS) {
+		info = RG_MatrixTupleIter_iterate_row(&it_t, edge_id);
+		ASSERT(info == GrB_SUCCESS);
+		info = RG_MatrixTupleIter_next_BOOL(&it_t, NULL, &dest_id, NULL);
+		ASSERT(info == GrB_SUCCESS);
+
+		Edge e = {0};
+		e.src_id      =  src_id;
+		e.dest_id     =  dest_id;
+		e.id          =  edge_id;
+		e.relationID  =  edgeType;
+		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
+		ASSERT(e.attributes);
+		array_append(*edges, e);
+	}
+	info = RG_MatrixTupleIter_detach(&it_s);
+	ASSERT(info == GrB_SUCCESS);
+	info = RG_MatrixTupleIter_detach(&it_t);
+	ASSERT(info == GrB_SUCCESS);
+}
+
+void _GetIncomingNodeEdges
+(
+	const Graph *g,       // graph to collect edges from
+	const Node *n,        // either source or destination node
+	GRAPH_EDGE_DIR dir,   // edge direction ->, <-, <->
+	RelationID edgeType,  // relationship type
+	Edge **edges          // [output] array of edges
+) {
+	ASSERT(g);
+	ASSERT(n);
+	ASSERT(edges);
+	ASSERT(edgeType != GRAPH_NO_RELATION && edgeType != GRAPH_UNKNOWN_RELATION);
+
+	GrB_Info info;
+	RG_MatrixTupleIter   it_s     =  {0};
+	RG_MatrixTupleIter   it_t     =  {0};
+	RG_Matrix            S        =  NULL;
+	RG_Matrix            T        =  NULL;
+	NodeID               src_id   =  ENTITY_GET_ID(n);
+	NodeID               dest_id  =  INVALID_ENTITY_ID;
+	EdgeID               edge_id  =  INVALID_ENTITY_ID;
+	UNUSED(info);
+
+	S = Graph_GetSourceRelationMatrix(g, edgeType, true);
+	T = Graph_GetTargetRelationMatrix(g, edgeType, true);
+
+	info = RG_MatrixTupleIter_AttachRange(&it_t, T, src_id, src_id);
+	ASSERT(info == GrB_SUCCESS);
+	info = RG_MatrixTupleIter_attach(&it_s, S);
+	ASSERT(info == GrB_SUCCESS);
+	while(RG_MatrixTupleIter_next_BOOL(&it_t, NULL, &edge_id, NULL) == GrB_SUCCESS) {
+		info = RG_MatrixTupleIter_iterate_row(&it_s, edge_id);
+		ASSERT(info == GrB_SUCCESS);
+		info = RG_MatrixTupleIter_next_BOOL(&it_s, NULL, &dest_id, NULL);
+		ASSERT(info == GrB_SUCCESS);
+		if(dir == GRAPH_EDGE_DIR_BOTH && src_id == dest_id) continue;
+		Edge e = {0};
+		e.src_id      =  dest_id;
+		e.dest_id     =  src_id;
+		e.id          =  edge_id;
+		e.relationID  =  edgeType;
+		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
+		ASSERT(e.attributes);
+		array_append(*edges, e);
+	}
+	info = RG_MatrixTupleIter_detach(&it_s);
+	ASSERT(info == GrB_SUCCESS);
+	info = RG_MatrixTupleIter_detach(&it_t);
+	ASSERT(info == GrB_SUCCESS);
+}
+
 // retrieves all either incoming or outgoing edges
 // to/from given node N, depending on given direction
 void Graph_GetNodeEdges
@@ -868,16 +910,6 @@ void Graph_GetNodeEdges
 	ASSERT(n);
 	ASSERT(edges);
 
-	GrB_Type t;
-	GrB_Info info;
-	RG_MatrixTupleIter   it       =  {0};
-	RG_Matrix            M        =  NULL;
-	RG_Matrix            TM       =  NULL;
-	NodeID               srcID    =  ENTITY_GET_ID(n);
-	NodeID               destID   =  INVALID_ENTITY_ID;
-	EdgeID               edgeID   =  INVALID_ENTITY_ID;
-	UNUSED(info);
-
 	if(edgeType == GRAPH_UNKNOWN_RELATION) return;
 
 	bool outgoing = (dir == GRAPH_EDGE_DIR_OUTGOING ||
@@ -886,59 +918,28 @@ void Graph_GetNodeEdges
 	bool incoming = (dir == GRAPH_EDGE_DIR_INCOMING ||
 					 dir == GRAPH_EDGE_DIR_BOTH);
 
-	// if a relationship type is specified,
-	// retrieve the appropriate relation matrix
-	// otherwise use the overall adjacency matrix
-	M = Graph_GetRelationMatrix(g, edgeType, false);
-
 	if(outgoing) {
-		info = RG_Matrix_type(&t, M);
-		ASSERT(info == GrB_SUCCESS);
-		ASSERT(t == GrB_UINT64 || t == GrB_BOOL);
-		// construct an iterator to traverse over the source node row,
-		// containing all outgoing edges
-		RG_MatrixTupleIter_AttachRange(&it, M, srcID, srcID);
-		if(t == GrB_UINT64) {
-			while(RG_MatrixTupleIter_next_UINT64(&it, NULL, &destID, &edgeID) == GrB_SUCCESS) {
-				// collect all edges (src)->(dest)
-				_CollectEdgesFromEntry(g, srcID, destID, edgeType, edgeID, edges);
-			}
+		if(edgeType != GRAPH_NO_RELATION) {
+			_GetOutgoingNodeEdges(g, n, dir, edgeType, edges);
 		} else {
-			while(RG_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL) == GrB_SUCCESS) {
-				Graph_GetEdgesConnectingNodes(g, srcID, destID, edgeType, edges);
+			// relation type missing, scan through each edge type
+			int relationCount = Graph_RelationTypeCount(g);
+			for(int i = 0; i < relationCount; i++) {
+				_GetOutgoingNodeEdges(g, n, dir, i, edges);
 			}
 		}
-		RG_MatrixTupleIter_detach(&it);
 	}
 
 	if(incoming) {
-		// if a relationship type is specified, retrieve the appropriate
-		// transposed relation matrix,
-		// otherwise use the transposed adjacency matrix
-		TM = Graph_GetRelationMatrix(g, edgeType, true);
-
-		info = RG_Matrix_type(&t, M);
-		ASSERT(info == GrB_SUCCESS);
-		ASSERT(t == GrB_UINT64 || t == GrB_BOOL);
-
-		// construct an iterator to traverse over the source node row,
-		// containing all incoming edges
-		RG_MatrixTupleIter_AttachRange(&it, TM, srcID, srcID);
-
-		if(t == GrB_UINT64) {
-			while(RG_MatrixTupleIter_next_UINT64(&it, NULL, &destID, NULL) == GrB_SUCCESS) {
-				RG_Matrix_extractElement_UINT64(&edgeID, M, destID, srcID);
-				if(dir == GRAPH_EDGE_DIR_BOTH && srcID == destID) continue;
-				// collect all edges connecting destId to srcId
-				_CollectEdgesFromEntry(g, destID, srcID, edgeType, edgeID, edges);
-			}
+		if(edgeType != GRAPH_NO_RELATION) {
+			_GetIncomingNodeEdges(g, n, dir, edgeType, edges);
 		} else {
-			while(RG_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL) == GrB_SUCCESS) {
-				if(dir == GRAPH_EDGE_DIR_BOTH && srcID == destID) continue;
-				Graph_GetEdgesConnectingNodes(g, destID, srcID, edgeType, edges);
+			// relation type missing, scan through each edge type
+			int relationCount = Graph_RelationTypeCount(g);
+			for(int i = 0; i < relationCount; i++) {
+				_GetIncomingNodeEdges(g, n, dir, i, edges);
 			}
 		}
-		RG_MatrixTupleIter_detach(&it);
 	}
 }
 
@@ -987,30 +988,20 @@ uint64_t Graph_GetNodeDegree
 
 	// for each relationship type to consider
 	for(edgeType = start_rel; edgeType < end_rel; edgeType++) {
-		M = Graph_GetRelationMatrix(g, edgeType, false);
+		M = Graph_GetSourceRelationMatrix(g, edgeType, false);
 
 		//----------------------------------------------------------------------
 		// outgoing edges
 		//----------------------------------------------------------------------
 
-		// TODO: revisit once we get rid of MULTI-EDGE hack
 		if(outgoing) {
 			// construct an iterator to traverse over the source node row,
 			// containing all outgoing edges
 			RG_MatrixTupleIter_AttachRange(&it, M, srcID, srcID);
 			// scan row
-			while(RG_MatrixTupleIter_next_UINT64(&it, NULL, &destID, &edgeID)
+			while(RG_MatrixTupleIter_next_BOOL(&it, NULL, NULL, NULL)
 					== GrB_SUCCESS) {
-
-				// check for edge type single/multi
-				if(SINGLE_EDGE(edgeID)) {
-					edge_count++;
-				} else {
-					// multiple edges connecting src to dest
-					// entry is a pointer to an array of edge IDs
-					EdgeID *multi_edge = (EdgeID *)(CLEAR_MSB(edgeID));
-					edge_count += array_len(multi_edge);
-				}
+				edge_count++;
 			}
 			RG_MatrixTupleIter_detach(&it);
 		}
@@ -1021,24 +1012,14 @@ uint64_t Graph_GetNodeDegree
 
 		if(incoming) {
 			// transposed relation matrix
-			TM = Graph_GetRelationMatrix(g, edgeType, true);
+			TM = Graph_GetTargetRelationMatrix(g, edgeType, true);
 
 			// construct an iterator to traverse over the source node row,
 			// containing all incoming edges
 			RG_MatrixTupleIter_AttachRange(&it, TM, srcID, srcID);
-			while(RG_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL)
+			while(RG_MatrixTupleIter_next_BOOL(&it, NULL, NULL, NULL)
 					== GrB_SUCCESS) {
-
-				// check for edge type single/multi
-				RG_Matrix_extractElement_UINT64(&edgeID, M, destID, srcID);
-				if(SINGLE_EDGE(edgeID)) {
-					edge_count++;
-				} else {
-					// multiple edges connecting src to dest
-					// entry is a pointer to an array of edge IDs
-					EdgeID *multi_edge = (EdgeID *)(CLEAR_MSB(edgeID));
-					edge_count += array_len(multi_edge);
-				}
+				edge_count++;
 			}
 			RG_MatrixTupleIter_detach(&it);
 		}
@@ -1063,7 +1044,6 @@ uint Graph_GetNodeLabels
 	GrB_Info res;
 	UNUSED(res);
 
-	// GrB_Col_extract will iterate over the range of the output size
 	RG_Matrix M = Graph_GetNodeLabelMatrix(g);
 
 	EntityID id = ENTITY_GET_ID(n);
@@ -1099,9 +1079,11 @@ void Graph_DeleteEdges
 
 	uint64_t    x;
 	RG_Matrix   R;
+	RG_Matrix   S;
+	RG_Matrix   T;
+	RG_Matrix   TT;
 	RG_Matrix   M;
 	GrB_Info    info;
-	bool        entry_deleted;
 
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
 
@@ -1113,26 +1095,45 @@ void Graph_DeleteEdges
 
 		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
 
-		// an edge of type r has just been deleted, update statistics
-		GraphStatistics_DecEdgeCount(&g->stats, r, 1);
-
 		R = Graph_GetRelationMatrix(g, r, false);
+		S = Graph_GetSourceRelationMatrix(g, r, false);
+		T = Graph_GetTargetRelationMatrix(g, r, false);
 
-		// single edge of type R connecting src to dest, delete entry
-		info = RG_Matrix_removeEntry_UINT64(R, src_id, dest_id, ENTITY_GET_ID(e), &entry_deleted);
+		info = RG_Matrix_removeElement_BOOL(S, src_id, ENTITY_GET_ID(e));
+		ASSERT(info == GrB_SUCCESS);
+		info = RG_Matrix_removeElement_BOOL(T, ENTITY_GET_ID(e), dest_id);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(entry_deleted) {
-			// TODO: consider making ADJ UINT64_T where ADJ[i,j] = #connections
-			// drop the entry once it reaches 0
-			//
+		GrB_Vector src_vec;
+		GrB_Vector dst_vec;
+		info = GrB_Vector_new(&src_vec, GrB_BOOL, g->edges->itemCap);
+		ASSERT(info == GrB_SUCCESS);
+		info = GrB_Vector_new(&dst_vec, GrB_BOOL, g->edges->itemCap);
+		ASSERT(info == GrB_SUCCESS);
+		info = RG_Matrix_extract_row(S, src_vec, src_id);
+		ASSERT(info == GrB_SUCCESS);
+		info = RG_Matrix_extract_row(RG_Matrix_getTranspose(T), dst_vec, dest_id);
+		ASSERT(info == GrB_SUCCESS);
+		info = GrB_Vector_eWiseMult_Semiring(src_vec, NULL, NULL, GxB_ANY_PAIR_BOOL, src_vec, dst_vec, GrB_DESC_R);
+		GrB_Vector_nvals(&x, src_vec);
+		info = GrB_free(&src_vec);
+		ASSERT(info == GrB_SUCCESS);
+		info = GrB_free(&dst_vec);
+		ASSERT(info == GrB_SUCCESS);
+
+		if(x == 0) {
+			// no more edges connecting src to other nodes
+			// remove src from relation matrix
+			info = RG_Matrix_removeElement_BOOL(R, src_id, dest_id);
+			ASSERT(info == GrB_SUCCESS);
+
 			// see if source is connected to destination with additional edges
 			bool connected = false;
 			int relationCount = Graph_RelationTypeCount(g);
-			for(int i = 0; i < relationCount; i++) {
-				if(i == r) continue;
-				M = Graph_GetRelationMatrix(g, i, false);
-				info = RG_Matrix_extractElement_UINT64(&x, M, src_id, dest_id);
+			for(int j = 0; j < relationCount; j++) {
+				if(j == r) continue;
+				M = Graph_GetRelationMatrix(g, j, false);
+				info = RG_Matrix_extractElement_BOOL(NULL, M, src_id, dest_id);
 				if(info == GrB_SUCCESS) {
 					connected = true;
 					break;
@@ -1172,7 +1173,12 @@ static void _Graph_FreeRelationMatrices
 	const Graph *g
 ) {
 	uint relationCount = Graph_RelationTypeCount(g);
-	for(uint i = 0; i < relationCount; i++) RG_Matrix_free(&g->relations[i]);
+	for(uint i = 0; i < relationCount; i++) {
+		Relation *r = g->relations + i;
+		RG_Matrix_free(&r->R);
+		RG_Matrix_free(&r->S);
+		RG_Matrix_free(&r->T);
+	}
 }
 
 DataBlockIterator *Graph_ScanNodes(const Graph *g) {
@@ -1194,12 +1200,9 @@ LabelID Graph_AddLabel
 	RG_Matrix m;
 	GrB_Info info;
 	size_t n = Graph_RequiredMatrixDim(g);
-	RG_Matrix_new(&m, GrB_BOOL, n, n);
+	RG_Matrix_new(&m, GrB_BOOL, n, n, false);
 
 	array_append(g->labels, m);
-
-	// adding a new label, update the stats structures to support it
-	GraphStatistics_IntroduceLabel(&g->stats);
 
 	LabelID l = Graph_LabelTypeCount(g) - 1;
 	return l;
@@ -1230,15 +1233,15 @@ RelationID Graph_AddRelationType
 ) {
 	ASSERT(g);
 
-	RG_Matrix m;
+	Relation r;
 	size_t n = Graph_RequiredMatrixDim(g);
+	size_t edge_cap = g->edges->itemCap;
 
-	RG_Matrix_new(&m, GrB_UINT64, n, n);
+	RG_Matrix_new(&r.R, GrB_BOOL, n, n, true);
+	RG_Matrix_new(&r.S, GrB_BOOL, n, edge_cap, true);
+	RG_Matrix_new(&r.T, GrB_BOOL, edge_cap, n, true);
 
-	array_append(g->relations, m);
-
-	// adding a new relationship type, update the stats structures to support it
-	GraphStatistics_IntroduceRelationship(&g->stats);
+	array_append(g->relations, r);
 
 	RelationID relationID = Graph_RelationTypeCount(g) - 1;
 	return relationID;
@@ -1253,11 +1256,13 @@ void Graph_RemoveRelation
 	ASSERT(relation_id == Graph_RelationTypeCount(g) - 1);
 	#ifdef RG_DEBUG
 	GrB_Index nvals;
-	GrB_Info info = RG_Matrix_nvals(&nvals, g->relations[relation_id]);
+	GrB_Info info = RG_Matrix_nvals(&nvals, g->relations[relation_id].R);
 	ASSERT(info == GrB_SUCCESS);
 	ASSERT(nvals == 0);
 	#endif
-	RG_Matrix_free(&g->relations[relation_id]);
+	RG_Matrix_free(&g->relations[relation_id].R);
+	RG_Matrix_free(&g->relations[relation_id].S);
+	RG_Matrix_free(&g->relations[relation_id].T);
 	g->relations = array_del(g->relations, relation_id);
 }
 
@@ -1273,7 +1278,8 @@ RG_Matrix Graph_GetLabelMatrix
 	if(label_idx < 0) return Graph_GetZeroMatrix(g);
 
 	RG_Matrix m = g->labels[label_idx];
-	g->SynchronizeMatrix(g, m);
+	size_t n = Graph_RequiredMatrixDim(g);
+	g->SynchronizeMatrix(g, m, n, n);
 
 	return m;
 }
@@ -1293,10 +1299,49 @@ RG_Matrix Graph_GetRelationMatrix
 	if(relation_idx == GRAPH_NO_RELATION) {
 		m = g->adjacency_matrix;
 	} else {
-		m = g->relations[relation_idx];
+		m = g->relations[relation_idx].R;
 	}
 
-	g->SynchronizeMatrix(g, m);
+	size_t n = Graph_RequiredMatrixDim(g);
+	g->SynchronizeMatrix(g, m, n, n);
+
+	if(transposed) m = RG_Matrix_getTranspose(m);
+
+	return m;
+}
+
+RG_Matrix Graph_GetSourceRelationMatrix
+(
+	const Graph *g,
+	RelationID relation_idx,
+	bool transposed
+) {
+	ASSERT(relation_idx != GRAPH_NO_RELATION);
+
+	RG_Matrix m = g->relations[relation_idx].S;
+
+	size_t n = Graph_RequiredMatrixDim(g);
+	size_t edge_cap = g->edges->itemCap;
+	g->SynchronizeMatrix(g, m, n, edge_cap);
+
+	if(transposed) m = RG_Matrix_getTranspose(m);
+
+	return m;
+}
+
+RG_Matrix Graph_GetTargetRelationMatrix
+(
+	const Graph *g,
+	RelationID relation_idx,
+	bool transposed
+) {
+	ASSERT(relation_idx != GRAPH_NO_RELATION);
+
+	RG_Matrix m = g->relations[relation_idx].T;
+
+	size_t n = Graph_RequiredMatrixDim(g);
+	size_t edge_cap = g->edges->itemCap;
+	g->SynchronizeMatrix(g, m, edge_cap, n);
 
 	if(transposed) m = RG_Matrix_getTranspose(m);
 
@@ -1336,7 +1381,8 @@ RG_Matrix Graph_GetNodeLabelMatrix
 
 	RG_Matrix m = g->node_labels;
 
-	g->SynchronizeMatrix(g, m);
+	size_t n = Graph_RequiredMatrixDim(g);
+	g->SynchronizeMatrix(g, m, n, n);
 
 	return m;
 }
@@ -1346,7 +1392,8 @@ RG_Matrix Graph_GetZeroMatrix
 	const Graph *g
 ) {
 	RG_Matrix z = g->_zero_matrix;
-	g->SynchronizeMatrix(g, z);
+	size_t n = Graph_RequiredMatrixDim(g);
+	g->SynchronizeMatrix(g, z, n, n);
 
 #if RG_DEBUG
 	// make sure zero matrix is indeed empty
@@ -1373,7 +1420,6 @@ static void _Graph_Free
 
 	_Graph_FreeRelationMatrices(g);
 	array_free(g->relations);
-	GraphStatistics_FreeInternals(&g->stats);
 
 	uint32_t labelCount = array_len(g->labels);
 	for(int i = 0; i < labelCount; i++) RG_Matrix_free(&g->labels[i]);

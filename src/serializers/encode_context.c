@@ -43,11 +43,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	ctx->offset = 0;
 	ctx->keys_processed = 0;
 	ctx->state = ENCODE_STATE_INIT;
-	ctx->multiple_edges_src_id = 0;
-	ctx->multiple_edges_dest_id = 0;
-	ctx->multiple_edges_array = NULL;
 	ctx->current_relation_matrix_id = 0;
-	ctx->multiple_edges_current_index = 0;
 
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &ctx->vkey_entity_count);
 
@@ -167,36 +163,6 @@ RG_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(
 	GraphEncodeContext *ctx) {
 	ASSERT(ctx);
 	return &ctx->matrix_tuple_iterator;
-}
-
-void GraphEncodeContext_SetMutipleEdgesArray(GraphEncodeContext *ctx, EdgeID *edges,
-											 uint current_index, NodeID src, NodeID dest) {
-	ASSERT(ctx);
-	ctx->multiple_edges_array = edges;
-	ctx->multiple_edges_current_index = current_index;
-	ctx->multiple_edges_src_id = src;
-	ctx->multiple_edges_dest_id = dest;
-}
-
-EdgeID *GraphEncodeContext_GetMultipleEdgesArray(const GraphEncodeContext *ctx) {
-	ASSERT(ctx);
-	return ctx->multiple_edges_array;
-}
-
-uint GraphEncodeContext_GetMultipleEdgesCurrentIndex(const GraphEncodeContext *ctx) {
-	ASSERT(ctx);
-	return ctx->multiple_edges_current_index;
-}
-
-
-NodeID GraphEncodeContext_GetMultipleEdgesSourceNode(const GraphEncodeContext *ctx) {
-	ASSERT(ctx);
-	return ctx->multiple_edges_src_id;
-}
-
-NodeID GraphEncodeContext_GetMultipleEdgesDestinationNode(const GraphEncodeContext *ctx) {
-	ASSERT(ctx);
-	return ctx->multiple_edges_dest_id;
 }
 
 bool GraphEncodeContext_Finished(const GraphEncodeContext *ctx) {

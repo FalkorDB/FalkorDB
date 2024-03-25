@@ -20,7 +20,8 @@ static Graph *BuildGraph() {
 	Edge e;
 	Node n;
 	size_t nodeCount = 4;
-	Graph *g = Graph_New(nodeCount, nodeCount);
+	size_t edgeCount = 7;
+	Graph *g = Graph_New(nodeCount, edgeCount);
 	int relation = Graph_AddRelationType(g);
 	for(int i = 0; i < 4; i++) {
 		n = GE_NEW_NODE();

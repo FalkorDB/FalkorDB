@@ -7,24 +7,20 @@
 #pragma once
 
 #include <stdint.h>
-#include "./rg_matrix.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
+#include "rg_matrix.h"
+#include "GraphBLAS.h"
 
 #define RG_ITER_MIN_ROW 0
 #define RG_ITER_MAX_ROW ULLONG_MAX
 
 // TuplesIter maintains information required
 // to iterate over a RG_Matrix
-typedef struct
+struct Opaque_RG_MatrixTupleIter
 {
-	RG_Matrix A;                      // matrix iterated
-	struct GB_Iterator_opaque m_it;   // internal m iterator
-	struct GB_Iterator_opaque dp_it;  // internal delta plus iterator
-	bool m_depleted;                  // is m iterator depleted
-	bool dp_depleted;                 // is dp iterator depleted
-	GrB_Index min_row;                // minimum row for iteration
-	GrB_Index max_row;                // maximum row for iteration
-} RG_MatrixTupleIter ;
+	char _private[296];
+};
+
+typedef struct Opaque_RG_MatrixTupleIter RG_MatrixTupleIter ;
 
 // attach iterator to matrix
 GrB_Info RG_MatrixTupleIter_attach
@@ -75,14 +71,6 @@ GrB_Info RG_MatrixTupleIter_next_BOOL
 	GrB_Index *row,                 // optional output row index
 	GrB_Index *col,                 // optional output column index
 	bool *val                       // optional value at A[row, col]
-);
-
-GrB_Info RG_MatrixTupleIter_next_UINT64
-(
-	RG_MatrixTupleIter *iter,       // iterator to consume
-	GrB_Index *row,                 // optional output row index
-	GrB_Index *col,                 // optional output column index
-	uint64_t *val                   // optional value at A[row, col]
 );
 
 // reset iterator

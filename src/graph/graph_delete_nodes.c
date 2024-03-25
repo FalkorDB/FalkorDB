@@ -59,18 +59,11 @@ void Graph_DeleteNodes
 	//--------------------------------------------------------------------------
 
 	GrB_Index j;            // iterated entry col idx
-	GrB_Scalar s;           // empty scalar
-	GrB_Matrix M;           // delta M
-	GrB_Matrix DP;          // delta plus
-	GrB_Matrix DM;          // delta minus
 	GrB_Info info;          // GraphBLAS return code
 	GrB_Index nrows;        // lbls row count
 	GrB_Index ncols;        // lbls col count
 	GrB_Matrix lbls_mask;   // lbls mask
 	RG_MatrixTupleIter it;  // matrix iterator
-
-	// create empty scalar
-	GrB_Scalar_new(&s, GrB_BOOL);
 
 	// get labels matrix
 	RG_Matrix lbls = Graph_GetNodeLabelMatrix(g);
@@ -109,9 +102,6 @@ void Graph_DeleteNodes
 			RG_Matrix L = Graph_GetLabelMatrix(g, j);
 			info = RG_Matrix_removeElement_BOOL(L, id, id);
 			ASSERT(info == GrB_SUCCESS);
-
-			// a label was removed from node, update statistics
-			GraphStatistics_DecNodeCount(&g->stats, j, 1);
 		}
 
 		// remove node from datablock
@@ -122,27 +112,11 @@ void Graph_DeleteNodes
 	// phase two
 	//--------------------------------------------------------------------------
 
-	// update labels matrix
-	M  = RG_MATRIX_M(lbls);
-	DP = RG_MATRIX_DELTA_PLUS(lbls);
-	DM = RG_MATRIX_DELTA_MINUS(lbls);
-
-	info = GrB_Matrix_assign_Scalar(DP, lbls_mask, NULL, s, GrB_ALL, nrows,
-			GrB_ALL, ncols, GrB_DESC_S);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = GrB_Matrix_assign(DM, lbls_mask, NULL, M, GrB_ALL, nrows, GrB_ALL,
-			ncols, GrB_DESC_S);
-	ASSERT(info == GrB_SUCCESS);
-
-	// mark labels matrix as dirty
-	RG_Matrix_setDirty(lbls);
+	RG_Matrix_removeElements(lbls, lbls_mask);
 
 	// restore matrix sync policy
 	Graph_SetMatrixPolicy(g, policy);
 
-	// clean up
-	GrB_free(&s);
 	GrB_free(&lbls_mask);
 }
 

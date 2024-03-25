@@ -208,11 +208,6 @@ GraphContext *RdbLoadGraphContext_v11
 
 		// update the node statistics, enable node indices
 		for(uint i = 0; i < label_count; i++) {
-			GrB_Index nvals;
-			RG_Matrix L = Graph_GetLabelMatrix(g, i);
-			RG_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
-
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);

@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #pragma once
@@ -14,26 +13,6 @@
 // forward declaration of RG_Matrix type
 typedef struct _RG_Matrix _RG_Matrix;
 typedef _RG_Matrix *RG_Matrix;
-
-// Checks if X represents edge ID.
-#define SINGLE_EDGE(x) !((x) & MSB_MASK)
-
-#define RG_MATRIX_M(C) (C)->matrix
-#define RG_MATRIX_DELTA_PLUS(C) (C)->delta_plus
-#define RG_MATRIX_DELTA_MINUS(C) (C)->delta_minus
-
-#define RG_MATRIX_TM(C) (C)->transposed->matrix
-#define RG_MATRIX_TDELTA_PLUS(C) (C)->transposed->delta_plus
-#define RG_MATRIX_TDELTA_MINUS(C) (C)->transposed->delta_minus
-
-#define RG_MATRIX_MAINTAIN_TRANSPOSE(C) (C)->transposed != NULL
-
-#define RG_MATRIX_MULTI_EDGE(M) __extension__({ \
-	GrB_Type t;                    \
-	GrB_Matrix m = RG_MATRIX_M(M); \
-	GxB_Matrix_type(&t, m);        \
-	(t == GrB_UINT64);             \
-})
 
 
 //------------------------------------------------------------------------------
@@ -118,21 +97,13 @@ typedef _RG_Matrix *RG_Matrix;
 //
 //------------------------------------------------------------------------------
 
-struct _RG_Matrix {
-	volatile bool dirty;                // Indicates if matrix requires sync
-	GrB_Matrix matrix;                  // Underlying GrB_Matrix
-	GrB_Matrix delta_plus;              // Pending additions
-	GrB_Matrix delta_minus;             // Pending deletions
-	RG_Matrix transposed;               // Transposed matrix
-	pthread_mutex_t mutex;              // Lock
-};
-
 GrB_Info RG_Matrix_new
 (
 	RG_Matrix *A,            // handle of matrix to create
 	GrB_Type type,           // type of matrix to create
 	GrB_Index nrows,         // matrix dimension is nrows-by-ncols
-	GrB_Index ncols
+	GrB_Index ncols,
+	bool transpose           // if true, create a transpose of the matrix
 );
 
 // returns transposed matrix of C
@@ -141,35 +112,24 @@ RG_Matrix RG_Matrix_getTranspose
 	const RG_Matrix C
 );
 
-// mark matrix as dirty
-void RG_Matrix_setDirty
-(
-	RG_Matrix C
-);
-
 bool RG_Matrix_isDirty
 (
 	const RG_Matrix C
 );
 
-// checks if C is fully synced
-// a synced delta matrix does not contains any entries in
-// either its delta-plus and delta-minus internal matrices
-bool RG_Matrix_Synced
+GrB_Matrix RG_Matrix_m
 (
-	const RG_Matrix C  // matrix to inquery
+	const RG_Matrix C
 );
 
-// locks the matrix
-void RG_Matrix_Lock
+GrB_Matrix RG_Matrix_dp
 (
-	RG_Matrix C
+	const RG_Matrix C
 );
 
-// unlocks the matrix
-void RG_Matrix_Unlock
+GrB_Matrix RG_Matrix_dm
 (
-	RG_Matrix C
+	const RG_Matrix C
 );
 
 GrB_Info RG_Matrix_nrows
@@ -204,14 +164,6 @@ GrB_Info RG_Matrix_setElement_BOOL      // C (i,j) = x
 	GrB_Index j                         // column index
 );
 
-GrB_Info RG_Matrix_setElement_UINT64      // C (i,j) = x
-(
-	RG_Matrix C,                        // matrix to modify
-	uint64_t x,                         // scalar to assign to C(i,j)
-	GrB_Index i,                        // row index
-	GrB_Index j                         // column index
-);
-
 GrB_Info RG_Matrix_extractElement_BOOL     // x = A(i,j)
 (
 	bool *x,                               // extracted scalar
@@ -220,12 +172,18 @@ GrB_Info RG_Matrix_extractElement_BOOL     // x = A(i,j)
 	GrB_Index j                            // column index
 ) ;
 
-GrB_Info RG_Matrix_extractElement_UINT64   // x = A(i,j)
+GrB_Info RG_Matrix_extract_row
 (
-	uint64_t *x,                           // extracted scalar
-	const RG_Matrix A,                     // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
+	const RG_Matrix A,                      // matrix to extract a vector from
+	GrB_Vector v,                           // vector to extract
+	GrB_Index i                             // row index
+) ;
+
+GrB_Info RG_Matrix_extract_col
+(
+	const RG_Matrix A,                      // matrix to extract a vector from
+	GrB_Vector v,                           // vector to extract
+	GrB_Index j                             // row index
 ) ;
 
 // remove entry at position C[i,j]
@@ -236,21 +194,10 @@ GrB_Info RG_Matrix_removeElement_BOOL
 	GrB_Index j                     // column index
 );
 
-GrB_Info RG_Matrix_removeElement_UINT64
+GrB_Info RG_Matrix_removeElements
 (
 	RG_Matrix C,                    // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j                     // column index
-);
-
-// remove value 'v' from multi-value entry at position C[i,j]
-GrB_Info RG_Matrix_removeEntry_UINT64
-(
-	RG_Matrix C,                    // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j,                    // column index
-	uint64_t  v,                    // value to remove
-	bool     *entry_deleted         // is entry deleted
+	GrB_Matrix m                    // elements to remove
 );
 
 GrB_Info RG_mxm                     // C = A * B
@@ -300,11 +247,11 @@ GrB_Info RG_Matrix_wait
 	bool force_sync
 );
 
-// get the type of the M matrix
-GrB_Info RG_Matrix_type
+void RG_Matrix_synchronize
 (
-	GrB_Type *type,
-	RG_Matrix A
+	RG_Matrix C,
+	GrB_Index nrows,
+	GrB_Index ncols
 );
 
 void RG_Matrix_free
