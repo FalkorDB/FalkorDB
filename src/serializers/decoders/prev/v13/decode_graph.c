@@ -220,7 +220,7 @@ GraphContext *RdbLoadGraphContext_v13
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
-		// update the node statistics, enable node indices
+		// enable node indices
 		for(uint i = 0; i < label_count; i++) {
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
