@@ -284,7 +284,7 @@ static bool _EmitIndex
 	if(ctx->yield_info) {
 		RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
 
-		RSIndex *rsIdx = Index_RSIndex(idx);
+		IndexRS*rsIdx = Index_RSIndex(idx);
 
 		RediSearch_IndexInfo(rsIdx, &info);
 		SIValue map = SI_Map(23);

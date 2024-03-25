@@ -7,7 +7,6 @@
 #pragma once
 
 #include "index_field.h"
-#include "redisearch_api.h"
 #include "../graph/graph.h"
 #include "../graph/entities/node.h"
 #include "../graph/entities/edge.h"
@@ -35,6 +34,40 @@ typedef struct {
 	EntityID dest_id;  // edge destination node ID
 	EntityID edge_id;  // edge ID
 } EdgeIndexKey;
+
+// container for SchemaBuilder
+typedef struct Opaque_SchemaBuilder *SchemaBuilder;
+
+// container for Schema
+typedef struct Opaque_IndexSchema *IndexSchema;
+
+// container for Index
+typedef struct Opaque_IndexRS *IndexRS;
+
+// Create Schema Builder
+SchemaBuilder schema_builder_new();
+
+// Free schema builder
+void schema_builder_free(SchemaBuilder builder);
+
+// Add text field to schema builder
+void schema_builder_add_text_field(SchemaBuilder builder, const char* field_name, bool stored);
+
+// Add numeric field to schema builder
+void schema_builder_add_numeric_field(SchemaBuilder builder, const char* field_name);
+
+// Build schema from schema builder
+IndexSchema schema_builder_build(const SchemaBuilder builder);
+
+// Free schema
+void schema_free(IndexSchema schema);
+
+// Create index
+IndexRS create_index(const IndexSchema schema, const char* index_path, bool in_memory);
+
+// Free Index
+void index_free(IndexRS index);
+
 
 // create a new index
 Index Index_New
@@ -105,8 +138,8 @@ bool Index_Enabled
 	const Index idx  // index to get state of
 );
 
-// returns RediSearch index
-RSIndex *Index_RSIndex
+// returns index
+IndexRS *Index_IndexRS
 (
 	const Index idx  // index to get internal RediSearch index from
 );

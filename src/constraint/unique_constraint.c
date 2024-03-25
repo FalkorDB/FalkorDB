@@ -8,7 +8,6 @@
 #include "constraint.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
-#include "redisearch_api.h"
 #include "../src/datatypes/point.h"
 #include "../graph/entities/attribute_set.h"
 
@@ -115,7 +114,7 @@ bool EnforceUniqueEntity
 	bool holds = false;  // return value none-optimistic
 
 	// constraint holds if there are no duplicates, a single index match
-	RSIndex *rs_idx = Index_RSIndex(idx);
+	IndexRS*rs_idx = Index_RSIndex(idx);
 	RSResultsIterator *iter = RediSearch_GetResultsIterator(root, rs_idx);
 	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
 		// first call, expecting to find 'e' in the index

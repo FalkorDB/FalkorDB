@@ -210,7 +210,7 @@ static Record EdgeIndexScanConsumeFromChild
 	OpBase *opBase
 ) {
 	OpEdgeIndexScan	*op = (OpEdgeIndexScan*)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	IndexRS*rsIdx = Index_RSIndex(op->idx);
 	const EdgeIndexKey *edgeKey = NULL;
 
 pull_index:
@@ -313,7 +313,7 @@ static Record EdgeIndexScanConsume
 	OpBase *opBase
 ) {
 	OpEdgeIndexScan *op = (OpEdgeIndexScan *)opBase;
-	RSIndex *rsIdx = Index_RSIndex(op->idx);
+	IndexRS*rsIdx = Index_RSIndex(op->idx);
 
 	// create iterator on first call
 	if(op->iter == NULL) {

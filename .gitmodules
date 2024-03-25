@@ -4,9 +4,6 @@
 [submodule "deps/xxHash"]
 	path = deps/xxHash
 	url = https://github.com/Cyan4973/xxHash.git
-[submodule "deps/RediSearch"]
-	path = deps/RediSearch
-	url = https://github.com/FalkorDB/RediSearch.git
 [submodule "deps/readies"]
 	path = deps/readies
 	url = https://github.com/RedisLabsModules/readies.git
