@@ -1,51 +1,56 @@
 //------------------------------------------------------------------------------
-// GB_cuda_warmup.cu: warmup the GPU
+// GraphBLAS/CUDA/GB_cuda_warmup.cu: warmup the GPU
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-#include "GB_cuda.h"
+#include "GB_cuda.hpp"
 
 bool GB_cuda_warmup (int device)
 {
-    // allocate 'nothing' just to load the drivers.
-    // No need to free the result.
-    bool ok = GB_cuda_set_device( device );
-    if (!ok)
+    
+    //--------------------------------------------------------------------------
+    // set the device
+    //--------------------------------------------------------------------------
+
+    if (!GB_cuda_set_device (device))
     {
-        printf ("invalid GPU: %d\n", device) ;
+        // invalid device
         return (false) ;
     }
 
-    double gpu_memory_size = GB_Global_gpu_memorysize_get (device);
+    // FIXME: why do we need this?
+    double gpu_memory_size = GB_Global_gpu_memorysize_get (device) ;
+
+    //--------------------------------------------------------------------------
+    // allocate two small blocks just to load the drivers
+    //--------------------------------------------------------------------------
 
     size_t size = 0 ;
     void *p = GB_malloc_memory (1, 1, &size) ;
     if (p == NULL)
     {
-        printf ("Hey!! where's da memory???\n") ;
+        // no memory on the device
         return (false) ;
     }
-//    printf ("oooo nice block of memory of size %lu\n", size) ;
-    GB_free_memory ( &p, size) ;
-//    printf ("be free, block of memory of size %lu\n", size) ;
+    GB_free_memory (&p, size) ;
 
-//    printf ("good ol' cudaMalloc just to be sure\n");
-    cudaMalloc ( &p, size ) ;
+    cudaMalloc (&p, size ) ;
     if (p == NULL)
     {
-        printf ("Hey!! where's da GPU???\n") ;
+        // no memory on the device
         return (false) ;
     }
     cudaFree (p) ;
 
-//    printf ("GPU %d nice and toasty now\n", device) ;
+    //--------------------------------------------------------------------------
+    // return result
+    //--------------------------------------------------------------------------
 
-    // TODO check for jit cache? or in GB_init?
-
-    return  true; //(err == cudaSuccess) ;
+    return (true) ;
 }
 

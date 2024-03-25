@@ -26,9 +26,9 @@ GrB_Info GB_op_enum_get
 
     switch ((int) field)
     {
-        case GrB_INPUT1TYPE_CODE : type = op->xtype ; break ;
-        case GrB_INPUT2TYPE_CODE : type = op->ytype ; break ;
-        case GrB_OUTPUTTYPE_CODE : type = op->ztype ; break ;
+        case GrB_INP0_TYPE_CODE : type = op->xtype ; break ;
+        case GrB_INP1_TYPE_CODE : type = op->ytype ; break ;
+        case GrB_OUTP_TYPE_CODE : type = op->ztype ; break ;
         default : ;
             return (GrB_INVALID_VALUE) ;
     }

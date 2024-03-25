@@ -16,6 +16,7 @@
 //      #define GB_UNARYOP(z,x,j,i,y) z = f (x,i,j,y)
 
 #include "GB.h"
+#include "GB_math.h"
 #include "GB_stringify.h"
 #include <ctype.h>
 

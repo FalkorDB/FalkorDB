@@ -26,7 +26,7 @@ static GrB_Info GB_blob_header_get
     double *bitmap_sw,          // bitmap_switch
     int32_t *storage,           // GrB_COLMAJOR or GrB_ROWMAJOR
     char **user_name,           // GrB_NAME of the blob
-    char **eltype_string,       // GrB_ELTYPE_STRING of the type of the blob
+    char **eltype_string,       // GrB_EL_TYPE_STRING of the type of the blob
 
     // input, not modified:
     const GB_void *blob,        // the blob
@@ -157,7 +157,7 @@ static GrB_Info GB_blob_header_get
     s += (Cx_nblocks > 0) ? Cx_Sblocks [Cx_nblocks-1] : 0 ;
 
     //--------------------------------------------------------------------------
-    // get the GrB_NAME and GrB_ELTYPE_STRING
+    // get the GrB_NAME and GrB_EL_TYPE_STRING
     //--------------------------------------------------------------------------
 
     // v8.1.0 adds two nul-terminated uncompressed strings to the end of the
@@ -185,7 +185,7 @@ static GrB_Info GB_blob_header_get
 
         if (nfound == 2)
         { 
-            // extract the GrB_NAME and GrB_ELTYPE_STRING from the blob
+            // extract the GrB_NAME and GrB_EL_TYPE_STRING from the blob
             (*user_name) = (char *) (blob + s) ;
             (*eltype_string) = (char *) (blob + ss [0] + 1) ;
 //          printf ("deserialize user_name %lu:[%s] eltype %lu:[%s]\n",
@@ -244,14 +244,14 @@ GrB_Info GxB_Serialized_get_Scalar
 
     if (info == GrB_SUCCESS)
     {
-        switch (field)
+        switch ((int) field)
         {
             case GrB_STORAGE_ORIENTATION_HINT : 
 
                 ivalue = storage ;
                 break ;
 
-            case GrB_ELTYPE_CODE : 
+            case GrB_EL_TYPE_CODE : 
 
                 ivalue = type_code ;
                 break ;
@@ -359,7 +359,7 @@ GrB_Info GxB_Serialized_get_String
                 strcpy (value, type_name) ;
                 break ;
 
-            case GrB_ELTYPE_STRING : 
+            case GrB_EL_TYPE_STRING : 
                 if (eltype_string != NULL)
                 {
                     strcpy (value, eltype_string) ;
@@ -414,14 +414,14 @@ GrB_Info GxB_Serialized_get_INT32
 
     if (info == GrB_SUCCESS)
     {
-        switch (field)
+        switch ((int) field)
         {
             case GrB_STORAGE_ORIENTATION_HINT : 
 
                 (*value) = storage ;
                 break ;
 
-            case GrB_ELTYPE_CODE : 
+            case GrB_EL_TYPE_CODE : 
 
                 (*value) = type_code ;
                 break ;
@@ -502,7 +502,7 @@ GrB_Info GxB_Serialized_get_SIZE
                 (*value) = strlen (type_name) + 1 ;
                 break ;
 
-            case GrB_ELTYPE_STRING : 
+            case GrB_EL_TYPE_STRING : 
                 (*value) = (eltype_string == NULL) ?
                     1 : (strlen (eltype_string) + 1) ;
                 break ;

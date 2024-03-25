@@ -306,6 +306,11 @@ static GrB_Info GB_global_string_get (const char **value, int field)
             (*value) = GB_jitifyer_get_C_preface ( ) ;
             break ;
 
+        case GxB_JIT_CUDA_PREFACE : 
+
+            (*value) = GB_jitifyer_get_CUDA_preface ( ) ;
+            break ;
+
         case GxB_JIT_ERROR_LOG : 
 
             (*value) = GB_jitifyer_get_error_log ( ) ;

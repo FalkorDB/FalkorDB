@@ -1,14 +1,14 @@
 //------------------------------------------------------------------------------
-// GB_cuda_get_device_count.cu: find out how many GPUs exist
+// GraphBLAS/CUDA/GB_cuda_get_device_count.cu: find out how many GPUs exist
 //------------------------------------------------------------------------------
 
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2019, All Rights Reserved.
-// http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
-#include "GB_cuda.h"
+#include "GB_cuda.hpp"
 
 bool GB_cuda_get_device_count   // true if OK, false if failure
 (

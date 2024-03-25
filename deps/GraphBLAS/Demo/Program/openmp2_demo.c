@@ -11,6 +11,7 @@
 // a multi-threaded user program.
 
 #include "GraphBLAS.h"
+#undef I
 
 #ifdef _OPENMP
 #include <omp.h>

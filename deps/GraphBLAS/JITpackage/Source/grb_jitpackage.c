@@ -16,7 +16,9 @@
 //------------------------------------------------------------------------------
 
 // ZSTD uses switch statements with no default case.
+#if defined (__GNUC__)
 #pragma GCC diagnostic ignored "-Wswitch-default"
+#endif
 
 // disable ZSTD deprecation warnings and include all ZSTD definitions  
 
@@ -83,7 +85,7 @@ int main (int argc, char **argv)
     // start the GB_JITpackage.c file
     //--------------------------------------------------------------------------
 
-    FILE *fp = fopen ("GB_JITpackage.c", "w") ;
+    FILE *fp = fopen ("GB_JITpackage.c", "wb") ;
     OK (fp != NULL) ;
     int nfiles = argc - 1 ;
     printf ("Processing %d input files ...\n", nfiles) ;
@@ -157,7 +159,7 @@ int main (int argc, char **argv)
         //----------------------------------------------------------------------
 
         fprintf (fp, "// %s:\n", argv [k]) ;
-        fprintf (fp, "uint8_t GB_JITpackage_%d [%lu] = {\n", k-1, dsize) ;
+        fprintf (fp, "uint8_t GB_JITpackage_%d [%zu] = {\n", k-1, dsize) ;
         for (int64_t k = 0 ; k < dsize ; k++)
         {
             fprintf (fp, "%3d,", dst [k]) ;
@@ -181,8 +183,8 @@ int main (int argc, char **argv)
     // print the index
     //--------------------------------------------------------------------------
 
-    printf ("Total uncompressed: %lu bytes\n", total_uncompressed_size) ;
-    printf ("Total compressed:   %lu bytes\n", total_compressed_size) ;
+    printf ("Total uncompressed: %zu bytes\n", total_uncompressed_size) ;
+    printf ("Total compressed:   %zu bytes\n", total_compressed_size) ;
     printf ("Compression:        %g\n", 
         (double) total_compressed_size / (double) total_uncompressed_size) ;
 
@@ -200,7 +202,7 @@ int main (int argc, char **argv)
             }
         }
         // append this file to the index
-        fprintf (fp, "    { %8lu, %8lu, GB_JITpackage_%-3d, \"%s\" },\n",
+        fprintf (fp, "    { %8zu, %8zu, GB_JITpackage_%-3d, \"%s\" },\n",
             Uncompressed_size [k], Compressed_size [k], k-1, name) ;
     }
     fprintf (fp, "} ;\n#endif\n\n") ;

@@ -27,6 +27,7 @@
 #else
 
     #include "GraphBLAS.h"
+    #undef I
     #include "graphblas_demos.h"
 
     #if defined __INTEL_COMPILER

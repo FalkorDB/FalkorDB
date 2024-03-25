@@ -2,7 +2,7 @@
 // GraphBLAS/Config/GB_config.h: JIT configuration for GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,7 +21,7 @@
 // GB_C_FLAGS: the C compiler flags used to compile GraphBLAS.  Used
 // for compiling and linking:
 #ifndef GB_C_FLAGS
-#define GB_C_FLAGS      "@GB_C_FLAGS@"
+#define GB_C_FLAGS      "@GB_C_FLAGS@ @GB_OPENMP_C_FLAGS@"
 #endif
 
 // GB_C_LINK_FLAGS: the flags passed to the C compiler for the link phase:
@@ -39,7 +39,7 @@
 #define GB_LIB_SUFFIX   "@GB_LIB_SUFFIX@"
 #endif
 
-// GB_OBJ_SUFFIX: object suffix (.o for Linux/Unix/Mac, .obj for Windows):
+// GB_OBJ_SUFFIX: object suffix (.o for Linux/Unix/Mac/MinGW, .obj for MSVC):
 #ifndef GB_OBJ_SUFFIX
 #define GB_OBJ_SUFFIX   "@GB_OBJ_SUFFIX@"
 #endif
@@ -49,7 +49,7 @@
 #define GB_OMP_INC      "@GB_OMP_INC@"
 #endif
 
-// GB_OMP_INC_DIRS: include directories OpenMP, if in use by GraphBLAS,
+// GB_OMP_INC_DIRS: include directories for OpenMP, if in use by GraphBLAS,
 // for cmake:
 #ifndef GB_OMP_INC_DIRS
 #define GB_OMP_INC_DIRS "@GB_OMP_INC_DIRS@"
@@ -63,6 +63,26 @@
 // GB_CMAKE_LIBRARIES: libraries to link with when using cmake
 #ifndef GB_CMAKE_LIBRARIES
 #define GB_CMAKE_LIBRARIES  "@GB_CMAKE_LIBRARIES@"
+#endif
+
+// GB_CUDA_COMPILER: the CUDA compiler to compile CUDA JIT kernels:
+#ifndef GB_CUDA_COMPILER
+#define GB_CUDA_COMPILER "@GB_CUDA_COMPILER@"
+#endif
+
+// GB_CUDA_FLAGS: the CUDA flags to compile CUDA JIT kernels:
+#ifndef GB_CUDA_FLAGS
+#define GB_CUDA_FLAGS "@GB_CUDA_FLAGS@"
+#endif
+
+// GB_CUDA_INC: -I includes for CUDA JIT kernels:
+#ifndef GB_CUDA_INC
+#define GB_CUDA_INC "@GB_CUDA_INC@"
+#endif
+
+// GB_CUDA_ARCHITECTURES: the CUDA ARCHITECTURES for CUDA JIT kernels:
+#ifndef GB_CUDA_ARCHITECTURES
+#define GB_CUDA_ARCHITECTURES "@GB_CUDA_ARCHITECTURES@"
 #endif
 
 #endif

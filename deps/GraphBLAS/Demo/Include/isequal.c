@@ -20,6 +20,7 @@
 // returns true if x and y are both NaN.
 
 #include "GraphBLAS.h"
+#undef I
 #include "graphblas_demos.h"
 
 // call a GraphBLAS method and return if an error occurs

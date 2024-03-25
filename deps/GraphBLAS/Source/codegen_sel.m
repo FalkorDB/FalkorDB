@@ -18,7 +18,7 @@ fprintf (fh, '\n') ;
 fprintf (fh, '// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.\n') ;
 fprintf (fh, '// SPDX-License-Identifier: Apache-2.0\n\n') ;
 fprintf (fh, '// This file has been automatically generated from Generator/GB_sel.h') ;
-fprintf (fh, '\n\n') ;
+fprintf (fh, '\n#include "GB_math.h"\n\n') ;
 fclose (fh) ;
 
 % NONZOMBIE:         name         selector                     type

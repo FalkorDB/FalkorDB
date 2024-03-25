@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "GB.h"
+#include "GB_math.h"
 #include "GB_stringify.h"
 #include <ctype.h>
 
@@ -25,8 +26,9 @@ void GB_macrofy_binop
     bool C_iso,                 // if true: C is iso
     GrB_BinaryOp op,            // NULL if C is iso
     // output:
-    const char **f_handle,
-    const char **u_handle
+    const char **f_handle,      // basic expression z=f(x,y)
+    const char **u_handle,      // update z=f(z,y) for the CPU
+    const char **g_handle       // update z=f(z,y) for the GPU (if different)
 )
 {
 
@@ -758,10 +760,11 @@ void GB_macrofy_binop
     }
 
     //--------------------------------------------------------------------------
-    // return the u and f expressions
+    // return the u, f, and g expressions
     //--------------------------------------------------------------------------
 
     if (u_handle != NULL) (*u_handle) = u ;
     if (f_handle != NULL) (*f_handle) = f ;
+    if (g_handle != NULL) (*g_handle) = g ;
 }
 

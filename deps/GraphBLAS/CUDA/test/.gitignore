@@ -1,6 +1,0 @@
-# Ignore these files:
-graphblascuda_test
-
-# Do not ignore this file
-!.gitignore
-

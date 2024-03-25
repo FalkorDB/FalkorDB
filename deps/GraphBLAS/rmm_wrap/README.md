@@ -5,7 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 rmm_wrap defines a single global object, the RMM_Wrap_Handle that holds
 an RMM (Rapids Memory Manager) memory resource and a hash map (C++
 std:unordered_map).  This allows rmm_wrap to provide 7 functions to a C
-application:
+application.
+
+Note that the rmm_wrap functions are NOT thread safe.
 
 Create/destroy an RMM resource:
 

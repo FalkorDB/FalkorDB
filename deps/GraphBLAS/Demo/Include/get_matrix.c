@@ -11,6 +11,7 @@
 // matrix.  If reading from a file, the file is assumed to be 0-based.
 
 #include "GraphBLAS.h"
+#undef I
 
 #undef  FREE_ALL
 #define FREE_ALL                    \

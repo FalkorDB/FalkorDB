@@ -76,7 +76,7 @@ void mexFunction
     system ("rm -rf /tmp/grb_cache") ;
 
     //--------------------------------------------------------------------------
-    // determine if GraphBLAS was compiled with NJIT
+    // determine if GraphBLAS was compiled with GRAPHBLAS_USE_JIT
     //--------------------------------------------------------------------------
 
     OK (GxB_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
@@ -161,8 +161,12 @@ if (jit_enabled)
     mxFree (save_c) ;
     save_c = NULL ;
 
+    // test compiler flags
     OK (GxB_Global_Option_get_CHAR (GxB_JIT_C_COMPILER_FLAGS, &s)) ;
     printf ("default flags [%s]\n", s) ;
+    len = strlen (s) ;
+    char *save_flags = mxMalloc (len+2) ;
+    strcpy (save_flags, s) ;
     OK (GxB_set (GxB_JIT_C_COMPILER_FLAGS, "-g")) ;
     OK (GxB_get (GxB_JIT_C_COMPILER_FLAGS, &s)) ;
     CHECK (MATCH (s, "-g")) ;
@@ -171,7 +175,11 @@ if (jit_enabled)
     OK (GxB_Global_Option_set_CHAR (GxB_JIT_C_COMPILER_FLAGS, "-O0")) ;
     OK (GxB_Global_Option_get_CHAR (GxB_JIT_C_COMPILER_FLAGS, &t)) ;
     CHECK (MATCH (t, "-O0")) ;
+    OK (GxB_Global_Option_set_CHAR (GxB_JIT_C_COMPILER_FLAGS, save_flags)) ;
+    mxFree (save_flags) ;
+    save_flags = NULL ;
 
+    // test libraries for cmake
     OK (GxB_get (GxB_JIT_C_CMAKE_LIBS, &s)) ;
     printf ("default C cmake libs [%s]\n", s) ;
     printf ("set cmake libs:\n") ;
@@ -226,6 +234,18 @@ if (jit_enabled)
     OK (GxB_Global_Option_set_CHAR (GxB_JIT_C_PREFACE, "// more stuff here")) ;
     OK (GxB_Global_Option_get_CHAR (GxB_JIT_C_PREFACE, &t)) ;
     CHECK (MATCH (t, "// more stuff here")) ;
+
+    OK (GxB_get (GxB_JIT_CUDA_PREFACE, &s)) ;
+    printf ("default CUDA preface [%s]\n", s) ;
+    OK (GxB_set (GxB_JIT_CUDA_PREFACE, "// cuda stuff here")) ;
+    OK (GxB_get (GxB_JIT_CUDA_PREFACE, &s)) ;
+    CHECK (MATCH (s, "// cuda stuff here")) ;
+    OK (GxB_Global_Option_get_CHAR (GxB_JIT_CUDA_PREFACE, &t)) ;
+    CHECK (MATCH (t, "// cuda stuff here")) ;
+    OK (GxB_Global_Option_set_CHAR (GxB_JIT_CUDA_PREFACE,
+        "// more cuda stuff here")) ;
+    OK (GxB_Global_Option_get_CHAR (GxB_JIT_CUDA_PREFACE, &t)) ;
+    CHECK (MATCH (t, "// more cuda stuff here")) ;
 
     OK (GxB_Type_new (&MyType, 0, "mytype", "typedef double mytype ;")) ;
     OK (GxB_Type_size (&mysize, MyType)) ;
@@ -502,7 +522,7 @@ if (jit_enabled)
     OK (GxB_Context_set_INT32 (context1, GxB_CONTEXT_GPU_ID, 40)) ;
     OK (GxB_Context_get_INT32 (context1, GxB_CONTEXT_GPU_ID, &id1)) ;
 
-    OK (GxB_Context_disengage (context1)) ;
+    OK (GxB_Context_disengage (NULL)) ;
     GrB_free (&context1) ;
     GrB_free (&context2) ;
 

@@ -11,6 +11,7 @@
 // wathen.m.
 
 #include "GraphBLAS.h"
+#undef I
 #include "graphblas_demos.h"
 
 //------------------------------------------------------------------------------

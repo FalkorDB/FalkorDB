@@ -53,9 +53,9 @@ GrB_Info GB_op_string_get
             #pragma omp flush
             return (GrB_SUCCESS) ;
 
-        case GrB_INPUT1TYPE_STRING : type = op->xtype ; break ;
-        case GrB_INPUT2TYPE_STRING : type = op->ytype ; break ;
-        case GrB_OUTPUTTYPE_STRING : type = op->ztype ; break ;
+        case GrB_INP0_TYPE_STRING : type = op->xtype ; break ;
+        case GrB_INP1_TYPE_STRING : type = op->ytype ; break ;
+        case GrB_OUTP_TYPE_STRING : type = op->ztype ; break ;
 
         default : 
             return (GrB_INVALID_VALUE) ;

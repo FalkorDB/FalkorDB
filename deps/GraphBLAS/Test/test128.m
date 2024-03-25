@@ -43,7 +43,7 @@ B.class = 'double' ;
 S = sparse (m,n) ;
 X = sparse (rand (m,n)) ;
 
-% test the workaround for the GB_COMPILER_MSC_2019 bug in the
+% test the workaround for the GB_COMPILER_MSC_2019_OR_NEWER bug in the
 % Microsoft C compiler
 A.class = 'single complex' ;
 B.class = 'single complex' ;
