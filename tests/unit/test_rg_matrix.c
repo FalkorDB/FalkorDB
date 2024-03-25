@@ -1051,7 +1051,7 @@ void test_RGMatrix_fuzzy() {
 	GrB_Index   ncols               =  100;
 	GrB_Index   i                   =  0;
 	GrB_Index   j                   =  1;
-	GrB_Index*  I                   =  NULL;
+	GrB_Index*  II                  =  NULL;
 	GrB_Index*  J                   =  NULL;
 	uint32_t    operations          =  10000;
 
@@ -1061,8 +1061,8 @@ void test_RGMatrix_fuzzy() {
 
 	srand(time(0));
 
-	I = (GrB_Index*) malloc(sizeof(GrB_Index) * operations);
-	J = (GrB_Index*) malloc(sizeof(GrB_Index) * operations);
+	II = (GrB_Index*) malloc(sizeof(GrB_Index) * operations);
+	J  = (GrB_Index*) malloc(sizeof(GrB_Index) * operations);
 
 	info = RG_Matrix_new(&A, t, nrows, ncols);
 	info = RG_Matrix_new(&A->transposed, t, ncols, nrows);
@@ -1101,14 +1101,14 @@ void test_RGMatrix_fuzzy() {
 			info = GrB_Matrix_setElement_BOOL(N, true, i, j);
 			TEST_ASSERT(info == GrB_SUCCESS);
 
-			I[additions] = i;
+			II[additions] = i;
 			J[additions] = j;
 			additions++;
 		}
 		else
 		{
 			uint32_t delete_pos = rand() % additions;
-			i = I[delete_pos];
+			i = II[delete_pos];
 			j = J[delete_pos];
 
 			//------------------------------------------------------------------
@@ -1150,7 +1150,7 @@ void test_RGMatrix_fuzzy() {
 	info = GrB_Matrix_free(&NT);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
-	free(I);
+	free(II);
 	free(J);
 }
 

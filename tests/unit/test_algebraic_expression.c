@@ -210,13 +210,13 @@ void _print_matrix(GrB_Matrix mat) {
     printf("ncols: %lu, nrows: %lu, nvals: %lu\n", ncols, nrows, nvals);
 #endif
 
-	GrB_Index I[nvals];     // array for returning row indices of tuples
+	GrB_Index II[nvals];    // array for returning row indices of tuples
 	GrB_Index J[nvals];     // array for returning col indices of tuples
 	bool X[nvals];          // array for returning values of tuples
 
-	GrB_Matrix_extractTuples_BOOL(I, J, X, &nvals, mat);
+	GrB_Matrix_extractTuples_BOOL(II, J, X, &nvals, mat);
 	for(int i = 0; i < nvals; i++) {
-		printf("[%lu,%lu,%d]\n", I[i], J[i], X[i]);
+		printf("[%lu,%lu,%d]\n", II[i], J[i], X[i]);
 	}
 }
 
