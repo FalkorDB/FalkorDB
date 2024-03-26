@@ -121,7 +121,7 @@ void _Graph_GetEdgesConnectingNodes
 	info = GrB_Vector_new(&src_vec, GrB_BOOL, g->edges->itemCap);
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Vector_new(&dst_vec, GrB_BOOL, g->edges->itemCap);
-		ASSERT(info == GrB_SUCCESS);
+	ASSERT(info == GrB_SUCCESS);
 	info = RG_Matrix_extract_row(S, src_vec, src);
 	ASSERT(info == GrB_SUCCESS);
 	info = RG_Matrix_extract_row(T, dst_vec, dest);
