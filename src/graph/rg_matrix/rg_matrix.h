@@ -179,13 +179,6 @@ GrB_Info RG_Matrix_extract_row
 	GrB_Index i                             // row index
 ) ;
 
-GrB_Info RG_Matrix_extract_col
-(
-	const RG_Matrix A,                      // matrix to extract a vector from
-	GrB_Vector v,                           // vector to extract
-	GrB_Index j                             // row index
-) ;
-
 // remove entry at position C[i,j]
 GrB_Info RG_Matrix_removeElement_BOOL
 (

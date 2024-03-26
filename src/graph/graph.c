@@ -112,16 +112,16 @@ void _Graph_GetEdgesConnectingNodes
 	// no entry at [dest, src], src is not connected to dest with relation R
 	if(res == GrB_NO_VALUE) return;
 
-	Edge     e   = {.src_id = src, .dest_id = dest, .relationID = r};
+	Edge      e = {.src_id = src, .dest_id = dest, .relationID = r};
 	RG_Matrix S = Graph_GetSourceRelationMatrix(g, r, false);
 	RG_Matrix T = Graph_GetTargetRelationMatrix(g, r, true);
 	GrB_Vector src_vec;
 	GrB_Vector dst_vec;
-	GrB_Info info;
+		GrB_Info info;
 	info = GrB_Vector_new(&src_vec, GrB_BOOL, g->edges->itemCap);
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Vector_new(&dst_vec, GrB_BOOL, g->edges->itemCap);
-	ASSERT(info == GrB_SUCCESS);
+		ASSERT(info == GrB_SUCCESS);
 	info = RG_Matrix_extract_row(S, src_vec, src);
 	ASSERT(info == GrB_SUCCESS);
 	info = RG_Matrix_extract_row(T, dst_vec, dest);
