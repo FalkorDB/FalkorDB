@@ -138,6 +138,9 @@ void mexFunction
     OK (GxB_Context_get_SIZE_ (context, &size, GrB_NAME)) ;
     CHECK (size == strlen (name) + 1) ;
 
+    OK (GxB_Context_disengage (NULL)) ;
+    GrB_free (&context) ;
+
     //--------------------------------------------------------------------------
     // finalize GraphBLAS
     //--------------------------------------------------------------------------
@@ -148,7 +151,6 @@ void mexFunction
     GrB_free (&s_fp64) ;
     GrB_free (&s_fp32) ;
     GrB_free (&s_int32) ;
-    GrB_free (&context) ;
     GB_mx_put_global (true) ;
     printf ("\nGB_mex_test33:  all tests passed\n\n") ;
 }

@@ -6,19 +6,19 @@
 # V="valgrind --error-limit=no --tool=memcheck -q --log-file=valgrind_%p.log --leak-check=full --show-leak-kinds=all"
 V="valgrind --error-limit=no --tool=memcheck -q --log-file=valgrind_%p.log"
 
-$V ../build/simple_demo                   > simple_demo.out
-$V ../build/complex_demo                  > complex_demo_out.m
-$V ../build/complex_demo 1                > complex_demo_out2.m
-$V ../build/openmp_demo                   > openmp_demo.out
+$V ../build/simple_demo                   > ../build/simple_demo.out
+$V ../build/complex_demo                  > ../build/complex_demo_out.m
+$V ../build/complex_demo 1                > ../build/complex_demo_out2.m
+$V ../build/openmp_demo                   > ../build/openmp_demo.out
 
-$V ../build/import_demo < Matrix/west0067 > import_demo.out
-$V ../build/wildtype_demo                 > wildtype_demo.out
+$V ../build/import_demo < Matrix/west0067 > ../build/import_demo.out
+$V ../build/wildtype_demo                 > ../build/wildtype_demo.out
 
 $V ../build/gauss_demo
 
 echo "Comparing output:"
-diff Output/simple_demo.out       simple_demo.out
-diff Output/complex_demo_out.m    complex_demo_out.m
-diff Output/wildtype_demo.out     wildtype_demo.out
+diff Output/simple_demo.out       ../build/simple_demo.out
+diff Output/complex_demo_out.m    ../build/complex_demo_out.m
+diff Output/wildtype_demo.out     ../build/wildtype_demo.out
 
 exit 0

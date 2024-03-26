@@ -334,6 +334,11 @@ GrB_Info GxB_Global_Option_get_CHAR     // gets the current global option
             (*value) = GB_jitifyer_get_C_preface ( ) ;
             break ;
 
+        case GxB_JIT_CUDA_PREFACE : 
+
+            (*value) = GB_jitifyer_get_CUDA_preface ( ) ;
+            break ;
+
         case GxB_JIT_ERROR_LOG : 
 
             (*value) = GB_jitifyer_get_error_log ( ) ;
@@ -907,6 +912,17 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (preface) ;
                 (*preface) = GB_jitifyer_get_C_preface ( ) ;
+            }
+            break ;
+
+        case GxB_JIT_CUDA_PREFACE : 
+
+            {
+                va_start (ap, field) ;
+                const char **preface = va_arg (ap, const char **) ;
+                va_end (ap) ;
+                GB_RETURN_IF_NULL (preface) ;
+                (*preface) = GB_jitifyer_get_CUDA_preface ( ) ;
             }
             break ;
 

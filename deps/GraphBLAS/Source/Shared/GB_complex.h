@@ -205,7 +205,7 @@
 // macros for basic complex operations: mult, add, minus, ainv
 //------------------------------------------------------------------------------
 
-#if GB_COMPILER_MSC
+#if defined (GxB_HAVE_COMPLEX_MSVC)
 
     //--------------------------------------------------------------------------
     // Microsoft Visual Studio compiler with its own complex type

@@ -267,6 +267,10 @@ GrB_Info GxB_Global_Option_set_CHAR      // set a global default option
 
             return (GB_jitifyer_set_C_preface (value)) ;
 
+        case GxB_JIT_CUDA_PREFACE : 
+
+            return (GB_jitifyer_set_CUDA_preface (value)) ;
+
         case GxB_JIT_ERROR_LOG : 
 
             return (GB_jitifyer_set_error_log (value)) ;
@@ -542,6 +546,15 @@ GrB_Info GxB_Global_Option_set      // set a global default option
                 char *C_preface = va_arg (ap, char *) ;
                 va_end (ap) ;
                 return (GB_jitifyer_set_C_preface (C_preface)) ;
+            }
+
+        case GxB_JIT_CUDA_PREFACE : 
+
+            {
+                va_start (ap, field) ;
+                char *CUDA_preface = va_arg (ap, char *) ;
+                va_end (ap) ;
+                return (GB_jitifyer_set_CUDA_preface (CUDA_preface)) ;
             }
 
         case GxB_JIT_USE_CMAKE : 

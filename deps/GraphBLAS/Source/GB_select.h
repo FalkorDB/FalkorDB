@@ -10,6 +10,7 @@
 #ifndef GB_SELECT_H
 #define GB_SELECT_H
 #include "GB.h"
+#include "GB_math.h"
 #include "GB_is_nonzero.h"
 
 GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)

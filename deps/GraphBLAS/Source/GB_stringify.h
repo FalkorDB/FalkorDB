@@ -22,7 +22,9 @@ void GB_macrofy_preface
 (
     FILE *fp,               // target file to write, already open
     char *kernel_name,      // name of the kernel
-    char *preface           // user-provided preface
+    char *C_preface,        // user-provided preface for CPU JIT kernels
+    char *CUDA_preface,     // user-provided preface for CUDA JIT kernels
+    GB_jit_kcode kcode
 ) ;
 
 //------------------------------------------------------------------------------
@@ -73,6 +75,7 @@ uint64_t GB_encodify_reduce // encode a GrB_reduce problem
                                 // except for the suffix
     char **suffix,              // suffix for user-defined kernel
     // input:
+    const GB_jit_kcode kcode,   // kernel to encode
     GrB_Monoid monoid,      // the monoid to enumify
     GrB_Matrix A            // input matrix to reduce
 ) ;
@@ -422,16 +425,24 @@ void GB_enumify_mxm         // enumerate a GrB_mxm problem
     GrB_Matrix B
 ) ;
 
-void GB_macrofy_mxm        // construct all macros for GrB_mxm
+void GB_macrofy_mxm         // construct all macros for GrB_mxm
 (
     // output:
-    FILE *fp,                   // target file to write, already open
+    FILE *fp,               // target file to write, already open
     // input:
     uint64_t scode,
     GrB_Semiring semiring,  // the semiring to macrofy
     GrB_Type ctype,
     GrB_Type atype,
     GrB_Type btype
+) ;
+
+void GB_macrofy_multadd
+(
+    FILE *fp,
+    const char *update_expression,      // has the form "z = f(z,y)"
+    const char *multiply_expression,    // has the form "z = mult(x,y)"
+    bool flipxy
 ) ;
 
 GrB_Info GB_AxB_saxpy3_jit      // C<M>=A*B, saxpy3, via the JIT
@@ -639,7 +650,8 @@ void GB_macrofy_monoid  // construct the macros for a monoid
                         // semiring, times is normally a terminal monoid, but
                         // it's not worth exploiting in GrB_mxm.
     // output:
-    const char **u_expression
+    const char **u_expression,
+    const char **g_expression
 ) ;
 
 bool GB_enumify_cuda_atomic         // return true if CUDA can do it atomically
@@ -665,7 +677,8 @@ void GB_macrofy_query
     GrB_Type type0,
     GrB_Type type1,
     GrB_Type type2,
-    uint64_t hash       // hash code for the kernel
+    uint64_t hash,      // hash code for the kernel
+    GB_jit_kcode kcode
 ) ;
 
 //------------------------------------------------------------------------------
@@ -687,16 +700,18 @@ void GB_macrofy_binop
     FILE *fp,
     // input:
     const char *macro_name,
-    bool flipxy,                // if true: op is f(y,x)
+    bool flipxy,                // if true: op is f(y,x) for a semiring
     bool is_monoid_or_build,    // if true: additive operator for monoid,
-                                // or binary op for GrB_Matrix_build
+                                // or binary op for GrB_Matrix_build, or
+                                // accum operator
     bool is_ewise,              // if true: binop for ewise methods
     int ecode,
     bool C_iso,                 // if true: C is iso
     GrB_BinaryOp op,            // NULL if C is iso
     // output:
-    const char **f_handle,
-    const char **u_handle
+    const char **f_handle,      // basic expression z=f(x,y)
+    const char **u_handle,      // update z=f(z,y) for the CPU
+    const char **g_handle       // update z=f(z,y) for the GPU (if different)
 ) ;
 
 //------------------------------------------------------------------------------

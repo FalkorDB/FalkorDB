@@ -78,9 +78,9 @@ GrB_Info GrB_Monoid_get_String
             #pragma omp flush
             return (GrB_SUCCESS) ;
 
-        case GrB_INPUT1TYPE_STRING : 
-        case GrB_INPUT2TYPE_STRING : 
-        case GrB_OUTPUTTYPE_STRING : 
+        case GrB_INP0_TYPE_STRING : 
+        case GrB_INP1_TYPE_STRING : 
+        case GrB_OUTP_TYPE_STRING : 
             return (GB_op_string_get ((GB_Operator) (monoid->op),
                 value, field)) ;
 
@@ -153,9 +153,9 @@ GrB_Info GrB_Monoid_get_SIZE
             name = GB_monoid_name_get (monoid) ;
             break ;
 
-        case GrB_INPUT1TYPE_STRING : 
-        case GrB_INPUT2TYPE_STRING : 
-        case GrB_OUTPUTTYPE_STRING : 
+        case GrB_INP0_TYPE_STRING : 
+        case GrB_INP1_TYPE_STRING : 
+        case GrB_OUTP_TYPE_STRING : 
             name = GB_type_name_get (monoid->op->ztype) ;
             break ;
 

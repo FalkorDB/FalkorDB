@@ -7,6 +7,10 @@
 
 //------------------------------------------------------------------------------
 
+#ifdef __cplusplus
+#error "not used for C++"
+#endif
+
 #ifndef GB_OPS_H
 #define GB_OPS_H
 
@@ -106,9 +110,6 @@ inline void GB_nonzombie_func (bool *z, const void *x,
 #define GB_DOUBLE
 #include "GB_ops_template.h"
 
-#if !defined ( GBCUDA_CPLUSPLUS )
-// TODO: does not yet work in CUDA
-
 #define GB_TYPE             GxB_FC32_t
 #define GB_XTYPE            FC32
 #define GB_BITS             64
@@ -124,8 +125,6 @@ inline void GB_nonzombie_func (bool *z, const void *x,
 #define GB_FLOATING_POINT
 #define GB_DOUBLE_COMPLEX
 #include "GB_ops_template.h"
-
-#endif
 
 #endif
 

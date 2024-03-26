@@ -64,9 +64,9 @@ void mexFunction
     expected = GrB_INVALID_VALUE ;
     ERR (GxB_Serialized_get_VOID_(blob, nothing, 0, blob_size)) ;
 
-    OK (GxB_Serialized_get_SIZE_(blob, &size, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_SIZE_(blob, &size, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (size == strlen ("GrB_FP32") + 1) ;
-    OK (GxB_Serialized_get_String_(blob, name, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_String_(blob, name, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (MATCH (name, "GrB_FP32")) ;
 
     OK (GxB_Serialized_get_SIZE_(blob, &size, GxB_JIT_C_NAME, blob_size)) ;
@@ -77,17 +77,17 @@ void mexFunction
     OK (GxB_Serialized_get_String_(blob, name, GrB_NAME, blob_size)) ;
     CHECK (MATCH (name, "")) ;
 
-    OK (GxB_Serialized_get_String_(blob, name, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_String_(blob, name, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (MATCH (name, "GrB_FP32")) ;
 
-    OK (GxB_Serialized_get_SIZE_(blob, &size, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_SIZE_(blob, &size, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (size == strlen ("GrB_FP32") + 1) ;
 
-    OK (GxB_Serialized_get_INT32_(blob, &code, GrB_ELTYPE_CODE, blob_size)) ;
+    OK (GxB_Serialized_get_INT32_(blob, &code, GrB_EL_TYPE_CODE, blob_size)) ;
     CHECK (code == GrB_FP32_CODE) ;
 
     i = -1 ;
-    OK (GxB_Serialized_get_Scalar_(blob, s_int32, GrB_ELTYPE_CODE, blob_size)) ;
+    OK (GxB_Serialized_get_Scalar_(blob, s_int32, GrB_EL_TYPE_CODE, blob_size)) ;
     OK (GrB_Scalar_extractElement_INT32_(&i, s_int32)) ;
     CHECK (i == GrB_FP32_CODE) ;
 
@@ -133,9 +133,9 @@ void mexFunction
     OK (GxB_Serialized_get_String_ (blob, &size, GrB_NAME, blob_size)) ;
     CHECK (size == strlen ("A matrix") + 1) ;
 
-    OK (GxB_Serialized_get_String_ (blob, name, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_String_ (blob, name, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (MATCH (name, "GrB_FP32")) ;
-    OK (GxB_Serialized_get_String_(blob, &size, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_String_(blob, &size, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (size == strlen ("GrB_FP32") + 1) ;
 
     OK (GxB_Serialized_get_String_ (blob, name, GxB_JIT_C_NAME, blob_size)) ;
@@ -257,7 +257,7 @@ void mexFunction
     OK (GxB_Serialized_get_String_(blob, name, GxB_JIT_C_NAME, blob_size)) ;
     CHECK (MATCH (name, "mytype")) ;
 
-    OK (GxB_Serialized_get_String_(blob, name, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_String_(blob, name, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (MATCH (name, "")) ;
 
     GrB_free (&A) ;
@@ -293,7 +293,7 @@ void mexFunction
 
     OK (GxB_Serialized_get_String_(blob, name, GxB_JIT_C_NAME, blob_size)) ;
     CHECK (MATCH (name, "mytype")) ;
-    OK (GxB_Serialized_get_String_(blob, name, GrB_ELTYPE_STRING, blob_size)) ;
+    OK (GxB_Serialized_get_String_(blob, name, GrB_EL_TYPE_STRING, blob_size)) ;
     CHECK (MATCH (name, "my type")) ;
     OK (GxB_Serialized_get_String_(blob, name, GrB_NAME, blob_size)) ;
     printf ("name [%s]\n", name) ;

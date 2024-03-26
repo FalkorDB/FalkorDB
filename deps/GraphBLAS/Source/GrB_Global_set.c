@@ -202,6 +202,10 @@ GrB_Info GrB_Global_set_String
 
             return (GB_jitifyer_set_C_preface (value)) ;
 
+        case GxB_JIT_CUDA_PREFACE : 
+
+            return (GB_jitifyer_set_CUDA_preface (value)) ;
+
         case GxB_JIT_ERROR_LOG : 
 
             return (GB_jitifyer_set_error_log (value)) ;

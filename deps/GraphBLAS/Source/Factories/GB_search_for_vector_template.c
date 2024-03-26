@@ -18,13 +18,11 @@
 
 #ifdef GB_CUDA_KERNEL
 __device__
-static inline int64_t GB_search_for_vector_device
-#else
-static inline int64_t GB_search_for_vector // return vector k that contains p
 #endif
+static inline int64_t GB_search_for_vector // return vector k that contains p
 (
     const int64_t p,                // search for vector k that contains p
-    const int64_t *restrict Ap,  // vector pointers to search
+    const int64_t *restrict Ap,     // vector pointers to search
     int64_t kleft,                  // left-most k to search
     int64_t anvec,                  // Ap is of size anvec+1
     int64_t avlen                   // A->vlen
@@ -42,7 +40,7 @@ static inline int64_t GB_search_for_vector // return vector k that contains p
         return ((avlen == 0) ? 0 : (p / avlen)) ;
     }
 
-    // A is sparse
+    // A is sparse or hypersparse
     ASSERT (p >= 0 && p < Ap [anvec]) ;
 
     //--------------------------------------------------------------------------

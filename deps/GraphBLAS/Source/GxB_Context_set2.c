@@ -60,7 +60,7 @@ GrB_Info GxB_Context_set_Scalar
         return ((info == GrB_NO_VALUE) ? GrB_EMPTY_OBJECT : info) ;
     }
 
-    switch (field)
+    switch ((int) field)
     {
 
         default:
@@ -142,7 +142,7 @@ GrB_Info GxB_Context_set_INT
     // set the field
     //--------------------------------------------------------------------------
 
-    switch (field)
+    switch ((int) field)
     {
 
         case GxB_CONTEXT_NTHREADS :         // same as GxB_NTHREADS

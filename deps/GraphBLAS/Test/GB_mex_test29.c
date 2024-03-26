@@ -245,11 +245,11 @@ void mexFunction
 
 
     expected = GrB_INVALID_VALUE ;
-    ERR (GrB_Global_get_Scalar_ (GrB_GLOBAL, s_fp64, GrB_ELTYPE_CODE)) ;
-    ERR (GrB_Global_get_INT32_  (GrB_GLOBAL, &i, GrB_ELTYPE_CODE)) ;
-    ERR (GrB_Global_get_SIZE_   (GrB_GLOBAL, &size, GrB_ELTYPE_CODE)) ;
-    ERR (GrB_Global_get_String_ (GrB_GLOBAL, name, GrB_ELTYPE_CODE)) ;
-    ERR (GrB_Global_get_VOID_   (GrB_GLOBAL, nothing, GrB_ELTYPE_CODE)) ;
+    ERR (GrB_Global_get_Scalar_ (GrB_GLOBAL, s_fp64, GrB_EL_TYPE_CODE)) ;
+    ERR (GrB_Global_get_INT32_  (GrB_GLOBAL, &i, GrB_EL_TYPE_CODE)) ;
+    ERR (GrB_Global_get_SIZE_   (GrB_GLOBAL, &size, GrB_EL_TYPE_CODE)) ;
+    ERR (GrB_Global_get_String_ (GrB_GLOBAL, name, GrB_EL_TYPE_CODE)) ;
+    ERR (GrB_Global_get_VOID_   (GrB_GLOBAL, nothing, GrB_EL_TYPE_CODE)) ;
 
     OK (GrB_Global_get_String_ (GrB_GLOBAL, name, GrB_NAME)) ;
     printf ("library name: [%s]\n", name) ;
@@ -345,6 +345,15 @@ void mexFunction
     CHECK (MATCH (defn2, "// stuff")) ;
     OK (GrB_Global_set_String_ (GrB_GLOBAL, defn, GxB_JIT_C_PREFACE)) ;
     OK (GrB_Global_get_String_ (GrB_GLOBAL, defn2, GxB_JIT_C_PREFACE)) ;
+    CHECK (MATCH (defn2, defn)) ;
+
+    OK (GrB_Global_get_String_ (GrB_GLOBAL, defn, GxB_JIT_CUDA_PREFACE)) ;
+    printf ("JIT CUDA preface: [%s]\n", defn) ;
+    OK (GrB_Global_set_String_ (GrB_GLOBAL, "// cu", GxB_JIT_CUDA_PREFACE)) ;
+    OK (GrB_Global_get_String_ (GrB_GLOBAL, defn2, GxB_JIT_CUDA_PREFACE)) ;
+    CHECK (MATCH (defn2, "// cu")) ;
+    OK (GrB_Global_set_String_ (GrB_GLOBAL, defn, GxB_JIT_CUDA_PREFACE)) ;
+    OK (GrB_Global_get_String_ (GrB_GLOBAL, defn2, GxB_JIT_CUDA_PREFACE)) ;
     CHECK (MATCH (defn2, defn)) ;
 
     OK (GrB_Global_get_String_ (GrB_GLOBAL, defn, GxB_JIT_ERROR_LOG)) ;
