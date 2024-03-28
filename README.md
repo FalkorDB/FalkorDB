@@ -34,7 +34,16 @@ To quickly try out FalkorDB, launch an instance using docker:
 docker run -p 6379:6379 -it --rm falkordb/falkordb:edge
 ```
 
-Once loaded you can interact with FalkorDB using any of the supported [client libraries](#Client-libraries)
+Or, to use the built-in browser-based interface, run:
+
+```
+docker run -p 6379:6379 -p 3000:3000 -it --rm falkordb/falkordb:edge
+```
+
+Then, open your browser and navigate to `http://localhost:3000`.
+
+
+You can also interact with FalkorDB using any of the supported [client libraries](#Client-libraries)
 
 Here we'll use [FalkorDB Python client](https://pypi.org/project/FalkorDB/) to create a small graph representing a subset of motorcycle riders and teams taking part in the MotoGP league, once created we'll start querying our data.
 
