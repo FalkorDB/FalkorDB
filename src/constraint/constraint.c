@@ -503,7 +503,7 @@ void Constraint_EnforceEdges
 	EntityID  dest_id      = 0;             // current processed column idx
 	EntityID  edge_id      = 0;             // current processed edge id
 	EntityID  prev_src_id  = 0;             // last processed row idx
-	EntityID  prev_dest_id = 0;             // last processed column idx
+	EntityID  prev_edge_id = 0;             // last processed column idx
 	int       enforced     = 0;             // # entities enforced in batch
 	int       schema_id    = c->schema_id;  // edge relationship type ID
 	int       batch_size   = 1000;          // max number of entities to enforce
@@ -523,11 +523,11 @@ void Constraint_EnforceEdges
 		// reset number of enforced edges in batch
 		enforced     = 0;
 		prev_src_id  = src_id;
-		prev_dest_id = dest_id;
+		prev_edge_id = edge_id;
 
 		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const RG_Matrix m = Graph_GetRelationMatrix(g, schema_id, false);
+		const RG_Matrix m = Graph_GetSourceRelationMatrix(g, schema_id, false);
 		ASSERT(m != NULL);
 
 		//----------------------------------------------------------------------
@@ -538,10 +538,10 @@ void Constraint_EnforceEdges
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously enforced edges
-		while((info = RG_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id,
-						&edge_id)) == GrB_SUCCESS &&
+		while((info = RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
+						NULL)) == GrB_SUCCESS &&
 				src_id == prev_src_id &&
-				dest_id < prev_dest_id);
+				edge_id != prev_edge_id);
 
 		// process only if iterator is on an active entry
 		if(info != GrB_SUCCESS) {
@@ -558,30 +558,15 @@ void Constraint_EnforceEdges
 			e.dest_id    = dest_id;
 			e.relationID = schema_id;
 
-			if(SINGLE_EDGE(edge_id)) {
-				bool res = Graph_GetEdge(g, edge_id, &e);
-				assert(res == true);
-				if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-					holds = false;
-					break;
-				}
-			} else {
-				EdgeID *edgeIds = (EdgeID *)(CLEAR_MSB(edge_id));
-				uint edgeCount = array_len(edgeIds);
-
-				for(uint i = 0; i < edgeCount; i++) {
-					edge_id = edgeIds[i];
-					bool res = Graph_GetEdge(g, edge_id, &e);
-					assert(res == true);
-					if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-						holds = false;
-						break;
-					}
-				}
+			bool res = Graph_GetEdge(g, edge_id, &e);
+			assert(res == true);
+			if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
+				holds = false;
+				break;
 			}
 			enforced++; // single/multi edge are counted similarly
 		} while(enforced < batch_size &&
-			  RG_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id, &edge_id)
+			  RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
 				== GrB_SUCCESS && holds);
 
 		//----------------------------------------------------------------------

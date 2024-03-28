@@ -8,11 +8,13 @@
 
 #include <pthread.h>
 
+#include "RG.h"
 #include "rax.h"
+#include "../util/arr.h"
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
-#include "graph_statistics.h"
+#include "../util/rmalloc.h"
 #include "rg_matrix/rg_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
@@ -41,7 +43,13 @@ typedef enum {
 // forward declaration of Graph struct
 typedef struct Graph Graph;
 // typedef for synchronization function pointer
-typedef void (*SyncMatrixFunc)(const Graph *, RG_Matrix);
+typedef void (*SyncMatrixFunc)(const Graph *, RG_Matrix, GrB_Index, GrB_Index);
+
+typedef struct {
+	RG_Matrix R; 	  // relation matrix
+	RG_Matrix S;      // sources matrix
+	RG_Matrix T;      // targets matrix
+} Relation;
 
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
@@ -50,12 +58,11 @@ struct Graph {
 	RG_Matrix adjacency_matrix;        // adjacency matrix, holds all graph connections
 	RG_Matrix *labels;                 // label matrices
 	RG_Matrix node_labels;             // mapping of all node IDs to all labels possessed by each node
-	RG_Matrix *relations;              // relation matrices
+	Relation *relations;               // relation matrices
 	RG_Matrix _zero_matrix;            // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
-	GraphStatistics stats;             // graph related statistics
 };
 
 // graph synchronization functions
@@ -403,8 +410,26 @@ RG_Matrix Graph_GetLabelMatrix
 // matrix is resized if its size doesn't match graph's node count
 RG_Matrix Graph_GetRelationMatrix
 (
-	const Graph *g,     // graph from which to get adjacency matrix
-	int relation,       // relation described by matrix
+	const Graph *g,           // graph from which to get adjacency matrix
+	RelationID relation_idx,  // relation described by matrix
+	bool transposed
+);
+
+// retrieves a source matrix
+// matrix is resized if its size doesn't match graph's node count
+RG_Matrix Graph_GetSourceRelationMatrix
+(
+	const Graph *g,            // graph from which to get adjacency matrix
+	RelationID relation_idx,   // relation described by matrix
+	bool transposed
+);
+
+// retrieves a target matrix
+// matrix is resized if its size doesn't match graph's node count
+RG_Matrix Graph_GetTargetRelationMatrix
+(
+	const Graph *g,           // graph from which to get adjacency matrix
+	RelationID relation_idx,  // relation described by matrix
 	bool transposed
 );
 

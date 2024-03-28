@@ -187,26 +187,12 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
-
-		uint node_schemas_count = array_len(gc->node_schemas);
-		// update the node statistics
-		for(uint i = 0; i < node_schemas_count; i++) {
-			GrB_Index nvals;
-			RG_Matrix L = g->labels[i];
-			RG_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
-		}
 		
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
-		// update the node statistics, enable node indices
+		// enable node indices
 		for(uint i = 0; i < label_count; i++) {
-			GrB_Index nvals;
-			RG_Matrix L = Graph_GetLabelMatrix(g, i);
-			RG_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
-
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);

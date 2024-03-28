@@ -79,7 +79,7 @@ void Serializer_Graph_SetNode
 		LabelID label = labels[i];
 		// set label matrix at position [id, id]
 		RG_Matrix  M = Graph_GetLabelMatrix(g, label);
-		GrB_Matrix m = RG_MATRIX_M(M);
+		GrB_Matrix m = RG_Matrix_m(M);
 		info = GrB_Matrix_setElement_BOOL(m, true, id, id);
 		if(info == GrB_INVALID_INDEX) {
 			RedisModule_Log(NULL, "notice", "RESIZE LABEL MATRIX");
@@ -103,7 +103,7 @@ void Serializer_Graph_SetNodeLabels
 	int node_count           = Graph_RequiredMatrixDim(g);
 	int label_count          = Graph_LabelTypeCount(g);
 	RG_Matrix node_labels    = Graph_GetNodeLabelMatrix(g);
-	GrB_Matrix node_labels_m = RG_MATRIX_M(node_labels);
+	GrB_Matrix node_labels_m = RG_Matrix_m(node_labels);
 
 #if RG_DEBUG
 	GrB_Index nvals;
@@ -115,7 +115,7 @@ void Serializer_Graph_SetNodeLabels
 
 	for(int i = 0; i < label_count; i++) {
 		RG_Matrix  M  =  Graph_GetLabelMatrix(g, i);
-		GrB_Matrix m  =  RG_MATRIX_M(M);
+		GrB_Matrix m  =  RG_Matrix_m(M);
 
 		GxB_Vector_diag(v, m, 0, NULL);
 
@@ -139,11 +139,17 @@ static void _OptimizedSingleEdgeFormConnection
 ) {
 	GrB_Info info;
 	RG_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
+	RG_Matrix  S      =  Graph_GetSourceRelationMatrix(g, r, false);
+	RG_Matrix  T      =  Graph_GetTargetRelationMatrix(g, r, false);
 	RG_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
-	GrB_Matrix m      =  RG_MATRIX_M(M);
-	GrB_Matrix tm     =  RG_MATRIX_TM(M);
-	GrB_Matrix adj_m  =  RG_MATRIX_M(adj);
-	GrB_Matrix adj_tm =  RG_MATRIX_TM(adj);
+	GrB_Matrix m      =  RG_Matrix_m(M);
+	GrB_Matrix tm     =  RG_Matrix_m(RG_Matrix_getTranspose(M));
+	GrB_Matrix s      =  RG_Matrix_m(S);
+	GrB_Matrix ts     =  RG_Matrix_m(RG_Matrix_getTranspose(S));
+	GrB_Matrix t      =  RG_Matrix_m(T);
+	GrB_Matrix tt     =  RG_Matrix_m(RG_Matrix_getTranspose(T));
+	GrB_Matrix adj_m  =  RG_Matrix_m(adj);
+	GrB_Matrix adj_tm =  RG_Matrix_m(RG_Matrix_getTranspose(adj));
 
 	UNUSED(info);
 
@@ -170,14 +176,18 @@ static void _OptimizedSingleEdgeFormConnection
 	// update relationship matrix
 	//--------------------------------------------------------------------------
 
-	info = GrB_Matrix_setElement_UINT64(m, edge_id, src, dest);
+	info = GrB_Matrix_setElement_BOOL(m, true, src, dest);
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
 	ASSERT(info == GrB_SUCCESS);
-
-	// an edge of type r has just been created, update statistics
-	// TODO: stats->edge_count[relation_idx] += nvals;
-	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
+	info = GrB_Matrix_setElement_BOOL(s, true, src, edge_id);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_setElement_BOOL(ts, true, edge_id, src);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_setElement_BOOL(t, true, edge_id, dest);
+	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_setElement_BOOL(tt, true, dest, edge_id);
+	ASSERT(info == GrB_SUCCESS);
 }
 
 // set a given edge in the graph - Used for deserialization of graph
@@ -202,19 +212,7 @@ void Serializer_Graph_SetEdge
 	e->attributes =  set;
 	e->relationID =  r;
 
-	if(multi_edge) {
-		if(!Graph_FormConnection(g, src, dest, edge_id, r)) {
-			// resize matrices
-			RedisModule_Log(NULL, "notice", "RESIZE MATRIX MULTI EDGE");
-
-			uint64_t max_id = MAX(src, dest);
-			Graph_EnsureNodeCap(g, max_id);
-			bool res = Graph_FormConnection(g, src, dest, edge_id, r);
-			ASSERT(res == true);
-		}
-	} else {
-		_OptimizedSingleEdgeFormConnection(g, src, dest, edge_id, r);
-	}
+	_OptimizedSingleEdgeFormConnection(g, src, dest, edge_id, r);
 }
 
 // returns the graph deleted nodes list

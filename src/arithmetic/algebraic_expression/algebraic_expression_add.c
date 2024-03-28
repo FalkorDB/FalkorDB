@@ -47,7 +47,7 @@ RG_Matrix _Eval_Add
 			// `res` is in use, create an additional matrix
 			RG_Matrix_nrows(&nrows, res);
 			RG_Matrix_ncols(&ncols, res);
-			info = RG_Matrix_new(&inter, GrB_BOOL, nrows, ncols);
+			info = RG_Matrix_new(&inter, GrB_BOOL, nrows, ncols, false);
 			ASSERT(info == GrB_SUCCESS);
 			B = AlgebraicExpression_Eval(right, inter);
 		} else {
@@ -78,7 +78,7 @@ RG_Matrix _Eval_Add
 				// can't use `res`, use an intermidate matrix
 				RG_Matrix_nrows(&nrows, res);
 				RG_Matrix_ncols(&ncols, res);
-				info = RG_Matrix_new(&inter, GrB_BOOL, nrows, ncols);
+				info = RG_Matrix_new(&inter, GrB_BOOL, nrows, ncols, false);
 				ASSERT(info == GrB_SUCCESS);
 			}
 			AlgebraicExpression_Eval(right, inter);

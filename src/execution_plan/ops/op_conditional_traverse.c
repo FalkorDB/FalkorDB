@@ -25,7 +25,7 @@ static void CondTraverseToString(const OpBase *ctx, sds *buf) {
 }
 
 static void _populate_filter_matrix(OpCondTraverse *op) {
-	GrB_Matrix FM = RG_MATRIX_M(op->F);
+	GrB_Matrix FM = RG_Matrix_m(op->F);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
@@ -51,8 +51,8 @@ void _traverse(OpCondTraverse *op) {
 	if(op->F == NULL) {
 		// create both filter and result matrices
 		size_t required_dim = Graph_RequiredMatrixDim(op->graph);
-		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim);
-		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim);
+		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim, false);
+		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim, false);
 
 		// prepend filter matrix to algebraic expression as the leftmost operand
 		AlgebraicExpression_MultiplyToTheLeft(&op->ae, op->F);
@@ -142,7 +142,7 @@ static Record CondTraverseConsume(OpBase *opBase) {
 	NodeID dest_id = INVALID_ENTITY_ID;
 
 	while(true) {
-		GrB_Info info = RG_MatrixTupleIter_next_UINT64(&op->iter, &src_id, &dest_id, NULL);
+		GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &src_id, &dest_id, NULL);
 
 		// Managed to get a tuple, break.
 		if(info == GrB_SUCCESS) break;

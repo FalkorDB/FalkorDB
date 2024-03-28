@@ -122,7 +122,7 @@ static void _Index_PopulateEdgeIndex
 	EntityID  dest_id      = 0;     // current processed column idx
 	EntityID  edge_id      = 0;     // current processed edge id
 	EntityID  prev_src_id  = 0;     // last processed row idx
-	EntityID  prev_dest_id = 0;     // last processed column idx
+	EntityID  prev_edge_id = 0;     // last processed column idx
 	int       indexed      = 0;     // number of entities indexed in current batch
 	int       batch_size   = 1000;  // max number of entities to index in one go
 	RG_MatrixTupleIter it  = {0};
@@ -142,27 +142,29 @@ static void _Index_PopulateEdgeIndex
 		// reset number of indexed edges in batch
 		indexed      = 0;
 		prev_src_id  = src_id;
-		prev_dest_id = dest_id;
+		prev_edge_id = edge_id;
 
 		// fetch relation matrix
-		const RG_Matrix m = Graph_GetRelationMatrix(g, Index_GetLabelID(idx),
-				false);
-		ASSERT(m != NULL);
+		int label_id = Index_GetLabelID(idx);
+		RG_Matrix S = Graph_GetSourceRelationMatrix(g, label_id, false);
+		ASSERT(S != NULL);
+		RG_Matrix T = Graph_GetTargetRelationMatrix(g, label_id, false);
+		ASSERT(T != NULL);
+		RG_MatrixTupleIter it_dst = {0};
+		RG_MatrixTupleIter_attach(&it_dst, T);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		info = RG_MatrixTupleIter_attach(&it, m);
-		ASSERT(info == GrB_SUCCESS);
-		info = RG_MatrixTupleIter_iterate_range(&it, src_id, UINT64_MAX);
+		info = RG_MatrixTupleIter_AttachRange(&it, S, src_id, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously indexed edges
-		while((info = RG_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id,
-						&edge_id)) == GrB_SUCCESS &&
+		while((info = RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
+						NULL)) == GrB_SUCCESS &&
 				src_id == prev_src_id &&
-				dest_id < prev_dest_id);
+				edge_id < prev_edge_id);
 
 		// process only if iterator is on an active entry
 		if(info != GrB_SUCCESS) {
@@ -174,27 +176,19 @@ static void _Index_PopulateEdgeIndex
 		//----------------------------------------------------------------------
 
 		do {
+			RG_MatrixTupleIter_iterate_row(&it_dst, edge_id);
+			RG_MatrixTupleIter_next_BOOL(&it_dst, NULL, &dest_id, NULL);
+
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
-			e.relationID = Index_GetLabelID(idx);
+			e.relationID = label_id;
+			Graph_GetEdge(g, edge_id, &e);
+			Index_IndexEdge(idx, &e);
 
-			if(SINGLE_EDGE(edge_id)) {
-				Graph_GetEdge(g, edge_id, &e);
-				Index_IndexEdge(idx, &e);
-			} else {
-				EdgeID *edgeIds = (EdgeID *)(CLEAR_MSB(edge_id));
-				uint edgeCount = array_len(edgeIds);
-
-				for(uint i = 0; i < edgeCount; i++) {
-					edge_id = edgeIds[i];
-					Graph_GetEdge(g, edge_id, &e);
-					Index_IndexEdge(idx, &e);
-				}
-			}
-			indexed++; // single/multi edge are counted similarly
+			indexed++;
 		} while(indexed < batch_size &&
-			  RG_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id, &edge_id)
+			  RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
 				== GrB_SUCCESS);
 
 		//----------------------------------------------------------------------

@@ -115,7 +115,7 @@ EntityID AllNeighborsCtx_NextNeighbor
 		RG_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
 
 		GrB_Index dest_id;
-		GrB_Info info = RG_MatrixTupleIter_next_UINT64(it, NULL, &dest_id, NULL);
+		GrB_Info info = RG_MatrixTupleIter_next_BOOL(it, NULL, &dest_id, NULL);
 
 		if(info == GxB_EXHAUSTED) {
 			// backtrack

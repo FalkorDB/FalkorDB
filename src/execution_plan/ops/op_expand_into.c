@@ -34,7 +34,7 @@ static void _populate_filter_matrix
 (
 	OpExpandInto *op
 ) {
-	GrB_Matrix FM = RG_MATRIX_M(op->F);
+	GrB_Matrix FM = RG_Matrix_m(op->F);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
@@ -65,8 +65,8 @@ static void _traverse
 	if(op->F == NULL) {
 		// create both filter matrix F and result matrix M
 		size_t required_dim = Graph_RequiredMatrixDim(op->graph);
-		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim);
-		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim);
+		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim, false);
+		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim, false);
 
 		// prepend the filter matrix to algebraic expression
 		// as the leftmost operand
