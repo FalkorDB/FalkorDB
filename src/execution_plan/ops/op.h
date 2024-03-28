@@ -55,6 +55,7 @@ typedef enum {
 	OPType_OR_APPLY_MULTIPLEXER,
 	OPType_AND_APPLY_MULTIPLEXER,
 	OPType_OPTIONAL,
+	OPType_LOAD_CSV,
 } OPType;
 
 typedef enum {
@@ -204,8 +205,8 @@ uint OpBase_ChildCount
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (
-	OpBase *join,  // op
-	uint i         // child index
+	OpBase *op,  // op
+	uint i       // child index
 );
 
 // mark alias as being modified by operation
