@@ -4,7 +4,7 @@ if [ ${BROWSER:-1} -eq 1 ]
 then
     if [ -d /FalkorDBBrowser ]
     then
-        cd /FalkorDBBrowser && node server.js &
+        cd /FalkorDBBrowser && HOSTNAME="0.0.0.0" node server.js &
     fi
 fi
 
