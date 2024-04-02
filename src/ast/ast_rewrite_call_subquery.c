@@ -425,6 +425,8 @@ static void _rewrite_projections
 			_add_first_clause(clause, clause_ind, first_ind, names,
 				*inter_names);
 
+			subquery = cypher_ast_call_subquery_get_query(clause);
+
 			// update union indeces
 			for(uint j = i; j < n_union_branches; j++) {
 				union_indices[j]++;
