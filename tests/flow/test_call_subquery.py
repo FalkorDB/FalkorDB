@@ -2111,12 +2111,12 @@ updating clause.")
         self.graph.query("CREATE (:N {v: 1})")
 
         res = self.graph.query("""
-                MATCH (n0)
-                CALL {
-                    FOREACH ( n1 IN [] | FOREACH ( n2 IN [] | MERGE () ) )
-                    RETURN 0 AS n3
-                    UNION
-                    RETURN 0 AS n3
-                }
-                RETURN 0""")
+               MATCH (n)
+               CALL {
+                       FOREACH ( n2 IN [] | CREATE () )
+                       RETURN 0 AS n3
+                   UNION
+                       RETURN 0 AS n3
+               }
+               RETURN 0""")
         self.env.assertEquals(res.result_set, [[0]])
