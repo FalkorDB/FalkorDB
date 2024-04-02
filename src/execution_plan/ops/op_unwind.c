@@ -96,14 +96,9 @@ static Record _handoff
 		Record  r = OpBase_CloneRecord(op->currentRecord);
 		SIValue v = SIArray_Get(op->list, op->listIdx);
 
-		// persist 'v', as we have no control over it once it is added to 'r'
-		// eventually 'list' will be freed as a result of either pulling from
-		// child or resetting
-		if(unlikely(!(v.type & SI_GRAPHENTITY))) {
-			SIValue_Persist(&v);
-		}
-
 		Record_Add(r, op->unwindRecIdx, v);
+		Record_PersistScalars(r);
+
 		op->listIdx++;
 		return r;
 	}

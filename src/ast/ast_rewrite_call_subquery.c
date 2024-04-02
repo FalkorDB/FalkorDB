@@ -70,10 +70,6 @@ static uint _add_names_projections
 
 // add projections to projections array, corresponding to the bound vars (names)
 // and their internal representation (inter_names)
-// if `direction` is 0 (false), projections from `names` to `inter_names` are added.
-// if `directions` is 1, projections from `inter_names` to `names` are added.
-// if `directions` is 2, projections from `inter_names` to `inter_names` are
-// added.
 // returns the new value of `proj_idx`
 static uint _add_projections
 (
@@ -95,9 +91,10 @@ static uint _add_projections
 			inter_names + n_outer_names, names, hide);
 	}
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// create projections for bound vars from outer context
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+
 	for(uint i = 0; i < n_outer_names; i++) {
 		// create a projection for the bound var
 		struct cypher_input_range range = {0};
@@ -213,13 +210,13 @@ static void _add_first_clause
 	uint proj_idx = 0;
 	cypher_astnode_t *projections[n_projections];
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// create projections for bound vars
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	proj_idx = _add_projections(projections, proj_idx, names, inter_names,
 		true);
 
-	// -------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
 	// prepare additional arguments
 	//--------------------------------------------------------------------------
 
