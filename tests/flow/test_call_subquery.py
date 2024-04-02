@@ -2103,3 +2103,20 @@ updating clause.")
         plan = self.graph.explain(query)
         scan = locate_operation(plan.structured_plan, "Conditional Traverse")
         self.env.assertEquals(str(scan), "Conditional Traverse | (n:N)->(n:N)")
+
+    def test32_rewrite_callsubquery(self):
+        self.graph.delete()
+
+        # create the node (:N {v: 1})
+        self.graph.query("CREATE (:N {v: 1})")
+
+        res = self.graph.query("""
+               MATCH (n)
+               CALL {
+                       FOREACH ( n2 IN [] | CREATE () )
+                       RETURN 0 AS n3
+                   UNION
+                       RETURN 0 AS n3
+               }
+               RETURN 0""")
+        self.env.assertEquals(res.result_set, [[0]])
