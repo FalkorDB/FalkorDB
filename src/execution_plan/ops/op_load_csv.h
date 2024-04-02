@@ -7,16 +7,19 @@
 
 #include "op.h"
 #include "../execution_plan.h"
+#include "../../csv_reader/csv_reader.h"
 
 // load CSV
 typedef struct {
 	OpBase op;            // op base must be the first field in this struct
+	CSVReader reader;     // CSV reader
 	AR_ExpNode *exp;      // expression evaluated to CSV path
 	SIValue path;         // CSV path
 	char *alias;          // CSV row alias
 	int recIdx;           // record index to populate with CSV row
-	bool mock;            // mock CSV row
+	size_t ncols;         // number of columns
 	bool with_headers;    // CSV contains header row
+	SIValue *headers;     // header columns
 	OpBase *child;        // child operation
 	Record child_record;  // child record
 } OpLoadCSV;

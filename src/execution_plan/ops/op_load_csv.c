@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "op_load_csv.h"
+#include "../../datatypes/map.h"
 #include "../../datatypes/array.h"
 
 // forward declarations
@@ -35,10 +36,57 @@ static bool _compute_path
 	return true;
 }
 
-// mock data
-static char *A = "AAA";
-static char *B = "BB";
-static char *C = "C";
+// initialize CSV reader
+static bool _Init_CSVReader
+(
+	OpLoadCSV *op  // load CSV operation
+) {
+	ASSERT(op != NULL);
+
+	// free old reader
+	if(op->reader != NULL) {
+		CSVReader_Free(op->reader);
+	}
+
+	// initialize a new CSV reader
+	op->reader = CSVReader_New(op->path.stringval, op->with_headers, ',');
+	op->ncols  = CSVReader_ColumnCount(op->reader);
+
+	//--------------------------------------------------------------------------
+	// save headers
+	//--------------------------------------------------------------------------
+
+	if(op->with_headers) {
+		// free old headers
+		if(op->headers != NULL) {
+			for(int i = 0; i < op->ncols; i++) {
+				SIValue_Free(op->headers[i]);
+			}
+			rm_free(op->headers);
+		}
+
+		char *columns[op->ncols];
+		size_t lengths[op->ncols];
+		if(!CSVReader_GetHeaders(op->reader, (const char**)&columns, lengths)) {
+			ErrorCtx_RaiseRuntimeException("failed to read headers row");
+			return false;
+		}
+
+		// save headers
+		op->headers = rm_malloc(sizeof(SIValue) * op->ncols);
+		for(int i = 0; i < op->ncols; i++) {
+			size_t l = lengths[i];
+			char *s  = rm_malloc(l+1);
+			memcpy(s, columns[i], l);
+			s[l] = '\0';  // nullify
+
+			// add value to row array
+			op->headers[i] = SI_TransferStringVal(s);
+		}
+	}
+
+	return true;
+}
 
 // get a single CSV row
 static bool _CSV_GetRow
@@ -49,17 +97,50 @@ static bool _CSV_GetRow
 	ASSERT(op  != NULL);
 	ASSERT(row != NULL);
 
-	if(!op->mock) return false;
+	char *values[op->ncols];
+	size_t lengths[op->ncols];
 
-	SIValue _row = SIArray_New(3);
+	// try to get a new row from CSV
+	if(!CSVReader_GetRow(op->reader, (const char**)&values, lengths)) {
+		// reached the end of the file
+		return false;
+	}
 
-	SIArray_Append(&_row, SI_ConstStringVal(A));
-	SIArray_Append(&_row, SI_ConstStringVal(B));
-	SIArray_Append(&_row, SI_ConstStringVal(C));
+	//--------------------------------------------------------------------------
+	// copy values
+	//--------------------------------------------------------------------------
 
-	*row = _row;
+	if(op->with_headers) {
+		SIValue _row[op->ncols];
 
-	op->mock = false;
+		for(int i = 0; i < op->ncols; i++) {
+			size_t l = lengths[i];
+			char *s  = rm_malloc(l+1);
+			memcpy(s, values[i], l);
+			s[l] = '\0';  // nullify
+
+			// add value to row array
+			_row[i] = SI_TransferStringVal(s);
+		}
+
+		*row = Map_FromArrays(op->headers, _row, op->ncols);
+	} else {
+		SIValue *_row = array_new(SIValue, op->ncols);
+
+		for(int i = 0; i < op->ncols; i++) {
+			size_t l = lengths[i];
+			char *s  = rm_malloc(l+1);
+			memcpy(s, values[i], l);
+			s[l] = '\0';  // nullify
+
+			// add value to row array
+			array_append(_row, SI_TransferStringVal(s));
+		}
+
+		*row = SIArray_FromRaw(&_row);
+		ASSERT(_row == NULL);
+	}
+
 	return true;
 }
 
@@ -79,7 +160,6 @@ OpBase *NewLoadCSVOp
 
 	op->exp          = exp;
 	op->path         = SI_NullVal();
-	op->mock         = true;
 	op->alias        = strdup(alias);
 	op->with_headers = with_headers;
 
@@ -97,7 +177,7 @@ static OpResult LoadCSVInit
 (
 	OpBase *opBase
 ) {
-	// set operation consume function
+	// set operation's consume function
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 	// update consume function in case operation has a child
@@ -108,12 +188,22 @@ static OpResult LoadCSVInit
 		return OP_OK;
 	}
 
+	//--------------------------------------------------------------------------
 	// no child operation evaluate path expression
+	//--------------------------------------------------------------------------
+
+	// try to evaluate expression
 	Record r = OpBase_CreateRecord(opBase);
 	if(!_compute_path(op, r)) {
 		// failed to evaluate CSV path
 		// update consume function
-		OpBase_DeleteRecord(r);
+		OpBase_UpdateConsume(opBase, LoadCSVConsumeDepleted);
+	}
+	OpBase_DeleteRecord(r);
+
+	if(!_Init_CSVReader(op)) {
+		// failed to init CSV
+		// update consume function
 		OpBase_UpdateConsume(opBase, LoadCSVConsumeDepleted);
 	}
 
@@ -154,10 +244,14 @@ pull_from_child:
 			return NULL;
 		}
 
-		op->mock = true;
+		// create a new CSV reader
+		if(!_Init_CSVReader(op)) {
+			return NULL;
+		}
 	}
 
 	// must have a record at this point
+	ASSERT(op->reader       != NULL);
 	ASSERT(op->child_record != NULL);
 
 	// get a new CSV row
@@ -229,6 +323,11 @@ static OpResult LoadCSVReset (
 		op->child_record = NULL;
 	}
 
+	if(op->reader != NULL) {
+		CSVReader_Free(op->reader);
+		op->reader = NULL;
+	}
+
 	return OP_OK;
 }
 
@@ -256,6 +355,19 @@ static void LoadCSVFree
 	if(op->child_record != NULL) {
 		OpBase_DeleteRecord(op->child_record);
 		op->child_record = NULL;	
+	}
+
+	if(op->reader != NULL) {
+		CSVReader_Free(op->reader);
+		op->reader = NULL;
+	}
+
+	if(op->headers != NULL) {
+		for(int i = 0; i < op->ncols; i++) {
+			SIValue_Free(op->headers[i]);
+		}
+		rm_free(op->headers);
+		op->headers = NULL;
 	}
 }
 
