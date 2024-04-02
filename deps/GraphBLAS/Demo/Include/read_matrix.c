@@ -16,6 +16,7 @@
 // The matrix is read in double precision.
 
 #include "GraphBLAS.h"
+#undef I
 
 // free all workspace; this used by the OK(...) macro if an error occurs
 #undef  FREE_ALL

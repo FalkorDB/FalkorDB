@@ -57,6 +57,7 @@ void mexFunction
     ERR (GxB_Global_Option_set_CHAR (GxB_JIT_C_COMPILER_FLAGS, NULL)) ;
     ERR (GxB_Global_Option_set_CHAR (GxB_JIT_C_LINKER_FLAGS, NULL)) ;
     ERR (GxB_Global_Option_set_CHAR (GxB_JIT_C_PREFACE, NULL)) ;
+    ERR (GxB_Global_Option_set_CHAR (GxB_JIT_CUDA_PREFACE, NULL)) ;
     OK (GxB_Global_Option_set_CHAR (GxB_JIT_ERROR_LOG, NULL)) ;
 
     //--------------------------------------------------------------------------

@@ -10,6 +10,7 @@
 // TODO for GPU: add this to CMakelists.txt, or merge with reduce_demo.c
 
 #include "GraphBLAS.h"
+#undef I
 
 // #define N 65536
    #define N 16384

@@ -174,7 +174,7 @@ void mexFunction
 
     FILE *fp = fopen ("/tmp/GB_tcov_gunk.h", "w") ;
     GB_macrofy_binop (fp, "nothing", false, false, false,
-        199, false, NULL, NULL, NULL) ;
+        199, false, NULL, NULL, NULL, NULL) ;
     fclose (fp) ;
 
     //--------------------------------------------------------------------------

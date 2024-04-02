@@ -10,6 +10,7 @@
 #ifndef GB_BITMAP_ASSIGN_H
 #define GB_BITMAP_ASSIGN_H
 #include "GB.h"
+#include "GB_math.h"
 
 GrB_Info GB_bitmap_assign
 (

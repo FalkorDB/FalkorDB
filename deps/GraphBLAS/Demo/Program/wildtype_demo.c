@@ -10,7 +10,8 @@
 // Each "scalar" entry of this type consists of a 4x4 matrix and a string of
 // length 64.
 
-#include "GraphBLAS.h"
+#include "graphblas_demos.h"
+#undef I
 
 #if defined __INTEL_COMPILER
 #pragma warning (disable: 58 167 144 177 181 186 188 589 593 869 981 1418 1419 1572 1599 2259 2282 2557 2547 3280 )
@@ -189,36 +190,18 @@ void wildmult (wildtype *z, const wildtype *x, const wildtype *y)
 //------------------------------------------------------------------------------
 
 #define LINE \
-"----------------------------------------------------------------------------\n"
-#define LINE2 \
-"============================================================================\n"
+"--------------------------------------------------------\n"
 
 int main (void)
 {
 
     // start GraphBLAS
-    #if 1
     GrB_init (GrB_NONBLOCKING) ;
-    #else
-    GxB_init (GxB_NONBLOCKING_GPU, NULL, NULL, NULL, NULL, NULL) ;
-    GxB_set (GxB_GPU_ID, 0) ;
-    GB_Global_hack_set (2, 1) ; // always use the GPU
-    #endif
 
     GxB_Global_Option_set (GxB_BURBLE, true) ;
     int nthreads ;
     GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads) ;
-    fprintf (stderr, "wildtype demo: nthreads %d\n", nthreads) ;
-
-    /* via #defines:
-    fprintf (stderr, LINE2 "SuiteSparse:GraphBLAS Version %d.%d.%d, %s\n" LINE2
-        "%s" LINE "License: %s" LINE "GraphBLAS API Version %d.%d.%d, %s"
-        " (http://graphblas.org)\n%s" LINE2, GxB_IMPLEMENTATION_MAJOR,
-        GxB_IMPLEMENTATION_MINOR, GxB_IMPLEMENTATION_SUB,
-        GxB_IMPLEMENTATION_DATE,  GxB_IMPLEMENTATION_ABOUT,
-        GxB_IMPLEMENTATION_LICENSE, GxB_SPEC_MAJOR, GxB_SPEC_MINOR,
-        GxB_SPEC_SUB, GxB_SPEC_DATE, GxB_SPEC_ABOUT) ;
-    */
+    fprintf (stderr, "\n" LINE "wildtype_demo: nthreads: %d\n", nthreads ) ;
 
     char *library ;   GxB_Global_Option_get (GxB_LIBRARY_NAME,     &library) ;
     int version [3] ; GxB_Global_Option_get (GxB_LIBRARY_VERSION,  version) ;
@@ -233,9 +216,9 @@ int main (void)
     char *api_about ; GxB_Global_Option_get (GxB_API_ABOUT,        &api_about) ;
     char *api_url ;   GxB_Global_Option_get (GxB_API_URL,          &api_url) ;
 
-    fprintf (stderr, LINE2 "%s Version %d.%d.%d, %s\n" LINE2 "%s"
+    fprintf (stderr, LINE "%s Version %d.%d.%d, %s\n" LINE "%s"
         "(%s)\n" LINE "License:\n%s" LINE "GraphBLAS API Version %d.%d.%d, %s"
-        " (%s)\n%s" LINE2,
+        " (%s)\n%s" LINE,
         library, version [0], version [1], version [2], date, about, url,
         license, api_ver [0], api_ver [1], api_ver [2], api_date, api_url,
         api_about) ;
@@ -460,5 +443,6 @@ int main (void)
     GrB_Type_free (&WildType) ;
 
     GrB_finalize ( ) ;
+    fprintf (stderr, "\n" LINE) ;
 }
 

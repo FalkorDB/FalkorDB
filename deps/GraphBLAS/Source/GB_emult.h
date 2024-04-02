@@ -10,6 +10,7 @@
 #ifndef GB_EMULT_H
 #define GB_EMULT_H
 #include "GB.h"
+#include "GB_math.h"
 #include "GB_bitmap_assign_methods.h"
 
 #define GB_EMULT_METHOD1_ADD 1      /* use GB_add instead of emult */

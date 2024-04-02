@@ -24,18 +24,18 @@
     OK (GrB_Monoid_get_SIZE (op, &size, GrB_NAME)) ;                    \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
-    info2 = GrB_Monoid_get_SIZE (op, &siz1, GrB_INPUT1TYPE_STRING) ;    \
-    info3 = GrB_Monoid_get_String (op, name, GrB_INPUT1TYPE_STRING) ;   \
+    info2 = GrB_Monoid_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;    \
+    info3 = GrB_Monoid_get_String (op, name, GrB_INP0_TYPE_STRING) ;   \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz1 == strlen (name) + 1) ;                                 \
     CHECK (info2 == GrB_SUCCESS) ;                                      \
-    info2 = GrB_Monoid_get_SIZE (op, &siz2, GrB_INPUT2TYPE_STRING) ;    \
-    info3 = GrB_Monoid_get_String (op, name, GrB_INPUT2TYPE_STRING) ;   \
+    info2 = GrB_Monoid_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;    \
+    info3 = GrB_Monoid_get_String (op, name, GrB_INP1_TYPE_STRING) ;   \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz2 == strlen (name) + 1) ;                                 \
     CHECK (info2 == GrB_SUCCESS) ;                                      \
-    info2 = GrB_Monoid_get_SIZE (op, &siz3, GrB_OUTPUTTYPE_STRING) ;    \
-    info3 = GrB_Monoid_get_String (op, name, GrB_OUTPUTTYPE_STRING) ;   \
+    info2 = GrB_Monoid_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;    \
+    info3 = GrB_Monoid_get_String (op, name, GrB_OUTP_TYPE_STRING) ;   \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz3 == strlen (name) + 1) ;                                 \
     CHECK (info2 == GrB_SUCCESS) ;                                      \
@@ -235,40 +235,40 @@ void mexFunction
     // other get/set methods for GrB_Monoid
     //--------------------------------------------------------------------------
 
-    OK (GrB_Monoid_get_INT32_(GrB_MAX_MONOID_FP32, &code, GrB_INPUT1TYPE_CODE)) ;
+    OK (GrB_Monoid_get_INT32_(GrB_MAX_MONOID_FP32, &code, GrB_INP0_TYPE_CODE)) ;
     CHECK (code == GrB_FP32_CODE) ;
 
     OK (GrB_Monoid_get_String_(GrB_MAX_MONOID_FP32, name,
-        GrB_INPUT1TYPE_STRING)) ;
+        GrB_INP0_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_FP32")) ;
 
     OK (GrB_Monoid_get_String_(GrB_MAX_MONOID_INT32, name,
-        GrB_INPUT2TYPE_STRING)) ;
+        GrB_INP1_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_INT32")) ;
 
-    OK (GrB_Monoid_get_INT32_(GrB_MAX_MONOID_FP64, &code, GrB_OUTPUTTYPE_CODE)) ;
+    OK (GrB_Monoid_get_INT32_(GrB_MAX_MONOID_FP64, &code, GrB_OUTP_TYPE_CODE)) ;
     CHECK (code == GrB_FP64_CODE) ;
 
     OK (GrB_Monoid_get_String_(GrB_MAX_MONOID_FP64, name,
-        GrB_OUTPUTTYPE_STRING)) ;
+        GrB_OUTP_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_FP64")) ;
 
     OK (GrB_Monoid_get_Scalar_(GrB_MAX_MONOID_FP32, s_int32,
-        GrB_INPUT1TYPE_CODE)) ;
+        GrB_INP0_TYPE_CODE)) ;
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_FP32_CODE) ;
 
     OK (GrB_Monoid_get_Scalar_(GrB_LAND_MONOID_BOOL, s_int32,
-        GrB_OUTPUTTYPE_CODE)) ;
+        GrB_OUTP_TYPE_CODE)) ;
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_BOOL_CODE) ;
 
     OK (GrB_Monoid_get_INT32_(GrB_PLUS_MONOID_FP64, &code,
-        GrB_INPUT2TYPE_CODE)) ;
+        GrB_INP1_TYPE_CODE)) ;
     CHECK (code == GrB_FP64_CODE) ;
 
     OK (GrB_Monoid_get_Scalar_(GrB_LAND_MONOID_BOOL, s_int32,
-        GrB_INPUT2TYPE_CODE)) ;
+        GrB_INP1_TYPE_CODE)) ;
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_BOOL_CODE) ;
 
@@ -289,14 +289,14 @@ void mexFunction
     CHECK (size == 1) ;
     OK (GxB_print (monoid, 3)) ;
 
-    OK (GrB_Monoid_get_String_(monoid, name, GrB_INPUT1TYPE_STRING)) ;
+    OK (GrB_Monoid_get_String_(monoid, name, GrB_INP0_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_FP32")) ;
 
-    OK (GrB_Monoid_get_SIZE_(monoid, &size, GrB_INPUT1TYPE_STRING)) ;
+    OK (GrB_Monoid_get_SIZE_(monoid, &size, GrB_INP0_TYPE_STRING)) ;
     CHECK (size == strlen ("GrB_FP32") + 1) ;
 
     expected = GrB_INVALID_VALUE ;
-    ERR (GrB_Monoid_get_SIZE_(monoid, &size, GrB_INPUT1TYPE_CODE)) ;
+    ERR (GrB_Monoid_get_SIZE_(monoid, &size, GrB_INP0_TYPE_CODE)) ;
 
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_Monoid_set_Scalar_(monoid, s_int32, 0)) ;

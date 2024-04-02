@@ -5,19 +5,6 @@
 
 # FalkorDB
 
-> **Note**
-> The team behind RedisGraph decided to take a stab at bringing this disruptive technology back to market.
->
-> We plan to rebrand it and release it as a stand alone product, following the same guidelines we have followed for the last 6 years:
-> 
-> * Working in the open with the community
-> * Always provide superior performance.
-> * Easy to adapt
-
-
-
----
-
 FalkorDB is the first queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to use [sparse matrices](https://en.wikipedia.org/wiki/Sparse_matrix) to represent the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](http://faculty.cse.tamu.edu/davis/GraphBLAS.html) to query the graph.
 
 Primary features:
@@ -47,7 +34,16 @@ To quickly try out FalkorDB, launch an instance using docker:
 docker run -p 6379:6379 -it --rm falkordb/falkordb:edge
 ```
 
-Once loaded you can interact with FalkorDB using any of the supported [client libraries](#Client-libraries)
+Or, to use the built-in browser-based interface, run:
+
+```
+docker run -p 6379:6379 -p 3000:3000 -it --rm falkordb/falkordb:edge
+```
+
+Then, open your browser and navigate to `http://localhost:3000`.
+
+
+You can also interact with FalkorDB using any of the supported [client libraries](#Client-libraries)
 
 Here we'll use [FalkorDB Python client](https://pypi.org/project/FalkorDB/) to create a small graph representing a subset of motorcycle riders and teams taking part in the MotoGP league, once created we'll start querying our data.
 
@@ -92,7 +88,7 @@ Requirements:
 * On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
 
 * On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
-    * The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for RedisGraph. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
+    * The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
 
 To build, run `make` in the project's directory.
 
@@ -170,14 +166,18 @@ Depending on your client of choice, the exact method for doing that may vary.
 
 #### Python example
 
-This code snippet shows how to use FalkorDB with raw Redis commands from Python via
-[redis-py](https://github.com/redis/redis-py):
+This code snippet shows how to use FalkorDB with from Python using [falkordb-py](https://github.com/FalkorDB/falkordb-py):
 
 ```Python
-import redis
+from falkordb import FalkorDB
 
-r = redis.Redis(host='localhost', port=6379, db=0)
-reply = r.graph().query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
+# Connect to FalkorDB
+db = FalkorDB(host='localhost', port=6379)
+
+# Select the social graph
+g = db.select_graph('social')
+
+reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
 ```
 
 ### Client libraries
@@ -188,7 +188,7 @@ Some languages have client libraries that provide support for FalkorDB's command
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | ![Stars][jfalkordb-stars] | [Maven][jfalkordb-package]||
 | [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
-| [node-falkordb][node-falkordb-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][node-falkordb-stars] | [npm][node-falkordb-package]||
+| [falkordb-ts][falkordb-ts-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-ts-stars] | [npm][falkordb-ts-package]||
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
 | [redgraph][redgraph-url]                                  | Ruby       | MIT     | [pzac][redgraph-author]                | [![redgraph-stars]][redgraph-url]                                 | [GitHub][redgraph-url] ||
@@ -220,9 +220,9 @@ Some languages have client libraries that provide support for FalkorDB's command
 [nredisstack-stars]: https://img.shields.io/github/stars/redis/nredisstack.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [nredisstack-package]: https://www.nuget.org/packages/nredisstack/
 
-[node-falkordb-url]: https://github.com/falkordb/node-falkordb
-[node-falkordb-stars]: https://img.shields.io/github/stars/falkordb/node-falkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
-[node-falkordb-package]: https://www.npmjs.com/package/falkordb
+[falkordb-ts-url]: https://github.com/falkordb/falkordb-ts
+[falkordb-ts-stars]: https://img.shields.io/github/stars/falkordb/falkordb-ts.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-ts-package]: https://www.npmjs.com/package/falkordb
 
 [redisgraph-rb-author]: https://redislabs.com
 [redisgraph-rb-url]: https://github.com/RedisGraph/redisgraph-rb

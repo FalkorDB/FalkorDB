@@ -169,6 +169,25 @@ typedef enum
     GB_JIT_KERNEL_CONVERTBITMAP = 85, // GB_convert_bitmap_worker
     GB_JIT_KERNEL_EXPANDISO     = 86, // GB_expand_iso
     GB_JIT_KERNEL_SORT          = 87, // GB_sort
+
+    //--------------------------------------------------------------------------
+    // future:: CUDA kernels
+    //--------------------------------------------------------------------------
+
+    GB_JIT_CUDA_KERNEL          = 1000, // no CUDA kernel
+
+    // reduce to scalar in CUDA
+    GB_JIT_CUDA_KERNEL_REDUCE   = 1001, // GB_cuda_reduce_to_scalar
+
+    // C<M> = A*B, except for row/col scale (which are ewise methods)
+    // ...
+    GB_JIT_CUDA_KERNEL_AXB_DOT3 = 1004, // GB_cuda_AxB_dot3
+
+    // ewise methods:
+    // ...
+    GB_JIT_CUDA_KERNEL_ROWSCALE = 1011,
+    // ...
+
 }
 GB_jit_kcode ;
 
@@ -326,6 +345,7 @@ bool GB_jitifyer_query
 
 void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash) ;
 void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket) ;
+void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket) ;
 
 GrB_Info GB_jitifyer_init (void) ;  // initialize the JIT
 
@@ -371,6 +391,10 @@ GrB_Info GB_jitifyer_set_C_cmake_libs_worker (const char *new_cmake_libs) ;
 const char *GB_jitifyer_get_C_preface (void) ;
 GrB_Info GB_jitifyer_set_C_preface (const char *new_C_preface) ;
 GrB_Info GB_jitifyer_set_C_preface_worker (const char *new_C_preface) ;
+
+const char *GB_jitifyer_get_CUDA_preface (void) ;
+GrB_Info GB_jitifyer_set_CUDA_preface (const char *new_CUDA_preface) ;
+GrB_Info GB_jitifyer_set_CUDA_preface_worker (const char *new_CUDA_preface) ;
 
 const char *GB_jitifyer_get_error_log (void) ;
 GrB_Info GB_jitifyer_set_error_log (const char *new_error_log) ;

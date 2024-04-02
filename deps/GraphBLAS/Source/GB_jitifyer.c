@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jitifyer.c: CPU jitifyer
+// GB_jitifyer.c: CPU / CUDA jitifyer
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
@@ -37,8 +37,8 @@ static int64_t  GB_jit_table_populated = 0 ;
 static size_t   GB_jit_table_allocated = 0 ;
 
 static bool GB_jit_use_cmake =
-    #if GB_WINDOWS
-    true ;      // Windows requires cmake
+    #if defined (_MSC_VER)
+    true ;      // MSVC requires cmake
     #else
     false ;     // otherwise, default is to skip cmake and compile directly
     #endif
@@ -71,9 +71,13 @@ static size_t   GB_jit_C_libraries_allocated = 0 ;
 static char    *GB_jit_C_cmake_libs = NULL ;
 static size_t   GB_jit_C_cmake_libs_allocated = 0 ;
 
-// preface to add to each JIT kernel:
+// preface to add to each CPU JIT kernel:
 static char    *GB_jit_C_preface = NULL ;
 static size_t   GB_jit_C_preface_allocated = 0 ;
+
+// preface to add to each CUDA JIT kernel:
+static char    *GB_jit_CUDA_preface = NULL ;
+static size_t   GB_jit_CUDA_preface_allocated = 0 ;
 
 // temporary workspace for filenames and system commands:
 static char    *GB_jit_temp = NULL ;
@@ -208,11 +212,12 @@ void GB_jitifyer_finalize (void)
     GB_FREE_STUFF (GB_jit_C_libraries) ;
     GB_FREE_STUFF (GB_jit_C_cmake_libs) ;
     GB_FREE_STUFF (GB_jit_C_preface) ;
+    GB_FREE_STUFF (GB_jit_CUDA_preface) ;
     GB_FREE_STUFF (GB_jit_temp) ;
 }
 
 //------------------------------------------------------------------------------
-// GB_jitifyer_init: initialize the CPU and CUDA JIT folders, flags, etc
+// GB_jitifyer_init: initialize the JIT folders, flags, etc
 //------------------------------------------------------------------------------
 
 // Returns GrB_SUCCESS or GrB_OUT_OF_MEMORY.  If any other error occurs (such
@@ -234,7 +239,8 @@ GrB_Info GB_jitifyer_init (void)
     control = GB_IMIN (control, (int) GxB_JIT_ON) ;
     #else
     // The JIT is restricted; only OFF, PAUSE, and RUN settings can be
-    // used.  No JIT kernels can be loaded or compiled.
+    // used.  No JIT kernels can be loaded or compiled.  Only PreJIT kernels
+    // can be used.
     control = GB_IMIN (control, (int) GxB_JIT_RUN) ;
     #endif
     GB_jit_control = (GxB_JIT_Control) control ;
@@ -307,6 +313,7 @@ GrB_Info GB_jitifyer_init (void)
     GB_COPY_STUFF (GB_jit_C_libraries,  GB_C_LIBRARIES) ;
     GB_COPY_STUFF (GB_jit_C_cmake_libs, GB_CMAKE_LIBRARIES) ;
     GB_COPY_STUFF (GB_jit_C_preface,    "") ;
+    GB_COPY_STUFF (GB_jit_CUDA_preface, "") ;
     OK (GB_jitifyer_alloc_space ( )) ;
 
     //--------------------------------------------------------------------------
@@ -437,6 +444,7 @@ GrB_Info GB_jitifyer_init (void)
         else if (IS ("union"        )) c = GB_JIT_KERNEL_UNION ;
         else if (IS ("user_op"      )) c = GB_JIT_KERNEL_USEROP ;
         else if (IS ("user_type"    )) c = GB_JIT_KERNEL_USERTYPE ;
+        else if (IS ("cuda_reduce"  )) c = GB_JIT_CUDA_KERNEL_REDUCE ;
         else
         {
             // PreJIT error: kernel_name is invalid; ignore this kernel
@@ -555,7 +563,7 @@ GrB_Info GB_jitifyer_establish_paths (GrB_Info error_condition)
     ok = ok && GB_file_mkdir (GB_jit_temp) ;
 
     // construct the tmp path
-    snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/tmp", GB_jit_cache_path);
+    snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/tmp", GB_jit_cache_path) ;
     ok = ok && GB_file_mkdir (GB_jit_temp) ;
 
     //--------------------------------------------------------------------------
@@ -1158,9 +1166,12 @@ void GB_jitifyer_set_use_cmake (bool use_cmake)
 { 
     #pragma omp critical (GB_jitifyer_worker)
     {
-        #if GB_WINDOWS
+        #if defined (_MSC_VER)
         // Windows requires cmake
         GB_jit_use_cmake = true ;
+        #elif defined (__MINGW32__)
+        // MINGW requires direct compile
+        GB_jit_use_cmake = false ;
         #else
         // all other platforms have the option to use cmake or a direct compile
         GB_jit_use_cmake = use_cmake ;
@@ -1224,7 +1235,6 @@ GrB_Info GB_jitifyer_set_C_cmake_libs_worker (const char *new_cmake_libs)
     return (GB_jitifyer_alloc_space ( )) ;
 }
 
-
 //------------------------------------------------------------------------------
 // GB_jitifyer_get_C_preface: return the current C preface
 //------------------------------------------------------------------------------
@@ -1277,6 +1287,61 @@ GrB_Info GB_jitifyer_set_C_preface_worker (const char *new_C_preface)
     GB_FREE_STUFF (GB_jit_C_preface) ;
     // allocate the new GB_jit_C_preface
     GB_COPY_STUFF (GB_jit_C_preface, new_C_preface) ;
+    return (GrB_SUCCESS) ;
+}
+
+//------------------------------------------------------------------------------
+// GB_jitifyer_get_CUDA_preface: return the current C preface
+//------------------------------------------------------------------------------
+
+const char *GB_jitifyer_get_CUDA_preface (void)
+{ 
+    const char *s ;
+    #pragma omp critical (GB_jitifyer_worker)
+    {
+        s = GB_jit_CUDA_preface ;
+    }
+    return (s) ;
+}
+
+//------------------------------------------------------------------------------
+// GB_jitifyer_set_CUDA_preface: set new C preface
+//------------------------------------------------------------------------------
+
+GrB_Info GB_jitifyer_set_CUDA_preface (const char *new_CUDA_preface)
+{ 
+
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
+
+    if (new_CUDA_preface == NULL)
+    { 
+        return (GrB_NULL_POINTER) ;
+    }
+
+    //--------------------------------------------------------------------------
+    // set the C preface in a critical section
+    //--------------------------------------------------------------------------
+
+    GrB_Info info ;
+    #pragma omp critical (GB_jitifyer_worker)
+    {
+        info = GB_jitifyer_set_CUDA_preface_worker (new_CUDA_preface) ;
+    }
+    return (info) ;
+}
+
+//------------------------------------------------------------------------------
+// GB_jitifyer_set_CUDA_preface_worker: set C preface in a critical section
+//------------------------------------------------------------------------------
+
+GrB_Info GB_jitifyer_set_CUDA_preface_worker (const char *new_CUDA_preface)
+{ 
+    // free the old strings that depend on the C preface
+    GB_FREE_STUFF (GB_jit_CUDA_preface) ;
+    // allocate the new GB_jit_CUDA_preface
+    GB_COPY_STUFF (GB_jit_CUDA_preface, new_CUDA_preface) ;
     return (GrB_SUCCESS) ;
 }
 
@@ -1671,6 +1736,10 @@ GrB_Info GB_jitifyer_worker
     // lock the kernel
     //--------------------------------------------------------------------------
 
+    // FIXME: add kernel_name to the lock filename.  If the lock fails,
+    // sleep for 1 second and try again repeatedly, with a timeout limit of
+    // (say) 60 seconds.
+
     uint32_t bucket = hash & 0xFF ;
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
         "%s/lock/%02x/%016" PRIx64 "_lock", GB_jit_cache_path, bucket, hash) ;
@@ -1791,15 +1860,19 @@ GrB_Info GB_jitifyer_load_worker
         //----------------------------------------------------------------------
 
         GBURBLE ("(jit: compile and load) ") ;
+        GB_jit_kcode kcode = encoding->kcode ;
+        const char *kernel_filetype =
+            (kcode < GB_JIT_CUDA_KERNEL) ? "c" : "cu" ;
 
         // create (or recreate) the kernel source, compile it, and load it
-        snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/c/%02x/%s.c",
-            GB_jit_cache_path, bucket, kernel_name) ;
+        snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/c/%02x/%s.%s",
+            GB_jit_cache_path, bucket, kernel_name, kernel_filetype) ;
         FILE *fp = fopen (GB_jit_temp, "w") ;
         if (fp != NULL)
         { 
             // create the preface
-            GB_macrofy_preface (fp, kernel_name, GB_jit_C_preface) ;
+            GB_macrofy_preface (fp, kernel_name,
+                GB_jit_C_preface, GB_jit_CUDA_preface, kcode) ;
             // macrofy the kernel operators, types, and matrix formats
             GB_macrofy_family (fp, family, encoding->code, semiring,
                 monoid, op, type1, type2, type3) ;
@@ -1808,12 +1881,14 @@ GrB_Info GB_jitifyer_load_worker
                          "#define GB_jit_kernel %s\n"
                          "#define GB_jit_query  %s_query\n"
                          "#endif\n"
-                         "#include \"GB_jit_kernel_%s.c\"\n",
-                         kernel_name, kernel_name, kname) ;
+                         "#include \"GB_jit_kernel_%s.%s\"\n",
+                         kernel_name, kernel_name, kname,
+                         kernel_filetype) ;
+
             // macrofy the query function
             bool builtin = (encoding->suffix_len == 0) ;
             GB_macrofy_query (fp, builtin, monoid, op1, op2, type1, type2,
-                type3, hash) ;
+                type3, hash, kcode) ;
             fclose (fp) ;
         }
 
@@ -1821,16 +1896,22 @@ GrB_Info GB_jitifyer_load_worker
         // gracefully fail.
 
         // compile the kernel to get the lib*.so file
-        if (GB_jit_use_cmake)
+        if (kcode >= GB_JIT_CUDA_KERNEL)
+        {
+            // use NVCC to directly compile the CUDA kernel
+            GB_jitifyer_nvcc_compile (kernel_name, bucket) ;
+        }
+        else if (GB_jit_use_cmake)
         { 
-            // use cmake to compile the kernel
+            // use cmake to compile the CPU kernel
             GB_jitifyer_cmake_compile (kernel_name, hash) ;
         }
         else
         { 
-            // use the compiler to directly compile the kernel
+            // use the compiler to directly compile the CPU kernel
             GB_jitifyer_direct_compile (kernel_name, bucket) ;
         }
+
         // load the kernel from the lib*.so file
         snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/lib/%02x/%s%s%s",
             GB_jit_cache_path, bucket, GB_LIB_PREFIX, kernel_name,
@@ -1859,7 +1940,7 @@ GrB_Info GB_jitifyer_load_worker
     }
 
     //--------------------------------------------------------------------------
-    // get the jit_kernel_function pointer
+    // get the GB_jit_kernel function pointer
     //--------------------------------------------------------------------------
 
     (*dl_function) = GB_file_dlsym (dl_handle, "GB_jit_kernel") ;
@@ -2168,6 +2249,19 @@ void GB_jitifyer_table_free (bool freeall)
 // handled by modifying the command string in the caller, so they do not have
 // to be handled here.
 
+// NOTE: this call to system(...) *cannot* be sanitized; CodeQL flags calls to
+// GB_jitifyer_command as security issues, but this is intentional.  The JIT
+// allows the end user to create arbitary user-defined types and operators,
+// which GraphBLAS then injects into C source code of a JIT kernel created at
+// run time.  The end user can also specify an arbitrary compiler to compile
+// JIT kernels.  This code injection is intentional, and required for the JIT.
+// If a security-hardened GraphBLAS library is required, then GraphBLAS must be
+// compiled with -DNJIT to disable the JIT entirely.  User-defined JIT kernels
+// will not be created at run time, and thus user-defined types and operators
+// will be slow, however.  This option does not disable any PreJIT kernels, so
+// if fast user-defined kernels are required, they can be used with the PreJIT
+// mechanism; see the GraphBLAS User Guide for details.
+
 static void GB_jitifyer_command (char *command)
 { 
     int result = system (command) ;
@@ -2180,7 +2274,10 @@ static void GB_jitifyer_command (char *command)
 // This method does not return any error/success code.  If the compilation
 // fails for any reason, the subsequent load of the compiled kernel will fail.
 
-// This method works on any platform.  For Windows, this method is always used.
+// This method works on most platforms (not yet on MINGW, so it is not used
+// there).  For Windows using MSVC, this method is always used.
+
+// FUTURE: get this method to work in MINGW.
 
 #define GB_BLD_DIR "%s/tmp/%016" PRIx64
 
@@ -2193,12 +2290,18 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
     char *burble_stdout = GB_Global_burble_get ( ) ? "" : GB_DEV_NULL ;
     char *err_redirect = (strlen (GB_jit_error_log) > 0) ? " 2>> " : "" ;
 
+#if defined (__MINGW32__)
+#define GB_SH_C "sh -c "
+#else
+#define GB_SH_C
+#endif
+
     // remove any prior build folder for this kernel, and all its contents
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s",
+        GB_SH_C "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s",
         GB_jit_cache_path, hash,     // build path
         burble_stdout, err_redirect, GB_jit_error_log) ;
-    GB_jitifyer_command (GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // create the build folder for this kernel
     snprintf (GB_jit_temp, GB_jit_temp_allocated, GB_BLD_DIR,
@@ -2211,7 +2314,7 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
     FILE *fp = fopen (GB_jit_temp, "w") ;
     if (fp == NULL) return ;
     fprintf (fp,
-        "cmake_minimum_required ( VERSION 3.13 )\n"
+        "cmake_minimum_required ( VERSION 3.13 )\n" // end user needs cmake 3.13
         "project ( GBjit LANGUAGES C )\n"
         "include_directories ( \"%s/src\"%s)\n"
         "add_compile_definitions ( GB_JIT_RUNTIME )\n",
@@ -2253,35 +2356,116 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
 
     // generate the build system for this kernel
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        "cmake -S \"" GB_BLD_DIR "\" -B \"" GB_BLD_DIR "\""
+        GB_SH_C "cmake -S \"" GB_BLD_DIR "\" -B \"" GB_BLD_DIR "\""
         " -DCMAKE_C_COMPILER=\"%s\" %s %s %s",
         GB_jit_cache_path, hash,     // -S source path
         GB_jit_cache_path, hash,     // -B build path
         GB_jit_C_compiler,                  // C compiler to use
         burble_stdout, err_redirect, GB_jit_error_log) ;
-    GB_jitifyer_command (GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // compile the library for this kernel
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        "cmake --build \"" GB_BLD_DIR "\" --config Release %s %s %s",
+        GB_SH_C "cmake --build \"" GB_BLD_DIR "\" --config Release %s %s %s",
         // can add "--verbose" here too
         GB_jit_cache_path, hash,     // build path
         burble_stdout, err_redirect, GB_jit_error_log) ;
-    GB_jitifyer_command (GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // install the library
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        "cmake --install \"" GB_BLD_DIR "\" %s %s %s",
+        GB_SH_C "cmake --install \"" GB_BLD_DIR "\" %s %s %s",
         GB_jit_cache_path, hash,     // build path
         burble_stdout, err_redirect, GB_jit_error_log) ;
-    GB_jitifyer_command (GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // remove the build folder and all its contents
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s",
+        GB_SH_C "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s",
         GB_jit_cache_path, hash,     // build path
         burble_stdout, err_redirect, GB_jit_error_log) ;
-    GB_jitifyer_command (GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
+
+#endif
+}
+
+//------------------------------------------------------------------------------
+// GB_jitifyer_nvcc_compile: compile a CUDA kernel with NVRTC
+//------------------------------------------------------------------------------
+
+// Compiles a CUDA JIT kernel in a *.cu file, containing host code that
+// launches one or more device kernels.
+
+// The input file has the form:
+//
+//      %s/c/%02x/%s or [cache_path]/c/[bucket]/[kernel_name].cu
+//
+// and the libary file is linked as
+//
+//      %s/lib/%02x/lib%s.so or [cache_path]/lib/[bucket]/lib[kernel_name].so
+//
+// All other temporary files (including *.o object files) are removed.
+
+void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
+{
+
+#if defined ( GRAPHBLAS_HAS_CUDA ) && !defined ( NJIT )
+
+    char *burble_stdout = GB_Global_burble_get ( ) ? "" : GB_DEV_NULL ;
+    char *err_redirect = (strlen (GB_jit_error_log) > 0) ? " 2>> " : "" ;
+
+    GBURBLE ("(jit compiling cuda with nvcc: %s/c/%02x/%s.cu) ",
+        GB_jit_cache_path, bucket, kernel_name) ;
+
+    snprintf (GB_jit_temp, GB_jit_temp_allocated,
+
+    // compile:
+    "sh -c \""                          // execute with POSIX shell
+    "nvcc "                             // compiler command
+    "-forward-unknown-to-host-compiler "
+    "-DGB_JIT_RUNTIME=1  "              // nvcc flags
+    "-I/usr/local/cuda/include -std=c++17 -arch=sm_60 -fPIC "
+    "-I%s/src "                         // include source directory
+    "-o %s/c/%02x/%s%s "                // *.o output file
+    "-c %s/c/%02x/%s.cu "               // *.cu input file
+    "%s "                               // burble stdout
+    "%s %s ; "                          // error log file
+
+    // link:
+    "nvcc "                             // compiler
+    "-DGB_JIT_RUNTIME=1  "              // nvcc flags
+    "-I/usr/local/cuda/include -std=c++17 -arch=sm_60 "
+    " -shared "
+    "-o %s/lib/%02x/%s%s%s "            // lib*.so output file
+    "%s/c/%02x/%s%s "                   // *.o input file
+    " -cudart shared "
+//  "%s "                               // libraries to link with (any?)
+    "%s "                               // burble stdout
+    "%s %s\"",                          // error log file
+
+    // compile:
+    GB_jit_cache_path,                  // include source directory (cache/src)
+    GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o output file
+    GB_jit_cache_path, bucket, kernel_name,                 // *.cu input file
+    burble_stdout,                      // burble stdout
+    err_redirect, GB_jit_error_log,     // error log file
+
+    // link:
+    GB_jit_cache_path, bucket,  
+    GB_LIB_PREFIX, kernel_name, GB_LIB_SUFFIX,              // lib*.so file
+    GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o input file
+//  GB_jit_C_libraries                  // libraries to link with
+    burble_stdout,                      // burble stdout
+    err_redirect, GB_jit_error_log) ;   // error log file
+
+    // compile the library and return result
+    GBURBLE ("\n(jit: %s) ", GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
+
+    // remove the *.o file
+    snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/c/%02x/%s%s",
+        GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX) ;
+    remove (GB_jit_temp) ;
 
 #endif
 }
@@ -2293,7 +2477,11 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
 // This method does not return any error/success code.  If the compilation
 // fails for any reason, the subsequent load of the compiled kernel will fail.
 
-// This method does not work on Windows. 
+// This method does not work on Windows with MSVC.  It works for Linux, Mac,
+// or Windows with MINGW (for which it is currently the only option).
+
+// FUTURE: get this method to work in MSVC, since it's much faster than using
+// cmake on Windows.
 
 void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
 { 
@@ -2306,8 +2494,9 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
 
     // compile:
-    "%s -DGB_JIT_RUNTIME=1 "            // compiler command
-    "%s "                               // C flags
+    "sh -c \""                          // execute with POSIX shell
+    "%s "                               // compiler command
+    "-DGB_JIT_RUNTIME=1 %s "            // C flags
     "-I%s/src "                         // include source directory
     "%s "                               // openmp include directories
     "-o %s/c/%02x/%s%s "                // *.o output file
@@ -2322,8 +2511,8 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
     "-o %s/lib/%02x/%s%s%s "            // lib*.so output file
     "%s/c/%02x/%s%s "                   // *.o input file
     "%s "                               // libraries to link with
-    "%s"                                // burble stdout
-    "%s %s ",                           // error log file
+    "%s "                               // burble stdout
+    "%s %s\"",                          // error log file
 
     // compile:
     GB_jit_C_compiler,                  // C compiler
@@ -2348,7 +2537,7 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
 
     // compile the library and return result
     GBURBLE ("(jit: %s) ", GB_jit_temp) ;
-    GB_jitifyer_command (GB_jit_temp) ;
+    GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // remove the *.o file
     snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/c/%02x/%s%s",

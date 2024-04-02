@@ -103,6 +103,7 @@ void mexFunction
     ERR (GxB_Context_get (Context, 999, &nth)) ;
     ERR (GxB_Context_set (Context, 999, nth)) ;
 
+    OK (GxB_Context_disengage (NULL)) ;
     GrB_free (&Context) ;
 
     expected = GrB_NULL_POINTER ;

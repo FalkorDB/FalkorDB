@@ -7,11 +7,12 @@
 
 //------------------------------------------------------------------------------
 
-// The maximal way to reduce code size and compile time is to use the COMPACT
-// cmake option (-DCOMPACT=1).  That setting disables all FactoryKernels.
+// The maximal way to reduce code size and compile time is to turn ON the
+// GRAPHBLAS_COMPACT cmake option.  That setting disables all FactoryKernels.
 // Performance will then rely on the JIT kernels, once they are compiled at run
 // time, or from an PreJIT kernels.  See the User Guide for details.  If
-// COMPACT is enabled, the settings in this file have no additional effect.
+// GRAPHBLAS_COMPACT is enabled, the settings in this file have no additional
+// effect.
 
 // The installer of SuiteSparse:GraphBLAS can edit this file to reduce the code
 // size of the compiled library, by seletively disabling the corresponding
@@ -172,7 +173,7 @@
 // slower.
 
 // #define GxB_NO_BOOL      1
-// #define GxB_NO_FP32      1
+#define GxB_NO_FP32      1
 #define GxB_NO_FP64      1
 #define GxB_NO_FC32      1
 #define GxB_NO_FC64      1
@@ -197,7 +198,7 @@
 // them will be slower.
 
 // #define GxB_NO_ABS       1
- #define GxB_NO_AINV      1
+// #define GxB_NO_AINV      1
 // #define GxB_NO_IDENTITY  1
 // #define GxB_NO_LNOT      1
 // #define GxB_NO_MINV      1
@@ -205,24 +206,24 @@
 // #define GxB_NO_BNOT      1
 
 // #define GxB_NO_SQRT      1
-#define GxB_NO_LOG       1
-#define GxB_NO_EXP       1
+// #define GxB_NO_LOG       1
+// #define GxB_NO_EXP       1
 
-#define GxB_NO_SIN       1
-#define GxB_NO_COS       1
-#define GxB_NO_TAN       1
+// #define GxB_NO_SIN       1
+// #define GxB_NO_COS       1
+// #define GxB_NO_TAN       1
 
-#define GxB_NO_ASIN      1
-#define GxB_NO_ACOS      1
-#define GxB_NO_ATAN      1
+// #define GxB_NO_ASIN      1
+// #define GxB_NO_ACOS      1
+// #define GxB_NO_ATAN      1
 
-#define GxB_NO_SINH      1
-#define GxB_NO_COSH      1
-#define GxB_NO_TANH      1
+// #define GxB_NO_SINH      1
+// #define GxB_NO_COSH      1
+// #define GxB_NO_TANH      1
 
-#define GxB_NO_ASINH     1
-#define GxB_NO_ACOSH     1
-#define GxB_NO_ATANH     1
+// #define GxB_NO_ASINH     1
+// #define GxB_NO_ACOSH     1
+// #define GxB_NO_ATANH     1
 
 // #define GxB_NO_SIGNUM    1
 // #define GxB_NO_CEIL      1
@@ -230,25 +231,25 @@
 // #define GxB_NO_ROUND     1
 // #define GxB_NO_TRUNC     1
 
-#define GxB_NO_EXP2      1
-#define GxB_NO_EXPM1     1
-#define GxB_NO_LOG10     1
-#define GxB_NO_LOG1P     1
-#define GxB_NO_LOG2      1
+// #define GxB_NO_EXP2      1
+// #define GxB_NO_EXPM1     1
+// #define GxB_NO_LOG10     1
+// #define GxB_NO_LOG1P     1
+// #define GxB_NO_LOG2      1
 
-#define GxB_NO_LGAMMA    1
-#define GxB_NO_TGAMMA    1
-#define GxB_NO_ERF       1
-#define GxB_NO_ERFC      1
-#define GxB_NO_CBRT      1
+// #define GxB_NO_LGAMMA    1
+// #define GxB_NO_TGAMMA    1
+// #define GxB_NO_ERF       1
+// #define GxB_NO_ERFC      1
+// #define GxB_NO_CBRT      1
 
-#define GxB_NO_FREXPX    1
-#define GxB_NO_FREXPE    1
+// #define GxB_NO_FREXPX    1
+// #define GxB_NO_FREXPE    1
 
-#define GxB_NO_CONJ      1
-#define GxB_NO_CREAL     1
-#define GxB_NO_CIMAG     1
-#define GxB_NO_CARG      1
+// #define GxB_NO_CONJ      1
+// #define GxB_NO_CREAL     1
+// #define GxB_NO_CIMAG     1
+// #define GxB_NO_CARG      1
 
 // #define GxB_NO_ISINF     1
 // #define GxB_NO_ISNAN     1

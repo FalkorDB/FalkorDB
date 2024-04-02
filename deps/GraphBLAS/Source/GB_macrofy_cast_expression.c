@@ -10,6 +10,7 @@
 // Return a typecast expression to cast from xtype to ztype.
 
 #include "GB.h"
+#include "GB_math.h"
 #include "GB_stringify.h"
 
 const char *GB_macrofy_cast_expression  // return cast expression

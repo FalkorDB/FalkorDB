@@ -85,7 +85,7 @@ void GB_macrofy_build           // construct all macros for GB_build
 
     fprintf (fp, "\n// binary dup operator:\n") ;
     GB_macrofy_binop (fp, "GB_DUP", false, true, false, dup_ecode, false, dup,
-        NULL, NULL) ;
+        NULL, NULL, NULL) ;
 
     fprintf (fp, "\n// build copy/dup methods:\n") ;
 

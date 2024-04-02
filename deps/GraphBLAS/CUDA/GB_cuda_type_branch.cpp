@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_cuda_type_branch: decide if GPU can be used on the given type
+// GraphBLAS/CUDA/GB_cuda_type_branch: decide if GPU can be used on a type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,14 +12,11 @@
 // bytes or less.  If user-defined type has a different size, it cannot be done
 // on the GPU.
 
+// FIXME: get the CUDA kernels to work on large types
+
 // All built-in types pass this rule.
 
-#include "GraphBLAS.h"
-extern "C" 
-{
-    #include "GB.h"
-}
-#include "GB_cuda.h"
+#include "GB_cuda.hpp"
 
 bool GB_cuda_type_branch            // return true if the type is OK on GPU
 (

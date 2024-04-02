@@ -1,8 +1,9 @@
 //------------------------------------------------------------------------------
-// GB_cuda_init: initialize the GPUs for use by GraphBLAS
+// GraphBLAS/CUDA/GB_cuda_init: initialize the GPUs for use by GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2022, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,7 +13,6 @@
 // assumed.  Then each GPU is "warmed up" by allocating a small amount of
 // memory.
 
-#undef GBCUDA_CPLUSPLUS
 #include "GB.h"
 
 GrB_Info GB_cuda_init (void)
@@ -55,7 +55,6 @@ GrB_Info GB_cuda_init (void)
 
     GB_cuda_set_device (0) ;            // make GPU 0 the default device
     GB_Context_gpu_id_set (NULL, 0) ;   // set GxB_CONTEXT_WORLD->gpu_id to 0
-    GB_Global_hack_set (2, 0) ;         // gpu_hack default
 
     // also check for jit cache, pre-load library of common kernels ...
     return (GrB_SUCCESS) ;

@@ -32,7 +32,8 @@ GrB_Info GB_reduce_to_scalar_jit    // z = reduce_to_scalar (A) via the JIT
 
     GB_jit_encoding encoding ;
     char *suffix ;
-    uint64_t hash = GB_encodify_reduce (&encoding, &suffix, monoid, A) ;
+    uint64_t hash = GB_encodify_reduce (&encoding, &suffix,
+        GB_JIT_KERNEL_REDUCE, monoid, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed

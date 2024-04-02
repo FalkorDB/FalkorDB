@@ -1,0 +1,64 @@
+FUTURE plans For 9.0.1: and beyond:
+
+GraphBLAS:
+
+    don't just check 1st line of GraphBLAS.h when deciding to unpack
+    the src in user cache folder. Use a crc test.
+
+CUDA:
+
+    finding src
+    kernel source location, and name
+
+Future features:
+
+    cumulative sum (or other monoid)
+
+    pack/unpack COO
+    kernel fusion
+    CUDA kernels
+    distributed framework
+
+    fine-grain parallelism for dot-product based mxm, mxv, vxm,
+        then add GxB_vxvt (outer product) and GxB_vtxv (inner product)
+        (or call them GxB_outerProduct and GxB_innerProduct?)
+
+    aggregators
+    index binary ops
+    GrB_extract with GrB_Vectors instead of (GrB_Index *) arrays for I and J
+
+    iso: set a flag with GrB_get/set to disable iso.  useful if the matrix is
+    about to become non-iso anyway. Pagerank does:
+
+        r = teleport (becomes iso)
+        r += A*x     (becomes non-iso)
+
+    apply: C = f(A), A dense, no mask or accum, C already dense: do in place
+
+    JIT: allow a flag to be set in a type or operator to selectively control
+        the JIT
+
+    JIT: requires GxB_BinaryOp_new to give the string that defines the op.
+    Allow use of
+        GrB_BinaryOp_new (...)
+        GrB_set (op, GxB_DEFN, "string"
+    also for all ops
+
+    candidates for kernel fusion:
+        * triangle counting: mxm then reduce to scalar
+        * lcc: mxm then reduce to vector
+        * FusedMM: see https://arxiv.org/pdf/2011.06391.pdf
+
+    more:
+        * consider algorithms where fusion can occur
+        * performance monitor, or revised burble, to detect generic cases
+        * check if vectorization of GrB_mxm is effective when using clang
+        * see how HNSW vector search could be implemented in GraphBLAS
+
+CUDA JIT:
+
+    https://developer.nvidia.com/blog/cuda-12-0-compiler-support-for-runtime-lto-using-nvjitlink-library/
+        Developer webpage talking about ways to do nvJit with link time
+        optimization using CUDA 12.0  Shows precompiled path and JIT path to
+        generate kernels
+

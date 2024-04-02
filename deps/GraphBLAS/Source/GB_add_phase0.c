@@ -677,8 +677,8 @@ GrB_Info GB_add_phase0          // find vectors in C for C=A+B or C<M>=A+B
             GB_OK (GB_hyper_hash_build (M, Werk)) ;
 
             const int64_t *restrict M_Yp = (M->Y == NULL) ? NULL : M->Y->p ;
-            const int64_t *restrict M_Yi = (M->Y == NULL) ? NULL : M->Y->p ;
-            const int64_t *restrict M_Yx = (M->Y == NULL) ? NULL : M->Y->p ;
+            const int64_t *restrict M_Yi = (M->Y == NULL) ? NULL : M->Y->i ;
+            const int64_t *restrict M_Yx = (M->Y == NULL) ? NULL : M->Y->x ;
             const int64_t M_hash_bits = (M->Y == NULL) ? 0 : (M->Y->vdim - 1) ;
 
             int64_t k ;

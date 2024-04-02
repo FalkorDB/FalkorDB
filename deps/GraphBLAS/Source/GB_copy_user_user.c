@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "GB.h"
+#include "GB_casting.h"
 
 void GB_copy_user_user (void *z, const void *x, size_t s)
 { 

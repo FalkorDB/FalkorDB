@@ -7,7 +7,8 @@
 
 //------------------------------------------------------------------------------
 
-#include "GraphBLAS.h"
+#include "graphblas_demos.h"
+#undef I
 
 //------------------------------------------------------------------------------
 // the Gaussian integer: real and imaginary parts
@@ -141,26 +142,31 @@ void ijgauss (int64_t *z, const gauss *x, GrB_Index i, GrB_Index j,
 // since the matrix is small.
 
 #undef  OK
-#define OK(x)                   \
-{                               \
-    if (!(x))                   \
-    {                           \
-        printf ("info: %d error! Line %d\n", info, __LINE__)  ; \
-        fflush (stdout) ;       \
-        abort ( ) ;             \
-    }                           \
+#define OK(x)                                                   \
+{                                                               \
+    if (!(x))                                                   \
+    {                                                           \
+        printf ("info: %d error! File %s, Line %d\n",           \
+            info, __FILE__, __LINE__)  ;                        \
+        fprintf (stderr, "info: %d error! File %s, Line %d\n",  \
+            info, __FILE__, __LINE__)  ;                        \
+        fflush (stdout) ;                                       \
+        fflush (stderr) ;                                       \
+        abort ( ) ;                                             \
+    }                                                           \
 }
 
 #undef  TRY
 #define TRY(method)             \
 {                               \
-    GrB_Info info = method ;    \
+    info = (method) ;           \
     OK (info == GrB_SUCCESS) ;  \
 }
 
 void printgauss (GrB_Matrix A, char *name)
 {
     // print the matrix
+    GrB_Info info = GrB_SUCCESS ;
     GrB_Index m, n ;
     TRY (GrB_Matrix_nrows (&m, A)) ;
     TRY (GrB_Matrix_ncols (&n, A)) ;
@@ -171,7 +177,7 @@ void printgauss (GrB_Matrix A, char *name)
         for (int j = 0 ; j < n ; j++)
         {
             gauss a ;
-            GrB_Info info = GrB_Matrix_extractElement_UDT (&a, A, i, j) ;
+            info = GrB_Matrix_extractElement_UDT (&a, A, i, j) ;
             if (info == GrB_NO_VALUE)
             {
                 printf ("      .     ") ;
@@ -193,11 +199,19 @@ void printgauss (GrB_Matrix A, char *name)
 
 int main (void)
 {
+    fprintf (stderr, "\ngauss_demo:\n") ;
+
     // start GraphBLAS
-    GrB_Info info ;
+    GrB_Info info = GrB_SUCCESS ;
     TRY (GrB_init (GrB_NONBLOCKING)) ;
     TRY (GxB_Global_Option_set (GxB_BURBLE, true)) ;
+
+    // try using cmake to build all JIT kernels, just as a test.  This setting
+    // is ignored by Windows (for MSVC it is treated as always true, and for
+    // MINGW it is treated as always false).  Only Linux and Mac can change
+    // this setting.
     TRY (GxB_Global_Option_set (GxB_JIT_USE_CMAKE, true)) ;
+
     printf ("Gauss demo.  Note that all transposes are array transposes,\n"
         "not matrix (conjugate) transposes.\n\n") ;
 
@@ -205,9 +219,10 @@ int main (void)
 //  TRY (GxB_Global_Option_set (GxB_JIT_ERROR_LOG, "/tmp/grb_jit_errors.txt")) ;
 
 //  try changing the cache path
-//  TRY (GxB_Global_Option_set (GxB_JIT_CACHE_PATH, "/home/faculty/d/davis/mycache")) ;
+//  TRY (GxB_Global_Option_set (GxB_JIT_CACHE_PATH,
+//      "/home/faculty/d/davis/mycache")) ;
 
-    TRY (GxB_Context_fprint (GxB_CONTEXT_WORLD, "World", GxB_COMPLETE, stdout)) ;
+    TRY (GxB_Context_fprint (GxB_CONTEXT_WORLD, "World", GxB_COMPLETE, stdout));
     char *compiler, *cache, *flags, *link, *libraries, *preface ;
     int control ;
     TRY (GxB_Global_Option_get (GxB_JIT_C_COMPILER_NAME, &compiler)) ;
@@ -227,8 +242,10 @@ int main (void)
     printf ("JIT C control:    [%d]\n", control) ;
     TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
     TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ;
+    int save = control ;
     printf ("JIT C control:    [%d] reset\n", control) ;
     printf ("-------------------------------------\n\n") ;
+
 
     // revise the header for each JIT kernel; this is not required but appears
     // here just as a demo of the feature.
@@ -259,6 +276,12 @@ int main (void)
     OK (sizeof_gauss == sizeof (badgauss)) ;
     GrB_Type_free (&BadGauss) ;
 
+    // the JIT should have been successful, unless it was originally off
+    #define OK_JIT \
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ; \
+    OK (control == save) ;
+    OK_JIT
+
     // create the Gauss type, and let the JIT determine the size.  This causes
     // an intentional name collision.  The new 'gauss' type does not match the
     // old one (above), and this will be safely detected.  The burble will say
@@ -281,6 +304,7 @@ int main (void)
         TRY (GxB_Type_size (&sizeof_gauss, Gauss)) ;
 //      printf ("sizeof_gauss  %lu %lu\n", sizeof_gauss, sizeof (gauss)) ;
         OK (sizeof_gauss == sizeof (gauss)) ;
+        OK_JIT
     }
 
     // create the BadAddGauss operator; use a NULL function pointer to test the
@@ -300,6 +324,7 @@ int main (void)
     TRY (GxB_BinaryOp_fprint (BadAddGauss, "BadAddGauss", GxB_COMPLETE,
         stdout)) ;
     GrB_BinaryOp_free (&BadAddGauss) ;
+    OK_JIT
 
     // create the AddGauss operator; use a NULL function pointer to test the
     // JIT.  Causes an intentional name collision because of reusing the name
@@ -321,6 +346,7 @@ int main (void)
                 Gauss, Gauss, Gauss)) ;
         }
         TRY (GxB_BinaryOp_fprint (AddGauss, "AddGauss", GxB_COMPLETE, stdout)) ;
+        OK_JIT
     }
 
 //  printf ("JIT: off\n") ;
@@ -370,14 +396,17 @@ int main (void)
     // a = sum (A)
     TRY (GrB_Matrix_reduce_UDT (&a, NULL, AddMonoid, A, NULL)) ;
     printf ("\nsum (A) = (%d,%d)\n", a.real, a.imag) ;
+    OK_JIT
 
     // A = A*A
     TRY (GrB_mxm (A, NULL, NULL, GaussSemiring, A, A, NULL)) ;
     printgauss (A, "\n=============== Gauss A = A^2 matrix:\n") ;
+    OK_JIT
 
     // a = sum (A)
     TRY (GrB_Matrix_reduce_UDT (&a, NULL, AddMonoid, A, NULL)) ;
     printf ("\nsum (A^2) = (%d,%d)\n", a.real, a.imag) ;
+    OK_JIT
 
     // C<D> = A*A' where A and D are sparse
     GrB_Matrix C ;
@@ -387,6 +416,7 @@ int main (void)
     TRY (GxB_Matrix_Option_set (D, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
     TRY (GrB_mxm (C, D, NULL, GaussSemiring, A, A, GrB_DESC_T1)) ;
     printgauss (C, "\n=============== Gauss C = diag(AA') matrix:\n") ;
+    OK_JIT
 
     // C = D*A
     GrB_Matrix_free (&D) ;
@@ -397,6 +427,7 @@ int main (void)
     printgauss (D, "\nGauss D matrix") ;
     TRY (GrB_mxm (C, NULL, NULL, GaussSemiring, D, A, NULL)) ;
     printgauss (C, "\n=============== Gauss C = D*A matrix:\n") ;
+    OK_JIT
 
     // convert D to bitmap then back to sparse
     TRY (GxB_Matrix_Option_set (D, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
@@ -406,10 +437,12 @@ int main (void)
     TRY (GxB_Matrix_Option_set (D, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
     printgauss (D, "\nGauss D matrix (back to sparse)") ;
     TRY (GxB_Matrix_fprint (D, "D", GxB_COMPLETE, stdout)) ;
+    OK_JIT
 
     // C = A*D
     TRY (GrB_mxm (C, NULL, NULL, GaussSemiring, A, D, NULL)) ;
     printgauss (C, "\n=============== Gauss C = A*D matrix:\n") ;
+    OK_JIT
 
     // C = (1,2) then C += A*A' where C is full
     gauss ciso ;
@@ -421,6 +454,7 @@ int main (void)
     printgauss (A, "\n=============== Gauss A matrix:\n") ;
     TRY (GrB_mxm (C, NULL, AddGauss, GaussSemiring, A, A, GrB_DESC_T1)) ;
     printgauss (C, "\n=============== Gauss C += A*A' matrix:\n") ;
+    OK_JIT
 
     // C += B*A where B is full and A is sparse
     GrB_Matrix B ;
@@ -430,30 +464,36 @@ int main (void)
     printgauss (B, "\n=============== Gauss B = (1,-2) matrix:\n") ;
     TRY (GrB_mxm (C, NULL, AddGauss, GaussSemiring, B, A, NULL)) ;
     printgauss (C, "\n=============== Gauss C += B*A:\n") ;
+    OK_JIT
 
     // C += A*B where B is full and A is sparse
     TRY (GrB_mxm (C, NULL, AddGauss, GaussSemiring, A, B, NULL)) ;
     printgauss (C, "\n=============== Gauss C += A*B:\n") ;
+    OK_JIT
 
     // C = ciso+A
     TRY (GrB_Matrix_apply_BinaryOp1st_UDT (C, NULL, NULL, AddGauss,
         (void *) &ciso, A, NULL)) ;
     printgauss (C, "\n=============== Gauss C = (1,-2) + A:\n") ;
+    OK_JIT
 
     // C = A*ciso
     TRY (GrB_Matrix_apply_BinaryOp2nd_UDT (C, NULL, NULL, MultGauss, A,
         (void *) &ciso, NULL)) ;
     printgauss (C, "\n=============== Gauss C = A*(1,-2):\n") ;
+    OK_JIT
 
     // C = A'*ciso
     TRY (GrB_Matrix_apply_BinaryOp2nd_UDT (C, NULL, NULL, MultGauss, A,
         (void *) &ciso, GrB_DESC_T0)) ;
     printgauss (C, "\n=============== Gauss C = A'*(1,-2):\n") ;
+    OK_JIT
 
     // C = ciso*A'
     TRY (GrB_Matrix_apply_BinaryOp1st_UDT (C, NULL, NULL, MultGauss,
         (void *) &ciso, A, GrB_DESC_T1)) ;
     printgauss (C, "\n=============== Gauss C = (1,-2)*A':\n") ;
+    OK_JIT
 
     // create the RealGauss unary op
     GrB_UnaryOp RealGauss ;
@@ -462,14 +502,19 @@ int main (void)
     TRY (GxB_UnaryOp_fprint (RealGauss, "RealGauss", GxB_COMPLETE, stdout)) ;
     GrB_Matrix R ;
     TRY (GrB_Matrix_new (&R, GrB_INT32, 4, 4)) ;
+    OK_JIT
+
     // R = RealGauss (C)
     TRY (GrB_Matrix_apply (R, NULL, NULL, RealGauss, C, NULL)) ;
     TRY (GxB_Matrix_fprint (R, "R", GxB_COMPLETE, stdout)) ;
+    OK_JIT
+
     // R = RealGauss (C')
     printgauss (C, "\n=============== R = RealGauss (C')\n") ;
     TRY (GrB_Matrix_apply (R, NULL, NULL, RealGauss, C, GrB_DESC_T0)) ;
     TRY (GxB_Matrix_fprint (R, "R", GxB_COMPLETE, stdout)) ;
     GrB_Matrix_free (&R) ;
+    OK_JIT
 
     // create the IJGauss IndexUnaryOp
     GrB_IndexUnaryOp IJGauss ;
@@ -488,10 +533,13 @@ int main (void)
     { 
         printf ("R (%d,%d) = %g\n", (int) I [k], (int) J [k], X [k]) ;
     }
+    OK_JIT
 
+    // C = C'
     printgauss (C, "\n=============== C\n") ;
     TRY (GrB_transpose (C, NULL, NULL, C, NULL)) ;
     printgauss (C, "\n=============== C = C'\n") ;
+    OK_JIT
 
     for (int trial = 0 ; trial <= 1 ; trial++)
     {
@@ -508,6 +556,7 @@ int main (void)
         TRY (GxB_Matrix_concat (Z, (GrB_Matrix *) Tiles, 3, 2, NULL)) ;
         printgauss (Z, "\n=============== Z = [C D ; E E ; D C]") ;
         TRY (GxB_Matrix_fprint (Z, "Z", GxB_COMPLETE, stdout)) ;
+        OK_JIT
 
         GrB_Matrix CTiles [4] ;
         GrB_Index Tile_nrows [2] ;
@@ -517,6 +566,7 @@ int main (void)
         Tile_ncols [0] = 3 ;
         Tile_ncols [1] = 5 ;
         TRY (GxB_Matrix_split (CTiles, 2, 2, Tile_nrows, Tile_ncols, Z, NULL)) ;
+        OK_JIT
 
         for (int k = 0 ; k < 4 ; k++)
         {
@@ -524,6 +574,7 @@ int main (void)
             TRY (GxB_Matrix_fprint (CTiles [k], "CTiles [k]", GxB_COMPLETE,
                 stdout)) ;
             GrB_Matrix_free (& (CTiles [k])) ;
+            OK_JIT
         }
 
         GrB_Matrix_free (&Z) ;
@@ -532,11 +583,13 @@ int main (void)
 
     // try using cmake instead of a direct compile/link command
     TRY (GxB_Global_Option_set (GxB_JIT_USE_CMAKE, true)) ;
+    OK_JIT
 
     // C += ciso
     TRY (GrB_Matrix_assign_UDT (C, NULL, AddGauss, (void *) &ciso,
         GrB_ALL, 4, GrB_ALL, 4, NULL)) ;
     printgauss (C, "\n=============== C = C + ciso\n") ;
+    OK_JIT
 
     // split the full matrix C
     TRY (GxB_Matrix_Option_set (C, GxB_SPARSITY_CONTROL, GxB_FULL)) ;
@@ -544,6 +597,7 @@ int main (void)
     GrB_Index Tile_nrows [2] = { 1, 3 } ;
     GrB_Index Tile_ncols [2] = { 2, 2 } ;
     TRY (GxB_Matrix_split (STiles, 2, 2, Tile_nrows, Tile_ncols, C, NULL)) ;
+    OK_JIT
 
     for (int k = 0 ; k < 4 ; k++)
     {
@@ -551,57 +605,64 @@ int main (void)
         TRY (GxB_Matrix_fprint (STiles [k], "STiles [k]", GxB_COMPLETE,
             stdout)) ;
         GrB_Matrix_free (& (STiles [k])) ;
+        OK_JIT
     }
 
     // pause the JIT
     printf ("JIT: paused\n") ;
     TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_PAUSE)) ;
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ;
+    save = control ;
+    OK_JIT
 
     // C += ciso
     printgauss (C, "\n=============== C: \n") ;
     TRY (GrB_Matrix_assign_UDT (C, NULL, AddGauss, (void *) &ciso,
         GrB_ALL, 4, GrB_ALL, 4, NULL)) ;
     printgauss (C, "\n=============== C = C + ciso (JIT paused):\n") ;
+    OK_JIT
 
     // C *= ciso
     printgauss (C, "\n=============== C: \n") ;
     TRY (GrB_Matrix_assign_UDT (C, NULL, MultGauss, (void *) &ciso,
         GrB_ALL, 4, GrB_ALL, 4, NULL)) ;
     printgauss (C, "\n=============== C = C * ciso (JIT paused):\n") ;
+    OK_JIT
 
     // re-enable the JIT, but not to compile anything new
-    printf ("JIT: run (may not load or compile)\n") ;
+    printf ("JIT: run (the JIT can only run, not load or compile)\n") ;
     TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_RUN)) ;
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ;
+    save = control ;
+    OK_JIT
 
     // C += ciso, using the previous loaded JIT kernel
     TRY (GrB_Matrix_assign_UDT (C, NULL, AddGauss, (void *) &ciso,
         GrB_ALL, 4, GrB_ALL, 4, NULL)) ;
     printgauss (C, "\n=============== C = C + ciso (JIT run):\n") ;
+    OK_JIT
 
     // C *= ciso, but using generic since it is not compiled
     TRY (GrB_Matrix_assign_UDT (C, NULL, MultGauss, (void *) &ciso,
         GrB_ALL, 4, GrB_ALL, 4, NULL)) ;
     printgauss (C, "\n=============== C = C * ciso (JIT not loaded):\n") ;
+    OK_JIT
 
     // re-enable the JIT entirely
     printf ("JIT: on\n") ;
     TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ;
+    save = control ;
+    OK_JIT
 
     // C *= ciso, compiling a new JIT kernel if needed
     TRY (GrB_Matrix_assign_UDT (C, NULL, MultGauss, (void *) &ciso,
         GrB_ALL, 4, GrB_ALL, 4, NULL)) ;
     printgauss (C, "\n=============== C = C * ciso (full JIT):\n") ;
+    OK_JIT
 
     gauss result ;
     TRY (GrB_Matrix_extractElement_UDT (&result, C, 3, 3)) ;
-    if (result.real == 65 && result.imag == 1170)
-    {
-        fprintf (stderr, "gauss_demo: all tests pass\n") ;
-    }
-    else
-    {
-        fprintf (stderr, "gauss_demo: test failure\n") ;
-    }
 
     // free everything and finalize GraphBLAS
     GrB_Matrix_free (&A) ;
@@ -616,6 +677,19 @@ int main (void)
     GrB_Monoid_free (&AddMonoid) ;
     GrB_BinaryOp_free (&MultGauss) ;
     GrB_Semiring_free (&GaussSemiring) ;
+    OK_JIT
     GrB_finalize ( ) ;
+
+    // return result
+    bool ok = (result.real == 65 && result.imag == 1170) ;
+    if (ok)
+    {
+        fprintf (stderr, "gauss_demo: all tests pass\n") ;
+    }
+    else
+    {
+        fprintf (stderr, "gauss_demo: test failure\n") ;
+    }
+    return (ok ? 0 : 1) ;
 }
 

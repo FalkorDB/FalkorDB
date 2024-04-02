@@ -26,18 +26,18 @@
     OK (GrB_BinaryOp_get_SIZE (op, &size, GrB_NAME)) ;                  \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
-    info2 = GrB_BinaryOp_get_SIZE (op, &siz1, GrB_INPUT1TYPE_STRING) ;  \
-    info3 = GrB_BinaryOp_get_String (op, name, GrB_INPUT1TYPE_STRING) ; \
+    info2 = GrB_BinaryOp_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;  \
+    info3 = GrB_BinaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ; \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz1 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                  \
-    info2 = GrB_BinaryOp_get_SIZE (op, &siz2, GrB_INPUT2TYPE_STRING) ;  \
-    info3 = GrB_BinaryOp_get_String (op, name, GrB_INPUT2TYPE_STRING) ; \
+    info2 = GrB_BinaryOp_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;  \
+    info3 = GrB_BinaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ; \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz2 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz2 == 1) ; }                  \
-    info2 = GrB_BinaryOp_get_SIZE (op, &siz3, GrB_OUTPUTTYPE_STRING) ;  \
-    info3 = GrB_BinaryOp_get_String (op, name, GrB_OUTPUTTYPE_STRING) ; \
+    info2 = GrB_BinaryOp_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;  \
+    info3 = GrB_BinaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ; \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz3 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz3 == 1) ; }                  \
@@ -588,42 +588,42 @@ void mexFunction
     // other get/set methods for GrB_BinaryOp
     //--------------------------------------------------------------------------
 
-    OK (GrB_BinaryOp_get_INT32_(GrB_MAX_FP32, &code, GrB_INPUT1TYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_INT32_(GrB_MAX_FP32, &code, GrB_INP0_TYPE_CODE)) ;
     CHECK (code == GrB_FP32_CODE) ;
 
-    OK (GrB_BinaryOp_get_SIZE_(GrB_MAX_FP32, &size, GrB_INPUT1TYPE_STRING)) ;
+    OK (GrB_BinaryOp_get_SIZE_(GrB_MAX_FP32, &size, GrB_INP0_TYPE_STRING)) ;
     CHECK (size == strlen ("GrB_FP32") + 1) ;
 
-    OK (GrB_BinaryOp_get_String_(GrB_MAX_FP32, name, GrB_INPUT1TYPE_STRING)) ;
+    OK (GrB_BinaryOp_get_String_(GrB_MAX_FP32, name, GrB_INP0_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_FP32")) ;
 
-    OK (GrB_BinaryOp_get_SIZE_(GrB_MAX_INT32, &size, GrB_INPUT2TYPE_STRING)) ;
+    OK (GrB_BinaryOp_get_SIZE_(GrB_MAX_INT32, &size, GrB_INP1_TYPE_STRING)) ;
     CHECK (size == strlen ("GrB_INT32") + 1) ;
 
-    OK (GrB_BinaryOp_get_String_(GrB_MAX_INT32, name, GrB_INPUT2TYPE_STRING)) ;
+    OK (GrB_BinaryOp_get_String_(GrB_MAX_INT32, name, GrB_INP1_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_INT32")) ;
 
-    OK (GrB_BinaryOp_get_INT32_(GrB_MAX_FP64, &code, GrB_OUTPUTTYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_INT32_(GrB_MAX_FP64, &code, GrB_OUTP_TYPE_CODE)) ;
     CHECK (code == GrB_FP64_CODE) ;
 
-    OK (GrB_BinaryOp_get_SIZE_(GrB_MAX_FP64, &size, GrB_OUTPUTTYPE_STRING)) ;
+    OK (GrB_BinaryOp_get_SIZE_(GrB_MAX_FP64, &size, GrB_OUTP_TYPE_STRING)) ;
     CHECK (size == strlen ("GrB_FP64") + 1) ;
 
-    OK (GrB_BinaryOp_get_String_(GrB_MAX_FP64, name, GrB_OUTPUTTYPE_STRING)) ;
+    OK (GrB_BinaryOp_get_String_(GrB_MAX_FP64, name, GrB_OUTP_TYPE_STRING)) ;
     CHECK (MATCH (name, "GrB_FP64")) ;
 
-    OK (GrB_BinaryOp_get_Scalar_(GrB_MAX_FP32, s_int32, GrB_INPUT1TYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_Scalar_(GrB_MAX_FP32, s_int32, GrB_INP0_TYPE_CODE)) ;
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_FP32_CODE) ;
 
-    OK (GrB_BinaryOp_get_Scalar_(GrB_LAND, s_int32, GrB_OUTPUTTYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_Scalar_(GrB_LAND, s_int32, GrB_OUTP_TYPE_CODE)) ;
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_BOOL_CODE) ;
 
-    OK (GrB_BinaryOp_get_INT32_(GrB_PLUS_FP64, &code, GrB_INPUT2TYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_INT32_(GrB_PLUS_FP64, &code, GrB_INP1_TYPE_CODE)) ;
     CHECK (code == GrB_FP64_CODE) ;
 
-    OK (GrB_BinaryOp_get_Scalar_(GrB_LAND, s_int32, GrB_INPUT2TYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_Scalar_(GrB_LAND, s_int32, GrB_INP1_TYPE_CODE)) ;
     OK (GrB_Scalar_extractElement_INT32_(&code, s_int32)) ;
     CHECK (code == GrB_BOOL_CODE) ;
 
@@ -658,7 +658,7 @@ void mexFunction
     ERR (GrB_BinaryOp_set_String_(binop, "another user name", GrB_NAME)) ;
     printf ("    test GrB_ALREADY_SET: ok\n") ;
 
-    OK (GrB_BinaryOp_get_INT32_(binop, &code, GrB_INPUT2TYPE_CODE)) ;
+    OK (GrB_BinaryOp_get_INT32_(binop, &code, GrB_INP1_TYPE_CODE)) ;
     CHECK (code == GrB_FP32_CODE) ;
 
     expected = GrB_INVALID_VALUE ;

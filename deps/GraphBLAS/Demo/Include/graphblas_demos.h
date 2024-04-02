@@ -54,6 +54,7 @@
 #endif
 
 #include "GraphBLAS.h"
+#undef I
 #include "simple_rand.h"
 // #include "usercomplex.h"
 
