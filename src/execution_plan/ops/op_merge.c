@@ -155,16 +155,8 @@ static OpResult MergeInit
 	ASSERT(opBase->childCount == 2 || opBase->childCount == 3);
 	OpMerge *op = (OpMerge *)opBase;
 	if(opBase->childCount == 2) {
-		// if we only have 2 streams
-		// we simply need to determine which has a MergeCreate op
-//		if(_LocateOp(opBase->children[0], OPType_MERGE_CREATE)) {
-//			// if the Create op is in the first stream, swap the children
-//			// otherwise, the order is already correct
-//			OpBase *tmp = opBase->children[0];
-//			opBase->children[0] = opBase->children[1];
-//			opBase->children[1] = tmp;
-//		}
-
+		// if we only have 2 streams, the first one is the bound variable stream
+		// and the second is the match stream
 		op->match_stream  = opBase->children[0];
 		op->create_stream = opBase->children[1];
 
@@ -172,6 +164,8 @@ static OpResult MergeInit
 		return OP_OK;
 	}
 
+	// if we have 3 streams, the first is the bound variable stream
+	// the second is the match stream, and the third is the create stream
 	op->bound_variable_stream = opBase->children[0];
 	op->match_stream          = opBase->children[1];
 	op->create_stream         = opBase->children[2];
@@ -187,10 +181,12 @@ static OpResult MergeInit
 	// store a reference to it
 	op->match_argument_tap =
 		(Argument *)ExecutionPlan_LocateOp(op->match_stream, OPType_ARGUMENT);
+	ASSERT(op->match_argument_tap != NULL);
 
 	// if the create stream is populated by an Argument tap, store a reference to it.
 	op->create_argument_tap =
 		(Argument *)ExecutionPlan_LocateOp(op->create_stream, OPType_ARGUMENT);
+	ASSERT(op->create_argument_tap != NULL);
 
 	// set up an array to store records produced by the bound variable stream
 	op->input_records = array_new(Record, 1);
