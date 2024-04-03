@@ -142,32 +142,6 @@ OpBase *NewMergeOp
 	return (OpBase *)op;
 }
 
-// modification of ExecutionPlan_LocateOp that only follows LHS child
-// Otherwise, the assumptions of Merge_SetStreams fail in MERGE..MERGE queries
-// Match and Create streams are always guaranteed to not branch
-// (have any ops with multiple children)
-static OpBase *_LocateOp
-(
-	OpBase *root,
-	OPType type
-) {
-	OpBase *ret;
-
-	if(!root) {
-		ret = NULL;
-	}
-	else if(root->type == type) {
-		ret = root;
-	}
-	else if(root->childCount > 0) {
-		ret = _LocateOp(root->children[0], type);
-	} else {
-		ret = NULL;
-	}
-
-	return ret;
-}
-
 static OpResult MergeInit
 (
 	OpBase *opBase
@@ -183,26 +157,29 @@ static OpResult MergeInit
 	if(opBase->childCount == 2) {
 		// if we only have 2 streams
 		// we simply need to determine which has a MergeCreate op
-		if(_LocateOp(opBase->children[0], OPType_MERGE_CREATE)) {
-			// if the Create op is in the first stream, swap the children
-			// otherwise, the order is already correct
-			OpBase *tmp = opBase->children[0];
-			opBase->children[0] = opBase->children[1];
-			opBase->children[1] = tmp;
-		}
+//		if(_LocateOp(opBase->children[0], OPType_MERGE_CREATE)) {
+//			// if the Create op is in the first stream, swap the children
+//			// otherwise, the order is already correct
+//			OpBase *tmp = opBase->children[0];
+//			opBase->children[0] = opBase->children[1];
+//			opBase->children[1] = tmp;
+//		}
 
-		op->match_stream = opBase->children[0];
+		op->match_stream  = opBase->children[0];
 		op->create_stream = opBase->children[1];
+
+		ASSERT(OpBase_Type(op->create_stream) == OPType_MERGE_CREATE);
 		return OP_OK;
 	}
 
 	op->bound_variable_stream = opBase->children[0];
-	op->match_stream = opBase->children[1];
-	op->create_stream = opBase->children[2];
+	op->match_stream          = opBase->children[1];
+	op->create_stream         = opBase->children[2];
 
+	ASSERT(OpBase_Type(op->create_stream) == OPType_MERGE_CREATE);
 	ASSERT(op->bound_variable_stream != NULL &&
-		   op->match_stream != NULL &&
-		   op->create_stream != NULL);
+		   op->match_stream          != NULL &&
+		   op->create_stream         != NULL);
 
 	// find and store references to the:
 	// Argument taps for the Match and Create streams
