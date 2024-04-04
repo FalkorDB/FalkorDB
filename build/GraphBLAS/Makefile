@@ -38,7 +38,7 @@ define CMAKE_DEFS +=
 	BUILD_SHARED_LIBS=OFF
 	BUILD_TESTING=off
 	CMAKE_POSITION_INDEPENDENT_CODE=on
-	NJIT=1
+	GRAPHBLAS_USE_JIT=off
 endef
 
 #----------------------------------------------------------------------------------------------

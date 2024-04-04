@@ -131,3 +131,16 @@ class testUnwindClause():
         except Exception as e:
             self.env.assertTrue("'i' not defined" in str(e))
 
+    def test07_nested_unwind(self):
+        # n0 is a heap allocated array
+        # which gets free on the third call to consume of the nested UNWIND
+        query = """WITH [0] AS n0
+                   UNWIND [0, 0] AS n1
+                   WITH *
+                   UNWIND [0, 0] AS n2
+                   MERGE ({n3:0})"""
+        
+        result = self.graph.query(query)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
+
