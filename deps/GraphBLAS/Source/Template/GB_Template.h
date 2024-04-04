@@ -25,6 +25,11 @@
 //------------------------------------------------------------------------------
 
 #include "GraphBLAS.h"
+#undef I
+
+#ifdef GBMATLAB
+#undef GRAPHBLAS_HAS_CUDA
+#endif
 
 //------------------------------------------------------------------------------
 // handle the restrict and 'static inline' keywords

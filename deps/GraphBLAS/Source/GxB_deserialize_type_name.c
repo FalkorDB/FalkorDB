@@ -18,8 +18,8 @@
 // must not point into the blob itself).  On output, type_name will contain a
 // null-terminated string with the corresponding C type name.  If the blob
 // holds a matrix of a built-in type, the name is returned as "bool" for
-// GrB_BOOL, "uint8_t" for GrB_UINT8, "float complex" for GxB_FC32, etc.  If
-// the type is user-defined, the GxB_JIT_C_NAME of the type is returned.
+// GrB_BOOL, "uint8_t" for GrB_UINT8, "float complex" for GxB_FC32, etc.
+// If the type is user-defined, the GxB_JIT_C_NAME of the type is returned.
 
 GrB_Info GxB_deserialize_type_name  // return the type name of a blob
 (

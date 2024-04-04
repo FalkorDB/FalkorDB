@@ -6,6 +6,7 @@
 
 #pragma once
 
+#define EMSG_GRAPH_EXISTS "Graph %s already exists"
 #define EMSG_EMPTY_KEY "Encountered an empty key when opened key %s"
 #define EMSG_NON_GRAPH_KEY "Encountered a non-graph value type when opened key %s"
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"
@@ -115,7 +116,7 @@
 #define EMSG_SSPATH_REQUIRED "sourceNode is required"
 #define EMSG_SSPATH_INVALID_TYPE "sourceNode must be of type Node"
 #define EMSG_QUERY_MEM_CONSUMPTION "Query's mem consumption exceeded capacity"
-#define EMSG_VECTOR_TYPE_ERROR "vector%df expects an array of numbers"
+#define EMSG_VECTOR_TYPE_ERROR "vectorf%d expects an array of numbers"
 #define EMSG_PROC_INVALID_ARGUMENTS "Invalid arguments for procedure '%s'"
 #define EMSG_FULLTEXT_DROP_INDEX "ERR Unable to drop index on :%s: no such index."
 #define EMSG_UNABLE_TO_DROP_INDEX "ERR Unable to drop index on :%s(%s): no such index."
@@ -124,4 +125,5 @@
 #define EMSG_VECTOR_INDEX_INVALID_CONFIG "Invalid vector index configuration"
 #define EMSG_INDEX_CANT_RECONFIG "Can not override index configuration"
 #define EMSG_REMOVE_INVALID_INPUT "REMOVE operates on either a node, relationship or a map"
+#define EMSG_VECTOR_DIMENSION_MISMATCH "Vector dimension mismatch, expected %d but got %d"
 

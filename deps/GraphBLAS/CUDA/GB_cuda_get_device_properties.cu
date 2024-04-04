@@ -1,14 +1,18 @@
 //------------------------------------------------------------------------------
-// GB_cuda_get_device_properties.cu: get the properties of a GPU
+// GraphBLAS/CUDA/GB_cuda_get_device_properties: get the properties of a GPU
 //------------------------------------------------------------------------------
 
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2019, All Rights Reserved.
-// http://suitesparse.com   See GraphBLAS/Doc/License.txt for license.
 
 //------------------------------------------------------------------------------
 
-#include "GB_cuda.h"
+#include "GB_cuda.hpp"
+#define CU_OK(cudaMethod)                               \
+{                                                       \
+    if ((cudaMethod) != cudaSuccess) return (false) ;   \
+}
 
 //------------------------------------------------------------------------------
 // GB_cuda_get_device: get the current GPU
@@ -21,7 +25,7 @@ bool GB_cuda_get_device (int &device)
         // invalid inputs
         return (false) ;
     }
-    CHECK_CUDA_SIMPLE (cudaGetDevice (&device)) ;
+    CU_OK (cudaGetDevice (&device)) ;
     return (true) ;
 }
 
@@ -36,7 +40,7 @@ bool GB_cuda_set_device (int device)
         // invalid inputs
         return (false) ;
     }
-    CHECK_CUDA_SIMPLE (cudaSetDevice (device)) ;
+    CU_OK (cudaSetDevice (device)) ;
     return (true) ;
 }
 
@@ -65,7 +69,7 @@ bool GB_cuda_get_device_properties  // true if OK, false if failure
     memset (prop, 0, sizeof (GB_cuda_device)) ;
 
     int old_device ;
-    CHECK_CUDA_SIMPLE ( cudaGetDevice( &old_device ) ) ;
+    CU_OK (cudaGetDevice (&old_device )) ;
 
     //--------------------------------------------------------------------------
     // get the properties
@@ -74,26 +78,24 @@ bool GB_cuda_get_device_properties  // true if OK, false if failure
     int num_sms, compute_capability_major, compute_capability_minor ;
     size_t memfree, memtotal ;
 
-    CHECK_CUDA_SIMPLE( cudaDeviceGetAttribute (&num_sms,
-                                         cudaDevAttrMultiProcessorCount,
-                                         device) ) ;
-    CHECK_CUDA_SIMPLE( cudaDeviceGetAttribute (&compute_capability_major,
-                                         cudaDevAttrComputeCapabilityMajor,
-                                         device) ) ;
-    CHECK_CUDA_SIMPLE( cudaDeviceGetAttribute (&compute_capability_minor,
-                                         cudaDevAttrComputeCapabilityMajor,
-                                         device) ) ;
+    CU_OK (cudaDeviceGetAttribute (&num_sms,
+                cudaDevAttrMultiProcessorCount, device)) ;
+    CU_OK (cudaDeviceGetAttribute (&compute_capability_major,
+                cudaDevAttrComputeCapabilityMajor, device)) ;
+    CU_OK (cudaDeviceGetAttribute (&compute_capability_minor,
+                cudaDevAttrComputeCapabilityMinor, device)) ;
 
-    CHECK_CUDA_SIMPLE ( cudaSetDevice( device ) ) ;
-    CHECK_CUDA_SIMPLE ( cudaMemGetInfo( & memfree, &memtotal) ) ;
-    CHECK_CUDA_SIMPLE ( cudaSetDevice( old_device ) ) ;
+    CU_OK (cudaSetDevice (device )) ;
+    CU_OK (cudaMemGetInfo (&memfree, &memtotal)) ;
+    CU_OK (cudaSetDevice (old_device )) ;
 
     prop->total_global_memory = memtotal ;
     prop->number_of_sms = num_sms ;
     prop->compute_capability_major = compute_capability_major ;
     prop->compute_capability_minor = compute_capability_minor ;
 
-    printf ("Device: %d: memory: %ld SMs: %d compute: %d.%d\n",
+    // FIXME: remove this printf
+    printf ("\nDevice: %d: memory: %ld SMs: %d compute: %d.%d\n",
         device, prop->total_global_memory, prop->number_of_sms,
         prop->compute_capability_major, prop->compute_capability_minor) ;
 

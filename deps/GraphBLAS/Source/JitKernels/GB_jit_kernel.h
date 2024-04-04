@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jit_kernel.h:  JIT kernel #include for all kernels
+// GB_jit_kernel.h:  JIT kernel #include for all kernels (both CPU and CUDA)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
@@ -13,10 +13,17 @@
 #define GB_JIT_KERNEL_H
 
 #define GB_JIT_KERNEL
-#include "GB_Template.h"
-#include "GB_jit_kernel_proto.h"
 
-// for JIT kernels
+#ifndef GB_CUDA_KERNEL
+    // for CPU JIT kernels:
+    #include "GB_Template.h"
+#else
+    // for CUDA JIT kernels:
+    #include "GB_cuda_kernel.cuh"
+#endif
+
+// for all JIT kernels
+#include "GB_jit_kernel_proto.h"
 #if defined (_MSC_VER) && !(defined (__INTEL_COMPILER) || defined(__INTEL_CLANG_COMPILER))
     #define GB_JIT_GLOBAL extern __declspec ( dllexport )
 #else
@@ -24,7 +31,7 @@
 #endif
 
 #ifndef GB_JIT_RUNTIME
-    // for PreJIT kernels
+    // for PreJIT kernels (CPU and CUDA)
     #include "GB_callbacks.h"
 #endif
 

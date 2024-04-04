@@ -2,7 +2,7 @@
 # GraphBLAS/cmake_modules/SuiteSparseAtomic.cmake
 #-------------------------------------------------------------------------------
 
-# Copyright (c) 2017-2023, Timothy A. Davis.  All Rights Reserved.
+# Copyright (c) 2017-2024, Timothy A. Davis.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------

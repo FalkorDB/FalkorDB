@@ -26,7 +26,7 @@ struct foreach_clause
     const cypher_astnode_t *identifier;
     const cypher_astnode_t *expression;
     unsigned int nclauses;
-    const cypher_astnode_t *clauses[];
+    cypher_astnode_t *clauses[];
 };
 
 

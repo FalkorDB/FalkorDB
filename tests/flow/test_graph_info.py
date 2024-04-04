@@ -70,9 +70,9 @@ def StreamName(graph):
 
 class testGraphInfo(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
         self.conn = self.env.getConnection()
-        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def consumeStream(self, stream, drop=True, n_items=1):
         # wait for telemetry stream to be created
@@ -222,7 +222,7 @@ class testGraphInfo(FlowTestsBase):
         self.env.assertEquals(self.conn.type(stream_name), "stream")
 
         # make sure graph is deleted synchronously
-        self.graph.config("ASYNC_DELETE", "no", set=True)
+        self.db.config_set("ASYNC_DELETE", "no")
 
         # delete graph
         self.graph.delete()
@@ -231,7 +231,7 @@ class testGraphInfo(FlowTestsBase):
         self.env.assertEquals(self.conn.type(stream_name), "none")
 
         # restore ASYNC_DELETE
-        self.graph.config("ASYNC_DELETE", "yes", set=True)
+        self.db.config_set("ASYNC_DELETE", "yes")
 
     def test05_rename_graph(self):
         """make sure reporting stream is renamed when graph is renamed"""
@@ -324,8 +324,8 @@ class testGraphInfo(FlowTestsBase):
     def test07_current_queries(self):
         """test currently running queries"""
 
-        # flush DB
-        self.conn.flushall()
+        # clear graph
+        self.conn.delete(GRAPH_ID)
 
         # shared variable, single consumer thread to exit
         alive = True

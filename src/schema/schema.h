@@ -16,7 +16,7 @@
 #define ACTIVE_IDX(s)  s->index[0]
 #define PENDING_IDX(s) s->index[1]
 
-typedef enum {
+typedef enum SchemaType {
 	SCHEMA_NODE,
 	SCHEMA_EDGE,
 } SchemaType;
@@ -83,11 +83,11 @@ unsigned short Schema_GetIndicies
 // returns NULL if index wasn't found
 Index Schema_GetIndex
 (
-	const Schema *s,            // schema to get index from
-	const Attribute_ID *attrs,  // indexed attributes
-	uint n,                     // number of attributes
-	IndexFieldType t,           // all index attributes must be of this type
-	bool include_pending        // take into considiration pending indicies
+	const Schema *s,           // schema to get index from
+	const AttributeID *attrs,  // indexed attributes
+	uint n,                    // number of attributes
+	IndexFieldType t,          // all index attributes must be of this type
+	bool include_pending       // take into considiration pending indicies
 );
 
 // assign a new attribute to index
@@ -162,20 +162,20 @@ bool Schema_HasConstraints
 // checks if schema constains constraint
 bool Schema_ContainsConstraint
 (
-	const Schema *s,            // schema to search
-	ConstraintType t,           // constraint type
-	const Attribute_ID *attrs,  // constraint attributes
-	uint attr_count             // number of attributes
+	const Schema *s,           // schema to search
+	ConstraintType t,          // constraint type
+	const AttributeID *attrs,  // constraint attributes
+	uint attr_count            // number of attributes
 );
 
 // retrieves constraint 
 // returns NULL if constraint was not found
 Constraint Schema_GetConstraint
 (
-	const Schema *s,            // schema from which to get constraint
-	ConstraintType t,           // constraint type
-	const Attribute_ID *attrs,  // constraint attributes
-	uint attr_count             // number of attributes
+	const Schema *s,           // schema from which to get constraint
+	ConstraintType t,          // constraint type
+	const AttributeID *attrs,  // constraint attributes
+	uint attr_count            // number of attributes
 );
 
 // get all constraints in schema

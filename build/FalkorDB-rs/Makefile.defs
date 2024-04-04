@@ -1,0 +1,10 @@
+
+ifneq ($(SAN),)
+export FalkorDBRS=$(FalkorDBRS_BINDIR)/x86_64-unknown-linux-gnu/debug/libFalkorDB_rs.a
+else
+ifeq ($(DEBUG),1)
+export FalkorDBRS=$(FalkorDBRS_BINDIR)/debug/libFalkorDB_rs.a
+else
+export FalkorDBRS=$(FalkorDBRS_BINDIR)/release/libFalkorDB_rs.a
+endif
+endif

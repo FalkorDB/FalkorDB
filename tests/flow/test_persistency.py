@@ -2,92 +2,86 @@ from common import *
 import random
 from index_utils import *
 from click.testing import CliRunner
-from redisgraph_bulk_loader.bulk_insert import bulk_insert
-
-redis_con = None
-port = None
+from falkordb_bulk_loader.bulk_insert import bulk_insert
 
 class testGraphPersistency():
     def __init__(self):
-        self.env = Env(decodeResponses=True, enableDebugCommand=True)
+        self.env, self.db = Env(enableDebugCommand=True)
 
         # skip test if we're running under Sanitizer
         if SANITIZER != "":
             self.env.skip() # sanitizer is not working correctly with bulk
 
-        global redis_con
-        redis_con = self.env.getConnection()
-        global port
-        port = self.env.envRunner.port
-        
-
     def populate_graph(self, graph_name):
-        redis_graph = Graph(redis_con, graph_name)
+        graph = self.db.select_graph(graph_name)
         # quick return if graph already exists
-        if redis_con.exists(graph_name):
-            return redis_graph
+        if graph_name in self.db.list_graphs():
+            return graph
 
         people       = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
-        visits       = [("Roi", "USA"), ("Alon", "Israel"), ("Ailon", "Japan"), ("Boaz", "United Kingdom")]
-        countries    = ["Israel", "USA", "Japan", "United Kingdom"]
+        visits       = [("Roi", "USA"), ("Alon", "Israel"), ("Ailon", "Japan"), ("Boaz", "UK")]
+        countries    = ["Israel", "USA", "Japan", "UK"]
         personNodes  = {}
         countryNodes = {}
 
         # create nodes
         for p in people:
-            person = Node(label="person", properties={"name": p, "height": random.randint(160, 200)})
-            redis_graph.add_node(person)
+            person = Node(alias=p, labels="person", properties={"name": p, "height": random.randint(160, 200)})
             personNodes[p] = person
 
         for c in countries:
-            country = Node(label="country", properties={"name": c, "population": random.randint(100, 400)})
-            redis_graph.add_node(country)
+            country = Node(alias=c, labels="country", properties={"name": c, "population": random.randint(100, 400)})
             countryNodes[c] = country
 
         # create edges
+        edges = []
         for v in visits:
             person  = v[0]
             country = v[1]
-            edge = Edge(personNodes[person], 'visit', countryNodes[country], properties={
-                        'purpose': 'pleasure'})
-            redis_graph.add_edge(edge)
+            edges.append(Edge(personNodes[person], 'visit', countryNodes[country], properties={
+                        'purpose': 'pleasure'}))
 
-        redis_graph.commit()
+        edges_str = [str(e) for e in edges]
+        nodes_str = [str(n) for n in personNodes.values()] + [str(n) for n in countryNodes.values()]
+        graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
         # delete nodes, to introduce deleted entries within our datablock
         query = """MATCH (n:person) WHERE n.name = 'Roi' or n.name = 'Ailon' DELETE n"""
-        redis_graph.query(query)
+        graph.query(query)
 
         query = """MATCH (n:country) WHERE n.name = 'USA' DELETE n"""
-        redis_graph.query(query)
+        graph.query(query)
 
         # create indices
-        create_node_range_index(redis_graph, "person", "name", "height")
-        create_node_range_index(redis_graph, "country", "name", "population")
-        create_edge_range_index(redis_graph, "visit", "purpose")
-        redis_graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
-        wait_for_indices_to_sync(redis_graph)
+        graph.create_node_range_index("person", "name", "height")
+        graph.create_node_range_index("country", "name", "population")
+        graph.create_edge_range_index("visit", "purpose")
+        graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
+        wait_for_indices_to_sync(graph)
 
-        return redis_graph
+        return graph
 
     def populate_dense_graph(self, graph_name):
-        dense_graph = Graph(redis_con, graph_name)
+        dense_graph = self.db.select_graph(graph_name)
 
         # return early if graph exists
-        if redis_con.exists(graph_name):
+        if graph_name in self.db.list_graphs():
             return dense_graph
 
         nodes = []
         for i in range(10):
-            node = Node(label="n", properties={"val": i})
-            dense_graph.add_node(node)
+            node = Node(alias=f"n_{i}", labels="n", properties={"val": i})
             nodes.append(node)
 
+        edges = []
         for n_idx, n in enumerate(nodes):
             for m_idx, m in enumerate(nodes[:n_idx]):
-                dense_graph.add_edge(Edge(n, "connected", m))
+                edges.append(Edge(n, "connected", m))
 
-        dense_graph.flush()
+        nodes_str = [str(n) for n in nodes]
+        edges_str = [str(e) for e in edges]
+        dense_graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
+
         return dense_graph
 
     def test01_save_load(self):
@@ -164,7 +158,7 @@ class testGraphPersistency():
     def test03_restore_properties(self):
         graph_names = ("simple_props", "{tag}_simple_props")
         for graph_name in graph_names:
-            graph = Graph(redis_con, graph_name)
+            graph = self.db.select_graph(graph_name)
 
             query = """CREATE (:p {strval: 'str', numval: 5.5, boolval: true, array: [1,2,3], pointval: point({latitude: 5.5, longitude: 6})})"""
             result = graph.query(query)
@@ -188,24 +182,15 @@ class testGraphPersistency():
     def test04_repeated_edges(self):
         graph_names = ["repeated_edges", "{tag}_repeated_edges"]
         for graph_name in graph_names:
-            graph = Graph(redis_con, graph_name)
-            src   = Node(label='p', properties={'name': 'src'})
-            dest  = Node(label='p', properties={'name': 'dest'})
-            edge1 = Edge(src, 'e', dest, properties={'val': 1})
-            edge2 = Edge(src, 'e', dest, properties={'val': 2})
-
-            graph.add_node(src)
-            graph.add_node(dest)
-            graph.add_edge(edge1)
-            graph.add_edge(edge2)
-            graph.flush()
+            graph = self.db.select_graph(graph_name)
+            graph.query("""CREATE (src:p {name: 'src'}), (dest:p {name: 'dest'}),
+                        (src)-[:e {val: 1}]->(dest), (src)-[:e {val: 2}]->(dest)""")
 
             # Verify the new edge
             q = """MATCH (a)-[e]->(b) RETURN e.val, a.name, b.name ORDER BY e.val"""
             actual_result = graph.query(q)
 
-            expected_result = [[edge1.properties['val'], src.properties['name'], dest.properties['name']],
-                               [edge2.properties['val'], src.properties['name'], dest.properties['name']]]
+            expected_result = [[1, 'src', 'dest'], [2, 'src', 'dest']]
 
             self.env.assertEquals(actual_result.result_set, expected_result)
 
@@ -220,7 +205,7 @@ class testGraphPersistency():
     # default capacity are persisted correctly.
     def test05_load_large_graph(self):
         graph_name = "LARGE_GRAPH"
-        graph = Graph(redis_con, graph_name)
+        graph = self.db.select_graph(graph_name)
         q = """UNWIND range(1, 50000) AS v CREATE (:L)-[:R {v: v}]->(:L)"""
         actual_result = graph.query(q)
         self.env.assertEquals(actual_result.nodes_created, 100_000)
@@ -243,11 +228,13 @@ class testGraphPersistency():
 
     # Verify that graphs created using the GRAPH.BULK endpoint are persisted correctly
     def test06_bulk_insert(self):
+        port      = self.env.envRunner.port
+        runner    = CliRunner()
         graphname = "bulk_inserted_graph"
-        runner = CliRunner()
+
 
         csv_path = os.path.dirname(os.path.abspath(__file__)) + '/../../demo/social/resources/bulk_formatted/'
-        res = runner.invoke(bulk_insert, ['--redis-url', f"redis://localhost:{port}",
+        res = runner.invoke(bulk_insert, ['--server-url', f"redis://localhost:{port}",
                                           '--nodes', csv_path + 'Person.csv',
                                           '--nodes', csv_path + 'Country.csv',
                                           '--relations', csv_path + 'KNOWS.csv',
@@ -262,7 +249,7 @@ class testGraphPersistency():
         # Restart the server
         self.env.dumpAndReload()
 
-        graph = Graph(redis_con, graphname)
+        graph = self.db.select_graph(graphname)
 
         query_result = graph.query("""MATCH (p:Person)
                                       RETURN p.name, p.age, p.gender, p.status, ID(p)
@@ -379,7 +366,7 @@ class testGraphPersistency():
     # Verify that nodes with multiple labels are saved and restored correctly.
     def test07_persist_multiple_labels(self):
         graph_id = "multiple_labels"
-        g = Graph(redis_con, graph_id)
+        g = self.db.select_graph(graph_id)
         q = "CREATE (a:L0:L1:L2)"
         actual_result = g.query(q)
         self.env.assertEquals(actual_result.nodes_created, 1)

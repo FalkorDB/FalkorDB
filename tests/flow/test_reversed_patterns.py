@@ -1,35 +1,23 @@
 from common import *
 
-GRAPH_ID = "G"
-redis_con = None
-redis_graph = None
-
+GRAPH_ID = "reversed_patterns"
 
 class testReversedPatterns(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_graph
-        global redis_con
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.redis_con = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
-        global redis_graph
-        if not redis_con.exists(GRAPH_ID):
+        if GRAPH_ID not in self.db.list_graphs():
             # Create entities
-            srcNode = Node(label="L", properties={"name": "SRC"})
-            destNode = Node(label="L", properties={"name": "DEST"})
-            redis_graph.add_node(srcNode)
-            redis_graph.add_node(destNode)
-            edge = Edge(srcNode, 'E', destNode)
-            redis_graph.add_edge(edge)
-            redis_graph.commit()
+            self.graph.query("CREATE (:L {name:'SRC'})-[:E]->(:L {name:'DEST'})")
 
     # Verify that edges are not modified after entity deletion
     def test01_reversed_pattern(self):
         leftToRight = """MATCH (a:L)-[b]->(c:L) RETURN a, TYPE(b), c"""
         rightToLeft = """MATCH (c:L)<-[b]-(a:L) RETURN a, TYPE(b), c"""
-        leftToRightResult = redis_graph.query(leftToRight)
-        rightToLeftResult = redis_graph.query(rightToLeft)
+        leftToRightResult = self.graph.query(leftToRight)
+        rightToLeftResult = self.graph.query(rightToLeft)
         self.env.assertEquals(leftToRightResult.result_set, rightToLeftResult.result_set)

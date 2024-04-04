@@ -28,6 +28,7 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
+    container: falkordb/falkordb-build:ubuntu
     permissions:
       actions: read
       contents: read
@@ -43,7 +44,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         submodules: true
     - run: |
@@ -54,28 +55,28 @@ jobs:
 
     - name: Cache GraphBLAS
       id: cache_graphblas
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
         key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}    
 
     - name: Cache parser
       id: cache_parser
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
         key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
         key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
         # If you wish to specify custom queries, you can do so here or in a config file.
@@ -87,9 +88,7 @@ jobs:
     # If this step fails, then you should remove it and run the build manually (see below)
     - name: Build
       run: |
-        sudo ln -sf /usr/bin/gcc /usr/bin/gcc-5
-        ./deps/readies/bin/getpy3
-        ./sbin/system-setup.py # --no-rmpytools
+        rustup default stable
         make build
 
     # ℹ️ Command-line programs to run using the OS shell.
@@ -104,4 +103,4 @@ jobs:
     #   make release
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3

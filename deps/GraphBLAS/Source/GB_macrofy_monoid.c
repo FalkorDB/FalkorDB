@@ -24,7 +24,8 @@ void GB_macrofy_monoid  // construct the macros for a monoid
                         // semiring, times is normally a terminal monoid, but
                         // it's not worth exploiting in GrB_mxm.
     // output:
-    const char **u_expression
+    const char **u_expression,
+    const char **g_expression
 )
 {
 
@@ -39,7 +40,7 @@ void GB_macrofy_monoid  // construct the macros for a monoid
     //--------------------------------------------------------------------------
 
     GB_macrofy_binop (fp, "GB_ADD", false, true, false, add_ecode, C_iso,
-        op, NULL, u_expression) ;
+        op, NULL, u_expression, g_expression) ;
 
     //--------------------------------------------------------------------------
     // create macros for the identity value
@@ -260,6 +261,7 @@ void GB_macrofy_monoid  // construct the macros for a monoid
     // create macros for atomics on the CPU
     //--------------------------------------------------------------------------
 
+    fprintf (fp, "#define GB_Z_SIZE  %d\n", (int) zsize) ;
     fprintf (fp, "#define GB_Z_NBITS %d\n", 8 * (int) zsize) ;
 
     // atomic write

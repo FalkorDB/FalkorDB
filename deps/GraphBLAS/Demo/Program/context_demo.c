@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "GraphBLAS.h"
+#undef I
 #include "simple_rand.h"
 #include "simple_rand.c"
 #define MIN(x,y) ((x) < (y)) ? (x) : (y)

@@ -11,6 +11,7 @@
 #include "globals.h"
 #include "util/uuid.h"
 #include "cron/cron.h"
+#include "bolt/bolt_api.h"
 #include "util/thpool/pools.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
@@ -357,6 +358,8 @@ static void _ShutdownEventHandler
 
 	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
 	RediSearch_CleanupModule();
+
+	BoltApi_Unregister();
 
 	// free global variables
 	Globals_Free();

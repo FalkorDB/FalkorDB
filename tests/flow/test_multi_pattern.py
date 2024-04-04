@@ -1,33 +1,27 @@
 from common import *
 
-redis_graph = None
+GRAPH_ID = "multi_pattern"
 people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
 
 class testGraphMultiPatternQueryFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, "G")
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
-        global redis_graph
-        
-        nodes = {}
-         # Create entities        
+         # Create entities
+        nodes = []
         for p in people:
-            node = Node(label="person", properties={"name": p})
-            redis_graph.add_node(node)
-            nodes[p] = node
+            nodes.append(Node(labels="person", properties={"name": p}))
 
-        redis_graph.commit()
+        self.graph.query(f"CREATE {','.join(map(str, nodes))}")
 
     # Connect a single node to all other nodes.
     def test01_connect_node_to_rest(self):
         query = """MATCH(r:person {name:"Roi"}), (f:person) WHERE f.name <> r.name CREATE (r)-[:friend]->(f) RETURN count(f)"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
         self.env.assertEquals(friend_count, 6)
         self.env.assertEquals(actual_result.relationships_created, 6)
@@ -42,14 +36,14 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
                    """MATCH (r:person {name:"Roi"})-[]->(f) MATCH (x) RETURN f, x""",
                    """MATCH (x) MATCH (r:person {name:"Roi"})-[]->(f) RETURN f, x"""]
         for q in queries:
-            actual_result = redis_graph.query(q)
+            actual_result = self.graph.query(q)
             records_count = len(actual_result.result_set)
             self.env.assertEquals(records_count, expected_resultset_size)
 
     # Connect every node to every node.
     def test03_create_fully_connected_graph(self):
         query = """MATCH(a:person), (b:person) WHERE a.name <> b.name CREATE (a)-[f:friend]->(b) RETURN count(f)"""
-        actual_result = redis_graph.query(query)
+        actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
         self.env.assertEquals(friend_count, 42)
         self.env.assertEquals(actual_result.relationships_created, 42)
@@ -62,7 +56,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
                    """MATCH (a) MATCH (b) MATCH (c) RETURN count(a)"""]
 
         for q in queries:
-            actual_result = redis_graph.query(q)
+            actual_result = self.graph.query(q)
             friend_count = actual_result.result_set[0][0]
             self.env.assertEquals(friend_count, 343)
 
@@ -71,7 +65,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
                    """CREATE (:a {v:1}) CREATE (:b {v:2, z:3}) CREATE (:c) CREATE (:a)-[:r0 {k:9}]->(:b) CREATE (:c)-[:r1]->(:d)""",
                    """CREATE (:a {v:1}), (:b {v:2, z:3}) CREATE (:c), (:a)-[:r0 {k:9}]->(:b) CREATE (:c)-[:r1]->(:d)"""]
         for q in queries:
-            actual_result = redis_graph.query(q)
+            actual_result = self.graph.query(q)
             self.env.assertEquals(actual_result.relationships_created, 2)
             self.env.assertEquals(actual_result.properties_set, 4)
             self.env.assertEquals(actual_result.nodes_created, 7)

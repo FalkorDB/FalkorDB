@@ -189,7 +189,7 @@ static void EffectsBuffer_WriteSIValue
 		case T_NULL:
 			// no additional data is required to represent NULL
 			break;
-		case T_VECTOR32F:
+		case T_VECTOR_F32:
 			EffectsBuffer_WriteSIVector(v, buff);
 			break;
 		default:
@@ -260,11 +260,11 @@ static void EffectsBuffer_WriteAttributeSet
 
 	for(ushort i = 0; i < attr_count; i++) {
 		// get current attribute name and value
-		Attribute_ID attr_id;
+		AttributeID attr_id;
 		SIValue attr = AttributeSet_GetIdx(attrs, i, &attr_id);
 
 		// write attribute ID
-		EffectsBuffer_WriteBytes(&attr_id, sizeof(Attribute_ID), buff);
+		EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
 
 		// write attribute value
 		EffectsBuffer_WriteSIValue(&attr, buff);
@@ -555,10 +555,10 @@ void EffectsBuffer_AddDeleteEdgeEffect
 // add an entity update effect to buffer
 static void EffectsBuffer_AddNodeUpdateEffect
 (
-	EffectsBuffer *buff,   // effect buffer
-	Node *node,            // updated node
-	Attribute_ID attr_id,  // updated attribute ID
- 	SIValue value          // value
+	EffectsBuffer *buff,  // effect buffer
+	Node *node,           // updated node
+	AttributeID attr_id,  // updated attribute ID
+ 	SIValue value         // value
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -581,7 +581,7 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	// write attribute ID
 	//--------------------------------------------------------------------------
 	
-	EffectsBuffer_WriteBytes(&attr_id, sizeof(Attribute_ID), buff);
+	EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
 
 	//--------------------------------------------------------------------------
 	// write attribute value
@@ -595,10 +595,10 @@ static void EffectsBuffer_AddNodeUpdateEffect
 // add an entity update effect to buffer
 static void EffectsBuffer_AddEdgeUpdateEffect
 (
-	EffectsBuffer *buff,   // effect buffer
-	Edge *edge,            // updated edge
-	Attribute_ID attr_id,  // updated attribute ID
- 	SIValue value          // value
+	EffectsBuffer *buff,  // effect buffer
+	Edge *edge,           // updated edge
+	AttributeID attr_id,  // updated attribute ID
+ 	SIValue value         // value
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -645,7 +645,7 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	// write attribute ID
 	//--------------------------------------------------------------------------
 
-	EffectsBuffer_WriteBytes(&attr_id, sizeof(Attribute_ID), buff);
+	EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
 
 	//--------------------------------------------------------------------------
 	// write attribute value
@@ -661,7 +661,7 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 (
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
-	Attribute_ID attr_id,        // updated attribute ID
+	AttributeID attr_id,         // updated attribute ID
 	GraphEntityType entity_type  // entity type
 ) {
 	// attribute was deleted
@@ -685,7 +685,7 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 (
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
-	Attribute_ID attr_id,        // updated attribute ID
+	AttributeID attr_id,         // updated attribute ID
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {
@@ -704,7 +704,7 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 (
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
-	Attribute_ID attr_id,        // updated attribute ID
+	AttributeID attr_id,         // updated attribute ID
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {

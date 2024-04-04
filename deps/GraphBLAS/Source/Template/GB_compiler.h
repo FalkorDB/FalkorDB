@@ -55,6 +55,17 @@
     #define GB_COMPILER_SUB   0
     #define GB_COMPILER_NAME  __VERSION__
 
+#elif defined ( _MSC_VER )
+
+    // Microsoft Visual Studio (cl compiler)
+    #undef  GB_COMPILER_MSC
+    #define GB_COMPILER_MSC     1
+
+    #define GB_COMPILER_MAJOR ( _MSC_VER / 100 )
+    #define GB_COMPILER_MINOR ( _MSC_VER - 100 * GB_COMPILER_MAJOR)
+    #define GB_COMPILER_SUB   0
+    #define GB_COMPILER_NAME  "Microsoft Visual Studio " GB_XSTR (_MSC_VER)
+
 #elif defined ( __clang__ )
 
     // clang
@@ -88,17 +99,6 @@
     #define GB_COMPILER_SUB   __GNUC_PATCHLEVEL__
     #define GB_COMPILER_NAME  "GNU gcc " GB_XSTR (__GNUC__) "." \
         GB_XSTR (__GNUC_MINOR__) "." GB_XSTR (__GNUC_PATCHLEVEL__)
-
-#elif defined ( _MSC_VER )
-
-    // Microsoft Visual Studio (cl compiler)
-    #undef  GB_COMPILER_MSC
-    #define GB_COMPILER_MSC     1
-
-    #define GB_COMPILER_MAJOR ( _MSC_VER / 100 )
-    #define GB_COMPILER_MINOR ( _MSC_VER - 100 * GB_COMPILER_MAJOR)
-    #define GB_COMPILER_SUB   0
-    #define GB_COMPILER_NAME  "Microsoft Visual Studio " GB_XSTR (_MSC_VER)
 
 #else
 

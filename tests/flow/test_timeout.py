@@ -1,71 +1,68 @@
 import asyncio
 from common import *
 from index_utils import *
-
-redis_con = None
-redis_graph = None
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 
 GRAPH_ID = "timeout"
 
 
 class testQueryTimeout():
     def __init__(self):
-        self.env = Env(decodeResponses=True, moduleArgs="TIMEOUT 1000")
+        self.env, self.db = Env(moduleArgs="TIMEOUT 1000")
 
         # skip test if we're running under Valgrind
         if VALGRIND or SANITIZER != "":
             self.env.skip() # valgrind is not working correctly with replication
 
-        global redis_con
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def test01_read_write_query_timeout(self):
         query = "UNWIND range(0, 1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
             # The query is expected to timeout
-            redis_graph.query(query, timeout=1)
+            self.graph.query(query, timeout=1)
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))
 
         try:
             # The query is expected to succeed
-            redis_graph.query(query, timeout=2000)
+            self.graph.query(query, timeout=2000)
         except:
             self.env.assertTrue(False)
 
         query = """UNWIND range(0, 1000000) AS x CREATE (p:Person {age: x%90, height: x%200, weight: x%80})"""
         try:
             # The query is expected to succeed
-            redis_graph.query(query, timeout=1)
+            self.graph.query(query, timeout=1)
             self.env.assertTrue(True)
         except:
             self.env.assertTrue(False)
 
     def test02_configured_timeout(self):
         # Verify that the module-level timeout is set to the default of 0
-        response = redis_con.execute_command("GRAPH.CONFIG GET timeout")
-        self.env.assertEquals(response[1], 1000)
+        timeout = self.db.config_get("timeout")
+        self.env.assertEquals(timeout, 1000)
+
         # Set a default timeout of 1 millisecond
-        redis_con.execute_command("GRAPH.CONFIG SET timeout 1")
-        response = redis_con.execute_command("GRAPH.CONFIG GET timeout")
-        self.env.assertEquals(response[1], 1)
+        self.db.config_set("timeout", 1)
+        timeout = self.db.config_get("timeout")
+        self.env.assertEquals(timeout, 1)
 
         # Validate that a read query times out
         query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
         try:
-            redis_graph.query(query)
+            self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))
 
     def test03_timeout_index_scan(self):
         # set timeout to unlimited
-        redis_con.execute_command("GRAPH.CONFIG SET timeout 0")
+        self.db.config_set("timeout", 0)
 
-        create_node_range_index(redis_graph, 'Person', 'age', 'height', 'weight', sync=True)
+        create_node_range_index(self.graph, 'Person', 'age', 'height', 'weight', sync=True)
 
         queries = [
                 # full scan
@@ -99,7 +96,7 @@ class testQueryTimeout():
         for q in queries:
             q += " LIMIT 10"
             try:
-                res = redis_graph.query(q, timeout=5)
+                res = self.graph.query(q, timeout=5)
                 timeouts.append(res.run_time_ms)
             except:
                 timeouts.append(res.run_time_ms)
@@ -108,11 +105,8 @@ class testQueryTimeout():
             try:
                 # query is expected to timeout
                 timeout = min(max(int(timeouts[i]), 1), 10)
-                res = redis_graph.query(q, timeout=timeout)
+                res = self.graph.query(q, timeout=timeout)
                 self.env.assertTrue(False)
-                print(q)
-                print(res.run_time_ms)
-                print(timeout)
             except ResponseError as error:
                 self.env.assertContains("Query timed out", str(error))
 
@@ -122,67 +116,64 @@ class testQueryTimeout():
         res = None
         try:
             # The query is expected to succeed
-            res = redis_graph.query(query + " LIMIT 1000", timeout=3000)
+            res = self.graph.query(query + " LIMIT 1000", timeout=3000)
         except:
             self.env.assertTrue(False)
 
         try:
             # The query is expected to timeout
-            res = redis_graph.query(query, timeout=int(res.run_time_ms))
+            res = self.graph.query(query, timeout=int(res.run_time_ms))
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("Query timed out", str(error))
 
     def test05_invalid_loadtime_config(self):
-        self.env.flush()
-        self.env.stop()
-
         try:
-            env = Env(decodeResponses=True, moduleArgs="TIMEOUT 10 TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
+            env, db = Env(moduleArgs="TIMEOUT 10 TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
             env.getConnection().ping()
             self.env.assertTrue(False)
         except:
             self.env.assertTrue(True)
 
     def test06_error_timeout_default_higher_than_timeout_max(self):
-        self.env = Env(decodeResponses=True, moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
+        self.env, self.db = Env(moduleArgs="TIMEOUT_DEFAULT 10 TIMEOUT_MAX 10")
 
         # get current timeout configuration
-        max_timeout = redis_con.execute_command("GRAPH.CONFIG", "GET", "TIMEOUT_MAX")[1]
-        default_timeout = redis_con.execute_command("GRAPH.CONFIG", "GET", "TIMEOUT_DEFAULT")[1]
+        max_timeout = self.db.config_get("TIMEOUT_MAX")
+        default_timeout = self.db.config_get("TIMEOUT_DEFAULT")
 
         self.env.assertEquals(max_timeout, 10)
         self.env.assertEquals(default_timeout, 10)
 
         # try to set default-timeout to a higher value than max-timeout
         try:
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", max_timeout + 1)
+            self.db.config_set("TIMEOUT_DEFAULT", max_timeout + 1)
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("TIMEOUT_DEFAULT configuration parameter cannot be set to a value higher than TIMEOUT_MAX", str(error))
 
         # try to set max-timeout to a lower value then default-timeout
         try:
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", default_timeout - 1)
+            self.db.config_set("TIMEOUT_MAX", default_timeout - 1)
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("TIMEOUT_MAX configuration parameter cannot be set to a value lower than TIMEOUT_DEFAULT", str(error))
 
         # disable max timeout
         try:
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", 0)
+            self.db.config_set("TIMEOUT_MAX", 0)
             self.env.assertTrue(True)
             # revert timeout_max to 10
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", 10)
+            self.db.config_set("TIMEOUT_MAX", 10)
         except ResponseError as error:
             self.env.assertTrue(False)
 
         # disable default timeout
         try:
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", 0)
+            self.db.config_set("TIMEOUT_DEFAULT", 0)
             self.env.assertTrue(True)
             # revert timeout_default to 5
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", 5)
+            self.db.config_set("TIMEOUT_DEFAULT", 5)
         except ResponseError as error:
             self.env.assertTrue(False)
 
@@ -196,48 +187,47 @@ class testQueryTimeout():
             for query in queries:
                 try:
                     # The query is expected to timeout
-                    redis_graph.query(query)
+                    self.graph.query(query)
                     self.env.assertTrue(False)
                 except ResponseError as error:
                     self.env.assertContains("Query timed out", str(error))
 
             # disable timeout_default, timeout_max should be enforced
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", 0)
+            self.db.config_set("TIMEOUT_DEFAULT", 0)
 
         # revert timeout_default to 10
-        redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", 10)
+        self.db.config_set("TIMEOUT_DEFAULT", 10)
 
     def test08_enforce_timeout_configuration(self):
         read_q = "RETURN 1"
         write_q = "CREATE ()"
         queries = [read_q, write_q]
 
-        max_timeout = redis_con.execute_command("GRAPH.CONFIG", "GET", "TIMEOUT_MAX")[1]
+        max_timeout = self.db.config_get("TIMEOUT_MAX")
 
         for query in queries:
             try:
                 # query is expected to fail
-                redis_graph.query(query, timeout=max_timeout+1)
+                self.graph.query(query, timeout=max_timeout+1)
                 self.env.assertTrue(False)
             except ResponseError as error:
                 self.env.assertContains("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value", str(error))
 
     def test09_fallback(self):
-        self.env.flush()
         self.env.stop()
-        self.env = Env(decodeResponses=True, moduleArgs="TIMEOUT 1")
+        self.env, self.db = Env(moduleArgs="TIMEOUT 1")
 
         configs = ["TIMEOUT_DEFAULT", "TIMEOUT_MAX"]
 
         for config in configs:
             # enable/disable config expecting to fallback to the old timeout
-            redis_con.execute_command("GRAPH.CONFIG", "SET", config, 10)
-            redis_con.execute_command("GRAPH.CONFIG", "SET", config, 0)
+            self.db.config_set(config, 10)
+            self.db.config_set(config, 0)
 
             query = "UNWIND range(0,1000000) AS x WITH x AS x WHERE x = 10000 RETURN x"
             try:
                 # The query is expected to timeout
-                redis_graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(False)
             except ResponseError:
                 self.env.assertTrue(True)
@@ -245,17 +235,17 @@ class testQueryTimeout():
             query = "UNWIND range(0, 1000000) AS x CREATE (:N {v: x})"
             try:
                 # The query is expected to succeed
-                redis_graph.query(query)
+                self.graph.query(query)
                 self.env.assertTrue(True)
             except:
                 self.env.assertTrue(False)
 
     def test10_set_old_timeout_when_new_config_set(self):
-        redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", 10)
+        self.db.config_set("TIMEOUT_DEFAULT", 10)
 
         # try to set timeout
         try:
-            redis_con.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT", 20)
+            self.db.config_set("TIMEOUT", 20)
             self.env.assertTrue(False)
         except ResponseError as error:
             self.env.assertContains("The TIMEOUT configuration parameter is deprecated. Please set TIMEOUT_MAX and TIMEOUT_DEFAULT instead", str(error))
@@ -264,50 +254,50 @@ class testQueryTimeout():
     # should return to user
     def test11_profile_no_double_response(self):
         # reset timeout params to default
-        self.env.flush()
         self.env.stop()
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
         # Set timeout parameters to small values (1 millisecond)
-        redis_graph.config("TIMEOUT_MAX", 1, True)
-        redis_graph.config("TIMEOUT_DEFAULT", 1, True)
+        self.db.config_set("TIMEOUT_MAX", 1)
+        self.db.config_set("TIMEOUT_DEFAULT", 1)
 
         # Issue a profile query, expect a timeout error
         try:
             q = """UNWIND range(0, 10000) AS x
                    UNWIND range(0, 10000) AS y
                    CREATE (:P{v:x * y + y})"""
-            redis_graph.profile(q)
+            self.graph.profile(q)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             # expecting to get a timeout error
             self.env.assertIn("Query timed out", str(e))
 
         # make sure no pending result exists
-        res = redis_graph.query("RETURN 1")
+        res = self.graph.query("RETURN 1")
         self.env.assertEquals(res.result_set[0][0], 1)
 
     def test12_concurrent_timeout(self):
-        # skip test if we're running under Valgrind
-        if VALGRIND or "to_thread" not in dir(asyncio):
-            self.env.skip() # valgrind is not working correctly with multi processing
-
-        self.env.flush()
         self.env.stop()
-        self.env = Env(decodeResponses=True)
+        self.env, self.db = Env()
 
-        redis_graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
+        self.graph.query("UNWIND range(1, 1000) AS x CREATE (:N {v:x})")
 
-        def query():
-            g = Graph(self.env.getConnection(), GRAPH_ID)
+        async def query():
+            # connection pool with 16 connections
+            # blocking when there's no connections available
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-            for i in range(1, 1000):
-                g.query(f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)", timeout=1000)
+            tasks = []
+            for i in range(1, 10000):
+                q = f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)"
+                tasks.append(asyncio.create_task(g.query(q, timeout=1000)))
 
-        loop = asyncio.get_event_loop()
-        tasks = []
-        for i in range(1, 10):
-            tasks.append(loop.create_task(asyncio.to_thread(query)))
+            # wait for tasks to finish
+            await asyncio.gather(*tasks)
 
-        loop.run_until_complete(asyncio.wait(tasks))
+            # close the connection pool
+            await pool.aclose()
 
+        asyncio.run(query())

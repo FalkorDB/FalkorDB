@@ -1,21 +1,19 @@
 from common import *
 from math import floor, ceil, sqrt
 
-graph = None
 GRAPH_ID = "aggregations"
 
 class testAggregations():
     def __init__(self):
-        global graph
-        self.env = Env(decodeResponses=True)
-        graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def get_res_and_assertEquals(self, query, expected_result):
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set, expected_result)
     
     def get_res_and_assertAlmostEquals(self, query, expected_result):
-        actual_result = graph.query(query)
+        actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], expected_result[0][0], 0.0001)
 
     # test aggregation default values
@@ -40,7 +38,7 @@ class testAggregations():
                    RETURN count(n), min(n.v), max(n.v), sum(n.v), avg(n.v),
                    stDev(n.v), stDevP(n.v), collect(n),
                    percentileDisc(n.v, 0.5), percentileCont(n.v, 0.5)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0], expected_result)
 
         # issue a similar query only perform aggregations within a WITH clause
@@ -51,19 +49,19 @@ class testAggregations():
                    percentileCont(n.v, 0.5) as J
                    RETURN *"""
 
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0], expected_result)
     
     def test02_countTest(self):
         query = "UNWIND [NULL, NULL, NULL, NULL, NULL] AS x RETURN count(1)"
         expected = 5
-        actual_result = graph.query(query).result_set[0][0]
+        actual_result = self.graph.query(query).result_set[0][0]
         self.env.assertEquals(actual_result, expected)
     
     def test03_partialCountTest(self):
         query = "UNWIND [NULL, 1, NULL, 1, NULL, 1, NULL, 1, NULL, 1] AS x RETURN count(x)"
         expected = 5
-        actual_result = graph.query(query).result_set[0][0]
+        actual_result = self.graph.query(query).result_set[0][0]
         self.env.assertEquals(actual_result, expected)
     
     def test04_percentileCont(self):
@@ -117,8 +115,8 @@ class testAggregations():
         double_max = '1.7976931348623157e+308'
         query = f'UNWIND [{double_max}, {double_max} / 2] AS x RETURN avg(x)'
         query2 = f'RETURN ({double_max} / 2 + {double_max} / 4)'
-        res1 = graph.query(query).result_set[0][0]
-        res2 = graph.query(query2).result_set[0][0]
+        res1 = self.graph.query(query).result_set[0][0]
+        res2 = self.graph.query(query2).result_set[0][0]
         self.env.assertEquals(res1, res2)
     
     def test08_AggregateLongOverflow(self):
@@ -129,7 +127,7 @@ class testAggregations():
     
     def test09_AggregateWithNullFilter(self):
         query = 'CREATE (:L {p:0.0/0.0})'
-        graph.query(query)
+        self.graph.query(query)
 
         query = 'MATCH (n:L) WHERE (null <> false) XOR true RETURN COUNT(n)'
         expected = [[0]]

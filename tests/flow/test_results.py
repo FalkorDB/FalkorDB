@@ -1,43 +1,38 @@
 from common import *
 
-graph = None
-redis_con = None
-
 people = ["Roi", "Alon", "Ailon", "Boaz"]
+GRAPH_ID = "G"
 
 
 class testResultSetFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global graph
-        global redis_con
-        redis_con = self.env.getConnection()
-        graph = Graph(redis_con, "G")
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
         self.populate_graph()
 
     def populate_graph(self):
-        global graph
         nodes = {}
         # Create entities
         for idx, p in enumerate(people):
-            node = Node(label="person", properties={"name": p, "val": idx})
-            graph.add_node(node)
+            node = Node(alias=f"n{idx}", labels="person", properties={"name": p, "val": idx})
             nodes[p] = node
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
-                    edge = Edge(nodes[src], "know", nodes[dest])
-                    graph.add_edge(edge)
+                    edges.append(Edge(nodes[src], "know", nodes[dest]))
 
-        graph.commit()
+        nodes_str = [str(node) for node in nodes.values()]
+        edges_str = [str(edge) for edge in edges]
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
 
     # Verify that scalar returns function properly
     def test01_return_scalars(self):
         query = """MATCH (a) RETURN a.name, a.val ORDER BY a.val"""
-        result = graph.query(query)
+        result = self.graph.query(query)
 
         expected_result = [['Roi', 0],
                            ['Alon', 1],
@@ -51,7 +46,7 @@ class testResultSetFlow(FlowTestsBase):
     # Verify that full node returns function properly
     def test02_return_nodes(self):
         query = """MATCH (a) RETURN a"""
-        result = graph.query(query)
+        result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
         self.env.assertEquals(len(result.result_set), 4)
@@ -60,7 +55,7 @@ class testResultSetFlow(FlowTestsBase):
     # Verify that full edge returns function properly
     def test03_return_edges(self):
         query = """MATCH ()-[e]->() RETURN e"""
-        result = graph.query(query)
+        result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
         self.env.assertEquals(len(result.result_set), 12) # 12 relations (fully connected graph)
@@ -68,7 +63,7 @@ class testResultSetFlow(FlowTestsBase):
 
     def test04_mixed_returns(self):
         query = """MATCH (a)-[e]->() RETURN a.name, a, e ORDER BY a.val"""
-        result = graph.query(query)
+        result = self.graph.query(query)
 
         # TODO add more assertions after updated client format is defined
         self.env.assertEquals(len(result.result_set), 12) # 12 relations (fully connected graph)
@@ -76,7 +71,7 @@ class testResultSetFlow(FlowTestsBase):
 
     # Verify that the DISTINCT operator works with full entity returns
     def test05_distinct_full_entities(self):
-        graph2 = Graph(redis_con, "H")
+        graph2 = self.db.select_graph("H")
         query = """CREATE (a)-[:e]->(), (a)-[:e]->()"""
         result = graph2.query(query)
         self.env.assertEquals(result.nodes_created, 3)
@@ -93,7 +88,7 @@ class testResultSetFlow(FlowTestsBase):
     # Verify that RETURN * projections include all user-defined aliases.
     def test06_return_all(self):
         query = """MATCH (a)-[e]->(b) RETURN *"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         # Validate the header strings of the 3 columns.
         # NOTE - currently, RETURN * populates values in alphabetical order, but that is subject to later change.
         self.env.assertEqual(result.header[0][1], 'a')
@@ -107,63 +102,63 @@ class testResultSetFlow(FlowTestsBase):
         # Test for aggregation over non existing node properties.
         # Max default value is null.
         query = """MATCH (a) return max(a.missing_field)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(None, result.result_set[0][0])
 
         # Min default value is null.
         query = """MATCH (a) return min(a.missing_field)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(None, result.result_set[0][0])
 
         # Count default value is 0.
         query = """MATCH (a) return count(a.missing_field)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(0, result.result_set[0][0])
 
         # Avarage default value is 0.
         query = """MATCH (a) return avg(a.missing_field)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(None, result.result_set[0][0])
 
         # Collect default value is an empty array.
         query = """MATCH (a) return collect(a.missing_field)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual([], result.result_set[0][0])
 
         # StdDev default value is 0.
         query = """MATCH (a) return stdev(a.missing_field)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(0, result.result_set[0][0])
 
         # percentileCont default value is null.
         query = """MATCH (a) return percentileCont(a.missing_field, 0.1)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(None, result.result_set[0][0])
 
         # percentileDisc default value is null.
         query = """MATCH (a) return percentileDisc(a.missing_field, 0.1)"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(None, result.result_set[0][0])
 
     # Test returning multiple occurrence of an expression.
     def test08_return_duplicate_expression(self):
         query = """MATCH (a) return max(a.val) as x, max(a.val) as y"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], result.result_set[0][1])
 
         query = """MATCH (a) return a.val as x, a.val as y LIMIT 1"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], result.result_set[0][1])
 
         query = """return 1 as x, 1 as y"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], result.result_set[0][1])
 
     # Test implicit result-set size limit
     def test09_implicit_resultset_limit(self):
         query = "MATCH (a) RETURN a"
 
-        result = graph.query(query)
+        result = self.graph.query(query)
         record_count = len(result.result_set)
 
         # make sure limit is greater than 0
@@ -171,22 +166,21 @@ class testResultSetFlow(FlowTestsBase):
         limit = record_count -1
 
         # enforce implicit limit
-        redis_con.execute_command("GRAPH.CONFIG", "SET", "RESULTSET_SIZE", limit)
+        self.db.config_set("RESULTSET_SIZE", limit)
 
-        result = graph.query(query)
+        result = self.graph.query(query)
         limited_record_count = len(result.result_set)
         assert(limited_record_count == limit)
 
         # lift limit, -1 stands for unlimited
-        redis_con.execute_command("GRAPH.CONFIG", "SET", "RESULTSET_SIZE", -1)
+        self.db.config_set("RESULTSET_SIZE", -1)
 
         # re-issue query
-        result = graph.query(query)
+        result = self.graph.query(query)
         unlimited_record_count = len(result.result_set)
         assert(unlimited_record_count == record_count)
 
     def test10_carriage_return_in_result(self):
         query = """RETURN 'Foo\r\nBar'"""
-        result = graph.query(query)
+        result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], 'Foo\r\nBar')
-

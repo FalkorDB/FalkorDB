@@ -2,8 +2,6 @@
 *.o
 *.a
 *.so
-jitFactory
-stringify
 rmm_log.txt
 
 # Do not ignore this file

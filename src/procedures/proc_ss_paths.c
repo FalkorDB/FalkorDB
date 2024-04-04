@@ -47,8 +47,8 @@ typedef struct {
 	GRAPH_EDGE_DIR dir;          // traverse direction.
 	uint minLen;                 // path minimum length.
 	uint maxLen;                 // path max length.
-	Attribute_ID weight_prop;    // weight attribute id
-	Attribute_ID cost_prop;      // cost attribuite id
+	AttributeID weight_prop;     // weight attribute id
+	AttributeID cost_prop;       // cost attribuite id
 	double max_cost;             // maximum cost of path
 	uint64_t path_count;         // path to return
 	union {
@@ -407,10 +407,10 @@ static void addNeighbors
 }
 
 // get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_defualt
+static inline SIValue _get_value_or_default
 (
 	GraphEntity *ge,
-	Attribute_ID id,
+	AttributeID id,
 	SIValue default_value
 ) {
 	SIValue *v = GraphEntity_GetProperty(ge, id);
@@ -449,8 +449,8 @@ static void SSpaths_next
 			// if depth is 0 this is the source node, there is no leading edge to it.
 			// for depth > 0 for each frontier node, there is a leading edge.
 			if(depth > 0) {
-				SIValue c = _get_value_or_defualt((GraphEntity *)&frontierConnection.edge, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_defualt((GraphEntity *)&frontierConnection.edge, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = _get_value_or_default((GraphEntity *)&frontierConnection.edge, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = _get_value_or_default((GraphEntity *)&frontierConnection.edge, ctx->weight_prop, SI_LongVal(1));
 				if(p->cost + SI_GET_NUMERIC(c) <= ctx->max_cost && p->weight + SI_GET_NUMERIC(w) <= max_weight) {
 					p->cost += SI_GET_NUMERIC(c);
 					p->weight += SI_GET_NUMERIC(w);
@@ -480,8 +480,8 @@ static void SSpaths_next
 			Path_PopNode(ctx->path);
 			if(Path_EdgeCount(ctx->path)) {
 				Edge e = Path_PopEdge(ctx->path);
-				SIValue c = _get_value_or_defualt((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_defualt((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = _get_value_or_default((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = _get_value_or_default((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
 				p->cost -= SI_GET_NUMERIC(c);
 				p->weight -= SI_GET_NUMERIC(w);
 			}
@@ -490,7 +490,6 @@ static void SSpaths_next
 
 	// couldn't find a path.
 	p->path = NULL;
-	return;
 }
 
 // compare path by weight, cost and path length

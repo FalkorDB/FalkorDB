@@ -14,8 +14,8 @@ void setup() {
 #include "acutest.h"
 
 void test_empty_vector(void) {
-	SIValue v = SIVector32f_New(0);
-	TEST_ASSERT(SI_TYPE(v) == T_VECTOR32F);
+	SIValue v = SIVectorf32_New(0);
+	TEST_ASSERT(SI_TYPE(v) == T_VECTOR_F32);
 	TEST_ASSERT(SI_ALLOCATION(&v) == M_SELF);
 	TEST_ASSERT(SIVector_Dim(v) == 0);
 	SIVector_Free(v);
@@ -26,10 +26,10 @@ void test_vector_elements(void) {
 	double *d_elements;
 
 	//--------------------------------------------------------------------------
-	// test vector32f
+	// test vectorf32
 	//--------------------------------------------------------------------------
 
-	SIValue v = SIVector32f_New(3);
+	SIValue v = SIVectorf32_New(3);
 	
 	f_elements = (float*)SIVector_Elements(v);
 	for(int i = 0; i < 3; i++) {
@@ -55,10 +55,10 @@ void test_vector_clone(void) {
 	double *clone_d_elements = NULL;
 
 	//--------------------------------------------------------------------------
-	// test vector32f
+	// test vectorf32
 	//--------------------------------------------------------------------------
 
-	v = SIVector32f_New(3);
+	v = SIVectorf32_New(3);
 	f_elements = (float*)SIVector_Elements(v);
 
 	for(int i = 0; i < 3; i++) {
@@ -89,11 +89,11 @@ void test_vector_compare(void) {
 	double *b_d_elements = NULL;
 
 	//--------------------------------------------------------------------------
-	// test vector32f
+	// test vectorf32
 	//--------------------------------------------------------------------------
 
-	a = SIVector32f_New(3);
-	b = SIVector32f_New(3);
+	a = SIVectorf32_New(3);
+	b = SIVectorf32_New(3);
 
 	a_f_elements = (float*)SIVector_Elements(a);
 	b_f_elements = (float*)SIVector_Elements(b);
@@ -123,10 +123,10 @@ void test_vector_tostring(void) {
 	size_t bytesWritten;
 
 	//--------------------------------------------------------------------------
-	// test vector32f
+	// test vectorf32
 	//--------------------------------------------------------------------------
 
-	v = SIVector32f_New(3);
+	v = SIVectorf32_New(3);
 
 	bufferLen = 1;
 	bytesWritten = 0;
@@ -140,7 +140,7 @@ void test_vector_tostring(void) {
 
 	//--------------------------------------------------------------------------
 
-	v = SIVector32f_New(3);
+	v = SIVectorf32_New(3);
 
 	float *f_elements = (float*)SIVector_Elements(v);
 	for(int i = 0; i < 3; i++) {

@@ -53,7 +53,7 @@
 
 GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
 (
-    GrB_Mode mode,          // blocking or non-blocking mode, GPU or not
+    GrB_Mode mode,          // blocking or non-blocking mode
 
     // pointers to memory management functions
     void * (* user_malloc_function  ) (size_t),         // required
@@ -73,7 +73,7 @@ GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
     // initialize GraphBLAS
     //--------------------------------------------------------------------------
 
-#if defined ( SUITESPARSE_CUDA )
+#if defined ( GRAPHBLAS_HAS_CUDA )
     if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
     {
         return (GB_init (mode,              // blocking or non-blocking mode

@@ -36,11 +36,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _bool, bool, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _bool, bool, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _bool, bool, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _bool, bool, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _bool, bool, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -62,11 +59,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _int8, int8_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _int8, int8_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _int8, int8_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _int8, int8_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _int8, int8_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -88,11 +82,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _int16, int16_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _int16, int16_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _int16, int16_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _int16, int16_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _int16, int16_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -114,11 +105,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _int32, int32_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _int32, int32_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _int32, int32_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _int32, int32_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _int32, int32_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -140,11 +128,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _int64, int64_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _int64, int64_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _int64, int64_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _int64, int64_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _int64, int64_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -166,11 +151,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _uint8, uint8_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _uint8, uint8_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _uint8, uint8_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _uint8, uint8_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _uint8, uint8_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -192,11 +174,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _uint16, uint16_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _uint16, uint16_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _uint16, uint16_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _uint16, uint16_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _uint16, uint16_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -218,11 +197,8 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _uint32, uint32_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _uint32, uint32_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _uint32, uint32_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _uint32, uint32_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _uint32, uint32_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -244,11 +220,8 @@ switch (code1)
             #endif
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _uint64, uint64_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _uint64, uint64_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _uint64, uint64_t, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _uint64, uint64_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -270,11 +243,8 @@ switch (code1)
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _fp32, float, _fp32,   float     )
             #endif
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _fp32, float, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _fp32, float, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _fp32, float, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -296,11 +266,8 @@ switch (code1)
             #if !defined ( GB_EXCLUDE_SAME_TYPES )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _fp64, double, _fp64,   double    )
             #endif
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _fp64, double, _fc32,   GxB_FC32_t)
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _fp64, double, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -320,13 +287,10 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _fc32, GxB_FC32_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _fc32, GxB_FC32_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _fc32, GxB_FC32_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             #if !defined ( GB_EXCLUDE_SAME_TYPES )
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _fc32, GxB_FC32_t, _fc32,   GxB_FC32_t)
             #endif
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _fc32, GxB_FC32_t, _fc64,   GxB_FC64_t)
-            #endif
             default: ;
         }
         break ;
@@ -346,12 +310,9 @@ switch (code1)
             case GB_UINT64_code : GB_WORKER (GB_OPNAME, _fc64, GxB_FC64_t, _uint64, uint64_t  )
             case GB_FP32_code   : GB_WORKER (GB_OPNAME, _fc64, GxB_FC64_t, _fp32,   float     )
             case GB_FP64_code   : GB_WORKER (GB_OPNAME, _fc64, GxB_FC64_t, _fp64,   double    )
-            #if !defined ( SUITESPARSE_CUDA )
-            // TODO: does not yet work in CUDA
             case GB_FC32_code   : GB_WORKER (GB_OPNAME, _fc64, GxB_FC64_t, _fc32,   GxB_FC32_t)
             #if !defined ( GB_EXCLUDE_SAME_TYPES )
             case GB_FC64_code   : GB_WORKER (GB_OPNAME, _fc64, GxB_FC64_t, _fc64,   GxB_FC64_t)
-            #endif
             #endif
             default: ;
         }

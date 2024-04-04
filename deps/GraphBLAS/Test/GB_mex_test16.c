@@ -120,7 +120,7 @@ void mexFunction
         GrB_FP32, NULL, false, false, s, false, A, B) ;
     CHECK (code == UINT64_MAX) ;
 
-    code = GB_encodify_reduce (&e, &suffix, mon, A) ;
+    code = GB_encodify_reduce (&e, &suffix, GB_JIT_KERNEL_REDUCE, mon, A) ;
     CHECK (code == UINT64_MAX) ;
 
     code = GB_encodify_assign (&e, &suffix, 0, C, false, 0, 0, NULL,

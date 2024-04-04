@@ -2,7 +2,7 @@
 // GB_macrofy_mxm: construct all macros for a semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,10 +10,14 @@
 #include "GB.h"
 #include "GB_stringify.h"
 
-void GB_macrofy_mxm        // construct all macros for GrB_mxm
+//------------------------------------------------------------------------------
+// GB_macrofy_mxm: create all macros for GrB_mxm
+//------------------------------------------------------------------------------
+
+void GB_macrofy_mxm         // construct all macros for GrB_mxm
 (
     // output:
-    FILE *fp,                   // target file to write, already open
+    FILE *fp,               // target file to write, already open
     // input:
     uint64_t scode,
     GrB_Semiring semiring,  // the semiring to macrofy
@@ -109,10 +113,10 @@ void GB_macrofy_mxm        // construct all macros for GrB_mxm
     bool is_positional = GB_IS_BINARYOP_CODE_POSITIONAL (mult->opcode) ;
 
     fprintf (fp, "\n// monoid:\n") ;
-    const char *u_expr ;
+    const char *u_expr, *g_expr ;
     GB_macrofy_type (fp, "Z", "_", (zcode == 0) ? "GB_void" : ztype->name) ;
     GB_macrofy_monoid (fp, add_ecode, id_ecode, term_ecode, C_iso, monoid,
-        is_positional, &u_expr) ;
+        is_positional, &u_expr, &g_expr) ;
 
     //--------------------------------------------------------------------------
     // construct macros for the multiply operator
@@ -122,7 +126,7 @@ void GB_macrofy_mxm        // construct all macros for GrB_mxm
         flipxy ? " (flipped)" : "") ;
     const char *f_expr ;
     GB_macrofy_binop (fp, "GB_MULT", flipxy, false, false, mult_ecode, C_iso,
-        mult, &f_expr, NULL) ;
+        mult, &f_expr, NULL, NULL) ;
 
     //--------------------------------------------------------------------------
     // multiply-add operator
@@ -165,29 +169,20 @@ void GB_macrofy_mxm        // construct all macros for GrB_mxm
 
         // Since GB_MULT is not used, the fused GB_MULTADD must handle flipxy.
 
-        if (flipxy)
-        { 
-            fprintf (fp, "#define GB_MULTADD(z,y,x,j,k,i) ") ;
+        if (g_expr == NULL)
+        {
+            // the CPU and GPU use the same macro
+            GB_macrofy_multadd (fp, u_expr, f_expr, flipxy) ;
         }
         else
-        { 
-            fprintf (fp, "#define GB_MULTADD(z,x,y,i,k,j) ") ;
-        }
-        for (const char *p = u_expr ; (*p) != '\0' ; p++)
         {
-            // all update operators have a single 'y'
-            if ((*p) == 'y')
-            { 
-                // inject the multiply operator; all have the form "z = ..."
-                fprintf (fp, "%s", f_expr + 4) ;
-            }
-            else
-            { 
-                // otherwise, print the update operator character
-                fprintf (fp, "%c", (*p)) ;
-            }
+            // the CPU uses u_expr, and GPU uses g_expr
+            fprintf (fp, "#ifdef GB_CUDA_KERNEL\n") ;
+            GB_macrofy_multadd (fp, g_expr, f_expr, flipxy) ;
+            fprintf (fp, "#else\n") ;
+            GB_macrofy_multadd (fp, u_expr, f_expr, flipxy) ;
+            fprintf (fp, "#endif\n") ;
         }
-        fprintf (fp, "\n") ;
 
     }
     else

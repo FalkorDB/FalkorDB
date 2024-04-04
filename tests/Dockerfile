@@ -1,23 +1,32 @@
-FROM redis:latest as builder
+ARG BASE_IMAGE=falkordb/falkordb-compiler
 
-ENV DEPS "automake peg libtool autoconf python python-setuptools python-pip python-dev wget build-essential cmake m4 git valgrind"
+ARG TARGETPLATFORM=linux/amd64
+
+FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
+
+ENV DEPS "curl lsb-release automake peg libtool autoconf python-is-python3 2to3 python3.10-venv python3-pip wget build-essential cmake m4 git valgrind gcc python3-dev"
 
 # Set up a build environment
 RUN set -ex ;\
     deps="$DEPS ";\
     apt-get update -qq ;\
-    apt-get install -y --no-install-recommends $deps ;\
-    pip install wheel ;\
-    pip install Click rmtest backports.csv psutil behave ;\
-    pip install redis-py-cluster ;\
-    pip install git+https://github.com/RedisGraph/redisgraph-py.git@master ;\
-    pip install git+https://github.com/RedisLabsModules/RLTest.git@master
-    
-# Build the source
-ADD ./ /redisgraph
+    apt-get install -y --no-install-recommends $deps ;
 
-# Build RedisGraph
-WORKDIR /redisgraph
+# Set up redis
+RUN curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg ;\
+    echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list ;\
+    apt-get update -qq ;\
+    apt-get install -y redis
+
+# Create venv
 RUN set -ex ;\
-    make clean ALL=1 ;\
-    make -j `nproc`
+    python3 -m venv /venv
+
+ENV PATH=/venv/bin:$PATH
+
+RUN set -ex ;\
+    pip3 install --upgrade pip ;\
+    pip3 install --upgrade setuptools
+
+RUN set -ex ;\
+    pip3 install -r /FalkorDB/tests/requirements.txt

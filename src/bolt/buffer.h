@@ -26,25 +26,46 @@ struct buffer_t {
 };
 
 // set buffer index to offset
-void buffer_index
+void buffer_index_set
 (
-	buffer_t *buf,          // buffer
 	buffer_index_t *index,  // index
+	buffer_t *buf,          // buffer
 	uint32_t offset         // offset
 );
 
-// return the pointer to the data and increment the index
-char *buffer_index_read
+// copy the data and increment the index
+void buffer_index_read
 (
 	buffer_index_t *index,  // index
+	char *ptr,              // pointer
 	uint32_t size           // size
 );
 
+// advance the index
+void buffer_index_advance
+(
+	buffer_index_t *index,  // index
+	uint32_t n              // # bytes
+);
+
 // the length between two indexes
-uint16_t buffer_index_diff
+uint64_t buffer_index_diff
 (
 	buffer_index_t *a,  // index a
 	buffer_index_t *b   // index b
+);
+
+// the length of the buffer index
+uint64_t buffer_index_length
+(
+	buffer_index_t *index  // index
+);
+
+// read until a delimiter
+char *buffer_index_read_until
+(
+	buffer_index_t *index,  // index
+	char delimiter          // delimiter
 );
 
 // initialize a new buffer
@@ -95,8 +116,9 @@ bool buffer_socket_read
 // write data from the buffer to the socket
 bool buffer_socket_write
 (
-	buffer_index_t *buf,  // buffer
-	socket_t socket       // socket
+	buffer_index_t *from_buf,  // from buffer
+	buffer_index_t *to_buf,    // to buffer
+	socket_t socket            // socket
 );
 
 // write a uint8_t to the buffer
@@ -133,6 +155,14 @@ void buffer_write
 	buffer_index_t *buf,  // buffer
 	const char *data,     // data
 	uint32_t size         // size
+);
+
+// apply the mask to the buffer
+void buffer_apply_mask
+(
+	buffer_index_t buf,    // buffer
+	uint32_t masking_key,  // masking key
+	uint64_t payload_len   // payload length
 );
 
 // free the buffer

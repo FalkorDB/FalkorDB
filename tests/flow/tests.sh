@@ -10,9 +10,9 @@ READIES=$ROOT/deps/readies
 
 export PYTHONUNBUFFERED=1
 
-VG_REDIS_VER=7.2-rc3
+VG_REDIS_VER=7.2
 VG_REDIS_SUFFIX=7.2
-SAN_REDIS_VER=7.2-rc3
+SAN_REDIS_VER=7.2
 SAN_REDIS_SUFFIX=7.2
 
 cd $HERE
@@ -137,7 +137,7 @@ setup_rltest() {
 		fi
 	fi
 	
-	RLTEST_ARGS+=" --enable-debug-command"
+	RLTEST_ARGS+=" --enable-debug-command --no-progress"
 
 	if [[ $RLTEST_VERBOSE == 1 ]]; then
 		RLTEST_ARGS+=" -v"
@@ -485,9 +485,6 @@ STATFILE=${STATFILE:-$ROOT/bin/artifacts/tests/status}
 #---------------------------------------------------------------------------------- Parallelism
 
 PARALLEL=${PARALLEL:-1}
-
-# due to Python "Can't pickle local object" problem in RLTest
-[[ $OS == macos ]] && PARALLEL=0
 
 [[ $EXT == 1 || $EXT == run || $BB == 1 || $GDB == 1 ]] && PARALLEL=0
 

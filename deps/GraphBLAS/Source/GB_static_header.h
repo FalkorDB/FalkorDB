@@ -18,7 +18,7 @@
 // #define GBNSTATIC 1
 
 #ifndef GBNSTATIC
-    #if defined ( SUITESPARSE_CUDA )
+    #if defined ( GRAPHBLAS_HAS_CUDA )
     #define GBNSTATIC 1
     #else
     #define GBNSTATIC 0

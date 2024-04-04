@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // This file has been automatically generated from Generator/GB_bld.h
+#include "GB_math.h"
 
 GrB_Info GB (_bld__min_int8)
 (

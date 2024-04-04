@@ -4,7 +4,8 @@
 
 # The following copyright and license applies to just this file only, not to
 # the library itself:
-# GraphBLASConfig.cmake, Copyright (c) 2023, Timothy A. Davis.  All Rights Reserved.
+# GraphBLASConfig.cmake, Copyright (c) 2024, Timothy A. Davis.  All Rights
+# Reserved.
 # SPDX-License-Identifier: BSD-3-clause
 
 #-------------------------------------------------------------------------------
@@ -39,7 +40,7 @@ set ( GRAPHBLAS_VERSION "@GraphBLAS_VERSION_MAJOR@.@GraphBLAS_VERSION_MINOR@.@Gr
 include ( CMakeFindDependencyMacro )
 set ( _dependencies_found ON )
 
-if ( @SUITESPARSE_CUDA@ )
+if ( @GRAPHBLAS_HAS_CUDA@ )
     # Look for imported targets of additional dependency if GraphBLAS was built with CUDA
 
     if ( NOT GraphBLAS_CUDA_FOUND )
@@ -60,6 +61,14 @@ if ( @SUITESPARSE_CUDA@ )
     endif ( )
 endif ( )
 
+# Look for OpenMP
+if ( @GRAPHBLAS_HAS_OPENMP@ AND NOT OpenMP_C_FOUND )
+    find_dependency ( OpenMP COMPONENTS C )
+    if ( NOT OpenMP_C_FOUND )
+        set ( _dependencies_found OFF )
+    endif ( )
+endif ( )
+
 if ( NOT _dependencies_found )
     set ( GraphBLAS_FOUND OFF )
     return ( )
@@ -68,11 +77,42 @@ endif ( )
 # Import target
 include ( ${CMAKE_CURRENT_LIST_DIR}/GraphBLASTargets.cmake )
 
+if ( @GRAPHBLAS_HAS_OPENMP@ )
+    if ( TARGET SuiteSparse::GraphBLAS )
+        get_property ( _graphblas_aliased TARGET SuiteSparse::GraphBLAS
+            PROPERTY ALIASED_TARGET )
+        if ( "${_graphblas_aliased}" STREQUAL "" )
+            target_include_directories ( SuiteSparse::GraphBLAS SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        else ( )
+            target_include_directories ( ${_graphblas_aliased} SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        endif ( )
+    endif ( )
+    if ( TARGET SuiteSparse::GraphBLAS_static )
+        get_property ( _graphblas_aliased TARGET SuiteSparse::GraphBLAS_static
+            PROPERTY ALIASED_TARGET )
+        if ( "${_graphblas_aliased}" STREQUAL "" )
+            target_include_directories ( SuiteSparse::GraphBLAS_static SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        else ( )
+            target_include_directories ( ${_graphblas_aliased} SYSTEM AFTER INTERFACE
+                "$<TARGET_PROPERTY:OpenMP::OpenMP_C,INTERFACE_INCLUDE_DIRECTORIES>" )
+        endif ( )
+    endif ( )
+endif ( )
+
 # The following is only for backward compatibility with FindGraphBLAS.
 
 set ( _target_shared SuiteSparse::GraphBLAS )
 set ( _target_static SuiteSparse::GraphBLAS_static )
 set ( _var_prefix "GRAPHBLAS" )
+
+if ( NOT @BUILD_SHARED_LIBS@ AND NOT TARGET ${_target_shared} )
+    # make sure there is always an import target without suffix )
+    add_library ( ${_target_shared} ALIAS ${_target_static} )
+    set ( _shared_is_aliased ON )
+endif ( )
 
 get_target_property ( ${_var_prefix}_INCLUDE_DIR ${_target_shared} INTERFACE_INCLUDE_DIRECTORIES )
 if ( ${_var_prefix}_INCLUDE_DIR )
@@ -150,3 +190,63 @@ message ( STATUS "GraphBLAS version: ${GRAPHBLAS_VERSION}" )
 message ( STATUS "GraphBLAS include: ${GRAPHBLAS_INCLUDE_DIR}" )
 message ( STATUS "GraphBLAS library: ${GRAPHBLAS_LIBRARY}" )
 message ( STATUS "GraphBLAS static:  ${GRAPHBLAS_STATIC}" )
+
+if ( NOT _shared_is_aliased AND GRAPHBLAS_LIBRARY )
+    # Get library name from filename of library
+    # This might be something like:
+    #   /usr/lib/libgraphblas.so or /usr/lib/libgraphblas.a or graphblas64
+    # convert to library name that can be used with -l flags for pkg-config
+    set ( GRAPHBLAS_LIBRARY_TMP ${GRAPHBLAS_LIBRARY} )
+    string ( FIND ${GRAPHBLAS_LIBRARY} "." _pos REVERSE )
+    if ( ${_pos} EQUAL "-1" )
+        set ( _graphblas_library_name ${GRAPHBLAS_LIBRARY} )
+    else ( )
+      set ( _kinds "SHARED" "STATIC" )
+      if ( WIN32 )
+          list ( PREPEND _kinds "IMPORT" )
+      endif ( )
+      foreach ( _kind IN LISTS _kinds )
+          set ( _regex ".*\\/(lib)?([^\\.]*)(${CMAKE_${_kind}_LIBRARY_SUFFIX})" )
+          if ( ${GRAPHBLAS_LIBRARY} MATCHES ${_regex} )
+              string ( REGEX REPLACE ${_regex} "\\2" _libname ${GRAPHBLAS_LIBRARY} )
+              if ( NOT "${_libname}" STREQUAL "" )
+                  set ( _graphblas_library_name ${_libname} )
+                  break ()
+              endif ( )
+          endif ( )
+      endforeach ( )
+    endif ( )
+
+    set_target_properties ( SuiteSparse::GraphBLAS PROPERTIES
+        OUTPUT_NAME ${_graphblas_library_name} )
+endif ( )
+
+if ( GRAPHBLAS_STATIC )
+    # Get library name from filename of library
+    # This might be something like:
+    #   /usr/lib/libgraphblas.so or /usr/lib/libgraphblas.a or graphblas64
+    # convert to library name that can be used with -l flags for pkg-config
+    set ( GRAPHBLAS_LIBRARY_TMP ${GRAPHBLAS_STATIC} )
+    string ( FIND ${GRAPHBLAS_STATIC} "." _pos REVERSE )
+    if ( ${_pos} EQUAL "-1" )
+        set ( _graphblas_library_name ${GRAPHBLAS_STATIC} )
+    else ( )
+      set ( _kinds "SHARED" "STATIC" )
+      if ( WIN32 )
+          list ( PREPEND _kinds "IMPORT" )
+      endif ( )
+      foreach ( _kind IN LISTS _kinds )
+          set ( _regex ".*\\/(lib)?([^\\.]*)(${CMAKE_${_kind}_LIBRARY_SUFFIX})" )
+          if ( ${GRAPHBLAS_STATIC} MATCHES ${_regex} )
+              string ( REGEX REPLACE ${_regex} "\\2" _libname ${GRAPHBLAS_STATIC} )
+              if ( NOT "${_libname}" STREQUAL "" )
+                  set ( _graphblas_library_name ${_libname} )
+                  break ()
+              endif ( )
+          endif ( )
+      endforeach ( )
+    endif ( )
+
+    set_target_properties ( SuiteSparse::GraphBLAS_static PROPERTIES
+        OUTPUT_NAME ${_graphblas_library_name} )
+endif ( )

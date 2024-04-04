@@ -1,295 +1,334 @@
+import random
 import asyncio
 from common import *
-from pathos.pools import ProcessPool as Pool
-from pathos.helpers import mp as pathos_multiprocess
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
+from redis.asyncio import Redis as AsyncRedis
 
-GRAPH_ID = "G"                      # Graph identifier.
+GRAPH_ID = "concurrent_query"       # Graph identifier.
+SECONDARY_GRAPH_ID = GRAPH_ID + "2" # Secondery graph identifier.
 CLIENT_COUNT = 16                   # Number of concurrent connections.
 people = ["Roi", "Alon", "Ailon", "Boaz", "Tal", "Omri", "Ori"]
 
-
-def thread_run_query(query, barrier):
-    env = Env(decodeResponses=True)
-    conn = env.getConnection()
-    graph = Graph(conn, GRAPH_ID)
-
-    if barrier is not None:
-        barrier.wait()
-    
-    try:
-        result = graph.query(query)
-        return { "result_set": result.result_set, 
-            "nodes_created": result.nodes_created, 
-            "properties_set": result.properties_set }
-    except ResponseError as e:
-        return str(e)
-
-def delete_graph(graph_id):
-    env = Env(decodeResponses=True)
-    conn = env.getConnection()
-    graph = Graph(conn, graph_id)
-
+async def delete_graph(g):
     # Try to delete graph.
     try:
-        graph.delete()
+        await g.delete()
         return True
     except:
         # Graph deletion failed.
         return False
 
-def run_concurrent(queries, f):
-    pool = Pool(nodes=CLIENT_COUNT)
-    manager = pathos_multiprocess.Manager()
-    
-    barrier = manager.Barrier(CLIENT_COUNT)
-    barriers = [barrier] * CLIENT_COUNT
-
-    # invoke queries
-    results = pool.map(f, queries, barriers)
-
-    pool.clear()
-
-    return results
-
 class testConcurrentQueryFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        # skip test if we're running under Valgrind
-        if VALGRIND:
-            self.env.skip() # valgrind is not working correctly with multi processing
+        self.env, self.db = Env()
+        self.conn = redis.Redis("localhost", self.env.port)
+        self.graph = self.db.select_graph(GRAPH_ID)
 
-        self.conn = self.env.getConnection()
-        self.graph = Graph(self.conn, GRAPH_ID)
-        self.populate_graph()
+    def setUp(self):
+        self.conn.delete(GRAPH_ID)
+        self.conn.delete(SECONDARY_GRAPH_ID)
+
+    def run_queries_concurrently(self, queries):
+        async def run(self, queries):            
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+
+            tasks = []
+            for q in queries:
+                tasks.append(asyncio.create_task(g.query(q)))
+
+            # wait for all tasks to complete
+            results = await asyncio.gather(*tasks)
+
+            # close the connection pool
+            await pool.aclose()
+
+            return results
+
+        return asyncio.run(run(self, queries))
 
     def populate_graph(self):
         nodes = {}
 
         # Create entities
-        for p in people:
-            node = Node(label="person", properties={"name": p})
-            self.graph.add_node(node)
-            nodes[p] = node
+        for idx, p in enumerate(people):
+            alias = f"n_{idx}"
+            node = Node(alias=alias, labels="person", properties={"name": p})
+            nodes[alias] = node
+        nodes_str = [str(node) for node in nodes.values()]
 
         # Fully connected graph
+        edges = []
         for src in nodes:
             for dest in nodes:
                 if src != dest:
-                    edge = Edge(nodes[src], "know", nodes[dest])
-                    self.graph.add_edge(edge)
+                    edges.append(Edge(nodes[src], "know", nodes[dest]))
+        edges_str = [str(edge) for edge in edges]
 
-        self.graph.commit()
+        self.graph.query(f"CREATE {','.join(nodes_str + edges_str)}")
 
     # Count number of nodes in the graph
-    def test01_concurrent_aggregation(self):
+    def test_01_concurrent_aggregation(self):
+        self.populate_graph()
+
         q = """MATCH (p:person) RETURN count(p)"""
         queries = [q] * CLIENT_COUNT
-        results = run_concurrent(queries, thread_run_query)
+        results = self.run_queries_concurrently(queries)
+
         for result in results:
-            person_count = result["result_set"][0][0]
+            person_count = result.result_set[0][0]
             self.env.assertEqual(person_count, len(people))
     
     # Concurrently get neighbors of every node.
-    def test02_retrieve_neighbors(self):
+    def test_02_retrieve_neighbors(self):
+        self.populate_graph()
+
         q = """MATCH (p:person)-[know]->(n:person) RETURN n.name"""
         queries = [q] * CLIENT_COUNT
-        results = run_concurrent(queries, thread_run_query)
+        results = self.run_queries_concurrently(queries)
+
         # Fully connected graph + header row.
         expected_resultset_size = len(people) * (len(people)-1)
         for result in results:
-            self.env.assertEqual(len(result["result_set"]), expected_resultset_size)
+            self.env.assertEqual(len(result.result_set), expected_resultset_size)
 
     # Concurrent writes
     def test_03_concurrent_write(self):        
-        queries = ["""CREATE (c:country {id:"%d"})""" % i for i in range(CLIENT_COUNT)]
-        results = run_concurrent(queries, thread_run_query)
+        self.populate_graph()
+
+        queries = ["CREATE (:country {id:%d})" % i for i in range(CLIENT_COUNT)]
+        results = self.run_queries_concurrently(queries)
         for result in results:
-            self.env.assertEqual(result["nodes_created"], 1)
-            self.env.assertEqual(result["properties_set"], 1)
+            self.env.assertEqual(result.nodes_created, 1)
+            self.env.assertEqual(result.properties_set, 1)
     
     # Try to delete graph multiple times.
     def test_04_concurrent_delete(self):
-        pool = Pool(nodes=CLIENT_COUNT)
+        async def run(self):
+            self.graph.query("RETURN 1")
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        # invoke queries
-        assertions = pool.map(delete_graph, [GRAPH_ID] * CLIENT_COUNT)
+            tasks = []
+            for i in range(0, CLIENT_COUNT):
+                tasks.append(asyncio.create_task(g.delete()))
 
-        # Exactly one thread should have successfully deleted the graph.
-        self.env.assertEquals(assertions.count(True), 1)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        pool.clear()
+            # Exactly one thread should have successfully deleted the graph.
+            self.env.assertEquals(len(results) - sum(isinstance(res, ResponseError) for res in results), 1)
+
+            # close the connection pool
+            await pool.aclose()
+
+        asyncio.run(run(self))
 
     # Try to delete a graph while multiple queries are executing.
     def test_05_concurrent_read_delete(self):
-        ##############################################################################################
-        # Delete graph via Redis DEL key.
-        ##############################################################################################
-        self.populate_graph()
-        pool = Pool(nodes=CLIENT_COUNT)
-        manager = pathos_multiprocess.Manager()
-        barrier = manager.Barrier(CLIENT_COUNT)
-        barriers = [barrier] * CLIENT_COUNT
+        async def run(self):
+            async_conn = AsyncRedis(port=self.env.port)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        q = """UNWIND (range(0, 10000)) AS x WITH x AS x WHERE (x / 900) = 1 RETURN x"""
-        queries = [q] * CLIENT_COUNT
-        # invoke queries
-        m = pool.amap(thread_run_query, queries, barriers)
+            #-------------------------------------------------------------------
+            # Delete graph via Redis DEL key.
+            #-------------------------------------------------------------------
 
-        self.conn.delete(GRAPH_ID)
+            self.populate_graph()
 
-        # wait for processes to return
-        m.wait()
+            # invoke queries
+            q = "UNWIND (range(0, 10000)) AS x WITH x AS x WHERE (x / 900) = 1 RETURN x"
+            tasks = []
+            del_task = None
 
-        # get the results
-        results = m.get()
+            for i in range(CLIENT_COUNT):
+                tasks.append(asyncio.create_task(g.query(q)))
+                if i == CLIENT_COUNT / 2:
+                    del_task = asyncio.create_task(async_conn.delete(GRAPH_ID))
 
-        # validate result.
-        self.env.assertTrue(all([r["result_set"][0][0] == 900 for r in results]))
+            # wait for all async tasks
+            results = await asyncio.gather(*tasks)
+            await del_task
 
-        # Make sure Graph is empty, e.g. graph was deleted.
-        resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-        self.env.assertEquals(resultset[0][0], 0)
-        ##############################################################################################        
-        # Delete graph via Redis FLUSHALL.
-        ##############################################################################################
-        self.populate_graph()
-        q = """UNWIND (range(0, 10000)) AS x WITH x AS x WHERE (x / 900) = 1 RETURN x"""
-        queries = [q] * CLIENT_COUNT
-        barrier = manager.Barrier(CLIENT_COUNT)
-        barriers = [barrier] * CLIENT_COUNT
-        # invoke queries
-        m = pool.amap(thread_run_query, queries, barriers)
+            # validate result.
+            self.env.assertTrue(all(r.result_set[0][0] == 900 for r in results))
 
-        self.conn.flushall()
+            # Make sure Graph is empty, e.g. graph was deleted.
+            resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
+            self.env.assertEquals(resultset[0][0], 0)
 
-        # wait for processes to return
-        m.wait()
+            #-------------------------------------------------------------------
+            # Delete graph via GRAPH.DELETE.
+            #-------------------------------------------------------------------
 
-        # get the results
-        results = m.get()
+            self.populate_graph()
 
-        # validate result.
-        self.env.assertTrue(all([r["result_set"][0][0] == 900 for r in results]))
+            # invoke queries
+            tasks = []
+            for i in range (CLIENT_COUNT):
+                tasks.append(asyncio.create_task(g.query(q)))
+                if i == CLIENT_COUNT / 2:
+                    del_task = asyncio.create_task(g.delete())
 
-        # Make sure Graph is empty, e.g. graph was deleted.
-        resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-        self.env.assertEquals(resultset[0][0], 0)
-        ##############################################################################################        
-        # Delete graph via GRAPH.DELETE.
-        ##############################################################################################
-        self.populate_graph()
-        q = """UNWIND (range(0, 10000)) AS x WITH x AS x WHERE (x / 900) = 1 RETURN x"""
-        queries = [q] * CLIENT_COUNT
-        barrier = manager.Barrier(CLIENT_COUNT)
-        barriers = [barrier] * CLIENT_COUNT
-        # invoke queries
-        m = pool.amap(thread_run_query, queries, barriers)
+            # wait for all async tasks
+            results = await asyncio.gather(*tasks)
+            await del_task
 
-        self.graph.delete()
+            # validate result.
+            self.env.assertTrue(all(r.result_set[0][0] == 900 for r in results))
 
-        # wait for processes to return
-        m.wait()
+            # Make sure Graph is empty, e.g. graph was deleted.
+            resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
+            self.env.assertEquals(resultset[0][0], 0)
 
-        # get the results
-        results = m.get()
+            # Close the connection
+            await async_conn.close()
 
-        # validate result.
-        self.env.assertTrue(all([r["result_set"][0][0] == 900 for r in results]))
+            # close the connection pool
+            await pool.aclose()
 
-        # Make sure Graph is empty, e.g. graph was deleted.
-        resultset = self.graph.query("MATCH (n) RETURN count(n)").result_set
-        self.env.assertEquals(resultset[0][0], 0)
-
-        pool.clear()
+        asyncio.run(run(self))
 
     def test_06_concurrent_write_delete(self):
-        # Test setup - validate that graph exists and possible results are None
-        self.graph.query("MATCH (n) RETURN n")
+        async def run(self):
+            # connect to async graph via a connection pool
+            # which will block if there are no available connections
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
+            async_conn = AsyncRedis(port=self.env.port)
 
-        pool = Pool(nodes=1)
-        heavy_write_query = """UNWIND(range(0,999999)) as x CREATE(n) RETURN count(n)"""
-        writer = pool.apipe(thread_run_query, heavy_write_query, None)
-        self.conn.delete(GRAPH_ID)
-        writer.wait()
-        possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
-                               "Encountered an empty key when opened key " + GRAPH_ID]
-        result = writer.get()
-        if isinstance(result, str):
-            self.env.assertContains(result, possible_exceptions)
-        else:
-            self.env.assertEquals(1000000, result["result_set"][0][0])
+            # Test setup - validate that graph exists and possible results are None
+            self.graph.query("RETURN 1")
+            heavy_write_query = "UNWIND(range(0, 999999)) as x CREATE(n) RETURN count(1)"
 
-        pool.clear()
+            tasks = []
+            tasks.append(asyncio.create_task(g.query(heavy_write_query)))
+            tasks.append(asyncio.create_task(async_conn.delete(GRAPH_ID)))
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            result = results[0]
+            if type(result) is ResponseError:
+                possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
+                                       "Encountered an empty key when opened key " + GRAPH_ID]
+                self.env.assertIn(str(result), possible_exceptions)
+            else:
+                self.env.assertEquals(1000000, result.result_set[0][0])
+
+            # close the connection pool
+            await pool.aclose()
+
+            # close async connection
+            await async_conn.close()
+
+        asyncio.run(run(self))
     
     def test_07_concurrent_write_rename(self):
-        # Test setup - validate that graph exists and possible results are None
-        self.graph.query("MATCH (n) RETURN n")
+        async def run(self):
+            # connect to async graph via a connection pool
+            # which will block if there are no available connections
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        pool = Pool(nodes=1)
-        new_graph = GRAPH_ID + "2"
-        # Create new empty graph with id GRAPH_ID + "2"
-        self.conn.execute_command("GRAPH.QUERY",new_graph, """MATCH (n) return n""", "--compact")
-        heavy_write_query = """UNWIND(range(0,999999)) as x CREATE(n) RETURN count(n)"""
-        writer = pool.apipe(thread_run_query, heavy_write_query, None)
-        self.conn.rename(GRAPH_ID, new_graph)
-        writer.wait()
-        # Possible scenarios:
-        # 1. Rename is done before query is sent. The name in the graph context is new_graph, so when upon commit, when trying to open new_graph key, it will encounter an empty key since new_graph is not a valid key. 
-        #    Note: As from https://github.com/RedisGraph/RedisGraph/pull/820 this may not be valid since the rename event handler might actually rename the graph key, before the query execution.    
-        # 2. Rename is done during query executing, so when commiting and comparing stored graph context name (GRAPH_ID) to the retrived value graph context name (new_graph), the identifiers are not the same, since new_graph value is now stored at GRAPH_ID value.
+            # single async connection
+            async_conn = AsyncRedis(port=self.env.port)
 
-        possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID, 
-        "Encountered an empty key when opened key " + new_graph]
+            # Test setup - validate that graph exists and possible results are None
+            # Create new empty graph with ID SECONDARY_GRAPH_ID
+            new_graph_id = SECONDARY_GRAPH_ID
+            graph2 = self.db.select_graph(new_graph_id)
+            graph2.query("RETURN 1")
 
-        result = writer.get()
-        if isinstance(result, str):
-            self.env.assertContains(result, possible_exceptions)
-        else:
-            self.env.assertEquals(1000000, result["result_set"][0][0])
+            self.graph.query("MATCH (n) RETURN n")
+            heavy_write_query = "UNWIND(range(0, 999999)) as x CREATE(n) RETURN count(1)"
 
-        pool.clear()
-        
+            tasks = []
+            tasks.append(asyncio.create_task(g.query(heavy_write_query)))
+            tasks.append(asyncio.create_task(async_conn.rename(GRAPH_ID, new_graph_id)))
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Possible scenarios:
+            # 1. Rename is done before query is sent. The name in the graph context is new_graph,
+            #    so when upon commit, when trying to open new_graph key,
+            #    it will encounter an empty key since new_graph is not a valid key.
+            #    Note: As from https://github.com/RedisGraph/RedisGraph/pull/820
+            #          this may not be valid since the rename event handler might actually rename the graph key, before the query execution.    
+            # 2. Rename is done during query executing, so when commiting and comparing stored graph context name (GRAPH_ID) to the retrived value graph context name (new_graph),
+            #    the identifiers are not the same, since new_graph value is now stored at GRAPH_ID value.
+
+            result = results[0]
+            if type(result) is ResponseError:
+                possible_exceptions = ["Encountered different graph value when opened key " + GRAPH_ID,
+                                       "Encountered an empty key when opened key " + new_graph]
+                self.env.assertIn(str(result), possible_exceptions)
+            else:
+                self.env.assertEquals(1000000, result.result_set[0][0])
+
+            # close the connection pool
+            await pool.aclose()
+
+            # close async connection
+            await async_conn.close()
+
+        asyncio.run(run(self))
+
     def test_08_concurrent_write_replace(self):
-        # Test setup - validate that graph exists and possible results are None
-        self.graph.query("MATCH (n) RETURN n")
+        async def run(self):
+            # connect to async graph via a connection pool
+            # which will block if there are no available connections
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        pool = Pool(nodes=1)
-        heavy_write_query = """UNWIND(range(0,999999)) as x CREATE(n) RETURN count(n)"""
-        writer = pool.apipe(thread_run_query, heavy_write_query, None)
-        set_result = self.conn.set(GRAPH_ID, "1")
-        writer.wait()
-        possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
-                               "WRONGTYPE Operation against a key holding the wrong kind of value"]
+            # single async connection
+            async_conn = AsyncRedis(port=self.env.port)
 
-        result = writer.get()
-        if isinstance(result, str):
-            # If the SET command attempted to execute while the CREATE query was running,
-            # an exception should have been issued.
-            self.env.assertContains(result, possible_exceptions)
-        else:
-            # Otherwise, both the CREATE query and the SET command should have succeeded.
-            self.env.assertEquals(1000000, result.result_set[0][0])
-            self.env.assertEquals(set_result, True)
+            # Test setup - validate that graph exists and possible results are None
+            self.graph.query("MATCH (n) RETURN n")
 
-        # Delete the key
-        self.conn.delete(GRAPH_ID)
+            heavy_write_query = "UNWIND(range(0, 999999)) as x CREATE(n) RETURN count(1)"
 
-        pool.clear()
+            tasks = []
+            tasks.append(asyncio.create_task(g.query(heavy_write_query)))
+            tasks.append(asyncio.create_task(async_conn.set(GRAPH_ID, 1)))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            result = results[0]
+            if type(result) is ResponseError:
+                possible_exceptions = ["Encountered a non-graph value type when opened key " + GRAPH_ID,
+                                       "WRONGTYPE Operation against a key holding the wrong kind of value"]
+                self.env.assertIn(str(result), possible_exceptions)
+            else:
+                self.env.assertEquals(1000000, result.result_set[0][0])
+
+            # close the connection pool
+            await pool.aclose()
+
+            # close async connection
+            await async_conn.close()
+
+        asyncio.run(run(self))
 
     def test_09_concurrent_multiple_readers_after_big_write(self):
         # Test issue #890
         self.graph = Graph(self.conn, GRAPH_ID)
-        self.graph.query("""UNWIND(range(0,999)) as x CREATE()-[:R]->()""")
+        self.graph.query("""UNWIND(range(0, 999)) as x CREATE ()-[r:R]->() RETURN count(r)""")
+
         read_query = """MATCH (n)-[r:R]->(m) RETURN count(r) AS res UNION RETURN 0 AS res"""
+        self.graph.query(read_query)
 
         queries = [read_query] * CLIENT_COUNT
-        results = run_concurrent(queries, thread_run_query)
+        results = self.run_queries_concurrently(queries)
 
         for result in results:
-            if isinstance(result, str):
-                self.env.assertEquals(0, result)
-            else:
-                self.env.assertEquals(1000, result["result_set"][0][0])
+            self.env.assertEquals(1000, result.result_set[0][0])
 
     def test_10_write_starvation(self):
         # make sure write query do not starve
@@ -305,70 +344,79 @@ class testConcurrentQueryFlow(FlowTestsBase):
         # this test issues a similar sequence of queries and
         # validates that the write query wasn't delayed too much
 
-        self.graph = Graph(self.conn, GRAPH_ID)
-        pool = Pool(nodes=CLIENT_COUNT)
+        async def run(self):
+            self.graph.query("RETURN 1")
 
-        Rq = "UNWIND range(0, 10000) AS x WITH x WHERE x = 9999 RETURN 'R', timestamp()"
-        Wq = "UNWIND range(0, 1000) AS x WITH x WHERE x = 27 CREATE ({v:1}) RETURN 'W', timestamp()"
-        Slowq = "UNWIND range(0, 100000) AS x WITH x WHERE (x % 73) = 0 RETURN count(1)"
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        # issue a number of slow queries, this will give us time to fill up
-        # RedisGraph internal threadpool queue
-        queries = [Slowq] * CLIENT_COUNT * 5
-        nulls = [None] * CLIENT_COUNT * 5
+            Rq    = "UNWIND range(0, 10000)  AS x WITH x WHERE x = 9999   RETURN 'R', timestamp()"
+            Wq    = "UNWIND range(0, 1000)   AS x WITH x WHERE x = 27     CREATE ({v:1}) RETURN 'W', timestamp()"
+            Slowq = "UNWIND range(0, 100000) AS x WITH x WHERE x % 73 = 0 RETURN count(1)"
 
-        # issue queries asynchronously
-        pool.imap(thread_run_query, queries, nulls)
+            # issue a number of slow queries, this will give us time to fill up
+            # FalkorDB's internal threadpool queue
+            slow_queries = []
+            for i in range(0, CLIENT_COUNT * 5):
+                slow_queries.append(asyncio.create_task(g.ro_query(Slowq)))
 
-        # create a long sequence of read queries
-        queries = [Rq] * CLIENT_COUNT * 10
-        nulls = [None] * CLIENT_COUNT * 10
+            # create a long sequence of read queries
+            read_tasks = []
 
-        # inject a single write query close to the begining on the sequence
-        queries[CLIENT_COUNT] = Wq
+            # N Read queries
+            for i in range(0, CLIENT_COUNT):
+                read_tasks.append(asyncio.create_task(g.ro_query(Rq)))
 
-        # invoke queries
-        # execute queries in parallel
-        results = pool.map(thread_run_query, queries, nulls)
+            # Single Write query
+            write_task = asyncio.create_task(g.query(Wq))
 
-        # count how many queries completed before the write query
-        count = 0
-        write_ts = results[CLIENT_COUNT]["result_set"][0][1]
-        for result in results:
-            row = result["result_set"][0]
-            ts = row[1]
-            if ts < write_ts:
-                count += 1
+            # 9N Read queries
+            for i in range(0, CLIENT_COUNT * 9):
+                read_tasks.append(asyncio.create_task(g.ro_query(Rq)))
 
-        # make sure write query wasn't starved
-        self.env.assertLessEqual(count, len(queries) * 0.3)
+            # wait for all queries to return
+            await asyncio.gather(*slow_queries)
+            results = await asyncio.gather(*read_tasks)
+            w_res   = await write_task
 
-        # delete the key
-        self.conn.delete(GRAPH_ID)
+            # count how many queries completed before the write query
+            write_ts = w_res.result_set[0][1]
+            count = 0
+            count = sum(1 for res in results if res.result_set[0][1] < write_ts)
 
-        pool.clear()
+            # make sure write query wasn't starved
+            self.env.assertLessEqual(count, len(read_tasks) * 0.3)
+
+            # close the connection pool
+            await pool.aclose()
+
+            # delete the key
+            self.conn.delete(GRAPH_ID)
+
+        return asyncio.run(run(self))
 
     def test_11_concurrent_resize_zero_matrix(self):
-        if "to_thread" not in dir(asyncio):
-            # no need to check
-            return
+        async def run(self):
+            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            db = FalkorDB(connection_pool=pool)
+            g = db.select_graph(GRAPH_ID)
 
-        self.graph = Graph(self.conn, GRAPH_ID)
+            # make sure graph exists
+            self.graph.query("RETURN 1")
 
-        self.graph.query("CREATE (:N)")
+            tasks = []
+            read_q  = "MATCH (n:N)-[r:R]->() RETURN r"
+            write_q = "UNWIND range(1, 10000) AS x CREATE (:M)"
+            for i in range(1, 10):
+                tasks.append(asyncio.create_task(g.query(write_q)))
+                for j in range(1, 10):
+                    tasks.append(asyncio.create_task(g.ro_query(read_q)))
 
-        def resize_and_query():
-            g = redis.commands.graph.Graph(self.env.getConnection(), GRAPH_ID)
+            await asyncio.gather(*tasks)
 
-            for j in range(1, 10):
-                g.query("UNWIND range(1, 10000) AS x CREATE (:M)")
-                for i in range(1, 10):
-                    g.query("MATCH (n:N)-[r:R]->() RETURN r")
-        
-        loop = asyncio.get_event_loop()
-        tasks = []
-        for i in range(1, 10):
-            tasks.append(loop.create_task(asyncio.to_thread(resize_and_query)))
+            # close the connection pool
+            await pool.aclose()
 
-        loop.run_until_complete(asyncio.wait(tasks))
+        asyncio.run(run(self))
 

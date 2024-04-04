@@ -86,9 +86,9 @@ GrB_Info GrB_Semiring_get_String
             #pragma omp flush
             return (GrB_SUCCESS) ;
 
-        case GrB_INPUT1TYPE_STRING : 
-        case GrB_INPUT2TYPE_STRING : 
-        case GrB_OUTPUTTYPE_STRING : 
+        case GrB_INP0_TYPE_STRING : 
+        case GrB_INP1_TYPE_STRING : 
+        case GrB_OUTP_TYPE_STRING : 
             return (GB_op_string_get ((GB_Operator) (semiring->multiply),
                 value, field)) ;
 
@@ -161,15 +161,15 @@ GrB_Info GrB_Semiring_get_SIZE
             name = GB_semiring_name_get (semiring) ;
             break ;
 
-        case GrB_INPUT1TYPE_STRING : 
+        case GrB_INP0_TYPE_STRING : 
             name = GB_type_name_get (semiring->multiply->xtype) ;
             break ;
 
-        case GrB_INPUT2TYPE_STRING : 
+        case GrB_INP1_TYPE_STRING : 
             name = GB_type_name_get (semiring->multiply->ytype) ;
             break ;
 
-        case GrB_OUTPUTTYPE_STRING : 
+        case GrB_OUTP_TYPE_STRING : 
             name = GB_type_name_get (semiring->multiply->ztype) ;
             break ;
 

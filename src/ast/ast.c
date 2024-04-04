@@ -713,7 +713,13 @@ cypher_parse_result_t *parse_query
 (
 	const char *query  // query to parse
 ) {
-	FILE *f = fmemopen((char *)query, strlen(query), "r");
+	// remove trailing semicolons
+	int len = strlen(query);
+	while(len > 0 && query[len - 1] == ';') {
+		len--;
+	}
+
+	FILE *f = fmemopen((char *)query, len, "r");
 	cypher_parse_result_t *result = cypher_fparse(f, NULL, NULL, CYPHER_PARSE_SINGLE);
 	fclose(f);
 
@@ -723,9 +729,9 @@ cypher_parse_result_t *parse_query
 
 	// check that the parser parsed the entire query
 	if(!cypher_parse_result_eof(result)) {
-		ErrorCtx_SetError(EMSG_QUERY_WITH_MULTIPLE_STATEMENTS);
-		parse_result_free(result);
-		return NULL;
+					ErrorCtx_SetError(EMSG_QUERY_WITH_MULTIPLE_STATEMENTS);
+			parse_result_free(result);
+			return NULL;
 	}
 
 	// in case ast contains any errors, report them and return

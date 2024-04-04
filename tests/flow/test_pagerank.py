@@ -1,22 +1,22 @@
 from common import *
 
-GRAPH_ID = "G"
-redis_graph = None
+GRAPH_ID = "pagerank"
 
 
 class testPagerankFlow(FlowTestsBase):
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        global redis_graph
-        redis_con = self.env.getConnection()
-        redis_graph = Graph(redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def setUp(self):
+        self.conn.delete(GRAPH_ID)
 
     def test_pagerank_no_label_no_relation(self):
-        self.env.cmd('flushall')
         q = "CREATE (a:L0 {v:0})-[:R0]->(b:L1 {v:1})-[:R1]->(c:L2 {v:2})"
-        redis_graph.query(q)
+        self.graph.query(q)
         q = """CALL algo.pageRank(NULL, NULL) YIELD node, score RETURN node.v, score"""
-        resultset = redis_graph.query(q).result_set
+        resultset = self.graph.query(q).result_set
 
         self.env.assertEqual(len(resultset), 3)
         self.env.assertEqual(resultset[0][0], 2)
@@ -27,11 +27,10 @@ class testPagerankFlow(FlowTestsBase):
         self.env.assertAlmostEqual(resultset[2][1], 0.103661172091961, 0.0001)
 
     def test_pagerank_no_label(self):
-        self.env.cmd('flushall')
         q = "CREATE (a:L0 {v:0})-[:R]->(b:L1 {v:1})-[:R0]->(c:L2 {v:2})"
-        redis_graph.query(q)
+        self.graph.query(q)
         q = """CALL algo.pageRank(NULL, 'R') YIELD node, score RETURN node.v, score"""
-        resultset = redis_graph.query(q).result_set
+        resultset = self.graph.query(q).result_set
 
         self.env.assertEqual(len(resultset), 3)
         self.env.assertEqual(resultset[0][0], 1)
@@ -42,11 +41,10 @@ class testPagerankFlow(FlowTestsBase):
         self.env.assertAlmostEqual(resultset[2][1], 0.169648125767708, 0.0001)
 
     def test_pagerank_no_relation(self):
-        self.env.cmd('flushall')
         q = "CREATE (a:L {v:0})-[:R]->(b:L {v:1})-[:R0]->(c:L2 {v:2})"
-        redis_graph.query(q)
+        self.graph.query(q)
         q = """CALL algo.pageRank('L', NULL) YIELD node, score RETURN node.v, score"""
-        resultset = redis_graph.query(q).result_set
+        resultset = self.graph.query(q).result_set
 
         self.env.assertEqual(len(resultset), 2)
         self.env.assertEqual(resultset[0][0], 1)
@@ -67,10 +65,10 @@ class testPagerankFlow(FlowTestsBase):
         ]
 
         for q in queries:
-            self.env.cmd('flushall')
-            redis_graph.query(q)
+            self.conn.delete(GRAPH_ID)
+            self.graph.query(q)
             q = """CALL algo.pageRank('L', 'R') YIELD node, score RETURN node.v, score"""
-            resultset = redis_graph.query(q).result_set
+            resultset = self.graph.query(q).result_set
 
             self.env.assertEqual(len(resultset), 0)
 
@@ -90,10 +88,10 @@ class testPagerankFlow(FlowTestsBase):
         ]
 
         for q in queries:
-            self.env.cmd('flushall')
-            redis_graph.query(q)
+            self.conn.delete(GRAPH_ID)
+            self.graph.query(q)
             q = """CALL algo.pageRank('L', 'R') YIELD node, score RETURN node.v, score"""
-            resultset = redis_graph.query(q).result_set
+            resultset = self.graph.query(q).result_set
 
             # 2) 1) 1) (integer) 2
             # 2) "0.777813196182251"

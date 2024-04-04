@@ -7,9 +7,16 @@
 
 #include "redismodule.h"
 
-// listen to bolt port 7687
+// listen to bolt port
 // add the socket to the event loop
 int BoltApi_Register
 (
     RedisModuleCtx *ctx  // redis context
 );
+
+// free connected clients
+void BoltApi_Unregister
+(
+    void
+);
+

@@ -7,67 +7,86 @@ on:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:ubuntu
     steps:
 
     - name: Safe dir
       run: git config --global --add safe.directory '*'
 
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         set-safe-directory: '*'
         submodules: recursive
 
     - name: Cache GraphBLAS
       id: cache_graphblas
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
         key: graphblas-sanitizer-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser
       id: cache_parser
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
         key: parser-sanitizer-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/search-static
         key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
-      run: make CLANG=1 SAN=address NPROC=16
+      run: |
+        rustup toolchain list
+        rustup default nightly
+        apt-get update
+        apt-get install -y clang libomp-dev libc6-dbg python3-venv
+        python3 -m venv venv
+        . venv/bin/activate
+        pip install -r tests/requirements.txt
+        make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
+      id: unit_tests
       run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: Upload unit tests logs
         path: ${{ github.workspace }}/tests/unit/logs/
         retention-days: 7
 
     - name: Flow tests
-      run: make flow-tests CLEAR_LOGS=0 SAN=address
+      id: flow_tests
+      run: |
+        . venv/bin/activate
+        make flow-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: Upload flow tests logs
         path: ${{ github.workspace }}/tests/flow/logs/
         retention-days: 7
 
     - name: TCK tests
-      run: make tck-tests CLEAR_LOGS=0 SAN=address
+      id: tck_tests
+      run: |
+        . venv/bin/activate
+        make tck-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: Upload TCK tests logs
         path: ${{ github.workspace }}/tests/tck/logs/
         retention-days: 7
+
+    - name: Check on failures
+      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
+      run: exit 1

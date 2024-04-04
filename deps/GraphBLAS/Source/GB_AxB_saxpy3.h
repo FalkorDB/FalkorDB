@@ -14,6 +14,7 @@
 #define GB_AXB_SAXPY3_H
 
 #include "GB.h"
+#include "GB_math.h"
 
 GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 (

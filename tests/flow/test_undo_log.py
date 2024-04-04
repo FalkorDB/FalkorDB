@@ -5,14 +5,37 @@ GRAPH_ID = "undo-log"
 
 class testUndoLog():
     def __init__(self):
-        self.env = Env(decodeResponses=True)
-        self.redis_con = self.env.getConnection()
-        self.graph = Graph(self.redis_con, GRAPH_ID)
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
 
     def tearDown(self):
-        self.redis_con.flushall()
+        self.graph.delete()
+
+    def test00_undo_schema(self):
+        try:
+            self.graph.query("""CREATE (s:N {v: 1}), (t:N {v: 2})
+                                MATCH (s:N {v: 1}), (t:N {v: 2})
+                                CREATE (s)-[r:R]->(t)
+                                WITH r
+                                RETURN 1 * r""")
+            # we're not supposed to be here, expecting query to fail
+            self.env.assertTrue(False) 
+        except:
+            pass
+
+        # no label should be created
+        result = self.graph.query("CALL db.labels")
+        self.env.assertEquals(len(result.result_set), 0)
+
+        # no relation should be added
+        result = self.graph.query("CALL db.relationshipTypes")
+        self.env.assertEquals(len(result.result_set), 0)
 
     def test01_undo_create_node(self):
+        # test undo create node only by creating a node first so the schema is created
+        self.graph.query("CREATE (n:N)")
+
         try:
             self.graph.query("CREATE (n:N) WITH n RETURN 1 * n")
             # we're not supposed to be here, expecting query to fail
@@ -20,17 +43,14 @@ class testUndoLog():
         except:
             pass
 
-        # node (n:N) should be removed, expecting an empty graph
+        # node (n:N) should be removed
         result = self.graph.query("MATCH (n:N) RETURN n")
-        self.env.assertEquals(len(result.result_set), 0)
-
-        # no label should be created
-        result = self.graph.query("CALL db.labels")
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEquals(len(result.result_set), 1)
 
 
     def test02_undo_create_edge(self):
-        self.graph.query("CREATE (:N {v: 1}), (:N {v: 2})")
+        # test undo create edge only by creating a node first so the schema is created
+        self.graph.query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})")
         try:
             self.graph.query("""MATCH (s:N {v: 1}), (t:N {v: 2})
                                 CREATE (s)-[r:R]->(t)
@@ -43,11 +63,7 @@ class testUndoLog():
 
         # edge [r:R] should have been removed
         result = self.graph.query("MATCH ()-[r:R]->() RETURN r")
-        self.env.assertEquals(len(result.result_set), 0)
-
-        # no relation should be added
-        result = self.graph.query("CALL db.relationshipTypes")
-        self.env.assertEquals(len(result.result_set), 0)
+        self.env.assertEquals(len(result.result_set), 1)
 
     def test03_undo_delete_node(self):
         self.graph.query("CREATE (:N)")
@@ -88,7 +104,7 @@ class testUndoLog():
             b:'str',
             c:[1, 'str', point({latitude:1, longitude:2})],
             d:point({latitude:1, longitude:2}),
-            e:vector32f([1, 2])
+            e:vecf32([1, 2])
         })
         RETURN n""")
 
@@ -100,7 +116,7 @@ class testUndoLog():
             self.graph.query("""MATCH (n:N {a: 1})
                                 SET n.a = 2, n.b = '', n.c = null,
                                 n.d = point({latitude:2, longitude:1}),
-                                n.e = vector32f([2, 1])
+                                n.e = vecf32([2, 1])
                                 WITH n
                                 RETURN 1 * n""")
             # we're not supposed to be here, expecting query to fail
@@ -155,7 +171,7 @@ class testUndoLog():
 
         # clear all attributes of `n`
         try:
-            self.graph.query(f"""MATCH (n:N {a: 1})
+            self.graph.query(f"""MATCH (n:N {{a: 1}})
                                 WHERE ID(n) = {n_v0.id}
                                 SET n = {{}}
                                 WITH n
@@ -176,7 +192,7 @@ class testUndoLog():
         try:
             self.graph.query(f"""MATCH (n:N)
                                 WHERE ID(n) = {n_v0.id}
-                                SET n += {f: 1}
+                                SET n += {{f: 1}}
                                 WITH n
                                 RETURN n * 1""")
             # we're not supposed to be here, expecting query to fail
@@ -314,7 +330,7 @@ class testUndoLog():
 
         # deleted node should be revived, expecting a single node
         query = "MATCH (n:N {v: 0}) RETURN n"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
@@ -334,7 +350,7 @@ class testUndoLog():
 
         # deleted edge should be revived, expecting a single edge
         query = "MATCH ()-[r:R {v: 0}]->() RETURN r"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Edge By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(len(result.result_set), 1)
@@ -354,7 +370,7 @@ class testUndoLog():
 
         # expecting the original attributes to be restored and indexed
         query = "MATCH (n:N {v: 1}) RETURN n.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -374,7 +390,7 @@ class testUndoLog():
 
         # expecting the original attributes to be restored and indexed
         query = "MATCH ()-[r:R {v: 1}]->() RETURN r.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Edge By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -399,7 +415,7 @@ class testUndoLog():
 
     def test14_undo_timeout(self):
         # Change timeout value from default
-        response = self.redis_con.execute_command("GRAPH.CONFIG SET TIMEOUT_DEFAULT 1")
+        response = self.db.config_set("TIMEOUT_DEFAULT", 1)
         self.env.assertEqual(response, "OK")
 
         try:
@@ -410,7 +426,7 @@ class testUndoLog():
             pass
 
         # Restore timeout value to default
-        response = self.redis_con.execute_command("GRAPH.CONFIG SET TIMEOUT_DEFAULT 0")
+        response = self.db.config_set("TIMEOUT_DEFAULT", 0)
         self.env.assertEqual(response, "OK")
 
         # node (n:N) should be removed, expecting an empty graph
@@ -450,7 +466,7 @@ class testUndoLog():
         self.env.assertEquals(len(result.result_set), 0)
         # check index is ok
         query = "MATCH (n:L1 {v: 1}) RETURN n.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -475,7 +491,7 @@ class testUndoLog():
         self.env.assertEquals(["L2"], result.result_set[0][0])
         # check index is ok
         query = "MATCH (n:L2 {v: 1}) RETURN n.v"
-        plan = self.graph.execution_plan(query)
+        plan = str(self.graph.explain(query))
         self.env.assertContains("Node By Index Scan", plan)
         result = self.graph.query(query)
         self.env.assertEquals(result.result_set[0][0], 1)
@@ -546,4 +562,3 @@ class testUndoLog():
 
         # drop index over 'L', 'age'
         result = drop_node_range_index(self.graph, 'L', 'age')
-

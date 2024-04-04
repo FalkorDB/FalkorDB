@@ -2,6 +2,7 @@ import time
 import threading
 from common import *
 from index_utils import *
+from graph_utils import graph_eq
 
 GRAPH_ID = "effects"
 MONITOR_ATTACHED = False
@@ -9,16 +10,16 @@ MONITOR_ATTACHED = False
 class testEffects():
     # enable effects replication
     def effects_enable(self):
-        self.master.execute_command("GRAPH.CONFIG", "SET", "EFFECTS_THRESHOLD", '0')
+       self.db.config_set("EFFECTS_THRESHOLD", 0)
 
     # disable effects replication
     def effects_disable(self):
-        res = self.master.execute_command("GRAPH.CONFIG", "SET", "EFFECTS_THRESHOLD", '999999')
+        self.db.config_set("EFFECTS_THRESHOLD", 999999)
 
     # checks if effects replication is enabled
     def effects_enabled(self):
-        conf = self.master.execute_command("GRAPH.CONFIG", "GET", "EFFECTS_THRESHOLD")
-        return (conf[1] == 0)
+        threshold = self.db.config_get("EFFECTS_THRESHOLD")
+        return (threshold == 0)
 
     # checks if effects replication is enabled
     def effects_disabled(self):
@@ -77,45 +78,10 @@ class testEffects():
 
     # asserts that master and replica have the same view over the graph
     def assert_graph_eq(self):
-        #validate schema:
-        # labels
-        q = "CALL db.labels()"
-        master_labels = self.master_graph.query(q).result_set
-        replica_labels = self.replica_graph.query(q, read_only=True).result_set
-        self.env.assertEquals(master_labels, replica_labels)
-
-        # relationship-types
-        q = "CALL db.relationshiptypes()"
-        master_relations = self.master_graph.query(q).result_set
-        replica_relations = self.replica_graph.query(q, read_only=True).result_set
-        self.env.assertEquals(master_relations, replica_relations)
-
-        # properties
-        q = "CALL db.propertyKeys()"
-        master_props = self.master_graph.query(q).result_set
-        replica_props = self.replica_graph.query(q, read_only=True).result_set
-        self.env.assertEquals(master_props, replica_props)
-
-        # validate nodes
-        q = "MATCH (n) RETURN n ORDER BY(n)"
-        master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
-        self.env.assertEquals(master_resultset, replica_resultset)
-
-        # validate relationships
-        q = "MATCH ()-[e]->() RETURN e ORDER BY(e)"
-        master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
-        self.env.assertEquals(master_resultset, replica_resultset)
-
-        # validate indices
-        q = "CALL db.indexes() YIELD label, properties, types, language, stopwords, entitytype"
-        master_resultset = self.master_graph.query(q).result_set
-        replica_resultset = self.replica_graph.query(q, read_only=True).result_set
-        self.env.assertEquals(master_resultset, replica_resultset)
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
     def __init__(self):
-        self.env = Env(decodeResponses=True, env='oss', useSlaves=True)
+        self.env, self.db = Env(env='oss', useSlaves=True)
         self.monitor = []
         self.master = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
@@ -199,7 +165,7 @@ class testEffects():
                 n.b = 'str',
                 n.c = True,
                 n.d = [1, [2], '3'],
-                n.v = vector32f([1.0, 2.0, 3.0])
+                n.v = vecf32([1.0, 2.0, 3.0])
             """
 
         res = self.query_master_and_wait(q)
@@ -217,7 +183,7 @@ class testEffects():
                 e.e = point({latitude: 51, longitude: 0}),
                 e.f=3.14,
                 e.empty_string = '',
-                e.v = vector32f([1.0, 2.0, 3.0])
+                e.v = vecf32([1.0, 2.0, 3.0])
             """
 
         res = self.query_master_and_wait(q)
@@ -248,7 +214,7 @@ class testEffects():
                             p:point({latitude: 51, longitude: 0}),
                             f:3.14,
                             empty_string: '',
-                            v: vector32f([1.0, 2.0, 3.0])
+                            v: vecf32([1.0, 2.0, 3.0])
                         })"""
 
         # labeled node without attributes
@@ -263,7 +229,7 @@ class testEffects():
                             p:point({latitude: 51, longitude: 0}),
                             f:3.14,
                             empty_string: '',
-                            v: vector32f([1.0, 2.0, 3.0])
+                            v: vecf32([1.0, 2.0, 3.0])
                         })"""
 
         queries = [q0, q1, q2, q3]
@@ -296,7 +262,7 @@ class testEffects():
                                       ep:point({latitude: 51, longitude: 0}),
                                       f:3.14,
                                       empty_string: '',
-                                      v: vector32f([1.0, 2.0, 3.0])}
+                                      v: vecf32([1.0, 2.0, 3.0])}
                             ]->()"""
 
         # edge between an existing node and a new node
@@ -334,7 +300,7 @@ class testEffects():
                     n.xe = point({latitude: 41, longitude: 2}),
                     n.f=6.28,
                     n.xempty_string = '',
-                    n.v = vector32f([-1.0, -2.0, -3.0])"""
+                    n.v = vecf32([-1.0, -2.0, -3.0])"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -376,7 +342,7 @@ class testEffects():
                 e:point({latitude: 2, longitude: 41}),
                 f:2.68,
                 empty_string:'',
-                v: vector32f([-1.1, 2.2, -3.3])}"""
+                v: vecf32([-1.1, 2.2, -3.3])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -401,7 +367,7 @@ class testEffects():
                 e:point({latitude: 3, longitude: 40}),
                 f:8.26,
                 empty_string:'',
-                v: vector32f([-1.2, 2.4, -3.6])}"""
+                v: vecf32([-1.2, 2.4, -3.6])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -495,7 +461,7 @@ class testEffects():
                     e.e = point({latitude: 41, longitude: 2}),
                     e.f=6.28,
                     e.empty_string = '',
-                    e.v = vector32f([-1.0, -2.0, -3.0])"""
+                    e.v = vecf32([-1.0, -2.0, -3.0])"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -537,7 +503,7 @@ class testEffects():
                 e:point({latitude: 2, longitude: 41}),
                 f:2.68,
                 empty_string:'',
-                v: vector32f([-1.1, 2.2, -3.3])}"""
+                v: vecf32([-1.1, 2.2, -3.3])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)
@@ -562,7 +528,7 @@ class testEffects():
                 e:point({latitude: 3, longitude: 40}),
                 f:8.26,
                 empty_string:'',
-                v: vector32f([-1.2, 2.4, -3.6])}"""
+                v: vecf32([-1.2, 2.4, -3.6])}"""
 
         res = self.query_master_and_wait(q)
         self.env.assertGreater(res.properties_set, 0)

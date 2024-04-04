@@ -10,6 +10,7 @@
 #ifndef GB_ADD_H
 #define GB_ADD_H
 #include "GB.h"
+#include "GB_math.h"
 
 GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
 (

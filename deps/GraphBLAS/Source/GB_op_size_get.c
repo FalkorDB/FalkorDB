@@ -42,15 +42,15 @@ GrB_Info GB_op_size_get
             #pragma omp flush
             return (GrB_SUCCESS) ;
 
-        case GrB_INPUT1TYPE_STRING : 
+        case GrB_INP0_TYPE_STRING : 
             s = GB_type_name_get (op->xtype) ;
             break ; ;
 
-        case GrB_INPUT2TYPE_STRING : 
+        case GrB_INP1_TYPE_STRING : 
             s = GB_type_name_get (op->ytype) ;
             break ;
 
-        case GrB_OUTPUTTYPE_STRING : 
+        case GrB_OUTP_TYPE_STRING : 
             s = GB_type_name_get (op->ztype) ;
             break ;
 
