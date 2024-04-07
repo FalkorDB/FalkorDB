@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jitifyer.h: definitions for the CPU jitifyer
+// GB_jitifyer.h: definitions for the CPU and CUDA jitifyer
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
@@ -402,6 +402,8 @@ GrB_Info GB_jitifyer_set_error_log_worker (const char *new_error_log) ;
 
 bool GB_jitifyer_get_use_cmake (void) ;
 void GB_jitifyer_set_use_cmake (bool use_cmake) ;
+
+void GB_jitifyer_sanitize (char *string, size_t len) ;
 
 #endif
 

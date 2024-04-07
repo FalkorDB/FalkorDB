@@ -211,10 +211,10 @@ if ( NOT WIN32 )
     target_link_libraries ( graphblas_matlab PUBLIC dl )
 endif ( )
 
-include ( SuiteSparseAtomic )
-if ( LIBATOMIC_REQUIRED )
-    target_link_libraries ( graphblas_matlab PUBLIC atomic )
-endif ( )
+# include ( SuiteSparseAtomic )
+# if ( LIBATOMIC_REQUIRED )
+#     target_link_libraries ( graphblas_matlab PUBLIC atomic )
+# endif ( )
 
 #-------------------------------------------------------------------------------
 # add library dependencies

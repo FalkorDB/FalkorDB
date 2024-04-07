@@ -160,46 +160,51 @@ GrB_Info GrB_Global_get_Scalar
     // get the field
     //--------------------------------------------------------------------------
 
-    int32_t i ;
-    GrB_Info info = GB_global_enum_get (&i, field) ;
-    if (info == GrB_SUCCESS)
-    { 
-        // field specifies an int: assign it to the scalar
-        info = GB_setElement ((GrB_Matrix) value, NULL, &i, 0, 0,
-            GB_INT32_code, Werk) ;
-    }
-    else
-    { 
-        double x ;
-        int64_t i64 ; 
-        switch ((int) field)
-        {
+    GrB_Info info = GrB_NO_VALUE ;
 
-            case GxB_HYPER_SWITCH : 
+    #pragma omp critical (GB_global_get_set)
+    {
+        int32_t i ;
+        info = GB_global_enum_get (&i, field) ;
+        if (info == GrB_SUCCESS)
+        { 
+            // field specifies an int: assign it to the scalar
+            info = GB_setElement ((GrB_Matrix) value, NULL, &i, 0, 0,
+                GB_INT32_code, Werk) ;
+        }
+        else
+        { 
+            double x ;
+            int64_t i64 ; 
+            switch ((int) field)
+            {
 
-                x = (double) GB_Global_hyper_switch_get ( ) ;
-                info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
-                    GB_FP64_code, Werk) ;
+                case GxB_HYPER_SWITCH : 
 
-                break ;
+                    x = (double) GB_Global_hyper_switch_get ( ) ;
+                    info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
+                        GB_FP64_code, Werk) ;
 
-            case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
+                    break ;
 
-                x = GB_Context_chunk_get (NULL) ;
-                info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
-                    GB_FP64_code, Werk) ;
-                break ;
+                case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
 
-            case GxB_HYPER_HASH : 
+                    x = GB_Context_chunk_get (NULL) ;
+                    info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
+                        GB_FP64_code, Werk) ;
+                    break ;
 
-                i64 = GB_Global_hyper_hash_get ( ) ;
-                info = GB_setElement ((GrB_Matrix) value, NULL, &i64, 0, 0,
-                    GB_INT64_code, Werk) ;
-                break ;
+                case GxB_HYPER_HASH : 
 
-            default : 
+                    i64 = GB_Global_hyper_hash_get ( ) ;
+                    info = GB_setElement ((GrB_Matrix) value, NULL, &i64, 0, 0,
+                        GB_INT64_code, Werk) ;
+                    break ;
 
-                return (GrB_INVALID_VALUE) ;
+                default : 
+
+                    info = GrB_INVALID_VALUE ;
+            }
         }
     }
 
@@ -354,12 +359,18 @@ GrB_Info GrB_Global_get_String
     // get the field
     //--------------------------------------------------------------------------
 
-    const char *s ;
-    GrB_Info info = GB_global_string_get (&s, field) ;
-    if (info == GrB_SUCCESS)
-    { 
-        strcpy (value, s) ;
+    GrB_Info info = GrB_NO_VALUE ;
+
+    #pragma omp critical (GB_global_get_set)
+    {
+        const char *s ;
+        info = GB_global_string_get (&s, field) ;
+        if (info == GrB_SUCCESS)
+        { 
+            strcpy (value, s) ;
+        }
     }
+
     #pragma omp flush
     return (info) ;
 }
@@ -388,7 +399,14 @@ GrB_Info GrB_Global_get_INT32
     // get the field
     //--------------------------------------------------------------------------
 
-    return (GB_global_enum_get (value, field)) ;
+    GrB_Info info = GrB_NO_VALUE ;
+
+    #pragma omp critical (GB_global_get_set)
+    {
+        info = GB_global_enum_get (value, field) ;
+    }
+
+    return (info) ;
 }
 
 //------------------------------------------------------------------------------
@@ -417,42 +435,50 @@ GrB_Info GrB_Global_get_SIZE
     //--------------------------------------------------------------------------
 
     const char *s ;
-    GrB_Info info = GB_global_string_get (&s, field) ;
-    if (info == GrB_SUCCESS)
-    { 
-        (*value) = strlen (s) + 1 ;
-    }
-    else
-    { 
-        switch ((int) field)
-        {
+    GrB_Info info = GrB_NO_VALUE ;
 
-            case GxB_BITMAP_SWITCH : 
+    #pragma omp critical (GB_global_get_set)
+    {
+        info = GB_global_string_get (&s, field) ;
+        if (info == GrB_SUCCESS)
+        { 
+            (*value) = GB_STRLEN (s) + 1 ;
+        }
+        else
+        { 
+            switch ((int) field)
+            {
 
-                (*value) = sizeof (double) * GxB_NBITMAP_SWITCH ;
-                break ;
+                case GxB_BITMAP_SWITCH : 
 
-            case GxB_COMPILER_VERSION : 
+                    (*value) = sizeof (double) * GxB_NBITMAP_SWITCH ;
+                    info = GrB_SUCCESS ;
+                    break ;
 
-                (*value) = sizeof (int32_t) * 3 ;
-                break ;
+                case GxB_COMPILER_VERSION : 
 
-            case GxB_MALLOC_FUNCTION : 
-            case GxB_CALLOC_FUNCTION : 
-            case GxB_REALLOC_FUNCTION : 
-            case GxB_FREE_FUNCTION : 
+                    (*value) = sizeof (int32_t) * 3 ;
+                    info = GrB_SUCCESS ;
+                    break ;
 
-                (*value) = sizeof (void *) ;
-                break ;
+                case GxB_MALLOC_FUNCTION : 
+                case GxB_CALLOC_FUNCTION : 
+                case GxB_REALLOC_FUNCTION : 
+                case GxB_FREE_FUNCTION : 
 
-            default : 
+                    (*value) = sizeof (void *) ;
+                    info = GrB_SUCCESS ;
+                    break ;
 
-                return (GrB_INVALID_VALUE) ;
+                default : 
+
+                    info = GrB_INVALID_VALUE ;
+            }
         }
     }
 
     #pragma omp flush
-    return (GrB_SUCCESS) ;
+    return (info) ;
 }
 
 //------------------------------------------------------------------------------
@@ -479,64 +505,75 @@ GrB_Info GrB_Global_get_VOID
     // get the field
     //--------------------------------------------------------------------------
 
-    switch ((int) field)
+    GrB_Info info = GrB_NO_VALUE ;
+
+    #pragma omp critical (GB_global_get_set)
     {
+        switch ((int) field)
+        {
 
-        case GxB_BITMAP_SWITCH : 
+            case GxB_BITMAP_SWITCH : 
 
-            {
-                double *dvalue = (double *) value ;
-                for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
                 {
-                    dvalue [k] = (double) GB_Global_bitmap_switch_get (k) ;
+                    double *dvalue = (double *) value ;
+                    for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
+                    {
+                        dvalue [k] = (double) GB_Global_bitmap_switch_get (k) ;
+                    }
                 }
-            }
-            break ;
+                info = GrB_SUCCESS ;
+                break ;
 
-        case GxB_COMPILER_VERSION : 
+            case GxB_COMPILER_VERSION : 
 
-            {
-                int32_t *ivalue = (int32_t *) value ;
-                ivalue [0] = GB_COMPILER_MAJOR ;
-                ivalue [1] = GB_COMPILER_MINOR ;
-                ivalue [2] = GB_COMPILER_SUB ;
-            }
-            break ;
+                {
+                    int32_t *ivalue = (int32_t *) value ;
+                    ivalue [0] = GB_COMPILER_MAJOR ;
+                    ivalue [1] = GB_COMPILER_MINOR ;
+                    ivalue [2] = GB_COMPILER_SUB ;
+                }
+                info = GrB_SUCCESS ;
+                break ;
 
-        case GxB_MALLOC_FUNCTION : 
-            {
-                void **func = (void **) value ;
-                (*func) = GB_Global_malloc_function_get ( ) ;
-            }
-            break ;
+            case GxB_MALLOC_FUNCTION : 
+                {
+                    void **func = (void **) value ;
+                    (*func) = GB_Global_malloc_function_get ( ) ;
+                }
+                info = GrB_SUCCESS ;
+                break ;
 
-        case GxB_CALLOC_FUNCTION : 
-            {
-                void **func = (void **) value ;
-                (*func) = GB_Global_calloc_function_get ( ) ;
-            }
-            break ;
+            case GxB_CALLOC_FUNCTION : 
+                {
+                    void **func = (void **) value ;
+                    (*func) = GB_Global_calloc_function_get ( ) ;
+                }
+                info = GrB_SUCCESS ;
+                break ;
 
-        case GxB_REALLOC_FUNCTION : 
-            {
-                void **func = (void **) value ;
-                (*func) = GB_Global_realloc_function_get ( ) ;
-            }
-            break ;
+            case GxB_REALLOC_FUNCTION : 
+                {
+                    void **func = (void **) value ;
+                    (*func) = GB_Global_realloc_function_get ( ) ;
+                }
+                info = GrB_SUCCESS ;
+                break ;
 
-        case GxB_FREE_FUNCTION : 
-            {
-                void **func = (void **) value ;
-                (*func) = GB_Global_free_function_get ( ) ;
-            }
-            break ;
+            case GxB_FREE_FUNCTION : 
+                {
+                    void **func = (void **) value ;
+                    (*func) = GB_Global_free_function_get ( ) ;
+                }
+                info = GrB_SUCCESS ;
+                break ;
 
-        default : 
+            default : 
 
-            return (GrB_INVALID_VALUE) ;
+                info = GrB_INVALID_VALUE ;
+        }
     }
 
     #pragma omp flush
-    return (GrB_SUCCESS) ;
+    return (info) ;
 }
 

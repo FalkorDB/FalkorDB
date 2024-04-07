@@ -24,8 +24,8 @@
 
 // If the reduction is done on the GPU, A will never be iso-valued.
 
-#if GB_C_ISO
-#error "kernel undefined for C iso"
+#if GB_C_ISO || GB_A_ISO
+#error "kernel undefined for C or A iso"
 #endif
 
 // FIXME: put these definitions in GB_cuda_kernel.h:

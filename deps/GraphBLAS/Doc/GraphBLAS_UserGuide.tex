@@ -8147,6 +8147,8 @@ cannot be determined and the \verb'GRAPHBLAS_CACHE_PATH' environment variable
 is not set, then JIT compilation is disabled and only PreJIT kernels can be
 used.  The optional environment variable, \verb'GRAPHBLAS_CACHE_PATH', is also
 read by \verb'GrB_init' when the user application runs.
+See Section~\ref{cache_path} for a description of the valid characters
+that can appear in the cache path.
 
 When the user application starts, it can modify the location of the cache
 folder after calling \verb'GrB_init'.  It can also modify the C compiler and
@@ -8395,6 +8397,7 @@ The string may be \verb'NULL', which means the same as an empty string.
 
 %----------------------------------------
 \subsubsection{\sf GxB\_JIT\_CACHE\_PATH}
+\label{cache_path}
 %----------------------------------------
 
 The \verb'GxB_JIT_CACHE_PATH' string is the full path to the user's cache
@@ -8405,6 +8408,20 @@ called \verb'SuiteSparse/GrB8.0.0'.  When GraphBLAS starts,
 \verb'GrB_init' checks if the \verb'GRAPHBLAS_CACHE_PATH' environment variable
 exists, and initializes the cache path with that value instead of using the
 default.
+
+{\bf Restrictions:} the cache path is santized for security reasons.  No spaces
+are permitted.  Backslashes are converted into forward slashes.  It can contain
+only charactors in the following list:
+
+\begin{verbatim}
+        abcdefghijklmnopqrstuvwxyz
+        ABCDEFGHIJKLMNOPQRSTUVWXYZ
+        0123456789.-_/
+\end{verbatim}
+
+In addition, the second character in the string is allowed to be the colon
+character (\verb':') to allow for the use of Windows drive letters.  Any
+character outside of these rules is converted into an underscore (\verb'_').
 
 %-------------------------------------------------------------------------------
 \subsection{Compilation options: {\sf GRAPHBLAS\_USE\_JIT} and {\sf GRAPHBLAS\_COMPACT}}
@@ -14767,6 +14784,14 @@ GraphBLAS folder.
 %-------------------------------------------------------------------------------
 
 \begin{itemize}
+
+\item Apr 7, 2024: version 9.1.1
+
+    \begin{itemize}
+    \item JIT: sanitizing the JIT cache path, better burble for compiler errors.
+    \item \verb'GrB_get/GrB_set': better handling of concurrent get/set between
+        different user threads.
+    \end{itemize}
 
 \item Mar 22, 2024: version 9.1.0
 

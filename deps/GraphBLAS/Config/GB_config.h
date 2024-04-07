@@ -21,12 +21,12 @@
 // GB_C_FLAGS: the C compiler flags used to compile GraphBLAS.  Used
 // for compiling and linking:
 #ifndef GB_C_FLAGS
-#define GB_C_FLAGS      " -Wno-pointer-sign  -O3 -DNDEBUG -Wno-extra-semi-stmt -fPIC  -arch arm64  -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX14.4.sdk  -fopenmp=libomp"
+#define GB_C_FLAGS      " -Wno-pointer-sign  -O3 -DNDEBUG -Wno-extra-semi-stmt -fPIC  -arch arm64  -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.2.sdk  -fopenmp=libomp"
 #endif
 
 // GB_C_LINK_FLAGS: the flags passed to the C compiler for the link phase:
 #ifndef GB_C_LINK_FLAGS
-#define GB_C_LINK_FLAGS "-L/opt/homebrew/opt/llvm/lib -L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib -L/opt/homebrew/opt/zlib/lib -L/opt/homebrew/opt/openssl@3/lib -L/opt/homebrew/opt/readline/lib -L/opt/homebrew/opt/libiconv/lib -L/opt/homebrew/opt/gettext/lib -L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib -L/opt/homebrew/opt/zlib/lib -L/opt/homebrew/opt/openssl@3/lib -L/opt/homebrew/opt/readline/lib -L/opt/homebrew/opt/libiconv/lib -L/opt/homebrew/opt/gettext/lib -dynamiclib "
+#define GB_C_LINK_FLAGS "-L/opt/homebrew/opt/llvm/lib -L/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib -L/opt/homebrew/opt/zlib/lib -L/opt/homebrew/opt/openssl@3/lib -L/opt/homebrew/opt/readline/lib -L/opt/homebrew/opt/libiconv/lib -L/opt/homebrew/opt/gettext/lib -L/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib -L/opt/homebrew/opt/zlib/lib -L/opt/homebrew/opt/openssl@3/lib -L/opt/homebrew/opt/readline/lib -L/opt/homebrew/opt/libiconv/lib -L/opt/homebrew/opt/gettext/lib -dynamiclib "
 #endif
 
 // GB_LIB_PREFIX: library prefix (lib for Linux/Unix/Mac, empty for Windows):
