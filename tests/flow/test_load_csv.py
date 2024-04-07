@@ -1,5 +1,6 @@
 import csv
 from common import *
+from collections import OrderedDict
 
 GRAPH_ID = "load_csv"
 
@@ -23,6 +24,14 @@ SHORT_CSV_WITHOUT_HEADERS_DATA          = [["Roi",  "Lipman"],
                                            ["Hila", "Lipman"],
                                            ["Adam", "Lipman"],
                                            ["Yoav", "Lipman"]]
+
+MALFORMED_CSV                           = "malformed.csv"
+MALFORMED_CSV_RELATIVE_PATH             = "./tests/flow/" + MALFORMED_CSV
+MALFORMED_CSV_HEADER                    = [["FirstName", "LastName"]]
+MALFORMED_CSV_DATA                      = [["Roi",  "Lipman"],
+                                           ["Hila", "Lipman"],
+                                           ["Adam", "Lipman"],
+                                           ["Yoav", "Lipman", "Extra"]]
 
 # write a CSV file using 'name' as the file name
 # 'header' [optional] as the first row
@@ -62,6 +71,16 @@ def create_short_csv_without_header():
 
     return name
 
+# create a malformed CSV file
+def create_malformed_csv():
+    name   = MALFORMED_CSV
+    DATA   = MALFORMED_CSV_DATA
+    HEADER = MALFORMED_CSV_HEADER
+
+    create_csv_file(name, HEADER, DATA)
+
+    return name
+
 class testLoadCSV():
     def __init__(self):
         self.env, self.db = Env()
@@ -69,6 +88,7 @@ class testLoadCSV():
 
         # create CSV files
         create_empty_csv()
+        create_malformed_csv()
         create_short_csv_with_header()
         create_short_csv_without_header()
  
@@ -94,7 +114,25 @@ class testLoadCSV():
             except Exception as e:
                 continue
 
-    def test02_project_csv_rows(self):
+    def test02_none_existing_csv_file(self):
+        q = "LOAD CSV FROM 'none_existing.csv' AS row RETURN row"
+        try:
+            self.graph.query(q)
+            self.env.assertFalse(True)
+        except Exception as e:
+            # failed to open CSV file: a
+            pass
+
+    def test03_malformed_csv(self):
+        q = "LOAD CSV FROM $file AS row RETURN row"
+        try:
+            self.graph.query(q, {'file': MALFORMED_CSV_RELATIVE_PATH})
+            self.env.assertFalse(True)
+        except Exception as e:
+            # failed to process malformed csv
+            pass
+
+    def test04_project_csv_rows(self):
         g = self.graph
 
         # project all rows in a CSV file
@@ -115,7 +153,7 @@ class testLoadCSV():
                 # validate result
                 self.env.assertEquals(row[0], expected[i])
 
-    def test03_project_csv_as_map(self):
+    def test05_project_csv_as_map(self):
         g = self.graph
 
         # project all rows in a CSV file
@@ -133,31 +171,30 @@ class testLoadCSV():
 
             expected = []
             for row in data:
-                obj = {}
+                obj = OrderedDict()
                 for idx, column in enumerate(columns):
                     obj[column] = row[idx]
-                expected.append(obj)
+                expected.append([obj])
             
             result = g.query(q, {'file': file}).result_set
             self.env.assertEquals(result, expected)
 
-    def _test04_load_csv_multiple_times(self):
+    def test06_load_csv_multiple_times(self):
         # project the same CSV multiple times
         q = """UNWIND range(0, 3) AS x
                LOAD CSV FROM $file AS row
-               RETURN x, row
-               ORDER BY x"""
+               RETURN x, row"""
 
-        result = self.graph.query(q, {'file': SHORT_CSV_WITHOUT_HEADERS}).result_set
+        result = self.graph.query(q, {'file': SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH}).result_set
 
         expected = []
-        for i in range(3):
+        for i in range(4):
             for row in SHORT_CSV_WITHOUT_HEADERS_DATA:
                 expected.append([i, row])
 
         self.env.assertEquals(result, expected)
 
-    def _test05_load_multiple_files(self):
+    def test07_load_multiple_files(self):
         g = self.graph
 
         # project multiple CSV files
@@ -166,11 +203,11 @@ class testLoadCSV():
                LOAD CSV FROM $file_2 AS row
                RETURN file_1_rows, collect(row) as file_2_rows
                """
-        result = g.query(q, {'file_1': SHORT_CSV_WITHOUT_HEADERS,
-                             'file_2': SHORT_CSV_WITH_HEADERS}).result_set
+        result = g.query(q, {'file_1': SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH,
+                             'file_2': SHORT_CSV_WITH_HEADERS_RELATIVE_PATH}).result_set
 
         file_1_rows = SHORT_CSV_WITHOUT_HEADERS_DATA
-        file_2_rows = [SHORT_CSV_WITH_HEADERS_HEADER + SHORT_CSV_WITH_HEADERS_DATA]
+        file_2_rows = SHORT_CSV_WITH_HEADERS_HEADER + SHORT_CSV_WITH_HEADERS_DATA
 
-        self.env.assertEquals(result[0], file_1_rows)
-        self.env.assertEquals(result[1], file_2_rows)
+        self.env.assertEquals(result[0][0], file_1_rows)
+        self.env.assertEquals(result[0][1], file_2_rows)
