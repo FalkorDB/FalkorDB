@@ -74,6 +74,26 @@ SIValue Map_New
 	return map;
 }
 
+// create a map from keys and values arrays
+// keys and values are both of length n
+SIValue Map_FromArrays
+(
+	const SIValue *keys,    // keys
+	const SIValue *values,  // values
+	uint n                  // arrays length
+) {
+	ASSERT(keys   != NULL);
+	ASSERT(values != NULL);
+
+	SIValue map = Map_New(n);
+
+	for(uint i = 0; i < n; i++) {
+		array_append(map.map, Pair_New(keys[i], values[i]));
+	}
+
+	return map;
+}
+
 // clone map
 SIValue Map_Clone
 (

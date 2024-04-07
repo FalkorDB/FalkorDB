@@ -165,13 +165,13 @@ void Error_UnsupportedASTNodeType(const cypher_astnode_t *node) {
 
 	cypher_astnode_type_t type = cypher_astnode_type(node);
 	const char *type_str = cypher_astnode_typestr(type);
-	ErrorCtx_SetError(EMSG_REDISGRAPH_SUPPORT, type_str);
+	ErrorCtx_SetError(EMSG_FALKORDB_SUPPORT, type_str);
 }
 
 void Error_UnsupportedASTOperator(const cypher_operator_t *op) {
 	ASSERT(op != NULL);
 
-	ErrorCtx_SetError(EMSG_REDISGRAPH_SUPPORT, op->str);
+	ErrorCtx_SetError(EMSG_FALKORDB_SUPPORT, op->str);
 }
 
 inline void Error_InvalidPropertyValue(void) {
