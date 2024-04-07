@@ -29,7 +29,7 @@ static bool _compute_path
 
 	op->path = AR_EXP_Evaluate(op->exp, r);
 	if(SI_TYPE(op->path) != T_STRING) {
-		ErrorCtx_RaiseRuntimeException("path to CSV must be a string");
+		ErrorCtx_RaiseRuntimeException(EMSG_INVALID_CSV_PATH);
 		return false;
 	}
 
@@ -49,8 +49,16 @@ static bool _Init_CSVReader
 	}
 
 	// initialize a new CSV reader
-	op->reader = CSVReader_New(op->path.stringval, op->with_headers, ',');
-	op->ncols  = CSVReader_ColumnCount(op->reader);
+	const char *path = op->path.stringval;
+	op->reader = CSVReader_New(path, op->with_headers, ',');
+
+	// raise exception if we've failed to initialize a new CSV reader
+	if(op->reader == NULL) {
+		ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_LOAD_CSV, path);
+		return false;
+	}
+
+	op->ncols = CSVReader_ColumnCount(op->reader);
 
 	//--------------------------------------------------------------------------
 	// save headers
@@ -68,7 +76,7 @@ static bool _Init_CSVReader
 		char *columns[op->ncols];
 		size_t lengths[op->ncols];
 		if(!CSVReader_GetHeaders(op->reader, (const char**)&columns, lengths)) {
-			ErrorCtx_RaiseRuntimeException("failed to read headers row");
+			ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_READ_CSV_HEADERS);
 			return false;
 		}
 
@@ -101,10 +109,17 @@ static bool _CSV_GetRow
 	size_t lengths[op->ncols];
 
 	// try to get a new row from CSV
-	if(!CSVReader_GetRow(op->reader, (const char**)&values, lengths)) {
+	int res = CSVReader_GetRow(op->reader, (const char**)&values, lengths);
+	if(res == -1) {
+		ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_READ_CSV_ROW);
+		return false;
+	} else if (res == -2) {
 		// reached the end of the file
 		return false;
 	}
+
+	// 0 indicates success
+	ASSERT(res == 0);
 
 	//--------------------------------------------------------------------------
 	// copy values

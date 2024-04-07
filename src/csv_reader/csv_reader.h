@@ -36,8 +36,11 @@ bool CSVReader_GetHeaders
 
 // extract the current row
 // length of 'values' and 'lengths' arrays must be the same
-// returns true on success false indicates either an error or EOF
-bool CSVReader_GetRow
+// returns:
+// 0 success
+// -1 failed to get row
+// -2 end of file
+int CSVReader_GetRow
 (
 	const CSVReader reader,  // CSV reader
 	const char **values,     // row values
