@@ -2104,7 +2104,7 @@ updating clause.")
         scan = locate_operation(plan.structured_plan, "Conditional Traverse")
         self.env.assertEquals(str(scan), "Conditional Traverse | (n:N)->(n:N)")
 
-    def test32_rewrite_callsubquery(self):
+    def test32_rewrite_call_subquery(self):
         self.graph.delete()
 
         # create the node (:N {v: 1})
@@ -2120,3 +2120,17 @@ updating clause.")
                }
                RETURN 0""")
         self.env.assertEquals(res.result_set, [[0]])
+
+    def test33_merge_after_call_subquery(self):
+        self.graph.delete()
+
+        # create the node (:N {v: 1})
+        self.graph.query("CREATE (:N {v: 1})")
+        res = self.graph.query("""
+            CALL {
+                RETURN 1 AS x
+            }
+            MERGE (n:N {v: 1})
+            RETURN n.v
+            """)
+        self.env.assertEquals(res.result_set, [[1]])

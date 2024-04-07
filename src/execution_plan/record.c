@@ -107,17 +107,17 @@ void Record_DeepClone
 		const Record r,
 		Record clone
 ) {
-		int entry_count = Record_length(r);
-		size_t required_record_size = sizeof(Entry) * entry_count;
+	int entry_count = Record_length(r);
+	size_t required_record_size = sizeof(Entry) * entry_count;
 
-		memcpy(clone->entries, r->entries, required_record_size);
+	memcpy(clone->entries, r->entries, required_record_size);
 
-		// Deep copy scalars
-		for(uint i = 0; i < entry_count; i++) {
-				if(r->entries[i].type == REC_TYPE_SCALAR) {
-						clone->entries[i].value.s = SI_CloneValue(r->entries[i].value.s);
-				}
+	// deep copy scalars
+	for(uint i = 0; i < entry_count; i++) {
+		if(r->entries[i].type == REC_TYPE_SCALAR) {
+			clone->entries[i].value.s = SI_CloneValue(r->entries[i].value.s);
 		}
+	}
 }
 
 void Record_Merge
