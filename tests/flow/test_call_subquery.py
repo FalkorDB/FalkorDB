@@ -2134,3 +2134,20 @@ updating clause.")
             RETURN n.v
             """)
         self.env.assertEquals(res.result_set, [[1]])
+
+    def test34_create_within_call(self):
+        # The query will:
+        # 1. Create an entity within a CALL sub query
+        # 2. a Match outside the sub query will pull as many records as it can
+        #    untill the sub query is depleted
+
+        q = """CALL {
+                        CREATE ()
+                        RETURN 0 AS X
+                    }
+               MATCH ()--()
+               RETURN 0"""
+
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(len(res.result_set), 0)
