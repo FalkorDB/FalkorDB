@@ -13,13 +13,20 @@
 UnsignedRange *UnsignedRange_New(void) {
 	UnsignedRange *range = rm_malloc(sizeof(UnsignedRange));
 
+	UnsignedRange_Reset(range);
+
+	return range;
+}
+
+void UnsignedRange_Reset
+(
+	UnsignedRange *range
+) {
 	range->min         = 0;
 	range->max         = UINT64_MAX;
 	range->valid       = true;
 	range->include_min = true;
 	range->include_max = true;
-
-	return range;
 }
 
 UnsignedRange *UnsignedRange_Clone

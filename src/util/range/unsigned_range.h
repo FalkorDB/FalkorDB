@@ -18,6 +18,7 @@ typedef struct {
 } UnsignedRange;
 
 UnsignedRange *UnsignedRange_New(void);
+void UnsignedRange_Reset(UnsignedRange *range);
 UnsignedRange *UnsignedRange_Clone(const UnsignedRange *range);
 bool UnsignedRange_IsValid(const UnsignedRange *range);
 bool UnsignedRange_ContainsValue(const UnsignedRange *range, uint64_t v);

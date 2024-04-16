@@ -84,6 +84,12 @@ static GrB_Info _ConstructIterator
 	NodeID    maxId;
 	GrB_Index nrows;
 
+	UnsignedRange_Reset(op->id_range);
+	for(int i = 0; i < array_len(op->filters); i++) {
+		SIValue v = AR_EXP_Evaluate(op->filters->id_exp, op->child_record);
+		UnsignedRange_TightenRange(op->id_range, op->filters[i].operator, v.longval);
+	}
+
 	RG_Matrix L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 	info = RG_Matrix_nrows(&nrows, L);
 	ASSERT(info == GrB_SUCCESS);
@@ -125,16 +131,6 @@ static OpResult NodeByLabelScanInit
 		return OP_OK;
 	}
 
-	for(int i = 0; i < array_len(op->filters); i++) {
-		SIValue v;
-		if(!AR_EXP_ReduceToScalar(op->filters->id_exp, true, &v)) {
-			// missing schema, use the NOP consume function
-			OpBase_UpdateConsume(opBase, NodeByLabelScanNoOp);
-			return OP_OK;
-		}
-		UnsignedRange_TightenRange(op->id_range, op->filters[i].operator, v.longval);
-	}
-
 	// the iterator build may fail if the ID range does not match the matrix dimensions
 	GrB_Info iterator_built = _ConstructIterator(op);
 	if(iterator_built != GrB_SUCCESS) {
@@ -156,13 +152,6 @@ static inline void _UpdateRecord
 	Node n = GE_NEW_NODE();
 	Graph_GetNode(op->g, node_id, &n);
 	Record_AddNode(r, op->nodeRecIdx, n);
-}
-
-static inline void _ResetIterator
-(
-	NodeByLabelScan *op
-) {
-	_ConstructIterator(op);
 }
 
 static Record NodeByLabelScanConsumeFromChild
@@ -195,7 +184,7 @@ static Record NodeByLabelScanConsumeFromChild
 			}
 		} else {
 			// iterator depleted - reset
-			_ResetIterator(op);
+			_ConstructIterator(op);
 		}
 
 		// try to get new NodeID
@@ -211,7 +200,10 @@ static Record NodeByLabelScanConsumeFromChild
 	return r;
 }
 
-static Record NodeByLabelScanConsume(OpBase *opBase) {
+static Record NodeByLabelScanConsume
+(
+	OpBase *opBase
+) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index nodeId;
@@ -249,7 +241,7 @@ static OpResult NodeByLabelScanReset
 		op->child_record = NULL;
 	}
 
-	_ResetIterator(op);
+	_ConstructIterator(op);
 	return OP_OK;
 }
 
