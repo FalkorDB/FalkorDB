@@ -11,7 +11,7 @@
 #include "stdbool.h"
 #include "../graph/graph.h"
 #include "../util/datablock/datablock.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
+#include "../graph/delta_matrix/delta_matrix_iter.h"
 #include "../graph/entities/graph_entity.h"
 #include "rax.h"
 
@@ -49,7 +49,7 @@ typedef struct {
 	uint64_t vkey_entity_count;                 // Number of entities in a single virtual key.
 	uint current_relation_matrix_id;            // Current encoded relationship matrix.
 	DataBlockIterator *datablock_iterator;      // Datablock iterator to be saved in the context.
-	RG_MatrixTupleIter matrix_tuple_iterator;   // Matrix tuple iterator to be saved in the context.
+	Delta_MatrixTupleIter matrix_tuple_iterator;// Matrix tuple iterator to be saved in the context.
 } GraphEncodeContext;
 
 // Creates a new graph encoding context.
@@ -102,7 +102,7 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 											 uint current_relation_matrix_id);
 
 // Retrieve stored matrix tuple iterator.
-RG_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(GraphEncodeContext *ctx);
+Delta_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(GraphEncodeContext *ctx);
 
 // Returns if the the number of processed keys is equal to the total number of graph keys.
 bool GraphEncodeContext_Finished(const GraphEncodeContext *ctx);

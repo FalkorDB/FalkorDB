@@ -6,7 +6,7 @@
 
 #include "RG.h"
 #include "graph.h"
-#include "rg_matrix/rg_matrix_iter.h"
+#include "delta_matrix/delta_matrix_iter.h"
 
 // deletes nodes from the graph
 //
@@ -58,26 +58,26 @@ void Graph_DeleteNodes
 	// update label matrices
 	//--------------------------------------------------------------------------
 
-	GrB_Index j;            // iterated entry col idx
-	GrB_Info info;          // GraphBLAS return code
-	GrB_Index nrows;        // lbls row count
-	GrB_Index ncols;        // lbls col count
-	GrB_Matrix elems;       // elements to delete
-	RG_MatrixTupleIter it;  // matrix iterator
+	GrB_Index j;               // iterated entry col idx
+	GrB_Info info;             // GraphBLAS return code
+	GrB_Index nrows;           // lbls row count
+	GrB_Index ncols;           // lbls col count
+	GrB_Matrix elems;          // elements to delete
+	Delta_MatrixTupleIter it;  // matrix iterator
 
 	// get labels matrix
-	RG_Matrix lbls = Graph_GetNodeLabelMatrix(g);
+	Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
 
 	// create lbls mask
-	info = RG_Matrix_nrows(&nrows, lbls);
+	info = Delta_Matrix_nrows(&nrows, lbls);
 	ASSERT(info == GrB_SUCCESS);
-	info = RG_Matrix_ncols(&ncols, lbls);
+	info = Delta_Matrix_ncols(&ncols, lbls);
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_new(&elems, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
 
 	// attach iterator to lbls matrix
-	RG_MatrixTupleIter_attach(&it, lbls);
+	Delta_MatrixTupleIter_attach(&it, lbls);
 
 	//--------------------------------------------------------------------------
 	// phase one
@@ -89,18 +89,18 @@ void Graph_DeleteNodes
 		Node *n = nodes + i;
 		EntityID id = ENTITY_GET_ID(n);
 
-		info = RG_MatrixTupleIter_iterate_row(&it, id);
+		info = Delta_MatrixTupleIter_iterate_row(&it, id);
 		ASSERT(info == GrB_SUCCESS);
 
 		// for each deleted node label
-		while(RG_MatrixTupleIter_next_BOOL(&it, NULL, &j, NULL) == GrB_SUCCESS) {
+		while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &j, NULL) == GrB_SUCCESS) {
 			// populate lbls mask
 			info = GrB_Matrix_setElement_BOOL(elems, true, id, j);
 			ASSERT(info == GrB_SUCCESS);
 
 			// clear label matrix j at position [id,id]
-			RG_Matrix L = Graph_GetLabelMatrix(g, j);
-			info = RG_Matrix_removeElement_BOOL(L, id, id);
+			Delta_Matrix L = Graph_GetLabelMatrix(g, j);
+			info = Delta_Matrix_removeElement_BOOL(L, id, id);
 			ASSERT(info == GrB_SUCCESS);
 		}
 
@@ -112,7 +112,7 @@ void Graph_DeleteNodes
 	// phase two
 	//--------------------------------------------------------------------------
 
-	RG_Matrix_removeElements(lbls, elems);
+	Delta_Matrix_removeElements(lbls, elems);
 
 	// restore matrix sync policy
 	Graph_SetMatrixPolicy(g, policy);

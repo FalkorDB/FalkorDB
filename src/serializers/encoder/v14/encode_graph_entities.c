@@ -303,19 +303,19 @@ void RdbSaveEdges_v14
 	// get current relation matrix
 	uint r = GraphEncodeContext_GetCurrentRelationID(gc->encoding_context);
 
-	RG_Matrix S = Graph_GetSourceRelationMatrix(gc->g, r, false);
+	Delta_Matrix S = Graph_GetSourceRelationMatrix(gc->g, r, false);
 	ASSERT(S != NULL);
-	RG_Matrix T = Graph_GetTargetRelationMatrix(gc->g, r, false);
+	Delta_Matrix T = Graph_GetTargetRelationMatrix(gc->g, r, false);
 	ASSERT(T != NULL);
-	RG_MatrixTupleIter iter_t = {0};
-	RG_MatrixTupleIter_attach(&iter_t, T);
+	Delta_MatrixTupleIter iter_t = {0};
+	Delta_MatrixTupleIter_attach(&iter_t, T);
 
 	// get matrix tuple iterator from context
 	// already set to the next entry to fetch
 	// for previous edge encide or create new one
-	RG_MatrixTupleIter *iter = GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
-	if(!RG_MatrixTupleIter_is_attached(iter, S)) {
-		info = RG_MatrixTupleIter_attach(iter, S);
+	Delta_MatrixTupleIter *iter = GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
+	if(!Delta_MatrixTupleIter_is_attached(iter, S)) {
+		info = Delta_MatrixTupleIter_attach(iter, S);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -330,7 +330,7 @@ void RdbSaveEdges_v14
 		Edge e;
 
 		// try to get next tuple
-		info = RG_MatrixTupleIter_next_BOOL(iter, &src_id, &edge_id, NULL);
+		info = Delta_MatrixTupleIter_next_BOOL(iter, &src_id, &edge_id, NULL);
 
 		// if iterator is depleted
 		// get new tuple from different matrix or finish encode
@@ -345,18 +345,18 @@ void RdbSaveEdges_v14
 			S = Graph_GetSourceRelationMatrix(gc->g, r, false);
 			ASSERT(S != NULL);
 			T = Graph_GetTargetRelationMatrix(gc->g, r, false);
-			info = RG_MatrixTupleIter_attach(iter, S);
+			info = Delta_MatrixTupleIter_attach(iter, S);
 			ASSERT(info == GrB_SUCCESS);
-			info = RG_MatrixTupleIter_attach(&iter_t, T);
+			info = Delta_MatrixTupleIter_attach(&iter_t, T);
 			ASSERT(info == GrB_SUCCESS);
-			info = RG_MatrixTupleIter_next_BOOL(iter, &src_id, &edge_id, NULL);
+			info = Delta_MatrixTupleIter_next_BOOL(iter, &src_id, &edge_id, NULL);
 		}
 		
 		ASSERT(info == GrB_SUCCESS);
 
-		info = RG_MatrixTupleIter_iterate_row(&iter_t, edge_id);
+		info = Delta_MatrixTupleIter_iterate_row(&iter_t, edge_id);
 		ASSERT(info == GrB_SUCCESS);
-		info = RG_MatrixTupleIter_next_BOOL(&iter_t, NULL, &dest_id, NULL);
+		info = Delta_MatrixTupleIter_next_BOOL(&iter_t, NULL, &dest_id, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		e.src_id = src_id;
@@ -369,7 +369,7 @@ void RdbSaveEdges_v14
 finish:
 	// check if done encoding edges
 	if(offset + edges_to_encode == graph_edges) {
-		RG_MatrixTupleIter_detach(iter);
+		Delta_MatrixTupleIter_detach(iter);
 	}
 
 	// update context

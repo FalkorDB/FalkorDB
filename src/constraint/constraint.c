@@ -12,7 +12,7 @@
 #include "../util/thpool/pools.h"
 #include "../graph//graphcontext.h"
 #include "../graph/entities/attribute_set.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
+#include "../graph/delta_matrix/delta_matrix_iter.h"
 
 #include <stdatomic.h>
 
@@ -408,7 +408,7 @@ void Constraint_EnforceNodes
 	ASSERT(c != NULL);
 	ASSERT(g != NULL);
 
-	RG_MatrixTupleIter it         = {0};           // matrix iterator
+	Delta_MatrixTupleIter it         = {0};           // matrix iterator
 	bool               holds      = true;          // constraint holds
 	GrB_Index          rowIdx     = 0;             // current row being scanned
 	int                enforced   = 0;             // #entities in current batch
@@ -427,7 +427,7 @@ void Constraint_EnforceNodes
 			break;
 		}
 
-		const RG_Matrix m = Graph_GetLabelMatrix(g, schema_id);
+		const Delta_Matrix m = Graph_GetLabelMatrix(g, schema_id);
 		ASSERT(m != NULL);
 
 		// reset number of enforce nodes in batch
@@ -438,7 +438,7 @@ void Constraint_EnforceNodes
 		//----------------------------------------------------------------------
 
 		GrB_Info info;
-		info = RG_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -447,7 +447,7 @@ void Constraint_EnforceNodes
 
 		EntityID id;
 		while(enforced < batch_size &&
-			  RG_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
+			  Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
@@ -471,7 +471,7 @@ void Constraint_EnforceNodes
 			Graph_ReleaseLock(g);
 
 			// finished current batch
-			RG_MatrixTupleIter_detach(&it);
+			Delta_MatrixTupleIter_detach(&it);
 
 			// continue next batch from row id+1
 			// this is true because we're iterating over a diagonal matrix
@@ -479,7 +479,7 @@ void Constraint_EnforceNodes
 		}
 	}
 
-	RG_MatrixTupleIter_detach(&it);
+	Delta_MatrixTupleIter_detach(&it);
 
 	// update constraint status
 	ConstraintStatus status = (holds) ? CT_ACTIVE : CT_FAILED;
@@ -496,7 +496,7 @@ void Constraint_EnforceEdges
 	Graph *g
 ) {
 	GrB_Info info;
-	RG_MatrixTupleIter it = {0};
+	Delta_MatrixTupleIter it = {0};
 
 	bool      holds        = true;          // constraint holds
 	EntityID  src_id       = 0;             // current processed row idx
@@ -527,18 +527,18 @@ void Constraint_EnforceEdges
 
 		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const RG_Matrix m = Graph_GetSourceRelationMatrix(g, schema_id, false);
+		const Delta_Matrix m = Graph_GetSourceRelationMatrix(g, schema_id, false);
 		ASSERT(m != NULL);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		info = RG_MatrixTupleIter_AttachRange(&it, m, src_id, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, m, src_id, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously enforced edges
-		while((info = RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
+		while((info = Delta_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
 						NULL)) == GrB_SUCCESS &&
 				src_id == prev_src_id &&
 				edge_id != prev_edge_id);
@@ -566,7 +566,7 @@ void Constraint_EnforceEdges
 			}
 			enforced++; // single/multi edge are counted similarly
 		} while(enforced < batch_size &&
-			  RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
+			  Delta_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
 				== GrB_SUCCESS && holds);
 
 		//----------------------------------------------------------------------
@@ -580,11 +580,11 @@ void Constraint_EnforceEdges
 			// finished current batch
 			// release read lock
 			Graph_ReleaseLock(g);
-			RG_MatrixTupleIter_detach(&it);
+			Delta_MatrixTupleIter_detach(&it);
 		}
 	}
 
-	RG_MatrixTupleIter_detach(&it);
+	Delta_MatrixTupleIter_detach(&it);
 
 	// update constraint status
 	ConstraintStatus status = (holds) ? CT_ACTIVE : CT_FAILED;

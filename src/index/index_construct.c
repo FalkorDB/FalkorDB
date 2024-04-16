@@ -6,7 +6,7 @@
 
 #include "RG.h"
 #include "index.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
+#include "../graph/delta_matrix/delta_matrix_iter.h"
 
 #include <assert.h>
 
@@ -30,7 +30,7 @@ static void _Index_PopulateNodeIndex
 	GrB_Index          rowIdx     = 0;
 	int                indexed    = 0;      // #entities in current batch
 	int                batch_size = 10000;  // max #entities to index in one go
-	RG_MatrixTupleIter it         = {0};
+	Delta_MatrixTupleIter it      = {0};
 
 	while(true) {
 		// lock graph for reading
@@ -48,7 +48,7 @@ static void _Index_PopulateNodeIndex
 		indexed = 0;
 
 		// fetch label matrix
-		const RG_Matrix m = Graph_GetLabelMatrix(g, Index_GetLabelID(idx));
+		const Delta_Matrix m = Graph_GetLabelMatrix(g, Index_GetLabelID(idx));
 		ASSERT(m != NULL);
 
 		//----------------------------------------------------------------------
@@ -56,9 +56,9 @@ static void _Index_PopulateNodeIndex
 		//----------------------------------------------------------------------
 
 		GrB_Info info;
-		info = RG_MatrixTupleIter_attach(&it, m);
+		info = Delta_MatrixTupleIter_attach(&it, m);
 		ASSERT(info == GrB_SUCCESS);
-		info = RG_MatrixTupleIter_iterate_range(&it, rowIdx, UINT64_MAX);
+		info = Delta_MatrixTupleIter_iterate_range(&it, rowIdx, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -67,7 +67,7 @@ static void _Index_PopulateNodeIndex
 
 		EntityID id;
 		while(indexed < batch_size &&
-			  RG_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
+			  Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
@@ -87,7 +87,7 @@ static void _Index_PopulateNodeIndex
 			Graph_ReleaseLock(g);
 
 			// finished current batch
-			RG_MatrixTupleIter_detach(&it);
+			Delta_MatrixTupleIter_detach(&it);
 
 			// continue next batch from row id+1
 			// this is true because we're iterating over a diagonal matrix
@@ -97,7 +97,7 @@ static void _Index_PopulateNodeIndex
 
 	// release read lock
 	Graph_ReleaseLock(g);
-	RG_MatrixTupleIter_detach(&it);
+	Delta_MatrixTupleIter_detach(&it);
 }
 
 // index edges in an asynchronous manner
@@ -118,14 +118,14 @@ static void _Index_PopulateEdgeIndex
 	ASSERT(idx != NULL);
 
 	GrB_Info  info;
-	EntityID  src_id       = 0;     // current processed row idx
-	EntityID  dest_id      = 0;     // current processed column idx
-	EntityID  edge_id      = 0;     // current processed edge id
-	EntityID  prev_src_id  = 0;     // last processed row idx
-	EntityID  prev_edge_id = 0;     // last processed column idx
-	int       indexed      = 0;     // number of entities indexed in current batch
-	int       batch_size   = 1000;  // max number of entities to index in one go
-	RG_MatrixTupleIter it  = {0};
+	EntityID  src_id          = 0;     // current processed row idx
+	EntityID  dest_id         = 0;     // current processed column idx
+	EntityID  edge_id         = 0;     // current processed edge id
+	EntityID  prev_src_id     = 0;     // last processed row idx
+	EntityID  prev_edge_id    = 0;     // last processed column idx
+	int       indexed         = 0;     // number of entities indexed in current batch
+	int       batch_size      = 1000;  // max number of entities to index in one go
+	Delta_MatrixTupleIter it  = {0};
 
 	while(true) {
 		// lock graph for reading
@@ -146,22 +146,22 @@ static void _Index_PopulateEdgeIndex
 
 		// fetch relation matrix
 		int label_id = Index_GetLabelID(idx);
-		RG_Matrix S = Graph_GetSourceRelationMatrix(g, label_id, false);
+		Delta_Matrix S = Graph_GetSourceRelationMatrix(g, label_id, false);
 		ASSERT(S != NULL);
-		RG_Matrix T = Graph_GetTargetRelationMatrix(g, label_id, false);
+		Delta_Matrix T = Graph_GetTargetRelationMatrix(g, label_id, false);
 		ASSERT(T != NULL);
-		RG_MatrixTupleIter it_dst = {0};
-		RG_MatrixTupleIter_attach(&it_dst, T);
+		Delta_MatrixTupleIter it_dst = {0};
+		Delta_MatrixTupleIter_attach(&it_dst, T);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		info = RG_MatrixTupleIter_AttachRange(&it, S, src_id, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, S, src_id, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously indexed edges
-		while((info = RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
+		while((info = Delta_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
 						NULL)) == GrB_SUCCESS &&
 				src_id == prev_src_id &&
 				edge_id < prev_edge_id);
@@ -176,8 +176,8 @@ static void _Index_PopulateEdgeIndex
 		//----------------------------------------------------------------------
 
 		do {
-			RG_MatrixTupleIter_iterate_row(&it_dst, edge_id);
-			RG_MatrixTupleIter_next_BOOL(&it_dst, NULL, &dest_id, NULL);
+			Delta_MatrixTupleIter_iterate_row(&it_dst, edge_id);
+			Delta_MatrixTupleIter_next_BOOL(&it_dst, NULL, &dest_id, NULL);
 
 			Edge e;
 			e.src_id     = src_id;
@@ -188,7 +188,7 @@ static void _Index_PopulateEdgeIndex
 
 			indexed++;
 		} while(indexed < batch_size &&
-			  RG_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
+			  Delta_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
 				== GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -202,13 +202,13 @@ static void _Index_PopulateEdgeIndex
 			// finished current batch
 			// release read lock
 			Graph_ReleaseLock(g);
-			RG_MatrixTupleIter_detach(&it);
+			Delta_MatrixTupleIter_detach(&it);
 		}
 	}
 
 	// release read lock
 	Graph_ReleaseLock(g);
-	RG_MatrixTupleIter_detach(&it);
+	Delta_MatrixTupleIter_detach(&it);
 }
 
 // constructs index

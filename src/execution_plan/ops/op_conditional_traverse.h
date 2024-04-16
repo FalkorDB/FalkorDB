@@ -9,7 +9,7 @@
 #include "op.h"
 #include "../execution_plan.h"
 #include "shared/traverse_functions.h"
-#include "../../graph/rg_matrix/rg_matrix_iter.h"
+#include "../../graph/delta_matrix/delta_matrix_iter.h"
 #include "../../arithmetic/algebraic_expression.h"
 #include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
 
@@ -18,16 +18,16 @@ typedef struct {
 	OpBase op;
 	Graph *graph;
 	AlgebraicExpression *ae;
-	RG_Matrix F;                // Filter matrix.
-	RG_Matrix M;                // Algebraic expression result.
-	EdgeTraverseCtx *edge_ctx;  // Edge collection data if the edge needs to be set.
-	RG_MatrixTupleIter iter;    // Iterator over M.
-	int srcNodeIdx;             // Source node index into record.
-	int destNodeIdx;            // Destination node index into record.
-	uint64_t record_count;      // Number of held records.
-	uint64_t record_cap;        // Max number of records to process.
-	Record *records;            // Array of records.
-	Record r;                   // Currently selected record.
+	Delta_Matrix F;              // Filter matrix.
+	Delta_Matrix M;              // Algebraic expression result.
+	EdgeTraverseCtx *edge_ctx;   // Edge collection data if the edge needs to be set.
+	Delta_MatrixTupleIter iter;  // Iterator over M.
+	int srcNodeIdx;              // Source node index into record.
+	int destNodeIdx;             // Destination node index into record.
+	uint64_t record_count;       // Number of held records.
+	uint64_t record_cap;         // Max number of records to process.
+	Record *records;             // Array of records.
+	Record r;                    // Currently selected record.
 } OpCondTraverse;
 
 /* Creates a new Traverse operation */

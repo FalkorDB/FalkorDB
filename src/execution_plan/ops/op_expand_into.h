@@ -17,8 +17,8 @@ typedef struct {
 	OpBase op;
 	Graph *graph;
 	AlgebraicExpression *ae;
-	RG_Matrix F;                // filter matrix
-	RG_Matrix M;                // algebraic expression result
+	Delta_Matrix F;             // filter matrix
+	Delta_Matrix M;             // algebraic expression result
 	EdgeTraverseCtx *edge_ctx;  // edge collection data if the edge needs to be set
 	int srcNodeIdx;             // source node index into record
 	int destNodeIdx;            // destination node index into record

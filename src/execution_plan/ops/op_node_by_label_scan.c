@@ -84,8 +84,8 @@ static GrB_Info _ConstructIterator
 	NodeID    maxId;
 	GrB_Index nrows;
 
-	RG_Matrix L = Graph_GetLabelMatrix(QueryCtx_GetGraph(), op->n->label_id);
-	info = RG_Matrix_nrows(&nrows, L);
+	Delta_Matrix L = Graph_GetLabelMatrix(QueryCtx_GetGraph(), op->n->label_id);
+	info = Delta_Matrix_nrows(&nrows, L);
 	ASSERT(info == GrB_SUCCESS);
 
 	// make sure range is within matrix bounds
@@ -100,7 +100,7 @@ static GrB_Info _ConstructIterator
 	if(op->id_range->include_max) maxId = op->id_range->max;
 	else maxId = op->id_range->max - 1;
 
-	info = RG_MatrixTupleIter_AttachRange(&op->iter, L, minId, maxId);
+	info = Delta_MatrixTupleIter_AttachRange(&op->iter, L, minId, maxId);
 	ASSERT(info == GrB_SUCCESS);
 
 	return info;
@@ -163,7 +163,7 @@ static Record NodeByLabelScanConsumeFromChild
 
 	// try to get new nodeID
 	GrB_Index nodeId;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
 	while(info == GrB_NULL_POINTER || op->child_record == NULL || info == GxB_EXHAUSTED) {
 		// try to get a new record
 		if(op->child_record != NULL) {
@@ -189,7 +189,7 @@ static Record NodeByLabelScanConsumeFromChild
 		}
 
 		// try to get new NodeID
-		info = RG_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
+		info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
 	}
 
 	// we've got a record and NodeID
@@ -205,7 +205,7 @@ static Record NodeByLabelScanConsume(OpBase *opBase) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index nodeId;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
 	if(info == GxB_EXHAUSTED) return NULL;
 
 	ASSERT(info == GrB_SUCCESS);
@@ -252,7 +252,7 @@ static OpBase *NodeByLabelScanClone(const ExecutionPlan *plan, const OpBase *opB
 static void NodeByLabelScanFree(OpBase *op) {
 	NodeByLabelScan *nodeByLabelScan = (NodeByLabelScan *)op;
 
-	GrB_Info info = RG_MatrixTupleIter_detach(&(nodeByLabelScan->iter));
+	GrB_Info info = Delta_MatrixTupleIter_detach(&(nodeByLabelScan->iter));
 	ASSERT(info == GrB_SUCCESS);
 
 	if(nodeByLabelScan->child_record) {

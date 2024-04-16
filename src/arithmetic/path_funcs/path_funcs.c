@@ -162,18 +162,18 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 		if(ctx->reltypes == NULL) {
 			// No edge types were specified, use the overall adjacency matrix.
 			ctx->free_matrices = true;
-			res = RG_Matrix_export(&ctx->R, Graph_GetAdjacencyMatrix(gc->g,
+			res = Delta_Matrix_export(&ctx->R, Graph_GetAdjacencyMatrix(gc->g,
 						false));
 			ASSERT(res == GrB_SUCCESS);
 		} else if(ctx->reltype_count == 0) {
 			// If edge types were specified but none were valid,
 			// use the zero matrix
 			ctx->free_matrices = true;
-			res = RG_Matrix_export(&ctx->R, Graph_GetZeroMatrix(gc->g));
+			res = Delta_Matrix_export(&ctx->R, Graph_GetZeroMatrix(gc->g));
 			ASSERT(res == GrB_SUCCESS);
 		} else if(ctx->reltype_count == 1) {
 			ctx->free_matrices = true;
-			res = RG_Matrix_export(&ctx->R, Graph_GetRelationMatrix(gc->g,
+			res = Delta_Matrix_export(&ctx->R, Graph_GetRelationMatrix(gc->g,
 						ctx->reltypes[0], false));
 			ASSERT(res == GrB_SUCCESS);
 		} else {
@@ -185,7 +185,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 
 			for(uint i = 0; i < ctx->reltype_count; i ++) {
 				GrB_Matrix adj;
-				res = RG_Matrix_export(&adj, Graph_GetRelationMatrix(gc->g,
+				res = Delta_Matrix_export(&adj, Graph_GetRelationMatrix(gc->g,
 							ctx->reltypes[i], false));
 				ASSERT(res == GrB_SUCCESS);
 				res = GrB_eWiseAdd(ctx->R, GrB_NULL, GrB_NULL,

@@ -20,24 +20,24 @@ void Graph_EnsureNodeCap
 
 	uint       n;
 	GrB_Index  dim = Graph_RequiredMatrixDim(g);
-	RG_Matrix  M   =  NULL;
+	Delta_Matrix  M   =  NULL;
 
 	M = Graph_GetAdjacencyMatrix(g, false);
-	RG_Matrix_resize(M, dim, dim);
+	Delta_Matrix_resize(M, dim, dim);
 
 	M = Graph_GetNodeLabelMatrix(g);
-	RG_Matrix_resize(M, dim, dim);
+	Delta_Matrix_resize(M, dim, dim);
 
 	n = array_len(g->labels);
 	for(int i = 0; i < n; i ++) {
 		M = Graph_GetLabelMatrix(g, i);
-		RG_Matrix_resize(M, dim, dim);
+		Delta_Matrix_resize(M, dim, dim);
 	}
 
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
 		M = Graph_GetRelationMatrix(g, i, false);
-		RG_Matrix_resize(M, dim, dim);
+		Delta_Matrix_resize(M, dim, dim);
 	}
 }
 
@@ -78,8 +78,8 @@ void Serializer_Graph_SetNode
 	for(uint i = 0; i < label_count; i ++) {
 		LabelID label = labels[i];
 		// set label matrix at position [id, id]
-		RG_Matrix  M = Graph_GetLabelMatrix(g, label);
-		GrB_Matrix m = RG_Matrix_M(M);
+		Delta_Matrix  M = Graph_GetLabelMatrix(g, label);
+		GrB_Matrix m    = Delta_Matrix_M(M);
 		info = GrB_Matrix_setElement_BOOL(m, true, id, id);
 		if(info == GrB_INVALID_INDEX) {
 			RedisModule_Log(NULL, "notice", "RESIZE LABEL MATRIX");
@@ -102,20 +102,20 @@ void Serializer_Graph_SetNodeLabels
 	GrB_Vector v;
 	int node_count           = Graph_RequiredMatrixDim(g);
 	int label_count          = Graph_LabelTypeCount(g);
-	RG_Matrix node_labels    = Graph_GetNodeLabelMatrix(g);
-	GrB_Matrix node_labels_m = RG_Matrix_M(node_labels);
+	Delta_Matrix node_labels = Graph_GetNodeLabelMatrix(g);
+	GrB_Matrix node_labels_m = Delta_Matrix_M(node_labels);
 
 #if RG_DEBUG
 	GrB_Index nvals;
-	RG_Matrix_nvals(&nvals, node_labels);
+	Delta_Matrix_nvals(&nvals, node_labels);
 	ASSERT(nvals == 0);
 #endif
 
 	GrB_Vector_new(&v, GrB_BOOL, node_count);
 
 	for(int i = 0; i < label_count; i++) {
-		RG_Matrix  M  =  Graph_GetLabelMatrix(g, i);
-		GrB_Matrix m  =  RG_Matrix_M(M);
+		Delta_Matrix  M  =  Graph_GetLabelMatrix(g, i);
+		GrB_Matrix m     =  Delta_Matrix_M(M);
 
 		GxB_Vector_diag(v, m, 0, NULL);
 
@@ -138,18 +138,18 @@ static void _OptimizedSingleEdgeFormConnection
 	int r
 ) {
 	GrB_Info info;
-	RG_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
-	RG_Matrix  S      =  Graph_GetSourceRelationMatrix(g, r, false);
-	RG_Matrix  T      =  Graph_GetTargetRelationMatrix(g, r, false);
-	RG_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
-	GrB_Matrix m      =  RG_Matrix_M(M);
-	GrB_Matrix tm     =  RG_Matrix_M(RG_Matrix_getTranspose(M));
-	GrB_Matrix s      =  RG_Matrix_M(S);
-	GrB_Matrix ts     =  RG_Matrix_M(RG_Matrix_getTranspose(S));
-	GrB_Matrix t      =  RG_Matrix_M(T);
-	GrB_Matrix tt     =  RG_Matrix_M(RG_Matrix_getTranspose(T));
-	GrB_Matrix adj_m  =  RG_Matrix_M(adj);
-	GrB_Matrix adj_tm =  RG_Matrix_M(RG_Matrix_getTranspose(adj));
+	Delta_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
+	Delta_Matrix  S      =  Graph_GetSourceRelationMatrix(g, r, false);
+	Delta_Matrix  T      =  Graph_GetTargetRelationMatrix(g, r, false);
+	Delta_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
+	GrB_Matrix m         =  Delta_Matrix_M(M);
+	GrB_Matrix tm        =  Delta_Matrix_M(Delta_Matrix_getTranspose(M));
+	GrB_Matrix s         =  Delta_Matrix_M(S);
+	GrB_Matrix ts        =  Delta_Matrix_M(Delta_Matrix_getTranspose(S));
+	GrB_Matrix t         =  Delta_Matrix_M(T);
+	GrB_Matrix tt        =  Delta_Matrix_M(Delta_Matrix_getTranspose(T));
+	GrB_Matrix adj_m     =  Delta_Matrix_M(adj);
+	GrB_Matrix adj_tm    =  Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
 	UNUSED(info);
 

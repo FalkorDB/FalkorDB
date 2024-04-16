@@ -14,7 +14,7 @@
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
-#include "rg_matrix/rg_matrix.h"
+#include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
 #include "../../deps/GraphBLAS/Include/GraphBLAS.h"
@@ -42,23 +42,23 @@ typedef enum {
 // forward declaration of Graph struct
 typedef struct Graph Graph;
 // typedef for synchronization function pointer
-typedef void (*SyncMatrixFunc)(const Graph *, RG_Matrix, GrB_Index, GrB_Index);
+typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
 typedef struct {
-	RG_Matrix R; 	  // relation matrix
-	RG_Matrix S;      // sources matrix
-	RG_Matrix T;      // targets matrix
+	Delta_Matrix R; 	 // relation matrix
+	Delta_Matrix S;      // sources matrix
+	Delta_Matrix T;      // targets matrix
 } RelationMatrices;
 
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
 	DataBlock *nodes;                  // graph nodes stored in blocks
 	DataBlock *edges;                  // graph edges stored in blocks
-	RG_Matrix adjacency_matrix;        // adjacency matrix, holds all graph connections
-	RG_Matrix *labels;                 // label matrices
-	RG_Matrix node_labels;             // mapping of all node IDs to all labels possessed by each node
+	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
+	Delta_Matrix *labels;              // label matrices
+	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
 	RelationMatrices *relations;       // relation matrices
-	RG_Matrix _zero_matrix;            // zero matrix
+	Delta_Matrix _zero_matrix;         // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
@@ -391,7 +391,7 @@ uint Graph_GetNodeLabels
 
 // retrieves the adjacency matrix
 // matrix is resized if its size doesn't match graph's node count
-RG_Matrix Graph_GetAdjacencyMatrix
+Delta_Matrix Graph_GetAdjacencyMatrix
 (
 	const Graph *g,
 	bool transposed
@@ -399,7 +399,7 @@ RG_Matrix Graph_GetAdjacencyMatrix
 
 // retrieves a label matrix
 // matrix is resized if its size doesn't match graph's node count
-RG_Matrix Graph_GetLabelMatrix
+Delta_Matrix Graph_GetLabelMatrix
 (
 	const Graph *g,     // graph from which to get adjacency matrix
 	int label           // label described by matrix
@@ -407,7 +407,7 @@ RG_Matrix Graph_GetLabelMatrix
 
 // retrieves a typed adjacency matrix
 // matrix is resized if its size doesn't match graph's node count
-RG_Matrix Graph_GetRelationMatrix
+Delta_Matrix Graph_GetRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
 	RelationID relation_idx,  // relation described by matrix
@@ -416,7 +416,7 @@ RG_Matrix Graph_GetRelationMatrix
 
 // retrieves a relation edge source matrix
 // matrix is resized if its dimensions doesn't match graph's node count & graph's edge count
-RG_Matrix Graph_GetSourceRelationMatrix
+Delta_Matrix Graph_GetSourceRelationMatrix
 (
 	const Graph *g,            // graph from which to get adjacency matrix
 	RelationID relation_idx,   // relation described by matrix
@@ -425,7 +425,7 @@ RG_Matrix Graph_GetSourceRelationMatrix
 
 // retrieves a relation edge target matrix
 // matrix is resized if its dimensions doesn't match graph's edge count & graph's node count
-RG_Matrix Graph_GetTargetRelationMatrix
+Delta_Matrix Graph_GetTargetRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
 	RelationID relation_idx,  // relation described by matrix
@@ -434,7 +434,7 @@ RG_Matrix Graph_GetTargetRelationMatrix
 
 // retrieves the node-label mapping matrix,
 // matrix is resized if its size doesn't match graph's node count.
-RG_Matrix Graph_GetNodeLabelMatrix
+Delta_Matrix Graph_GetNodeLabelMatrix
 (
 	const Graph *g
 );
@@ -442,12 +442,12 @@ RG_Matrix Graph_GetNodeLabelMatrix
 // retrieves the zero matrix
 // the function will resize it to match all other
 // internal matrices, caller mustn't modify it in any way
-RG_Matrix Graph_GetZeroMatrix
+Delta_Matrix Graph_GetZeroMatrix
 (
 	const Graph *g
 );
 
-RG_Matrix Graph_GetLabelRGMatrix
+Delta_Matrix Graph_GetLabelMatrix
 (
 	const Graph *g,
 	int label_idx
