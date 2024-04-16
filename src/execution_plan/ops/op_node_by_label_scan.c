@@ -51,6 +51,7 @@ OpBase *NewNodeByLabelScanOp
 	op->n = n;
 	// Defaults to [0...UINT64_MAX].
 	op->id_range = UnsignedRange_New();
+	op->filters = NULL;
 	_update_label_id(op);
 
 	// Set our Op operations
@@ -63,13 +64,12 @@ OpBase *NewNodeByLabelScanOp
 	return (OpBase *)op;
 }
 
-void NodeByLabelScanOp_SetIDRange
+void NodeByLabelScanOp_SetFilterID
 (
 	NodeByLabelScan *op,
-	UnsignedRange *id_range
+	FilterID *filters
 ) {
-	UnsignedRange_Free(op->id_range);
-	op->id_range = UnsignedRange_Clone(id_range);
+	op->filters = filters;
 
 	op->op.type = OPType_NODE_BY_LABEL_AND_ID_SCAN;
 	op->op.name = "Node By Label and ID Scan";
@@ -84,7 +84,7 @@ static GrB_Info _ConstructIterator
 	NodeID    maxId;
 	GrB_Index nrows;
 
-	RG_Matrix L = Graph_GetLabelMatrix(QueryCtx_GetGraph(), op->n->label_id);
+	RG_Matrix L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 	info = RG_Matrix_nrows(&nrows, L);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -123,7 +123,17 @@ static OpResult NodeByLabelScanInit
 		// missing schema, use the NOP consume function
 		OpBase_UpdateConsume(opBase, NodeByLabelScanNoOp);
 		return OP_OK;
-	}	
+	}
+
+	for(int i = 0; i < array_len(op->filters); i++) {
+		SIValue v;
+		if(!AR_EXP_ReduceToScalar(op->filters->id_exp, true, &v)) {
+			// missing schema, use the NOP consume function
+			OpBase_UpdateConsume(opBase, NodeByLabelScanNoOp);
+			return OP_OK;
+		}
+		UnsignedRange_TightenRange(op->id_range, op->filters[i].operator, v.longval);
+	}
 
 	// the iterator build may fail if the ID range does not match the matrix dimensions
 	GrB_Info iterator_built = _ConstructIterator(op);
@@ -243,13 +253,20 @@ static OpResult NodeByLabelScanReset
 	return OP_OK;
 }
 
-static OpBase *NodeByLabelScanClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *NodeByLabelScanClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_NODE_BY_LABEL_SCAN);
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 	return NewNodeByLabelScanOp(plan, NodeScanCtx_Clone(op->n));
 }
 
-static void NodeByLabelScanFree(OpBase *op) {
+static void NodeByLabelScanFree
+(
+	OpBase *op
+) {
 	NodeByLabelScan *nodeByLabelScan = (NodeByLabelScan *)op;
 
 	GrB_Info info = RG_MatrixTupleIter_detach(&(nodeByLabelScan->iter));

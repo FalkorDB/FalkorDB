@@ -17,32 +17,29 @@ static OpResult NodeByIdSeekReset(OpBase *opBase);
 static OpBase *NodeByIdSeekClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void NodeByIdSeekFree(OpBase *opBase);
 
-static inline void NodeByIdSeekToString(const OpBase *ctx, sds *buf) {
+static inline void NodeByIdSeekToString
+(
+	const OpBase *ctx,
+	sds *buf
+) {
 	ScanToString(ctx, buf, ((NodeByIdSeek *)ctx)->alias, NULL);
 }
 
-// Checks to see if operation index is within its bounds.
-static inline bool _outOfBounds(NodeByIdSeek *op) {
-	/* Because currentId starts at minimum and only increases
-	 * we only care about top bound. */
-	if(op->currentId > op->maxId) return true;
-	return false;
-}
-
-OpBase *NewNodeByIdSeekOp(const ExecutionPlan *plan, const char *alias, UnsignedRange *id_range) {
+OpBase *NewNodeByIdSeekOp
+(
+	const ExecutionPlan *plan,
+	const char *alias,
+	FilterID *filters
+) {
 
 	NodeByIdSeek *op = rm_malloc(sizeof(NodeByIdSeek));
 	op->g = QueryCtx_GetGraph();
 	op->child_record = NULL;
 	op->alias = alias;
 
-	op->minId = id_range->include_min ? id_range->min : id_range->min + 1;
-	/* The largest possible entity ID is the same as Graph_RequiredMatrixDim.
-	 * This value will be set on Init, to allow operation clone be independent
-	 * on the current graph size.*/
-	op->maxId = id_range->include_max ? id_range->max : id_range->max - 1;
-
-	op->currentId = op->minId;
+	op->filters = filters;
+	op->ids = roaring64_bitmap_create();
+	op->it = NULL;
 
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_ID_SEEK, "NodeByIdSeek", NodeByIdSeekInit,
 				NodeByIdSeekConsume, NodeByIdSeekReset, NodeByIdSeekToString, NodeByIdSeekClone, NodeByIdSeekFree,
@@ -53,33 +50,84 @@ OpBase *NewNodeByIdSeekOp(const ExecutionPlan *plan, const char *alias, Unsigned
 	return (OpBase *)op;
 }
 
-static OpResult NodeByIdSeekInit(OpBase *opBase) {
+static OpResult NodeByIdSeekInit
+(
+	OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_NODE_BY_ID_SEEK);
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
-	// The largest possible entity ID is the number of nodes - deleted and real - in the DataBlock.
-	size_t node_count = Graph_UncompactedNodeCount(op->g);
-	op->maxId = MIN(node_count - 1, op->maxId);
 	if(opBase->childCount > 0) OpBase_UpdateConsume(opBase, NodeByIdSeekConsumeFromChild);
 	return OP_OK;
 }
 
-static inline Node _SeekNextNode(NodeByIdSeek *op) {
+static inline Node _SeekNextNode
+(
+	NodeByIdSeek *op
+) {
+	if(op->it == NULL) {
+		size_t node_count = Graph_UncompactedNodeCount(op->g);
+		int count = array_len(op->filters);
+		roaring64_bitmap_add_range_closed(op->ids, 0, node_count);
+		bool is_valid = true;
+		for(int i = 0; i < count; i++) {
+			SIValue v = AR_EXP_Evaluate(op->filters[i].id_exp, op->child_record);
+			switch(op->filters[i].operator) {
+				case OP_LT:    // <
+					if(roaring64_bitmap_maximum(op->ids) >= v.longval) {
+						roaring64_bitmap_remove_range_closed(op->ids, v.longval, roaring64_bitmap_maximum(op->ids));
+					}
+					break;
+				case OP_LE:    // <=
+					if(roaring64_bitmap_maximum(op->ids) > v.longval) {
+						roaring64_bitmap_remove_range_closed(op->ids, v.longval + 1, roaring64_bitmap_maximum(op->ids));
+					}
+					break;
+				case OP_GT:    // >
+					if(roaring64_bitmap_minimum(op->ids) <= v.longval) {
+						roaring64_bitmap_remove_range_closed(op->ids, roaring64_bitmap_minimum(op->ids), v.longval);
+					}
+					break;
+				case OP_GE:    // >=
+					if(roaring64_bitmap_minimum(op->ids) < v.longval) {
+						roaring64_bitmap_remove_range(op->ids, roaring64_bitmap_minimum(op->ids), v.longval);
+					}
+					break;
+				case OP_EQUAL:  // =
+					if(!roaring64_bitmap_contains(op->ids, v.longval)) {
+						is_valid = false;
+						break;
+					}
+
+					roaring64_bitmap_remove_range_closed(op->ids, v.longval + 1, roaring64_bitmap_maximum(op->ids));
+					roaring64_bitmap_remove_range(op->ids, roaring64_bitmap_minimum(op->ids), v.longval);
+					break;
+				default:
+					ASSERT(false && "operation not supported");
+					break;
+				}
+		}
+		if(!is_valid) {
+			return GE_NEW_NODE();
+		}
+		op->it = roaring64_iterator_create(op->ids);
+	}
 	Node n = GE_NEW_NODE();
 
-	/* As long as we're within range bounds
-	 * and we've yet to get a node. */
-	while(!_outOfBounds(op)) {
-		if(Graph_GetNode(op->g, op->currentId, &n)) break;
-		op->currentId++;
+	while(roaring64_iterator_has_value(op->it)) {
+		if(Graph_GetNode(op->g, roaring64_iterator_value(op->it), &n)) break;
+		roaring64_iterator_advance(op->it);
 	}
 
 	// Advance id for next consume call.
-	op->currentId++;
+	roaring64_iterator_advance(op->it);
 
 	return n;
 }
 
-static Record NodeByIdSeekConsumeFromChild(OpBase *opBase) {
+static Record NodeByIdSeekConsumeFromChild
+(
+	OpBase *opBase
+) {
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
 
 	if(op->child_record == NULL) {
@@ -111,7 +159,10 @@ static Record NodeByIdSeekConsumeFromChild(OpBase *opBase) {
 	return r;
 }
 
-static Record NodeByIdSeekConsume(OpBase *opBase) {
+static Record NodeByIdSeekConsume
+(
+	OpBase *opBase
+) {
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
 
 	Node n = _SeekNextNode(op);
@@ -126,30 +177,41 @@ static Record NodeByIdSeekConsume(OpBase *opBase) {
 	return r;
 }
 
-static OpResult NodeByIdSeekReset(OpBase *ctx) {
+static OpResult NodeByIdSeekReset
+(
+	OpBase *ctx
+) {
 	NodeByIdSeek *op = (NodeByIdSeek *)ctx;
-	op->currentId = op->minId;
+	if(op->it) {
+		roaring64_iterator_free(op->it);
+		op->it = NULL;
+	}
 	return OP_OK;
 }
 
-static OpBase *NodeByIdSeekClone(const ExecutionPlan *plan, const OpBase *opBase) {
-	ASSERT(opBase->type == OPType_NODE_BY_ID_SEEK);
-	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
-	UnsignedRange range;
-	range.min = op->minId;
-	range.max = op->maxId;
-	/* In order to clone the range set at the original op, the range must be inclusive so the clone will set the exact range as the original.
-	 * During the call to NewNodeByIdSeekOp with the range, the following lines are executed:
-	 * op->minId = id_range->include_min ? id_range->min : id_range->min + 1;
-	 * op->maxId = id_range->include_max ? id_range->max : id_range->max - 1;
-	 * Since the range object min equals to the origin minId, and so is the max equals to the origin maxId, and the range is inclusive
-	 * the clone will set its values to be the same as in the origin. */
-	range.include_min = true;
-	range.include_max = true;
-	return NewNodeByIdSeekOp(plan, op->alias, &range);
+static FilterID _cloneFilterID
+(
+	FilterID filter
+) {
+	return (FilterID){.operator = filter.operator, .id_exp = AR_EXP_Clone(filter.id_exp)};
 }
 
-static void NodeByIdSeekFree(OpBase *opBase) {
+static OpBase *NodeByIdSeekClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
+	ASSERT(opBase->type == OPType_NODE_BY_ID_SEEK);
+	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
+	FilterID *filters;
+	array_clone_with_cb(filters, op->filters,_cloneFilterID);
+	return NewNodeByIdSeekOp(plan, op->alias, filters);
+}
+
+static void NodeByIdSeekFree
+(
+	OpBase *opBase
+) {
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
 	if(op->child_record) {
 		OpBase_DeleteRecord(op->child_record);

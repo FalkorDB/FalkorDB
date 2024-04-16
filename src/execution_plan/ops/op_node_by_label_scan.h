@@ -22,6 +22,7 @@ typedef struct {
 	Graph *g;
 	NodeScanCtx *n;             // Label data of node being scanned
 	unsigned int nodeRecIdx;    // Node position within record
+	FilterID *filters;          // 
 	UnsignedRange *id_range;    // ID range to iterate over
 	RG_MatrixTupleIter iter;    // Iterator over label matrix
 	Record child_record;        // The Record this op acts on if it is not a tap
@@ -34,6 +35,8 @@ OpBase *NewNodeByLabelScanOp
 	NodeScanCtx *n
 );
 
-/* Transform a simple label scan to perform additional range query over the label  matrix. */
-void NodeByLabelScanOp_SetIDRange(NodeByLabelScan *op, UnsignedRange *id_range);
-
+void NodeByLabelScanOp_SetFilterID
+(
+	NodeByLabelScan *op,
+	FilterID *filters
+);

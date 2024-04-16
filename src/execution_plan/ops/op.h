@@ -116,6 +116,11 @@ typedef OpResult(*fpReset)(struct OpBase *);
 typedef void (*fpToString)(const struct OpBase *, sds *);
 typedef struct OpBase *(*fpClone)(const struct ExecutionPlan *, const struct OpBase *);
 
+typedef struct {
+	AST_Operator operator;
+	AR_ExpNode  *id_exp;
+} FilterID;
+
 // Execution plan operation statistics.
 typedef struct {
 	int profileRecordCount;     // Number of records generated.
