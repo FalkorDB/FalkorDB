@@ -265,25 +265,33 @@ static OpBase *NodeByLabelScanClone
 
 static void NodeByLabelScanFree
 (
-	OpBase *op
+	OpBase *opBase
 ) {
-	NodeByLabelScan *nodeByLabelScan = (NodeByLabelScan *)op;
+	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	GrB_Info info = RG_MatrixTupleIter_detach(&(nodeByLabelScan->iter));
+	GrB_Info info = RG_MatrixTupleIter_detach(&(op->iter));
 	ASSERT(info == GrB_SUCCESS);
 
-	if(nodeByLabelScan->child_record) {
-		OpBase_DeleteRecord(nodeByLabelScan->child_record);
-		nodeByLabelScan->child_record = NULL;
+	if(op->child_record) {
+		OpBase_DeleteRecord(op->child_record);
+		op->child_record = NULL;
 	}
 
-	if(nodeByLabelScan->id_range) {
-		UnsignedRange_Free(nodeByLabelScan->id_range);
-		nodeByLabelScan->id_range = NULL;
+	if(op->id_range) {
+		UnsignedRange_Free(op->id_range);
+		op->id_range = NULL;
 	}
 
-	if(nodeByLabelScan->n != NULL) {
-		NodeScanCtx_Free(nodeByLabelScan->n);
-		nodeByLabelScan->n = NULL;
+	if(op->n != NULL) {
+		NodeScanCtx_Free(op->n);
+		op->n = NULL;
+	}
+
+	if(op->filters) {
+		for(int i = 0; i < array_len(op->filters); i++) {
+			AR_EXP_Free(op->filters[i].id_exp);
+		}
+		array_free(op->filters);
+		op->filters = NULL;
 	}
 }

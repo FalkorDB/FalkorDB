@@ -217,5 +217,13 @@ static void NodeByIdSeekFree
 		OpBase_DeleteRecord(op->child_record);
 		op->child_record = NULL;
 	}
+
+	if(op->filters) {
+		for(int i = 0; i < array_len(op->filters); i++) {
+			AR_EXP_Free(op->filters[i].id_exp);
+		}
+		array_free(op->filters);
+		op->filters = NULL;
+	}
 }
 
