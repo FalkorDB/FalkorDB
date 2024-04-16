@@ -225,5 +225,10 @@ static void NodeByIdSeekFree
 		array_free(op->filters);
 		op->filters = NULL;
 	}
+
+	if(op->it) {
+		roaring64_iterator_free(op->it);
+		op->it = NULL;
+	}
 }
 
