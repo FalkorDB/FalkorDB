@@ -117,17 +117,17 @@ bool RG_Matrix_isDirty
 	const RG_Matrix C
 );
 
-GrB_Matrix RG_Matrix_m
+GrB_Matrix RG_Matrix_M
 (
 	const RG_Matrix C
 );
 
-GrB_Matrix RG_Matrix_dp
+GrB_Matrix RG_Matrix_DP
 (
 	const RG_Matrix C
 );
 
-GrB_Matrix RG_Matrix_dm
+GrB_Matrix RG_Matrix_DM
 (
 	const RG_Matrix C
 );

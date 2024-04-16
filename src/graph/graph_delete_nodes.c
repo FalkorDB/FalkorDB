@@ -62,7 +62,7 @@ void Graph_DeleteNodes
 	GrB_Info info;          // GraphBLAS return code
 	GrB_Index nrows;        // lbls row count
 	GrB_Index ncols;        // lbls col count
-	GrB_Matrix lbls_mask;   // lbls mask
+	GrB_Matrix elems;       // elements to delete
 	RG_MatrixTupleIter it;  // matrix iterator
 
 	// get labels matrix
@@ -73,7 +73,7 @@ void Graph_DeleteNodes
 	ASSERT(info == GrB_SUCCESS);
 	info = RG_Matrix_ncols(&ncols, lbls);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_new(&lbls_mask, GrB_BOOL, nrows, ncols);
+	info = GrB_Matrix_new(&elems, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
 
 	// attach iterator to lbls matrix
@@ -95,7 +95,7 @@ void Graph_DeleteNodes
 		// for each deleted node label
 		while(RG_MatrixTupleIter_next_BOOL(&it, NULL, &j, NULL) == GrB_SUCCESS) {
 			// populate lbls mask
-			info = GrB_Matrix_setElement_BOOL(lbls_mask, true, id, j);
+			info = GrB_Matrix_setElement_BOOL(elems, true, id, j);
 			ASSERT(info == GrB_SUCCESS);
 
 			// clear label matrix j at position [id,id]
@@ -112,11 +112,11 @@ void Graph_DeleteNodes
 	// phase two
 	//--------------------------------------------------------------------------
 
-	RG_Matrix_removeElements(lbls, lbls_mask);
+	RG_Matrix_removeElements(lbls, elems);
 
 	// restore matrix sync policy
 	Graph_SetMatrixPolicy(g, policy);
 
-	GrB_free(&lbls_mask);
+	GrB_free(&elems);
 }
 

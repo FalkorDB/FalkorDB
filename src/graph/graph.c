@@ -395,7 +395,7 @@ Graph *Graph_New
 	g->nodes     = DataBlock_New(node_cap, node_cap, sizeof(AttributeSet), cb);
 	g->edges     = DataBlock_New(edge_cap, edge_cap, sizeof(AttributeSet), cb);
 	g->labels    = array_new(RG_Matrix, GRAPH_DEFAULT_LABEL_CAP);
-	g->relations = array_new(Relation, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	g->relations = array_new(RelationMatrices, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 
 	GrB_Info info;
 	UNUSED(info);
@@ -1174,7 +1174,7 @@ static void _Graph_FreeRelationMatrices
 ) {
 	uint relationCount = Graph_RelationTypeCount(g);
 	for(uint i = 0; i < relationCount; i++) {
-		Relation *r = g->relations + i;
+		RelationMatrices *r = g->relations + i;
 		RG_Matrix_free(&r->R);
 		RG_Matrix_free(&r->S);
 		RG_Matrix_free(&r->T);
@@ -1233,7 +1233,7 @@ RelationID Graph_AddRelationType
 ) {
 	ASSERT(g);
 
-	Relation r;
+	RelationMatrices r;
 	size_t n = Graph_RequiredMatrixDim(g);
 	size_t edge_cap = g->edges->itemCap;
 

@@ -153,7 +153,7 @@ void test_RGMatrixTupleIter_next_sparse() {
 	// check M is sparse
 	//--------------------------------------------------------------------------
 
-	GrB_Matrix M = RG_Matrix_m(A);
+	GrB_Matrix M = RG_Matrix_M(A);
 	
 	int sparsity;
 	GxB_Matrix_Option_get(M, GxB_SPARSITY_STATUS, &sparsity);

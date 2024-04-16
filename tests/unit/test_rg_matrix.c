@@ -147,9 +147,9 @@ void test_RGMatrix_new() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  RG_Matrix_m(A);
-	DP  =  RG_Matrix_dp(A);
-	DM  =  RG_Matrix_dm(A);
+	M   =  RG_Matrix_M(A);
+	DP  =  RG_Matrix_DP(A);
+	DM  =  RG_Matrix_DM(A);
 
 	// bool matrix do not maintain transpose
 	TEST_ASSERT(RG_Matrix_getTranspose(A) == NULL);
@@ -186,9 +186,9 @@ void test_RGMatrix_set() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  RG_Matrix_m(A);
-	DP  =  RG_Matrix_dp(A);
-	DM  =  RG_Matrix_dm(A);
+	M   =  RG_Matrix_M(A);
+	DP  =  RG_Matrix_DP(A);
+	DM  =  RG_Matrix_DM(A);
 
 	//--------------------------------------------------------------------------
 	// Set element that marked for deletion
@@ -259,9 +259,9 @@ void test_RGMatrix_flush() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M   =  RG_Matrix_m(A);
-	DP  =  RG_Matrix_dp(A);
-	DM  =  RG_Matrix_dm(A);
+	M   =  RG_Matrix_M(A);
+	DP  =  RG_Matrix_DP(A);
+	DM  =  RG_Matrix_DM(A);
 
 	//--------------------------------------------------------------------------
 	// flush matrix, no sync
@@ -344,8 +344,8 @@ void test_RGMatrix_fuzzy() {
 	TEST_ASSERT(T != NULL);
 
 	// get internal matrices
-	M   =  RG_Matrix_m(A);
-	MT  =  RG_Matrix_m(T);
+	M   =  RG_Matrix_M(A);
+	MT  =  RG_Matrix_M(T);
 
 	info = GrB_Matrix_new(&N, t, nrows, ncols);
 	TEST_ASSERT(info == GrB_SUCCESS);
@@ -442,7 +442,7 @@ void test_RGMatrix_export_no_changes() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M = RG_Matrix_m(A);
+	M = RG_Matrix_M(A);
 
 	//--------------------------------------------------------------------------
 	// export empty matrix
@@ -508,7 +508,7 @@ void test_RGMatrix_export_pending_changes() {
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// get internal matrices
-	M = RG_Matrix_m(A);
+	M = RG_Matrix_M(A);
 
 	// set elements
 	info = RG_Matrix_setElement_BOOL(A, 0, 0);
@@ -621,12 +621,12 @@ void test_RGMatrix_copy() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	A_M  = RG_Matrix_m(A);
-	B_M  = RG_Matrix_m(B);
-	A_DP = RG_Matrix_dp(A);
-	B_DP = RG_Matrix_dp(B);
-	A_DM = RG_Matrix_dm(A);
-	B_DM = RG_Matrix_dm(B);
+	A_M  = RG_Matrix_M(A);
+	B_M  = RG_Matrix_M(B);
+	A_DP = RG_Matrix_DP(A);
+	B_DP = RG_Matrix_DP(B);
+	A_DM = RG_Matrix_DM(A);
+	B_DM = RG_Matrix_DM(B);
 	
 	ASSERT_GrB_Matrices_EQ(A_M, B_M);
 	ASSERT_GrB_Matrices_EQ(A_DP, B_DP);
@@ -709,8 +709,8 @@ void test_RGMatrix_mxm() {
 	// validation
 	//--------------------------------------------------------------------------
 
-	C_M  = RG_Matrix_m(C);
-	D_M  = RG_Matrix_m(D);
+	C_M  = RG_Matrix_M(C);
+	D_M  = RG_Matrix_M(D);
 	
 	ASSERT_GrB_Matrices_EQ(C_M, D_M);
 

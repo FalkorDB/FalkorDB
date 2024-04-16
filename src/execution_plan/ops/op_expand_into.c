@@ -34,7 +34,7 @@ static void _populate_filter_matrix
 (
 	OpExpandInto *op
 ) {
-	GrB_Matrix FM = RG_Matrix_m(op->F);
+	GrB_Matrix FM = RG_Matrix_M(op->F);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
