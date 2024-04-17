@@ -116,11 +116,7 @@ static Record NodeByIdSeekConsumeFromChild
 		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
 			return NULL;
 		}
-		if(op->it == NULL) {
-			op->it = roaring64_iterator_create(op->ids);
-		} else {
-			roaring64_iterator_reinit(op->ids, op->it);
-		}
+		roaring64_iterator_reinit(op->ids, op->it);
 		if(!_SeekNextNode(op, &n)) return NULL; // Empty iterator; return immediately.
 	}
 
@@ -163,7 +159,7 @@ static OpResult NodeByIdSeekReset
 	OpBase *ctx
 ) {
 	NodeByIdSeek *op = (NodeByIdSeek *)ctx;
-	if(op->it) {
+	if(op->it && op->child_record == 0) {
 		roaring64_iterator_reinit(op->ids, op->it);
 	}
 	return OP_OK;

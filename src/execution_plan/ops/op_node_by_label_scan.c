@@ -96,10 +96,11 @@ static GrB_Info _ConstructIterator
 			return GrB_DIMENSION_MISMATCH;
 		}
 
-		if(op->it) {
-			roaring64_iterator_free(op->it);	
+		if(op->it == NULL) {
+			op->it = roaring64_iterator_create(op->ids);
+		} else {
+			roaring64_iterator_reinit(op->ids, op->it);
 		}
-		op->it = roaring64_iterator_create(op->ids);
 
 		return GrB_SUCCESS;
 	}
@@ -221,17 +222,16 @@ static Record NodeByLabelAndIDScanConsumeFromChild
 	if(op->it == NULL) {
 		info = GrB_NULL_POINTER;
 	} else {
-		bool is_valid = false;
+		info = GxB_EXHAUSTED;
 		while(roaring64_iterator_has_value(op->it)) {
 			id = roaring64_iterator_value(op->it);
 			roaring64_iterator_advance(op->it);
 			bool x;
 			if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
-				is_valid = true;
+				info = GrB_SUCCESS;
 				break;
 			}
 		}
-		info = is_valid ? GrB_SUCCESS : GxB_EXHAUSTED;
 	}
 	while(info == GrB_NULL_POINTER || op->child_record == NULL || info == GxB_EXHAUSTED) {
 		// try to get a new record
@@ -258,17 +258,16 @@ static Record NodeByLabelAndIDScanConsumeFromChild
 		}
 
 		// try to get new NodeID
-		bool is_valid = false;
+		info = GxB_EXHAUSTED;
 		while(roaring64_iterator_has_value(op->it)) {
 			id = roaring64_iterator_value(op->it);
 			roaring64_iterator_advance(op->it);
 			bool x;
 			if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
-				is_valid = true;
+				info = GrB_SUCCESS;
 				break;
 			}
 		}
-		info = is_valid ? GrB_SUCCESS : GxB_EXHAUSTED;
 	}
 
 	// we've got a record and NodeID
@@ -307,26 +306,21 @@ static Record NodeByLabelAndIDScanConsume
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index id;
-	bool is_valid = false;
 	while(roaring64_iterator_has_value(op->it)) {
 		id = roaring64_iterator_value(op->it);
 		roaring64_iterator_advance(op->it);
 		bool x;
 		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
-			is_valid = true;
-			break;
+			Record r = OpBase_CreateRecord((OpBase *)op);
+
+			// Populate the Record with the actual node.
+			_UpdateRecord(op, r, id);
+
+			return r;
 		}
 	}
-	if(!is_valid) {
-		return NULL;
-	}
 
-	Record r = OpBase_CreateRecord((OpBase *)op);
-
-	// Populate the Record with the actual node.
-	_UpdateRecord(op, r, id);
-
-	return r;
+	return NULL;
 }
 
 // this function is invoked when the op has no children
@@ -345,12 +339,13 @@ static OpResult NodeByLabelScanReset
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)ctx;
 
-	if(op->child_record) {
+	if(op->child_record > 0) {
 		OpBase_DeleteRecord(op->child_record); // Free old record.
 		op->child_record = NULL;
+	} else {
+		_ConstructIterator(op);
 	}
 
-	_ConstructIterator(op);
 	return OP_OK;
 }
 
