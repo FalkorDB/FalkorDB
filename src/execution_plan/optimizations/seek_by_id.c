@@ -65,7 +65,7 @@ static void _UseIdOptimization
 	// where X is a constant and op in [EQ, GE, LE, GT, LT]
 	OpBase *parent = scan_op->parent;
 	OpBase *grandparent;
-	FilterID *filters = array_new(FilterID, 1);
+	FilterExpression *filters = array_new(FilterExpression, 1);
 	while(parent && parent->type == OPType_FILTER) {
 		// track the next op to visit in case we free parent
 		grandparent = parent->parent;
@@ -82,7 +82,7 @@ static void _UseIdOptimization
 
 			// Free replaced operations.
 			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
-			array_append(filters, ((FilterID){.operator = op, .id_exp = id_exp}));
+			array_append(filters, ((FilterExpression){.op = op, .id_exp = id_exp}));
 			OpBase_Free((OpBase *)filter);
 		}
 		// advance

@@ -13,7 +13,9 @@
 /* Forward declarations. */
 static OpResult NodeByLabelScanInit(OpBase *opBase);
 static Record NodeByLabelScanConsume(OpBase *opBase);
+static Record NodeByLabelAndIDScanConsume(OpBase *opBase);
 static Record NodeByLabelScanConsumeFromChild(OpBase *opBase);
+static Record NodeByLabelAndIDScanConsumeFromChild(OpBase *opBase);
 static Record NodeByLabelScanNoOp(OpBase *opBase);
 static OpResult NodeByLabelScanReset(OpBase *opBase);
 static OpBase *NodeByLabelScanClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -47,10 +49,10 @@ OpBase *NewNodeByLabelScanOp
 	NodeScanCtx *n
 ) {
 	NodeByLabelScan *op = rm_calloc(sizeof(NodeByLabelScan), 1);
-	op->g = QueryCtx_GetGraph();
-	op->n = n;
-	// Defaults to [0...UINT64_MAX].
-	op->id_range = UnsignedRange_New();
+	op->g       = QueryCtx_GetGraph();
+	op->n       = n;
+	op->it      = NULL;
+	op->ids     = NULL;
 	op->filters = NULL;
 	_update_label_id(op);
 
@@ -67,7 +69,7 @@ OpBase *NewNodeByLabelScanOp
 void NodeByLabelScanOp_SetFilterID
 (
 	NodeByLabelScan *op,
-	FilterID *filters
+	FilterExpression *filters
 ) {
 	op->filters = filters;
 
@@ -82,31 +84,27 @@ static GrB_Info _ConstructIterator
 	GrB_Info  info;
 	NodeID    minId;
 	NodeID    maxId;
-	GrB_Index nrows;
 
-	UnsignedRange_Reset(op->id_range);
-	for(int i = 0; i < array_len(op->filters); i++) {
-		SIValue v = AR_EXP_Evaluate(op->filters->id_exp, op->child_record);
-		UnsignedRange_TightenRange(op->id_range, op->filters[i].operator, v.longval);
+	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
+
+	if(array_len(op->filters) > 0) {
+		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
+			return GrB_INVALID_INDEX;
+		}
+
+		if(roaring64_bitmap_get_cardinality(op->ids) == 0) {
+			return GrB_DIMENSION_MISMATCH;
+		}
+
+		if(op->it) {
+			roaring64_iterator_free(op->it);	
+		}
+		op->it = roaring64_iterator_create(op->ids);
+
+		return GrB_SUCCESS;
 	}
 
-	RG_Matrix L = Graph_GetLabelMatrix(op->g, op->n->label_id);
-	info = RG_Matrix_nrows(&nrows, L);
-	ASSERT(info == GrB_SUCCESS);
-
-	// make sure range is within matrix bounds
-	UnsignedRange_TightenRange(op->id_range, OP_GE, 0);
-	UnsignedRange_TightenRange(op->id_range, OP_LT, nrows);
-
-	if(!UnsignedRange_IsValid(op->id_range)) return GrB_DIMENSION_MISMATCH;
-
-	if(op->id_range->include_min) minId = op->id_range->min;
-	else minId = op->id_range->min + 1;
-
-	if(op->id_range->include_max) maxId = op->id_range->max;
-	else maxId = op->id_range->max - 1;
-
-	info = RG_MatrixTupleIter_AttachRange(&op->iter, L, minId, maxId);
+	info = RG_MatrixTupleIter_attach(&op->iter, op->L);
 	ASSERT(info == GrB_SUCCESS);
 
 	return info;
@@ -117,11 +115,20 @@ static OpResult NodeByLabelScanInit
 	OpBase *opBase
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
-	OpBase_UpdateConsume(opBase, NodeByLabelScanConsume); // default consume function
+
+	bool has_filters = array_len(op->filters) > 0;
+
+	OpBase_UpdateConsume(opBase, has_filters ? NodeByLabelAndIDScanConsume : NodeByLabelScanConsume); // default consume function
+
+	if(has_filters) {
+		op->ids = roaring64_bitmap_create();
+	}
 
 	// operation has children, consume from child
 	if(opBase->childCount > 0) {
-		OpBase_UpdateConsume(opBase, NodeByLabelScanConsumeFromChild);
+		OpBase_UpdateConsume(opBase, has_filters 
+			? NodeByLabelAndIDScanConsumeFromChild
+			: NodeByLabelScanConsumeFromChild);
 		return OP_OK;
 	}
 
@@ -161,8 +168,8 @@ static Record NodeByLabelScanConsumeFromChild
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	// try to get new nodeID
-	GrB_Index nodeId;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
+	GrB_Index id;
+	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	while(info == GrB_NULL_POINTER || op->child_record == NULL || info == GxB_EXHAUSTED) {
 		// try to get a new record
 		if(op->child_record != NULL) {
@@ -188,7 +195,7 @@ static Record NodeByLabelScanConsumeFromChild
 		}
 
 		// try to get new NodeID
-		info = RG_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
+		info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	}
 
 	// we've got a record and NodeID
@@ -196,7 +203,78 @@ static Record NodeByLabelScanConsumeFromChild
 	Record r = OpBase_DeepCloneRecord(op->child_record);
 
 	// populate the Record with the actual node
-	_UpdateRecord(op, r, nodeId);
+	_UpdateRecord(op, r, id);
+	return r;
+}
+
+static Record NodeByLabelAndIDScanConsumeFromChild
+(
+	OpBase *opBase
+) {
+	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
+
+	// try to get new nodeID
+	GrB_Info info;
+	GrB_Index id;
+	if(op->it == NULL) {
+		info = GrB_NULL_POINTER;
+	} else {
+		bool is_valid = false;
+		while(roaring64_iterator_has_value(op->it)) {
+			id = roaring64_iterator_value(op->it);
+			roaring64_iterator_advance(op->it);
+			bool x;
+			if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+				is_valid = true;
+				break;
+			}
+		}
+		info = is_valid ? GrB_SUCCESS : GxB_EXHAUSTED;
+	}
+	while(info == GrB_NULL_POINTER || op->child_record == NULL || info == GxB_EXHAUSTED) {
+		// try to get a new record
+		if(op->child_record != NULL) {
+			OpBase_DeleteRecord(op->child_record);
+		}
+
+		op->child_record = OpBase_Consume(op->op.children[0]);
+
+		if(op->child_record == NULL) {
+			// depleted
+			return NULL;
+		}
+
+		// got a record
+		if(info == GrB_NULL_POINTER) {
+			_update_label_id(op);
+			if(_ConstructIterator(op) != GrB_SUCCESS) {
+				continue;
+			}
+		} else {
+			// iterator depleted - reset
+			_ConstructIterator(op);
+		}
+
+		// try to get new NodeID
+		bool is_valid = false;
+		while(roaring64_iterator_has_value(op->it)) {
+			id = roaring64_iterator_value(op->it);
+			roaring64_iterator_advance(op->it);
+			bool x;
+			if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+				is_valid = true;
+				break;
+			}
+		}
+		info = is_valid ? GrB_SUCCESS : GxB_EXHAUSTED;
+	}
+
+	// we've got a record and NodeID
+	// clone the held Record, as it will be freed upstream
+	Record r = OpBase_DeepCloneRecord(op->child_record);
+
+	// populate the Record with the actual node
+	_UpdateRecord(op, r, id);
 	return r;
 }
 
@@ -206,8 +284,8 @@ static Record NodeByLabelScanConsume
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	GrB_Index nodeId;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &nodeId, NULL, NULL);
+	GrB_Index id;
+	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	if(info == GxB_EXHAUSTED) return NULL;
 
 	ASSERT(info == GrB_SUCCESS);
@@ -215,7 +293,36 @@ static Record NodeByLabelScanConsume
 	Record r = OpBase_CreateRecord((OpBase *)op);
 
 	// Populate the Record with the actual node.
-	_UpdateRecord(op, r, nodeId);
+	_UpdateRecord(op, r, id);
+
+	return r;
+}
+
+static Record NodeByLabelAndIDScanConsume
+(
+	OpBase *opBase
+) {
+	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
+
+	GrB_Index id;
+	bool is_valid = false;
+	while(roaring64_iterator_has_value(op->it)) {
+		id = roaring64_iterator_value(op->it);
+		roaring64_iterator_advance(op->it);
+		bool x;
+		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+			is_valid = true;
+			break;
+		}
+	}
+	if(!is_valid) {
+		return NULL;
+	}
+
+	Record r = OpBase_CreateRecord((OpBase *)op);
+
+	// Populate the Record with the actual node.
+	_UpdateRecord(op, r, id);
 
 	return r;
 }
@@ -269,11 +376,6 @@ static void NodeByLabelScanFree
 		op->child_record = NULL;
 	}
 
-	if(op->id_range) {
-		UnsignedRange_Free(op->id_range);
-		op->id_range = NULL;
-	}
-
 	if(op->n != NULL) {
 		NodeScanCtx_Free(op->n);
 		op->n = NULL;
@@ -285,5 +387,15 @@ static void NodeByLabelScanFree
 		}
 		array_free(op->filters);
 		op->filters = NULL;
+	}
+
+	if(op->it) {
+		roaring64_iterator_free(op->it);
+		op->it = NULL;
+	}
+
+	if(op->ids) {
+		roaring64_bitmap_free(op->ids);
+		op->ids = NULL;
 	}
 }

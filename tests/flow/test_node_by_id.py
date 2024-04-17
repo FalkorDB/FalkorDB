@@ -226,8 +226,8 @@ class testNodeByIDFlow(FlowTestsBase):
         query = """UNWIND range(1, 5) AS x MATCH (n:person) WHERE ID(n) = x RETURN n ORDER BY n.id"""
         resultsetA = self.graph.query(query).result_set
         self.env.assertIn("Node By Label and ID Scan", str(self.graph.explain(query)))
-        query = """UNWIND range(1, 5) AS x MATCH (n) WHERE n.id = x RETURN n ORDER BY n.id"""
-        self.env.assertNotIn("NodeByIdSeek", str(self.graph.explain(query)))
+        query = """UNWIND range(1, 5) AS x MATCH (n:person) WHERE n.id = x RETURN n ORDER BY n.id"""
+        self.env.assertNotIn("Node By Label and ID Scan", str(self.graph.explain(query)))
         resultsetB = self.graph.query(query).result_set
         self.env.assertEqual(resultsetA, resultsetB)
 

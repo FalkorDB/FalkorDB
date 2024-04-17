@@ -29,7 +29,7 @@ OpBase *NewNodeByIdSeekOp
 (
 	const ExecutionPlan *plan,
 	const char *alias,
-	FilterID *filters
+	FilterExpression *filters
 ) {
 
 	NodeByIdSeek *op = rm_malloc(sizeof(NodeByIdSeek));
@@ -69,47 +69,8 @@ static inline bool _SeekNextNode
 	Node *n
 ) {
 	if(op->it == NULL) {
-		size_t node_count = Graph_UncompactedNodeCount(op->g);
-		int count = array_len(op->filters);
-		roaring64_bitmap_add_range_closed(op->ids, 0, node_count);
-		for(int i = 0; i < count; i++) {
-			SIValue v = AR_EXP_Evaluate(op->filters[i].id_exp, op->child_record);
-			if(SI_TYPE(v) != T_INT64) {
-				return false;
-			}
-			switch(op->filters[i].operator) {
-				case OP_LT:    // <
-					if(roaring64_bitmap_maximum(op->ids) >= v.longval) {
-						roaring64_bitmap_remove_range_closed(op->ids, v.longval, roaring64_bitmap_maximum(op->ids));
-					}
-					break;
-				case OP_LE:    // <=
-					if(roaring64_bitmap_maximum(op->ids) > v.longval) {
-						roaring64_bitmap_remove_range_closed(op->ids, v.longval + 1, roaring64_bitmap_maximum(op->ids));
-					}
-					break;
-				case OP_GT:    // >
-					if(roaring64_bitmap_minimum(op->ids) <= v.longval) {
-						roaring64_bitmap_remove_range_closed(op->ids, roaring64_bitmap_minimum(op->ids), v.longval);
-					}
-					break;
-				case OP_GE:    // >=
-					if(roaring64_bitmap_minimum(op->ids) < v.longval) {
-						roaring64_bitmap_remove_range(op->ids, roaring64_bitmap_minimum(op->ids), v.longval);
-					}
-					break;
-				case OP_EQUAL:  // =
-					if(!roaring64_bitmap_contains(op->ids, v.longval)) {
-						return false;
-					}
-
-					roaring64_bitmap_remove_range_closed(op->ids, v.longval + 1, roaring64_bitmap_maximum(op->ids));
-					roaring64_bitmap_remove_range(op->ids, roaring64_bitmap_minimum(op->ids), v.longval);
-					break;
-				default:
-					ASSERT(false && "operation not supported");
-					break;
-				}
+		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
+			return false;
 		}
 		op->it = roaring64_iterator_create(op->ids);
 	}
@@ -189,11 +150,11 @@ static OpResult NodeByIdSeekReset
 	return OP_OK;
 }
 
-static FilterID _cloneFilterID
+static FilterExpression _cloneFilterExpression
 (
-	FilterID filter
+	FilterExpression filter
 ) {
-	return (FilterID){.operator = filter.operator, .id_exp = AR_EXP_Clone(filter.id_exp)};
+	return (FilterExpression){.op = filter.op, .id_exp = AR_EXP_Clone(filter.id_exp)};
 }
 
 static OpBase *NodeByIdSeekClone
@@ -203,8 +164,8 @@ static OpBase *NodeByIdSeekClone
 ) {
 	ASSERT(opBase->type == OPType_NODE_BY_ID_SEEK);
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
-	FilterID *filters;
-	array_clone_with_cb(filters, op->filters,_cloneFilterID);
+	FilterExpression *filters;
+	array_clone_with_cb(filters, op->filters,_cloneFilterExpression);
 	return NewNodeByIdSeekOp(plan, op->alias, filters);
 }
 
