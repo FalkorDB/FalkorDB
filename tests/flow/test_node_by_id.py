@@ -214,6 +214,23 @@ class testNodeByIDFlow(FlowTestsBase):
         resultsetB = self.graph.query(query).result_set
         self.env.assertEqual(resultsetA, resultsetB)
 
+        # runtime optimization
+        query = """UNWIND range(1, 5) AS x MATCH (n) WHERE ID(n) = x RETURN n ORDER BY n.id"""
+        resultsetA = self.graph.query(query).result_set
+        self.env.assertIn("NodeByIdSeek", str(self.graph.explain(query)))
+        query = """UNWIND range(1, 5) AS x MATCH (n) WHERE n.id = x RETURN n ORDER BY n.id"""
+        self.env.assertNotIn("NodeByIdSeek", str(self.graph.explain(query)))
+        resultsetB = self.graph.query(query).result_set
+        self.env.assertEqual(resultsetA, resultsetB)
+
+        query = """UNWIND range(1, 5) AS x MATCH (n:person) WHERE ID(n) = x RETURN n ORDER BY n.id"""
+        resultsetA = self.graph.query(query).result_set
+        self.env.assertIn("Node By Label and ID Scan", str(self.graph.explain(query)))
+        query = """UNWIND range(1, 5) AS x MATCH (n) WHERE n.id = x RETURN n ORDER BY n.id"""
+        self.env.assertNotIn("NodeByIdSeek", str(self.graph.explain(query)))
+        resultsetB = self.graph.query(query).result_set
+        self.env.assertEqual(resultsetA, resultsetB)
+
     # Try to fetch none existing entities by ID(s).
     def test_for_none_existing_entity_ids(self):
         # Try to fetch an entity with a none existing ID.
