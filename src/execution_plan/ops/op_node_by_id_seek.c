@@ -38,7 +38,7 @@ OpBase *NewNodeByIdSeekOp
 	op->alias = alias;
 
 	op->filters = filters;
-	op->ids = roaring64_bitmap_create();
+	op->ids = NULL;
 	op->it = NULL;
 
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_ID_SEEK, "NodeByIdSeek", NodeByIdSeekInit,
@@ -56,21 +56,27 @@ static OpResult NodeByIdSeekInit
 ) {
 	ASSERT(opBase->type == OPType_NODE_BY_ID_SEEK);
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
-	if(opBase->childCount > 0) OpBase_UpdateConsume(opBase, NodeByIdSeekConsumeFromChild);
+	op->ids = roaring64_bitmap_create();
+	if(opBase->childCount > 0) {
+		OpBase_UpdateConsume(opBase, NodeByIdSeekConsumeFromChild);
+	}
 	return OP_OK;
 }
 
-static inline Node _SeekNextNode
+static inline bool _SeekNextNode
 (
-	NodeByIdSeek *op
+	NodeByIdSeek *op,
+	Node *n
 ) {
 	if(op->it == NULL) {
 		size_t node_count = Graph_UncompactedNodeCount(op->g);
 		int count = array_len(op->filters);
 		roaring64_bitmap_add_range_closed(op->ids, 0, node_count);
-		bool is_valid = true;
 		for(int i = 0; i < count; i++) {
 			SIValue v = AR_EXP_Evaluate(op->filters[i].id_exp, op->child_record);
+			if(SI_TYPE(v) != T_INT64) {
+				return false;
+			}
 			switch(op->filters[i].operator) {
 				case OP_LT:    // <
 					if(roaring64_bitmap_maximum(op->ids) >= v.longval) {
@@ -94,8 +100,7 @@ static inline Node _SeekNextNode
 					break;
 				case OP_EQUAL:  // =
 					if(!roaring64_bitmap_contains(op->ids, v.longval)) {
-						is_valid = false;
-						break;
+						return false;
 					}
 
 					roaring64_bitmap_remove_range_closed(op->ids, v.longval + 1, roaring64_bitmap_maximum(op->ids));
@@ -106,22 +111,18 @@ static inline Node _SeekNextNode
 					break;
 				}
 		}
-		if(!is_valid) {
-			return GE_NEW_NODE();
-		}
 		op->it = roaring64_iterator_create(op->ids);
 	}
-	Node n = GE_NEW_NODE();
 
 	while(roaring64_iterator_has_value(op->it)) {
-		if(Graph_GetNode(op->g, roaring64_iterator_value(op->it), &n)) break;
+		NodeID id = roaring64_iterator_value(op->it);
 		roaring64_iterator_advance(op->it);
+		if(Graph_GetNode(op->g, id, n)) {
+			return true;
+		}
 	}
 
-	// Advance id for next consume call.
-	roaring64_iterator_advance(op->it);
-
-	return n;
+	return false;
 }
 
 static Record NodeByIdSeekConsumeFromChild
@@ -136,9 +137,9 @@ static Record NodeByIdSeekConsumeFromChild
 		else NodeByIdSeekReset(opBase);
 	}
 
-	Node n = _SeekNextNode(op);
+	Node n;
 
-	if(n.attributes == NULL) { // Failed to retrieve a node.
+	if(!_SeekNextNode(op, &n)) { // Failed to retrieve a node.
 		OpBase_DeleteRecord(op->child_record); // Free old record.
 		// Pull a new record from child.
 		op->child_record = OpBase_Consume(op->op.children[0]);
@@ -146,8 +147,7 @@ static Record NodeByIdSeekConsumeFromChild
 
 		// Reset iterator and evaluate again.
 		NodeByIdSeekReset(opBase);
-		n = _SeekNextNode(op);
-		if(n.attributes == NULL) return NULL; // Empty iterator; return immediately.
+		if(!_SeekNextNode(op, &n)) return NULL; // Empty iterator; return immediately.
 	}
 
 	// Clone the held Record, as it will be freed upstream.
@@ -165,8 +165,8 @@ static Record NodeByIdSeekConsume
 ) {
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
 
-	Node n = _SeekNextNode(op);
-	if(n.attributes == NULL) return NULL; // Failed to retrieve a node.
+	Node n;
+	if(!_SeekNextNode(op, &n)) return NULL; // Failed to retrieve a node.
 
 	// Create a new Record.
 	Record r = OpBase_CreateRecord(opBase);
