@@ -12,6 +12,7 @@
 /* Forward declarations. */
 static OpResult NodeByIdSeekInit(OpBase *opBase);
 static Record NodeByIdSeekConsume(OpBase *opBase);
+static Record NodeByIdSeekNoOpConsume(OpBase *opBase);
 static Record NodeByIdSeekConsumeFromChild(OpBase *opBase);
 static OpResult NodeByIdSeekReset(OpBase *opBase);
 static OpBase *NodeByIdSeekClone(const ExecutionPlan *plan, const OpBase *opBase);
@@ -34,12 +35,11 @@ OpBase *NewNodeByIdSeekOp
 
 	NodeByIdSeek *op = rm_malloc(sizeof(NodeByIdSeek));
 	op->g = QueryCtx_GetGraph();
+	op->it           = NULL;
+	op->ids          = NULL;
+	op->alias        = alias;
+	op->filters      = filters;
 	op->child_record = NULL;
-	op->alias = alias;
-
-	op->filters = filters;
-	op->ids = NULL;
-	op->it = NULL;
 
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_ID_SEEK, "NodeByIdSeek", NodeByIdSeekInit,
 				NodeByIdSeekConsume, NodeByIdSeekReset, NodeByIdSeekToString, NodeByIdSeekClone, NodeByIdSeekFree,
@@ -59,6 +59,12 @@ static OpResult NodeByIdSeekInit
 	op->ids = roaring64_bitmap_create();
 	if(opBase->childCount > 0) {
 		OpBase_UpdateConsume(opBase, NodeByIdSeekConsumeFromChild);
+	} else {
+		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
+			OpBase_UpdateConsume(opBase, NodeByIdSeekNoOpConsume);
+			return OP_OK;
+		}
+		op->it = roaring64_iterator_create(op->ids);
 	}
 	return OP_OK;
 }
@@ -68,13 +74,6 @@ static inline bool _SeekNextNode
 	NodeByIdSeek *op,
 	Node *n
 ) {
-	if(op->it == NULL) {
-		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
-			return false;
-		}
-		op->it = roaring64_iterator_create(op->ids);
-	}
-
 	while(roaring64_iterator_has_value(op->it)) {
 		NodeID id = roaring64_iterator_value(op->it);
 		roaring64_iterator_advance(op->it);
@@ -95,7 +94,14 @@ static Record NodeByIdSeekConsumeFromChild
 	if(op->child_record == NULL) {
 		op->child_record = OpBase_Consume(op->op.children[0]);
 		if(op->child_record == NULL) return NULL;
-		else NodeByIdSeekReset(opBase);
+		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
+			return NULL;
+		}
+		if(op->it == NULL) {
+			op->it = roaring64_iterator_create(op->ids);
+		} else {
+			roaring64_iterator_reinit(op->ids, op->it);
+		}
 	}
 
 	Node n;
@@ -107,7 +113,14 @@ static Record NodeByIdSeekConsumeFromChild
 		if(op->child_record == NULL) return NULL; // Child depleted.
 
 		// Reset iterator and evaluate again.
-		NodeByIdSeekReset(opBase);
+		if(!FilterExpression_Resolve(op->g, op->filters, op->ids, op->child_record)) {
+			return NULL;
+		}
+		if(op->it == NULL) {
+			op->it = roaring64_iterator_create(op->ids);
+		} else {
+			roaring64_iterator_reinit(op->ids, op->it);
+		}
 		if(!_SeekNextNode(op, &n)) return NULL; // Empty iterator; return immediately.
 	}
 
@@ -138,14 +151,20 @@ static Record NodeByIdSeekConsume
 	return r;
 }
 
+static Record NodeByIdSeekNoOpConsume
+(
+	OpBase *opBase
+) {
+	return NULL;
+}
+
 static OpResult NodeByIdSeekReset
 (
 	OpBase *ctx
 ) {
 	NodeByIdSeek *op = (NodeByIdSeek *)ctx;
 	if(op->it) {
-		roaring64_iterator_free(op->it);
-		op->it = NULL;
+		roaring64_iterator_reinit(op->ids, op->it);
 	}
 	return OP_OK;
 }
