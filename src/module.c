@@ -14,6 +14,7 @@
 #include "util/arr.h"
 #include "cron/cron.h"
 #include "query_ctx.h"
+#include "util/roaring.h"
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "redisearch_api.h"
@@ -94,6 +95,14 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	return REDISMODULE_OK;
 }
 
+static void *rm_aligned_malloc
+(
+	size_t alignment,
+	size_t size
+) {
+	return rm_malloc(size);
+}
+
 int RedisModule_OnLoad
 (
 	RedisModuleCtx *ctx,
@@ -108,6 +117,15 @@ int RedisModule_OnLoad
 	// initialize GraphBLAS
 	int res = GraphBLAS_Init(ctx);
 	if(res != REDISMODULE_OK) return res;
+
+	roaring_init_memory_hook((roaring_memory_t){
+		.malloc = rm_malloc,
+		.realloc = rm_realloc,
+		.calloc = rm_calloc,
+		.free = rm_free,
+		.aligned_malloc = rm_aligned_malloc,
+		.aligned_free = rm_free
+	});
 
 	// validate minimum redis-server version
 	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERION_MAJOR,

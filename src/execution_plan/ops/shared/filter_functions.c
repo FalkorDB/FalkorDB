@@ -57,5 +57,6 @@ bool FilterExpression_Resolve
         }
     }
 
+    roaring64_bitmap_run_optimize(ids);
     return true;
 }
