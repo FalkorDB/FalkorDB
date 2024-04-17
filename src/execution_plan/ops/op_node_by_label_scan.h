@@ -38,6 +38,7 @@ OpBase *NewNodeByLabelScanOp
 	NodeScanCtx *n
 );
 
+// transform a simple label scan to perform additional range query over the label matrix
 void NodeByLabelScanOp_SetFilterID
 (
 	NodeByLabelScan *op,

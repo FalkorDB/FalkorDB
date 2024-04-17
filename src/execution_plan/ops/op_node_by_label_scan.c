@@ -118,7 +118,9 @@ static OpResult NodeByLabelScanInit
 
 	bool has_filters = array_len(op->filters) > 0;
 
-	OpBase_UpdateConsume(opBase, has_filters ? NodeByLabelAndIDScanConsume : NodeByLabelScanConsume); // default consume function
+	OpBase_UpdateConsume(opBase, has_filters 
+		? NodeByLabelAndIDScanConsume 
+		: NodeByLabelScanConsume); // default consume function
 
 	if(has_filters) {
 		op->ids = roaring64_bitmap_create();

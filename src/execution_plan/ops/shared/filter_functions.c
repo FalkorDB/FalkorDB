@@ -6,13 +6,14 @@
 #include "filter_functions.h"
 #include "../../../util/arr.h"
 
+// evaluate the ids according to filters
 bool FilterExpression_Resolve
 (
-    Graph *g,
-    FilterExpression *filters,
-    roaring64_bitmap_t *ids,
-    Record r
-) {
+    Graph *g,                   // graph to get max id
+    FilterExpression *filters,  // filters to consider
+    roaring64_bitmap_t *ids,    // output ids
+    Record r                    // record to evaluate filters
+){
     size_t node_count = Graph_UncompactedNodeCount(g);
     int count = array_len(filters);
     roaring64_bitmap_add_range_closed(ids, 0, node_count);
