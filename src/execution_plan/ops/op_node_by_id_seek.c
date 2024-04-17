@@ -230,5 +230,10 @@ static void NodeByIdSeekFree
 		roaring64_iterator_free(op->it);
 		op->it = NULL;
 	}
+
+	if(op->ids) {
+		roaring64_bitmap_free(op->ids);
+		op->ids = NULL;
+	}
 }
 
