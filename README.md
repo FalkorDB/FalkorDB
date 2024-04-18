@@ -4,6 +4,7 @@
 [![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
 
 # FalkorDB
+[![Try Free](https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge&link=https://app.falkordb.cloud)](https://app.falkordb.cloud)
 
 **Our objective is to create an outstanding Knowledge Graph specifically for Large Language Models (LLM) that boasts exceptionally low latency, ensuring swift delivery of information through our Graph Database, known as KG-RAG.**
 
