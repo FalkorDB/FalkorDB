@@ -1313,6 +1313,21 @@ updating clause.")
             self.env.assertEquals(res.result_set[i-1][0], i)
             self.env.assertEquals(res.result_set[i-1][1], [i])
 
+        # mix union and union all in call sub query
+        res = self.graph.query(
+            """
+            CALL { 
+                RETURN 0 AS n1
+                UNION ALL
+                RETURN 0 AS n1
+            }
+            RETURN 0 AS n2
+            UNION
+            RETURN 0 AS n2
+            """
+        )
+        self.env.assertEquals(res.result_set, [[0]])
+
     def test22_indexes(self):
         """Tests that operations on indexes are properly executed (and reset)
         in subqueries"""

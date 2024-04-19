@@ -113,7 +113,7 @@ int OpBase_AliasModifier
 
 bool OpBase_ChildrenAware
 (
-	OpBase *op,
+	const OpBase *op,
 	const char *alias,
 	int *idx
 ) {
@@ -140,7 +140,7 @@ bool OpBase_ChildrenAware
 
 bool OpBase_Aware
 (
-	OpBase *op,
+	const OpBase *op,
 	const char *alias,
 	int *idx
 ) {
@@ -233,7 +233,7 @@ Record OpBase_Profile
 
 bool OpBase_IsWriter
 (
-	OpBase *op
+	const OpBase *op
 ) {
 	return op->writer;
 }
@@ -327,8 +327,8 @@ inline uint OpBase_ChildCount
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (
-	OpBase *op,  // op
-	uint i       // child index
+	const OpBase *op,  // op
+	uint i             // child index
 ) {
 	ASSERT(op != NULL);
 	ASSERT(i < op->childCount);
