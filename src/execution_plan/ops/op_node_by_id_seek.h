@@ -10,26 +10,25 @@
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
 #include "../../util/roaring.h"
-#include "shared/filter_functions.h"
+#include "../../util/range/range.h"
 
-#define ID_RANGE_UNBOUND -1
-
-/* Node by ID seek locates an entity by its ID */
+// Node by ID seek locates an entity by its ID
 typedef struct {
 	OpBase op;
 	Graph *g;                   // graph object
 	Record child_record;        // the record this op acts on if it is not a tap
 	const char *alias;          // alias of the node being scanned by this op
-	FilterExpression *filters;  // filters expressions applied to id e.g. ID(n) > 10
-	roaring64_bitmap_t *ids;    // resolved ids by filters
-	roaring64_iterator_t *it;   // id iterators
+	RangeExpression *ranges;    // array of ID range expressions
+	roaring64_bitmap_t *ids;    // IDs to scan
+	roaring64_iterator_t *it;   // IDs iterator
 	int nodeRecIdx;             // position of entity within record
 } NodeByIdSeek;
 
+// create a new NodeByIdSeek operation
 OpBase *NewNodeByIdSeekOp
 (
-	const ExecutionPlan *plan,
-	const char *alias,
-	FilterExpression *filters
+	const ExecutionPlan *plan,  // execution plan
+	const char *alias,          // node alias
+	RangeExpression *ranges     // ID range expressions
 );
 

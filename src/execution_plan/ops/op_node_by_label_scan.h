@@ -7,28 +7,25 @@
 #pragma once
 
 #include "op.h"
-#include "GraphBLAS.h"
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
 #include "../../util/roaring.h"
 #include "shared/scan_functions.h"
-#include "shared/filter_functions.h"
-#include "../../graph/entities/node.h"
+#include "../../util/range/range.h"
 #include "../../graph/rg_matrix/rg_matrix_iter.h"
 
-/* NodeByLabelScan, scans entire label. */
-
+// NodeByLabelScan, scans entire label
 typedef struct {
 	OpBase op;
-	Graph *g;
-	NodeScanCtx *n;             // label data of node being scanned
-	unsigned int nodeRecIdx;    // node position within record
-	FilterExpression *filters;  // filters expressions applied to id e.g. ID(n) > 10
-	roaring64_bitmap_t *ids;    // resolved ids by filters
-	roaring64_iterator_t *it;   // id iterators
-	RG_Matrix L;                // label matrix
-	RG_MatrixTupleIter iter;    // iterator over label matrix
-	Record child_record;        // the record this op acts on if it is not a tap
+	Graph *g;                     // graph
+	NodeScanCtx *n;               // label data of node being scanned
+	unsigned int nodeRecIdx;      // node position within record
+	RangeExpression *ranges;      // array of ID range expressions
+	roaring64_bitmap_t *ids;      // resolved ids by filters
+	roaring64_iterator_t *ID_it;  // ID iterator
+	RG_Matrix L;                  // label matrix
+	RG_MatrixTupleIter iter;      // iterator over label matrix
+	Record child_record;          // the record this op acts on if it is not a tap
 } NodeByLabelScan;
 
 // creates a new NodeByLabelScan operation
@@ -38,9 +35,10 @@ OpBase *NewNodeByLabelScanOp
 	NodeScanCtx *n
 );
 
-// transform a simple label scan to perform additional range query over the label matrix
-void NodeByLabelScanOp_SetFilterID
+// transform label scan to perform additional range query over the label matrix
+void NodeByLabelScanOp_SetIDRange
 (
 	NodeByLabelScan *op,
-	FilterExpression *filters
+	RangeExpression *ranges  // ID range expressions
 );
+

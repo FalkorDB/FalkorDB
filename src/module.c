@@ -95,14 +95,6 @@ static int GraphBLAS_Init(RedisModuleCtx *ctx) {
 	return REDISMODULE_OK;
 }
 
-static void *rm_aligned_malloc
-(
-	size_t alignment,
-	size_t size
-) {
-	return rm_malloc(size);
-}
-
 int RedisModule_OnLoad
 (
 	RedisModuleCtx *ctx,
@@ -118,13 +110,13 @@ int RedisModule_OnLoad
 	int res = GraphBLAS_Init(ctx);
 	if(res != REDISMODULE_OK) return res;
 
-	roaring_init_memory_hook((roaring_memory_t){
-		.malloc = rm_malloc,
-		.realloc = rm_realloc,
-		.calloc = rm_calloc,
-		.free = rm_free,
-		.aligned_malloc = rm_aligned_malloc,
-		.aligned_free = rm_free
+	roaring_init_memory_hook((roaring_memory_t) {
+		.free           = rm_free,
+		.malloc         = rm_malloc,
+		.calloc         = rm_calloc,
+		.realloc        = rm_realloc,
+		.aligned_free   = rm_free,
+		.aligned_malloc = rm_aligned_malloc
 	});
 
 	// validate minimum redis-server version

@@ -63,9 +63,9 @@ static void _UseIdOptimization
 	// see if there's a filter of the form
 	// ID(n) op X
 	// where X is a constant and op in [EQ, GE, LE, GT, LT]
-	OpBase *parent = scan_op->parent;
 	OpBase *grandparent;
-	FilterExpression *filters = array_new(FilterExpression, 1);
+	OpBase *parent = scan_op->parent;
+	RangeExpression *ranges = array_new(RangeExpression, 1);
 	while(parent && parent->type == OPType_FILTER) {
 		// track the next op to visit in case we free parent
 		grandparent = parent->parent;
@@ -82,30 +82,30 @@ static void _UseIdOptimization
 
 			// Free replaced operations.
 			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
-			array_append(filters, ((FilterExpression){.op = op, .id_exp = id_exp}));
+			array_append(ranges, ((RangeExpression){.op = op, .exp = id_exp}));
 			OpBase_Free((OpBase *)filter);
 		}
 		// advance
 		parent = grandparent;
 	}
-	if(array_len(filters) > 0) {
+	if(array_len(ranges) > 0) {
 		/* Don't replace label scan, but set it to have range query.
 		 * Issue 818 https://github.com/RedisGraph/RedisGraph/issues/818
 		 * This optimization caused a range query over the entire range of ids in the graph
 		 * regardless to the label. */
 		if(scan_op->type == OPType_NODE_BY_LABEL_SCAN) {
 			NodeByLabelScan *label_scan = (NodeByLabelScan *) scan_op;
-			NodeByLabelScanOp_SetFilterID(label_scan, filters);
+			NodeByLabelScanOp_SetIDRange(label_scan, ranges);
 		} else {
 			const char *alias = ((AllNodeScan *)scan_op)->alias;
-			OpBase *opNodeByIdSeek = NewNodeByIdSeekOp(scan_op->plan, alias, filters);
+			OpBase *opNodeByIdSeek = NewNodeByIdSeekOp(scan_op->plan, alias, ranges);
 
 			// Managed to reduce!
 			ExecutionPlan_ReplaceOp(plan, scan_op, opNodeByIdSeek);
 			OpBase_Free(scan_op);
 		}
 	} else {
-		array_free(filters);
+		array_free(ranges);
 	}
 }
 
