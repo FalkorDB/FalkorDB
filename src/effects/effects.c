@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "../query_ctx.h"
+#include "../datatypes/map.h"
 #include "../datatypes/vector.h"
 
 // determine block available space 
@@ -45,6 +46,12 @@ static void EffectsBuffer_WriteSIVector
 (
 	const SIValue *v,    // vector
 	EffectsBuffer *buff  // effect buffer
+);
+
+static void EffectsBuffer_WriteMap
+(
+	const SIValue *map,  // map
+	EffectsBuffer *buff  // effects buffer
 );
 
 // create a new effects-buffer block
@@ -192,6 +199,9 @@ static void EffectsBuffer_WriteSIValue
 		case T_VECTOR_F32:
 			EffectsBuffer_WriteSIVector(v, buff);
 			break;
+		case T_MAP:
+			EffectsBuffer_WriteMap(v, buff);
+			break;
 		default:
 			assert(false && "unknown SIValue type");
 	}
@@ -239,6 +249,31 @@ static void EffectsBuffer_WriteSIVector
 	size_t n = dim * elem_size;
 
 	EffectsBuffer_WriteBytes(elements, n, buff);
+}
+
+static void EffectsBuffer_WriteMap
+(
+	const SIValue *map,  // map
+	EffectsBuffer *buff  // effects buffer
+) {
+	// format:
+	// key count
+	// key:value
+
+	// write number of keys in map
+	uint32_t n = Map_KeyCount(*map);
+	EffectsBuffer_WriteBytes(&n, sizeof(uint32_t), buff);
+
+	// write each key:value pair to buffer
+	for(uint32_t i = 0; i < n; i++) {
+		SIValue key;
+		SIValue value;
+		Map_GetIdx(*map, i, &key, &value);
+
+		ASSERT(SI_TYPE(key) == T_STRING);
+		EffectsBuffer_WriteSIValue(&key, buff);
+		EffectsBuffer_WriteSIValue(&value, buff);
+	}
 }
 
 // dump attributes to stream

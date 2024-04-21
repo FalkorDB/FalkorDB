@@ -37,10 +37,25 @@ SIValue Map_New
 	uint capacity     // map initial capacity
 );
 
+// create a map from keys and values arrays
+// keys and values are both of length n
+SIValue Map_FromArrays
+(
+	SIValue *keys,    // keys
+	SIValue *values,  // values
+	uint n            // arrays length
+);
+
 // clones map
 SIValue Map_Clone
 (
 	SIValue map  // map to clone
+);
+
+// create map from binary stream
+SIValue Map_FromBinary
+(
+	FILE *stream  // binary stream
 );
 
 // adds key/value to map
@@ -79,6 +94,13 @@ bool Map_Contains
 (
 	SIValue map,  // map to query
 	SIValue key   // key to look-up
+);
+
+// check if map contains a key with type 't'
+bool Map_ContainsType
+(
+	SIValue map,  // map to scan
+	SIType t      // type to match
 );
 
 // return number of keys in map

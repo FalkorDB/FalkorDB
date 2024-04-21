@@ -15,6 +15,7 @@
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
 #include "graph_extensions.h"
+#include "../datatypes/map.h"
 #include "../datatypes/array.h"
 #include "../datatypes/vector.h"
 #include "../graph/graphcontext.h"

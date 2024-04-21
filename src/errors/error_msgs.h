@@ -88,7 +88,7 @@
 #define EMSG_UNABLE_TO_RESOLVE_FILTER_ALIAS "Unable to resolve filtered alias '%s'"
 #define EMSG_TYPE_MISMATCH "Type mismatch: expected %s but was %s"
 #define EMSG_REDISGRAPH_SUPPORT "RedisGraph does not currently support %s"
-#define EMSG_INVALID_PROPERTY_VALUE "Property values can only be of primitive types or arrays of primitive types"
+#define EMSG_INVALID_PROPERTY_VALUE "Property values can only be of primitive types arrays or maps"
 #define EMSG_DIVISION_BY_ZERO "Division by zero"
 #define EMSG_ALLSHORTESTPATH_SRC_DST_RESLOVED "Source and destination must already be resolved to call allShortestPaths"
 #define EMSG_DELETE_OPERATE_ON_CHILD "Delete was constructed without a child operation"

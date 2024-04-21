@@ -95,15 +95,14 @@ class testGraphCreationFlow(FlowTestsBase):
         # Test combinations of invalid types with nested and top-level arrays
         # Invalid types are NULL, maps, nodes, edges, and paths
         queries = ["CREATE (a), (b) SET a.v = [b]",
-                   "CREATE (a {v: ['str', [1, NULL]]})",
-                   "CREATE (a {v: [[{k: 'v'}]]})"]
+                   "MATCH (b) CREATE ({v: ['str', [b]]})"]
 
         for query in queries:
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
-                self.env.assertContains("Property values can only be of primitive types or arrays of primitive types", str(e))
+                self.env.assertContains("Property values can only be of primitive types arrays or maps", str(e))
 
     # test creating a node with multiple attributes with the same name
     # expecting node with single attribute 'name' with the last mentioned value 'B'

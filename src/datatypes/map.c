@@ -74,6 +74,34 @@ SIValue Map_New
 	return map;
 }
 
+// create a map from keys and values arrays
+// keys and values are both of length n
+SIValue Map_FromArrays
+(
+	SIValue *keys,    // keys
+	SIValue *values,  // values
+	uint n            // arrays length
+) {
+	ASSERT(keys   != NULL);
+	ASSERT(values != NULL);
+
+	SIValue map = Map_New(n);
+
+	for(uint i = 0; i < n; i++) {
+		Pair p = {
+			.key = keys[i],
+			.val = values[i]
+		};
+
+		array_append(map.map, p);
+
+		keys[i]   = SI_NullVal();
+		values[i] = SI_NullVal();
+	}
+
+	return map;
+}
+
 // clone map
 SIValue Map_Clone
 (
@@ -90,6 +118,35 @@ SIValue Map_Clone
 	}
 
 	return clone;
+}
+
+// create map from binary stream
+SIValue Map_FromBinary
+(
+	FILE *stream  // binary stream
+) {
+	// format:
+	// key count
+	// key:value
+
+	ASSERT(stream != NULL);
+
+	// read number of keys in map
+	uint32_t n;
+	fread_assert(&n, sizeof(uint32_t), stream);
+
+	SIValue map = Map_New(n);
+
+	for(uint32_t i = 0; i < n; i++) {
+		Pair p = {
+			.key = SIValue_FromBinary(stream),
+			.val = SIValue_FromBinary(stream)
+		};
+
+		array_append(map.map, p);
+	}
+
+	return map;
 }
 
 // adds key/value to map
@@ -203,6 +260,32 @@ bool Map_Contains
 	ASSERT(SI_TYPE(key) & T_STRING);
 
 	return (Map_KeyIdx(map, key) != -1);
+}
+
+// check if map contains a key with type 't'
+bool Map_ContainsType
+(
+	SIValue map,  // map to scan
+	SIType t      // type to match
+) {
+	ASSERT(SI_TYPE(map) == T_MAP);
+
+	uint n = Map_KeyCount(map);
+	for(uint i = 0; i < n; i++) {
+		Pair    p = map.map[i];
+		SIValue v = p.val;
+
+		if(SI_TYPE(v) & t) return true;
+
+		// recursively check nested containers
+		if(SI_TYPE(v) == T_ARRAY) {
+			if(SIArray_ContainsType(v, t) == true) return true;
+		} else if(SI_TYPE(v) == T_MAP) {
+			if(Map_ContainsType(v, t) == true) return true;
+		}
+	}
+
+	return false;
 }
 
 uint Map_KeyCount
