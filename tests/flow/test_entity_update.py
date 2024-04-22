@@ -15,8 +15,24 @@ class testEntityUpdate():
 
     def test01_update_attribute(self):
         # update existing attribute 'v'
-        result = self.graph.query("MATCH (n) SET n.v = 2")
-        self.env.assertEqual(result.properties_set, 1)
+        params = [
+                {'v': 2.1},
+                {'v': 'a'},
+                {'v': True},
+                {'v': []},
+                {'v': {}},
+                {'v': [2]},
+                {'v': {'a': 2}},
+                {'v': {'a': {}}},
+                {'v': [{'a': 2}, [1,2]]},
+                {'v': 2}
+                ]
+
+        q = "MATCH (n) SET n.v = $v RETURN n.v"
+        for param in params:
+            res = self.graph.query(q, param)
+            self.env.assertEqual(res.properties_set, 1)
+            self.env.assertEquals(res.result_set[0][0], param['v'])
 
     def test02_update_none_existing_attr(self):
         # introduce a new attribute 'x'
@@ -136,31 +152,31 @@ class testEntityUpdate():
             self.graph.query("MATCH P=() SET nodes(P).prop = 1 RETURN nodes(P)")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON CREATE SET n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON CREATE SET n = {v: 1}, n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON MATCH SET n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
         try:
             self.graph.query("MERGE (n:N) ON MATCH SET n = {v: 1}, n.a.b=3 RETURN n")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("RedisGraph does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
 
     # Fail when a property is a complex type nested within an array type
     def test13_invalid_complex_type_in_array(self):
@@ -549,3 +565,29 @@ class testEntityUpdate():
 
         # assert results
         self.env.assertEquals(res.result_set[0][0], Node(properties={'v': 7}))
+
+    def test37_update_nested_path(self):
+        # try to update nested map field
+        q = "MATCH (n) SET n.v.a.b.c = 1"
+        try:
+            res = self.graph.query(q)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("FalkorDB does not currently support non-alias references on the left-hand side of SET expressions", str(e))
+
+    def test38_update_infered_entity(self):
+        # try to update an entity described by a complex expression
+        q = "MATCH (n) WITH {a: n} AS m SET m.a.v = 4"
+
+        try:
+            res = self.graph.query(q)
+        except ResponseError as e:
+            self.env.assertContains("", str(e))
+
+        q = "MATCH (n) WITH [n] AS m SET m[0].v = 4"
+
+        try:
+            res = self.graph.query(q)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("errMsg: Invalid input '[': expected '.'", str(e))

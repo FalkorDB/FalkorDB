@@ -195,3 +195,52 @@ class testGraphCreationFlow(FlowTestsBase):
             result = self.graph.query(query)
             expected_result = [[0]]
             self.env.assertEquals(result.result_set, expected_result)
+
+    def test11_container_type_attributes(self):
+        # make sure we're able to create entities with both arrays and maps
+        # as attributes
+
+        scenarios = [
+                # empty array
+                ("CREATE (a {v: []}) RETURN a.v", []),
+
+                # array with scalar
+                ("CREATE (a {v: [1]}) RETURN a.v", [1]),
+
+                # array with NULL element
+                ("CREATE (a {v: [null]}) RETURN a.v", [None]),
+
+                # nested array
+                ("CREATE (a {v: [[]]}) RETURN a.v", [[]]),
+
+                # array with map element
+                ("CREATE (a {v: [{}]}) RETURN a.v", [{}]),
+
+                # array with both map and array elements
+                ("CREATE (a {v: [{a:1}, [2, 3]]}) RETURN a.v", [{'a':1}, [2, 3]]),
+
+                # empty map
+                ("CREATE (a {v: {}}) RETURN a.v", {}),
+
+                # map with scalar
+                ("CREATE (a {v: {s:1}}) RETURN a.v", {'s': 1}),
+
+                # map with NULL element
+                ("CREATE (a {v: {s: null}}) RETURN a.v", {'s': None}),
+
+                # nested map
+                ("CREATE (a {v: {s: {}}}) RETURN a.v", {'s': {}}),
+
+                # map with array element
+                ("CREATE (a {v: {s: []}}) RETURN a.v", {'s': []}),
+
+                # map with both map and array elements
+                ("CREATE (a {v: {s: {a:1}, t: [2, 3]}}) RETURN a.v", {'s': {'a':1}, 't': [2, 3]})
+                ]
+
+        for scenario in scenarios:
+            q = scenario[0]
+            expectation = scenario[1]
+            res = self.graph.query(q).result_set[0][0]
+            self.env.assertEquals(res, expectation)
+

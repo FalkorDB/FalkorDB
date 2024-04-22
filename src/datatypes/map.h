@@ -39,6 +39,8 @@ SIValue Map_New
 
 // create a map from keys and values arrays
 // keys and values are both of length n
+// map takes ownership over keys and values elements
+// the function will nullify each element within the arrays
 SIValue Map_FromArrays
 (
 	SIValue *keys,    // keys
