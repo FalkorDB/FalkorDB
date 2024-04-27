@@ -290,5 +290,6 @@ Record OpBase_CloneRecord
 // release record
 void OpBase_DeleteRecord
 (
-	Record r
+	Record *r
 );
+

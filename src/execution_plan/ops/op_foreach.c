@@ -135,7 +135,7 @@ static Record ForeachConsume
 	// call consume on loop body first op
 	// the result is thrown away
 	while((r = OpBase_Consume(op->body))) {
-		OpBase_DeleteRecord(r);
+		OpBase_DeleteRecord(&r);
 	}
 
 	return _handoff(op);
@@ -151,7 +151,7 @@ static void _freeInternals
 		// free record list components (except first element, which is NULL)
 		uint nrecords = array_len(op->records);
 		for(uint i = 1; i < nrecords; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(&op->records[i]);
 		}
 
 		array_free(op->records);
@@ -162,7 +162,7 @@ static void _freeInternals
 		// free body record list components
 		uint nrecords = array_len(op->body_records);
 		for(uint i = 0; i < nrecords; i++) {
-			OpBase_DeleteRecord(op->body_records[i]);
+			OpBase_DeleteRecord(&op->body_records[i]);
 		}
 
 		array_free(op->body_records);

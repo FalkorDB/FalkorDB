@@ -83,7 +83,7 @@ static Record ApplyConsume(OpBase *opBase) {
 		Record r = OpBase_CloneRecord(op->r);
 		Record_Merge(r, rhs_record);
 		// delete the RHS record, as it has been merged into r
-		OpBase_DeleteRecord(rhs_record);
+		OpBase_DeleteRecord(&rhs_record);
 
 		return r;
 	}
@@ -98,7 +98,7 @@ static OpResult ApplyReset(OpBase *opBase) {
 	// free collected records
 	uint32_t n = array_len(op->records);
 	for(uint32_t i = 0; i < n; i++) {
-		OpBase_DeleteRecord(op->records[i]);
+		OpBase_DeleteRecord(&op->records[i]);
 	}
 	array_clear(op->records);
 
@@ -116,7 +116,7 @@ static void ApplyFree(OpBase *opBase) {
 	if(op->records != NULL) {
 		uint32_t n = array_len(op->records);
 		for(uint32_t i = 0; i < n; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(&op->records[i]);
 		}
 
 		array_free(op->records);

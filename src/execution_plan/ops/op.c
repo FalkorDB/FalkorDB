@@ -334,19 +334,22 @@ OpBase *OpBase_GetChild
 
 inline void OpBase_DeleteRecord
 (
-	Record r
+	Record *r
 ) {
 	// decrease record ref count
-	r->ref_count--;
+	(*r)->ref_count--;
 
 	// free record when ref count reached 0
-	if(r->ref_count == 0) {
+	if((*r)->ref_count == 0) {
 		// call recursively for parent
-		if(r->parent != NULL) {
-			OpBase_DeleteRecord(r->parent);
+		if((*r)->parent != NULL) {
+			OpBase_DeleteRecord(&(*r)->parent);
 		}
-		ExecutionPlan_ReturnRecord(r->owner, r);
+		ExecutionPlan_ReturnRecord((*r)->owner, *r);
 	}
+
+	// nullify record
+	*r = NULL;
 }
 
 OpBase *OpBase_Clone

@@ -185,7 +185,7 @@ static void _aggregateRecord
 		AR_EXP_Aggregate(exp, r);
 	}
 
-	OpBase_DeleteRecord(r);
+	OpBase_DeleteRecord(&r);
 }
 
 // returns a record populated with group data
@@ -314,7 +314,7 @@ static Record AggregateConsume
 		_GetGroup(op, r);
 
 		// free record
-		OpBase_DeleteRecord(r);
+		OpBase_DeleteRecord(&r);
 	}
 
 	// create group iterator
@@ -438,7 +438,6 @@ static void AggregateFree
 	}
 
 	if(op->r) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 }

@@ -151,7 +151,7 @@ static Record CondTraverseConsume(OpBase *opBase) {
 		 * Free old records. */
 		op->r = NULL;
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(&op->records[i]);
 		}
 
 		// Ask child operations for data.
@@ -164,7 +164,7 @@ static Record CondTraverseConsume(OpBase *opBase) {
 			if(!Record_GetNode(childRecord, op->srcNodeIdx)) {
 				/* The child Record may not contain the source node in scenarios like
 				 * a failed OPTIONAL MATCH. In this case, delete the Record and try again. */
-				OpBase_DeleteRecord(childRecord);
+				OpBase_DeleteRecord(&childRecord);
 				op->record_count--;
 				continue;
 			}
@@ -204,7 +204,9 @@ static OpResult CondTraverseReset(OpBase *ctx) {
 	// Do not explicitly free op->r, as the same pointer is also held
 	// in the op->records array and as such will be freed there.
 	op->r = NULL;
-	for(uint i = 0; i < op->record_count; i++) OpBase_DeleteRecord(op->records[i]);
+	for(uint i = 0; i < op->record_count; i++) {
+		OpBase_DeleteRecord(&op->records[i]);
+	}
 	op->record_count = 0;
 
 	if(op->edge_ctx) EdgeTraverseCtx_Reset(op->edge_ctx);
@@ -251,7 +253,7 @@ static void CondTraverseFree(OpBase *ctx) {
 
 	if(op->records) {
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(&op->records[i]);
 		}
 		rm_free(op->records);
 		op->records = NULL;

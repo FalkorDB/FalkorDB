@@ -132,7 +132,7 @@ static Record UnwindConsume
 pull:
 	if((r = OpBase_Consume(child))) {
 		// free current record
-		OpBase_DeleteRecord(op->currentRecord);
+		OpBase_DeleteRecord(&op->currentRecord);
 
 		// assign new record
 		op->currentRecord = r;
@@ -188,8 +188,7 @@ static void UnwindFree
 	}
 
 	if(op->currentRecord != NULL) {
-		OpBase_DeleteRecord(op->currentRecord);
-		op->currentRecord = NULL;
+		OpBase_DeleteRecord(&op->currentRecord);
 	}
 
 	op->currentRecord = NULL;

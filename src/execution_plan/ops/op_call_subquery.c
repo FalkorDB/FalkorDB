@@ -222,7 +222,7 @@ static Record CallSubqueryConsumeEager
 	if(!op->is_returning) {
 		// deplete body and discard records
 		while((r = OpBase_Consume(op->body))) {
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 	}
 
@@ -241,8 +241,7 @@ static Record _consume_and_merge
 
 	while(consumed == NULL) {
 		OpBase_PropagateReset(op->body);
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 
 		if(op->lhs && (op->r = OpBase_Consume(op->lhs)) != NULL) {
 			// plant a clone of the record consumed at the Argument ops
@@ -258,7 +257,7 @@ static Record _consume_and_merge
 	Record clone = OpBase_CloneRecord(op->r);
 	// Merge consumed record into a clone of the received record.
 	Record_Merge(clone, consumed);
-	OpBase_DeleteRecord(consumed);
+	OpBase_DeleteRecord(&consumed);
 	return clone;
 }
 
@@ -284,7 +283,7 @@ static Record _handoff(OpCallSubquery *op) {
 	Record consumed;
 	// drain the body, deleting the subquery records and return current record
 	while((consumed = OpBase_Consume(op->body))) {
-		OpBase_DeleteRecord(consumed);
+		OpBase_DeleteRecord(&consumed);
 	}
 	OpBase_PropagateReset(op->body);
 	Record r = op->r;
@@ -339,15 +338,14 @@ static void _free_records
 	if(op->records != NULL) {
 		uint n_records = array_len(op->records);
 		for(uint i = 0; i < n_records; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(&op->records[i]);
 		}
 		array_free(op->records);
 		op->records = NULL;
 	}
 
 	if(op->r != NULL) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 }
 
