@@ -204,7 +204,7 @@ static Record NodeByLabelScanConsume
 
 	Record r = OpBase_CreateRecord((OpBase *)op);
 
-	// Populate the Record with the actual node.
+	// populate the Record with the actual node
 	_UpdateRecord(op, r, id);
 
 	return r;
@@ -282,7 +282,7 @@ static Record NodeByLabelScanConsumeFromChild
 
 	// we've got a record and NodeID
 	// clone the held Record, as it will be freed upstream
-	Record r = OpBase_DeepCloneRecord(op->child_record);
+	Record r = OpBase_CloneRecord(op->child_record);
 
 	// populate the Record with the actual node
 	_UpdateRecord(op, r, id);
@@ -344,7 +344,7 @@ pull:
 
 	// we've got a record and NodeID
 	// clone the held Record, as it will be freed upstream
-	Record r = OpBase_DeepCloneRecord(op->child_record);
+	Record r = OpBase_CloneRecord(op->child_record);
 
 	// populate the Record with the actual node
 	_UpdateRecord(op, r, id);

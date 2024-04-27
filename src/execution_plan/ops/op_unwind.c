@@ -93,7 +93,7 @@ static Record _handoff
 ) {
 	// if there is a new value ready, return it
 	if(op->listIdx < op->listLen) {
-		Record  r = OpBase_DeepCloneRecord(op->currentRecord);
+		Record  r = OpBase_CloneRecord(op->currentRecord);
 		SIValue v = SIArray_Get(op->list, op->listIdx);
 
 		if(!(SI_TYPE(v) & SI_GRAPHENTITY)) {

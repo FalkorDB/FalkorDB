@@ -12,7 +12,7 @@
 #include "../graph/entities/edge.h"
 #include <sys/types.h>
 
-// Return value in case of call to Record_GetEntryIdx with invalid entry alias.
+// return value in case of call to Record_GetEntryIdx with invalid entry alias
 #define INVALID_INDEX -1
 
 typedef enum  {
@@ -32,13 +32,16 @@ typedef struct {
 	RecordEntryType type;
 } Entry;
 
-typedef struct {
-	void *owner;        // Owner of record.
-	rax *mapping;       // Mapping between alias to record entry.
-	Entry entries[];    // Array of entries.
-} _Record;
-
+typedef struct _Record _Record;
 typedef _Record *Record;
+
+typedef struct _Record {
+	uint64_t ref_count;  // number of records directly relying on this record
+	Record parent;       // this record relies on data in parent record
+	void *owner;         // owner of record
+	rax *mapping;        // mapping between alias to record entry
+	Entry entries[];     // array of entries
+} _Record;
 
 // create a new record sized to accommodate all entries in the given map
 Record Record_New

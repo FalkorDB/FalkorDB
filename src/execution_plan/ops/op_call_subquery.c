@@ -47,7 +47,7 @@ static void _plant_records_ArgumentLists
 	for(int i = 0; i < n_branches - 1; i++) {
 		Record *records_clone;
 		array_clone_with_cb(records_clone, op->records,
-			OpBase_DeepCloneRecord);
+			OpBase_CloneRecord);
 		ArgumentList_AddRecordList(op->feeders.argumentLists[i],
 			records_clone);
 	}
@@ -61,7 +61,7 @@ static void _plant_records_Arguments
 	uint n_branches = array_len(op->feeders.arguments);
 	for(uint i = 0; i < n_branches; i++) {
 		Argument_AddRecord(op->feeders.arguments[i],
-			OpBase_DeepCloneRecord(op->r));
+			OpBase_CloneRecord(op->r));
 	}
 }
 
@@ -214,7 +214,7 @@ static Record CallSubqueryConsumeEager
 		// give the last branch a clone of the original record(s)
 		Record *records_clone;
 		array_clone_with_cb(records_clone, op->records,
-			OpBase_DeepCloneRecord);
+			OpBase_CloneRecord);
 		ArgumentList_AddRecordList(
 			op->feeders.argumentLists[n_branches - 1], records_clone);
 	}
@@ -255,7 +255,7 @@ static Record _consume_and_merge
 		consumed = OpBase_Consume(op->body);
 	}
 
-	Record clone = OpBase_DeepCloneRecord(op->r);
+	Record clone = OpBase_CloneRecord(op->r);
 	// Merge consumed record into a clone of the received record.
 	Record_Merge(clone, consumed);
 	OpBase_DeleteRecord(consumed);

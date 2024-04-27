@@ -36,11 +36,11 @@ Record Record_New
 (
 	rax *mapping
 ) {
-	ASSERT(mapping);
+	ASSERT(mapping != NULL);
+
 	// determine record size
 	uint entries_count = raxSize(mapping);
-	uint rec_size = sizeof(_Record);
-	rec_size += sizeof(Entry) * entries_count;
+	uint rec_size = sizeof(_Record) + sizeof(Entry) * entries_count;
 
 	Record r = rm_calloc(1, rec_size);
 	r->mapping = mapping;
@@ -89,12 +89,13 @@ void Record_Clone
 
 	memcpy(clone->entries, r->entries, required_record_size);
 
-	/* Foreach scalar entry in cloned record, make sure it is not freed.
-	 * it is the original record owner responsibility to free the record
-	 * and its internal scalar as a result.
-	 *
-	 * TODO: I wish we wouldn't have to perform this loop as it is a major performance hit
-	 * with the introduction of a garbage collection this should be removed. */
+	// foreach scalar entry in cloned record, make sure it is not freed
+	// it is the original record owner responsibility to free the record
+	// and its internal scalar as a result
+	//
+	// TODO: i wish we wouldn't have to perform this loop
+	// as it is a major performance hit
+	// with the introduction of a garbage collection this should be removed
 	for(int i = 0; i < entry_count; i++) {
 		if(Record_GetType(clone, i) == REC_TYPE_SCALAR) {
 			SIValue_MakeVolatile(&clone->entries[i].value.s);
@@ -372,6 +373,9 @@ void Record_Free
 (
 	Record r
 ) {
+	ASSERT(r != NULL);
+	ASSERT(r->ref_count == 0);
+
 	Record_FreeEntries(r);
 	rm_free(r);
 }

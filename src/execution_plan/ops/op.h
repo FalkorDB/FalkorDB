@@ -287,12 +287,6 @@ Record OpBase_CloneRecord
 	Record r
 );
 
-// deep clones given record
-Record OpBase_DeepCloneRecord
-(
-	Record r
-);
-
 // release record
 void OpBase_DeleteRecord
 (
