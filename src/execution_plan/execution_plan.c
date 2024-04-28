@@ -408,7 +408,18 @@ void ExecutionPlan_ReturnRecord
 	Record r
 ) {
 	ASSERT(plan && r);
-	ObjectPool_DeleteItem(plan->record_pool, r);
+
+	// decrease record ref count
+	r->ref_count--;
+
+	// free record when ref count reached 0
+	if(r->ref_count == 0) {
+		// call recursively for parent
+		if(r->parent != NULL) {
+			ExecutionPlan_ReturnRecord(r->parent->owner, r->parent);
+		}
+		ObjectPool_DeleteItem(plan->record_pool, r);
+	}
 }
 
 //------------------------------------------------------------------------------

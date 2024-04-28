@@ -10,7 +10,7 @@
 #include "../../util/rmalloc.h"
 #include "../../query_ctx.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record ProcCallConsume(OpBase *opBase);
 static OpResult ProcCallReset(OpBase *opBase);
 static OpBase *ProcCallClone(const ExecutionPlan *plan, const OpBase *opBase);

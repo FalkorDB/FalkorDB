@@ -176,11 +176,11 @@ void _cache_records
 ) {
 	ASSERT(op->cached_records == NULL);
 
-	OpBase *left_child = op->op.children[0];
+	OpBase *left_child = OpBase_GetChild((OpBase*)op, 0);
 	op->cached_records = array_new(Record, 32);
 
 	Record r = left_child->consume(left_child);
-	if(!r) return;
+	if(r == NULL) return;
 
 	// as long as there's data coming in from left branch
 	do {
@@ -189,7 +189,10 @@ void _cache_records
 
 		// if the joined value is NULL
 		// it cannot be compared to other values - skip this record
-		if(SIValue_IsNull(v)) continue;
+		if(SIValue_IsNull(v)) {
+			OpBase_DeleteRecord(&r);
+			continue;
+		}
 
 		// add joined value to record
 		Record_AddScalar(r, op->join_value_rec_idx, v);
@@ -261,7 +264,7 @@ static Record ValueHashJoinConsume
 	OpBase *opBase
 ) {
 	OpValueHashJoin *op = (OpValueHashJoin *)opBase;
-	OpBase *right_child = op->op.children[1];
+	OpBase *right_child = OpBase_GetChild(opBase, 1);
 
 	// eager, pull from left branch until depleted
 	if(op->cached_records == NULL) {
