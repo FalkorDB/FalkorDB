@@ -105,7 +105,7 @@ ObjectPool *ObjectPool_New
 	pool->itemSize   = itemSize + HEADER_SIZE;  // accommodate the header
 	pool->blockCount = 0;
 	pool->blocks     = NULL;
-	pool->deletedIdx = array_new(uint64_t,  128);
+	pool->deletedIdx = array_new(uint64_t, 128);
 	pool->destructor = fp;
 
 	_ObjectPool_AddBlocks(pool, ITEM_COUNT_TO_BLOCK_COUNT(itemCap));

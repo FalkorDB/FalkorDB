@@ -31,7 +31,6 @@ static void _RecordPropagateEntry
 	}
 }
 
-// this function is currently unused
 Record Record_New
 (
 	rax *mapping
@@ -99,24 +98,6 @@ void Record_Clone
 	for(int i = 0; i < entry_count; i++) {
 		if(Record_GetType(clone, i) == REC_TYPE_SCALAR) {
 			SIValue_MakeVolatile(&clone->entries[i].value.s);
-		}
-	}
-}
-
-void Record_DeepClone
-(
-		const Record r,
-		Record clone
-) {
-	int entry_count = Record_length(r);
-	size_t required_record_size = sizeof(Entry) * entry_count;
-
-	memcpy(clone->entries, r->entries, required_record_size);
-
-	// deep copy scalars
-	for(uint i = 0; i < entry_count; i++) {
-		if(r->entries[i].type == REC_TYPE_SCALAR) {
-			clone->entries[i].value.s = SI_CloneValue(r->entries[i].value.s);
 		}
 	}
 }
@@ -368,7 +349,6 @@ void Record_FreeEntries
 	}
 }
 
-// this function is currently unused
 void Record_Free
 (
 	Record r

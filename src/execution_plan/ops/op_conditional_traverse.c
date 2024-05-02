@@ -151,7 +151,7 @@ static Record CondTraverseConsume(OpBase *opBase) {
 		 * Free old records. */
 		op->r = NULL;
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(&op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		// Ask child operations for data.
@@ -205,7 +205,7 @@ static OpResult CondTraverseReset(OpBase *ctx) {
 	// in the op->records array and as such will be freed there.
 	op->r = NULL;
 	for(uint i = 0; i < op->record_count; i++) {
-		OpBase_DeleteRecord(&op->records[i]);
+		OpBase_DeleteRecord(op->records+i);
 	}
 	op->record_count = 0;
 
@@ -253,7 +253,7 @@ static void CondTraverseFree(OpBase *ctx) {
 
 	if(op->records) {
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(&op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 		rm_free(op->records);
 		op->records = NULL;

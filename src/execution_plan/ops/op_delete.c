@@ -253,7 +253,7 @@ static void DeleteFree(OpBase *opBase) {
 
 	if(op->records) {
 		uint rec_count = array_len(op->records);
-		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(&op->records[i]);
+		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(op->records+i);
 		array_free(op->records);
 		op->records = NULL;
 	}

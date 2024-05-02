@@ -298,7 +298,6 @@ Record OpBase_CloneRecord
 
 	// increase r's ref count and set r as clone's parent
 	r->ref_count++;
-	ASSERT(clone->parent == NULL);
 	clone->parent = r;
 
 	return clone;

@@ -323,7 +323,7 @@ static OpResult ExpandIntoReset
 	}
 
 	for(uint i = 0; i < op->record_count; i++) {
-		OpBase_DeleteRecord(&op->records[i]);
+		OpBase_DeleteRecord(op->records+i);
 	}
 	op->record_count = 0;
 
@@ -374,7 +374,7 @@ static void ExpandIntoFree
 
 	if(op->records != NULL) {
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(&op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 		rm_free(op->records);
 		op->records = NULL;

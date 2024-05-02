@@ -342,8 +342,7 @@ static OpResult ValueHashJoinReset
 	if(op->cached_records) {
 		uint record_count = array_len(op->cached_records);
 		for(uint i = 0; i < record_count; i++) {
-			Record r = op->cached_records[i];
-			OpBase_DeleteRecord(&r);
+			OpBase_DeleteRecord(op->cached_records+i);
 		}
 		array_free(op->cached_records);
 		op->cached_records = NULL;
@@ -374,8 +373,7 @@ static void ValueHashJoinFree(OpBase *ctx) {
 	if(op->cached_records) {
 		uint record_count = array_len(op->cached_records);
 		for(uint i = 0; i < record_count; i++) {
-			Record r = op->cached_records[i];
-			OpBase_DeleteRecord(&r);
+			OpBase_DeleteRecord(op->cached_records+i);
 		}
 		array_free(op->cached_records);
 		op->cached_records = NULL;

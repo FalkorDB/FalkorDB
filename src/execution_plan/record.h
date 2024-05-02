@@ -36,10 +36,10 @@ typedef struct _Record _Record;
 typedef _Record *Record;
 
 typedef struct _Record {
-	uint64_t ref_count;  // number of records directly relying on this record
-	Record parent;       // this record relies on data in parent record
-	void *owner;         // owner of record
 	rax *mapping;        // mapping between alias to record entry
+	void *owner;         // owner of record
+	Record parent;       // this record relies on data in parent record
+	uint32_t ref_count;  // number of records directly relying on this record
 	Entry entries[];     // array of entries
 } _Record;
 

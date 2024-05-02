@@ -64,7 +64,7 @@ static OpResult ArgumentListReset
 	// free remaining records
 	if(op->records != NULL) {
 		for(uint i = 0; i < op->rec_len; i++) {
-			OpBase_DeleteRecord(&op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		array_free(op->records);
@@ -94,7 +94,7 @@ static void ArgumentListFree
 	// free remaining records
 	if(op->records != NULL) {
 		for(uint i = 0; i < op->rec_len; i++) {
-			OpBase_DeleteRecord(&op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		array_free(op->records);
