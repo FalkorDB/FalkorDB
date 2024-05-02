@@ -399,7 +399,6 @@ SIValue AR_HEAD(SIValue *argv, int argc, void *private_data) {
 	uint arrayLen = SIArray_Length(value);
 	if(arrayLen == 0) return SI_NullVal();
 	SIValue retval = SIArray_Get(value, 0);
-	SIValue_Persist(&retval);
 	return retval;
 }
 
@@ -413,7 +412,6 @@ SIValue AR_LAST(SIValue *argv, int argc, void *private_data) {
 	uint arrayLen = SIArray_Length(value);
 	if(arrayLen == 0) return SI_NullVal();
 	SIValue retval = SIArray_Get(value, arrayLen-1);
-	SIValue_Persist(&retval);
 	return retval;
 }
 
