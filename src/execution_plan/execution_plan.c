@@ -408,6 +408,7 @@ void ExecutionPlan_ReturnRecord
 	Record r
 ) {
 	ASSERT(plan && r);
+	ASSERT(r->ref_count > 0);
 
 	// decrease record ref count
 	r->ref_count--;

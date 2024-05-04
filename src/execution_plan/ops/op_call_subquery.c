@@ -255,9 +255,8 @@ static Record _consume_and_merge
 	}
 
 	Record clone = OpBase_CloneRecord(op->r);
-	// Merge consumed record into a clone of the received record.
-	Record_Merge(clone, consumed);
-	OpBase_DeleteRecord(&consumed);
+	// merge consumed record into a clone of the received record
+	OpBase_MergeRecords(clone, &consumed, false);
 	return clone;
 }
 

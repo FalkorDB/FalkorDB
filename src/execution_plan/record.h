@@ -56,27 +56,19 @@ void Record_Clone
 	Record clone
 );
 
-// deep clone record
-void Record_DeepClone
-(
-	const Record r,
-	Record clone
-);
-
-// merge record b into a, sharing any nested references in b with a
+// merge src record into dest
 void Record_Merge
 (
-	Record a,
-	const Record b
+	restrict Record dest,       // dest record
+	const restrict Record src,  // src record
+	bool override               // override existing entries within dest
 );
 
-// merge entries from `from` into `to`, transfer ownership if transfer_ownership
-// is on
-void Record_TransferEntries
+// duplicates entries from `src` into `dest`
+void Record_DuplicateEntries
 (
-	Record *to,              // destination record
-	Record from,             // src record
-	bool transfer_ownership  // transfer ownership of the record to dest or not
+	restrict Record dest,      // destination record
+	restrict const Record src  // src record
 );
 
 // returns number of entries record can hold

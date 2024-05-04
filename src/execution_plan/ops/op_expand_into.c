@@ -297,8 +297,6 @@ static Record ExpandIntoConsume
 			}
 
 			// store received record
-			// TODO: not sure if necessary when we're streaming records
-			Record_PersistScalars(r);
 			op->records[i] = r;
 		}
 		op->record_count = i;

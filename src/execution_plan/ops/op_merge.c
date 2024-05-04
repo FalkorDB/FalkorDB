@@ -282,7 +282,6 @@ static Record MergeConsume
 			// as the input stream will be freed
 			// before entities are created
 			if(lhs_record) {
-				Record_PersistScalars(lhs_record);
 				Argument_AddRecord(op->create_argument_tap, lhs_record);
 				lhs_record = NULL;
 			}

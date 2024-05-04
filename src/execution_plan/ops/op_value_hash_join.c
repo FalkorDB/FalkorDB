@@ -256,7 +256,7 @@ OpBase *NewValueHashJoin
 	return (OpBase *)op;
 }
 
-// Produce a record by joining
+// produce a record by joining
 // records coming from the left and right hand side
 // of this operation
 static Record ValueHashJoinConsume
@@ -269,7 +269,7 @@ static Record ValueHashJoinConsume
 	// eager, pull from left branch until depleted
 	if(op->cached_records == NULL) {
 		_cache_records(op);
-		// sort cache on intersect node ID
+		// sort cache on compared value
 		_sort_cached_records(op);
 	}
 
@@ -277,17 +277,18 @@ static Record ValueHashJoinConsume
 	// given a right hand side record R,
 	// evaluate V = exp on R,
 	// see if there are any cached records
-	// which V evaluated to V:
+	// with V value:
 	// X in cached_records and X[idx] = V
 	// return merged record:
-	// X merged with R
+	// L merged with R
 
 	Record l;
 	if(op->number_of_intersections > 0) {
 		while((l = _get_intersecting_record(op))) {
 			// clone cached record before merging rhs
 			Record c = OpBase_CloneRecord(l);
-			Record_Merge(c, op->rhs_rec);
+			//Record_Merge(c, op->rhs_rec);
+			Record_DuplicateEntries(c, op->rhs_rec);
 			return c;
 		}
 	}
@@ -320,7 +321,8 @@ static Record ValueHashJoinConsume
 
 		// clone cached record before merging rhs
 		Record c = OpBase_CloneRecord(l);
-		Record_Merge(c, op->rhs_rec);
+		//Record_Merge(c, op->rhs_rec);
+		Record_DuplicateEntries(c, op->rhs_rec);
 
 		return c;
 	}

@@ -10,24 +10,17 @@
 #include "../util/rmalloc.h"
 
 // migrate the entry at the given index in the source Record to the same index
-// in the destination. Ownership is transferred according to transfer_ownership
 static void _RecordPropagateEntry
 (
 	Record dest,
 	Record src,
-	uint idx,
-	bool transfer_ownership
+	uint idx
 ) {
 	// copy the entry
 	dest->entries[idx] = src->entries[idx];
 
-	// ownership is determined according to transfer_ownership
-	if(src->entries[idx].type == REC_TYPE_SCALAR) {
-		if(transfer_ownership) {
-			SIValue_MakeVolatile(&src->entries[idx].value.s);
-		} else {
-			SIValue_MakeVolatile(&dest->entries[idx].value.s);
-		}
+	if(dest->entries[idx].type == REC_TYPE_SCALAR) {
+		dest->entries[idx].value.s = SI_CloneValue(src->entries[idx].value.s);
 	}
 }
 
@@ -102,36 +95,56 @@ void Record_Clone
 	}
 }
 
+// merge src record into dest
 void Record_Merge
 (
-	Record a,
-	const Record b
+	restrict Record dest,       // dest record
+	const restrict Record src,  // src record
+	bool override               // override existing entries within dest
 ) {
-	ASSERT(a->owner == b->owner);
-	uint len = Record_length(a);
+	ASSERT(src->owner == dest->owner);
 
+	// can't override entries of a dependent record, as others might be effected
+	ASSERT((override == true && dest->ref_count == 1) || override == false);
+
+	uint len = Record_length(src);
 	for(uint i = 0; i < len; i++) {
-		RecordEntryType a_type = a->entries[i].type;
-		RecordEntryType b_type = b->entries[i].type;
+		RecordEntryType src_type  = src->entries[i].type;
+		RecordEntryType dest_type = dest->entries[i].type;
 
-		if(a_type == REC_TYPE_UNKNOWN && b_type != REC_TYPE_UNKNOWN) {
-			_RecordPropagateEntry(a, b, i, true);
+		if(src_type != REC_TYPE_UNKNOWN &&
+		   (dest_type == REC_TYPE_UNKNOWN || override)) {
+			// copy entry from src to dest
+			dest->entries[i] = src->entries[i];
+
+			// protect heap allocated values
+			if(src->entries[i].type == REC_TYPE_SCALAR) {
+				if(SI_ALLOCATION(&(src->entries[i].value.s)) == M_SELF) {
+					SIValue_MakeVolatile(&(src->entries[i].value.s));
+				} else {
+					SIValue_Persist(&(dest->entries[i].value.s));
+				}
+			}
 		}
 	}
 }
 
-// merge entries from `from` into `to`, transfer ownership if transfer_ownership
-// is on
-void Record_TransferEntries
+// duplicates entries from `src` into `dest`
+void Record_DuplicateEntries
 (
-	Record *to,              // destination record
-	Record from,             // src record
-	bool transfer_ownership  // transfer ownership of the record to dest or not
+	restrict Record dest,      // destination record
+	restrict const Record src  // src record
 ) {
-	uint len = Record_length(from);
+	uint len = Record_length(src);
 	for(uint i = 0; i < len; i++) {
-		if(from->entries[i].type != REC_TYPE_UNKNOWN) {
-			_RecordPropagateEntry(*to, from, i, transfer_ownership);
+		if(src->entries[i].type != REC_TYPE_UNKNOWN && 
+		   dest->entries[i].type == REC_TYPE_UNKNOWN) {
+			// copy the entry
+			dest->entries[i] = src->entries[i];
+			if(dest->entries[i].type == REC_TYPE_SCALAR) {
+				dest->entries[i].value.s =
+					SI_CloneValue(dest->entries[i].value.s);
+			}
 		}
 	}
 }

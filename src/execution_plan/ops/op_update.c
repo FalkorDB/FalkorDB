@@ -86,8 +86,6 @@ static Record UpdateConsume
 	if(op->updates_committed) return _handoff(op);
 
 	while((r = OpBase_Consume(child))) {
-		Record_PersistScalars(r);
-
 		// evaluate update expressions
 		raxSeek(&op->it, "^", NULL, 0);
 		while(raxNext(&op->it)) {
