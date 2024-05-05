@@ -238,7 +238,9 @@ static void EffectsBuffer_WriteSIVector
 	size_t elem_size = sizeof(float);
 	size_t n = dim * elem_size;
 
-	EffectsBuffer_WriteBytes(elements, n, buff);
+	if(n > 0) {
+		EffectsBuffer_WriteBytes(elements, n, buff);
+	}
 }
 
 // dump attributes to stream

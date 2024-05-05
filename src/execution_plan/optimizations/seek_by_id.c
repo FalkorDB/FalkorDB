@@ -23,14 +23,13 @@ static bool _idFilter
 (
 	FT_FilterNode *f,
 	AST_Operator *rel,
-	EntityID *id,
+	AR_ExpNode **id_exp,
 	bool *reverse
 ) {
 	if(f->t       != FT_N_PRED) return false;
 	if(f->pred.op == OP_NEQUAL) return false;
 
 	AR_OpNode *op;
-	AR_ExpNode *expr;
 	AR_ExpNode *lhs = f->pred.lhs;
 	AR_ExpNode *rhs = f->pred.rhs;
 	*rel = f->pred.op;
@@ -40,11 +39,11 @@ static bool _idFilter
 	// const compare ID(N)
 	if(lhs->type == AR_EXP_OPERAND && rhs->type == AR_EXP_OP) {
 		op = &rhs->op;
-		expr = lhs;
+		*id_exp = lhs;
 		*reverse = true;
 	} else if(lhs->type == AR_EXP_OP && rhs->type == AR_EXP_OPERAND) {
 		op = &lhs->op;
-		expr = rhs;
+		*id_exp = rhs;
 		*reverse = false;
 	} else {
 		return false;
@@ -52,15 +51,6 @@ static bool _idFilter
 
 	// make sure applied function is ID.
 	if(strcasecmp(op->f->name, "id")) return false;
-
-	// make sure ID is compared to a constant int64
-	SIValue val;
-	bool reduced = AR_EXP_ReduceToScalar(expr, true, &val);
-
-	if(!reduced)                return false;
-	if(SI_TYPE(val) != T_INT64) return false;
-
-	*id = SI_GET_NUMERIC(val);
 
 	return true;
 }
@@ -73,9 +63,9 @@ static void _UseIdOptimization
 	// see if there's a filter of the form
 	// ID(n) op X
 	// where X is a constant and op in [EQ, GE, LE, GT, LT]
-	OpBase *parent = scan_op->parent;
 	OpBase *grandparent;
-	UnsignedRange *id_range = NULL;
+	OpBase *parent = scan_op->parent;
+	RangeExpression *ranges = array_new(RangeExpression, 1);
 	while(parent && parent->type == OPType_FILTER) {
 		// track the next op to visit in case we free parent
 		grandparent = parent->parent;
@@ -83,38 +73,39 @@ static void _UseIdOptimization
 		FT_FilterNode *f = filter->filterTree;
 
 		bool         reverse;
-		EntityID     id;
+		AR_ExpNode  *id_exp;
 		AST_Operator op;
 
-		if(_idFilter(f, &op, &id, &reverse)) {
-			if(!id_range) id_range = UnsignedRange_New();
+		if(_idFilter(f, &op, &id_exp, &reverse)) {
 			if(reverse) op = ArithmeticOp_ReverseOp(op);
-			UnsignedRange_TightenRange(id_range, op, id);
+			id_exp = AR_EXP_Clone(id_exp);
 
 			// Free replaced operations.
 			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
+			array_append(ranges, ((RangeExpression){.op = op, .exp = id_exp}));
 			OpBase_Free((OpBase *)filter);
 		}
 		// advance
 		parent = grandparent;
 	}
-	if(id_range) {
+	if(array_len(ranges) > 0) {
 		/* Don't replace label scan, but set it to have range query.
 		 * Issue 818 https://github.com/RedisGraph/RedisGraph/issues/818
 		 * This optimization caused a range query over the entire range of ids in the graph
 		 * regardless to the label. */
 		if(scan_op->type == OPType_NODE_BY_LABEL_SCAN) {
 			NodeByLabelScan *label_scan = (NodeByLabelScan *) scan_op;
-			NodeByLabelScanOp_SetIDRange(label_scan, id_range);
+			NodeByLabelScanOp_SetIDRange(label_scan, ranges);
 		} else {
 			const char *alias = ((AllNodeScan *)scan_op)->alias;
-			OpBase *opNodeByIdSeek = NewNodeByIdSeekOp(scan_op->plan, alias, id_range);
+			OpBase *opNodeByIdSeek = NewNodeByIdSeekOp(scan_op->plan, alias, ranges);
 
 			// Managed to reduce!
 			ExecutionPlan_ReplaceOp(plan, scan_op, opNodeByIdSeek);
 			OpBase_Free(scan_op);
 		}
-		UnsignedRange_Free(id_range);
+	} else {
+		array_free(ranges);
 	}
 }
 

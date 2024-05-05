@@ -27,13 +27,15 @@ static inline void *rm_calloc(size_t nelem, size_t elemsz) {
 static inline void *rm_realloc(void *p, size_t n) {
 	return RedisModule_Realloc(p, n);
 }
+static inline void *rm_aligned_malloc(size_t alignment, size_t size) {
+	return rm_malloc(size);
+}
 static inline void rm_free(void *p) {
 	RedisModule_Free(p);
 }
 static inline char *rm_strdup(const char *s) {
 	return RedisModule_Strdup(s);
 }
-
 static inline char *rm_strndup(const char *s, size_t n) {
 	char *ret = (char *)rm_malloc(n + 1);
 

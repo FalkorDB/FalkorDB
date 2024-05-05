@@ -7,33 +7,38 @@
 #pragma once
 
 #include "op.h"
-#include "shared/scan_functions.h"
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
-#include "../../graph/entities/node.h"
-#include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
-#include "../../util/range/unsigned_range.h"
-#include "../../graph/delta_matrix/delta_matrix_iter.h"
+#include "../../util/roaring.h"
+#include "shared/scan_functions.h"
+#include "../../util/range/range.h"
+#include "../../graph/rg_matrix/delta_matrix_iter.h"
 
-/* NodeByLabelScan, scans entire label. */
-
+// NodeByLabelScan, scans entire label
 typedef struct {
 	OpBase op;
-	Graph *g;
-	NodeScanCtx *n;              // Label data of node being scanned
-	unsigned int nodeRecIdx;     // Node position within record
-	UnsignedRange *id_range;     // ID range to iterate over
-	Delta_MatrixTupleIter iter;  // Iterator over label matrix
-	Record child_record;         // The Record this op acts on if it is not a tap
+	Graph *g;                     // graph
+	NodeScanCtx *n;               // label data of node being scanned
+	unsigned int nodeRecIdx;      // node position within record
+	RangeExpression *ranges;      // array of ID range expressions
+	roaring64_bitmap_t *ids;      // resolved ids by filters
+	roaring64_iterator_t *ID_it;  // ID iterator
+	RG_Matrix L;                  // label matrix
+	Delta_MatrixTupleIter iter;   // iterator over label matrix
+	Record child_record;          // the record this op acts on if it is not a tap
 } NodeByLabelScan;
 
-/* Creates a new NodeByLabelScan operation */
+// creates a new NodeByLabelScan operation
 OpBase *NewNodeByLabelScanOp
 (
 	const ExecutionPlan *plan,
 	NodeScanCtx *n
 );
 
-/* Transform a simple label scan to perform additional range query over the label  matrix. */
-void NodeByLabelScanOp_SetIDRange(NodeByLabelScan *op, UnsignedRange *id_range);
+// transform label scan to perform additional range query over the label matrix
+void NodeByLabelScanOp_SetIDRange
+(
+	NodeByLabelScan *op,
+	RangeExpression *ranges  // ID range expressions
+);
 
