@@ -197,7 +197,7 @@ static Record NodeByLabelScanConsume
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index id;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	if(info == GxB_EXHAUSTED) return NULL;
 
 	ASSERT(info == GrB_SUCCESS);
@@ -224,7 +224,7 @@ static Record NodeByLabelAndIDScanConsume
 		id = roaring64_iterator_value(op->ID_it);
 		roaring64_iterator_advance(op->ID_it);
 		bool x;
-		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
 			Record r = OpBase_CreateRecord((OpBase *)op);
 
 			// Populate the Record with the actual node.
@@ -311,7 +311,7 @@ pull:
 		roaring64_iterator_advance(op->ID_it);
 
 		// make sure ID is labeled as L
-		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
 			emited = true;
 			break;
 		}
