@@ -206,11 +206,14 @@ static Record _handoff
 	for(uint i = 0; i < op->key_count; i++) {
 		int rec_idx = op->record_offsets[i];
 		// non-aggregated expression
-		//SIValue key = SI_ShareValue(keys[i]);
-		SIValue key = keys[i];
-		if(!(key.type & SI_GRAPHENTITY)) {
+		SIValue key;
+		if(SI_ALLOCATION(keys+i) == M_SELF) {
+			key = SI_TransferOwnership(keys+i);
+		} else {
+			key = keys[i];
 			SIValue_Persist(&key);
 		}
+
 		Record_Add(r, rec_idx, key);
 	}
 
@@ -220,11 +223,13 @@ static Record _handoff
 		AR_ExpNode *exp = g->agg[i];
 
 		SIValue agg = AR_EXP_FinalizeAggregations(exp, r);
-		if(!(agg.type & SI_GRAPHENTITY)) {
-			SIValue_Persist(&agg);
-		}
+		SIValue_Persist(&agg);
 		Record_AddScalar(r, rec_idx, agg);
 	}
+
+	// free group
+	Group_Free(g);
+	HashTableSetVal(op->groups, entry, NULL);
 
 	return r;
 }
