@@ -107,7 +107,6 @@ static Record ForeachConsume
 	if(op->supplier) {
 		// eagerly drain supplier
 		while((r = OpBase_Consume(op->supplier))) {
-			//Record_PersistScalars(r);
 			array_append(op->records, r);
 
 			// create a record with the mapping of the embedded plan

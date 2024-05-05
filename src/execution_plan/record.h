@@ -165,12 +165,6 @@ Edge *Record_AddEdge
 	Edge edge
 );
 
-// ensure that all scalar values in record are access-safe
-void Record_PersistScalars
-(
-	Record r
-);
-
 // string representation of record
 size_t Record_ToString
 (

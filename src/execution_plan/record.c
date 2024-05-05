@@ -294,18 +294,6 @@ Edge *Record_AddEdge
 	return &(r->entries[idx].value.e);
 }
 
-void Record_PersistScalars
-(
-	Record r
-) {
-	uint len = Record_length(r);
-	for(uint i = 0; i < len; i++) {
-		if(r->entries[i].type == REC_TYPE_SCALAR) {
-			SIValue_Persist(&r->entries[i].value.s);
-		}
-	}
-}
-
 size_t Record_ToString
 (
 	const Record r,

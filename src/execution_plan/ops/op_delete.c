@@ -216,10 +216,6 @@ static Record DeleteConsume(OpBase *opBase) {
 	// pull data until child is depleted
 	OpBase *child = op->op.children[0];
 	while((r = OpBase_Consume(child))) {
-		// persist scalars from previous ops before storing the record
-		// as those ops will be freed before the records are handed off
-		Record_PersistScalars(r);
-
 		// save record for later use
 		array_append(op->records, r);
 
