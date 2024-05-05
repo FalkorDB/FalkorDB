@@ -84,7 +84,7 @@ static Record ApplyConsume
 
 		// clone the bound Record and merge the RHS Record into it
 		Record r = OpBase_CloneRecord(op->r);
-		OpBase_MergeRecords(r, &rhs_record, false);
+		OpBase_MergeRecords(r, &rhs_record);
 
 		return r;
 	}

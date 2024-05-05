@@ -99,21 +99,16 @@ void Record_Clone
 void Record_Merge
 (
 	restrict Record dest,       // dest record
-	const restrict Record src,  // src record
-	bool override               // override existing entries within dest
+	const restrict Record src  // src record
 ) {
 	ASSERT(src->owner == dest->owner);
-
-	// can't override entries of a dependent record, as others might be effected
-	ASSERT((override == true && dest->ref_count == 1) || override == false);
 
 	uint len = Record_length(src);
 	for(uint i = 0; i < len; i++) {
 		RecordEntryType src_type  = src->entries[i].type;
 		RecordEntryType dest_type = dest->entries[i].type;
 
-		if(src_type != REC_TYPE_UNKNOWN &&
-		   (dest_type == REC_TYPE_UNKNOWN || override)) {
+		if(src_type != REC_TYPE_UNKNOWN && dest_type == REC_TYPE_UNKNOWN) {
 			// copy entry from src to dest
 			dest->entries[i] = src->entries[i];
 

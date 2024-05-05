@@ -287,7 +287,6 @@ static Record ValueHashJoinConsume
 		while((l = _get_intersecting_record(op))) {
 			// clone cached record before merging rhs
 			Record c = OpBase_CloneRecord(l);
-			//Record_Merge(c, op->rhs_rec);
 			Record_DuplicateEntries(c, op->rhs_rec);
 			return c;
 		}
@@ -321,7 +320,6 @@ static Record ValueHashJoinConsume
 
 		// clone cached record before merging rhs
 		Record c = OpBase_CloneRecord(l);
-		//Record_Merge(c, op->rhs_rec);
 		Record_DuplicateEntries(c, op->rhs_rec);
 
 		return c;

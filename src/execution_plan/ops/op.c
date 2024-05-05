@@ -343,15 +343,14 @@ inline void OpBase_DeleteRecord
 // merge src into dest and deletes src
 void OpBase_MergeRecords
 (
-	Record dest,   // entries are merged into this record
-	Record *src,   // entries are merged from this record
-	bool override  // override existing entries within dest
+	Record dest,  // entries are merged into this record
+	Record *src   // entries are merged from this record
 ) {
 	ASSERT(dest != NULL);
 	ASSERT(src  != NULL && *src != NULL);
 	ASSERT(dest != *src);
 
-	Record_Merge(dest, *src, override);
+	Record_Merge(dest, *src);
 	OpBase_DeleteRecord(src);
 }
 

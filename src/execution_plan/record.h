@@ -59,9 +59,8 @@ void Record_Clone
 // merge src record into dest
 void Record_Merge
 (
-	restrict Record dest,       // dest record
-	const restrict Record src,  // src record
-	bool override               // override existing entries within dest
+	restrict Record dest,      // dest record
+	const restrict Record src  // src record
 );
 
 // duplicates entries from `src` into `dest`
