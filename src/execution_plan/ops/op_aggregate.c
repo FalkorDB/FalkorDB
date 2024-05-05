@@ -207,11 +207,12 @@ static Record _handoff
 		int rec_idx = op->record_offsets[i];
 		// non-aggregated expression
 		SIValue key;
+		ASSERT(SI_ALLOCATION(keys+i) != M_VOLATILE);
+
 		if(SI_ALLOCATION(keys+i) == M_SELF) {
 			key = SI_TransferOwnership(keys+i);
 		} else {
 			key = keys[i];
-			SIValue_Persist(&key);
 		}
 
 		Record_Add(r, rec_idx, key);
