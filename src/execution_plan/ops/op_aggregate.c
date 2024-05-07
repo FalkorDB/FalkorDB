@@ -148,8 +148,17 @@ static Group *_GetGroup
 		// set keys in record
 		Record representative = OpBase_CreateRecord((OpBase*)op);
 		for(uint i = 0; i < op->key_count; i++) {
-			SIValue_Persist(keys+i);
+			SIType t = keys[i].type;
+
+			if(!(t & SI_GRAPHENTITY)) {
+				SIValue_Persist(keys+i);
+			}
+
 			Record_Add(representative, op->record_offsets[i], keys[i]);
+
+			if((t & SI_GRAPHENTITY)) {
+				SIValue_Free(keys[i]);
+			}
 		}
 
 		g = _CreateGroup(op, representative);
@@ -189,7 +198,6 @@ static Record _handoff
 		return NULL;
 	}
 
-	Record output = OpBase_CreateRecord((OpBase*)op);
 	Group *g = (Group*)HashTableGetVal(entry);
 	Record r = g->r;
 	g->r = NULL;
