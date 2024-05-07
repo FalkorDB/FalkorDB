@@ -33,8 +33,8 @@ generate_cert() {
 }
 
 mkdir -p tls
-[ -f tls/ca.key ] || openssl genrsa -out tls/ca.key 4096
-[ -f tls/ca.crt ] || openssl req \
+[ -f "tls/ca.key" ] || openssl genrsa -out tls/ca.key 4096
+[ -f "tls/ca.crt" ] || openssl req \
     -x509 -new -nodes -sha256 \
     -key tls/ca.key \
     -days 3650 \
