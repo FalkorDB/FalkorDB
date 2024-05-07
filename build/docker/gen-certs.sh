@@ -41,7 +41,7 @@ mkdir -p tls
     -subj '/O=Redis Test/CN=Certificate Authority' \
     -out tls/ca.crt
 
-[ -f tls/openssl.cnf ] || cat > tls/openssl.cnf <<_END_
+[ -f "tls/openssl.cnf" ] || cat > tls/openssl.cnf <<_END_
 [ server_cert ]
 keyUsage = digitalSignature, keyEncipherment
 nsCertType = server
