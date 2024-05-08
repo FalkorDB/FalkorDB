@@ -66,6 +66,7 @@ deps/GraphBLAS/Config/GraphBLAS.h.tmp
 /cov/
 /venv/
 /.vscode/
+/.idea/
 /1/
 
 target
