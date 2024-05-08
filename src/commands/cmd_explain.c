@@ -36,7 +36,7 @@ void Graph_Explain(void *args) {
 	ExecutionPlan  *plan  = NULL;
 	exec_ctx  =  ExecutionCtx_FromQuery(CommandCtx_GetQuery(command_ctx));
 	if (exec_ctx == NULL) {
-		query_ctx->status = QueryExecutionStatus_FAILURE;
+        QueryCtx_SetStatus(QueryExecutionStatus_FAILURE);
 		goto cleanup;
 	}
 
@@ -58,7 +58,7 @@ void Graph_Explain(void *args) {
 	ExecutionPlan_Init(plan);       // Initialize the plan's ops.
 
 	if (ErrorCtx_EncounteredError()) {
-		query_ctx->status = QueryExecutionStatus_FAILURE;
+        QueryCtx_SetStatus(QueryExecutionStatus_FAILURE);
 		goto cleanup;
 	}
 

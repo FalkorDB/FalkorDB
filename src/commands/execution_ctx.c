@@ -132,8 +132,7 @@ ExecutionCtx *ExecutionCtx_FromQuery
 
 	// update query context with the query without params
 	// (here the QueryInfo is created as well, starting the stage timer)
-	QueryCtx *ctx = QueryCtx_GetQueryCtx();
-	ctx->query_data.query_no_params = q_str;
+    QueryCtx_SetQueryNoParams(q_str);
 
 	// get cache
 	Cache *cache = GraphContext_GetCache(QueryCtx_GetGraphCtx());

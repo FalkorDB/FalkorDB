@@ -5,16 +5,16 @@
  */
 
 #include "query_ctx.h"
-#include "RG.h"
-#include "errors.h"
-#include "util/simple_timer.h"
-#include "arithmetic/arithmetic_expression.h"
-#include "serializers/graphcontext_type.h"
+//#include "RG.h"
+//#include "errors.h"
+//#include "util/simple_timer.h"
+//#include "arithmetic/arithmetic_expression.h"
+//#include "serializers/graphcontext_type.h"
 
 // GraphContext type as it is registered at Redis
-extern RedisModuleType *GraphContextRedisModuleType;
+//extern RedisModuleType *GraphContextRedisModuleType;
 
-pthread_key_t _tlsQueryCtxKey;  // thread local storage query context key
+//pthread_key_t _tlsQueryCtxKey;  // thread local storage query context key
 
 // retrieve or instantiate new QueryCtx
 //static inline QueryCtx *_QueryCtx_GetCreateCtx(void) {

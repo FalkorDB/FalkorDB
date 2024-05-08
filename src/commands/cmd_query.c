@@ -47,7 +47,7 @@ static GraphQueryCtx *GraphQueryCtx_New
 	ctx->exec_ctx         =  exec_ctx;
 	ctx->graph_ctx        =  graph_ctx;
 	ctx->query_ctx        =  QueryCtx_GetQueryCtx();
-	ctx->query_ctx->flags = flags;
+    QueryCtx_SetFlags(flags);
 	ctx->command_ctx      =  command_ctx;
 	ctx->timeout          =  timeout;
 
@@ -160,8 +160,6 @@ static void _ExecuteQuery(void *args) {
 	AST            *ast         = exec_ctx->ast;
 	ExecutionPlan  *plan        = exec_ctx->plan;
 	ExecutionType  exec_type    = exec_ctx->exec_type;
-	const bool     profile      = (query_ctx->flags & QueryExecutionTypeFlag_PROFILE);
-	const bool     readonly     = !(query_ctx->flags & QueryExecutionTypeFlag_WRITE);
 
 	// if we have migrated to a writer thread,
 	// update thread-local storage and track the CommandCtx
@@ -171,6 +169,10 @@ static void _ExecuteQuery(void *args) {
 		QueryCtx_SetTLS(query_ctx);
 		Globals_TrackCommandCtx(command_ctx);
 	}
+
+    // In case we did migrate, because this function takes the query ctx from the tls
+    const bool     profile      = QueryCtx_HasFlags(QueryExecutionTypeFlag_PROFILE);
+    const bool     readonly     = !QueryCtx_HasFlags(QueryExecutionTypeFlag_WRITE);
 
 	// instantiate the query ResultSet
     bolt_client_t *bolt = CommandCtx_GetBoltClient(command_ctx);
@@ -214,7 +216,7 @@ static void _ExecuteQuery(void *args) {
 		if(profile) {
 			ExecutionPlan_Profile(plan);
 			if (abort_and_check_timeout(gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT;
+                QueryCtx_SetStatus(QueryExecutionStatus_TIMEDOUT);
 			}
 
 			if(!ErrorCtx_EncounteredError()) {
@@ -226,7 +228,7 @@ static void _ExecuteQuery(void *args) {
 		else {
 			result_set = ExecutionPlan_Execute(plan);
 			if (abort_and_check_timeout(gq_ctx, plan)) {
-				query_ctx->status = QueryExecutionStatus_TIMEDOUT;
+                QueryCtx_SetStatus(QueryExecutionStatus_TIMEDOUT);
 			}
 		}
 
@@ -244,8 +246,8 @@ static void _ExecuteQuery(void *args) {
 		QueryCtx_Rollback();
 		// clear resultset statistics, avoiding commnad being replicated
 		ResultSet_Clear(result_set);
-		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
-			query_ctx->status = QueryExecutionStatus_FAILURE;
+		if (QueryCtx_GetStatus() != QueryExecutionStatus_TIMEDOUT) {
+            QueryCtx_SetStatus(QueryExecutionStatus_FAILURE);
 		}
 	} else {
 		// replicate if graph was modified

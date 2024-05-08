@@ -30,7 +30,7 @@ static void build_ast_and_plan
 	ExecutionPlan **plan
 ) {
 	QueryCtx *ctx = QueryCtx_GetQueryCtx();
-	ctx->query_data.query_no_params = query;
+    QueryCtx_SetQueryNoParams(query);
 	cypher_parse_result_t *parse_result = cypher_parse(query, NULL, NULL, CYPHER_PARSE_ONLY_STATEMENTS);
 	*ast = AST_Build(parse_result);
 	*plan = ExecutionPlan_FromTLS_AST();

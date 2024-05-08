@@ -695,7 +695,7 @@ const char *AST_ToString
 			struct cypher_input_range range = cypher_astnode_range(node);
 			uint length = range.end.offset - range.start.offset + 1;
 			str = malloc(sizeof(char) * length);
-			strncpy(str, ctx->query_data.query_no_params + range.start.offset, length - 1);
+			strncpy(str, QueryCtx_GetQueryNoParams() + range.start.offset, length - 1);
 			str[length - 1] = '\0';
 		}
 		if(ast_identifier) {
