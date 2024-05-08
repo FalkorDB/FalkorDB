@@ -165,7 +165,7 @@ static void _ExecuteQuery(void *args) {
 
 	// if we have migrated to a writer thread,
 	// update thread-local storage and track the CommandCtx
-	if (command_ctx->thread == EXEC_THREAD_WRITER) {
+	if (CommandCtx_GetThreadType(command_ctx) == EXEC_THREAD_WRITER) {
 		// transition the query from waiting to executing
 		QueryCtx_AdvanceStage(query_ctx);
 		QueryCtx_SetTLS(query_ctx);
@@ -173,18 +173,18 @@ static void _ExecuteQuery(void *args) {
 	}
 
 	// instantiate the query ResultSet
-	bool bolt    = command_ctx->bolt_client != NULL;
-	bool compact = command_ctx->compact;
+    bolt_client_t *bolt = CommandCtx_GetBoltClient(command_ctx);
+	bool compact = CommandCtx_IsCompact(command_ctx);
 	// replicated command don't need to return result
 	ResultSetFormatterType resultset_format =
-		profile || command_ctx->replicated_command
+		profile || CommandCtx_IsReplicated(command_ctx)
 		? FORMATTER_NOP
-		: (bolt)
+		: (bolt != NULL)
 			? FORMATTER_BOLT
 			: (compact)
 				? FORMATTER_COMPACT
 				: FORMATTER_VERBOSE;
-	ResultSet *result_set = NewResultSet(rm_ctx, command_ctx->bolt_client, resultset_format);
+	ResultSet *result_set = NewResultSet(rm_ctx, bolt, resultset_format);
 	if(exec_ctx->cached) {
 		ResultSet_CachedExecution(result_set); // indicate a cached execution
 	}
@@ -287,7 +287,7 @@ static void _ExecuteQuery(void *args) {
 
 	// log query to slowlog
 	SlowLog *slowlog = GraphContext_GetSlowLog(gc);
-	SlowLog_Add(slowlog, command_ctx->command_name, command_ctx->query,
+	SlowLog_Add(slowlog, CommandCtx_GetCommandName(command_ctx), CommandCtx_GetQuery(command_ctx),
 				QueryCtx_GetRuntime(), NULL);
 
 	// clean up
@@ -318,7 +318,7 @@ static void _DelegateWriter(GraphQueryCtx *gq_ctx) {
 	Globals_UntrackCommandCtx(gq_ctx->command_ctx);
 
 	// update execution thread to writer
-	gq_ctx->command_ctx->thread = EXEC_THREAD_WRITER;
+    CommandCtx_SetThreadType(gq_ctx->command_ctx, EXEC_THREAD_WRITER);
 
 	// reset query stage from executing back to waiting
 	QueryCtx_ResetStage(gq_ctx->query_ctx);
@@ -347,7 +347,7 @@ void _query
 
 	// parse query parameters and build an execution plan
 	// or retrieve it from the cache
-	exec_ctx = ExecutionCtx_FromQuery(command_ctx->query);
+	exec_ctx = ExecutionCtx_FromQuery(CommandCtx_GetQuery(command_ctx));
 	if(exec_ctx == NULL) goto cleanup;
 
 	// update cached flag
@@ -373,11 +373,12 @@ void _query
 
 	// enforce specified timeout when query is readonly
 	// or timeout applies to both read and write
-	bool enforce_timeout = command_ctx->timeout != 0 && !index_op &&
-		(readonly || command_ctx->timeout_rw) &&
-		!command_ctx->replicated_command;
+    long long timeout = CommandCtx_GetTimeout(command_ctx);
+	bool enforce_timeout = timeout != 0 && !index_op &&
+		(readonly || CommandCtx_GetTimeoutReadWrite(command_ctx)) &&
+		!CommandCtx_IsReplicated(command_ctx);
 	if(enforce_timeout) {
-		timeout_task = Query_SetTimeOut(command_ctx->timeout, exec_ctx->plan);
+		timeout_task = Query_SetTimeOut(timeout, exec_ctx->plan);
 	}
 
 	// populate the container struct for invoking _ExecuteQuery.
@@ -394,7 +395,7 @@ void _query
 	// if 'thread' is redis main thread, continue running
 	// if readonly is true we're executing on a worker thread from
 	// the read-only threadpool
-	if(readonly || command_ctx->thread == EXEC_THREAD_MAIN) {
+	if(readonly || CommandCtx_GetThreadType(command_ctx) == EXEC_THREAD_MAIN) {
 		_ExecuteQuery(gq_ctx);
 	} else {
 		_DelegateWriter(gq_ctx);

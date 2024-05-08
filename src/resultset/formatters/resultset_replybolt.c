@@ -114,7 +114,7 @@ static void _ResultSet_BoltReplyWithElementID
 ) {
 	int ndigits = id == 0 ? 1 : floor(log10(id)) + 1;
 	char element_id[ndigits + strlen(prefix) + 2];
-	sprintf(element_id, "%s_%llu", prefix, id);
+	sprintf(element_id, "%s_%lu", prefix, id);
 	bolt_reply_string(client, element_id, strlen(element_id));
 }
 
@@ -187,7 +187,7 @@ static void _ResultSet_BoltReplyWithEdge
 	} else {
 		bolt_reply_structure(client, BST_UNBOUND_RELATIONSHIP, 4);
 	}
-	
+
 	bolt_reply_int64(client, e->id);
 	if(is_bounded) {
 		bolt_reply_int64(client, e->src_id);

@@ -99,27 +99,27 @@ static void _emit_running_query
 	ASSERT(cmd != NULL);
 
 	// compute query execution time
-	const double total_time = TIMER_GET_ELAPSED_MILLISECONDS(cmd->timer);
+	const double total_time = TIMER_GET_ELAPSED_MILLISECONDS(CommandCtx_GetTimer(cmd));
 
 	RedisModule_ReplyWithArray(ctx, 5 * 2);
 
 	// emit query received timestamp
 	Info_SectionAddEntryLongLong(ctx, RECEIVED_TIMESTAMP_KEY_NAME,
-			cmd->received_ts);
+                                 CommandCtx_GetReceivedTimestamp(cmd));
 
 	// emit graph name
 	Info_SectionAddEntryString(ctx, GRAPH_NAME_KEY_NAME,
-			GraphContext_GetName(cmd->graph_ctx));
+			GraphContext_GetName(CommandCtx_GetGraphContext(cmd)));
 
 	// emit query
-	Info_SectionAddEntryString(ctx, QUERY_KEY_NAME, cmd->query);
+	Info_SectionAddEntryString(ctx, QUERY_KEY_NAME, CommandCtx_GetQuery(cmd));
 
 	// emit query wait duration
 	Info_SectionAddEntryDouble(ctx, EXECUTION_DURATION_KEY_NAME, total_time);
 
 	// emit rather or not query was replicated
 	Info_SectionAddEntryLongLong(ctx, REPLICATION_KEY_NAME,
-			cmd->replicated_command);
+                                 CommandCtx_IsReplicated(cmd));
 }
 
 // replies with query information
@@ -132,20 +132,20 @@ static void _emit_waiting_query
 	ASSERT(cmd != NULL);
 
 	// compute query execution time
-	const double total_time = TIMER_GET_ELAPSED_MILLISECONDS(cmd->timer);
+	const double total_time = TIMER_GET_ELAPSED_MILLISECONDS(CommandCtx_GetTimer(cmd));
 
 	RedisModule_ReplyWithArray(ctx, 4 * 2);
 
 	// emit query received timestamp
 	Info_SectionAddEntryLongLong(ctx, RECEIVED_TIMESTAMP_KEY_NAME,
-			cmd->received_ts);
+                                 CommandCtx_GetReceivedTimestamp(cmd));
 
 	// emit graph name
 	Info_SectionAddEntryString(ctx, GRAPH_NAME_KEY_NAME,
-			GraphContext_GetName(cmd->graph_ctx));
+			GraphContext_GetName(CommandCtx_GetGraphContext(cmd)));
 
 	// emit query
-	Info_SectionAddEntryString(ctx, QUERY_KEY_NAME, cmd->query);
+	Info_SectionAddEntryString(ctx, QUERY_KEY_NAME, CommandCtx_GetQuery(cmd));
 
 	// emit query execution duration
 	Info_SectionAddEntryDouble(ctx, WAIT_DURATION_KEY_NAME, total_time);

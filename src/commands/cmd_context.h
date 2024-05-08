@@ -14,6 +14,8 @@
 
 #include <stdatomic.h>
 
+typedef struct _CommandCtx CommandCtx;
+
 // ExecutorThread lists the diffrent types of threads in the system
 typedef enum {
 	EXEC_THREAD_MAIN,    // redis main thread
@@ -22,22 +24,22 @@ typedef enum {
 } ExecutorThread;
 
 // command context, used for concurrent query processing
-typedef struct {
-	char *query;                   // query string
-	RedisModuleCtx *ctx;           // redis module context
-	char *command_name;            // command to execute
-	GraphContext *graph_ctx;       // graph context
-	atomic_int ref_count;          // reference count
-	RedisModuleBlockedClient *bc;  // blocked client
-	bool replicated_command;       // whether this instance was spawned by a replication command
-	bool compact;                  // whether this query was issued with the compact flag
-	ExecutorThread thread;         // which thread executes this command
-	long long timeout;             // the query timeout, if specified
-	bool timeout_rw;               // apply timeout on both read and write queries
-	uint64_t received_ts;          // command received at this UNIX timestamp
-	simple_timer_t timer;          // stopwatch started upon command received
-	bolt_client_t *bolt_client;    // BOLT client
-} CommandCtx;
+//typedef struct {
+//	char *query;                   // query string
+//	RedisModuleCtx *ctx;           // redis module context
+//	char *command_name;            // command to execute
+//	GraphContext *graph_ctx;       // graph context
+//	atomic_int ref_count;          // reference count
+//	RedisModuleBlockedClient *bc;  // blocked client
+//	bool replicated_command;       // whether this instance was spawned by a replication command
+//	bool compact;                  // whether this query was issued with the compact flag
+//	ExecutorThread thread;         // which thread executes this command
+//	long long timeout;             // the query timeout, if specified
+//	bool timeout_rw;               // apply timeout on both read and write queries
+//	uint64_t received_ts;          // command received at this UNIX timestamp
+//	simple_timer_t timer;          // stopwatch started upon command received
+//	bolt_client_t *bolt_client;    // BOLT client
+//} CommandCtx;
 
 // create a new command context
 CommandCtx *CommandCtx_New
@@ -86,6 +88,22 @@ GraphContext *CommandCtx_GetGraphContext
 (
 	const CommandCtx *command_ctx
 );
+
+void CommandCtx_SetThreadType(const CommandCtx *command_ctx, ExecutorThread thread_type);
+
+ExecutorThread CommandCtx_GetThreadType(const CommandCtx *command_ctx);
+
+bool CommandCtx_IsReplicated(const CommandCtx *command_ctx);
+
+bool CommandCtx_IsCompact(const CommandCtx *command_ctx);
+
+long long CommandCtx_GetTimeout(const CommandCtx *command_ctx);
+
+const double *CommandCtx_GetTimer(const CommandCtx *command_ctx);
+
+long long CommandCtx_GetReceivedTimestamp(const CommandCtx *command_ctx);
+
+bool CommandCtx_GetTimeoutReadWrite(const CommandCtx *command_ctx);
 
 // get command name
 const char *CommandCtx_GetCommandName

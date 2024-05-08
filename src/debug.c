@@ -33,8 +33,8 @@ static void logCommands(void) {
 		CommandCtx *cmd = commands[i];
 		ASSERT(cmd != NULL);
 
-		RedisModule_Log(NULL, "warning", "%s %s", cmd->command_name,
-				cmd->query);
+		RedisModule_Log(NULL, "warning", "%s %s", CommandCtx_GetCommandName(cmd),
+                        CommandCtx_GetQuery(cmd));
 
 		CommandCtx_Free(cmd);
 	}
@@ -66,7 +66,7 @@ void InfoFunc
 
 		int rc __attribute__((unused));
 		char *command_desc = NULL;
-		rc = asprintf(&command_desc, "%s %s", cmd->command_name, cmd->query);
+		rc = asprintf(&command_desc, "%s %s", CommandCtx_GetCommandName(cmd), CommandCtx_GetQuery(cmd));
 		RedisModule_InfoAddFieldCString(ctx, "command", command_desc);
 
 		free(command_desc);

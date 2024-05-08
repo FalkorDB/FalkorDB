@@ -20,6 +20,7 @@ add_library(falkordb SHARED ${SOURCES})
 include_directories(
 	${root}/src
 	${root}
+	${root}/deps/FalkorDB-rs/headers
 	${root}/deps
 	${root}/deps/rax
 	${root}/deps/xxHash
