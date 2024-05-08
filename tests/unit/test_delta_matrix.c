@@ -154,10 +154,6 @@ void test_DeltaMatrix_new() {
 	// bool matrix do not maintain transpose
 	TEST_ASSERT(Delta_Matrix_getTranspose(A) == NULL);
 
-	// a new empty matrix should be synced
-	// no data in either DP or DM
-	TEST_ASSERT(!Delta_Matrix_isDirty(A));
-
 	// matrix should be empty
 	M_EMPTY();
 	DP_EMPTY(); 
@@ -203,7 +199,7 @@ void test_DeltaMatrix_set() {
 	Delta_Matrix_wait(A, true);
 
 	// set element at position i,j
-	info = Delta_Matrix_removeElement_BOOL(A, i, j);
+	info = Delta_Matrix_removeElement(A, i, j);
 	TEST_ASSERT(info == GrB_SUCCESS);
 	
 	// set element at position i,j
@@ -385,7 +381,7 @@ void test_DeltaMatrix_fuzzy() {
 			// delete element at position i,j
 			//------------------------------------------------------------------
 			
-			Delta_Matrix_removeElement_BOOL(A, i, j);
+			Delta_Matrix_removeElement(A, i, j);
 
 			GrB_Matrix_removeElement(N, i, j);
 		}
@@ -529,7 +525,7 @@ void test_DeltaMatrix_export_pending_changes() {
 	//--------------------------------------------------------------------------
 
 	// remove element at position 0,0
-	info = Delta_Matrix_removeElement_BOOL(A, 0, 0);
+	info = Delta_Matrix_removeElement(A, 0, 0);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set element at position 2,2
@@ -603,7 +599,7 @@ void test_DeltaMatrix_copy() {
 	//--------------------------------------------------------------------------
 
 	// remove element at position 0,0
-	info = Delta_Matrix_removeElement_BOOL(A, 0, 0);
+	info = Delta_Matrix_removeElement(A, 0, 0);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set element at position 2,2
@@ -688,7 +684,7 @@ void test_DeltaMatrix_mxm() {
 	//--------------------------------------------------------------------------
 
 	// remove element at position 0,0
-	info = Delta_Matrix_removeElement_BOOL(B, 1, 2);
+	info = Delta_Matrix_removeElement(B, 1, 2);
 	TEST_ASSERT(info == GrB_SUCCESS);
 
 	// set element at position 1,3

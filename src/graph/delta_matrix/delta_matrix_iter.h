@@ -73,6 +73,15 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 	bool *val                       // optional value at A[row, col]
 );
 
+// advance iterator
+GrB_Info Delta_MatrixTupleIter_next_UINT64
+(
+	Delta_MatrixTupleIter *iter,    // iterator to consume
+	GrB_Index *row,                 // optional output row index
+	GrB_Index *col,                 // optional output column index
+	uint64_t *val                   // optional value at A[row, col]
+);
+
 // reset iterator
 GrB_Info Delta_MatrixTupleIter_reset
 (

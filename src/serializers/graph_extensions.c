@@ -139,15 +139,13 @@ static void _OptimizedSingleEdgeFormConnection
 ) {
 	GrB_Info info;
 	Delta_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix  S      =  Graph_GetSourceRelationMatrix(g, r, false);
-	Delta_Matrix  T      =  Graph_GetTargetRelationMatrix(g, r, false);
+	Delta_Matrix  S      =  Graph_GetSourceRelationMatrix(g, r);
+	Delta_Matrix  T      =  Graph_GetTargetRelationMatrix(g, r);
 	Delta_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
 	GrB_Matrix m         =  Delta_Matrix_M(M);
 	GrB_Matrix tm        =  Delta_Matrix_M(Delta_Matrix_getTranspose(M));
 	GrB_Matrix s         =  Delta_Matrix_M(S);
-	GrB_Matrix ts        =  Delta_Matrix_M(Delta_Matrix_getTranspose(S));
 	GrB_Matrix t         =  Delta_Matrix_M(T);
-	GrB_Matrix tt        =  Delta_Matrix_M(Delta_Matrix_getTranspose(T));
 	GrB_Matrix adj_m     =  Delta_Matrix_M(adj);
 	GrB_Matrix adj_tm    =  Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
@@ -180,13 +178,9 @@ static void _OptimizedSingleEdgeFormConnection
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_BOOL(s, true, src, edge_id);
+	info = GrB_Matrix_setElement_UINT64(s, dest, src, edge_id);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_BOOL(ts, true, edge_id, src);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_BOOL(t, true, edge_id, dest);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_BOOL(tt, true, dest, edge_id);
+	info = GrB_Matrix_setElement_UINT64(t, src, dest, edge_id);
 	ASSERT(info == GrB_SUCCESS);
 }
 

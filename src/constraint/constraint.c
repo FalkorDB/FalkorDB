@@ -527,7 +527,7 @@ void Constraint_EnforceEdges
 
 		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const Delta_Matrix m = Graph_GetSourceRelationMatrix(g, schema_id, false);
+		const Delta_Matrix m = Graph_GetSourceRelationMatrix(g, schema_id);
 		ASSERT(m != NULL);
 
 		//----------------------------------------------------------------------
@@ -538,8 +538,8 @@ void Constraint_EnforceEdges
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously enforced edges
-		while((info = Delta_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id,
-						NULL)) == GrB_SUCCESS &&
+		while((info = Delta_MatrixTupleIter_next_UINT64(&it, &src_id, &edge_id,
+						&dest_id)) == GrB_SUCCESS &&
 				src_id == prev_src_id &&
 				edge_id != prev_edge_id);
 

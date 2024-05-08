@@ -303,12 +303,8 @@ void RdbSaveEdges_v14
 	// get current relation matrix
 	uint r = GraphEncodeContext_GetCurrentRelationID(gc->encoding_context);
 
-	Delta_Matrix S = Graph_GetSourceRelationMatrix(gc->g, r, false);
+	Delta_Matrix S = Graph_GetSourceRelationMatrix(gc->g, r);
 	ASSERT(S != NULL);
-	Delta_Matrix T = Graph_GetTargetRelationMatrix(gc->g, r, false);
-	ASSERT(T != NULL);
-	Delta_MatrixTupleIter iter_t = {0};
-	Delta_MatrixTupleIter_attach(&iter_t, T);
 
 	// get matrix tuple iterator from context
 	// already set to the next entry to fetch
@@ -330,7 +326,7 @@ void RdbSaveEdges_v14
 		Edge e;
 
 		// try to get next tuple
-		info = Delta_MatrixTupleIter_next_BOOL(iter, &src_id, &edge_id, NULL);
+		info = Delta_MatrixTupleIter_next_UINT64(iter, &src_id, &edge_id, &dest_id);
 
 		// if iterator is depleted
 		// get new tuple from different matrix or finish encode
@@ -342,21 +338,13 @@ void RdbSaveEdges_v14
 			if(r == relation_count) goto finish;
 
 			// get matrix and set iterator
-			S = Graph_GetSourceRelationMatrix(gc->g, r, false);
+			S = Graph_GetSourceRelationMatrix(gc->g, r);
 			ASSERT(S != NULL);
-			T = Graph_GetTargetRelationMatrix(gc->g, r, false);
 			info = Delta_MatrixTupleIter_attach(iter, S);
 			ASSERT(info == GrB_SUCCESS);
-			info = Delta_MatrixTupleIter_attach(&iter_t, T);
-			ASSERT(info == GrB_SUCCESS);
-			info = Delta_MatrixTupleIter_next_BOOL(iter, &src_id, &edge_id, NULL);
+			info = Delta_MatrixTupleIter_next_UINT64(iter, &src_id, &edge_id, &dest_id);
 		}
 		
-		ASSERT(info == GrB_SUCCESS);
-
-		info = Delta_MatrixTupleIter_iterate_row(&iter_t, edge_id);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_MatrixTupleIter_next_BOOL(&iter_t, NULL, &dest_id, NULL);
 		ASSERT(info == GrB_SUCCESS);
 
 		e.src_id = src_id;

@@ -419,8 +419,7 @@ Delta_Matrix Graph_GetRelationMatrix
 Delta_Matrix Graph_GetSourceRelationMatrix
 (
 	const Graph *g,            // graph from which to get adjacency matrix
-	RelationID relation_idx,   // relation described by matrix
-	bool transposed
+	RelationID relation_idx    // relation described by matrix
 );
 
 // retrieves a relation edge target matrix
@@ -428,8 +427,7 @@ Delta_Matrix Graph_GetSourceRelationMatrix
 Delta_Matrix Graph_GetTargetRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
-	RelationID relation_idx,  // relation described by matrix
-	bool transposed
+	RelationID relation_idx   // relation described by matrix
 );
 
 // retrieves the node-label mapping matrix,

@@ -112,11 +112,6 @@ Delta_Matrix Delta_Matrix_getTranspose
 	const Delta_Matrix C
 );
 
-bool Delta_Matrix_isDirty
-(
-	const Delta_Matrix C
-);
-
 GrB_Matrix Delta_Matrix_M
 (
 	const Delta_Matrix C
@@ -164,9 +159,25 @@ GrB_Info Delta_Matrix_setElement_BOOL      // C (i,j) = x
 	GrB_Index j                         // column index
 );
 
+GrB_Info Delta_Matrix_setElement_UINT64      // C (i,j) = x
+(
+	Delta_Matrix C,                     // matrix to modify
+	uint64_t x,                         // value
+	GrB_Index i,                        // row index
+	GrB_Index j                         // column index
+);
+
 GrB_Info Delta_Matrix_extractElement_BOOL     // x = A(i,j)
 (
 	bool *x,                               // extracted scalar
+	const Delta_Matrix A,                  // matrix to extract a scalar from
+	GrB_Index i,                           // row index
+	GrB_Index j                            // column index
+) ;
+
+GrB_Info Delta_Matrix_extractElement_UINT64     // x = A(i,j)
+(
+	uint64_t *x,                           // extracted scalar
 	const Delta_Matrix A,                  // matrix to extract a scalar from
 	GrB_Index i,                           // row index
 	GrB_Index j                            // column index
@@ -180,7 +191,7 @@ GrB_Info Delta_Matrix_extract_row
 ) ;
 
 // remove entry at position C[i,j]
-GrB_Info Delta_Matrix_removeElement_BOOL
+GrB_Info Delta_Matrix_removeElement
 (
 	Delta_Matrix C,                 // matrix to remove entry from
 	GrB_Index i,                    // row index
