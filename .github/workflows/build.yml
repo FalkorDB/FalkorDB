@@ -91,7 +91,7 @@ jobs:
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false
         run: |
           id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
-          docker cp $id:/FalkorDB/bin /FalkorDB/bin
+          docker cp $id:/FalkorDB/bin .
           docker rm -v $id
           ls -l -R /FalkorDB/bin
 
