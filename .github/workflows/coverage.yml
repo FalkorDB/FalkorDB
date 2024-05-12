@@ -1,8 +1,13 @@
 name: Code Coverage
 
 on:
-  push:
   workflow_dispatch:
+  pull_request:
+    branches: [master, "[0-9]+.[0-9]+"]
+  push:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
 
 jobs:
   code-coverage:
@@ -22,14 +27,14 @@ jobs:
       id: cache_graphblas
       uses: actions/cache@v4
       with:
-        path: ./bin/linux-x64-debug-cov/GraphBLAS
+        path: ./bin/linux-x64-release-cov/GraphBLAS
         key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v4
       with:
-        path: ./bin/linux-x64-debug-cov/libcypher-parser
+        path: ./bin/linux-x64-release-cov/libcypher-parser
         key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
