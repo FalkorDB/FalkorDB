@@ -198,8 +198,7 @@ static Record _handoff
 			}
 		} else {
 			// failed to produce edge, free record
-			OpBase_DeleteRecord(op->r);
-			op->r = NULL;
+			OpBase_DeleteRecord(&op->r);
 		}
 	}
 
@@ -232,7 +231,7 @@ static Record _handoff
 
 		// src is not connected to dest, free the current record and continue
 		if(res != GrB_SUCCESS) {
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 			continue;
 		}
 
@@ -292,14 +291,12 @@ static Record ExpandIntoConsume
 				// the child Record may not contain eithe
 				// source or destination nodes in scenarios like a failed
 				// OPTIONAL MATCH in this case, delete the Record and try again
-				OpBase_DeleteRecord(r);
+				OpBase_DeleteRecord(&r);
 				i--;
 				continue;
 			}
 
 			// store received record
-			// TODO: not sure if necessary when we're streaming records
-			Record_PersistScalars(r);
 			op->records[i] = r;
 		}
 		op->record_count = i;
@@ -320,12 +317,11 @@ static OpResult ExpandIntoReset
 	OpExpandInto *op = (OpExpandInto *)ctx;
 
 	if(op->r != NULL) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 
 	for(uint i = 0; i < op->record_count; i++) {
-		OpBase_DeleteRecord(op->records[i]);
+		OpBase_DeleteRecord(op->records+i);
 	}
 	op->record_count = 0;
 
@@ -376,14 +372,13 @@ static void ExpandIntoFree
 
 	if(op->records != NULL) {
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 		rm_free(op->records);
 		op->records = NULL;
 	}
 
 	if(op->r != NULL) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 }
