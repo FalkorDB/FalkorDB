@@ -93,7 +93,7 @@ static Record _handoff
 ) {
 	// if there is a new value ready, return it
 	if(op->listIdx < op->listLen) {
-		Record  r = OpBase_DeepCloneRecord(op->currentRecord);
+		Record  r = OpBase_CloneRecord(op->currentRecord);
 		SIValue v = SIArray_Get(op->list, op->listIdx);
 
 		if(!(SI_TYPE(v) & SI_GRAPHENTITY)) {
@@ -132,7 +132,7 @@ static Record UnwindConsume
 pull:
 	if((r = OpBase_Consume(child))) {
 		// free current record
-		OpBase_DeleteRecord(op->currentRecord);
+		OpBase_DeleteRecord(&op->currentRecord);
 
 		// assign new record
 		op->currentRecord = r;
@@ -188,8 +188,7 @@ static void UnwindFree
 	}
 
 	if(op->currentRecord != NULL) {
-		OpBase_DeleteRecord(op->currentRecord);
-		op->currentRecord = NULL;
+		OpBase_DeleteRecord(&op->currentRecord);
 	}
 
 	op->currentRecord = NULL;

@@ -160,7 +160,12 @@ class testBFS(FlowTestsBase):
 
     # test a query which calls BFS multiple times in the same scope
     def test07_multiple_bfs_calls(self):
-        query = """MATCH (a {v: 'a'}) CALL algo.BFS(a, 1, NULL) YIELD nodes as n1 MATCH (b {v: 'd'}) CALL algo.BFS(b, 1, NULL) YIELD nodes as n2 RETURN [n IN n1 | n.v] AS x, [n IN n2 | n.v] AS y ORDER BY x.v"""
+        query = """MATCH (a {v: 'a'})
+                   CALL algo.BFS(a, 1, NULL) YIELD nodes as n1
+                   MATCH (b {v: 'd'})
+                   CALL algo.BFS(b, 1, NULL) YIELD nodes as n2
+                   RETURN [n IN n1 | n.v] AS x, [n IN n2 | n.v] AS y
+                   ORDER BY x.v"""
         actual_result = self.graph.query(query)
         expected_result = [[['b'], ['e']]]
         self.env.assertEquals(actual_result.result_set, expected_result)

@@ -82,7 +82,9 @@ SIValue SIVector_FromBinary
 	size_t elem_size = sizeof(float);
 
 	// set vector's elements
-	fread_assert(SIVector_Elements(v), dim * elem_size, stream);
+	if(dim > 0) {
+		fread_assert(SIVector_Elements(v), dim * elem_size, stream);
+	}
 
 	return v;
 }

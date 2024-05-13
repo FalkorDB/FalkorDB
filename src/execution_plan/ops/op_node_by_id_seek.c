@@ -141,15 +141,14 @@ pull:
 
 	Node n;
 	if(!_SeekNextNode(op, &n)) { // failed to retrieve a node
-		OpBase_DeleteRecord(op->child_record); // free old record
-		op->child_record = NULL;
+		OpBase_DeleteRecord(&op->child_record); // free old record
 
 		// try to pull a new record
 		goto pull;
 	}
 
 	// clone the held Record, as it will be freed upstream
-	Record r = OpBase_DeepCloneRecord(op->child_record);
+	Record r = OpBase_CloneRecord(op->child_record);
 
 	// populate the Record with the actual node
 	Record_AddNode(r, op->nodeRecIdx, n);
@@ -199,8 +198,7 @@ static OpResult NodeByIdSeekReset
 		roaring64_iterator_reinit(op->ids, op->it);
 	} else {
 		if(op->child_record != NULL) {
-			OpBase_DeleteRecord(op->child_record);
-			op->child_record = NULL;
+			OpBase_DeleteRecord(&op->child_record);
 		}
 	}
 
@@ -229,8 +227,7 @@ static void NodeByIdSeekFree
 	NodeByIdSeek *op = (NodeByIdSeek *)opBase;
 
 	if(op->child_record) {
-		OpBase_DeleteRecord(op->child_record);
-		op->child_record = NULL;
+		OpBase_DeleteRecord(&op->child_record);
 	}
 
 	if(op->ranges) {
