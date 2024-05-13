@@ -9,11 +9,14 @@
 #include "op.h"
 #include "../execution_plan.h"
 
-/* Cartesian product AKA Join. */
+// Cartesian product AKA Join
 typedef struct {
 	OpBase op;
-	Record r;
 	bool init;
+	Record *records;
 } CartesianProduct;
 
-OpBase *NewCartesianProductOp(const ExecutionPlan *plan);
+OpBase *NewCartesianProductOp
+(
+	const ExecutionPlan *plan
+);

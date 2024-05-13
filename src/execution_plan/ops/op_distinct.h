@@ -20,5 +20,10 @@ typedef struct {
 
 } OpDistinct;
 
-OpBase *NewDistinctOp(const ExecutionPlan *plan, const char **aliases, uint alias_count);
+OpBase *NewDistinctOp
+(
+	const ExecutionPlan *plan,
+	const char **aliases,
+	uint alias_count
+);
 

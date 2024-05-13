@@ -97,7 +97,7 @@ static Record DistinctConsume(OpBase *opBase) {
 		unsigned long long const hash = _compute_hash(op, r);
 		int is_new = raxInsert(op->found, (unsigned char *) &hash, sizeof(hash), NULL, NULL);
 		if(is_new) return r;
-		OpBase_DeleteRecord(r);
+		OpBase_DeleteRecord(&r);
 	}
 }
 

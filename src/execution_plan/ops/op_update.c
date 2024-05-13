@@ -86,8 +86,6 @@ static Record UpdateConsume
 	if(op->updates_committed) return _handoff(op);
 
 	while((r = OpBase_Consume(child))) {
-		Record_PersistScalars(r);
-
 		// evaluate update expressions
 		raxSeek(&op->it, "^", NULL, 0);
 		while(raxNext(&op->it)) {
@@ -161,7 +159,7 @@ static void UpdateFree(OpBase *ctx) {
 
 	if(op->records) {
 		uint records_count = array_len(op->records);
-		for(uint i = 0; i < records_count; i++) OpBase_DeleteRecord(op->records[i]);
+		for(uint i = 0; i < records_count; i++) OpBase_DeleteRecord(op->records+i);
 		array_free(op->records);
 		op->records = NULL;
 	}
