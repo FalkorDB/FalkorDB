@@ -20,9 +20,8 @@ OpBase *NewCartesianProductOp
 ) {
 	CartesianProduct *op = rm_malloc(sizeof(CartesianProduct));
 
-	op->r       = NULL;
 	op->init    = true;
-	op->streams = NULL;
+	op->records = NULL;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CARTESIAN_PRODUCT, "Cartesian Product",
@@ -37,7 +36,7 @@ static OpResult CartesianProductInit
 	OpBase *opBase
 ) {
 	CartesianProduct *op = (CartesianProduct *)opBase;
-	op->streams = rm_calloc(OpBase_ChildCount(opBase), sizeof(Record));
+	op->records = rm_calloc(OpBase_ChildCount(opBase), sizeof(Record));
 	return OP_OK;
 }
 
@@ -49,7 +48,7 @@ static void _ResetStreams
 ) {
 	// reset each child stream
 	for(int i = 0; i < streamIdx; i++) {
-		OpBase_DeleteRecord(cp->streams+i);
+		OpBase_DeleteRecord(cp->records+i);
 		OpBase_PropagateReset(cp->op.children[i]);
 	}
 }
@@ -64,10 +63,10 @@ static int _PullFromStreams
 
 		if(childRecord) {
 			// free previous record
-			OpBase_DeleteRecord(op->streams+i);
+			OpBase_DeleteRecord(op->records+i);
 
 			// set new record
-			op->streams[i] = childRecord;
+			op->records[i] = childRecord;
 
 			// managed to get new data
 			// reset streams [0-i]
@@ -78,7 +77,7 @@ static int _PullFromStreams
 				child = op->op.children[j];
 				childRecord = OpBase_Consume(child);
 				if(childRecord) {
-					op->streams[j] = childRecord;
+					op->records[j] = childRecord;
 				} else {
 					return 0;
 				}
@@ -103,7 +102,7 @@ static Record _YieldRecord
 
 	// clone entries from each stream into 'r'
 	for(int i = 0; i < OpBase_ChildCount(opBase); i++) {
-		Record_DuplicateEntries(r, op->streams[i]);
+		Record_DuplicateEntries(r, op->records[i]);
 	}
 
 	return r;
@@ -130,7 +129,7 @@ static Record CartesianProductConsume
 			if(!childRecord) return NULL;
 
 			// save record
-			op->streams[i] = childRecord;
+			op->records[i] = childRecord;
 		}
 
 		return _YieldRecord(opBase);
@@ -142,8 +141,8 @@ static Record CartesianProductConsume
 
 	if(childRecord) {
 		// update stream record
-		OpBase_DeleteRecord(op->streams);
-		op->streams[0] = childRecord;
+		OpBase_DeleteRecord(op->records);
+		op->records[0] = childRecord;
 	} else {
 		// failed to get data from first stream
 		// try pulling other streams for data
@@ -161,8 +160,8 @@ static void _FreeStreamRecords
 	CartesianProduct *op = (CartesianProduct *)opBase;
 
 	for(int i = 0; i < OpBase_ChildCount(opBase); i++) {
-		if(op->streams[i] != NULL) {
-			OpBase_DeleteRecord(op->streams+i);
+		if(op->records[i] != NULL) {
+			OpBase_DeleteRecord(op->records+i);
 		}
 	}
 }
@@ -194,13 +193,9 @@ static void CartesianProductFree
 ) {
 	CartesianProduct *op = (CartesianProduct *)opBase;
 
-	if(op->r) {
-		OpBase_DeleteRecord(&op->r);
-	}
-
-	if(op->streams != NULL) {
+	if(op->records != NULL) {
 		_FreeStreamRecords(opBase);
-		rm_free(op->streams);
+		rm_free(op->records);
 	}
 }
 

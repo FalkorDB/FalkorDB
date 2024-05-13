@@ -52,8 +52,8 @@ Record Record_New
 // clones record
 void Record_Clone
 (
-	const Record r,
-	Record clone
+	const restrict Record r,
+	restrict Record clone
 );
 
 // merge src record into dest

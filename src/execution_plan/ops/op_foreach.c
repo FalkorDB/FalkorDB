@@ -108,14 +108,12 @@ static Record ForeachConsume
 		// eagerly drain supplier
 		while((r = OpBase_Consume(op->supplier))) {
 			array_append(op->records, r);
-
 			// create a record with the mapping of the embedded plan
 			// (as opposed to the record-mapping of the consumed record)
 			Record body_rec = OpBase_CreateRecord(op->body);
 			// copy the consumed record's entries to the record to be sent to
 			// the body
-			//Record_Clone(r, body_rec);
-			Record_DuplicateEntries(body_rec, r);
+			Record_Clone(r, body_rec);
 			array_append(op->body_records, body_rec);
 		}
 

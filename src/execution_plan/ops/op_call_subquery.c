@@ -337,7 +337,7 @@ static void _free_records
 	if(op->records != NULL) {
 		uint n_records = array_len(op->records);
 		for(uint i = 0; i < n_records; i++) {
-			OpBase_DeleteRecord(&op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 		array_free(op->records);
 		op->records = NULL;

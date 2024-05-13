@@ -631,8 +631,10 @@ class testForeachFlow():
         query = """UNWIND range(1,9) AS i 
                    CREATE (n:N {v:i})-[:R]->(m:M {v:(i+1)})"""
         self.graph.query(query)
+
         query = """CREATE INDEX FOR (n:N) ON (n.v)"""
         self.graph.query(query)
+
         query = """MATCH p=(n:N)-[:R]->(:M) WHERE n.v <= 5 
                    FOREACH( n in nodes(p) | SET n.x = 3) RETURN count(n.v)"""
         result = self.graph.query(query)

@@ -12,9 +12,8 @@
 // Cartesian product AKA Join
 typedef struct {
 	OpBase op;
-	Record r;
 	bool init;
-	Record *streams;
+	Record *records;
 } CartesianProduct;
 
 OpBase *NewCartesianProductOp

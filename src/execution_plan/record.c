@@ -9,21 +9,6 @@
 #include "../errors/errors.h"
 #include "../util/rmalloc.h"
 
-// migrate the entry at the given index in the source Record to the same index
-static void _RecordPropagateEntry
-(
-	Record dest,
-	Record src,
-	uint idx
-) {
-	// copy the entry
-	dest->entries[idx] = src->entries[idx];
-
-	if(dest->entries[idx].type == REC_TYPE_SCALAR) {
-		dest->entries[idx].value.s = SI_CloneValue(src->entries[idx].value.s);
-	}
-}
-
 Record Record_New
 (
 	rax *mapping
@@ -59,8 +44,7 @@ bool Record_ContainsEntry
 }
 
 // retrieve the offset into the Record of the given alias
-uint Record_GetEntryIdx
-(
+uint Record_GetEntryIdx (
 	Record r,
 	const char *alias
 ) {
@@ -73,18 +57,42 @@ uint Record_GetEntryIdx
 
 void Record_Clone
 (
-	const Record r,
-	Record clone
+	const restrict Record r,
+	restrict Record clone
 ) {
-	int entry_count = Record_length(r);
-	size_t required_record_size = sizeof(Entry) * entry_count;
+	int entry_count = Record_length(clone);
+	// r and clone share the same record mapping
+	if(likely(r->owner == clone->owner)) {
+		size_t required_record_size = sizeof(Entry) * entry_count;
+		memcpy(clone->entries, r->entries, required_record_size);
 
-	memcpy(clone->entries, r->entries, required_record_size);
+		// foreach scalar entry in cloned record, make sure it is not freed
+		// it is the original record owner responsibility to free the record
+		// and its internal scalar as a result
+		//
+	} else {
+		// r and clone don't share the same mappings
+		// scan through each entry within r
+		// locate coresponding entry in clone
+		// if such exists shallow clone it
+		raxIterator it;
+		raxStart(&it, clone->mapping);
+		raxSeek(&it, "^", NULL, 0);
 
-	// foreach scalar entry in cloned record, make sure it is not freed
-	// it is the original record owner responsibility to free the record
-	// and its internal scalar as a result
-	//
+		while(raxNext(&it)) {
+			it.key[it.key_len] = '\0';
+			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key);
+
+			if(src_idx == INVALID_INDEX) continue;
+			if(Record_GetType(r, src_idx) == REC_TYPE_UNKNOWN) continue;
+
+			intptr_t target_idx = (intptr_t)it.data;
+			Record_Add(clone, target_idx, Record_Get(r, src_idx));
+		}
+
+		raxStop(&it);
+	}
+
 	// TODO: i wish we wouldn't have to perform this loop
 	// as it is a major performance hit
 	// with the introduction of a garbage collection this should be removed
@@ -98,7 +106,7 @@ void Record_Clone
 // merge src record into dest
 void Record_Merge
 (
-	restrict Record dest,       // dest record
+	restrict Record dest,      // dest record
 	const restrict Record src  // src record
 ) {
 	ASSERT(src->owner == dest->owner);
@@ -130,6 +138,8 @@ void Record_DuplicateEntries
 	restrict Record dest,      // destination record
 	restrict const Record src  // src record
 ) {
+	ASSERT(src->owner == dest->owner);
+
 	uint len = Record_length(src);
 	for(uint i = 0; i < len; i++) {
 		if(src->entries[i].type != REC_TYPE_UNKNOWN && 
@@ -149,6 +159,7 @@ RecordEntryType Record_GetType
 	const Record r,
 	uint idx
 ) {
+	ASSERT(Record_length(r) > idx);
 	return r->entries[idx].type;
 }
 
@@ -195,6 +206,8 @@ SIValue Record_Get
 	Record r,
 	uint idx
 ) {
+	ASSERT(Record_length(r) > idx);
+
 	Entry e = r->entries[idx];
 	switch(e.type) {
 		case REC_TYPE_NODE:
