@@ -74,10 +74,9 @@ static GraphContext *_DecodeHeader
 	uint64_t  deleted_edge_count  =  RedisModule_LoadUnsigned(rdb);
 	uint64_t  label_count         =  RedisModule_LoadUnsigned(rdb);
 	uint64_t  relation_count      =  RedisModule_LoadUnsigned(rdb);
-	uint64_t  multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
-		multi_edge[i] = RedisModule_LoadUnsigned(rdb);
+		RedisModule_LoadUnsigned(rdb);
 	}
 
 	// total keys representing the graph
@@ -91,14 +90,6 @@ static GraphContext *_DecodeHeader
 	if(GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0) {
 		_InitGraphDataStructure(gc->g, node_count, edge_count,
 			deleted_node_count, deleted_edge_count, label_count, relation_count);
-
-		gc->decoding_context->multi_edge = array_new(uint64_t, relation_count);
-		for(uint i = 0; i < relation_count; i++) {
-			// enable/Disable support for multi-edge
-			// we will enable support for multi-edge on all relationship
-			// matrices once we finish loading the graph
-			array_append(gc->decoding_context->multi_edge,  multi_edge[i]);
-		}
 
 		GraphDecodeContext_SetKeyCount(gc->decoding_context, key_number);
 	}

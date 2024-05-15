@@ -128,8 +128,7 @@ void Serializer_Graph_SetNodeLabels
 }
 
 // optimized version of Graph_FormConnection
-// used only when matrix doesn't contains multi edge values
-static void _OptimizedSingleEdgeFormConnection
+static void _OptimizedFormConnection
 (
 	Graph *g,
 	NodeID src,
@@ -188,7 +187,6 @@ static void _OptimizedSingleEdgeFormConnection
 void Serializer_Graph_SetEdge
 (
 	Graph *g,
-	bool multi_edge,
 	EdgeID edge_id,
 	NodeID src,
 	NodeID dest,
@@ -206,7 +204,7 @@ void Serializer_Graph_SetEdge
 	e->attributes =  set;
 	e->relationID =  r;
 
-	_OptimizedSingleEdgeFormConnection(g, src, dest, edge_id, r);
+	_OptimizedFormConnection(g, src, dest, edge_id, r);
 }
 
 // returns the graph deleted nodes list

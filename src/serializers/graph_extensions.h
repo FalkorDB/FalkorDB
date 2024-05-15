@@ -28,7 +28,6 @@ void Serializer_Graph_SetNodeLabels
 void Serializer_Graph_SetEdge
 (
 	Graph *g,               // graph to add edge to
-	bool multi_edge,        // true if graph supports multi-edge
 	EdgeID edge_id,         // edge ID
 	NodeID src,             // edge source
 	NodeID dest,            // edge destination
