@@ -287,14 +287,16 @@ Record OpBase_CloneRecord
 	Record r
 );
 
-// deep clones given record
-Record OpBase_DeepCloneRecord
-(
-	Record r
-);
-
 // release record
 void OpBase_DeleteRecord
 (
-	Record r
+	Record *r
 );
+
+// merge src into dest and deletes src
+void OpBase_MergeRecords
+(
+	Record dest,  // entries are merged into this record
+	Record *src   // entries are merged from this record
+);
+

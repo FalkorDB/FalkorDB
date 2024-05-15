@@ -86,8 +86,7 @@ static Record ProjectConsume(OpBase *opBase) {
 		}
 	}
 
-	OpBase_DeleteRecord(op->r);
-	op->r = NULL;
+	OpBase_DeleteRecord(&op->r);
 
 	// Emit the projected Record once.
 	Record projection = op->projection;
@@ -144,12 +143,10 @@ static void ProjectFree(OpBase *ctx) {
 	}
 
 	if(op->r) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 
 	if(op->projection) {
-		OpBase_DeleteRecord(op->projection);
-		op->projection = NULL;
+		OpBase_DeleteRecord(&op->projection);
 	}
 }

@@ -47,7 +47,7 @@ static void _plant_records_ArgumentLists
 	for(int i = 0; i < n_branches - 1; i++) {
 		Record *records_clone;
 		array_clone_with_cb(records_clone, op->records,
-			OpBase_DeepCloneRecord);
+			OpBase_CloneRecord);
 		ArgumentList_AddRecordList(op->feeders.argumentLists[i],
 			records_clone);
 	}
@@ -61,7 +61,7 @@ static void _plant_records_Arguments
 	uint n_branches = array_len(op->feeders.arguments);
 	for(uint i = 0; i < n_branches; i++) {
 		Argument_AddRecord(op->feeders.arguments[i],
-			OpBase_DeepCloneRecord(op->r));
+			OpBase_CloneRecord(op->r));
 	}
 }
 
@@ -214,7 +214,7 @@ static Record CallSubqueryConsumeEager
 		// give the last branch a clone of the original record(s)
 		Record *records_clone;
 		array_clone_with_cb(records_clone, op->records,
-			OpBase_DeepCloneRecord);
+			OpBase_CloneRecord);
 		ArgumentList_AddRecordList(
 			op->feeders.argumentLists[n_branches - 1], records_clone);
 	}
@@ -222,7 +222,7 @@ static Record CallSubqueryConsumeEager
 	if(!op->is_returning) {
 		// deplete body and discard records
 		while((r = OpBase_Consume(op->body))) {
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 	}
 
@@ -241,8 +241,7 @@ static Record _consume_and_merge
 
 	while(consumed == NULL) {
 		OpBase_PropagateReset(op->body);
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 
 		if(op->lhs && (op->r = OpBase_Consume(op->lhs)) != NULL) {
 			// plant a clone of the record consumed at the Argument ops
@@ -255,10 +254,9 @@ static Record _consume_and_merge
 		consumed = OpBase_Consume(op->body);
 	}
 
-	Record clone = OpBase_DeepCloneRecord(op->r);
-	// Merge consumed record into a clone of the received record.
-	Record_Merge(clone, consumed);
-	OpBase_DeleteRecord(consumed);
+	Record clone = OpBase_CloneRecord(op->r);
+	// merge consumed record into a clone of the received record
+	OpBase_MergeRecords(clone, &consumed);
 	return clone;
 }
 
@@ -284,7 +282,7 @@ static Record _handoff(OpCallSubquery *op) {
 	Record consumed;
 	// drain the body, deleting the subquery records and return current record
 	while((consumed = OpBase_Consume(op->body))) {
-		OpBase_DeleteRecord(consumed);
+		OpBase_DeleteRecord(&consumed);
 	}
 	OpBase_PropagateReset(op->body);
 	Record r = op->r;
@@ -339,15 +337,14 @@ static void _free_records
 	if(op->records != NULL) {
 		uint n_records = array_len(op->records);
 		for(uint i = 0; i < n_records; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 		array_free(op->records);
 		op->records = NULL;
 	}
 
 	if(op->r != NULL) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 }
 
