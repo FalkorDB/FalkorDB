@@ -146,14 +146,14 @@ static void _Index_PopulateEdgeIndex
 
 		// fetch relation matrix
 		int label_id = Index_GetLabelID(idx);
-		Delta_Matrix S = Graph_GetSourceRelationMatrix(g, label_id);
-		ASSERT(S != NULL);
+		Delta_Matrix out = Graph_OutgoingRelationMatrix(g, label_id);
+		ASSERT(out != NULL);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		info = Delta_MatrixTupleIter_AttachRange(&it, S, src_id, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, out, src_id, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously indexed edges

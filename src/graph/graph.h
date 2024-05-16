@@ -8,9 +8,7 @@
 
 #include <pthread.h>
 
-#include "RG.h"
 #include "rax.h"
-#include "../util/arr.h"
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
@@ -44,10 +42,14 @@ typedef struct Graph Graph;
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
+// A relation type is defined via three matrices:
+//   1. boolean connecting source nodes to destination nodes
+//   2. Outgoing, O[s,e] = d indicating an outgoing edge e from s to d
+//   3. Incoming, I[d,e] = s indicating an incoming edge e from s to d
 typedef struct {
-	Delta_Matrix R; 	 // relation matrix
-	Delta_Matrix S;      // sources matrix
-	Delta_Matrix T;      // targets matrix
+	Delta_Matrix R;       // relation matrix
+	Delta_Matrix Out;     // Outgoing matrix
+	Delta_Matrix In;      // Incoming matrix
 } RelationMatrices;
 
 struct Graph {
@@ -414,17 +416,19 @@ Delta_Matrix Graph_GetRelationMatrix
 	bool transposed
 );
 
-// retrieves a relation edge source matrix
-// matrix is resized if its dimensions doesn't match graph's node count & graph's edge count
-Delta_Matrix Graph_GetSourceRelationMatrix
+// retrieves a relation specific outgoing edges matrix O[s,e] = d
+// where s is a source node, e is an edge ID d is a destination node (s)-[e]->(d)
+// this function will sync the matrix according to the set synchronisation policy
+Delta_Matrix Graph_OutgoingRelationMatrix
 (
 	const Graph *g,            // graph from which to get adjacency matrix
 	RelationID relation_idx    // relation described by matrix
 );
 
-// retrieves a relation edge target matrix
-// matrix is resized if its dimensions doesn't match graph's edge count & graph's node count
-Delta_Matrix Graph_GetTargetRelationMatrix
+// retrieves a relation specific incoming edges matrix O[d,e] = s
+// where s is a source node, e is an edge ID d is a destination node (s)-[e]->(d)
+// this function will sync the matrix according to the set synchronisation policy
+Delta_Matrix Graph_IncomingRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
 	RelationID relation_idx   // relation described by matrix

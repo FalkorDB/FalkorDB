@@ -4,8 +4,9 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "graph_extensions.h"
 #include "../RG.h"
+#include "../util/arr.h"
+#include "graph_extensions.h"
 #include "../util/datablock/oo_datablock.h"
 
 // functions declerations - implemented in graph.c
@@ -138,13 +139,13 @@ static void _OptimizedFormConnection
 ) {
 	GrB_Info info;
 	Delta_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix  S      =  Graph_GetSourceRelationMatrix(g, r);
-	Delta_Matrix  T      =  Graph_GetTargetRelationMatrix(g, r);
+	Delta_Matrix  out    =  Graph_OutgoingRelationMatrix(g, r);
+	Delta_Matrix  in     =  Graph_IncomingRelationMatrix(g, r);
 	Delta_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
 	GrB_Matrix m         =  Delta_Matrix_M(M);
 	GrB_Matrix tm        =  Delta_Matrix_M(Delta_Matrix_getTranspose(M));
-	GrB_Matrix s         =  Delta_Matrix_M(S);
-	GrB_Matrix t         =  Delta_Matrix_M(T);
+	GrB_Matrix out_m     =  Delta_Matrix_M(out);
+	GrB_Matrix in_m      =  Delta_Matrix_M(in);
 	GrB_Matrix adj_m     =  Delta_Matrix_M(adj);
 	GrB_Matrix adj_tm    =  Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
@@ -177,9 +178,9 @@ static void _OptimizedFormConnection
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_UINT64(s, dest, src, edge_id);
+	info = GrB_Matrix_setElement_UINT64(out_m, dest, src, edge_id);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_UINT64(t, src, dest, edge_id);
+	info = GrB_Matrix_setElement_UINT64(in_m, src, dest, edge_id);
 	ASSERT(info == GrB_SUCCESS);
 }
 

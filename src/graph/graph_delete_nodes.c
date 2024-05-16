@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "graph.h"
+#include "../util/arr.h"
 #include "delta_matrix/delta_matrix_iter.h"
 
 // deletes nodes from the graph

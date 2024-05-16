@@ -303,15 +303,15 @@ void RdbSaveEdges_v14
 	// get current relation matrix
 	uint r = GraphEncodeContext_GetCurrentRelationID(gc->encoding_context);
 
-	Delta_Matrix S = Graph_GetSourceRelationMatrix(gc->g, r);
-	ASSERT(S != NULL);
+	Delta_Matrix out = Graph_OutgoingRelationMatrix(gc->g, r);
+	ASSERT(out != NULL);
 
 	// get matrix tuple iterator from context
 	// already set to the next entry to fetch
 	// for previous edge encide or create new one
 	Delta_MatrixTupleIter *iter = GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
-	if(!Delta_MatrixTupleIter_is_attached(iter, S)) {
-		info = Delta_MatrixTupleIter_attach(iter, S);
+	if(!Delta_MatrixTupleIter_is_attached(iter, out)) {
+		info = Delta_MatrixTupleIter_attach(iter, out);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
@@ -338,9 +338,9 @@ void RdbSaveEdges_v14
 			if(r == relation_count) goto finish;
 
 			// get matrix and set iterator
-			S = Graph_GetSourceRelationMatrix(gc->g, r);
-			ASSERT(S != NULL);
-			info = Delta_MatrixTupleIter_attach(iter, S);
+			out = Graph_OutgoingRelationMatrix(gc->g, r);
+			ASSERT(out != NULL);
+			info = Delta_MatrixTupleIter_attach(iter, out);
 			ASSERT(info == GrB_SUCCESS);
 			info = Delta_MatrixTupleIter_next_UINT64(iter, &src_id, &edge_id, &dest_id);
 		}

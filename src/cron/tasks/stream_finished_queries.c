@@ -7,6 +7,7 @@
 #include "globals.h"
 #include "cron/cron.h"
 #include "redismodule.h"
+#include "../../util/rmalloc.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
 #include "util/circular_buffer.h"

@@ -527,7 +527,7 @@ void Constraint_EnforceEdges
 
 		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const Delta_Matrix m = Graph_GetSourceRelationMatrix(g, schema_id);
+		const Delta_Matrix m = Graph_OutgoingRelationMatrix(g, schema_id);
 		ASSERT(m != NULL);
 
 		//----------------------------------------------------------------------
