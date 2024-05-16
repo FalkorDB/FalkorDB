@@ -102,8 +102,8 @@ void _Graph_GetEdgesConnectingNodes
 	ASSERT(g);
 	ASSERT(r    != GRAPH_NO_RELATION);
 	ASSERT(r    < Graph_RelationTypeCount(g));
-	ASSERT(src  < Graph_NodeCount(g));
-	ASSERT(dest < Graph_NodeCount(g));
+	ASSERT(src  < _Graph_NodeCap(g));
+	ASSERT(dest < _Graph_NodeCap(g));
 
 	// relation map, maps (src, dest, r) to edge IDs.
 	Delta_Matrix   M    = Graph_GetRelationMatrix(g, r, false);
