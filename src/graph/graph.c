@@ -727,7 +727,7 @@ void Graph_RemoveNodeLabels
 	}
 }
 
-bool Graph_FormConnection
+void Graph_FormConnection
 (
 	Graph *g,
 	NodeID src,
@@ -746,18 +746,16 @@ bool Graph_FormConnection
 
 	// rows represent source nodes, columns represent destination nodes
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
-	// incase of decoding it is possible to write outside of matrix bounds
-	// exit early
-	if(info != GrB_SUCCESS) return false;
+	ASSERT(info == GrB_SUCCESS);
 
 	info = Delta_Matrix_setElement_BOOL(M, src, dest);
-	if(info != GrB_SUCCESS) return false;
+	ASSERT(info == GrB_SUCCESS);
 
 	info = Delta_Matrix_setElement_UINT64(out, dest, src, edge_id);
-	if(info != GrB_SUCCESS) return false;
+	ASSERT(info == GrB_SUCCESS);
 
 	info = Delta_Matrix_setElement_UINT64(in, src, dest, edge_id);
-	return info == GrB_SUCCESS;
+	ASSERT(info == GrB_SUCCESS);
 }
 
 void Graph_CreateEdge

@@ -9,9 +9,6 @@
 #include "graph_extensions.h"
 #include "../util/datablock/oo_datablock.h"
 
-// functions declerations - implemented in graph.c
-bool Graph_FormConnection(Graph *g, NodeID src, NodeID dest, EdgeID edge_id, int r);
-
 void Graph_EnsureNodeCap
 (
 	Graph *g,
