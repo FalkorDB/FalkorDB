@@ -374,6 +374,18 @@ bool Graph_Pending
 		if(pending) {
 			return true;
 		}
+		M = g->relations[i].Out;
+		info = Delta_Matrix_pending(M, &pending);
+		ASSERT(info == GrB_SUCCESS);
+		if(pending) {
+			return true;
+		}
+		M = g->relations[i].In;
+		info = Delta_Matrix_pending(M, &pending);
+		ASSERT(info == GrB_SUCCESS);
+		if(pending) {
+			return true;
+		}
 	}
 
 	return false;
@@ -544,7 +556,8 @@ RelationID Graph_GetEdgeRelation
 		EdgeID edgeId = 0;
 		Delta_Matrix out = Graph_OutgoingRelationMatrix(g, i);
 		info = Delta_Matrix_extractElement_UINT64(&dst, out, src_id, id);
-		if(info != GrB_SUCCESS || dst != dest_id) continue;
+		if(info != GrB_SUCCESS) continue;
+		ASSERT(dst == dest_id);
 		Edge_SetRelationID(e, i);
 		rel = i;
 		break;
@@ -841,20 +854,20 @@ void _GetIncomingNodeEdges
 	GrB_Info info;
 	Delta_MatrixTupleIter   it       =  {0};
 	Delta_Matrix            in       =  NULL;
-	NodeID                  src_id   =  ENTITY_GET_ID(n);
-	NodeID                  dest_id  =  INVALID_ENTITY_ID;
+	NodeID                  src_id   =  INVALID_ENTITY_ID;
+	NodeID                  dest_id  =  ENTITY_GET_ID(n);
 	EdgeID                  edge_id  =  INVALID_ENTITY_ID;
 	UNUSED(info);
 
 	in = Graph_IncomingRelationMatrix(g, edgeType);
 
-	info = Delta_MatrixTupleIter_AttachRange(&it, in, src_id, src_id);
+	info = Delta_MatrixTupleIter_AttachRange(&it, in, dest_id, dest_id);
 	ASSERT(info == GrB_SUCCESS);
-	while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, &edge_id, &dest_id) == GrB_SUCCESS) {
+	while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, &edge_id, &src_id) == GrB_SUCCESS) {
 		if(dir == GRAPH_EDGE_DIR_BOTH && src_id == dest_id) continue;
 		Edge e = {0};
-		e.src_id      =  dest_id;
-		e.dest_id     =  src_id;
+		e.src_id      =  src_id;
+		e.dest_id     =  dest_id;
 		e.id          =  edge_id;
 		e.relationID  =  edgeType;
 		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
@@ -1059,6 +1072,7 @@ void Graph_DeleteEdges
 		int         r         =  Edge_GetRelationID(e);
 		NodeID      src_id    =  Edge_GetSrcNodeID(e);
 		NodeID      dest_id   =  Edge_GetDestNodeID(e);
+		EdgeID      edge_id   =  ENTITY_GET_ID(e);
 
 		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
 
@@ -1066,9 +1080,9 @@ void Graph_DeleteEdges
 		out = Graph_OutgoingRelationMatrix(g, r);
 		in = Graph_IncomingRelationMatrix(g, r);
 
-		info = Delta_Matrix_removeElement(out, src_id, ENTITY_GET_ID(e));
+		info = Delta_Matrix_removeElement(out, src_id, edge_id);
 		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_removeElement(in, dest_id, ENTITY_GET_ID(e));
+		info = Delta_Matrix_removeElement(in, dest_id, edge_id);
 		ASSERT(info == GrB_SUCCESS);
 
 		GrB_Vector src_vec;
@@ -1117,7 +1131,7 @@ void Graph_DeleteEdges
 		}
 
 		// free and remove edges from datablock.
-		DataBlock_DeleteItem(g->edges, ENTITY_GET_ID(e));
+		DataBlock_DeleteItem(g->edges, edge_id);
 	}
 
 	Graph_SetMatrixPolicy(g, policy);
