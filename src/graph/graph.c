@@ -132,16 +132,16 @@ void _Graph_GetEdgesConnectingNodes
 	info = GxB_Vector_Iterator_attach(&it, src_vec, NULL);
 	ASSERT(info == GrB_SUCCESS);
 	info = GxB_Vector_Iterator_seek((&it), 0);
-    while (info != GxB_EXHAUSTED) {
-        GrB_Index edgeId = GxB_Vector_Iterator_getIndex((&it));
+	while (info != GxB_EXHAUSTED) {
+		GrB_Index edgeId = GxB_Vector_Iterator_getIndex((&it));
 		e.id          =  edgeId;
 		e.relationID  =  r;
 		e.attributes  =  DataBlock_GetItem(g->edges, edgeId);
 		ASSERT(e.attributes);
 		array_append(*edges, e);
 
-        info = GxB_Vector_Iterator_next((&it));
-    }
+		info = GxB_Vector_Iterator_next((&it));
+	}
 	GrB_Vector_free(&src_vec);
 	GrB_Vector_free(&dst_vec);
 }
@@ -542,9 +542,6 @@ RelationID Graph_GetEdgeRelation
 	GrB_Index dst;
 	for(uint i = 0; i < n; i++) {
 		EdgeID edgeId = 0;
-		Delta_Matrix M = Graph_GetRelationMatrix(g, i, false);
-		info = Delta_Matrix_extractElement_BOOL(NULL, M, src_id, dest_id);
-		if(info != GrB_SUCCESS) continue;
 		Delta_Matrix out = Graph_OutgoingRelationMatrix(g, i);
 		info = Delta_Matrix_extractElement_UINT64(&dst, out, src_id, id);
 		if(info != GrB_SUCCESS || dst != dest_id) continue;
