@@ -1059,7 +1059,6 @@ void Graph_DeleteEdges
 	ASSERT(n > 0);
 	ASSERT(edges != NULL);
 
-	uint64_t       x;
 	GrB_Info       info;
 	Delta_Matrix   R;
 	Delta_Matrix   out;
@@ -1085,31 +1084,25 @@ void Graph_DeleteEdges
 		info = Delta_Matrix_removeElement(in, dest_id, edge_id);
 		ASSERT(info == GrB_SUCCESS);
 
-		GrB_Vector src_vec;
-		GrB_Vector dst_vec;
-		info = GrB_Vector_new(&src_vec, GrB_BOOL, g->edges->itemCap);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Vector_new(&dst_vec, GrB_BOOL, g->edges->itemCap);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_extract_row(out, src_vec, src_id);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_extract_row(in, dst_vec, dest_id);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_Vector_eWiseMult_Semiring(src_vec, NULL, NULL, GxB_ANY_PAIR_BOOL, src_vec, dst_vec, GrB_DESC_R);
-		GrB_Vector_nvals(&x, src_vec);
-		info = GrB_free(&src_vec);
-		ASSERT(info == GrB_SUCCESS);
-		info = GrB_free(&dst_vec);
-		ASSERT(info == GrB_SUCCESS);
+		Delta_MatrixTupleIter it = {0};
+		Delta_MatrixTupleIter_AttachRange(&it, out, src_id, src_id);
+		GrB_Index dst;
+		bool connected = false;
+		while (Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &dst) == GrB_SUCCESS) {
+			if(dst == dest_id) {
+				connected = true;
+				break;
+			}
+		}
 
-		if(x == 0) {
+		if(!connected) {
 			// no more edges connecting src to other nodes
 			// remove src from relation matrix
 			info = Delta_Matrix_removeElement(R, src_id, dest_id);
 			ASSERT(info == GrB_SUCCESS);
 
 			// see if source is connected to destination with additional edges
-			bool connected = false;
+			connected = false;
 			int relationCount = Graph_RelationTypeCount(g);
 			for(int j = 0; j < relationCount; j++) {
 				if(j == r) continue;
