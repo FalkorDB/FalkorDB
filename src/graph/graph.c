@@ -113,37 +113,22 @@ void _Graph_GetEdgesConnectingNodes
 	if(res == GrB_NO_VALUE) return;
 
 	GrB_Info info;
-	GrB_Vector src_vec;
-	GrB_Vector dst_vec;
-	info = GrB_Vector_new(&src_vec, GrB_BOOL, g->edges->itemCap);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Vector_new(&dst_vec, GrB_BOOL, g->edges->itemCap);
-	ASSERT(info == GrB_SUCCESS);
-	Edge         e = {.src_id = src, .dest_id = dest, .relationID = r};
+	Edge         e   = {.src_id = src, .dest_id = dest, .relationID = r};
 	Delta_Matrix out = Graph_OutgoingRelationMatrix(g, r);
-	Delta_Matrix in  = Graph_IncomingRelationMatrix(g, r);
-	info = Delta_Matrix_extract_row(out, src_vec, src);
-	ASSERT(info == GrB_SUCCESS);
-	info = Delta_Matrix_extract_row(in, dst_vec, dest);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Vector_eWiseMult_Semiring(src_vec, NULL, NULL, GxB_ANY_PAIR_BOOL, src_vec, dst_vec, GrB_DESC_R);
-	ASSERT(info == GrB_SUCCESS);
-	struct GB_Iterator_opaque it;
-	info = GxB_Vector_Iterator_attach(&it, src_vec, NULL);
-	ASSERT(info == GrB_SUCCESS);
-	info = GxB_Vector_Iterator_seek((&it), 0);
-	while (info != GxB_EXHAUSTED) {
-		GrB_Index edgeId = GxB_Vector_Iterator_getIndex((&it));
+
+	Delta_MatrixTupleIter it = {0};
+	Delta_MatrixTupleIter_AttachRange(&it, out, src, src);
+
+	GrB_Index dst;
+	GrB_Index edgeId;
+	while (Delta_MatrixTupleIter_next_UINT64(&it, NULL, &edgeId, &dst) == GrB_SUCCESS) {
+		if(dst != dest) continue;
 		e.id          =  edgeId;
 		e.relationID  =  r;
 		e.attributes  =  DataBlock_GetItem(g->edges, edgeId);
 		ASSERT(e.attributes);
 		array_append(*edges, e);
-
-		info = GxB_Vector_Iterator_next((&it));
 	}
-	GrB_Vector_free(&src_vec);
-	GrB_Vector_free(&dst_vec);
 }
 
 static inline AttributeSet *_Graph_GetEntity(const DataBlock *entities, EntityID id) {
