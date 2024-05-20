@@ -734,10 +734,10 @@ void Graph_FormConnection
 
 	GrB_Info info;
 	UNUSED(info);
-	Delta_Matrix M   = Graph_GetRelationMatrix(g, r, false);
+	Delta_Matrix M     = Graph_GetRelationMatrix(g, r, false);
 	Delta_Matrix out   = Graph_OutgoingRelationMatrix(g, r);
 	Delta_Matrix in    = Graph_IncomingRelationMatrix(g, r);
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	Delta_Matrix adj   = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
@@ -1051,9 +1051,9 @@ void Graph_DeleteEdges
 
 		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
 
-		R = Graph_GetRelationMatrix(g, r, false);
+		R   = Graph_GetRelationMatrix(g, r, false);
 		out = Graph_OutgoingRelationMatrix(g, r);
-		in = Graph_IncomingRelationMatrix(g, r);
+		in  = Graph_IncomingRelationMatrix(g, r);
 
 		info = Delta_Matrix_removeElement(out, src_id, edge_id);
 		ASSERT(info == GrB_SUCCESS);

@@ -449,12 +449,6 @@ Delta_Matrix Graph_GetZeroMatrix
 	const Graph *g
 );
 
-Delta_Matrix Graph_GetLabelMatrix
-(
-	const Graph *g,
-	int label_idx
-);
-
 // free partial graph
 void Graph_PartialFree
 (
