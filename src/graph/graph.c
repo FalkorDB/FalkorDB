@@ -927,6 +927,7 @@ uint64_t Graph_GetNodeDegree
 	uint64_t               edge_count = 0;
 	Delta_Matrix           out        = NULL;
 	Delta_Matrix           in         = NULL;
+	Delta_MatrixTupleIter  it         = {0};
 
 	if(edgeType == GRAPH_UNKNOWN_RELATION) {
 		return 0;  // no edges
@@ -952,10 +953,6 @@ uint64_t Graph_GetNodeDegree
 		end_rel = Graph_RelationTypeCount(g);
 	}
 
-	GrB_Index nvals;
-	GrB_Vector v;
-	GrB_Vector_new(&v, GrB_BOOL, g->edges->itemCap);
-
 	// for each relationship type to consider
 	for(edgeType = start_rel; edgeType < end_rel; edgeType++) {
 		//----------------------------------------------------------------------
@@ -964,9 +961,15 @@ uint64_t Graph_GetNodeDegree
 
 		if(outgoing) {
 			out = Graph_OutgoingRelationMatrix(g, edgeType);
-			Delta_Matrix_extract_row(out, v, srcID);
-			GrB_Vector_nvals(&nvals, v);
-			edge_count += nvals;
+			// construct an iterator to traverse over the source node row,
+			// containing all outgoing edges
+			Delta_MatrixTupleIter_AttachRange(&it, out, srcID, srcID);
+			// scan row
+			while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, NULL)
+					== GrB_SUCCESS) {
+				edge_count++;
+			}
+			Delta_MatrixTupleIter_detach(&it);
 		}
 
 		//----------------------------------------------------------------------
@@ -975,13 +978,17 @@ uint64_t Graph_GetNodeDegree
 
 		if(incoming) {
 			in = Graph_IncomingRelationMatrix(g, edgeType);
-			Delta_Matrix_extract_row(in, v, srcID);
-			GrB_Vector_nvals(&nvals, v);
-			edge_count += nvals;
+			// construct an iterator to traverse over the source node row,
+			// containing all incoming edges
+			Delta_MatrixTupleIter_AttachRange(&it, in, srcID, srcID);
+			// scan row
+			while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, NULL)
+					== GrB_SUCCESS) {
+				edge_count++;
+			}
+			Delta_MatrixTupleIter_detach(&it);
 		}
 	}
-
-	GrB_free(&v);
 
 	return edge_count;
 }
