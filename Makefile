@@ -371,7 +371,7 @@ ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
-	RUSTFLAGS+='-L$(BINROOT)/GraphBLAS -lgraphblas -L$(LIBOMP_PREFIX)/lib -lomp' cargo test --lib
+	RUSTFLAGS+='-L$(BINROOT)/src -lfalkordb_static -L$(BINROOT)/GraphBLAS -lgraphblas -L$(LIBOMP_PREFIX)/lib -lomp' cargo test --lib
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh
@@ -413,7 +413,13 @@ benchmark: $(TARGET)
 #----------------------------------------------------------------------------------------------
 
 COV_EXCLUDE_DIRS += \
-	deps \
+	deps/GraphBLAS \
+	deps/libcypher-parser \
+	deps/oniguruma \
+	deps/rax \
+	deps/RediSearch \
+	deps/utf8proc \
+	deps/xxHash \
 	src/util/sds \
 	tests
 
