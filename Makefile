@@ -281,6 +281,10 @@ export RUSTFLAGS=-Zsanitizer=$(SAN)
 CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
 
+ifneq ($(COV),)
+export RUSTFLAGS=-C instrument-coverage
+endif
+
 falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
@@ -367,6 +371,7 @@ ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
+	RUSTFLAGS+='-L$(BINROOT)/GraphBLAS -lgraphblas -L$(LIBOMP_PREFIX)/lib -lomp' cargo test --lib
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh

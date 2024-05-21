@@ -1,5 +1,11 @@
 ignore:
-  - "deps"
+  - "deps/GraphBLAS"
+  - "deps/libcypher-parser"
+  - "deps/oniguruma"
+  - "deps/rax"
+  - "deps/RediSearch"
+  - "deps/utf8proc"
+  - "deps/utf8proc"
   - "src/util/sds"
   - "src/util/roaring.c"
-  - "tests"
+  - "xxHash"
