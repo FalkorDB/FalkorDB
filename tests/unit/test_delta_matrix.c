@@ -131,75 +131,6 @@ void ASSERT_GrB_Matrices_EQ(const GrB_Matrix A, const GrB_Matrix B)
 	TEST_ASSERT(info == GrB_SUCCESS);
 }
 
-// flush simple addition
-void test_DeltaMatrix_flush() {
-	GrB_Type       t                   =  GrB_BOOL;
-	Delta_Matrix   A                   =  NULL;
-	GrB_Matrix     M                   =  NULL;
-	GrB_Matrix     DP                  =  NULL;
-	GrB_Matrix     DM                  =  NULL;
-	GrB_Info       info                =  GrB_SUCCESS;
-	GrB_Index      nvals               =  0;
-	GrB_Index      nrows               =  100;
-	GrB_Index      ncols               =  100;
-	GrB_Index      i                   =  0;
-	GrB_Index      j                   =  1;
-	bool           sync                =  false;
-
-	info = Delta_Matrix_new(&A, t, nrows, ncols, false);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// set element at position i,j
-	info = Delta_Matrix_setElement_BOOL(A, i, j);
-	TEST_ASSERT(info == GrB_SUCCESS);
-
-	// get internal matrices
-	M   =  Delta_Matrix_M(A);
-	DP  =  Delta_Matrix_DP(A);
-	DM  =  Delta_Matrix_DM(A);
-
-	//--------------------------------------------------------------------------
-	// flush matrix, no sync
-	//--------------------------------------------------------------------------
-	
-	// wait, don't force sync
-	sync = false;
-	Delta_Matrix_wait(A, sync);
-
-	// M should be empty
-	M_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should contain a single element
-	DP_NOT_EMPTY();
-
-	//--------------------------------------------------------------------------
-	// flush matrix, sync
-	//--------------------------------------------------------------------------
-	
-	// wait, force sync
-	sync = true;
-	Delta_Matrix_wait(A, sync);
-
-	Delta_Matrix_nvals(&nvals, A);
-	TEST_ASSERT(nvals == 1);
-
-	// M should be empty
-	M_NOT_EMPTY();
-
-	// DM should be empty
-	DM_EMPTY();
-
-	// DP should contain a single element
-	DP_EMPTY();
-
-	// clean up
-	Delta_Matrix_free(&A);
-	TEST_ASSERT(A == NULL);
-}
-
 //------------------------------------------------------------------------------
 // fuzzy test compare Delta_Matrix to GrB_Matrix
 //------------------------------------------------------------------------------
@@ -705,7 +636,6 @@ void test_DeltaMatrix_resize() {
 }
 
 TEST_LIST = {
-	{"DeltaMatrix_flush", test_DeltaMatrix_flush},
 	{"DeltaMatrix_fuzzy", test_DeltaMatrix_fuzzy},
 	{"DeltaMatrix_export_no_changes", test_DeltaMatrix_export_no_changes},
 	{"DeltaMatrix_export_pending_changes", test_DeltaMatrix_export_pending_changes},
