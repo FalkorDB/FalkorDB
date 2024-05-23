@@ -131,7 +131,7 @@ SIValue AR_TOINTEGER(SIValue *argv, int argc, void *private_data) {
 		if(strlen(arg.stringval) == 0) return SI_NullVal();
 		errno = 0;
 		if(strchr(arg.stringval, '.') == NULL) {
-			uint64_t parsedval = strtoll(arg.stringval, &sEnd, 10);
+			int64_t parsedval = strtoll(arg.stringval, &sEnd, 10);
 			if(sEnd[0] != '\0' || errno == ERANGE) return SI_NullVal();
 			return SI_LongVal(parsedval);
 		}
