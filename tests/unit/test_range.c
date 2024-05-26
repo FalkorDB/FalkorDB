@@ -8,7 +8,6 @@
 #include "src/ast/ast_shared.h"
 #include "src/util/range/string_range.h"
 #include "src/util/range/numeric_range.h"
-#include "src/util/range/unsigned_range.h"
 
 #include <math.h>
 
@@ -300,141 +299,6 @@ void test_stringContainsValue() {
 	StringRange_Free(r);
 }
 
-//------------------------------------------------------------------------------
-// Unsigned range
-//------------------------------------------------------------------------------
-
-void test_unsighnedRangeNew() {
-	UnsignedRange *r = UnsignedRange_New();
-
-	TEST_ASSERT(r->valid);
-	TEST_ASSERT(r->max == UINT64_MAX);
-	TEST_ASSERT(r->min == 0);
-	TEST_ASSERT(r->include_max);
-	TEST_ASSERT(r->include_min);
-
-	UnsignedRange_Free(r);
-}
-
-void test_unsignedRangeValidation() {
-	UnsignedRange *r = UnsignedRange_New();
-
-	// X > 5 AND X < 5
-	r->max = 5;
-	r->min = 5;
-	r->include_max = false;
-	r->include_min = false;
-	TEST_ASSERT(!UnsignedRange_IsValid(r));
-
-	// X >= 5 AND X < 5
-	r->max = 5;
-	r->min = 5;
-	r->include_max = false;
-	r->include_min = true;
-	TEST_ASSERT(!UnsignedRange_IsValid(r));
-
-	// X >= 5 AND X <= 5
-	r->max = 5;
-	r->min = 5;
-	r->include_max = true;
-	r->include_min = true;
-	TEST_ASSERT(UnsignedRange_IsValid(r));
-
-	// X > 5 AND X <= 5
-	r->max = 5;
-	r->min = 5;
-	r->include_max = true;
-	r->include_min = false;
-	TEST_ASSERT(!UnsignedRange_IsValid(r));
-
-	// (5, 10)  X > 5 AND x < 10.
-	r->max = 10;
-	r->min = 5;
-	r->include_max = false;
-	r->include_min = false;
-	TEST_ASSERT(UnsignedRange_IsValid(r));
-
-	// (5, 10]  X > 5 AND x <= 10.
-	r->max = 10;
-	r->min = 5;
-	r->include_max = true;
-	r->include_min = false;
-	TEST_ASSERT(UnsignedRange_IsValid(r));
-
-	// [5, 10)  X >= 5 AND x < 10.
-	r->max = 10;
-	r->min = 5;
-	r->include_max = false;
-	r->include_min = true;
-	TEST_ASSERT(UnsignedRange_IsValid(r));
-
-	// [5, 10]  X >= 5 AND x =< 10.
-	r->max = 10;
-	r->min = 5;
-	r->include_max = true;
-	r->include_min = true;
-	TEST_ASSERT(UnsignedRange_IsValid(r));
-
-	UnsignedRange_Free(r);
-}
-
-void test_unsignedTightenRange() {
-	UnsignedRange *r = UnsignedRange_New();
-
-	// X < 100
-	UnsignedRange_TightenRange(r, OP_LT, 100);
-	TEST_ASSERT(r->max == 100);
-	TEST_ASSERT(!r->include_max);
-
-	// X <= 100
-	UnsignedRange_TightenRange(r, OP_LE, 100);
-	TEST_ASSERT(r->max == 100);
-	TEST_ASSERT(!r->include_max);
-
-	// X >= 50
-	UnsignedRange_TightenRange(r, OP_GE, 50);
-	TEST_ASSERT(r->min == 50);
-	TEST_ASSERT(r->include_min);
-
-	// X > 50
-	UnsignedRange_TightenRange(r, OP_GT, 50);
-	TEST_ASSERT(r->min == 50);
-	TEST_ASSERT(!r->include_min);
-
-	// 75 <= X >= 75
-	UnsignedRange_TightenRange(r, OP_EQUAL, 75);
-	TEST_ASSERT(r->min == 75);
-	TEST_ASSERT(r->include_min);
-	TEST_ASSERT(r->max == 75);
-	TEST_ASSERT(r->include_max);
-
-	TEST_ASSERT(UnsignedRange_IsValid(r));
-	UnsignedRange_Free(r);
-}
-
-void test_unsignedContainsValue() {
-	UnsignedRange *r = UnsignedRange_New();
-	// 0 <= X < UINT64_MAX
-	TEST_ASSERT(UnsignedRange_ContainsValue(r, 100));
-
-	// X <= 100
-	UnsignedRange_TightenRange(r, OP_LE, 100);
-	TEST_ASSERT(!UnsignedRange_ContainsValue(r, 101));
-	TEST_ASSERT(UnsignedRange_ContainsValue(r, 100));
-	TEST_ASSERT(UnsignedRange_ContainsValue(r, 99));
-
-	// X >= 0 AND X <= 0
-	UnsignedRange_TightenRange(r, OP_EQUAL, 0);
-	TEST_ASSERT(!UnsignedRange_ContainsValue(r, 1));
-	TEST_ASSERT(UnsignedRange_ContainsValue(r, 0));
-
-	// X > 0
-	UnsignedRange_TightenRange(r, OP_GT, 0);
-	TEST_ASSERT(!UnsignedRange_ContainsValue(r, 0));
-
-	UnsignedRange_Free(r);
-}
-
 TEST_LIST = {
 	{"numericRangeValidation", test_numericRangeValidation},
 	{"numericTightenRange", test_numericTightenRange},
@@ -443,9 +307,5 @@ TEST_LIST = {
 	{"stringRangeValidation", test_stringRangeValidation},
 	{"stringTightenRange", test_stringTightenRange},
 	{"stringContainsValue", test_stringContainsValue},
-	{"unsighnedRangeNew", test_unsighnedRangeNew},
-	{"unsignedRangeValidation", test_unsignedRangeValidation},
-	{"unsignedTightenRange", test_unsignedTightenRange},
-	{"unsignedContainsValue", test_unsignedContainsValue},
 	{NULL, NULL}
 };

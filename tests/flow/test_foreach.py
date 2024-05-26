@@ -319,12 +319,14 @@ class testForeachFlow():
 
         # validate that the end state is correct
         # there should be one node in the graph, with label N, 
-        # properties: {v: 2, name: 'RAZmon', li: [1] and 4 nodes with label M
+        # properties: {v: 1, name: 'RAZ', li: [1,2,3,4]
+        # and 4 nodes with label M
         # and properties: {v: 1, name: 'raz'} and li from 1 to 4
         res = self.graph.query("MATCH (n:N) return n")
         n = Node(labels='N', properties={'v': 1, 'name': 'RAZ', 'li': [1, 2, 3, 4]})
         self.env.assertEquals(len(res.result_set), 1)
         self.env.assertEquals(res.result_set[0][0], n)
+
         res = self.graph.query("MATCH (m:M) return m")
         self.env.assertEquals(len(res.result_set), 4)
         for i in range(len(res.result_set)):
@@ -335,9 +337,9 @@ class testForeachFlow():
         res = self.graph.query("MATCH (m:M) DELETE m")
         self.env.assertEquals(res.nodes_deleted, 4)
 
-        # ----------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         # triple embedding of a FOREACH clause, referencing node properties
-        # ----------------------------------------------------------------------
+        #-----------------------------------------------------------------------
 
         query = """
         MATCH (n:N)
@@ -367,9 +369,9 @@ class testForeachFlow():
                                             t.v""",
                                             [[n1], [n2]])
 
-        # ----------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         # triple embedded Foreach clause followed by reading and writing clauses
-        # ----------------------------------------------------------------------
+        #-----------------------------------------------------------------------
 
         self.graph.delete()
 
@@ -629,8 +631,10 @@ class testForeachFlow():
         query = """UNWIND range(1,9) AS i 
                    CREATE (n:N {v:i})-[:R]->(m:M {v:(i+1)})"""
         self.graph.query(query)
+
         query = """CREATE INDEX FOR (n:N) ON (n.v)"""
         self.graph.query(query)
+
         query = """MATCH p=(n:N)-[:R]->(:M) WHERE n.v <= 5 
                    FOREACH( n in nodes(p) | SET n.x = 3) RETURN count(n.v)"""
         result = self.graph.query(query)

@@ -759,7 +759,25 @@ class testEffects():
 
         self.assert_graph_eq()
 
-    def test14_rerun_disable_effects(self):
+    def test14_empty_vector(self, expect_effect=True):
+        # test creation of an empty vector
+
+        # no leftovers from previous test
+        self.env.assertFalse(self.monitor_containt_effect())
+
+        q = "CREATE ({v:vecf32([])})"
+        res = self.query_master_and_wait(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(res.properties_set, 1)
+
+        if(expect_effect):
+            self.wait_for_effect()
+        else:
+            self.wait_for_query()
+
+        self.assert_graph_eq()
+
+    def test15_rerun_disable_effects(self):
         # test replication works when effects are disabled
 
         # no leftovers from previous test
@@ -790,11 +808,12 @@ class testEffects():
         self.test11_delete_node_effect(False)
         self.test12_merge_node(False)
         self.test13_merge_edge(False)
+        self.test14_empty_vector(False)
 
         # make sure no effects had been recieved
         self.env.assertFalse(self.monitor_containt_effect())
 
-    def test_15_random_ops(self):
+    def test_16_random_ops(self):
         # update graph key
         global GRAPH_ID
         GRAPH_ID = "random_graph"

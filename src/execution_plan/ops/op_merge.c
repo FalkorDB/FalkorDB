@@ -282,7 +282,6 @@ static Record MergeConsume
 			// as the input stream will be freed
 			// before entities are created
 			if(lhs_record) {
-				Record_PersistScalars(lhs_record);
 				Argument_AddRecord(op->create_argument_tap, lhs_record);
 				lhs_record = NULL;
 			}
@@ -294,7 +293,7 @@ static Record MergeConsume
 
 		// free the LHS Record if we haven't transferred it to the Create stream
 		if(lhs_record) {
-			OpBase_DeleteRecord(lhs_record);
+			OpBase_DeleteRecord(&lhs_record);
 		}
 	}
 
@@ -399,7 +398,7 @@ static void MergeFree
 	if(op->input_records) {
 		uint input_count = array_len(op->input_records);
 		for(uint i = 0; i < input_count; i ++) {
-			OpBase_DeleteRecord(op->input_records[i]);
+			OpBase_DeleteRecord(op->input_records+i);
 		}
 		array_free(op->input_records);
 		op->input_records = NULL;
@@ -408,7 +407,7 @@ static void MergeFree
 	if(op->output_records) {
 		uint output_count = array_len(op->output_records);
 		for(uint i = 0; i < output_count; i ++) {
-			OpBase_DeleteRecord(op->output_records[i]);
+			OpBase_DeleteRecord(op->output_records+i);
 		}
 		array_free(op->output_records);
 		op->output_records = NULL;

@@ -113,7 +113,7 @@ int OpBase_AliasModifier
 
 bool OpBase_ChildrenAware
 (
-	OpBase *op,
+	const OpBase *op,
 	const char *alias,
 	int *idx
 ) {
@@ -140,7 +140,7 @@ bool OpBase_ChildrenAware
 
 bool OpBase_Aware
 (
-	OpBase *op,
+	const OpBase *op,
 	const char *alias,
 	int *idx
 ) {
@@ -233,7 +233,7 @@ Record OpBase_Profile
 
 bool OpBase_IsWriter
 (
-	OpBase *op
+	const OpBase *op
 ) {
 	return op->writer;
 }
@@ -295,15 +295,11 @@ Record OpBase_CloneRecord
 ) {
 	Record clone = ExecutionPlan_BorrowRecord((struct ExecutionPlan *)r->owner);
 	Record_Clone(r, clone);
-	return clone;
-}
 
-Record OpBase_DeepCloneRecord
-(
-	Record r
-) {
-	Record clone = ExecutionPlan_BorrowRecord((struct ExecutionPlan *)r->owner);
-	Record_DeepClone(r, clone);
+	// increase r's ref count and set r as clone's parent
+	r->ref_count++;
+	clone->parent = r;
+
 	return clone;
 }
 
@@ -327,8 +323,8 @@ inline uint OpBase_ChildCount
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (
-	OpBase *op,  // op
-	uint i       // child index
+	const OpBase *op,  // op
+	uint i             // child index
 ) {
 	ASSERT(op != NULL);
 	ASSERT(i < op->childCount);
@@ -337,9 +333,25 @@ OpBase *OpBase_GetChild
 
 inline void OpBase_DeleteRecord
 (
-	Record r
+	Record *r
 ) {
-	ExecutionPlan_ReturnRecord(r->owner, r);
+	ExecutionPlan_ReturnRecord((*r)->owner, *r);
+	// nullify record
+	*r = NULL;
+}
+
+// merge src into dest and deletes src
+void OpBase_MergeRecords
+(
+	Record dest,  // entries are merged into this record
+	Record *src   // entries are merged from this record
+) {
+	ASSERT(dest != NULL);
+	ASSERT(src  != NULL && *src != NULL);
+	ASSERT(dest != *src);
+
+	Record_Merge(dest, *src);
+	OpBase_DeleteRecord(src);
 }
 
 OpBase *OpBase_Clone

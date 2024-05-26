@@ -365,7 +365,8 @@ class testComprehensionFunctions(FlowTestsBase):
     def test19_variable_redefinition(self):
         # Use a list comprehension's variable in two different contexts
         # The shared variable is x
-        query = """MATCH x=(a {val: 'v3'}) RETURN [x IN nodes(x) | [elem IN range(1, 2) | size(({val: 'v2'})-[]->(x))]]"""
+        query = """MATCH x=(a {val: 'v3'})
+                   RETURN [x IN nodes(x) | [elem IN range(1, 2) | size(({val: 'v2'})-[]->(x))]]"""
         actual_result = self.graph.query(query)
         expected_result = [[[[1, 1]]]]
         self.env.assertEquals(actual_result.result_set, expected_result)

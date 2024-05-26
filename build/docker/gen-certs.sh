@@ -33,15 +33,15 @@ generate_cert() {
 }
 
 mkdir -p tls
-[ -f tls/ca.key ] || openssl genrsa -out tls/ca.key 4096
-openssl req \
+[ -f "tls/ca.key" ] || openssl genrsa -out tls/ca.key 4096
+[ -f "tls/ca.crt" ] || openssl req \
     -x509 -new -nodes -sha256 \
     -key tls/ca.key \
     -days 3650 \
     -subj '/O=Redis Test/CN=Certificate Authority' \
     -out tls/ca.crt
 
-cat > tls/openssl.cnf <<_END_
+[ -f "tls/openssl.cnf" ] || cat > tls/openssl.cnf <<_END_
 [ server_cert ]
 keyUsage = digitalSignature, keyEncipherment
 nsCertType = server

@@ -1238,6 +1238,11 @@ static VISITOR_STRATEGY _Validate_call_subquery
 		}
 	}
 
+	// save current state
+	is_union_all union_all = vctx->union_all;
+	// reset state
+	vctx->union_all = NOT_DEFINED;
+
 	// visit the subquery clauses
 	bool last_is_union = false;
 	for(uint i = 0; i < nclauses; i++) {
@@ -1278,6 +1283,9 @@ static VISITOR_STRATEGY _Validate_call_subquery
 			last_is_union = false;
 		}
 	}
+
+	// restore state
+	vctx->union_all = union_all;
 
 	// free the temporary environment
 	raxFree(vctx->defined_identifiers);

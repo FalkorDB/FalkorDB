@@ -204,8 +204,8 @@ uint OpBase_ChildCount
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (
-	OpBase *join,  // op
-	uint i         // child index
+	const OpBase *op,  // op
+	uint i             // child index
 );
 
 // mark alias as being modified by operation
@@ -228,7 +228,7 @@ int OpBase_AliasModifier
 // returns true if any of an op's children are aware of the given alias
 bool OpBase_ChildrenAware
 (
-	OpBase *op,
+	const OpBase *op,
 	const char *alias,
 	int *idx
 );
@@ -238,7 +238,7 @@ bool OpBase_ChildrenAware
 // modified by prior operation within its segment
 bool OpBase_Aware
 (
-	OpBase *op,
+	const OpBase *op,
 	const char *alias,
 	int *idx
 );
@@ -252,7 +252,7 @@ void OpBase_PropagateReset
 // indicates if the operation is a writer operation
 bool OpBase_IsWriter
 (
-	OpBase *op
+	const OpBase *op
 );
 
 // indicates if the operation is an eager operation
@@ -287,14 +287,16 @@ Record OpBase_CloneRecord
 	Record r
 );
 
-// deep clones given record
-Record OpBase_DeepCloneRecord
-(
-	Record r
-);
-
 // release record
 void OpBase_DeleteRecord
 (
-	Record r
+	Record *r
 );
+
+// merge src into dest and deletes src
+void OpBase_MergeRecords
+(
+	Record dest,  // entries are merged into this record
+	Record *src   // entries are merged from this record
+);
+

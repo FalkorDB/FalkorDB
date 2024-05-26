@@ -728,3 +728,17 @@ class testIndexScanFlow():
         self.env.assertIn('Boaz Arad', names)
         self.env.assertIn('Valerie Abigail Arad', names)
 
+    def test_25_unescaped_string(self):
+        # make sure range index doesn't alter strings
+
+        self.graph.create_node_range_index("Page", "url")
+
+        # create node with escapable string
+        url = "http://mapper.acme.com/?ll=35.33977,-111.64513&z=13&t=R&marker0=37.17417%2C-113.32611%2CHurricane%2C%20Utah&marker1=33.34950%2C-110.99262%2CTop%20of%20the%20World\\%2C%20AZ&marker2=36.14666%2C-111.03209%2CCoal%20Mine%20Canyon\\%2C%20AZ&marker3=34.72585%2C-111.55126%2CApache%20Maid%20Mountain&marker4=35.34640%2C-111.67849%2CSan%20Francisco%20Peaks\\%2C%20Flagstaff&marker5=33.46420%2C-113.36047%2CCourthouse%20Rock\\%2C%20Maricopa%20County%20AZ&marker6=35.64082%2C-115.35916%2CRoach\\%2C%20Nevada&marker7=37.25276%2C-113.36773%2CSilver%20Reef&marker8=35.33001%2C-111.64627%2CDoyle%20Peak\\%2C%20Arizona&marker9=34.20086%2C-112.15294%2CBumble%20Bee\\%2C%20AZ"
+        params = {'url': url}
+        res = self.graph.query("CREATE (:Page {url: $url})", params)
+        self.env.assertEqual(res.nodes_created, 1)
+
+        # make sure we're able to locate node using index scan
+        res = self.graph.query("MATCH (p:Page {url: $url}) RETURN p.url", params)
+        self.env.assertEqual(url, res.result_set[0][0])

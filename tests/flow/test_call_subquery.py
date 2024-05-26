@@ -1313,6 +1313,21 @@ updating clause.")
             self.env.assertEquals(res.result_set[i-1][0], i)
             self.env.assertEquals(res.result_set[i-1][1], [i])
 
+        # mix union and union all in call sub query
+        res = self.graph.query(
+            """
+            CALL { 
+                RETURN 0 AS n1
+                UNION ALL
+                RETURN 0 AS n1
+            }
+            RETURN 0 AS n2
+            UNION
+            RETURN 0 AS n2
+            """
+        )
+        self.env.assertEquals(res.result_set, [[0]])
+
     def test22_indexes(self):
         """Tests that operations on indexes are properly executed (and reset)
         in subqueries"""
@@ -2134,3 +2149,20 @@ updating clause.")
             RETURN n.v
             """)
         self.env.assertEquals(res.result_set, [[1]])
+
+    def test34_create_within_call(self):
+        # The query will:
+        # 1. Create an entity within a CALL sub query
+        # 2. a Match outside the sub query will pull as many records as it can
+        #    untill the sub query is depleted
+
+        q = """CALL {
+                        CREATE ()
+                        RETURN 0 AS X
+                    }
+               MATCH ()--()
+               RETURN 0"""
+
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEquals(len(res.result_set), 0)

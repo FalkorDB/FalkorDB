@@ -44,8 +44,7 @@ static OpResult ArgumentReset(OpBase *opBase) {
 	Argument *arg = (Argument *)opBase;
 
 	if(arg->r) {
-		OpBase_DeleteRecord(arg->r);
-		arg->r = NULL;
+		OpBase_DeleteRecord(&arg->r);
 	}
 
 	return OP_OK;
@@ -64,8 +63,7 @@ static inline OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opB
 static void ArgumentFree(OpBase *opBase) {
 	Argument *arg = (Argument *)opBase;
 	if(arg->r) {
-		OpBase_DeleteRecord(arg->r);
-		arg->r = NULL;
+		OpBase_DeleteRecord(&arg->r);
 	}
 }
 

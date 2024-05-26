@@ -133,7 +133,8 @@ static Record _handoff
 (
 	OpCreate *op
 ) {
-	return array_pop(op->records);
+	if(array_len(op->records) > 0) return array_pop(op->records);
+	else return NULL;
 }
 
 static Record CreateConsume
@@ -148,10 +149,6 @@ static Record CreateConsume
 
 	// consume mode
 	op->records = array_new(Record, 32);
-
-	// initialize the records array with NULL, which will terminate execution
-	// upon depletion
-	array_append(op->records, NULL);
 
 	OpBase       *child = NULL;
 	GraphContext *gc    = QueryCtx_GetGraphCtx();
@@ -169,10 +166,6 @@ static Record CreateConsume
 		// pull data until child is depleted
 		child = op->op.children[0];
 		while((r = OpBase_Consume(child))) {
-			// persist scalars from previous ops before storing the record
-			// as those ops will be freed before the records are handed off
-			Record_PersistScalars(r);
-
 			// create entities
 			_CreateNodes(op, r, gc);
 			_CreateEdges(op, r, gc);
@@ -211,7 +204,7 @@ static void CreateFree(OpBase *ctx) {
 
 	if(op->records) {
 		uint rec_count = array_len(op->records);
-		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(op->records[i]);
+		for(uint i = 0; i < rec_count; i++) OpBase_DeleteRecord(op->records+i);
 		array_free(op->records);
 		op->records = NULL;
 	}
