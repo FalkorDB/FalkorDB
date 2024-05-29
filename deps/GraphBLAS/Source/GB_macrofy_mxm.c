@@ -125,6 +125,8 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
     fprintf (fp, "\n// multiplicative operator%s:\n",
         flipxy ? " (flipped)" : "") ;
     const char *f_expr ;
+    GB_macrofy_type (fp, "X", "_", (xcode == 0) ? "GB_void" : xtype->name) ;
+    GB_macrofy_type (fp, "Y", "_", (ycode == 0) ? "GB_void" : ytype->name) ;
     GB_macrofy_binop (fp, "GB_MULT", flipxy, false, false, mult_ecode, C_iso,
         mult, &f_expr, NULL, NULL) ;
 

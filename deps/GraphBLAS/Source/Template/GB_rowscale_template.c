@@ -51,6 +51,9 @@
     int ntasks = nthreads ;
     ntasks = GB_IMIN (bnz, ntasks) ;
 
+    // parition the space into ntasks, to do this in parallel:
+    // for (p = 0 ; p < bnz ; p++) { ... work on Bi [p] and Bx [p] ... }
+
     int tid ;
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (tid = 0 ; tid < ntasks ; tid++)

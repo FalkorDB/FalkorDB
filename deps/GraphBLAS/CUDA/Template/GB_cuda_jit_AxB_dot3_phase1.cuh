@@ -101,6 +101,8 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     // int64_t *restrict Ch = C->h ;    // copy of Mh
     int64_t *__restrict__ Ci = C->i ;   // for zombies, or bucket assignment
 
+    // FIXME: use (k << 2) not (k << 4)
+
     // Ci [p] for an entry C(i,j) contains either GB_FLIP(i) if C(i,j) is a
     // zombie, or (k << 4) + bucket otherwise, where C(:,j) is the kth vector
     // of C (j = Ch [k] if hypersparse or j = k if standard sparse), and
@@ -123,12 +125,10 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     // assign buckets to all entries in C(i,j), one chunk at a time
     //--------------------------------------------------------------------------
 
-#if 0
-    // removing ks saves about 10% of the phase1 time
-    // (19.5 msec to 17.5 msec for the com-Orkut matrix)
-    __shared__ int64_t ks [chunk_size] ;
-#endif
+    // FIXME: tune this loop (and all others) for GPU architectures, where # of
+    // threadblocks can differ on different GPUs.
 
+    // grid-stride loop for each threadblock:
     for (int64_t pfirst = blockIdx.x << log2_chunk_size ;
                  pfirst < mnz ;
                  pfirst += gridDim.x << log2_chunk_size)
@@ -140,34 +140,28 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
         // This threadblock works on Mi/Mx and Ci/Mx, in positions pfirst to
         // pfirst + my_chunk_size - 1.
-
-#if 0
-        int64_t my_chunk_size = GB_cuda_ek_slice (Mp, mnvec, mnz, pfirst,
-            chunk_size, /* output: */ ks) ;
-#else
         int64_t my_chunk_size, mnvec1 ;
         float slope ;
         int64_t kfirst = GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst,
             chunk_size, &my_chunk_size, &mnvec1, &slope) ;
-#endif
 
         //----------------------------------------------------------------------
         // assign entries in C(i,j) to the buckets
         //----------------------------------------------------------------------
 
-        for (int64_t kk = threadIdx.x ; kk < my_chunk_size ; kk += blockDim.x)
+        for (int64_t pdelta = threadIdx.x ;
+                     pdelta < my_chunk_size ;
+                     pdelta += blockDim.x)
         {
 
             //------------------------------------------------------------------
             // determine the kth vector that contains the pth entry
             //------------------------------------------------------------------
 
-#if 0
-            int64_t k = ks [kk] ;           // get the k value of Mi,Mx [pM]
-#else
-            int64_t k = GB_cuda_ek_slice_entry (kk, pfirst, Mp, mnvec1, kfirst,
-                slope) ;
-#endif
+            // get the pM and k value of Mi,Mx [pM]
+            int64_t pM ;    // = pfirst + pdelta
+            int64_t k = GB_cuda_ek_slice_entry (&pM, pdelta, pfirst, Mp, mnvec1,
+                kfirst, slope) ;
 
             //------------------------------------------------------------------
             // get C(i,j): zombie if A(:,i) and B(:,j) are empty or M(i,j) false
@@ -177,7 +171,6 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
             // or j = Mh [k] if C is hypersparse
 
             GB_bucket_code bucket = GB_BUCKET_ZOMBIE ;
-            int64_t pM = kk + pfirst ;
             int64_t i = Mi [pM] ;
 
             if (GB_MCAST (Mx, pM, ))        // if (M (i,j) is true):
@@ -261,7 +254,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
             // encode the bucket or zombie status in the row index of C(i,j)
             Ci [pM] = (bucket == GB_BUCKET_ZOMBIE) * ( GB_FLIP(i) << 4)
-                    + (bucket != GB_BUCKET_ZOMBIE) * ((k<<4) + bucket) ;
+                    + (bucket != GB_BUCKET_ZOMBIE) * ((k << 4) + bucket) ;
 
             // each thread counts its own bucket sizes
             my_bucket [bucket]++ ;
