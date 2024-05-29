@@ -82,6 +82,7 @@ GrB_Info GB_init            // start up GraphBLAS
     bool malloc_is_thread_safe = true ;
 
     #if defined ( GRAPHBLAS_HAS_CUDA )
+    mode = GxB_NONBLOCKING_GPU ;    // HACK FIXME: force GPU to be used
     if (mode == GxB_NONBLOCKING_GPU || mode == GxB_BLOCKING_GPU)
     {
         // ignore the memory management function pointers and use rmm_wrap_*
@@ -197,6 +198,12 @@ GrB_Info GB_init            // start up GraphBLAS
     //--------------------------------------------------------------------------
 
     #pragma omp flush
+    #if defined ( GRAPHBLAS_HAS_CUDA )
+//  this hack_get setting is used by GB_ngpus_to_use:
+//  GB_Global_hack_set (2,0) ;  // HACK FIXME: default: GPU for big enough probs
+    GB_Global_hack_set (2,1) ;  // HACK FIXME: force the GPU always to be used
+//  GB_Global_hack_set (2,2) ;  // HACK FIXME: force the GPU never to be used
+    #endif
     return (GrB_SUCCESS) ;
 }
 

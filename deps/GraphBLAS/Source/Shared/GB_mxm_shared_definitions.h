@@ -175,6 +175,11 @@
     #define GB_PAIR_ONE 1
     #endif
 
+    // Zx [p] += aik * bkj where Zx is ztype
+    #ifndef GB_MULTADD2
+    #define GB_MULTADD2(Zx,p,a,b,i,k,j)
+    #endif
+
 #else
 
     //--------------------------------------------------------------------------
@@ -183,7 +188,8 @@
 
     // These definitions require explicit types to be used, not GB_void.
     // Generic methods using GB_void for all types, memcpy, and function
-    // pointers for all computations must #define these macros first.
+    // pointers for all computations must #define these macros first,
+    // or #undef them and re-#define them.
 
     // declare a scalar of ztype
     #ifndef GB_CIJ_DECLARE
@@ -231,5 +237,11 @@
     #define GB_PAIR_ONE ((GB_Z_TYPE) 1)
     #endif
 
+    // Zx [p] += aik * bkj where Zx is ztype
+    #ifndef GB_MULTADD2
+    #define GB_MULTADD2(Zx,p,a,b,i,k,j) GB_MULTADD (Zx [p], a, b, i, k, j)
+    #endif
+
 #endif
 #endif
+

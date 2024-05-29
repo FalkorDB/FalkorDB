@@ -21,22 +21,22 @@
     OK (GrB_UnaryOp_get_String (op, name, GrB_NAME)) ;                  \
     CHECK (MATCH (name, opname)) ;                                      \
     OK (GrB_UnaryOp_get_String (op, cname, GxB_JIT_C_NAME)) ;           \
-    printf ("%s: %s\n", name, cname) ; \
+    printf ("%s: %s\n", name, cname) ;                                  \
     OK (GrB_UnaryOp_get_SIZE (op, &size, GrB_NAME)) ;                   \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
-    info2 = GrB_UnaryOp_get_SIZE (op, &size, GrB_INP0_TYPE_STRING) ;   \
-    info3 = GrB_UnaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ;  \
+    info2 = GrB_UnaryOp_get_SIZE (op, &size, GrB_INP0_TYPE_STRING) ;    \
+    info3 = GrB_UnaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ;   \
     CHECK (info2 == info3) ;                                            \
     CHECK (size == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (size == 1) ; }                  \
-    info2 = GrB_UnaryOp_get_SIZE (op, &size, GrB_INP1_TYPE_STRING) ;   \
-    info3 = GrB_UnaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ;  \
+    info2 = GrB_UnaryOp_get_SIZE (op, &size, GrB_INP1_TYPE_STRING) ;    \
+    info3 = GrB_UnaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ;   \
     CHECK (info2 == info3) ;                                            \
     CHECK (size == 1) ;                                                 \
     CHECK (info2 == GrB_NO_VALUE) ;                                     \
-    info2 = GrB_UnaryOp_get_SIZE (op, &size, GrB_OUTP_TYPE_STRING) ;   \
-    info3 = GrB_UnaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ;  \
+    info2 = GrB_UnaryOp_get_SIZE (op, &size, GrB_OUTP_TYPE_STRING) ;    \
+    info3 = GrB_UnaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ;   \
     CHECK (info2 == info3) ;                                            \
     CHECK (size == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (size == 1) ; }                  \
@@ -417,7 +417,7 @@ void mexFunction
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_UnaryOp_get_VOID_(GrB_LNOT, nothing, 0)) ;
 
-    OK (GrB_UnaryOp_new (&unop, myfunc, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_UnaryOp_new (&unop, (GxB_unary_function) myfunc, GrB_FP32, GrB_FP32)) ;
     OK (GrB_UnaryOp_get_SIZE_(unop, &size, GrB_NAME)) ;
     CHECK (size == 1) ;
     OK (GrB_UnaryOp_get_SIZE_(unop, &size, GxB_JIT_C_NAME)) ;

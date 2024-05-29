@@ -40,19 +40,36 @@
     #endif
 
     const int8_t *restrict Bb = B->b ;
-    const bool B_iso = B->iso ;
     const int64_t bvlen = B->vlen ;
     const int64_t bvdim = B->vdim ;
+
+    #ifdef GB_JIT_KERNEL
+    #define B_is_bitmap GB_B_IS_BITMAP
+    #define B_iso GB_B_ISO
+    #else
     const bool B_is_bitmap = GB_IS_BITMAP (B) ;
-    ASSERT (B_is_bitmap || GB_IS_FULL (B)) ;
+    const bool B_iso = B->iso ;
+    #endif
+
+    ASSERT (GB_IS_BITMAP (B) || GB_IS_FULL (B)) ;
 
     const int64_t *restrict Ap = A->p ;
     const int64_t *restrict Ah = A->h ;
     const int64_t *restrict Ai = A->i ;
-    const bool A_iso = A->iso ;
     const int64_t anvec = A->nvec ;
     const int64_t avlen = A->vlen ;
     const int64_t avdim = A->vdim ;
+
+    #ifdef GB_JIT_KERNEL
+    #define A_is_hyper  GB_A_IS_HYPER
+    #define A_is_sparse GB_A_IS_SPARSE
+    #define A_iso GB_A_ISO
+    #else
+    const bool A_is_hyper = GB_IS_HYPERSPARSE (A) ;
+    const bool A_is_sparse = GB_IS_SPARSE (A) ;
+    const bool A_iso = A->iso ;
+    #endif
+
     ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) ;
 
     #if !GB_A_IS_PATTERN

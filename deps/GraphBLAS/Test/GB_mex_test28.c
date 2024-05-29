@@ -21,23 +21,23 @@
     size_t siz1, siz2, siz3 ;                                           \
     OK (GrB_BinaryOp_get_String (op, name, GrB_NAME)) ;                 \
     CHECK (MATCH (name, opname)) ;                                      \
-    OK (GrB_BinaryOp_get_String (op, cname, GxB_JIT_C_NAME)) ;      \
-    printf ("%s: %s\n", name, cname) ; \
+    OK (GrB_BinaryOp_get_String (op, cname, GxB_JIT_C_NAME)) ;          \
+    printf ("%s: %s\n", name, cname) ;                                  \
     OK (GrB_BinaryOp_get_SIZE (op, &size, GrB_NAME)) ;                  \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
-    info2 = GrB_BinaryOp_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;  \
-    info3 = GrB_BinaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ; \
+    info2 = GrB_BinaryOp_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;   \
+    info3 = GrB_BinaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ;  \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz1 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                  \
-    info2 = GrB_BinaryOp_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;  \
-    info3 = GrB_BinaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ; \
+    info2 = GrB_BinaryOp_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;   \
+    info3 = GrB_BinaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ;  \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz2 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz2 == 1) ; }                  \
-    info2 = GrB_BinaryOp_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;  \
-    info3 = GrB_BinaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ; \
+    info2 = GrB_BinaryOp_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;   \
+    info3 = GrB_BinaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ;  \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz3 == strlen (name) + 1) ;                                 \
     if (info2 == GrB_NO_VALUE) { CHECK (siz3 == 1) ; }                  \
@@ -634,7 +634,8 @@ void mexFunction
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_BinaryOp_get_VOID_(GrB_LAND, nothing, 0)) ;
 
-    OK (GrB_BinaryOp_new (&binop, myfunc, GrB_FP32, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_BinaryOp_new (&binop, (GxB_binary_function) myfunc,
+        GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_get_SIZE_(binop, &size, GrB_NAME)) ;
     CHECK (size == 1) ;
     OK (GrB_BinaryOp_get_SIZE_(binop, &size, GxB_JIT_C_NAME)) ;
