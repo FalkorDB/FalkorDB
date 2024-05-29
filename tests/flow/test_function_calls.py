@@ -695,7 +695,9 @@ class testFunctionCallsFlow(FlowTestsBase):
         queries = [
             """RETURN toInteger('z')""",
             """RETURN toInteger(NULL)""",
-            """RETURN toInteger('')"""
+            """RETURN toInteger('')""",
+            """RETURN toInteger('18446744073709551616')""",
+            """RETURN toInteger('-18446744073709551616')""",
         ]
         for query in queries:
             actual_result = self.graph.query(query)
