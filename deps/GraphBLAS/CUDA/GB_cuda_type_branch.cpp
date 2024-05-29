@@ -8,13 +8,7 @@
 //------------------------------------------------------------------------------
 
 // The CUDA kernels require that the type sizes are 1, 2, or a multiple of 4
-// bytes.  In addition, the shfl_down primitives require the type to be 32
-// bytes or less.  If user-defined type has a different size, it cannot be done
-// on the GPU.
-
-// FIXME: get the CUDA kernels to work on large types
-
-// All built-in types pass this rule.
+// bytes.  All built-in types pass this rule.
 
 #include "GB_cuda.hpp"
 
@@ -30,6 +24,12 @@ bool GB_cuda_type_branch            // return true if the type is OK on GPU
         return (true) ;
     }
 
+    if (type == GxB_FC32 || type == GxB_FC64)
+    {
+        // FIXME: complex types not yet supported in CUDA
+        return (false) ;
+    }
+
     size_t size = type->size ;
 
     if (size == sizeof (uint8_t) || size == sizeof (uint16_t))
@@ -38,9 +38,12 @@ bool GB_cuda_type_branch            // return true if the type is OK on GPU
         return (true) ;
     }
 
-    if (size % sizeof (uint32_t) == 0 && size <= 32)
+    if (size % sizeof (uint32_t) == 0)
     {
-        // size is 4, 16, 20, 24, 28, or 32
+        // size is 4, 16, 20, 24, 28, or 32: small ztypes.
+        // If the size is larger than 32 bytes, it still must be a multiple of
+        // 4 bytes.  The only difference will be warp-level reductions, which
+        // will use GB_cuda_shfl_down_large_ztype instead of tile.shfl_down.
         return (true) ;
     }
 

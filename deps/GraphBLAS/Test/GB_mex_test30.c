@@ -16,31 +16,32 @@
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
 
-#define GETOP(op,opname)                                                \
-{                                                                       \
-    size_t siz1, siz2, siz3 ;                                           \
-    OK (GrB_IndexUnaryOp_get_String (op, name, GrB_NAME)) ;             \
-    CHECK (MATCH (name, opname)) ;                                      \
-    OK (GrB_IndexUnaryOp_get_String (op, cname, GxB_JIT_C_NAME)) ;      \
-    printf ("%s: %s\n", name, cname) ; \
-    OK (GrB_IndexUnaryOp_get_SIZE (op, &size, GrB_NAME)) ;              \
-    CHECK (size == strlen (name) + 1) ;                                 \
-    GrB_Info info2, info3 ;                                             \
-    info2 = GrB_IndexUnaryOp_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;  \
-    info3 = GrB_IndexUnaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ; \
-    CHECK (info2 == info3) ;                                            \
-    CHECK (siz1 == strlen (name) + 1) ;                                 \
-    if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                  \
-    info2 = GrB_IndexUnaryOp_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;  \
-    info3 = GrB_IndexUnaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ; \
-    CHECK (info2 == info3) ;                                            \
-    CHECK (siz2 == strlen (name) + 1) ;                                 \
-    if (info2 == GrB_NO_VALUE) { CHECK (siz2 == 1) ; }                  \
-    info2 = GrB_IndexUnaryOp_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;  \
-    info3 = GrB_IndexUnaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ; \
-    CHECK (info2 == info3) ;                                            \
-    CHECK (siz3 == strlen (name) + 1) ;                                 \
-    if (info2 == GrB_NO_VALUE) { CHECK (siz3 == 1) ; }                  \
+#define GETOP(op,opname)                                                    \
+{                                                                           \
+    size_t siz1, siz2, siz3 ;                                               \
+    OK (GrB_IndexUnaryOp_get_String (op, name, GrB_NAME)) ;                 \
+    CHECK (MATCH (name, opname)) ;                                          \
+    OK (GrB_IndexUnaryOp_get_String (op, cname,                             \
+        (GrB_Field) GxB_JIT_C_NAME));                                       \
+    printf ("%s: %s\n", name, cname) ;                                      \
+    OK (GrB_IndexUnaryOp_get_SIZE (op, &size, GrB_NAME)) ;                  \
+    CHECK (size == strlen (name) + 1) ;                                     \
+    GrB_Info info2, info3 ;                                                 \
+    info2 = GrB_IndexUnaryOp_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;   \
+    info3 = GrB_IndexUnaryOp_get_String (op, name, GrB_INP0_TYPE_STRING) ;  \
+    CHECK (info2 == info3) ;                                                \
+    CHECK (siz1 == strlen (name) + 1) ;                                     \
+    if (info2 == GrB_NO_VALUE) { CHECK (siz1 == 1) ; }                      \
+    info2 = GrB_IndexUnaryOp_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;   \
+    info3 = GrB_IndexUnaryOp_get_String (op, name, GrB_INP1_TYPE_STRING) ;  \
+    CHECK (info2 == info3) ;                                                \
+    CHECK (siz2 == strlen (name) + 1) ;                                     \
+    if (info2 == GrB_NO_VALUE) { CHECK (siz2 == 1) ; }                      \
+    info2 = GrB_IndexUnaryOp_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;   \
+    info3 = GrB_IndexUnaryOp_get_String (op, name, GrB_OUTP_TYPE_STRING) ;  \
+    CHECK (info2 == info3) ;                                                \
+    CHECK (siz3 == strlen (name) + 1) ;                                     \
+    if (info2 == GrB_NO_VALUE) { CHECK (siz3 == 1) ; }                      \
 }
 
 #define GETNAME(op)                                         \
@@ -231,7 +232,8 @@ void mexFunction
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_IndexUnaryOp_get_VOID_(GrB_TRIL, nothing, 0)) ;
 
-    OK (GrB_IndexUnaryOp_new (&op, myfunc, GrB_BOOL, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_IndexUnaryOp_new (&op, (GxB_index_unary_function) myfunc,
+        GrB_BOOL, GrB_FP32, GrB_FP32)) ;
     OK (GrB_IndexUnaryOp_get_SIZE_(op, &size, GrB_NAME)) ;
     CHECK (size == 1) ;
     OK (GrB_IndexUnaryOp_get_SIZE_(op, &size, GxB_JIT_C_NAME)) ;
