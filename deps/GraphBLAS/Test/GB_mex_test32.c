@@ -2167,13 +2167,17 @@ void mexFunction
 
     ERR (GrB_Semiring_get_VOID_(GrB_LOR_LAND_SEMIRING_BOOL, nothing, 0)) ;
 
-    OK (GrB_BinaryOp_new (&times, mytimes, GrB_FP32, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_BinaryOp_new (&times,
+        (GxB_binary_function) mytimes, GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(times, "mytimes", GrB_NAME)) ;
-    METHOD (GrB_BinaryOp_set_String (times, MYTIMES_DEFN, GxB_JIT_C_DEFINITION)) ;
+    METHOD (GrB_BinaryOp_set_String (times, MYTIMES_DEFN,
+        (GrB_Field) GxB_JIT_C_DEFINITION)) ;
 
-    OK (GrB_BinaryOp_new (&add, myadd, GrB_FP32, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_BinaryOp_new (&add,
+        (GxB_binary_function) myadd, GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(add, "myadd", GrB_NAME)) ;
-    METHOD (GrB_BinaryOp_set_String (add, MYADD_DEFN, GxB_JIT_C_DEFINITION)) ;
+    METHOD (GrB_BinaryOp_set_String (add, MYADD_DEFN,
+        (GrB_Field) GxB_JIT_C_DEFINITION)) ;
 
     OK (GrB_Monoid_new_FP32 (&monoid, add, (float) 0.0)) ;
     OK (GrB_Monoid_get_SIZE_(monoid, &size, GrB_NAME)) ;

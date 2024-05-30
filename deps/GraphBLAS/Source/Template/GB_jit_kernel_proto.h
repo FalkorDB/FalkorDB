@@ -572,6 +572,61 @@ GrB_Info GB_jit_kernel_reduce                                           \
     int32_t blocksz                                                     \
 )
 
+#define GB_JIT_CUDA_KERNEL_ROWSCALE_PROTO(GB_jit_kernel_rowscale)       \
+GrB_Info GB_jit_kernel_rowscale                                         \
+(                                                                       \
+    GrB_Matrix C,                                                       \
+    GrB_Matrix D,                                                       \
+    GrB_Matrix B,                                                       \
+    cudaStream_t stream,                                                \
+    int32_t gridsz,                                                     \
+    int32_t blocksz                                                     \
+)
+
+#define GB_JIT_CUDA_KERNEL_COLSCALE_PROTO(GB_jit_kernel_colscale)       \
+GrB_Info GB_jit_kernel_colscale                                         \
+(                                                                       \
+    GrB_Matrix C,                                                       \
+    GrB_Matrix A,                                                       \
+    GrB_Matrix D,                                                       \
+    cudaStream_t stream,                                                \
+    int32_t gridsz,                                                     \
+    int32_t blocksz                                                     \
+)
+
+#define GB_JIT_CUDA_KERNEL_APPLY_BIND1ST_PROTO(GB_jit_kernel_apply_bind1st) \
+GrB_Info GB_jit_kernel_apply_bind1st                                        \
+(                                                                           \
+    GB_void *Cx,                                                            \
+    const GB_void *scalarx,                                                 \
+    GrB_Matrix B,                                                           \
+    cudaStream_t stream,                                                    \
+    int32_t gridsz,                                                         \
+    int32_t blocksz                                                         \
+)                                                                           \
+
+#define GB_JIT_CUDA_KERNEL_APPLY_BIND2ND_PROTO(GB_jit_kernel_apply_bind2nd) \
+GrB_Info GB_jit_kernel_apply_bind2nd                                        \
+(                                                                           \
+    GB_void *Cx,                                                            \
+    GrB_Matrix A,                                                           \
+    const GB_void *scalarx,                                                 \
+    cudaStream_t stream,                                                    \
+    int32_t gridsz,                                                         \
+    int32_t blocksz                                                         \
+)                                                                           \
+
+#define GB_JIT_CUDA_KERNEL_APPLY_UNOP_PROTO(GB_jit_kernel_apply_unop)       \
+GrB_Info GB_jit_kernel_apply_unop                                           \
+(                                                                           \
+    GB_void *Cx,                                                            \
+    GrB_Matrix A,                                                           \
+    const GB_void *ythunk,                                                  \
+    cudaStream_t stream,                                                    \
+    int32_t gridsz,                                                         \
+    int32_t blocksz                                                         \
+)                                                                           \
+
 #define GB_JIT_CUDA_KERNEL_DOT3_PROTO(GB_jit_kernel_AxB_dot3)           \
 GrB_Info GB_jit_kernel_AxB_dot3                                         \
 (                                                                       \
