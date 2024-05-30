@@ -685,6 +685,8 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger('1.9')""": [[1]],
             """RETURN toInteger(true)""": [[1]],
             """RETURN toInteger(false)""": [[0]],
+            """RETURN toInteger('1790460441484152222')""": [[1790460441484152222]],
+            """RETURN toInteger('-1790460441484152222')""": [[-1790460441484152222]],
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
@@ -693,7 +695,9 @@ class testFunctionCallsFlow(FlowTestsBase):
         queries = [
             """RETURN toInteger('z')""",
             """RETURN toInteger(NULL)""",
-            """RETURN toInteger('')"""
+            """RETURN toInteger('')""",
+            """RETURN toInteger('18446744073709551616')""",
+            """RETURN toInteger('-18446744073709551616')""",
         ]
         for query in queries:
             actual_result = self.graph.query(query)
