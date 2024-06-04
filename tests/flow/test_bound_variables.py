@@ -131,5 +131,5 @@ class testBoundVariables(FlowTestsBase):
                 # should not reach this point
                 self.env.assertFalse(True)
             except Exception as e:
-                self.env.assertIn("Edge `e` can only be declared once", str(e))
+                self.env.assertIn("The bound edge 'e' can't be redeclared in a MERGE clause", str(e))
 

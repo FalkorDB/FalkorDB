@@ -740,12 +740,13 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 	enum cypher_rel_direction dir = cypher_ast_rel_pattern_get_direction(n);
 	const cypher_astnode_t *range = cypher_ast_rel_pattern_get_varlength(n);
 
+	// clause name used for error reporting
+	const char *clause_name = (vctx->clause == CYPHER_AST_CREATE) ?
+		"CREATE" :
+		"MERGE";
+
 	// extra validation when in a CREATE / MERGE clause
 	if(vctx->clause == CYPHER_AST_CREATE || vctx->clause == CYPHER_AST_MERGE) {
-		// clause name used for error reporting
-		const char *clause_name = (vctx->clause == CYPHER_AST_CREATE) ?
-			"CREATE" :
-			"MERGE";
 
 		// validate that each relation has exactly one type
 		if(reltype_count != 1) {
@@ -788,7 +789,7 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 		const char *alias = cypher_ast_identifier_get_name(alias_node);
 		// edge can not be redeclared
 		if(_IdentifierAdd(vctx, alias, (void*)T_EDGE) == 0) {
-			ErrorCtx_SetError(EMSG_EDGE_REDECLARATION, alias);
+			ErrorCtx_SetError(EMSG_REDECLARE, "edge", alias, clause_name);
 			return VISITOR_BREAK;
 		}
 	}
@@ -1673,7 +1674,7 @@ static VISITOR_STRATEGY _Validate_CREATE_Clause
 
 		// fail on duplicate identifier
 		if(_IdentifierAdd(vctx, alias, (void*)t) == 0 && t == T_EDGE) {
-			ErrorCtx_SetError(EMSG_EDGE_REDECLARATION, alias);
+			ErrorCtx_SetError(EMSG_REDECLARE, "edge", alias, "CREATE");
 			res = VISITOR_BREAK;
 			break;
 		}

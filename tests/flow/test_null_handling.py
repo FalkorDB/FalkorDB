@@ -102,7 +102,7 @@ class testNullHandlingFlow(FlowTestsBase):
             # not expecting to reach this point
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
-            self.env.assertContains("Edge `e` can only be declared once", str(e))
+            self.env.assertContains("The bound edge 'e' can't be redeclared in a MERGE clause", str(e))
 
     # ValueHashJoin ops should not treat null values as equal.
     def test08_null_value_hash_join(self):

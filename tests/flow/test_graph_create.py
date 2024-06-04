@@ -142,7 +142,7 @@ class testGraphCreationFlow(FlowTestsBase):
                 self.graph.query(query)
                 self.env.assertTrue(False)
             except redis.exceptions.ResponseError as e:
-                self.env.assertContains("Edge `r` can only be declared once", str(e))
+                self.env.assertContains("The bound edge 'r' can't be redeclared in a CREATE clause", str(e))
 
         query = "MATCH (r) CREATE (r)"
         try:

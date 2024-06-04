@@ -61,7 +61,6 @@
 #define EMSG_PROCEDURE_NOT_REGISTERED "Procedure `%s` is not registered"
 #define EMSG_PROCEDURE_INVALID_ARGUMENTS "Procedure `%s` requires %d arguments, got %d"
 #define EMSG_VAIABLE_ALREADY_DECLARED "Variable `%s` already declared"
-#define EMSG_EDGE_REDECLARATION "Edge `%s` can only be declared once"
 #define EMSG_PROCEDURE_INVALID_OUTPUT "Procedure `%s` does not yield output `%s`"
 #define EMSG_CALLSUBQUERY_INVALID_REFERENCES "WITH imports in CALL {} must consist of only simple references to outside variables"
 #define EMSG_VAIABLE_ALREADY_DECLARED_IN_OUTER_SCOPE "Variable `%s` already declared in outer scope"

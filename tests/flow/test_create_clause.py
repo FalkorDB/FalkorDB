@@ -56,7 +56,7 @@ class testCreateClause():
             # should not reach this point
             self.env.assertTrue(False)
         except Exception as e:
-            self.env.assertTrue("Edge `e` can only be declared once" in str(e))
+            self.env.assertTrue("The bound edge 'e' can't be redeclared in a CREATE clause" in str(e))
 
         queries = ["MATCH ()-[e:R]->() CREATE ()-[e:R]->()",
                    "CREATE ()-[e:R]->() CREATE ()-[e:R]->()"]
@@ -67,5 +67,5 @@ class testCreateClause():
                 # should not reach this point
                 self.env.assertTrue(False)
             except Exception as e:
-                self.env.assertTrue("Edge `e` can only be declared once" in str(e))
+                self.env.assertTrue("The bound edge 'e' can't be redeclared in a CREATE clause" in str(e))
 
