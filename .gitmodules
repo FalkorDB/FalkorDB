@@ -17,5 +17,5 @@
 	path = deps/oniguruma
 	url = https://github.com/kkos/oniguruma.git
 [submodule "deps/FalkorDB-core-rs"]
-	path = deps/FalkorDB-rs
+	path = deps/FalkorDB-core-rs
 	url = https://github.com/FalkorDB/FalkorDB-core-rs.git
