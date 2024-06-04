@@ -169,7 +169,7 @@ bool GB_mx_get_global       // true if doing malloc_debug
     GrB_Scalar s ;
     GrB_Scalar_new (&s, GrB_INT64) ;
     GrB_Scalar_setElement_INT64 (s, 8) ;
-    GrB_Global_set_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH) ;
+    GrB_Global_set_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH) ;
     GrB_Scalar_free (&s) ;
 
     //--------------------------------------------------------------------------

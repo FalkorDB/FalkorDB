@@ -10,6 +10,9 @@
 #ifndef GB_PRINTF_KERNELS_H
 #define GB_PRINTF_KERNELS_H
 
+// return the length of a string, or 0 if the string is NULL
+#define GB_STRLEN(s) ((s == NULL) ? 0 : strlen (s))
+
 #define GB_STRING_MATCH(s,t) (strcmp (s,t) == 0)
 
 // format strings, normally %llu and %lld, for GrB_Index values

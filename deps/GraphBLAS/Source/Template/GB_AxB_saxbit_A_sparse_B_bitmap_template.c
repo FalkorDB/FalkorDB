@@ -117,22 +117,22 @@
                 #undef GB_MULT_A_ik_G_kj
                 #if ( GB_IS_PAIR_MULTIPLIER && !GB_Z_IS_COMPLEX )
                     // t = A(i,k) * B (k,j) is already #defined as 1
-                    #define GB_MULT_A_ik_G_kj(gkj,jj)
+                    #define GB_MULT_A_ik_G_kj(gkj,i,jj)
                 #else
                     // t = A(i,k) * B (k,j)
-                    #define GB_MULT_A_ik_G_kj(gkj,jj)                   \
+                    #define GB_MULT_A_ik_G_kj(gkj,i,jj)                 \
                         GB_CIJ_DECLARE (t) ;                            \
                         GB_MULT (t, aik, gkj, i, k, j1 + jj)
                 #endif
 
                 #undef  GB_HX_COMPUTE
-                #define GB_HX_COMPUTE(gkj,gb,jj)                        \
+                #define GB_HX_COMPUTE(pH,i,gkj,gb,jj)                   \
                 {                                                       \
                     /* H (i,jj) += A(i,k) * B(k,j) */                   \
                     if (GB_B_kj_PRESENT (gb))                           \
                     {                                                   \
                         /* t = A(i,k) * B (k,j) */                      \
-                        GB_MULT_A_ik_G_kj (gkj, jj) ;                   \
+                        GB_MULT_A_ik_G_kj (gkj, i, jj) ;                \
                         if (Hf [pH+jj] == 0)                            \
                         {                                               \
                             /* H(i,jj) is a new entry */                \
@@ -149,6 +149,9 @@
                 }
 
                 #include "GB_AxB_saxpy4_panel.c"
+                #undef GB_MULT_A_ik_G_kj
+                #undef GB_HX_COMPUTE
+                #undef GB_B_kj_PRESENT
 
                 //--------------------------------------------------------------
                 // C<#M>(:,j1:j2-1) = H

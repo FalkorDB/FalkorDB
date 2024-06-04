@@ -47,10 +47,10 @@
                     const int64_t pH = i * 4 ;
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
-                    GB_HX_COMPUTE (gk0, gb0, 0) ;
-                    GB_HX_COMPUTE (gk1, gb1, 1) ;
-                    GB_HX_COMPUTE (gk2, gb2, 2) ;
-                    GB_HX_COMPUTE (gk3, gb3, 3) ;
+                    GB_HX_COMPUTE (pH, i, gk0, gb0, 0) ;
+                    GB_HX_COMPUTE (pH, i, gk1, gb1, 1) ;
+                    GB_HX_COMPUTE (pH, i, gk2, gb2, 2) ;
+                    GB_HX_COMPUTE (pH, i, gk3, gb3, 3) ;
                 }
             }
             break ;
@@ -82,9 +82,9 @@
                     const int64_t pH = i * 3 ;
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
-                    GB_HX_COMPUTE (gk0, gb0, 0) ;
-                    GB_HX_COMPUTE (gk1, gb1, 1) ;
-                    GB_HX_COMPUTE (gk2, gb2, 2) ;
+                    GB_HX_COMPUTE (pH, i, gk0, gb0, 0) ;
+                    GB_HX_COMPUTE (pH, i, gk1, gb1, 1) ;
+                    GB_HX_COMPUTE (pH, i, gk2, gb2, 2) ;
                 }
             }
             break ;
@@ -113,8 +113,8 @@
                     const int64_t pH = i * 2 ;
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
-                    GB_HX_COMPUTE (gk0, gb0, 0) ;
-                    GB_HX_COMPUTE (gk1, gb1, 1) ;
+                    GB_HX_COMPUTE (pH, i, gk0, gb0, 0) ;
+                    GB_HX_COMPUTE (pH, i, gk1, gb1, 1) ;
                 }
             }
             break ;
@@ -125,31 +125,27 @@
             {
                 // get A(:,k)
                 const int64_t k = GBH_A (Ah, kA) ;
-                // get B(k,j1:j2-1) where j1 == j2-1
+                // get B(k,j1)
                 #if GB_B_IS_BITMAP
                 const int8_t gb0 = Gb [k] ;
                 if (!gb0) continue ;
                 #endif
-                // H += A(:,k)*B(k,j1:j2-1)
+                // H += A(:,k)*B(k,j1)
                 GB_DECLAREB (gk0) ;
                 GB_GETB (gk0, Gx, k, B_iso) ;
                 const int64_t pA_end = Ap [kA+1] ;
                 for (int64_t pA = Ap [kA] ; pA < pA_end ; pA++)
                 { 
-                    const int64_t i = Ai [pA] ;
-                    const int64_t pH = i ;
+                    // aik = A (i,j)
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
-                    GB_HX_COMPUTE (gk0, 1, 0) ;
+                    // H (i) += aik * gk0
+                    GB_HX_COMPUTE (Ai [pA], Ai [pA], gk0, 1, 0) ;
                 }
             }
             break ;
 
         default:;
     }
-
-    #undef GB_HX_COMPUTE
-    #undef GB_B_kj_PRESENT
-    #undef GB_MULT_A_ik_G_kj
 }
 
