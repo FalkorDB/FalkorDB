@@ -786,8 +786,6 @@ static VISITOR_STRATEGY _Validate_rel_pattern
 
 	if(alias_node) {
 		const char *alias = cypher_ast_identifier_get_name(alias_node);
-		void *alias_type  = _IdentifiersFind(vctx, alias);
-
 		// edge can not be redeclared
 		if(_IdentifierAdd(vctx, alias, (void*)T_EDGE) == 0) {
 			ErrorCtx_SetError(EMSG_EDGE_REDECLARATION, alias);

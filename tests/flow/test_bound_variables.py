@@ -127,7 +127,7 @@ class testBoundVariables(FlowTestsBase):
 
         for q in queries:
             try:
-                res = self.g.query(q)
+                res = self.graph.query(q)
                 # should not reach this point
                 self.env.assertFalse(True)
             except Exception as e:
