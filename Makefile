@@ -137,8 +137,8 @@ REDISEARCH_DIR = $(ROOT)/deps/RediSearch
 export REDISEARCH_BINROOT=$(BINROOT)
 include $(ROOT)/build/RediSearch/Makefile.defs
 
-FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-rs
-export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-rs
+FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-core-rs
+export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-core-rs
 include $(ROOT)/build/FalkorDB-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
