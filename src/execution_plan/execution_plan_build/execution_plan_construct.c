@@ -233,6 +233,7 @@ static void _buildForeachOp
 	ExecutionPlan *embedded_plan = ExecutionPlan_NewEmptyExecutionPlan();
 	embedded_plan->ast_segment = body_ast;
 	embedded_plan->record_map = raxClone(plan->record_map);
+	const char **arguments = (const char **)raxKeys(embedded_plan->record_map);
 
 	//--------------------------------------------------------------------------
 	// build Unwind op
@@ -249,7 +250,7 @@ static void _buildForeachOp
 	// build ArgumentList op
 	//--------------------------------------------------------------------------
 
-	OpBase *argument_list = NewArgumentListOp(embedded_plan);
+	OpBase *argument_list = NewArgumentListOp(embedded_plan, arguments);
 	// TODO: After refactoring the execution-plan freeing mechanism, bind the
 	// ArgumentList op to the outer-scope plan (plan), and change the condition
 	// for Unwind's 'free_rec' field to be whether the child plan is different
@@ -269,6 +270,7 @@ static void _buildForeachOp
 
 	// free the artificial body array (not its components)
 	array_free(clauses);
+	array_free(arguments);
 
 	// create the Foreach op, and update (outer) plan root
 	OpBase *foreach = NewForeachOp(plan);
