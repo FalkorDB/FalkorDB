@@ -233,7 +233,13 @@ static void _buildForeachOp
 	ExecutionPlan *embedded_plan = ExecutionPlan_NewEmptyExecutionPlan();
 	embedded_plan->ast_segment = body_ast;
 	embedded_plan->record_map = raxClone(plan->record_map);
-	const char **arguments = (const char **)raxKeys(embedded_plan->record_map);
+	const char **arguments = NULL;
+	if(plan->root) {
+		rax *bound_vars = raxNew();
+		ExecutionPlan_BoundVariables(plan->root, bound_vars, plan);
+		arguments = (const char **)raxValues(bound_vars);
+		raxFree(bound_vars);
+	}
 
 	//--------------------------------------------------------------------------
 	// build Unwind op
