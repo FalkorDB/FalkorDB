@@ -663,3 +663,26 @@ class testForeachFlow():
         res = self.graph.query(query)
         # check that the `v` property of the node is now 1 + 0 + 1 + 2 + 3 = 7
         self.env.assertEquals(res.result_set[0][0], 7)
+
+    def test17_bound_variables(self):
+        """Tests that foreach bound variables correctly"""
+
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (:M), (:N {name: "a"}), (:N {name: "b"}), (:N {name: "c"})""")
+        self.env.assertEquals(res.nodes_created, 4)
+
+        query = """
+        MATCH (n:N)
+        WITH COLLECT(n) as ns
+        MATCH (m:M)
+        WITH m, ns
+        FOREACH (n IN ns |
+            MERGE (m)-[:R]->(n)
+        )
+        """
+
+        res = self.graph.query(query)
+        self.env.assertEquals(res.nodes_created, 0)
+        self.env.assertEquals(res.relationships_created, 3)
+
