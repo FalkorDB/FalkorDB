@@ -230,13 +230,17 @@ static void _buildForeachOp
 	body_ast->referenced_entities =
 		raxClone(plan->ast_segment->referenced_entities);
 
+	// create the Foreach op, and update (outer) plan root
+	OpBase *foreach = NewForeachOp(plan);
+	ExecutionPlan_UpdateRoot(plan, foreach);
+
 	ExecutionPlan *embedded_plan = ExecutionPlan_NewEmptyExecutionPlan();
 	embedded_plan->ast_segment = body_ast;
 	embedded_plan->record_map = raxClone(plan->record_map);
 	const char **arguments = NULL;
 	if(plan->root) {
 		rax *bound_vars = raxNew();
-		ExecutionPlan_BoundVariables(plan->root, bound_vars, plan);
+		ExecutionPlan_BoundVariables(foreach, bound_vars, plan);
 		arguments = (const char **)raxValues(bound_vars);
 		raxFree(bound_vars);
 	}
@@ -277,10 +281,6 @@ static void _buildForeachOp
 	// free the artificial body array (not its components)
 	array_free(clauses);
 	array_free(arguments);
-
-	// create the Foreach op, and update (outer) plan root
-	OpBase *foreach = NewForeachOp(plan);
-	ExecutionPlan_UpdateRoot(plan, foreach);
 
 	// connect the embedded plan to the Foreach op
 	ExecutionPlan_AddOp(foreach, embedded_plan->root);
