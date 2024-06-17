@@ -31,8 +31,11 @@ static bool _ValidateAttrType
 	// in case of an array, make sure each element is of an
 	// acceptable type
 	if(t == T_ARRAY) {
-		SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE;
-		return !SIArray_ContainsType(v, invalid_properties);
+		SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
+		return !SIArray_ContainsType(v, invalid_types);
+	} else if(t == T_MAP) {
+		SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
+		return !Map_ContainsType(v, invalid_types);
 	}
 
 	return true;

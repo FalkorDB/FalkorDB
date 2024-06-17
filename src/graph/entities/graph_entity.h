@@ -22,14 +22,13 @@ typedef GrB_Index EdgeID;
 typedef GrB_Index NodeID;
 typedef GrB_Index EntityID;
 
-/*  Format a graph entity string according to the enum.
-    One can sum the enum values in order to print multiple value:
-    ENTITY_ID + ENTITY_LABELS_OR_RELATIONS will print both id and label. */
-
+//  format a graph entity string according to the enum
+//  one can sum the enum values in order to print multiple value:
+//  ENTITY_ID + ENTITY_LABELS_OR_RELATIONS will print both id and label
 typedef enum {
-	ENTITY_ID = 1,                       // print id only
-	ENTITY_LABELS_OR_RELATIONS = 1 << 1, // print label or relationship type
-	ENTITY_PROPERTIES = 1 << 2           // print properties
+	ENTITY_ID = 1,                        // print id only
+	ENTITY_LABELS_OR_RELATIONS = 1 << 1,  // print label or relationship type
+	ENTITY_PROPERTIES = 1 << 2            // print properties
 } GraphEntityStringFormat;
 
 typedef enum GraphEntityType {
@@ -38,7 +37,7 @@ typedef enum GraphEntityType {
 	GETYPE_EDGE
 } GraphEntityType;
 
-// Common denominator between nodes and edges.
+// common denominator between nodes and edges
 typedef struct {
 	AttributeSet *attributes;
 	EntityID id;
@@ -53,8 +52,8 @@ bool GraphEntity_AddProperty
 	SIValue value
 );
 
-// Retrieves entity's property
-// NOTE: If the key does not exist, we return the special
+// retrieves entity's property
+// NOTE: if the key does not exist, we return the special
 // constant value PROPERTY_NOTFOUND
 SIValue *GraphEntity_GetProperty
 (
@@ -68,8 +67,8 @@ SIValue GraphEntity_Keys
 	const GraphEntity *e
 );
 
-// returns an SIArray of all keys and values in graph entity properties.
-// Keys at even positions, Values at odd position of the array
+// returns an SIArray of all keys and values in graph entity properties
+// keys at even positions, Values at odd position of the array
 SIValue GraphEntity_Properties
 (
 	const GraphEntity *e
@@ -99,7 +98,9 @@ AttributeSet GraphEntity_GetAttributes
 	const GraphEntity *e
 );
 
+// frees entity attribute set
 int GraphEntity_ClearAttributes
 (
-	GraphEntity *e
+	GraphEntity *e  // entity to modify
 );
+
