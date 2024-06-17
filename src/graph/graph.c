@@ -1058,7 +1058,6 @@ void Graph_DeleteEdges
 
 		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
 
-		R   = Graph_GetRelationMatrix(g, r, false);
 		out = Graph_OutgoingRelationMatrix(g, r);
 		in  = Graph_IncomingRelationMatrix(g, r);
 
@@ -1078,9 +1077,6 @@ void Graph_DeleteEdges
 		NodeID      dest_id   =  Edge_GetDestNodeID(e);
 		EdgeID      edge_id   =  ENTITY_GET_ID(e);
 
-		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
-
-		R   = Graph_GetRelationMatrix(g, r, false);
 		out = Graph_OutgoingRelationMatrix(g, r);
 
 		Delta_MatrixTupleIter it = {0};
@@ -1095,6 +1091,7 @@ void Graph_DeleteEdges
 		}
 
 		if(!connected) {
+			R   = Graph_GetRelationMatrix(g, r, false);
 			// no more edges connecting src to other nodes
 			// remove src from relation matrix
 			info = Delta_Matrix_removeElement(R, src_id, dest_id);
