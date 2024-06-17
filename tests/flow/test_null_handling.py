@@ -96,15 +96,13 @@ class testNullHandlingFlow(FlowTestsBase):
         expected_result = []
         self.env.assertEquals(actual_result.result_set, expected_result)
 
-        query = """WITH NULL AS e MATCH (a:L)-[e]->(b) RETURN a, e, b"""
-        plan = str(self.graph.explain(query))
-        # Verify that we are performing a scan and traversal.
-        self.env.assertIn("Label Scan", plan)
-        self.env.assertIn("Conditional Traverse", plan)
-        actual_result = self.graph.query(query)
-        # Expect no results.
-        expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            query = """WITH NULL AS e MATCH (a:L)-[e]->(b) RETURN a, e, b"""
+            plan = self.graph.explain(query)
+            # not expecting to reach this point
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("The bound edge 'e' can't be redeclared in a MERGE clause", str(e))
 
     # ValueHashJoin ops should not treat null values as equal.
     def test08_null_value_hash_join(self):
