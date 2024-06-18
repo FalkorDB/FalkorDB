@@ -11,7 +11,9 @@ import jsonpath_ng
 
 def run_single_benchmark(idx, file_stream):
     data = yaml.safe_load(file_stream)
-    data["docker_image"] = "falkordb/falkordb:latest"
+
+    db_image = os.getenv("DB_IMAGE")
+    data["docker_image"] = db_image if db_image else "falkordb/falkordb:edge"
     file_stream.seek(0)
     yaml.safe_dump(data, file_stream, sort_keys=False, allow_unicode=True)
     file_stream.truncate()
