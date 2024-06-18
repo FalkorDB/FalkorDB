@@ -1,8 +1,4 @@
-*.json
-*.txt
-*.csv
-datasets/*.rdb
-*.rdb
-binaries
-profile_*
-*.log
+*-results.json
+dataset.rdb
+falkordb.so
+venv/

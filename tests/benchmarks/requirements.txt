@@ -1,1 +1,2 @@
-redisbench_admin>=0.1.74
+pyyaml
+jsonpath_ng
