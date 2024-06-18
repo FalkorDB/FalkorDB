@@ -1,5 +1,4 @@
 name: EXPLICIT-EDGE-DELETION
-docker_image: ${DB_IMAGE}
 db_config:
   init_commands:
     - ["GRAPH.QUERY", "g", "CREATE INDEX FOR ()-[e:R]->() ON (e.v)"]

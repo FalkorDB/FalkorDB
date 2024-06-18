@@ -12,14 +12,16 @@ import jsonpath_ng
 def run_single_benchmark(idx, file_stream):
     data = yaml.safe_load(file_stream)
 
+    # Always prefer the environment variable over the yaml file
     db_image = os.getenv("DB_IMAGE")
-    data["docker_image"] = db_image if db_image else "falkordb/falkordb:edge"
-    file_stream.seek(0)
-    yaml.safe_dump(data, file_stream, sort_keys=False, allow_unicode=True)
-    file_stream.truncate()
+    if not db_image:
+        if "docker_image" in data:
+            db_image = data["db_image"]
+        else:
+            db_image = "falkordb/falkordb:edge"  # If nothing is specified, use the latest image
 
-    process = subprocess.Popen(["./falkordb-benchmark", "--yaml_config", f"./{idx}.yml",
-                                "--output_file", f"{idx}-results.json"],
+    process = subprocess.Popen(["./falkordb-benchmark-go", "--yaml_config", f"./{idx}.yml",
+                                "--output_file", f"{idx}-results.json", "--override_image", db_image],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     # Wait for the process to finish and get the return code

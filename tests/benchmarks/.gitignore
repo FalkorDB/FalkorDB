@@ -2,3 +2,4 @@
 dataset.rdb
 falkordb.so
 venv/
+falkordb-benchmark-go
