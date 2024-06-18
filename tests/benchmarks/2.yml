@@ -1,5 +1,4 @@
 name: VARIABLE_LENGTH_EXPAND_INTO
-docker_image: ${DB_IMAGE}
 db_config:
   dataset: datasets/highly_connected.rdb
   graph: g

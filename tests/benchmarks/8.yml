@@ -1,5 +1,4 @@
 name: ENTITY_COUNT
-docker_image: ${DB_IMAGE}
 db_config:
   init_commands:
     - ["GRAPH.QUERY", "g", "UNWIND range(0, 5000000) AS x CREATE (:N)-[:R]->(:N)"]

@@ -1,5 +1,4 @@
 name: NODE-INDEX-LOOKUP
-docker_image: ${DB_IMAGE}
 db_config:
   dataset: datasets/imdb.rdb
   graph: imdb

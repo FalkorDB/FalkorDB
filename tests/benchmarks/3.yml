@@ -3,7 +3,6 @@ description: "Test: tests mixed read+write+delete queries within the same benchm
 Dataset: Synthetic graph500 network of scale 18 (262144x262144, 4194304 edges) -
   262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED' - Indexed
 properties: - exact-match: Node; [external_id] "
-docker_image: ${DB_IMAGE}
 db_config:
   dataset:
     https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/datasets/graph500-scale18-ef16_v2.4.7_dump.rdb
