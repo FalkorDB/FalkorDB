@@ -7,8 +7,8 @@ db_config:
   dataset:
     https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/datasets/graph500-scale18-ef16_v2.4.7_dump.rdb
   dataset_load_timeout_secs: 180
-  graph: graph500-scale18-ef16
 parameters:
+  graph: graph500-scale18-ef16
   num_clients: 32
   num_requests: 10000
   random_int_max: 262016

@@ -1,8 +1,7 @@
 name: ENTITY_COUNT
 db_config:
   init_commands:
-    - ["GRAPH.QUERY", "g", "UNWIND range(0, 5000000) AS x CREATE (:N)-[:R]->(:N)"]
-  graph: g
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 5000000) AS x CREATE (:N)-[:R]->(:N)"]
 parameters:
   num_clients: 32
   num_requests: 1000000

@@ -1,8 +1,7 @@
 name: INSPECT-EDGES
 db_config:
   init_commands:
-    - ["GRAPH.QUERY", "g", "UNWIND range(1, 1000) AS x CREATE (src:N {v: x}), (src)-[:R]->(:N)"]
-  graph: g
+    - ["GRAPH.QUERY", "graph", "UNWIND range(1, 1000) AS x CREATE (src:N {v: x}), (src)-[:R]->(:N)"]
 parameters:
   num_clients: 32
   num_requests: 50000

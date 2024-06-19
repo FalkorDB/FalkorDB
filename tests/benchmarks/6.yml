@@ -1,9 +1,8 @@
 name: EXPLICIT-EDGE-DELETION
 db_config:
   init_commands:
-    - ["GRAPH.QUERY", "g", "CREATE INDEX FOR ()-[e:R]->() ON (e.v)"]
-    - ["GRAPH.QUERY", "g", "UNWIND range(0, 1000000) AS x CREATE (:N)-[:R {v: x}]->(:N)"]
-  graph: g
+    - ["GRAPH.QUERY", "graph", "CREATE INDEX FOR ()-[e:R]->() ON (e.v)"]
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 1000000) AS x CREATE (:N)-[:R {v: x}]->(:N)"]
 parameters:
   num_clients: 1
   num_requests: 1000

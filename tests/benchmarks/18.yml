@@ -1,8 +1,7 @@
 name: MIX_READ_WRITE
 db_config:
   init_commands:
-    - ["GRAPH.QUERY", "g", "UNWIND range(0, 10000) AS x CREATE (:N)"]
-  graph: g
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 10000) AS x CREATE (:N)"]
 parameters:
   num_clients: 32
   num_requests: 1000000
