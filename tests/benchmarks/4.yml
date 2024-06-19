@@ -3,8 +3,7 @@ description: "Dataset: Synthetic graph500 network of scale 18 (262144x262144, 41
   edges) - 262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED'
   - Indexed properties: - exact-match: Node; [external_id] "
 db_config:
-  dataset:
-    https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/datasets/graph500-scale18-ef16_v2.4.7_dump.rdb
+  dataset: datasets/graph500.rdb
   dataset_load_timeout_secs: 180
 parameters:
   graph: graph500-scale18-ef16
