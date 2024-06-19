@@ -30,12 +30,11 @@ description: "
 "
 db_config:
   init_commands:
-    - ["GRAPH.QUERY", "g", "CREATE (s0:S0) CREATE (s1:S1) WITH * UNWIND range(1, 10) AS x CREATE (s0)-[:R]->(:S)-[:R]->(s1)"]
-    - ["GRAPH.QUERY", "g", "MATCH (s1:S1) CREATE (s2:S2) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
-    - ["GRAPH.QUERY", "g", "MATCH (s1:S2) CREATE (s2:S3) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
-    - ["GRAPH.QUERY", "g", "MATCH (s1:S3) CREATE (s2:S4) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
-    - ["GRAPH.QUERY", "g", "MATCH (s1:S4) CREATE (s2:S5) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
-  graph: g
+    - ["GRAPH.QUERY", "graph", "CREATE (s0:S0) CREATE (s1:S1) WITH * UNWIND range(1, 10) AS x CREATE (s0)-[:R]->(:S)-[:R]->(s1)"]
+    - ["GRAPH.QUERY", "graph", "MATCH (s1:S1) CREATE (s2:S2) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
+    - ["GRAPH.QUERY", "graph", "MATCH (s1:S2) CREATE (s2:S3) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
+    - ["GRAPH.QUERY", "graph", "MATCH (s1:S3) CREATE (s2:S4) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
+    - ["GRAPH.QUERY", "graph", "MATCH (s1:S4) CREATE (s2:S5) WITH * UNWIND range(1, 10) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
 parameters:
   num_clients: 32
   num_requests: 3000

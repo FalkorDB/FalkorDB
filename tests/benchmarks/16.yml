@@ -1,8 +1,8 @@
 name: NODE-INDEX-LOOKUP
 db_config:
   dataset: datasets/imdb.rdb
-  graph: imdb
 parameters:
+  graph: imdb
   num_clients: 32
   num_requests: 1000
   queries:

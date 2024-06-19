@@ -1,7 +1,6 @@
 name: VARIABLE-LENGTH-FILTER
 db_config:
   dataset: datasets/highly_connected.rdb
-  graph: g
 parameters:
   num_clients: 32
   num_requests: 1000000

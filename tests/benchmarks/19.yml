@@ -1,8 +1,7 @@
 name: UPDATE-BASELINE
 db_config:
   init_commands:
-    - [ "GRAPH.QUERY", "g", "CREATE ({ v: 0 })" ]
-  graph: g
+    - [ "GRAPH.QUERY", "graph", "CREATE ({ v: 0 })" ]
 parameters:
   num_clients: 32
   num_requests: 1000000
