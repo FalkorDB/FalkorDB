@@ -1,6 +1,10 @@
 *-results.json
+*-results.tar.gz
 dataset.rdb
 falkordb.so
 venv/
 falkordb-benchmark-go
 datasets/graph500.rdb
+falkordb-benchmark-go.tar.gz
+README.md
+LICENSE

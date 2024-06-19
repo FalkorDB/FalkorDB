@@ -11,9 +11,23 @@ on:
       - v*
 
 jobs:
-  BenchmarkA:
+  CreateRunnerA:
     if: ${{ github.event.label.name == 'action:run-benchmark' }}
     runs-on: ubuntu-latest
+    steps:
+        - name: Create runner
+          uses: actions/runner-registration@v2
+          with:
+            token: ${{ secrets.GITHUB_TOKEN }}
+            remove: true
+            labels: self-hosted, linux, x64
+            runner-version: latest
+
+  BenchmarkA:
+    needs:
+      - CreateRunnerA
+    if: ${{ github.event.label.name == 'action:run-benchmark' }}
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -21,11 +35,46 @@ jobs:
         run: pip3 install -r requirements.txt
       - name: Run benchmark
         working-directory: tests/benchmarks
-        run: python3 benchmark.py 0-10
+        run: python3 run_benchmarks.py 0-9 BenchmarkA
+      - name: Upload results
+        uses: ./actions/upload-artifact
+        with:
+          name: BenchmarkA-results.tar.gz
+          path: tests/benchmarks/BenchmarkA-results.tar.gz
+
+  RemoveRunnerA:
+    needs:
+      - BenchmarkA
+    if: ${{ github.event.label.name == 'action:run-benchmark' || always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove runner
+        uses: actions/runner-registration@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          remove: true
+          labels: self-hosted, linux, x64
+          runner-version: latest
+
+
+
+  CreateRunnerB:
+    if: ${{ github.event.label.name == 'action:run-benchmark' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create runner
+        uses: actions/runner-registration@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          remove: true
+          labels: self-hosted, linux, x64
+          runner-version: latest
 
   BenchmarkB:
+    needs:
+      - CreateRunnerB
     if: ${{ github.event.label.name == 'action:run-benchmark' }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -33,4 +82,23 @@ jobs:
         run: pip3 install -r requirements.txt
       - name: Run benchmark
         working-directory: tests/benchmarks
-        run: python3 benchmark.py 10-19
+        run: python3 run_benchmarks.py 9-19 BenchmarkA
+      - name: Upload results
+        uses: ./actions/upload-artifact
+        with:
+          name: BenchmarkB-results.tar.gz
+          path: tests/benchmarks/BenchmarkB-results.tar.gz
+
+  RemoveRunnerB:
+    needs:
+      - BenchmarkB
+    if: ${{ github.event.label.name == 'action:run-benchmark' || always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove runner
+        uses: actions/runner-registration@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          remove: true
+          labels: self-hosted, linux, x64
+          runner-version: latest
