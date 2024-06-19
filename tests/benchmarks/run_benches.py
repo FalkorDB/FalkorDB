@@ -8,6 +8,8 @@ import os
 import yaml
 import jsonpath_ng
 
+from urllib.request import urlretrieve
+
 
 def run_single_benchmark(idx, file_stream):
     data = yaml.safe_load(file_stream)
@@ -63,43 +65,56 @@ def run_single_benchmark(idx, file_stream):
                         exit(1)
 
 
+def single_iteration(idx: int, bench_count: int):
+    print(f"========== Benchmark {idx+1}/{bench_count} Started ================\n")
+
+    if os.path.exists(f"{idx}-results.json"):
+        os.remove(f"{idx}-results.json")
+
+    if os.path.exists("dataset.rdb"):
+        os.remove("dataset.rdb")
+
+    with open(f"{idx}.yml", "r") as current_bench_file:
+        run_single_benchmark(idx, current_bench_file)
+
+    print("")
+    print(f"========== Benchmark {idx+1}/{bench_count} Completed ==============")
+    print("")
+
+    try:
+        subprocess.check_output("pidof redis-server", shell=True)
+        print("Redis server is still running!")
+        exit(1)
+    except subprocess.CalledProcessError:
+        pass
+
+
 def main():
     print("Starting benchmark suite...\n")
 
-    for idx in range(20):
-        print(f"========== Benchmark {idx}/19 Started ================\n")
+    if not os.path.exists("./datasets/graph500.rdb"):
+        try:
+            urlretrieve("https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/datasets/graph500-scale18-ef16_v2.4.7_dump.rdb", "./datasets/graph500.rdb")
+        except Exception as e:
+            print(f"Failed to download the dataset: {e}")
+            exit(1)
 
-        if os.path.exists(f"{idx}-results.json"):
-            os.remove(f"{idx}-results.json")
-
-        if os.path.exists("dataset.rdb"):
-            os.remove("dataset.rdb")
-
-        with open(f"{idx}.yml", "r") as current_bench_file:
-            run_single_benchmark(idx, current_bench_file)
-
-        print("")
-        print(f"========== Benchmark {idx}/19 Completed ==============")
-        print("")
+    bench_start = 0
+    bench_end = 20
+    if len(sys.argv) > 1:
+        bench_split = sys.argv[1].split("-")
 
         try:
-            subprocess.check_output("pidof redis-server", shell=True)
-            print("Redis server is still running!")
+            bench_start = int(bench_split[0])
+            if len(bench_split) > 1:
+                bench_end = int(bench_split[1])
+        except ValueError as e:
+            print(f"Benchmark numbers must be Positive integers: {e}")
             exit(1)
-        except subprocess.CalledProcessError:
-            pass
+
+    for idx in range(bench_start, bench_end):
+        single_iteration(idx, bench_end - bench_start)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        bench_num = 0
-        try:
-            bench_num = int(sys.argv[1])
-        except ValueError as e:
-            print("Second argument must be an integer")
-            exit(1)
-
-        with open(f"{bench_num}.yml", "r+") as bench_file:
-            run_single_benchmark(bench_num, bench_file)
-    else:
-        main()
+    main()
