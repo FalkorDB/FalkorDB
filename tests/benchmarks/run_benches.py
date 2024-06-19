@@ -93,8 +93,10 @@ def main():
     print("Starting benchmark suite...\n")
 
     if not os.path.exists("./datasets/graph500.rdb"):
+        print("Downloading missing dataset")
         try:
-            urlretrieve("https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/datasets/graph500-scale18-ef16_v2.4.7_dump.rdb", "./datasets/graph500.rdb")
+            urlretrieve("https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/"
+                        "datasets/graph500-scale18-ef16_v2.4.7_dump.rdb", "./datasets/graph500.rdb")
         except Exception as e:
             print(f"Failed to download the dataset: {e}")
             exit(1)

@@ -3,3 +3,4 @@ dataset.rdb
 falkordb.so
 venv/
 falkordb-benchmark-go
+datasets/graph500.rdb
