@@ -295,3 +295,10 @@ Some languages have client libraries that provide support for FalkorDB's command
 ## License
 
 Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE.txt).
+
+
+
+## 🌟 Contributors
+
+[![langchain contributors](https://contrib.rocks/image?repo=falkordb/falkordb&max=2000)](https://github.com/falkordb/falkordb/graphs/contributors)
+
