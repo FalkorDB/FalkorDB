@@ -15,28 +15,22 @@ jobs:
     if: ${{ github.event.label.name == 'action:run-benchmark' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install dependencies
         working-directory: tests/benchmarks
-        run: |
-          pip3 install -r requirements.txt
+        run: pip3 install -r requirements.txt
       - name: Run benchmark
         working-directory: tests/benchmarks
-        run: |
-          python3 benchmark.py 0-10
+        run: python3 benchmark.py 0-10
 
   BenchmarkB:
     if: ${{ github.event.label.name == 'action:run-benchmark' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install dependencies
         working-directory: tests/benchmarks
-        run: |
-          pip3 install -r requirements.txt
+        run: pip3 install -r requirements.txt
       - name: Run benchmark
         working-directory: tests/benchmarks
-        run: |
-          python3 benchmark.py 10-19
+        run: python3 benchmark.py 10-19
