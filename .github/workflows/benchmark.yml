@@ -11,94 +11,46 @@ on:
       - v*
 
 jobs:
-  CreateRunnerA:
-    if: ${{ github.event.label.name == 'action:run-benchmark' }}
-    runs-on: ubuntu-latest
-    steps:
-        - name: Create runner
-          uses: actions/runner-registration@v2
-          with:
-            token: ${{ secrets.GITHUB_TOKEN }}
-            remove: true
-            labels: self-hosted, linux, x64
-            runner-version: latest
+  create-runner:
+    uses: gitpod-io/gce-github-runner/.github/workflows/create-vm.yml@secrets
+    with:
+      project_id: github-runners-414914
+      machine_zone: us-central1-a
+      machine_type: e2-custom-4-8192
+      label: $RANDOM
+    secrets:
+      runner_token: ${{ secrets.GH_SA_TOKEN }}
+      gcp_credentials: ${{ secrets.GCP_SA_KEY }}
 
-  BenchmarkA:
+  run-benchmark:
     needs:
-      - CreateRunnerA
+      - create-runner
     if: ${{ github.event.label.name == 'action:run-benchmark' }}
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
         working-directory: tests/benchmarks
-        run: pip3 install -r requirements.txt
+        run: |
+          apt install -y redis-server
+          pip3 install -r requirements.txt
       - name: Run benchmark
         working-directory: tests/benchmarks
         run: python3 run_benchmarks.py 0-9 BenchmarkA
       - name: Upload results
         uses: ./actions/upload-artifact
         with:
-          name: BenchmarkA-results.tar.gz
+          name: BenchmarkA-results.tar.gzx`x`x`x`
           path: tests/benchmarks/BenchmarkA-results.tar.gz
 
-  RemoveRunnerA:
-    needs:
-      - BenchmarkA
+  delete-runner:
     if: ${{ github.event.label.name == 'action:run-benchmark' || always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Remove runner
-        uses: actions/runner-registration@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          remove: true
-          labels: self-hosted, linux, x64
-          runner-version: latest
-
-
-
-  CreateRunnerB:
-    if: ${{ github.event.label.name == 'action:run-benchmark' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create runner
-        uses: actions/runner-registration@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          remove: true
-          labels: self-hosted, linux, x64
-          runner-version: latest
-
-  BenchmarkB:
     needs:
-      - CreateRunnerB
-    if: ${{ github.event.label.name == 'action:run-benchmark' }}
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install dependencies
-        working-directory: tests/benchmarks
-        run: pip3 install -r requirements.txt
-      - name: Run benchmark
-        working-directory: tests/benchmarks
-        run: python3 run_benchmarks.py 9-19 BenchmarkA
-      - name: Upload results
-        uses: ./actions/upload-artifact
-        with:
-          name: BenchmarkB-results.tar.gz
-          path: tests/benchmarks/BenchmarkB-results.tar.gz
-
-  RemoveRunnerB:
-    needs:
-      - BenchmarkB
-    if: ${{ github.event.label.name == 'action:run-benchmark' || always() }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Remove runner
-        uses: actions/runner-registration@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          remove: true
-          labels: self-hosted, linux, x64
-          runner-version: latest
+      - create-runner
+      - test
+    uses: gitpod-io/gce-github-runner/.github/workflows/delete-vm.yml@secrets
+    secrets:
+      gcp_credentials: ${{ secrets.GCP_SA_KEY }}
+    with:
+      runner-label: ${{ needs.create-runner.outputs.label }}
+      machine-zone: ${{ needs.create-runner.outputs.machine-zone }}

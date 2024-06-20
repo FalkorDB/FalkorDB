@@ -71,9 +71,6 @@ make tck-tests    # Run TCK tests
 make fuzz-tests   # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
-make benchmark    # Run benchmarks
-  REMOTE=1          # Run remotely
-
 make coverage     # Perform coverage analysis (build & test)
 make cov-upload   # Upload coverage data to codecov.io
 
@@ -386,24 +383,6 @@ fuzz fuzz-tests: $(TARGET)
 	$(SHOW)cd tests/fuzz && ./process.py -m $(TARGET) $(FUZZ_ARGS)
 
 .PHONY: fuzz fuzz-tests
-
-#----------------------------------------------------------------------------------------------
-
-ifneq ($(REMOTE),)
-BENCHMARK_ARGS=run-remote
-else
-BENCHMARK_ARGS=run-local
-endif
-
-BENCHMARK_ARGS += --module_path $(TARGET) --required-module graph
-ifneq ($(BENCHMARK),)
-BENCHMARK_ARGS += --test $(BENCHMARK)
-endif
-
-benchmark: $(TARGET)
-	$(SHOW)cd tests/benchmarks && redisbench-admin $(BENCHMARK_ARGS)
-
-.PHONY: benchmark
 
 #----------------------------------------------------------------------------------------------
 
