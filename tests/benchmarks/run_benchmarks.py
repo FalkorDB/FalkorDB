@@ -16,6 +16,11 @@ from http.client import HTTPSConnection
 
 def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str):
     data = yaml.safe_load(file_stream)
+    if not "name" in data:
+        print("Error! No benchmark name specified in the yaml file")
+        exit(1)
+
+    print(f"Benchmark: '{data["yaml"]}'")
 
     # Always prefer the environment variable over the yaml file
     db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
@@ -206,19 +211,19 @@ def main():
     verify_and_download_graph500()
 
     benches = glob.glob("*.yml", recursive=False, root_dir=benchmark_group)
-    benches_results = [f"{benchmark_group}/{str.replace(benches[idx], '.yml', '')}-results.json" for idx in range(len(benches))]
+    benches_results = [str.replace(bench, '.yml', '-results.json') for bench in benches]
     benches_count = len(benches)
     for idx, bench in enumerate(benches):
-        single_iteration(f"{benchmark_group}/{bench}", benches_results[idx], idx, benches_count)
+        single_iteration(f"{benchmark_group}/{bench}", f"{benchmark_group}/{benches_results[idx]}", idx, benches_count)
 
     # Create tar from the results of the benchmarks
     command = ["tar", "-czf", f"{benchmark_group}-results.tar.gz"]
     command.extend(benches_results)
-    res = subprocess.run(command)
+    res = subprocess.run(command, cwd=benchmark_group)
     if res.returncode != 0:
         print("Failed to create tar file")
-        if os.path.exists(f"{benchmark_group}-results.tar.gz"):
-            os.remove(f"{benchmark_group}-results.tar.gz")
+        if os.path.exists(f"{benchmark_group}/{benchmark_group}-results.tar.gz"):
+            os.remove(f"{benchmark_group}/{benchmark_group}-results.tar.gz")
         exit(1)
 
 
