@@ -12,7 +12,7 @@ on:
 
 jobs:
   create-runner:
-    uses: gitpod-io/gce-github-runner/.github/workflows/create-vm.yml@secrets
+    uses: related-sciences/gce-github-runner@v0.10
     with:
       project_id: github-runners-414914
       machine_zone: us-central1-a
@@ -42,15 +42,3 @@ jobs:
         with:
           name: BenchmarkA-results.tar.gzx`x`x`x`
           path: tests/benchmarks/BenchmarkA-results.tar.gz
-
-  delete-runner:
-    if: ${{ github.event.label.name == 'action:run-benchmark' || always() }}
-    needs:
-      - create-runner
-      - test
-    uses: gitpod-io/gce-github-runner/.github/workflows/delete-vm.yml@secrets
-    secrets:
-      gcp_credentials: ${{ secrets.GCP_SA_KEY }}
-    with:
-      runner-label: ${{ needs.create-runner.outputs.label }}
-      machine-zone: ${{ needs.create-runner.outputs.machine-zone }}
