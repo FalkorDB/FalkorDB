@@ -16,6 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check if PR exists for this branch
+        env:
+          GH_TOKEN: ${{ github.token }}
         # Check if a PR with label 'action:run-benchmark' exists for this branch and save its id
         run: |
           PR=$(gh pr list --state open --label 'action:run-benchmark' --json headRefName -q ".[] | select(.headRefName == ${{ github.ref }})")
