@@ -12,6 +12,7 @@ on:
 
 jobs:
   create-runner:
+    if: ${{ github.event.label.name == 'action:run-benchmark' }}
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
