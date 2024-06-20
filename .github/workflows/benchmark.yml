@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Labeled with run-benchmark
         id: haslabel
-        uses: DanielTamkin/HasLabel@v1.0.4
+        uses: FalkorDB/HasLabel@v1.0.5
         with:
           contains: 'run-benchmark'
 
@@ -32,7 +32,7 @@ jobs:
       label: ${{ steps.create-runner.outputs.label }}
     steps:
       - id: create-runner
-        uses: FalkorDB/gce-github-runner@main
+        uses: FalkorDB/gce-github-runner@v0.11
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
           project_id: github-runners-414914

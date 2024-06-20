@@ -16,11 +16,6 @@ from http.client import HTTPSConnection
 
 def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str):
     data = yaml.safe_load(file_stream)
-    if not "name" in data:
-        print("Error! No benchmark name specified in the yaml file")
-        exit(1)
-
-    print(f"Benchmark: '{data["yaml"]}'")
 
     # Always prefer the environment variable over the yaml file
     db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
