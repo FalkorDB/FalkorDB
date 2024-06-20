@@ -1,5 +1,5 @@
 #! /usr/bin/env python3
-
+import glob
 import json
 import sys
 import subprocess
@@ -9,11 +9,12 @@ import hashlib
 import yaml
 import jsonpath_ng
 
+from typing import TextIO
 from urllib.request import urlretrieve
 from http.client import HTTPSConnection
 
 
-def run_single_benchmark(idx, file_stream):
+def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str):
     data = yaml.safe_load(file_stream)
 
     # Always prefer the environment variable over the yaml file
@@ -23,8 +24,9 @@ def run_single_benchmark(idx, file_stream):
             print("Error! No DB module specified in the yaml file or the environment variable")
             exit(1)
 
-    process = subprocess.Popen(["./falkordb-benchmark-go", "--yaml_config", f"./{idx}.yml",
-                                "--output_file", f"{idx}-results.json", "--override_module", db_module],
+    process = subprocess.Popen(["./falkordb-benchmark-go", "--yaml_config", bench,
+                                "--output_file", result_file_name,
+                                "--override_module", db_module],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     for line in process.stdout:
@@ -42,7 +44,7 @@ def run_single_benchmark(idx, file_stream):
         exit(1)
 
     if "kpis" in data:
-        with open(f"{idx}-results.json", 'r') as results_file:
+        with open(result_file_name) as results_file:
             json_results = json.load(results_file)
             for kpi in data["kpis"]:
                 parsed_key = jsonpath_ng.parse(kpi["key"])
@@ -66,21 +68,20 @@ def run_single_benchmark(idx, file_stream):
                         exit(1)
 
 
-def single_iteration(idx: int, bench_start: int, bench_end: int):
-    bench_relative_idx = idx - bench_start
-    print(f"========== Benchmark {bench_relative_idx + 1}/{bench_end - bench_start} Started ================\n")
+def single_iteration(bench: str, result_file_name: str, idx: int, bench_end: int):
+    print(f"========== Benchmark {idx + 1}/{bench_end} Started ================\n")
 
-    if os.path.exists(f"{idx}-results.json"):
-        os.remove(f"{idx}-results.json")
+    if os.path.exists(result_file_name):
+        os.remove(result_file_name)
 
     if os.path.exists("dataset.rdb"):
         os.remove("dataset.rdb")
 
-    with open(f"{idx}.yml", "r") as current_bench_file:
-        run_single_benchmark(idx, current_bench_file)
+    with open(bench, "r") as current_bench_file:
+        run_single_benchmark(current_bench_file, bench, result_file_name)
 
     print("")
-    print(f"========== Benchmark {bench_relative_idx + 1}/{bench_end - bench_start} Completed ==============")
+    print(f"========== Benchmark {idx + 1}/{bench_end} Completed ==============")
     print("")
 
     try:
@@ -175,57 +176,50 @@ def verify_and_download_benchmark_tool():
             exit(1)
 
 
+def print_help():
+    print("Usage: ./run_benchmarks.py <BenchmarkGroup>")
+    print("")
+    print("Example: ./run_benchmarks.py GroupA          # Run group 'GroupA'")
+    print("")
+    print("To print this help message: ./run_benchmarks.py --help or ./run_benches.py -h")
+    exit(0)
+
+
 def main():
     if len(sys.argv) > 1 and (sys.argv[1] == "--help" or sys.argv[1] == "-h"):
-        print("Usage: ./run_benchmarks.py <start-bench>[-<end-bench>] [<benchmark_name>]")
-        print("")
-        print("Example: ./run_benchmarks.py 1-5 MyBenchmark        # Run benchmarks 1 to 5 and "
-              "create a tar 'MyBenchmark-results.tar.gz' with the results")
-        print("Example: ./run_benchmarks.py 5 MyBenchmark          # Run only the 5th benchmark")
-        print("Example: ./run_benchmarks.py                        # Run all benchmarks")
-        print("")
-        print("To print this help message: ./run_benchmarks.py --help or ./run_benches.py -h")
-        exit(0)
+        print_help()
 
-    benchmark_name = None
-    if len(sys.argv) > 2:
-        benchmark_name = sys.argv[2]
+    if len(sys.argv) < 2:
+        print_help()
 
-    print(f"Starting benchmark suite{f' "{benchmark_name}"' if benchmark_name else ''}...\n")
+    benchmark_group = sys.argv[1]
+    if benchmark_group == '':
+        print("Error! Empty benchmark group provided")
+        exit(1)
+
+    print(f"Starting benchmark Group {benchmark_group}...\n")
+    if not os.path.isdir(benchmark_group):
+        print(f"Error! Benchmark group {benchmark_group} not found")
+        exit(1)
 
     verify_and_download_benchmark_tool()
     verify_and_download_graph500()
 
-    bench_start = 0
-    bench_end = 20
-    if len(sys.argv) > 1:
-        bench_split = sys.argv[1].split("-")
+    benches = glob.glob("*.yml", recursive=False, root_dir=benchmark_group)
+    benches_results = [f"{benchmark_group}/{str.replace(benches[idx], '.yml', '')}-results.json" for idx in range(len(benches))]
+    benches_count = len(benches)
+    for idx, bench in enumerate(benches):
+        single_iteration(f"{benchmark_group}/{bench}", benches_results[idx], idx, benches_count)
 
-        try:
-            bench_start = int(bench_split[0])
-            bench_end = bench_start + 1
-            if len(bench_split) > 1:
-                bench_end = int(bench_split[1])
-                if bench_end == bench_start:
-                    print("Benchmark range must be at least 1 benchmarks(range is not inclusive)")
-                    exit(1)
-        except ValueError as e:
-            print(f"Benchmark numbers must be Positive integers: {e}")
-            exit(1)
-
-    for idx in range(bench_start, bench_end):
-        single_iteration(idx, bench_start, bench_end)
-
-    if benchmark_name:
-        # Create tar from the results of the benchmarks
-        command = ["tar", "-czf", f"{benchmark_name}-results.tar.gz"]
-        command.extend([f'{idx}-results.json' for idx in range(bench_start, bench_end)])
-        res = subprocess.run(command)
-        if res.returncode != 0:
-            print("Failed to create tar file")
-            if os.path.exists(f"{benchmark_name}-results.tar.gz"):
-                os.remove(f"{benchmark_name}-results.tar.gz")
-            exit(1)
+    # Create tar from the results of the benchmarks
+    command = ["tar", "-czf", f"{benchmark_group}-results.tar.gz"]
+    command.extend(benches_results)
+    res = subprocess.run(command)
+    if res.returncode != 0:
+        print("Failed to create tar file")
+        if os.path.exists(f"{benchmark_group}-results.tar.gz"):
+            os.remove(f"{benchmark_group}-results.tar.gz")
+        exit(1)
 
 
 if __name__ == "__main__":
