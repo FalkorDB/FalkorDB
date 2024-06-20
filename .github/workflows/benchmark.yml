@@ -6,13 +6,25 @@ on:
     types: [ labeled ]
   push:
     branches:
-      - master
+      - '*'
     tags:
-      - v*
+      - 'v*'
 
 jobs:
+  check-label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check if PR exists for this branch
+        # Check if a PR with label 'action:run-benchmark' exists for this branch and save its id
+        run: |
+          PR=$(gh pr list --state open --label 'action:run-benchmark' --json headRefName -q ".[] | select(.headRefName == ${{ github.ref }})")
+          echo "pr_exists=${PR}" >> "${GITHUB_OUTPUT}"
+
   create-runner:
-    if: ${{ github.event.label.name == 'action:run-benchmark' || github.event_name == 'workflow_dispatch' }}
+    needs:
+      - check-label
+    if: ${{ needs.check-label.outputs.pr_exists != null }}
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
@@ -25,6 +37,7 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zone: us-central1-a
           machine_type: e2-custom-4-8192
+          network: gh-runner
 
   run-benchmark:
     needs:
