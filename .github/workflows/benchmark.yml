@@ -45,20 +45,56 @@ jobs:
     needs:
       - create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
+    container: falkordb/falkordb-build:ubuntu
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
-        working-directory: tests/benchmarks
-        run: |
-          apt install -y redis-server python3-pip
-          pip3 install -r requirements.txt
-      - name: Download falkorDB artifact
-        uses: ./actions/download-artifact
         with:
-          name: falkorDB
+          submodules: recursive
+
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release-cov/GraphBLAS
+          key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release-cov/libcypher-parser
+          key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-debug-cov/search-static
+          key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
+      - name: Build
+        run: |
+          rustup toolchain list
+          rustup default nightly
+          apt-get update
+          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r tests/requirements.txt
+          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
+          apt update && apt install -y redis
+          make $(j16)
+        continue-on-error: true
+
+      - name: Install benchmark dependencies
+        working-directory: tests/benchmarks
+        run: pip3 install -r requirements.txt
+
       - name: Run benchmark
         working-directory: tests/benchmarks
         run: python3 run_benchmarks.py GroupA
+
       - name: Upload results
         uses: ./actions/upload-artifact
         with:
