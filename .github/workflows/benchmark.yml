@@ -12,7 +12,7 @@ on:
 
 jobs:
   create-runner:
-    if: ${{ github.event.label.name == 'action:run-benchmark' }}
+    if: ${{ github.event.label.name == 'action:run-benchmark' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
@@ -29,7 +29,7 @@ jobs:
   run-benchmark:
     needs:
       - create-runner
-    if: ${{ github.event.label.name == 'action:run-benchmark' }}
+    if: ${{ github.event.label.name == 'action:run-benchmark' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
