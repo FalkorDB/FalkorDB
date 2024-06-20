@@ -20,11 +20,10 @@ jobs:
         uses: related-sciences/gce-github-runner@v0.10
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: github-runners-414914
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zone: us-central1-a
           machine_type: e2-custom-4-8192
-          label: $RANDOM
 
   run-benchmark:
     needs:
