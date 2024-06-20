@@ -50,8 +50,12 @@ jobs:
       - name: Install dependencies
         working-directory: tests/benchmarks
         run: |
-          apt install -y redis-server
+          apt install -y redis-server python3-pip
           pip3 install -r requirements.txt
+      - name: Download falkorDB artifact
+        uses: ./actions/download-artifact
+        with:
+          name: falkorDB
       - name: Run benchmark
         working-directory: tests/benchmarks
         run: python3 run_benchmarks.py GroupA
