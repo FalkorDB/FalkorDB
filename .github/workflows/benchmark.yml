@@ -3,30 +3,30 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [ master ]
-    types: [ labeled ]
+    types: [opened, labeled, unlabeled, synchronize]
   push:
     branches:
-      - '*'
+      - 'master'
     tags:
       - 'v*'
 
 jobs:
-  check-label:
+  haslabel:
+    name: analyse labels
     runs-on: ubuntu-latest
+    outputs:
+      benchmark: ${{ steps.haslabel.outputs.labeled-run-benchmark }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check if PR exists for this branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        # Check if a PR with label 'action:run-benchmark' exists for this branch and save its id
-        run: |
-          PR=$(gh pr list --state open --label 'action:run-benchmark' --json headRefName -q ".[] | select(.headRefName == ${{ github.ref }})")
-          echo "pr_exists=${PR}" >> "${GITHUB_OUTPUT}"
+      - name: Labeled with run-benchmark
+        id: haslabel
+        uses: DanielTamkin/HasLabel@v1.0.4
+        with:
+          contains: 'run-benchmark'
 
   create-runner:
-    needs:
-      - check-label
-    if: ${{ needs.check-label.outputs.pr_exists != null }}
+    needs: haslabel
+    if: needs.haslabel.outputs.benchmark
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
@@ -44,7 +44,6 @@ jobs:
   run-benchmark:
     needs:
       - create-runner
-    if: ${{ github.event.label.name == 'action:run-benchmark' || github.event_name == 'workflow_dispatch' }}
     runs-on: ${{ needs.create-runner.outputs.label }}
     steps:
       - uses: actions/checkout@v4
@@ -55,9 +54,9 @@ jobs:
           pip3 install -r requirements.txt
       - name: Run benchmark
         working-directory: tests/benchmarks
-        run: python3 run_benchmarks.py 0-9 BenchmarkA
+        run: python3 run_benchmarks.py GroupA
       - name: Upload results
         uses: ./actions/upload-artifact
         with:
-          name: BenchmarkA-results.tar.gzx`x`x`x`
-          path: tests/benchmarks/BenchmarkA-results.tar.gz
+          name: GroupA-results.tar.gz
+          path: tests/benchmarks/GroupA/GroupA-results.tar.gz
