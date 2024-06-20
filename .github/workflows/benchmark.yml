@@ -47,8 +47,12 @@ jobs:
     runs-on: ${{ needs.create-runner.outputs.label }}
     container: falkordb/falkordb-build:ubuntu
     steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
       - uses: actions/checkout@v4
         with:
+          set-safe-directory: '*'
           submodules: recursive
 
       - name: Cache GraphBLAS
