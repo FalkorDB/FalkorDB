@@ -17,15 +17,14 @@ def run_single_benchmark(idx, file_stream):
     data = yaml.safe_load(file_stream)
 
     # Always prefer the environment variable over the yaml file
-    db_image = os.getenv("DB_IMAGE")
-    if not db_image:
-        if "docker_image" in data:
-            db_image = data["docker_image"]
-        else:
-            db_image = "falkordb/falkordb:edge"  # If nothing is specified, use the latest image
+    db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
+    if db_module is None:
+        if "db_module" not in data:
+            print("Error! No DB module specified in the yaml file or the environment variable")
+            exit(1)
 
     process = subprocess.Popen(["./falkordb-benchmark-go", "--yaml_config", f"./{idx}.yml",
-                                "--output_file", f"{idx}-results.json", "--override_image", db_image],
+                                "--output_file", f"{idx}-results.json", "--override_module", db_module],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     for line in process.stdout:
