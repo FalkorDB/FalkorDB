@@ -409,11 +409,11 @@ void Constraint_EnforceNodes
 	ASSERT(g != NULL);
 
 	Delta_MatrixTupleIter it         = {0};           // matrix iterator
-	bool               holds      = true;          // constraint holds
-	GrB_Index          rowIdx     = 0;             // current row being scanned
-	int                enforced   = 0;             // #entities in current batch
-	int                schema_id  = c->schema_id;  // constraint schema ID
-	int                batch_size = 10000;         // #entities to enforce
+	bool                  holds      = true;          // constraint holds
+	GrB_Index             rowIdx     = 0;             // current row being scanned
+	int                   enforced   = 0;             // #entities in current batch
+	int                   schema_id  = c->schema_id;  // constraint schema ID
+	int                   batch_size = 10000;         // #entities to enforce
 
 	while(holds) {
 		// lock graph for reading
@@ -503,7 +503,7 @@ void Constraint_EnforceEdges
 	EntityID  dest_id      = 0;             // current processed column idx
 	EntityID  edge_id      = 0;             // current processed edge id
 	EntityID  prev_src_id  = 0;             // last processed row idx
-	EntityID  prev_edge_id = 0;             // last processed column idx
+	EntityID  prev_dest_id = 0;             // last processed column idx
 	int       enforced     = 0;             // # entities enforced in batch
 	int       schema_id    = c->schema_id;  // edge relationship type ID
 	int       batch_size   = 1000;          // max number of entities to enforce
@@ -523,11 +523,11 @@ void Constraint_EnforceEdges
 		// reset number of enforced edges in batch
 		enforced     = 0;
 		prev_src_id  = src_id;
-		prev_edge_id = edge_id;
+		prev_dest_id = dest_id;
 
 		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const Delta_Matrix m = Graph_OutgoingRelationMatrix(g, schema_id);
+		const Delta_Matrix m = Graph_GetRelationMatrix(g, schema_id, false);
 		ASSERT(m != NULL);
 
 		//----------------------------------------------------------------------
@@ -538,10 +538,10 @@ void Constraint_EnforceEdges
 		ASSERT(info == GrB_SUCCESS);
 
 		// skip previously enforced edges
-		while((info = Delta_MatrixTupleIter_next_UINT64(&it, &src_id, &edge_id,
-						&dest_id)) == GrB_SUCCESS &&
+		while((info = Delta_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id,
+						&edge_id)) == GrB_SUCCESS &&
 				src_id == prev_src_id &&
-				edge_id != prev_edge_id);
+				dest_id < prev_dest_id);
 
 		// process only if iterator is on an active entry
 		if(info != GrB_SUCCESS) {
@@ -558,15 +558,33 @@ void Constraint_EnforceEdges
 			e.dest_id    = dest_id;
 			e.relationID = schema_id;
 
-			bool res = Graph_GetEdge(g, edge_id, &e);
-			assert(res == true);
-			if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-				holds = false;
-				break;
+			if(SINGLE_EDGE(edge_id)) {
+				bool res = Graph_GetEdge(g, edge_id, &e);
+				assert(res == true);
+				if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
+					holds = false;
+					break;
+				}
+			} else {
+				GrB_Index me_ids = CLEAR_MSB(edge_id);
+				Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, schema_id);
+				Delta_MatrixTupleIter me_it;
+				Delta_MatrixTupleIter_AttachRange(&me_it, me, me_ids, me_ids);
+
+				while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
+					bool res = Graph_GetEdge(g, edge_id, &e);
+					assert(res == true);
+					if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
+						holds = false;
+						break;
+					}
+				}
+
+				Delta_MatrixTupleIter_detach(&me_it);
 			}
 			enforced++; // single/multi edge are counted similarly
 		} while(enforced < batch_size &&
-			  Delta_MatrixTupleIter_next_BOOL(&it, &src_id, &edge_id, NULL)
+			  Delta_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id, &edge_id)
 				== GrB_SUCCESS && holds);
 
 		//----------------------------------------------------------------------
@@ -623,4 +641,3 @@ void Constraint_Free
 
 	*c = NULL;
 }
-

@@ -9,6 +9,9 @@
 #include "graph_extensions.h"
 #include "../util/datablock/oo_datablock.h"
 
+// functions declerations - implemented in graph.c
+void Graph_FormConnection(Graph *g, NodeID src, NodeID dest, EdgeID edge_id, int r);
+
 void Graph_EnsureNodeCap
 (
 	Graph *g,
@@ -126,7 +129,7 @@ void Serializer_Graph_SetNodeLabels
 }
 
 // optimized version of Graph_FormConnection
-static void _OptimizedFormConnection
+static void _OptimizedSingleEdgeFormConnection
 (
 	Graph *g,
 	NodeID src,
@@ -136,13 +139,9 @@ static void _OptimizedFormConnection
 ) {
 	GrB_Info info;
 	Delta_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix  out    =  Graph_OutgoingRelationMatrix(g, r);
-	Delta_Matrix  in     =  Graph_IncomingRelationMatrix(g, r);
 	Delta_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
 	GrB_Matrix m         =  Delta_Matrix_M(M);
 	GrB_Matrix tm        =  Delta_Matrix_M(Delta_Matrix_getTranspose(M));
-	GrB_Matrix out_m     =  Delta_Matrix_M(out);
-	GrB_Matrix in_m      =  Delta_Matrix_M(in);
 	GrB_Matrix adj_m     =  Delta_Matrix_M(adj);
 	GrB_Matrix adj_tm    =  Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
@@ -171,20 +170,19 @@ static void _OptimizedFormConnection
 	// update relationship matrix
 	//--------------------------------------------------------------------------
 
-	info = GrB_Matrix_setElement_BOOL(m, true, src, dest);
+	info = GrB_Matrix_setElement_UINT64(m, edge_id, src, dest);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
+	info = GrB_Matrix_setElement_UINT64(tm, edge_id, dest, src);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_UINT64(out_m, dest, src, edge_id);
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_UINT64(in_m, src, dest, edge_id);
-	ASSERT(info == GrB_SUCCESS);
+
+	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
 }
 
 // set a given edge in the graph - Used for deserialization of graph
 void Serializer_Graph_SetEdge
 (
 	Graph *g,
+	bool multi_edge,
 	EdgeID edge_id,
 	NodeID src,
 	NodeID dest,
@@ -202,7 +200,11 @@ void Serializer_Graph_SetEdge
 	e->attributes =  set;
 	e->relationID =  r;
 
-	_OptimizedFormConnection(g, src, dest, edge_id, r);
+	if(multi_edge) {
+		Graph_FormConnection(g, src, dest, edge_id, r);
+	} else {
+		_OptimizedSingleEdgeFormConnection(g, src, dest, edge_id, r);
+	}
 }
 
 // returns the graph deleted nodes list

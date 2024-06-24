@@ -8,11 +8,12 @@
 #include "RG.h"
 #include "GraphBLAS.h"
 
-#include <pthread.h>
-
 // forward declaration of Delta_Matrix type
 typedef struct _Delta_Matrix _Delta_Matrix;
 typedef _Delta_Matrix *Delta_Matrix;
+
+// Checks if X represents edge ID.
+#define SINGLE_EDGE(x) !((x) & MSB_MASK)
 
 
 //------------------------------------------------------------------------------

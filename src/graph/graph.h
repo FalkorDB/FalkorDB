@@ -12,6 +12,7 @@
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
+#include "graph_statistics.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
@@ -43,13 +44,13 @@ typedef struct Graph Graph;
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
 // A relation type is defined via three matrices:
-//   1. boolean connecting source nodes to destination nodes
-//   2. Outgoing, O[s,e] = d indicating an outgoing edge e from s to d
-//   3. Incoming, I[d,e] = s indicating an incoming edge e from s to d
+//   1. uint64 connecting source nodes to destination nodes
+//   2. multi-edge, O[meid,e] = true
 typedef struct {
-	Delta_Matrix R;       // relation matrix
-	Delta_Matrix Out;     // Outgoing matrix
-	Delta_Matrix In;      // Incoming matrix
+	Delta_Matrix R;            // relation matrix
+	Delta_Matrix ME;           // multi-edge matrix
+	uint64_t me_id;            // multi-edge id
+	uint64_t *me_deleted_ids;  // multi-edge deleted ids
 } RelationMatrices;
 
 struct Graph {
@@ -64,6 +65,7 @@ struct Graph {
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
 	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
+	GraphStatistics stats;             // graph related statistics
 };
 
 // graph synchronization functions
@@ -416,22 +418,10 @@ Delta_Matrix Graph_GetRelationMatrix
 	bool transposed
 );
 
-// retrieves a relation specific outgoing edges matrix O[s,e] = d
-// where s is a source node, e is an edge ID d is a destination node (s)-[e]->(d)
-// this function will sync the matrix according to the set synchronisation policy
-Delta_Matrix Graph_OutgoingRelationMatrix
+Delta_Matrix Graph_MultiEdgeRelationMatrix
 (
 	const Graph *g,            // graph from which to get adjacency matrix
 	RelationID relation_idx    // relation described by matrix
-);
-
-// retrieves a relation specific incoming edges matrix O[d,e] = s
-// where s is a source node, e is an edge ID d is a destination node (s)-[e]->(d)
-// this function will sync the matrix according to the set synchronisation policy
-Delta_Matrix Graph_IncomingRelationMatrix
-(
-	const Graph *g,           // graph from which to get adjacency matrix
-	RelationID relation_idx   // relation described by matrix
 );
 
 // retrieves the node-label mapping matrix,

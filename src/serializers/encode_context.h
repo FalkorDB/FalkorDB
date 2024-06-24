@@ -41,15 +41,18 @@ typedef struct {
 
 // GraphEncodeContext maintains the state of a graph being encoded or decoded
 typedef struct {
-	rax *meta_keys;                             // The holds the names of meta keys representing the graph.
-	uint64_t offset;                            // Number of encoded entities in the current state.
-	EncodeState state;                          // Represents the current encoding state.
-	uint64_t keys_processed;                    // Count the number of procssed graph keys.
-	GraphEncodeHeader header;                   // Header replied for each vkey
-	uint64_t vkey_entity_count;                 // Number of entities in a single virtual key.
-	uint current_relation_matrix_id;            // Current encoded relationship matrix.
-	DataBlockIterator *datablock_iterator;      // Datablock iterator to be saved in the context.
-	Delta_MatrixTupleIter matrix_tuple_iterator;// Matrix tuple iterator to be saved in the context.
+	rax *meta_keys;                                // The holds the names of meta keys representing the graph.
+	uint64_t offset;                               // Number of encoded entities in the current state.
+	EncodeState state;                             // Represents the current encoding state.
+	uint64_t keys_processed;                       // Count the number of procssed graph keys.
+	GraphEncodeHeader header;                      // Header replied for each vkey
+	uint64_t vkey_entity_count;                    // Number of entities in a single virtual key.
+	NodeID multiple_edges_src_id;                  // The current edges array sourc node id.
+	NodeID multiple_edges_dest_id;                 // The current edges array destination node id.
+	Delta_MatrixTupleIter multiple_edges_it;       // Multiple edges array, save in the context.
+	uint current_relation_matrix_id;               // Current encoded relationship matrix.
+	DataBlockIterator *datablock_iterator;         // Datablock iterator to be saved in the context.
+	Delta_MatrixTupleIter matrix_tuple_iterator;   // Matrix tuple iterator to be saved in the context.
 } GraphEncodeContext;
 
 // Creates a new graph encoding context.
@@ -104,6 +107,18 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 // Retrieve stored matrix tuple iterator.
 Delta_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(GraphEncodeContext *ctx);
 
+// Sets a multiple edges array and the current index, for saving the state of multiple edges encoding.
+void GraphEncodeContext_SetMutipleEdges(GraphEncodeContext *ctx, NodeID src, NodeID dest);
+
+// Retrive the multiple edges id, to continue array of multiple edge encoding.
+Delta_MatrixTupleIter * GraphEncodeContext_GetMultipleEdgesIterator(GraphEncodeContext *ctx);
+
+// Retrive the multiple edges array source node.
+NodeID GraphEncodeContext_GetMultipleEdgesSourceNode(const GraphEncodeContext *ctx);
+
+// Retrive the multiple edges array destination node.
+NodeID GraphEncodeContext_GetMultipleEdgesDestinationNode(const GraphEncodeContext *ctx);
+
 // Returns if the the number of processed keys is equal to the total number of graph keys.
 bool GraphEncodeContext_Finished(const GraphEncodeContext *ctx);
 
@@ -112,4 +127,3 @@ void GraphEncodeContext_IncreaseProcessedKeyCount(GraphEncodeContext *ctx);
 
 // Free graph encoding context.
 void GraphEncodeContext_Free(GraphEncodeContext *ctx);
-

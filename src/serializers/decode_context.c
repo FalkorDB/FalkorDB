@@ -15,6 +15,7 @@ GraphDecodeContext *GraphDecodeContext_New() {
 	ctx->keys_processed = 0;
 	ctx->graph_keys_count = 1;
 	ctx->meta_keys = raxNew();
+	ctx->multi_edge = NULL;
 	return ctx;
 }
 
@@ -23,6 +24,11 @@ void GraphDecodeContext_Reset(GraphDecodeContext *ctx) {
 
 	ctx->keys_processed    =  0;
 	ctx->graph_keys_count  =  1;
+
+	if(ctx->multi_edge) {
+		array_free(ctx->multi_edge);
+		ctx->multi_edge = NULL;
+	}
 }
 
 void GraphDecodeContext_SetKeyCount(GraphDecodeContext *ctx, uint64_t key_count) {
@@ -70,6 +76,11 @@ bool GraphDecodeContext_GetProcessedKeyCount(const GraphDecodeContext *ctx) {
 void GraphDecodeContext_Free(GraphDecodeContext *ctx) {
 	if(ctx) {
 		raxFree(ctx->meta_keys);
+
+		if(ctx->multi_edge) {
+			array_free(ctx->multi_edge);
+			ctx->multi_edge = NULL;
+		}
 
 		rm_free(ctx);
 	}

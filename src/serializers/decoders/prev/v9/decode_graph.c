@@ -53,9 +53,10 @@ static GraphContext *_DecodeHeader(RedisModuleIO *rdb) {
 	uint64_t edge_count = RedisModule_LoadUnsigned(rdb);
 	uint64_t label_count = RedisModule_LoadUnsigned(rdb);
 	uint64_t relation_count = RedisModule_LoadUnsigned(rdb);
+	uint64_t multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
-		RedisModule_LoadUnsigned(rdb);
+		multi_edge[i] = RedisModule_LoadUnsigned(rdb);
 	}
 
 	// Total keys representing the graph.
@@ -68,6 +69,14 @@ static GraphContext *_DecodeHeader(RedisModuleIO *rdb) {
 	// with the appropriate dimensions
 	if(GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0) {
 		_InitGraphDataStructure(g, node_count, edge_count, label_count, relation_count);
+
+		gc->decoding_context->multi_edge = array_new(uint64_t, relation_count);
+		for(uint i = 0; i < relation_count; i++) {
+			// Enable/Disable support for multi-edge
+			// we will enable support for multi-edge on all relationship
+			// matrices once we finish loading the graph
+			array_append(gc->decoding_context->multi_edge,  multi_edge[i]);
+		}
 
 		GraphDecodeContext_SetKeyCount(gc->decoding_context, key_number);
 	}
@@ -179,11 +188,25 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 		
+		uint node_schemas_count = array_len(gc->node_schemas);
+		// update the node statistics
+		for(uint i = 0; i < node_schemas_count; i++) {
+			GrB_Index nvals;
+			Delta_Matrix L = g->labels[i];
+			Delta_Matrix_nvals(&nvals, L);
+			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
+		}
+
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
-		// enable node indices
+		// update the node statistics, enable node indices
 		for(uint i = 0; i < label_count; i++) {
+			GrB_Index nvals;
+			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
+			Delta_Matrix_nvals(&nvals, L);
+			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
+
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
