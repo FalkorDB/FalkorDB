@@ -1204,7 +1204,7 @@ static void _Graph_FreeRelationMatrices
 		RelationMatrices *r = g->relations + i;
 		Delta_Matrix_free(&r->R);
 		Delta_Matrix_free(&r->ME);
-		array_free(&r->me_deleted_ids);
+		array_free(r->me_deleted_ids);
 	}
 }
 

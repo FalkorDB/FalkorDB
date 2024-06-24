@@ -187,7 +187,7 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 
 		// revert to default synchronization behavior
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
-		
+
 		uint node_schemas_count = array_len(gc->node_schemas);
 		// update the node statistics
 		for(uint i = 0; i < node_schemas_count; i++) {
