@@ -1140,9 +1140,8 @@ void Graph_DeleteEdges
 
 			Delta_MatrixTupleIter it = {0};
 			Delta_MatrixTupleIter_AttachRange(&it, ME, CLEAR_MSB(me_id), CLEAR_MSB(me_id));
-			GrB_Index dst;
 			bool connected = false;
-			while (Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &dst) == GrB_SUCCESS) {
+			while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, NULL, NULL) == GrB_SUCCESS) {
 				connected = true;
 				break;
 			}
