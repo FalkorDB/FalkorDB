@@ -435,13 +435,7 @@ uint64_t Graph_LabeledNodeCount
 	const Graph *g,
 	LabelID label
 ) {
-	ASSERT(g);
-
-	Delta_Matrix L = Graph_GetLabelMatrix(g, label);
-	GrB_Index nvals;
-	GrB_Info info = Delta_Matrix_nvals(&nvals, L);
-	ASSERT(info == GrB_SUCCESS);
-	return nvals;
+	return GraphStatistics_NodeCount(&g->stats, label);
 }
 
 size_t Graph_EdgeCount(const Graph *g) {
@@ -674,6 +668,9 @@ void Graph_LabelNode
 		// map this label in this node's set of labels
 		info = Delta_Matrix_setElement_BOOL(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
+
+		// update labels statistics	
+		GraphStatistics_IncNodeCount(&g->stats, l, 1);
 	}
 }
 
@@ -723,6 +720,9 @@ void Graph_RemoveNodeLabels
 		// remove this label from node's set of labels
 		info = Delta_Matrix_removeElement(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
+
+		// a label was removed from node, update statistics	
+		GraphStatistics_DecNodeCount(&g->stats, l, 1);
 	}
 }
 
@@ -745,6 +745,9 @@ void Graph_FormConnection
 	// rows represent source nodes, columns represent destination nodes
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
 	ASSERT(info == GrB_SUCCESS);
+
+	// an edge of type r has just been created, update statistics	
+	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
 
 	GrB_Index current_edge;
 	info = Delta_Matrix_extractElement_UINT64(&current_edge, M, src, dest);
@@ -1123,6 +1126,9 @@ void Graph_DeleteEdges
 		EdgeID      edge_id   =  ENTITY_GET_ID(e);
 
 		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
+
+		// an edge of type r has just been deleted, update statistics
+		GraphStatistics_DecEdgeCount(&g->stats, r, 1);
 
 		M = Graph_GetRelationMatrix(g, r, false);
 		ME  = Graph_MultiEdgeRelationMatrix(g, r);
