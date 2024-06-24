@@ -172,7 +172,7 @@ static void _OptimizedSingleEdgeFormConnection
 
 	info = GrB_Matrix_setElement_UINT64(m, edge_id, src, dest);
 	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_UINT64(tm, edge_id, dest, src);
+	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
 	ASSERT(info == GrB_SUCCESS);
 
 	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
