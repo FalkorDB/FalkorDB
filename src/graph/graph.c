@@ -1294,7 +1294,7 @@ void Graph_RemoveRelation
 	#endif
 	Delta_Matrix_free(&g->relations[relation_id].R);
 	Delta_Matrix_free(&g->relations[relation_id].ME);
-	array_free(&g->relations[relation_id].me_deleted_ids);
+	array_free(g->relations[relation_id].me_deleted_ids);
 	g->relations = array_del(g->relations, relation_id);
 }
 
