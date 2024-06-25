@@ -669,7 +669,7 @@ void Graph_LabelNode
 		info = Delta_Matrix_setElement_BOOL(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
 
-		// update labels statistics	
+		// update labels statistics
 		GraphStatistics_IncNodeCount(&g->stats, l, 1);
 	}
 }
@@ -721,7 +721,7 @@ void Graph_RemoveNodeLabels
 		info = Delta_Matrix_removeElement(nl, id, l);
 		ASSERT(info == GrB_SUCCESS);
 
-		// a label was removed from node, update statistics	
+		// a label was removed from node, update statistics
 		GraphStatistics_DecNodeCount(&g->stats, l, 1);
 	}
 }
@@ -746,7 +746,7 @@ void Graph_FormConnection
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
 	ASSERT(info == GrB_SUCCESS);
 
-	// an edge of type r has just been created, update statistics	
+	// an edge of type r has just been created, update statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
 
 	GrB_Index current_edge;
@@ -867,7 +867,7 @@ void _GetIncomingNodeEdges
 
 	GrB_Info info;
 	Delta_MatrixTupleIter   it       =  {0};
-	Delta_Matrix            M       =  NULL;
+	Delta_Matrix            M        =  NULL;
 	NodeID                  src_id   =  INVALID_ENTITY_ID;
 	NodeID                  dest_id  =  ENTITY_GET_ID(n);
 	EdgeID                  edge_id  =  INVALID_ENTITY_ID;
@@ -1140,45 +1140,47 @@ void Graph_DeleteEdges
 		if(SINGLE_EDGE(me_id)) {
 			info = Delta_Matrix_removeElement(M, src_id, dest_id);
 			ASSERT(info == GrB_SUCCESS);
+			ASSERT(me_id == edge_id);
+
+			// see if source is connected to destination with additional edges
+			bool connected = false;
+			int relationCount = Graph_RelationTypeCount(g);
+			for(int j = 0; j < relationCount; j++) {
+				if(j == r) continue;
+				Delta_Matrix r = Graph_GetRelationMatrix(g, j, false);
+				info = Delta_Matrix_extractElement_BOOL(NULL, r, src_id, dest_id);
+				if(info == GrB_SUCCESS) {
+					connected = true;
+					break;
+				}
+			}
+
+			// there are no additional edges connecting source to destination
+			// remove edge from THE adjacency matrix
+			if(!connected) {
+				Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+				info = Delta_Matrix_removeElement(adj, src_id, dest_id);
+				ASSERT(info == GrB_SUCCESS);
+			}
 		} else {
-			info = Delta_Matrix_removeElement(ME, CLEAR_MSB(me_id), edge_id);
+			me_id = CLEAR_MSB(me_id);
+			info = Delta_Matrix_removeElement(ME, me_id, edge_id);
 			ASSERT(info == GrB_SUCCESS);
 
 			Delta_MatrixTupleIter it = {0};
-			Delta_MatrixTupleIter_AttachRange(&it, ME, CLEAR_MSB(me_id), CLEAR_MSB(me_id));
-			bool connected = false;
-			while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, NULL, NULL) == GrB_SUCCESS) {
-				connected = true;
-				break;
+			Delta_MatrixTupleIter_AttachRange(&it, ME, me_id, me_id);
+			GrB_Index last_edge_id;
+			uint count = 0;
+			while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, &last_edge_id, NULL) == GrB_SUCCESS) {
+				count++;
+				if(count == 2) break;
 			}
 
-			if(!connected) {
-				// no more edges connecting src to other nodes
-				// remove src from relation matrix
-				info = Delta_Matrix_removeElement(M, src_id, dest_id);
-				ASSERT(info == GrB_SUCCESS);
-
-				// see if source is connected to destination with additional edges
-				connected = false;
-				int relationCount = Graph_RelationTypeCount(g);
-				for(int j = 0; j < relationCount; j++) {
-					if(j == r) continue;
-					Delta_Matrix r = Graph_GetRelationMatrix(g, j, false);
-					info = Delta_Matrix_extractElement_BOOL(NULL, r, src_id, dest_id);
-					if(info == GrB_SUCCESS) {
-						connected = true;
-						break;
-					}
-				}
-
-				// there are no additional edges connecting source to destination
-				// remove edge from THE adjacency matrix
-				if(!connected) {
-					Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
-					info = Delta_Matrix_removeElement(adj, src_id, dest_id);
-					ASSERT(info == GrB_SUCCESS);
-				}
-			}
+			if(count == 1) {
+				Delta_Matrix_removeElement(ME, me_id, last_edge_id);
+				Delta_Matrix_setElement_UINT64(M, last_edge_id, src_id, dest_id);
+				array_append(g->relations[r].me_deleted_ids, me_id);
+			} 
 		}
 
 		// free and remove edges from datablock.
@@ -1272,7 +1274,7 @@ RelationID Graph_AddRelationType
 	size_t edge_cap = g->edges->itemCap;
 
 	Delta_Matrix_new(&r.R, GrB_UINT64, n, n, true);
-	Delta_Matrix_new(&r.ME, GrB_BOOL, n, edge_cap, false);
+	Delta_Matrix_new(&r.ME, GrB_BOOL, edge_cap, edge_cap, false);
 	r.me_id = 0;
 	r.me_deleted_ids = array_new(uint64_t, 0);
 
@@ -1352,7 +1354,9 @@ Delta_Matrix Graph_MultiEdgeRelationMatrix
 	const Graph *g,
 	RelationID relation_idx
 ) {
-	ASSERT(relation_idx != GRAPH_NO_RELATION);
+	ASSERT(g);
+	ASSERT(relation_idx != GRAPH_NO_RELATION &&
+		   relation_idx < Graph_RelationTypeCount(g));
 
 	Delta_Matrix m = g->relations[relation_idx].ME;
 

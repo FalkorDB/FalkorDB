@@ -174,13 +174,6 @@ GrB_Info Delta_Matrix_extractElement_UINT64     // x = A(i,j)
 	GrB_Index j                            // column index
 ) ;
 
-GrB_Info Delta_Matrix_extract_row
-(
-	const Delta_Matrix A,                   // matrix to extract a vector from
-	GrB_Vector v,                           // vector to extract
-	GrB_Index i                             // row index
-) ;
-
 // remove entry at position C[i,j]
 GrB_Info Delta_Matrix_removeElement
 (
