@@ -879,7 +879,7 @@ void _GetIncomingNodeEdges
 
 	info = Delta_MatrixTupleIter_AttachRange(&it, TM, dest_id, dest_id);
 	ASSERT(info == GrB_SUCCESS);
-	while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, &src_id, NULL) == GrB_SUCCESS) {
+	while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &src_id, NULL) == GrB_SUCCESS) {
 		Edge e = {0};
 		e.src_id      =  src_id;
 		e.dest_id     =  dest_id;
@@ -1009,9 +1009,10 @@ uint64_t Graph_GetNodeDegree
 		// outgoing edges
 		//----------------------------------------------------------------------
 
+		out = Graph_GetRelationMatrix(g, edgeType, false);
+		me  = Graph_MultiEdgeRelationMatrix(g, edgeType);
+		
 		if(outgoing) {
-			out = Graph_GetRelationMatrix(g, edgeType, false);
-			me  = Graph_MultiEdgeRelationMatrix(g, edgeType);
 			// construct an iterator to traverse over the source node row,
 			// containing all outgoing edges
 			Delta_MatrixTupleIter_AttachRange(&it, out, srcID, srcID);
@@ -1040,13 +1041,13 @@ uint64_t Graph_GetNodeDegree
 
 		if(incoming) {
 			in = Graph_GetRelationMatrix(g, edgeType, true);
-			me  = Graph_MultiEdgeRelationMatrix(g, edgeType);
 			// construct an iterator to traverse over the source node row,
 			// containing all incoming edges
 			Delta_MatrixTupleIter_AttachRange(&it, in, srcID, srcID);
 			// scan row
-			while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &edgeID)
+			while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL)
 					== GrB_SUCCESS) {
+				Delta_Matrix_extractElement_UINT64(&edgeID, out, destID, srcID);
 				// check for edge type single/multi
 				if(SINGLE_EDGE(edgeID)) {
 					edge_count++;
