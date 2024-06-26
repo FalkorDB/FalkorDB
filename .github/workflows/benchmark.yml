@@ -38,7 +38,7 @@ jobs:
           project_id: github-runners-414914
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zone: us-central1-a
-          machine_type: e2-custom-8-8192
+          machine_type: e2-highcpu-4
           network: gh-runner
 
   run-benchmark:
@@ -60,21 +60,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ./bin/linux-x64-release-cov/GraphBLAS
-          key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
       - name: Cache parser
         id: cache_parser
         uses: actions/cache@v4
         with:
           path: ./bin/linux-x64-release-cov/libcypher-parser
-          key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search
         id: cache_search
         uses: actions/cache@v4
         with:
           path: ./bin/linux-x64-debug-cov/search-static
-          key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Build
         run: |
