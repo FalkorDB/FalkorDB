@@ -103,6 +103,9 @@ void Graph_DeleteNodes
 			Delta_Matrix L = Graph_GetLabelMatrix(g, j);
 			info = Delta_Matrix_removeElement(L, id, id);
 			ASSERT(info == GrB_SUCCESS);
+
+			// a label was removed from node, update statistics
+			GraphStatistics_DecNodeCount(&g->stats, j, 1);
 		}
 
 		// remove node from datablock
