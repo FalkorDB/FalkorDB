@@ -269,7 +269,7 @@ void buildCallSubqueryPlan
 	uint n_feeding_points = array_len(feeding_points);
 	if(is_eager) {
 		for(uint i = 0; i < n_feeding_points; i++) {
-			OpBase *argument_list = NewArgumentListOp(plan);
+			OpBase *argument_list = NewArgumentListOp(plan, NULL);
 			ExecutionPlan_AddOp(feeding_points[i], argument_list);
 		}
 	} else {
