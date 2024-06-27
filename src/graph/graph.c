@@ -739,7 +739,7 @@ void Graph_FormConnection
 	GrB_Info info;
 	UNUSED(info);
 	Delta_Matrix M     = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix me    = Graph_MultiEdgeRelationMatrix(g, r);
+	Delta_Matrix ME    = Graph_MultiEdgeRelationMatrix(g, r);
 	Delta_Matrix adj   = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
@@ -758,12 +758,12 @@ void Graph_FormConnection
 		GrB_Index meid = g->relations[r].me_id++;
 		info = Delta_Matrix_setElement_UINT64(M, SET_MSB(meid), src, dest);
 		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(me, meid, current_edge);
+		info = Delta_Matrix_setElement_BOOL(ME, meid, current_edge);
 		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(me, meid, edge_id);
+		info = Delta_Matrix_setElement_BOOL(ME, meid, edge_id);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Delta_Matrix_setElement_BOOL(me, CLEAR_MSB(current_edge), edge_id);
+		info = Delta_Matrix_setElement_BOOL(ME, CLEAR_MSB(current_edge), edge_id);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }

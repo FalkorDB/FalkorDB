@@ -287,7 +287,7 @@ static void _RdbSaveMultipleEdges
 	NodeID dest                          // Edges destination node id.
 ) {
 	// define function local variables from passed-by-reference parameters.
-	uint encoded_edges_count = *encoded_edges;
+	uint64_t encoded_edges_count = *encoded_edges;
 
 	// add edges as long the number of encoded edges is in the allowed range
 	// and the array is not depleted
@@ -355,12 +355,12 @@ void RdbSaveEdges_v14
 			ASSERT(info == GrB_SUCCESS);
 		}
 
-		// first, see if the last edges encoding stopped at multiple edges array
-		src = GraphEncodeContext_GetMultipleEdgesSourceNode(gc->encoding_context);
-		dest = GraphEncodeContext_GetMultipleEdgesDestinationNode(gc->encoding_context);
 		if(Delta_MatrixTupleIter_is_attached(me_it, ME)) {
+			// first, see if the last edges encoding stopped at multiple edges array
+			src = GraphEncodeContext_GetMultipleEdgesSourceNode(gc->encoding_context);
+			dest = GraphEncodeContext_GetMultipleEdgesDestinationNode(gc->encoding_context);
 			_RdbSaveMultipleEdges(rdb, gc, r, me_it,
-								&encoded_edges, edges_to_encode, src, dest);
+				&encoded_edges, edges_to_encode, src, dest);
 			// if the multiple edges array filled the capacity of entities allowed
 			// to be encoded, finish encoding
 			if(encoded_edges == edges_to_encode) {
@@ -391,6 +391,7 @@ void RdbSaveEdges_v14
 
 			// get matrix and set iterator
 			M = Graph_GetRelationMatrix(gc->g, r, false);
+			ME = Graph_MultiEdgeRelationMatrix(gc->g, r);
 			info = Delta_MatrixTupleIter_attach(iter, M);
 			ASSERT(info == GrB_SUCCESS);
 			info = Delta_MatrixTupleIter_next_UINT64(iter, &src, &dest, &edgeID);
@@ -407,7 +408,7 @@ void RdbSaveEdges_v14
 		} else {
 			Delta_MatrixTupleIter_AttachRange(me_it, ME, CLEAR_MSB(edgeID), CLEAR_MSB(edgeID));
 			_RdbSaveMultipleEdges(rdb, gc, r, me_it,
-								  &encoded_edges, edges_to_encode, src, dest);
+				&encoded_edges, edges_to_encode, src, dest);
 			// if the multiple edges array filled the capacity of entities
 			// allowed to be encoded, finish encoding
 			if(encoded_edges == edges_to_encode) {
