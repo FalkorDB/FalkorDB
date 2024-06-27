@@ -387,7 +387,7 @@ void RdbSaveEdges_v14
 			r++;
 
 			// if done iterating over all the matrices, jump to finish
-			if(r >= relation_count) goto finish;
+			if(r == relation_count) goto finish;
 
 			// get matrix and set iterator
 			M = Graph_GetRelationMatrix(gc->g, r, false);
