@@ -755,7 +755,9 @@ void Graph_FormConnection
 		info = Delta_Matrix_setElement_UINT64(M, edge_id, src, dest);
 		ASSERT(info == GrB_SUCCESS);
 	} else if(SINGLE_EDGE(current_edge)) {
-		GrB_Index meid = g->relations[r].me_id++;
+		GrB_Index meid = array_len(g->relations[r].me_deleted_ids) > 0 
+			? array_pop(g->relations[r].me_deleted_ids) 
+			: g->relations[r].me_id++;
 		info = Delta_Matrix_setElement_UINT64(M, SET_MSB(meid), src, dest);
 		ASSERT(info == GrB_SUCCESS);
 		info = Delta_Matrix_setElement_BOOL(ME, meid, current_edge);
