@@ -38,7 +38,7 @@ jobs:
           project_id: github-runners-414914
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zone: us-central1-a
-          machine_type: c4-highcpu-4
+          machine_type: n4-highcpu-4
           network: gh-runner
 
   run-benchmark:
