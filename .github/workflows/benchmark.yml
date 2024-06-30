@@ -26,7 +26,7 @@ jobs:
 
   create-runner:
     strategy:
-      matrix: &matrix
+      matrix:
         arch_suffix: [ x64 ] # So we can add arch64 benchmarks later
         benchmark_group: [ GroupA, GroupB ]
     needs: haslabel
@@ -47,7 +47,9 @@ jobs:
 
   run-benchmark:
     strategy:
-        matrix: *matrix
+      matrix:
+        arch_suffix: [ x64 ] # So we can add arch64 benchmarks later
+        benchmark_group: [ GroupA, GroupB ]
     needs:
       - create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
