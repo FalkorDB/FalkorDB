@@ -60,7 +60,11 @@ jobs:
         curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
         echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
         apt update && apt install redis -y
-        make coverage NPROC=16 CLANG=1 CC=clang-17 CXX=clang++-17
+        update-alternatives \
+          --verbose \
+          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
+          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
+        make coverage NPROC=16 CLANG=1
       continue-on-error: true
 
     - name: Upload coverage reports to Codecov
