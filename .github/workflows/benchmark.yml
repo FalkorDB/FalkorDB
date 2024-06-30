@@ -25,6 +25,10 @@ jobs:
           contains: 'run-benchmark'
 
   create-runner:
+    strategy:
+      matrix: &matrix
+        arch_suffix: [ x64 ] # So we can add arch64 benchmarks later
+        benchmark_group: [ GroupA, GroupB ]
     needs: haslabel
     if: needs.haslabel.outputs.benchmark
     runs-on: ubuntu-latest
@@ -42,6 +46,8 @@ jobs:
           network: gh-runner
 
   run-benchmark:
+    strategy:
+        matrix: *matrix
     needs:
       - create-runner
     runs-on: ${{ needs.create-runner.outputs.label }}
@@ -97,10 +103,10 @@ jobs:
 
       - name: Run benchmark
         working-directory: tests/benchmarks
-        run: python3 run_benchmarks.py GroupA
+        run: python3 run_benchmarks.py ${{ matrix.benchmark_group }}
 
       - name: Upload results
-        uses: ./actions/upload-artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: GroupA-results.tar.gz
-          path: tests/benchmarks/GroupA/GroupA-results.tar.gz
+          name: ${{ matrix.benchmark_group }}-results.tar.gz
+          path: tests/benchmarks/${{ matrix.benchmark_group }}/${{ matrix.benchmark_group }}-results.tar.gz
