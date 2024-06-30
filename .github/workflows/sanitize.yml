@@ -61,7 +61,7 @@ jobs:
 
     - name: Unit tests
       id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
+      run: make unit-tests CLEAR_LOGS=0 SAN=address CC=clang-17 CXX=clang++-17
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -74,7 +74,7 @@ jobs:
       id: flow_tests
       run: |
         . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
+        make flow-tests CLEAR_LOGS=0 SAN=address CC=clang-17 CXX=clang++-17
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -87,7 +87,7 @@ jobs:
       id: tck_tests
       run: |
         . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
+        make tck-tests CLEAR_LOGS=0 SAN=address CC=clang-17 CXX=clang++-17
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
