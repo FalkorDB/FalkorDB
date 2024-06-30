@@ -46,8 +46,9 @@ jobs:
 
     - name: Build
       run: |
-        rustup toolchain list
         rustup default nightly
+        apt-get update
+        apt-get install -y wget
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         sudo ./llvm.sh 17
