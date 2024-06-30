@@ -46,18 +46,21 @@ jobs:
 
     - name: Build
       run: |
-        rustup toolchain list
         rustup default nightly
         apt-get update
-        apt-get install -y clang libomp-dev libc6-dbg python3-venv
+        apt-get install -y lsb-release wget software-properties-common gnupg
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        ./llvm.sh 17
+        apt-get update
+        apt-get install -y libomp-17-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
-        apt update && apt install lsb-release -y
         curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
         echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
         apt update && apt install redis -y
-        make coverage NPROC=16
+        make coverage NPROC=16 CLANG=1 CC=clang-17 CXX=clang++-17
       continue-on-error: true
 
     - name: Upload coverage reports to Codecov
