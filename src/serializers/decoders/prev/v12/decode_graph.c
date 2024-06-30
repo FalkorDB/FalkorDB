@@ -74,7 +74,7 @@ static GraphContext *_DecodeHeader
 	uint64_t  deleted_edge_count  =  RedisModule_LoadUnsigned(rdb);
 	uint64_t  label_count         =  RedisModule_LoadUnsigned(rdb);
 	uint64_t  relation_count      =  RedisModule_LoadUnsigned(rdb);
-	uint64_t multi_edge[relation_count];
+	uint64_t  multi_edge[relation_count];
 
 	for(uint i = 0; i < relation_count; i++) {
 		multi_edge[i] = RedisModule_LoadUnsigned(rdb);

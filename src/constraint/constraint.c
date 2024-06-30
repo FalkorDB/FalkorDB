@@ -567,11 +567,11 @@ void Constraint_EnforceEdges
 				}
 			} else {
 				GrB_Index me_ids = CLEAR_MSB(edge_id);
-				Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, schema_id);
-				Delta_MatrixTupleIter me_it;
-				Delta_MatrixTupleIter_AttachRange(&me_it, me, me_ids, me_ids);
+				Delta_Matrix M = Graph_GetMultiEdgeRelationMatrix(g, schema_id);
+				Delta_MatrixTupleIter M_it;
+				Delta_MatrixTupleIter_AttachRange(&M_it, M, me_ids, me_ids);
 
-				while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
+				while(Delta_MatrixTupleIter_next_BOOL(&M_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
 					bool res = Graph_GetEdge(g, edge_id, &e);
 					assert(res == true);
 					if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
@@ -580,7 +580,7 @@ void Constraint_EnforceEdges
 					}
 				}
 
-				Delta_MatrixTupleIter_detach(&me_it);
+				Delta_MatrixTupleIter_detach(&M_it);
 			}
 			enforced++; // single/multi edge are counted similarly
 		} while(enforced < batch_size &&

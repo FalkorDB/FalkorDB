@@ -1754,7 +1754,7 @@ void test_RemoveOperand() {
 void test_LocateOperand() {
 	// construct algebraic expression
 	bool                 located  =  false;
-	Delta_Matrix            mat      =  NULL;
+	Delta_Matrix         mat      =  NULL;
 	AlgebraicExpression  *A       =  NULL;
 	AlgebraicExpression  *B       =  NULL;
 	AlgebraicExpression  *r       =  NULL;

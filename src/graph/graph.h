@@ -43,15 +43,15 @@ typedef struct Graph Graph;
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
-// A relation type is defined via three matrices:
+// A relation type is defined via two matrices:
 //   1. uint64 connecting source nodes to destination nodes
 //   2. multi-edge, O[meid,e] = true
 typedef struct {
-	Delta_Matrix R;            // relation matrix
-	Delta_Matrix ME;           // multi-edge matrix
-	uint64_t me_id;            // multi-edge id
-	uint64_t *me_deleted_ids;  // multi-edge deleted ids
-} RelationMatrices;
+	Delta_Matrix R;      // relation matrix
+	Delta_Matrix E;      // multi-edge matrix
+	uint64_t me_id;      // multi-edge id
+	uint64_t *freelist;  // multi-edge deleted ids
+} RelationMatrix;
 
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
@@ -60,7 +60,7 @@ struct Graph {
 	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
 	Delta_Matrix *labels;              // label matrices
 	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
-	RelationMatrices *relations;       // relation matrices
+	RelationMatrix *relations;         // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
@@ -418,9 +418,11 @@ Delta_Matrix Graph_GetRelationMatrix
 	bool transposed
 );
 
-Delta_Matrix Graph_MultiEdgeRelationMatrix
+// retrieves a typed multi-edge matrix
+// matrix is resized if its size doesn't match graph's node count
+Delta_Matrix Graph_GetMultiEdgeRelationMatrix
 (
-	const Graph *g,            // graph from which to get adjacency matrix
+	const Graph *g,            // graph from which to get multi-edge matrix
 	RelationID relation_idx    // relation described by matrix
 );
 
