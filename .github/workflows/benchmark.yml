@@ -63,21 +63,21 @@ jobs:
         id: cache_graphblas
         uses: actions/cache@v4
         with:
-          path: ./bin/linux-x64-release-cov/GraphBLAS
+          path: ./bin/linux-x64-release/GraphBLAS
           key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
       - name: Cache parser
         id: cache_parser
         uses: actions/cache@v4
         with:
-          path: ./bin/linux-x64-release-cov/libcypher-parser
+          path: ./bin/linux-x64-release/libcypher-parser
           key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search
         id: cache_search
         uses: actions/cache@v4
         with:
-          path: ./bin/linux-x64-debug-cov/search-static
+          path: ./bin/linux-x64-release/search-static
           key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Build
@@ -146,21 +146,21 @@ jobs:
         id: cache_graphblas
         uses: actions/cache@v4
         with:
-          path: ./bin/linux-x64-release-cov/GraphBLAS
+          path: ./bin/linux-x64-release/GraphBLAS
           key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
       - name: Cache parser
         id: cache_parser
         uses: actions/cache@v4
         with:
-          path: ./bin/linux-x64-release-cov/libcypher-parser
+          path: ./bin/linux-x64-release/libcypher-parser
           key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
       - name: Cache search
         id: cache_search
         uses: actions/cache@v4
         with:
-          path: ./bin/linux-x64-debug-cov/search-static
+          path: ./bin/linux-x64-release/search-static
           key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
       - name: Build
