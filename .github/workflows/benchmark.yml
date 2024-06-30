@@ -140,6 +140,9 @@ jobs:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
+      - name: Print CWD
+        run: pwd
+
       - uses: actions/checkout@v4
         with:
           set-safe-directory: '*'
