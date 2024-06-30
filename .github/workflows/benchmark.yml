@@ -47,8 +47,8 @@ jobs:
 
   run-benchmark-A:
     needs:
-      - create-runner
-    runs-on: ${{ needs.create-runner.outputs.label }}
+      - create-runner-A
+    runs-on: ${{ needs.create-runner-A.outputs.label }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
@@ -130,8 +130,8 @@ jobs:
 
   run-benchmark-B:
     needs:
-      - create-runner
-    runs-on: ${{ needs.create-runner.outputs.label }}
+      - create-runner-B
+    runs-on: ${{ needs.create-runner-B.outputs.label }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
