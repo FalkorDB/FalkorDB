@@ -57,7 +57,7 @@ jobs:
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
-        make CLANG=1 SAN=address NPROC=16
+        make CLANG=1 SAN=address NPROC=16 CC=clang-17 CXX=clang++-17
 
     - name: Unit tests
       id: unit_tests
