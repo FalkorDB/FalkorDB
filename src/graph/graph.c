@@ -107,8 +107,8 @@ void _Graph_GetEdgesConnectingNodes
 
 	// relation map, maps (src, dest, r) to edge IDs.
 	GrB_Index      edge_id;
-	Delta_Matrix   M    = Graph_GetRelationMatrix(g, r, false);
-	GrB_Info       res  = Delta_Matrix_extractElement_UINT64(&edge_id, M, src, dest);
+	Delta_Matrix   R    = Graph_GetRelationMatrix(g, r, false);
+	GrB_Info       res  = Delta_Matrix_extractElement_UINT64(&edge_id, R, src, dest);
 
 	// no entry at [dest, src], src is not connected to dest with relation R
 	if(res == GrB_NO_VALUE) return;
@@ -117,16 +117,16 @@ void _Graph_GetEdgesConnectingNodes
 		Edge e = {.src_id = src, .dest_id = dest, .relationID = r, .id = edge_id, .attributes = DataBlock_GetItem(g->edges, edge_id)};
 		array_append(*edges, e);
 	} else {
+		// multi edge
 		GrB_Info info;
 		Edge         e   = {.src_id = src, .dest_id = dest, .relationID = r};
-		Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, r);
+		Delta_Matrix M = Graph_GetMultiEdgeRelationMatrix(g, r);
 
 		Delta_MatrixTupleIter it = {0};
-		Delta_MatrixTupleIter_AttachRange(&it, me, CLEAR_MSB(edge_id), CLEAR_MSB(edge_id));
+		Delta_MatrixTupleIter_AttachRange(&it, M, CLEAR_MSB(edge_id), CLEAR_MSB(edge_id));
 
 		while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
 			e.id          =  edge_id;
-			e.relationID  =  r;
 			e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
 			ASSERT(e.attributes);
 			array_append(*edges, e);
@@ -147,31 +147,31 @@ static inline AttributeSet *_Graph_GetEntity(const DataBlock *entities, EntityID
 // matrix to execute any pending operations
 void _MatrixSynchronize
 (
-	const Graph *g,
-	Delta_Matrix m,
-	GrB_Index nrows,
-	GrB_Index ncols
+	const Graph *g,   // graph the matrix is related to
+	Delta_Matrix M,   // matrix to synchronize
+	GrB_Index nrows,  // # of rows for the resize
+	GrB_Index ncols   // # of columns for the resize
 ) {
-	Delta_Matrix_synchronize(m, nrows, ncols);
+	Delta_Matrix_synchronize(M, nrows, ncols);
 }
 
 // resize matrix to node capacity
 void _MatrixResizeToCapacity
 (
-	const Graph *g,
-	Delta_Matrix m,
-	GrB_Index nrows,
-	GrB_Index ncols
+	const Graph *g,   // graph the matrix is related to
+	Delta_Matrix M,   // matrix to synchronize
+	GrB_Index nrows,  // # of rows for the resize
+	GrB_Index ncols   // # of columns for the resize
 ) {
 	GrB_Index n_rows;
 	GrB_Index n_cols;
-	Delta_Matrix_nrows(&n_rows, m);
-	Delta_Matrix_ncols(&n_cols, m);
+	Delta_Matrix_nrows(&n_rows, M);
+	Delta_Matrix_ncols(&n_cols, M);
 
 	// this policy should only be used in a thread-safe context,
 	// so no locking is required
 	if(n_rows < nrows || n_cols < ncols) {
-		GrB_Info res = Delta_Matrix_resize(m, nrows, ncols);
+		GrB_Info res = Delta_Matrix_resize(M, nrows, ncols);
 		ASSERT(res == GrB_SUCCESS);
 	}
 }
@@ -179,10 +179,10 @@ void _MatrixResizeToCapacity
 // do not update matrices
 void _MatrixNOP
 (
-	const Graph *g,
-	Delta_Matrix matrix,
-	GrB_Index nrows,
-	GrB_Index ncols
+	const Graph *g,   // graph the matrix is related to
+	Delta_Matrix M,   // matrix to synchronize
+	GrB_Index nrows,  // # of rows for the resize
+	GrB_Index ncols   // # of columns for the resize
 ) {
 	return;
 }
@@ -246,7 +246,7 @@ void Graph_ApplyAllPending
 ) {
 	ASSERT(g != NULL);
 
-	uint       n  =  0;
+	uint          n  =  0;
 	Delta_Matrix  M  =  NULL;
 
 	// set matrix sync policy, backup previous sync policy
@@ -280,7 +280,7 @@ void Graph_ApplyAllPending
 	for(int i = 0; i < n; i ++) {
 		M = Graph_GetRelationMatrix(g, i, false);
 		Delta_Matrix_wait(M, force_flush);
-		M = Graph_MultiEdgeRelationMatrix(g, i);
+		M = Graph_GetMultiEdgeRelationMatrix(g, i);
 		Delta_Matrix_wait(M, force_flush);
 	}
 
@@ -324,17 +324,6 @@ bool Graph_Pending
 	}
 
 	//--------------------------------------------------------------------------
-	// see if the zero matrix contains pending changes
-	//--------------------------------------------------------------------------
-
-	M = g->_zero_matrix;
-	info = Delta_Matrix_pending(M, &pending);
-	ASSERT(info == GrB_SUCCESS);
-	if(pending) {
-		return true;
-	}
-
-	//--------------------------------------------------------------------------
 	// see if any label matrix contains pending changes
 	//--------------------------------------------------------------------------
 
@@ -360,7 +349,7 @@ bool Graph_Pending
 		if(pending) {
 			return true;
 		}
-		M = g->relations[i].ME;
+		M = g->relations[i].E;
 		info = Delta_Matrix_pending(M, &pending);
 		ASSERT(info == GrB_SUCCESS);
 		if(pending) {
@@ -387,7 +376,7 @@ Graph *Graph_New
 	g->nodes     = DataBlock_New(node_cap, node_cap, sizeof(AttributeSet), cb);
 	g->edges     = DataBlock_New(edge_cap, edge_cap, sizeof(AttributeSet), cb);
 	g->labels    = array_new(Delta_Matrix, GRAPH_DEFAULT_LABEL_CAP);
-	g->relations = array_new(RelationMatrices, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	g->relations = array_new(RelationMatrix, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 
 	GrB_Info info;
 	UNUSED(info);
@@ -536,7 +525,7 @@ RelationID Graph_GetEdgeRelation
 				break;
 			}
 		} else {
-			Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, i);
+			Delta_Matrix me = Graph_GetMultiEdgeRelationMatrix(g, i);
 			GrB_Index me_id = CLEAR_MSB(edgeId);
 			if(Delta_Matrix_extractElement_BOOL(NULL, me, me_id, id) == GrB_SUCCESS) {
 				Edge_SetRelationID(e, i);
@@ -738,9 +727,9 @@ void Graph_FormConnection
 
 	GrB_Info info;
 	UNUSED(info);
-	Delta_Matrix M     = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix ME    = Graph_MultiEdgeRelationMatrix(g, r);
-	Delta_Matrix adj   = Graph_GetAdjacencyMatrix(g, false);
+	Delta_Matrix M    = Graph_GetRelationMatrix(g, r, false);
+	Delta_Matrix E    = Graph_GetMultiEdgeRelationMatrix(g, r);
+	Delta_Matrix adj  = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
@@ -755,17 +744,17 @@ void Graph_FormConnection
 		info = Delta_Matrix_setElement_UINT64(M, edge_id, src, dest);
 		ASSERT(info == GrB_SUCCESS);
 	} else if(SINGLE_EDGE(current_edge)) {
-		GrB_Index meid = array_len(g->relations[r].me_deleted_ids) > 0 
-			? array_pop(g->relations[r].me_deleted_ids) 
+		GrB_Index meid = array_len(g->relations[r].freelist) > 0 
+			? array_pop(g->relations[r].freelist) 
 			: g->relations[r].me_id++;
 		info = Delta_Matrix_setElement_UINT64(M, SET_MSB(meid), src, dest);
 		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(ME, meid, current_edge);
+		info = Delta_Matrix_setElement_BOOL(E, meid, current_edge);
 		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(ME, meid, edge_id);
+		info = Delta_Matrix_setElement_BOOL(E, meid, edge_id);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Delta_Matrix_setElement_BOOL(ME, CLEAR_MSB(current_edge), edge_id);
+		info = Delta_Matrix_setElement_BOOL(E, CLEAR_MSB(current_edge), edge_id);
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -826,7 +815,7 @@ void _GetOutgoingNodeEdges
 	info = Delta_MatrixTupleIter_AttachRange(&it, M, src_id, src_id);
 	ASSERT(info == GrB_SUCCESS);
 
-	Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, edgeType);
+	Delta_Matrix me = Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 	Edge e = {.src_id = src_id, .relationID = edgeType};
 	while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, &dest_id, &edge_id) == GrB_SUCCESS) {
 		e.dest_id = dest_id;
@@ -879,7 +868,7 @@ void _GetIncomingNodeEdges
 
 	info = Delta_MatrixTupleIter_AttachRange(&it, TM, dest_id, dest_id);
 	ASSERT(info == GrB_SUCCESS);
-	Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, edgeType);
+	Delta_Matrix me = Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 	Edge e = {.dest_id = dest_id, .relationID = edgeType};
 	while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &src_id, NULL) == GrB_SUCCESS) {
 		e.src_id = src_id;
@@ -1008,7 +997,7 @@ uint64_t Graph_GetNodeDegree
 		//----------------------------------------------------------------------
 
 		M = Graph_GetRelationMatrix(g, edgeType, false);
-		ME  = Graph_MultiEdgeRelationMatrix(g, edgeType);
+		ME  = Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 		
 		if(outgoing) {
 			// construct an iterator to traverse over the source node row,
@@ -1045,6 +1034,7 @@ uint64_t Graph_GetNodeDegree
 			// scan row
 			while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL)
 					== GrB_SUCCESS) {
+				// for every incoming edge, binary search to get the actual edge ID
 				Delta_Matrix_extractElement_UINT64(&edgeID, M, destID, srcID);
 				// check for edge type single/multi
 				if(SINGLE_EDGE(edgeID)) {
@@ -1165,7 +1155,7 @@ void Graph_DeleteEdges
 				ASSERT(info == GrB_SUCCESS);
 			}
 		} else {
-			ME  = Graph_MultiEdgeRelationMatrix(g, r);
+			ME  = Graph_GetMultiEdgeRelationMatrix(g, r);
 			me_id = CLEAR_MSB(me_id);
 			info = Delta_Matrix_removeElement(ME, me_id, edge_id);
 			ASSERT(info == GrB_SUCCESS);
@@ -1188,7 +1178,7 @@ void Graph_DeleteEdges
 		info = Delta_Matrix_extractElement_UINT64(&me_id, M, src_id, dest_id);
 		if(info != GrB_SUCCESS || SINGLE_EDGE(me_id)) continue;
 
-		ME  = Graph_MultiEdgeRelationMatrix(g, r);
+		ME  = Graph_GetMultiEdgeRelationMatrix(g, r);
 		me_id = CLEAR_MSB(me_id);
 		Delta_MatrixTupleIter it = {0};
 		Delta_MatrixTupleIter_AttachRange(&it, ME, me_id, me_id);
@@ -1226,7 +1216,7 @@ void Graph_DeleteEdges
 		} else if(count == 1) {
 			Delta_Matrix_removeElement(ME, me_id, last_edge_id);
 			Delta_Matrix_setElement_UINT64(M, last_edge_id, src_id, dest_id);
-			array_append(g->relations[r].me_deleted_ids, me_id);
+			array_append(g->relations[r].freelist, me_id);
 		}
 	}
 
@@ -1251,10 +1241,10 @@ static void _Graph_FreeRelationMatrices
 ) {
 	uint relationCount = Graph_RelationTypeCount(g);
 	for(uint i = 0; i < relationCount; i++) {
-		RelationMatrices *r = g->relations + i;
+		RelationMatrix *r = g->relations + i;
 		Delta_Matrix_free(&r->R);
-		Delta_Matrix_free(&r->ME);
-		array_free(r->me_deleted_ids);
+		Delta_Matrix_free(&r->E);
+		array_free(r->freelist);
 	}
 }
 
@@ -1312,14 +1302,14 @@ RelationID Graph_AddRelationType
 ) {
 	ASSERT(g);
 
-	RelationMatrices r;
+	RelationMatrix r;
 	size_t n = Graph_RequiredMatrixDim(g);
 	size_t edge_cap = g->edges->itemCap;
 
 	Delta_Matrix_new(&r.R, GrB_UINT64, n, n, true);
-	Delta_Matrix_new(&r.ME, GrB_BOOL, edge_cap, edge_cap, false);
+	Delta_Matrix_new(&r.E, GrB_BOOL, edge_cap, edge_cap, false);
 	r.me_id = 0;
-	r.me_deleted_ids = array_new(uint64_t, 0);
+	r.freelist = array_new(uint64_t, 0);
 
 	array_append(g->relations, r);
 	// adding a new relationship type, update the stats structures to support it
@@ -1343,8 +1333,8 @@ void Graph_RemoveRelation
 	ASSERT(nvals == 0);
 	#endif
 	Delta_Matrix_free(&g->relations[relation_id].R);
-	Delta_Matrix_free(&g->relations[relation_id].ME);
-	array_free(g->relations[relation_id].me_deleted_ids);
+	Delta_Matrix_free(&g->relations[relation_id].E);
+	array_free(g->relations[relation_id].freelist);
 	g->relations = array_del(g->relations, relation_id);
 }
 
@@ -1392,7 +1382,7 @@ Delta_Matrix Graph_GetRelationMatrix
 	return m;
 }
 
-Delta_Matrix Graph_MultiEdgeRelationMatrix
+Delta_Matrix Graph_GetMultiEdgeRelationMatrix
 (
 	const Graph *g,
 	RelationID relation_idx
@@ -1401,7 +1391,7 @@ Delta_Matrix Graph_MultiEdgeRelationMatrix
 	ASSERT(relation_idx != GRAPH_NO_RELATION &&
 		   relation_idx < Graph_RelationTypeCount(g));
 
-	Delta_Matrix m = g->relations[relation_idx].ME;
+	Delta_Matrix m = g->relations[relation_idx].E;
 
 	size_t edge_cap = g->edges->itemCap;
 	g->SynchronizeMatrix(g, m, edge_cap, edge_cap);
@@ -1426,12 +1416,12 @@ bool Graph_RelationshipContainsMultiEdge
 	bool transpose
 ) {
 	ASSERT(Graph_RelationTypeCount(g) > r);
+
 	GrB_Index nvals;
-	// A relationship matrix contains multi-edge if nvals < number of edges with type r.
-	Delta_Matrix R = Graph_GetRelationMatrix(g, r, transpose);
+	Delta_Matrix R = Graph_GetMultiEdgeRelationMatrix(g, r);
 	Delta_Matrix_nvals(&nvals, R);
 
-	return (Graph_RelationEdgeCount(g, r) > nvals);
+	return nvals > 0;
 }
 
 Delta_Matrix Graph_GetNodeLabelMatrix

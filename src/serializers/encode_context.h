@@ -49,7 +49,7 @@ typedef struct {
 	uint64_t vkey_entity_count;                    // Number of entities in a single virtual key.
 	NodeID multiple_edges_src_id;                  // The current edges array sourc node id.
 	NodeID multiple_edges_dest_id;                 // The current edges array destination node id.
-	Delta_MatrixTupleIter multiple_edges_it;       // Multiple edges array, save in the context.
+	Delta_MatrixTupleIter multiple_edges_it;       // Multiple edges iterator, save in the context.
 	uint current_relation_matrix_id;               // Current encoded relationship matrix.
 	DataBlockIterator *datablock_iterator;         // Datablock iterator to be saved in the context.
 	Delta_MatrixTupleIter matrix_tuple_iterator;   // Matrix tuple iterator to be saved in the context.
@@ -107,7 +107,7 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 // Retrieve stored matrix tuple iterator.
 Delta_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(GraphEncodeContext *ctx);
 
-// Sets a multiple edges array and the current index, for saving the state of multiple edges encoding.
+// Sets a multiple edges src and dest, for saving the state of multiple edges encoding.
 void GraphEncodeContext_SetMutipleEdges(GraphEncodeContext *ctx, NodeID src, NodeID dest);
 
 // Retrive the multiple edges id, to continue array of multiple edge encoding.

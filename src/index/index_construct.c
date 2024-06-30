@@ -183,17 +183,17 @@ static void _Index_PopulateEdgeIndex
 				Graph_GetEdge(g, edge_id, &e);
 				Index_IndexEdge(idx, &e);
 			} else {
-				Delta_Matrix me = Graph_MultiEdgeRelationMatrix(g, e.relationID);
-				GrB_Index me_id = CLEAR_MSB(edge_id);
-				Delta_MatrixTupleIter me_it;
-				Delta_MatrixTupleIter_AttachRange(&me_it, me, me_id, me_id);
+				Delta_Matrix M = Graph_GetMultiEdgeRelationMatrix(g, e.relationID);
+				GrB_Index id = CLEAR_MSB(edge_id);
+				Delta_MatrixTupleIter M_it;
+				Delta_MatrixTupleIter_AttachRange(&M_it, M, id, id);
 
-				while(Delta_MatrixTupleIter_next_BOOL(&me_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
+				while(Delta_MatrixTupleIter_next_BOOL(&M_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
 					Graph_GetEdge(g, edge_id, &e);
 					Index_IndexEdge(idx, &e);
 				}
 
-				Delta_MatrixTupleIter_detach(&me_it);
+				Delta_MatrixTupleIter_detach(&M_it);
 			}
 			indexed++; // single/multi edge are counted similarly
 		} while(indexed < batch_size &&
