@@ -371,7 +371,7 @@ ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
-	RUSTFLAGS+=' -L$(BINROOT)/src -lfalkordb_static -L$(BINROOT)/GraphBLAS -lgraphblas -L$(LIBOMP_PREFIX)/lib -lomp' cargo test --lib
+	RUSTFLAGS+=' -L$(RAX_BINDIR) -lrax -L$(LIBXXHASH_BINDIR) -lxxhash -L$(LIBCYPHER_PARSER_BINDIR)/lib/src/.libs -lstatic=cypher-parser -L$(UTF8PROC_BINDIR) -lutf8proc -L$(ONIGURUMA_BINDIR) -lonig -L$(REDISEARCH_BINROOT)/search-static -lredisearch-static -L$(VECSIM_BINDIR) -lVectorSimilarity -L$(VECSIM_BINDIR)/spaces -lVectorSimilaritySpaces -lVectorSimilaritySpaces_avx -lVectorSimilaritySpaces_avx512 -lVectorSimilaritySpaces_avx512dq -lVectorSimilaritySpaces_no_optimization -lVectorSimilaritySpaces_sse -L$(BINROOT)/src -lfalkordb_static -L$(GRAPHBLAS_BINDIR) -lgraphblas -L/usr/lib/llvm-18/lib/ -lomp -lstdc++ -lssl -lcrypto' cargo test --lib
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh

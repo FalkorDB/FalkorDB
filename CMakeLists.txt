@@ -60,9 +60,7 @@ target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
 extract_debug_symbols(falkordb)
 
-if (APPLE)
-	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
-endif()
+add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
 
 if (UNIT_TESTS)
 	add_subdirectory(${root}/tests/unit tests/unit)
