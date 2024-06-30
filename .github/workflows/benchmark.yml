@@ -35,7 +35,8 @@ jobs:
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
     steps:
-      - id: create-runner
+      - name: Create Runner For Benchmarak
+        id: runner-${{ matrix.arch_suffix }}-${{ matrix.benchmark_group }}
         uses: FalkorDB/gce-github-runner@install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
