@@ -113,7 +113,7 @@ static bool _ConstructIterator
 	}
 
 	// use matrix iterator
-	info = RG_MatrixTupleIter_attach(&op->iter, op->L);
+	info = Delta_MatrixTupleIter_attach(&op->iter, op->L);
 	ASSERT(info == GrB_SUCCESS);
 
 	return true;
@@ -197,7 +197,7 @@ static Record NodeByLabelScanConsume
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
 	GrB_Index id;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	if(info == GxB_EXHAUSTED) return NULL;
 
 	ASSERT(info == GrB_SUCCESS);
@@ -224,7 +224,7 @@ static Record NodeByLabelAndIDScanConsume
 		id = roaring64_iterator_value(op->ID_it);
 		roaring64_iterator_advance(op->ID_it);
 		bool x;
-		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
 			Record r = OpBase_CreateRecord((OpBase *)op);
 
 			// Populate the Record with the actual node.
@@ -247,7 +247,7 @@ static Record NodeByLabelScanConsumeFromChild
 
 	// try to get new nodeID
 	GrB_Index id;
-	GrB_Info info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 
 	// iterator depleted, try to get a new record
 	while(op->child_record == NULL ||
@@ -276,7 +276,7 @@ static Record NodeByLabelScanConsumeFromChild
 		}
 
 		// try to get new NodeID
-		info = RG_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
+		info = Delta_MatrixTupleIter_next_BOOL(&op->iter, &id, NULL, NULL);
 	}
 
 	// we've got a record and NodeID
@@ -310,7 +310,7 @@ pull:
 		roaring64_iterator_advance(op->ID_it);
 
 		// make sure ID is labeled as L
-		if(RG_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
+		if(Delta_Matrix_extractElement_BOOL(&x, op->L, id, id) == GrB_SUCCESS) {
 			emited = true;
 			break;
 		}
@@ -380,7 +380,7 @@ static void NodeByLabelScanFree
 ) {
 	NodeByLabelScan *op = (NodeByLabelScan *)opBase;
 
-	GrB_Info info = RG_MatrixTupleIter_detach(&(op->iter));
+	GrB_Info info = Delta_MatrixTupleIter_detach(&(op->iter));
 	ASSERT(info == GrB_SUCCESS);
 
 	if(op->child_record) {

@@ -281,6 +281,11 @@ export RUSTFLAGS=-Zsanitizer=$(SAN)
 CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
 
+ifneq ($(COV),)
+export RUSTFLAGS=-C instrument-coverage
+export RUSTFLAGS_COV=-lgcov
+endif
+
 falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-core-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
@@ -367,6 +372,7 @@ ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
+	RUSTFLAGS+=' -L$(RAX_BINDIR) -lrax -L$(LIBXXHASH_BINDIR) -lxxhash -L$(LIBCYPHER_PARSER_BINDIR)/lib/src/.libs -lstatic=cypher-parser -L$(UTF8PROC_BINDIR) -lutf8proc -L$(ONIGURUMA_BINDIR) -lonig -L$(REDISEARCH_BINROOT)/search-static -lredisearch-static -L$(VECSIM_BINDIR) -lVectorSimilarity -L$(VECSIM_BINDIR)/spaces -lVectorSimilaritySpaces -lVectorSimilaritySpaces_avx -lVectorSimilaritySpaces_avx512 -lVectorSimilaritySpaces_avx512dq -lVectorSimilaritySpaces_no_optimization -lVectorSimilaritySpaces_sse -L$(BINROOT)/src -lfalkordb_static -L$(GRAPHBLAS_BINDIR) -lgraphblas -L/usr/lib/llvm-17/lib/ -L/usr/lib/llvm-18/lib/ -lomp -lstdc++ -lssl -lcrypto $(RUSTFLAGS_COV)' cargo test --lib
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh
@@ -408,7 +414,13 @@ benchmark: $(TARGET)
 #----------------------------------------------------------------------------------------------
 
 COV_EXCLUDE_DIRS += \
-	deps \
+	deps/GraphBLAS \
+	deps/libcypher-parser \
+	deps/oniguruma \
+	deps/rax \
+	deps/RediSearch \
+	deps/utf8proc \
+	deps/xxHash \
 	src/util/sds \
 	tests
 

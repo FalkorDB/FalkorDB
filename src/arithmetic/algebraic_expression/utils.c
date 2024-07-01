@@ -203,7 +203,7 @@ void _AlgebraicExpression_FreeOperand
 ) {
 	ASSERT(node && node->type == AL_OPERAND);
 	if(node->operand.bfree) {
-		RG_Matrix_free(&node->operand.matrix);
+		Delta_Matrix_free(&node->operand.matrix);
 	}
 }
 
@@ -257,7 +257,7 @@ static void _AlgebraicExpression_PopulateOperand(AlgebraicExpression *operand,
 
 	Graph       *g      =       gc->g;
 	Schema      *s      =       NULL;
-	RG_Matrix    m      =       NULL;
+	Delta_Matrix    m   =       NULL;
 	const char  *label  =       operand->operand.label;
 
 	if(label == NULL) {
@@ -298,7 +298,7 @@ static void _AlgebraicExpression_PopulateTransposedOperand(AlgebraicExpression *
 	if(operand->operand.matrix != NULL) return;
 
 	Schema *s = NULL;
-	RG_Matrix m = NULL;
+	Delta_Matrix m = NULL;
 	const char *label = operand->operand.label;
 
 	if(label == NULL) {

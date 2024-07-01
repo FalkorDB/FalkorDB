@@ -36,16 +36,16 @@ extern AR_ExpNode **_BuildReturnExpressions(const cypher_astnode_t *ret_clause, 
 QueryGraph *qg;
 
 // Matrices.
-RG_Matrix mat_p;
-RG_Matrix mat_ef;
-RG_Matrix mat_tef;
-RG_Matrix mat_f;
-RG_Matrix mat_ev;
-RG_Matrix mat_tev;
-RG_Matrix mat_c;
-RG_Matrix mat_ew;
-RG_Matrix mat_tew;
-RG_Matrix mat_e;
+Delta_Matrix mat_p;
+Delta_Matrix mat_ef;
+Delta_Matrix mat_tef;
+Delta_Matrix mat_f;
+Delta_Matrix mat_ev;
+Delta_Matrix mat_tev;
+Delta_Matrix mat_c;
+Delta_Matrix mat_ew;
+Delta_Matrix mat_tew;
+Delta_Matrix mat_e;
 rax *_matrices;
 
 const char *query_no_intermidate_return_nodes =
@@ -220,10 +220,10 @@ void _print_matrix(GrB_Matrix mat) {
 	}
 }
 
-bool _compare_matrices(GrB_Matrix expected, RG_Matrix actual) {
+bool _compare_matrices(GrB_Matrix expected, Delta_Matrix actual) {
 	GrB_Matrix a = expected;
 	GrB_Matrix b = NULL;
-	RG_Matrix_export(&b, actual);
+	Delta_Matrix_export(&b, actual);
 
 	GrB_Index acols, arows, avals;
 	GrB_Index bcols, brows, bvals;
@@ -340,7 +340,7 @@ void tearDown() {
 }
 
 void test_algebraicExpression() {
-	RG_Matrix matrix = NULL;
+	Delta_Matrix matrix = NULL;
 	bool diagonal = false;
 	const char *src = "src";
 	const char *dest = "dest";
@@ -596,25 +596,25 @@ void test_algebraicExpression_Transpose() {
 
 void test_Exp_OP_ADD() {
 	// Exp = A + B
-	RG_Matrix A;
-	RG_Matrix B;
-	RG_Matrix res;
+	Delta_Matrix A;
+	Delta_Matrix B;
+	Delta_Matrix res;
 	GrB_Matrix expected;
 
 	// A
 	// 1 1
 	// 0 0
-	RG_Matrix_new(&A, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(A, 0, 0);
-	RG_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(A, 0, 0);
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
 
 	// B
 	// 0 1
 	// 1 1
-	RG_Matrix_new(&B, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(B, 0, 1);
-	RG_Matrix_setElement_BOOL(B, 1, 0);
-	RG_Matrix_setElement_BOOL(B, 1, 1);
+	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(B, 0, 1);
+	Delta_Matrix_setElement_BOOL(B, 1, 0);
+	Delta_Matrix_setElement_BOOL(B, 1, 1);
 
 	// expected
 	// 1 1
@@ -632,7 +632,7 @@ void test_Exp_OP_ADD() {
 
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
-	RG_Matrix_new(&res, GrB_BOOL, 2, 2);
+	Delta_Matrix_new(&res, GrB_BOOL, 2, 2, false);
 	AlgebraicExpression_Eval(exp, res);
 
 	// Using the A matrix described above,
@@ -640,33 +640,33 @@ void test_Exp_OP_ADD() {
 	TEST_ASSERT(_compare_matrices(expected, res));
 
 	raxFree(matrices);
-	RG_Matrix_free(&A);
-	RG_Matrix_free(&B);
-	RG_Matrix_free(&res);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
+	Delta_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	AlgebraicExpression_Free(exp);
 }
 
 void test_Exp_OP_MUL() {
 	// Exp = A * I
-	RG_Matrix A;
-	RG_Matrix i;
-	RG_Matrix res;
+	Delta_Matrix A;
+	Delta_Matrix i;
+	Delta_Matrix res;
 
 	// A
 	// 1 1
 	// 0 0
-	RG_Matrix_new(&A, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(A, 0, 0);
-	RG_Matrix_setElement_BOOL(A, 0, 1);
-	RG_Matrix_wait(A, true); // force flush
+	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(A, 0, 0);
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_wait(A, true); // force flush
 
 	// I
 	// 1 0
 	// 0 1
-	RG_Matrix_new(&i, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(i, 0, 0);
-	RG_Matrix_setElement_BOOL(i, 1, 1);
+	Delta_Matrix_new(&i, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(i, 0, 0);
+	Delta_Matrix_setElement_BOOL(i, 1, 1);
 
 	rax *matrices = raxNew();
 	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
@@ -675,26 +675,26 @@ void test_Exp_OP_MUL() {
 
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
-	RG_Matrix_new(&res, GrB_BOOL, 2, 2);
+	Delta_Matrix_new(&res, GrB_BOOL, 2, 2, false);
 	AlgebraicExpression_Eval(exp, res);
 
 	// Using the A matrix described above,
 	// A * I = A.
 	GrB_Matrix expected;
-	RG_Matrix_export(&expected, A);
+	Delta_Matrix_export(&expected, A);
 	TEST_ASSERT(_compare_matrices(expected, res));
 
 	raxFree(matrices);
-	RG_Matrix_free(&A);
-	RG_Matrix_free(&i);
-	RG_Matrix_free(&res);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&i);
+	Delta_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	AlgebraicExpression_Free(exp);
 }
 
 void test_Exp_OP_ADD_Transpose() {
 	// Exp = A + Transpose(A)
-	RG_Matrix res;
+	Delta_Matrix res;
 	GrB_Matrix expected;
 	/* We must use matrices that we've added to the graph, or else
 	 * the transpose optimization will erroneously use the adjacency matrix
@@ -732,7 +732,7 @@ void test_Exp_OP_ADD_Transpose() {
 	GrB_Matrix_setElement_BOOL(expected, true, 3, 0);
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
-	RG_Matrix_new(&res, GrB_BOOL, n, n);
+	Delta_Matrix_new(&res, GrB_BOOL, n, n, false);
 	AlgebraicExpression *exp = AlgebraicExpression_FromString("V+tV", _matrices);
 	AlgebraicExpression_Eval(exp, res);
 
@@ -740,7 +740,7 @@ void test_Exp_OP_ADD_Transpose() {
 	// A + Transpose(A) = B.
 	TEST_ASSERT(_compare_matrices(expected, res));
 
-	RG_Matrix_free(&res);
+	Delta_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	AlgebraicExpression_Free(exp);
 }
@@ -748,7 +748,7 @@ void test_Exp_OP_ADD_Transpose() {
 void test_Exp_OP_MUL_Transpose() {
 	// Exp = Transpose(A) * A
 	GrB_Matrix B;
-	RG_Matrix res;
+	Delta_Matrix res;
 
 	/* We must use matrices that we've added to the graph, or else
 	 * the transpose optimization will erroneously use the adjacency matrix
@@ -784,7 +784,7 @@ void test_Exp_OP_MUL_Transpose() {
 
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
-	RG_Matrix_new(&res, GrB_BOOL, n, n);
+	Delta_Matrix_new(&res, GrB_BOOL, n, n, false);
 
 	// Transpose(A) * A
 	AlgebraicExpression *exp = AlgebraicExpression_FromString("V*tV", _matrices);
@@ -795,42 +795,42 @@ void test_Exp_OP_MUL_Transpose() {
 	TEST_ASSERT(_compare_matrices(B, res));
 
 	GrB_Matrix_free(&B);
-	RG_Matrix_free(&res);
+	Delta_Matrix_free(&res);
 	AlgebraicExpression_Free(exp);
 }
 
 void test_Exp_OP_A_MUL_B_Plus_C() {
 
 	// Exp = A*(B+C) = A*B + A*C
-	RG_Matrix A;
-	RG_Matrix B;
-	RG_Matrix C;
-	RG_Matrix res;
+	Delta_Matrix A;
+	Delta_Matrix B;
+	Delta_Matrix C;
+	Delta_Matrix res;
 	GrB_Matrix expected;
 
 	// A
 	// 1 1
 	// 0 0
-	RG_Matrix_new(&A, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(A, 0, 0);
-	RG_Matrix_setElement_BOOL(A, 0, 1);
-	RG_Matrix_wait(A, true); // force flush
+	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(A, 0, 0);
+	Delta_Matrix_setElement_BOOL(A, 0, 1);
+	Delta_Matrix_wait(A, true); // force flush
 
 	// B
 	// 1 0
 	// 0 0
-	RG_Matrix_new(&B, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(B, 0, 0);
+	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(B, 0, 0);
 
 	// C
 	// 0 0
 	// 0 1
-	RG_Matrix_new(&C, GrB_BOOL, 2, 2);
-	RG_Matrix_setElement_BOOL(C, 1, 1);
+	Delta_Matrix_new(&C, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_setElement_BOOL(C, 1, 1);
 
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
-	RG_Matrix_new(&res, GrB_BOOL, 2, 2);
+	Delta_Matrix_new(&res, GrB_BOOL, 2, 2, false);
 
 	// A * (B+C) = A.rax *matrices = raxNew();
 	rax *matrices = raxNew();
@@ -849,10 +849,10 @@ void test_Exp_OP_A_MUL_B_Plus_C() {
 	TEST_ASSERT(_compare_matrices(expected, res));
 
 	raxFree(matrices);
-	RG_Matrix_free(&A);
-	RG_Matrix_free(&B);
-	RG_Matrix_free(&C);
-	RG_Matrix_free(&res);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
+	Delta_Matrix_free(&C);
+	Delta_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	AlgebraicExpression_Free(exp);
 }
@@ -860,13 +860,13 @@ void test_Exp_OP_A_MUL_B_Plus_C() {
 void test_ExpTransform_A_Times_B_Plus_C() {
 	// Test Mul / Add transformation:
 	// A*(B+C) -> A*B + A*C
-	RG_Matrix A;
-	RG_Matrix B;
-	RG_Matrix C;
+	Delta_Matrix A;
+	Delta_Matrix B;
+	Delta_Matrix C;
 
-	RG_Matrix_new(&A, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&B, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&C, GrB_BOOL, 2, 2);
+	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&C, GrB_BOOL, 2, 2, false);
 
 	rax *matrices = raxNew();
 	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
@@ -899,24 +899,24 @@ void test_ExpTransform_A_Times_B_Plus_C() {
 	TEST_ASSERT(rightRight->type == AL_OPERAND && rightRight->operand.matrix == B);
 
 	raxFree(matrices);
-	RG_Matrix_free(&A);
-	RG_Matrix_free(&B);
-	RG_Matrix_free(&C);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
+	Delta_Matrix_free(&C);
 	AlgebraicExpression_Free(exp);
 }
 
 void test_ExpTransform_AB_Times_C_Plus_D() {
 	// Test Mul / Add transformation:
 	// A*B*(C+D) -> A*B*C + A*B*D
-	RG_Matrix A;
-	RG_Matrix B;
-	RG_Matrix C;
-	RG_Matrix D;
+	Delta_Matrix A;
+	Delta_Matrix B;
+	Delta_Matrix C;
+	Delta_Matrix D;
 
-	RG_Matrix_new(&A, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&B, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&C, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&D, GrB_BOOL, 2, 2);
+	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&C, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&D, GrB_BOOL, 2, 2, false);
 
 	// A*B*(C+D) -> A*B*C + A*B*D
 	AlgebraicExpression *exp = AlgebraicExpression_NewOperand(C, false, NULL,
@@ -959,24 +959,24 @@ void test_ExpTransform_AB_Times_C_Plus_D() {
 	TEST_ASSERT(rightchild_2->type == AL_OPERAND && rightchild_2->operand.matrix == D);
 
 
-	RG_Matrix_free(&A);
-	RG_Matrix_free(&B);
-	RG_Matrix_free(&C);
-	RG_Matrix_free(&D);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
+	Delta_Matrix_free(&C);
+	Delta_Matrix_free(&D);
 	AlgebraicExpression_Free(exp);
 }
 
 void test_ExpTransform_A_Plus_B_Times_C_Plus_D() {
 	// Test Mul / Add transformation:
 	// (A+B)*(C+D) -> A*C + A*D + B*C + B*D
-	RG_Matrix A;
-	RG_Matrix B;
-	RG_Matrix C;
-	RG_Matrix D;
-	RG_Matrix_new(&A, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&B, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&C, GrB_BOOL, 2, 2);
-	RG_Matrix_new(&D, GrB_BOOL, 2, 2);
+	Delta_Matrix A;
+	Delta_Matrix B;
+	Delta_Matrix C;
+	Delta_Matrix D;
+	Delta_Matrix_new(&A, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&B, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&C, GrB_BOOL, 2, 2, false);
+	Delta_Matrix_new(&D, GrB_BOOL, 2, 2, false);
 
 	rax *matrices = raxNew();
 	raxInsert(matrices, (unsigned char *)"A", strlen("A"), A, NULL);
@@ -1009,10 +1009,10 @@ void test_ExpTransform_A_Plus_B_Times_C_Plus_D() {
 	TEST_ASSERT(strcmp("(((A * C + A * D) + B * C) + B * D)", exp_str) == 0);
 	rm_free(exp_str);
 	raxFree(matrices);
-	RG_Matrix_free(&A);
-	RG_Matrix_free(&B);
-	RG_Matrix_free(&C);
-	RG_Matrix_free(&D);
+	Delta_Matrix_free(&A);
+	Delta_Matrix_free(&B);
+	Delta_Matrix_free(&C);
+	Delta_Matrix_free(&D);
 	AlgebraicExpression_Free(exp);
 }
 
@@ -1514,15 +1514,15 @@ void test_ExpressionExecute() {
 	TEST_ASSERT(strcmp(AlgebraicExpression_Src(exp), "p") == 0);
 	TEST_ASSERT(strcmp(AlgebraicExpression_Dest(exp), "e") == 0);
 
-	RG_Matrix res;
-	RG_Matrix_new(&res, GrB_BOOL, Graph_RequiredMatrixDim(g),
-			Graph_RequiredMatrixDim(g));
+	Delta_Matrix res;
+	Delta_Matrix_new(&res, GrB_BOOL, Graph_RequiredMatrixDim(g),
+			Graph_RequiredMatrixDim(g), false);
 	AlgebraicExpression_Eval(exp, res);
 
 	// Validate result matrix.
 	GrB_Index ncols, nrows;
-	RG_Matrix_ncols(&ncols, res);
-	RG_Matrix_nrows(&nrows, res);
+	Delta_Matrix_ncols(&ncols, res);
+	Delta_Matrix_nrows(&nrows, res);
 	assert(ncols == Graph_RequiredMatrixDim(g));
 	assert(nrows == Graph_RequiredMatrixDim(g));
 
@@ -1537,7 +1537,7 @@ void test_ExpressionExecute() {
 	assert(_compare_matrices(expected, res));
 
 	// Clean up
-	RG_Matrix_free(&res);
+	Delta_Matrix_free(&res);
 	GrB_Matrix_free(&expected);
 	free_algebraic_expressions(ae, exp_count);
 	array_free(ae);
@@ -1754,7 +1754,7 @@ void test_RemoveOperand() {
 void test_LocateOperand() {
 	// construct algebraic expression
 	bool                 located  =  false;
-	RG_Matrix            mat      =  NULL;
+	Delta_Matrix         mat      =  NULL;
 	AlgebraicExpression  *A       =  NULL;
 	AlgebraicExpression  *B       =  NULL;
 	AlgebraicExpression  *r       =  NULL;

@@ -123,6 +123,7 @@ static void _CommitEdgesBlueprint
 		// calling Graph_GetRelationMatrix will make sure relationship matrix
 		// is of the right dimensions
 		Graph_GetRelationMatrix(g, Schema_GetID(s), false);
+		Graph_GetMultiEdgeRelationMatrix(g, Schema_GetID(s));
 	}
 
 	// call Graph_GetAdjacencyMatrix will make sure the adjacency matrix

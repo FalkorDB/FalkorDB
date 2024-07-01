@@ -109,7 +109,7 @@ ProcedureResult Proc_PagerankInvoke
 		s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
 		// unknown label, quickly return
 		if(!s) return PROCEDURE_OK;
-		RG_Matrix_export(&l, Graph_GetLabelMatrix(g, s->id));
+		Delta_Matrix_export(&l, Graph_GetLabelMatrix(g, s->id));
 	}
 
 	// get relation matrix
@@ -117,14 +117,14 @@ ProcedureResult Proc_PagerankInvoke
 		s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 		// unknown relation, quickly return
 		if(!s) return PROCEDURE_OK;
-		RG_Matrix_export(&r, Graph_GetRelationMatrix(g, s->id, false));
+		Delta_Matrix_export(&r, Graph_GetRelationMatrix(g, s->id, false));
 
 		// convert the values to true
 		info = GrB_Matrix_apply(r, NULL, NULL, GxB_ONE_BOOL, r, GrB_DESC_R);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
 		// relation isn't specified, 'r' is the adjacency matrix
-		RG_Matrix_export(&r, Graph_GetAdjacencyMatrix(g, false));
+		Delta_Matrix_export(&r, Graph_GetAdjacencyMatrix(g, false));
 	}
 	// if label is specified:
 	// filter 'r' to contain only rows and columns associated with

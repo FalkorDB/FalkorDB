@@ -137,9 +137,8 @@ void RdbLoadEdges_v9(RedisModuleIO *rdb, GraphContext *gc, uint64_t edge_count) 
 		NodeID srcId = RedisModule_LoadUnsigned(rdb);
 		NodeID destId = RedisModule_LoadUnsigned(rdb);
 		uint64_t relation = RedisModule_LoadUnsigned(rdb);
-		Serializer_Graph_SetEdge(gc->g,
-				gc->decoding_context->multi_edge[relation], edgeId, srcId,
-				destId, relation, &e);
+		Serializer_Graph_SetEdge(gc->g, gc->decoding_context->multi_edge[relation],
+			edgeId, srcId, destId, relation, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 	}
 }

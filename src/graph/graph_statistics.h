@@ -99,4 +99,3 @@ void GraphStatistics_FreeInternals
 (
 	GraphStatistics *stats
 );
-

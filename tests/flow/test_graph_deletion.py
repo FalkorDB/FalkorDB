@@ -348,7 +348,7 @@ class testGraphDeletionFlow(FlowTestsBase):
 
     def test19_random_delete(self):
         # test random graph deletion added as a result of a crash found in Graph_GetNodeEdges
-        # when iterating RG_Matrix of type BOOL with RG_MatrixTupleIter_next_UINT64
+        # when iterating Delta_Matrix of type BOOL with Delta_MatrixTupleIter_next_UINT64
         for i in range(1, 10):
             self.graph.delete()
 

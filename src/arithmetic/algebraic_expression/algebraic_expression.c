@@ -171,7 +171,7 @@ AlgebraicExpression *AlgebraicExpression_NewOperation
 // Create a new AlgebraicExpression operand node
 AlgebraicExpression *AlgebraicExpression_NewOperand
 (
-	RG_Matrix mat,      // Matrix
+	Delta_Matrix mat,      // Matrix
 	bool diagonal,      // Is operand a diagonal matrix?
 	const char *src,    // Operand row domain (src node)
 	const char *dest,   // Operand column domain (destination node)
@@ -490,7 +490,7 @@ AlgebraicExpression *AlgebraicExpression_RemoveDest
 void AlgebraicExpression_MultiplyToTheLeft
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 ) {
 	ASSERT(root && m);
 	AlgebraicExpression *rhs = *root;
@@ -508,7 +508,7 @@ void AlgebraicExpression_MultiplyToTheLeft
 void AlgebraicExpression_MultiplyToTheRight
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 ) {
 	ASSERT(root && m);
 	AlgebraicExpression *lhs = *root;
@@ -526,7 +526,7 @@ void AlgebraicExpression_MultiplyToTheRight
 void AlgebraicExpression_AddToTheLeft
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 ) {
 	ASSERT(root && m);
 	AlgebraicExpression *rhs = *root;
@@ -545,7 +545,7 @@ void AlgebraicExpression_AddToTheLeft
 void AlgebraicExpression_AddToTheRight
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 ) {
 	ASSERT(root && m);
 	AlgebraicExpression *lhs = *root;

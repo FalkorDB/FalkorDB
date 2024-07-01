@@ -34,7 +34,7 @@ static void _populate_filter_matrix
 (
 	OpExpandInto *op
 ) {
-	GrB_Matrix FM = RG_MATRIX_M(op->F);
+	GrB_Matrix FM = Delta_Matrix_M(op->F);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
@@ -65,8 +65,8 @@ static void _traverse
 	if(op->F == NULL) {
 		// create both filter matrix F and result matrix M
 		size_t required_dim = Graph_RequiredMatrixDim(op->graph);
-		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim);
-		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim);
+		Delta_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim, false);
+		Delta_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim, false);
 
 		// prepend the filter matrix to algebraic expression
 		// as the leftmost operand
@@ -225,9 +225,9 @@ static Record _handoff
 		NodeID col      =  ENTITY_GET_ID(destNode);
 		// TODO: in the case of multiple operands ()-[:A]->()-[:B]->()
 		// M is the result of F*A*B, in which case we can switch from
-		// M being a RG_Matrix to a GrB_Matrix, making the extract element
+		// M being a Delta_Matrix to a GrB_Matrix, making the extract element
 		// operation a bit cheaper to compute
-		GrB_Info res    =  RG_Matrix_extractElement_BOOL(&x, op->M, row, col);
+		GrB_Info res    =  Delta_Matrix_extractElement_BOOL(&x, op->M, row, col);
 
 		// src is not connected to dest, free the current record and continue
 		if(res != GrB_SUCCESS) {
@@ -350,14 +350,14 @@ static void ExpandIntoFree
 	OpExpandInto *op = (OpExpandInto *)ctx;
 
 	if(op->F != NULL) {
-		RG_Matrix_free(&op->F);
+		Delta_Matrix_free(&op->F);
 		op->F = NULL;
 	}
 
 	if(op->ae != NULL) {
 		// M was allocated by us
 		if(op->M != NULL && !op->single_operand) {
-			RG_Matrix_free(&op->M);
+			Delta_Matrix_free(&op->M);
 			op->M = NULL;
 		}
 

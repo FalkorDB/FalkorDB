@@ -45,9 +45,8 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	ctx->state = ENCODE_STATE_INIT;
 	ctx->multiple_edges_src_id = 0;
 	ctx->multiple_edges_dest_id = 0;
-	ctx->multiple_edges_array = NULL;
+	ctx->multiple_edges_it = (Delta_MatrixTupleIter){0};
 	ctx->current_relation_matrix_id = 0;
-	ctx->multiple_edges_current_index = 0;
 
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &ctx->vkey_entity_count);
 
@@ -58,7 +57,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	}
 
 	// Avoid leaks in case or reset during encodeing.
-	RG_MatrixTupleIter_detach(&ctx->matrix_tuple_iterator);
+	Delta_MatrixTupleIter_detach(&ctx->matrix_tuple_iterator);
 }
 
 void GraphEncodeContext_InitHeader
@@ -163,31 +162,22 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 	ctx->current_relation_matrix_id = current_relation_matrix_id;
 }
 
-RG_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(
+Delta_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(
 	GraphEncodeContext *ctx) {
 	ASSERT(ctx);
 	return &ctx->matrix_tuple_iterator;
 }
 
-void GraphEncodeContext_SetMutipleEdgesArray(GraphEncodeContext *ctx, EdgeID *edges,
-											 uint current_index, NodeID src, NodeID dest) {
+void GraphEncodeContext_SetMutipleEdges(GraphEncodeContext *ctx, NodeID src, NodeID dest) {
 	ASSERT(ctx);
-	ctx->multiple_edges_array = edges;
-	ctx->multiple_edges_current_index = current_index;
 	ctx->multiple_edges_src_id = src;
 	ctx->multiple_edges_dest_id = dest;
 }
 
-EdgeID *GraphEncodeContext_GetMultipleEdgesArray(const GraphEncodeContext *ctx) {
+Delta_MatrixTupleIter *GraphEncodeContext_GetMultipleEdgesIterator(GraphEncodeContext *ctx) {
 	ASSERT(ctx);
-	return ctx->multiple_edges_array;
+	return &ctx->multiple_edges_it;
 }
-
-uint GraphEncodeContext_GetMultipleEdgesCurrentIndex(const GraphEncodeContext *ctx) {
-	ASSERT(ctx);
-	return ctx->multiple_edges_current_index;
-}
-
 
 NodeID GraphEncodeContext_GetMultipleEdgesSourceNode(const GraphEncodeContext *ctx) {
 	ASSERT(ctx);
@@ -221,4 +211,3 @@ void GraphEncodeContext_Free(GraphEncodeContext *ctx) {
 		rm_free(ctx);
 	}
 }
-
