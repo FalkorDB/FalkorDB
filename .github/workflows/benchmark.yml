@@ -108,6 +108,7 @@ jobs:
         with:
           name: GroupA-results.tar.gz
           path: tests/benchmarks/GroupA/GroupA-results.tar.gz
+          if-no-files-found: error
 
   create-runner-B:
     needs: haslabel
@@ -191,3 +192,4 @@ jobs:
         with:
           name: GroupB-results.tar.gz
           path: tests/benchmarks/GroupB/GroupB-results.tar.gz
+          if-no-files-found: error
