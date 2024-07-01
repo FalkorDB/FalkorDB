@@ -209,17 +209,7 @@ def main():
     benches_results = [str.replace(bench, '.yml', '-results.json') for bench in benches]
     benches_count = len(benches)
     for idx, bench in enumerate(benches):
-        single_iteration(f"{benchmark_group}/{bench}", f"{benchmark_group}/{benches_results[idx]}", idx, benches_count)
-
-    # Create tar from the results of the benchmarks
-    command = ["tar", "-czf", f"{benchmark_group}-results.tar.gz"]
-    command.extend(benches_results)
-    res = subprocess.run(command, cwd=benchmark_group)
-    if res.returncode != 0:
-        print("Failed to create tar file")
-        if os.path.exists(f"{benchmark_group}/{benchmark_group}-results.tar.gz"):
-            os.remove(f"{benchmark_group}/{benchmark_group}-results.tar.gz")
-        exit(1)
+        single_iteration(f"{benchmark_group}/{bench}", f"{benches_results[idx]}", idx, benches_count)
 
 
 if __name__ == "__main__":
