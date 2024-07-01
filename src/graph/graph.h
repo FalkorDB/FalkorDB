@@ -49,7 +49,7 @@ typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index
 typedef struct {
 	Delta_Matrix R;      // relation matrix
 	Delta_Matrix E;      // multi-edge matrix
-	uint64_t me_id;      // multi-edge id
+	uint64_t row_id;     // multi-edge id
 	uint64_t *freelist;  // multi-edge deleted ids
 } RelationMatrix;
 
@@ -342,14 +342,6 @@ bool Graph_GetEdge
 (
 	const Graph *g,
 	EdgeID id,
-	Edge *e
-);
-
-// retrieves edge relation type
-// returns GRAPH_NO_RELATION if edge has no relation type
-RelationID Graph_GetEdgeRelation
-(
-	const Graph *g,
 	Edge *e
 );
 

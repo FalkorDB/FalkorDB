@@ -566,10 +566,10 @@ void Constraint_EnforceEdges
 					break;
 				}
 			} else {
-				GrB_Index me_ids = CLEAR_MSB(edge_id);
+				GrB_Index id = CLEAR_MSB(edge_id);
 				Delta_Matrix M = Graph_GetMultiEdgeRelationMatrix(g, schema_id);
 				Delta_MatrixTupleIter M_it;
-				Delta_MatrixTupleIter_AttachRange(&M_it, M, me_ids, me_ids);
+				Delta_MatrixTupleIter_AttachRange(&M_it, M, id, id);
 
 				while(Delta_MatrixTupleIter_next_BOOL(&M_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
 					bool res = Graph_GetEdge(g, edge_id, &e);
