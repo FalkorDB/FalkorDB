@@ -51,6 +51,8 @@ jobs:
         benchmark_group: [ A, B ]
     runs-on: ${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
+    outputs:
+      ref_name: ${{ steps.set-ref-name.outputs.ref_name }}
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -106,35 +108,46 @@ jobs:
           . venv/bin/activate
           python3 run_benchmarks.py Group${{ matrix.benchmark_group }}
 
+      - name: Set ref name
+        id: set-ref-name
+        run: |
+          if {{ github.event_name == 'pull_request' }}; then
+            echo "ref_name=pr-${{ github.event.head_ref }}" >> $GITHUB_OUTPUT
+          else
+            echo "ref_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-Group${{ matrix.benchmark_group }}-results
+          name: ${{ steps.set-ref-name.outputs.ref_name }}-benchmark-Group${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
-          retention: 1
+          retention-days: 1
 
   merge-results:
     needs:
       - run-benchmarks
     runs-on: ubuntu-latest
+    outputs:
+        ref_name: ${{ needs.run-benchmarks.outputs.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - name: Download artifact A
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-GroupA-results
+          name: ${{ needs.run-benchmarks.outputs.ref_name }}-benchmark-GroupA-results
       - name: Download artifact B
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-GroupB-results
+          name: ${{ needs.run-benchmarks.outputs.ref_name }}-benchmark-GroupB-results
       - name: Merge results
         run: |
-          unzip ${{ github.ref_name }}-benchmark-GroupA-results.zip
-          unzip ${{ github.ref_name }}-benchmark-GroupB-results.zip
+          unzip ${{ needs.run-benchmarks.outputs.ref_name }}-benchmark-GroupA-results.zip
+          unzip ${{ needs.run-benchmarks.outputs.ref_name }}-benchmark-GroupB-results.zip
       - name: Upload merged results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-results
+          name: ${{ needs.run-benchmarks.outputs.ref_name }}-benchmark-results
           path: ./*-results.json
 
   use-artifacts:
@@ -147,20 +160,20 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-results
+          name: ${{ needs.merge-results.outputs.ref_name }}-benchmark-results
           path: $GITHUB_WORKSPACE/tests/benchmarks
 
       - name: Download master artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-results
+          name: ${{ needs.merge-results.outputs.ref_name }}-benchmark-results
           path: $GITHUB_WORKSPACE/tests/benchmarks
 
       - name: Merge results
         working-directory: tests/benchmarks
         run: |
-          unzip ${{ github.ref_name }}-benchmark-results.zip -d compare/${{ github.ref_name }}
-          unzip ${{ github.ref_name }}-benchmark-results.zip -d compare/master
+          unzip ${{ needs.merge-results.outputs.ref_name }}-benchmark-results.zip -d compare/${{ needs.merge-results.outputs.ref_name }}
+          unzip ${{ needs.merge-results.outputs.ref_name }}-benchmark-results.zip -d compare/master
 #          unzip master-benchmark-results.zip -d compare/master
 
       - name: Install dependencies
