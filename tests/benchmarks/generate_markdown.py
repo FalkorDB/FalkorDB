@@ -26,6 +26,7 @@ def load_benchmarks(sot_branch: str, new_branch: str):
 
     benchmarks_to_test = [new_file for new_file in all_new_files if new_file in all_sot_files]
     for benchmark_file_name in benchmarks_to_test:
+        # I really don't want the over indentation, so not using the context pattern again
         sot_benchmark = json.load(open(f"compare/{sot_branch}/{benchmark_file_name}", "r"))
         new_benchmark = json.load(open(f"compare/{new_branch}/{benchmark_file_name}", "r"))
 
@@ -140,6 +141,7 @@ def main():
 
     output_markdown_file = None
     if not args.dryrun:
+        # I want it to fail if cant open when not in dryrun, so I open it here, instead of using the context pattern
         output_markdown_file = open(args.output_file, "w")
 
     markdown_str = generate_benchmark_list_table(args.sot_branch, args.new_branch) + "\n"

@@ -19,16 +19,16 @@ def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str)
 
     # Always prefer the environment variable over the yaml file
     db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
-    if db_module is None:
-        if "db_module" not in data:
-            print("Error! No DB module specified in the yaml file or the environment variable")
-            exit(1)
+    if db_module is None and "db_module" not in data:
+        print("Error! No DB module specified in the yaml file or the environment variable")
+        exit(1)
 
     process = subprocess.Popen(["./falkordb-benchmark-go", "--yaml_config", bench,
                                 "--output_file", result_file_name,
                                 "--override_module", db_module],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
+    # Print the output of the benchmark tool
     for line in process.stdout:
         print(line, end='')
 
@@ -37,10 +37,9 @@ def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str)
 
     # Check if there were any errors
     if process.returncode != 0:
-        for line in process.stderr:
-            print(line, end='')
-
-        print("Benchmark run failed, aborting")
+        error_messages = process.stderr.readlines()
+        print("Benchmark run failed with the following errors:", *error_messages, sep="\n")
+        print("Aborting")
         exit(1)
 
     if "kpis" in data:
@@ -52,17 +51,15 @@ def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str)
                 if kpi_val is not None:
                     failed = False
 
-                    if "min_value" in kpi:
-                        if not kpi_val[0].value > kpi["min_value"]:
-                            print(f'Error! Expected {kpi["key"]} to be greater than {kpi["min_value"]}, '
-                                  f'is {kpi_val[0].value}')
-                            failed = True
+                    if "min_value" in kpi and not kpi_val[0].value > kpi["min_value"]:
+                        print(f'Error! Expected {kpi["key"]} to be greater than {kpi["min_value"]}, '
+                              f'is {kpi_val[0].value}')
+                        failed = True
 
-                    if "max_value" in kpi:
-                        if not kpi_val[0].value < kpi["max_value"]:
-                            print(f'Error! Expected {kpi["key"]} to be less than {kpi["max_value"]}, '
-                                  f'is {kpi_val[0].value}')
-                            failed = True
+                    if "max_value" in kpi and not kpi_val[0].value < kpi["max_value"]:
+                        print(f'Error! Expected {kpi["key"]} to be less than {kpi["max_value"]}, '
+                              f'is {kpi_val[0].value}')
+                        failed = True
 
                     if failed:
                         exit(1)
@@ -144,7 +141,7 @@ def verify_and_download_benchmark_tool():
             files_downloaded = 0
             for asset in response_json["assets"]:
                 if asset["name"] == f"falkordb-benchmark-go-{system_doublet}.tar.gz.sha256":
-                    urlretrieve(asset["browser_download_url"], f"./falkordb-benchmark-go.tar.gz.sha256")
+                    urlretrieve(asset["browser_download_url"], "./falkordb-benchmark-go.tar.gz.sha256")
 
                     files_downloaded += 1
                     if files_downloaded == 2:
