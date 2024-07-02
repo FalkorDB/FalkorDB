@@ -26,269 +26,256 @@ jobs:
         with:
           contains: 'run-benchmark'
 
-  upload_empty_artifact:
-    name: Upload empty artifact
+# For now I wrote them manually
+# Still trying to think of how to overcome sending each one to a specific runner
+# Matrix does not allow me to do that
+  create-runner-A:
     needs: haslabel
-    if: ${{ needs.haslabel.outputs.has-benchmark-label }}
+    if: ${{ needs.haslabel.outputs.has-benchmark-label || evennt }}
     runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.create-runner.outputs.label }}
     steps:
-      - name: Create empty JSON file
-        run: echo '{}' > empty-results.json
-      - name: Upload empty artifact
+      - name: Create Runner For Benchmarak
+        id: create-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: github-runners-414914
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: us-central1-a
+          machine_type: n4-highcpu-8
+          network: gh-runner
+
+  run-benchmark-A:
+    needs:
+      - create-runner-A
+    runs-on: ${{ needs.create-runner-A.outputs.label }}
+    container: falkordb/falkordb-build:ubuntu
+    steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+        with:
+          set-safe-directory: '*'
+          submodules: recursive
+
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/GraphBLAS
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/libcypher-parser
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/search-static
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
+      - name: Build
+        run: |
+          rustup toolchain list
+          rustup default nightly
+          apt-get update
+          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
+          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
+          apt update && apt install -y redis
+          make $(j16)
+        continue-on-error: true
+
+      - name: Install benchmark dependencies
+        working-directory: tests/benchmarks
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r tests/benchmarks_requirements.txt
+
+      - name: Run benchmark
+        working-directory: tests/benchmarks
+        run: |
+          . venv/bin/activate
+          python3 run_benchmarks.py GroupA
+
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: master-benchmark-results
-          path: empty-results.json
+          name: ${{ github.ref_name }}-benchmark-GroupA-results
+          path: tests/benchmarks/*-results.json
+          retention: 1
 
-## For now I wrote them manually
-## Still trying to think of how to overcome sending each one to a specific runner
-## Matrix does not allow me to do that
-#  create-runner-A:
-#    needs: haslabel
-#    if: ${{ needs.haslabel.outputs.has-benchmark-label || evennt }}
-#    runs-on: ubuntu-latest
-#    outputs:
-#      label: ${{ steps.create-runner.outputs.label }}
-#    steps:
-#      - name: Create Runner For Benchmarak
-#        id: create-runner
-#        uses: FalkorDB/gce-github-runner@install_docker
-#        with:
-#          token: ${{ secrets.GH_SA_TOKEN }}
-#          project_id: github-runners-414914
-#          service_account_key: ${{ secrets.GCP_SA_KEY }}
-#          machine_zone: us-central1-a
-#          machine_type: n4-highcpu-8
-#          network: gh-runner
-#
-#  run-benchmark-A:
-#    needs:
-#      - create-runner-A
-#    runs-on: ${{ needs.create-runner-A.outputs.label }}
-#    container: falkordb/falkordb-build:ubuntu
-#    steps:
-#      - name: Safe dir
-#        run: git config --global --add safe.directory '*'
-#
-#      - uses: actions/checkout@v4
-#        with:
-#          set-safe-directory: '*'
-#          submodules: recursive
-#
-#      - name: Cache GraphBLAS
-#        id: cache_graphblas
-#        uses: actions/cache@v4
-#        with:
-#          path: ./bin/linux-x64-release/GraphBLAS
-#          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
-#
-#      - name: Cache parser
-#        id: cache_parser
-#        uses: actions/cache@v4
-#        with:
-#          path: ./bin/linux-x64-release/libcypher-parser
-#          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-#
-#      - name: Cache search
-#        id: cache_search
-#        uses: actions/cache@v4
-#        with:
-#          path: ./bin/linux-x64-release/search-static
-#          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-#
-#      - name: Build
-#        run: |
-#          rustup toolchain list
-#          rustup default nightly
-#          apt-get update
-#          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
-#          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
-#          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-#          apt update && apt install -y redis
-#          make $(j16)
-#        continue-on-error: true
-#
-#      - name: Install benchmark dependencies
-#        working-directory: tests/benchmarks
-#        run: |
-#          python3 -m venv venv
-#          . venv/bin/activate
-#          pip install -r tests/benchmarks_requirements.txt
-#
-#      - name: Run benchmark
-#        working-directory: tests/benchmarks
-#        run: |
-#          . venv/bin/activate
-#          python3 run_benchmarks.py GroupA
-#
-#      - name: Upload results
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-GroupA-results
-#          path: tests/benchmarks/*-results.json
-#          retention: 1
-#
-#  create-runner-B:
-#    needs: haslabel
-#    if: ${{ needs.haslabel.outputs.has-benchmark-label || needs.haslabel.outputs.is-not-pr }}
-#    runs-on: ubuntu-latest
-#    outputs:
-#      label: ${{ steps.create-runner.outputs.label }}
-#    steps:
-#      - name: Create Runner For Benchmarak
-#        id: create-runner
-#        uses: FalkorDB/gce-github-runner@install_docker
-#        with:
-#          token: ${{ secrets.GH_SA_TOKEN }}
-#          project_id: github-runners-414914
-#          service_account_key: ${{ secrets.GCP_SA_KEY }}
-#          machine_zone: us-central1-a
-#          machine_type: n4-highcpu-8
-#          network: gh-runner
-#
-#
-#  run-benchmark-B:
-#    needs:
-#      - create-runner-B
-#    runs-on: ${{ needs.create-runner-B.outputs.label }}
-#    container: falkordb/falkordb-build:ubuntu
-#    steps:
-#      - name: Safe dir
-#        run: git config --global --add safe.directory '*'
-#
-#      - uses: actions/checkout@v4
-#        with:
-#          set-safe-directory: '*'
-#          submodules: recursive
-#
-#      - name: Cache GraphBLAS
-#        id: cache_graphblas
-#        uses: actions/cache@v4
-#        with:
-#          path: ./bin/linux-x64-release/GraphBLAS
-#          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
-#
-#      - name: Cache parser
-#        id: cache_parser
-#        uses: actions/cache@v4
-#        with:
-#          path: ./bin/linux-x64-release/libcypher-parser
-#          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-#
-#      - name: Cache search
-#        id: cache_search
-#        uses: actions/cache@v4
-#        with:
-#          path: ./bin/linux-x64-release/search-static
-#          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-#
-#      - name: Build
-#        run: |
-#          rustup toolchain list
-#          rustup default nightly
-#          apt-get update
-#          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
-#          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
-#          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-#          apt update && apt install -y redis
-#          make $(j16)
-#        continue-on-error: true
-#
-#      - name: Install benchmark dependencies
-#        working-directory: tests/benchmarks
-#        run: |
-#          python3 -m venv venv
-#          . venv/bin/activate
-#          pip install -r tests/benchmarks_requirements.txt
-#
-#      - name: Run benchmark
-#        working-directory: tests/benchmarks
-#        run: |
-#          . venv/bin/activate
-#          python3 run_benchmarks.py GroupB
-#
-#      - name: Upload results
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-GroupB-results
-#          path: tests/benchmarks/*-results.json
-#          retention: 1
-#
-#  merge-results:
-#    needs:
-#      - run-benchmark-A
-#      - run-benchmark-B
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - name: Download artifact A
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-GroupA-results
-#      - name: Download artifact B
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-GroupB-results
-#      - name: Merge results
-#        run: |
-#          unzip ${{ github.ref_name }}-benchmark-GroupA-results.zip
-#          unzip ${{ github.ref_name }}-benchmark-GroupB-results.zip
-#      - name: Upload merged results
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-results
-#          path: ./*-results.json
-#
-#  use-artifacts:
-#    needs:
-#      - merge-results
-#    if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - name: Download artifact
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-results
-#          path: $GITHUB_WORKSPACE/tests/benchmarks
-#
-#      - name: Download master artifact
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: ${{ github.ref_name }}-benchmark-results
-#          path: $GITHUB_WORKSPACE/tests/benchmarks
-#
-#      - name: Merge results
-#        working-directory: tests/benchmarks
-#        run: |
-#          unzip ${{ github.ref_name }}-benchmark-results.zip -d compare/${{ github.ref_name }}
+  create-runner-B:
+    needs: haslabel
+    if: ${{ needs.haslabel.outputs.has-benchmark-label || needs.haslabel.outputs.is-not-pr }}
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.create-runner.outputs.label }}
+    steps:
+      - name: Create Runner For Benchmarak
+        id: create-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: github-runners-414914
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: us-central1-a
+          machine_type: n4-highcpu-8
+          network: gh-runner
+
+
+  run-benchmark-B:
+    needs:
+      - create-runner-B
+    runs-on: ${{ needs.create-runner-B.outputs.label }}
+    container: falkordb/falkordb-build:ubuntu
+    steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+        with:
+          set-safe-directory: '*'
+          submodules: recursive
+
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/GraphBLAS
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/libcypher-parser
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/search-static
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
+      - name: Build
+        run: |
+          rustup toolchain list
+          rustup default nightly
+          apt-get update
+          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
+          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
+          apt update && apt install -y redis
+          make $(j16)
+        continue-on-error: true
+
+      - name: Install benchmark dependencies
+        working-directory: tests/benchmarks
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r tests/benchmarks_requirements.txt
+
+      - name: Run benchmark
+        working-directory: tests/benchmarks
+        run: |
+          . venv/bin/activate
+          python3 run_benchmarks.py GroupB
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-benchmark-GroupB-results
+          path: tests/benchmarks/*-results.json
+          retention: 1
+
+  merge-results:
+    needs:
+      - run-benchmark-A
+      - run-benchmark-B
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifact A
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-benchmark-GroupA-results
+      - name: Download artifact B
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-benchmark-GroupB-results
+      - name: Merge results
+        run: |
+          unzip ${{ github.ref_name }}-benchmark-GroupA-results.zip
+          unzip ${{ github.ref_name }}-benchmark-GroupB-results.zip
+      - name: Upload merged results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-benchmark-results
+          path: ./*-results.json
+
+  use-artifacts:
+    needs:
+      - merge-results
+    if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-benchmark-results
+          path: $GITHUB_WORKSPACE/tests/benchmarks
+
+      - name: Download master artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.ref_name }}-benchmark-results
+          path: $GITHUB_WORKSPACE/tests/benchmarks
+
+      - name: Merge results
+        working-directory: tests/benchmarks
+        run: |
+          unzip ${{ github.ref_name }}-benchmark-results.zip -d compare/${{ github.ref_name }}
+          unzip ${{ github.ref_name }}-benchmark-results.zip -d compare/master
 #          unzip master-benchmark-results.zip -d compare/master
-#
-#      - name: Install dependencies
-#        working-directory: tests/benchmarks
-#        run: |
-#          python3 -m venv venv
-#          . venv/bin/activate
-#          pip install -r tests/comparison_requirements.txt
-#
-#      - name: Generate markdown
-#        working-directory: tests/benchmarks
-#        run: |
-#          . venv/bin/activate
-#          python3 generate_markdown.py
-#
-#      - name: Comment on Pull Request
-#        uses: actions/github-script@v7
-#        with:
-#          github-token: ${{ secrets.GITHUB_TOKEN }}
-#          script: |
-#            const fs = require('fs');
-#            const markdown = fs.readFileSync('tests/benchmarks/compare.md', 'utf8');
-#
-#            await github.pulls.createReview({
-#              owner: context.repo.owner,
-#              repo: context.repo.repo,
-#              pull_number: ${{ github.event.number }},
-#              body: markdown,
-#              event: 'COMMENT'
-#            });
+
+      - name: Install dependencies
+        working-directory: tests/benchmarks
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r tests/comparison_requirements.txt
+
+      - name: Generate markdown
+        working-directory: tests/benchmarks
+        run: |
+          . venv/bin/activate
+          python3 generate_markdown.py
+
+      - name: Comment on Pull Request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const markdown = fs.readFileSync('tests/benchmarks/compare.md', 'utf8');
+
+            await github.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: ${{ github.event.number }},
+              body: markdown,
+              event: 'COMMENT'
+            });
