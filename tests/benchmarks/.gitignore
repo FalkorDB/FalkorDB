@@ -6,5 +6,7 @@ venv/
 falkordb-benchmark-go
 datasets/graph500.rdb
 falkordb-benchmark-go.tar.gz
+compare.md
 README.md
 LICENSE
+compare/
