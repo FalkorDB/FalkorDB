@@ -41,7 +41,7 @@ jobs:
           machine_zone: us-central1-a
           machine_type: n4-highcpu-8
           network: gh-runner
-          labels: $GITHUB_RUN_ID-GITHUB_RUN_NUMBER-${{ matrix.benchmark_group }}
+          labels: ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
 
   run-benchmarks:
     needs:
@@ -49,7 +49,7 @@ jobs:
     strategy:
       matrix:
         benchmark_group: [ A, B ]
-    runs-on: $GITHUB_RUN_ID-GITHUB_RUN_NUMBER-${{ matrix.benchmark_group }}
+    runs-on: ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
