@@ -41,7 +41,7 @@ jobs:
           machine_zone: us-central1-a
           machine_type: n4-highcpu-8
           network: gh-runner
-          labels: group-${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
+          runner_labels: group-${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
 
   run-benchmarks:
     needs:
