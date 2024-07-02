@@ -1,0 +1,23 @@
+name: MIX_READ_WRITE
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 10000) AS x CREATE (:N)"]
+parameters:
+  num_clients: 32
+  num_requests: 1000000
+  random_int_max: 10000
+  random_seed: 12345
+  queries:
+    - query: 'CYPHER Id1=__rand_int__ MATCH (n:N) WHERE id(n) > $Id1 RETURN n LIMIT 100'
+      ratio: 0.8
+    - query: 'CYPHER Id1=__rand_int__ MATCH (n:N) WHERE id(n) = $Id1 SET n.v = $Id1 WITH n MATCH (n:N) WHERE id(n) > $Id1 RETURN n LIMIT 100'
+      ratio: 0.05
+    - query: 'CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n:N), (m:N) WHERE id(n) = $Id1 AND id(m) = $Id2  MERGE (n)-[:R]->(m) WITH n MATCH (n:N) WHERE id(n) > $Id1 RETURN n LIMIT 100'
+      ratio: 0.05
+    - query: 'CYPHER Id1=__rand_int__ MATCH (n:N) WHERE id(n) = $Id1 DELETE n WITH n MATCH (n:N) WHERE id(n) > $Id1 RETURN n LIMIT 100'
+      ratio: 0.05
+    - query: 'CYPHER Id1=__rand_int__ MATCH (n:N) WHERE id(n) = $Id1 CREATE (:N) WITH n MATCH (n:N) WHERE id(n) > $Id1 RETURN n LIMIT 100'
+      ratio: 0.05
+kpis:
+  - key: '$.OverallQueryRates.Total'
+    min_value: 7000

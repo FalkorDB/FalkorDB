@@ -1,0 +1,11 @@
+name: INSPECT-EDGES
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "UNWIND range(1, 1000) AS x CREATE (src:N {v: x}), (src)-[:R]->(:N)"]
+parameters:
+  num_clients: 32
+  num_requests: 50000
+  queries:
+    - query: 'MATCH ()-[e]->() RETURN max(ID(e))'
+      ratio: 1.0
+

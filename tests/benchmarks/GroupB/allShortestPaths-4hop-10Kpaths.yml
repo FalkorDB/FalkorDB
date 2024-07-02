@@ -1,0 +1,45 @@
+name: allShortestPaths-4hop-10Kpaths
+description: "
+         ┌────┐
+         │ S0 │
+         └────┘
+     /     |          \
+    /      |           \
+   /       |            \
+┌────┐   ┌────┐         ┌────┐
+│ S  │   │ S  │ ...100  │ S  │
+└────┘   └────┘         └────┘
+     \     |            /
+      \    |           /
+       \   |          /
+         ┌────┐
+         │ S1 │
+         └────┘
+     /     |          \
+    /      |           \
+   /       |            \
+┌────┐   ┌────┐         ┌────┐
+│ S  │   │ S  │ ...100  │ S  │
+└────┘   └────┘         └────┘
+     \     |            /
+      \    |           /
+       \   |          /
+         ┌────┐
+         │ S2 │
+         └────┘
+"
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "CREATE (s0:S0) CREATE (s1:S1) WITH * UNWIND range(1, 100) AS x CREATE (s0)-[:R]->(:S)-[:R]->(s1)"]
+    - ["GRAPH.QUERY", "graph", "MATCH (s1:S1) CREATE (s2:S2) WITH * UNWIND range(1, 100) AS x CREATE (s1)-[:R]->(:S)-[:R]->(s2)"]
+parameters:
+  num_clients: 32
+  num_requests: 50000
+  queries:
+    - query: 'MATCH (s:S0), (t:S2) WITH * MATCH p = allShortestPaths((s)-[:R*]->(t)) RETURN count(p)'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50 '
+    max_value: 200.0
+  - key: '$.OverallQueryRates.Total'
+    min_value: 100

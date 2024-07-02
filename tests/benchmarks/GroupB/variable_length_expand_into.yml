@@ -1,0 +1,14 @@
+name: VARIABLE_LENGTH_EXPAND_INTO
+db_config:
+  dataset: datasets/highly_connected.rdb
+parameters:
+  num_clients: 32
+  num_requests: 1000
+  queries:
+    - query: 'MATCH (n), (m) WHERE ID(n) = 0 AND ID(m) = 1 WITH n, m MATCH (n)-[*]->(m) RETURN count(1)'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 70.0
+  - key: '$.OverallQueryRates.Total'
+    min_value: 5.0
