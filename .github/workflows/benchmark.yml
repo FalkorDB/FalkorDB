@@ -31,6 +31,8 @@ jobs:
         benchmark_group: [A, B]
     runs-on: ubuntu-latest
     steps:
+      - name: Print label
+        run: echo ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
       - name: Create Runner For Benchmarak
         id: create-runner
         uses: FalkorDB/gce-github-runner@install_docker
