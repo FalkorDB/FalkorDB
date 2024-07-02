@@ -23,15 +23,13 @@ jobs:
         with:
           contains: 'run-benchmark'
 
-# For now I wrote them manually
-# Still trying to think of how to overcome sending each one to a specific runner
-# Matrix does not allow me to do that
-  create-runner-A:
+  create-runners:
     needs: haslabel
     if: ${{ needs.haslabel.outputs.has-benchmark-label || github.event_name != 'pull_request' }}
+    strategy:
+      matrix:
+        benchmark_group: [A, B]
     runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.create-runner.outputs.label }}
     steps:
       - name: Create Runner For Benchmarak
         id: create-runner
@@ -43,11 +41,15 @@ jobs:
           machine_zone: us-central1-a
           machine_type: n4-highcpu-8
           network: gh-runner
+          labels: $GITHUB_RUN_ID-GITHUB_RUN_NUMBER-${{ matrix.benchmark_group }}
 
-  run-benchmark-A:
+  run-benchmarks:
     needs:
-      - create-runner-A
-    runs-on: ${{ needs.create-runner-A.outputs.label }}
+      - create-runners
+    strategy:
+      matrix:
+        benchmark_group: [ A, B ]
+    runs-on: $GITHUB_RUN_ID-GITHUB_RUN_NUMBER-${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
@@ -96,111 +98,24 @@ jobs:
         run: |
           python3 -m venv venv
           . venv/bin/activate
-          pip install -r tests/benchmarks_requirements.txt
+          pip install -r benchmarks_requirements.txt
 
       - name: Run benchmark
         working-directory: tests/benchmarks
         run: |
           . venv/bin/activate
-          python3 run_benchmarks.py GroupA
+          python3 run_benchmarks.py Group${{ matrix.benchmark_group }}
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.ref_name }}-benchmark-GroupA-results
-          path: tests/benchmarks/*-results.json
-          retention: 1
-
-  create-runner-B:
-    needs: haslabel
-    if: ${{ needs.haslabel.outputs.has-benchmark-label || github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.create-runner.outputs.label }}
-    steps:
-      - name: Create Runner For Benchmarak
-        id: create-runner
-        uses: FalkorDB/gce-github-runner@install_docker
-        with:
-          token: ${{ secrets.GH_SA_TOKEN }}
-          project_id: github-runners-414914
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zone: us-central1-a
-          machine_type: n4-highcpu-8
-          network: gh-runner
-
-
-  run-benchmark-B:
-    needs:
-      - create-runner-B
-    runs-on: ${{ needs.create-runner-B.outputs.label }}
-    container: falkordb/falkordb-build:ubuntu
-    steps:
-      - name: Safe dir
-        run: git config --global --add safe.directory '*'
-
-      - uses: actions/checkout@v4
-        with:
-          set-safe-directory: '*'
-          submodules: recursive
-
-      - name: Cache GraphBLAS
-        id: cache_graphblas
-        uses: actions/cache@v4
-        with:
-          path: ./bin/linux-x64-release/GraphBLAS
-          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
-
-      - name: Cache parser
-        id: cache_parser
-        uses: actions/cache@v4
-        with:
-          path: ./bin/linux-x64-release/libcypher-parser
-          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-
-      - name: Cache search
-        id: cache_search
-        uses: actions/cache@v4
-        with:
-          path: ./bin/linux-x64-release/search-static
-          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
-
-      - name: Build
-        run: |
-          rustup toolchain list
-          rustup default nightly
-          apt-get update
-          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
-          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
-          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-          apt update && apt install -y redis
-          make $(j16)
-        continue-on-error: true
-
-      - name: Install benchmark dependencies
-        working-directory: tests/benchmarks
-        run: |
-          python3 -m venv venv
-          . venv/bin/activate
-          pip install -r tests/benchmarks_requirements.txt
-
-      - name: Run benchmark
-        working-directory: tests/benchmarks
-        run: |
-          . venv/bin/activate
-          python3 run_benchmarks.py GroupB
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.ref_name }}-benchmark-GroupB-results
+          name: ${{ github.ref_name }}-benchmark-Group${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
           retention: 1
 
   merge-results:
     needs:
-      - run-benchmark-A
-      - run-benchmark-B
+      - run-benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -253,7 +168,7 @@ jobs:
         run: |
           python3 -m venv venv
           . venv/bin/activate
-          pip install -r tests/comparison_requirements.txt
+          pip install -r comparison_requirements.txt
 
       - name: Generate markdown
         working-directory: tests/benchmarks
@@ -267,12 +182,12 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const markdown = fs.readFileSync('tests/benchmarks/compare.md', 'utf8');
-
+            const markdown = await fs.readFile('tests/benchmarks/compare.md', 'utf8');
+            const pullRequest = context.payload.pull_request
             await github.pulls.createReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: ${{ github.event.number }},
+              pull_number: pullRequest.number,
               body: markdown,
               event: 'COMMENT'
             });
