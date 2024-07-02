@@ -17,9 +17,6 @@ jobs:
     outputs:
       has-benchmark-label: ${{ steps.haslabel.outputs.labeled-run-benchmark }}
     steps:
-      - name: Check if is not PR
-        id: is-not-pr
-        run: echo not_pr=
       - name: Labeled with run-benchmark
         id: haslabel
         uses: FalkorDB/HasLabel@v1.0.5
@@ -31,7 +28,7 @@ jobs:
 # Matrix does not allow me to do that
   create-runner-A:
     needs: haslabel
-    if: ${{ needs.haslabel.outputs.has-benchmark-label || evennt }}
+    if: ${{ needs.haslabel.outputs.has-benchmark-label || github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
@@ -116,7 +113,7 @@ jobs:
 
   create-runner-B:
     needs: haslabel
-    if: ${{ needs.haslabel.outputs.has-benchmark-label || needs.haslabel.outputs.is-not-pr }}
+    if: ${{ needs.haslabel.outputs.has-benchmark-label || github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.create-runner.outputs.label }}
