@@ -49,7 +49,7 @@ jobs:
     strategy:
       matrix:
         benchmark_group: [ A, B ]
-    runs-on: ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
+    runs-on: ${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
