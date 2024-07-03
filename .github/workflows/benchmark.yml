@@ -197,8 +197,9 @@ jobs:
               if (originalString.includes(startMarker) && originalString.includes(endMarker)) {
                 return originalString.replace(regexPattern, `${startMarker}\n${replacementString}\n${endMarker}`);
               }
-            
-              return `${originalString}\n${replacementString}`;
+    
+    
+              return `${originalString}\n${startMarker}\n${replacementString}\n${endMarker}\n`;
             }
             
             await github.rest.pulls.update({
