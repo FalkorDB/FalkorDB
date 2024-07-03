@@ -152,7 +152,7 @@ jobs:
       - name: Download master artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.head_ref }}-benchmark-results
+          name: master-benchmark-results
           path: tests/benchmarks/compare/master
 
       - name: Install dependencies
