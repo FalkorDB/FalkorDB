@@ -168,13 +168,28 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const markdown = fs.readFileSync('tests/benchmarks/compare.md', 'utf8');
-            const pullRequest = context.payload.pull_request
-            await github.pulls.createReview({
+            const existing_pull = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: pullRequest.number,
-              body: markdown,
-              event: 'COMMENT'
+              pull_number: context.payload.pull_request.number,
+              headers: { 'Accept': 'application/vnd.github-commitcomment.text' }
             });
+            
+            const replaceBenchmarkSection = (originalString, replacementString) => {
+              const startMarker = '<!-- Benchmark results auto generation start -->';
+              const endMarker = '<!-- Benchmark results auto generation end -->';
+              const regexPattern = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`, 'g');
+            
+              if (originalString.includes(startMarker) && originalString.includes(endMarker)) {
+                return originalString.replace(regexPattern, `${startMarker}\n${replacementString}\n${endMarker}`);
+              }
+            
+              return `${originalString}\n${replacementString}`;
+            }
+            
+            await github.rest.pulls.update({
+              owner: 'FalkorDB',
+              repo: 'FalkorDB',
+              pull_number: 711,
+              body: replaceBenchmarkSection(existing_pull.data.body, require('fs').readFileSync('tests/benchmarks/compare.md', 'utf-8'))
+            })
