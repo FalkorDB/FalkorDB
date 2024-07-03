@@ -169,7 +169,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const markdown = await fs.readFile('tests/benchmarks/compare.md', 'utf8');
+            const markdown = fs.readFileSync('tests/benchmarks/compare.md', 'utf8');
             const pullRequest = context.payload.pull_request
             await github.pulls.createReview({
               owner: context.repo.owner,
