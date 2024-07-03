@@ -165,15 +165,6 @@ jobs:
       - name: Generate markdown
         working-directory: tests/benchmarks
         run: |
-          echo "compare"
-          ls compare/
-          
-          echo "\n compare/${{ github.head_ref }}"
-          ls compare/${{ github.head_ref }}
-          
-          echo "\n compare/master"
-          ls compare/master
-          
           . venv/bin/activate
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
