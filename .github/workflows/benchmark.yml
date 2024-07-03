@@ -122,15 +122,9 @@ jobs:
       - name: Download artifact A
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-GroupA-results
-      - name: Download artifact B
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-GroupB-results
-      - name: Merge results
-        run: |
-          unzip ${{ github.head_ref || github.ref_name }}-benchmark-GroupA-results.zip
-          unzip ${{ github.head_ref || github.ref_name }}-benchmark-GroupB-results.zip
+          # change this so it uses a pattern to download all Group* artifacts
+          pattern: ${{ github.head_ref || github.ref_name }}-benchmark-Group*-results
+          merge-multiple: true
       - name: Upload merged results
         uses: actions/upload-artifact@v4
         with:
@@ -148,20 +142,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ github.head_ref }}-benchmark-results
-          path: $GITHUB_WORKSPACE/tests/benchmarks
+          path: $GITHUB_WORKSPACE/tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ github.head_ref }}-benchmark-results
-          path: $GITHUB_WORKSPACE/tests/benchmarks
-
-      - name: Merge results
-        working-directory: tests/benchmarks
-        run: |
-          unzip ${{ github.head_ref }}-benchmark-results.zip -d compare/${{ github.head_ref }}
-          unzip ${{ github.head_ref }}-benchmark-results.zip -d compare/master
-#          unzip master-benchmark-results.zip -d compare/master
+          path: $GITHUB_WORKSPACE/tests/benchmarks/compare/master
 
       - name: Install dependencies
         working-directory: tests/benchmarks
