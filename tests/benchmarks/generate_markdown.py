@@ -161,9 +161,9 @@ def main():
         markdown_str += f"### {table}\n"
         markdown_str += generate_table([{
             "Benchmark": benchmark["Benchmark"],
-            f"  Branch '_{args.new_branch}_'  {table}  ": benchmark["new"][table],
-            f"  Branch '_{args.sot_branch}_'  {table}  ": benchmark["sot"][table],
-            f"  {table} Diff (%)  ": benchmark["diffs"][table],
+            f"  Branch '_{args.new_branch}_'  {table}  ": round(benchmark["new"][table], 3),
+            f"  Branch '_{args.sot_branch}_'  {table}  ": round(benchmark["sot"][table], 3),
+            f"  {table} Diff (%)  ": round(benchmark["diffs"][table], 2),
         } for benchmark in benchmark_jsons])
 
     markdown_str = mdformat.text(markdown_str, extensions=["gfm", "tables"])
