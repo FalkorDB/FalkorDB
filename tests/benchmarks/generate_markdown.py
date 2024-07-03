@@ -9,7 +9,7 @@ table_list = [
     "Average Internal Latency",
     "99.9th Percentile Internal Latency",
     "Average Client Latency",
-    "Average Internal Latency",
+    "99.9th Percentile Client Latency",
     "Overall Request Rate",
 ]
 

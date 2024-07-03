@@ -71,6 +71,8 @@ make tck-tests    # Run TCK tests
 make fuzz-tests   # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
+make benchmark    # Run benchmarks
+
 make coverage     # Perform coverage analysis (build & test)
 make cov-upload   # Upload coverage data to codecov.io
 
@@ -383,6 +385,13 @@ fuzz fuzz-tests: $(TARGET)
 	$(SHOW)cd tests/fuzz && ./process.py -m $(TARGET) $(FUZZ_ARGS)
 
 .PHONY: fuzz fuzz-tests
+
+#----------------------------------------------------------------------------------------------
+
+benchmark: $(TARGET)
+	$(SHOW)cd tests/benchmarks && python3 -m venv venv && source venv/bin/activate && pip install -r benchmarks_requirements.txt && python3 run_benchmarks.py GroupA && python3 run_benchmarks.py GroupB
+
+.PHONY: benchmark
 
 #----------------------------------------------------------------------------------------------
 
