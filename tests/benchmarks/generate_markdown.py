@@ -25,6 +25,15 @@ def load_benchmarks(sot_branch: str, new_branch: str):
     all_new_files = glob.glob("*-results.json", root_dir=f"compare/{new_branch}")
 
     benchmarks_to_test = [new_file for new_file in all_new_files if new_file in all_sot_files]
+
+    benchmarks_only_in_new = [benchmark for benchmark in benchmarks_to_test if benchmark not in all_sot_files]
+    if len(benchmarks_only_in_new) > 0:
+        warnings.append(f"Found benchmarks that are only in the new branch: {benchmarks_only_in_new}")
+
+    benchmarks_missing_in_new = [benchmark for benchmark in benchmarks_to_test if benchmark not in all_new_files]
+    if len(benchmarks_missing_in_new) > 0:
+        warnings.append(f"Found benchmarks that are missing in the new branch: {benchmarks_missing_in_new}")
+
     for benchmark_file_name in benchmarks_to_test:
         # I really don't want the over indentation, so not using the context pattern again
         sot_benchmark = json.load(open(f"compare/{sot_branch}/{benchmark_file_name}", "r"))
