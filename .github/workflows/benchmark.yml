@@ -138,17 +138,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Create paths
+        run: |
+          mkdir -p tests/benchmarks/compare/${{ github.head_ref }}
+          mkdir -p tests/benchmarks/compare/master
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ github.head_ref }}-benchmark-results
-          path: $GITHUB_WORKSPACE/tests/benchmarks/compare/${{ github.head_ref }}
+          path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ github.head_ref }}-benchmark-results
-          path: $GITHUB_WORKSPACE/tests/benchmarks/compare/master
+          path: tests/benchmarks/compare/master
 
       - name: Install dependencies
         working-directory: tests/benchmarks
