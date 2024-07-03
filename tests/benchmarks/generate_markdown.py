@@ -21,16 +21,16 @@ warnings = []
 def load_benchmarks(sot_branch: str, new_branch: str):
     global benchmark_jsons
 
-    all_sot_files = glob.glob("*-results.json", root_dir=f"compare/{sot_branch}")
-    all_new_files = glob.glob("*-results.json", root_dir=f"compare/{new_branch}")
+    all_sot_files = set(glob.glob("*-results.json", root_dir=f"compare/{sot_branch}"))
+    all_new_files = set(glob.glob("*-results.json", root_dir=f"compare/{new_branch}"))
 
-    benchmarks_to_test = [new_file for new_file in all_new_files if new_file in all_sot_files]
+    benchmarks_to_test = all_sot_files.intersection(all_new_files)
 
-    benchmarks_only_in_new = [benchmark for benchmark in benchmarks_to_test if benchmark not in all_sot_files]
+    benchmarks_only_in_new = benchmarks_to_test.difference(all_new_files)
     if len(benchmarks_only_in_new) > 0:
-        warnings.append(f"Found benchmarks that are only in the new branch: {benchmarks_only_in_new}")
+        warnings.append(f"Found benchmarks that were added in the new branch: {benchmarks_only_in_new}")
 
-    benchmarks_missing_in_new = [benchmark for benchmark in benchmarks_to_test if benchmark not in all_new_files]
+    benchmarks_missing_in_new = benchmarks_to_test.difference(all_sot_files)
     if len(benchmarks_missing_in_new) > 0:
         warnings.append(f"Found benchmarks that are missing in the new branch: {benchmarks_missing_in_new}")
 
@@ -92,22 +92,18 @@ def generate_table(dict_list: list[dict]) -> str:
     headers = dict_list[0].keys()
 
     # Create the header row
-    header_row = "| " + " | ".join(headers) + " |"
+    header_row = f"| {' | '.join(headers)} |"
 
     # Create the separator row
-    separator_row = "| " + " | ".join([":---:"] * len(headers)) + " |"
-    separator_row = str.replace(separator_row, ":---:", "---", 1)
+    separator_row = f"| {' | '.join([':---:'] * len(headers))} |".replace(":---:", "---", 1)
 
     # Create the data rows
-    data_rows = []
-    for d in dict_list:
-        row = "| " + " | ".join(str(d[h]) for h in headers) + " |"
-        data_rows.append(row)
+    data_rows = [f"| {' | '.join(str(d[h]) for h in headers)} |" for d in dict_list]
 
     # Combine all parts into the final markdown table string
     markdown_table = "\n".join([header_row, separator_row] + data_rows)
 
-    return markdown_table + "\n"
+    return f"{markdown_table}\n"
 
 
 def generate_benchmark_list_table(sot_branch: str, new_branch: str) -> str:
