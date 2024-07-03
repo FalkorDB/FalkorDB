@@ -31,7 +31,7 @@ jobs:
         benchmark_group: [A, B]
     runs-on: ubuntu-latest
     steps:
-      - name: Create Runner For Benchmarak
+      - name: Create Runner For Benchmark
         id: create-runner
         uses: FalkorDB/gce-github-runner@install_docker
         with:
