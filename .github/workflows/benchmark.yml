@@ -119,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download artifact A
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           # change this so it uses a pattern to download all Group* artifacts
