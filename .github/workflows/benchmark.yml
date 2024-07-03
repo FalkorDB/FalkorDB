@@ -161,7 +161,7 @@ jobs:
         working-directory: tests/benchmarks
         run: |
           . venv/bin/activate
-          python3 generate_markdown.py
+          python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
       - name: Comment on Pull Request
         uses: actions/github-script@v7
