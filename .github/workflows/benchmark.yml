@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [ master ]
-    types: [opened, labeled, unlabeled, synchronize]
+    types: [opened, labeled, synchronize]
   push:
     branches:
       - 'master'
@@ -83,13 +83,10 @@ jobs:
 
       - name: Build
         run: |
-          rustup toolchain list
-          rustup default nightly
-          apt-get update
-          apt-get install -y clang libomp-dev libc6-dbg python3-venv python3-pip lsb-release
+          apt install -y lsb-release
           curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
           echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-          apt update && apt install -y redis
+          apt update && apt install -y redis python3-venv
           make $(j16)
         continue-on-error: true
 
@@ -118,7 +115,6 @@ jobs:
       - run-benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -131,7 +127,7 @@ jobs:
           name: ${{ github.head_ref || github.ref_name }}-benchmark-results
           path: ./*-results.json
 
-  use-artifacts:
+  compare-results:
     needs:
       - merge-results
     if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags

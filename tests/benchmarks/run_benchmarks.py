@@ -14,7 +14,7 @@ from urllib.request import urlretrieve
 from http.client import HTTPSConnection
 
 
-def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str):
+def run_single_benchmark(file_stream: TextIO, bench: str):
     data = yaml.safe_load(file_stream)
 
     # Always prefer the environment variable over the yaml file
@@ -22,6 +22,10 @@ def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str)
     if db_module is None and "db_module" not in data:
         print("Error! No DB module specified in the yaml file or the environment variable")
         exit(1)
+
+    result_file_name = f"{data['name']}-results.json"
+    if os.path.exists(result_file_name):
+        os.remove(result_file_name)
 
     process = subprocess.Popen(["./falkordb-benchmark-go", "--yaml_config", bench,
                                 "--output_file", result_file_name,
@@ -65,17 +69,14 @@ def run_single_benchmark(file_stream: TextIO, bench: str, result_file_name: str)
                         exit(1)
 
 
-def single_iteration(bench: str, result_file_name: str, idx: int, bench_end: int):
+def single_iteration(bench: str, idx: int, bench_end: int):
     print(f"========== Benchmark {idx + 1}/{bench_end} Started ================\n")
-
-    if os.path.exists(result_file_name):
-        os.remove(result_file_name)
 
     if os.path.exists("dataset.rdb"):
         os.remove("dataset.rdb")
 
     with open(bench, "r") as current_bench_file:
-        run_single_benchmark(current_bench_file, bench, result_file_name)
+        run_single_benchmark(current_bench_file, bench)
 
     print("")
     print(f"========== Benchmark {idx + 1}/{bench_end} Completed ==============")
@@ -93,8 +94,8 @@ def verify_and_download_graph500():
     if not os.path.exists("./datasets/graph500.rdb"):
         print("Downloading missing dataset")
         try:
-            urlretrieve("https://s3.amazonaws.com/benchmarks.redislabs/redisgraph/"
-                        "datasets/graph500-scale18-ef16_v2.4.7_dump.rdb", "./datasets/graph500.rdb")
+            urlretrieve("https://storage.googleapis.com/falkordb-benchmark-datasets/"
+                        "graph500-scale18-ef16_v2.4.7_dump.rdb", "./datasets/graph500.rdb")
         except Exception as e:
             print(f"Failed to download the dataset: {e}")
             exit(1)
@@ -203,10 +204,9 @@ def main():
     verify_and_download_graph500()
 
     benches = glob.glob("*.yml", recursive=False, root_dir=benchmark_group)
-    benches_results = [str.replace(bench, '.yml', '-results.json') for bench in benches]
     benches_count = len(benches)
     for idx, bench in enumerate(benches):
-        single_iteration(f"{benchmark_group}/{bench}", f"{benches_results[idx]}", idx, benches_count)
+        single_iteration(f"{benchmark_group}/{bench}", idx, benches_count)
 
 
 if __name__ == "__main__":
