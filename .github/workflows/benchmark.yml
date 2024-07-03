@@ -23,7 +23,7 @@ jobs:
         with:
           contains: 'run-benchmark'
       - name: Print head ref
-        run: echo ${{ fromJson(github.head_ref) }}
+        run: echo ${{ toJson(github.head_ref) }}
 
 #  create-runners:
 #    needs: haslabel
