@@ -5,14 +5,6 @@ import json
 import argparse
 import mdformat
 
-table_list = [
-    "Average Internal Latency",
-    "99.9th Percentile Internal Latency",
-    "Average Client Latency",
-    "99.9th Percentile Client Latency",
-    "Overall Request Rate",
-]
-
 benchmark_jsons = []
 
 warnings = []
@@ -20,19 +12,22 @@ warnings = []
 
 def load_benchmarks(sot_branch: str, new_branch: str):
     global benchmark_jsons
+    global warnings
 
     all_sot_files = set(glob.glob("*-results.json", root_dir=f"compare/{sot_branch}"))
     all_new_files = set(glob.glob("*-results.json", root_dir=f"compare/{new_branch}"))
 
     benchmarks_to_test = all_sot_files.intersection(all_new_files)
 
-    benchmarks_only_in_new = benchmarks_to_test.difference(all_new_files)
-    if len(benchmarks_only_in_new) > 0:
-        warnings.append(f"Found benchmarks that were added in the new branch: {benchmarks_only_in_new}")
+    benchmarks_only_in_new = all_new_files.difference(benchmarks_to_test)
+    for benchmark in benchmarks_only_in_new:
+        warnings.append(f"**Benchmark '{benchmark.replace("-results.json", "")}' "
+                        f"has no counterpart in baseline benchmarks.**")
 
-    benchmarks_missing_in_new = benchmarks_to_test.difference(all_sot_files)
-    if len(benchmarks_missing_in_new) > 0:
-        warnings.append(f"Found benchmarks that are missing in the new branch: {benchmarks_missing_in_new}")
+    benchmarks_missing_in_new = all_sot_files.difference(benchmarks_to_test)
+    for benchmark in benchmarks_missing_in_new:
+        warnings.append(f"**Benchmark '{benchmark.replace("-results.json", "")}' "
+                        f"exists in baseline but is missing in the new branch benchmarks.**")
 
     for benchmark_file_name in benchmarks_to_test:
         # I really don't want the over indentation, so not using the context pattern again
@@ -154,37 +149,48 @@ def main():
     markdown_str = generate_benchmark_list_table(args.sot_branch, args.new_branch) + "\n"
     markdown_str += generate_warnings_text()
 
-    markdown_str += "### Comparison Tables:\n"
+    markdown_str += "### Benchmarks:\n"
     for benchmark in benchmark_jsons:
         benchmark_label = benchmark["Benchmark"]
-        sot_avg_lat = float(benchmark["sot"]["Average Internal Latency"])
-        new_avg_lat = float(benchmark["new"]["Average Internal Latency"])
+        sot_inner_avg = float(benchmark["sot"]["Average Internal Latency"])
+        new_inner_avg = float(benchmark["new"]["Average Internal Latency"])
 
-        sot_50_lat = float(benchmark["sot"]["50th Percentile Internal Latency"])
-        new_50_lat = float(benchmark["new"]["50th Percentile Internal Latency"])
+        sot_client_avg = float(benchmark["sot"]["Average Client Latency"])
+        new_client_avg = float(benchmark["new"]["Average Client Latency"])
 
-        min_val = min([sot_avg_lat, new_avg_lat, sot_50_lat, new_50_lat])
-        max_val = max([sot_avg_lat, new_avg_lat, sot_50_lat, new_50_lat])
+        min_val = min([sot_inner_avg, new_inner_avg, sot_client_avg, new_client_avg])
+        max_val = max([sot_inner_avg, new_inner_avg, sot_client_avg, new_client_avg])
 
-        branches_diff = generate_diff(sot_avg_lat, new_avg_lat)
-        summary_label = "DEGRADED" if branches_diff > 1 else ("IMPROVED" if branches_diff < -1 else "STABLE")
-        summary_color = "red" if branches_diff > 1 else ("green" if branches_diff < -1 else "darkolivegreen")
+        internal_diff = generate_diff(sot_inner_avg, new_inner_avg)
+        overall_diff = generate_diff(sot_client_avg, new_client_avg)
 
-        sot_deviation = generate_diff(sot_50_lat, sot_avg_lat)
-        new_deviation = generate_diff(new_50_lat, new_avg_lat)
-
-        deviation = generate_diff(sot_deviation, new_deviation)
+        match overall_diff:
+            case _ if overall_diff > 5:
+                summary_label = "DEGRADATION"
+                summary_color = "red"
+            case _ if overall_diff > 3:
+                summary_label = "POTENTIAL DEGRADATION"
+                summary_color = "yellow"
+            case _ if overall_diff < -3:
+                summary_label = "POTENTIAL IMPROVEMENT"
+                summary_color = "green"
+            case _ if overall_diff < -5:
+                summary_label = "IMPROVEMENT"
+                summary_color = "lime"
+            case _:
+                summary_label = "STABLE"
+                summary_color = "cadetblue"
 
         markdown_str += f"""
     <details>
     
     <summary style='color:{summary_color}'>Benchmark '{benchmark_label}' ({summary_label})</summary>
     
-    Diff between baseline and current branch: **{round(branches_diff, 2)}%** \\
+    Overall Latency diff between baseline and current branch: **{round(internal_diff, 2)}%** \\
     (Less is better)
     
-    Q50 to average deviation diff between baseline and current branch: **{round(deviation, 2)}%** \\
-    (Less is generally better, but this is not necessarily the metric to check for)
+    Internal Latency diff between baseline and current branch: **{round(overall_diff, 2)}%** \\
+    (Less is better)
     
     ```mermaid
     ---
@@ -201,10 +207,10 @@ def main():
     ---
     xychart-beta
         title "{benchmark_label}"
-        x-axis ["Baseline Avg.", "New Avg.", "Baseline 50th Percentile", "New 50th Percentile"]
-        y-axis "Graph Internal Latency (in ms)" {min_val / 2} --> {max_val * 1.25}
-        bar [{benchmark['sot']['Average Internal Latency']}, 0, {benchmark['sot']['50th Percentile Internal Latency']}, 0]
-        bar [0, {benchmark['new']['Average Internal Latency']}, 0, {benchmark['new']['50th Percentile Internal Latency']}]
+        x-axis ["Baseline Internal Avg.", "New Internal Avg.", "Baseline Overall Avg.", "New Overall Avg."]
+        y-axis "Graph Internal Latency (in ms)" {min_val / 3} --> {max_val}
+        bar [{benchmark['sot']['Average Internal Latency']}, 0, {benchmark['sot']['Average Client Latency']}, 0]
+        bar [0, {benchmark['new']['Average Internal Latency']}, 0, {benchmark['new']['Average Client Latency']}]
     ```
     
     </details>
