@@ -11,9 +11,6 @@ warnings = []
 
 
 def load_benchmarks(sot_branch: str, new_branch: str):
-    global benchmark_jsons
-    global warnings
-
     all_sot_files = set(glob.glob("*-results.json", root_dir=f"compare/{sot_branch}"))
     all_new_files = set(glob.glob("*-results.json", root_dir=f"compare/{new_branch}"))
 
