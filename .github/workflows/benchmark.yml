@@ -15,7 +15,7 @@ jobs:
     name: Upload redisgraph benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: @actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
