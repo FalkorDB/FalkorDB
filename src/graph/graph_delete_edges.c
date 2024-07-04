@@ -9,6 +9,15 @@
 #include "delta_matrix/delta_matrix_iter.h"
 
 // removes edges from Graph and updates graph relevant matrices
+//
+// edge deletion is performed in two steps
+// 1. simple edge deletion
+//    each edge is removed from the relation matrix if it is the
+//    only edge check if need to remove from the adjacency matrix
+//    otherwise delete it from the multi-edge matrix
+// 2. update multi-edge state
+//    each edge that was connected as multi edge check if we can
+//    transform it to single edge or delete it completly
 void Graph_DeleteEdges
 (
 	Graph *g,
