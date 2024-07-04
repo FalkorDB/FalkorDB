@@ -18,12 +18,13 @@ def load_benchmarks(sot_branch: str, new_branch: str):
 
     benchmarks_only_in_new = all_new_files.difference(benchmarks_to_test)
     for benchmark in benchmarks_only_in_new:
-        warnings.append(f"**Benchmark '{benchmark.replace("-results.json", "")}' "
-                        f"has no counterpart in baseline benchmarks.**")
+        benchmark_name = benchmark.replace("-results.json", "")
+        warnings.append(f"**Benchmark '{benchmark_name}' has no counterpart in baseline benchmarks.**")
 
     benchmarks_missing_in_new = all_sot_files.difference(benchmarks_to_test)
     for benchmark in benchmarks_missing_in_new:
-        warnings.append(f"**Benchmark '{benchmark.replace("-results.json", "")}' "
+        benchmark_name = benchmark.replace("-results.json", "")
+        warnings.append(f"**Benchmark '{benchmark_name}' "
                         f"exists in baseline but is missing in the new branch benchmarks.**")
 
     for benchmark_file_name in benchmarks_to_test:
