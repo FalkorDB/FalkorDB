@@ -272,39 +272,6 @@ void RdbSaveNodes_v14
 	}
 }
 
-// Auxilary function to encode a multiple edges array,
-// while consdirating the allowed number of edges to encode
-// returns true if the number of encoded edges has reached the capacity
-static void _RdbSaveMultipleEdges
-(
-	SerializerIO rdb,                    // RDB IO.
-	GraphContext *gc,                    // Graph context.
-	uint r,                              // Edges relation id.
-	Delta_MatrixTupleIter *M_it,         // Multiple edges iter.
-	uint64_t *encoded_edges,             // Number of encoded edges in this phase (passed by ref).
-	uint64_t edges_to_encode,            // Allowed capacity for encoding edges.
-	NodeID src,                          // Edges source node id.
-	NodeID dest                          // Edges destination node id.
-) {
-	// define function local variables from passed-by-reference parameters.
-	uint64_t encoded_edges_count = *encoded_edges;
-
-	// add edges as long the number of encoded edges is in the allowed range
-	// and the array is not depleted
-	EdgeID edgeID;
-	while(encoded_edges_count < edges_to_encode && Delta_MatrixTupleIter_next_BOOL(M_it, NULL, &edgeID, NULL) == GrB_SUCCESS) {
-		Edge e;
-		e.src_id  = src;
-		e.dest_id = dest;
-		Graph_GetEdge(gc->g, edgeID, &e);
-		_RdbSaveEdge(rdb, gc->g, &e, r);
-		encoded_edges_count++;
-	}
-
-	// update passed-by-reference parameters
-	*encoded_edges = encoded_edges_count;
-}
-
 void RdbSaveEdges_v14
 (
 	SerializerIO rdb,
@@ -319,8 +286,8 @@ void RdbSaveEdges_v14
 	//  relation type
 	//  edge properties
 
-	GrB_Info info;
-	UNUSED(info);
+	bool depleted;
+	UNUSED(depleted);
 
 	if(edges_to_encode == 0) return;
 
@@ -338,37 +305,18 @@ void RdbSaveEdges_v14
 
 	NodeID src;
 	NodeID dest;
-	Delta_Matrix M = NULL;
-	Delta_Matrix ME = NULL;
+
 	// get matrix tuple iterator from context
 	// already set to the next entry to fetch
 	// for previous edge encide or create new one
 	uint relation_count = Graph_RelationTypeCount(gc->g);
-	Delta_MatrixTupleIter *iter = GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
-	Delta_MatrixTupleIter *M_it = GraphEncodeContext_GetMultipleEdgesIterator(gc->encoding_context);
+	MultiEdgeIterator *iter = GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
 	if(r < relation_count) {
-		M = Graph_GetRelationMatrix(gc->g, r, false);
-		ME = Graph_GetMultiEdgeRelationMatrix(gc->g, r);
+		Graph_GetRelationMatrix(gc->g, r, false);
+		Graph_GetMultiEdgeRelationMatrix(gc->g, r);
 
-		if(!Delta_MatrixTupleIter_is_attached(iter, M)) {
-			info = Delta_MatrixTupleIter_attach(iter, M);
-			ASSERT(info == GrB_SUCCESS);
-		}
-
-		if(Delta_MatrixTupleIter_is_attached(M_it, ME)) {
-			// first, see if the last edges encoding stopped at multiple edges array
-			src = GraphEncodeContext_GetMultipleEdgesSourceNode(gc->encoding_context);
-			dest = GraphEncodeContext_GetMultipleEdgesDestinationNode(gc->encoding_context);
-			_RdbSaveMultipleEdges(rdb, gc, r, M_it,
-				&encoded_edges, edges_to_encode, src, dest);
-			// if the multiple edges array filled the capacity of entities allowed
-			// to be encoded, finish encoding
-			if(encoded_edges == edges_to_encode) {
-				goto finish;
-			} else {
-				// reset the multiple edges context for re-use
-				Delta_MatrixTupleIter_detach(M_it);
-			}
+		if(!MultiEdgeIterator_is_attached(iter, gc->g->relations + r)) {
+			MultiEdgeIterator_AttachSourceRange(iter, gc->g->relations + r, 0, UINT64_MAX, false);
 		}
 	}
 
@@ -378,11 +326,11 @@ void RdbSaveEdges_v14
 		EdgeID edgeID;
 
 		// try to get next tuple
-		info = Delta_MatrixTupleIter_next_UINT64(iter, &src, &dest, &edgeID);
+		depleted = !MultiEdgeIterator_next(iter, &src, &dest, &edgeID);
 
 		// if iterator is depleted
 		// get new tuple from different matrix or finish encode
-		while(info == GxB_EXHAUSTED) {
+		while(depleted) {
 			// proceed to next relation matrix
 			r++;
 
@@ -390,43 +338,27 @@ void RdbSaveEdges_v14
 			if(r == relation_count) goto finish;
 
 			// get matrix and set iterator
-			M = Graph_GetRelationMatrix(gc->g, r, false);
-			ME = Graph_GetMultiEdgeRelationMatrix(gc->g, r);
-			info = Delta_MatrixTupleIter_attach(iter, M);
-			ASSERT(info == GrB_SUCCESS);
-			info = Delta_MatrixTupleIter_next_UINT64(iter, &src, &dest, &edgeID);
+			Graph_GetRelationMatrix(gc->g, r, false);
+			Graph_GetMultiEdgeRelationMatrix(gc->g, r);
+			MultiEdgeIterator_AttachSourceRange(iter, gc->g->relations + r, 0, UINT64_MAX, false);
+			depleted = !MultiEdgeIterator_next(iter, &src, &dest, &edgeID);
 		}
 		
-		ASSERT(info == GrB_SUCCESS);
+		ASSERT(!depleted);
 
 		e.src_id = src;
 		e.dest_id = dest;
-		if(SINGLE_EDGE(edgeID)) {
-			Graph_GetEdge(gc->g, edgeID, &e);
-			_RdbSaveEdge(rdb, gc->g, &e, r);
-			encoded_edges++;
-		} else {
-			Delta_MatrixTupleIter_AttachRange(M_it, ME, CLEAR_MSB(edgeID), CLEAR_MSB(edgeID));
-			_RdbSaveMultipleEdges(rdb, gc, r, M_it,
-				&encoded_edges, edges_to_encode, src, dest);
-			// if the multiple edges array filled the capacity of entities
-			// allowed to be encoded, finish encoding
-			if(encoded_edges == edges_to_encode) {
-				goto finish;
-			} else {
-				// reset the multiple edges context for re-use
-				Delta_MatrixTupleIter_detach(M_it);
-			}
-		}
+		Graph_GetEdge(gc->g, edgeID, &e);
+		_RdbSaveEdge(rdb, gc->g, &e, r);
+		encoded_edges++;
 	}
 
 finish:
 	// check if done encoding edges
 	if(offset + edges_to_encode == graph_edges) {
-		Delta_MatrixTupleIter_detach(iter);
+		*iter = (MultiEdgeIterator){0};
 	}
 
 	// update context
 	GraphEncodeContext_SetCurrentRelationID(gc->encoding_context, r);
-	GraphEncodeContext_SetMutipleEdges(gc->encoding_context, src, dest);
 }

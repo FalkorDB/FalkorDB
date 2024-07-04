@@ -12,9 +12,6 @@
 typedef struct _Delta_Matrix _Delta_Matrix;
 typedef _Delta_Matrix *Delta_Matrix;
 
-// Checks if X represents edge ID.
-#define SINGLE_EDGE(x) !((x) & MSB_MASK)
-
 
 //------------------------------------------------------------------------------
 //

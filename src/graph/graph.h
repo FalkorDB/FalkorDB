@@ -9,14 +9,15 @@
 #include <pthread.h>
 
 #include "rax.h"
+#include "GraphBLAS.h"
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
 #include "graph_statistics.h"
+#include "multi_edge_matrix.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
-#include "../../deps/GraphBLAS/Include/GraphBLAS.h"
 
 #define GRAPH_DEFAULT_RELATION_TYPE_CAP 16  // default number of different relationship types a graph can hold before resizing.
 #define GRAPH_DEFAULT_LABEL_CAP 16          // default number of different labels a graph can hold before resizing.
@@ -43,16 +44,6 @@ typedef struct Graph Graph;
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
-// A relation type is defined via two matrices:
-//   1. uint64 connecting source nodes to destination nodes
-//   2. multi-edge, O[meid,e] = true
-typedef struct {
-	Delta_Matrix R;      // relation matrix
-	Delta_Matrix E;      // multi-edge matrix
-	uint64_t row_id;     // multi-edge id
-	uint64_t *freelist;  // multi-edge deleted ids
-} RelationMatrix;
-
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
 	DataBlock *nodes;                  // graph nodes stored in blocks
@@ -60,7 +51,7 @@ struct Graph {
 	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
 	Delta_Matrix *labels;              // label matrices
 	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
-	RelationMatrix *relations;         // relation matrices
+	MultiEdgeMatrix *relations;        // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer

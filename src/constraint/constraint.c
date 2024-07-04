@@ -496,14 +496,14 @@ void Constraint_EnforceEdges
 	Graph *g
 ) {
 	GrB_Info info;
-	Delta_MatrixTupleIter it = {0};
+	MultiEdgeIterator it = {0};
 
+	bool      skip         = false;
 	bool      holds        = true;          // constraint holds
 	EntityID  src_id       = 0;             // current processed row idx
 	EntityID  dest_id      = 0;             // current processed column idx
 	EntityID  edge_id      = 0;             // current processed edge id
-	EntityID  prev_src_id  = 0;             // last processed row idx
-	EntityID  prev_dest_id = 0;             // last processed column idx
+	EntityID  prev_edge_id = 0;             // last processed edge idx
 	int       enforced     = 0;             // # entities enforced in batch
 	int       schema_id    = c->schema_id;  // edge relationship type ID
 	int       batch_size   = 1000;          // max number of entities to enforce
@@ -522,70 +522,52 @@ void Constraint_EnforceEdges
 
 		// reset number of enforced edges in batch
 		enforced     = 0;
-		prev_src_id  = src_id;
-		prev_dest_id = dest_id;
+		prev_edge_id = edge_id;
 
-		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const Delta_Matrix m = Graph_GetRelationMatrix(g, schema_id, false);
-		ASSERT(m != NULL);
+		// sync relation matrix
+		Graph_GetRelationMatrix(g, schema_id, false);
+		Graph_GetMultiEdgeRelationMatrix(g, schema_id);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		info = Delta_MatrixTupleIter_AttachRange(&it, m, src_id, UINT64_MAX);
-		ASSERT(info == GrB_SUCCESS);
+		MultiEdgeIterator_AttachSourceRange(&it, g->relations + schema_id, src_id, UINT64_MAX, false);
 
 		// skip previously enforced edges
-		while((info = Delta_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id,
-						&edge_id)) == GrB_SUCCESS &&
-				src_id == prev_src_id &&
-				dest_id < prev_dest_id);
+		while(skip && (info = MultiEdgeIterator_next(&it, &src_id, &dest_id,
+						&edge_id)) &&
+				edge_id != prev_edge_id);
 
 		// process only if iterator is on an active entry
-		if(info != GrB_SUCCESS) {
+		if(skip && info != GrB_SUCCESS) {
 			break;
 		}
+
+		skip = true;
 
 		//----------------------------------------------------------------------
 		// batch enforce edges
 		//----------------------------------------------------------------------
 
-		do {
+		while(enforced < batch_size &&
+			  MultiEdgeIterator_next(&it, &src_id, &dest_id, &edge_id) &&
+			  holds) {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
 			e.relationID = schema_id;
 
-			if(SINGLE_EDGE(edge_id)) {
-				bool res = Graph_GetEdge(g, edge_id, &e);
-				assert(res == true);
-				if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-					holds = false;
-					break;
-				}
-			} else {
-				GrB_Index id = CLEAR_MSB(edge_id);
-				Delta_Matrix M = Graph_GetMultiEdgeRelationMatrix(g, schema_id);
-				Delta_MatrixTupleIter M_it;
-				Delta_MatrixTupleIter_AttachRange(&M_it, M, id, id);
-
-				while(Delta_MatrixTupleIter_next_BOOL(&M_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
-					bool res = Graph_GetEdge(g, edge_id, &e);
-					assert(res == true);
-					if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-						holds = false;
-						break;
-					}
-				}
-
-				Delta_MatrixTupleIter_detach(&M_it);
+			bool res = Graph_GetEdge(g, edge_id, &e);
+			assert(res == true);
+			if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
+				holds = false;
+				break;
 			}
-			enforced++; // single/multi edge are counted similarly
-		} while(enforced < batch_size &&
-			  Delta_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id, &edge_id)
-				== GrB_SUCCESS && holds);
+
+			enforced++;
+		} 
 
 		//----------------------------------------------------------------------
 		// done with current batch
@@ -598,11 +580,8 @@ void Constraint_EnforceEdges
 			// finished current batch
 			// release read lock
 			Graph_ReleaseLock(g);
-			Delta_MatrixTupleIter_detach(&it);
 		}
 	}
-
-	Delta_MatrixTupleIter_detach(&it);
 
 	// update constraint status
 	ConstraintStatus status = (holds) ? CT_ACTIVE : CT_FAILED;

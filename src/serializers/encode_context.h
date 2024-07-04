@@ -47,12 +47,9 @@ typedef struct {
 	uint64_t keys_processed;                       // Count the number of procssed graph keys.
 	GraphEncodeHeader header;                      // Header replied for each vkey
 	uint64_t vkey_entity_count;                    // Number of entities in a single virtual key.
-	NodeID multiple_edges_src_id;                  // The current edges array sourc node id.
-	NodeID multiple_edges_dest_id;                 // The current edges array destination node id.
-	Delta_MatrixTupleIter multiple_edges_it;       // Multiple edges iterator, save in the context.
 	uint current_relation_matrix_id;               // Current encoded relationship matrix.
 	DataBlockIterator *datablock_iterator;         // Datablock iterator to be saved in the context.
-	Delta_MatrixTupleIter matrix_tuple_iterator;   // Matrix tuple iterator to be saved in the context.
+	MultiEdgeIterator matrix_tuple_iterator;       // Matrix tuple iterator to be saved in the context.
 } GraphEncodeContext;
 
 // Creates a new graph encoding context.
@@ -105,19 +102,7 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 											 uint current_relation_matrix_id);
 
 // Retrieve stored matrix tuple iterator.
-Delta_MatrixTupleIter *GraphEncodeContext_GetMatrixTupleIterator(GraphEncodeContext *ctx);
-
-// Sets a multiple edges src and dest, for saving the state of multiple edges encoding.
-void GraphEncodeContext_SetMutipleEdges(GraphEncodeContext *ctx, NodeID src, NodeID dest);
-
-// Retrive the multiple edges id, to continue array of multiple edge encoding.
-Delta_MatrixTupleIter * GraphEncodeContext_GetMultipleEdgesIterator(GraphEncodeContext *ctx);
-
-// Retrive the multiple edges array source node.
-NodeID GraphEncodeContext_GetMultipleEdgesSourceNode(const GraphEncodeContext *ctx);
-
-// Retrive the multiple edges array destination node.
-NodeID GraphEncodeContext_GetMultipleEdgesDestinationNode(const GraphEncodeContext *ctx);
+MultiEdgeIterator *GraphEncodeContext_GetMatrixTupleIterator(GraphEncodeContext *ctx);
 
 // Returns if the the number of processed keys is equal to the total number of graph keys.
 bool GraphEncodeContext_Finished(const GraphEncodeContext *ctx);

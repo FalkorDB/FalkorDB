@@ -106,31 +106,18 @@ void _Graph_GetEdgesConnectingNodes
 	ASSERT(dest < _Graph_NodeCap(g));
 
 	// relation map, maps (src, dest, r) to edge IDs.
-	GrB_Index      edge_id;
-	Delta_Matrix   R    = Graph_GetRelationMatrix(g, r, false);
-	GrB_Info       res  = Delta_Matrix_extractElement_UINT64(&edge_id, R, src, dest);
+	Graph_GetRelationMatrix(g, r, false);
+	Graph_GetMultiEdgeRelationMatrix(g, r);
+	Edge e = {.src_id = src, .dest_id = dest, .relationID = r};
+	GrB_Index edge_id;
+	MultiEdgeIterator it = {0};
+	MultiEdgeIterator_AttachSourceDest(&it, g->relations + r, src, dest);
 
-	// no entry at [dest, src], src is not connected to dest with relation R
-	if(res == GrB_NO_VALUE) return;
-
-	if(SINGLE_EDGE(edge_id)) {
-		Edge e = {.src_id = src, .dest_id = dest, .relationID = r, .id = edge_id, .attributes = DataBlock_GetItem(g->edges, edge_id)};
+	while(MultiEdgeIterator_next(&it, NULL, NULL, &edge_id)){
+		e.id          =  edge_id;
+		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
+		ASSERT(e.attributes);
 		array_append(*edges, e);
-	} else {
-		// multi edge
-		GrB_Info info;
-		Edge         e   = {.src_id = src, .dest_id = dest, .relationID = r};
-		Delta_Matrix M = Graph_GetMultiEdgeRelationMatrix(g, r);
-
-		Delta_MatrixTupleIter it = {0};
-		Delta_MatrixTupleIter_AttachRange(&it, M, CLEAR_MSB(edge_id), CLEAR_MSB(edge_id));
-
-		while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
-			e.id          =  edge_id;
-			e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
-			ASSERT(e.attributes);
-			array_append(*edges, e);
-		}
 	}
 }
 
@@ -376,7 +363,7 @@ Graph *Graph_New
 	g->nodes     = DataBlock_New(node_cap, node_cap, sizeof(AttributeSet), cb);
 	g->edges     = DataBlock_New(edge_cap, edge_cap, sizeof(AttributeSet), cb);
 	g->labels    = array_new(Delta_Matrix, GRAPH_DEFAULT_LABEL_CAP);
-	g->relations = array_new(RelationMatrix, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	g->relations = array_new(MultiEdgeMatrix, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 
 	GrB_Info info;
 	UNUSED(info);
@@ -681,36 +668,20 @@ void Graph_FormConnection
 
 	GrB_Info info;
 	UNUSED(info);
-	Delta_Matrix M    = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix E    = Graph_GetMultiEdgeRelationMatrix(g, r);
+	// sync matrices
+	Graph_GetRelationMatrix(g, r, false);
+	Graph_GetMultiEdgeRelationMatrix(g, r);
+
 	Delta_Matrix adj  = Graph_GetAdjacencyMatrix(g, false);
 
 	// rows represent source nodes, columns represent destination nodes
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
 	ASSERT(info == GrB_SUCCESS);
 
+	MultiEdgeMatrix_FormConnection(g->relations + r, src, dest, edge_id);
+
 	// an edge of type r has just been created, update statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
-
-	GrB_Index current_edge;
-	info = Delta_Matrix_extractElement_UINT64(&current_edge, M, src, dest);
-	if(info == GrB_NO_VALUE) {
-		info = Delta_Matrix_setElement_UINT64(M, edge_id, src, dest);
-		ASSERT(info == GrB_SUCCESS);
-	} else if(SINGLE_EDGE(current_edge)) {
-		GrB_Index meid = array_len(g->relations[r].freelist) > 0 
-			? array_pop(g->relations[r].freelist) 
-			: g->relations[r].row_id++;
-		info = Delta_Matrix_setElement_UINT64(M, SET_MSB(meid), src, dest);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(E, meid, current_edge);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_Matrix_setElement_BOOL(E, meid, edge_id);
-		ASSERT(info == GrB_SUCCESS);
-	} else {
-		info = Delta_Matrix_setElement_BOOL(E, CLEAR_MSB(current_edge), edge_id);
-		ASSERT(info == GrB_SUCCESS);
-	}
 }
 
 void Graph_CreateEdge
@@ -757,42 +728,24 @@ void _GetOutgoingNodeEdges
 	ASSERT(edgeType != GRAPH_NO_RELATION && edgeType != GRAPH_UNKNOWN_RELATION);
 
 	GrB_Info info;
-	Delta_MatrixTupleIter   it       =  {0};
-	Delta_Matrix            M        =  NULL;
+	MultiEdgeIterator       it       =  {0};
 	NodeID                  src_id   =  ENTITY_GET_ID(n);
 	NodeID                  dest_id  =  INVALID_ENTITY_ID;
 	EdgeID                  edge_id  =  INVALID_ENTITY_ID;
 	UNUSED(info);
 
-	M = Graph_GetRelationMatrix(g, edgeType, false);
+	Graph_GetRelationMatrix(g, edgeType, false);
+	Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 
-	info = Delta_MatrixTupleIter_AttachRange(&it, M, src_id, src_id);
-	ASSERT(info == GrB_SUCCESS);
-
-	Delta_Matrix me = Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 	Edge e = {.src_id = src_id, .relationID = edgeType};
-	while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, &dest_id, &edge_id) == GrB_SUCCESS) {
-		e.dest_id = dest_id;
-		if(SINGLE_EDGE(edge_id)) {
-			e.id          =  edge_id;
-			e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
-			ASSERT(e.attributes);
-			array_append(*edges, e);
-		} else {
-			GrB_Index me_id = CLEAR_MSB(edge_id);
-			Delta_MatrixTupleIter me_it;
-			Delta_MatrixTupleIter_AttachRange(&me_it, me, me_id, me_id);
-
-			while(Delta_MatrixTupleIter_next_BOOL(&me_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
-				e.id          =  edge_id;
-				e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
-				ASSERT(e.attributes);
-				array_append(*edges, e);
-			}
-		}
+	MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, src_id, src_id, false);
+	while(MultiEdgeIterator_next(&it, NULL, &dest_id, &edge_id)) {
+		e.dest_id     =  dest_id;
+		e.id          =  edge_id;
+		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
+		ASSERT(e.attributes);
+		array_append(*edges, e);
 	}
-	info = Delta_MatrixTupleIter_detach(&it);
-	ASSERT(info == GrB_SUCCESS);
 }
 
 void _GetIncomingNodeEdges
@@ -809,47 +762,25 @@ void _GetIncomingNodeEdges
 	ASSERT(edgeType != GRAPH_NO_RELATION && edgeType != GRAPH_UNKNOWN_RELATION);
 
 	GrB_Info info;
-	Delta_MatrixTupleIter   it       =  {0};
-	Delta_Matrix            M        =  NULL;
-	Delta_Matrix            TM       =  NULL;
+	MultiEdgeIterator       it       =  {0};
 	NodeID                  src_id   =  INVALID_ENTITY_ID;
 	NodeID                  dest_id  =  ENTITY_GET_ID(n);
 	EdgeID                  edge_id  =  INVALID_ENTITY_ID;
 	UNUSED(info);
 
-	M = Graph_GetRelationMatrix(g, edgeType, false);
-	TM = Graph_GetRelationMatrix(g, edgeType, true);
+	Graph_GetRelationMatrix(g, edgeType, false);
+	Graph_GetRelationMatrix(g, edgeType, true);
+	Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 
-	info = Delta_MatrixTupleIter_AttachRange(&it, TM, dest_id, dest_id);
-	ASSERT(info == GrB_SUCCESS);
-	Delta_Matrix me = Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 	Edge e = {.dest_id = dest_id, .relationID = edgeType};
-	while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &src_id, NULL) == GrB_SUCCESS) {
-		e.src_id = src_id;
-		info = Delta_Matrix_extractElement_UINT64(&edge_id, M, src_id, dest_id);
-		ASSERT(info == GrB_SUCCESS);
-		if(SINGLE_EDGE(edge_id)) {
-			if(dir == GRAPH_EDGE_DIR_BOTH && src_id == dest_id) continue;
-			e.id          =  edge_id;
-			e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
-			ASSERT(e.attributes);
-			array_append(*edges, e);
-		} else {
-			GrB_Index me_id = CLEAR_MSB(edge_id);
-			Delta_MatrixTupleIter me_it;
-			Delta_MatrixTupleIter_AttachRange(&me_it, me, me_id, me_id);
-
-			while(Delta_MatrixTupleIter_next_BOOL(&me_it, NULL, &edge_id, NULL) == GrB_SUCCESS) {
-				if(dir == GRAPH_EDGE_DIR_BOTH && src_id == dest_id) continue;
-				e.id          =  edge_id;
-				e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
-				ASSERT(e.attributes);
-				array_append(*edges, e);
-			}
-		}
+	MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, dest_id, dest_id, true);
+	while(MultiEdgeIterator_next(&it, &src_id, NULL, &edge_id)) {
+		e.src_id      =  src_id;
+		e.id          =  edge_id;
+		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
+		ASSERT(e.attributes);
+		array_append(*edges, e);
 	}
-	info = Delta_MatrixTupleIter_detach(&it);
-	ASSERT(info == GrB_SUCCESS);
 }
 
 // retrieves all either incoming or outgoing edges
@@ -914,11 +845,6 @@ uint64_t Graph_GetNodeDegree
 	NodeID                 destID     = INVALID_ENTITY_ID;
 	EdgeID                 edgeID     = INVALID_ENTITY_ID;
 	uint64_t               edge_count = 0;
-	Delta_Matrix           M          = NULL;
-	Delta_Matrix           TM         = NULL;
-	Delta_Matrix           ME         = NULL;
-	Delta_MatrixTupleIter  it         = {0};
-	Delta_MatrixTupleIter  me_it      = {0};
 
 	if(edgeType == GRAPH_UNKNOWN_RELATION) {
 		return 0;  // no edges
@@ -950,30 +876,19 @@ uint64_t Graph_GetNodeDegree
 		// outgoing edges
 		//----------------------------------------------------------------------
 
-		M = Graph_GetRelationMatrix(g, edgeType, false);
-		ME  = Graph_GetMultiEdgeRelationMatrix(g, edgeType);
+		Graph_GetRelationMatrix(g, edgeType, false);
+		Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 		
 		if(outgoing) {
+			MultiEdgeIterator it = {0};
 			// construct an iterator to traverse over the source node row,
 			// containing all outgoing edges
-			Delta_MatrixTupleIter_AttachRange(&it, M, srcID, srcID);
+			MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, srcID, srcID, false);
+
 			// scan row
-			while(Delta_MatrixTupleIter_next_UINT64(&it, NULL, NULL, &edgeID)
-					== GrB_SUCCESS) {
-				// check for edge type single/multi
-				if(SINGLE_EDGE(edgeID)) {
-					edge_count++;
-				} else {
-					EdgeID me_id = CLEAR_MSB(edgeID);
-					Delta_MatrixTupleIter me_it;
-					Delta_MatrixTupleIter_AttachRange(&me_it, ME, me_id, me_id);
-					while(Delta_MatrixTupleIter_next_BOOL(&me_it, NULL, NULL, NULL) == GrB_SUCCESS) {
-						edge_count++;
-					}
-					Delta_MatrixTupleIter_detach(&me_it);
-				}
+			while(MultiEdgeIterator_next(&it, NULL, NULL, &edgeID)) {
+				edge_count++;
 			}
-			Delta_MatrixTupleIter_detach(&it);
 		}
 
 		//----------------------------------------------------------------------
@@ -981,29 +896,16 @@ uint64_t Graph_GetNodeDegree
 		//----------------------------------------------------------------------
 
 		if(incoming) {
-			TM = Graph_GetRelationMatrix(g, edgeType, true);
+			Graph_GetRelationMatrix(g, edgeType, true);
+			MultiEdgeIterator it = {0};
 			// construct an iterator to traverse over the source node row,
 			// containing all incoming edges
-			Delta_MatrixTupleIter_AttachRange(&it, TM, srcID, srcID);
+			MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, srcID, srcID, true);
+
 			// scan row
-			while(Delta_MatrixTupleIter_next_BOOL(&it, NULL, &destID, NULL)
-					== GrB_SUCCESS) {
-				// for every incoming edge, binary search to get the actual edge ID
-				Delta_Matrix_extractElement_UINT64(&edgeID, M, destID, srcID);
-				// check for edge type single/multi
-				if(SINGLE_EDGE(edgeID)) {
-					edge_count++;
-				} else {
-					EdgeID me_id = CLEAR_MSB(edgeID);
-					Delta_MatrixTupleIter me_it;
-					Delta_MatrixTupleIter_AttachRange(&me_it, ME, me_id, me_id);
-					while(Delta_MatrixTupleIter_next_BOOL(&me_it, NULL, NULL, NULL) == GrB_SUCCESS) {
-						edge_count++;
-					}
-					Delta_MatrixTupleIter_detach(&me_it);
-				}
+			while(MultiEdgeIterator_next(&it, NULL, NULL, &edgeID)) {
+				edge_count++;
 			}
-			Delta_MatrixTupleIter_detach(&it);
 		}
 	}
 
@@ -1048,137 +950,6 @@ uint Graph_GetNodeLabels
 	return i;
 }
 
-// removes edges from Graph and updates graph relevant matrices
-void Graph_DeleteEdges
-(
-	Graph *g,
-	Edge *edges,
-	uint64_t n
-) {
-	ASSERT(g != NULL);
-	ASSERT(n > 0);
-	ASSERT(edges != NULL);
-
-	GrB_Info       info;
-	Delta_Matrix   M;
-	Delta_Matrix   E;
-
-	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-
-	// delete edges without considering multi edge state changes
-	for (uint i = 0; i < n; i++) {
-		Edge       *e         =  edges + i;
-		int         r         =  Edge_GetRelationID(e);
-		NodeID      src_id    =  Edge_GetSrcNodeID(e);
-		NodeID      dest_id   =  Edge_GetDestNodeID(e);
-		EdgeID      edge_id   =  ENTITY_GET_ID(e);
-
-		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
-
-		// an edge of type r has just been deleted, update statistics
-		GraphStatistics_DecEdgeCount(&g->stats, r, 1);
-
-		M = Graph_GetRelationMatrix(g, r, false);
-
-		GrB_Index me_id;
-		info = Delta_Matrix_extractElement_UINT64(&me_id, M, src_id, dest_id);
-		ASSERT(info == GrB_SUCCESS);
-
-		if(SINGLE_EDGE(me_id)) {
-			info = Delta_Matrix_removeElement(M, src_id, dest_id);
-			ASSERT(info == GrB_SUCCESS);
-			ASSERT(me_id == edge_id);
-
-			// see if source is connected to destination with additional edges
-			bool connected = false;
-			int relationCount = Graph_RelationTypeCount(g);
-			for(int j = 0; j < relationCount; j++) {
-				if(j == r) continue;
-				Delta_Matrix r = Graph_GetRelationMatrix(g, j, false);
-				info = Delta_Matrix_extractElement_BOOL(NULL, r, src_id, dest_id);
-				if(info == GrB_SUCCESS) {
-					connected = true;
-					break;
-				}
-			}
-
-			// there are no additional edges connecting source to destination
-			// remove edge from THE adjacency matrix
-			if(!connected) {
-				Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
-				info = Delta_Matrix_removeElement(adj, src_id, dest_id);
-				ASSERT(info == GrB_SUCCESS);
-			}
-		} else {
-			E  = Graph_GetMultiEdgeRelationMatrix(g, r);
-			me_id = CLEAR_MSB(me_id);
-			info = Delta_Matrix_removeElement(E, me_id, edge_id);
-			ASSERT(info == GrB_SUCCESS);
-		}
-
-		// free and remove edges from datablock.
-		DataBlock_DeleteItem(g->edges, edge_id);
-	}
-
-	// check if multi edge can be transformed to single edge or deleted completely
-	for (uint i = 0; i < n; i++) {
-		Edge       *e         =  edges + i;
-		int         r         =  Edge_GetRelationID(e);
-		NodeID      src_id    =  Edge_GetSrcNodeID(e);
-		NodeID      dest_id   =  Edge_GetDestNodeID(e);
-		EdgeID      edge_id   =  ENTITY_GET_ID(e);
-
-		M = Graph_GetRelationMatrix(g, r, false);
-
-		GrB_Index id;
-		info = Delta_Matrix_extractElement_UINT64(&id, M, src_id, dest_id);
-		if(info != GrB_SUCCESS || SINGLE_EDGE(id)) continue;
-
-		E  = Graph_GetMultiEdgeRelationMatrix(g, r);
-		id = CLEAR_MSB(id);
-		Delta_MatrixTupleIter it = {0};
-		Delta_MatrixTupleIter_AttachRange(&it, E, id, id);
-		GrB_Index last_edge_id;
-		uint count = 0;
-		while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, &last_edge_id, NULL) == GrB_SUCCESS) {
-			count++;
-			if(count == 2) break;
-		}
-
-		if(count == 0) {
-			info = Delta_Matrix_removeElement(M, src_id, dest_id);
-			ASSERT(info == GrB_SUCCESS);
-
-			// see if source is connected to destination with additional edges
-			bool connected = false;
-			int relationCount = Graph_RelationTypeCount(g);
-			for(int j = 0; j < relationCount; j++) {
-				if(j == r) continue;
-				Delta_Matrix r = Graph_GetRelationMatrix(g, j, false);
-				info = Delta_Matrix_extractElement_BOOL(NULL, r, src_id, dest_id);
-				if(info == GrB_SUCCESS) {
-					connected = true;
-					break;
-				}
-			}
-
-			// there are no additional edges connecting source to destination
-			// remove edge from THE adjacency matrix
-			if(!connected) {
-				Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
-				info = Delta_Matrix_removeElement(adj, src_id, dest_id);
-				ASSERT(info == GrB_SUCCESS);
-			}
-		} else if(count == 1) {
-			Delta_Matrix_removeElement(E, id, last_edge_id);
-			Delta_Matrix_setElement_UINT64(M, last_edge_id, src_id, dest_id);
-			array_append(g->relations[r].freelist, id);
-		}
-	}
-
-	Graph_SetMatrixPolicy(g, policy);
-}
-
 inline bool Graph_EntityIsDeleted
 (
 	const GraphEntity *e
@@ -1197,10 +968,7 @@ static void _Graph_FreeRelationMatrices
 ) {
 	uint relationCount = Graph_RelationTypeCount(g);
 	for(uint i = 0; i < relationCount; i++) {
-		RelationMatrix *r = g->relations + i;
-		Delta_Matrix_free(&r->R);
-		Delta_Matrix_free(&r->E);
-		array_free(r->freelist);
+		MultiEdgeMatrix_free(g->relations + i);
 	}
 }
 
@@ -1258,14 +1026,11 @@ RelationID Graph_AddRelationType
 ) {
 	ASSERT(g);
 
-	RelationMatrix r;
+	MultiEdgeMatrix r;
 	size_t n = Graph_RequiredMatrixDim(g);
 	size_t edge_cap = g->edges->itemCap;
 
-	Delta_Matrix_new(&r.R, GrB_UINT64, n, n, true);
-	Delta_Matrix_new(&r.E, GrB_BOOL, edge_cap, edge_cap, false);
-	r.row_id = 0;
-	r.freelist = array_new(uint64_t, 0);
+	MultiEdgeMatrix_init(&r, n, n, edge_cap, edge_cap);
 
 	array_append(g->relations, r);
 	// adding a new relationship type, update the stats structures to support it
@@ -1288,9 +1053,7 @@ void Graph_RemoveRelation
 	ASSERT(info == GrB_SUCCESS);
 	ASSERT(nvals == 0);
 	#endif
-	Delta_Matrix_free(&g->relations[relation_id].R);
-	Delta_Matrix_free(&g->relations[relation_id].E);
-	array_free(g->relations[relation_id].freelist);
+	MultiEdgeMatrix_free(g->relations + relation_id);
 	g->relations = array_del(g->relations, relation_id);
 }
 
