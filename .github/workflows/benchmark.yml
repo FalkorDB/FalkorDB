@@ -146,10 +146,41 @@ jobs:
           path: tests/benchmarks/compare/${{ github.head_ref }}
 
       - name: Download master artifact
-        uses: actions/download-artifact@v4
+        uses: actions/github-script@v7
         with:
-          name: master-benchmark-results
-          path: tests/benchmarks/compare/master
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              headers: { 'Accept': 'application/vnd.github.json' },
+              name: 'master-benchmark-results',
+              per_page: 1 // Gets the latest artifact
+            })
+              
+            const download_url = artifacts.data.artifacts[0].archive_download_url
+              
+            const download_res = await github.rest.actions.downloadArtifact({
+              owner: "FalkorDB",
+              repo: "FalkorDB",
+              artifact_id: artifacts.data.artifacts[0].id,
+              archive_format: "zip",
+            })
+              
+            function toBuffer(arrayBuffer) {
+              const buffer = Buffer.alloc(arrayBuffer.byteLength);
+              const view = new Uint8Array(arrayBuffer);
+              for (let i = 0; i < buffer.length; ++i) {
+                buffer[i] = view[i];
+              }
+              return buffer;
+            }
+              
+            require('fs').writeFileSync(require('path').resolve("${{ github.workspace }}", "master-benchmark-results.zip"), toBuffer(download_res.data))
+        continue-on-error: true
+
+      - name: Unzip master artifact
+        run: unzip master-benchmark-results.zip -d tests/benchmarks/compare/master
         continue-on-error: true
 
       - name: Install dependencies
@@ -191,8 +222,8 @@ jobs:
             }
             
             await github.rest.pulls.update({
-              owner: 'FalkorDB',
-              repo: 'FalkorDB',
-              pull_number: 711,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
               body: replaceBenchmarkSection(existing_pull.data.body, require('fs').readFileSync('tests/benchmarks/compare.md', 'utf-8'))
             })
