@@ -1,0 +1,160 @@
+{
+ "ResultFormatVersion": "0.0.1",
+ "Metadata": "",
+ "Clients": 32,
+ "MaxRps": 0,
+ "RandomSeed": 12345,
+ "BenchmarkConfiguredCommandsLimit": 10000,
+ "IssuedCommands": 10000,
+ "BenchmarkFullyRun": true,
+ "TestDescription": "",
+ "DBSpecificConfigs": {
+  "FalkorDBVersion": 21210
+ },
+ "StartTime": 1720085915391,
+ "EndTime": 1720086030391,
+ "DurationMillis": 115000,
+ "Totals": {
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id: $Id1})-[rel:IS_CONNECTED]-\u003e(n2:Node {external_id: $Id2}) DELETE rel": {
+   "Errors": 0,
+   "IssuedQueries": 1006,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id:$Id1}) MATCH (n2:Node {external_id: $Id2}) MERGE(n1)-[rel:IS_CONNECTED]-\u003e(n2)": {
+   "Errors": 0,
+   "IssuedQueries": 2511,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 2511,
+   "RelationshipsDeleted": 0
+  },
+  "CYPHER Id1=__rand_int__ MATCH (n)-[:IS_CONNECTED]-\u003e(z) WHERE ID(n) = $Id1 RETURN ID(n), count(z)": {
+   "Errors": 0,
+   "IssuedQueries": 6483,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "Total": {
+   "Errors": 0,
+   "IssuedQueries": 10000,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 2511,
+   "RelationshipsDeleted": 0
+  }
+ },
+ "OverallQueryRates": {
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id: $Id1})-[rel:IS_CONNECTED]-\u003e(n2:Node {external_id: $Id2}) DELETE rel": 8.747821744613876,
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id:$Id1}) MATCH (n2:Node {external_id: $Id2}) MERGE(n1)-[rel:IS_CONNECTED]-\u003e(n2)": 21.834771770104815,
+  "CYPHER Id1=__rand_int__ MATCH (n)-[:IS_CONNECTED]-\u003e(z) WHERE ID(n) = $Id1 RETURN ID(n), count(z)": 56.373885059971926,
+  "Total": 86.95647857469062
+ },
+ "OverallClientLatencies": {
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id: $Id1})-[rel:IS_CONNECTED]-\u003e(n2:Node {external_id: $Id2}) DELETE rel": {
+   "avg": 948.9326550695826,
+   "q0": 0,
+   "q100": 1124.095,
+   "q50": 986.175,
+   "q95": 1070.911,
+   "q99": 1093.887,
+   "q999": 1110.719
+  },
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id:$Id1}) MATCH (n2:Node {external_id: $Id2}) MERGE(n1)-[rel:IS_CONNECTED]-\u003e(n2)": {
+   "avg": 968.1698144165671,
+   "q0": 0,
+   "q100": 1129.471,
+   "q50": 1006.271,
+   "q95": 1087.551,
+   "q99": 1108.607,
+   "q999": 1127.615
+  },
+  "CYPHER Id1=__rand_int__ MATCH (n)-[:IS_CONNECTED]-\u003e(z) WHERE ID(n) = $Id1 RETURN ID(n), count(z)": {
+   "avg": 0.2546321147616844,
+   "q0": 0,
+   "q100": 1.72,
+   "q50": 0.205,
+   "q95": 0.541,
+   "q99": 0.772,
+   "q999": 0.951
+  },
+  "Total": {
+   "avg": 338.7351435,
+   "q0": 0,
+   "q100": 1129.471,
+   "q50": 0.303,
+   "q95": 1057.023,
+   "q99": 1096.319,
+   "q999": 1124.031
+  }
+ },
+ "OverallGraphInternalLatencies": {
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id: $Id1})-[rel:IS_CONNECTED]-\u003e(n2:Node {external_id: $Id2}) DELETE rel": {
+   "avg": 18.382115308151093,
+   "q0": 0,
+   "q100": 20.689,
+   "q50": 18.322,
+   "q95": 19.064,
+   "q99": 19.689,
+   "q999": 20.642
+  },
+  "CYPHER Id1=__rand_int__ Id2=__rand_int__ MATCH (n1:Node {external_id:$Id1}) MATCH (n2:Node {external_id: $Id2}) MERGE(n1)-[rel:IS_CONNECTED]-\u003e(n2)": {
+   "avg": 36.82044245320589,
+   "q0": 0,
+   "q100": 41.847,
+   "q50": 36.715,
+   "q95": 38.123,
+   "q99": 38.927,
+   "q999": 39.703
+  },
+  "CYPHER Id1=__rand_int__ MATCH (n)-[:IS_CONNECTED]-\u003e(z) WHERE ID(n) = $Id1 RETURN ID(n), count(z)": {
+   "avg": 0.12785407990128028,
+   "q0": 0,
+   "q100": 1.054,
+   "q50": 0.096,
+   "q95": 0.355,
+   "q99": 0.583,
+   "q999": 0.666
+  },
+  "Total": {
+   "avg": 11.1777417,
+   "q0": 0,
+   "q100": 41.847,
+   "q50": 0.134,
+   "q95": 37.321,
+   "q99": 38.267,
+   "q999": 39.297
+  }
+ },
+ "OverallRelativeInternalExternalLatencyDiff": {
+  "avg": 30.30443470526788,
+  "q100": 26.990489162902954,
+  "q50": 2.261194029850746,
+  "q95": 28.3224726025562,
+  "q99": 28.649201662006426,
+  "q999": 28.603481181769602
+ },
+ "OverallAbsoluteInternalExternalLatencyDiff": {
+  "avg": 327.5574018,
+  "q0": 0,
+  "q100": 1087.624,
+  "q50": 0.16899999999999998,
+  "q95": 1019.7019999999999,
+  "q99": 1058.052,
+  "q999": 1084.734
+ },
+ "ClientRunTimeStats": null,
+ "ServerRunTimeStats": null
+}

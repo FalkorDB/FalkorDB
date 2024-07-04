@@ -1,0 +1,131 @@
+{
+ "ResultFormatVersion": "0.0.1",
+ "Metadata": "",
+ "Clients": 32,
+ "MaxRps": 0,
+ "RandomSeed": 12345,
+ "BenchmarkConfiguredCommandsLimit": 1000000,
+ "IssuedCommands": 1000000,
+ "BenchmarkFullyRun": true,
+ "TestDescription": "",
+ "DBSpecificConfigs": {
+  "FalkorDBVersion": 21210
+ },
+ "StartTime": 1720086516514,
+ "EndTime": 1720086536515,
+ "DurationMillis": 20000,
+ "Totals": {
+  "MATCH ()-[e:R]-\u003e() RETURN count(e)": {
+   "Errors": 0,
+   "IssuedQueries": 499291,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "MATCH (n:N) RETURN count(n)": {
+   "Errors": 0,
+   "IssuedQueries": 500709,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "Total": {
+   "Errors": 0,
+   "IssuedQueries": 1000000,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  }
+ },
+ "OverallQueryRates": {
+  "MATCH ()-[e:R]-\u003e() RETURN count(e)": 24963.855011269254,
+  "MATCH (n:N) RETURN count(n)": 25034.753037482384,
+  "Total": 49998.60804875164
+ },
+ "OverallClientLatencies": {
+  "MATCH ()-[e:R]-\u003e() RETURN count(e)": {
+   "avg": 0.5292098715979259,
+   "q0": 0,
+   "q100": 14.319,
+   "q50": 0.465,
+   "q95": 0.963,
+   "q99": 1.204,
+   "q999": 1.881
+  },
+  "MATCH (n:N) RETURN count(n)": {
+   "avg": 0.5217930294841914,
+   "q0": 0,
+   "q100": 15.672,
+   "q50": 0.456,
+   "q95": 0.943,
+   "q99": 1.191,
+   "q999": 1.87
+  },
+  "Total": {
+   "avg": 0.525496192,
+   "q0": 0,
+   "q100": 15.672,
+   "q50": 0.461,
+   "q95": 0.953,
+   "q99": 1.197,
+   "q999": 1.874
+  }
+ },
+ "OverallGraphInternalLatencies": {
+  "MATCH ()-[e:R]-\u003e() RETURN count(e)": {
+   "avg": 0.06159841655467453,
+   "q0": 0,
+   "q100": 13.904,
+   "q50": 0.048,
+   "q95": 0.138,
+   "q99": 0.25,
+   "q999": 0.719
+  },
+  "MATCH (n:N) RETURN count(n)": {
+   "avg": 0.05504053851638377,
+   "q0": 0,
+   "q100": 15.096,
+   "q50": 0.043,
+   "q95": 0.126,
+   "q99": 0.227,
+   "q999": 0.715
+  },
+  "Total": {
+   "avg": 0.058314828,
+   "q0": 0,
+   "q100": 15.096,
+   "q50": 0.046,
+   "q95": 0.132,
+   "q99": 0.24,
+   "q999": 0.717
+  }
+ },
+ "OverallRelativeInternalExternalLatencyDiff": {
+  "avg": 9.011364862466884,
+  "q100": 1.0381558028616853,
+  "q50": 10.021739130434783,
+  "q95": 7.219696969696969,
+  "q99": 4.987500000000001,
+  "q999": 2.6136680613668064
+ },
+ "OverallAbsoluteInternalExternalLatencyDiff": {
+  "avg": 0.467181364,
+  "q0": 0,
+  "q100": 0.5760000000000005,
+  "q50": 0.41500000000000004,
+  "q95": 0.821,
+  "q99": 0.9570000000000001,
+  "q999": 1.157
+ },
+ "ClientRunTimeStats": null,
+ "ServerRunTimeStats": null
+}

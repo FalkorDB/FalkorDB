@@ -1,0 +1,102 @@
+{
+ "ResultFormatVersion": "0.0.1",
+ "Metadata": "",
+ "Clients": 32,
+ "MaxRps": 0,
+ "RandomSeed": 12345,
+ "BenchmarkConfiguredCommandsLimit": 1000,
+ "IssuedCommands": 1000,
+ "BenchmarkFullyRun": true,
+ "TestDescription": "",
+ "DBSpecificConfigs": {
+  "FalkorDBVersion": 21210
+ },
+ "StartTime": 1720086030480,
+ "EndTime": 1720086035483,
+ "DurationMillis": 5002,
+ "Totals": {
+  "MATCH (n) WITH n ORDER BY n.v RETURN 1 LIMIT 1": {
+   "Errors": 0,
+   "IssuedQueries": 1000,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "Total": {
+   "Errors": 0,
+   "IssuedQueries": 1000,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  }
+ },
+ "OverallQueryRates": {
+  "MATCH (n) WITH n ORDER BY n.v RETURN 1 LIMIT 1": 199.89446771471472,
+  "Total": 199.89446771471472
+ },
+ "OverallClientLatencies": {
+  "MATCH (n) WITH n ORDER BY n.v RETURN 1 LIMIT 1": {
+   "avg": 58.866611,
+   "q0": 0,
+   "q100": 67.843,
+   "q50": 59.853,
+   "q95": 63.481,
+   "q99": 66.035,
+   "q999": 66.991
+  },
+  "Total": {
+   "avg": 58.866611,
+   "q0": 0,
+   "q100": 67.843,
+   "q50": 59.853,
+   "q95": 63.481,
+   "q99": 66.035,
+   "q999": 66.991
+  }
+ },
+ "OverallGraphInternalLatencies": {
+  "MATCH (n) WITH n ORDER BY n.v RETURN 1 LIMIT 1": {
+   "avg": 14.991948,
+   "q0": 0,
+   "q100": 24.189,
+   "q50": 14.816,
+   "q95": 16.549,
+   "q99": 17.958,
+   "q999": 19.073
+  },
+  "Total": {
+   "avg": 14.991948,
+   "q0": 0,
+   "q100": 24.189,
+   "q50": 14.816,
+   "q95": 16.549,
+   "q99": 17.958,
+   "q999": 19.073
+  }
+ },
+ "OverallRelativeInternalExternalLatencyDiff": {
+  "avg": 3.9265485045705866,
+  "q100": 2.8047046178014803,
+  "q50": 4.039754319654428,
+  "q95": 3.8359417487461482,
+  "q99": 3.6771912239670344,
+  "q999": 3.512347297226446
+ },
+ "OverallAbsoluteInternalExternalLatencyDiff": {
+  "avg": 43.874663,
+  "q0": 0,
+  "q100": 43.654,
+  "q50": 45.037,
+  "q95": 46.932,
+  "q99": 48.077,
+  "q999": 47.918
+ },
+ "ClientRunTimeStats": null,
+ "ServerRunTimeStats": null
+}

@@ -1,0 +1,189 @@
+{
+ "ResultFormatVersion": "0.0.1",
+ "Metadata": "",
+ "Clients": 32,
+ "MaxRps": 0,
+ "RandomSeed": 12345,
+ "BenchmarkConfiguredCommandsLimit": 1000000,
+ "IssuedCommands": 1000000,
+ "BenchmarkFullyRun": true,
+ "TestDescription": "",
+ "DBSpecificConfigs": {
+  "FalkorDBVersion": 21210
+ },
+ "StartTime": 1720086392273,
+ "EndTime": 1720086412273,
+ "DurationMillis": 20000,
+ "Totals": {
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" OR e.connects = \"FG\" RETURN a.name, b.name": {
+   "Errors": 0,
+   "IssuedQueries": 250059,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" RETURN a.name, b.name": {
+   "Errors": 0,
+   "IssuedQueries": 249588,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" RETURN a.name, b.name": {
+   "Errors": 0,
+   "IssuedQueries": 250408,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" RETURN a.name, b.name": {
+   "Errors": 0,
+   "IssuedQueries": 249945,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  },
+  "Total": {
+   "Errors": 0,
+   "IssuedQueries": 1000000,
+   "LabelsAdded": 0,
+   "NodesCreated": 0,
+   "NodesDeleted": 0,
+   "PropertiesSet": 0,
+   "RelationshipsCreated": 0,
+   "RelationshipsDeleted": 0
+  }
+ },
+ "OverallQueryRates": {
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" OR e.connects = \"FG\" RETURN a.name, b.name": 12502.836726174686,
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" RETURN a.name, b.name": 12479.286939532221,
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" RETURN a.name, b.name": 12520.286568081736,
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" RETURN a.name, b.name": 12497.136777815364,
+  "Total": 49999.54701160401
+ },
+ "OverallClientLatencies": {
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" OR e.connects = \"FG\" RETURN a.name, b.name": {
+   "avg": 0.5581975133868406,
+   "q0": 0,
+   "q100": 5.027,
+   "q50": 0.506,
+   "q95": 0.969,
+   "q99": 1.21,
+   "q999": 1.977
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" RETURN a.name, b.name": {
+   "avg": 0.5547983637033832,
+   "q0": 0,
+   "q100": 4.407,
+   "q50": 0.502,
+   "q95": 0.963,
+   "q99": 1.205,
+   "q999": 1.883
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" RETURN a.name, b.name": {
+   "avg": 0.5526924978435194,
+   "q0": 0,
+   "q100": 4.386,
+   "q50": 0.5,
+   "q95": 0.956,
+   "q99": 1.207,
+   "q999": 1.886
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" RETURN a.name, b.name": {
+   "avg": 0.5483534657624678,
+   "q0": 0,
+   "q100": 3.895,
+   "q50": 0.495,
+   "q95": 0.949,
+   "q99": 1.195,
+   "q999": 1.843
+  },
+  "Total": {
+   "avg": 0.5535101560000001,
+   "q0": 0,
+   "q100": 5.027,
+   "q50": 0.501,
+   "q95": 0.959,
+   "q99": 1.205,
+   "q999": 1.89
+  }
+ },
+ "OverallGraphInternalLatencies": {
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" OR e.connects = \"FG\" RETURN a.name, b.name": {
+   "avg": 0.06853932471936623,
+   "q0": 0,
+   "q100": 3.766,
+   "q50": 0.056,
+   "q95": 0.143,
+   "q99": 0.25,
+   "q999": 0.718
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" OR e.connects = \"EF\" RETURN a.name, b.name": {
+   "avg": 0.06613507860954852,
+   "q0": 0,
+   "q100": 3.42,
+   "q50": 0.054,
+   "q95": 0.14,
+   "q99": 0.243,
+   "q999": 0.679
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" OR e.connects = \"DE\" RETURN a.name, b.name": {
+   "avg": 0.06411095891505063,
+   "q0": 0,
+   "q100": 3.512,
+   "q50": 0.052,
+   "q95": 0.137,
+   "q99": 0.241,
+   "q999": 0.726
+  },
+  "MATCH (a)-[e*]-\u003e(b) WHERE e.connects = \"CD\" RETURN a.name, b.name": {
+   "avg": 0.0613028946368201,
+   "q0": 0,
+   "q100": 2.661,
+   "q50": 0.05,
+   "q95": 0.132,
+   "q99": 0.227,
+   "q999": 0.642
+  },
+  "Total": {
+   "avg": 0.065021646,
+   "q0": 0,
+   "q100": 3.766,
+   "q50": 0.053,
+   "q95": 0.138,
+   "q99": 0.24,
+   "q999": 0.695
+  }
+ },
+ "OverallRelativeInternalExternalLatencyDiff": {
+  "avg": 8.51270599947593,
+  "q100": 1.3348380244291025,
+  "q50": 9.452830188679245,
+  "q95": 6.94927536231884,
+  "q99": 5.020833333333334,
+  "q999": 2.7194244604316546
+ },
+ "OverallAbsoluteInternalExternalLatencyDiff": {
+  "avg": 0.4884885100000001,
+  "q0": 0,
+  "q100": 1.2610000000000001,
+  "q50": 0.448,
+  "q95": 0.821,
+  "q99": 0.9650000000000001,
+  "q999": 1.1949999999999998
+ },
+ "ClientRunTimeStats": null,
+ "ServerRunTimeStats": null
+}
