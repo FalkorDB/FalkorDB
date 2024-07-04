@@ -203,10 +203,10 @@ def main():
     verify_and_download_benchmark_tool()
     verify_and_download_graph500()
 
-    benches = glob.glob("*.yml", recursive=False, root_dir=benchmark_group)
+    benches = glob.glob(f"{benchmark_group}/*.yml", recursive=False)
     benches_count = len(benches)
     for idx, bench in enumerate(benches):
-        single_iteration(f"{benchmark_group}/{bench}", idx, benches_count)
+        single_iteration(f"{bench}", idx, benches_count)
 
 
 if __name__ == "__main__":
