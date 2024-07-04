@@ -150,6 +150,7 @@ jobs:
         with:
           name: master-benchmark-results
           path: tests/benchmarks/compare/master
+        continue-on-error: true
 
       - name: Install dependencies
         working-directory: tests/benchmarks
