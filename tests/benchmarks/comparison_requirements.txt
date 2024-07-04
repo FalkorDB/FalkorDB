@@ -1,3 +1,2 @@
 mdformat
 mdformat-gfm
-mdformat-tables
