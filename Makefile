@@ -370,7 +370,7 @@ unit-tests:
 ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
-	# $(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
+	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
 	$(SHOW)BINROOT=$(BINROOT) cargo test --lib -vv
 
 flow-tests: $(TEST_DEPS)
