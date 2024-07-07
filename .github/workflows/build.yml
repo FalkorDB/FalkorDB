@@ -35,7 +35,7 @@ jobs:
           machine_zone: ${{ vars.GCP_ZONE }}
           machine_type: t2a-standard-2
           network: gh-runner
-          runner_label: ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.arm_machine }}
+          runner_label: ${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arm_machine }}
           arm: true
           image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           disk_size: 100
@@ -268,3 +268,24 @@ jobs:
       - name: Fuzz tests
         run: |
           docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+
+  cleanup-runners:
+    needs: [ create-runners, unit-tests, flow-tests, tck-tests, fuzz-tests ]
+    runs-on: ubuntu-latest
+    strategy:
+        matrix:
+            arm_machine:
+              - build
+              - unit-tests
+              - flow-tests
+              - tck-tests
+              - fuzz-tests
+    steps:
+      - id: auth
+        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+
+      - id: get-runner-id
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('${{ github.run_id }}-${{ github.run_number}}-${{ matrix.arm_machine }}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - id: kill-runner
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
