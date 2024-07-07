@@ -41,7 +41,7 @@ jobs:
 
   build:
     needs: create-runners
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || '${{ github.run_id }}-${{ github.run_number }}-build' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || format('{0}-{1}-{2}', github.run_id, github.run_number, 'build')  }}
     container: falkordb/falkordb-build:latest
     services:
       registry:
@@ -162,7 +162,7 @@ jobs:
 
   unit-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || '${{ github.run_id }}-${{ github.run_number }}-unit-tests' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('{0}-{1}-{2}', github.run_id, github.run_number, 'unit-tests') }}
     strategy:
       fail-fast: false
       matrix:
@@ -189,7 +189,7 @@ jobs:
 
   flow-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || '${{ github.run_id }}-${{ github.run_number }}-flow-tests' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('{0}-{1}-{2}', github.run_id, github.run_number, 'flow-tests') }}
     strategy:
       fail-fast: false
       matrix:
@@ -216,7 +216,7 @@ jobs:
 
   tck-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || '${{ github.run_id }}-${{ github.run_number }}-tck-tests' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('{0}-{1}-{2}', github.run_id, github.run_number, 'tck-tests') }}
     strategy:
       fail-fast: false
       matrix:
@@ -243,7 +243,7 @@ jobs:
 
   fuzz-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || '${{ github.run_id }}-${{ github.run_number }}-fuzz-tests' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('{0}-{1}-{2}', github.run_id, github.run_number, 'fuzz-tests') }}
     strategy:
       fail-fast: false
       matrix:
