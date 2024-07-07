@@ -36,6 +36,8 @@ jobs:
           machine_type: t2a-standard-2
           network: gh-runner
           runner_label: ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.arm_machine }}
+          arm: true
+          image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
 
   build:
     needs: create-runners
