@@ -14,15 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test_job:
-    runs-on: ubuntu-latest
-    steps:
-      - name: test-thingy
-        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project '${{ secrets.GCP_PROJECT_ID }}' auth activate-service-account --key-file -
-      - name: it-works-maybe
-        run: gcloud compute instances list
-          
-
   create-runners:
     needs: test_job
     strategy:
@@ -177,7 +168,7 @@ jobs:
     steps:
       - id: auth
         run: |
-          echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+          echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
         run: echo "runner_id=$(gcloud compute instances list --filter="labels=('build-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
@@ -217,7 +208,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: auth
-        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
         run: echo "runner_id=$(gcloud compute instances list --filter="labels=('unit-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
@@ -257,7 +248,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: auth
-        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
         run: echo "runner_id=$(gcloud compute instances list --filter="labels=('flow-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
@@ -297,7 +288,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: auth
-        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
         run: echo "runner_id=$(gcloud compute instances list --filter="labels=('tck-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
@@ -337,7 +328,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: auth
-        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
         run: echo "runner_id=$(gcloud compute instances list --filter="labels=('fuzz-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
