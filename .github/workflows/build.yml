@@ -161,6 +161,19 @@ jobs:
           path: /tmp/falkordb-${{ env.ARCH_SUFFIX }}.tar
           if-no-files-found: error
 
+  cleanup-build:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+
+      - id: get-runner-id
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('build-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - id: kill-runner
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
+
   unit-tests:
     needs: build
     runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('unit-tests-{0}-{1}', github.run_id, github.run_number) }}
@@ -186,7 +199,20 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          docker run -it --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+
+  cleanup-unit-tests:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+
+      - id: get-runner-id
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('unit-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - id: kill-runner
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
 
   flow-tests:
     needs: build
@@ -213,7 +239,20 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run -it --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+
+  cleanup-flow-tests:
+    needs: flow-tests
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+
+      - id: get-runner-id
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('flow-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - id: kill-runner
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
 
   tck-tests:
     needs: build
@@ -240,7 +279,20 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          docker run -it --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+
+  cleanup-tck-tests:
+    needs: tck-tests
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
+
+      - id: get-runner-id
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('tck-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - id: kill-runner
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
 
   fuzz-tests:
     needs: build
@@ -267,25 +319,17 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+          docker run -it --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
 
-  cleanup-runners:
-    needs: [ create-runners, unit-tests, flow-tests, tck-tests, fuzz-tests ]
+  cleanup-fuzz-tests:
+    needs: fuzz-tests
     runs-on: ubuntu-latest
-    strategy:
-        matrix:
-            arm_machine:
-              - build
-              - unit-tests
-              - flow-tests
-              - tck-tests
-              - fuzz-tests
     steps:
       - id: auth
         run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('${{ matrix.arm_machine }}-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('fuzz-tests-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - id: kill-runner
         run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
