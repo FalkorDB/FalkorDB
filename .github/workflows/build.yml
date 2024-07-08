@@ -165,15 +165,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - id: auth
-        run: |
-          echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
-
-      - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter=labels=build-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
-
-      - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: build-${{ github.run_id }}-${{ github.run_number }}
 
   unit-tests:
     needs: build
@@ -206,14 +203,12 @@ jobs:
     needs: unit-tests
     runs-on: ubuntu-latest
     steps:
-      - id: auth
-        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
-
-      - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter=labels=unit-tests-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
-
-      - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: unit-tests-${{ github.run_id }}-${{ github.run_number }}
 
   flow-tests:
     needs: build
@@ -246,14 +241,12 @@ jobs:
     needs: flow-tests
     runs-on: ubuntu-latest
     steps:
-      - id: auth
-        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
-
-      - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter=labels=flow-tests-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
-
-      - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: flow-tests-${{ github.run_id }}-${{ github.run_number }}
 
   tck-tests:
     needs: build
@@ -286,14 +279,12 @@ jobs:
     needs: tck-tests
     runs-on: ubuntu-latest
     steps:
-      - id: auth
-        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
-
-      - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter=labels=tck-tests-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
-
-      - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: tck-tests-${{ github.run_id }}-${{ github.run_number }}
 
   fuzz-tests:
     needs: build
@@ -326,11 +317,9 @@ jobs:
     needs: fuzz-tests
     runs-on: ubuntu-latest
     steps:
-      - id: auth
-        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project  '${{ secrets.GCP_PROJECT_ID }}' --quiet auth activate-service-account --key-file - &>/dev/null
-
-      - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter=labels=fuzz-tests-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
-
-      - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}
