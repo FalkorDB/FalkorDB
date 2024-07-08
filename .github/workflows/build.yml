@@ -173,7 +173,7 @@ jobs:
         run: echo "runner_id=$(gcloud compute instances list --filter=labels=build-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
 
       - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
 
   unit-tests:
     needs: build
@@ -213,7 +213,7 @@ jobs:
         run: echo "runner_id=$(gcloud compute instances list --filter=labels=build-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
 
       - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
 
   flow-tests:
     needs: build
@@ -253,7 +253,7 @@ jobs:
         run: echo "runner_id=$(gcloud compute instances list --filter=labels=build-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
 
       - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
 
   tck-tests:
     needs: build
@@ -293,7 +293,7 @@ jobs:
         run: echo "runner_id=$(gcloud compute instances list --filter=labels=build-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
 
       - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
 
   fuzz-tests:
     needs: build
@@ -333,4 +333,4 @@ jobs:
         run: echo "runner_id=$(gcloud compute instances list --filter=labels=build-${{github.run_id}}-${{ github.run_number }} | awk '{print $1}' | tail +2)" >> $GITHUB_OUTPUT
 
       - id: kill-runner
-        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
+        run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ vars.GCP_ZONE }} --quiet
