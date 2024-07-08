@@ -371,7 +371,7 @@ ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
-	$(SHOW)BINROOT=$(BINROOT) cargo test --lib -vv
+	$(SHOW)BINROOT=$(BINROOT) cargo test --lib --target-dir $(FalkorDBRS_BINDIR)
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh
@@ -427,11 +427,11 @@ COV_EXCLUDE+=$(foreach D,$(COV_EXCLUDE_DIRS),'$(realpath $(ROOT))/$(D)/*')
 
 coverage:
 	$(SHOW)$(MAKE) build COV=1
-	$(SHOW)$(COVERAGE_RESET)
+	$(SHOW)$(COVERAGE_RESET.llvm)
 	-$(SHOW)$(MAKE) unit-tests COV=1
 	-$(SHOW)$(MAKE) flow-tests COV=1
 	-$(SHOW)$(MAKE) tck-tests COV=1
-	$(SHOW)$(COVERAGE_COLLECT_REPORT)
+	$(SHOW)$(COVERAGE_COLLECT_REPORT.llvm)
 
 .PHONY: coverage
 

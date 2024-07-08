@@ -63,7 +63,9 @@ jobs:
         update-alternatives \
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
-          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
+          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17 \
+          --slave   /usr/bin/llvm-profdata        llvm-profdata        /usr/bin/llvm-profdata-17 \
+          --slave   /usr/bin/llvm-cov             llvm-cov             /usr/bin/llvm-cov-17
         make coverage NPROC=16 CLANG=1
       continue-on-error: true
 
