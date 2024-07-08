@@ -35,14 +35,14 @@ jobs:
           machine_zone: ${{ vars.GCP_ZONE }}
           machine_type: t2a-standard-2
           network: gh-runner
-          runner_label: ${{ github.run_id }}-${{ github.run_number }}-${{ matrix.arm_machine }}
+          runner_label: ${{ matrix.arm_machine }}-${{ github.run_id }}-${{ github.run_number }}
           arm: true
           image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           disk_size: 100
 
   build:
     needs: create-runners
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || format('{0}-{1}-{2}', github.run_id, github.run_number, 'build')  }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || format('build-{0}-{1}', github.run_id, github.run_number)  }}
     container: falkordb/falkordb-build:latest
     services:
       registry:
@@ -285,7 +285,7 @@ jobs:
         run: echo ${{ secrets.GCP_SA_KEY }} | gcloud --project  ${{ secrets.GCP_PROJECT_ID }} --quiet auth activate-service-account --key-file - &>/dev/null
 
       - id: get-runner-id
-        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('${{ github.run_id }}-${{ github.run_number}}-${{ matrix.arm_machine }}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
+        run: echo "runner_id=$(gcloud compute instances list --filter="labels=('${{ matrix.arm_machine }}-${{ github.run_id }}-${{ github.run_number}}')" | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - id: kill-runner
         run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=$machine_zone --quiet
