@@ -3,8 +3,8 @@ ifeq ($(COV),1)
 
 #----------------------------------------------------------------------------------------------
 
-CC_FLAGS.coverage += --coverage
-LD_FLAGS.coverage += --coverage
+CC_FLAGS.coverage += -fprofile-instr-generate -fcoverage-mapping
+LD_FLAGS.coverage += -fprofile-instr-generate -fcoverage-mapping
 
 COV_DIR=$(BINROOT)/cov
 COV_PROFDATA=$(COV_DIR)/cov.profdata
