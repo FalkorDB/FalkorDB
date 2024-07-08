@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: test-thingy
-        run: echo "${{ secrets.GCP_SA_KEY }}" | gcloud --project "${{ secrets.GCP_PROJECT_ID }}" auth activate-service-account --key-file -
+        run: echo '${{ secrets.GCP_SA_KEY }}' | gcloud --project '${{ secrets.GCP_PROJECT_ID }}' auth activate-service-account --key-file -
       - name: it-works-maybe
         run: gcloud compute instances list
           
