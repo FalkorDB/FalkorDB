@@ -199,7 +199,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run -it --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
 
   cleanup-unit-tests:
     needs: unit-tests
@@ -239,7 +239,7 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run -it --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
   cleanup-flow-tests:
     needs: flow-tests
@@ -279,7 +279,7 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run -it --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
 
   cleanup-tck-tests:
     needs: tck-tests
@@ -319,7 +319,7 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          docker run -it --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+          docker run -i --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
 
   cleanup-fuzz-tests:
     needs: fuzz-tests
