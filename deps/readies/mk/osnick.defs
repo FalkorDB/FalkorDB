@@ -1,0 +1,51 @@
+
+OSNICK=$(call cached-shell,OSNICK,$(READIES)/bin/platform --osnick)
+
+ifeq ($(OS.custom),)
+
+OS.centos7=centos:7
+OS.centos8=quay.io/centos/centos:stream8
+OS.centos9=quay.io/centos/centos:stream9
+OS.fedora=fedora:latest
+OS.fedora37=fedora:37
+OS.fedora33=fedora:33
+OS.fedora27=fedora:27
+OS.lunar=ubuntu:lunar
+OS.kinetic=ubuntu:kinetic
+OS.hirsute=ubuntu:hirsute
+OS.focal=ubuntu:focal
+OS.bionic=ubuntu:bionic
+OS.xenial=ubuntu:xenial
+OS.trusty=ubuntu:trusty
+OS.sid=debian:sid
+OS.bookworm=debian:bookworm
+OS.bullseye=debian:bullseye-slim
+OS.buster=debian:buster-slim
+OS.stretch=debian:stretch
+OS.leap=opensuse/leap:latest
+OS.leap15.2=opensuse/leap:15.2
+OS.leap15.3=opensuse/leap:15.3
+OS.tumbleweed=opensuse/tumbleweed
+OS.archlinux=archlinux:latest
+OS.manjaro=manjarolinux/base:latest
+OS.alpine3=alpine:latest
+OS.ol7=oraclelinux:7
+OS.ol8=oraclelinux:8
+OS.ol9=oraclelinux:9
+OS.alma8=almalinux:8
+OS.alma9=almalinux:9
+OS.rocky8=rockylinux:8
+OS.rocky9=rockylinux:9
+OS.rhel9=redhat/ubi9:latest
+OS.jammy=ubuntu:jammy
+OS.amzn2=amazonlinux:2
+OS.amzn2022=amazonlinux:2022
+OS.amzn2023=amazonlinux:2023
+OS.mariner2.0=mcr.microsoft.com/cbl-mariner/base/core:2.0
+
+endif # OS
+
+OS=$(OS.$(OSNICK))
+ifeq ($(OS),)
+$(error Invalid OSNICK. Aborting.)
+endif

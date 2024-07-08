@@ -1,0 +1,127 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
+	cat <<-'END'
+		Install Anaconda (and GCC) via Miniforge 
+
+		[ARGVARS...] getconda [--help|help]
+
+		Argument variables:
+		CONDA_DIR=dir   Install into `dir` (default: /opt/miniforge)
+
+		FULL=1          Install full Anaconda
+		GCC=1           Install GCC and G++
+		PYTHON=1        Enable Python
+
+		POST=0          No post-installation process
+		JUST_POST=1     Perform only post-installation (idempotent)
+
+		NOP=1           Do not execute, just print commands
+		V|VERBOSE=1     Print commands
+		HELP=1          Print help
+
+		Notes:
+		This installs profile.d script. Invoke `bash -l` to activate.
+	END
+	exit 0
+fi
+
+if [[ $FULL == 1 ]]; then
+	CONDA_DIR=${CONDA_DIR:-/opt/anaconda}
+else
+	CONDA_DIR=${CONDA_DIR:-/opt/miniforge}
+fi
+
+if [[ -e $CONDA_DIR && $JUST_POST != 1 ]]; then
+	# eprint "$CONDA_DIR exists. Aboring."
+	echo "$CONDA_DIR exists."
+	exit 0
+fi
+
+OP=""
+[[ $NOP == 1 ]] && OP=echo
+
+# https://www.anaconda.com/products/individual
+# https://docs.anaconda.com/anaconda/install/silent-mode
+# https://conda.io/projects/conda-build/en/latest/resources/compiler-tools.html
+
+# https://github.com/conda-forge/miniforge
+
+# https://docs.conda.io/en/latest/miniconda.html
+
+[[ $NOP != 1 && -n $SUDO ]] && $SUDO echo
+
+if [[ $JUST_POST != 1 ]]; then
+	runn $SUDO $READIES/bin/getget
+	shfile=$(mktemp /tmp/miniforge.XXXXXX)
+	if [[ $FULL == 1 ]]; then
+		ANACONDA_VER=2021.11
+		os=$(uname)
+		arch=$(uname -m)
+		[[ $os == Darwin ]] && os=MacOSX
+		runn wget -O $shfile https://repo.anaconda.com/archive/Anaconda3-${ANACONDA_VER}-${os}-${arch}.sh
+		runn $SUDO bash $shfile -b -p $CONDA_DIR
+		rm $shfile
+	else
+		runn wget -O $shfile https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-$(uname)-$(uname -m).sh
+		runn $SUDO bash $shfile -b -p $CONDA_DIR
+		rm $shfile
+		if [[ $GCC == 1 ]]; then
+			runn $SUDO $CONDA_DIR/bin/conda install -y -c conda-forge gcc gxx
+		fi
+		runn $SUDO $CONDA_DIR/bin/conda install -y -c conda-forge tar make
+	fi
+fi
+# . $CONDA_DIR/bin/activate
+
+if [[ $PYTHON == 1 ]]; then
+	for f in python3 pip3 pydoc3 python3-config; do
+		runn $SUDO ln -sf $CONDA_DIR/bin/$f /usr/local/bin/$f
+	done
+fi
+
+if [[ $GCC == 1 && $NOP != 1 ]]; then
+	cd $CONDA_DIR
+	[[ -d xbin ]] && runn $SUDO rm -rf xbin
+	runn $SUDO mkdir -p xbin
+	cd bin
+	for f in `ls x86_64-conda-linux-gnu-*`; do
+		ff=${f/x86_64-conda-linux-gnu-/}
+		runn $SUDO ln -sf $CONDA_DIR/bin/$f $CONDA_DIR/xbin/$ff
+	done
+	cd $HERE
+fi
+
+if (( $(tar --version | head -1 | grep -i gnu | cut -d" " -f4 | cut -d. -f2) < 32 )); then
+	runn $SUDO ln -sf $CONDA_DIR/bin/tar /usr/local/bin/tar
+fi
+if ! command -v make 2>/dev/null || (( $(make --version | head -1 | grep -i gnu | cut -d" " -f3 | cut -d. -f1) < 4 )); then
+	runn $SUDO ln -sf $CONDA_DIR/bin/make /usr/local/bin/make
+fi
+
+if [[ -n $POST && $POST != 0 ]]; then
+	tmp_profiled=$(mktemp -d)
+	if [[ $FULL == 1 ]]; then
+		cat <<-END > $tmp_profiled/anaconda.sh
+			. $CONDA_DIR/etc/profile.d/conda.sh
+			END
+	else
+		if [[ $GCC == 1 ]]; then
+			cat <<-END > $tmp_profiled/miniforge.sh
+				. $CONDA_DIR/etc/profile.d/conda.sh
+				export PATH=$CONDA_DIR/xbin:$PATH
+				END
+		else
+			cat <<-END > $tmp_profiled/miniforge.sh
+				. $CONDA_DIR/etc/profile.d/conda.sh
+				END
+		fi
+	fi
+	add_to_profile_d $tmp_profiled/miniforge.sh
+	rm -rf $tmp_profiled
+fi

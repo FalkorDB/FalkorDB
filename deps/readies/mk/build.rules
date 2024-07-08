@@ -1,0 +1,24 @@
+
+.PHONY: build clean
+
+ifeq ($(DIAG),1)
+$(info *** DEFAULT_TARGETS=$(DEFAULT_TARGETS))
+$(info *** MK_MAKEFILES=$(MK_MAKEFILES))
+endif
+
+ifneq ($(MK_CUSTOM_BUILD),1)
+
+build: $(DEFAULT_TARGETS) $(MK_MAKEFILES) $(TARGET)
+
+endif
+
+ifneq ($(MK_CUSTOM_CLEAN),1)
+
+clean:
+ifeq ($(ALL),1) 
+	$(SHOW)if [ ! -z "$(MK_CLEAN_ALL_DIRS)" ]; then rm -rf $(sort $(MK_CLEAN_ALL_DIRS)); fi
+else
+	$(SHOW)$(MAKE) clean -C $(MK_CLEAN_DIR)
+endif
+
+endif # MK_CUSTOM_CLEAN

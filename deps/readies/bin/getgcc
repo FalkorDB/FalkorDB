@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import argparse
+
+HERE = os.path.dirname(__file__)
+ROOT = os.path.abspath(os.path.join(HERE, ".."))
+sys.path.insert(0, ROOT)
+import paella
+
+#----------------------------------------------------------------------------------------------
+
+class SystemSetup(paella.Setup):
+    def __init__(self, args):
+        paella.Setup.__init__(self, nop=args.nop, verbose=args.verbose)
+        self.modern = args.modern
+        self.update_libstdcxx = args.update_libstdcxx
+        self.os_ver = self.os_version[0]
+
+    def ubuntu(self):
+        self.install("build-essential")
+        if self.modern:
+            if self.os_ver <= 20 or self.os_ver >= 22 or self.platform.is_arm64():
+                self.run(r'''
+                    echo 'APT::Acquire::Retries "7";' > /etc/apt/apt.conf.d/80-retries
+                    ''', sudo=True)
+                self.add_repo("ppa:ubuntu-toolchain-r/test")
+            if self.os_ver >= 22 or self.platform.is_arm64():
+                gcc_ver = 11
+            else:
+                gcc_ver = 10
+            if self.install(f"gcc-{gcc_ver} g++-{gcc_ver}", output=False, _try=True) != 0:
+                self.install("gcc-9 g++-9", output=False)
+                gcc_ver = 9
+            self.run(f"update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-{gcc_ver} 60 --slave /usr/bin/g++ g++ /usr/bin/g++-{gcc_ver}", sudo=True)
+
+    def debian(self):
+        if self.modern and self.os_ver < 11:
+            eprint("cannot install modern gcc for {}".format(self.osnick))
+            sys.exit(1)
+        self.install("build-essential")
+
+    def redhat_compat(self):
+        self.group_install("'Development Tools'")
+        if not self.modern:
+            return
+        self.run(f"{ROOT}/bin/getepel")
+        if self.os_ver == 9:
+            self.install("gcc-toolset-12")
+            self.install("gcc-toolset-12-libatomic-devel")
+            self.run(f"rm -f {self.profile_d}/gcc-devtoolset-*.sh", sudo=True)
+            self.cp_to_profile_d("/opt/rh/gcc-toolset-12/enable", "gcc-devtoolset-12.sh")
+        elif self.os_ver == 8:
+            if self.dist in ['centos', 'ol']:
+                self.install("gcc-toolset-11-gcc gcc-toolset-11-gcc-c++")
+                self.install("gcc-toolset-11-libatomic-devel")
+                self.run("rm -f {}/gcc-toolset-*.sh".format(self.profile_d), sudo=True)
+                self.cp_to_profile_d("/opt/rh/gcc-toolset-11/enable", "gcc-toolset-11.sh")
+        elif self.os_ver == 7:
+            if self.arch == 'arm64v8':
+                self.install("devtoolset-10")
+                self.install("devtoolset-10-libatomic-devel")
+                self.run(f"rm -f {self.profile_d}/scl-devtoolset-*.sh", sudo=True)
+                self.cp_to_profile_d("/opt/rh/devtoolset-10/enable", "scl-devtoolset-10.sh")
+            else:
+                self.install("devtoolset-11")
+                self.install("devtoolset-11-libatomic-devel")
+                self.run(f"rm -f {self.profile_d}/scl-devtoolset-*.sh", sudo=True)
+                self.cp_to_profile_d("/opt/rh/devtoolset-11/enable", "scl-devtoolset-11.sh")
+                if self.dist != "centos":
+                    return
+                tar = paella.wget(f"https://redismodules.s3.amazonaws.com/gnu/libstdc%2B%2B.so.6.0.25-linux-{self.arch}.tgz",
+                                  dest='libstdcxx.tgz', tempdir=True)
+                dir = os.path.dirname(tar)
+                self.run(f'''
+                    tar -C {dir} -xzf {tar}
+                    mv {dir}/libstdc++.so.6.0.25 /lib64
+                    cd /lib64
+                    ln -sf libstdc++.so.6.0.25 libstdc++.so.6
+                    ''', sudo=True)
+                paella.rm_rf(dir)
+
+    def amzn(self):
+        if not self.modern:
+            return
+        if self.os_ver == 2:
+            self.install("devtoolset-11-gcc devtoolset-11-gcc-c++ devtoolset-11-make")
+            # self.install("devtoolset-11-libatomic-devel")
+            self.run(f"rm -f {self.profile_d}/scl-devtoolset-*.sh", sudo=True)
+            self.cp_to_profile_d("/opt/rh/devtoolset-11/enable", "scl-devtoolset-11.sh")
+
+    def fedora(self):
+        self.group_install("'C Development Tools and Libraries'")
+
+    def archlinux(self):
+        self.install("gcc")
+
+    def alpine(self):
+        self.install("build-base musl-dev gcc g++")
+
+    def macos(self):
+        if self.modern:
+            gcc_ver = 11
+            self.install(f"gcc@{gcc_ver}")
+            gccdir = sh(f"brew --prefix gcc@{gcc_ver}")
+            self.run(f"ln -sf {gccdir}/bin/gcc-{gcc_ver} $HOME/.local/bin/gcc-{gcc_ver}")
+            self.run(f"ln -sf {gccdir}/bin/g++-{gcc_ver} $HOME/.local/bin/g++-{gcc_ver}")
+            self.run(f"ln -sf {gccdir}/bin/cpp-{gcc_ver} $HOME/.local/bin/cpp-{gcc_ver}")
+            self.run(f"cd $HOME/.local/bin; ln -sf gcc-{gcc_ver} gcc")
+            self.run(f"cd $HOME/.local/bin; ln -sf g++-{gcc_ver} g++")
+            self.run(f"cd $HOME/.local/bin; ln -sf cpp-{gcc_ver} cpp")
+            self.run(f"cd $HOME/.local/bin; ln -sf gcc-{gcc_ver} cc")
+            self.run(f"cd $HOME/.local/bin; ln -sf gcc-{gcc_ver} c++")
+        else:
+            if sh('xcode-select -p') == '':
+                fatal("Xcode tools are not installed. Please run xcode-select --install.")
+                # install brew (which will install Xcode command line tools):
+                # self.run("/bin/bash -c '$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)'", sudo=True)
+
+    def mariner(self):
+        self.install("build-essential")
+
+#----------------------------------------------------------------------------------------------
+parser = argparse.ArgumentParser(description='Set up GCC build environemnt.')
+parser.add_argument('--modern', action="store_true", help="Install modern GCC version")
+parser.add_argument('--update-libstdc++', dest="update_libstdcxx", action="store_true", help="If required, update ilbstdc++")
+parser.add_argument('-n', '--nop', action="store_true", help='No operation')
+parser.add_argument('-V', '--verbose', action="store_true", help="Verbose operation")
+
+args = parser.parse_args()
+SystemSetup(args).setup()

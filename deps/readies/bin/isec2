@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [[ -f /sys/hypervisor/uuid ]]; then
+	if [[ `head -c 3 /sys/hypervisor/uuid` == ec2 ]]; then
+		echo yes
+		exit 0
+	fi
+
+elif [[ -r /sys/devices/virtual/dmi/id/product_uuid ]]; then
+	if [[ `head -c 3 /sys/devices/virtual/dmi/id/product_uuid` == EC2 ]]; then
+		echo yes
+		exit 0
+	fi
+
+elif $(curl -s -m 5 http://169.254.169.254/latest/dynamic/instance-identity/document | grep -q availabilityZone); then
+	echo yes
+	exit 0
+fi
+
+echo no
+exit 0

@@ -1,0 +1,17 @@
+
+if (NOT DEFINED MK)
+	set(MK $ENV{MK})
+endif()
+
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _CMAKE_BUILD_TYPE)
+if (_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+	set(DEBUG TRUE)
+else()
+	set(DEBUG FALSE)
+endif()
+
+if (DEFINED $ENV{VERBOSE} AND $ENV{VERBOSE} STREQUAL "1")
+	set(CMK_VERBOSE TRUE)
+else()
+	set(CMK_VERBOSE FALSE)
+endif()

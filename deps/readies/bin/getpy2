@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+
+# Check that Python 2 is installed (by checking for python, python2, and python2.7 commands).
+# If so, verify that python2 and python2.7 commands are present.
+# If Python 2 is not found on the system, try to install it and repeat the abose checks.
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+ROOT=$(cd $HERE/../.. && pwd)
+READIES=$ROOT/readies
+. $READIES/shibumi/defs
+
+#----------------------------------------------------------------------------------------------
+
+if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
+	cat <<-'END'
+		[ARGVARS...] getpy2 [--help|help]
+
+		Argument variables:
+		MYPY=path    Use specific Python interpreter (install pip & requirements)
+		CHECK=1      Only check and report, do not install
+		PIP=0        Avoid installing pip
+		PIP=version  Also install pip of the specified version
+		VENV=1       Install virtualenv
+		VENV=dir     Install virtualenv, create one in `dir`
+		FORCE=1      Install even if present
+		FIX=1        Create /usr/local/bin/python2 symlink (default on macOS)
+		VERBOSE=n    Verbosity level (1: print commands, 2: print results)
+		HELP=1       Print help
+
+	END
+	exit 0
+fi
+
+#----------------------------------------------------------------------------------------------
+
+USER_MYPY="$MYPY"
+
+if [[ -f /etc/os-release ]]; then
+	osid=$(source /etc/os-release; echo "${ID}")
+	osverid=$(source /etc/os-release; echo "${VERSION_ID}")
+	osver="${osid}${osverid}"
+	osveridmajor=$(source /etc/os-release; echo "${VERSION_ID}" | cut -d. -f1)
+fi
+arch=$(uname -m)
+
+# [[ $VERBOSE == 1 ]] && { set -x; PS4='$LINENO: '; }
+V="$VERBOSE"
+[[ -z $PIP ]] && PIP=1
+
+SUDO=
+if [[ $(id -u) != 0 ]]; then
+	if is_command sudo; then
+		SUDO=sudo
+	fi
+fi
+
+# 20.3.4 is the latest pip version that supports Python 2
+[[ $PIP == 1 ]] && PIP=20.3.4
+
+#----------------------------------------------------------------------------------------------
+
+# the end state should be:
+# in a python2 venv: `python` command (don't fix)
+# in a non-python2 venv or outside venv:
+#   mandatory: `python2` command (fix)
+#   optional: `python2.7` command (don't fix)
+#   optional: `python` command (don't fix)
+
+fix_variants() {
+	if [[ -n $VIRTUAL_ENV ]]; then
+		[[ -n $PYTHON && "$PYTHON_VER" == "2"  ]] && return
+	fi
+
+	if [[ -z $PYTHON2 ]]; then
+		if [[ -n $PYTHON27 ]]; then
+			ln -sf $PYTHON27 /usr/local/bin/python2
+		elif [[ -n $PYTHON && "$PYTHON_VER" == "2"  ]]; then
+			ln -sf $PYTHON /usr/local/bin/python2
+		fi
+	fi
+}
+
+check_variants() {
+	if [[ -n $USER_MYPY ]]; then
+		PYTHON="$USER_MYPY"
+		PYTHON2="$USER_MYPY"
+		PYTHON27="$USER_MYPY"
+		return
+	fi
+	PYTHON=$(command -v python)
+	PYTHON2=$(command -v python2)
+	PYTHON27=$(command -v python2.7)
+
+	MYPY=""
+	PYTHON_VER=""
+
+	if [[ -n $PYTHON ]]; then
+		PYTHON_VER="$(python --version 2>&1 | awk '{print $2}' | cut -d. -f1)"
+		[[ $PYTHON_VER == 2 ]] && MYPY=$PYTHON
+	fi
+
+	[[ -n $PYTHON2 ]]  && MYPY=$PYTHON2
+	[[ -n $PYTHON27 ]] && MYPY=$PYTHON27
+
+	if [[ -n $FIX ]]; then fix_variants; fi
+}
+
+#----------------------------------------------------------------------------------------------
+
+install_python() {
+	if [[ $(uname) == Darwin ]]; then
+		if ! is_command brew; then
+			eprint "Unable to install Python without brew. Aborting."
+			eprint "Please install brew and retry."
+			exit 1
+		fi
+
+		# try to fix /usr/local/bin/python on macOS unless stated otherwize
+		[[ $FIX != 0 ]] && FIX=1
+	fi
+
+	if is_command apt-get; then
+		export DEBIAN_FRONTEND=noninteractive
+		runn $SUDO apt-get -qq update --fix-missing
+
+		new_ubuntu=0
+		if [[ $osid == ubuntu ]]; then
+			if (( osveridmajor >= 22 )); then
+				new_ubuntu=1
+			fi
+		fi
+		if [[ $new_ubuntu == 1 ]]; then
+			runn $SUDO apt-get install --fix-missing -y python2
+		else
+			runn $SUDO apt-get install --fix-missing -y python
+		fi
+	elif is_command dnf; then
+		runn $SUDO dnf install -y python2
+	elif is_command yum; then
+		runn $SUDO yum install -y python2
+	elif is_command zypper; then
+		runn $SUDO zypper install -y python2
+	elif is_command apk; then
+		runn $SUDO apk update
+		runn $SUDO apk add python2 python2-dev
+	elif is_command brew; then
+		:
+		# runn brew install python2
+	elif is_command pkg; then
+		runn $SUDO pkg install -y python2
+	elif is_command pacman; then
+		runn $SUDO pacman -Syy --noconfirm python2
+	fi
+}
+
+#----------------------------------------------------------------------------------------------
+
+install_pip() {
+	if [[ $FORCE != 1 ]]; then
+		pipver=$(mktemp /tmp/pipver.XXXXXX)
+		if [[ $($MYPY -m pip --version > $pipver 2> /dev/null; echo $?) == 0 ]]; then
+			if [[ $((`cat $pipver | awk '{print $2}' | cut -f1 -d.` >= 19 )) == 1 ]]; then
+				rm -f $pipver
+				return
+			fi
+		fi
+		rm -f $pipver
+	fi
+
+	pipspec=""
+	[[ $PIP != 1 ]] && pipspec="pip==$PIP"
+
+	local packs="ca-certificates wget"
+
+	if is_command apt-get; then
+		export DEBIAN_FRONTEND=noninteractive
+		runn $SUDO apt-get -qq update --fix-missing
+		runn $SUDO apt-get install --fix-missing -y $packs # python-pip
+	elif is_command dnf; then
+		runn $SUDO dnf install -y $packs # python2-pip
+	elif is_command yum; then
+		runn $SUDO $READIES/bin/getepel
+		runn $SUDO yum install -y $packs # python2-pip
+	elif is_command zypper; then
+		packs+=" python-xml" # python2-pip
+		runn $SUDO zypper install -y $packs
+	elif is_command apk; then
+		runn $SUDO apk update
+		runn $SUDO apk add $packs # python2-pip
+	elif is_command brew; then
+		runn brew install wget
+		# runn $MYPY -m ensurepip
+	elif is_command pkg; then
+		runn $SUDO pkg install -y $packs # python2-pip
+	elif is_command pacman; then
+		runn $SUDO pacman -Syy --noconfirm $packs
+	fi
+
+	## get-pip.py no longer supports Python 2
+	runn wget -O /tmp/get-pip.py https://bootstrap.pypa.io/pip/2.7/get-pip.py
+	runn $MYPY /tmp/get-pip.py $pipspec
+	rm -f /tmp/get-pip.py
+
+	# [[ -z $pipspec ]] && pipspec=pip
+	# runn $MYPY -m pip install $PIP_USER --upgrade $pipspec
+}
+
+#----------------------------------------------------------------------------------------------
+
+check_variants
+
+# [[ -n $MYPY && $PIP == 0 && $FORCE != 1 ]] && exit 0
+
+if [[ $CHECK == 1 ]]; then
+	# Make sure pip is installed
+	if $MYPY -m pip --version &> /dev/null; then exit 0; fi
+	exit 1
+fi
+
+[[ -z $MYPY || $FORCE == 1 ]] && install_python
+
+# The following no longer a problem in macOS, we keep it here for the case the
+# problem re-emerges.
+
+# if is_command brew; then
+# 	# the following is for avoiding python to be upgraded by brew silently,
+# 	# hence disrupting pip installaitons
+# 	runn brew upgrade python
+# fi
+
+check_variants
+if ! is_command $MYPY; then
+	eprint "Cannot install Python2. Aborting."
+	exit 1
+fi
+
+if [[ -z $VIRTUAL_ENV ]]; then
+	PIP_USER="--user"
+else
+	PIP_USER=""
+fi
+
+[[ $PIP != 0 ]] && install_pip
+
+REQ=$READIES/paella/requirements.txt
+if [[ -n $VENV && $VENV != 0 ]]; then
+	runn $MYPY -m pip install ${PIP_USER} virtualenv
+	[[ $VENV == 1 ]] && VENV=$HOME/venv
+	runn $MYPY -m virtualenv $VENV --system-site-packages
+	runn "{ . $VENV/bin/activate && python -m pip install -r $REQ; }"
+else
+	runn $MYPY -m pip install ${PIP_USER} -r $REQ
+fi
+
+exit 0

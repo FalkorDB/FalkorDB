@@ -1,0 +1,27 @@
+#!/bin/sh
+''''[ ! -z $VIRTUAL_ENV ] && exec python -u -- "$0" ${1+"$@"}; command -v python3 > /dev/null && exec python3 -u -- "$0" ${1+"$@"}; exec python2 -u -- "$0" ${1+"$@"} # '''
+
+import os
+import argparse 
+
+parser = argparse.ArgumentParser(description='Set up system for build.')
+parser.add_argument('-0', dest="zero", action="store_true", help='No prefix or suffix lines')
+parser.add_argument('--pre', '-b', type=int, default=1, help='Prefix lines')
+parser.add_argument('--post', '-a', type=int, default=0, help='Suffix lines')
+args = parser.parse_args() 
+
+if args.zero:
+    args.pre = 0
+    args.post = 0
+
+try:
+    rows, cols = os.popen('stty size 2> /dev/null', 'r').read().split()
+except:
+    try:
+        rows, cols = os.environ.get("STTY_SIZE", "24 80").split()
+    except:
+        cols = '80'
+if int(cols) <= 1:
+    cols = '80'
+
+print("\n" * args.pre + "-" * (int(cols) - 1) + "\n" * args.post)

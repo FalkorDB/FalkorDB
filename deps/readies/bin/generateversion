@@ -1,0 +1,50 @@
+#!/bin/bash
+
+#
+# Generate the version definition of a given artifact. This can be used in one of two ways:
+# 1. As a shell function:
+#    source generateversion; generate_version() - This allows you to reuse the output generated from the function
+#
+# 2. Calling the script directly, with any argument
+#    ./generateversion something - This outputs the version generated
+#
+# It defaults to automatically selecting architecture, versions, osnick, and products from the repository, but these can be
+# overridden with environment variables. Finally, this works in sh, bash, and on non-GNU (i.e OSX) systems.
+#
+
+# The assumption is that this is called from another directory. But if not PRODUCT and VERSION can be overridden
+#if [ -z "${PRODUCT}" ]; then
+#    PRODUCT=$(basename `git rev-parse --show-toplevel`)
+#fi
+#
+if [ -z "${VERSION}" ]; then
+    VERSION=$(git branch|grep '*'|cut -d '*' -f 2-2|sed 's/^ *//g')
+fi
+
+# We change to the script directory, purely to call platform from the exact path
+HERE=`dirname $0`
+pushd . &>/dev/null
+cd ${HERE}
+ROOT=$(git rev-parse --show-toplevel)
+ARCH=$(${ROOT}/bin/platform --arch)
+
+# Each of these can be overridden in the environment
+if [ -z "${OSNICK}" ]; then
+    OSNICK=$(${ROOT}/bin/platform --osnick)
+fi
+popd &>/dev/null
+
+if [ ! -z "${EXTENSION}" ]; then
+    EXT="-${EXTENSION}"
+fi
+
+#RESULTANT_VERSION="${PRODUCT}-${VERSION}-${OSNICK}-${ARCH}${EXT}"
+RESULTANT_VERSION="${VERSION}-${OSNICK}-${ARCH}${EXT}"
+
+generate_version() {
+    echo ${RESULTANT_VERSION}
+}
+
+if [ ! -z $1 ]; then
+    generate_version
+fi

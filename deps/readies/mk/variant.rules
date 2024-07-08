@@ -1,0 +1,7 @@
+
+show-variant:
+ifneq ($(wildcard $(ROOT)/VARIANT),)
+	@cat $(ROOT)/VARIANT
+else
+	@echo
+endif

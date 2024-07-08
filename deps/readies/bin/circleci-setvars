@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+
+import sys
+import os
+import argparse
+import requests
+from configparser import SafeConfigParser
+
+HERE = os.path.dirname(__file__)
+READIES = os.path.abspath(os.path.join(HERE, ".."))
+sys.path.insert(0, READIES)
+import paella  # noqa: F401
+
+#----------------------------------------------------------------------------------------------
+
+class CircleCI:
+    def __init__(self, token):
+        self.HEADERS = {"Circle-Token": token}
+        r = requests.get("https://circleci.com/api/v2/me", headers=self.HEADERS)
+        if r.status_code > 204 or not r.ok:
+            fatal("Incorrect token - login failed")
+        self.base_url = "https://circleci.com/api/v2"
+
+    def get(self, query, die=False):
+        r = requests.get(f"{self.base_url}/{query}", headers=self.HEADERS)
+        if r.status_code > 204 or not r.ok:
+            raise RuntimeError(r)
+        return r.json()
+
+    def put(self, query, data):
+        r = requests.put(f"{self.base_url}/{query}", data=data, headers=self.HEADERS)
+        if r.status_code > 204 or not r.ok:
+            raise RuntimeError(r)
+        return r.json()
+
+    def delete(self, query):
+        r = requests.delete(f"{self.base_url}/{query}", headers=self.HEADERS)
+        if r.status_code > 204 or not r.ok:
+            raise RuntimeError(r)
+        return r.json()
+
+#----------------------------------------------------------------------------------------------
+
+def read_values_file(fname):
+    lines = []
+    with open(fname, 'r') as file:
+        for line in file.readlines():
+            if not line.startswith('#'):
+                lines += [line.strip()]
+    return lines
+
+#----------------------------------------------------------------------------------------------
+
+DEFAULT_ORGS = ['RediSearch',
+                'RedisAI',
+                'RedisBloom',
+                'RedisGears',
+                'RedisGraph',
+                'RedisJSON',
+                'RedisLabsModules',
+                'RedisTimeSeries']
+
+#----------------------------------------------------------------------------------------------
+
+parser = argparse.ArgumentParser(description='Set CircleCI context variables')
+parser.add_argument('--verbose', action="store_true", default=False, help='Verbose mode')
+parser.add_argument('-o', '--org', type=str, help="Dockerhub organization to scan")
+parser.add_argument('-f', '--org-file', type=str, help="Dockerhub organizations file")
+parser.add_argument('-c', '--config', type=str, help="Configuration file")
+parser.add_argument('--nop', action="store_true", default=False, help='Dry run')
+args = parser.parse_args()
+
+NOP = args.nop
+VERBOSE = args.verbose or NOP
+
+token = os.getenv("CIRCLECI_TOKEN")
+if token is None:
+    fatal("Set the CIRCLECI_TOKEN environment variable, to communicate with circleci")
+circleci = CircleCI(token)
+
+orgs = []
+if args.org is not None:
+    orgs = args.org.split()
+
+if args.org_file is not None:
+    orgs += read_values_file(args.org_file)
+    
+if orgs == []:
+    orgs = DEFAULT_ORGS
+
+config = SafeConfigParser(interpolation=None)
+config.read(args.config)
+
+for org in orgs:
+    if VERBOSE:
+        print(f"{org}:")
+    try:
+        ci_contexts = circleci.get(f"context/?owner-slug=gh/{org}")
+    except:
+        eprint(f"Failed to open {org} contexts, continuing to next org")
+        continue
+
+    for context in config.sections():
+        if VERBOSE:
+            print(f"  context {org}/{context}:")
+
+        created_ctx = False
+        next_ctx = False
+        while True:
+            try:
+                items = list(filter(lambda ctx: ctx['name'] == context, ci_contexts["items"]))
+                ctx_id = items[0]['id']
+                break
+            except:
+                if created_ctx or NOP:
+                    eprint(f"Failed to create {org}/{context}, continuing to next context")
+                    next_ctx = True
+                    break
+                if VERBOSE:
+                    print(f"  context {org}/{context} not found. Will try to create.")
+                created_ctx = True
+                try:
+                    r = circleci.put("context", {"name": context, "owner": {"slug": f"gh/{org}"}})
+                except:
+                    eprint(f"  Failed to create {org}/{context}, continuing to next context")
+                    continue
+                try:
+                    ci_contexts = circleci.get(f"context/?owner-slug=gh/{org}")    
+                except:
+                    eprint(f"  Failed to open {org} contexts, continuing to next org")
+                    continue
+        if next_ctx:
+            continue
+
+        for key, value in config.items(context):
+            key = key.upper()
+            if value != "":
+                if VERBOSE:
+                    print(f"    setting {org}/{context}/{key}")
+                if not NOP:
+                    try:
+                        r = circleci.put(f"context/{ctx_id}/environment-variable/{key}", {"value": value})
+                    except Exception as x:
+                        perror(f"    Failed to set variable {key} for org {org}, continuing: {x}")
+            else:
+                if VERBOSE:
+                    print(f"    removing {org}/{context}/{key}")
+                if not NOP:
+                    try:
+                        r = circleci.delete(f"context/{ctx_id}/environment-variable/{key}")
+                    except Exception as x:
+                        perror(f"    Failed to delete variable {key} for org {org}, continuing: {x}")

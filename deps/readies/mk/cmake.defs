@@ -1,0 +1,60 @@
+
+ifneq ($(MK.cmake),)
+
+#----------------------------------------------------------------------------------------------
+
+define CMAKE_FLAGS.common +=
+	--no-warn-unused-cli
+	-Wno-dev
+endef
+
+CMAKE_FLAGS.defs=$(foreach d,$(call flatten,$(CMAKE_DEFS)),-D$(d))
+
+define _CMAKE_FLAGS +=
+	$(CMAKE_FLAGS.common)
+	$(CMAKE_FLAGS.defs)
+endef
+CMAKE_FLAGS=$(call flatten,$(_CMAKE_FLAGS))
+
+#----------------------------------------------------------------------------------------------
+
+define _CMAKE_DEFS +=
+	CMAKE_EXPORT_COMPILE_COMMANDS=1
+	MK=$(MK)
+	OS=$(OS)
+	OSNICK=$(OSNICK)
+	ARCH=$(ARCH)
+	GIT_SHA=$(GIT_SHA)
+	GIT_VERSPEC=$(GIT_VERSPEC)
+endef
+CMAKE_DEFS += $(call flatten,$(_CMAKE_DEFS))
+
+# ifeq ($(VERBOSE),1)
+# CMAKE_DEFS += CMAKE_VERBOSE_MAKEFILE:BOOL=ON
+# endif
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(DEBUG),1)
+CMAKE_DEFS += CMAKE_BUILD_TYPE=Debug
+else
+CMAKE_DEFS += CMAKE_BUILD_TYPE=RelWithDebInfo
+endif
+
+#----------------------------------------------------------------------------------------------
+
+MK_CMAKE_FILES ?= $(SRCDIR)/CMakeLists.txt
+
+MK_MAKEFILES += $(BINDIR)/Makefile
+DEFAULT_TARGETS += $(TARGET)
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(WHY),1)
+CMAKE_WHY=--trace-expand
+CMAKE_SINK= >/tmp/cmake.why 2>&1
+endif
+
+#----------------------------------------------------------------------------------------------
+
+endif # MK.cmake

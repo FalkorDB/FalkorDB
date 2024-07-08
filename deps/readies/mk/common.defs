@@ -1,0 +1,27 @@
+
+_SHOW:=$(SHOW)
+ifeq ($(_SHOW),)
+_SHOW:=0
+endif
+ifeq ($(SHOW),1)
+override SHOW:=
+else
+override SHOW:=@
+endif
+
+MAKEFLAGS += --no-builtin-rules  --no-print-directory
+# --no-builtin-variables
+
+define __SEP
+import os; rows, cols = os.popen('stty size', 'r').read().split(); print('-' * (int(cols) - 1) + \"\n\")
+endef
+
+ifeq (n,$(findstring n,$(firstword -$(MAKEFLAGS))))
+DRY_RUN:=1
+else
+DRY_RUN:=
+endif
+
+ifneq ($(BB),)
+SLOW:=1
+endif

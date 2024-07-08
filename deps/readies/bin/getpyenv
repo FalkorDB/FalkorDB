@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
+	cat <<-'END'
+		Install pyenv.
+
+		[ARGVARS...] getpyenv [--help|help]
+
+		Argument variables:
+		THIN=1         Do not install packages to build Python
+		FORCE=1        Repeat installation
+
+		NOP=1          Do not execute, just print commands
+		V|VERBOSE=1    Print commands
+		HELP=1         Print help
+		
+		PYTHON=ver     Python version to be installed 
+		GLOBAL=1       Setup global version
+		VENV=dir       Install a virtualenv in `dir`
+
+		Notes:
+		This installs a profile.d script. Invoke `bash -l` to activate.
+
+	END
+	exit 0
+fi
+
+OP=""
+[[ $NOP == 1 ]] && OP=echo
+
+echo "# Installing pyenv ..."
+
+if [[ $FORCE == 1 ]]; then
+	rm -rf $HOME/.pyenv $profile_d/pyenv.sh
+fi
+
+profile_d=`get_profile_d`
+if [[ -f $profile_d/pyenv.sh && $FORCE != 1 ]]; then
+	echo "# Already installed."
+else
+	if [[ $THIN != 1 ]]; then
+		if is_command apt-get; then
+			xinstall git make build-essential libssl-dev zlib1g-dev \
+				libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm \
+				libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev
+		elif is_command dnf; then
+			xinstall git findutils make gcc zlib-devel bzip2 bzip2-devel readline-devel \
+				sqlite sqlite-devel openssl-devel tk-devel libffi-devel xz-devel
+		elif is_command tdnf; then
+			xinstall git findutils make gcc zlib-devel bzip2 bzip2-devel readline-devel \
+				openssl-devel
+		elif is_command yum; then
+			xinstall git make gcc zlib-devel bzip2 bzip2-devel readline-devel sqlite \
+				sqlite-devel openssl-devel tk-devel libffi-devel xz-devel tar
+		elif is_command zypper; then
+			xinstall gcc automake bzip2 libbz2-devel xz xz-devel openssl-devel ncurses-devel \
+				readline-devel zlib-devel tk-devel libffi-devel sqlite3-devel make
+		elif is_command apk; then
+			xinstall git bash build-base libffi-dev openssl-dev bzip2-dev zlib-dev \
+				xz-dev readline-dev sqlite-dev tk-dev linux-headers 
+		elif is_command pacman; then
+			xinstall base-devel openssl zlib xz tk git gcc glibc
+		elif is_command brew; then
+			xinstall openssl readline sqlite3 xz zlib tcl-tk
+		fi
+	fi
+
+	if [[ ! -r $HOME/.pyenv ]]; then
+		runn git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+	fi
+
+	tmp_profiled=$(mktemp -d)
+	cat <<-'END' > $tmp_profiled/pyenv.sh
+		export PYENV_ROOT=$HOME/.pyenv
+		if [[ ":$PATH:" != *":$PYENV_ROOT/bin:"* ]]; then
+			export PATH="$PYENV_ROOT/bin${PATH:+":$PATH"}"
+		fi
+
+		
+		if command -v pyenv >/dev/null 2>&1; then
+			eval "$(pyenv init -)"
+		fi
+		END
+	add_to_profile_d $tmp_profiled/pyenv.sh
+	rm -fr $tmp_profiled/pyenv.sh
+	echo "# Done."
+fi
+
+if [[ -n $PYTHON ]]; then
+    echo "# Installing python $PYTHON ..."
+	$OP . $profile_d/pyenv.sh
+    runn pyenv install -f $PYTHON
+	if [[ $GLOBAL == 1 ]]; then
+		runn pyenv global $PYTHON
+	fi
+fi
+
+if [[ -n $VENV ]]; then
+	if [[ -e $VENV ]]; then
+		eprint "Directory $VENV exists, virtualenv not installed."
+		exit 1
+	fi
+    echo "# Installing virtualenv ..."
+	$OP export PYENV_VERSION="$PYTHON"
+	runn python3 -m pip install virtualenv
+	runn python3 -m virtualenv $VENV
+	echo "# virtualenv installed in $VENV"
+fi

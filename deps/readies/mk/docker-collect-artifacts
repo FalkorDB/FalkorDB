@@ -1,0 +1,26 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+DOCKER=${DOCKER:-docker}
+
+[[ -z $IMAGE ]] && { >&2 echo "$0: IMAGE is not defined. Aborting."; exit 1; }
+[[ -z $ART_DIR ]] && { >&2 echo "$0: ART_DIR is not defined. Aborting."; exit 1; }
+[[ -z $ART_INT_DIR ]] && { >&2 echo "$0: ART_INT_DIR is not defined. Aborting."; exit 1; }
+
+set -e
+
+echo "Copying $IMAGE :: $INT_ART_DIR -> $ART_DIR ..."
+[[ $NOP == 1 ]] && exit 0
+
+cid=`$DOCKER create $IMAGE`
+mkdir -p $ART_DIR
+# not all docker version support cp -q
+$DOCKER cp -q $cid:$ART_INT_DIR/. $ART_DIR/ || $DOCKER cp $cid:$ART_INT_DIR/. $ART_DIR/
+echo "$ART_DIR:"
+(cd $ART_DIR/; du -ah --apparent-size *)
+$DOCKER rm -v $cid > /dev/null
+exit 0
