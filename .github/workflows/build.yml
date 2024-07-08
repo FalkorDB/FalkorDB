@@ -165,6 +165,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -203,6 +204,7 @@ jobs:
     needs: unit-tests
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -241,6 +243,7 @@ jobs:
     needs: flow-tests
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -279,6 +282,7 @@ jobs:
     needs: tck-tests
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -317,6 +321,7 @@ jobs:
     needs: fuzz-tests
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
