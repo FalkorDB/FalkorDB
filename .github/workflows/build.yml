@@ -24,6 +24,7 @@ jobs:
           
 
   create-runners:
+    needs: test_job
     strategy:
       matrix:
         arm_machine:
