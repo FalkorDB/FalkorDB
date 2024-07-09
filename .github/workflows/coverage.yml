@@ -27,26 +27,26 @@ jobs:
         set-safe-directory: '*'
         submodules: recursive
 
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@v4
-      with:
-        path: ./bin/linux-x64-release-cov/GraphBLAS
-        key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+    # - name: Cache GraphBLAS
+    #   id: cache_graphblas
+    #   uses: actions/cache@v4
+    #   with:
+    #     path: ./bin/linux-x64-release-cov/GraphBLAS
+    #     key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
-    - name: Cache parser
-      id: cache_parser
-      uses: actions/cache@v4
-      with:
-        path: ./bin/linux-x64-release-cov/libcypher-parser
-        key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+    # - name: Cache parser
+    #   id: cache_parser
+    #   uses: actions/cache@v4
+    #   with:
+    #     path: ./bin/linux-x64-release-cov/libcypher-parser
+    #     key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@v4
-      with:
-        path: ./bin/linux-x64-debug-cov/search-static
-        key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+    # - name: Cache search
+    #   id: cache_search
+    #   uses: actions/cache@v4
+    #   with:
+    #     path: ./bin/linux-x64-debug-cov/search-static
+    #     key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
       run: |
