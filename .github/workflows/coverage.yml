@@ -50,7 +50,7 @@ jobs:
 
     - name: Build
       run: |
-        rustup default stable
+        rustup default 1.76.0
         apt-get update
         apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh
