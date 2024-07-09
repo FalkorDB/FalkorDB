@@ -49,7 +49,7 @@ jobs:
           machine_zone: us-central1-a
           machine_type: n4-highcpu-8
           network: gh-runner
-          runner_label: ${GITHUB_RUN_ID}-${GITHUB_RUN_NUMBER}-${{ matrix.benchmark_group }}
+          runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
 
   run-benchmarks:
     needs:
@@ -57,7 +57,7 @@ jobs:
     strategy:
       matrix:
         benchmark_group: [ A, B ]
-    runs-on: ${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
+    runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
@@ -117,6 +117,18 @@ jobs:
           name: ${{ github.head_ref || github.ref_name }}-benchmark-Group${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
           retention-days: 1
+
+  cleanup-runners:
+    needs: run-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
 
   merge-results:
     needs:
