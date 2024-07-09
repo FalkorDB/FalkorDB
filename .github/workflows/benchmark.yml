@@ -12,17 +12,19 @@ on:
 
 jobs:
   haslabel:
-    name: analyse labels
+    name: Check if benchmark should run
     runs-on: ubuntu-latest
     outputs:
       has-benchmark-label: ${{ steps.haslabel.outputs.result }}
     steps:
-      - name: Check PR for label
+      - name: Check label or branch
         id: haslabel
         uses: actions/github-script@v7
         with:
           debug: true
           script: |
+            console.log(context.eventName)
+            
             if (context.eventName !== 'pull_request') {
               console.log("Not a pull request")
               return false
@@ -228,7 +230,7 @@ jobs:
           . venv/bin/activate
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
-      - name: Comment on Pull Request
+      - name: Update Pull Request Text
         uses: actions/github-script@v7
         with:
           script: |
