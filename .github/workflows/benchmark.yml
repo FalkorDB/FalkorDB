@@ -22,6 +22,10 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            if (github.event_name != 'pull_request') {
+              return false
+            }
+            
             const existing_pull = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -30,6 +34,7 @@ jobs:
             });
 
             return existing_pull.data.labels.find(label => label.name === 'action:run-benchmark') != undefined
+    continue-on-error: true
 
   create-runners:
     needs: haslabel
