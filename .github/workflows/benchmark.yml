@@ -21,6 +21,7 @@ jobs:
         id: haslabel
         uses: actions/github-script@v7
         with:
+          debug: true
           script: |
             if (github.event_name != 'pull_request') {
               return false
@@ -32,8 +33,10 @@ jobs:
               pull_number: context.payload.pull_request.number,
               headers: { 'Accept': 'application/vnd.github-json' }
             });
-
-            return existing_pull.data.labels.find(label => label.name === 'action:run-benchmark') != undefined
+            
+            const has_label = existing_pull.data.labels.find(label => label.name === 'action:run-benchmark')
+            console.log(has_label)
+            return has_label !== undefined
     continue-on-error: true
 
   create-runners:
