@@ -1,0 +1,15 @@
+name: UPDATE-BASELINE
+db_config:
+  init_commands:
+    - [ "GRAPH.QUERY", "graph", "CREATE ({ v: 0 })" ]
+parameters:
+  num_clients: 32
+  num_requests: 1000000
+  queries:
+    - query: 'MATCH (n) WHERE ID(n) = 0 SET n.v = n.v + 1'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 2.0
+  - key: '$.OverallQueryRates.Total'
+    min_value: 18000
