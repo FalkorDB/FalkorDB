@@ -23,7 +23,8 @@ jobs:
         with:
           debug: true
           script: |
-            if (github.event_name != 'pull_request') {
+            if (context.eventName !== 'pull_request') {
+              console.log("Not a pull request")
               return false
             }
             
@@ -34,8 +35,9 @@ jobs:
               headers: { 'Accept': 'application/vnd.github-json' }
             });
             
+            
             const has_label = existing_pull.data.labels.find(label => label.name === 'action:run-benchmark')
-            console.log(has_label)
+            console.log(`Found label: ${has_label !== undefined}`)
             return has_label !== undefined
     continue-on-error: true
 
