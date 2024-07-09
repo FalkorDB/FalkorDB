@@ -44,12 +44,12 @@ jobs:
         uses: FalkorDB/gce-github-runner@install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
-          project_id: github-runners-414914
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zone: us-central1-a
+          machine_zone: ${{ vars.GCP_ZONE }}
           machine_type: n4-highcpu-8
           network: gh-runner
-          runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-${{ matrix.benchmark_group }}
+          runner_label: bench${{ matrix.benchmarkGroup }}-${{ github.run_id }}-${{ github.run_number }}
 
   run-benchmarks:
     needs:
