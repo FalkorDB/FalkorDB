@@ -10,7 +10,7 @@ COV_DIR=$(BINROOT)/cov
 COV_PROFDATA=$(COV_DIR)/cov.profdata
 COV_INFO=$(BINROOT)/cov.info
 
-export LLVM_PROFILE_FILE=$(COV_DIR)/cov-%p-%16m.profraw
+export LLVM_PROFILE_FILE=$(COV_DIR)/cov-%p-%m.profraw
 
 #----------------------------------------------------------------------------------------------
 
@@ -52,12 +52,10 @@ endef
 
 define COVERAGE_COLLECT.llvm
 $(SHOW)set -e ;\
-echo "Collecting llvm coverage data ..." ;\
-llvm-profdata merge --sparse `ls $(COV_DIR)/*.profraw` -o $(COV_PROFDATA) ;\
-echo "Collecting llvm coverage data ..." ;\
+echo "Collecting coverage data ..." ;\
+llvm-profdata merge --sparse `ls $(COV_DIR)/*.profraw` -o $(COV_PROFDATA) &> /dev/null ;\
 llvm-cov export --format=lcov --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).all ;\
-echo "Collecting llvm coverage data ..." ;\
-lcov --ignore-errors unused -o $(COV_INFO) -r $(COV_INFO).all $(COV_EXCLUDE.llvm)
+lcov -o $(COV_INFO) -r $(COV_INFO).all $(COV_EXCLUDE.llvm) &> /dev/null
 endef
 
 define COVERAGE_COLLECT.rust
