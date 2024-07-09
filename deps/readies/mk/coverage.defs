@@ -10,7 +10,7 @@ COV_DIR=$(BINROOT)/cov
 COV_PROFDATA=$(COV_DIR)/cov.profdata
 COV_INFO=$(BINROOT)/cov.info
 
-export LLVM_PROFILE_FILE=$(COV_DIR)/cov-%p-16m.profraw
+export LLVM_PROFILE_FILE=$(COV_DIR)/cov-%p-%16m.profraw
 
 #----------------------------------------------------------------------------------------------
 
