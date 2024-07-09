@@ -177,7 +177,7 @@ def verify_and_download_benchmark_tool():
 def print_help():
     print("Usage: ./run_benchmarks.py <BenchmarkGroup>")
     print("")
-    print("Example: ./run_benchmarks.py GroupA          # Run group 'GroupA'")
+    print("Example: ./run_benchmarks.py group_a          # Run group 'group_a'")
     print("")
     print("To print this help message: ./run_benchmarks.py --help or ./run_benches.py -h")
     exit(0)

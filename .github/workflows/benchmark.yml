@@ -36,7 +36,7 @@ jobs:
     if: ${{ needs.haslabel.outputs.has-benchmark-label || github.event_name != 'pull_request' }}
     strategy:
       matrix:
-        benchmark_group: [A, B]
+        benchmark_group: [a, b]
     runs-on: ubuntu-latest
     steps:
       - name: Create Runner For Benchmark
@@ -49,15 +49,15 @@ jobs:
           machine_zone: ${{ vars.GCP_ZONE }}
           machine_type: n4-highcpu-8
           network: gh-runner
-          runner_label: bench${{ matrix.benchmark_group }}-${{ github.run_id }}-${{ github.run_number }}
+          runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
 
   run-benchmarks:
     needs:
       - create-runners
     strategy:
       matrix:
-        benchmark_group: [ A, B ]
-    runs-on: bench${{ matrix.benchmark_group }}-${{ github.run_id }}-${{ github.run_number }}
+        benchmark_group: [ a, b ]
+    runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
     container: falkordb/falkordb-build:ubuntu
     steps:
       - name: Safe dir
@@ -109,12 +109,12 @@ jobs:
         working-directory: tests/benchmarks
         run: |
           . venv/bin/activate
-          python3 run_benchmarks.py Group${{ matrix.benchmark_group }}
+          python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.head_ref || github.ref_name }}-benchmark-Group${{ matrix.benchmark_group }}-results
+          name: ${{ github.head_ref || github.ref_name }}-benchmark-group_${{ matrix.benchmark_group }}-results
           path: tests/benchmarks/*-results.json
           retention-days: 1
 
@@ -122,7 +122,7 @@ jobs:
     needs: run-benchmarks
     strategy:
       matrix:
-        benchmark_group: [ A, B ]
+        benchmark_group: [ a, b ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +131,7 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           zone: ${{ vars.GCP_ZONE }}
-          instance_label: bench${{ matrix.benchmark_group }}-${{ github.run_id }}-${{ github.run_number }}
+          instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
 
   merge-results:
     needs:
@@ -141,8 +141,8 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          # change this so it uses a pattern to download all Group* artifacts
-          pattern: ${{ github.head_ref || github.ref_name }}-benchmark-Group*-results
+          # change this so it uses a pattern to download all group_* artifacts
+          pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
           merge-multiple: true
       - name: Upload merged results
         uses: actions/upload-artifact@v4
