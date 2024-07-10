@@ -8,7 +8,7 @@ LD_FLAGS.coverage += -fprofile-instr-generate -fcoverage-mapping
 
 COV_DIR=$(BINROOT)/cov
 COV_PROFDATA=$(COV_DIR)/cov.profdata
-COV_INFO=cov
+COV_INFO=codecov.txt
 
 export LLVM_PROFILE_FILE=$(COV_DIR)/cov-%p-%m.profraw
 
@@ -55,8 +55,7 @@ $(SHOW)set -e ;\
 echo "Collecting coverage data ..." ;\
 llvm-profdata merge --sparse `ls $(COV_DIR)/*.profraw` -o $(COV_PROFDATA) &> /dev/null ;\
 llvm-cov export --format=lcov --ignore-filename-regex='.*deps/.*' --ignore-filename-regex='.*bin/.*' --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).all ;\
-llvm-cov export --format=text --ignore-filename-regex='.*deps/.*' --ignore-filename-regex='.*bin/.*' --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).json ;\
-lcov --ignore-errors unused -o $(COV_INFO) -r $(COV_INFO).all $(COV_EXCLUDE.llvm) &> /dev/null
+lcov --ignore-errors unused -r $(COV_INFO).all -o $(COV_INFO) $(COV_EXCLUDE.llvm) &> /dev/null
 endef
 
 define COVERAGE_COLLECT.rust
