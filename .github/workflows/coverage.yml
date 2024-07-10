@@ -78,4 +78,6 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         file: cov.json
+        plugin: noop
         disable_search: true
+        verbose: true
