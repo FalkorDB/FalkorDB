@@ -67,3 +67,6 @@ deps/GraphBLAS/Config/GraphBLAS.h.tmp
 /1/
 
 target
+cov
+cov.all
+cov.json
