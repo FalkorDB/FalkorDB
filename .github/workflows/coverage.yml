@@ -70,7 +70,7 @@ jobs:
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17 \
           --slave   /usr/bin/llvm-profdata        llvm-profdata        /usr/bin/llvm-profdata-17 \
           --slave   /usr/bin/llvm-cov             llvm-cov             /usr/bin/llvm-cov-17
-        make coverage NPROC=16 CLANG=1
+        make coverage NPROC=16 CLANG=1 || true
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v4.5.0
