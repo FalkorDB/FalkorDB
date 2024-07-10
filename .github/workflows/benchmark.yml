@@ -12,28 +12,36 @@ on:
 
 jobs:
   haslabel:
-    name: analyse labels
+    name: Check label or branch
     runs-on: ubuntu-latest
     outputs:
       has-benchmark-label: ${{ steps.haslabel.outputs.result }}
     steps:
-      - name: Check PR for label
+      - name: Check label or branch
         id: haslabel
         uses: actions/github-script@v7
         with:
           script: |
+            if (context.eventName !== 'pull_request') {
+              console.log("Not a pull request")
+              return false
+            }
+            
             const existing_pull = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number,
               headers: { 'Accept': 'application/vnd.github-json' }
             });
-
-            return existing_pull.data.labels.find(label => label.name === 'action:run-benchmark') != undefined
+            
+            
+            const has_label = existing_pull.data.labels.find(label => label.name === 'action:run-benchmark')
+            console.log(`Found label: ${has_label !== undefined}`)
+            return has_label !== undefined
 
   create-runners:
     needs: haslabel
-    if: ${{ needs.haslabel.outputs.has-benchmark-label || github.event_name != 'pull_request' }}
+    if: ${{ needs.haslabel.outputs.has-benchmark-label == 'true' || github.event_name != 'pull_request' }}
     strategy:
       matrix:
         benchmark_group: [a, b]
@@ -218,7 +226,7 @@ jobs:
           . venv/bin/activate
           python3 generate_markdown.py --new_branch ${{ github.head_ref }}
 
-      - name: Comment on Pull Request
+      - name: Update Pull Request Text
         uses: actions/github-script@v7
         with:
           script: |
