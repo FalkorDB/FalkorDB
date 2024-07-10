@@ -54,8 +54,8 @@ define COVERAGE_COLLECT.llvm
 $(SHOW)set -e ;\
 echo "Collecting coverage data ..." ;\
 llvm-profdata merge --sparse `ls $(COV_DIR)/*.profraw` -o $(COV_PROFDATA) &> /dev/null ;\
-llvm-cov export --format=lcov --ignore-filename-regex='^deps/(?!FalkorDB-core-rs/).*' --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).all ;\
-llvm-cov export --format=text --ignore-filename-regex='^deps/(?!FalkorDB-core-rs/).*' --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).json ;\
+llvm-cov export --format=lcov --ignore-filename-regex='deps/*' --ignore-filename-regex='bin/*' --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).all ;\
+llvm-cov export --format=text --ignore-filename-regex='deps/*' --ignore-filename-regex='bin/*' --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).json ;\
 lcov --ignore-errors unused -o $(COV_INFO) -r $(COV_INFO).all $(COV_EXCLUDE.llvm) &> /dev/null
 endef
 
