@@ -5,6 +5,7 @@
  */
 
 #include "array.h"
+#include "map.h"
 #include "../util/arr.h"
 #include "../util/qsort.h"
 #include <limits.h>
@@ -48,12 +49,16 @@ bool SIArray_ContainsType(SIValue siarray, SIType t) {
 		SIValue elem = siarray.array[i];
 		if(SI_TYPE(elem) & t) return true;
 
-		// recursively check nested arrays
+		// recursively check nested containers
 		if(SI_TYPE(elem) == T_ARRAY) {
 			bool type_is_nested = SIArray_ContainsType(elem, t);
 			if(type_is_nested) return true;
+		} else if(SI_TYPE(elem) == T_MAP) {
+			bool type_is_nested = Map_ContainsType(elem, t);
+			if(type_is_nested) return true;
 		}
 	}
+
 	return false;
 }
 
