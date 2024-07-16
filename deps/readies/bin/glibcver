@@ -1,5 +1,0 @@
-#!/bin/bash
-
-ver=$(ldd --version | head -1 | sed -E 's/^[^(]*\([^)]*\) (.*)$/\1/')
-[[ $N == 1 ]] && ver=$(echo $ver | cut -d. -f2)
-echo "$ver"

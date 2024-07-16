@@ -1,7 +1,0 @@
-#!/bin/sh
-
-# A lightweight shim to add bash to alpine
-
-if [ -f /sbin/apk ]; then
-    apk add bash
-fi
