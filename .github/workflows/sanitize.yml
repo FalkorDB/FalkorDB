@@ -54,7 +54,7 @@ jobs:
         . venv/bin/activate
         pip install -r tests/requirements.txt
         
-        rustup default nightly-2024-04-10
+        rustup default nightly-2024-02-03
         
         make SAN=address NPROC=16
 
