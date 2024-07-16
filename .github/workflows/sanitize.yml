@@ -54,6 +54,9 @@ jobs:
         . venv/bin/activate
         pip install -r tests/requirements.txt
         
+#       1.77.0 was released on 2024-04-09, this is the equivalent nightly version, guaranteed to use LLVM 17
+        rustup default nightly-2024-04-10
+        
         make SAN=address NPROC=16
 
     - name: Unit tests

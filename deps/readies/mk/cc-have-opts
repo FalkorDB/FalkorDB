@@ -7,7 +7,7 @@ READIES=$(cd $HERE/.. && pwd)
 
 CFILE=$(mktemp /tmp/test.XXXXXX.c)
 
-CC=${CC:-gcc}
+CC=${CC:-clang}
 
 have_march() {
 	local arch=$1
