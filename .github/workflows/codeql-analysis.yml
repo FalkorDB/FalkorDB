@@ -32,7 +32,7 @@ jobs:
   analyze:
     name: Analyze
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
+    container: falkordb/falkordb-build:llvm-ubuntu
     permissions:
       actions: read
       contents: read
