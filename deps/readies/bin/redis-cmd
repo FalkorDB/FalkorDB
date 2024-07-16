@@ -1,0 +1,141 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+help() {
+	cat <<-'END'
+		Run redis command
+
+		[ARGVARS...] redis-cmd [--help|help]
+
+		Argument variables:
+		PORT=n              Use port n
+		RUN=0|1             Run redis-server
+		DOCKER=image        Run docker `image`
+		DOCKER_HOST=addr    For redis running on docker at DOCKER_HOST
+
+		VERBOSE=1           Print commands and Redis output
+		NOP=1               Dry run
+		HELP=1              Show help
+
+	END
+}
+
+if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
+	help
+	exit 0
+fi
+
+OP=""
+[[ $NOP == 1 ]] && OP=echo
+
+[[ -n $DOCKER ]] && RUN=0
+RUN=${RUN:-1}
+
+server_args=""
+cli_args=""
+
+if [[ ! -z $PORT ]]; then
+	server_args+="--port $PORT"
+	cli_args+="-p $PORT"
+fi
+
+if [[ $RUN == 0 ]]; then
+	dhost=$(echo "$DOCKER_HOST" | awk -F[/:] '{print $4}')
+	if [[ -n $dhost ]]; then
+		cli_args+=" -h $dhost"
+	fi
+fi
+
+if [[ ! -z $1 ]]; then
+	while [[ -n $1 && $1 != "--" ]]; do
+			server_args+=" $1"
+			shift
+	done
+	shift
+fi
+
+server_log=$(mktemp /tmp/redis-server.XXXXX)
+if [[ $RUN != 0 ]]; then
+	if [[ $NOP != 1 ]]; then
+		redis-server $server_args > $server_log 2>&1 &
+		if [[ -z $(ps -a -o pid | grep $!) ]]; then
+			eprint "Failed to run redis-server"
+			>&2 cat $server_log
+			exit 1
+		fi
+		server_pid=$!
+	else
+		$OP "redis-server $server_args > $server_log 2>&1 &"
+	fi
+elif [[ -n $DOCKER ]]; then
+	[[ -z $PORT ]] && PORT=6379
+	docker_args+=" -p $PORT:6379"
+	if [[ $NOP != 1 ]]; then
+		docker_idfile=$(mktemp /tmp/docker.XXXXX)
+		docker run -d $docker_args $DOCKER > $docker_idfile
+		docker_id=$(cat $docker_idfile)
+	else
+		$OP "docker run -d $docker_args $DOCKER"
+	fi
+fi
+
+if [[ $NOP != 1 ]]; then
+	{ redis-cli $cli_args ping > /dev/null 2>&1; (( E=$? )); } || true
+	n=0
+	while (( E != 0 && n < 10 )); do
+		n=$((n+1))
+		sleep 0.1
+		{ redis-cli $cli_args ping > /dev/null 2>&1; (( E=$? )); } || true
+	done
+else
+	$OP "redis-cli $cli_args ping"
+	E=0
+fi
+if [[ $E != 0 ]]; then
+	eprint "Failed to ping redis-server"
+	if [[ $RUN != 0 ]]; then
+		>&2 cat $server_log
+	elif [[ -n $DOCKER ]]; then
+		docker logs $docker_id > $server_log
+		>&2 cat $server_log
+	fi
+else
+	if [[ $NOP != 1 ]]; then
+		file=$(mktemp /tmp/redis.XXXXXX)
+		redis-cli $cli_args $* <&0 | cat > $file
+		if [[ $(cat $file | head -1 | cut -f1 -d" ") == ERR ]]; then
+			E=1
+			if [[ -t 1 ]]; then
+				echo "${RED}$(cat $file | head -1)${NOCOLOR}"
+				cat $file | tail -n +2
+			else
+				cat $file
+			fi
+		else
+			cat $file
+		fi
+	else
+		$OP "redis-cli $cli_args $* <&0"
+	fi
+fi
+
+if [[ $RUN != 0 ]]; then
+	if [[ $NOP != 1 ]]; then
+		kill -TERM $server_pid > /dev/null 2>&1 || true
+	else
+		$OP "kill -TERM \$!"
+	fi
+elif [[ -n $DOCKER ]]; then
+	if [[ $NOP != 1 ]]; then
+		docker stop $docker_id > /dev/null 2>&1 || true
+		rm -f $docker_idfile
+	else
+		$OP "docker stop DID"
+	fi
+fi
+rm -f $server_log
+exit $E

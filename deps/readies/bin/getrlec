@@ -1,0 +1,11 @@
+#!/bin/bash
+
+if [[ $FORCE == 1 ]]; then
+	bash <(curl -fsSL https://raw.githubusercontent.com/RedisLabsModules/arlecchino/master/bin/setup-rlec)
+else
+	read -p "Install Arlecchino at $PWD? " -r
+	echo
+	if [[ $REPLY =~ ^[Yy]$ ]]; then
+		bash <(curl -fsSL https://raw.githubusercontent.com/RedisLabsModules/arlecchino/master/bin/setup-rlec)
+	fi
+fi

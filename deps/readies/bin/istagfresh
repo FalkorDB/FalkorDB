@@ -1,0 +1,41 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+tags=$(git rev-list --tags --max-count=1)
+if [[ -z $tags ]]; then
+	echo "No tags defined" >&2
+	exit 1
+fi
+
+last_tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+if [[ -z $last_tag ]]; then
+	echo "No tags defined" >&2
+	exit 1
+fi
+[[ $VERBOSE == 1 ]] && echo "Last tag is $last_tag"
+tag_sha=$(git show-ref -s $last_tag)
+
+{ git diff --quiet; E=$?; } || true
+if [[ $E != 0 ]]; then
+	echo "Working tree is dirty" >&2
+	exit 1
+fi
+
+last_commit=$(git log -1 | head -1 | cut -f2 -d" ")
+[[ $VERBOSE == 1 ]] && echo "Last commit is $last_commit"
+
+tag_commit=$(git log --all --decorate=short | grep "tag: $last_tag" | cut -f2 -d" ")
+if [[ $tag_commit != $last_commit ]]; then
+	echo "There are post-tag commits" >&2
+	echo "Last commit differs from tag commit $tag_commit" >&2
+	exit 1
+fi
+
+[[ $VERBOSE == 1 ]] && echo "Tag $last_tag is fresh" >&2
+echo $last_tag
+
+exit 0
