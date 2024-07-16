@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if [ ! -z $(command -v python2) ]; then
+	python2 "$@"
+else
+	python "$@"
+fi
