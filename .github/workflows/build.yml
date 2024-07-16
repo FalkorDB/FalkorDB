@@ -43,7 +43,7 @@ jobs:
   build:
     needs: create-runners
     runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || format('build-{0}-{1}', github.run_id, github.run_number)  }}
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:llvm-ubuntu
     services:
       registry:
         image: registry:2

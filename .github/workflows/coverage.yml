@@ -16,7 +16,7 @@ concurrency:
 jobs:
   code-coverage:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
+    container: falkordb/falkordb-build:llvm-ubuntu
     steps:
 
     - name: Safe dir
