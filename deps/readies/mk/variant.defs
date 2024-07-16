@@ -1,0 +1,74 @@
+
+ifeq ($(COV),1)
+export DEBUG ?= 1
+endif
+
+ifeq ($(DEBUG),1)
+FLAVOR=debug
+else
+FLAVOR=release
+endif
+
+ifneq ($(SETVARIANT),)
+export SETVARIANT
+VARIANT:=$(SETVARIANT)
+endif
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(COV),1)
+VARIANT.list:=$(sort $(VARIANT.list) cov)
+endif
+
+ifeq ($(PROFILE),1)
+VARIANT.list:=$(sort $(VARIANT.list) profile)
+endif
+
+ifeq ($(SAN),address)
+VARIANT.list:=$(sort $(VARIANT.list) asan)
+endif
+
+ifeq ($(SAN),memory)
+VARIANT.list:=$(sort $(VARIANT.list) msan)
+endif
+
+VARIANT.file:=$(shell if [ -f $(ROOT)/VARIANT ]; then cat $(ROOT)/VARIANT; fi)
+
+# if VARIANT not specified and we're the not in submake, use one from file, if present
+ifeq ($(origin VARIANT),undefined)
+ ifeq ($(VARIANT.primary),)
+  ifneq ($(VARIANT.file),)
+   VARIANT:=$(VARIANT.file)
+   $(info VARIANT is $(VARIANT))
+  endif
+ endif
+else # VARIANT specified
+ ifeq ($(VARIANT.primary),)
+  export VARIANT.primary:=$(VARIANT)
+ endif
+endif
+
+# add variant to variant list
+ifneq ($(firstword $(call reverse,$(VARIANT.list))),$(VARIANT))
+export VARIANT.list:=$(strip $(VARIANT.list) $(VARIANT))
+endif
+
+# join strings with hyphens
+VARIANT.string:=$(subst $(__SPACE),-,$(strip $(VARIANT.list)))
+
+ifeq ($(VARIANT.string),)
+_VARIANT.string:=
+else
+_VARIANT.string:=-$(VARIANT.string)
+endif
+
+FULL_VARIANT:=$(OS)-$(ARCH)-$(FLAVOR)$(_VARIANT.string)
+FULL_VARIANT.release:=$(OS)-$(ARCH)-release$(_VARIANT.string)
+FULL_VARIANT.debug:=$(OS)-$(ARCH)-debug$(_VARIANT.string)
+
+# if primary variant and SETVARIANT are present, write variant to file
+ifneq ($(VARIANT.primary),)
+ifneq ($(origin SETVARIANT),undefined)
+$(eval $(shell echo $(VARIANT)>$(ROOT)/VARIANT))
+endif
+endif

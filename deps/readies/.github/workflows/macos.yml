@@ -1,0 +1,45 @@
+name: Test macOS platforms
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms'
+        default: '["macos-11", "macos-12", "macos-13"]'
+
+jobs:
+  linux-matrix:
+    defaults:
+      run:
+        shell: bash -l -eo pipefail {0}
+    strategy:
+      matrix:
+        os: ${{ fromJson(inputs.platforms) }}
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: false
+#    - run: |
+#        git config --global --add safe.directory '*'
+#        # git submodule update --init --recursive
+    - name: Python
+      run: |
+        ./bin/getpy3
+    - name: Installations
+      run: |
+        ./bin/getclang --modern
+        ./bin/getgcc --modern
+    - name: Summary
+      run: |
+        echo "platform: $(./bin/platform)"
+        echo "uname -a: $(uname -a)"
+        echo "bash: $BASH_VERSION"
+        echo "System Python: $(/usr/bin/python3 --version)"
+        echo "Python: $(python3 --version)"
+        echo "pip list:"; python3 -m pip list -v
+        echo "System clang: $(/usr/bin/clang --version | head -1)"
+        echo "clang: $(clang --version | head -1)"
+        echo "gcc: $(gcc --version | head -1)"
+        echo "macOS SDK version: $(xcrun --show-sdk-version)"

@@ -71,3 +71,4 @@ cmake-build-*
 cov
 cov.all
 cov.json
+compile_commands.json

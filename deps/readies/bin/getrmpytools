@@ -1,0 +1,197 @@
+#!/bin/sh
+''''[ ! -z $VIRTUAL_ENV ] && exec python -u -- "$0" ${1+"$@"}; command -v python3 > /dev/null && exec python3 -u -- "$0" ${1+"$@"}; exec python2 -u -- "$0" ${1+"$@"} # '''
+
+import sys
+import os
+import argparse
+import shutil
+import tempfile
+import traceback
+
+HERE = os.path.dirname(__file__)
+READIES = os.path.abspath(os.path.join(HERE, ".."))
+sys.path.insert(0, READIES)
+import paella  # noqa: F401
+
+os.environ["PYTHONWARNINGS"] = 'ignore:DEPRECATION::pip._internal.cli.base_command'
+
+#----------------------------------------------------------------------------------------------
+
+class RMPyToolsSetup(paella.Setup):
+    def __init__(self, args):
+        paella.Setup.__init__(self, nop=args.nop)
+        self.pyver = sys.version_info
+        if args.no_reinstall:
+            self.reinstall = False
+        else:
+            self.reinstall = args.reinstall
+        self.master = args.master
+        self.pypi = args.pypi
+        self.modern = args.modern
+        self.legacy = args.legacy
+        self.redispy_version = args.redispy_version
+        self.rltest_version = args.rltest_version
+        self.ramp_version = args.ramp_version
+
+    def build_and_install_psutil(self, deps):
+        self.run("%s/bin/getgcc" % READIES)
+        self.install(deps)
+        self.psutil_installed = self.pip_install("psutil~=5.8.0", _try=True) == 0
+        if not self.psutil_installed:
+            self.pip_install("psutil")
+
+    def common_first(self):
+        self.psutil_installed = self.pip_install("psutil~=5.8.0", _try=True, output=False) == 0
+
+    def debian_compat(self):
+        if not self.psutil_installed:
+            self.run("apt-get remove -y python%s-psutil" % ("" if self.pyver[0] == 2 else self.pyver[0]),
+                     _try=True, output=False, sudo=True)
+            if self.osnick == 'xenial' and self.pyver[0:2] == (3, 6):
+                self.build_and_install_psutil("python3.6-dev")
+            else:
+                self.build_and_install_psutil("python%s-dev" % self.pyver[0])
+
+    def redhat_compat(self):
+        if not self.psutil_installed:
+            self.build_and_install_psutil("python%s-devel" % self.pyver[0])
+
+    def archlinux(self):
+        if not self.psutil_installed:
+            self.build_and_install_psutil("python%s-dev" % self.pyver[0])
+
+    def fedora(self):
+        if not self.psutil_installed:
+            self.run("dnf remove -y python%s-psutil" % self.pyver[0], _try=True, output=False, sudo=True)
+            self.build_and_install_psutil("python%s-devel" % self.pyver[0])
+
+    def macos(self):
+        if not self.psutil_installed:
+            self.pip_install("psutil==5.8.0")
+        # without this, RLTest installation may fail (pip install does not install dev dependencies)
+        # self.pip_install("poetry")
+
+    def alpine(self):
+        self.install("linux-headers")
+
+    def common_last(self):
+        self.install("git")
+        if self.reinstall:
+            self.pip_uninstall("redis redis-py-cluster ramp-packer RLTest")
+            
+        if self.master:
+            self.redispy_org = 'redis'
+            self.redispy_version = 'master'
+            self.rltest_version = 'master'
+            self.ramp_version = 'master'
+
+        self._install_rltest()
+        self._install_ramp()
+        self._install_redis_py()
+
+    def _install_redis_py(self):
+        redis_py_cluster_installed = False
+        if self.redispy_version is None:
+            if self.modern:
+                self.pip_install("--no-cache-dir redis~=5.0.0")
+            elif self.legacy:
+                self.pip_install("--no-cache-dir git+https://github.com/redisfab/redis-py.git@3.5")
+                self.pip_install("--no-cache-dir git+https://github.com/redisfab/redis-py-cluster@2.1")
+                redis_py_cluster_installed = True
+            else:
+                self.pip_install("--no-cache-dir redis~=4.6.0")
+        else:
+            verspec = self.redispy_version.split('/')
+            if len(verspec) > 1:
+                self.redispy_org, self.redispy_version = verspec[:2]
+            else:
+                self.redispy_org = "redis"
+                self.redispy_version = verspec[0]
+        
+            (source, version) = self.get_version(self.redispy_version)
+            if source == 'pypi':
+                self.pip_install(f"--no-cache-dir redis=={version}")
+            else:
+                self.pip_install(f"--no-cache-dir git+https://github.com/{self.redispy_org}/redis-py.git@{version}")
+
+        if self.legacy and not redis_py_cluster_installed:
+            # redis-py-cluster should be installed from git due to redis-py dependency
+            # self.pip_install("--no-cache-dir git+https://github.com/Grokzen/redis-py-cluster.git@master")
+            # self.pip_install("--no-cache-dir redis-py-cluster")
+            self.pip_install("--no-cache-dir git+https://github.com/redisfab/redis-py-cluster@2.1")
+
+    def _install_rltest(self):
+        if self.rltest_version is None:
+            if self.modern:
+                self.pip_install("--no-cache-dir RLTest~=0.7.1")
+            elif self.legacy:
+                if not self.pypi:
+                    self.pip_install("--no-cache-dir git+https://github.com/RedisLabsModules/RLTest.git@0.4")
+                else:
+                    self.pip_install("--no-cache-dir RLTest~=0.4.2")
+            else:
+                self.pip_install("--no-cache-dir RLTest~=0.6.0")
+        else:
+            (source, version) = self.get_version(self.rltest_version)
+            if source == 'pypi':
+                self.pip_install(f"--no-cache-dir RLTest=={version}")
+            else:
+                self.pip_install(f"--no-cache-dir git+https://github.com/RedisLabsModules/RLTest.git@{version}")
+
+    def _install_ramp(self):
+        if self.ramp_version is None:
+            self.pip_install(f"--no-cache-dir ramp-packer~=2.5.6")
+        else:
+            (source, version) = self.get_version(self.ramp_version)
+            if source == 'pypi':
+                self.pip_install(f"--no-cache-dir ramp-packer=={version}")
+            else:
+                self.pip_install(f"--no-cache-dir git+https://github.com/RedisLabs/RAMP@{version}")
+    
+    def get_version(self, verspec):
+        if verspec.startswith('pypi:'):
+            return ('pypi', verspec[5:])
+        if verspec.startswith('github:'):
+            return ('github', verspec[7:])
+        return ('pypi' if self.pypi else 'github', verspec)
+    
+#----------------------------------------------------------------------------------------------
+
+class RMPyToolsUninstall(paella.Setup):
+    def __init__(self, args):
+        paella.Setup.__init__(self, nop=args.nop)
+        self.pip_uninstall("redis redis-py-cluster ramp-packer RLTest")
+
+#----------------------------------------------------------------------------------------------
+
+parser = argparse.ArgumentParser(description='Install RedisLabs Modules Python tools')
+parser.add_argument('-n', '--nop', action="store_true", help='no operation')
+parser.add_argument('-v', '--verbose', action="store_true", help='Display installed versions')
+parser.add_argument('--show', action="store_true", help='Display installed versions and exit')
+parser.add_argument('--no-reinstall', action="store_true", default=False, help='Not not reinstall everything')
+parser.add_argument('--reinstall', action="store_true", default=False, help='Reinstall everything')
+parser.add_argument('--remove', action="store_true", default=False, help='Uninstall everything')
+parser.add_argument('--modern', action="store_true", default=False, help='Install modern versions of redis-py (4.x), RLTest, and RAMP')
+parser.add_argument('--legacy', action="store_true", default=False, help='Install legacy versions of redis-py (3.5), redis-py-cluster, etc')
+parser.add_argument('--master', action="store_true", default=False, help='Install redis-py, RLTest, RAMP from master')
+parser.add_argument('--pypi', action="store_true", default=False, help='Install via PyPI')
+parser.add_argument('--redispy-version', metavar='VER', type=str, default=None, help="github:org/tag or github:org/branch or pypi:version")
+parser.add_argument('--rltest-version', metavar='VER', type=str, default=None, help="github:tag or github:branch or pypi:version")
+parser.add_argument('--ramp-version', metavar='VER', type=str, default=None, help="github:tag or github:branch or pypi:version")
+args = parser.parse_args()
+
+try:
+    if not args.show:
+        if args.modern and sys.version_info < (3, 6):
+            fatal("Cannot use redis-py 4.0 with Python 2")
+        if args.remove:
+            RMPyToolsUninstall(args).setup()
+        else:
+            RMPyToolsSetup(args).setup()
+    if args.verbose or args.show:
+        os.system("{PYTHON} -m pip list | grep -Ei 'redis|redis-py|rltest|ramp|psutil'".format(PYTHON=sys.executable))
+except Exception as x:
+    traceback.print_exc()
+    fatal(str(x))
+
+exit(0)

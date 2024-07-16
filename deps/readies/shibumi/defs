@@ -1,0 +1,66 @@
+
+# Typically invoked with:
+# PROGNAME="${BASH_SOURCE[0]}"
+# HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+# ROOT=$(cd $HERE/somewhere && pwd)
+# READIES=$ROOT/deps/readies
+# . $READIES/shibumi/defs
+
+if [[ -n $PROGNAME ]]; then
+	if commmand -v realpath 2> /dev/null; then
+		__PROGNAME="$(realpath "${PROGNAME}")"
+	else
+		__PROGNAME="$(cd $(dirname "${PROGNAME}") && pwd)/$(basename "${PROGNAME}")"
+	fi
+fi
+
+error_trap() {
+	# >&2 echo "$0: There are errors."
+	local __PROGNAME=${__PROGNAME:-$0}
+	>&2 echo
+	>&2 echo "In $__PROGNAME:"
+	>&2 awk 'NR>L-4 && NR<L+4 { printf "%-5d%4s%s\n",NR,(NR==L?">>> ":""),$0 }' L=$1 $__PROGNAME
+	>&2 echo
+	exit 1
+}
+
+# avoid trap with bashdb
+if [[ -z $_Dbg_DEBUGGER_LEVEL ]]; then
+	trap 'error_trap $LINENO' ERR
+fi
+
+if [[ -d $READIES ]]; then
+	. $READIES/shibumi/functions 
+fi
+
+setup_profile_d
+
+# OP=""
+# [[ $NOP == 1 ]] && OP=echo
+
+[[ $SUDO == 1 ]] && _SUDO="$SUDO"
+
+SUDO=
+if [[ $(id -u) != 0 ]]; then
+	if is_command sudo; then
+		SUDO=sudo
+	fi
+fi
+if [[ $_SUDO == 1 && -n $SUDO ]]; then
+	$SUDO echo -n
+fi
+
+if [[ -f /etc/os-release ]]; then
+	DIST="$(source /etc/os-release; echo ${ID}${VERSION_ID};)"
+fi
+
+if [[ $DIST == centos7 || $DIST == amzn2 ]]; then
+    if grep -q -r "mirror.centos.org" "/etc/yum.repos.d/"; then
+        # http://mirror.centos.org/centos/7/ is deprecated, so we have to disable mirrorlists
+        # and change the baseurl in the repo file to the working mirror (from mirror.centos.org to vault.centos.org)
+        sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo &> /dev/null || true
+        sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo &> /dev/null || true
+        sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo &> /dev/null || true
+        yum upgrade -y &> /dev/null
+    fi
+fi
