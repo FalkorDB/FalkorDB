@@ -50,21 +50,17 @@ jobs:
 
     - name: Build
       run: |
-        rustup toolchain list
-        rustup default nightly
-        apt-get update
-        apt-get install -y clang libomp-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
-        apt update && apt install lsb-release -y
+        
         curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
         echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
         apt update && apt install redis -y
-        make coverage NPROC=16
-      continue-on-error: true
+        
+        make coverage NPROC=16 || true
 
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4.4.0
+      uses: codecov/codecov-action@v4
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
