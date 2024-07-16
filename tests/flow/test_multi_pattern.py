@@ -50,15 +50,16 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
     
     # Perform a cartesian product of 3 sets.
     def test04_cartesian_product(self):
-        queries = ["""MATCH (a), (b), (c) RETURN count(a)""",
-                   """MATCH (a) MATCH (b), (c) RETURN count(a)""",
-                   """MATCH (a), (b) MATCH (c) RETURN count(a)""",
-                   """MATCH (a) MATCH (b) MATCH (c) RETURN count(a)"""]
+        queries = {"""MATCH (a), (b), (c) RETURN count(a)""": 343,
+                   """MATCH (a) MATCH (b), (c) RETURN count(a)""": 343,
+                   """MATCH (a), (b) MATCH (c) RETURN count(a)""": 343,
+                   """MATCH (a) MATCH (b) MATCH (c) RETURN count(a)""": 343,
+                   """MATCH (a) OPTIONAL MATCH ({n0:0}), () RETURN count(a)""": 7}
 
-        for q in queries:
+        for q, c in queries.items():
             actual_result = self.graph.query(q)
             friend_count = actual_result.result_set[0][0]
-            self.env.assertEquals(friend_count, 343)
+            self.env.assertEquals(friend_count, c)
 
     def test06_multiple_create_clauses(self):
         queries = ["""CREATE (:a {v:1}), (:b {v:2, z:3}), (:c), (:a)-[:r0 {k:9}]->(:b), (:c)-[:r1]->(:d)""",
