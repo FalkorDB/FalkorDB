@@ -484,7 +484,6 @@ SIValue AR_TOUPPER(SIValue *argv, int argc, void *private_data) {
 	if(SIValue_IsNull(argv[0])) return SI_NullVal();
 	char *original = argv[0].stringval;
 	char *upper = str_toupper(original);
-	char *lower = str_tolower(original);
 	if(lower == NULL) {
 		ErrorCtx_SetError(EMSG_INVALID_UTF8);
 		return SI_NullVal();
