@@ -53,7 +53,8 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         queries = ["""MATCH (a), (b), (c) RETURN count(a)""",
                    """MATCH (a) MATCH (b), (c) RETURN count(a)""",
                    """MATCH (a), (b) MATCH (c) RETURN count(a)""",
-                   """MATCH (a) MATCH (b) MATCH (c) RETURN count(a)"""]
+                   """MATCH (a) MATCH (b) MATCH (c) RETURN count(a)""",
+                   """MATCH (x) OPTIONAL MATCH ({n0:0}), () RETURN count(x)"""]
 
         for q in queries:
             actual_result = self.graph.query(q)

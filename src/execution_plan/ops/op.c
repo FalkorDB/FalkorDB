@@ -335,6 +335,8 @@ inline void OpBase_DeleteRecord
 (
 	Record *r
 ) {
+	if(*r == NULL) return;
+
 	ExecutionPlan_ReturnRecord((*r)->owner, *r);
 	// nullify record
 	*r = NULL;
