@@ -1,0 +1,16 @@
+
+if(NOT DEFINED OS)
+	set(OS $ENV{OS})
+endif()
+
+if(NOT DEFINED OSNICK)
+	set(OSNICK $ENV{OSNICK})
+endif()
+
+if(NOT DEFINED ARCH)
+	set(ARCH $ENV{ARCH})
+endif()
+
+message("# OS=${OS}")
+message("# OSNICK=${OSNICK}")
+message("# ARCH=${ARCH}")

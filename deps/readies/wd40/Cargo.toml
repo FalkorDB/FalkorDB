@@ -1,0 +1,16 @@
+[package]
+name = "readies-wd40"
+version = "0.1.0"
+authors = []
+edition = "2018"
+
+[lib]
+crate-type = ["rlib"]
+name = "readies_wd40"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mybin"
+path = "src/bin.rs"
+
+[dependencies]

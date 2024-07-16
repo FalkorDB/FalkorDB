@@ -1,0 +1,9 @@
+
+ifeq ($(shell { [ -d .git ] || git rev-parse --git-dir >/dev/null 2>&1; echo -n $$?; }),0)
+GIT_SHA=$(call cached-shell,GIT_SHA,git rev-parse HEAD)
+GIT_SHA_SHORT=$(call cached-shell,GIT_SHA_SHORT,git rev-parse --short HEAD)
+GIT_COMMIT=$(call cached-shell,GIT_COMMIT,git describe --always --abbrev=7 --dirty="+" 2>/dev/null || git rev-parse --short HEAD)
+GIT_BRANCH=$(call cached-shell,GIT_BRANCH,git rev-parse --abbrev-ref HEAD)
+GIT_BRANCH_ID=$(call cached-shell,GIT_BRANCH_ID,git rev-parse --abbrev-ref HEAD | sed -e 's/\//_/g')
+GIT_VERSPEC=$(GIT_BRANCH)-$(GIT_SHA_SHORT)
+endif

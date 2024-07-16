@@ -1,0 +1,94 @@
+#!/bin/sh
+''''[ ! -z $VIRTUAL_ENV ] && exec python -u -- "$0" ${1+"$@"}; command -v python3 > /dev/null && exec python3 -u -- "$0" ${1+"$@"}; exec python2 -u -- "$0" ${1+"$@"} # '''
+
+import sys
+import os
+import argparse
+
+HERE = os.path.dirname(__file__)
+ROOT = os.path.abspath(os.path.join(HERE, ".."))
+sys.path.insert(0, ROOT)
+import paella
+
+#----------------------------------------------------------------------------------------------
+
+class DockerSetup(paella.Setup):
+    def __init__(self, nop=False, no_install=False, no_exp=False):
+        self.no_install = no_install
+        self.no_exp = no_exp
+        paella.Setup.__init__(self, nop)
+
+    def debian_compat(self):
+        if self.no_install:
+            return
+        self.run("bash <(curl -fsSL https://raw.githubusercontent.com/docker/docker-install/master/install.sh)", sudo="file")
+
+        # self.install("apt-transport-https ca-certificates curl gnupg-agent software-properties-common lsb-release")
+        # self.run("curl -fsSL https://download.docker.com/linux/{}/gpg | apt-key add -".format(self.dist), sudo=True)
+        # self.add_repo("'deb [arch=amd64] https://download.docker.com/linux/debian {} stable'".format(sh("lsb_release -cs")))
+        # self.run("apt-get -qq update", sudo=True)
+        # self.install("docker-ce docker-ce-cli containerd.io")
+
+    def redhat_compat(self):
+        if self.no_install:
+            return   
+        self.install("yum-utils device-mapper-persistent-data lvm2")
+        self.install("http://mirror.centos.org/centos/7/extras/x86_64/Packages/container-selinux-2.107-3.el7.noarch.rpm")
+        self.add_repo("https://download.docker.com/linux/centos/docker-ce.repo")
+        self.install("docker-ce docker-ce-cli containerd.io")
+        self.run("systemctl start docker", sudo=True)
+        self.run("systemctl enable docker", sudo=True)
+
+    def fedora(self):
+        if self.no_install:
+            return
+        self.run("bash <(curl -fsSL https://raw.githubusercontent.com/docker/docker-install/master/install.sh)", sudo="file")
+
+        # self.add_repo("https://download.docker.com/linux/fedora/docker-ce.repo")
+        # self.install("docker-ce docker-ce-cli containerd.io")
+
+    def common_last(self):
+        # enable running docker as non-root user
+        self.run("groupadd docker || true", sudo=True)
+        self.run("usermod -aG docker $USER || true", sudo=True)
+
+        if self.no_exp:
+            return
+        self.install("jq moreutils")
+        # client
+        self.run("mkdir -p ~/.docker")
+        self.run("if [ ! -f ~/.docker/config.json ]; then echo '{}' >  ~/.docker/config.json; fi")
+        self.run("jq '.experimental = \"enabled\"' ~/.docker/config.json | sponge ~/.docker/config.json")
+        # server
+        self.run("if [ ! -f /etc/docker/daemon.json ]; then mkdir -p /etc/docker; echo '{}' >  /etc/docker/daemon.json; fi", sudo="file")
+        self.run("jq '.experimental = true' /etc/docker/daemon.json | sponge /etc/docker/daemon.json", sudo="file")
+        if self.has_command("systemctl"):
+            self.run("systemctl restart docker", sudo=True)
+        else:
+            self.run("service docker restart", sudo=True)
+
+#----------------------------------------------------------------------------------------------
+
+class DockerComposeSetup(paella.Setup):
+    def __init__(self, nop=False, no_install=False, no_exp=False):
+        self.no_install = no_install
+        self.no_exp = no_exp
+        paella.Setup.__init__(self, nop)
+
+    def common_first(self):
+        self.pip_install("docker-compose")
+
+#----------------------------------------------------------------------------------------------
+
+parser = argparse.ArgumentParser(description='Install Docker CE')
+parser.add_argument('-n', '--nop', action="store_true", help='no operation')
+parser.add_argument('--just-enable-exp', action="store_true", help='no install, just enable experimental features')
+parser.add_argument('--no-exp', action="store_true", help="don't enable experimental features")
+parser.add_argument('--compose', action="store_true", help='install Docker Compose')
+parser.add_argument('--just-compose', action="store_true", help='just install Docker Compose')
+args = parser.parse_args()
+
+if not args.just_compose:
+    DockerSetup(nop = args.nop, no_install=args.just_enable_exp, no_exp=args.no_exp).setup()
+if args.compose or args.just_compose:
+    DockerComposeSetup(nop = args.nop, no_install=args.just_enable_exp, no_exp=args.no_exp).setup()
