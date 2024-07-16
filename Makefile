@@ -38,8 +38,8 @@ make all            # Build everything
   SLOW=1              # Disable parallel build
   STATIC_OMP=1        # Link OpenMP statically
   VARIANT=name        # Add `name` to build products directory
-  GCC=1               # Build with GCC toolchain (default nor Linux)
-  CLANG=1             # Build with CLang toolchain (default for macOS)
+  GCC=1               # Build with GCC toolchain
+  CLANG=1             # Build with CLang toolchain (default)
   COV=1               # Build for coverage analysis (implies DEBUG=1)
   VG=1|docker         # build for Valgrind
   SAN=type            # build with LLVM sanitizer (type=address|memory|leak|thread)
@@ -240,7 +240,7 @@ $(RAX):
 
 graphblas: $(GRAPHBLAS)
 
-GRAPHBLAS_MAKE_FLAGS.xenial-x64=CC=gcc-5 CXX=gxx-5
+GRAPHBLAS_MAKE_FLAGS.xenial-x64=CC=clang CXX=clang++
 
 $(GRAPHBLAS):
 	@echo Building $@ ...
@@ -279,6 +279,8 @@ ifneq ($(SAN),)
 export RUSTFLAGS=-Zsanitizer=$(SAN)
 CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
+
+export RUSTFLAGS=-C linker-plugin-lto
 
 falkordbrs:
 	@echo Building $@ ...
@@ -396,7 +398,13 @@ benchmark: $(TARGET)
 #----------------------------------------------------------------------------------------------
 
 COV_EXCLUDE_DIRS += \
-	deps \
+	deps/GraphBLAS \
+	deps/libcypher-parser \
+	deps/oniguruma \
+	deps/rax \
+	deps/RediSearch \
+	deps/utf8proc \
+	deps/xxHash \
 	src/util/sds \
 	tests
 

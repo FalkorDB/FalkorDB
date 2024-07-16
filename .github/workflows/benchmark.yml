@@ -66,7 +66,7 @@ jobs:
       matrix:
         benchmark_group: [ a, b ]
     runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
-    container: falkordb/falkordb-build:ubuntu
+    container: falkordb/falkordb-build:llvm-ubuntu
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -99,11 +99,10 @@ jobs:
 
       - name: Build
         run: |
-          apt update && apt install -y lsb-release
           curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
           echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
-          apt update && apt install -y redis python3-venv python3-pip
-          rustup default stable
+          apt update && apt install -y redis
+          
           make -j$(nproc)
 
       - name: Install benchmark dependencies

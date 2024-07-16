@@ -50,14 +50,11 @@ jobs:
 
     - name: Build
       run: |
-        rustup toolchain list
-        rustup default nightly
-        apt-get update
-        apt-get install -y clang libomp-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
-        make CLANG=1 SAN=address NPROC=16
+        
+        make SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
