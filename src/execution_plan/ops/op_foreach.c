@@ -75,8 +75,8 @@ static OpResult ForeachInit
 // if there is a record to return, it is returned
 // otherwise, returns NULL (last value in op->records)
 static Record _handoff(OpForeach *op) {
-	ASSERT(op->records != NULL);
-	return array_pop(op->records);
+	if(array_len(op->records) > 0) return array_pop(op->records);
+	else return NULL;
 }
 
 // the Foreach consume function aggregates all the records from the supplier if
