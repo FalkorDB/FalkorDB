@@ -1,6 +1,5 @@
 ARG TARGETPLATFORM=linux/amd64
-
-FROM --platform=$TARGETPLATFORM falkordb/falkordb-build:llvm-ubuntu AS builder
+FROM --platform=${TARGETPLATFORM} falkordb/falkordb-build:llvm-ubuntu AS builder
 
 WORKDIR /FalkorDB
 

@@ -1,11 +1,9 @@
 ARG BASE_IMAGE=falkordb/falkordb-compiler
-
 ARG TARGETPLATFORM=linux/amd64
+FROM --platform=${TARGETPLATFORM} $BASE_IMAGE AS compiler
 
-FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
 
-
-FROM falkordb/falkordb-browser as browser
+FROM falkordb/falkordb-browser AS browser
 
 
 FROM redis:7.2.4
@@ -21,6 +19,8 @@ COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falk
 
 COPY --from=browser /app /FalkorDBBrowser
 
+# Args do not transfer between layers
+ARG TARGETPLATFORM=linux/amd64
 ENV ARCH=${TARGETPLATFORM}
 
 ENV TLS=0
