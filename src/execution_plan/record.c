@@ -60,7 +60,7 @@ void Record_Clone
 	const restrict Record r,
 	restrict Record clone
 ) {
-	int entry_count = Record_length(clone);
+	int entry_count = Record_length(r);
 	// r and clone share the same record mapping
 	if(likely(r->owner == clone->owner)) {
 		size_t required_record_size = sizeof(Entry) * entry_count;
