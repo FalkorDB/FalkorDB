@@ -686,3 +686,25 @@ class testForeachFlow():
         self.env.assertEquals(res.nodes_created, 0)
         self.env.assertEquals(res.relationships_created, 3)
 
+    def test18_foreach_within_conditional_traverse(self):
+        """Tests that a FOREACH clause can be used within a conditional traversal"""
+
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE ()""")
+        self.env.assertEquals(res.nodes_created, 1)
+
+        query = """
+        FOREACH (n IN [] |
+            MERGE ()
+        )
+        WITH *
+        MATCH ()--()
+        RETURN 0
+        """
+
+        try:
+            self.graph.query(query)
+            self.env.assertTrue(True)
+        except:
+            self.env.assertTrue(False)

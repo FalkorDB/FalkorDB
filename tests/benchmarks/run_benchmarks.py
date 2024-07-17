@@ -7,8 +7,8 @@ import os
 import hashlib
 
 import yaml
+import platform
 import jsonpath_ng
-
 from typing import TextIO
 from urllib.request import urlretrieve
 from http.client import HTTPSConnection
@@ -18,7 +18,10 @@ def run_single_benchmark(file_stream: TextIO, bench: str):
     data = yaml.safe_load(file_stream)
 
     # Always prefer the environment variable over the yaml file
-    db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
+    if platform.system() == "Darwin":
+        db_module = os.getenv("DB_MODULE", "../../bin/macos-arm64v8-release/src/falkordb.so")
+    else:
+        db_module = os.getenv("DB_MODULE", "../../bin/linux-x64-release/src/falkordb.so")
     if db_module is None and "db_module" not in data:
         print("Error! No DB module specified in the yaml file or the environment variable")
         exit(1)
@@ -125,7 +128,10 @@ def verify_sha256_checksum(target_file, checksum_file):
 
 
 def get_system_doublet():
-    return "linux-amd64"
+    if platform.system() == "Darwin":
+        return "darwin-arm64"
+    else:
+        return "linux-amd64"
 
 
 def verify_and_download_benchmark_tool():
