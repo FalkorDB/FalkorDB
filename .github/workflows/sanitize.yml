@@ -60,7 +60,9 @@ jobs:
 
     - name: Unit tests
       id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
+      run: |
+        . venv/bin/activate
+        make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
