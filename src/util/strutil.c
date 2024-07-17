@@ -86,6 +86,10 @@ char *str_tolower
 	utf8proc_uint8_t buffer[4];
 	while(str_i[0] != 0) {
 		str_i     += utf8proc_iterate(str_i, -1, &c);
+		if(c == -1) {
+			// Unicode character is not valid
+			return NULL;
+		}
 		lower_len += utf8proc_encode_char(utf8proc_tolower(c), buffer);
 	}
 	
@@ -115,6 +119,10 @@ char *str_toupper
 	utf8proc_uint8_t buffer[4];
 	while(str_i[0] != 0) {
 		str_i     += utf8proc_iterate(str_i, -1, &c);
+		if(c == -1) {
+			// Unicode character is not valid
+			return NULL;
+		}
 		upper_len += utf8proc_encode_char(utf8proc_toupper(c), buffer);
 	}
 	

@@ -204,7 +204,7 @@ static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase) {
 		Record childRecord = OpBase_Consume(child);
 		if(!childRecord) return NULL;
 
-		if(op->r) OpBase_DeleteRecord(&op->r);
+		OpBase_DeleteRecord(&op->r);
 		op->r = childRecord;
 
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
@@ -266,7 +266,7 @@ static Record CondVarLenTraverseConsume(OpBase *opBase) {
 		Record childRecord = OpBase_Consume(child);
 		if(!childRecord) return NULL;
 
-		if(op->r) OpBase_DeleteRecord(&op->r);
+		OpBase_DeleteRecord(&op->r);
 		op->r = childRecord;
 
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
