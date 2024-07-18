@@ -258,4 +258,3 @@ int RedisModule_OnLoad
 
 	return REDISMODULE_OK;
 }
-

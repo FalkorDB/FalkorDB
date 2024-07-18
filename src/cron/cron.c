@@ -124,6 +124,7 @@ static bool CRON_RemoveTask
 	pthread_mutex_lock(&cron->mutex);
 	void *res = Heap_remove_item(cron->tasks, t);
 	pthread_mutex_unlock(&cron->mutex);
+
 	return res != NULL;
 }
 
@@ -136,6 +137,7 @@ static bool CRON_RemoveCurrentTask
 	pthread_mutex_lock(&cron->mutex);
 	cron->current_task = Heap_remove_item(cron->tasks, t);
 	pthread_mutex_unlock(&cron->mutex);
+
 	return cron->current_task != NULL;
 }
 

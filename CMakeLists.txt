@@ -60,7 +60,9 @@ set(FALKORDB_LIBS ${FalkorDBRS} ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PAR
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
-extract_debug_symbols(falkordb)
+if (NOT MEMCHECK)
+	extract_debug_symbols(falkordb)
+endif ()
 
 if (APPLE)
 	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
