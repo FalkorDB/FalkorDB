@@ -50,6 +50,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # The script should report 27 node creations and 48 edge creations
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         self.env.assertIn('27 nodes created', res.output)
         self.env.assertIn('56 relations created', res.output)
 
@@ -182,6 +183,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # The script should report 3 node creations and 2 edge creations
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         self.env.assertIn('3 nodes created', res.output)
         self.env.assertIn('2 relations created', res.output)
 
@@ -228,6 +230,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # The script should succeed and create 3 nodes
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         self.env.assertIn('3 nodes created', res.output)
 
         # Delete temporary files
@@ -249,6 +252,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         # The script should report statistics multiple times
         self.env.assertGreater(res.output.count('nodes created'), 1)
 
@@ -349,6 +353,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         self.env.assertIn('3 nodes created', res.output)
         self.env.assertIn('3 relations created', res.output)
 
@@ -433,6 +438,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
                                           graphname])
 
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         self.env.assertIn('6 nodes created', res.output)
         self.env.assertIn('5 relations created', res.output)
 
@@ -541,6 +547,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
 
         # The script should report 27 node creations and 48 edge creations
         self.env.assertEquals(res.exit_code, 0)
+        self.env.assertEquals(res.exception, None)
         self.env.assertIn('27 nodes created', res.output)
         self.env.assertIn('56 relations created', res.output)
 
