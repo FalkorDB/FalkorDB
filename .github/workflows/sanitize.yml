@@ -63,7 +63,7 @@ jobs:
       id: unit_tests
       run: |
         . venv/bin/activate
-        make unit-tests SAN=address SLOW=1
+        make unit-tests SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
       id: tck_tests
       run: |
         . venv/bin/activate
-        make tck-tests SAN=address SLOW=1
+        make tck-tests SAN=address
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
