@@ -11,6 +11,7 @@ ignore:
   - "deps/RediSearch"
   - "deps/utf8proc"
   - "deps/xxHash"
+  - "deps/readies"
   - "src/util/sds"
   - "src/util/roaring.c"
   - "tests"
