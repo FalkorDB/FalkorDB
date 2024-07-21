@@ -92,7 +92,7 @@ jobs:
     # If this step fails, then you should remove it and run the build manually (see below)
     - name: Build
       run: |
-        rustup default stable
+        rustup default 1.77
         make build
 
     # ℹ️ Command-line programs to run using the OS shell.
