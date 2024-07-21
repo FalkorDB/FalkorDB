@@ -130,6 +130,11 @@ SIValue AR_TOINTEGER(SIValue *argv, int argc, void *private_data) {
 	case T_STRING:
 		if(strlen(arg.stringval) == 0) return SI_NullVal();
 		errno = 0;
+		if(strchr(arg.stringval, '.') == NULL) {
+			int64_t parsedval = strtoll(arg.stringval, &sEnd, 10);
+			if(sEnd[0] != '\0' || errno == ERANGE) return SI_NullVal();
+			return SI_LongVal(parsedval);
+		}
 		double parsedval = strtod(arg.stringval, &sEnd);
 		/* The input was not a complete number or represented a number that
 		 * cannot be represented as a double. */

@@ -34,8 +34,7 @@
 
 __inline__ __device__ uint64_t GB_block_ReduceSum_uint64
 (
-    thread_block g,     // FIXME: g is used for thread_block_tile elsewhere;
-                        // be consistent.
+    thread_block g,
     uint64_t val
 )
 {

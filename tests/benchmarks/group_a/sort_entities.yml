@@ -1,0 +1,15 @@
+name: SORT_ENTITIES
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 100000) AS x CREATE ({v:rand()})"]
+parameters:
+  num_clients: 32
+  num_requests: 1000
+  queries:
+    - query: 'MATCH (n) WITH n ORDER BY n.v RETURN 1 LIMIT 1'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 100
+  - key: '$.OverallQueryRates.Total'
+    min_value: 90

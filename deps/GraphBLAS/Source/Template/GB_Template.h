@@ -18,7 +18,6 @@
 #include "GB_compiler.h"
 #include "GB_warnings.h"
 #include "GB_coverage.h"
-#define GB_LIBRARY
 
 //------------------------------------------------------------------------------
 // user-visible GraphBLAS.h

@@ -23,10 +23,12 @@
 #endif
 
 //------------------------------------------------------------------------------
-// kernel launch geometry
+// dot3 kernel launch geometry
 //------------------------------------------------------------------------------
 
 // FIXME: some duplicates here
+// FIXME: tune these values.  Bigger chunk_size leads to fewer binary searches
+// with GB_cuda_ek_slice_setup, for example.
 #define chunk_size 128
 #define log2_chunk_size 7
 #define tile_sz 32 

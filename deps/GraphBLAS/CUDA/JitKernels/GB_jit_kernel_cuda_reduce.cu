@@ -24,8 +24,8 @@
 
 // If the reduction is done on the GPU, A will never be iso-valued.
 
-#if GB_C_ISO
-#error "kernel undefined for C iso"
+#if GB_C_ISO || GB_A_ISO
+#error "kernel undefined for C or A iso"
 #endif
 
 // FIXME: put these definitions in GB_cuda_kernel.h:
@@ -111,6 +111,7 @@ __global__ void GB_cuda_reduce_kernel
         {
             // check for zombies during the reduction
             const int64_t *__restrict__ Ai = A->i ;
+            // grid-stride loop:
             for (int64_t p = blockIdx.x * blockDim.x + threadIdx.x ;
                 p < anz ;
                 p += blockDim.x * gridDim.x)
@@ -182,22 +183,24 @@ __global__ void GB_cuda_reduce_kernel
     {
         #if GB_Z_HAS_CUDA_ATOMIC_USER
 
-            // user-defined monoid can be done automically
+            // user-defined monoid can be done automically:
+            // zscalar "+=" zmine using a CUDA atomic directly
             GB_cuda_atomic_user (zscalar, zmine) ;
 
         #elif GB_Z_HAS_CUDA_ATOMIC_BUILTIN
 
-            // cast the result to the CUDA atomic type, and reduce
+            // cast the zmine result to the CUDA atomic type, and reduce
             // atomically to the global zscalar
+            // zscalar "+=" zmine using a CUDA atomic pun
             GB_Z_CUDA_ATOMIC_TYPE *z = (GB_Z_CUDA_ATOMIC_TYPE *) zscalar ;
             GB_Z_CUDA_ATOMIC_TYPE zsum = (GB_Z_CUDA_ATOMIC_TYPE) zmine ;
             GB_Z_CUDA_ATOMIC <GB_Z_CUDA_ATOMIC_TYPE> (z, zsum) ;
 
         #else
 
-            // save my result in V
-            GB_Z_TYPE *Vx = (GB_Z_TYPE) V->x ;
-            Vx [blockIdx.x] = zscalar ;
+            // save my zmine result in V
+            GB_Z_TYPE *Vx = (GB_Z_TYPE *) V->x ;
+            Vx [blockIdx.x] = zmine ;
 
         #endif
     }
