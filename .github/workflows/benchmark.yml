@@ -103,6 +103,8 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
           apt update && apt install -y redis
           
+          rustup default 1.77
+          
           make NPROC=$(nproc)
 
       - name: Install benchmark dependencies
