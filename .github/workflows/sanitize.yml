@@ -52,17 +52,19 @@ jobs:
       run: |
         python3 -m venv venv
         . venv/bin/activate
+        
+        apt update && apt install -y libc6-dbg
         pip install -r tests/requirements.txt
         
         rustup default nightly-2024-02-03
         
-        make SAN=address NPROC=16 DEBUG=1
+        make SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
       run: |
         . venv/bin/activate
-        make unit-tests SAN=address DEBUG=1 SLOW=1
+        make unit-tests SAN=address SLOW=1
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -75,7 +77,7 @@ jobs:
       id: flow_tests
       run: |
         . venv/bin/activate
-        make flow-tests SAN=address DEBUG=1 SLOW=1
+        make flow-tests SAN=address SLOW=1
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
@@ -88,7 +90,7 @@ jobs:
       id: tck_tests
       run: |
         . venv/bin/activate
-        make tck-tests SAN=address DEBUG=1 SLOW=1
+        make tck-tests SAN=address SLOW=1
       continue-on-error: true
 
     - uses: actions/upload-artifact@v4
