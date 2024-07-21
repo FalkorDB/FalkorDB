@@ -59,9 +59,9 @@ void GB_assign_describe
     // construct the Mask string
     //--------------------------------------------------------------------------
 
-    #define GB_STRLEN 128
+    #define GB_MASK_STRING_LEN 128
     const char *Mask ;
-    char Mask_string [GB_STRLEN+1] ;
+    char Mask_string [GB_MASK_STRING_LEN+1] ;
     if (M_is_null)
     {
         // M is not present
@@ -77,7 +77,7 @@ void GB_assign_describe
     else
     { 
         // M is present
-        snprintf (Mask_string, GB_STRLEN, "<%sM%s%s%s>",
+        snprintf (Mask_string, GB_MASK_STRING_LEN, "<%sM%s%s%s>",
             (Mask_comp) ? "!" : "",
             (M_sparsity == GxB_BITMAP) ? ",bitmap"
                 : ((M_sparsity == GxB_FULL) ? ",full" : ""),

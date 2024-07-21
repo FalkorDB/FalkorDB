@@ -30,11 +30,11 @@ for k = 1:(ntypes + 1)
         type = types {k}  ;
         fprintf ('\n%s:\n', type) ;
     end
-    
+
     if (test_contains (type, 'single'))
-        tol = 1e-5 ;
+        tol = 1e-4 ;
     elseif (test_contains (type, 'double'))
-        tol = 1e-11 ;
+        tol = 1e-9 ;
     else
         tol = 0 ;
     end

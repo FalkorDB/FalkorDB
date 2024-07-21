@@ -1,0 +1,17 @@
+name: GRAPH500-SCALE_18-EF_16-2_HOP
+description: "Dataset: Synthetic graph500 network of scale 18 (262144x262144, 4194304
+  edges) - 262017 nodes with label 'Node' - 4194304 relations of type 'IS_CONNECTED'
+  - Indexed properties: - exact-match: Node; [external_id] "
+db_config:
+  dataset: datasets/graph500.rdb
+  dataset_load_timeout_secs: 180
+parameters:
+  graph: graph500-scale18-ef16
+  num_clients: 32
+  num_requests: 1000000
+  random_int_max: 262016
+  random_seed: 12345
+  queries:
+    - query: 'CYPHER Id1=__rand_int__ MATCH (n)-[:IS_CONNECTED*2]->(z) WHERE ID(n) = $Id1 RETURN ID(n), count(z)'
+      ratio: 1.0
+

@@ -43,7 +43,7 @@ valid_count = [
 for k = 1:nfiles
     % fprintf ('--------------------------load file:\n') ;
     filename = files {k} ;
-    T = load (fullfile (filepath, filename)) ;
+    T = load ('-ascii', fullfile (filepath, filename)) ;
     nz = size (T, 1) ;
     X = ones (nz,1) ;
     G = GrB.build (int64 (T (:,1)), int64 (T (:,2)), X, desc) ;

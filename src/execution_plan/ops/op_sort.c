@@ -114,8 +114,8 @@ static OpResult SortInit(OpBase *opBase) {
 	OpSort *op = (OpSort *)opBase;
 
 	// set skip and limit if present in the execution-plan
-	ExecutionPlan_ContainsSkip(opBase, &op->skip);
-	ExecutionPlan_ContainsLimit(opBase, &op->limit);
+	ExecutionPlan_ContainsSkip(opBase->parent, &op->skip);
+	ExecutionPlan_ContainsLimit(opBase->parent, &op->limit);
 
 	// if there is LIMIT value, l, set in the current clause,
 	// the operation must return the top l records with respect to

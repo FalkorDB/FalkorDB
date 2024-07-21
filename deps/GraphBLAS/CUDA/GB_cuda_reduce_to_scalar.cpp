@@ -60,21 +60,20 @@ GrB_Info GB_cuda_reduce_to_scalar
     // determine problem characteristics and allocate worksbace
     //--------------------------------------------------------------------------
 
-    int threads_per_block = 320 ;
-    int work_per_thread = 256;
-//  int number_of_sms = GB_Global_gpu_sm_get (0) ;
+    int blocksz = 320 ;             // # threads in each block
+    int work_per_thread = 256 ;     // work each thread does in a single block
+    int number_of_sms = GB_Global_gpu_sm_get (0) ;
 
     GrB_Type ztype = monoid->op->ztype ;
     size_t zsize = ztype->size ;
 
     // determine kernel launch geometry
     int64_t anvals = GB_nnz_held (A) ;
-    int blocksz = threads_per_block ;
-    int gridsz =
-        // FIXME: this is a lot of blocks.  Use a smaller number (cap at,
-        // say, 64K), to simplify the non-atomic reductions
-        (anvals + work_per_thread*threads_per_block - 1) /
-               (work_per_thread*threads_per_block) ;
+    int64_t work_per_block = work_per_thread*blocksz ;
+    // gridsz = ceil (anvals / work_per_block)
+    int64_t raw_gridsz = GB_ICEIL (anvals, work_per_block) ;
+    raw_gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
+    int gridsz = (int) raw_gridsz ;
 
     // FIXME: GB_enumify_reduce is called twice: here (to get has_cheeseburger)
     // and in GB_cuda_reduce_to_scalar_jit.  Can we just call it once?  One

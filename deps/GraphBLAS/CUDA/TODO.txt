@@ -1,18 +1,20 @@
 TODO (Mar 2024):
 
+    GB_CUDA_FLAGS: get from GB_config.h, allow user to modify them, etc
+        and pass to nvcc.  Also GB_CUDA_COMPILER (default to nvcc)
+
+    complex data types
     set/get cuda archictures
     CUDA PreJIT kernels
     GB_cuda_matrix_advise:  write it
     dot3: allow iso
     use a stream pool (from RMM)
     can rmm_wrap be thread safe?
-    # of threadblocks in reduce
-    reduce calls GB_enumify_reduce twice
     set/get which GPU(s) to use
-    data types > 32 bytes
     handling nvcc compiler errors
-    static device function for computing ks (acts like GB_ek_slice,
-        so call it GB_ek_slice_device
+
+    Tim:
+    reduce calls GB_enumify_reduce twice     
 
 --------------------------------------------------------------------------------
 

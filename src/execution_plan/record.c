@@ -60,10 +60,10 @@ void Record_Clone
 	const restrict Record r,
 	restrict Record clone
 ) {
-	int entry_count = Record_length(clone);
 	// r and clone share the same record mapping
 	if(likely(r->owner == clone->owner)) {
-		size_t required_record_size = sizeof(Entry) * entry_count;
+		ASSERT(Record_length(r) <= Record_length(clone));
+		size_t required_record_size = sizeof(Entry) * Record_length(r);
 		memcpy(clone->entries, r->entries, required_record_size);
 
 		// foreach scalar entry in cloned record, make sure it is not freed
@@ -96,6 +96,7 @@ void Record_Clone
 	// TODO: i wish we wouldn't have to perform this loop
 	// as it is a major performance hit
 	// with the introduction of a garbage collection this should be removed
+	int entry_count = Record_length(clone);
 	for(int i = 0; i < entry_count; i++) {
 		if(Record_GetType(clone, i) == REC_TYPE_SCALAR) {
 			SIValue_MakeVolatile(&clone->entries[i].value.s);

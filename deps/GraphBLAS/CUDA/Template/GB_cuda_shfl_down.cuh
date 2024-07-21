@@ -21,18 +21,18 @@
 // Suppose each thread has two scalars dest and src of type T.  Then:
 //
 //      T dest, src ;
-//      dest = tile.shfl_down (src, delta) ;
+//      dest = tile.shfl_down (src, offset) ;
 //
-// performs the following computation for each thread i:
+// performs the following computation for each thread tid:
 //
-//      if (i+delta < tile_sz)
+//      if (tid+offset < tile_sz)
 //      {
-//          dest = (the value of src on thread i+delta)
+//          dest = (the value of src on thread tid+offset)
 //      }
 //
-// Where i ranges from 0 to the tile_size-1, which is the warp size of 32 (the
+// Where tid ranges from 0 to the tile_size-1, which is the warp size of 32 (the
 // size of the tile, given by tile.num_threads() and also the #define'd value
-// tile_sz), minus one.  If i+delta >= tile_sz for the ith thread, then nothing
+// tile_sz), minus one.  If tid+offset >= tile_sz for the ith thread, then nothing
 // happens for that thread, and the thread is inactive.
 //
 // Restrictions:  tile_sz must be a power of 2, and it must be 32 or less for
@@ -41,9 +41,6 @@
 // hold (that is, the size of T must be 32 bytes or less).  The 32-byte limit
 // is handled by GB_cuda_shfl_down_large_ztype, which uses repeated calls to
 // tile.shfl_down on 32-byte chunks.
-
-// FIXME for tile.shfl_down(...), delta is an int, so can it be negative?
-// For the __shfl_down warp shuffle function, delta is an unsigned int.
 
 //------------------------------------------------------------------------------
 // GB_cuda_warp_sum_uint64: reduce a uint64_t value across a single warp
@@ -75,9 +72,9 @@ __device__ __inline__ uint64_t GB_cuda_warp_sum_uint64
     #else
     {
         #pragma unroll
-        for (int i = tile_sz >> 1 ; i > 0 ; i >>= 1)
+        for (int offset = tile_sz >> 1 ; offset > 0 ; offset >>= 1)
         {
-            value += tile.shfl_down (value, i) ;
+            value += tile.shfl_down (value, offset) ;
         }
     }
     #endif
@@ -94,81 +91,11 @@ __device__ __inline__ uint64_t GB_cuda_warp_sum_uint64
     return (value) ;
 }
 
-#if 0
-
-//------------------------------------------------------------------------------
-// warp_ReduceSumPlus_uint64: for dot3_phase2
-//------------------------------------------------------------------------------
-
-__inline__ __device__ uint64_t warp_ReduceSumPlus_uint64
-(
-    thread_block_tile<tile_sz> tile,
-    uint64_t val
-)
-{
-    // Each iteration halves the number of active threads
-    // Each thread adds its partial sum[i] to sum[lane+i]
-    for (int i = tile.num_threads() / 2; i > 0; i /= 2)
-    {
-        val += tile.shfl_down (val, i) ;
-    }
-    return val; // note: only thread 0 will return full sum
-}
-
-//------------------------------------------------------------------------------
-// GB_warp_ReduceSumPlus_uint64_vsvs: for vsvs kernel
-//------------------------------------------------------------------------------
-
-__inline__ __device__ uint64_t GB_warp_ReduceSumPlus_uint64_vsvs
-(
-    thread_block_tile<tile_sz> g,
-    uint64_t val
-)
-{
-    // Each iteration halves the number of active threads
-    // Each thread adds its partial sum[i] to sum[lane+i]
-    /*
-    #pragma unroll
-    for (int i = tile_sz >> 1; i > 0; i >>= 1) {
-        val +=  g.shfl_down( val, i);
-    }
-    */
-    // assuming tile_sz is 32:
-    val +=  g.shfl_down( val, 16);
-    val +=  g.shfl_down( val, 8);
-    val +=  g.shfl_down( val, 4);
-    val +=  g.shfl_down( val, 2);
-    val +=  g.shfl_down( val, 1);
-    return val; // note: only thread 0 will return full sum
-}
-
-//------------------------------------------------------------------------------
-// reduce_sum_int64: for vsdn
-//------------------------------------------------------------------------------
-
-// for counting zombies only (always int64_t)
-__device__ int64_t reduce_sum_int64
-(
-    thread_block_tile<tile_sz> g,
-    int64_t val
-)
-{
-    // Each iteration halves the number of active threads
-    // Each thread adds its partial sum[i] to sum[lane+i]
-    for (int64_t i = g.num_threads() / 2; i > 0; i /= 2)
-    {
-        val += g.shfl_down(val,i) ;
-    }
-    return val; // note: only thread 0 will return full sum
-}
-
-#endif
-
 //------------------------------------------------------------------------------
 // GB_cuda_shfl_down_large_ztype: shfl_down a type larger than 32 bytes
 //------------------------------------------------------------------------------
 
-// This returns result = tile.shfl_down (value, delta), where value has type
+// This returns result = tile.shfl_down (value, offset), where value has type
 // GB_Z_TYPE, and sizeof (GB_Z_TYPE) > 32.
 
 #if ( GB_Z_SIZE > 32 )
@@ -193,26 +120,26 @@ __device__ int64_t reduce_sum_int64
         GB_Z_TYPE *result,
         thread_block_tile<tile_sz> tile,
         GB_Z_TYPE *value,
-        int delta
+        int offset
     )
     {
 
         // get pointers to value and result, as chunks of size 32 bytes
-        struct ztype_chunk *v = (struct ztype_chunk *) value ;
-        struct ztype_chunk *r = (struct ztype_chunk *) result ;
+        ztype_chunk *v = (ztype_chunk *) value ;
+        ztype_chunk *r = (ztype_chunk *) result ;
 
         // shfl_down value into result, one chunk at a time
         #pragma unroll
         for (int chunk = 0 ; chunk < GB_Z_NCHUNKS ; chunk++, r++, v++)
         {
-            (*r) = tile.shfl_down (*v, delta) ;
+            (*r) = tile.shfl_down (*v, offset) ;
         }
 
         #if ( GB_Z_LEFTOVER > 0 )
         // handle the leftover chunk, if it has nonzero size
-        struct ztype_leftover *v_leftover = (struct ztype_leftover *) v ;
-        struct ztype_leftover *r_leftover = (struct ztype_leftover *) r ;
-        (*r_leftover) = tile.shfl_down (*v_leftover, delta) ;
+        ztype_leftover *v_leftover = (ztype_leftover *) v ;
+        ztype_leftover *r_leftover = (ztype_leftover *) r ;
+        (*r_leftover) = tile.shfl_down (*v_leftover, offset) ;
         #endif
     }
 
@@ -221,8 +148,6 @@ __device__ int64_t reduce_sum_int64
 //------------------------------------------------------------------------------
 // GB_cuda_warp_reduce_ztype: reduce a ztype to a scalar, on a single warp
 //------------------------------------------------------------------------------
-
-// FIXME: make value parameter *value, and return type void?
 
 __device__ __inline__ GB_Z_TYPE GB_cuda_warp_reduce_ztype
 (
@@ -242,24 +167,19 @@ __device__ __inline__ GB_Z_TYPE GB_cuda_warp_reduce_ztype
         {
             // this is the typical case
             GB_Z_TYPE next ;
-            next = tile.shfl_down (value, 16) ;
-            GB_ADD (value, value, next) ;
-            next = tile.shfl_down (value,  8) ;
-            GB_ADD (value, value, next) ;
-            next = tile.shfl_down (value,  4) ;
-            GB_ADD (value, value, next) ;
-            next = tile.shfl_down (value,  2) ;
-            GB_ADD (value, value, next) ;
-            next = tile.shfl_down (value,  1) ;
-            GB_ADD (value, value, next) ;
+            next = tile.shfl_down (value, 16) ; GB_ADD (value, value, next) ;
+            next = tile.shfl_down (value,  8) ; GB_ADD (value, value, next) ;
+            next = tile.shfl_down (value,  4) ; GB_ADD (value, value, next) ;
+            next = tile.shfl_down (value,  2) ; GB_ADD (value, value, next) ;
+            next = tile.shfl_down (value,  1) ; GB_ADD (value, value, next) ;
         }
         #else
         {
 
             #pragma unroll
-            for (int i = tile_sz >> 1 ; i > 0 ; i >>= 1)
+            for (int offset = tile_sz >> 1 ; offset > 0 ; offset >>= 1)
             {
-                GB_Z_TYPE next = tile.shfl_down (value, i) ;
+                GB_Z_TYPE next = tile.shfl_down (value, offset) ;
                 GB_ADD (value, value, next) ;
             }
 
@@ -274,10 +194,10 @@ __device__ __inline__ GB_Z_TYPE GB_cuda_warp_reduce_ztype
         //----------------------------------------------------------------------
 
         #pragma unroll
-        for (int i = tile_sz >> 1 ; i > 0 ; i >>= 1)
+        for (int offset = tile_sz >> 1 ; offset > 0 ; offset >>= 1)
         {
             GB_Z_TYPE next ;
-            GB_cuda_shfl_down_large_ztype (&next, tile, &value, i) ;
+            GB_cuda_shfl_down_large_ztype (&next, tile, &value, offset) ;
             GB_ADD (value, value, next) ;
         }
     }
@@ -298,87 +218,3 @@ __device__ __inline__ GB_Z_TYPE GB_cuda_warp_reduce_ztype
     return (value) ;
 }
 
-#if 0
-
-//------------------------------------------------------------------------------
-// warp_ReduceSum_dndn: for dndn kernel
-//------------------------------------------------------------------------------
-
-__inline__ __device__ GB_Z_TYPE warp_ReduceSum_dndn
-(
-    thread_block_tile<32> g,
-    GB_Z_TYPE val
-)
-{
-    // Each iteration halves the number of active threads
-    // Each thread adds its partial sum[i] to sum[lane+i]
-    // FIXME: only works if sizeof(GB_Z_TYPE) <= 32 bytes
-    // FIXME: the ANY monoid needs the cij_exists for each thread
-    for (int i = g.num_threads() / 2; i > 0; i /= 2)
-    {
-        GB_Z_TYPE next = g.shfl_down( val, i) ;
-        GB_ADD( val, val, next ); 
-    }
-    return val; // note: only thread 0 will return full sum
-}
-
-//------------------------------------------------------------------------------
-// GB_reduce_sum: for dot3 mp and spdn
-//------------------------------------------------------------------------------
-
-__device__ __inline__ GB_Z_TYPE GB_reduce_sum
-(
-    thread_block_tile<tile_sz> g,
-    GB_Z_TYPE val
-)
-{
-    // Each iteration halves the number of active threads
-    // Each thread adds its partial sum[i] to sum[lane+i]
-    // Temporary GB_Z_TYPE is necessary to handle arbirary ops
-    // FIXME: only works if sizeof(GB_Z_TYPE) <= 32 bytes
-    // FIXME: the ANY monoid needs the cij_exists for each thread
-    #pragma unroll
-    for (int i = tile_sz >> 1 ; i > 0 ; i >>= 1)
-    {
-        GB_Z_TYPE next = g.shfl_down (val, i) ;
-        GB_ADD (val, val, next) ; 
-    }
-    return val;
-}
-
-//------------------------------------------------------------------------------
-// GB_warp_Reduce: for cuda_reduce
-//------------------------------------------------------------------------------
-
-__device__ __inline__ GB_Z_TYPE GB_warp_Reduce
-(
-    thread_block_tile<tile_sz> g,
-    GB_Z_TYPE val
-)
-{
-    // Each iteration halves the number of active threads
-    // Each thread adds its partial val[k] to val[lane+k]
-
-    // FIXME: doesn't work unless sizeof(GB_Z_TYPE) <= 32 bytes
-
-#if ( GB_Z_SIZE <= 32 )
-    // assumes tile_sz is 32:
-    GB_Z_TYPE fold = g.shfl_down ( val, 16) ;
-    GB_ADD ( val, val, fold ) ;
-    fold = g.shfl_down ( val, 8) ;
-    GB_ADD ( val, val, fold ) ;
-    fold = g.shfl_down ( val, 4) ;
-    GB_ADD ( val, val, fold ) ;
-    fold = g.shfl_down ( val, 2) ;
-    GB_ADD ( val, val, fold ) ;
-    fold = g.shfl_down ( val, 1) ;
-    GB_ADD ( val, val, fold ) ;
-#else
-    // use shared memory and do not use shfl_down?
-    // or use repeated calls to shfl_down, on chunks of 32 bytes each?
-    #error "not implemented yet"
-#endif
-
-    return (val) ; // note: only thread 0 will return full val
-}
-#endif

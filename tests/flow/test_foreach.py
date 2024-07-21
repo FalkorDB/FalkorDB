@@ -663,3 +663,48 @@ class testForeachFlow():
         res = self.graph.query(query)
         # check that the `v` property of the node is now 1 + 0 + 1 + 2 + 3 = 7
         self.env.assertEquals(res.result_set[0][0], 7)
+
+    def test17_bound_variables(self):
+        """Tests that foreach bound variables correctly"""
+
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (:M), (:N {name: "a"}), (:N {name: "b"}), (:N {name: "c"})""")
+        self.env.assertEquals(res.nodes_created, 4)
+
+        query = """
+        MATCH (n:N)
+        WITH COLLECT(n) as ns
+        MATCH (m:M)
+        WITH m, ns
+        FOREACH (n IN ns |
+            MERGE (m)-[:R]->(n)
+        )
+        """
+
+        res = self.graph.query(query)
+        self.env.assertEquals(res.nodes_created, 0)
+        self.env.assertEquals(res.relationships_created, 3)
+
+    def test18_foreach_within_conditional_traverse(self):
+        """Tests that a FOREACH clause can be used within a conditional traversal"""
+
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE ()""")
+        self.env.assertEquals(res.nodes_created, 1)
+
+        query = """
+        FOREACH (n IN [] |
+            MERGE ()
+        )
+        WITH *
+        MATCH ()--()
+        RETURN 0
+        """
+
+        try:
+            self.graph.query(query)
+            self.env.assertTrue(True)
+        except:
+            self.env.assertTrue(False)
