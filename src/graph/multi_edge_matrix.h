@@ -37,6 +37,16 @@ struct MultiEdgeIterator {
     IterFunc iter_func;          // iteration strategy
 };
 
+
+struct MultiEdgeCreationCtx
+{
+    MultiEdgeMatrix *M;  // multi-edge matrix
+    NodeID src;          // source id
+    NodeID dest;         // dest id
+    size_t creation_idx; // creation index
+    Edge** edges_to_add;  // edges to add
+};
+
 // attach iterator by source range
 void MultiEdgeIterator_AttachSourceRange
 (

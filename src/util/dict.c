@@ -591,7 +591,7 @@ dictEntry *HashTableFind(dict *d, const void *key)
     if (dictSize(d) == 0) return NULL; /* dict is empty */
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
-	//printf("HashTableFind hash: %llu\n", h);
+	// printf("HashTableFind hash: %llu\n", h);
     for (table = 0; table <= 1; table++) {
         idx = h & DICTHT_SIZE_MASK(d->ht_size_exp[table]);
         he = d->ht_table[table][idx];

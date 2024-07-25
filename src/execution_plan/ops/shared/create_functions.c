@@ -5,12 +5,41 @@
  */
 
 #include "create_functions.h"
+
+
 #include "RG.h"
+#include "../../../util/dict.h"
 #include "../../../query_ctx.h"
 #include "../../../errors/errors.h"
 #include "../../../ast/ast_shared.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
+
+static uint64_t _stringHashFunc(const void *str) {
+	const char* cast = str;
+
+	unsigned long hash = 5381;
+	int c;
+
+	while ((c = *cast++)) {
+		hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+	}
+
+	return hash;
+}
+
+static int _stringCompare(dict*, const void *key1, const void *key2) {
+	return !strcmp(key1, key2);
+}
+
+static dictType _stringDictType = {
+		.hashFunction = _stringHashFunc,
+		.keyDup = NULL,
+		.valDup = NULL,
+		.keyCompare = _stringCompare,
+		.keyDestructor = NULL,
+		.valDestructor = NULL
+	};
 
 // commit node blueprints
 static void _CommitNodesBlueprint
@@ -134,37 +163,68 @@ static void _CommitEdgesBlueprint
 // commit edges
 static void _CommitEdges
 (
-	PendingCreations *pending
+	const PendingCreations *pending
 ) {
-	Edge         *e                   = NULL;
 	GraphContext *gc                  = QueryCtx_GetGraphCtx();
-	Graph        *g                   = gc->g;
-	uint         edge_count           = array_len(pending->created_edges);
-	bool         constraint_violation = false;
-
+	const Graph        *g                   = gc->g;
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_NOP);
 
-	for(int i = 0; i < edge_count; i++) {
-		e = pending->created_edges[i];
-		NodeID src_id  = Edge_GetSrcNodeID(e);
-		NodeID dest_id = Edge_GetDestNodeID(e);
-		AttributeSet attr = pending->edge_attributes[i];
+	const uint         edge_count           = array_len(pending->created_edges);
+	AttributeSet* attr = rm_malloc(sizeof(AttributeSet) * edge_count);
+	dict* multiEdgeCreationCtx = HashTableCreate(&_stringDictType);
+	for(size_t i = 0; i < edge_count; i++) {
+		Edge* edge = pending->created_edges[i];
 
-		Schema *s = GraphContext_GetSchema(gc, e->relationship, SCHEMA_EDGE);
+		const Schema *schema = GraphContext_GetSchema(gc, edge->relationship, SCHEMA_EDGE);
 		// all schemas have been created in the edge blueprint loop or earlier
-		ASSERT(s != NULL);
-		int relation_id = Schema_GetID(s);
+		ASSERT(schema != NULL);
 
-		CreateEdge(gc, e, src_id, dest_id, relation_id, attr, true);
+		const RelationID relation_id = Schema_GetID(schema);
+		const NodeID src_id  = Edge_GetSrcNodeID(edge);
+		const NodeID dest_id = Edge_GetDestNodeID(edge);
 
-		//----------------------------------------------------------------------
-		// enforce constraints
-		//----------------------------------------------------------------------
+		char* key;
+		asprintf(&key, "%i_%lu_%lu", relation_id, src_id, dest_id);
+		struct MultiEdgeCreationCtx* entry = HashTableFetchValue(multiEdgeCreationCtx, key);
+		if (entry)
+		{
+			array_append(entry->edges_to_add, edge);
+		} else
+		{
+			entry = rm_malloc(sizeof(struct MultiEdgeCreationCtx));
+			entry->M = g->relations + relation_id;
+			entry->src = src_id;
+			entry->dest = dest_id;
+			entry->creation_idx = i;
+			entry->edges_to_add = array_new(Edge*, 1);
+			array_append(entry->edges_to_add, edge);
 
-		if(constraint_violation == false) {
+			const int ret = HashTableAdd(multiEdgeCreationCtx, key, entry);
+			ASSERT(ret == DICT_OK);
+		}
+
+		attr[i] = pending->edge_attributes[i];
+
+		CreateEdge(gc, edge, src_id, dest_id, relation_id, attr[i], true);
+	}
+
+	rm_free(attr);
+
+	//----------------------------------------------------------------------
+	// enforce constraints
+	//----------------------------------------------------------------------
+	bool constraint_violation = false;
+	for (size_t i = 0; i < edge_count; i++) {
+		if (!constraint_violation)
+		{
+			const Edge* edge = pending->created_edges[i];
+			Schema* schema = GraphContext_GetSchema(gc, edge->relationship, SCHEMA_EDGE);
+
+			ASSERT(schema != NULL);
 			char *err_msg = NULL;
-			if(!Schema_EnforceConstraints(s, (GraphEntity*)e, &err_msg)) {
+			if (!Schema_EnforceConstraints(schema, (GraphEntity*) edge, &err_msg))
+			{
 				// constraint violated!
 				ASSERT(err_msg != NULL);
 				constraint_violation = true;
@@ -172,6 +232,7 @@ static void _CommitEdges
 				free(err_msg);
 			}
 		}
+
 	}
 }
 
