@@ -87,7 +87,8 @@ bool Record_ContainsEntry
 uint Record_GetEntryIdx
 (
 	Record r,
-	const char *alias
+	const char *alias,
+	size_t len
 );
 
 // get entry type
