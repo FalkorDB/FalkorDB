@@ -47,7 +47,6 @@ class testUndoLog():
         result = self.graph.query("MATCH (n:N) RETURN n")
         self.env.assertEquals(len(result.result_set), 1)
 
-
     def test02_undo_create_edge(self):
         # test undo create edge only by creating a node first so the schema is created
         self.graph.query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})")

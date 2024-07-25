@@ -94,7 +94,7 @@ struct dict {
 };
 
 // global default dictType with identity hash function
-dictType def_dt;
+extern dictType def_dt;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
  * dictAdd, dictFind, and other functions against the dictionary even while

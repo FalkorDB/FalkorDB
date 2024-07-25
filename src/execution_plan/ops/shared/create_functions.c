@@ -175,12 +175,12 @@ static dict* _CreateMultiEdgeDict(GraphContext* gc, const PendingCreations* pend
 		// all schemas have been created in the edge blueprint loop or earlier
 		ASSERT(schema != NULL);
 
-		const RelationID relation_id = Schema_GetID(schema);
+		edge->relationID = Schema_GetID(schema);
 		const NodeID src_id  = Edge_GetSrcNodeID(edge);
 		const NodeID dest_id = Edge_GetDestNodeID(edge);
 
 		char* key;
-		asprintf(&key, "%i_%lu_%lu", relation_id, src_id, dest_id);
+		asprintf(&key, "%i_%lu_%lu", edge->relationID, src_id, dest_id);
 		struct MultiEdgeCreationCtx* entry = HashTableFetchValue(multiEdgeCreationCtx, key);
 		if (entry)
 		{
@@ -188,8 +188,8 @@ static dict* _CreateMultiEdgeDict(GraphContext* gc, const PendingCreations* pend
 		} else
 		{
 			entry = rm_malloc(sizeof(struct MultiEdgeCreationCtx));
-			entry->M = g->relations + relation_id;
-			entry->relation_id = relation_id;
+			entry->M = g->relations + edge->relationID;
+			entry->relation_id = edge->relationID;
 			entry->src = src_id;
 			entry->dest = dest_id;
 			entry->creation_idx = i;
@@ -200,7 +200,7 @@ static dict* _CreateMultiEdgeDict(GraphContext* gc, const PendingCreations* pend
 			ASSERT(ret == DICT_OK);
 		}
 
-		edge->attributes = Graph_AllocateAttribute(g, src_id, dest_id, relation_id, &edge->id);
+		edge->attributes = Graph_AllocateAttribute(g, src_id, dest_id, edge->relationID, &edge->id);
 		*edge->attributes = pending->edge_attributes[i];
 	}
 
