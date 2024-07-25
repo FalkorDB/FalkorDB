@@ -6,6 +6,10 @@
 #include "RG.h"
 #include "util/arr.h"
 #include "multi_edge_matrix.h"
+
+#include <query_ctx.h>
+#include <undo_log/undo_log.h>
+
 #include "delta_matrix/delta_matrix_iter.h"
 
 bool _DepletedIter
@@ -227,6 +231,65 @@ void MultiEdgeMatrix_FormConnection
 	} else {
 		info = Delta_Matrix_setElement_BOOL(M->E, CLEAR_MSB(current_edge), edge_id);
 		ASSERT(info == GrB_SUCCESS);
+	}
+}
+
+void MultiEdgeMatrix_FormConnections(
+	MultiEdgeMatrix* M,
+	const NodeID src,
+	const NodeID dest,
+	Edge** edges,
+	const size_t edge_count,
+	bool log
+)
+{
+	ASSERT(M != NULL);
+
+	GrB_Index current_edge;
+	GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, M->R, src, dest);
+	ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
+
+	// If no value exists yet, and we intent to only add a single edge, add it normally
+	if (info == GrB_NO_VALUE && edge_count == 1)
+	{
+		Edge* edge = edges[0];
+
+		info = Delta_Matrix_setElement_UINT64(M->R, edge->id, src, dest);
+		ASSERT(info == GrB_SUCCESS);
+
+
+		if (log)
+		{
+			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), edge);
+			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), edge);
+		}
+		return;
+	}
+
+	// If we currently are at a single_edge we need to set it to the selected meid
+	GrB_Index meid;
+	if (SINGLE_EDGE(current_edge))
+	{
+		meid = array_len(M->freelist) > 0
+									   ? array_pop(M->freelist)
+									   : M->row_id++;
+		info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
+		ASSERT(info == GrB_SUCCESS);
+	} else
+	{
+		meid = CLEAR_MSB(current_edge);
+	}
+
+	for (size_t i = 0; i < edge_count; i++)
+	{
+		info = Delta_Matrix_setElement_BOOL(M->E, meid, edges[i]->id);
+		ASSERT(info == GrB_SUCCESS);
+
+		if (log)
+		{
+			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), edges[i]);
+			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), edges[i]);
+		}
 	}
 }
 

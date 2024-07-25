@@ -1,5 +1,7 @@
 import time
 import threading
+import traceback
+
 from common import *
 from index_utils import *
 from graph_utils import graph_eq
@@ -78,7 +80,7 @@ class testEffects():
 
     # asserts that master and replica have the same view over the graph
     def assert_graph_eq(self):
-        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph), message=traceback.print_stack(limit=2))
 
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)

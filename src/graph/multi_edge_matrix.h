@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "entities/node.h"
 #include "entities/edge.h"
 #include "delta_matrix/delta_matrix.h"
 #include "delta_matrix/delta_matrix_iter.h"
@@ -41,6 +40,7 @@ struct MultiEdgeIterator {
 struct MultiEdgeCreationCtx
 {
     MultiEdgeMatrix *M;  // multi-edge matrix
+    RelationID relation_id; // relation id
     NodeID src;          // source id
     NodeID dest;         // dest id
     size_t creation_idx; // creation index
@@ -99,6 +99,16 @@ void MultiEdgeMatrix_FormConnection
     NodeID src,          // source id
 	NodeID dest,         // dest id
 	EdgeID edge_id       // edge id
+);
+
+void MultiEdgeMatrix_FormConnections
+(
+    MultiEdgeMatrix *M,  // multi-edge matrix
+    NodeID src,          // source id
+    NodeID dest,         // dest id
+    Edge **edges,        // edges to add
+    size_t edge_count,   // number of edges
+    bool log             // log creation
 );
 
 // free multi-edge matrix
