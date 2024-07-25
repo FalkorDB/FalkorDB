@@ -91,8 +91,8 @@ static void _PopulateReduceCtx
 
 	// this could just be assigned to 'id'
 	// but for safety we'll use a Record lookup
-	ctx->variable_idx = Record_GetEntryIdx(ctx->record, ctx->variable);
-	ctx->accumulator_idx = Record_GetEntryIdx(ctx->record, ctx->accumulator);
+	ctx->variable_idx = Record_GetEntryIdx(ctx->record, ctx->variable, strlen(ctx->variable));
+	ctx->accumulator_idx = Record_GetEntryIdx(ctx->record, ctx->accumulator, strlen(ctx->accumulator));
 	ASSERT(ctx->variable_idx != INVALID_INDEX);
 	ASSERT(ctx->accumulator_idx != INVALID_INDEX);
 }

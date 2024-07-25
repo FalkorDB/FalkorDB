@@ -68,7 +68,7 @@ static void _PopulateComprehensionCtx
 
 	// this could just be assigned to 'id'
 	// but for safety we'll use a Record lookup
-	ctx->variable_idx = Record_GetEntryIdx(ctx->local_record, ctx->variable_str);
+	ctx->variable_idx = Record_GetEntryIdx(ctx->local_record, ctx->variable_str, strlen(ctx->variable_str));
 	ASSERT(ctx->variable_idx != INVALID_INDEX);
 }
 

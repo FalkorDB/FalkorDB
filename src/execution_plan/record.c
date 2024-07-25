@@ -46,11 +46,12 @@ bool Record_ContainsEntry
 // retrieve the offset into the Record of the given alias
 uint Record_GetEntryIdx (
 	Record r,
-	const char *alias
+	const char *alias,
+	size_t len
 ) {
 	ASSERT(r && alias);
 
-	void *idx = raxFind(r->mapping, (unsigned char *)alias, strlen(alias));
+	void *idx = raxFind(r->mapping, (unsigned char *)alias, len);
 
 	return idx != raxNotFound ? (intptr_t)idx : INVALID_INDEX;
 }
@@ -80,8 +81,7 @@ void Record_Clone
 		raxSeek(&it, "^", NULL, 0);
 
 		while(raxNext(&it)) {
-			it.key[it.key_len] = '\0';
-			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key);
+			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key, it.key_len);
 
 			if(src_idx == INVALID_INDEX) continue;
 			if(Record_GetType(r, src_idx) == REC_TYPE_UNKNOWN) continue;
