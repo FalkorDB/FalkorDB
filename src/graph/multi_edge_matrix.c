@@ -236,6 +236,7 @@ void MultiEdgeMatrix_FormConnection
 
 void MultiEdgeMatrix_FormConnections(
 	MultiEdgeMatrix* M,
+	int64_t current_value,
 	const NodeID src,
 	const NodeID dest,
 	Edge** edges,
@@ -245,18 +246,13 @@ void MultiEdgeMatrix_FormConnections(
 {
 	ASSERT(M != NULL);
 
-	GrB_Index current_edge;
-	GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, M->R, src, dest);
-	ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
-
 	// If no value exists yet, and we intent to only add a single edge, add it normally
-	if (info == GrB_NO_VALUE && edge_count == 1)
+	if (current_value == -1 && edge_count == 1)
 	{
 		Edge* edge = edges[0];
 
-		info = Delta_Matrix_setElement_UINT64(M->R, edge->id, src, dest);
+		const GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, edge->id, src, dest);
 		ASSERT(info == GrB_SUCCESS);
-
 
 		if (log)
 		{
@@ -268,21 +264,21 @@ void MultiEdgeMatrix_FormConnections(
 
 	// If we currently are at a single_edge we need to set it to the selected meid
 	GrB_Index meid;
-	if (SINGLE_EDGE(current_edge))
+	if (SINGLE_EDGE(current_value))
 	{
 		meid = array_len(M->freelist) > 0
 									   ? array_pop(M->freelist)
 									   : M->row_id++;
-		info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
+		GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
 		ASSERT(info == GrB_SUCCESS);
 	} else
 	{
-		meid = CLEAR_MSB(current_edge);
+		meid = CLEAR_MSB(current_value);
 	}
 
 	for (size_t i = 0; i < edge_count; i++)
 	{
-		info = Delta_Matrix_setElement_BOOL(M->E, meid, edges[i]->id);
+		GrB_Info info = Delta_Matrix_setElement_BOOL(M->E, meid, edges[i]->id);
 		ASSERT(info == GrB_SUCCESS);
 
 		if (log)

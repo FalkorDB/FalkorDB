@@ -41,6 +41,7 @@ struct MultiEdgeCreationCtx
 {
     MultiEdgeMatrix *M;  // multi-edge matrix
     RelationID relation_id; // relation id
+    int64_t current_value;
     NodeID src;          // source id
     NodeID dest;         // dest id
     size_t creation_idx; // creation index
@@ -104,6 +105,7 @@ void MultiEdgeMatrix_FormConnection
 void MultiEdgeMatrix_FormConnections
 (
     MultiEdgeMatrix *M,  // multi-edge matrix
+    int64_t current_value,
     NodeID src,          // source id
     NodeID dest,         // dest id
     Edge **edges,        // edges to add

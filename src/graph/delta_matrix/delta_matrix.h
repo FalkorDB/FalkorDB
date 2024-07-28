@@ -147,6 +147,14 @@ GrB_Info Delta_Matrix_setElement_BOOL      // C (i,j) = x
 	GrB_Index j                         // column index
 );
 
+GrB_Info Delta_Matrix_setElements_BOOL      // C (i,j) = x
+(
+	Delta_Matrix C,                     // matrix to modify
+	GrB_Index* i,                       // row index
+	GrB_Index* j,                       // column index
+	size_t count 					    // number of elements
+);
+
 GrB_Info Delta_Matrix_setElement_UINT64      // C (i,j) = x
 (
 	Delta_Matrix C,                     // matrix to modify
