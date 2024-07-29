@@ -717,7 +717,9 @@ void Graph_FormConnections
 		entry = HashTableNext(iter);
 	}
 
-	HashTableResetIterator(iter);
+	// Not sure why ResetIterator is not working, so we need to recreate it
+	HashTableReleaseIterator(iter);
+	iter = HashTableGetIterator(multiEdgeCreationCtx);
 	entry = HashTableNext(iter);
 	while (entry != NULL)
 	{
