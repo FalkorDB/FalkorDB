@@ -70,6 +70,14 @@ float SIVector_EuclideanDistance
 	SIValue b   // second vector
 );
 
+// computes the cosine distance between two vectors
+// distance = 1 - dot(a, b) / (||a|| * ||b||)
+float SIVector_CosineDistance
+(
+	SIValue a,  // first vector
+	SIValue b   // second vector
+);
+
 // write a string representation of vector to buf
 void SIVector_ToString
 (
