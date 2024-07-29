@@ -202,6 +202,8 @@ static dict* _CreateMultiEdgeDict(GraphContext* gc, const PendingCreations* pend
 
 		edge->attributes = Graph_AllocateAttribute(g, src_id, dest_id, edge->relationID, &edge->id);
 		*edge->attributes = pending->edge_attributes[i];
+
+		Schema_AddEdgeToIndex(schema, edge);
 	}
 
 	return multiEdgeCreationCtx;

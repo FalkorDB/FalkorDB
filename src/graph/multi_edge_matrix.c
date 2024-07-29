@@ -264,7 +264,7 @@ void MultiEdgeMatrix_FormConnections(
 
 	// If we currently are at a single_edge we need to set it to the selected meid
 	GrB_Index meid;
-	if (SINGLE_EDGE(current_value))
+	if (current_value == -1 || SINGLE_EDGE(GrB_Index(current_value)))
 	{
 		meid = array_len(M->freelist) > 0
 									   ? array_pop(M->freelist)
@@ -273,7 +273,7 @@ void MultiEdgeMatrix_FormConnections(
 		ASSERT(info == GrB_SUCCESS);
 	} else
 	{
-		meid = CLEAR_MSB(current_value);
+		meid = CLEAR_MSB(GrB_Index(current_value));
 	}
 
 	for (size_t i = 0; i < edge_count; i++)
