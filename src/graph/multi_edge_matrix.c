@@ -262,7 +262,7 @@ void MultiEdgeMatrix_FormConnections(
 
 	// If we currently are at a single_edge we need to set it to the selected meid
 	GrB_Index meid;
-	if (!has_value || ctx->is_me)
+	if (!has_value || !ctx->is_me)
 	{
 		meid = array_len(M->freelist) > 0
 									   ? array_pop(M->freelist)
