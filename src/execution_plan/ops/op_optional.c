@@ -22,6 +22,10 @@ OpBase *NewOptionalOp(const ExecutionPlan *plan) {
 	return (OpBase *)op;
 }
 
+static Record _DepleteConsume(OpBase *opBase) {
+	return NULL;
+}
+
 static Record OptionalConsume(OpBase *opBase) {
 	Optional *op = (Optional *)opBase;
 	// try to produce a Record from the child op.
@@ -31,6 +35,7 @@ static Record OptionalConsume(OpBase *opBase) {
 	// and this op has not yet returned data.
 	if(!r && !op->emitted_record) {
 		r = OpBase_CreateRecord(opBase);
+		OpBase_UpdateConsume(opBase, _DepleteConsume);
 	}
 
 	// don't produce multiple empty Records.
@@ -42,6 +47,7 @@ static Record OptionalConsume(OpBase *opBase) {
 static OpResult OptionalReset(OpBase *opBase) {
 	Optional *op = (Optional *)opBase;
 	op->emitted_record = false;
+	OpBase_UpdateConsume(opBase, OptionalConsume);
 	return OP_OK;
 }
 
