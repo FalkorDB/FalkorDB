@@ -263,14 +263,23 @@ void MultiEdgeMatrix_FormConnections(
 	}
 
 	// If we currently are at a single_edge we need to set it to the selected meid
+	const bool is_single_edge = SINGLE_EDGE((GrB_Index)current_value);
 	GrB_Index meid;
-	if (current_value == -1 || SINGLE_EDGE((GrB_Index)current_value))
+	if (current_value == -1 || is_single_edge)
 	{
 		meid = array_len(M->freelist) > 0
 									   ? array_pop(M->freelist)
 									   : M->row_id++;
 		GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
 		ASSERT(info == GrB_SUCCESS);
+
+		// If we were a single edge, we need to readd that edge it after switching to multi-edge
+		if (is_single_edge)
+		{
+
+			info = Delta_Matrix_setElement_BOOL(M->E, meid, current_value);
+			ASSERT(info == GrB_SUCCESS);
+		}
 	} else
 	{
 		meid = CLEAR_MSB((GrB_Index)current_value);
