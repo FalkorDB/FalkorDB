@@ -701,7 +701,7 @@ void Graph_FormConnections
 	NodeID *srcs = array_new(NodeID, unique_edges_count);
 	NodeID *dests= array_new(NodeID, unique_edges_count);
 
-	size_t src_dest_idx = 0;
+	size_t new_elements_count = 0;
 	dictIterator* iter = HashTableGetIterator(multiEdgeCreationCtx);
 	const dictEntry* entry = HashTableNext(iter);
 	while (entry != NULL)
@@ -711,6 +711,7 @@ void Graph_FormConnections
 		GrB_Index current_edge;
 		const GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, ctx->M->R, ctx->src, ctx->dest);
 		ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
+
 		if (info == GrB_SUCCESS)
 		{
 			if (!SINGLE_EDGE(current_edge))
@@ -719,10 +720,22 @@ void Graph_FormConnections
 				ctx->is_me = true;
 			}
 			ctx->current_value = current_edge;
+		} else // new elements still need to be added to the adjacency matrix
+		{
+			array_append(srcs, ctx->src);
+			array_append(dests, ctx->dest);
+			new_elements_count++;
 		}
 
 		entry = HashTableNext(iter);
 	}
+
+	// Set all the new elements to true in the adjacency matrix
+	const GrB_Info info = Delta_Matrix_setElements_BOOL(adj, srcs, dests, new_elements_count);
+	ASSERT(info == GrB_SUCCESS);
+
+	array_free(srcs);
+	array_free(dests);
 
 	// Not sure why ResetIterator is not working, so we need to recreate it
 	HashTableReleaseIterator(iter);
@@ -731,9 +744,6 @@ void Graph_FormConnections
 	while (entry != NULL)
 	{
 		struct MultiEdgeCreationCtx* ctx = HashTableGetVal(entry);
-		srcs[src_dest_idx] = ctx->src;
-		dests[src_dest_idx] = ctx->dest;
-		src_dest_idx++;
 
 		// Only needs to be done once per relation,
 		// Althout in our case sync policy is NOP, possible will differ for other calls, best keep it
@@ -752,12 +762,6 @@ void Graph_FormConnections
 
 		entry = HashTableNext(iter);
 	}
-
-	const GrB_Info info = Delta_Matrix_setElements_BOOL(adj, srcs, dests, unique_edges_count);
-	ASSERT(info == GrB_SUCCESS);
-
-	array_free(srcs);
-	array_free(dests);
 }
 
 AttributeSet* Graph_AllocateAttribute(
