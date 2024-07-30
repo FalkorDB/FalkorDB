@@ -190,6 +190,8 @@ static dict* _CreateMultiEdgeDict(GraphContext* gc, const PendingCreations* pend
 			entry = rm_malloc(sizeof(struct MultiEdgeCreationCtx));
 			entry->M = g->relations + edge->relationID;
 			entry->relation_id = edge->relationID;
+			entry->current_value = -1;
+			entry->is_me = false;
 			entry->src = src_id;
 			entry->dest = dest_id;
 			entry->creation_idx = i;

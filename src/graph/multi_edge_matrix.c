@@ -235,23 +235,21 @@ void MultiEdgeMatrix_FormConnection
 }
 
 void MultiEdgeMatrix_FormConnections(
-	MultiEdgeMatrix* M,
-	int64_t current_value,
-	const NodeID src,
-	const NodeID dest,
-	Edge** edges,
+	const struct MultiEdgeCreationCtx* ctx,
 	const size_t edge_count,
-	bool log
+	const bool log
 )
 {
+	MultiEdgeMatrix* M = ctx->M;
 	ASSERT(M != NULL);
 
 	// If no value exists yet, and we intent to only add a single edge, add it normally
-	if (current_value == -1 && edge_count == 1)
+	const bool has_value = (ctx->current_value != -1);
+	if (!has_value && edge_count == 1)
 	{
-		Edge* edge = edges[0];
+		Edge* edge = ctx->edges_to_add[0];
 
-		const GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, edge->id, src, dest);
+		const GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, edge->id, ctx->src, ctx->dest);
 		ASSERT(info == GrB_SUCCESS);
 
 		if (log)
@@ -263,37 +261,34 @@ void MultiEdgeMatrix_FormConnections(
 	}
 
 	// If we currently are at a single_edge we need to set it to the selected meid
-	const bool is_single_edge = SINGLE_EDGE((GrB_Index)current_value);
 	GrB_Index meid;
-	if (current_value == -1 || is_single_edge)
+	if (!has_value || ctx->is_me)
 	{
 		meid = array_len(M->freelist) > 0
 									   ? array_pop(M->freelist)
 									   : M->row_id++;
-		GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
+		GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), ctx->src, ctx->dest);
 		ASSERT(info == GrB_SUCCESS);
 
-		// If we were a single edge, we need to readd that edge it after switching to multi-edge
-		if (is_single_edge)
+		if (has_value) // If we were a single edge, we need to readd that edge it after switching to multi-edge
 		{
-
-			info = Delta_Matrix_setElement_BOOL(M->E, meid, current_value);
+			info = Delta_Matrix_setElement_BOOL(M->E, meid, ctx->current_value);
 			ASSERT(info == GrB_SUCCESS);
 		}
-	} else
+	} else // Has value, but is not single edge
 	{
-		meid = CLEAR_MSB((GrB_Index)current_value);
+		meid = ctx->current_value;
 	}
 
 	for (size_t i = 0; i < edge_count; i++)
 	{
-		GrB_Info info = Delta_Matrix_setElement_BOOL(M->E, meid, edges[i]->id);
+		const GrB_Info info = Delta_Matrix_setElement_BOOL(M->E, meid, ctx->edges_to_add[i]->id);
 		ASSERT(info == GrB_SUCCESS);
 
 		if (log)
 		{
-			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), edges[i]);
-			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), edges[i]);
+			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), ctx->edges_to_add[i]);
+			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), ctx->edges_to_add[i]);
 		}
 	}
 }

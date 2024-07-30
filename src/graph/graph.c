@@ -711,8 +711,15 @@ void Graph_FormConnections
 		GrB_Index current_edge;
 		const GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, ctx->M->R, ctx->src, ctx->dest);
 		ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
-
-		ctx->current_value = info == GrB_NO_VALUE ? -1 : current_edge;
+		if (info == GrB_SUCCESS)
+		{
+			if (!SINGLE_EDGE(current_edge))
+			{
+				current_edge = CLEAR_MSB(current_edge);
+				ctx->is_me = true;
+			}
+			ctx->current_value = current_edge;
+		}
 
 		entry = HashTableNext(iter);
 	}
@@ -735,7 +742,7 @@ void Graph_FormConnections
 
 		// form edges here
 		const size_t edge_count = array_len(ctx->edges_to_add);
-		MultiEdgeMatrix_FormConnections(ctx->M, ctx->current_value, ctx->src, ctx->dest, ctx->edges_to_add, edge_count, log);
+		MultiEdgeMatrix_FormConnections(ctx, edge_count, log);
 
 		// an edge of type r has just been created, update statistics
 		GraphStatistics_IncEdgeCount(&g->stats, ctx->relation_id, edge_count);
