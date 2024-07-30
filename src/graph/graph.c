@@ -6,6 +6,9 @@
 
 #include "RG.h"
 #include "graph.h"
+
+#include <util/dict.h>
+
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "delta_matrix/delta_matrix_iter.h"
@@ -682,6 +685,106 @@ void Graph_FormConnection
 
 	// an edge of type r has just been created, update statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
+}
+
+void Graph_FormConnections
+(
+	Graph *g,
+	dict* multiEdgeCreationCtx,
+	const bool log
+)
+{
+	// adjacency matrix is graph-global
+	const Delta_Matrix adj  = Graph_GetAdjacencyMatrix(g, false);
+
+	const size_t unique_edges_count = HashTableElemCount(multiEdgeCreationCtx);
+	NodeID *srcs = array_new(NodeID, unique_edges_count);
+	NodeID *dests= array_new(NodeID, unique_edges_count);
+
+	size_t new_elements_count = 0;
+	dictIterator* iter = HashTableGetIterator(multiEdgeCreationCtx);
+	const dictEntry* entry = HashTableNext(iter);
+	while (entry != NULL)
+	{
+		struct MultiEdgeCreationCtx* ctx = HashTableGetVal(entry);
+
+		GrB_Index current_edge;
+		const GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, ctx->M->R, ctx->src, ctx->dest);
+		ASSERT(info == GrB_SUCCESS || info == GrB_NO_VALUE);
+
+		if (info == GrB_SUCCESS)
+		{
+			if (!SINGLE_EDGE(current_edge))
+			{
+				current_edge = CLEAR_MSB(current_edge);
+				ctx->is_me = true;
+			}
+			ctx->current_value = current_edge;
+		} else // new elements still need to be added to the adjacency matrix
+		{
+			array_append(srcs, ctx->src);
+			array_append(dests, ctx->dest);
+			new_elements_count++;
+		}
+
+		entry = HashTableNext(iter);
+	}
+
+	// Set all the new elements to true in the adjacency matrix
+	const GrB_Info info = Delta_Matrix_setElements_BOOL(adj, srcs, dests, new_elements_count);
+	ASSERT(info == GrB_SUCCESS);
+
+	array_free(srcs);
+	array_free(dests);
+
+	// Not sure why ResetIterator is not working, so we need to recreate it
+	HashTableReleaseIterator(iter);
+	iter = HashTableGetIterator(multiEdgeCreationCtx);
+	entry = HashTableNext(iter);
+	while (entry != NULL)
+	{
+		struct MultiEdgeCreationCtx* ctx = HashTableGetVal(entry);
+
+		// Only needs to be done once per relation,
+		// Althout in our case sync policy is NOP, possible will differ for other calls, best keep it
+		Graph_GetRelationMatrix(g, ctx->relation_id, false);
+		Graph_GetMultiEdgeRelationMatrix(g, ctx->relation_id);
+
+		// form edges here
+		const size_t edge_count = array_len(ctx->edges_to_add);
+		MultiEdgeMatrix_FormConnections(ctx, edge_count, log);
+
+		// an edge of type r has just been created, update statistics
+		GraphStatistics_IncEdgeCount(&g->stats, ctx->relation_id, edge_count);
+
+		array_free(ctx->edges_to_add);
+		rm_free(ctx);
+
+		entry = HashTableNext(iter);
+	}
+}
+
+AttributeSet* Graph_AllocateAttribute(
+	Graph* g,
+	const NodeID src_id,
+	const NodeID dest_id,
+	const RelationID relation_id,
+	EdgeID* out_id
+)
+{
+
+#ifdef RG_DEBUG
+	{
+		// make sure both src and destination nodes exists
+		Node node = GE_NEW_NODE();
+		ASSERT(Graph_GetNode(g, src_id, &node)  == true);
+		ASSERT(Graph_GetNode(g, dest_id, &node) == true);
+	}
+#endif
+
+	ASSERT(relation_id < Graph_RelationTypeCount(g));
+
+	return DataBlock_AllocateItem(g->edges, out_id);
 }
 
 void Graph_CreateEdge

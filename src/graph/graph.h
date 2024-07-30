@@ -7,6 +7,7 @@
 #pragma once
 
 #include <pthread.h>
+#include <util/dict.h>
 
 #include "rax.h"
 #include "GraphBLAS.h"
@@ -199,6 +200,13 @@ void Graph_CreateNode
 	uint label_count
 );
 
+void Graph_FormConnections
+(
+	Graph *g,
+	dict* multiEdgeCreationCtx,
+	bool log
+);
+
 // connects source node to destination node
 // returns 1 if connection is formed, 0 otherwise
 void Graph_CreateEdge
@@ -208,6 +216,14 @@ void Graph_CreateEdge
 	NodeID dest,        // destination node ID
 	RelationID r,       // edge type
 	Edge *e
+);
+
+AttributeSet* Graph_AllocateAttribute(
+	Graph* g,
+	NodeID src_id,
+	NodeID dest_id,
+	RelationID relation_id,
+	EdgeID* out_id
 );
 
 // deletes nodes from the graph

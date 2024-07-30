@@ -1,5 +1,7 @@
 import time
 import threading
+import traceback
+
 from common import *
 from index_utils import *
 from graph_utils import graph_eq

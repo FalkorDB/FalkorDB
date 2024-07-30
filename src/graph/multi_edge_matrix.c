@@ -6,6 +6,10 @@
 #include "RG.h"
 #include "util/arr.h"
 #include "multi_edge_matrix.h"
+
+#include <query_ctx.h>
+#include <undo_log/undo_log.h>
+
 #include "delta_matrix/delta_matrix_iter.h"
 
 bool _DepletedIter
@@ -227,6 +231,65 @@ void MultiEdgeMatrix_FormConnection
 	} else {
 		info = Delta_Matrix_setElement_BOOL(M->E, CLEAR_MSB(current_edge), edge_id);
 		ASSERT(info == GrB_SUCCESS);
+	}
+}
+
+void MultiEdgeMatrix_FormConnections(
+	const struct MultiEdgeCreationCtx* ctx,
+	const size_t edge_count,
+	const bool log
+)
+{
+	MultiEdgeMatrix* M = ctx->M;
+	ASSERT(M != NULL);
+
+	// If no value exists yet, and we intent to only add a single edge, add it normally
+	const bool has_value = (ctx->current_value != -1);
+	if (!has_value && edge_count == 1)
+	{
+		Edge* edge = ctx->edges_to_add[0];
+
+		const GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, edge->id, ctx->src, ctx->dest);
+		ASSERT(info == GrB_SUCCESS);
+
+		if (log)
+		{
+			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), edge);
+			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), edge);
+		}
+		return;
+	}
+
+	// If we currently are at a single_edge we need to set it to the selected meid
+	GrB_Index meid;
+	if (!has_value || !ctx->is_me)
+	{
+		meid = array_len(M->freelist) > 0
+									   ? array_pop(M->freelist)
+									   : M->row_id++;
+		GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), ctx->src, ctx->dest);
+		ASSERT(info == GrB_SUCCESS);
+
+		if (has_value) // If we were a single edge, we need to readd that edge it after switching to multi-edge
+		{
+			info = Delta_Matrix_setElement_BOOL(M->E, meid, ctx->current_value);
+			ASSERT(info == GrB_SUCCESS);
+		}
+	} else // Has value, but is not single edge
+	{
+		meid = ctx->current_value;
+	}
+
+	for (size_t i = 0; i < edge_count; i++)
+	{
+		const GrB_Info info = Delta_Matrix_setElement_BOOL(M->E, meid, ctx->edges_to_add[i]->id);
+		ASSERT(info == GrB_SUCCESS);
+
+		if (log)
+		{
+			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), ctx->edges_to_add[i]);
+			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), ctx->edges_to_add[i]);
+		}
 	}
 }
 

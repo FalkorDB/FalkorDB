@@ -23,6 +23,19 @@ void tearDown();
 
 #include "acutest.h"
 
+
+// identity hash function
+static uint64_t _id_hash
+(
+	const void *key
+) {
+	return ((uint64_t)key);
+}
+
+// hashtable callbacks
+dictType def_dt = {_id_hash, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL};
+
 static void build_ast_and_plan
 (
 	const char *query,
