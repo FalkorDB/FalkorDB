@@ -1,0 +1,75 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
+	cat <<-'END'
+		Print Git context string.
+
+		[ARGVARS...] git-context [--help|help]
+
+		Argument variables:
+		WHY=1    Print verbose explanations
+		FILE=1   Only use valid filename characters
+		LONG=1   Print full commit
+
+	END
+	exit 0
+fi
+
+# non-git context
+if ! git rev-parse --git-dir &> /dev/null; then
+	[[ $WHY == 1 ]] && >&2 echo "# Outside of Git repo"
+	echo "nongit"
+	exit 0
+fi
+
+if [[ $LONG == 1 ]]; then
+	COMMIT="$(git rev-parse HEAD)"
+else
+	COMMIT="$(git rev-parse --short HEAD)"
+fi
+[[ $WHY == 1 ]] && >&2 echo "# Commit is $COMMIT"
+
+# detached HEAD (e.g., explicitly checked out commit)
+DETACHED=0
+MAYBE_BRANCH="$(git rev-parse --abbrev-ref --symbolic-full-name HEAD)"
+## if git branch -q | head -1 | grep 'HEAD detached' &> /dev/null; then
+if [[ $MAYBE_BRANCH == HEAD ]]; then 
+	[[ $WHY == 1 ]] && >&2 echo "# Detached HEAD"
+	DETACHED=1
+fi
+
+# on tag commit (explicitly checkout out tag or in CI, triggerd by git tag)
+TAG="$(git describe --tags --exact-match 2> /dev/null || true)"
+[[ $WHY == 1 && -n $TAG ]] && >&2 echo "# Has exact tag: $TAG"
+if [[ -n $TAG && $DETACHED == 1 ]]; then
+	[[ $FILE == 1 ]] && TAG=${TAG//[^A-Za-z0-9._-]/_}
+	echo "$TAG"
+	exit 0
+fi
+
+if [[ $DETACHED == 1 ]]; then
+	echo "$COMMIT"
+	exit 0
+fi
+
+# on branch (not detached)
+BRANCH="$MAYBE_BRANCH"
+if [[ -n $TAG ]]; then
+	[[ $WHY == 1 ]] && >&2 echo "# Branch is $BRANCH, overriding tag $TAG"
+else
+	[[ $WHY == 1 ]] && >&2 echo "# Branch is $BRANCH"
+fi
+[[ $FILE == 1 ]] && BRANCH=${BRANCH//[^A-Za-z0-9._-]/_}
+echo "$BRANCH"
+exit 0
+
+# has local commits
+# TODO
+
+# has uncommitted changes
+# TODO

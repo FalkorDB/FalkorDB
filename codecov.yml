@@ -1,5 +1,17 @@
+coverage:
+  status:
+    project:
+      default:
+        threshold: 1%
 ignore:
-  - "deps"
+  - "deps/GraphBLAS"
+  - "deps/libcypher-parser"
+  - "deps/oniguruma"
+  - "deps/rax"
+  - "deps/RediSearch"
+  - "deps/utf8proc"
+  - "deps/xxHash"
+  - "deps/readies"
   - "src/util/sds"
   - "src/util/roaring.c"
   - "tests"

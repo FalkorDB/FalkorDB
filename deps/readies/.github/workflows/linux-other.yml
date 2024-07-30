@@ -1,0 +1,49 @@
+name: Test Linux platforms
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms'
+        default: '["opensuse/leap:15", "opensuse/tumbleweed:latest",
+                   "archlinux:latest"]' # "alpine:3"
+
+jobs:
+  linux-matrix:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l -eo pipefail {0}
+    strategy:
+      matrix:
+        os: ${{ fromJson(inputs.platforms) }}
+      fail-fast: false
+    container:
+      image: ${{ matrix.os }}
+      options: --cpus 2
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: false
+#    - run: |
+#        git config --global --add safe.directory '*'
+#        # git submodule update --init --recursive
+    - name: Python
+      run: |
+        ./bin/getpy3
+    - name: Installations
+      run: |
+        ./bin/getgcc --modern
+    - name: Summary
+      run: |
+        echo "/etc/os-release:"; cat /etc/os-release
+        echo "uname -a: $(uname -a)"
+        echo "bash: $BASH_VERSION"
+        echo "System Python: $(/usr/bin/python3 --version)"
+        echo "Python: $(python3 --version)"
+        echo "pip list:"; python3 -m pip list -v
+        echo "System gcc: $(/usr/bin/gcc --version | head -1)"
+        echo "gcc: $(gcc --version | head -1)"
+        echo "glibc: $(./bin/glibcver)"
+        echo "libstdc++: $(./bin/libstdc++ver)"
+        echo "binutils: $(ld --version | head -1)"

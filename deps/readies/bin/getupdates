@@ -1,0 +1,39 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+if [[ -f /etc/os-release ]]; then
+	DIST="$(source /etc/os-release; echo ${ID}${VERSION_ID};)"
+	DIST_NAME="$(source /etc/os-release; echo ${NAME};)"
+fi
+
+if is_command apt-get; then
+	export DEBIAN_FRONTEND=noninteractive
+	runn apt-get update -qq --fix-missing
+	runn apt-get upgrade -yqq
+	runn rm -rf /var/cache/apt
+elif is_command dnf; then
+	if [[ $DIST == centos8 && $DIST_NAME != "CentOS Stream" ]]; then
+		sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-Linux-* &> /dev/null || true
+		sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.epel.cloud|g' /etc/yum.repos.d/CentOS-Linux-* &> /dev/null || true
+	fi
+	runn dnf update -y
+    runn rm -rf /var/cache/dnf
+elif is_command yum; then
+	runn yum update -y
+    runn rm -rf /var/cache/yum
+elif is_command zypper; then
+	runn zypper update -y
+	runn rm -rf /var/cache/zypp
+elif is_command apk; then
+	runn apk -U upgrade
+elif is_command pacman; then
+	pacman --noconfirm -Syu
+elif is_command brew; then
+	runn brew update
+elif is_command pkg; then
+	runn pkg upgrade -y
+fi

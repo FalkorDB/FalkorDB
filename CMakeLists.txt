@@ -44,6 +44,8 @@ if (MEMCHECK)
 	add_compile_definitions(MEMCHECK)
 endif()
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto")
+
 setup_shared_object_target(falkordb "")
 
 set_target_properties(falkordb PROPERTIES LINKER_LANGUAGE CXX)
@@ -53,12 +55,14 @@ set(FALKORDB_OBJECTS $<TARGET_OBJECTS:falkordb>)
 find_package(OpenSSL)
 
 lists_from_env(GRAPHBLAS LIBXXHASH RAX LIBCYPHER_PARSER REDISEARCH_LIBS UTF8PROC ONIGURUMA FalkorDBRS)
-set(FALKORDB_LIBS ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} ${FalkorDBRS} OpenSSL::SSL)
+set(FALKORDB_LIBS ${FalkorDBRS} ${GRAPHBLAS} ${LIBXXHASH} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
 target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
-extract_debug_symbols(falkordb)
+if (NOT MEMCHECK)
+	extract_debug_symbols(falkordb)
+endif ()
 
 if (APPLE)
 	add_library(falkordb_static STATIC $<TARGET_OBJECTS:falkordb>)
@@ -67,4 +71,3 @@ endif()
 if (UNIT_TESTS)
 	add_subdirectory(${root}/tests/unit tests/unit)
 endif()
-

@@ -1,0 +1,104 @@
+
+ifeq ($(COV),1)
+
+#----------------------------------------------------------------------------------------------
+
+CC_FLAGS.coverage += --coverage
+LD_FLAGS.coverage += --coverage
+
+COV_DIR=$(BINROOT)/cov
+COV_PROFDATA=$(COV_DIR)/cov.profdata
+COV_INFO=$(BINROOT)/cov.info
+
+export LLVM_PROFILE_FILE=$(COV_DIR)/cov-%p-%m.profraw
+
+#----------------------------------------------------------------------------------------------
+
+COV_EXCLUDE += \
+	'/Applications/*' \
+	'/usr/*'
+
+COV_EXCLUDE.llvm += \
+	"/rustc/*" \
+	"$$HOME/.cargo/*"
+
+#----------------------------------------------------------------------------------------------
+
+define COVERAGE_RESET
+$(SHOW)set -e ;\
+echo "Starting coverage analysys." ;\
+mkdir -p $(COV_DIR) ;\
+lcov --directory $(BINROOT) --base-directory $(SRCDIR) -z > /dev/null 2>&1
+endef
+
+define COVERAGE_RESET.llvm
+$(SHOW)set -e ;\
+echo "Starting coverage analysys." ;\
+rm -rf $(COV_DIR) ;\
+mkdir -p $(COV_DIR)
+endef
+
+COVERAGE_RESET.rust=$(COVERAGE_RESET.llvm)
+
+#----------------------------------------------------------------------------------------------
+
+define COVERAGE_COLLECT
+$(SHOW)set -e ;\
+echo "Collecting coverage data ..." ;\
+lcov --capture --directory $(BINROOT) --base-directory $(SRCDIR) --output-file $(COV_INFO) > /dev/null 2>&1 ;\
+lcov -o $(COV_INFO).1 -r $(COV_INFO) $(COV_EXCLUDE) > /dev/null 2>&1 ;\
+mv $(COV_INFO).1 $(COV_INFO)
+endef
+
+define COVERAGE_COLLECT.llvm
+$(SHOW)set -e ;\
+echo "Collecting coverage data ..." ;\
+llvm-profdata merge --sparse `ls $(COV_DIR)/*.profraw` -o $(COV_PROFDATA) &> /dev/null ;\
+llvm-cov export --format=lcov --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).all ;\
+lcov -o $(COV_INFO) -r $(COV_INFO).all $(COV_EXCLUDE.llvm) &> /dev/null
+endef
+
+define COVERAGE_COLLECT.rust
+$(SHOW)set -e ;\
+echo "Collecting coverage data ..." ;\
+llvm-profdata merge --sparse `ls $(COV_DIR)/*.profraw` -o $(COV_PROFDATA) &> /dev/null ;\
+llvm-cov export --format=lcov --instr-profile $(COV_PROFDATA) $(TARGET) > $(COV_INFO).all ;\
+lcov -o $(COV_INFO) -r $(COV_INFO).all $(COV_EXCLUDE.llvm) &> /dev/null
+endef
+
+#----------------------------------------------------------------------------------------------
+
+define COVERAGE_REPORT
+$(SHOW)set -e ;\
+lcov -l $(COV_INFO) ;\
+genhtml --legend --ignore-errors source -o $(COV_DIR) $(COV_INFO) > /dev/null 2>&1 ;\
+echo "Coverage info at $$(realpath $(COV_DIR))/index.html"
+endef
+
+#----------------------------------------------------------------------------------------------
+
+define COVERAGE_COLLECT_REPORT
+$(COVERAGE_COLLECT)
+$(COVERAGE_REPORT)
+endef
+
+define COVERAGE_COLLECT_REPORT.llvm
+$(COVERAGE_COLLECT.llvm)
+$(COVERAGE_REPORT)
+endef
+
+#----------------------------------------------------------------------------------------------
+else # ! COV
+
+COVERAGE_RESET=
+COVERAGE_COLLECT=
+COVERAGE_REPORT=
+COVERAGE_COLLECT_REPORT=
+
+COVERAGE_RESET.llvm=
+COVERAGE_COLLECT.llvm=
+COVERAGE_COLLECT_REPORT.llvm=
+
+#----------------------------------------------------------------------------------------------
+
+endif # COV

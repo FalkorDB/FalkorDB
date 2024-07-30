@@ -1,0 +1,22 @@
+
+include $(MK)/help.defs
+include $(MK)/build.defs
+include $(MK)/cc.defs
+include $(MK)/binutils.defs
+include $(MK)/run.defs
+
+ifneq ($(MK.cmake),)
+include $(MK)/cmake.defs
+endif
+
+ifneq ($(MK.configure),)
+include $(MK)/configure.defs
+endif
+
+ifeq ($(COV),1)
+include $(MK)/coverage.defs
+endif
+
+ifneq ($(SAN),)
+include $(MK)/clang-sanitizer.defs
+endif

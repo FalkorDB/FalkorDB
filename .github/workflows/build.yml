@@ -43,7 +43,7 @@ jobs:
   build:
     needs: create-runners
     runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || format('build-{0}-{1}', github.run_id, github.run_number)  }}
-    container: falkordb/falkordb-build:latest
+    container: falkordb/falkordb-build:llvm-ubuntu
     services:
       registry:
         image: registry:2
@@ -102,13 +102,11 @@ jobs:
 
       - name: Build compiler image
         id: build_compiler
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile.compiler
-          platforms: ${{ matrix.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
-          # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
           build-args: |
             TARGETPLATFORM=${{ matrix.platform }}
@@ -117,19 +115,18 @@ jobs:
         working-directory: /FalkorDB
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false
         run: |
-          id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
+          id=$(docker create localhost:5000/falkordb/falkordb-compiler true)
           docker cp $id:/FalkorDB/bin .
           docker rm -v $id
           ls -l -R /FalkorDB/bin
 
       - name: Build tests image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: /FalkorDB/tests/Dockerfile
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
           tags: falkordb/falkordb-tests
-          platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
             TARGETPLATFORM=${{ matrix.platform }}
@@ -143,11 +140,10 @@ jobs:
 
       - name: Build base image
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
-          platforms: ${{ matrix.platform }}
           outputs: type=docker,dest=/tmp/falkordb-${{ env.ARCH_SUFFIX }}.tar
           tags: falkordb/falkordb-${{ env.ARCH_SUFFIX }}
           build-args: |

@@ -1,0 +1,320 @@
+
+.NOTPARALLEL:
+
+MK.nobindir=1
+
+MK_ALL_TARGETS=build publish
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(STEM),)
+$(error STEM is undefined. Aborting.)
+endif
+
+ifeq ($(LATEST),1)
+ifneq ($(LATEST_BRANCH),$(GIT_BRANCH))
+override LATEST:=0
+endif
+endif
+
+ifeq ($(EDGE),1)
+ifneq (master,$(GIT_BRANCH))
+$(error Cannot produce EDGE build on non-master branch)
+else
+ifeq ($(SIMPLE),1)
+override VERSION=edge
+else
+override VERSION=master
+endif
+endif
+endif
+
+ifeq ($(VERSION),)
+VERSION:=$(patsubst v%,%,$(shell git describe --tags `git rev-list --tags --max-count=1`))
+endif
+ifeq ($(VERSION),)
+$(error Cannot determine version. Aborting.)
+endif
+
+ifeq ($(VAR),)
+_VAR=
+else
+_VAR=-$(VAR)
+endif
+
+BUILD_OPT += --rm --no-cache
+ifneq ($(PULL),0)
+BUILD_OPT += --pull
+endif
+
+# --squash
+
+DOCKERFILE_STEM ?= $(ROOT)/Dockerfile
+
+#----------------------------------------------------------------------------------------------
+
+REDIS_VER ?= 6.2.1
+
+PACK ?= 0
+TEST ?= 0
+
+ifeq ($(ARTIFACTS),1)
+PACK:=1
+endif
+
+#----------------------------------------------------------------------------------------------
+
+OSNICK ?= debian
+
+ifeq ($(OS.custom),)
+
+OS.centos7=centos:7
+OS.centos7.8=centos:7.8.2003
+OS.centos8=centos:8
+OS.centos8.3=centos:8.2011
+OS.fedora=fedora:latest
+OS.fedora33=fedora:33
+OS.hirsute=ubuntu:hirsute
+OS.focal=ubuntu:focal
+OS.bionic=ubuntu:bionic
+OS.xenial=ubuntu:xenial
+OS.trusty=ubuntu:trusty
+OS.bullseye=debian:bullseye
+OS.buster=debian:buster
+OS.stretch=debian:stretch
+OS.leap=opensuse/leap:latest
+OS.leap15.2=opensuse/leap:15.2
+OS.leap15.3=opensuse/leap:15.3
+OS.tumbleweed=opensuse/tumbleweed
+OS.archlinux=archlinux:latest
+OS.ol8=oraclelinux:8
+OS.alma8=almalinux:8
+OS.rocky8=rockylinux:8
+
+endif # OS
+
+OS=$(OS.$(OSNICK))
+ifeq ($(OS),)
+$(error Invalid OSNICK. Aborting.)
+endif
+
+#----------------------------------------------------------------------------------------------
+
+MACH:=$(shell uname -m)
+
+#----------------------------------------------------------------------------------------------
+
+define HELPTEXT
+make build      # build Docker images
+  REDIS_VER=ver   # use Redis version `ver`
+  TEST=1          # test aftar build
+  PACK=1          # create packages
+  ARTIFACTS=1     # copy artifacts from docker image
+
+make publish   # push Docker image to Dockerhub
+  LATEST=1       # tag selected version as "latest" and push it
+  PUSH=0         # only push multi-arch manifest
+  MULTI=1        # build and push multi-arch Docker manifest
+
+make show      # display registry information from Docker repo
+
+Common arguments:
+  OSNICK=nick    # nick=buster|stretch|bionic|centos7
+  VERSION=ver    # build and publish version x.y.z
+  EDGE=1         # treat build as "edge" version
+  X64=1          # build and publish x64 arch
+  ARM7=1         # build and publish arm32v7 arch
+  ARM8=1         # build and publish arm64v8 arch
+endef
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(SIMPLE),1)
+
+define D_NAME # (1=arch)
+$(STEM):$(VERSION)$(_VAR)
+endef
+
+define D_LATEST_NAME # (1=arch)
+$(STEM):latest$(_VAR)
+endef
+
+else
+
+define D_NAME # (1=arch)
+$(STEM):$(VERSION)$(_VAR)-$(1)-$(OSNICK)
+endef
+
+define D_LATEST_NAME # (1=arch)
+$(STEM):latest$(_VAR)-$(1)-$(OSNICK)
+endef
+
+endif # SIMPLE
+
+DOCKER_BUILD_ARGS += \
+	VERSION=$(VERSION) \
+	OSNICK=$(OSNICK) \
+	OS=$(OS) \
+	ARCH=$(ARCH) \
+	MACH=$(MACH) \
+	REDIS_VER=$(REDIS_VER) \
+	TEST=$(TEST) \
+	PACK=$(PACK)
+
+define targets # (1=OP, 2=op)
+$(1)_TARGETS :=
+$(1)_TARGETS += $(if $(findstring $(X64),1),$(2)_native)
+ifeq ($$(CROSS),1)
+$(1)_TARGETS += $(if $(findstring $(ARM7),1),$(2)_arm32v7)
+$(1)_TARGETS += $(if $(findstring $(ARM8),1),$(2)_arm64v8)
+endif
+
+ifeq ($$(CROSS),1)
+$(1)_TARGETS += $$(if $$(strip $$($(1)_TARGETS)),,$(2)_native $(2)_arm32v7 $(2)_arm64v8)
+else
+$(1)_TARGETS += $$(if $$(strip $$($(1)_TARGETS)),,$(2)_native)
+endif
+endef
+
+$(eval $(call targets,BUILD,build))
+$(eval $(call targets,PUSH,push))
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(ARTIFACTS),1)
+ifeq ($(ART_DIR),)
+$(error ART_DIR is not defined.)
+endif
+export ART_DIR
+ifeq ($(ART_INT_DIR),)
+$(error ART_INT_DIR is not defined.)
+endif
+export ART_INT_DIR
+endif
+
+#----------------------------------------------------------------------------------------------
+
+define build_native # (1=arch)
+build_native:
+	$(SHOW)docker build $(BUILD_OPT) -t $(call D_NAME,$(1)) -f $(DOCKERFILE_STEM) \
+		$(foreach A,$(DOCKER_BUILD_ARGS),--build-arg $(A)) \
+		$(ROOT)
+ifeq ($(ARTIFACTS),1)
+	$(SHOW)IMAGE=$(call D_NAME,$(1)) $(MK)/docker-collect-artifacts
+endif
+ifeq ($(LATEST),1)
+	$(SHOW)docker tag $(call D_NAME,$(1)) $(call D_LATEST_NAME,$(1))
+endif
+
+.PHONY: build_native
+endef
+
+define build_arm  # (1=arch)
+build_$(1):
+	$(SHOW)docker build $(BUILD_OPT) -t $(call D_NAME,$(1)) -f $(DOCKERFILE_STEM).arm \
+		$(foreach A,$(DOCKER_BUILD_ARGS),--build-arg $(A)) \
+		--build-arg ARCH=$(1) \
+		$(ROOT)
+ifeq ($(ARTIFACTS),1)
+	$(SHOW)IMAGE=$(call D_NAME,$(1)) $(MK)/docker-collect-artifacts
+endif
+ifeq ($(LATEST),1)
+	$(SHOW)docker tag $(call D_NAME,$(1)) $(call D_LATEST_NAME,$(1))
+endif
+
+.PHONY: build_$(1)
+endef
+
+#----------------------------------------------------------------------------------------------
+
+define push_native # (1=arch)
+push_native:
+	$(SHOW)docker push $(call D_NAME,$(1))
+ifeq ($(LATEST),1)
+	$(SHOW)docker push $(call D_LATEST_NAME,$(1))
+endif
+
+.PHONY: push_native
+endef
+
+define push_arm # (1=arch)
+push_$(1):
+	$(SHOW)docker push $(call D_NAME,$(1))
+ifeq ($(LATEST),1)
+	$(SHOW)docker push $(call D_LATEST_NAME,$(1))
+endif
+
+.PHONY: push_$(1)
+endef
+
+#----------------------------------------------------------------------------------------------
+
+define create_manifest # (1=version)
+$(SHOW)docker manifest create -a $(STEM):$(1)-$(OSNICK) \
+	-a $(STEM):$(VERSION)-x64-$(OSNICK) \
+	-a $(STEM):$(VERSION)-arm64v8-$(OSNICK) \
+	-a $(STEM):$(VERSION)-arm32v7-$(OSNICK)
+$(SHOW)docker manifest annotate $(STEM):$(1)-$(OSNICK) $(STEM):$(VERSION)-arm32v7-$(OSNICK) --os linux --arch arm --variant v7
+$(SHOW)docker manifest annotate $(STEM):$(1)-$(OSNICK) $(STEM):$(VERSION)-arm64v8-$(OSNICK) --os linux --arch arm64 --variant v8
+$(SHOW)docker manifest push -p $(STEM):$(1)-$(OSNICK)
+endef
+
+#----------------------------------------------------------------------------------------------
+
+DEFAULT_TARGETS += $(BUILD_TARGETS)
+
+include $(MK)/defs
+
+ifeq ($(ARCH),x64)
+CROSS ?= 1
+else
+ifeq ($(X64),1)
+$(error Cannot build x64 on arm)
+endif
+ifeq ($(CROSS),1)
+$(error Cannot cross-build on arm)
+endif
+endif
+
+
+#----------------------------------------------------------------------------------------------
+
+include $(MK)/rules
+
+$(eval $(call build_native,$(ARCH)))
+ifeq ($(CROSS),1)
+$(eval $(call build_arm,arm64v8))
+$(eval $(call build_arm,arm32v7))
+endif
+
+$(eval $(call push_native,$(ARCH)))
+ifeq ($(CROSS),1)
+$(eval $(call push_arm,arm64v8))
+$(eval $(call push_arm,arm32v7))
+endif
+
+ifeq ($(MULTI),1)
+
+ifneq ($(PUSH),0)
+publish: $(PUSH_TARGETS) ;
+else
+publish:
+endif
+	$(SHOW)$(call create_manifest,$(VERSION))
+	$(SHOW)$(call create_manifest,latest)
+
+else
+
+publish: $(PUSH_TARGETS) ;
+
+endif # MULTI
+
+show:
+	@echo "$(STEM):"
+ifeq ($(INSPECT),1)
+	$(SHOW)docker manifest inspect $(STEM):$(VERSION)-$(OSNICK) | jq
+else
+	$(SHOW)curl -s -X "GET" https://cloud.docker.com/v2/repositories/$(STEM)/tags/ | jq
+endif
+
+.PHONY: build publish show
