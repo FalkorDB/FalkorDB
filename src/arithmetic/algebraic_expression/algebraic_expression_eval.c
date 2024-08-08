@@ -9,28 +9,28 @@
 #include "../algebraic_expression.h"
 
 // forward declarations
-RG_Matrix _AlgebraicExpression_Eval
+Delta_Matrix _AlgebraicExpression_Eval
 (
 	const AlgebraicExpression *exp,
-	RG_Matrix res
+	Delta_Matrix res
 );
 
-RG_Matrix _Eval_Mul
+Delta_Matrix _Eval_Mul
 (
 	const AlgebraicExpression *exp,
-	RG_Matrix res
+	Delta_Matrix res
 );
 
-RG_Matrix _Eval_Add
+Delta_Matrix _Eval_Add
 (
 	const AlgebraicExpression *exp,
-	RG_Matrix res
+	Delta_Matrix res
 );
 
-RG_Matrix _AlgebraicExpression_Eval
+Delta_Matrix _AlgebraicExpression_Eval
 (
 	const AlgebraicExpression *exp,
-	RG_Matrix res
+	Delta_Matrix res
 ) {
 	ASSERT(exp);
 
@@ -64,10 +64,10 @@ RG_Matrix _AlgebraicExpression_Eval
 	return res;
 }
 
-RG_Matrix AlgebraicExpression_Eval
+Delta_Matrix AlgebraicExpression_Eval
 (
 	const AlgebraicExpression *exp,
-	RG_Matrix res
+	Delta_Matrix res
 ) {
 	ASSERT(exp != NULL);
 	return _AlgebraicExpression_Eval(exp, res);

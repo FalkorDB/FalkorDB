@@ -8,10 +8,10 @@
 #include "../../query_ctx.h"
 #include "../algebraic_expression.h"
 
-RG_Matrix _Eval_Add
+Delta_Matrix _Eval_Add
 (
 	const AlgebraicExpression *exp,
-	RG_Matrix res
+	Delta_Matrix res
 ) {
 	ASSERT(exp);
 	ASSERT(AlgebraicExpression_ChildCount(exp) > 1);
@@ -22,9 +22,9 @@ RG_Matrix _Eval_Add
 	GrB_Index ncols;                   // number of columns of operand
 
 	bool        res_in_use  =  false;  //  can we use `res` for intermediate evaluation
-	RG_Matrix   A           =  NULL;   //  left operand
-	RG_Matrix   B           =  NULL;   //  right operand
-	RG_Matrix   inter       =  NULL;   //  intermediate matrix
+	Delta_Matrix   A           =  NULL;   //  left operand
+	Delta_Matrix   B           =  NULL;   //  right operand
+	Delta_Matrix   inter       =  NULL;   //  intermediate matrix
 
 	// get left and right operands
 	AlgebraicExpression *left = CHILD_AT(exp, 0);
@@ -45,9 +45,9 @@ RG_Matrix _Eval_Add
 	if(right->type == AL_OPERATION) {
 		if(res_in_use) {
 			// `res` is in use, create an additional matrix
-			RG_Matrix_nrows(&nrows, res);
-			RG_Matrix_ncols(&ncols, res);
-			info = RG_Matrix_new(&inter, GrB_BOOL, nrows, ncols);
+			Delta_Matrix_nrows(&nrows, res);
+			Delta_Matrix_ncols(&ncols, res);
+			info = Delta_Matrix_new(&inter, GrB_BOOL, nrows, ncols, false);
 			ASSERT(info == GrB_SUCCESS);
 			B = AlgebraicExpression_Eval(right, inter);
 		} else {
@@ -62,7 +62,7 @@ RG_Matrix _Eval_Add
 	// perform addition
 	//--------------------------------------------------------------------------
 
-	info = RG_eWiseAdd(res, GxB_ANY_PAIR_BOOL, A, B);
+	info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, A, B);
 	ASSERT(info == GrB_SUCCESS);
 
 	uint child_count = AlgebraicExpression_ChildCount(exp);
@@ -76,9 +76,9 @@ RG_Matrix _Eval_Add
 			// 'right' represents either + or * operation
 			if(inter == NULL) {
 				// can't use `res`, use an intermidate matrix
-				RG_Matrix_nrows(&nrows, res);
-				RG_Matrix_ncols(&ncols, res);
-				info = RG_Matrix_new(&inter, GrB_BOOL, nrows, ncols);
+				Delta_Matrix_nrows(&nrows, res);
+				Delta_Matrix_ncols(&ncols, res);
+				info = Delta_Matrix_new(&inter, GrB_BOOL, nrows, ncols, false);
 				ASSERT(info == GrB_SUCCESS);
 			}
 			AlgebraicExpression_Eval(right, inter);
@@ -86,11 +86,11 @@ RG_Matrix _Eval_Add
 		}
 
 		// perform addition
-		info = RG_eWiseAdd(res, GxB_ANY_PAIR_BOOL, res, B);
+		info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, res, B);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
-	if(inter != NULL) RG_Matrix_free(&inter);
+	if(inter != NULL) Delta_Matrix_free(&inter);
 	return res;
 }
 

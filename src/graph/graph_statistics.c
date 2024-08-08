@@ -70,4 +70,3 @@ void GraphStatistics_FreeInternals
 	if(stats->node_count) array_free(stats->node_count);
 	if(stats->edge_count) array_free(stats->edge_count);
 }
-

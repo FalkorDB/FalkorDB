@@ -16,11 +16,11 @@ static void _AllNeighborsCtx_CollectNeighbors
 ) {
 	ctx->current_level++;
 	if(ctx->current_level == array_len(ctx->levels)) {
-		RG_MatrixTupleIter iter = {0};
-		RG_MatrixTupleIter_AttachRange(&iter, ctx->M, id, id);
+		Delta_MatrixTupleIter iter = {0};
+		Delta_MatrixTupleIter_AttachRange(&iter, ctx->M, id, id);
 		array_append(ctx->levels, iter);
 	} else {
-		RG_MatrixTupleIter_iterate_row(&ctx->levels[ctx->current_level], id);
+		Delta_MatrixTupleIter_iterate_row(&ctx->levels[ctx->current_level], id);
 	}
 }
 
@@ -28,7 +28,7 @@ void AllNeighborsCtx_Reset
 (
 	AllNeighborsCtx *ctx,  // all neighbors context to reset
 	EntityID src,          // source node from which to traverse
-	RG_Matrix M,           // matrix describing connections
+	Delta_Matrix M,        // matrix describing connections
 	uint minLen,           // minimum traversal depth
 	uint maxLen            // maximum traversal depth
 ) {
@@ -53,15 +53,15 @@ void AllNeighborsCtx_Reset
 	ctx->visited_nodes = HashTableCreate(&def_dt);
 
 	// dummy iterator at level 0
-	array_append(ctx->levels, (RG_MatrixTupleIter) {0});
+	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
 }
 
 AllNeighborsCtx *AllNeighborsCtx_New
 (
-	EntityID src,  // source node from which to traverse
-	RG_Matrix M,   // matrix describing connections
-	uint minLen,   // minimum traversal depth
-	uint maxLen    // maximum traversal depth
+	EntityID src,    // source node from which to traverse
+	Delta_Matrix M,  // matrix describing connections
+	uint minLen,     // minimum traversal depth
+	uint maxLen      // maximum traversal depth
 ) {
 	ASSERT(M   != NULL);
 	ASSERT(src != INVALID_ENTITY_ID);
@@ -72,14 +72,14 @@ AllNeighborsCtx *AllNeighborsCtx_New
 	ctx->src            = src;
 	ctx->minLen         = minLen;
 	ctx->maxLen         = maxLen;
-	ctx->levels         = array_new(RG_MatrixTupleIter, 1);
+	ctx->levels         = array_new(Delta_MatrixTupleIter, 1);
 	ctx->visited        = array_new(EntityID, 1);
 	ctx->first_pull     = true;
 	ctx->current_level  = 0;
 	ctx->visited_nodes  = HashTableCreate(&def_dt);
 
 	// Dummy iterator at level 0
-	array_append(ctx->levels, (RG_MatrixTupleIter) {0});
+	array_append(ctx->levels, (Delta_MatrixTupleIter) {0});
 
 	return ctx;
 }
@@ -112,10 +112,10 @@ EntityID AllNeighborsCtx_NextNeighbor
 
 	while(ctx->current_level > 0) {
 		ASSERT(ctx->current_level < array_len(ctx->levels));
-		RG_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
+		Delta_MatrixTupleIter *it = &ctx->levels[ctx->current_level];
 
 		GrB_Index dest_id;
-		GrB_Info info = RG_MatrixTupleIter_next_UINT64(it, NULL, &dest_id, NULL);
+		GrB_Info info = Delta_MatrixTupleIter_next_BOOL(it, NULL, &dest_id, NULL);
 
 		if(info == GxB_EXHAUSTED) {
 			// backtrack
@@ -160,7 +160,7 @@ void AllNeighborsCtx_Free
 
 	uint count = array_len(ctx->levels);
 	for (uint i = 0; i < count; i++) {
-		RG_MatrixTupleIter_detach(ctx->levels + i);
+		Delta_MatrixTupleIter_detach(ctx->levels + i);
 	}
 	array_free(ctx->levels);
 	array_free(ctx->visited);

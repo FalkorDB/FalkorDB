@@ -332,7 +332,7 @@ void UpdateNodeLabels
 				// sync matrix
 				// make sure label matrix is of the right dimensions
 				if(schema_created) {
-					RG_Matrix m = Graph_GetLabelMatrix(gc->g, schema_id);
+					Delta_Matrix m = Graph_GetLabelMatrix(gc->g, schema_id);
 				}
 				// append label id
 				add_labels_ids[add_labels_index++] = schema_id;

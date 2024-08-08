@@ -9,7 +9,7 @@
 #include "../graph/graph.h"
 #include "../graph/query_graph.h"
 
-static RG_Matrix IDENTITY_MATRIX = (RG_Matrix)0x31032017;  // identity matrix
+static Delta_Matrix IDENTITY_MATRIX = (Delta_Matrix)0x31032017;  // identity matrix
 
 // Matrix, vector operations
 typedef enum {
@@ -40,7 +40,7 @@ struct AlgebraicExpression {
 			const char *dest;           // alias given to operand's columns
 			const char *edge;           // alias given to operand (edge)
 			const char *label;          // label attached to matrix
-			RG_Matrix matrix;           // matrix
+			Delta_Matrix matrix;        // matrix
 		} operand;
 		struct {
 			AL_EXP_OP op;                   // operation: `*`,`+`,`transpose`
@@ -72,7 +72,7 @@ AlgebraicExpression *AlgebraicExpression_NewOperation
 // Create a new AlgebraicExpression operand node.
 AlgebraicExpression *AlgebraicExpression_NewOperand
 (
-	RG_Matrix mat,      // Matrix.
+	Delta_Matrix mat,   // Matrix.
 	bool diagonal,      // Is operand a diagonal matrix?
 	const char *src,    // Operand row domain (src node).
 	const char *dest,   // Operand column domain (destination node).
@@ -185,7 +185,7 @@ AlgebraicExpression *AlgebraicExpression_RemoveDest
 void AlgebraicExpression_MultiplyToTheLeft
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 );
 
 // Multiply expression to the right by operand
@@ -193,7 +193,7 @@ void AlgebraicExpression_MultiplyToTheLeft
 void AlgebraicExpression_MultiplyToTheRight
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 );
 
 // Add expression to the left by operand
@@ -201,7 +201,7 @@ void AlgebraicExpression_MultiplyToTheRight
 void AlgebraicExpression_AddToTheLeft
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 );
 
 // Add expression to the right by operand
@@ -209,7 +209,7 @@ void AlgebraicExpression_AddToTheLeft
 void AlgebraicExpression_AddToTheRight
 (
 	AlgebraicExpression **root,
-	RG_Matrix m
+	Delta_Matrix m
 );
 
 // Transpose expression
@@ -220,10 +220,10 @@ void AlgebraicExpression_Transpose
 );
 
 // Evaluate expression tree.
-RG_Matrix AlgebraicExpression_Eval
+Delta_Matrix AlgebraicExpression_Eval
 (
 	const AlgebraicExpression *exp, // Root node
-	RG_Matrix res                   // Result output
+	Delta_Matrix res                // Result output
 );
 
 // locates operand based on row,column domain and edge or label

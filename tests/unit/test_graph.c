@@ -45,10 +45,10 @@ void _test_node_creation(Graph *g, size_t node_count) {
 	}
 
 	// Validate nodes creation.
-	RG_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
-	TEST_ASSERT(RG_Matrix_nrows(&nrows, adj) == GrB_SUCCESS);
-	TEST_ASSERT(RG_Matrix_ncols(&ncols, adj) == GrB_SUCCESS);
-	TEST_ASSERT(RG_Matrix_nvals(&nvals, adj) == GrB_SUCCESS);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	TEST_ASSERT(Delta_Matrix_nrows(&nrows, adj) == GrB_SUCCESS);
+	TEST_ASSERT(Delta_Matrix_ncols(&ncols, adj) == GrB_SUCCESS);
+	TEST_ASSERT(Delta_Matrix_nvals(&nvals, adj) == GrB_SUCCESS);
 
 	TEST_ASSERT(nvals == 0);                  // No connection were formed.
 	TEST_ASSERT(ncols >= Graph_NodeCount(g)); // Graph's adjacency matrix dimensions.
@@ -226,10 +226,10 @@ void test_newGraph() {
 	GrB_Index ncols, nrows, nvals;
 	Graph *g = Graph_New(GRAPH_DEFAULT_NODE_CAP, GRAPH_DEFAULT_EDGE_CAP);
 	Graph_AcquireWriteLock(g);
-	RG_Matrix adj_matrix = g->adjacency_matrix;
-	TEST_ASSERT(RG_Matrix_ncols(&ncols, adj_matrix) == GrB_SUCCESS);
-	TEST_ASSERT(RG_Matrix_nrows(&nrows, adj_matrix) == GrB_SUCCESS);
-	TEST_ASSERT(RG_Matrix_nvals(&nvals, adj_matrix) == GrB_SUCCESS);
+	Delta_Matrix adj_matrix = g->adjacency_matrix;
+	TEST_ASSERT(Delta_Matrix_ncols(&ncols, adj_matrix) == GrB_SUCCESS);
+	TEST_ASSERT(Delta_Matrix_nrows(&nrows, adj_matrix) == GrB_SUCCESS);
+	TEST_ASSERT(Delta_Matrix_nvals(&nvals, adj_matrix) == GrB_SUCCESS);
 
 	TEST_ASSERT(g->nodes != NULL);
 	TEST_ASSERT(g->relations != NULL);
@@ -258,7 +258,7 @@ void test_graphConstruction() {
 
 void test_removeNodes() {
 	// Construct graph.
-	RG_Matrix M;
+	Delta_Matrix M;
 	GrB_Index nnz;
 	Graph *g = Graph_New(32, 32);
 	Graph_AcquireWriteLock(g);
@@ -290,11 +290,11 @@ void test_removeNodes() {
 	// Validate graph creation.
 	TEST_ASSERT(Graph_NodeCount(g) == 3);
 	M = Graph_GetRelationMatrix(g, r, false);
-	RG_Matrix_nvals(&nnz, M);
+	Delta_Matrix_nvals(&nnz, M);
 	TEST_ASSERT(nnz == 3);
 
 	M = Graph_GetAdjacencyMatrix(g, false);
-	RG_Matrix_nvals(&nnz, M);
+	Delta_Matrix_nvals(&nnz, M);
 	TEST_ASSERT(nnz == 3);
 
 	Edge *edges = (Edge *)array_new(Edge, 3);

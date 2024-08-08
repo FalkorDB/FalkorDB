@@ -6,6 +6,7 @@
 
 #include "indexer.h"
 #include "../redismodule.h"
+#include "../util/rmalloc.h"
 #include "../util/circular_buffer.h"
 #include <assert.h>
 #include <pthread.h>

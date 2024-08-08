@@ -1,0 +1,6 @@
+# Set up a build environment
+{% if REDIS_OSNICK == "alpine3" %}
+RUN ./deps/readies/bin/getbash
+{% endif %}
+RUN ./deps/readies/bin/getpy3
+RUN ./deps/readies/bin/getupdates
