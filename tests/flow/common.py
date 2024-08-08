@@ -26,7 +26,7 @@ OSNICK = paella.Platform().osnick
 def Env(moduleArgs=None, env='oss', useSlaves=False, enableDebugCommand=False):
     env = Environment(decodeResponses=True, moduleArgs=moduleArgs, env=env,
                       useSlaves=useSlaves, enableDebugCommand=enableDebugCommand)
-    db  = FalkorDB("localhost", env.port)
+    db  = FalkorDB("localhost", env.envRunner.port)
     return (env, db)
 
 def skip(cluster=False, macos=False):
