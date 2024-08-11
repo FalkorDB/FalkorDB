@@ -1850,6 +1850,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        self.expect_error('RETURN toLower(replace("�", "", "   "))', "Invalid UTF8 string")
     
     def test66_ToUpper(self):
         query_to_expected_result = {
@@ -1863,6 +1865,8 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        self.expect_error('RETURN toUpper(replace("�", "", "   "))', "Invalid UTF8 string")
     
     def test67_Exists(self):
         query_to_expected_result = {

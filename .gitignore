@@ -57,15 +57,13 @@ deps/GraphBLAS/Config/GraphBLAS.h.tmp
 /tests/flow/logs/
 /tests/tck/logs/
 
-# local/remote benchmark result files
-/tests/benchmarks/*.json
-
 # gcov
 *.gcda
 *.gcno
 /cov/
 /venv/
 /.vscode/
+/.idea/
 /1/
 
 target

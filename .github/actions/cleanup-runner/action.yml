@@ -12,7 +12,7 @@ inputs:
     description: GCP Zone
     required: true
   instance_label:
-    description: Label to identify the inscompositetance
+    description: Label to identify the instance
     required: true
 
 runs:

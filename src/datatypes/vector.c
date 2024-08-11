@@ -209,6 +209,37 @@ float SIVector_EuclideanDistance
 	return sqrtf(sum);
 }
 
+// computes the cosine distance between two vectors
+// distance = 1 - dot(a, b) / (||a|| * ||b||)
+float SIVector_CosineDistance
+(
+	SIValue a,  // first vector
+	SIValue b   // second vector
+) {
+	// cosineDistance(vecf32([0.2, 0.12, 0.3178]), vecf32([0.1, 0.2, 0.3]))
+	ASSERT(SI_TYPE(a) & T_VECTOR);
+	ASSERT(SI_TYPE(b) & T_VECTOR);
+
+	// validate input vectors are of the same length
+	uint32_t n1 = SIVector_Dim(a);
+	uint32_t n2 = SIVector_Dim(b);
+	ASSERT(n1 == n2);
+
+	// compute the cosine distance between the two vectors
+	float dot        = 0;
+	float *elements1 = (float*)SIVector_Elements(a);
+	float *elements2 = (float*)SIVector_Elements(b);
+	float norm_a     = 0;
+	float norm_b     = 0;
+	for(uint32_t i = 0; i < n1; i++) {
+		dot    += elements1[i] * elements2[i];
+		norm_a += elements1[i] * elements1[i];
+		norm_b += elements2[i] * elements2[i];
+	}
+
+	return 1 - dot / (sqrtf(norm_a) * sqrtf(norm_b));
+}
+
 // write a string representation of vector to buf
 void SIVector_ToString
 (

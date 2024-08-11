@@ -1,0 +1,258 @@
+name: Benchmark build
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ master ]
+    types: [opened, labeled, synchronize]
+  push:
+    branches:
+      - 'master'
+    tags:
+      - 'v*'
+
+jobs:
+  haslabel:
+    name: Check label or branch
+    runs-on: ubuntu-latest
+    outputs:
+      has-benchmark-label: ${{ steps.haslabel.outputs.result }}
+    steps:
+      - name: Check label or branch
+        id: haslabel
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName !== 'pull_request') {
+              console.log("Not a pull request")
+              return false
+            }
+            
+            const existing_pull = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              headers: { 'Accept': 'application/vnd.github-json' }
+            });
+            
+            
+            const has_label = existing_pull.data.labels.find(label => label.name === 'action:run-benchmark')
+            console.log(`Found label: ${has_label !== undefined}`)
+            return has_label !== undefined
+
+  create-runners:
+    needs: haslabel
+    if: ${{ needs.haslabel.outputs.has-benchmark-label == 'true' || github.event_name != 'pull_request' }}
+    strategy:
+      matrix:
+        benchmark_group: [a, b]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Runner For Benchmark
+        id: create-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: ${{ vars.GCP_ZONE }}
+          machine_type: n4-highcpu-8
+          network: gh-runner
+          runner_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
+
+  run-benchmarks:
+    needs:
+      - create-runners
+    strategy:
+      matrix:
+        benchmark_group: [ a, b ]
+    runs-on: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
+    container: falkordb/falkordb-build:ubuntu
+    steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
+
+      - uses: actions/checkout@v4
+        with:
+          set-safe-directory: '*'
+          submodules: recursive
+
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/GraphBLAS
+          key: graphblas-x64-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/libcypher-parser
+          key: parser-x64-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/search-static
+          key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
+      - name: Build
+        run: |
+          apt update && apt install -y lsb-release
+          curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+          echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
+          apt update && apt install -y redis python3-venv python3-pip
+          rustup default stable
+          make -j$(nproc)
+
+      - name: Install benchmark dependencies
+        working-directory: tests/benchmarks
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r benchmarks_requirements.txt
+
+      - name: Run benchmark
+        working-directory: tests/benchmarks
+        run: |
+          . venv/bin/activate
+          python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.head_ref || github.ref_name }}-benchmark-group_${{ matrix.benchmark_group }}-results
+          path: tests/benchmarks/*-results.json
+          retention-days: 1
+
+  cleanup-runners:
+    needs: run-benchmarks
+    strategy:
+      matrix:
+        benchmark_group: [ a, b ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}-group_${{ matrix.benchmark_group }}
+
+  merge-results:
+    needs:
+      - run-benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # change this so it uses a pattern to download all group_* artifacts
+          pattern: ${{ github.head_ref || github.ref_name }}-benchmark-group_*-results
+          merge-multiple: true
+      - name: Upload merged results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.head_ref || github.ref_name }}-benchmark-results
+          path: ./*-results.json
+
+  compare-results:
+    needs:
+      - merge-results
+    if: ${{ github.event_name == 'pull_request' }} # No need to run this job for branches and tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create paths
+        run: |
+          mkdir -p tests/benchmarks/compare/${{ github.head_ref }}
+          mkdir -p tests/benchmarks/compare/master
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.head_ref }}-benchmark-results
+          path: tests/benchmarks/compare/${{ github.head_ref }}
+
+      - name: Download master artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              headers: { 'Accept': 'application/vnd.github.json' },
+              name: 'master-benchmark-results',
+              per_page: 1 // Gets the latest artifact
+            })
+
+            const download_url = artifacts.data.artifacts[0].archive_download_url
+
+            const download_res = await github.rest.actions.downloadArtifact({
+              owner: "FalkorDB",
+              repo: "FalkorDB",
+              artifact_id: artifacts.data.artifacts[0].id,
+              archive_format: "zip",
+            })
+
+            function toBuffer(arrayBuffer) {
+              const buffer = Buffer.alloc(arrayBuffer.byteLength);
+              const view = new Uint8Array(arrayBuffer);
+              for (let i = 0; i < buffer.length; ++i) {
+                buffer[i] = view[i];
+              }
+              return buffer;
+            }
+
+            require('fs').writeFileSync(require('path').resolve("${{ github.workspace }}", "master-benchmark-results.zip"), toBuffer(download_res.data))
+        continue-on-error: true
+
+      - name: Unzip master artifact
+        run: unzip master-benchmark-results.zip -d tests/benchmarks/compare/master
+        continue-on-error: true
+
+      - name: Install dependencies
+        working-directory: tests/benchmarks
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r comparison_requirements.txt
+
+      - name: Generate markdown
+        working-directory: tests/benchmarks
+        run: |
+          . venv/bin/activate
+          python3 generate_markdown.py --new_branch ${{ github.head_ref }}
+
+      - name: Update Pull Request Text
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const existing_pull = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              headers: { 'Accept': 'application/vnd.github-commitcomment.text' }
+            });
+
+            const replaceBenchmarkSection = (originalString, replacementString) => {
+              const startMarker = '<!-- Benchmark results auto generation start -->';
+              const endMarker = '<!-- Benchmark results auto generation end -->';
+              const regexPattern = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`, 'g');
+
+              if (originalString.includes(startMarker) && originalString.includes(endMarker)) {
+                return originalString.replace(regexPattern, `${startMarker}\n${replacementString}\n${endMarker}`);
+              }
+
+
+              return `${originalString}\n${startMarker}\n${replacementString}\n${endMarker}\n`;
+            }
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              body: replaceBenchmarkSection(existing_pull.data.body, require('fs').readFileSync('tests/benchmarks/compare.md', 'utf-8'))
+            })

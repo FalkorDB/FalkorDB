@@ -1,0 +1,13 @@
+name: NODE-BATCH-DELETE
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 3000000) AS x CREATE (:N{v:x})"]
+parameters:
+  num_clients: 1
+  num_requests: 1000
+  queries:
+    - query: 'MATCH (n) WITH n LIMIT 3000 DELETE n'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallGraphInternalLatencies.Total.q50'
+    max_value: 950.0

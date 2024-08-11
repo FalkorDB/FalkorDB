@@ -295,7 +295,7 @@ static Record ValueHashJoinConsume
 	// if we're here there are no more
 	// left hand side records which intersect with R
 	// discard R
-	if(op->rhs_rec) OpBase_DeleteRecord(&op->rhs_rec);
+	OpBase_DeleteRecord(&op->rhs_rec);
 
 	// try to get new right hand side record
 	// which intersect with a left hand side record

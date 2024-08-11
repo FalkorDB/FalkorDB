@@ -1,0 +1,15 @@
+name: NODE-INDEX-LOOKUP
+db_config:
+  dataset: datasets/imdb.rdb
+parameters:
+  graph: imdb
+  num_clients: 32
+  num_requests: 1000
+  queries:
+    - query: 'MATCH (a:actor) WITH a MATCH (b:actor) WHERE a.age = b.age AND a <> b RETURN a, collect(b)'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallClientLatencies.Total.q50'
+    max_value: 2200
+  - key: '$.OverallQueryRates.Total'
+    min_value: 11
