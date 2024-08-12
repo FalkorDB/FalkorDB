@@ -63,10 +63,10 @@ static void _RdbSaveIndexField
 			strlen(f->options.phonetic) + 1);
 
 	// encode field dimension
-	SerializerIO_WriteUnsigned(rdb, f->options.dimension);
-	SerializerIO_WriteUnsigned(rdb, f->options.M);
-	SerializerIO_WriteUnsigned(rdb, f->options.efConstruction);
-	SerializerIO_WriteUnsigned(rdb, f->options.efRuntime);
+	SerializerIO_WriteUnsigned(rdb, f->hnsw_options.dimension);
+	SerializerIO_WriteUnsigned(rdb, f->hnsw_options.M);
+	SerializerIO_WriteUnsigned(rdb, f->hnsw_options.efConstruction);
+	SerializerIO_WriteUnsigned(rdb, f->hnsw_options.efRuntime);
 }
 
 static inline void _RdbSaveIndexData

@@ -67,7 +67,7 @@ static bool _parseOptions
 		}
 		*M = val.longval;
 	} else {
-		*M = 16;
+		*M = INDEX_FIELD_DEFAULT_M;
 	}
 
 	if(MAP_GET(options, "efConstruction", val)) {
@@ -76,7 +76,7 @@ static bool _parseOptions
 		}
 		*efConstruction = val.longval;
 	} else {
-		*efConstruction = 200;
+		*efConstruction = INDEX_FIELD_DEFAULT_EF_CONSTRUCTION;
 	}
 
 	if(MAP_GET(options, "efRuntime", val)) {
@@ -85,7 +85,7 @@ static bool _parseOptions
 		}
 		*efRuntime = val.longval;
 	} else {
-		*efRuntime = 10;
+		*efRuntime = INDEX_FIELD_DEFAULT_EF_RUNTIME;
 	}
 
 	return true;
