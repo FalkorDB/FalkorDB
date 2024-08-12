@@ -140,6 +140,9 @@ static void _Index_ConstructStructure
 					field->vector_name);
 
 			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
+			RediSearch_VectorFieldSetM(rsIdx, fieldID, field->options.M);
+			RediSearch_VectorFieldSetefConstruction(rsIdx, fieldID, field->options.efConstruction);
+			RediSearch_VectorFieldSetefRuntime(rsIdx, fieldID, field->options.efRuntime);
 		}
 
 		//----------------------------------------------------------------------

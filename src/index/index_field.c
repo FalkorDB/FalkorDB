@@ -52,10 +52,13 @@ void IndexField_Init
 	field->type = type;
 
 	// set default options
-	field->options.weight    = INDEX_FIELD_DEFAULT_WEIGHT;
-	field->options.nostem    = INDEX_FIELD_DEFAULT_NOSTEM;
-	field->options.phonetic  = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
-	field->options.dimension = 0;
+	field->options.weight         = INDEX_FIELD_DEFAULT_WEIGHT;
+	field->options.nostem         = INDEX_FIELD_DEFAULT_NOSTEM;
+	field->options.phonetic       = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
+	field->options.dimension      = 0;
+	field->options.M              = 16;
+	field->options.efConstruction = 200;
+	field->options.efRuntime      = 10;
 
 	if(type & INDEX_FLD_FULLTEXT) {
 		field->fulltext_name = field->name;
@@ -126,13 +129,19 @@ void IndexField_NewFullTextField
 // create a new vector index field
 void IndexField_NewVectorField
 (
-	IndexField *field,   // field to initialize
-	const char *name,    // field name
-	AttributeID id,      // field id
-	uint32_t dimension   // vector dimension
+	IndexField *field,      // field to initialize
+	const char *name,       // field name
+	AttributeID id,         // field id
+	uint32_t dimension,     // vector dimension
+	size_t M,		        // max outgoing edges
+	size_t efConstruction,  // construction error factor
+	size_t efRuntime        // runtime error factor
 ) {
 	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);
 	IndexField_OptionsSetDimension(field, dimension);
+	IndexField_OptionsSetM(field, M);
+	IndexField_OptionsSetEfConstruction(field, efConstruction);
+	IndexField_OptionsSetEfRuntime(field, efRuntime);
 }
 
 // clone index field
@@ -277,6 +286,34 @@ void IndexField_OptionsSetDimension
 ) {
 	ASSERT(field != NULL);
 	field->options.dimension = dimension;
+}
+
+// set index field vector max outgoing edges
+void IndexField_OptionsSetM
+(
+	IndexField *field,  // field to update
+	size_t M            // max outgoing edges
+) {
+	ASSERT(field != NULL);
+	field->options.M = M;
+}
+
+void IndexField_OptionsSetEfConstruction
+(
+	IndexField *field,     // field to update
+	size_t efConstruction  // construction error factor
+) {
+	ASSERT(field != NULL);
+	field->options.efConstruction = efConstruction;
+}
+
+void IndexField_OptionsSetEfRuntime
+(
+	IndexField *field,  // field to update
+	size_t efRuntime    // runtime error factor
+) {
+	ASSERT(field != NULL);
+	field->options.efRuntime = efRuntime;
 }
 
 uint32_t IndexField_OptionsGetDimension
