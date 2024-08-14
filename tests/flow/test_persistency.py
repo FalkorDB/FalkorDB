@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from common import *
 import random
 from index_utils import *
@@ -57,6 +58,7 @@ class testGraphPersistency():
         graph.create_node_range_index("country", "name", "population")
         graph.create_edge_range_index("visit", "purpose")
         graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
+        create_node_vector_index(graph, "person", 'embedding', dim=128, m=64, efConstruction=10, efRuntime=10)
         wait_for_indices_to_sync(graph)
 
         return graph
@@ -124,15 +126,16 @@ class testGraphPersistency():
 
                 # Verify indices exists
                 indices = graph.query("""CALL db.indexes()""").result_set
-                expected_indices = [
-                        ['country', ['name', 'population'], 'english', [], 'NODE'],
-                        ['person', ['name', 'height', 'text'], 'english', ['a', 'b'], 'NODE'],
-                        ['visit', ['_src_id', '_dest_id', 'purpose'], 'english', [], 'RELATIONSHIP']
-                ]
+                expected_indices = {
+                        'country': [['name', 'population'], 'english', [], 'NODE'],
+                        'person': [['name', 'height', 'text', 'embedding'], OrderedDict({'name': ['RANGE'], 'height': ['RANGE'], 'text': ['FULLTEXT'], 'embedding': ['VECTOR']}), OrderedDict({'name': OrderedDict({}), 'height': OrderedDict({}), 'text': OrderedDict({}), 'embedding': OrderedDict({'dimension': 128, 'M': 64, 'efConstruction': 10, 'efRuntime': 10})}), 'english', ['a', 'b'], 'NODE'],
+                        'visit': [['purpose'], 'english', [], 'RELATIONSHIP']
+                }
 
                 self.env.assertEquals(len(indices), len(expected_indices))
                 for index in indices:
-                    self.env.assertIn(index, indices)
+                    for expected_index in expected_indices[index[0]]:
+                        self.env.assertIn(expected_index, index)
 
     # Verify that edges are not modified after entity deletion
     def test02_deleted_entity_migration(self):
