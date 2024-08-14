@@ -177,16 +177,32 @@ void IndexField_OptionsSetM
 	size_t M            // max outgoing edges
 );
 
+// get index field vector max outgoing edges
+size_t IndexField_OptionsGetM
+(
+	const IndexField *field   // field to update
+);
+
 void IndexField_OptionsSetEfConstruction
 (
 	IndexField *field,    // field to update
 	size_t efConstruction // construction error factor
 );
 
+size_t IndexField_OptionsGetEfConstruction
+(
+	const IndexField *field     // field to update
+);
+
 void IndexField_OptionsSetEfRuntime
 (
 	IndexField *field,  // field to update
 	size_t efRuntime    // runtime error factor
+);
+
+size_t IndexField_OptionsGetEfRuntime
+(
+	const IndexField *field  // field to update
 );
 
 // free index field

@@ -87,9 +87,9 @@ void IndexField_SetOptions
 	ASSERT(phonetic != NULL);
 
 	// default options
-	ASSERT(field->options.dimension == 0);
 	ASSERT(field->options.weight    == INDEX_FIELD_DEFAULT_WEIGHT);
 	ASSERT(field->options.nostem    == INDEX_FIELD_DEFAULT_NOSTEM);
+	ASSERT(field->hnsw_options.dimension == 0);
 	ASSERT(strcmp(field->options.phonetic, INDEX_FIELD_DEFAULT_PHONETIC) == 0);
 
 	// set options
@@ -298,6 +298,15 @@ void IndexField_OptionsSetM
 	field->hnsw_options.M = M;
 }
 
+// get index field vector max outgoing edges
+size_t IndexField_OptionsGetM
+(
+	const IndexField *field   // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.M;
+}
+
 void IndexField_OptionsSetEfConstruction
 (
 	IndexField *field,     // field to update
@@ -307,6 +316,14 @@ void IndexField_OptionsSetEfConstruction
 	field->hnsw_options.efConstruction = efConstruction;
 }
 
+size_t IndexField_OptionsGetEfConstruction
+(
+	const IndexField *field     // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.efConstruction;
+}
+
 void IndexField_OptionsSetEfRuntime
 (
 	IndexField *field,  // field to update
@@ -314,6 +331,14 @@ void IndexField_OptionsSetEfRuntime
 ) {
 	ASSERT(field != NULL);
 	field->hnsw_options.efRuntime = efRuntime;
+}
+
+size_t IndexField_OptionsGetEfRuntime
+(
+	const IndexField *field  // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.efRuntime;
 }
 
 uint32_t IndexField_OptionsGetDimension
