@@ -54,9 +54,10 @@ void Graph_DeleteEdges
 		ASSERT(info == GrB_SUCCESS);
 
 		if(SINGLE_EDGE(me_id)) {
+			ASSERT(me_id == edge_id);
+
 			info = Delta_Matrix_removeElement(M, src_id, dest_id);
 			ASSERT(info == GrB_SUCCESS);
-			ASSERT(me_id == edge_id);
 
 			// see if source is connected to destination with additional edges
 			bool connected = false;

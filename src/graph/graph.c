@@ -690,8 +690,7 @@ void Graph_FormConnection
 void Graph_FormConnections
 (
 	Graph *g,
-	dict* multiEdgeCreationCtx,
-	const bool log
+	dict* multiEdgeCreationCtx
 )
 {
 	// adjacency matrix is graph-global
@@ -752,7 +751,7 @@ void Graph_FormConnections
 
 		// form edges here
 		const size_t edge_count = array_len(ctx->edges_to_add);
-		MultiEdgeMatrix_FormConnections(ctx, edge_count, log);
+		MultiEdgeMatrix_FormConnections(ctx, edge_count);
 
 		// an edge of type r has just been created, update statistics
 		GraphStatistics_IncEdgeCount(&g->stats, ctx->relation_id, edge_count);
@@ -772,7 +771,6 @@ AttributeSet* Graph_AllocateAttribute(
 	EdgeID* out_id
 )
 {
-
 #ifdef RG_DEBUG
 	{
 		// make sure both src and destination nodes exists

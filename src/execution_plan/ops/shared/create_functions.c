@@ -225,7 +225,7 @@ static void _CommitEdges
 	const uint edge_count             = array_len(pending->created_edges);
 	dict* multiEdgeCreationCtx = _CreateMultiEdgeDict(gc, pending, edge_count);
 
-	Graph_FormConnections(g, multiEdgeCreationCtx, log);
+	Graph_FormConnections(g, multiEdgeCreationCtx);
 
 	// Individual members have to be release prior to releasing the hash table
 	HashTableRelease(multiEdgeCreationCtx);
@@ -235,9 +235,13 @@ static void _CommitEdges
 	//----------------------------------------------------------------------
 	bool constraint_violation = false;
 	for (size_t i = 0; i < edge_count; i++) {
+		Edge* edge = pending->created_edges[i];
+
+		UndoLog_CreateEdge(QueryCtx_GetUndoLog(), edge);
+		EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), edge);
+
 		if (!constraint_violation)
 		{
-			const Edge* edge = pending->created_edges[i];
 			const Schema* schema = GraphContext_GetSchema(gc, edge->relationship, SCHEMA_EDGE);
 
 			ASSERT(schema != NULL);

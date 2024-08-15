@@ -236,8 +236,7 @@ void MultiEdgeMatrix_FormConnection
 
 void MultiEdgeMatrix_FormConnections(
 	const struct MultiEdgeCreationCtx* ctx,
-	const size_t edge_count,
-	const bool log
+	const size_t edge_count
 )
 {
 	MultiEdgeMatrix* M = ctx->M;
@@ -248,15 +247,10 @@ void MultiEdgeMatrix_FormConnections(
 	if (!has_value && edge_count == 1)
 	{
 		Edge* edge = ctx->edges_to_add[0];
+		printf("%lu %lu %lu\n", edge->src_id, edge->dest_id, edge->id);
 
 		const GrB_Info info = Delta_Matrix_setElement_UINT64(M->R, edge->id, ctx->src, ctx->dest);
 		ASSERT(info == GrB_SUCCESS);
-
-		if (log)
-		{
-			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), edge);
-			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), edge);
-		}
 		return;
 	}
 
@@ -284,12 +278,6 @@ void MultiEdgeMatrix_FormConnections(
 	{
 		const GrB_Info info = Delta_Matrix_setElement_BOOL(M->E, meid, ctx->edges_to_add[i]->id);
 		ASSERT(info == GrB_SUCCESS);
-
-		if (log)
-		{
-			UndoLog_CreateEdge(QueryCtx_GetUndoLog(), ctx->edges_to_add[i]);
-			EffectsBuffer_AddCreateEdgeEffect(QueryCtx_GetEffectsBuffer(), ctx->edges_to_add[i]);
-		}
 	}
 }
 

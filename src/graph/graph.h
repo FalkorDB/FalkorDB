@@ -203,8 +203,7 @@ void Graph_CreateNode
 void Graph_FormConnections
 (
 	Graph *g,
-	dict* multiEdgeCreationCtx,
-	bool log
+	dict* multiEdgeCreationCtx
 );
 
 // connects source node to destination node

@@ -106,8 +106,7 @@ void MultiEdgeMatrix_FormConnection
 void MultiEdgeMatrix_FormConnections
 (
 	const struct MultiEdgeCreationCtx* ctx, // multi-edge creation context
-    size_t edge_count,   // number of edges
-    bool log             // log creation
+    size_t edge_count   // number of edges
 );
 
 // free multi-edge matrix
