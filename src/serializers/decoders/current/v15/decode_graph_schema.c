@@ -49,13 +49,15 @@ static void _RdbDecodeIndexField
 	*phonetic = SerializerIO_ReadBuffer(rdb, NULL);
 
 	// decode field dimension
-	*dimension = SerializerIO_ReadUnsigned(rdb);
+	if(*type & INDEX_FLD_VECTOR) {
+		*dimension = SerializerIO_ReadUnsigned(rdb);
 
-	*M = SerializerIO_ReadUnsigned(rdb);
+		*M = SerializerIO_ReadUnsigned(rdb);
 
-	*efConstruction = SerializerIO_ReadUnsigned(rdb);
+		*efConstruction = SerializerIO_ReadUnsigned(rdb);
 
-	*efRuntime = SerializerIO_ReadUnsigned(rdb);
+		*efRuntime = SerializerIO_ReadUnsigned(rdb);
+	}
 }
 
 static void _RdbLoadIndex

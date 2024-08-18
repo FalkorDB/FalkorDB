@@ -63,10 +63,12 @@ static void _RdbSaveIndexField
 			strlen(f->options.phonetic) + 1);
 
 	// encode field dimension
-	SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetDimension(f));
-	SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetM(f));
-	SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfConstruction(f));
-	SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfRuntime(f));
+	if(IndexField_GetType(f) & INDEX_FLD_VECTOR) {
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetDimension(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetM(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfConstruction(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfRuntime(f));
+	}
 }
 
 static inline void _RdbSaveIndexData
