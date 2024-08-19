@@ -125,7 +125,7 @@
         const int64_t *restrict pstart_Aslice = klast_Aslice + A_ntasks ;
 
         int taskid ;
-        #pragma omp parallel for num_threads(A_nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(A_nthreads) schedule(dynamic,1)
         for (taskid = 0 ; taskid < A_ntasks ; taskid++)
         {
 

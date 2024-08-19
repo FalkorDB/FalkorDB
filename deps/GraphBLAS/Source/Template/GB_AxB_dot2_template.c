@@ -64,9 +64,9 @@
 
     int tid ;
     #if GB_C_IS_FULL
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
     #else
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
         reduction(+:cnvals)
     #endif
     for (tid = 0 ; tid < ntasks ; tid++)

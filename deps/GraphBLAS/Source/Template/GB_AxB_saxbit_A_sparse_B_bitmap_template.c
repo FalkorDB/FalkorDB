@@ -34,7 +34,7 @@
         //----------------------------------------------------------------------
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
             reduction(+:cnvals)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
@@ -232,7 +232,7 @@
         //----------------------------------------------------------------------
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
             reduction(+:cnvals)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
@@ -456,7 +456,7 @@
         //----------------------------------------------------------------------
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
 
@@ -581,7 +581,7 @@
         // second phase: C<#M> += reduce (W)
         //----------------------------------------------------------------------
 
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
             reduction(+:cnvals)
         for (tid = 0 ; tid < ntasks ; tid++)
         {

@@ -433,7 +433,7 @@ GrB_Info GB_subref_phase0
 
         // scan all of Ah and check each entry if it appears in J
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
             int64_t kA_start, kA_end, my_Cnvec = 0 ;
@@ -471,7 +471,7 @@ GrB_Info GB_subref_phase0
         // scan all of J and check each entry if it appears in Ah
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
             int64_t jC_start, jC_end ;
@@ -611,7 +611,7 @@ GrB_Info GB_subref_phase0
         if (jinc > 0)
         {
             int tid ;
-            #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+            #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
             for (tid = 0 ; tid < ntasks ; tid++)
             {
                 int64_t kA_start, kA_end ;
@@ -634,7 +634,7 @@ GrB_Info GB_subref_phase0
         else
         {
             int tid;
-            #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+            #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
             for (tid = 0 ; tid < ntasks ; tid++)
             {
                 int64_t kA_start, kA_end ;
@@ -668,7 +668,7 @@ GrB_Info GB_subref_phase0
         // then found in Ah, via binary search.
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
             int64_t jC_start, jC_end ;

@@ -362,7 +362,7 @@ GrB_Info GB_msort_2    // sort array A of size 2-by-n, using 2 keys (A [0:1][])
 
     GB_eslice (Slice, n, ntasks) ;
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
     for (tid = 0 ; tid < ntasks ; tid++)
     { 
         int64_t leaf = Slice [tid] ;
@@ -395,7 +395,7 @@ GrB_Info GB_msort_2    // sort array A of size 2-by-n, using 2 keys (A [0:1][])
                 A_0, A_1, Slice [tid+nt], Slice [tid+2*nt]) ;
         }
 
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         { 
             // merge A [pL...pL+nL-1] and A [pR...pR+nR-1] into W [pS..]
@@ -424,7 +424,7 @@ GrB_Info GB_msort_2    // sort array A of size 2-by-n, using 2 keys (A [0:1][])
                 W_0, W_1, Slice [tid+nt], Slice [tid+2*nt]) ;
         }
 
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         { 
             // merge A [pL...pL+nL-1] and A [pR...pR+nR-1] into W [pS..]

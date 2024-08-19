@@ -543,7 +543,7 @@ static void GB_SORT (vector)    // sort the pair of arrays A_0, A_1
 
     GB_eslice (Slice, n, ntasks) ;
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
     for (tid = 0 ; tid < ntasks ; tid++)
     { 
         int64_t leaf = Slice [tid] ;
@@ -585,7 +585,7 @@ static void GB_SORT (vector)    // sort the pair of arrays A_0, A_1
                 ) ;
         }
 
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         { 
             // merge A [pL...pL+nL-1] and A [pR...pR+nR-1] into W [pS..]
@@ -622,7 +622,7 @@ static void GB_SORT (vector)    // sort the pair of arrays A_0, A_1
                 ) ;
         }
 
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
         { 
             // merge A [pL...pL+nL-1] and A [pR...pR+nR-1] into W [pS..]
@@ -735,7 +735,7 @@ static GrB_Info GB_SORT (matrix)
 
     // sort all short vectors in parallel, one thread per vector
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
     for (tid = 0 ; tid < ntasks ; tid++)
     {
         const int64_t kfirst = C_slice [tid] ;
@@ -801,7 +801,7 @@ static GrB_Info GB_SORT (matrix)
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
     for (tid = 0 ; tid < ntasks ; tid++)
     {
         const int64_t kfirst = C_slice [tid] ;

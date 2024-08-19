@@ -21,7 +21,7 @@
     ASSERT (Mvlen == 1) ;
     int64_t iC = I [0] ;
     int tid ;
-    #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1) \
+    #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1) \
         reduction(+:cnvals)
     for (tid = 0 ; tid < M_ntasks ; tid++)
     {

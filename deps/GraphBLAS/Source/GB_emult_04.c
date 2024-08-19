@@ -167,7 +167,7 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     // the same pattern as M, the first phase can be skipped.
 
     int tid ;
-    #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1)
     for (tid = 0 ; tid < M_ntasks ; tid++)
     {
         int64_t kfirst = kfirst_Mslice [tid] ;

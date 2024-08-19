@@ -35,7 +35,7 @@
     //--------------------------------------------------------------------------
 
     int tid ;
-    #pragma omp parallel for num_threads(C_nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(C_nthreads) schedule(dynamic,1)
     for (tid = 0 ; tid < C_ntasks ; tid++)
     {
         int64_t kfirst = kfirst_Cslice [tid] ;

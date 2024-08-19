@@ -59,7 +59,7 @@ GrB_Info GB_assign_zombie2
     //--------------------------------------------------------------------------
 
     int taskid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
         reduction(+:nzombies)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {

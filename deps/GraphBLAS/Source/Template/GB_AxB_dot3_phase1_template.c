@@ -12,7 +12,7 @@
 
 {
     int taskid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
+    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {
 

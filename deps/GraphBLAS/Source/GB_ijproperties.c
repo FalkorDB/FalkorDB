@@ -215,7 +215,7 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         }
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
             reduction(||:I_unsorted) reduction(&&:I_contig) \
             reduction(||:I_has_duplicates)
         for (tid = 0 ; tid < ntasks ; tid++)

@@ -131,7 +131,7 @@ GrB_Info GB_convert_hyper_to_sparse // convert hypersparse to sparse
         //----------------------------------------------------------------------
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
             reduction(+:nvec_nonempty)
         for (tid = 0 ; tid < ntasks ; tid++)
         {

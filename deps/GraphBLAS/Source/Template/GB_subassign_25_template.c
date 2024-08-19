@@ -91,7 +91,7 @@
         int64_t nzombies = 0 ;
 
         int tid ;
-        #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1) \
+        #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1) \
             reduction(+:nzombies)
         for (tid = 0 ; tid < M_ntasks ; tid++)
         {
@@ -159,7 +159,7 @@
         {
 
             int tid ;
-            #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1)
+            #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1)
             for (tid = 0 ; tid < M_ntasks ; tid++)
             {
 
