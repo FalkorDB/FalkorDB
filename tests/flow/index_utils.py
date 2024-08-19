@@ -64,8 +64,8 @@ def create_node_range_index(graph, label, *properties, sync=False):
 def create_node_fulltext_index(graph, label, *properties, sync=False):
     return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, sync=sync)
 
-def create_node_vector_index(graph, label, *properties, dim=0, similarity_function="euclidean", sync=False):
-    options = {'dimension': dim, 'similarityFunction': similarity_function}
+def create_node_vector_index(graph, label, *properties, dim=0, similarity_function="euclidean", m=16, efConstruction=200, efRuntime=10, sync=False):
+    options = {'dimension': dim, 'similarityFunction': similarity_function, 'M': m, 'efConstruction': efConstruction, 'efRuntime': efRuntime}
     return _create_typed_index(graph, "VECTOR", "NODE", label, *properties, options=options, sync=sync)
 
 def create_edge_range_index(graph, relation, *properties, sync=False):
@@ -74,8 +74,8 @@ def create_edge_range_index(graph, relation, *properties, sync=False):
 def create_edge_fulltext_index(graph, relation, *properties, sync=False):
     return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, sync=sync)
 
-def create_edge_vector_index(graph, relation, *properties, dim, similarity_function="euclidean", sync=False):
-    options = {'dimension': dim, 'similarityFunction': similarity_function}
+def create_edge_vector_index(graph, relation, *properties, dim, similarity_function="euclidean", m=16, efConstruction=200, efRuntime=10, sync=False):
+    options = {'dimension': dim, 'similarityFunction': similarity_function, 'M': m, 'efConstruction': efConstruction, 'efRuntime': efRuntime}
     return _create_typed_index(graph, "VECTOR", "EDGE", relation, *properties, options=options, sync=sync)
 
 def _drop_index(graph, idx_type, entity_type, label, attribute=None):

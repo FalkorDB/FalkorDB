@@ -13,8 +13,11 @@
 // parse options
 static bool _parseOptions
 (
-	const SIValue options,  // options
-	uint32_t *dimension     // vector length
+	const SIValue options,   // options
+	uint32_t *dimension,     // vector length
+	size_t *M,               // max outgoing edges
+	size_t *efConstruction,  // construction parameter for HNSW
+	size_t *efRuntime        // runtime parameter for HNSW
 ) {
 	if(SI_TYPE(options) != T_MAP) {
 		return false;
@@ -23,7 +26,10 @@ static bool _parseOptions
 	// expecting a map with the following fields:
 	// {
 	//     dimension:538,
-	//     similarityFunction:'euclidean'
+	//     similarityFunction:'euclidean',
+	//     M:16,
+	//     efConstruction:200,
+	//     efRuntime:10
 	//  }
 
 	if(Map_KeyCount(options) < 2) {
@@ -55,6 +61,33 @@ static bool _parseOptions
 		return false;
 	}
 
+	if(MAP_GET(options, "M", val)) {
+		if(SI_TYPE(val) != T_INT64) {
+			return false;
+		}
+		*M = val.longval;
+	} else {
+		*M = INDEX_FIELD_DEFAULT_M;
+	}
+
+	if(MAP_GET(options, "efConstruction", val)) {
+		if(SI_TYPE(val) != T_INT64) {
+			return false;
+		}
+		*efConstruction = val.longval;
+	} else {
+		*efConstruction = INDEX_FIELD_DEFAULT_EF_CONSTRUCTION;
+	}
+
+	if(MAP_GET(options, "efRuntime", val)) {
+		if(SI_TYPE(val) != T_INT64) {
+			return false;
+		}
+		*efRuntime = val.longval;
+	} else {
+		*efRuntime = INDEX_FIELD_DEFAULT_EF_RUNTIME;
+	}
+
 	return true;
 }
 
@@ -79,7 +112,10 @@ Index Index_VectorCreate
 	ASSERT(attr_id != ATTRIBUTE_ID_ALL && attr_id != ATTRIBUTE_ID_NONE);
 
 	// arguments
-	uint32_t dimension;  // vector length
+	uint32_t dimension;     // vector length
+	size_t M;               // max outgoing edges
+	size_t efConstruction;  // construction parameter for HNSW
+	size_t efRuntime;       // runtime parameter for HNSW
 
 	// get schema
 	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
@@ -91,7 +127,7 @@ Index Index_VectorCreate
 	// parse options
 	//--------------------------------------------------------------------------
 
-	if(!_parseOptions(options, &dimension)) {
+	if(!_parseOptions(options, &dimension, &M, &efConstruction, &efRuntime)) {
 		ErrorCtx_SetError(EMSG_VECTOR_INDEX_INVALID_CONFIG);
 		return NULL;
 	}
@@ -102,7 +138,7 @@ Index Index_VectorCreate
 
 	// create index field
 	IndexField field;
-	IndexField_NewVectorField(&field, attr, attr_id, dimension);
+	IndexField_NewVectorField(&field, attr, attr_id, dimension, M, efConstruction, efRuntime);
 
 	Index idx = NULL;
 	Schema_AddIndex(&idx, s, &field);

@@ -30,7 +30,7 @@ static void _ResetVectorOptions
 ) {
 	ASSERT(f != NULL);
 
-	f->options.dimension = 0;
+	f->hnsw_options.dimension = 0;
 }
 
 // initialize index field
@@ -52,10 +52,13 @@ void IndexField_Init
 	field->type = type;
 
 	// set default options
-	field->options.weight    = INDEX_FIELD_DEFAULT_WEIGHT;
-	field->options.nostem    = INDEX_FIELD_DEFAULT_NOSTEM;
-	field->options.phonetic  = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
-	field->options.dimension = 0;
+	field->options.weight              = INDEX_FIELD_DEFAULT_WEIGHT;
+	field->options.nostem              = INDEX_FIELD_DEFAULT_NOSTEM;
+	field->options.phonetic            = rm_strdup(INDEX_FIELD_DEFAULT_PHONETIC);
+	field->hnsw_options.dimension      = 0;
+	field->hnsw_options.M              = INDEX_FIELD_DEFAULT_M;
+	field->hnsw_options.efConstruction = INDEX_FIELD_DEFAULT_EF_CONSTRUCTION;
+	field->hnsw_options.efRuntime      = INDEX_FIELD_DEFAULT_EF_RUNTIME;
 
 	if(type & INDEX_FLD_FULLTEXT) {
 		field->fulltext_name = field->name;
@@ -84,15 +87,15 @@ void IndexField_SetOptions
 	ASSERT(phonetic != NULL);
 
 	// default options
-	ASSERT(field->options.dimension == 0);
 	ASSERT(field->options.weight    == INDEX_FIELD_DEFAULT_WEIGHT);
 	ASSERT(field->options.nostem    == INDEX_FIELD_DEFAULT_NOSTEM);
+	ASSERT(field->hnsw_options.dimension == 0);
 	ASSERT(strcmp(field->options.phonetic, INDEX_FIELD_DEFAULT_PHONETIC) == 0);
 
 	// set options
-	field->options.weight    = weight;
-	field->options.nostem    = nostem;
-	field->options.dimension = dimension;
+	field->options.weight         = weight;
+	field->options.nostem         = nostem;
+	field->hnsw_options.dimension = dimension;
 
 	if(phonetic != NULL) {
 		rm_free(field->options.phonetic);
@@ -126,13 +129,19 @@ void IndexField_NewFullTextField
 // create a new vector index field
 void IndexField_NewVectorField
 (
-	IndexField *field,   // field to initialize
-	const char *name,    // field name
-	AttributeID id,      // field id
-	uint32_t dimension   // vector dimension
+	IndexField *field,      // field to initialize
+	const char *name,       // field name
+	AttributeID id,         // field id
+	uint32_t dimension,     // vector dimension
+	size_t M,               // max outgoing edges
+	size_t efConstruction,  // construction error factor
+	size_t efRuntime        // runtime error factor
 ) {
 	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);
 	IndexField_OptionsSetDimension(field, dimension);
+	IndexField_OptionsSetM(field, M);
+	IndexField_OptionsSetEfConstruction(field, efConstruction);
+	IndexField_OptionsSetEfRuntime(field, efRuntime);
 }
 
 // clone index field
@@ -276,7 +285,60 @@ void IndexField_OptionsSetDimension
 	uint32_t dimension  // vector dimension
 ) {
 	ASSERT(field != NULL);
-	field->options.dimension = dimension;
+	field->hnsw_options.dimension = dimension;
+}
+
+// set index field vector max outgoing edges
+void IndexField_OptionsSetM
+(
+	IndexField *field,  // field to update
+	size_t M            // max outgoing edges
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.M = M;
+}
+
+// get index field vector max outgoing edges
+size_t IndexField_OptionsGetM
+(
+	const IndexField *field   // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.M;
+}
+
+void IndexField_OptionsSetEfConstruction
+(
+	IndexField *field,     // field to update
+	size_t efConstruction  // construction error factor
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.efConstruction = efConstruction;
+}
+
+size_t IndexField_OptionsGetEfConstruction
+(
+	const IndexField *field     // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.efConstruction;
+}
+
+void IndexField_OptionsSetEfRuntime
+(
+	IndexField *field,  // field to update
+	size_t efRuntime    // runtime error factor
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.efRuntime = efRuntime;
+}
+
+size_t IndexField_OptionsGetEfRuntime
+(
+	const IndexField *field  // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.efRuntime;
 }
 
 uint32_t IndexField_OptionsGetDimension
@@ -286,7 +348,7 @@ uint32_t IndexField_OptionsGetDimension
 	ASSERT(field != NULL);
 	ASSERT(field->type & INDEX_FLD_VECTOR);
 
-	return field->options.dimension;
+	return field->hnsw_options.dimension;
 }
 
 // free index field

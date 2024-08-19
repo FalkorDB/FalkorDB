@@ -11,6 +11,9 @@
 #define INDEX_FIELD_DEFAULT_WEIGHT 1.0
 #define INDEX_FIELD_DEFAULT_NOSTEM false
 #define INDEX_FIELD_DEFAULT_PHONETIC "no"
+#define INDEX_FIELD_DEFAULT_M 16
+#define INDEX_FIELD_DEFAULT_EF_CONSTRUCTION 200
+#define INDEX_FIELD_DEFAULT_EF_RUNTIME 10
 
 // type of index field
 // multiple types can be combined via bitwise OR
@@ -31,11 +34,16 @@ typedef struct {
 	AttributeID id;          // field id
 	IndexFieldType type;     // field type(s)
 	struct {
-		double weight;       // the importance of text
-		bool nostem;         // disable stemming of the text
-		char *phonetic;      // phonetic search of text
-		uint32_t dimension;  // vector dimension
+		double weight;          // the importance of text
+		bool nostem;            // disable stemming of the text
+		char *phonetic;         // phonetic search of text
 	} options;
+	struct {
+		uint32_t dimension;     // vector dimension
+		size_t M;               // max outgoing edges
+		size_t efConstruction;  // construction parameter for HNSW
+		size_t efRuntime;       // runtime parameter for HNSW
+	} hnsw_options;
 	char *range_name;        // 'range:'  + field name
 	char *vector_name;       // 'vector:' + field name
 	char *fulltext_name;     // field name
@@ -80,10 +88,13 @@ void IndexField_NewFullTextField
 // create a new vector index field
 void IndexField_NewVectorField
 (
-	IndexField *field,   // field to initialize
-	const char *name,    // field name
-	AttributeID id,      // field id
-	uint32_t dimension   // vector dimension
+	IndexField *field,      // field to initialize
+	const char *name,       // field name
+	AttributeID id,         // field id
+	uint32_t dimension,     // vector dimension
+	size_t M,               // max outgoing edges
+	size_t efConstruction,  // construction error factor
+	size_t efRuntime        // runtime error factor
 );
 
 // return number of types in field
@@ -157,6 +168,41 @@ void IndexField_OptionsSetDimension
 uint32_t IndexField_OptionsGetDimension
 (
 	const IndexField *field  // field to get dimension
+);
+
+// set index field vector max outgoing edges
+void IndexField_OptionsSetM
+(
+	IndexField *field,  // field to update
+	size_t M            // max outgoing edges
+);
+
+// get index field vector max outgoing edges
+size_t IndexField_OptionsGetM
+(
+	const IndexField *field   // field to update
+);
+
+void IndexField_OptionsSetEfConstruction
+(
+	IndexField *field,    // field to update
+	size_t efConstruction // construction error factor
+);
+
+size_t IndexField_OptionsGetEfConstruction
+(
+	const IndexField *field     // field to update
+);
+
+void IndexField_OptionsSetEfRuntime
+(
+	IndexField *field,  // field to update
+	size_t efRuntime    // runtime error factor
+);
+
+size_t IndexField_OptionsGetEfRuntime
+(
+	const IndexField *field  // field to update
 );
 
 // free index field

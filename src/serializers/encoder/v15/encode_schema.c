@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v14.h"
+#include "encode_v15.h"
 #include "../../../util/arr.h"
 
 static void _RdbSaveAttributeKeys
@@ -63,7 +63,12 @@ static void _RdbSaveIndexField
 			strlen(f->options.phonetic) + 1);
 
 	// encode field dimension
-	SerializerIO_WriteUnsigned(rdb, f->options.dimension);
+	if(IndexField_GetType(f) & INDEX_FLD_VECTOR) {
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetDimension(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetM(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfConstruction(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfRuntime(f));
+	}
 }
 
 static inline void _RdbSaveIndexData
@@ -205,7 +210,7 @@ static void _RdbSaveSchema(SerializerIO rdb, Schema *s) {
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v14(SerializerIO rdb, GraphContext *gc) {
+void RdbSaveGraphSchema_v15(SerializerIO rdb, GraphContext *gc) {
 	/* Format:
 	 * attribute keys (unified schema)
 	 * #node schemas

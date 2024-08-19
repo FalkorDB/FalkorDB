@@ -21,6 +21,7 @@ typedef struct {
 	SIValue *yield_label;       // yield index label
 	SIValue *yield_types;       // yield index fields types
 	SIValue *yield_fields;      // yield index fields
+	SIValue *yield_options;     // yield index options
 	SIValue *yield_language;    // yield index language
 	SIValue *yield_stopwords;   // yield index stopwords
 	SIValue *yield_entity_type; // yield index entity type
@@ -38,6 +39,7 @@ static void _process_yield
 	ctx->yield_types       = NULL;
 	ctx->yield_fields      = NULL;
 	ctx->yield_status      = NULL;
+	ctx->yield_options     = NULL;
 	ctx->yield_language    = NULL;
 	ctx->yield_stopwords   = NULL;
 	ctx->yield_entity_type = NULL;
@@ -52,6 +54,12 @@ static void _process_yield
 
 		if(strcasecmp("types", yield[i]) == 0) {
 			ctx->yield_types = ctx->out + idx;
+			idx++;
+			continue;
+		}
+
+		if(strcasecmp("options", yield[i]) == 0) {
+			ctx->yield_options = ctx->out + idx;
 			idx++;
 			continue;
 		}
@@ -116,7 +124,7 @@ ProcedureResult Proc_IndexesInvoke
 	IndexesContext *pdata = rm_malloc(sizeof(IndexesContext));
 
 	pdata->gc      = gc;
-	pdata->out     = array_new(SIValue, 8);
+	pdata->out     = array_new(SIValue, 9);
 	pdata->indices = array_new(Index, 0);
 
 	//--------------------------------------------------------------------------
@@ -249,6 +257,45 @@ static bool _EmitIndex
 	}
 
 	//--------------------------------------------------------------------------
+	// index fields options
+	//--------------------------------------------------------------------------
+
+	if(ctx->yield_options) {
+		// {field_name, {field_options}
+		// e.g.
+		// {
+		//  'embedding': {'dimension': 100, 'M': 16, 'efConstruction': 200, 'efRuntime': 100}
+		// }
+
+		uint fields_count        = Index_FieldsCount(idx);
+		const IndexField *fields = Index_GetFields(idx);
+		*ctx->yield_options      = SI_Map(fields_count);
+
+		for(uint i = 0; i < fields_count; i++) {
+			const IndexField *field = fields + i;
+			IndexFieldType types = IndexField_GetType(field);
+
+			SIValue prop_types = SI_Map(0);
+
+			if(types & INDEX_FLD_VECTOR) {
+				Map_Add(&prop_types, SI_ConstStringVal("dimension"),
+						SI_LongVal(IndexField_OptionsGetDimension(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("M"),
+						SI_LongVal(IndexField_OptionsGetM(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("efConstruction"),
+						SI_LongVal(IndexField_OptionsGetEfConstruction(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("efRuntime"),
+						SI_LongVal(IndexField_OptionsGetEfRuntime(field)));
+			}
+
+			Map_Add(ctx->yield_options,
+					SI_ConstStringVal(IndexField_GetName(field)), prop_types);
+
+			SIValue_Free(prop_types);
+		}
+	}
+
+	//--------------------------------------------------------------------------
 	// index language
 	//--------------------------------------------------------------------------
 
@@ -374,7 +421,7 @@ ProcedureResult Proc_IndexesFree
 ProcedureCtx *Proc_IndexesCtx(void) {
 	void *privateData = NULL;
 	ProcedureOutput output;
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 7);
+	ProcedureOutput *outputs = array_new(ProcedureOutput, 9);
 
 	// indexed label
 	output = (ProcedureOutput) {
@@ -391,6 +438,12 @@ ProcedureCtx *Proc_IndexesCtx(void) {
 	// indexed fields types
 	output = (ProcedureOutput) {
 		.name = "types", .type = T_MAP
+	};
+	array_append(outputs, output);
+
+	// indexed fields options
+	output = (ProcedureOutput) {
+		.name = "options", .type = T_MAP
 	};
 	array_append(outputs, output);
 

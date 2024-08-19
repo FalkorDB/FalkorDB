@@ -23,6 +23,11 @@ GraphContext *Decode_Previous
 			return RdbLoadGraphContext_v12(rdb);
 		case 13:
 			return RdbLoadGraphContext_v13(rdb);
+		case 14: {
+			SerializerIO io = SerializerIO_FromRedisModuleIO(rdb);
+			const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
+			return RdbLoadGraphContext_v14(io, rm_key_name);
+		}
 		default:
 			ASSERT(false && "attempted to read unsupported RedisGraph version from RDB file.");
 			return NULL;
