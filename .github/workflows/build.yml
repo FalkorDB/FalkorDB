@@ -71,21 +71,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/GraphBLAS
-          key: graphblas-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+          key: graphblas-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}-llvm
 
       - name: Cache parser ${{ matrix.platform }}
         id: cache_parser
         uses: actions/cache@v4
         with:
           path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/libcypher-parser
-          key: parser-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+          key: parser-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}-llvm
 
       - name: Cache search ${{ matrix.platform }}
         id: cache_search
         uses: actions/cache@v4
         with:
           path: /FalkorDB/bin/linux-${{ env.ARCH_SUFFIX  }}-release/search-static
-          key: search-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          key: search-${{ env.ARCH_SUFFIX  }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}-llvm
 
       # Make sure the working directory is static between runs
       # and always the same for the CMake cache

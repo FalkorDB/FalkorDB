@@ -32,21 +32,21 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+        key: graphblas-sanitizer-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}-llvm
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        key: parser-sanitizer-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}-llvm
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}-llvm
 
     - name: Build
       run: |
