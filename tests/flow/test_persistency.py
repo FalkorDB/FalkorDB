@@ -128,7 +128,7 @@ class testGraphPersistency():
                 indices = graph.query("""CALL db.indexes()""").result_set
                 expected_indices = {
                         'country': [['name', 'population'], 'english', [], 'NODE'],
-                        'person': [['name', 'height', 'text', 'embedding'], OrderedDict({'name': ['RANGE'], 'height': ['RANGE'], 'text': ['FULLTEXT'], 'embedding': ['VECTOR']}), OrderedDict({'name': OrderedDict({}), 'height': OrderedDict({}), 'text': OrderedDict({}), 'embedding': OrderedDict({'dimension': 128, 'M': 64, 'efConstruction': 10, 'efRuntime': 10})}), 'english', ['a', 'b'], 'NODE'],
+                        'person': [['name', 'height', 'text', 'embedding'], OrderedDict({'name': ['RANGE'], 'height': ['RANGE'], 'text': ['FULLTEXT'], 'embedding': ['VECTOR']}), OrderedDict({'name': OrderedDict({}), 'height': OrderedDict({}), 'text': OrderedDict({}), 'embedding': OrderedDict({'dimension': 128, 'similarityFunction': 'euclidean', 'M': 64, 'efConstruction': 10, 'efRuntime': 10})}), 'english', ['a', 'b'], 'NODE'],
                         'visit': [['purpose'], 'english', [], 'RELATIONSHIP']
                 }
 

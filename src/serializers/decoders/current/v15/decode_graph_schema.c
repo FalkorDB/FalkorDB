@@ -18,7 +18,8 @@ static void _RdbDecodeIndexField
 	uint32_t *dimension,     // index field option dimension
 	size_t *M, 		         // index field option M
 	size_t *efConstruction,  // index field option efConstruction
-	size_t *efRuntime        // index field option efRuntime
+	size_t *efRuntime,       // index field option efRuntime
+	VecSimSimFunc *simFunc   // index field option similarity function
 ) {
 	// format:
 	// name
@@ -57,6 +58,8 @@ static void _RdbDecodeIndexField
 		*efConstruction = SerializerIO_ReadUnsigned(rdb);
 
 		*efRuntime = SerializerIO_ReadUnsigned(rdb);
+
+		*simFunc = SerializerIO_ReadUnsigned(rdb);
 	}
 }
 
@@ -98,9 +101,10 @@ static void _RdbLoadIndex
 		size_t		   M;
 		size_t         efConstruction;
 		size_t         efRuntime;
+		VecSimSimFunc  simFunc;
 
 		_RdbDecodeIndexField(rdb, &field_name, &type, &weight, &nostem,
-				&phonetic, &dimension, &M, &efConstruction, &efRuntime);
+				&phonetic, &dimension, &M, &efConstruction, &efRuntime, &simFunc);
 
 		if(!already_loaded) {
 			IndexField field;
@@ -115,6 +119,7 @@ static void _RdbLoadIndex
 			IndexField_OptionsSetM(&field, M);
 			IndexField_OptionsSetEfConstruction(&field, efConstruction);
 			IndexField_OptionsSetEfRuntime(&field, efRuntime);
+			IndexField_OptionsSetSimFunc(&field, simFunc);
 
 			// add field to index
 			Schema_AddIndex(&idx, s, &field);

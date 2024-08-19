@@ -68,6 +68,7 @@ static void _RdbSaveIndexField
 		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetM(f));
 		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfConstruction(f));
 		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetEfRuntime(f));
+		SerializerIO_WriteUnsigned(rdb, IndexField_OptionsGetSimFunc(f));
 	}
 }
 

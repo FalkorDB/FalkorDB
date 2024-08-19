@@ -280,6 +280,8 @@ static bool _EmitIndex
 			if(types & INDEX_FLD_VECTOR) {
 				Map_Add(&prop_types, SI_ConstStringVal("dimension"),
 						SI_LongVal(IndexField_OptionsGetDimension(field)));
+				Map_Add(&prop_types, SI_ConstStringVal("similarityFunction"),
+						SI_ConstStringVal(IndexField_OptionsGetSimFunc(field) == VecSimSimFunc_Euclidean ? "euclidean" : "cosine"));
 				Map_Add(&prop_types, SI_ConstStringVal("M"),
 						SI_LongVal(IndexField_OptionsGetM(field)));
 				Map_Add(&prop_types, SI_ConstStringVal("efConstruction"),

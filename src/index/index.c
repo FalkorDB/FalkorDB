@@ -140,7 +140,8 @@ static void _Index_ConstructStructure
 					field->vector_name);
 
 			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->hnsw_options.dimension);
-			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, field->hnsw_options.M, field->hnsw_options.efConstruction, field->hnsw_options.efRuntime);
+			VecSimMetric metric = field->hnsw_options.simFunc == VecSimSimFunc_Euclidean ? VecSimMetric_L2 : VecSimMetric_Cosine;
+			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), metric);
 		}
 
 		//----------------------------------------------------------------------

@@ -26,6 +26,11 @@ typedef enum {
 	INDEX_FLD_VECTOR   = 0x10,  // vector field
 } IndexFieldType;
 
+typedef enum {
+	VecSimSimFunc_Euclidean,
+	VecSimSimFunc_Cosine,
+} VecSimSimFunc;
+
 #define INDEX_FLD_RANGE (INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR)
 #define INDEX_FLD_ANY (INDEX_FLD_FULLTEXT | INDEX_FLD_RANGE | INDEX_FLD_VECTOR)
 
@@ -43,6 +48,7 @@ typedef struct {
 		size_t M;               // max outgoing edges
 		size_t efConstruction;  // construction parameter for HNSW
 		size_t efRuntime;       // runtime parameter for HNSW
+		VecSimSimFunc simFunc;  // similarity function
 	} hnsw_options;
 	char *range_name;        // 'range:'  + field name
 	char *vector_name;       // 'vector:' + field name
@@ -94,7 +100,8 @@ void IndexField_NewVectorField
 	uint32_t dimension,     // vector dimension
 	size_t M,               // max outgoing edges
 	size_t efConstruction,  // construction error factor
-	size_t efRuntime        // runtime error factor
+	size_t efRuntime,       // runtime error factor
+	VecSimSimFunc simFunc   // similarity function
 );
 
 // return number of types in field
@@ -201,6 +208,17 @@ void IndexField_OptionsSetEfRuntime
 );
 
 size_t IndexField_OptionsGetEfRuntime
+(
+	const IndexField *field  // field to update
+);
+
+void IndexField_OptionsSetSimFunc
+(
+	IndexField *field,  // field to update
+	VecSimSimFunc func  // similarity function
+);
+
+VecSimSimFunc IndexField_OptionsGetSimFunc
 (
 	const IndexField *field  // field to update
 );
