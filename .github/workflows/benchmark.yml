@@ -116,6 +116,8 @@ jobs:
 
       - name: Run benchmark
         working-directory: tests/benchmarks
+        env:
+          OMP_NUM_THREADS: 1
         run: |
           . venv/bin/activate
           python3 run_benchmarks.py group_${{ matrix.benchmark_group }}
