@@ -28,7 +28,7 @@
     //--------------------------------------------------------------------------
 
     int tid ;
-    #pragma omp parallel for num_threads(A_nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(A_nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(+:cnvals)
     for (tid = 0 ; tid < A_ntasks ; tid++)
     {

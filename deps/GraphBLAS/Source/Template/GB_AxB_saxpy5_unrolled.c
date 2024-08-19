@@ -77,7 +77,7 @@
     //--------------------------------------------------------------------------
 
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
     for (tid = 0 ; tid < ntasks ; tid++)
     {
         #if ! ( GB_V16 || GB_V8 || GB_V4 )

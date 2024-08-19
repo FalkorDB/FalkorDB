@@ -21,7 +21,7 @@
     const size_t msize = M->type->size ;
 
     int tid ;
-    #pragma omp parallel for num_threads(B_nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(B_nthreads) schedule(nonmonotonic:dynamic, 1)
     for (tid = 0 ; tid < B_ntasks ; tid++)
     {
         int64_t kfirst = kfirst_Bslice [tid] ;

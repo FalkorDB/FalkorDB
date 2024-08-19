@@ -46,7 +46,7 @@
     const int64_t *klast_Mslice  = M_ek_slicing + M_ntasks ;
     const int64_t *pstart_Mslice = M_ek_slicing + M_ntasks*2 ;
 
-    #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1)
     for (taskid = 0 ; taskid < M_ntasks ; taskid++)
     {
         int64_t kfirst = kfirst_Mslice [taskid] ;
@@ -136,7 +136,7 @@
         // an extra pass over the mask M, so this might be slower than
         // postponing the application of the mask, and doing it later.
 
-        #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1)
+        #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1)
         for (taskid = 0 ; taskid < M_ntasks ; taskid++)
         {
             int64_t kfirst = kfirst_Mslice [taskid] ;

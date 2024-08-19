@@ -79,7 +79,7 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
         }
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
             int64_t jstart, jend, my_nvec_nonempty = 0 ; ;
@@ -132,7 +132,7 @@ GrB_Info GB_convert_sparse_to_hyper // convert from sparse to hypersparse
         // construct the new hyperlist in the new A->p and A->h
         //----------------------------------------------------------------------
 
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
             int64_t jstart, jend, k = Count [tid] ;

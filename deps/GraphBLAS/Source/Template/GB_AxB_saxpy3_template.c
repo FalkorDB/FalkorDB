@@ -112,7 +112,7 @@
     // Fine tasks: compute nnz (C(:,j)), and values in Hx via atomics.
 
     int taskid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
     for (taskid = 0 ; taskid < nfine ; taskid++)
     {
 
@@ -344,7 +344,7 @@
     #endif
 
     bool C_jumbled = false ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(||:C_jumbled)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {

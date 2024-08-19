@@ -57,7 +57,7 @@
     GB_C_NHELD (C_nnz_held) ;
     GB_SLICE_MATRIX_WORK (C, 8, C_nnz_held + C->nvec, C_nnz_held) ;
 
-    #pragma omp parallel for num_threads(C_nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(C_nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(+:rnvals)
     for (taskid = 0 ; taskid < C_ntasks ; taskid++)
     {
@@ -115,7 +115,7 @@
         GB_M_NHELD (M_nnz_held) ;
         GB_SLICE_MATRIX_WORK (M, 8, M_nnz_held + M->nvec, M_nnz_held) ;
 
-        #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1)
+        #pragma omp parallel for num_threads(M_nthreads) schedule(nonmonotonic:dynamic, 1)
         for (taskid = 0 ; taskid < M_ntasks ; taskid++)
         {
             int64_t kfirst = kfirst_Mslice [taskid] ;

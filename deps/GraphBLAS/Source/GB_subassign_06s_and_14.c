@@ -126,7 +126,7 @@ GrB_Info GB_subassign_06s_and_14
         // phase1: A is bitmap TODO: this is SLOW! for method 06s
         //----------------------------------------------------------------------
 
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
             reduction(+:nzombies)
         for (taskid = 0 ; taskid < ntasks ; taskid++)
         {
@@ -224,7 +224,7 @@ GrB_Info GB_subassign_06s_and_14
         // phase1: A is hypersparse, sparse, or full
         //----------------------------------------------------------------------
 
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
             reduction(+:nzombies)
         for (taskid = 0 ; taskid < ntasks ; taskid++)
         {
@@ -369,7 +369,7 @@ GrB_Info GB_subassign_06s_and_14
         // phase2: A is bitmap
         //----------------------------------------------------------------------
 
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
             reduction(&&:pending_sorted)
         for (taskid = 0 ; taskid < ntasks ; taskid++)
         {
@@ -445,7 +445,7 @@ GrB_Info GB_subassign_06s_and_14
         // phase2: A is hypersparse, sparse, or full
         //----------------------------------------------------------------------
 
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
             reduction(&&:pending_sorted)
         for (taskid = 0 ; taskid < ntasks ; taskid++)
         {

@@ -48,7 +48,7 @@
     const int64_t *klast_Bslice  = B_ek_slicing + B_ntasks ;
     const int64_t *pstart_Bslice = B_ek_slicing + B_ntasks*2 ;
 
-    #pragma omp parallel for num_threads(B_nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(B_nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(+:cnvals)
     for (taskid = 0 ; taskid < B_ntasks ; taskid++)
     {

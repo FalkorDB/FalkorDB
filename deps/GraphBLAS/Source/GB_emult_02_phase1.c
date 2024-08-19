@@ -90,7 +90,7 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
             ASSERT (GB_IS_BITMAP (B)) ;
 
             int tid ;
-            #pragma omp parallel for num_threads(A_nthreads) schedule(dynamic,1)
+            #pragma omp parallel for num_threads(A_nthreads) schedule(nonmonotonic:dynamic, 1)
             for (tid = 0 ; tid < A_ntasks ; tid++)
             {
                 int64_t kfirst = kfirst_Aslice [tid] ;
@@ -136,7 +136,7 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
             ASSERT (M != NULL) ;
 
             int tid ;
-            #pragma omp parallel for num_threads(A_nthreads) schedule(dynamic,1)
+            #pragma omp parallel for num_threads(A_nthreads) schedule(nonmonotonic:dynamic, 1)
             for (tid = 0 ; tid < A_ntasks ; tid++)
             {
                 int64_t kfirst = kfirst_Aslice [tid] ;

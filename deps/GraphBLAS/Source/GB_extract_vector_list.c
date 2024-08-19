@@ -68,7 +68,7 @@ GrB_Info GB_extract_vector_list     // extract vector list from a matrix
     //--------------------------------------------------------------------------
 
     int tid ;
-    #pragma omp parallel for num_threads(A_nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(A_nthreads) schedule(nonmonotonic:dynamic, 1)
     for (tid = 0 ; tid < A_ntasks ; tid++)
     {
 

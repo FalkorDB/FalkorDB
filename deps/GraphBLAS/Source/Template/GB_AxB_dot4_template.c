@@ -41,7 +41,7 @@
     // bitmap/full.  A better method would use tiles to reduce memory traffic.
 
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
     for (tid = 0 ; tid < ntasks ; tid++)
     {
 
@@ -359,7 +359,7 @@
         //----------------------------------------------------------------------
 
         int tid ;
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
         for (tid = 0 ; tid < ntasks ; tid++)
         {
 
@@ -476,7 +476,7 @@
                     const GB_B_TYPE *restrict Bxj1 = Bx + j1 * vlen ;
                     int tid ;
                     #pragma omp parallel for num_threads(nthreads) \
-                        schedule(dynamic,1)
+                        schedule(nonmonotonic:dynamic, 1)
                     for (tid = 0 ; tid < ntasks ; tid++)
                     {
                         // get the task descriptor
@@ -534,7 +534,7 @@
 
                     int tid ;
                     #pragma omp parallel for num_threads(nthreads) \
-                        schedule(dynamic,1)
+                        schedule(nonmonotonic:dynamic, 1)
                     for (tid = 0 ; tid < ntasks ; tid++)
                     {
                         // get the task descriptor
@@ -595,7 +595,7 @@
 
                     int tid ;
                     #pragma omp parallel for num_threads(nthreads) \
-                        schedule(dynamic,1)
+                        schedule(nonmonotonic:dynamic, 1)
                     for (tid = 0 ; tid < ntasks ; tid++)
                     {
                         // get the task descriptor
@@ -661,7 +661,7 @@
 
                     int tid ;
                     #pragma omp parallel for num_threads(nthreads) \
-                        schedule(dynamic,1)
+                        schedule(nonmonotonic:dynamic, 1)
                     for (tid = 0 ; tid < ntasks ; tid++)
                     {
                         // get the task descriptor
@@ -720,7 +720,7 @@
     // FUTURE: this can be unrolled, like the case above
 
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
     for (tid = 0 ; tid < ntasks ; tid++)
     {
 
@@ -917,7 +917,7 @@
     //--------------------------------------------------------------------------
 
     int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
     for (tid = 0 ; tid < ntasks ; tid++)
     {
 

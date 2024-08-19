@@ -221,7 +221,7 @@
                 //--------------------------------------------------------------
 
                 #pragma omp parallel for num_threads(A_nthreads) \
-                    schedule(dynamic,1) reduction(+:cnvals)
+                    schedule(nonmonotonic:dynamic, 1) reduction(+:cnvals)
                 for (taskid = 0 ; taskid < A_ntasks ; taskid++)
                 {
                     // if kfirst > klast then taskid does no work at all
@@ -265,7 +265,7 @@
                 #ifndef GB_ISO_ASSIGN
                 {
                     #pragma omp parallel for num_threads(A_nthreads) \
-                        schedule(dynamic,1)
+                        schedule(nonmonotonic:dynamic, 1)
                     for (taskid = 0 ; taskid < A_ntasks ; taskid++)
                     {
                         // if kfirst > klast then taskid does no work at all
@@ -437,7 +437,7 @@
                 //--------------------------------------------------------------
 
                 #pragma omp parallel for num_threads(A_nthreads) \
-                    schedule(dynamic,1) reduction(+:cnvals)
+                    schedule(nonmonotonic:dynamic, 1) reduction(+:cnvals)
                 for (taskid = 0 ; taskid < A_ntasks ; taskid++)
                 {
                     // if kfirst > klast then taskid does no work at all
@@ -480,7 +480,7 @@
                 //--------------------------------------------------------------
 
                 #pragma omp parallel for num_threads(A_nthreads) \
-                    schedule(dynamic,1) reduction(+:cnvals)
+                    schedule(nonmonotonic:dynamic, 1) reduction(+:cnvals)
                 for (taskid = 0 ; taskid < A_ntasks ; taskid++)
                 {
                     // if kfirst > klast then taskid does no work at all

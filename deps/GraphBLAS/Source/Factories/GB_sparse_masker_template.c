@@ -137,7 +137,7 @@
 
     ASSERT (C_is_sparse || C_is_hyper) ;
 
-    #pragma omp parallel for num_threads(R_nthreads) schedule(dynamic,1)
+    #pragma omp parallel for num_threads(R_nthreads) schedule(nonmonotonic:dynamic, 1)
     for (taskid = 0 ; taskid < R_ntasks ; taskid++)
     {
 

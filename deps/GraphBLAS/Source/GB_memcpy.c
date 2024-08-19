@@ -49,7 +49,7 @@ void GB_memcpy                  // parallel memcpy
         const GB_void *psrc = (GB_void *) src ;
 
         int64_t k ;
-        #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
+        #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1)
         for (k = 0 ; k < nchunks ; k++)
         {
             size_t start = k * GB_MEM_CHUNK ;

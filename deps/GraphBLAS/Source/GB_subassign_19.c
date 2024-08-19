@@ -97,7 +97,7 @@ GrB_Info GB_subassign_19
     // phase 1: create zombies, update entries, and count pending tuples
     //--------------------------------------------------------------------------
 
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(+:nzombies)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {
@@ -221,7 +221,7 @@ GrB_Info GB_subassign_19
 
     GB_PENDING_CUMSUM ;
 
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(&&:pending_sorted)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {

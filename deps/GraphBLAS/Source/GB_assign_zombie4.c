@@ -101,7 +101,7 @@ GrB_Info GB_assign_zombie4
     // the mask is not complemented) or M(0,j)=1 (if the mask is complemented.
 
     int taskid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
+    #pragma omp parallel for num_threads(nthreads) schedule(nonmonotonic:dynamic, 1) \
         reduction(+:nzombies)
     for (taskid = 0 ; taskid < ntasks ; taskid++)
     {
