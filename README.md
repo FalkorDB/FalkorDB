@@ -76,7 +76,7 @@ for row in res.result_set:
 res = g.query("""MATCH (r:Rider)-[:rides]->(t:Team {name:'Ducati'})
                  RETURN count(r)""")
 
-print(row[0])
+print(res.result_set[0][0])
 # Prints: 1
 ```
 
