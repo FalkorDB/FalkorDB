@@ -125,3 +125,15 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
+
+  cleanup-runner:
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}
