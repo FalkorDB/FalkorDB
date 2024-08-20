@@ -40,7 +40,7 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zone: ${{ vars.GCP_ZONE }}
-          machine_type: n1-standard-2
+          machine_type: n4-highcpu-8
           network: gh-runner
           disk_size: 50GB
           runner_label: codeql-${{ github.run_id }}-${{ github.run_number }}
