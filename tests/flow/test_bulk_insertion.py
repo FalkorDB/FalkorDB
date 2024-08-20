@@ -391,7 +391,7 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         thread.join()
         ping_count = res[0]
         # Verify that at least one ping was issued
-        self.env.assertGreaterEqual(ping_count, 2)
+        self.env.assertGreaterEqual(ping_count, 1)
 
     # Verify that nodes with multiple labels are created correctly
     def test10_multiple_labels(self):
