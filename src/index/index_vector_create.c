@@ -18,7 +18,7 @@ static bool _parseOptions
 	size_t *M,               // max outgoing edges
 	size_t *efConstruction,  // construction parameter for HNSW
 	size_t *efRuntime,       // runtime parameter for HNSW
-	VecSimSimFunc *simFunc   // similarity function
+	VecSimMetric *simFunc    // similarity function
 ) {
 	if(SI_TYPE(options) != T_MAP) {
 		return false;
@@ -59,9 +59,9 @@ static bool _parseOptions
 
 	// at the moment only euclidean distance is supported
 	if(strcasecmp(val.stringval, "euclidean") == 0) {
-		*simFunc = VecSimSimFunc_Euclidean;
+		*simFunc = VecSimMetric_L2;
 	} else if (strcasecmp(val.stringval, "cosine") == 0) {
-		*simFunc = VecSimSimFunc_Cosine;
+		*simFunc = VecSimMetric_Cosine;
 	} else {
 		return false;
 	}
@@ -121,7 +121,7 @@ Index Index_VectorCreate
 	size_t M;               // max outgoing edges
 	size_t efConstruction;  // construction parameter for HNSW
 	size_t efRuntime;       // runtime parameter for HNSW
-	VecSimSimFunc simFunc;  // similarity function
+	VecSimMetric simFunc;   // similarity function
 
 	// get schema
 	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;

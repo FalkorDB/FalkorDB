@@ -7,7 +7,6 @@
 #pragma once
 
 #include "index_field.h"
-#include "RediSearch/deps/VectorSimilarity/src/VecSim/vec_sim_common.h"
 #include "redisearch_api.h"
 #include "../graph/graph.h"
 #include "../graph/entities/node.h"

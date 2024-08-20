@@ -19,7 +19,7 @@ static void _RdbDecodeIndexField
 	size_t *M, 		         // index field option M
 	size_t *efConstruction,  // index field option efConstruction
 	size_t *efRuntime,       // index field option efRuntime
-	VecSimSimFunc *simFunc   // index field option similarity function
+	VecSimMetric *simFunc    // index field option similarity function
 ) {
 	// format:
 	// name
@@ -101,7 +101,7 @@ static void _RdbLoadIndex
 		size_t		   M;
 		size_t         efConstruction;
 		size_t         efRuntime;
-		VecSimSimFunc  simFunc;
+		VecSimMetric   simFunc;
 
 		_RdbDecodeIndexField(rdb, &field_name, &type, &weight, &nostem,
 				&phonetic, &dimension, &M, &efConstruction, &efRuntime, &simFunc);
