@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "RG.h"
 #include "redisearch_api.h"
 #include "../graph/entities/attribute_set.h"
 
