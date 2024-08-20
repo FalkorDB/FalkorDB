@@ -136,4 +136,4 @@ jobs:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           zone: ${{ vars.GCP_ZONE }}
-          instance_label: benchmark-${{ github.run_id }}-${{ github.run_number }}
+          instance_label: codeql-${{ github.run_id }}-${{ github.run_number }}
