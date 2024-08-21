@@ -135,13 +135,15 @@ void IndexField_NewVectorField
 	uint32_t dimension,     // vector dimension
 	size_t M,               // max outgoing edges
 	size_t efConstruction,  // construction error factor
-	size_t efRuntime        // runtime error factor
+	size_t efRuntime,       // runtime error factor
+	VecSimMetric simFunc      // similarity function
 ) {
 	IndexField_Init(field, name, id, INDEX_FLD_VECTOR);
 	IndexField_OptionsSetDimension(field, dimension);
 	IndexField_OptionsSetM(field, M);
 	IndexField_OptionsSetEfConstruction(field, efConstruction);
 	IndexField_OptionsSetEfRuntime(field, efRuntime);
+	IndexField_OptionsSetSimFunc(field, simFunc);
 }
 
 // clone index field
@@ -339,6 +341,23 @@ size_t IndexField_OptionsGetEfRuntime
 ) {
 	ASSERT(field != NULL);
 	return field->hnsw_options.efRuntime;
+}
+
+void IndexField_OptionsSetSimFunc
+(
+	IndexField *field,  // field to update
+	VecSimMetric func   // similarity function
+) {
+	ASSERT(field != NULL);
+	field->hnsw_options.simFunc = func;
+}
+
+VecSimMetric IndexField_OptionsGetSimFunc
+(
+	const IndexField *field  // field to update
+) {
+	ASSERT(field != NULL);
+	return field->hnsw_options.simFunc;
 }
 
 uint32_t IndexField_OptionsGetDimension

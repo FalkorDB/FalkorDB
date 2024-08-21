@@ -17,7 +17,8 @@ static bool _parseOptions
 	uint32_t *dimension,     // vector length
 	size_t *M,               // max outgoing edges
 	size_t *efConstruction,  // construction parameter for HNSW
-	size_t *efRuntime        // runtime parameter for HNSW
+	size_t *efRuntime,       // runtime parameter for HNSW
+	VecSimMetric *simFunc    // similarity function
 ) {
 	if(SI_TYPE(options) != T_MAP) {
 		return false;
@@ -57,7 +58,11 @@ static bool _parseOptions
 	}
 
 	// at the moment only euclidean distance is supported
-	if(strcasecmp(val.stringval, "euclidean") != 0) {
+	if(strcasecmp(val.stringval, "euclidean") == 0) {
+		*simFunc = VecSimMetric_L2;
+	} else if (strcasecmp(val.stringval, "cosine") == 0) {
+		*simFunc = VecSimMetric_Cosine;
+	} else {
 		return false;
 	}
 
@@ -116,6 +121,7 @@ Index Index_VectorCreate
 	size_t M;               // max outgoing edges
 	size_t efConstruction;  // construction parameter for HNSW
 	size_t efRuntime;       // runtime parameter for HNSW
+	VecSimMetric simFunc;   // similarity function
 
 	// get schema
 	SchemaType st = (entity_type == GETYPE_NODE) ?SCHEMA_NODE : SCHEMA_EDGE;
@@ -127,7 +133,7 @@ Index Index_VectorCreate
 	// parse options
 	//--------------------------------------------------------------------------
 
-	if(!_parseOptions(options, &dimension, &M, &efConstruction, &efRuntime)) {
+	if(!_parseOptions(options, &dimension, &M, &efConstruction, &efRuntime, &simFunc)) {
 		ErrorCtx_SetError(EMSG_VECTOR_INDEX_INVALID_CONFIG);
 		return NULL;
 	}
@@ -138,7 +144,7 @@ Index Index_VectorCreate
 
 	// create index field
 	IndexField field;
-	IndexField_NewVectorField(&field, attr, attr_id, dimension, M, efConstruction, efRuntime);
+	IndexField_NewVectorField(&field, attr, attr_id, dimension, M, efConstruction, efRuntime, simFunc);
 
 	Index idx = NULL;
 	Schema_AddIndex(&idx, s, &field);
