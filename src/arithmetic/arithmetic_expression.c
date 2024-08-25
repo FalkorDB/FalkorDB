@@ -376,7 +376,7 @@ void _AR_EXP_OperandResolveVariables(AR_ExpNode *node, const Record r) {
 
 	// see if record contains a value for this variadic
 	const char *alias = node->operand.variadic.entity_alias;
-	uint idx = Record_GetEntryIdx(r, alias);
+	uint idx = Record_GetEntryIdx(r, alias, strlen(alias));
 	ASSERT(idx != INVALID_INDEX);
 	if(!Record_ContainsEntry(r, idx)) return;
 
@@ -520,7 +520,7 @@ static bool _AR_EXP_UpdateEntityIdx(AR_OperandNode *node, const Record r) {
 		ErrorCtx_SetError(EMSG_MISSING_RECORD, node->variadic.entity_alias);
 		return false;
 	}
-	int entry_alias_idx = Record_GetEntryIdx(r, node->variadic.entity_alias);
+	int entry_alias_idx = Record_GetEntryIdx(r, node->variadic.entity_alias, strlen(node->variadic.entity_alias));
 	if(entry_alias_idx == INVALID_INDEX) {
 		// Set the query-level error.
 		ErrorCtx_SetError(EMSG_MISSING_VALUE, node->variadic.entity_alias);

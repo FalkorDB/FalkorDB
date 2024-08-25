@@ -269,3 +269,11 @@ class testOptionalFlow(FlowTestsBase):
         query = """WITH [0, 0] AS n0 OPTIONAL MATCH () MERGE ()"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.nodes_created, 1)
+
+    def test24_optional_and_cartesian_product(self):
+        self.graph.delete()
+        self.graph.query("CREATE ()<-[:A]-()")
+        query = """OPTIONAL MATCH (), ({x:0, x:1}) RETURN 0"""
+        actual_result = self.graph.query(query)
+        expected_result = [[0]]
+        self.env.assertEquals(actual_result.result_set, expected_result)

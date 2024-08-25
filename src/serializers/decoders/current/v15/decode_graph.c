@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v14.h"
+#include "decode_v15.h"
 #include "../../../../index/indexer.h"
 
 static GraphContext *_GetOrCreateGraphContext
@@ -109,7 +109,7 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v14(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v15(rdb, gc, !first_vkey);
 
 	return gc;
 }
@@ -171,17 +171,17 @@ GraphContext *RdbLoadGraphContext_latest
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v14(rdb, gc, payload.entities_count);
+				RdbLoadNodes_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v14(rdb, gc, payload.entities_count);
+				RdbLoadDeletedNodes_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v14(rdb, gc, payload.entities_count);
+				RdbLoadEdges_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v14(rdb, gc, payload.entities_count);
+				RdbLoadDeletedEdges_v15(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_GRAPH_SCHEMA:
 				// skip, handled in _DecodeHeader
@@ -223,8 +223,8 @@ GraphContext *RdbLoadGraphContext_latest
 		// update the node statistics, enable node indices
 		for(uint i = 0; i < label_count; i++) {
 			GrB_Index nvals;
-			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
-			Delta_Matrix_nvals(&nvals, L);
+			RG_Matrix L = Graph_GetLabelMatrix(g, i);
+			RG_Matrix_nvals(&nvals, L);
 			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
 
 			Index idx;
@@ -255,3 +255,4 @@ GraphContext *RdbLoadGraphContext_latest
 
 	return gc;
 }
+

@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "../graph/graphcontext.h"
 #include "../serializers/serializer_io.h"
-#include "../serializers/decoders/current/v14/decode_v14.h"
+#include "../serializers/decoders/current/v15/decode_v15.h"
 
 extern RedisModuleType *GraphContextRedisModuleType;
 
