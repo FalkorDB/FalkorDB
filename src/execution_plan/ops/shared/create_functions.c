@@ -375,6 +375,10 @@ void PendingCreationsFree
 	}
 
 	if(pending->created_edges) {
+		uint count = array_len(pending->created_edges);
+		for(uint i = 0; i < count; i ++) {
+			array_free(pending->created_edges[i]);
+		}
 		array_free(pending->created_edges);
 		pending->created_edges = NULL;
 	}
