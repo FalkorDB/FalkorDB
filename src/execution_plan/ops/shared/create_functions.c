@@ -259,6 +259,10 @@ void CommitNewEntities
 		_CommitEdges(pending);
 
 		// clear pending attributes array
+		uint count = array_len(pending->edge_attributes);
+		for(uint i = 0; i < count; i++) {
+			array_free(pending->edge_attributes[i]);
+		}
 		array_clear(pending->edge_attributes);
 
 		if(unlikely(ErrorCtx_EncounteredError())) {

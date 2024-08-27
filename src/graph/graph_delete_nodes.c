@@ -77,9 +77,6 @@ void Graph_DeleteNodes
 	info = GrB_Matrix_new(&elems, GrB_BOOL, nrows, ncols);
 	ASSERT(info == GrB_SUCCESS);
 
-	// attach iterator to lbls matrix
-	Delta_MatrixTupleIter_attach(&it, lbls);
-
 	//--------------------------------------------------------------------------
 	// phase one
 	//--------------------------------------------------------------------------
@@ -90,7 +87,7 @@ void Graph_DeleteNodes
 		Node *n = nodes + i;
 		EntityID id = ENTITY_GET_ID(n);
 
-		info = Delta_MatrixTupleIter_iterate_row(&it, id);
+		info = Delta_MatrixTupleIter_AttachRange(&it, lbls, id, id);
 		ASSERT(info == GrB_SUCCESS);
 
 		// for each deleted node label
