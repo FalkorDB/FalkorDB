@@ -7,12 +7,16 @@
 #include "op_filter.h"
 #include "RG.h"
 
-/* Forward declarations. */
+// forward declarations
 static Record FilterConsume(OpBase *opBase);
 static OpBase *FilterClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void FilterFree(OpBase *opBase);
 
-OpBase *NewFilterOp(const ExecutionPlan *plan, FT_FilterNode *filterTree) {
+OpBase *NewFilterOp
+(
+	const ExecutionPlan *plan,
+	FT_FilterNode *filterTree
+) {
 	OpFilter *op = rm_malloc(sizeof(OpFilter));
 	op->filterTree = filterTree;
 
@@ -23,9 +27,12 @@ OpBase *NewFilterOp(const ExecutionPlan *plan, FT_FilterNode *filterTree) {
 	return (OpBase *)op;
 }
 
-/* FilterConsume next operation
- * returns OP_OK when graph passes filter tree. */
-static Record FilterConsume(OpBase *opBase) {
+// FilterConsume next operation
+// returns OP_OK when graph passes filter tree
+static Record FilterConsume
+(
+	OpBase *opBase
+) {
 	Record r = NULL;
 	OpFilter *filter = (OpFilter *)opBase;
 	OpBase *child = filter->op.children[0];
@@ -34,22 +41,29 @@ static Record FilterConsume(OpBase *opBase) {
 		r = OpBase_Consume(child);
 		if(!r) break;
 
-		/* Pass record through filter tree */
+		// pass record through filter tree
 		if(FilterTree_applyFilters(filter->filterTree, r) == FILTER_PASS) break;
-		else OpBase_DeleteRecord(r);
+		else OpBase_DeleteRecord(&r);
 	}
 
 	return r;
 }
 
-static inline OpBase *FilterClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *FilterClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_FILTER);
 	OpFilter *op = (OpFilter *)opBase;
 	return NewFilterOp(plan, FilterTree_Clone(op->filterTree));
 }
 
-/* Frees OpFilter*/
-static void FilterFree(OpBase *ctx) {
+// frees OpFilter
+static void FilterFree
+(
+	OpBase *ctx
+) {
 	OpFilter *filter = (OpFilter *)ctx;
 	if(filter->filterTree) {
 		FilterTree_Free(filter->filterTree);

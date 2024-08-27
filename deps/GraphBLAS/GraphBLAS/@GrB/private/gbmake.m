@@ -47,51 +47,8 @@ end
 
 make_all = (isequal (what, 'all')) ;
 
-flags = '-O -R2018a -DGBNCPUFEAT' ;
-
 % use -R2018a for the new interleaved complex API
-if (have_octave)
-    % Octave does not have the new MEX classdef object and as of version 7, the
-    % mex command doesn't handle compiler options the same way.
-    flags = [flags ' -std=c11 -fopenmp -fPIC -Wno-pragmas' ] ;
-else
-    try
-        if (strncmp (computer, 'GLNX', 4))
-            % remove -ansi from CFLAGS and replace it with -std=c11
-            cc = mex.getCompilerConfigurations ('C', 'Selected') ;
-            env = cc.Details.SetEnv ;
-            c1 = strfind (env, 'CFLAGS=') ;
-            q = strfind (env, '"') ;
-            q = q (q > c1) ;
-            if (~isempty (c1) && length (q) > 1)
-                c2 = q (2) ;
-                cflags = env (c1:c2) ;  % the CFLAGS="..." string
-                ansi = strfind (cflags, '-ansi') ;
-                if (~isempty (ansi))
-                    cflags = [cflags(1:ansi-1) '-std=c11' cflags(ansi+5:end)] ;
-                    flags = [flags ' ' cflags] ;
-                    fprintf ('using -std=c11 instead of default -ansi\n') ;
-                end
-            end
-        end
-    catch
-    end
-    if (~ismac && isunix)
-        flags = [ flags   ' CFLAGS="$CXXFLAGS -fopenmp -fPIC -Wno-pragmas" '] ;
-        flags = [ flags ' CXXFLAGS="$CXXFLAGS -fopenmp -fPIC -Wno-pragmas" '] ;
-        flags = [ flags  ' LDFLAGS="$LDFLAGS  -fopenmp -fPIC" '] ;
-    end
-end
-
-if ispc
-    % Windows
-    object_suffix = '.obj' ;
-else
-    % Linux, Mac
-    object_suffix = '.o' ;
-end
-
-inc = '-Iutil -I../../../Include -I../../../Source -I../../../Source/Shared -I../../../Source/Template -I../../../Source/Factories ' ;
+flags = '-O -R2018a -DGBNCPUFEAT' ;
 
 if ispc
     % First do the following in GraphBLAS/build, in the Windows console:
@@ -104,6 +61,7 @@ if ispc
     % Command Window do:
     %
     %   gbmake
+    %
     if (need_rename)
         library = sprintf ('%s/../../build/Release', pwd) ;
     else
@@ -122,6 +80,7 @@ else
     % Command Window do:
     %
     %   gbmake
+    %
     if (need_rename)
         library = sprintf ('%s/../../build', pwd) ;
     else
@@ -129,15 +88,75 @@ else
     end
 end
 
+if (have_octave)
+    % Octave does not have the new MEX classdef object and as of version 7, the
+    % mex command doesn't handle compiler options the same way.
+    flags = [flags ' -std=c11 -fopenmp -fPIC -Wno-pragmas' ] ;
+else
+    % remove -ansi from CFLAGS and replace it with -std=c11
+    try
+        if (strncmp (computer, 'GLNX', 4))
+            cc = mex.getCompilerConfigurations ('C', 'Selected') ;
+            env = cc.Details.SetEnv ;
+            c1 = strfind (env, 'CFLAGS=') ;
+            q = strfind (env, '"') ;
+            q = q (q > c1) ;
+            if (~isempty (c1) && length (q) > 1)
+                c2 = q (2) ;
+                cflags = env (c1:c2) ;  % the CFLAGS="..." string
+                ansi = strfind (cflags, '-ansi') ;
+                if (~isempty (ansi))
+                    cflags = [cflags(1:ansi-1) '-std=c11' cflags(ansi+5:end)] ;
+                    flags = [flags ' ' cflags] ;
+                    fprintf ('using -std=c11 instead of default -ansi\n') ;
+                end
+            end
+        end
+    catch
+    end
+    % revise compiler flags for MATLAB
+    if (ismac)
+        cflags = '' ;
+        ldflags = '-fPIC' ;
+        rpath = '-rpath ' ;
+    elseif (isunix)
+        cflags = '-fopenmp' ;
+        ldflags = '-fopenmp -fPIC' ;
+        rpath = '-rpath=' ;
+    end
+    if (ismac || isunix)
+        rpath = sprintf (' -Wl,%s''''%s'''' ', rpath, library) ;
+        flags = [ flags ' CFLAGS=''$CFLAGS ' cflags ' -Wno-pragmas'' '] ;
+        flags = [ flags ' CXXFLAGS=''$CXXFLAGS ' cflags ' -Wno-pragmas'' '] ;
+        flags = [ flags ' LDFLAGS=''$LDFLAGS ' ldflags rpath ' '' '] ;
+    end
+end
+
+if ispc
+    % Windows
+    object_suffix = '.obj' ;
+else
+    % Linux, Mac
+    object_suffix = '.o' ;
+end
+
+inc = '-Iutil -I../../../Include -I../../../Source -I../../../Source/Shared -I../../../Source/Template -I../../../Source/Factories ' ;
+
 if (need_rename)
+    % use the renamed library for MATLAB
     flags = [flags ' -DGBMATLAB=1 ' ] ;
     inc = [inc ' -I../../rename ' ] ;
     libgraphblas = '-lgraphblas_matlab' ;
 else
+    % use the regular library for Octave
     libgraphblas = '-lgraphblas' ;
 end
 
-ldflags = sprintf ('-L''%s''', library) ;
+Lflags = sprintf ('-L''%s''', library) ;
+
+fprintf ('compiler flags: %s\n', flags) ;
+fprintf ('compiler incs:  %s\n', inc) ;
+fprintf ('library:        %s\n', libgraphblas) ;
 
 hfiles = [ dir('*.h') ; dir('util/*.h') ] ;
 
@@ -180,6 +199,7 @@ for k = 1:length (cfiles)
         % fprintf ('%s\n', cfile) ;
         fprintf ('.') ;
         mexcmd = sprintf ('mex -c %s -silent %s ''%s''', flags, inc, cfile) ;
+        % fprintf ('%s\n', mexcmd) ;
         eval (mexcmd) ;
         any_c_compiled = true ;
     end
@@ -209,7 +229,7 @@ for k = 1:length (mexfunctions)
     if (make_all || tc > tobj || any_c_compiled)
         % compile the mexFunction
         mexcmd = sprintf ('mex %s -silent %s %s ''%s'' %s %s', ...
-            ldflags, flags, inc, mexfunction, objlist, libgraphblas) ;
+            Lflags, flags, inc, mexfunction, objlist, libgraphblas) ;
         % fprintf ('%s\n', mexcmd) ;
         fprintf (':') ;
         eval (mexcmd) ;
@@ -229,11 +249,9 @@ if (need_rename)
 end
 if ispc
     lib_path = sprintf ('%s/build/Release', pwd) ;
-else
-    lib_path = sprintf ('%s/build', pwd) ;
+    fprintf ('  addpath (''%s'') ;\n', lib_path) ;
+    addpath (lib_path) ;
 end
-fprintf ('  addpath (''%s'') ;\n', lib_path) ;
-addpath (lib_path) ;
 cd (here1) ;
 
 fprintf ('\nFor a quick demo of GraphBLAS, type the following commands:\n\n') ;

@@ -134,6 +134,80 @@ GrB_Info GB_cuda_reduce_to_scalar
     const GrB_Matrix A
 ) ;
 
+bool GB_cuda_rowscale_branch
+(
+    const GrB_Matrix D,
+    const GrB_Matrix B,
+    const GrB_Semiring semiring,
+    const bool flipxy
+) ;
+
+GrB_Info GB_cuda_rowscale
+(
+    GrB_Matrix C,
+    const GrB_Matrix D,
+    const GrB_Matrix B,
+    const GrB_Semiring semiring,
+    const bool flipxy
+) ;
+
+bool GB_cuda_colscale_branch
+(
+    const GrB_Matrix A,
+    const GrB_Matrix D,
+    const GrB_Semiring semiring,
+    const bool flipxy
+) ;
+
+GrB_Info GB_cuda_colscale
+(
+    GrB_Matrix C,
+    const GrB_Matrix A,
+    const GrB_Matrix D,
+    const GrB_Semiring semiring,
+    const bool flipxy
+) ;
+
+bool GB_cuda_apply_binop_branch
+(
+    const GrB_Type ctype,
+    const GrB_BinaryOp op,
+    const GrB_Matrix A
+) ;
+
+bool GB_cuda_apply_unop_branch
+(
+    const GrB_Type ctype,
+    const GrB_Matrix A,
+    const GB_Operator op
+) ;
+
+GrB_Info GB_cuda_apply_unop
+(
+    GB_void *Cx,
+    const GrB_Type ctype,
+    const GB_Operator op,
+    const bool flipij,
+    const GrB_Matrix A,
+    const GB_void *ythunk
+) ;
+
+GrB_Info GB_cuda_apply_binop
+(
+    GB_void *Cx,
+    const GrB_Type ctype,
+    const GrB_BinaryOp op,
+    const GrB_Matrix A, 
+    const GB_void *scalarx,
+    const bool bind1st
+) ;
+
+
+bool GB_cuda_type_branch            // return true if the type is OK on GPU
+(
+    const GrB_Type type             // type to query
+) ;
+
 GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 (
     GrB_Matrix C,                   // output matrix, static header

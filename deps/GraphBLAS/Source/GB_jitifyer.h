@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jitifyer.h: definitions for the CPU jitifyer
+// GB_jitifyer.h: definitions for the CPU and CUDA jitifyer
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
@@ -184,10 +184,13 @@ typedef enum
     GB_JIT_CUDA_KERNEL_AXB_DOT3 = 1004, // GB_cuda_AxB_dot3
 
     // ewise methods:
-    // ...
-    GB_JIT_CUDA_KERNEL_ROWSCALE = 1011,
-    // ...
-
+    GB_JIT_CUDA_KERNEL_COLSCALE = 1011,
+    GB_JIT_CUDA_KERNEL_ROWSCALE = 1012,
+    GB_JIT_CUDA_KERNEL_APPLYBIND1 = 1013,
+    GB_JIT_CUDA_KERNEL_APPLYBIND2 = 1014,
+    //... (up to 15 ewise methods?)
+    // apply methods:
+    GB_JIT_CUDA_KERNEL_APPLYUNOP = 1026
 }
 GB_jit_kcode ;
 
@@ -250,7 +253,7 @@ GrB_Info GB_jitifyer_load
     GrB_Type type3
 ) ;
 
-GrB_Info GB_jitifyer_worker
+GrB_Info GB_jitifyer_load2_worker
 (
     // output:
     void **dl_function,         // pointer to JIT kernel
@@ -333,6 +336,7 @@ typedef GB_JIT_QUERY_PROTO ((*GB_jit_query_func)) ;
 bool GB_jitifyer_query
 (
     GB_jit_query_func dl_query,
+    const bool builtin,         // true if method is all builtin
     uint64_t hash,              // hash code for the kernel
     // operator and type definitions
     GrB_Semiring semiring,
@@ -402,6 +406,8 @@ GrB_Info GB_jitifyer_set_error_log_worker (const char *new_error_log) ;
 
 bool GB_jitifyer_get_use_cmake (void) ;
 void GB_jitifyer_set_use_cmake (bool use_cmake) ;
+
+void GB_jitifyer_sanitize (char *string, size_t len) ;
 
 #endif
 

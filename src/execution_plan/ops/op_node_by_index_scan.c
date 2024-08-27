@@ -122,8 +122,7 @@ pull_index:
 
 	// free input record
 	if(op->child_record != NULL) {
-		OpBase_DeleteRecord(op->child_record);
-		op->child_record = NULL;
+		OpBase_DeleteRecord(&op->child_record);
 	}
 
 	//--------------------------------------------------------------------------
@@ -217,7 +216,7 @@ static Record IndexScanConsume(OpBase *opBase) {
 		}
 	}
 
-	OpBase_DeleteRecord(r);
+	OpBase_DeleteRecord(&r);
 
 	return NULL;
 }
@@ -250,8 +249,7 @@ static void IndexScanFree(OpBase *opBase) {
 	}
 
 	if(op->child_record != NULL) {
-		OpBase_DeleteRecord(op->child_record);
-		op->child_record = NULL;
+		OpBase_DeleteRecord(&op->child_record);
 	}
 
 	if(op->filter != NULL) {

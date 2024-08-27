@@ -78,36 +78,17 @@ static inline AR_ExpNode **_build_aggregate_exps
 	return agg_exps;
 }
 
-// build a new group key from the SIValue results of non-aggregate expressions
-static inline SIValue *_build_group_key
-(
-	SIValue *keys,
-	uint n
-) {
-	// TODO: might be expensive incase we're generating lots of groups
-	SIValue *group_keys = rm_malloc(sizeof(SIValue) * n);
-
-	for(uint i = 0; i < n; i++) {
-		SIValue key = SI_TransferOwnership(keys + i);
-		SIValue_Persist(&key);
-		group_keys[i] = key;
-	}
-
-	return group_keys;
-}
-
 static Group *_CreateGroup
 (
 	OpAggregate *op,
-	SIValue *keys
+	Record r
 ) {
-	// create a new group, clone group keys
-	SIValue *group_keys = _build_group_key(keys, op->key_count);
+	// create a new group
 
 	// get a fresh copy of aggregation functions
 	AR_ExpNode **agg_exps = _build_aggregate_exps(op);
 
-	return Group_New(group_keys, op->key_count, agg_exps, op->aggregate_count);
+	return Group_New(agg_exps, op->aggregate_count, r);
 }
 
 static XXH64_hash_t _ComputeGroupKey
@@ -150,6 +131,7 @@ static Group *_GetGroup
 	Group *g;
 	dictEntry *existing;
 	dictEntry *entry = HashTableAddRaw(op->groups, (void *)hash, &existing);
+
 	if(entry == NULL) {
 		// group exists
 		ASSERT(existing != NULL);
@@ -161,9 +143,26 @@ static Group *_GetGroup
 
 		g = HashTableGetVal(existing);
 	} else {
-		// entry missing
 		// group does not exists, create it
-		g = _CreateGroup(op, keys);
+
+		// set keys in record
+		Record representative = OpBase_CreateRecord((OpBase*)op);
+		for(uint i = 0; i < op->key_count; i++) {
+			SIType t = keys[i].type;
+
+			if(!(t & SI_GRAPHENTITY)) {
+				SIValue_Persist(keys+i);
+			}
+
+			Record_Add(representative, op->record_offsets[i], keys[i]);
+
+			if((t & SI_GRAPHENTITY)) {
+				SIValue_Free(keys[i]);
+			}
+		}
+
+		g = _CreateGroup(op, representative);
+
 		HashTableSetVal(op->groups, entry, g);
 	}
 
@@ -185,7 +184,8 @@ static void _aggregateRecord
 		AR_EXP_Aggregate(exp, r);
 	}
 
-	OpBase_DeleteRecord(r);
+	// delete record only if it isn't group representative
+	OpBase_DeleteRecord(&r);
 }
 
 // returns a record populated with group data
@@ -198,17 +198,9 @@ static Record _handoff
 		return NULL;
 	}
 
-	Record   r    = OpBase_CreateRecord((OpBase*)op);
-	Group   *g    = (Group*)HashTableGetVal(entry);
-	SIValue *keys = g->keys;
-
-	// add all projected keys to the Record
-	for(uint i = 0; i < op->key_count; i++) {
-		int rec_idx = op->record_offsets[i];
-		// non-aggregated expression
-		SIValue key = SI_ShareValue(keys[i]);
-		Record_Add(r, rec_idx, key);
-	}
+	Group *g = (Group*)HashTableGetVal(entry);
+	Record r = g->r;
+	g->r = NULL;
 
 	// compute the final value of all aggregate expressions and add to Record
 	for(uint i = 0; i < op->aggregate_count; i++) {
@@ -216,8 +208,13 @@ static Record _handoff
 		AR_ExpNode *exp = g->agg[i];
 
 		SIValue agg = AR_EXP_FinalizeAggregations(exp, r);
+		SIValue_Persist(&agg);
 		Record_AddScalar(r, rec_idx, agg);
 	}
+
+	// free group
+	Group_Free(g);
+	HashTableSetVal(op->groups, entry, NULL);
 
 	return r;
 }
@@ -312,9 +309,6 @@ static Record AggregateConsume
 
 		// get group
 		_GetGroup(op, r);
-
-		// free record
-		OpBase_DeleteRecord(r);
 	}
 
 	// create group iterator
@@ -438,7 +432,6 @@ static void AggregateFree
 	}
 
 	if(op->r) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 }

@@ -98,6 +98,7 @@ for k1 = 1:length(types)
             fprintf ('\n') ;
         end
         fprintf (' %s', op.opname) ;
+        GB_mex_finalize ;
 
         for k3 = 1:length(types)
             op.optype = types {k3} ;

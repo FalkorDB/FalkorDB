@@ -206,6 +206,14 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
                 GB_Type_compatible (D->type, mult->ytype))) ;
         }
 
+        info = GrB_NO_VALUE ;
+        
+        #if defined ( GRAPHBLAS_HAS_CUDA )
+        if (GB_cuda_colscale_branch (A, D, semiring, flipxy)) {
+            info = GB_cuda_colscale (C, A, D, semiring, flipxy) ;
+        } 
+        #endif
+
         //----------------------------------------------------------------------
         // determine the number of threads to use
         //----------------------------------------------------------------------
@@ -224,10 +232,9 @@ GrB_Info GB_colscale                // C = A*D, column scale with diagonal D
         // via the factory kernel
         //----------------------------------------------------------------------
 
-        info = GrB_NO_VALUE ;
-
         #ifndef GBCOMPACT
         GB_IF_FACTORY_KERNELS_ENABLED
+        if (info == GrB_NO_VALUE)
         { 
 
             //------------------------------------------------------------------

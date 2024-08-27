@@ -7,6 +7,53 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// The GB_cuda_ek_slice* methods provide an efficient method for the
+// threadblocks to work in parallel on a single sparse or hypersparse matrix A.
+// Let Ap = A->p be an array of "pointers" of size anvec+1.
+// Let Ai = A->i be the array of row indices of the sparse/hypersparse matrix.
+// Let Ax = A->x be the array of values of the sparse/hypersparse matrix.
+// Let anz be the # of entries in the Ai and Ax arrays.
+//
+// Then matrix of A can be traversed as follows (suppose it is stored by col):
+//
+//  for (k = 0 ; k < anvec ; k++)
+//      j = k if A is sparse, or j = Ah [k] if A is hypersparse
+//      for (p = Ap [k] ; p < Ap [k+1] ; p++)
+//          i = Ai [p] ;
+//          atype aij = Ax [p] ;
+//          the entry A(i,j) has value aij, row index i, column index j, and
+//              column j is the kth column in the data structure of A,
+//          ...
+//
+// However, parallelizing that loop across the GPU threadblocks is difficult.
+// Instead, consider a single loop:
+//
+//  for (p = 0 ; p < anz ; p++)
+//      find k so that Ap [k] <= p < Ap [k+1]
+//      j = k if A is sparse, or j = Ah [k] if A is hypersparse
+//      i = Ai [p]
+//      aij = Ax [p]
+//      ...
+//
+// The above loop can be easily parallelized on the GPU, and the
+// GB_cuda_ek_slice* methods provide a way for each thread to find k for each
+// entry at position p.  The methods assume a single threadblock is given the
+// task to compute iterations p = pfirst : plast=1 where plast = min (anz,
+// pfirst + max_pchunk) for the loop above.
+//
+// First, all threads call GB_cuda_ek_slice_setup, and do two binary searches.
+// This determines the slope, and gives a way to estimate the vector k that
+// contains any entry p in the given range pfirst:plast-1.  This estimate is
+// then used in GB_cuda_ek_slice_entry to determine the k for any given p in
+// that range.
+//
+// If the thread that computes k for a given p is also the thread that uses k,
+// then there is no need for the threadblock to share that computation.
+// Otherwise, the set of k values can be computed in a shared array ks, using
+// the single method GB_cuda_ek_slice.
+
+//------------------------------------------------------------------------------
 // GB_cuda_ek_slice_setup
 //------------------------------------------------------------------------------
 
@@ -26,7 +73,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
 {
 
     //--------------------------------------------------------------------------
-    // determine the range of entryes pfirst:plast-1 for this chunk
+    // determine the range of entries pfirst:plast-1 for this chunk
     //--------------------------------------------------------------------------
 
     // The slice for each threadblock contains entries pfirst:plast-1 of A.
@@ -79,24 +126,27 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
 // GB_cuda_ek_slice_entry
 //------------------------------------------------------------------------------
 
-// Let p = kk + pfirst, where kk ranges from 0:my_chunk_size-1, and so p ranges
-// from kk:(kk+my_chunk_size-1), and where my_chunk_size is normally of size
-// max_pchunk, unless this is the last chunk in the entire matrix.
-// GB_cuda_ek_slice_entry computes k for this entry, so that the kth vector
-// contains the entry aij with row index i = Ai [p] and value aij = Ax [p]
-// (assuming that A is a sparse or hypersparse matrix held by column).  That
-// is, Ap [k] <= p < Ap [k+1] will hold.  If A is sparse and held by column,
-// then aij is in column j = k.  If A is hypersparse, then aij is in column j =
-// Ah [k].
+// Let p = pfirst + pdelta, where pdelta ranges from 0:my_chunk_size-1, and so
+// p ranges from pdelta:(pdelta+my_chunk_size-1), and where my_chunk_size is
+// normally of size max_pchunk, unless this is the last chunk in the entire
+// matrix.  GB_cuda_ek_slice_entry computes k for this entry, so that the kth
+// vector contains the entry aij with row index i = Ai [p] and value aij = Ax
+// [p] (assuming that A is a sparse or hypersparse matrix held by column).
+// That is, Ap [k] <= p < Ap [k+1] will hold.  If A is sparse and held by
+// column, then aij is in column j = k.  If A is hypersparse, then aij is in
+// column j = Ah [k].
 
 // The method returns the index k of the vector in A that contains the pth
-// entry in A, at position p = kk + pfirst.
+// entry in A, at position p = pfirst + pdelta.
 
 static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
 (
+    // output:
+    int64_t *p_handle,          // p = pfirst + pdelta
     // inputs, not modified:
-    const int64_t kk,           // find the k value of the kkth entry
-    const int64_t pfirst,       // first entry in A to find k (for which kk=0)
+    const int64_t pdelta,       // find the k value of the pfirst+pdelta entry
+    const int64_t pfirst,       // first entry in A to find k (for which
+                                // pdelta=0)
     const int64_t *Ap,          // array of size anvec+1
     const int64_t anvec1,       // anvec-1
     const int64_t kfirst,       // estimate of first vector in the chunk
@@ -104,8 +154,8 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
 )
 {
 
-    // get a rough estimate of k for the kkth entry
-    int64_t k = kfirst + (int64_t) (slope * ((float) kk)) ;
+    // get a rough estimate of k for the pfirst + pdelta entry
+    int64_t k = kfirst + (int64_t) (slope * ((float) pdelta)) ;
 
     // The estimate of k cannot be smaller than kfirst, but it might be bigger
     // than anvec-1, so ensure it is in the valid range, kfirst to anvec-1.
@@ -113,7 +163,8 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
 
     // look for p in Ap, where p is in range pfirst:plast-1
     // where pfirst >= 0 and plast < anz
-    int64_t p = kk + pfirst ;
+    int64_t p = pfirst + pdelta ;
+    (*p_handle) = p ;
 
     // linear-time search for the k value of the pth entry
     while (Ap [k+1] <= p) k++ ;
@@ -165,21 +216,25 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
     // find the kth vector that contains each entry p = pfirst:plast-1
     //--------------------------------------------------------------------------
 
-    for (int64_t kk = threadIdx.x ; kk < my_chunk_size ; kk += blockDim.x)
+    for (int64_t pdelta = threadIdx.x ;
+                 pdelta < my_chunk_size ;
+                 pdelta += blockDim.x)
     {
 
         //----------------------------------------------------------------------
         // determine the kth vector that contains the pth entry
         //----------------------------------------------------------------------
 
-        int64_t k = GB_cuda_ek_slice_entry (kk, pfirst, Ap, anvec1, kfirst,
-            slope) ;
+        int64_t p ;     // unused, p = pfirst + pdelta
+        int64_t k = GB_cuda_ek_slice_entry (&p, pdelta, pfirst, Ap, anvec1,
+            kfirst, slope) ;
 
         //----------------------------------------------------------------------
         // save the result in ks
         //----------------------------------------------------------------------
 
-        ks [kk] = k ;
+        // the pth entry of the matrix is in vector k
+        ks [pdelta] = k ;
     }
 
     //--------------------------------------------------------------------------

@@ -7,8 +7,11 @@ function ok = GB_spec_compare (C_spec, C_mex, identity, tol)
 % some GraphBLAS method.  C_mex = GB_mex_* (...) is the output of the
 % corresponding interface to the true GraphBLAS method, in C.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+err = 0 ;
+anorm = 0 ;
 
 % get the semiring identity
 if (nargin < 3)
@@ -43,7 +46,7 @@ C2 = GB_spec_matrix (C_mex, identity) ;
 
 try
     % ok_matrix = isequalwithequalnans (C1.matrix, C2.matrix) ;
-    ok_matrix = isequal_roundoff (C1.matrix, C2.matrix, tol) ;
+    [ok_matrix, err, anorm] = isequal_roundoff (C1.matrix, C2.matrix, tol) ;
 catch
     ok_matrix = false ;
 end
@@ -84,6 +87,9 @@ if (~ok_class || ~ok_pattern || ~ok_matrix)
     fprintf ('matrix: %d pattern: %d class %d\n', ...
         ok_matrix, ok_pattern, ok_class) ;
     norm (double (C1.matrix) - double (C2.matrix), 1)
+    if (~ok_matrix)
+        fprintf ('err: %g tol %g anorm %g\n', err, tol, anorm) ;
+    end
 end
 
 % with no output, just assert that ok is true

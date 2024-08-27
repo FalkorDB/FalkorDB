@@ -176,11 +176,11 @@ void _cache_records
 ) {
 	ASSERT(op->cached_records == NULL);
 
-	OpBase *left_child = op->op.children[0];
+	OpBase *left_child = OpBase_GetChild((OpBase*)op, 0);
 	op->cached_records = array_new(Record, 32);
 
 	Record r = left_child->consume(left_child);
-	if(!r) return;
+	if(r == NULL) return;
 
 	// as long as there's data coming in from left branch
 	do {
@@ -189,7 +189,10 @@ void _cache_records
 
 		// if the joined value is NULL
 		// it cannot be compared to other values - skip this record
-		if(SIValue_IsNull(v)) continue;
+		if(SIValue_IsNull(v)) {
+			OpBase_DeleteRecord(&r);
+			continue;
+		}
 
 		// add joined value to record
 		Record_AddScalar(r, op->join_value_rec_idx, v);
@@ -253,7 +256,7 @@ OpBase *NewValueHashJoin
 	return (OpBase *)op;
 }
 
-// Produce a record by joining
+// produce a record by joining
 // records coming from the left and right hand side
 // of this operation
 static Record ValueHashJoinConsume
@@ -261,12 +264,12 @@ static Record ValueHashJoinConsume
 	OpBase *opBase
 ) {
 	OpValueHashJoin *op = (OpValueHashJoin *)opBase;
-	OpBase *right_child = op->op.children[1];
+	OpBase *right_child = OpBase_GetChild(opBase, 1);
 
 	// eager, pull from left branch until depleted
 	if(op->cached_records == NULL) {
 		_cache_records(op);
-		// sort cache on intersect node ID
+		// sort cache on compared value
 		_sort_cached_records(op);
 	}
 
@@ -274,17 +277,17 @@ static Record ValueHashJoinConsume
 	// given a right hand side record R,
 	// evaluate V = exp on R,
 	// see if there are any cached records
-	// which V evaluated to V:
+	// with V value:
 	// X in cached_records and X[idx] = V
 	// return merged record:
-	// X merged with R
+	// L merged with R
 
 	Record l;
 	if(op->number_of_intersections > 0) {
 		while((l = _get_intersecting_record(op))) {
 			// clone cached record before merging rhs
 			Record c = OpBase_CloneRecord(l);
-			Record_Merge(c, op->rhs_rec);
+			Record_DuplicateEntries(c, op->rhs_rec);
 			return c;
 		}
 	}
@@ -292,7 +295,7 @@ static Record ValueHashJoinConsume
 	// if we're here there are no more
 	// left hand side records which intersect with R
 	// discard R
-	if(op->rhs_rec) OpBase_DeleteRecord(op->rhs_rec);
+	OpBase_DeleteRecord(&op->rhs_rec);
 
 	// try to get new right hand side record
 	// which intersect with a left hand side record
@@ -308,7 +311,7 @@ static Record ValueHashJoinConsume
 		SIValue_Free(v);
 		// no intersection, discard R
 		if(!found_intersection) {
-			OpBase_DeleteRecord(op->rhs_rec);
+			OpBase_DeleteRecord(&op->rhs_rec);
 			continue;
 		}
 
@@ -317,7 +320,7 @@ static Record ValueHashJoinConsume
 
 		// clone cached record before merging rhs
 		Record c = OpBase_CloneRecord(l);
-		Record_Merge(c, op->rhs_rec);
+		Record_DuplicateEntries(c, op->rhs_rec);
 
 		return c;
 	}
@@ -333,15 +336,13 @@ static OpResult ValueHashJoinReset
 
 	// clear cached records
 	if(op->rhs_rec) {
-		OpBase_DeleteRecord(op->rhs_rec);
-		op->rhs_rec = NULL;
+		OpBase_DeleteRecord(&op->rhs_rec);
 	}
 
 	if(op->cached_records) {
 		uint record_count = array_len(op->cached_records);
 		for(uint i = 0; i < record_count; i++) {
-			Record r = op->cached_records[i];
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(op->cached_records+i);
 		}
 		array_free(op->cached_records);
 		op->cached_records = NULL;
@@ -366,15 +367,13 @@ static void ValueHashJoinFree(OpBase *ctx) {
 	OpValueHashJoin *op = (OpValueHashJoin *)ctx;
 	// free cached records
 	if(op->rhs_rec) {
-		OpBase_DeleteRecord(op->rhs_rec);
-		op->rhs_rec = NULL;
+		OpBase_DeleteRecord(&op->rhs_rec);
 	}
 
 	if(op->cached_records) {
 		uint record_count = array_len(op->cached_records);
 		for(uint i = 0; i < record_count; i++) {
-			Record r = op->cached_records[i];
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(op->cached_records+i);
 		}
 		array_free(op->cached_records);
 		op->cached_records = NULL;

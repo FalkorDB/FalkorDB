@@ -112,7 +112,7 @@ void mexFunction
     OK (GxB_Context_get_String_ (GxB_CONTEXT_WORLD, name, GrB_NAME)) ;
     CHECK (MATCH (name, "GxB_CONTEXT_WORLD")) ;
 
-    ERR (GxB_Context_get_SIZE_ (GxB_CONTEXT_WORLD, &size, GxB_FORMAT)) ;
+    ERR (GxB_Context_get_SIZE_ (GxB_CONTEXT_WORLD, &size, (GrB_Field) GxB_FORMAT)) ;
 
     expected = GrB_INVALID_VALUE ;
     ERR (GxB_Context_get_VOID_ (GxB_CONTEXT_WORLD, nothing, 0)) ;

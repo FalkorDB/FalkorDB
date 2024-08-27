@@ -206,7 +206,7 @@ bool ExecutionPlan_ContainsLimit
 
 	while(root != NULL) {
 		// halt if we encounter an eager operation
-		if(ExecutionPlan_isEager(root)) return false;
+		if(OpBase_IsEager(root)) return false;
 
 		// found a limit operation
 		if(root->type == OPType_LIMIT) {
@@ -234,7 +234,7 @@ bool ExecutionPlan_ContainsSkip
 
 	while(root != NULL) {
 		// halt if we encounter an eager operation
-		if(ExecutionPlan_isEager(root)) return false;
+		if(OpBase_IsEager(root)) return false;
 
 		// found a skip operation
 		if(root->type == OPType_SKIP) {

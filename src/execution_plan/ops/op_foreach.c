@@ -75,8 +75,8 @@ static OpResult ForeachInit
 // if there is a record to return, it is returned
 // otherwise, returns NULL (last value in op->records)
 static Record _handoff(OpForeach *op) {
-	ASSERT(op->records != NULL);
-	return array_pop(op->records);
+	if(array_len(op->records) > 0) return array_pop(op->records);
+	else return NULL;
 }
 
 // the Foreach consume function aggregates all the records from the supplier if
@@ -107,9 +107,7 @@ static Record ForeachConsume
 	if(op->supplier) {
 		// eagerly drain supplier
 		while((r = OpBase_Consume(op->supplier))) {
-			Record_PersistScalars(r);
 			array_append(op->records, r);
-
 			// create a record with the mapping of the embedded plan
 			// (as opposed to the record-mapping of the consumed record)
 			Record body_rec = OpBase_CreateRecord(op->body);
@@ -118,6 +116,7 @@ static Record ForeachConsume
 			Record_Clone(r, body_rec);
 			array_append(op->body_records, body_rec);
 		}
+
 		// supplier depleted
 		// propagate reset to release RediSearch index lock if any exists
 		OpBase_PropagateReset(op->supplier);
@@ -135,7 +134,7 @@ static Record ForeachConsume
 	// call consume on loop body first op
 	// the result is thrown away
 	while((r = OpBase_Consume(op->body))) {
-		OpBase_DeleteRecord(r);
+		OpBase_DeleteRecord(&r);
 	}
 
 	return _handoff(op);
@@ -151,7 +150,7 @@ static void _freeInternals
 		// free record list components (except first element, which is NULL)
 		uint nrecords = array_len(op->records);
 		for(uint i = 1; i < nrecords; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		array_free(op->records);
@@ -162,7 +161,7 @@ static void _freeInternals
 		// free body record list components
 		uint nrecords = array_len(op->body_records);
 		for(uint i = 0; i < nrecords; i++) {
-			OpBase_DeleteRecord(op->body_records[i]);
+			OpBase_DeleteRecord(op->body_records+i);
 		}
 
 		array_free(op->body_records);

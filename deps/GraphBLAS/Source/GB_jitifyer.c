@@ -28,7 +28,12 @@ typedef GB_JIT_KERNEL_USER_TYPE_PROTO ((*GB_user_type_f)) ;
 
 // The strings are used to create filenames and JIT compilation commands.
 
+#ifdef GBCOVER
+// use a smaller JIT table size during test coverage
+#define GB_JITIFIER_INITIAL_SIZE (1024)
+#else
 #define GB_JITIFIER_INITIAL_SIZE (32*1024)
+#endif
 
 static GB_jit_entry *GB_jit_table = NULL ;
 static int64_t  GB_jit_table_size = 0 ;  // always a power of 2
@@ -146,8 +151,8 @@ static void check_table (void)
     #define GB_MALLOC_PERSISTENT(X,siz)                     \
     {                                                       \
         X = GB_Global_persistent_malloc (siz) ;             \
-        printf ("persistent malloc (%4d): %p size %lu\n",   /* MEMDUMP */ \
-            __LINE__, X, siz) ;                             \
+        printf ("persistent malloc (%4d): %p size %g\n",   /* MEMDUMP */ \
+            __LINE__, X, (double) siz) ;                    \
     }
 
     #define GB_FREE_PERSISTENT(X)                           \
@@ -192,6 +197,7 @@ static void check_table (void)
 
 #define GB_COPY_STUFF(X,src)                            \
 {                                                       \
+    ASSERT (src != NULL) ;                              \
     size_t len = strlen (src) ;                         \
     GB_MALLOC_STUFF (X, len) ;                          \
     strncpy (X, src, X ## _allocated) ;                 \
@@ -214,6 +220,54 @@ void GB_jitifyer_finalize (void)
     GB_FREE_STUFF (GB_jit_C_preface) ;
     GB_FREE_STUFF (GB_jit_CUDA_preface) ;
     GB_FREE_STUFF (GB_jit_temp) ;
+}
+
+//------------------------------------------------------------------------------
+// GB_jitifyer_sanitize
+//------------------------------------------------------------------------------
+
+// Replace invalid characters in a string with underscore.
+
+// Valid characters: letters, numbers, space, and four others (dot, dash,
+// underscore, and slash).  Backslash is valid but replaced with slash.
+// All other invalid characters are replaced with underscore.
+
+void GB_jitifyer_sanitize (char *string, size_t len)
+{
+    for (int k = 0 ; k < len ; k++)
+    {
+        // check for the end of the string
+        if (string [k] == '\0') break ;
+        #ifdef _WIN32
+        // check the colon for "C:...", only in the second character
+        if (k == 1 && string [k] == ':') continue ;
+        #endif
+        // replace backslash with forward slash
+        if (string [k] == '\\')
+        { 
+            string [k] = '/' ;
+            continue ;
+        }
+        // replace other invalid characters with "_"
+        static char valid_character_set [ ] =
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789 .-_/" ;
+        bool ok = false ;
+        for (char *s = valid_character_set ; *s != '\0' ; s++)
+        {
+            if (string [k] == *s)
+            { 
+                ok = true ;
+                break ;
+            }
+        }
+        if (!ok)
+        { 
+            // replace a bad character with an underscore
+            string [k] = '_' ;
+        }
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -296,17 +350,14 @@ GrB_Info GB_jitifyer_init (void)
         GB_COPY_STUFF (GB_jit_cache_path, "") ;
     }
 
-    // replace backslash with forward slash
-    for (char *p = GB_jit_cache_path ; *p != '\0' ; p++)
-    {
-        if ((*p) == '\\') (*p) = '/' ; 
-    }
+    // sanitize the cache path
+    GB_jitifyer_sanitize (GB_jit_cache_path, GB_jit_cache_path_allocated) ;
 
     //--------------------------------------------------------------------------
     // initialize the remaining strings
     //--------------------------------------------------------------------------
 
-    GB_COPY_STUFF (GB_jit_error_log,     "") ;
+    GB_COPY_STUFF (GB_jit_error_log,    "") ;
     GB_COPY_STUFF (GB_jit_C_compiler,   GB_C_COMPILER) ;
     GB_COPY_STUFF (GB_jit_C_flags,      GB_C_FLAGS) ;
     GB_COPY_STUFF (GB_jit_C_link_flags, GB_C_LINK_FLAGS) ;
@@ -454,8 +505,7 @@ GrB_Info GB_jitifyer_init (void)
         #undef IS
         encoding->kcode = c ;
         encoding->code = scode ;
-        encoding->suffix_len = (suffix == NULL) ? 0 :
-            ((int32_t) strlen (suffix)) ;
+        encoding->suffix_len = (int32_t) GB_STRLEN (suffix) ;
 
         //----------------------------------------------------------------------
         // get the hash of this PreJIT kernel
@@ -471,7 +521,7 @@ GrB_Info GB_jitifyer_init (void)
         // time the kernel is run.
 
         uint64_t hash = 0 ;
-        char *ignored [5] ;
+        const char *ignored [5] ;
         int version [3] ;
         (void) dl_query (&hash, version, ignored, NULL, NULL, 0, 0) ;
 
@@ -862,6 +912,8 @@ GrB_Info GB_jitifyer_set_cache_path_worker (const char *new_cache_path)
     GB_FREE_STUFF (GB_jit_cache_path) ;
     // allocate the new GB_jit_cache_path
     GB_COPY_STUFF (GB_jit_cache_path, new_cache_path) ;
+    // sanitize the cache path
+    GB_jitifyer_sanitize (GB_jit_cache_path, GB_jit_cache_path_allocated) ;
     // allocate workspace
     OK (GB_jitifyer_alloc_space ( )) ;
     // set the src path and make sure cache and src paths are accessible
@@ -917,6 +969,8 @@ GrB_Info GB_jitifyer_set_error_log_worker (const char *new_error_log)
     GB_FREE_STUFF (GB_jit_error_log) ;
     // allocate the new GB_jit_error_log
     GB_COPY_STUFF (GB_jit_error_log, new_error_log) ;
+    // sanitize the error log
+    GB_jitifyer_sanitize (GB_jit_error_log, GB_jit_error_log_allocated) ;
     return (GB_jitifyer_alloc_space ( )) ;
 }
 
@@ -1354,6 +1408,7 @@ GrB_Info GB_jitifyer_set_CUDA_preface_worker (const char *new_CUDA_preface)
 bool GB_jitifyer_query
 (
     GB_jit_query_func dl_query,
+    const bool builtin,         // true if method is all builtin
     uint64_t hash,              // hash code for the kernel
     // operator and type definitions
     GrB_Semiring semiring,
@@ -1370,7 +1425,7 @@ bool GB_jitifyer_query
     //--------------------------------------------------------------------------
 
     int version [3] ;
-    char *library_defn [5] ;
+    const char *ldef [5] ;
     size_t zsize = 0 ;
     size_t tsize = 0 ;
     void *id = NULL ;
@@ -1407,7 +1462,7 @@ bool GB_jitifyer_query
     //--------------------------------------------------------------------------
 
     uint64_t hash2 = 0 ;
-    bool ok = dl_query (&hash2, version, library_defn, id, term, zsize, tsize) ;
+    bool ok = dl_query (&hash2, version, ldef, id, term, zsize, tsize) ;
     ok = ok && (version [0] == GxB_IMPLEMENTATION_MAJOR) &&
                (version [1] == GxB_IMPLEMENTATION_MINOR) &&
                (version [2] == GxB_IMPLEMENTATION_SUB) &&
@@ -1418,29 +1473,18 @@ bool GB_jitifyer_query
     //--------------------------------------------------------------------------
 
     char *defn [5] ;
-    defn [0] = (op1 == NULL) ? NULL : op1->defn ;
-    defn [1] = (op2 == NULL) ? NULL : op2->defn ;
-    defn [2] = (type1 == NULL) ? NULL : type1->defn ;
-    defn [3] = (type2 == NULL) ? NULL : type2->defn ;
-    defn [4] = (type3 == NULL) ? NULL : type3->defn ;
+    defn [0] = (builtin || op1   == NULL) ? NULL : op1->defn ;
+    defn [1] = (builtin || op2   == NULL) ? NULL : op2->defn ;
+    defn [2] = (builtin || type1 == NULL) ? NULL : type1->defn ;
+    defn [3] = (builtin || type2 == NULL) ? NULL : type2->defn ;
+    defn [4] = (builtin || type3 == NULL) ? NULL : type3->defn ;
 
     for (int k = 0 ; k < 5 ; k++)
-    {
-        if ((defn [k] != NULL) != (library_defn [k] != NULL))
-        { 
-            // one is not NULL but the other is NULL
-            ok = false ;
-        }
-        else if (defn [k] != NULL)
-        { 
-            // both definitions are present
-            // ensure the definition hasn't changed
-            ok = ok && (strcmp (defn [k], library_defn [k]) == 0) ;
-        }
-        else
-        { 
-            // both definitions are NULL, so they match
-        }
+    { 
+        // ensure the definition hasn't changed
+        ok = ok && (strcmp (
+            ((defn [k] == NULL) ? "" : defn [k]),
+            ((ldef [k] == NULL) ? "" : ldef [k])) == 0) ;
     }
     return (ok) ;
 }
@@ -1541,7 +1585,7 @@ GrB_Info GB_jitifyer_load
 
     #pragma omp critical (GB_jitifyer_worker)
     { 
-        info = GB_jitifyer_worker (dl_function, family, kname, hash,
+        info = GB_jitifyer_load2_worker (dl_function, family, kname, hash,
             encoding, suffix, semiring, monoid, op, type1, type2, type3) ;
     }
 
@@ -1549,10 +1593,10 @@ GrB_Info GB_jitifyer_load
 }
 
 //------------------------------------------------------------------------------
-// GB_jitifyer_worker: do the work for GB_jitifyer_load in a critical section
+// GB_jitifyer_load2_worker: do the work for GB_jitifyer_load in a critical section
 //------------------------------------------------------------------------------
 
-GrB_Info GB_jitifyer_worker
+GrB_Info GB_jitifyer_load2_worker
 (
     // output:
     void **dl_function,         // pointer to JIT kernel
@@ -1591,8 +1635,9 @@ GrB_Info GB_jitifyer_worker
             int32_t nkernels = 0 ;
             GB_prejit (&nkernels, &Kernels, &Queries, &Names) ;
             GB_jit_query_func dl_query = (GB_jit_query_func) Queries [k1] ;
-            bool ok = GB_jitifyer_query (dl_query, hash, semiring, monoid, op,
-                type1, type2, type3) ;
+            bool builtin = (encoding->suffix_len == 0) ;
+            bool ok = GB_jitifyer_query (dl_query, builtin, hash, semiring,
+                monoid, op, type1, type2, type3) ;
             if (ok)
             { 
                 // PreJIT kernel is fine; flag it as checked by flipping
@@ -1811,6 +1856,7 @@ GrB_Info GB_jitifyer_load_worker
     snprintf (GB_jit_temp, GB_jit_temp_allocated, "%s/lib/%02x/%s%s%s",
         GB_jit_cache_path, bucket, GB_LIB_PREFIX, kernel_name, GB_LIB_SUFFIX) ;
     void *dl_handle = GB_file_dlopen (GB_jit_temp) ;
+    GB_jit_kcode kcode = encoding->kcode ;
 
     //--------------------------------------------------------------------------
     // check if the kernel was found, but needs to be compiled anyway
@@ -1824,8 +1870,9 @@ GrB_Info GB_jitifyer_load_worker
         bool ok = (dl_query != NULL) ;
         if (ok)
         { 
-            ok = GB_jitifyer_query (dl_query, hash, semiring, monoid, op,
-                type1, type2, type3) ;
+            bool builtin = (encoding->suffix_len == 0) ;
+            ok = GB_jitifyer_query (dl_query, builtin, hash, semiring,
+                monoid, op, type1, type2, type3) ;
         }
         if (!ok)
         { 
@@ -1860,7 +1907,6 @@ GrB_Info GB_jitifyer_load_worker
         //----------------------------------------------------------------------
 
         GBURBLE ("(jit: compile and load) ") ;
-        GB_jit_kcode kcode = encoding->kcode ;
         const char *kernel_filetype =
             (kcode < GB_JIT_CUDA_KERNEL) ? "c" : "cu" ;
 
@@ -1930,13 +1976,20 @@ GrB_Info GB_jitifyer_load_worker
             GB_jit_control = GxB_JIT_LOAD ;
             // remove the compiled library
             remove (GB_jit_temp) ;
-            return (GrB_NO_VALUE) ;
+            return (GrB_NO_VALUE) ;     // FIXME: use another error code?
         }
 
     }
     else
     { 
-        GBURBLE ("(jit: load) ") ;
+        if (kcode >= GB_JIT_CUDA_KERNEL)
+        {
+            GBURBLE ("(jit: cuda load) ") ;
+        }
+        else
+        {
+            GBURBLE ("(jit: cpu load) ") ;
+        }
     }
 
     //--------------------------------------------------------------------------
@@ -1953,7 +2006,7 @@ GrB_Info GB_jitifyer_load_worker
         GB_jit_control = GxB_JIT_RUN ;
         // remove the compiled library
         remove (GB_jit_temp) ;
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // FIXME: use another error code?
     }
 
     // insert the new kernel into the hash table
@@ -2251,7 +2304,7 @@ void GB_jitifyer_table_free (bool freeall)
 
 // NOTE: this call to system(...) *cannot* be sanitized; CodeQL flags calls to
 // GB_jitifyer_command as security issues, but this is intentional.  The JIT
-// allows the end user to create arbitary user-defined types and operators,
+// allows the end user to create arbitrary user-defined types and operators,
 // which GraphBLAS then injects into C source code of a JIT kernel created at
 // run time.  The end user can also specify an arbitrary compiler to compile
 // JIT kernels.  This code injection is intentional, and required for the JIT.
@@ -2288,7 +2341,9 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
     uint32_t bucket = hash & 0xFF ;
     GBURBLE ("(jit: %s)\n", "cmake") ;
     char *burble_stdout = GB_Global_burble_get ( ) ? "" : GB_DEV_NULL ;
-    char *err_redirect = (strlen (GB_jit_error_log) > 0) ? " 2>> " : "" ;
+    bool have_log = (GB_STRLEN (GB_jit_error_log) > 0) ;
+    char *err_redirect = have_log ?  " 2>> " : " 2>&1 " ;
+    char *log_quote = have_log ? "\"" : "" ;
 
 #if defined (__MINGW32__)
 #define GB_SH_C "sh -c "
@@ -2298,9 +2353,10 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
 
     // remove any prior build folder for this kernel, and all its contents
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        GB_SH_C "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s",
+        GB_SH_C "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s%s%s",
         GB_jit_cache_path, hash,     // build path
-        burble_stdout, err_redirect, GB_jit_error_log) ;
+        burble_stdout, err_redirect,
+        log_quote, GB_jit_error_log, log_quote) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // create the build folder for this kernel
@@ -2332,7 +2388,7 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
         "add_library ( %s SHARED \"%s/c/%02x/%s.c\" )\n",
         kernel_name,                // target name for add_library command
         GB_jit_cache_path, bucket, kernel_name) ; // source file for add_library
-    if (strlen (GB_jit_C_cmake_libs) > 0)
+    if (GB_STRLEN (GB_jit_C_cmake_libs) > 0)
     {
         fprintf (fp,
             "target_link_libraries ( %s PUBLIC %s )\n",
@@ -2357,40 +2413,41 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
     // generate the build system for this kernel
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
         GB_SH_C "cmake -S \"" GB_BLD_DIR "\" -B \"" GB_BLD_DIR "\""
-        " -DCMAKE_C_COMPILER=\"%s\" %s %s %s",
+        " -DCMAKE_C_COMPILER=\"%s\" %s %s %s%s%s",
         GB_jit_cache_path, hash,     // -S source path
         GB_jit_cache_path, hash,     // -B build path
         GB_jit_C_compiler,                  // C compiler to use
-        burble_stdout, err_redirect, GB_jit_error_log) ;
+        burble_stdout, err_redirect, log_quote, GB_jit_error_log, log_quote) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // compile the library for this kernel
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        GB_SH_C "cmake --build \"" GB_BLD_DIR "\" --config Release %s %s %s",
+        GB_SH_C "cmake --build \"" GB_BLD_DIR
+        "\" --config Release %s %s %s%s%s",
         // can add "--verbose" here too
         GB_jit_cache_path, hash,     // build path
-        burble_stdout, err_redirect, GB_jit_error_log) ;
+        burble_stdout, err_redirect, log_quote, GB_jit_error_log, log_quote) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // install the library
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        GB_SH_C "cmake --install \"" GB_BLD_DIR "\" %s %s %s",
+        GB_SH_C "cmake --install \"" GB_BLD_DIR "\" %s %s %s%s%s",
         GB_jit_cache_path, hash,     // build path
-        burble_stdout, err_redirect, GB_jit_error_log) ;
+        burble_stdout, err_redirect, log_quote, GB_jit_error_log, log_quote) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // remove the build folder and all its contents
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
-        GB_SH_C "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s",
+        GB_SH_C "cmake -E remove_directory \"" GB_BLD_DIR "\" %s %s %s%s%s",
         GB_jit_cache_path, hash,     // build path
-        burble_stdout, err_redirect, GB_jit_error_log) ;
+        burble_stdout, err_redirect, log_quote, GB_jit_error_log, log_quote) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
 #endif
 }
 
 //------------------------------------------------------------------------------
-// GB_jitifyer_nvcc_compile: compile a CUDA kernel with NVRTC
+// GB_jitifyer_nvcc_compile: compile a CUDA kernel with nvcc
 //------------------------------------------------------------------------------
 
 // Compiles a CUDA JIT kernel in a *.cu file, containing host code that
@@ -2412,7 +2469,9 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
 #if defined ( GRAPHBLAS_HAS_CUDA ) && !defined ( NJIT )
 
     char *burble_stdout = GB_Global_burble_get ( ) ? "" : GB_DEV_NULL ;
-    char *err_redirect = (strlen (GB_jit_error_log) > 0) ? " 2>> " : "" ;
+    bool have_log = (GB_STRLEN (GB_jit_error_log) > 0) ;
+    char *err_redirect = have_log ?  " 2>> " : " 2>&1 " ;
+    char *log_quote = have_log ? "'" : "" ;
 
     GBURBLE ("(jit compiling cuda with nvcc: %s/c/%02x/%s.cu) ",
         GB_jit_cache_path, bucket, kernel_name) ;
@@ -2421,34 +2480,41 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
 
     // compile:
     "sh -c \""                          // execute with POSIX shell
+    // FIXME: use GB_CUDA_COMPILER here:
     "nvcc "                             // compiler command
     "-forward-unknown-to-host-compiler "
     "-DGB_JIT_RUNTIME=1  "              // nvcc flags
-    "-I/usr/local/cuda/include -std=c++17 -arch=sm_60 -fPIC "
-    "-I%s/src "                         // include source directory
-    "-o %s/c/%02x/%s%s "                // *.o output file
-    "-c %s/c/%02x/%s.cu "               // *.cu input file
+    // FIXME: add GB_CUDA_INC here:
+    "-I/usr/local/cuda/include -std=c++17 " 
+    // FIXME: use GB_CUDA_ARCHITECTURES here:
+    " -arch=sm_60 "
+    " -fPIC " 
+    // FIXME: add GB_CUDA_FLAGS here:
+    " -G "   // HACK FIXME (for CUDA)
+    "-I '%s/src' "                      // include source directory
+    "-o '%s/c/%02x/%s%s' "              // *.o output file
+    "-c '%s/c/%02x/%s.cu' "             // *.cu input file
     "%s "                               // burble stdout
-    "%s %s ; "                          // error log file
+    "%s %s%s%s ; "                      // error log file
 
     // link:
     "nvcc "                             // compiler
     "-DGB_JIT_RUNTIME=1  "              // nvcc flags
     "-I/usr/local/cuda/include -std=c++17 -arch=sm_60 "
     " -shared "
-    "-o %s/lib/%02x/%s%s%s "            // lib*.so output file
-    "%s/c/%02x/%s%s "                   // *.o input file
+    "-o '%s/lib/%02x/%s%s%s' "          // lib*.so output file
+    "'%s/c/%02x/%s%s' "                 // *.o input file
     " -cudart shared "
 //  "%s "                               // libraries to link with (any?)
     "%s "                               // burble stdout
-    "%s %s\"",                          // error log file
+    "%s %s%s%s\"",                      // error log file
 
     // compile:
     GB_jit_cache_path,                  // include source directory (cache/src)
     GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o output file
     GB_jit_cache_path, bucket, kernel_name,                 // *.cu input file
     burble_stdout,                      // burble stdout
-    err_redirect, GB_jit_error_log,     // error log file
+    err_redirect, log_quote, GB_jit_error_log, log_quote,   // error log file
 
     // link:
     GB_jit_cache_path, bucket,  
@@ -2456,7 +2522,7 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
     GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o input file
 //  GB_jit_C_libraries                  // libraries to link with
     burble_stdout,                      // burble stdout
-    err_redirect, GB_jit_error_log) ;   // error log file
+    err_redirect, log_quote, GB_jit_error_log, log_quote) ; // error log file
 
     // compile the library and return result
     GBURBLE ("\n(jit: %s) ", GB_jit_temp) ;
@@ -2489,7 +2555,9 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
 #ifndef NJIT
 
     char *burble_stdout = GB_Global_burble_get ( ) ? "" : GB_DEV_NULL ;
-    char *err_redirect = (strlen (GB_jit_error_log) > 0) ? " 2>> " : "" ;
+    bool have_log = (GB_STRLEN (GB_jit_error_log) > 0) ;
+    char *err_redirect = have_log ?  " 2>> " : " 2>&1 " ;
+    char *log_quote = have_log ? "'" : "" ;
 
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
 
@@ -2497,22 +2565,22 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
     "sh -c \""                          // execute with POSIX shell
     "%s "                               // compiler command
     "-DGB_JIT_RUNTIME=1 %s "            // C flags
-    "-I%s/src "                         // include source directory
+    "-I'%s/src' "                       // include source directory
     "%s "                               // openmp include directories
-    "-o %s/c/%02x/%s%s "                // *.o output file
-    "-c %s/c/%02x/%s.c "                // *.c input file
+    "-o '%s/c/%02x/%s%s' "              // *.o output file
+    "-c '%s/c/%02x/%s.c' "              // *.c input file
     "%s "                               // burble stdout
-    "%s %s ; "                          // error log file
+    "%s %s%s%s ; "                      // error log file
 
     // link:
     "%s "                               // C compiler
     "%s "                               // C flags
     "%s "                               // C link flags
-    "-o %s/lib/%02x/%s%s%s "            // lib*.so output file
-    "%s/c/%02x/%s%s "                   // *.o input file
+    "-o '%s/lib/%02x/%s%s%s' "          // lib*.so output file
+    "'%s/c/%02x/%s%s' "                 // *.o input file
     "%s "                               // libraries to link with
     "%s "                               // burble stdout
-    "%s %s\"",                          // error log file
+    "%s %s%s%s\"",                      // error log file
 
     // compile:
     GB_jit_C_compiler,                  // C compiler
@@ -2522,7 +2590,7 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
     GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o output file
     GB_jit_cache_path, bucket, kernel_name,                 // *.c input file
     burble_stdout,                      // burble stdout
-    err_redirect, GB_jit_error_log,     // error log file
+    err_redirect, log_quote, GB_jit_error_log, log_quote,   // error log file
 
     // link:
     GB_jit_C_compiler,                  // C compiler
@@ -2533,7 +2601,7 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
     GB_jit_cache_path, bucket, kernel_name, GB_OBJ_SUFFIX,  // *.o input file
     GB_jit_C_libraries,                 // libraries to link with
     burble_stdout,                      // burble stdout
-    err_redirect, GB_jit_error_log) ;   // error log file
+    err_redirect, log_quote, GB_jit_error_log, log_quote) ; // error log file
 
     // compile the library and return result
     GBURBLE ("(jit: %s) ", GB_jit_temp) ;

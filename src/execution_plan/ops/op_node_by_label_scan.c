@@ -204,7 +204,7 @@ static Record NodeByLabelScanConsume
 
 	Record r = OpBase_CreateRecord((OpBase *)op);
 
-	// Populate the Record with the actual node.
+	// populate the Record with the actual node
 	_UpdateRecord(op, r, id);
 
 	return r;
@@ -256,8 +256,7 @@ static Record NodeByLabelScanConsumeFromChild
 
 		// free current record
 		if(op->child_record != NULL) {
-			OpBase_DeleteRecord(op->child_record);
-			op->child_record = NULL;
+			OpBase_DeleteRecord(&op->child_record);
 		}
 
 		// try to get a new record
@@ -282,7 +281,7 @@ static Record NodeByLabelScanConsumeFromChild
 
 	// we've got a record and NodeID
 	// clone the held Record, as it will be freed upstream
-	Record r = OpBase_DeepCloneRecord(op->child_record);
+	Record r = OpBase_CloneRecord(op->child_record);
 
 	// populate the Record with the actual node
 	_UpdateRecord(op, r, id);
@@ -321,8 +320,7 @@ pull:
 		// try to get a new record
 		// free old record
 		if(op->child_record != NULL) {
-			OpBase_DeleteRecord(op->child_record);
-			op->child_record = NULL;
+			OpBase_DeleteRecord(&op->child_record);
 		}
 
 		// ask child for a new record
@@ -344,7 +342,7 @@ pull:
 
 	// we've got a record and NodeID
 	// clone the held Record, as it will be freed upstream
-	Record r = OpBase_DeepCloneRecord(op->child_record);
+	Record r = OpBase_CloneRecord(op->child_record);
 
 	// populate the Record with the actual node
 	_UpdateRecord(op, r, id);
@@ -358,8 +356,7 @@ static OpResult NodeByLabelScanReset
 	NodeByLabelScan *op = (NodeByLabelScan *)ctx;
 
 	if(OpBase_ChildCount(ctx) > 0 && op->child_record != NULL) {
-		OpBase_DeleteRecord(op->child_record); // free old record
-		op->child_record = NULL;
+		OpBase_DeleteRecord(&op->child_record); // free old record
 	} else {
 		_ConstructIterator(op);
 	}
@@ -387,8 +384,7 @@ static void NodeByLabelScanFree
 	ASSERT(info == GrB_SUCCESS);
 
 	if(op->child_record) {
-		OpBase_DeleteRecord(op->child_record);
-		op->child_record = NULL;
+		OpBase_DeleteRecord(&op->child_record);
 	}
 
 	if(op->n != NULL) {

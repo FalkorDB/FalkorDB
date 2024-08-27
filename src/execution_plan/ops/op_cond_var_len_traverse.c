@@ -204,7 +204,7 @@ static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase) {
 		Record childRecord = OpBase_Consume(child);
 		if(!childRecord) return NULL;
 
-		if(op->r) OpBase_DeleteRecord(op->r);
+		OpBase_DeleteRecord(&op->r);
 		op->r = childRecord;
 
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
@@ -212,8 +212,7 @@ static Record CondVarLenTraverseOptimizedConsume(OpBase *opBase) {
 			// the child Record may not contain the source node
 			// in scenarios like a failed OPTIONAL MATCH
 			// in this case, delete the Record and try again
-			OpBase_DeleteRecord(op->r);
-			op->r = NULL;
+			OpBase_DeleteRecord(&op->r);
 			continue;
 		}
 
@@ -267,15 +266,14 @@ static Record CondVarLenTraverseConsume(OpBase *opBase) {
 		Record childRecord = OpBase_Consume(child);
 		if(!childRecord) return NULL;
 
-		if(op->r) OpBase_DeleteRecord(op->r);
+		OpBase_DeleteRecord(&op->r);
 		op->r = childRecord;
 
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
 		if(srcNode == NULL) {
 			/* The child Record may not contain the source node in scenarios like
 			 * a failed OPTIONAL MATCH. In this case, delete the Record and try again. */
-			OpBase_DeleteRecord(op->r);
-			op->r = NULL;
+			OpBase_DeleteRecord(&op->r);
 			continue;
 		}
 
@@ -318,8 +316,7 @@ static Record CondVarLenTraverseConsume(OpBase *opBase) {
 static OpResult CondVarLenTraverseReset(OpBase *ctx) {
 	CondVarLenTraverse *op = (CondVarLenTraverse *)ctx;
 	if(op->r) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 
 	if(op->collect_paths) {
@@ -380,8 +377,7 @@ static void CondVarLenTraverseFree(OpBase *ctx) {
 	}
 
 	if(op->r) {
-		OpBase_DeleteRecord(op->r);
-		op->r = NULL;
+		OpBase_DeleteRecord(&op->r);
 	}
 
 	if(op->collect_paths) {

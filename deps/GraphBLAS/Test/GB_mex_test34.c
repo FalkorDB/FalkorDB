@@ -18,10 +18,10 @@
 
 #define DGET(desc,value,field)                                  \
 {                                                               \
-    OK (GrB_Descriptor_get_INT32 (desc, &i, field)) ;           \
+    OK (GrB_Descriptor_get_INT32 (desc, &i, (GrB_Field) (field))) ;           \
     CHECK (i == value) ;                                        \
     OK (GrB_Scalar_clear (s_int32)) ;                           \
-    OK (GrB_Descriptor_get_Scalar (desc, s_int32, field)) ;     \
+    OK (GrB_Descriptor_get_Scalar (desc, s_int32, (GrB_Field) (field))) ;     \
     int32_t iscalar = -1 ;                                      \
     OK (GrB_Scalar_extractElement_INT32 (&iscalar, s_int32)) ;  \
     CHECK (iscalar == value) ;                                  \
@@ -33,16 +33,16 @@
 
 #define DSET(desc,value,field)                                  \
 {                                                               \
-    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, field)) ;  \
-    OK (GrB_Descriptor_set_INT32 (desc, value, field)) ;        \
+    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (GrB_Field) (field))) ;  \
+    OK (GrB_Descriptor_set_INT32 (desc, value, (GrB_Field) (field))) ;        \
     int32_t i2 ;                                                \
-    OK (GrB_Descriptor_get_INT32 (desc, &i2, field)) ;          \
+    OK (GrB_Descriptor_get_INT32 (desc, &i2, (GrB_Field) (field))) ;          \
     CHECK (i2 == value) ;                                       \
-    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, field)) ;  \
+    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (GrB_Field) (field))) ;  \
     OK (GrB_Scalar_setElement_INT32 (s_int32, value)) ;         \
-    OK (GrB_Descriptor_set_Scalar (desc, s_int32, field)) ;     \
+    OK (GrB_Descriptor_set_Scalar (desc, s_int32, (GrB_Field) (field))) ;     \
     int32_t i3 ;                                                \
-    OK (GrB_Descriptor_get_INT32 (desc, &i2, field)) ;          \
+    OK (GrB_Descriptor_get_INT32 (desc, &i2, (GrB_Field) (field))) ;          \
     CHECK (i2 == value) ;                                       \
 }
 
@@ -412,38 +412,38 @@ GrB_DESC_RSCT0T1 ; // GrB_REPLACE  GrB_STRUCTURE  GrB_COMP   GrB_TRAN  GrB_TRAN
 
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_Descriptor_get_INT32_ (GrB_DESC_T1, &i, GrB_NAME)) ;
-    ERR (GrB_Descriptor_set_INT32_ (GrB_DESC_T1, GrB_REPLACE, GrB_OUTP)) ;
-    ERR (GrB_Descriptor_set_INT32 (NULL, GrB_REPLACE, GrB_OUTP)) ;
-    ERR (GrB_Descriptor_get_SIZE_ (GrB_DESC_T1, &size, GrB_OUTP)) ;
-    ERR (GrB_Descriptor_set_Scalar_ (GrB_DESC_T1, s_int32, GrB_MASK)) ;
-    ERR (GrB_Descriptor_set_Scalar (NULL, s_int32, GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_INT32_ (GrB_DESC_T1, GrB_REPLACE, (GrB_Field) GrB_OUTP)) ;
+    ERR (GrB_Descriptor_set_INT32 (NULL, GrB_REPLACE, (GrB_Field) GrB_OUTP)) ;
+    ERR (GrB_Descriptor_get_SIZE_ (GrB_DESC_T1, &size, (GrB_Field) GrB_OUTP)) ;
+    ERR (GrB_Descriptor_set_Scalar_ (GrB_DESC_T1, s_int32, (GrB_Field) GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_Scalar (NULL, s_int32, (GrB_Field) GrB_MASK)) ;
     ERR (GrB_Descriptor_set_INT32_ (desc, GrB_DEFAULT, GrB_NAME)) ;
     ERR (GrB_Descriptor_set_String_ (GrB_DESC_T1, "newname", GrB_NAME)) ;
 
-    char *err ;
-    ERR (GrB_Descriptor_set_INT32_ (desc, 999, GrB_OUTP)) ;
+    const char *err ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 999, (GrB_Field) GrB_OUTP)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 998, GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 998, (GrB_Field) GrB_MASK)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 997, GrB_INP0)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 997, (GrB_Field) GrB_INP0)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 996, GrB_INP1)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 996, (GrB_Field) GrB_INP1)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 995, GxB_AxB_METHOD)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 995, (GrB_Field) GxB_AxB_METHOD)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
     expected = GrB_EMPTY_OBJECT ;
     OK (GrB_Scalar_clear (s_int32)) ;
-    ERR (GrB_Descriptor_set_Scalar_ (desc, s_int32, GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_Scalar_ (desc, s_int32, (GrB_Field) GrB_MASK)) ;
 
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_Descriptor_set_VOID_ (desc, nothing, 0, 0)) ;

@@ -70,10 +70,10 @@ static void _accumulate
 		// a heap stored record with the current record
 		if(_record_cmp(Heap_peek(op->heap), r, op) > 0) {
 			Record replaced = Heap_poll(op->heap);
-			OpBase_DeleteRecord(replaced);
+			OpBase_DeleteRecord(&replaced);
 			Heap_offer(&op->heap, r);
 		} else {
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 	}
 }
@@ -114,8 +114,8 @@ static OpResult SortInit(OpBase *opBase) {
 	OpSort *op = (OpSort *)opBase;
 
 	// set skip and limit if present in the execution-plan
-	ExecutionPlan_ContainsSkip(opBase, &op->skip);
-	ExecutionPlan_ContainsLimit(opBase, &op->limit);
+	ExecutionPlan_ContainsSkip(opBase->parent, &op->skip);
+	ExecutionPlan_ContainsLimit(opBase->parent, &op->limit);
 
 	// if there is LIMIT value, l, set in the current clause,
 	// the operation must return the top l records with respect to
@@ -189,7 +189,7 @@ static OpResult SortReset(OpBase *ctx) {
 		recordCount = Heap_count(op->heap);
 		for(uint i = 0; i < recordCount; i++) {
 			Record r = (Record)Heap_poll(op->heap);
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 	}
 
@@ -197,7 +197,7 @@ static OpResult SortReset(OpBase *ctx) {
 		recordCount = array_len(op->buffer);
 		for(uint i = op->record_idx; i < recordCount; i++) {
 			Record r = op->buffer[i];
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 		array_clear(op->buffer);
 	}
@@ -225,7 +225,7 @@ static void SortFree(OpBase *ctx) {
 		uint recordCount = Heap_count(op->heap);
 		for(uint i = 0; i < recordCount; i++) {
 			Record r = (Record)Heap_poll(op->heap);
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 		Heap_free(op->heap);
 		op->heap = NULL;
@@ -235,7 +235,7 @@ static void SortFree(OpBase *ctx) {
 		uint recordCount = array_len(op->buffer);
 		for(uint i = op->record_idx; i < recordCount; i++) {
 			Record r = op->buffer[i];
-			OpBase_DeleteRecord(r);
+			OpBase_DeleteRecord(&r);
 		}
 		array_free(op->buffer);
 		op->buffer = NULL;

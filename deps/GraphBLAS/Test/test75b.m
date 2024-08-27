@@ -4,6 +4,7 @@ function test75b
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
+fprintf ('test75b: test mxm and vxm on all semirings\n') ;
 [binops, ~, add_ops, types, ~, ~] = GB_spec_opsall ;
 % mult_ops = binops.positional
 mult_ops = binops.all ;
@@ -91,6 +92,7 @@ n_semirings = 0 ;
 for k1 = 1:length(mult_ops)
     mulop = mult_ops {k1} ;
     fprintf ('\n%-10s ', mulop) ;
+    GB_mex_finalize ;
 
     for k2 = 1:length(add_ops)
         addop = add_ops {k2} ;

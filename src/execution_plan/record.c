@@ -9,38 +9,15 @@
 #include "../errors/errors.h"
 #include "../util/rmalloc.h"
 
-// migrate the entry at the given index in the source Record to the same index
-// in the destination. Ownership is transferred according to transfer_ownership
-static void _RecordPropagateEntry
-(
-	Record dest,
-	Record src,
-	uint idx,
-	bool transfer_ownership
-) {
-	// copy the entry
-	dest->entries[idx] = src->entries[idx];
-
-	// ownership is determined according to transfer_ownership
-	if(src->entries[idx].type == REC_TYPE_SCALAR) {
-		if(transfer_ownership) {
-			SIValue_MakeVolatile(&src->entries[idx].value.s);
-		} else {
-			SIValue_MakeVolatile(&dest->entries[idx].value.s);
-		}
-	}
-}
-
-// this function is currently unused
 Record Record_New
 (
 	rax *mapping
 ) {
-	ASSERT(mapping);
+	ASSERT(mapping != NULL);
+
 	// determine record size
 	uint entries_count = raxSize(mapping);
-	uint rec_size = sizeof(_Record);
-	rec_size += sizeof(Entry) * entries_count;
+	uint rec_size = sizeof(_Record) + sizeof(Entry) * entries_count;
 
 	Record r = rm_calloc(1, rec_size);
 	r->mapping = mapping;
@@ -67,34 +44,59 @@ bool Record_ContainsEntry
 }
 
 // retrieve the offset into the Record of the given alias
-uint Record_GetEntryIdx
-(
+uint Record_GetEntryIdx (
 	Record r,
-	const char *alias
+	const char *alias,
+	size_t len
 ) {
 	ASSERT(r && alias);
 
-	void *idx = raxFind(r->mapping, (unsigned char *)alias, strlen(alias));
+	void *idx = raxFind(r->mapping, (unsigned char *)alias, len);
 
 	return idx != raxNotFound ? (intptr_t)idx : INVALID_INDEX;
 }
 
 void Record_Clone
 (
-	const Record r,
-	Record clone
+	const restrict Record r,
+	restrict Record clone
 ) {
-	int entry_count = Record_length(r);
-	size_t required_record_size = sizeof(Entry) * entry_count;
+	// r and clone share the same record mapping
+	if(likely(r->owner == clone->owner)) {
+		ASSERT(Record_length(r) <= Record_length(clone));
+		size_t required_record_size = sizeof(Entry) * Record_length(r);
+		memcpy(clone->entries, r->entries, required_record_size);
 
-	memcpy(clone->entries, r->entries, required_record_size);
+		// foreach scalar entry in cloned record, make sure it is not freed
+		// it is the original record owner responsibility to free the record
+		// and its internal scalar as a result
+		//
+	} else {
+		// r and clone don't share the same mappings
+		// scan through each entry within r
+		// locate coresponding entry in clone
+		// if such exists shallow clone it
+		raxIterator it;
+		raxStart(&it, clone->mapping);
+		raxSeek(&it, "^", NULL, 0);
 
-	/* Foreach scalar entry in cloned record, make sure it is not freed.
-	 * it is the original record owner responsibility to free the record
-	 * and its internal scalar as a result.
-	 *
-	 * TODO: I wish we wouldn't have to perform this loop as it is a major performance hit
-	 * with the introduction of a garbage collection this should be removed. */
+		while(raxNext(&it)) {
+			uint src_idx = Record_GetEntryIdx(r, (const char*)it.key, it.key_len);
+
+			if(src_idx == INVALID_INDEX) continue;
+			if(Record_GetType(r, src_idx) == REC_TYPE_UNKNOWN) continue;
+
+			intptr_t target_idx = (intptr_t)it.data;
+			Record_Add(clone, target_idx, Record_Get(r, src_idx));
+		}
+
+		raxStop(&it);
+	}
+
+	// TODO: i wish we wouldn't have to perform this loop
+	// as it is a major performance hit
+	// with the introduction of a garbage collection this should be removed
+	int entry_count = Record_length(clone);
 	for(int i = 0; i < entry_count; i++) {
 		if(Record_GetType(clone, i) == REC_TYPE_SCALAR) {
 			SIValue_MakeVolatile(&clone->entries[i].value.s);
@@ -102,54 +104,53 @@ void Record_Clone
 	}
 }
 
-void Record_DeepClone
-(
-		const Record r,
-		Record clone
-) {
-	int entry_count = Record_length(r);
-	size_t required_record_size = sizeof(Entry) * entry_count;
-
-	memcpy(clone->entries, r->entries, required_record_size);
-
-	// deep copy scalars
-	for(uint i = 0; i < entry_count; i++) {
-		if(r->entries[i].type == REC_TYPE_SCALAR) {
-			clone->entries[i].value.s = SI_CloneValue(r->entries[i].value.s);
-		}
-	}
-}
-
+// merge src record into dest
 void Record_Merge
 (
-	Record a,
-	const Record b
+	restrict Record dest,      // dest record
+	const restrict Record src  // src record
 ) {
-	ASSERT(a->owner == b->owner);
-	uint len = Record_length(a);
+	ASSERT(src->owner == dest->owner);
 
+	uint len = Record_length(src);
 	for(uint i = 0; i < len; i++) {
-		RecordEntryType a_type = a->entries[i].type;
-		RecordEntryType b_type = b->entries[i].type;
+		RecordEntryType src_type  = src->entries[i].type;
+		RecordEntryType dest_type = dest->entries[i].type;
 
-		if(a_type == REC_TYPE_UNKNOWN && b_type != REC_TYPE_UNKNOWN) {
-			_RecordPropagateEntry(a, b, i, true);
+		if(src_type != REC_TYPE_UNKNOWN && dest_type == REC_TYPE_UNKNOWN) {
+			// copy entry from src to dest
+			dest->entries[i] = src->entries[i];
+
+			// protect heap allocated values
+			if(src->entries[i].type == REC_TYPE_SCALAR) {
+				if(SI_ALLOCATION(&(src->entries[i].value.s)) == M_SELF) {
+					SIValue_MakeVolatile(&(src->entries[i].value.s));
+				} else {
+					SIValue_Persist(&(dest->entries[i].value.s));
+				}
+			}
 		}
 	}
 }
 
-// merge entries from `from` into `to`, transfer ownership if transfer_ownership
-// is on
-void Record_TransferEntries
+// duplicates entries from `src` into `dest`
+void Record_DuplicateEntries
 (
-	Record *to,              // destination record
-	Record from,             // src record
-	bool transfer_ownership  // transfer ownership of the record to dest or not
+	restrict Record dest,      // destination record
+	restrict const Record src  // src record
 ) {
-	uint len = Record_length(from);
+	ASSERT(src->owner == dest->owner);
+
+	uint len = Record_length(src);
 	for(uint i = 0; i < len; i++) {
-		if(from->entries[i].type != REC_TYPE_UNKNOWN) {
-			_RecordPropagateEntry(*to, from, i, transfer_ownership);
+		if(src->entries[i].type != REC_TYPE_UNKNOWN && 
+		   dest->entries[i].type == REC_TYPE_UNKNOWN) {
+			// copy the entry
+			dest->entries[i] = src->entries[i];
+			if(dest->entries[i].type == REC_TYPE_SCALAR) {
+				dest->entries[i].value.s =
+					SI_CloneValue(dest->entries[i].value.s);
+			}
 		}
 	}
 }
@@ -159,6 +160,7 @@ RecordEntryType Record_GetType
 	const Record r,
 	uint idx
 ) {
+	ASSERT(Record_length(r) > idx);
 	return r->entries[idx].type;
 }
 
@@ -205,6 +207,8 @@ SIValue Record_Get
 	Record r,
 	uint idx
 ) {
+	ASSERT(Record_length(r) > idx);
+
 	Entry e = r->entries[idx];
 	switch(e.type) {
 		case REC_TYPE_NODE:
@@ -299,18 +303,6 @@ Edge *Record_AddEdge
 	return &(r->entries[idx].value.e);
 }
 
-void Record_PersistScalars
-(
-	Record r
-) {
-	uint len = Record_length(r);
-	for(uint i = 0; i < len; i++) {
-		if(r->entries[i].type == REC_TYPE_SCALAR) {
-			SIValue_Persist(&r->entries[i].value.s);
-		}
-	}
-}
-
 size_t Record_ToString
 (
 	const Record r,
@@ -367,11 +359,13 @@ void Record_FreeEntries
 	}
 }
 
-// this function is currently unused
 void Record_Free
 (
 	Record r
 ) {
+	ASSERT(r != NULL);
+	ASSERT(r->ref_count == 0);
+
 	Record_FreeEntries(r);
 	rm_free(r);
 }

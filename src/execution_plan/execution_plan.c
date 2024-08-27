@@ -385,20 +385,42 @@ inline rax *ExecutionPlan_GetMappings(const ExecutionPlan *plan) {
 	return plan->record_map;
 }
 
-Record ExecutionPlan_BorrowRecord(ExecutionPlan *plan) {
+Record ExecutionPlan_BorrowRecord
+(
+	ExecutionPlan *plan
+) {
 	rax *mapping = ExecutionPlan_GetMappings(plan);
 	ASSERT(plan->record_pool);
 
-	// Get a Record from the pool and set its owner and mapping.
+	// get a Record from the pool and set its owner and mapping
 	Record r = ObjectPool_NewItem(plan->record_pool);
-	r->owner = plan;
-	r->mapping = mapping;
+
+	r->owner     = plan;
+	r->mapping   = mapping;
+	r->ref_count = 1;
+
 	return r;
 }
 
-void ExecutionPlan_ReturnRecord(const ExecutionPlan *plan, Record r) {
+void ExecutionPlan_ReturnRecord
+(
+	const ExecutionPlan *plan,
+	Record r
+) {
 	ASSERT(plan && r);
-	ObjectPool_DeleteItem(plan->record_pool, r);
+	ASSERT(r->ref_count > 0);
+
+	// decrease record ref count
+	r->ref_count--;
+
+	// free record when ref count reached 0
+	if(r->ref_count == 0) {
+		// call recursively for parent
+		if(r->parent != NULL) {
+			ExecutionPlan_ReturnRecord(r->parent->owner, r->parent);
+		}
+		ObjectPool_DeleteItem(plan->record_pool, r);
+	}
 }
 
 //------------------------------------------------------------------------------

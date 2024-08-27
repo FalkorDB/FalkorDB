@@ -10,19 +10,17 @@
 #include "../arithmetic/arithmetic_expression.h"
 
 typedef struct {
-	SIValue *keys;     // SIValues that form the key associated with group
 	AR_ExpNode **agg;  // aggregate functions
-	uint key_count;    // number of keys
 	uint func_count;   // number of aggregation functions
+	Record r;          // representative record
 } Group;
 
 // creates a new group
 Group *Group_New
 (
-	SIValue *keys,     // group keys
-	uint key_count,    // number of keys
 	AR_ExpNode **agg,  // aggregation functions
-	uint func_count    // number of aggregation functions
+	uint func_count,   // number of aggregation functions
+	Record r           // representative record
 );
 
 // free group

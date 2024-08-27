@@ -103,49 +103,52 @@ GrB_Info GrB_Global_set_Scalar
     // set the field
     //--------------------------------------------------------------------------
 
-    double dvalue = 0 ;
-    int32_t ivalue = 0 ;
-    int64_t i64value = 0 ;
-    GrB_Info info ;
+    GrB_Info info = GrB_NO_VALUE ;
 
-    switch ((int) field)
+    #pragma omp critical (GB_global_get_set)
     {
+        double dvalue = 0 ;
+        int32_t ivalue = 0 ;
+        int64_t i64value = 0 ;
+        switch ((int) field)
+        {
 
-        case GxB_HYPER_SWITCH : 
+            case GxB_HYPER_SWITCH : 
 
-            info = GrB_Scalar_extractElement_FP64 (&dvalue, value) ;
-            if (info == GrB_SUCCESS)
-            {
-                GB_Global_hyper_switch_set ((float) dvalue) ;
-            }
-            break ;
+                info = GrB_Scalar_extractElement_FP64 (&dvalue, value) ;
+                if (info == GrB_SUCCESS)
+                {
+                    GB_Global_hyper_switch_set ((float) dvalue) ;
+                }
+                break ;
 
-        case GxB_GLOBAL_CHUNK :             // same as GxB_CHUNK
+            case GxB_GLOBAL_CHUNK :             // same as GxB_CHUNK
 
-            info = GrB_Scalar_extractElement_FP64 (&dvalue, value) ;
-            if (info == GrB_SUCCESS)
-            {
-                GB_Context_chunk_set (NULL, dvalue) ;
-            }
-            break ;
+                info = GrB_Scalar_extractElement_FP64 (&dvalue, value) ;
+                if (info == GrB_SUCCESS)
+                {
+                    GB_Context_chunk_set (NULL, dvalue) ;
+                }
+                break ;
 
-        case GxB_HYPER_HASH : 
+            case GxB_HYPER_HASH : 
 
-            info = GrB_Scalar_extractElement_INT64 (&i64value, value) ;
-            if (info == GrB_SUCCESS)
-            {
-                GB_Global_hyper_hash_set (i64value) ;
-            }
-            break ;
+                info = GrB_Scalar_extractElement_INT64 (&i64value, value) ;
+                if (info == GrB_SUCCESS)
+                {
+                    GB_Global_hyper_hash_set (i64value) ;
+                }
+                break ;
 
-        default : 
+            default : 
 
-            info = GrB_Scalar_extractElement_INT32 (&ivalue, value) ;
-            if (info == GrB_SUCCESS)
-            {
-                info = GB_global_enum_set (ivalue, field) ;
-            }
-            break ;
+                info = GrB_Scalar_extractElement_INT32 (&ivalue, value) ;
+                if (info == GrB_SUCCESS)
+                {
+                    info = GB_global_enum_set (ivalue, field) ;
+                }
+                break ;
+        }
     }
 
     return ((info == GrB_NO_VALUE) ? GrB_EMPTY_OBJECT : info) ;
@@ -175,49 +178,66 @@ GrB_Info GrB_Global_set_String
     // get the field
     //--------------------------------------------------------------------------
 
-    switch ((int) field)
+    GrB_Info info = GrB_NO_VALUE ;
+
+    #pragma omp critical (GB_global_get_set)
     {
+        switch ((int) field)
+        {
 
-        case GxB_JIT_C_COMPILER_NAME : 
+            case GxB_JIT_C_COMPILER_NAME : 
 
-            return (GB_jitifyer_set_C_compiler (value)) ;
+                info = GB_jitifyer_set_C_compiler (value) ;
+                break ;
 
-        case GxB_JIT_C_COMPILER_FLAGS : 
+            case GxB_JIT_C_COMPILER_FLAGS : 
 
-            return (GB_jitifyer_set_C_flags (value)) ;
+                info = GB_jitifyer_set_C_flags (value) ;
+                break ;
 
-        case GxB_JIT_C_LINKER_FLAGS : 
+            case GxB_JIT_C_LINKER_FLAGS : 
 
-            return (GB_jitifyer_set_C_link_flags (value)) ;
+                info = GB_jitifyer_set_C_link_flags (value) ;
+                break ;
 
-        case GxB_JIT_C_LIBRARIES : 
+            case GxB_JIT_C_LIBRARIES : 
 
-            return (GB_jitifyer_set_C_libraries (value)) ;
+                info = GB_jitifyer_set_C_libraries (value) ;
+                break ;
 
-        case GxB_JIT_C_CMAKE_LIBS : 
+            case GxB_JIT_C_CMAKE_LIBS : 
 
-            return (GB_jitifyer_set_C_cmake_libs (value)) ;
+                info = GB_jitifyer_set_C_cmake_libs (value) ;
+                break ;
 
-        case GxB_JIT_C_PREFACE : 
+            case GxB_JIT_C_PREFACE : 
 
-            return (GB_jitifyer_set_C_preface (value)) ;
+                info = GB_jitifyer_set_C_preface (value) ;
+                break ;
 
-        case GxB_JIT_CUDA_PREFACE : 
+            case GxB_JIT_CUDA_PREFACE : 
 
-            return (GB_jitifyer_set_CUDA_preface (value)) ;
+                info = GB_jitifyer_set_CUDA_preface (value) ;
+                break ;
 
-        case GxB_JIT_ERROR_LOG : 
+            case GxB_JIT_ERROR_LOG : 
 
-            return (GB_jitifyer_set_error_log (value)) ;
+                info = GB_jitifyer_set_error_log (value) ;
+                break ;
 
-        case GxB_JIT_CACHE_PATH : 
+            case GxB_JIT_CACHE_PATH : 
 
-            return (GB_jitifyer_set_cache_path (value)) ;
+                info = GB_jitifyer_set_cache_path (value) ;
+                break ;
 
-        default : 
+            default : 
 
-            return (GrB_INVALID_VALUE) ;
+                info = GrB_INVALID_VALUE ;
+                break ;
+        }
     }
+
+    return (info) ;
 }
 
 //------------------------------------------------------------------------------
@@ -243,7 +263,14 @@ GrB_Info GrB_Global_set_INT32
     // set the field
     //--------------------------------------------------------------------------
 
-    return (GB_global_enum_set (value, field)) ;
+    GrB_Info info = GrB_NO_VALUE ;
+
+    #pragma omp critical (GB_global_get_set)
+    {
+        info = GB_global_enum_set (value, field) ;
+    }
+
+    return (info) ;
 }
 
 //------------------------------------------------------------------------------
@@ -270,55 +297,70 @@ GrB_Info GrB_Global_set_VOID
     // set the field
     //--------------------------------------------------------------------------
 
-    switch ((int) field)
+    GrB_Info info = GrB_SUCCESS ;
+
+    #pragma omp critical (GB_global_get_set)
     {
+        switch ((int) field)
+        {
 
-        case GxB_BITMAP_SWITCH : 
+            case GxB_BITMAP_SWITCH : 
 
-            if (value == NULL)
-            { 
-                // set all switches to their default
-                GB_Global_bitmap_switch_default ( ) ;
-            }
-            else
-            {
-                if (size < sizeof (double) * GxB_NBITMAP_SWITCH)
+                if (value == NULL)
                 { 
-                    return (GrB_INVALID_VALUE) ;
+                    // set all switches to their default
+                    GB_Global_bitmap_switch_default ( ) ;
                 }
-                double *dvalue = (double *) value ;
-                for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
+                else
+                {
+                    if (size < sizeof (double) * GxB_NBITMAP_SWITCH)
+                    { 
+                        info = GrB_INVALID_VALUE ;
+                    }
+                    else
+                    {
+                        double *dvalue = (double *) value ;
+                        for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
+                        { 
+                            float b = (float) dvalue [k] ;
+                            GB_Global_bitmap_switch_set (k, b) ;
+                        }
+                    }
+                }
+                break ;
+
+            case GxB_PRINTF : 
+
+                if (size != sizeof (GB_printf_function_t))
                 { 
-                    float b = (float) dvalue [k] ;
-                    GB_Global_bitmap_switch_set (k, b) ;
+                    info = GrB_INVALID_VALUE ;
                 }
-            }
-            break ;
+                else
+                { 
+                    GB_Global_printf_set ((GB_printf_function_t) value) ;
+                }
+                break ;
 
-        case GxB_PRINTF : 
+            case GxB_FLUSH : 
 
-            if (size != sizeof (GB_printf_function_t))
-            { 
-                return (GrB_INVALID_VALUE) ;
-            }
-            GB_Global_printf_set ((GB_printf_function_t) value) ;
-            break ;
+                if (size != sizeof (GB_flush_function_t))
+                { 
+                    info = GrB_INVALID_VALUE ;
+                }
+                else
+                { 
+                    GB_Global_flush_set ((GB_flush_function_t) value) ;
+                }
+                break ;
 
-        case GxB_FLUSH : 
+            default : 
 
-            if (size != sizeof (GB_flush_function_t))
-            { 
-                return (GrB_INVALID_VALUE) ;
-            }
-            GB_Global_flush_set ((GB_flush_function_t) value) ;
-            break ;
-
-        default : 
-
-            return (GrB_INVALID_VALUE) ;
+                info = GrB_INVALID_VALUE ;
+                break ;
+        }
     }
 
     #pragma omp flush
-    return (GrB_SUCCESS) ;
+    return (info) ;
 }
 

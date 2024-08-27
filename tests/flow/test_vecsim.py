@@ -41,49 +41,52 @@ class testVecsim():
 
     def test01_vector_distance(self):
         # compute euclidean distance between two vectors
-        q = """RETURN vec.euclideanDistance(vecf32($a), vecf32($b)) AS dist"""
+        qs = {"""RETURN vec.euclideanDistance(vecf32($a), vecf32($b)) AS dist""": 1.414,
+              """RETURN vec.cosineDistance(vecf32($a), vecf32($b)) AS dist""": 0.008}
+              
 
-        # distance between NULL and NULL should be NULL
-        # distance between NULL and vector should be NULL
-        # distance between vector and NULL should be NULL
-        inputs = [ (None, None), (None, [1,1]), ([1,1], None) ]
-        for a, b in inputs:
-            params = {'a': a, 'b': b}
-            distance = self.graph.ro_query(q, params=params).result_set[0][0]
-            self.env.assertIsNone(distance)
-
-        # distance between same vectors should be 0
-        params = {'a': [1,1], 'b': [1,1]}
-        distance = self.graph.ro_query(q, params=params).result_set[0][0]
-        distance = round(distance, 3)
-        self.env.assertEqual(distance, 0)
-
-        # distance between [1,1] and [2,2] should be 1.414
-        params = {'a': [1,1], 'b': [2,2]}
-        distance = self.graph.ro_query(q, params=params).result_set[0][0]
-        distance = round(distance, 3)
-        self.env.assertEqual(distance, 1.414)
-
-        # distance between [1,1] and [2,2,3] should fail
-        # dimension mismatch
-        inputs = [([1,1], [2,2,3]), ([2,2,3], [1,1]) ]
-        for a, b in inputs:
-            try:
-                params = {'a': [1,1], 'b': [2,2,3]}
-                distance = self.graph.ro_query(q, params=params).result_set[0][0]
-                self.env.assertFalse("Expected query to fail")
-            except Exception as e:
-                self.env.assertContains("Vector dimension mismatch", str(e))
-
-        # distance between incompatible types should fail
-        inputs = [([1,1], "foo"), ("foo", [1,1]) ]
-        for a, b in inputs:
-            try:
+        for q, d in qs.items():
+            # distance between NULL and NULL should be NULL
+            # distance between NULL and vector should be NULL
+            # distance between vector and NULL should be NULL
+            inputs = [ (None, None), (None, [1,1]), ([1,1], None) ]
+            for a, b in inputs:
                 params = {'a': a, 'b': b}
                 distance = self.graph.ro_query(q, params=params).result_set[0][0]
-                self.env.assertFalse("Expected query to fail")
-            except Exception as e:
-                self.env.assertContains("Type mismatch", str(e))
+                self.env.assertIsNone(distance)
+
+            # distance between same vectors should be 0
+            params = {'a': [1,1], 'b': [1,1]}
+            distance = self.graph.ro_query(q, params=params).result_set[0][0]
+            distance = round(distance, 3)
+            self.env.assertEqual(distance, 0)
+
+            # distance between [1,2] and [2,3] should be d
+            params = {'a': [1,2], 'b': [2,3]}
+            distance = self.graph.ro_query(q, params=params).result_set[0][0]
+            distance = round(distance, 3)
+            self.env.assertEqual(distance, d)
+
+            # distance between [1,1] and [2,2,3] should fail
+            # dimension mismatch
+            inputs = [([1,1], [2,2,3]), ([2,2,3], [1,1]) ]
+            for a, b in inputs:
+                try:
+                    params = {'a': [1,1], 'b': [2,2,3]}
+                    distance = self.graph.ro_query(q, params=params).result_set[0][0]
+                    self.env.assertFalse("Expected query to fail")
+                except Exception as e:
+                    self.env.assertContains("Vector dimension mismatch", str(e))
+
+            # distance between incompatible types should fail
+            inputs = [([1,1], "foo"), ("foo", [1,1]) ]
+            for a, b in inputs:
+                try:
+                    params = {'a': a, 'b': b}
+                    distance = self.graph.ro_query(q, params=params).result_set[0][0]
+                    self.env.assertFalse("Expected query to fail")
+                except Exception as e:
+                    self.env.assertContains("Type mismatch", str(e))
 
     def test02_locate_similar_nodes(self):
         k = 3

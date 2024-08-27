@@ -431,6 +431,7 @@ inline float GB_powf (float x, float y)
 #define GJ_powf_DEFN                                                     \
  "float GJ_powf (float x, float y)                                   \n" \
 "{                                                                   \n" \
+"    #ifndef GB_CUDA_KERNEL                                          \n" \
 "    int xr_class = fpclassify (x) ;                                 \n" \
 "    int yr_class = fpclassify (y) ;                                 \n" \
 "    if (xr_class == FP_NAN || yr_class == FP_NAN)                   \n" \
@@ -441,6 +442,7 @@ inline float GB_powf (float x, float y)
 "    {                                                               \n" \
 "        return (1) ;                                                \n" \
 "    }                                                               \n" \
+"    #endif                                                          \n" \
 "    return (powf (x, y)) ;                                          \n" \
 "}"
 
@@ -465,6 +467,7 @@ inline double GB_pow (double x, double y)
 #define GJ_pow_DEFN                                                      \
 "double GJ_pow (double x, double y)                                  \n" \
 "{                                                                   \n" \
+"    #ifndef GB_CUDA_KERNEL                                          \n" \
 "    int xr_class = fpclassify (x) ;                                 \n" \
 "    int yr_class = fpclassify (y) ;                                 \n" \
 "    if (xr_class == FP_NAN || yr_class == FP_NAN)                   \n" \
@@ -478,6 +481,7 @@ inline double GB_pow (double x, double y)
 "        return (1) ;                                                \n" \
 "    }                                                               \n" \
 "    // otherwise, z = pow (x,y)                                     \n" \
+"    #endif                                                          \n" \
 "    return (pow (x, y)) ;                                           \n" \
 "}"
 

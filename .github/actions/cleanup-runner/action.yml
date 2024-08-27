@@ -1,0 +1,35 @@
+name: Cleanup running runner
+description: Cleans a spot instance that has the specified label
+
+inputs:
+  service_account_key:
+    description: GCP Service account key
+    required: true
+  project_id:
+    description: GCP Project ID
+    required: true
+  zone:
+    description: GCP Zone
+    required: true
+  instance_label:
+    description: Label to identify the instance
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: auth
+      shell: bash
+      run: echo '${{ inputs.service_account_key }}' | gcloud --project  '${{ inputs.project_id }}' --quiet auth activate-service-account --key-file - >/dev/null 2>&1
+    - id: get-runner-id
+      shell: bash
+      run: |
+        runner_id=$(gcloud compute instances list --filter=labels=${{ inputs.instance_label }} | awk '{print $1}' | tail +2)
+        if [ -z "$runner_id" ]; then
+          echo "Instance with label ${{ inputs.instance_label }} not found"
+          exit 1
+        fi
+        echo "runner_id=$runner_id" >> $GITHUB_OUTPUT
+    - id: kill-runner
+      shell: bash
+      run: gcloud compute instances delete ${{ steps.get-runner-id.outputs.runner_id }} --zone=${{ inputs.zone }} --quiet

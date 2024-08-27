@@ -7,7 +7,7 @@
 
 //------------------------------------------------------------------------------
 
-// This file is #include'd into all JIT kernels on the CPU.
+// This file is #include'd into all JIT kernels on the CPU and the GPU.
 
 #ifndef GB_JIT_KERNEL_H
 #define GB_JIT_KERNEL_H

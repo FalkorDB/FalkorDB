@@ -42,7 +42,7 @@ endif ( )
 
 # CUDA is under development for now, and not deployed in production:
   set ( GRAPHBLAS_USE_CUDA OFF )
-# set ( GRAPHBLAS_USE_CUDA ON )
+# set ( GRAPHBLAS_USE_CUDA ON )     # FIXME: use this for CUDA development
 
 include ( SuiteSparsePolicy )
 

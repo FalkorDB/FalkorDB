@@ -88,7 +88,7 @@ static void _Index_MergeFields
 	} else if(b->type & INDEX_FLD_RANGE) {
 		a->range_name        = rm_strdup(b->range_name);
 	} else if(b->type & INDEX_FLD_VECTOR) {
-		a->options.dimension = b->options.dimension;
+		a->hnsw_options.dimension = b->hnsw_options.dimension;
 		a->vector_name = rm_strdup(b->vector_name);
 	} else {
 		assert(false && "unexpected field type");
@@ -139,7 +139,8 @@ static void _Index_ConstructStructure
 			RSFieldID fieldID = RediSearch_CreateVectorField(rsIdx,
 					field->vector_name);
 
-			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->options.dimension);
+			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->hnsw_options.dimension);
+			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
 		}
 
 		//----------------------------------------------------------------------

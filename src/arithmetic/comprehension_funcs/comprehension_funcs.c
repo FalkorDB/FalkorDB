@@ -19,9 +19,10 @@
 void ListComprehension_Free(void *ctx_ptr) {
 	ListComprehensionCtx *ctx = ctx_ptr;
 
-	// If this comprehension has a filter tree, free it.
+	// if this comprehension has a filter tree, free it
 	if(ctx->ft) FilterTree_Free(ctx->ft);
-	// If this comprehension has an eval routine, free it.
+
+	// if this comprehension has an eval routine, free it
 	if(ctx->eval_exp) AR_EXP_Free(ctx->eval_exp);
 
 	if(ctx->local_record) {
@@ -54,18 +55,22 @@ void *ListComprehension_Clone(void *orig) {
 	return ctx_clone;
 }
 
-static void _PopulateComprehensionCtx(ListComprehensionCtx *ctx, Record outer_record) {
+static void _PopulateComprehensionCtx
+(
+	ListComprehensionCtx *ctx,
+	Record outer_record
+) {
 	rax *local_record_map = raxClone(outer_record->mapping);
 	intptr_t id = raxSize(local_record_map);
 	raxTryInsert(local_record_map, (unsigned char *)ctx->variable_str,
 						  strlen(ctx->variable_str), (void *)id, NULL);
 	ctx->local_record = Record_New(local_record_map);
 
-	// This could just be assigned to 'id', but for safety we'll use a Record lookup.
-	ctx->variable_idx = Record_GetEntryIdx(ctx->local_record, ctx->variable_str);
+	// this could just be assigned to 'id'
+	// but for safety we'll use a Record lookup
+	ctx->variable_idx = Record_GetEntryIdx(ctx->local_record, ctx->variable_str, strlen(ctx->variable_str));
 	ASSERT(ctx->variable_idx != INVALID_INDEX);
 }
-
 
 SIValue AR_ANY(SIValue *argv, int argc, void *private_data) {
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
@@ -92,7 +97,7 @@ SIValue AR_ANY(SIValue *argv, int argc, void *private_data) {
 		// Add the current element to the record at its allocated position.
 		Record_AddScalar(r, ctx->variable_idx, current_elem);
 
-		// If any element in an ANY function passes the predicate, return true.
+		// if any element in an ANY function passes the predicate, return true.
 		FT_Result res = FilterTree_applyFilters(ctx->ft, r);
 		if(res == FILTER_PASS) return SI_BoolVal(true);
 		is_null |= (res == FILTER_NULL);
@@ -224,30 +229,36 @@ SIValue AR_NONE(SIValue *argv, int argc, void *private_data) {
 }
 
 
-SIValue AR_LIST_COMPREHENSION(SIValue *argv, int argc, void *private_data) {
+SIValue AR_LIST_COMPREHENSION
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-	/* List comprehensions are invoked with three children:
-	 * The list to iterate over.
-	 * The current Record.
-	 * The function context. */
+
+	// list comprehensions are invoked with three children:
+	// the list to iterate over
+	// the current Record
+	// the function context
 	SIValue list = argv[0];
 	Record outer_record = argv[1].ptrval;
 	ListComprehensionCtx *ctx = private_data;
 
-	// On the first invocation, build the local Record.
+	// on the first invocation, build the local Record
 	if(ctx->local_record == NULL) _PopulateComprehensionCtx(ctx, outer_record);
 	Record r = ctx->local_record;
 
-	// Populate the local Record with the contents of the outer Record.
+	// populate the local Record with the contents of the outer Record
 	Record_Clone(outer_record, r);
-	// Instantiate the array to be returned.
+	// instantiate the array to be returned
 	SIValue retval = SI_Array(0);
 
 	uint len = SIArray_Length(list);
 	for(uint i = 0; i < len; i++) {
-		// Retrieve the current element.
+		// retrieve the current element
 		SIValue current_elem = SIArray_Get(list, i);
-		// Add the current element to the record at its allocated position.
+		// add the current element to the record at its allocated position
 		Record_AddScalar(r, ctx->variable_idx, current_elem);
 
 		// if the comprehension has a filter tree

@@ -54,13 +54,7 @@ __global__ void GB_cuda_AxB_dot3_dense_phase1_kernel
     // determine the vector k of all entries in C(i,j), one chunk at a time
     //--------------------------------------------------------------------------
 
-#if 0
-    __shared__ int64_t ks [chunk_size] ;
-#endif
-
-//  int64_t chunk_max = GB_ICEIL (mnz, chunk_size) ;
-//  for (int64_t chunk = blockIdx.x ; chunk < chunk_max ; chunk += gridDim.x )
-
+    // grid-stride loop for each threadblock:
     for (int64_t pfirst = blockIdx.x << log2_chunk_size ;
                  pfirst < mnz ;
                  pfirst += gridDim.x << log2_chunk_size)
@@ -72,36 +66,24 @@ __global__ void GB_cuda_AxB_dot3_dense_phase1_kernel
 
         // This threadblock works on Mi/Mx and Ci/Cx, in positions pfirst to
         // pfirst + my_chunk_size - 1.
-
-#if 0
-        int64_t my_chunk_size = GB_cuda_ek_slice (Mp, mnvec, mnz, pfirst,
-            chunk_size, /* output: */ ks) ;
-#else
         int64_t my_chunk_size, mnvec1 ;
         float slope ;
         int64_t kfirst = GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst,
             chunk_size, &my_chunk_size, &mnvec1, &slope) ;
-#endif
 
         //----------------------------------------------------------------------
         // assign entries in C(i,j): either its vector k or its zombie status
         //----------------------------------------------------------------------
 
-//      for (int64_t pM = pfirst + threadIdx.x ;
-//                   pM < pfirst + my_chunk_size ;
-//                   pM += blockDim.x)
-
-        for (int64_t kk = threadIdx.x ; kk < my_chunk_size ; kk += blockDim.x)
+        for (int64_t pdelta = threadIdx.x ;
+                     pdelta < my_chunk_size ;
+                     pdelta += blockDim.x)
         {
 
-#if 0
-            int64_t k = ks [kk] ;       // get the k value of Mi,Mx [pM].
-#else
-            int64_t k = GB_cuda_ek_slice_entry (kk, pfirst, Mp, mnvec1, kfirst,
-                slope) ;
-#endif
-
-            int64_t pM = kk + pfirst ;
+            // get the pM and k value of Mi,Mx [pM]:
+            int64_t pM ;    // = pfirst + pdelta
+            int64_t k = GB_cuda_ek_slice_entry (&pM, pdelta, pfirst, Mp, mnvec1,
+                kfirst, slope) ;
 
             #if GB_MASK_STRUCT
             {

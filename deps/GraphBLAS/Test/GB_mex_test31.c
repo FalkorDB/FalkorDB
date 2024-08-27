@@ -277,7 +277,8 @@ void mexFunction
     ERR (GrB_Monoid_get_String_(GrB_MAX_MONOID_INT32, name, 999)) ;
     ERR (GrB_Monoid_get_VOID_(GrB_LAND_MONOID_BOOL, nothing, 0)) ;
 
-    OK (GrB_BinaryOp_new (&binop, myfunc, GrB_FP32, GrB_FP32, GrB_FP32)) ;
+    OK (GrB_BinaryOp_new (&binop, (GxB_binary_function) myfunc,
+        GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(binop, "myfunc", GrB_NAME)) ;
     METHOD (GrB_BinaryOp_set_String (binop, MYFUNC_DEFN, GxB_JIT_C_DEFINITION)) ;
 

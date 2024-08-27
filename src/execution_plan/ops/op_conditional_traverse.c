@@ -123,15 +123,19 @@ static OpResult CondTraverseInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-/* Each call to CondTraverseConsume emits a Record containing the
- * traversal's endpoints and, if required, an edge.
- * Returns NULL once all traversals have been performed. */
-static Record CondTraverseConsume(OpBase *opBase) {
+// each call to CondTraverseConsume emits a Record containing the
+// traversal's endpoints and, if required, an edge
+// returns NULL once all traversals have been performed
+static Record CondTraverseConsume
+(
+	OpBase *opBase
+) {
 	OpCondTraverse *op = (OpCondTraverse *)opBase;
 	OpBase *child = op->op.children[0];
 
-	/* If we're required to update an edge and have one queued, we can return early.
-	 * Otherwise, try to get a new pair of source and destination nodes. */
+	// if we're required to update an edge and have one queued,
+	// we can return early
+	// otherwise, try to get a new pair of source and destination nodes
 	if(op->r         != NULL  &&
 	   op->edge_ctx  != NULL  &&
 	   EdgeTraverseCtx_SetEdge(op->edge_ctx, op->r)) {
@@ -142,35 +146,37 @@ static Record CondTraverseConsume(OpBase *opBase) {
 	NodeID dest_id = INVALID_ENTITY_ID;
 
 	while(true) {
-		GrB_Info info = RG_MatrixTupleIter_next_UINT64(&op->iter, &src_id, &dest_id, NULL);
+		GrB_Info info =
+			RG_MatrixTupleIter_next_UINT64(&op->iter, &src_id, &dest_id, NULL);
 
-		// Managed to get a tuple, break.
+		// managed to get a tuple, break
 		if(info == GrB_SUCCESS) break;
 
-		/* Run out of tuples, try to get new data.
-		 * Free old records. */
+		// run out of tuples, try to get new data
+		// Free old records
 		op->r = NULL;
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
-		// Ask child operations for data.
+		// ask child operations for data
 		for(op->record_count = 0; op->record_count < op->record_cap; op->record_count++) {
 			Record childRecord = OpBase_Consume(child);
-			// If the Record is NULL, the child has been depleted.
+			// if the Record is NULL, the child has been depleted
 			if(childRecord == NULL) {
 				break;
 			}
+
 			if(!Record_GetNode(childRecord, op->srcNodeIdx)) {
-				/* The child Record may not contain the source node in scenarios like
-				 * a failed OPTIONAL MATCH. In this case, delete the Record and try again. */
-				OpBase_DeleteRecord(childRecord);
+				// the child Record may not contain the source node in scenarios
+				// like a failed OPTIONAL MATCH
+				// in this case, delete the Record and try again
+				OpBase_DeleteRecord(&childRecord);
 				op->record_count--;
 				continue;
 			}
 
-			// Store received record.
-			Record_PersistScalars(childRecord);
+			// store received record
 			op->records[op->record_count] = childRecord;
 		}
 
@@ -195,7 +201,7 @@ static Record CondTraverseConsume(OpBase *opBase) {
 		EdgeTraverseCtx_SetEdge(op->edge_ctx, op->r);
 	}
 
-	return OpBase_DeepCloneRecord(op->r);
+	return OpBase_CloneRecord(op->r);
 }
 
 static OpResult CondTraverseReset(OpBase *ctx) {
@@ -204,7 +210,9 @@ static OpResult CondTraverseReset(OpBase *ctx) {
 	// Do not explicitly free op->r, as the same pointer is also held
 	// in the op->records array and as such will be freed there.
 	op->r = NULL;
-	for(uint i = 0; i < op->record_count; i++) OpBase_DeleteRecord(op->records[i]);
+	for(uint i = 0; i < op->record_count; i++) {
+		OpBase_DeleteRecord(op->records+i);
+	}
 	op->record_count = 0;
 
 	if(op->edge_ctx) EdgeTraverseCtx_Reset(op->edge_ctx);
@@ -251,7 +259,7 @@ static void CondTraverseFree(OpBase *ctx) {
 
 	if(op->records) {
 		for(uint i = 0; i < op->record_count; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 		rm_free(op->records);
 		op->records = NULL;

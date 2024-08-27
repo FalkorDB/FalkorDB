@@ -14,8 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  create-runners:
+    strategy:
+      matrix:
+        arm_machine:
+          - build
+          - unit-tests
+          - flow-tests
+          - tck-tests
+          - fuzz-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Arm runners
+        id: create-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: ${{ vars.GCP_ZONE }}
+          machine_type: t2a-standard-4
+          network: gh-runner
+          runner_label: ${{ matrix.arm_machine }}-${{ github.run_id }}-${{ github.run_number }}
+          arm: true
+          image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
+          disk_size: 100
+
   build:
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
+    needs: create-runners
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || format('build-{0}-{1}', github.run_id, github.run_number)  }}
     container: falkordb/falkordb-build:latest
     services:
       registry:
@@ -91,7 +118,7 @@ jobs:
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false
         run: |
           id=$(docker create --platform=${{ matrix.platform }} localhost:5000/falkordb/falkordb-compiler)
-          docker cp $id:/FalkorDB/bin /FalkorDB/bin
+          docker cp $id:/FalkorDB/bin .
           docker rm -v $id
           ls -l -R /FalkorDB/bin
 
@@ -134,9 +161,21 @@ jobs:
           path: /tmp/falkordb-${{ env.ARCH_SUFFIX }}.tar
           if-no-files-found: error
 
+  cleanup-build:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: build-${{ github.run_id }}-${{ github.run_number }}
+
   unit-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('unit-tests-{0}-{1}', github.run_id, github.run_number) }}
     strategy:
       fail-fast: false
       matrix:
@@ -151,7 +190,7 @@ jobs:
         with:
           name: falkordb-tests-${{ env.ARCH_SUFFIX }}
           path: /tmp
-  
+
       - name: Load image
         id: load_image
         run: |
@@ -159,11 +198,23 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 unit-tests
+
+  cleanup-unit-tests:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: unit-tests-${{ github.run_id }}-${{ github.run_number }}
 
   flow-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('flow-tests-{0}-{1}', github.run_id, github.run_number) }}
     strategy:
       fail-fast: false
       matrix:
@@ -186,11 +237,23 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=4 flow-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+
+  cleanup-flow-tests:
+    needs: flow-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: flow-tests-${{ github.run_id }}-${{ github.run_number }}
 
   tck-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('tck-tests-{0}-{1}', github.run_id, github.run_number) }}
     strategy:
       fail-fast: false
       matrix:
@@ -213,11 +276,23 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 tck-tests
+
+  cleanup-tck-tests:
+    needs: tck-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: tck-tests-${{ github.run_id }}-${{ github.run_number }}
 
   fuzz-tests:
     needs: build
-    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ARM64' }}
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('fuzz-tests-{0}-{1}', github.run_id, github.run_number) }}
     strategy:
       fail-fast: false
       matrix:
@@ -240,4 +315,16 @@ jobs:
 
       - name: Fuzz tests
         run: |
-          docker run --platform ${{ matrix.platform }} --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+          docker run -i --rm falkordb/falkordb-tests make fuzz TIMEOUT=180
+
+  cleanup-fuzz-tests:
+    needs: fuzz-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}

@@ -1,0 +1,70 @@
+name: Code Coverage
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master, "[0-9]+.[0-9]+"]
+  push:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-coverage:
+    runs-on: ubuntu-latest
+    container: falkordb/falkordb-build:ubuntu
+    steps:
+
+    - name: Safe dir
+      run: git config --global --add safe.directory '*'
+
+    - uses: actions/checkout@v4
+      with:
+        set-safe-directory: '*'
+        submodules: recursive
+
+    - name: Cache GraphBLAS
+      id: cache_graphblas
+      uses: actions/cache@v4
+      with:
+        path: ./bin/linux-x64-release-cov/GraphBLAS
+        key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+
+    - name: Cache parser
+      id: cache_parser
+      uses: actions/cache@v4
+      with:
+        path: ./bin/linux-x64-release-cov/libcypher-parser
+        key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+
+    - name: Cache search
+      id: cache_search
+      uses: actions/cache@v4
+      with:
+        path: ./bin/linux-x64-debug-cov/search-static
+        key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+
+    - name: Build
+      run: |
+        rustup toolchain list
+        rustup default nightly
+        apt-get update
+        apt-get install -y clang libomp-dev libc6-dbg python3-venv
+        python3 -m venv venv
+        . venv/bin/activate
+        pip install -r tests/requirements.txt
+        apt update && apt install lsb-release -y
+        curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
+        echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
+        apt update && apt install redis -y
+        make coverage NPROC=16
+      continue-on-error: true
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4.4.0
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}

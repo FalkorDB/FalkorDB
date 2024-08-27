@@ -82,18 +82,6 @@ void mexFunction
 
     CHECK (!GB_as_if_full (NULL)) ;
 
-#if 0
-    //--------------------------------------------------------------------------
-    // GRAPHBLAS_CACHE_PATH
-    //--------------------------------------------------------------------------
-
-    if (getenv ("GRAPHBLAS_CACHE_PATH") != NULL)
-    {
-        setenv ("GRAPHBLAS_CACHE_PATH", "/tmp/grbcache3", 0) ;
-        unsetenv ("GRAPHBLAS_CACHE_PATH") ;
-    }
-#endif
-
     //--------------------------------------------------------------------------
     // finalize GraphBLAS
     //--------------------------------------------------------------------------

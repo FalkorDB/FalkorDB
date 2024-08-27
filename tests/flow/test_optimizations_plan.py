@@ -538,3 +538,33 @@ class testOptimizationsPlan(FlowTestsBase):
         # labels with label `M`
         self.env.assertIn("Node By Label Scan | (n:N)", plan)
         self.env.assertIn("Conditional Traverse | (n:M)->(n:M)", plan)
+
+    def test32_remove_redundant_filters(self):
+        # test that filter reduction is a run-time optimization
+        # we can't remove redundant filters e.g. WHERE 1 = 1
+        # at compile time and cache the resulting execution-plan
+        # for the following reason:
+        # CYPHER param=1 WITH 4 AS X WHERE $param = 1 RETURN X
+
+        q = "WITH 4 AS X WHERE $param = 1 RETURN X"
+
+        # param = 1, WHERE $param = 1 evaluates to True
+        # expecting 'Filter' operation to be removed
+        params = {'param': 1}
+        plan = str(self.graph.explain(q, params))
+        self.env.assertNotIn('Filter', plan)
+
+        # validate result-set
+        res = self.graph.query(q, params).result_set
+        self.env.assertEquals(len(res), 1)
+        self.env.assertEquals(res[0][0], 4)
+
+        # param = 2, WHERE $param = 1 evaluates to False
+        # expecting 'Filter' operation to show up in execution-plan
+        params = {'param': 2}
+        plan = str(self.graph.explain(q, params))
+        self.env.assertIn('Filter', plan)
+
+        # validate result-set
+        res = self.graph.query(q, params).result_set
+        self.env.assertEquals(len(res), 0)

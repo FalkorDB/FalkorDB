@@ -34,13 +34,13 @@ To see FalkorDB in action, visit [Demos](https://github.com/FalkorDB/FalkorDB/tr
 To quickly try out FalkorDB, launch an instance using docker:
 
 ```
-docker run -p 6379:6379 -it --rm falkordb/falkordb:edge
+docker run -p 6379:6379 -it --rm -v ./data:/data falkordb/falkordb:edge
 ```
 
 Or, to use the built-in browser-based interface, run:
 
 ```
-docker run -p 6379:6379 -p 3000:3000 -it --rm falkordb/falkordb:edge
+docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/data falkordb/falkordb:edge
 ```
 
 Then, open your browser and navigate to `http://localhost:3000`.
@@ -76,7 +76,7 @@ for row in res.result_set:
 res = g.query("""MATCH (r:Rider)-[:rides]->(t:Team {name:'Ducati'})
                  RETURN count(r)""")
 
-print(row[0])
+print(res.result_set[0][0])
 # Prints: 1
 ```
 

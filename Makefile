@@ -72,7 +72,6 @@ make fuzz-tests   # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
 make benchmark    # Run benchmarks
-  REMOTE=1          # Run remotely
 
 make coverage     # Perform coverage analysis (build & test)
 make cov-upload   # Upload coverage data to codecov.io
@@ -137,9 +136,9 @@ REDISEARCH_DIR = $(ROOT)/deps/RediSearch
 export REDISEARCH_BINROOT=$(BINROOT)
 include $(ROOT)/build/RediSearch/Makefile.defs
 
-FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-rs
-export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-rs
-include $(ROOT)/build/FalkorDB-rs/Makefile.defs
+FalkorDBRS_DIR = $(ROOT)/deps/FalkorDB-core-rs
+export FalkorDBRS_BINDIR=$(BINROOT)/FalkorDB-core-rs
+include $(ROOT)/build/FalkorDB-core-rs/Makefile.defs
 
 BIN_DIRS += $(REDISEARCH_BINROOT)/search-static
 
@@ -283,7 +282,7 @@ endif
 
 falkordbrs:
 	@echo Building $@ ...
-	cd deps/FalkorDB-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
+	cd deps/FalkorDB-core-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
 
 .PHONY: libcypher-parser graphblas redisearch libxxhash rax utf8proc oniguruma falkordbrs
 
@@ -389,19 +388,8 @@ fuzz fuzz-tests: $(TARGET)
 
 #----------------------------------------------------------------------------------------------
 
-ifneq ($(REMOTE),)
-BENCHMARK_ARGS=run-remote
-else
-BENCHMARK_ARGS=run-local
-endif
-
-BENCHMARK_ARGS += --module_path $(TARGET) --required-module graph
-ifneq ($(BENCHMARK),)
-BENCHMARK_ARGS += --test $(BENCHMARK)
-endif
-
 benchmark: $(TARGET)
-	$(SHOW)cd tests/benchmarks && redisbench-admin $(BENCHMARK_ARGS)
+	$(SHOW)cd tests/benchmarks && python3 -m venv venv && source venv/bin/activate && pip install -r benchmarks_requirements.txt && python3 run_benchmarks.py group_a && python3 run_benchmarks.py group_b
 
 .PHONY: benchmark
 

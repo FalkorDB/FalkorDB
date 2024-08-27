@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
 members = [
-    "deps/FalkorDB-rs",
+    "deps/FalkorDB-core-rs",
 ]

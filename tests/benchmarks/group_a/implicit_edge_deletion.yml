@@ -1,0 +1,14 @@
+name: IMPLICIT-EDGE-DELETION
+db_config:
+  init_commands:
+    - ["GRAPH.QUERY", "graph", "CREATE INDEX FOR (n:N) ON (n.v)"]
+    - ["GRAPH.QUERY", "graph", "UNWIND range(0, 100000) AS x CREATE (src:N {v: x}), (src)-[:R]->(),(src)-[:R]->(:A), (src)-[:R]->(:B)"]
+parameters:
+  num_clients: 1
+  num_requests: 500
+  queries:
+    - query: 'MATCH (n:N {v: floor(rand()*100001)}) DELETE n RETURN 1 LIMIT 1'
+      ratio: 1.0
+kpis:
+  - key: '$.OverallGraphInternalLatencies.Total.q50'
+    max_value: 200.0

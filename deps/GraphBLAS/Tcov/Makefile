@@ -41,7 +41,7 @@ ifeq ($(UNAME),Darwin)
 else
     # Linux
     SO_NAME = libgraphblas_tcov.so
-    SO_OPTS += -shared -Wl,-soname -Wl,$(SO_NAME) -Wl,--no-undefined
+    SO_OPTS += -shared -Wl,-soname -Wl,$(SO_NAME) -Wl,--no-undefined -Wl,-rpath=.
 endif
 
 default: $(SO_NAME)

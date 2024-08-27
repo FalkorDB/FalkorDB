@@ -118,38 +118,26 @@
                 // H += A*G for one panel
                 //--------------------------------------------------------------
 
-                #undef GB_B_kj_PRESENT
+                // GB_HX_COMPUTE:  computes H (i,jj) += A(i,k) * B(k,j)
+                // where H(i,jj) is located at Hx [pH+jj], aij = A(i,k),
+                // and gkj = B(k,j).  gb is the bitmap value for B(k,j).
+
+                #undef GB_HX_COMPUTE
                 #if GB_B_IS_BITMAP
-                #define GB_B_kj_PRESENT(b) b
+                    #define GB_HX_COMPUTE(pH,i,gkj,gb,jj)                   \
+                    if (gb)                                                 \
+                    {                                                       \
+                        GB_MULTADD2 (Hx, pH+jj, aik, gkj, i, k, j1+jj) ;    \
+                    }
                 #else
-                #define GB_B_kj_PRESENT(b) 1
+                    #define GB_HX_COMPUTE(pH,i,gkj,gb,jj)                   \
+                    {                                                       \
+                        GB_MULTADD2 (Hx, pH+jj, aik, gkj, i, k, j1+jj) ;    \
+                    }
                 #endif
-
-                #undef GB_MULT_A_ik_G_kj
-                #if ( GB_IS_PAIR_MULTIPLIER && !GB_Z_IS_COMPLEX )
-                    // t = A(i,k) * B (k,j) is already #defined as 1
-                    #define GB_MULT_A_ik_G_kj(gkj,jj)
-                #else
-                    // t = A(i,k) * B (k,j)
-                    #define GB_MULT_A_ik_G_kj(gkj,jj)                   \
-                        GB_CIJ_DECLARE (t) ;                            \
-                        GB_MULT (t, aik, gkj, i, k, j1 + jj)
-                #endif
-
-                #undef  GB_HX_COMPUTE
-                #define GB_HX_COMPUTE(gkj,gb,jj)                        \
-                {                                                       \
-                    /* H (i,jj) += A(i,k) * B(k,j) */                   \
-                    if (GB_B_kj_PRESENT (gb))                           \
-                    {                                                   \
-                        /* t = A(i,k) * B (k,j) */                      \
-                        GB_MULT_A_ik_G_kj (gkj, jj) ;                   \
-                        /* Hx(i,jj)+=t */                               \
-                        GB_HX_UPDATE (pH+jj, t) ;                       \
-                    }                                                   \
-                }
 
                 #include "GB_AxB_saxpy4_panel.c"
+                #undef GB_HX_COMPUTE
 
                 //--------------------------------------------------------------
                 // C(:,j1:j2-1) = H

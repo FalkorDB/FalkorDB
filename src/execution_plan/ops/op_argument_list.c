@@ -15,7 +15,8 @@ static OpBase *ArgumentListClone(const ExecutionPlan *plan, const OpBase *opBase
 
 OpBase *NewArgumentListOp
 (
-	const ExecutionPlan *plan
+	const ExecutionPlan *plan,
+	const char **variables
 ) {
 	ArgumentList *op = rm_malloc(sizeof(ArgumentList));
 	op->records = NULL;
@@ -25,6 +26,11 @@ OpBase *NewArgumentListOp
 	OpBase_Init((OpBase *)op, OPType_ARGUMENT_LIST, "Argument List", NULL,
 			ArgumentListConsume, ArgumentListReset, NULL, ArgumentListClone,
 			ArgumentListFree, false, plan);
+
+	uint variable_count = array_len(variables);
+	for(uint i = 0; i < variable_count; i ++) {
+		OpBase_Modifies((OpBase *)op, variables[i]);
+	}
 
 	return (OpBase *)op;
 }
@@ -64,7 +70,7 @@ static OpResult ArgumentListReset
 	// free remaining records
 	if(op->records != NULL) {
 		for(uint i = 0; i < op->rec_len; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		array_free(op->records);
@@ -82,7 +88,7 @@ static inline OpBase *ArgumentListClone
 	const OpBase *opBase
 ) {
 	ASSERT(opBase->type == OPType_ARGUMENT_LIST);
-	return NewArgumentListOp(plan);
+	return NewArgumentListOp(plan, opBase->modifies);
 }
 
 static void ArgumentListFree
@@ -94,7 +100,7 @@ static void ArgumentListFree
 	// free remaining records
 	if(op->records != NULL) {
 		for(uint i = 0; i < op->rec_len; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		array_free(op->records);

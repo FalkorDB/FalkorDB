@@ -295,15 +295,11 @@ Record OpBase_CloneRecord
 ) {
 	Record clone = ExecutionPlan_BorrowRecord((struct ExecutionPlan *)r->owner);
 	Record_Clone(r, clone);
-	return clone;
-}
 
-Record OpBase_DeepCloneRecord
-(
-	Record r
-) {
-	Record clone = ExecutionPlan_BorrowRecord((struct ExecutionPlan *)r->owner);
-	Record_DeepClone(r, clone);
+	// increase r's ref count and set r as clone's parent
+	r->ref_count++;
+	clone->parent = r;
+
 	return clone;
 }
 
@@ -337,9 +333,29 @@ OpBase *OpBase_GetChild
 
 inline void OpBase_DeleteRecord
 (
-	Record r
+	Record *r
 ) {
-	ExecutionPlan_ReturnRecord(r->owner, r);
+	ASSERT(r != NULL);
+
+	if(unlikely(*r == NULL)) return;
+
+	ExecutionPlan_ReturnRecord((*r)->owner, *r);
+	// nullify record
+	*r = NULL;
+}
+
+// merge src into dest and deletes src
+void OpBase_MergeRecords
+(
+	Record dest,  // entries are merged into this record
+	Record *src   // entries are merged from this record
+) {
+	ASSERT(dest != NULL);
+	ASSERT(src  != NULL && *src != NULL);
+	ASSERT(dest != *src);
+
+	Record_Merge(dest, *src);
+	OpBase_DeleteRecord(src);
 }
 
 OpBase *OpBase_Clone

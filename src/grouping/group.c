@@ -14,16 +14,14 @@
 // creates a new group
 Group *Group_New
 (
-	SIValue *keys,     // group keys
-	uint key_count,    // number of keys
 	AR_ExpNode **agg,  // aggregation functions
-	uint func_count    // number of aggregation functions
+	uint func_count,   // number of aggregation functions
+	Record r           // representative record
 ) {
 	Group *g = rm_malloc(sizeof(Group));
 
-	g->keys       = keys;
+	g->r          = r;
 	g->agg        = agg;
-	g->key_count  = key_count;
 	g->func_count = func_count;
 
 	return g;
@@ -38,11 +36,8 @@ void Group_Free
 		return;
 	}
 
-	if(g->keys != NULL) {
-		for(int i = 0; i < g->key_count; i ++) {
-			SIValue_Free(g->keys[i]);
-		}
-		rm_free(g->keys);
+	if(g->r != NULL) {
+		OpBase_DeleteRecord(&(g->r));
 	}
 
 	for(uint i = 0; i < g->func_count; i++) {

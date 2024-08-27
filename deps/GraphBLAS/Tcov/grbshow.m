@@ -38,7 +38,9 @@ for k = 1:nfiles
             ~isempty (strfind (cline, '++')))
             % got one; get the count
             k1 = strfind (cline, '[') ;
+            k1 = k1 (1) ;
             k2 = strfind (cline, ']') ;
+            k2 = k2 (1) ;
             s = cline (k1+1:k2-1) ;
             i = str2num (s) + 1 ;
             c = GraphBLAS_grbcov (i) ;

@@ -44,15 +44,15 @@ void mexFunction
 
     OK (GrB_Scalar_new (&s, GrB_INT64)) ;
     OK (GrB_Scalar_setElement_INT64 (s, 0)) ;
-    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
+    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
     OK (GrB_Scalar_clear (s)) ;
-    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
+    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
     int64_t i = 1 ;
     OK (GrB_Scalar_extractElement_INT64 (&i, s)) ;
     CHECK (i == 0) ;
 
     OK (GrB_Matrix_new (&A, GrB_FP64, 100, 100)) ;
-    OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE)) ;
+    OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, (GrB_Field) GxB_HYPERSPARSE)) ;
     OK (GrB_Matrix_setElement_FP64 (A, (double) 1.2, 0, 0)) ;
     OK (GrB_Matrix_wait (A, 1)) ;
     OK (GxB_Matrix_fprint (A, "A valid", 3, NULL)) ;
@@ -297,9 +297,9 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     OK (GrB_Scalar_setElement_INT64 (s, 1024)) ;
-    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
+    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
     OK (GrB_Scalar_clear (s)) ;
-    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
+    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
     OK (GrB_Scalar_extractElement_INT64 (&i, s)) ;
     CHECK (i == 1024) ;
     OK (GrB_Scalar_free (&s)) ;

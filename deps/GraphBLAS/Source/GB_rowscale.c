@@ -73,7 +73,6 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
     //--------------------------------------------------------------------------
     // determine if C is iso (ignore the monoid since it isn't used)
     //--------------------------------------------------------------------------
-
     size_t zsize = ztype->size ;
     GB_void cscalar [GB_VLA(zsize)] ;
     bool C_iso = GB_AxB_iso (cscalar, D, B, D->vdim, semiring, flipxy, true) ;
@@ -194,6 +193,14 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
                 GB_Type_compatible (B->type, mult->ytype))) ;
         }
 
+        info = GrB_NO_VALUE ;
+
+        #if defined ( GRAPHBLAS_HAS_CUDA )
+        if (GB_cuda_rowscale_branch (D, B, semiring, flipxy)) {
+            info = GB_cuda_rowscale (C, D, B, semiring, flipxy) ;
+        }
+        #endif
+
         //----------------------------------------------------------------------
         // determine the number of threads to use
         //----------------------------------------------------------------------
@@ -207,9 +214,9 @@ GrB_Info GB_rowscale                // C = D*B, row scale with diagonal D
         // via the factory kernel
         //----------------------------------------------------------------------
 
-        info = GrB_NO_VALUE ;
         #ifndef GBCOMPACT
         GB_IF_FACTORY_KERNELS_ENABLED
+        if (info == GrB_NO_VALUE)
         { 
 
             //------------------------------------------------------------------

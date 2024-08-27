@@ -47,7 +47,10 @@ static OpResult ApplyInit(OpBase *opBase) {
 	return OP_OK;
 }
 
-static Record ApplyConsume(OpBase *opBase) {
+static Record ApplyConsume
+(
+	OpBase *opBase
+) {
 	Apply *op = (Apply *)opBase;
 
 	while(true) {
@@ -55,13 +58,13 @@ static Record ApplyConsume(OpBase *opBase) {
 			// retrieve a Record from the bound branch
 			op->r = OpBase_Consume(op->bound_branch);
 			if(op->r == NULL) {
-				return NULL; // Bound branch and this op are depleted.
+				return NULL; // bound branch and this op are depleted
 			}
 
 			// collect record for future freeing
 			array_append(op->records, op->r);
 
-			// Successfully pulled a new Record, propagate to the top of the RHS branch.
+			// successfully pulled a new Record, propagate to the top of the RHS branch
 			if(op->op_arg) {
 				Argument_AddRecord(op->op_arg, OpBase_CloneRecord(op->r));
 			}
@@ -81,9 +84,7 @@ static Record ApplyConsume(OpBase *opBase) {
 
 		// clone the bound Record and merge the RHS Record into it
 		Record r = OpBase_CloneRecord(op->r);
-		Record_Merge(r, rhs_record);
-		// delete the RHS record, as it has been merged into r
-		OpBase_DeleteRecord(rhs_record);
+		OpBase_MergeRecords(r, &rhs_record);
 
 		return r;
 	}
@@ -98,7 +99,7 @@ static OpResult ApplyReset(OpBase *opBase) {
 	// free collected records
 	uint32_t n = array_len(op->records);
 	for(uint32_t i = 0; i < n; i++) {
-		OpBase_DeleteRecord(op->records[i]);
+		OpBase_DeleteRecord(op->records+i);
 	}
 	array_clear(op->records);
 
@@ -116,7 +117,7 @@ static void ApplyFree(OpBase *opBase) {
 	if(op->records != NULL) {
 		uint32_t n = array_len(op->records);
 		for(uint32_t i = 0; i < n; i++) {
-			OpBase_DeleteRecord(op->records[i]);
+			OpBase_DeleteRecord(op->records+i);
 		}
 
 		array_free(op->records);

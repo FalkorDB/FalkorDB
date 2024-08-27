@@ -15,19 +15,40 @@ on:
   push:
     branches:
       - master
-      - '[0-9]+.[0-9]+'
+      - "[0-9]+.[0-9]+"
   pull_request:
     # The branches below must be a subset of the branches above
     branches:
       - master
-      - '[0-9]+.[0-9]+'
+      - "[0-9]+.[0-9]+"
   schedule:
-    - cron: '33 5 * * 1'
+    - cron: "33 5 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  analyze:
-    name: Analyze
+  create-runner:
     runs-on: ubuntu-latest
+    steps:
+      - name: Create Runner For Benchmark
+        id: create-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: ${{ vars.GCP_ZONE }}
+          machine_type: n4-highcpu-8
+          network: gh-runner
+          disk_size: 50GB
+          runner_label: codeql-${{ github.run_id }}-${{ github.run_number }}
+
+  analyze:
+    needs: create-runner
+    name: Analyze
+    runs-on: codeql-${{ github.run_id }}-${{ github.run_number }}
     container: falkordb/falkordb-build:ubuntu
     permissions:
       actions: read
@@ -37,70 +58,82 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'cpp' ]
+        language: ["cpp"]
         # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python' ]
         # Learn more:
         # https://docs.github.com/en/free-pro-team@latest/github/finding-security-vulnerabilities-and-errors-in-your-code/configuring-code-scanning#changing-the-languages-that-are-analyzed
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: true
-    - run: |
-        git config --global --add safe.directory '*'
-        git submodule update --init --recursive
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init --recursive
 
-    # Check for cached dependencies 
+      # Check for cached dependencies
 
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@v4
-      with:
-        path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
-        key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}    
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v4
+        with:
+          path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
+          key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
-    - name: Cache parser
-      id: cache_parser
-      uses: actions/cache@v4
-      with:
-        path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
-        key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v4
+        with:
+          path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
+          key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@v4
-      with:
-        path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
-        key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v4
+        with:
+          path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
+          key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
-    # Initializes the CodeQL tools for scanning.
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-        # If you wish to specify custom queries, you can do so here or in a config file.
-        # By default, queries listed here will override any specified in a config file.
-        # Prefix the list here with "+" to use these queries and those in the config file.
-        # queries: ./path/to/local/query, your-org/your-repo/queries@main
+      # Initializes the CodeQL tools for scanning.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # If you wish to specify custom queries, you can do so here or in a config file.
+          # By default, queries listed here will override any specified in a config file.
+          # Prefix the list here with "+" to use these queries and those in the config file.
+          # queries: ./path/to/local/query, your-org/your-repo/queries@main
 
-    # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
-    # If this step fails, then you should remove it and run the build manually (see below)
-    - name: Build
-      run: |
-        rustup default stable
-        make build
+      # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
+      # If this step fails, then you should remove it and run the build manually (see below)
+      - name: Build
+        run: |
+          rustup default stable
+          make build
 
-    # ℹ️ Command-line programs to run using the OS shell.
-    # 📚 https://git.io/JvXDl
+      # ℹ️ Command-line programs to run using the OS shell.
+      # 📚 https://git.io/JvXDl
 
-    # ✏️ If the Autobuild fails above, remove it and uncomment the following three lines
-    #    and modify them (or add more) to build your code if your project
-    #    uses a compiled language
+      # ✏️ If the Autobuild fails above, remove it and uncomment the following three lines
+      #    and modify them (or add more) to build your code if your project
+      #    uses a compiled language
 
-    #- run: |
-    #   make bootstrap
-    #   make release
+      #- run: |
+      #   make bootstrap
+      #   make release
 
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  cleanup-runner:
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          zone: ${{ vars.GCP_ZONE }}
+          instance_label: codeql-${{ github.run_id }}-${{ github.run_number }}

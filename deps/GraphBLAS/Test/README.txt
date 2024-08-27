@@ -19,13 +19,15 @@ Requirements:  the mex command must use a C compiler supporting C11.
 Microft Visual Studio does not support C11 so this test is not available
 on Windows unless you use another compiler.
 
+First compile and install the libgraphblas or libgraphblas_matlab library.
+For Linux or Mac, in the GraphBLAS/GraphBLAS folder, type
+
+    make ; sudo make install
+
 To run the tests, use the following command in this directory, in the 
-Octave Command Window:
+MATLAB/Octave Command Window:
 
     make ; testall
-
-If you get a linking problem on linux, add this directory to your
-LD_LIBRARY_PATH, so that the libgraphblas.so can be found by the mexFunctions.
 
 Longer tests can be done as well (this can take a whole day):
 
@@ -97,8 +99,6 @@ spok            an acronym for "sparse OK"; checks if a built-in sparse matrix
 README.txt      this file
 
 Contents.m      list of m-files in this folder
-
-GB_define.m     create #defines for GraphBLAS.h
 
 GB_user_*.m     test user-defined complex type and operators
 
