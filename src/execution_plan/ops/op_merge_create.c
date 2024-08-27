@@ -62,8 +62,12 @@ static void _RollbackPendingCreations
 
 	uint edges_to_create_count = array_len(op->pending.edges_to_create);
 	for(uint i = 0; i < edges_to_create_count; i++) {
-		AttributeSet props = array_pop(op->pending.edge_attributes);
-		AttributeSet_Free(&props);
+		AttributeSet *props = array_pop(op->pending.edge_attributes);
+		uint count = array_len(props);
+		for(uint j = 0; j < count; j++) {
+			AttributeSet_Free(props + j);
+		}
+		array_free(op->pending.edge_attributes[i]);
 	}
 }
 
@@ -200,7 +204,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 		}
 
 		// save attributes
-		array_append(op->pending.edge_attributes, converted_attr);
+		array_append(op->pending.edge_attributes[i], converted_attr);
 	}
 
 	// finalize the hash value for all processed creations
@@ -248,7 +252,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			Edge_SetDestNodeID(e, ENTITY_GET_ID(dest_node));
 
 			// save edge for later insertion
-			array_append(op->pending.created_edges, e);
+			array_append(op->pending.created_edges[i], e);
 		}
 	} else {
 		_RollbackPendingCreations(op);

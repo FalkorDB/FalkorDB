@@ -715,6 +715,88 @@ void Graph_CreateEdge
 	Graph_FormConnection(g, src, dest, id, r);
 }
 
+void Graph_FormConnections
+(
+	Graph *g,
+	Edge **edges,
+	int r
+) {
+	ASSERT(g != NULL);
+
+	GrB_Info info;
+	UNUSED(info);
+	// sync matrices
+	Graph_GetRelationMatrix(g, r, false);
+	Graph_GetMultiEdgeRelationMatrix(g, r);
+
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+
+	uint edge_count = array_len(edges);
+	for(uint i = 0; i < edge_count; i++) {
+		Edge  *e    = edges[i];
+		NodeID src  = e->src_id;
+		NodeID dest = e->dest_id;
+
+		// rows represent source nodes, columns represent destination nodes
+		info = Delta_Matrix_setElement_BOOL(adj, src, dest);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
+	// create connections in multi-edge matrix
+	MultiEdgeMatrix_FormConnections(g->relations + r, edges);
+
+	// an edge of type r has just been created, update statistics
+	GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);
+}
+
+static int _cmp
+(
+	const void *a,
+	const void *b
+) {
+	Edge *ea = *(Edge **)a;
+	Edge *eb = *(Edge **)b;
+	if(ea->src_id == eb->src_id) return ea->dest_id - eb->dest_id;
+	return ea->src_id - eb->src_id;
+}
+
+void Graph_CreateEdges
+(
+	Graph *g,
+	RelationID r,
+	Edge **edges
+) {
+	ASSERT(g != NULL);
+	ASSERT(r < Graph_RelationTypeCount(g));
+
+	uint edge_count = array_len(edges);
+	qsort(edges, edge_count, sizeof(Edge *), _cmp);
+#ifdef RG_DEBUG
+	// make sure both src and destination nodes exists
+	for(uint i = 0; i < edge_count; i++) {
+		Edge *e = edges[i];
+		NodeID src  = e->src_id;
+		NodeID dest = e->dest_id;
+		Node node = GE_NEW_NODE();
+		ASSERT(Graph_GetNode(g, src, &node)  == true);
+		ASSERT(Graph_GetNode(g, dest, &node) == true);
+	}
+#endif
+
+	EdgeID id;
+	for(uint i = 0; i < edge_count; i++) {
+		Edge *e = edges[i];
+		AttributeSet *set = DataBlock_AllocateItem(g->edges, &id);
+		*set = NULL;
+
+		e->id         = id;
+		e->attributes = set;
+		e->relationID = r;
+	}
+
+	Graph_FormConnections(g, edges, r);
+}
+
 void _GetOutgoingNodeEdges
 (
 	const Graph *g,       // graph to collect edges from

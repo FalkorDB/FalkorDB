@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "util/arr.h"
+#include "util/dict.h"
 #include "multi_edge_matrix.h"
 #include "delta_matrix/delta_matrix_iter.h"
 
@@ -230,7 +231,110 @@ void MultiEdgeMatrix_FormConnection
 	}
 }
 
-void  MultiEdgeMatrix_free
+void MultiEdgeMatrix_FormConnections
+(
+	MultiEdgeMatrix *M,
+	Edge **edges
+) {
+	ASSERT(M != NULL);
+
+	GrB_Info   info;
+	dictEntry *entry;
+	dict  *multi           = HashTableCreate(&def_dt);
+	uint   edge_count      = array_len(edges);
+	Edge  *single_to_multi = array_new(Edge, 0);
+	EdgeID meid            = INVALID_ENTITY_ID;
+	NodeID prev_src        = INVALID_ENTITY_ID;
+	NodeID prev_dest       = INVALID_ENTITY_ID;
+	EdgeID prev_edge_id    = INVALID_ENTITY_ID;
+
+	// detect multi edges and create multi edge id
+	for(uint i = 0; i < edge_count; i++) {
+		Edge  *e       = edges[i];
+		NodeID src     = e->src_id;
+		NodeID dest    = e->dest_id;
+		EdgeID edge_id = e->id;
+
+		if(src == prev_src && dest == prev_dest) {
+			if(meid == INVALID_ENTITY_ID) {
+				meid = array_len(M->freelist) > 0 
+						? array_pop(M->freelist) 
+						: M->row_id++;
+				entry = HashTableAddOrFind(multi, (void *)prev_edge_id);
+				HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+			}
+			entry = HashTableAddOrFind(multi, (void *)edge_id);
+			HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+			continue;
+		}
+
+		meid = INVALID_ENTITY_ID;
+		GrB_Index current_edge;
+		GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, M->R, src, dest);
+		if(info == GrB_SUCCESS) {
+			if(SINGLE_EDGE(current_edge)) {
+				meid = array_len(M->freelist) > 0 
+					? array_pop(M->freelist) 
+					: M->row_id++;
+				entry = HashTableAddRaw(multi, (void *)edge_id, NULL);
+				HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+				Edge e = { .src_id = src, .dest_id = dest, .id = current_edge };
+				array_append(single_to_multi, e);
+				entry = HashTableAddRaw(multi, (void *)current_edge, NULL);
+				HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+			} else {
+				entry = HashTableAddRaw(multi, (void *)edge_id, NULL);
+				HashTableSetVal(multi, entry, (void *)current_edge);
+				meid = current_edge;
+			}
+		} 
+
+		prev_src = src;
+		prev_dest = dest;
+		prev_edge_id = edge_id;
+	}
+
+	// create edges
+	for(uint i = 0; i < edge_count; i++) {
+		Edge *e = edges[i];
+		NodeID src = e->src_id;
+		NodeID dest = e->dest_id;
+		EdgeID edge_id = e->id;
+
+		entry = HashTableFind(multi, (void *)edge_id);
+		if(entry == NULL) {
+			info = Delta_Matrix_setElement_UINT64(M->R, edge_id, src, dest);
+			ASSERT(info == GrB_SUCCESS);
+		} else {
+			meid = (GrB_Index)HashTableGetVal(entry);
+			info = Delta_Matrix_setElement_UINT64(M->R, meid, src, dest);
+			ASSERT(info == GrB_SUCCESS);
+			info = Delta_Matrix_setElement_BOOL(M->E, CLEAR_MSB(meid), edge_id);
+			ASSERT(info == GrB_SUCCESS);
+		}
+	}
+
+	// add single edge to multi edge mapping
+	uint count = array_len(single_to_multi);
+	for(uint i = 0; i < count; i++) {
+		GrB_Index meid;
+		Edge      e       = single_to_multi[i];
+		GrB_Index edge_id = e.id;
+		GrB_Index src     = e.src_id;
+		GrB_Index dest    = e.dest_id;
+
+		entry = HashTableFind(multi, (void *)edge_id);
+		meid  = (GrB_Index)HashTableGetVal(entry);
+		info  = Delta_Matrix_setElement_BOOL(M->E, CLEAR_MSB(meid), edge_id);
+		ASSERT(info == GrB_SUCCESS);
+	}
+
+	// cleanup
+	HashTableRelease(multi);
+	array_free(single_to_multi);
+}
+
+void MultiEdgeMatrix_free
 (
 	MultiEdgeMatrix *M
 ) {

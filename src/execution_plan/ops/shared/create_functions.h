@@ -15,11 +15,11 @@ typedef struct {
 	EdgeCreateCtx *edges_to_create;
 
 	AttributeSet *node_attributes;
-	AttributeSet *edge_attributes;
+	AttributeSet **edge_attributes;
 
 	int **node_labels;
 	Node **created_nodes;
-	Edge **created_edges;
+	Edge ***created_edges;
 } PendingCreations;
 
 // initialize all variables for storing pending creations

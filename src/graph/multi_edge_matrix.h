@@ -91,8 +91,15 @@ void MultiEdgeMatrix_FormConnection
 	EdgeID edge_id       // edge id
 );
 
+// bulk create edges
+void MultiEdgeMatrix_FormConnections
+(
+	MultiEdgeMatrix *M,  // multi-edge matrix
+	Edge **edges         // edges to create
+);
+
 // free multi-edge matrix
-void  MultiEdgeMatrix_free
+void MultiEdgeMatrix_free
 (
     MultiEdgeMatrix *M  // multi-edge matrix
 );

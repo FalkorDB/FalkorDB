@@ -200,7 +200,6 @@ void Graph_CreateNode
 );
 
 // connects source node to destination node
-// returns 1 if connection is formed, 0 otherwise
 void Graph_CreateEdge
 (
 	Graph *g,           // graph on which to operate
@@ -208,6 +207,14 @@ void Graph_CreateEdge
 	NodeID dest,        // destination node ID
 	RelationID r,       // edge type
 	Edge *e
+);
+
+// connects all source nodes to destination nodes
+void Graph_CreateEdges
+(
+	Graph *g,           // graph on which to operate
+	RelationID r,       // edge type
+	Edge **edges
 );
 
 // deletes nodes from the graph

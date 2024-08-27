@@ -121,10 +121,10 @@ static void _CreateEdges
 		}
 
 		// save edge for later insertion
-		array_append(op->pending.created_edges, edge_ref);
+		array_append(op->pending.created_edges[i], edge_ref);
 
 		// save attributes to insert with node
-		array_append(op->pending.edge_attributes, converted_attr);
+		array_append(op->pending.edge_attributes[i], converted_attr);
 	}
 }
 

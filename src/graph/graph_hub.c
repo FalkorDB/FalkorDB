@@ -68,6 +68,43 @@ void CreateEdge
 	}
 }
 
+void CreateEdges
+(
+	GraphContext *gc,
+	Edge **edges,
+	RelationID r,
+	AttributeSet *sets,
+	bool log
+) {
+	ASSERT(edges  != NULL);
+	ASSERT(gc != NULL);
+
+	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
+
+	Graph_CreateEdges(gc->g, r, edges);
+
+	uint count = array_len(edges);
+	for(uint i = 0; i < count; i++) {
+		Edge *e = edges[i];
+		ASSERT(e->relationID == r);
+
+		AttributeSet set = sets[i];
+		*e->attributes = set;
+
+		// all schemas have been created in the edge blueprint loop or earlier
+		ASSERT(s != NULL);
+		Schema_AddEdgeToIndex(s, e);
+
+		// add edge creation operation to undo log
+		if(log == true) {
+			UndoLog undo_log = QueryCtx_GetUndoLog();
+			UndoLog_CreateEdge(undo_log, e);
+			EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
+			EffectsBuffer_AddCreateEdgeEffect(eb, e);
+		}
+	}
+}
+
 // delete a node
 // remove the node from the relevant indexes
 // add node deletion operation to undo-log

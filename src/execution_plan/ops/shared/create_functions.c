@@ -139,37 +139,37 @@ static void _CommitEdges
 	Edge         *e                   = NULL;
 	GraphContext *gc                  = QueryCtx_GetGraphCtx();
 	Graph        *g                   = gc->g;
-	uint         edge_count           = array_len(pending->created_edges);
 	bool         constraint_violation = false;
 
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_NOP);
 
-	for(int i = 0; i < edge_count; i++) {
-		e = pending->created_edges[i];
-		NodeID src_id  = Edge_GetSrcNodeID(e);
-		NodeID dest_id = Edge_GetDestNodeID(e);
-		AttributeSet attr = pending->edge_attributes[i];
-
-		Schema *s = GraphContext_GetSchema(gc, e->relationship, SCHEMA_EDGE);
+	uint count = array_len(pending->created_edges);
+	for(uint i = 0; i < count; i++) {
+		Edge **edges = pending->created_edges[i];
+		AttributeSet *attrs = pending->edge_attributes[i];
+		uint edge_count   = array_len(edges);
+		Schema *s = GraphContext_GetSchema(gc, pending->edges_to_create[i].relation, SCHEMA_EDGE);
 		// all schemas have been created in the edge blueprint loop or earlier
 		ASSERT(s != NULL);
 		int relation_id = Schema_GetID(s);
+		CreateEdges(gc, edges, relation_id, attrs, true);
+		for(int j = 0; j < edge_count; j++) {
+			e = edges[j];
 
-		CreateEdge(gc, e, src_id, dest_id, relation_id, attr, true);
+			//----------------------------------------------------------------------
+			// enforce constraints
+			//----------------------------------------------------------------------
 
-		//----------------------------------------------------------------------
-		// enforce constraints
-		//----------------------------------------------------------------------
-
-		if(constraint_violation == false) {
-			char *err_msg = NULL;
-			if(!Schema_EnforceConstraints(s, (GraphEntity*)e, &err_msg)) {
-				// constraint violated!
-				ASSERT(err_msg != NULL);
-				constraint_violation = true;
-				ErrorCtx_SetError("%s", err_msg);
-				free(err_msg);
+			if(constraint_violation == false) {
+				char *err_msg = NULL;
+				if(!Schema_EnforceConstraints(s, (GraphEntity*)e, &err_msg)) {
+					// constraint violated!
+					ASSERT(err_msg != NULL);
+					constraint_violation = true;
+					ErrorCtx_SetError("%s", err_msg);
+					free(err_msg);
+				}
 			}
 		}
 	}
@@ -188,9 +188,15 @@ void NewPendingCreationsContainer
 	pending->edges_to_create = edges;
 	pending->node_labels     = array_new(int *, 0);
 	pending->created_nodes   = array_new(Node *, 0);
-	pending->created_edges   = array_new(Edge *, 0);
+	pending->created_edges   = array_new(Edge **, 0);
 	pending->node_attributes = array_new(AttributeSet, 0);
-	pending->edge_attributes = array_new(AttributeSet, 0);
+	pending->edge_attributes = array_new(AttributeSet *, 0);
+
+	uint count = array_len(edges);
+	for(uint i = 0; i < count; i++) {
+		array_append(pending->created_edges, array_new(Edge *, 0));
+		array_append(pending->edge_attributes, array_new(AttributeSet, 0));
+	}
 }
 
 // Lock the graph and commit all changes introduced by the operation.
@@ -201,7 +207,11 @@ void CommitNewEntities
 ) {
 	Graph *g = QueryCtx_GetGraph();
 	uint node_count = array_len(pending->created_nodes);
-	uint edge_count = array_len(pending->created_edges);
+	uint edge_count = 0;
+	uint count = array_len(pending->created_edges);
+	for(uint i = 0; i < count; i++) {
+		edge_count   += array_len(pending->created_edges[i]);
+	}
 
 	// lock everything
 	QueryCtx_LockForCommit();
@@ -379,9 +389,13 @@ void PendingCreationsFree
 	}
 
 	if(pending->edge_attributes) {
-		uint prop_count = array_len(pending->edge_attributes);
- 		for(uint i = 0; i < prop_count; i ++) {
- 			AttributeSet_Free(pending->edge_attributes + i);
+		uint count = array_len(pending->edge_attributes);
+ 		for(uint i = 0; i < count; i ++) {
+			uint prop_count = array_len(pending->edge_attributes[i]);
+			for(uint j = 0; j < prop_count; j ++) {
+ 				AttributeSet_Free(pending->edge_attributes[i] + j);
+			}
+			array_free(pending->edge_attributes[i]);
  		}
 		array_free(pending->edge_attributes);
 		pending->edge_attributes = NULL;
