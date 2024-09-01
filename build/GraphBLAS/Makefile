@@ -39,6 +39,8 @@ define CMAKE_DEFS +=
 	BUILD_TESTING=off
 	CMAKE_POSITION_INDEPENDENT_CODE=on
 	GRAPHBLAS_USE_JIT=off
+	CMAKE_C_FLAGS=-fno-stack-protector
+	CMAKE_CXX_FLAGS=-fno-stack-protector
 endef
 
 #----------------------------------------------------------------------------------------------
