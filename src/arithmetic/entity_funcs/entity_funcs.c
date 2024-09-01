@@ -238,60 +238,79 @@ SIValue AR_OUTGOINGDEGREE
 	return _AR_NodeDegree(argv, argc, GRAPH_EDGE_DIR_OUTGOING);
 }
 
-SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
-	// return NULL for missing graph entity
-	if(SI_TYPE(argv[0]) == T_NULL) return SI_NullVal();
-
-	// AR_PROPERTY may be invoked from AR_SUBSCRIPT in a case like:
-	// WITH {val: 5} AS map RETURN map["val"]
-	// As such, we need to validate the argument's type independently of the invocation validation.
-	if(SI_TYPE(argv[1]) != T_STRING) {
-		// String indexes are only permitted on maps, not arrays.
-		Error_SITypeMismatch(argv[1], T_STRING);
-		return SI_NullVal();
-	}
-
+SIValue AR_PROPERTY
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
+	// computes n.a.b.c...
+	//
 	// inputs:
 	// argv[0] - node/edge/map/point
-	// argv[1] - property string
-	// argv[2] - property index
+	// argv[1] - array [attr name, attr index, attr name, attr index,...]
+	// argv[2] - array's length
 
 	//--------------------------------------------------------------------------
 	// Process inputs
 	//--------------------------------------------------------------------------
 
-	SIValue obj = argv[0];
-	if(SI_TYPE(obj) & SI_GRAPHENTITY) {
-		// retrieve entity property
-		GraphEntity *graph_entity = (GraphEntity *)obj.ptrval;
-		const char *prop_name     = argv[1].stringval;
-		AttributeID prop_idx     = argv[2].longval;
+	SIValue obj  = argv[0];          // container
+	SIValue path = argv[1];          // path
+	int64_t n    = argv[2].longval;  // path's length
 
-		// We have the property string, attempt to look up the index now.
-		if(prop_idx == ATTRIBUTE_ID_NONE) {
-			GraphContext *gc = QueryCtx_GetGraphCtx();
-			prop_idx = GraphContext_GetAttributeID(gc, prop_name);
+	ASSERT(SIArray_Length(path) == n * 2);
+
+	for(int64_t i = 0; i < n; i++) {
+		GraphEntity *e;
+		SIType t = SI_TYPE(obj);
+		int64_t idx = 2*i;
+		SIValue key = SIArray_Get(path, idx);
+		AttributeID attr_idx = SIArray_Get(path, idx+1).longval;
+
+		switch(t) {
+			case T_NODE:
+			case T_EDGE:
+
+				//--------------------------------------------------------------
+				// retrieve entity property
+				//--------------------------------------------------------------
+
+				e = (GraphEntity *)obj.ptrval;
+
+				// missing attribute's index
+				if(attr_idx == ATTRIBUTE_ID_NONE) {
+					// we have the property string, attempt to look up the index
+					GraphContext *gc = QueryCtx_GetGraphCtx();
+					attr_idx = GraphContext_GetAttributeID(gc, key.stringval);
+				}
+
+				// retrieve the attribute
+				// turn into const only if this is the end of the path
+				if(i == n-1) {
+					obj = SI_ConstValue(GraphEntity_GetProperty(e, attr_idx));
+				} else {
+					obj = *GraphEntity_GetProperty(e, attr_idx);
+				}
+				break;
+			case T_MAP:
+
+				//--------------------------------------------------------------
+				// retrieve map key
+				//--------------------------------------------------------------
+
+				Map_Get(obj, key, &obj);
+				break;
+			case T_POINT:
+				obj = Point_GetCoordinate(obj, key);
+				break;
+			default:
+				// unexpected type
+				return SI_NullVal();
 		}
-
-		// Retrieve the property.
-		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
-		return SI_ConstValue(value);
-	} else if(SI_TYPE(obj) & T_MAP) {
-		// retrieve map key
-		SIValue key = argv[1];
-		SIValue value;
-
-		Map_Get(obj, key, &value);
-		// Return a volatile copy of the value, as it may be heap-allocated.
-		return SI_ShareValue(value);
-	} else if(SI_TYPE(obj) & T_POINT) {
-		// retrieve property key 
-		SIValue key = argv[1];
-		return Point_GetCoordinate(obj, key);
-	} else {
-		// unexpected type SI_TYPE(obj)
-		return SI_NullVal();
 	}
+
+	return obj;
 }
 
 SIValue AR_TYPEOF(SIValue *argv, int argc, void *private_data) {
@@ -362,7 +381,7 @@ void Register_EntityFuncs() {
 
 	types = array_new(SIType, 3);
 	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT);
-	array_append(types, T_STRING);
+	array_append(types, T_ARRAY);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;
 	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type, true, true);

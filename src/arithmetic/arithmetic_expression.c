@@ -222,29 +222,36 @@ AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias) {
 	return node;
 }
 
-AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity,
-										  const char *attr) {
-
-	ASSERT(attr != NULL);
+AR_ExpNode *AR_EXP_NewAttributeAccessNode
+(
+	AR_ExpNode *entity,
+	const char *attr
+) {
+	ASSERT(attr   != NULL);
 	ASSERT(entity != NULL);
 
-	// use property index when possible, prop_idx is set to ATTRIBUTE_NOTFOUND
+	// use attribute index when possible, attr_idx is set to ATTRIBUTE_NOTFOUND
 	// if the graph is not aware of it in which case we'll try to resolve
-	// the property using its string representation
+	// the attribute using its string representation
 
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	SIValue prop_idx = SI_LongVal(ATTRIBUTE_ID_NONE);
-	SIValue prop_name = SI_ConstStringVal((char *)attr);
-	AttributeID idx = GraphContext_GetAttributeID(gc, attr);
+	GraphContext *gc  = QueryCtx_GetGraphCtx();
+	SIValue attr_name = SI_ConstStringVal((char *)attr);
+	SIValue attr_idx  = SI_LongVal(GraphContext_GetAttributeID(gc, attr));
 
-	if(idx != ATTRIBUTE_ID_NONE) prop_idx = SI_LongVal(idx);
-
-	// entity is an expression which should be evaluated to a graph entity
-	// attr is the name of the attribute we want to extract from entity
+	// entity is an expression which should be evaluated to a container
+	// attr is the name of the attribute we want to extract
 	AR_ExpNode *root = AR_EXP_NewOpNode("property", true, 3);
+
+	// construct named attribute to extract
+	// include both the attribute name along with its ID
+	SIValue args = SI_Array(2);
+	SIArray_Append(&args, attr_name);
+	SIArray_Append(&args, attr_idx);
+
+	// set root's children
 	root->op.children[0] = entity;
-	root->op.children[1] = AR_EXP_NewConstOperandNode(prop_name);
-	root->op.children[2] = AR_EXP_NewConstOperandNode(prop_idx);
+	root->op.children[1] = AR_EXP_NewConstOperandNode(args);
+	root->op.children[2] = AR_EXP_NewConstOperandNode(SI_LongVal(1));
 
 	return root;
 }
