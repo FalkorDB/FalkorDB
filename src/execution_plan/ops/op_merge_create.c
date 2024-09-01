@@ -62,12 +62,12 @@ static void _RollbackPendingCreations
 
 	uint edges_to_create_count = array_len(op->pending.edges_to_create);
 	for(uint i = 0; i < edges_to_create_count; i++) {
-		AttributeSet *props = array_pop(op->pending.edge_attributes);
+		AttributeSet *props = op->pending.edge_attributes[i];
 		uint count = array_len(props);
 		for(uint j = 0; j < count; j++) {
 			AttributeSet_Free(props + j);
 		}
-		array_free(op->pending.edge_attributes[i]);
+		array_clear(op->pending.edge_attributes[i]);
 	}
 }
 
