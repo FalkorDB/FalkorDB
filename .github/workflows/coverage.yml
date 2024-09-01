@@ -32,21 +32,21 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-release-cov/GraphBLAS
-        key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+        key: graphblas-coverage-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-release-cov/libcypher-parser
-        key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        key: parser-coverage-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-cov/search-static
-        key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
       run: |
