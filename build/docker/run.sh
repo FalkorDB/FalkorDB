@@ -4,7 +4,10 @@ if [ ${BROWSER:-1} -eq 1 ]
 then
     if [ -d /FalkorDBBrowser ]
     then
-        cd /FalkorDBBrowser && HOSTNAME="0.0.0.0" node server.js &
+        PORT=${BROWSER_PORT:-3000}
+        export HOSTNAME=${HOSTNAME:-"0.0.0.0"}
+        export NEXTAUTH_URL=${NEXTAUTH_URL:-"http://${HOSTNAME}:${PORT}"}
+        cd /FalkorDBBrowser && node server.js &
     fi
 fi
 
