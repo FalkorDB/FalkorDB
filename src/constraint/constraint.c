@@ -496,7 +496,7 @@ void Constraint_EnforceEdges
 	Graph *g
 ) {
 	GrB_Info info;
-	MultiEdgeIterator it = {0};
+	RelationIterator it = {0};
 
 	bool      skip         = false;
 	bool      holds        = true;          // constraint holds
@@ -533,10 +533,10 @@ void Constraint_EnforceEdges
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		MultiEdgeIterator_AttachSourceRange(&it, g->relations + schema_id, src_id, UINT64_MAX, false);
+		RelationIterator_AttachSourceRange(&it, g->relations[schema_id], src_id, UINT64_MAX, false);
 
 		// skip previously enforced edges
-		while(skip && (info = MultiEdgeIterator_next(&it, &src_id, &dest_id,
+		while(skip && (info = RelationIterator_next(&it, &src_id, &dest_id,
 						&edge_id)) &&
 				edge_id != prev_edge_id);
 
@@ -552,7 +552,7 @@ void Constraint_EnforceEdges
 		//----------------------------------------------------------------------
 
 		while(enforced < batch_size &&
-			  MultiEdgeIterator_next(&it, &src_id, &dest_id, &edge_id) &&
+			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id) &&
 			  holds) {
 			Edge e;
 			e.src_id     = src_id;

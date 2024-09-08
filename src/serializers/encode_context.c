@@ -43,7 +43,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	ctx->offset = 0;
 	ctx->keys_processed = 0;
 	ctx->state = ENCODE_STATE_INIT;
-	ctx->matrix_tuple_iterator = (MultiEdgeIterator){0};
+	ctx->matrix_tuple_iterator = (RelationIterator){0};
 	ctx->current_relation_matrix_id = 0;
 
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &ctx->vkey_entity_count);
@@ -55,7 +55,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	}
 
 	// Avoid leaks in case or reset during encodeing.
-	ctx->matrix_tuple_iterator = (MultiEdgeIterator){0};
+	ctx->matrix_tuple_iterator = (RelationIterator){0};
 }
 
 void GraphEncodeContext_InitHeader
@@ -160,7 +160,7 @@ void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
 	ctx->current_relation_matrix_id = current_relation_matrix_id;
 }
 
-MultiEdgeIterator *GraphEncodeContext_GetMatrixTupleIterator(
+RelationIterator *GraphEncodeContext_GetMatrixTupleIterator(
 	GraphEncodeContext *ctx) {
 	ASSERT(ctx);
 	return &ctx->matrix_tuple_iterator;

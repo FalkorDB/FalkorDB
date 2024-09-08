@@ -126,7 +126,7 @@ static void _Index_PopulateEdgeIndex
 	int       indexed         = 0;                      // number of entities indexed in current batch
 	int       schema_id       = Index_GetLabelID(idx);  // index relationship type ID
 	int       batch_size      = 1000;                   // max number of entities to index in one go
-	MultiEdgeIterator it      = {0};
+	RelationIterator it      = {0};
 
 	while(true) {
 		// lock graph for reading
@@ -152,10 +152,10 @@ static void _Index_PopulateEdgeIndex
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		MultiEdgeIterator_AttachSourceRange(&it, g->relations + schema_id, src_id, UINT64_MAX, false);
+		RelationIterator_AttachSourceRange(&it, g->relations[schema_id], src_id, UINT64_MAX, false);
 
 		// skip previously indexed edges
-		while(skip && (info = MultiEdgeIterator_next(&it, &src_id, &dest_id,
+		while(skip && (info = RelationIterator_next(&it, &src_id, &dest_id,
 						&edge_id)) &&
 				edge_id == prev_edge_id);
 
@@ -171,7 +171,7 @@ static void _Index_PopulateEdgeIndex
 		//----------------------------------------------------------------------
 
 		while(indexed < batch_size &&
-			  MultiEdgeIterator_next(&it, &src_id, &dest_id, &edge_id)) {
+			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id)) {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;

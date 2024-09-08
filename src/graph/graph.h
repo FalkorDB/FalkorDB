@@ -14,7 +14,7 @@
 #include "entities/edge.h"
 #include "../redismodule.h"
 #include "graph_statistics.h"
-#include "multi_edge_matrix.h"
+#include "relation_matrix.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
@@ -51,7 +51,7 @@ struct Graph {
 	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
 	Delta_Matrix *labels;              // label matrices
 	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
-	MultiEdgeMatrix *relations;        // relation matrices
+	RelationMatrix *relations;         // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer

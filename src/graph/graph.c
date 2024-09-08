@@ -110,10 +110,10 @@ void _Graph_GetEdgesConnectingNodes
 	Graph_GetMultiEdgeRelationMatrix(g, r);
 	Edge e = {.src_id = src, .dest_id = dest, .relationID = r};
 	GrB_Index edge_id;
-	MultiEdgeIterator it = {0};
-	MultiEdgeIterator_AttachSourceDest(&it, g->relations + r, src, dest);
+	RelationIterator it = {0};
+	RelationIterator_AttachSourceDest(&it, g->relations[r], src, dest);
 
-	while(MultiEdgeIterator_next(&it, NULL, NULL, &edge_id)){
+	while(RelationIterator_next(&it, NULL, NULL, &edge_id)){
 		e.id          =  edge_id;
 		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
 		ASSERT(e.attributes);
@@ -330,15 +330,7 @@ bool Graph_Pending
 
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
-		M = g->relations[i].R;
-		info = Delta_Matrix_pending(M, &pending);
-		ASSERT(info == GrB_SUCCESS);
-		if(pending) {
-			return true;
-		}
-		M = g->relations[i].E;
-		info = Delta_Matrix_pending(M, &pending);
-		ASSERT(info == GrB_SUCCESS);
+		pending = RelationMatrix_pending(g->relations[i]);
 		if(pending) {
 			return true;
 		}
@@ -363,7 +355,7 @@ Graph *Graph_New
 	g->nodes     = DataBlock_New(node_cap, node_cap, sizeof(AttributeSet), cb);
 	g->edges     = DataBlock_New(edge_cap, edge_cap, sizeof(AttributeSet), cb);
 	g->labels    = array_new(Delta_Matrix, GRAPH_DEFAULT_LABEL_CAP);
-	g->relations = array_new(MultiEdgeMatrix, GRAPH_DEFAULT_RELATION_TYPE_CAP);
+	g->relations = array_new(RelationMatrix, GRAPH_DEFAULT_RELATION_TYPE_CAP);
 
 	GrB_Info info;
 	UNUSED(info);
@@ -678,7 +670,7 @@ void Graph_FormConnection
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
 	ASSERT(info == GrB_SUCCESS);
 
-	MultiEdgeMatrix_FormConnection(g->relations + r, src, dest, edge_id);
+	RelationMatrix_FormConnection(g->relations[r], src, dest, edge_id);
 
 	// an edge of type r has just been created, update statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
@@ -743,7 +735,7 @@ void Graph_FormConnections
 	}
 
 	// create connections in multi-edge matrix
-	MultiEdgeMatrix_FormConnections(g->relations + r, edges);
+	RelationMatrix_FormConnections(g->relations[r], (const Edge **)edges);
 
 	// an edge of type r has just been created, update statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);
@@ -810,7 +802,7 @@ void _GetOutgoingNodeEdges
 	ASSERT(edgeType != GRAPH_NO_RELATION && edgeType != GRAPH_UNKNOWN_RELATION);
 
 	GrB_Info info;
-	MultiEdgeIterator       it       =  {0};
+	RelationIterator        it       =  {0};
 	NodeID                  src_id   =  ENTITY_GET_ID(n);
 	NodeID                  dest_id  =  INVALID_ENTITY_ID;
 	EdgeID                  edge_id  =  INVALID_ENTITY_ID;
@@ -820,8 +812,8 @@ void _GetOutgoingNodeEdges
 	Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 
 	Edge e = {.src_id = src_id, .relationID = edgeType};
-	MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, src_id, src_id, false);
-	while(MultiEdgeIterator_next(&it, NULL, &dest_id, &edge_id)) {
+	RelationIterator_AttachSourceRange(&it, g->relations[edgeType], src_id, src_id, false);
+	while(RelationIterator_next(&it, NULL, &dest_id, &edge_id)) {
 		e.dest_id     =  dest_id;
 		e.id          =  edge_id;
 		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
@@ -844,7 +836,7 @@ void _GetIncomingNodeEdges
 	ASSERT(edgeType != GRAPH_NO_RELATION && edgeType != GRAPH_UNKNOWN_RELATION);
 
 	GrB_Info info;
-	MultiEdgeIterator       it       =  {0};
+	RelationIterator        it       =  {0};
 	NodeID                  src_id   =  INVALID_ENTITY_ID;
 	NodeID                  dest_id  =  ENTITY_GET_ID(n);
 	EdgeID                  edge_id  =  INVALID_ENTITY_ID;
@@ -855,8 +847,8 @@ void _GetIncomingNodeEdges
 	Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 
 	Edge e = {.dest_id = dest_id, .relationID = edgeType};
-	MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, dest_id, dest_id, true);
-	while(MultiEdgeIterator_next(&it, &src_id, NULL, &edge_id)) {
+	RelationIterator_AttachSourceRange(&it, g->relations[edgeType], dest_id, dest_id, true);
+	while(RelationIterator_next(&it, &src_id, NULL, &edge_id)) {
 		e.src_id      =  src_id;
 		e.id          =  edge_id;
 		e.attributes  =  DataBlock_GetItem(g->edges, edge_id);
@@ -962,13 +954,13 @@ uint64_t Graph_GetNodeDegree
 		Graph_GetMultiEdgeRelationMatrix(g, edgeType);
 		
 		if(outgoing) {
-			MultiEdgeIterator it = {0};
+			RelationIterator it = {0};
 			// construct an iterator to traverse over the source node row,
 			// containing all outgoing edges
-			MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, srcID, srcID, false);
+			RelationIterator_AttachSourceRange(&it, g->relations[edgeType], srcID, srcID, false);
 
 			// scan row
-			while(MultiEdgeIterator_next(&it, NULL, NULL, &edgeID)) {
+			while(RelationIterator_next(&it, NULL, NULL, &edgeID)) {
 				edge_count++;
 			}
 		}
@@ -979,13 +971,13 @@ uint64_t Graph_GetNodeDegree
 
 		if(incoming) {
 			Graph_GetRelationMatrix(g, edgeType, true);
-			MultiEdgeIterator it = {0};
+			RelationIterator it = {0};
 			// construct an iterator to traverse over the source node row,
 			// containing all incoming edges
-			MultiEdgeIterator_AttachSourceRange(&it, g->relations + edgeType, srcID, srcID, true);
+			RelationIterator_AttachSourceRange(&it, g->relations[edgeType], srcID, srcID, true);
 
 			// scan row
-			while(MultiEdgeIterator_next(&it, NULL, NULL, &edgeID)) {
+			while(RelationIterator_next(&it, NULL, NULL, &edgeID)) {
 				edge_count++;
 			}
 		}
@@ -1050,7 +1042,7 @@ static void _Graph_FreeRelationMatrices
 ) {
 	uint relationCount = Graph_RelationTypeCount(g);
 	for(uint i = 0; i < relationCount; i++) {
-		MultiEdgeMatrix_free(g->relations + i);
+		RelationMatrix_free(g->relations[i]);
 	}
 }
 
@@ -1108,11 +1100,10 @@ RelationID Graph_AddRelationType
 ) {
 	ASSERT(g);
 
-	MultiEdgeMatrix r;
+	RelationMatrix r;
 	size_t n = Graph_RequiredMatrixDim(g);
-	size_t edge_cap = g->edges->itemCap;
 
-	MultiEdgeMatrix_init(&r, n, n, edge_cap, edge_cap);
+	r = RelationMatrix_new(n, n);
 
 	array_append(g->relations, r);
 	// adding a new relationship type, update the stats structures to support it
@@ -1131,11 +1122,11 @@ void Graph_RemoveRelation
 	ASSERT(relation_id == Graph_RelationTypeCount(g) - 1);
 	#ifdef RG_DEBUG
 	GrB_Index nvals;
-	GrB_Info info = Delta_Matrix_nvals(&nvals, g->relations[relation_id].R);
+	GrB_Info info = Delta_Matrix_nvals(&nvals, g->relations[relation_id]->R);
 	ASSERT(info == GrB_SUCCESS);
 	ASSERT(nvals == 0);
 	#endif
-	MultiEdgeMatrix_free(g->relations + relation_id);
+	RelationMatrix_free(g->relations[relation_id]);
 	g->relations = array_del(g->relations, relation_id);
 }
 
@@ -1172,7 +1163,7 @@ Delta_Matrix Graph_GetRelationMatrix
 	if(relation_idx == GRAPH_NO_RELATION) {
 		m = g->adjacency_matrix;
 	} else {
-		m = g->relations[relation_idx].R;
+		m = g->relations[relation_idx]->R;
 	}
 
 	size_t n = Graph_RequiredMatrixDim(g);
@@ -1192,7 +1183,7 @@ Delta_Matrix Graph_GetMultiEdgeRelationMatrix
 	ASSERT(relation_idx != GRAPH_NO_RELATION &&
 		   relation_idx < Graph_RelationTypeCount(g));
 
-	Delta_Matrix m = g->relations[relation_idx].E;
+	Delta_Matrix m = g->relations[relation_idx]->E;
 
 	size_t edge_cap = g->edges->itemCap;
 	g->SynchronizeMatrix(g, m, edge_cap, edge_cap);

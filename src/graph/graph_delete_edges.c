@@ -141,7 +141,7 @@ void Graph_DeleteEdges
 		} else if(count == 1) {
 			Delta_Matrix_removeElement(E, id, last_edge_id);
 			Delta_Matrix_setElement_UINT64(M, last_edge_id, src_id, dest_id);
-			array_append(g->relations[r].freelist, id);
+			array_append(g->relations[r]->freelist, id);
 		}
 	}
 

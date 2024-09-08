@@ -6,12 +6,13 @@
 #include "RG.h"
 #include "util/arr.h"
 #include "util/dict.h"
-#include "multi_edge_matrix.h"
+#include "util/roaring.h"
+#include "relation_matrix.h"
 #include "delta_matrix/delta_matrix_iter.h"
 
 bool _DepletedIter
 (
-	MultiEdgeIterator *it,
+	RelationIterator *it,
 	NodeID *src,
 	NodeID *dest,
 	EdgeID *edge_id
@@ -23,7 +24,7 @@ bool _DepletedIter
 
 bool _SourceTransposeIter
 (
-	MultiEdgeIterator *it,
+	RelationIterator *it,
 	NodeID *src,
 	NodeID *dest,
 	EdgeID *edge_id
@@ -58,7 +59,7 @@ bool _SourceTransposeIter
 
 bool _SourceIter
 (
-	MultiEdgeIterator *it,
+	RelationIterator *it,
 	NodeID *src,
 	NodeID *dest,
 	EdgeID *edge_id
@@ -92,7 +93,7 @@ bool _SourceIter
 
 bool _SourceDestSingleEdgeIter
 (
-	MultiEdgeIterator *it,
+	RelationIterator *it,
 	NodeID *src,
 	NodeID *dest,
 	EdgeID *edge_id
@@ -106,7 +107,7 @@ bool _SourceDestSingleEdgeIter
 
 bool _SourceDestMultiEdgeIter
 (
-	MultiEdgeIterator *it,
+	RelationIterator *it,
 	NodeID *src,
 	NodeID *dest,
 	EdgeID *edge_id
@@ -117,10 +118,10 @@ bool _SourceDestMultiEdgeIter
 	return info == GrB_SUCCESS;
 }
 
-void MultiEdgeIterator_AttachSourceRange
+void RelationIterator_AttachSourceRange
 (
-	MultiEdgeIterator *it,
-	MultiEdgeMatrix *M,
+	RelationIterator *it,
+	RelationMatrix M,
 	NodeID min_src_id,
 	NodeID max_src_id,
 	bool transposed
@@ -138,10 +139,10 @@ void MultiEdgeIterator_AttachSourceRange
 	}
 }
 
-void MultiEdgeIterator_AttachSourceDest
+void RelationIterator_AttachSourceDest
 (
-	MultiEdgeIterator *it,
-	MultiEdgeMatrix *M,
+	RelationIterator *it,
+	RelationMatrix M,
 	NodeID src_id,
 	NodeID dest_id
 ) {
@@ -162,9 +163,9 @@ void MultiEdgeIterator_AttachSourceDest
 	}
 }
 
-bool MultiEdgeIterator_next
+bool RelationIterator_next
 (
-	MultiEdgeIterator *it,
+	RelationIterator *it,
 	NodeID *src,
 	NodeID *dest,
 	EdgeID *edge_id
@@ -174,10 +175,10 @@ bool MultiEdgeIterator_next
 	return it->iter_func(it, src, dest, edge_id);
 }
 
-bool MultiEdgeIterator_is_attached
+bool RelationIterator_is_attached
 (
-	MultiEdgeIterator *it,
-	MultiEdgeMatrix *M
+	const RelationIterator *it,
+	const RelationMatrix M
 ) {
 	ASSERT(it != NULL);
 	ASSERT(M != NULL);
@@ -185,25 +186,25 @@ bool MultiEdgeIterator_is_attached
 	return it->M == M;
 }
 
-void MultiEdgeMatrix_init
+RelationMatrix RelationMatrix_new
 (
-	MultiEdgeMatrix *M,
 	GrB_Index nrows,
-	GrB_Index ncols,
-	GrB_Index me_nrows,
-	GrB_Index me_ncols
+	GrB_Index ncols
 ) {
-	ASSERT(M != NULL);
+	RelationMatrix M = rm_malloc(sizeof(struct RelationMatrix));
 
 	Delta_Matrix_new(&M->R, GrB_UINT64, nrows, ncols, true);
-	Delta_Matrix_new(&M->E, GrB_BOOL, me_nrows, me_ncols, false);
+	// delay matrix dimentions will be set on first sync
+	Delta_Matrix_new(&M->E, GrB_BOOL, 0, 0, false);
 	M->row_id = 0;
 	M->freelist = array_new(uint64_t, 0);
+
+	return M;
 }
 
-void MultiEdgeMatrix_FormConnection
+void RelationMatrix_FormConnection
 (
-	MultiEdgeMatrix *M,
+	RelationMatrix M,
 	NodeID src,
 	NodeID dest,
 	EdgeID edge_id
@@ -231,40 +232,54 @@ void MultiEdgeMatrix_FormConnection
 	}
 }
 
-void MultiEdgeMatrix_FormConnections
+GrB_Index _new_multi_edge_id
 (
-	MultiEdgeMatrix *M,
-	Edge **edges
+	RelationMatrix M
+) {
+	return array_len(M->freelist) > 0 
+		? array_pop(M->freelist) 
+		: M->row_id++;
+}
+
+void RelationMatrix_FormConnections
+(
+	RelationMatrix M,
+	const Edge **edges // assume is sorted by src and dest
 ) {
 	ASSERT(M != NULL);
+	ASSERT(edges != NULL);
 
-	GrB_Info   info;
-	dictEntry *entry;
-	dict  *multi           = HashTableCreate(&def_dt);
-	uint   edge_count      = array_len(edges);
-	Edge  *single_to_multi = array_new(Edge, 0);
-	EdgeID meid            = INVALID_ENTITY_ID;
-	NodeID prev_src        = INVALID_ENTITY_ID;
-	NodeID prev_dest       = INVALID_ENTITY_ID;
-	EdgeID prev_edge_id    = INVALID_ENTITY_ID;
+	GrB_Info            info;
+	Edge               *single_to_multi = array_new(Edge, 0);
+	uint                edge_count      = array_len(edges);
+	EdgeID              meid            = INVALID_ENTITY_ID;
+	NodeID              prev_src        = INVALID_ENTITY_ID;
+	NodeID              prev_dest       = INVALID_ENTITY_ID;
+	EdgeID              prev_edge_id    = INVALID_ENTITY_ID;
+	roaring64_bitmap_t *single = roaring64_bitmap_create();
 
-	// detect multi edges and create multi edge id
+	roaring64_bitmap_add_range(single, 0, edge_count);
+
 	for(uint i = 0; i < edge_count; i++) {
-		Edge  *e       = edges[i];
-		NodeID src     = e->src_id;
-		NodeID dest    = e->dest_id;
-		EdgeID edge_id = e->id;
+		const Edge  *e       = edges[i];
+		NodeID       src     = e->src_id;
+		NodeID       dest    = e->dest_id;
+		EdgeID       edge_id = e->id;
 
 		if(src == prev_src && dest == prev_dest) {
 			if(meid == INVALID_ENTITY_ID) {
-				meid = array_len(M->freelist) > 0 
-						? array_pop(M->freelist) 
-						: M->row_id++;
-				entry = HashTableAddOrFind(multi, (void *)prev_edge_id);
-				HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+				meid = _new_multi_edge_id(M);
+				info = Delta_Matrix_setElement_BOOL(M->E, meid, prev_edge_id);
+				ASSERT(info == GrB_SUCCESS);
+				// when the R[src, dest] is not exists yet delay the creation of the multi edge
+				Edge ee = *e;
+				ee.id = meid;
+				array_append(single_to_multi, ee);
+				roaring64_bitmap_remove(single, i - 1);
 			}
-			entry = HashTableAddOrFind(multi, (void *)edge_id);
-			HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+			info = Delta_Matrix_setElement_BOOL(M->E, meid, edge_id);
+			ASSERT(info == GrB_SUCCESS);
+			roaring64_bitmap_remove(single, i);
 			continue;
 		}
 
@@ -273,20 +288,19 @@ void MultiEdgeMatrix_FormConnections
 		GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, M->R, src, dest);
 		if(info == GrB_SUCCESS) {
 			if(SINGLE_EDGE(current_edge)) {
-				meid = array_len(M->freelist) > 0 
-					? array_pop(M->freelist) 
-					: M->row_id++;
-				entry = HashTableAddRaw(multi, (void *)edge_id, NULL);
-				HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
-				Edge e = { .src_id = src, .dest_id = dest, .id = current_edge };
-				array_append(single_to_multi, e);
-				entry = HashTableAddRaw(multi, (void *)current_edge, NULL);
-				HashTableSetVal(multi, entry, (void *)(SET_MSB(meid)));
+				meid = _new_multi_edge_id(M);
+				info = Delta_Matrix_setElement_BOOL(M->E, meid, current_edge);
+				ASSERT(info == GrB_SUCCESS);
+				info = Delta_Matrix_setElement_BOOL(M->E, meid, edge_id);
+				ASSERT(info == GrB_SUCCESS);
+				info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
+				ASSERT(info == GrB_SUCCESS);
 			} else {
-				entry = HashTableAddRaw(multi, (void *)edge_id, NULL);
-				HashTableSetVal(multi, entry, (void *)current_edge);
-				meid = current_edge;
+				meid = CLEAR_MSB(current_edge);
+				info = Delta_Matrix_setElement_BOOL(M->E, meid, edge_id);
+				ASSERT(info == GrB_SUCCESS);
 			}
+			roaring64_bitmap_remove(single, i);
 		} 
 
 		prev_src = src;
@@ -294,49 +308,52 @@ void MultiEdgeMatrix_FormConnections
 		prev_edge_id = edge_id;
 	}
 
-	// create edges
-	for(uint i = 0; i < edge_count; i++) {
-		Edge *e = edges[i];
-		NodeID src = e->src_id;
-		NodeID dest = e->dest_id;
-		EdgeID edge_id = e->id;
-
-		entry = HashTableFind(multi, (void *)edge_id);
-		if(entry == NULL) {
-			info = Delta_Matrix_setElement_UINT64(M->R, edge_id, src, dest);
-			ASSERT(info == GrB_SUCCESS);
-		} else {
-			meid = (GrB_Index)HashTableGetVal(entry);
-			info = Delta_Matrix_setElement_UINT64(M->R, meid, src, dest);
-			ASSERT(info == GrB_SUCCESS);
-			info = Delta_Matrix_setElement_BOOL(M->E, CLEAR_MSB(meid), edge_id);
-			ASSERT(info == GrB_SUCCESS);
-		}
-	}
-
-	// add single edge to multi edge mapping
 	uint count = array_len(single_to_multi);
 	for(uint i = 0; i < count; i++) {
-		GrB_Index meid;
-		Edge      e       = single_to_multi[i];
-		GrB_Index edge_id = e.id;
-		GrB_Index src     = e.src_id;
-		GrB_Index dest    = e.dest_id;
+		Edge     *e       = single_to_multi + i;
+		GrB_Index meid    = e->id;
+		GrB_Index src     = e->src_id;
+		GrB_Index dest    = e->dest_id;
 
-		entry = HashTableFind(multi, (void *)edge_id);
-		meid  = (GrB_Index)HashTableGetVal(entry);
-		info  = Delta_Matrix_setElement_BOOL(M->E, CLEAR_MSB(meid), edge_id);
+		info = Delta_Matrix_setElement_UINT64(M->R, SET_MSB(meid), src, dest);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
+	roaring64_iterator_t *it = roaring64_iterator_create(single);
+	while(roaring64_iterator_has_value(it)) {
+		GrB_Index i = roaring64_iterator_value(it);
+		const Edge *e = edges[i];
+		info = Delta_Matrix_setElement_UINT64(M->R, e->id, e->src_id, e->dest_id);
+		ASSERT(info == GrB_SUCCESS);
+		roaring64_iterator_advance(it);
+	}
+
 	// cleanup
-	HashTableRelease(multi);
 	array_free(single_to_multi);
+	roaring64_iterator_free(it);
+	roaring64_bitmap_free(single);
 }
 
-void MultiEdgeMatrix_free
+// checks to see if matrix has pending operations
+bool RelationMatrix_pending
 (
-	MultiEdgeMatrix *M
+	RelationMatrix M   // relation matrix
+) {
+	ASSERT(M != NULL);
+	
+	bool pending;
+
+	Delta_Matrix_pending(M->R, &pending);
+	if(pending) {
+		return true;
+	}
+	Delta_Matrix_pending(M->E, &pending);
+	return pending;
+}
+
+void RelationMatrix_free
+(
+	RelationMatrix M
 ) {
 	ASSERT(M != NULL);
 

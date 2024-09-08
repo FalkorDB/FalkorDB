@@ -148,7 +148,7 @@ static void _CommitEdges
 	for(uint i = 0; i < count; i++) {
 		Edge **edges = pending->created_edges[i];
 		AttributeSet *attrs = pending->edge_attributes[i];
-		uint edge_count   = array_len(edges);
+		uint edge_count = array_len(edges);
 		Schema *s = GraphContext_GetSchema(gc, pending->edges_to_create[i].relation, SCHEMA_EDGE);
 		// all schemas have been created in the edge blueprint loop or earlier
 		ASSERT(s != NULL);
@@ -210,7 +210,7 @@ void CommitNewEntities
 	uint edge_count = 0;
 	uint count = array_len(pending->created_edges);
 	for(uint i = 0; i < count; i++) {
-		edge_count   += array_len(pending->created_edges[i]);
+		edge_count += array_len(pending->created_edges[i]);
 	}
 
 	// lock everything
