@@ -1401,20 +1401,14 @@ static VISITOR_STRATEGY _Validate_call_subquery
 	return VISITOR_CONTINUE;
 }
 
-// returns true if the clause is an updating clause, false otherwise
-static bool _is_updating_clause
-(
-	const cypher_astnode_t *clause  // clause
-) {
-	cypher_astnode_type_t type = cypher_astnode_type(clause);
-
-	return type == CYPHER_AST_CREATE             ||
-	       type == CYPHER_AST_MERGE              ||
-	       type == CYPHER_AST_DELETE             ||
-	       type == CYPHER_AST_SET                ||
-	       type == CYPHER_AST_REMOVE             ||
-	       type == CYPHER_AST_FOREACH;
-}
+// returns true if the clause is an updating clause
+#define UPDATING_CALUSE(t)           \
+	(type == CYPHER_AST_CREATE ||    \
+	 type == CYPHER_AST_MERGE  ||    \
+	 type == CYPHER_AST_DELETE ||    \
+	 type == CYPHER_AST_SET    ||    \
+	 type == CYPHER_AST_REMOVE ||    \
+	 type == CYPHER_AST_FOREACH)
 
 // validate a WITH clause
 static VISITOR_STRATEGY _Validate_WITH_Clause
@@ -2121,21 +2115,25 @@ static AST_Validation _ValidateQuerySequence
 	return AST_VALID;
 }
 
-/* In any given query scope, reading clauses (MATCH, UNWIND, and InQueryCall)
- * cannot follow updating clauses (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH).
- * https://s3.amazonaws.com/artifacts.opencypher.org/railroad/SinglePartQuery.html
- * Additionally, a MATCH clause cannot follow an OPTIONAL MATCH clause. */
+// in any given query scope, reading clauses (MATCH, UNWIND, and InQueryCall)
+// cannot follow updating clauses (CREATE, MERGE, DELETE, SET, REMOVE, FOREACH).
+// https://s3.amazonaws.com/artifacts.opencypher.org/railroad/SinglePartQuery.html
+// Additionally, a MATCH clause cannot follow an OPTIONAL MATCH clause
 static AST_Validation _ValidateClauseOrder
 (
 	const AST *ast  // ast
 ) {
-	uint clause_count = cypher_ast_query_nclauses(ast->root);
+	ASSERT(ast != NULL);
 
-	bool encountered_optional_match = false;
+	uint clause_count                = cypher_ast_query_nclauses(ast->root);
+	bool encountered_optional_match  = false;
 	bool encountered_updating_clause = false;
-	for(uint i = 0; i < clause_count; i ++) {
-		const cypher_astnode_t *clause = cypher_ast_query_get_clause(ast->root, i);
+
+	for(uint i = 0; i < clause_count; i++) {
+		const cypher_astnode_t *clause =
+			cypher_ast_query_get_clause(ast->root, i);
 		cypher_astnode_type_t type = cypher_astnode_type(clause);
+
 		if(encountered_updating_clause && (type == CYPHER_AST_MATCH          ||
 										   type == CYPHER_AST_UNWIND         ||
 										   type == CYPHER_AST_CALL           ||
@@ -2143,27 +2141,24 @@ static AST_Validation _ValidateClauseOrder
 			ErrorCtx_SetError(EMSG_MISSING_WITH, cypher_astnode_typestr(type));
 			return AST_INVALID;
 		}
-		encountered_updating_clause = (encountered_updating_clause ||
-									   _is_updating_clause(clause));
+
+		encountered_updating_clause |= UPDATING_CALUSE(type);
 
 		if(type == CYPHER_AST_MATCH) {
-			// Check whether this match is optional
+			// check whether this match is optional
 			bool current_clause_is_optional = cypher_ast_match_is_optional(clause);
-			// If the current clause is non-optional but we have already
+			// if the current clause is non-optional but we have already
 			// encountered an optional match, emit an error
 			if(!current_clause_is_optional && encountered_optional_match) {
 				ErrorCtx_SetError(EMSG_MISSING_WITH_AFTER_MATCH);
 				return AST_INVALID;
 			}
 			encountered_optional_match |= current_clause_is_optional;
-		}
-
-		if(type == CYPHER_AST_WITH) {
-			encountered_optional_match = false;
+		} else if(type == CYPHER_AST_WITH || type == CYPHER_AST_UNION) {
+			// reset scope on WITH / UNION clauses
+			encountered_optional_match  = false;
 			encountered_updating_clause = false;
-		}
-
-		if(type == CYPHER_AST_CALL_SUBQUERY) {
+		} else if(type == CYPHER_AST_CALL_SUBQUERY) {
 			AST subquery_ast = {
 				.root = cypher_ast_call_subquery_get_query(clause)
 			};
