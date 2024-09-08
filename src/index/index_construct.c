@@ -117,12 +117,12 @@ static void _Index_PopulateEdgeIndex
 	ASSERT(g   != NULL);
 	ASSERT(idx != NULL);
 
-	GrB_Info  info;
-	bool      skip            = false;
+	bool  info;
 	EntityID  src_id          = 0;                      // current processed row idx
 	EntityID  dest_id         = 0;                      // current processed column idx
 	EntityID  edge_id         = 0;                      // current processed edge id
-	EntityID  prev_edge_id    = 0;                      // last processed edge idx
+	EntityID  prev_src_id     = INVALID_ENTITY_ID;      // last processed row idx
+	EntityID  prev_dest_id    = INVALID_ENTITY_ID;      // last processed column idx
 	int       indexed         = 0;                      // number of entities indexed in current batch
 	int       schema_id       = Index_GetLabelID(idx);  // index relationship type ID
 	int       batch_size      = 1000;                   // max number of entities to index in one go
@@ -141,8 +141,7 @@ static void _Index_PopulateEdgeIndex
 		}
 
 		// reset number of indexed edges in batch
-		indexed      = 0;
-		prev_edge_id = edge_id;
+		indexed = 0;
 
 		// fetch relation matrix
 		Graph_GetRelationMatrix(g, Index_GetLabelID(idx), false);
@@ -155,23 +154,21 @@ static void _Index_PopulateEdgeIndex
 		RelationIterator_AttachSourceRange(&it, g->relations[schema_id], src_id, UINT64_MAX, false);
 
 		// skip previously indexed edges
-		while(skip && (info = RelationIterator_next(&it, &src_id, &dest_id,
+		while((info = RelationIterator_next(&it, &src_id, &dest_id,
 						&edge_id)) &&
-				edge_id == prev_edge_id);
+				src_id == prev_src_id &&
+				dest_id < prev_dest_id);
 
 		// process only if iterator is on an active entry
-		if(skip && info != GrB_SUCCESS) {
+		if(!info) {
 			break;
 		}
-
-		skip = true;
 
 		//----------------------------------------------------------------------
 		// batch index edges
 		//----------------------------------------------------------------------
 
-		while(indexed < batch_size &&
-			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id)) {
+		do {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
@@ -180,8 +177,13 @@ static void _Index_PopulateEdgeIndex
 			Graph_GetEdge(g, edge_id, &e);
 			Index_IndexEdge(idx, &e);
 
-			indexed++;
-		}
+			if(prev_src_id != src_id || prev_dest_id != dest_id) {
+				indexed++;
+			}
+			prev_src_id  = src_id;
+			prev_dest_id = dest_id;
+		} while((indexed < batch_size || (prev_src_id == src_id && prev_dest_id == dest_id)) &&
+			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id));
 
 		//----------------------------------------------------------------------
 		// done with current batch

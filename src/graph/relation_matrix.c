@@ -10,6 +10,7 @@
 #include "relation_matrix.h"
 #include "delta_matrix/delta_matrix_iter.h"
 
+// don't iterate
 bool _DepletedIter
 (
 	RelationIterator *it,
@@ -22,6 +23,11 @@ bool _DepletedIter
 	return false;
 }
 
+// iterate over R matrix scanning a range of rows entry by entry
+// entry can a edge id or multi edge id
+// when an entry is multi-edge
+// iterate over E matrix at row = multi-edge id to get the edge id
+// transposed version
 bool _SourceTransposeIter
 (
 	RelationIterator *it,
@@ -57,6 +63,10 @@ bool _SourceTransposeIter
 	return false;
 }
 
+// iterate over R matrix scanning a range of rows entry by entry
+// entry can a edge id or multi edge id
+// when an entry is multi-edge
+// iterate over E matrix at row = multi-edge id to get the edge id
 bool _SourceIter
 (
 	RelationIterator *it,
@@ -66,6 +76,7 @@ bool _SourceIter
 ) {
 	ASSERT(it != NULL);
 
+	// resuming scan on edges matrix
 	if(Delta_MatrixTupleIter_is_attached(&it->e_it, it->M->E)) {
 		GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&it->e_it, NULL, edge_id, NULL);
 		if(info == GrB_SUCCESS) {
@@ -76,11 +87,14 @@ bool _SourceIter
 		Delta_MatrixTupleIter_detach(&it->e_it);
 	}
 
+	// trying to advance to the next set of src and dest nodes
 	GrB_Info info = Delta_MatrixTupleIter_next_UINT64(&it->r_it, &it->src, &it->dest, edge_id);
 	if(info == GrB_SUCCESS) {
 		if(src) *src = it->src;
 		if(dest) *dest = it->dest;
 		if(!SINGLE_EDGE(*edge_id)) {
+			// src and dest nodes have multiple edge connecting them
+			// attach edges iterator and get the first edge
 			Delta_MatrixTupleIter_AttachRange(&it->e_it, it->M->E, CLEAR_MSB(*edge_id), CLEAR_MSB(*edge_id));
 			info = Delta_MatrixTupleIter_next_BOOL(&it->e_it, NULL, edge_id, NULL);
 			ASSERT(info == GrB_SUCCESS);
@@ -91,6 +105,7 @@ bool _SourceIter
 	return false;
 }
 
+// single edge iterator
 bool _SourceDestSingleEdgeIter
 (
 	RelationIterator *it,
@@ -101,10 +116,13 @@ bool _SourceDestSingleEdgeIter
 	ASSERT(it != NULL);
 
 	*edge_id = it->edge_id;
+	if(src) *src = it->src;
+	if(dest) *dest = it->dest;
 	it->iter_func = _DepletedIter;
 	return true;
 }
 
+// iterate over E matrix at row = multi-edge id to get the edge id
 bool _SourceDestMultiEdgeIter
 (
 	RelationIterator *it,
@@ -114,6 +132,8 @@ bool _SourceDestMultiEdgeIter
 ) {
 	ASSERT(it != NULL);
 
+	if(src) *src = it->src;
+	if(dest) *dest = it->dest;
 	GrB_Info info = Delta_MatrixTupleIter_next_BOOL(&it->e_it, NULL, edge_id, NULL);
 	return info == GrB_SUCCESS;
 }
@@ -150,6 +170,8 @@ void RelationIterator_AttachSourceDest
 	ASSERT(M != NULL);
 
 	it->M = M;
+	it->src = src_id;
+	it->dest = dest_id;
 	GrB_Info res = Delta_Matrix_extractElement_UINT64(&it->edge_id, it->M->R, src_id, dest_id);
 	if(res == GrB_SUCCESS) {
 		if(SINGLE_EDGE(it->edge_id)) {
@@ -232,14 +254,7 @@ void RelationMatrix_FormConnection
 	}
 }
 
-GrB_Index _new_multi_edge_id
-(
-	RelationMatrix M
-) {
-	return array_len(M->freelist) > 0 
-		? array_pop(M->freelist) 
-		: M->row_id++;
-}
+#define NEW_MULTI_EDGE_ID(M) array_len(M->freelist) > 0 ? array_pop(M->freelist) : M->row_id++;
 
 void RelationMatrix_FormConnections
 (
@@ -250,13 +265,13 @@ void RelationMatrix_FormConnections
 	ASSERT(edges != NULL);
 
 	GrB_Info            info;
-	Edge               *single_to_multi = array_new(Edge, 0);
-	uint                edge_count      = array_len(edges);
-	EdgeID              meid            = INVALID_ENTITY_ID;
-	NodeID              prev_src        = INVALID_ENTITY_ID;
-	NodeID              prev_dest       = INVALID_ENTITY_ID;
-	EdgeID              prev_edge_id    = INVALID_ENTITY_ID;
-	roaring64_bitmap_t *single = roaring64_bitmap_create();
+	Edge               *multi        = array_new(Edge, 0); // newly added multi-edges
+	uint                edge_count   = array_len(edges);
+	EdgeID              meid         = INVALID_ENTITY_ID;  // multi-edge id
+	NodeID              prev_src     = INVALID_ENTITY_ID;
+	NodeID              prev_dest    = INVALID_ENTITY_ID;
+	EdgeID              prev_edge_id = INVALID_ENTITY_ID;
+	roaring64_bitmap_t *single       = roaring64_bitmap_create(); // marked single edges indices
 
 	roaring64_bitmap_add_range(single, 0, edge_count);
 
@@ -268,13 +283,11 @@ void RelationMatrix_FormConnections
 
 		if(src == prev_src && dest == prev_dest) {
 			if(meid == INVALID_ENTITY_ID) {
-				meid = _new_multi_edge_id(M);
+				meid = NEW_MULTI_EDGE_ID(M);
 				info = Delta_Matrix_setElement_BOOL(M->E, meid, prev_edge_id);
 				ASSERT(info == GrB_SUCCESS);
-				// when the R[src, dest] is not exists yet delay the creation of the multi edge
-				Edge ee = *e;
-				ee.id = meid;
-				array_append(single_to_multi, ee);
+				// when the R[src, dest] is not exists yet delay setting R[src, dest] = meid
+				array_append(multi, ((Edge){.id = meid, .src_id = src, .dest_id = dest}));
 				roaring64_bitmap_remove(single, i - 1);
 			}
 			info = Delta_Matrix_setElement_BOOL(M->E, meid, edge_id);
@@ -288,7 +301,7 @@ void RelationMatrix_FormConnections
 		GrB_Info info = Delta_Matrix_extractElement_UINT64(&current_edge, M->R, src, dest);
 		if(info == GrB_SUCCESS) {
 			if(SINGLE_EDGE(current_edge)) {
-				meid = _new_multi_edge_id(M);
+				meid = NEW_MULTI_EDGE_ID(M);
 				info = Delta_Matrix_setElement_BOOL(M->E, meid, current_edge);
 				ASSERT(info == GrB_SUCCESS);
 				info = Delta_Matrix_setElement_BOOL(M->E, meid, edge_id);
@@ -308,9 +321,9 @@ void RelationMatrix_FormConnections
 		prev_edge_id = edge_id;
 	}
 
-	uint count = array_len(single_to_multi);
+	uint count = array_len(multi);
 	for(uint i = 0; i < count; i++) {
-		Edge     *e       = single_to_multi + i;
+		Edge     *e       = multi + i;
 		GrB_Index meid    = e->id;
 		GrB_Index src     = e->src_id;
 		GrB_Index dest    = e->dest_id;
@@ -329,7 +342,7 @@ void RelationMatrix_FormConnections
 	}
 
 	// cleanup
-	array_free(single_to_multi);
+	array_free(multi);
 	roaring64_iterator_free(it);
 	roaring64_bitmap_free(single);
 }
