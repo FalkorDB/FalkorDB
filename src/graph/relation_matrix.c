@@ -353,11 +353,16 @@ bool RelationMatrix_pending
 
 void RelationMatrix_free
 (
-	RelationMatrix M
+	RelationMatrix *M
 ) {
-	ASSERT(M != NULL);
+	ASSERT(M != NULL && *M != NULL);
 
-	Delta_Matrix_free(&M->R);
-	Delta_Matrix_free(&M->E);
-	array_free(M->freelist);
+	RelationMatrix m = *M;
+
+	Delta_Matrix_free(&m->R);
+	Delta_Matrix_free(&m->E);
+	array_free(m->freelist);
+
+	rm_free(m);
+	*M = NULL;
 }

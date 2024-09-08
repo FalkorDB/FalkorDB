@@ -1042,7 +1042,7 @@ static void _Graph_FreeRelationMatrices
 ) {
 	uint relationCount = Graph_RelationTypeCount(g);
 	for(uint i = 0; i < relationCount; i++) {
-		RelationMatrix_free(g->relations[i]);
+		RelationMatrix_free(g->relations + i);
 	}
 }
 
@@ -1126,7 +1126,7 @@ void Graph_RemoveRelation
 	ASSERT(info == GrB_SUCCESS);
 	ASSERT(nvals == 0);
 	#endif
-	RelationMatrix_free(g->relations[relation_id]);
+	RelationMatrix_free(g->relations + relation_id);
 	g->relations = array_del(g->relations, relation_id);
 }
 

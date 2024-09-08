@@ -107,5 +107,5 @@ bool RelationMatrix_pending
 // free relation matrix
 void RelationMatrix_free
 (
-	RelationMatrix M   // relation matrix
+	RelationMatrix *M   // relation matrix
 );
