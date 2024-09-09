@@ -495,18 +495,18 @@ void Constraint_EnforceEdges
 	Constraint c,
 	Graph *g
 ) {
-	GrB_Info info;
+	bool info;
 	RelationIterator it = {0};
 
-	bool      skip         = false;
-	bool      holds        = true;          // constraint holds
-	EntityID  src_id       = 0;             // current processed row idx
-	EntityID  dest_id      = 0;             // current processed column idx
-	EntityID  edge_id      = 0;             // current processed edge id
-	EntityID  prev_edge_id = 0;             // last processed edge idx
-	int       enforced     = 0;             // # entities enforced in batch
-	int       schema_id    = c->schema_id;  // edge relationship type ID
-	int       batch_size   = 1000;          // max number of entities to enforce
+	bool      holds        = true;               // constraint holds
+	EntityID  src_id       = 0;                  // current processed row idx
+	EntityID  dest_id      = 0;                  // current processed column idx
+	EntityID  edge_id      = 0;                  // current processed edge idx
+	EntityID  prev_src_id  = INVALID_ENTITY_ID;  // last processed row idx
+	EntityID  prev_dest_id = INVALID_ENTITY_ID;  // last processed column idx
+	int       enforced     = 0;                  // # entities enforced in batch
+	int       schema_id    = c->schema_id;       // edge relationship type ID
+	int       batch_size   = 1000;               // max number of entities to enforce
 
 	while(holds) {
 		// lock graph for reading
@@ -521,8 +521,7 @@ void Constraint_EnforceEdges
 		}
 
 		// reset number of enforced edges in batch
-		enforced     = 0;
-		prev_edge_id = edge_id;
+		enforced = 0;
 
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
 		// sync relation matrix
@@ -536,24 +535,21 @@ void Constraint_EnforceEdges
 		RelationIterator_AttachSourceRange(&it, g->relations[schema_id], src_id, UINT64_MAX, false);
 
 		// skip previously enforced edges
-		while(skip && (info = RelationIterator_next(&it, &src_id, &dest_id,
+		while((info = RelationIterator_next(&it, &src_id, &dest_id,
 						&edge_id)) &&
-				edge_id != prev_edge_id);
+				src_id == prev_src_id &&
+				dest_id < prev_dest_id);
 
 		// process only if iterator is on an active entry
-		if(skip && info != GrB_SUCCESS) {
+		if(!info) {
 			break;
 		}
-
-		skip = true;
 
 		//----------------------------------------------------------------------
 		// batch enforce edges
 		//----------------------------------------------------------------------
 
-		while(enforced < batch_size &&
-			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id) &&
-			  holds) {
+		do {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
@@ -566,8 +562,14 @@ void Constraint_EnforceEdges
 				break;
 			}
 
-			enforced++;
-		} 
+			if(prev_src_id != src_id || prev_dest_id != dest_id) {
+				enforced++;
+			}
+			prev_src_id  = src_id;
+			prev_dest_id = dest_id;
+		} while((enforced < batch_size || (prev_src_id == src_id && prev_dest_id == dest_id)) &&
+			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id) &&
+			  holds);
 
 		//----------------------------------------------------------------------
 		// done with current batch
