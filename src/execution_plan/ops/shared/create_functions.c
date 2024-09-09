@@ -395,6 +395,7 @@ void PendingCreationsFree
 		uint edges_count = array_len(pending->edges);
 		for(uint i = 0; i < edges_count; i++) {
 			PendingEdgeCreations *pending_edge = pending->edges + i;
+			PropertyMap_Free(pending_edge->edges_to_create.properties);
 			if(pending_edge->edge_attributes) {
 				uint prop_count = array_len(pending_edge->edge_attributes);
 				for(uint j = 0; j < prop_count; j ++) {
