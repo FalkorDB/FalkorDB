@@ -10,16 +10,25 @@
 #include "../../../ast/ast_shared.h"
 #include "../../../resultset/resultset_statistics.h"
 
+// nodes commited one at a time as we reserved the node ids and need to be commited in order
 typedef struct {
-	NodeCreateCtx *nodes_to_create;
-	EdgeCreateCtx *edges_to_create;
+	NodeCreateCtx *nodes_to_create; // array of node blueprints
+	AttributeSet *node_attributes;  // array of node attribute sets created 
+	int  **node_labels;             // array of node labels
+	Node **created_nodes;           // array of created nodes
+} PendingNodeCreations;
 
-	AttributeSet *node_attributes;
-	AttributeSet **edge_attributes;
+// edges commited to the graph in baches all the edges from the same blueprint
+// are commited together
+typedef struct {
+	EdgeCreateCtx edges_to_create;  // edge blueprints
+	AttributeSet *edge_attributes;  // array of edge attribute sets created
+	Edge **created_edges;           // array of created edges
+} PendingEdgeCreations;
 
-	int **node_labels;
-	Node **created_nodes;
-	Edge ***created_edges;
+typedef struct {
+	PendingNodeCreations nodes;   // pending node creations
+	PendingEdgeCreations *edges;  // array of pending edge creations
 } PendingCreations;
 
 // initialize all variables for storing pending creations
