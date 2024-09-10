@@ -19,10 +19,13 @@ static OpResult UpdateReset(OpBase *opBase);
 static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void UpdateFree(OpBase *opBase);
 
-static Record _handoff(OpUpdate *op) {
-	/* TODO: popping a record out of op->records
-	 * will reverse the order in which records
-	 * are passed down the execution plan. */
+static Record _handoff
+(
+	OpUpdate *op
+) {
+	// TODO: popping a record out of op->records
+	// will reverse the order in which records
+	// are passed down the execution plan
 	if(op->records && array_len(op->records) > 0) return array_pop(op->records);
 	return NULL;
 }
@@ -49,8 +52,13 @@ static void freeCallback
 static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
 
-OpBase *NewUpdateOp(const ExecutionPlan *plan, rax *update_exps) {
+OpBase *NewUpdateOp
+(
+	const ExecutionPlan *plan,
+	rax *update_exps
+) {
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
+
 	op->gc                = QueryCtx_GetGraphCtx();
 	op->records           = array_new(Record, 64);
 	op->update_ctxs       = update_exps;
@@ -90,7 +98,8 @@ static Record UpdateConsume
 		raxSeek(&op->it, "^", NULL, 0);
 		while(raxNext(&op->it)) {
 			EntityUpdateEvalCtx *ctx = op->it.data;
-			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r, ctx, true);
+			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r,
+					ctx, true);
 		}
 
 		array_append(op->records, r);
@@ -102,7 +111,7 @@ static Record UpdateConsume
 	if(node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
-		// index R/W lock - as such, free all ExecutionPlan operations up the chain.
+		// index R/W lock - as such, reset all ExecutionPlan ops up the chain
 		OpBase_PropagateReset(child);
 
 		// lock everything
@@ -120,7 +129,11 @@ static Record UpdateConsume
 	return _handoff(op);
 }
 
-static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *UpdateClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_UPDATE);
 	OpUpdate *op = (OpUpdate *)opBase;
 

@@ -169,10 +169,10 @@ void EvalEntityUpdates
 	dict *updates;
 	GraphEntityType entity_type;
 	if(t == REC_TYPE_NODE) {
-		updates = node_updates;
+		updates     = node_updates;
 		entity_type = GETYPE_NODE;
 	} else {
-		updates = edge_updates;
+		updates     = edge_updates;
 		entity_type = GETYPE_EDGE;
 	}
 

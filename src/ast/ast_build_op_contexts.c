@@ -69,6 +69,7 @@ static void _ConvertUpdateItem
 	bool         set_labels    = false;
 	bool         remove_labels = false;
 	UPDATE_MODE  update_mode   = UPDATE_MERGE;
+
 	//--------------------------------------------------------------------------
 	// determine the type of assignment
 	//--------------------------------------------------------------------------
