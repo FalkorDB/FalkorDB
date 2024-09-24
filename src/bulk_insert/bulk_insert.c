@@ -272,7 +272,6 @@ static int _BulkInsert_ProcessEdgeFile
 	// sync matrix once
 	ASSERT(Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE);
 	Graph_GetRelationMatrix(gc->g, type_id, false);
-	Graph_GetMultiEdgeRelationMatrix(gc->g, type_id);
 	Graph_GetAdjacencyMatrix(gc->g, false);
 	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 

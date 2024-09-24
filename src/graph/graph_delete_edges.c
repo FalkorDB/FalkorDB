@@ -6,144 +6,160 @@
 #include "RG.h"
 #include "graph.h"
 #include "../util/arr.h"
+#include "tensor/tensor.h"
 #include "delta_matrix/delta_matrix_iter.h"
 
-// removes edges from Graph and updates graph relevant matrices
-//
-// edge deletion is performed in two steps
-// 1. simple edge deletion
-//    each edge is removed from the relation matrix if it is the
-//    only edge check if need to remove from the adjacency matrix
-//    otherwise delete it from the multi-edge matrix
-// 2. update multi-edge state
-//    each edge that was connected as multi edge check if we can
-//    transform it to single edge or delete it completly
-void Graph_DeleteEdges
+// qsort compare function
+// compare edges by relationship-type, src ID and dest ID
+static int _edge_cmp
+(
+	const void *a,
+	const void *b
+) {
+	Edge *ea = (Edge*)a;
+	Edge *eb = (Edge*)b;
+
+	// get edges relationship-type, src and dest node IDs
+	NodeID as     = Edge_GetSrcNodeID(ea);   // A's src node ID
+	NodeID bs     = Edge_GetSrcNodeID(eb);   // B's src node ID
+	NodeID at     = Edge_GetDestNodeID(ea);  // A's dest node ID
+	NodeID bt     = Edge_GetDestNodeID(eb);  // B's dest node ID
+	RelationID ar = Edge_GetRelationID(ea);  // A's relationship-type
+	RelationID br = Edge_GetRelationID(eb);  // B's relationship-type
+
+	// different relationship-type
+	if(ar != br) return ar - br;
+
+	// same relationship-type, different source node ID
+	if(as != bs) return as - bs;
+
+	// same relationship-type and src node ID
+	// compare base on destination node ID
+	return at - bt;
+}
+
+static void _clear_adj
 (
 	Graph *g,
-	Edge *edges,
-	uint64_t n
+	Delta_Matrix ADJ,
+	const Edge *e
 ) {
-	ASSERT(g != NULL);
-	ASSERT(n > 0);
-	ASSERT(edges != NULL);
+	RelationID r    = Edge_GetRelationID(e);
+	NodeID     src  = Edge_GetSrcNodeID(e);
+	NodeID     dest = Edge_GetDestNodeID(e);
 
-	GrB_Info       info;
-	Delta_Matrix   M;
-	Delta_Matrix   E;
+	// see if source is connected to destination with additional edges
+	// TODO: this is expensive, consider switching to numeric ADJ matrix
+	// where ADJ[i, j] = k the number of edges of any type connecting
+	// node i to node j, the entry can be dropped once ADJ[i, j] = 0
+	GrB_Info info;
+	bool connected = false;
+	int relationCount = Graph_RelationTypeCount(g);
+	for(int ri = 0; ri < relationCount; ri++) {
+		if(ri == r) continue;
 
-	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
-
-	// delete edges without considering multi edge state changes
-	for (uint i = 0; i < n; i++) {
-		Edge       *e         =  edges + i;
-		int         r         =  Edge_GetRelationID(e);
-		NodeID      src_id    =  Edge_GetSrcNodeID(e);
-		NodeID      dest_id   =  Edge_GetDestNodeID(e);
-		EdgeID      edge_id   =  ENTITY_GET_ID(e);
-
-		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
-
-		// an edge of type r has just been deleted, update statistics
-		GraphStatistics_DecEdgeCount(&g->stats, r, 1);
-
-		M = Graph_GetRelationMatrix(g, r, false);
-
-		GrB_Index me_id;
-		info = Delta_Matrix_extractElement_UINT64(&me_id, M, src_id, dest_id);
-		ASSERT(info == GrB_SUCCESS);
-
-		if(SINGLE_EDGE(me_id)) {
-			info = Delta_Matrix_removeElement(M, src_id, dest_id);
-			ASSERT(info == GrB_SUCCESS);
-			ASSERT(me_id == edge_id);
-
-			// see if source is connected to destination with additional edges
-			bool connected = false;
-			int relationCount = Graph_RelationTypeCount(g);
-			for(int j = 0; j < relationCount; j++) {
-				if(j == r) continue;
-				Delta_Matrix r = Graph_GetRelationMatrix(g, j, false);
-				info = Delta_Matrix_extractElement_BOOL(NULL, r, src_id, dest_id);
-				if(info == GrB_SUCCESS) {
-					connected = true;
-					break;
-				}
-			}
-
-			// there are no additional edges connecting source to destination
-			// remove edge from THE adjacency matrix
-			if(!connected) {
-				Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
-				info = Delta_Matrix_removeElement(adj, src_id, dest_id);
-				ASSERT(info == GrB_SUCCESS);
-			}
-		} else {
-			E  = Graph_GetMultiEdgeRelationMatrix(g, r);
-			me_id = CLEAR_MSB(me_id);
-			info = Delta_Matrix_removeElement(E, me_id, edge_id);
-			ASSERT(info == GrB_SUCCESS);
+		Delta_Matrix A = Graph_GetRelationMatrix(g, ri, false);
+		info = Delta_Matrix_extractElement_BOOL(NULL, A, src, dest);
+		if(info == GrB_SUCCESS) {
+			connected = true;
+			break;
 		}
-
-		// free and remove edges from datablock.
-		DataBlock_DeleteItem(g->edges, edge_id);
 	}
 
-	// check if multi edge can be transformed to single edge or deleted completely
-	for (uint i = 0; i < n; i++) {
-		Edge       *e         =  edges + i;
-		int         r         =  Edge_GetRelationID(e);
-		NodeID      src_id    =  Edge_GetSrcNodeID(e);
-		NodeID      dest_id   =  Edge_GetDestNodeID(e);
-		EdgeID      edge_id   =  ENTITY_GET_ID(e);
+	// there are no additional edges connecting source to destination
+	// remove edge from THE adjacency matrix
+	if(!connected) {
+		info = Delta_Matrix_removeElement(ADJ, src, dest);
+		ASSERT(info == GrB_SUCCESS);
+	}
+}
 
-		M = Graph_GetRelationMatrix(g, r, false);
+// removes edges from Graph and updates graph relevant matrices
+void Graph_DeleteEdges
+(
+	Graph *g,     // graph
+	Edge *edges,  // edges to remove
+	uint64_t n    // number of edges
+) {
+	ASSERT(n > 0);
+	ASSERT(g     != NULL);
+	ASSERT(edges != NULL);
 
-		GrB_Index id;
-		info = Delta_Matrix_extractElement_UINT64(&id, M, src_id, dest_id);
-		if(info != GrB_SUCCESS || SINGLE_EDGE(id)) continue;
+	GrB_Info info;
 
-		E  = Graph_GetMultiEdgeRelationMatrix(g, r);
-		id = CLEAR_MSB(id);
-		Delta_MatrixTupleIter it = {0};
-		Delta_MatrixTupleIter_AttachRange(&it, E, id, id);
-		GrB_Index last_edge_id;
-		uint count = 0;
-		while (Delta_MatrixTupleIter_next_BOOL(&it, NULL, &last_edge_id, NULL) == GrB_SUCCESS) {
-			count++;
-			if(count == 2) break;
+	// update matrix sync policy to NOP
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+
+	// sort edges by:
+	// 1. relationship-type
+	// 2. src node ID
+	// 3. dest node ID
+	qsort(edges, n, sizeof(Edge), _edge_cmp);
+
+	// handle each relationship-type seperetly
+	for(uint64_t i = 0; i < n;) {
+		Edge      *e = edges + i;
+		RelationID r = Edge_GetRelationID(e);
+
+		// gather edges by relationship-type
+		uint64_t j = i;
+		while(Edge_GetRelationID(e) == r) {
+			// make sure edge isn't already deleted
+			ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
+
+			// free and remove edges from datablock
+			EdgeID edge_id = ENTITY_GET_ID(e);
+			DataBlock_DeleteItem(g->edges, edge_id);
+
+			// advance
+			if(++j == n) break;
+
+			e = edges + j;
 		}
 
-		if(count == 0) {
-			info = Delta_Matrix_removeElement(M, src_id, dest_id);
-			ASSERT(info == GrB_SUCCESS);
+		// in case relationship-type 'r' doesn't contains any vector entries
+		// we can improve deletion performance by performin "flat deletion"
+		// otherwise the deletion process needs to take into account vectors
+		// which is a bit more expenssive
+		bool flat_deletion = !Graph_RelationshipContainsMultiEdge(g, r);
 
-			// see if source is connected to destination with additional edges
-			bool connected = false;
-			int relationCount = Graph_RelationTypeCount(g);
-			for(int j = 0; j < relationCount; j++) {
-				if(j == r) continue;
-				Delta_Matrix r = Graph_GetRelationMatrix(g, j, false);
-				info = Delta_Matrix_extractElement_BOOL(NULL, r, src_id, dest_id);
-				if(info == GrB_SUCCESS) {
-					connected = true;
-					break;
-				}
+		// edge(s) of type r has just been deleted, update statistics
+		uint64_t d = j - i;  // number of edges sharing the same relationship
+		GraphStatistics_DecEdgeCount(&g->stats, r, d);
+
+		// delete edges[i..j]
+		Delta_Matrix R   = Graph_GetRelationMatrix(g, r, false);
+		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+
+		if(flat_deletion) {
+			// tensor R doesn't contains any vector
+			// perform a simple "flat" deletion
+			Tensor_RemoveElements_Flat(R, edges + i, d);
+			// for each removed edge E see if ADJ[E.src, E.dest] needs clearing
+			for (uint64_t k = 0; k < d; k++) {
+				e = edges + (i + k);
+				_clear_adj(g, ADJ, e);
+			}
+		} else {
+			// tensor R contains vectors
+			// perform deletion which handels vector entries
+			uint64_t *cleared_entries = NULL;
+			Tensor_RemoveElements(R, edges + i, d, &cleared_entries);
+
+			// for each cleared entry E see if ADJ[E.src, E.dest] needs clearing
+			uint64_t m = array_len(cleared_entries);
+			for (uint k = 0; k < m; k++) {
+				e = edges + (i + cleared_entries[k]);
+				_clear_adj(g, ADJ, e);
 			}
 
-			// there are no additional edges connecting source to destination
-			// remove edge from THE adjacency matrix
-			if(!connected) {
-				Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
-				info = Delta_Matrix_removeElement(adj, src_id, dest_id);
-				ASSERT(info == GrB_SUCCESS);
-			}
-		} else if(count == 1) {
-			Delta_Matrix_removeElement(E, id, last_edge_id);
-			Delta_Matrix_setElement_UINT64(M, last_edge_id, src_id, dest_id);
-			array_append(g->relations[r]->freelist, id);
+			// free reported cleared entries
+			array_free(cleared_entries);
 		}
+
+		i = j;
 	}
 
 	Graph_SetMatrixPolicy(g, policy);
 }
+

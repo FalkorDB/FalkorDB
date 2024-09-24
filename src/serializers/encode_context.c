@@ -17,16 +17,19 @@ GraphEncodeContext *GraphEncodeContext_New() {
 	return ctx;
 }
 
-static void _GraphEncodeContext_ResetHeader(GraphEncodeContext *ctx) {
+static void _GraphEncodeContext_ResetHeader
+(
+	GraphEncodeContext *ctx
+) {
 	ASSERT(ctx != NULL);
 
 	GraphEncodeHeader *header = &(ctx->header);
 
-	header->key_count = 0;
-	header->node_count = 0;
-	header->edge_count = 0;
-	header->graph_name = NULL;
-	header->label_matrix_count = 0;
+	header->key_count                 = 0;
+	header->node_count                = 0;
+	header->edge_count                = 0;
+	header->graph_name                = NULL;
+	header->label_matrix_count        = 0;
 	header->relationship_matrix_count = 0;
 
 	if(header->multi_edge != NULL) {
@@ -43,7 +46,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	ctx->offset = 0;
 	ctx->keys_processed = 0;
 	ctx->state = ENCODE_STATE_INIT;
-	ctx->matrix_tuple_iterator = (RelationIterator){0};
+	ctx->matrix_tuple_iterator = (TensorIterator) {0};
 	ctx->current_relation_matrix_id = 0;
 
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &ctx->vkey_entity_count);
@@ -55,7 +58,7 @@ void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
 	}
 
 	// Avoid leaks in case or reset during encodeing.
-	ctx->matrix_tuple_iterator = (RelationIterator){0};
+	ctx->matrix_tuple_iterator = (TensorIterator){0};
 }
 
 void GraphEncodeContext_InitHeader
@@ -71,21 +74,21 @@ void GraphEncodeContext_InitHeader
 	GraphEncodeHeader *header = &(ctx->header);
 	ASSERT(header->multi_edge == NULL);
 
-	header->graph_name                 =  graph_name;
-	header->node_count                 =  Graph_NodeCount(g);
-	header->edge_count                 =  Graph_EdgeCount(g);
-	header->deleted_node_count         =  Graph_DeletedNodeCount(g);
-	header->deleted_edge_count         =  Graph_DeletedEdgeCount(g);
-	header->relationship_matrix_count  =  r_count;
-	header->label_matrix_count         =  Graph_LabelTypeCount(g);
-	header->key_count                  =  GraphEncodeContext_GetKeyCount(ctx);
-	header->multi_edge                 =  rm_malloc(sizeof(bool) * r_count);
+	header->graph_name                = graph_name;
+	header->node_count                = Graph_NodeCount(g);
+	header->edge_count                = Graph_EdgeCount(g);
+	header->deleted_node_count        = Graph_DeletedNodeCount(g);
+	header->deleted_edge_count        = Graph_DeletedEdgeCount(g);
+	header->relationship_matrix_count = r_count;
+	header->label_matrix_count        = Graph_LabelTypeCount(g);
+	header->key_count                 = GraphEncodeContext_GetKeyCount(ctx);
+	header->multi_edge                = rm_malloc(sizeof(bool) * r_count);
 
 	// denote for each relationship matrix Ri if it contains muti-edge entries
 	// this information alows for an optimization when loading the data
 	// as construction of a matrix without multiple edge entry is cheaper
 	for(uint i = 0; i < r_count; i++) {
-		bool multi_edge = Graph_RelationshipContainsMultiEdge(g, i, false);
+		bool multi_edge = Graph_RelationshipContainsMultiEdge(g, i);
 		header->multi_edge[i] = multi_edge;
 	}
 }
@@ -149,19 +152,27 @@ void GraphEncodeContext_SetDatablockIterator(GraphEncodeContext *ctx,
 	ctx->datablock_iterator = iter;
 }
 
-uint GraphEncodeContext_GetCurrentRelationID(const GraphEncodeContext *ctx) {
+uint GraphEncodeContext_GetCurrentRelationID
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return ctx->current_relation_matrix_id;
 }
 
-void GraphEncodeContext_SetCurrentRelationID(GraphEncodeContext *ctx,
-											 uint current_relation_matrix_id) {
+void GraphEncodeContext_SetCurrentRelationID
+(
+	GraphEncodeContext *ctx,
+	uint current_relation_matrix_id
+) {
 	ASSERT(ctx);
 	ctx->current_relation_matrix_id = current_relation_matrix_id;
 }
 
-RelationIterator *GraphEncodeContext_GetMatrixTupleIterator(
-	GraphEncodeContext *ctx) {
+TensorIterator *GraphEncodeContext_GetMatrixTupleIterator
+(
+	GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return &ctx->matrix_tuple_iterator;
 }

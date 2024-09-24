@@ -496,7 +496,7 @@ void Constraint_EnforceEdges
 	Graph *g
 ) {
 	bool info;
-	RelationIterator it = {0};
+	TensorIterator it = {0};
 
 	bool      holds        = true;               // constraint holds
 	EntityID  src_id       = 0;                  // current processed row idx
@@ -525,18 +525,16 @@ void Constraint_EnforceEdges
 
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
 		// sync relation matrix
-		Graph_GetRelationMatrix(g, schema_id, false);
-		Graph_GetMultiEdgeRelationMatrix(g, schema_id);
+		Delta_Matrix R = Graph_GetRelationMatrix(g, schema_id, false);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		RelationIterator_AttachSourceRange(&it, g->relations[schema_id], src_id, UINT64_MAX, false);
+		TensorIterator_ScanRange(&it, R, src_id, UINT64_MAX, false);
 
 		// skip previously enforced edges
-		while((info = RelationIterator_next(&it, &src_id, &dest_id,
-						&edge_id)) &&
+		while((info = TensorIterator_next(&it, &src_id, &dest_id, &edge_id)) &&
 				src_id == prev_src_id &&
 				dest_id < prev_dest_id);
 
@@ -567,8 +565,9 @@ void Constraint_EnforceEdges
 			}
 			prev_src_id  = src_id;
 			prev_dest_id = dest_id;
-		} while((enforced < batch_size || (prev_src_id == src_id && prev_dest_id == dest_id)) &&
-			  RelationIterator_next(&it, &src_id, &dest_id, &edge_id) &&
+		} while((enforced < batch_size ||
+				(prev_src_id == src_id && prev_dest_id == dest_id)) &&
+			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id) &&
 			  holds);
 
 		//----------------------------------------------------------------------

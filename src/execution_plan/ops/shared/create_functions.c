@@ -111,7 +111,7 @@ static void _CommitEdgesBlueprint
 	// create missing schemas
 	// this loop iterates over the CREATE pattern, e.g.
 	// CREATE (p:Person)-[e:VISITED]->(q)
-	// As such we're not expecting a large number of iterations
+	// as such we're not expecting a large number of iterations
 	uint blueprint_edge_count = array_len(pending->edges);
 	for(uint i = 0; i < blueprint_edge_count; i++) {
 		EdgeCreateCtx *edge_ctx = &pending->edges[i].edges_to_create;
@@ -123,7 +123,6 @@ static void _CommitEdgesBlueprint
 		// calling Graph_GetRelationMatrix will make sure relationship matrix
 		// is of the right dimensions
 		Graph_GetRelationMatrix(g, Schema_GetID(s), false);
-		Graph_GetMultiEdgeRelationMatrix(g, Schema_GetID(s));
 	}
 
 	// call Graph_GetAdjacencyMatrix will make sure the adjacency matrix
@@ -150,8 +149,11 @@ static void _CommitEdges
 		// processing current batch
 		// get batched edges along with their corresponding attribute sets
 		PendingEdgeCreations *pending_edge = pending->edges + i;
+
 		// all edges in a batch share the same relationship-type
-		Schema *s = GraphContext_GetSchema(gc, pending_edge->edges_to_create.relation, SCHEMA_EDGE);
+		Schema *s = GraphContext_GetSchema(gc,
+				pending_edge->edges_to_create.relation, SCHEMA_EDGE);
+
 		// all schemas have been created in the edge blueprint loop or earlier
 		ASSERT(s != NULL);
 		int relation_id = Schema_GetID(s);

@@ -14,7 +14,7 @@
 #include "entities/edge.h"
 #include "../redismodule.h"
 #include "graph_statistics.h"
-#include "relation_matrix.h"
+#include "tensor/tensor.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
 #include "../util/datablock/datablock_iterator.h"
@@ -51,7 +51,7 @@ struct Graph {
 	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
 	Delta_Matrix *labels;              // label matrices
 	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
-	RelationMatrix *relations;         // relation matrices
+	Tensor *relations;                 // relation matrices
 	Delta_Matrix _zero_matrix;         // zero matrix
 	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
 	bool _writelocked;                 // true if the read-write lock was acquired by a writer
@@ -80,14 +80,7 @@ void Graph_ReleaseLock
 	Graph *g
 );
 
-// synchronize and resize all matrices in graph
-void Graph_ApplyAllPending
-(
-	Graph *g,           // graph to sync
-	bool force_flush    // force sync of delta matrices
-);
-
-// Retrieve graph matrix synchronization policy
+// retrieve graph matrix synchronization policy
 MATRIX_POLICY Graph_GetMatrixPolicy
 (
 	const Graph *g
@@ -100,6 +93,13 @@ MATRIX_POLICY Graph_SetMatrixPolicy
 	MATRIX_POLICY policy
 );
 
+// synchronize and resize all matrices in graph
+void Graph_ApplyAllPending
+(
+	Graph *g,           // graph to sync
+	bool force_flush    // force sync of delta matrices
+);
+
 // checks to see if graph has pending operations
 bool Graph_Pending
 (
@@ -109,8 +109,8 @@ bool Graph_Pending
 // create a new graph
 Graph *Graph_New
 (
-	size_t node_cap,    // Allocation size for node datablocks and matrix dimensions.
-	size_t edge_cap     // Allocation size for edge datablocks.
+	size_t node_cap,  // allocation size for node datablocks and matrix dimensions
+	size_t edge_cap   // allocation size for edge datablocks
 );
 
 // creates a new label matrix, returns id given to label
@@ -124,32 +124,6 @@ void Graph_RemoveLabel
 (
 	Graph *g,
 	LabelID label_id
-);
-
-// label node with each label in 'lbls'
-void Graph_LabelNode
-(
-	Graph *g,       // graph to operate on
-	NodeID id,      // node ID to update
-	LabelID *lbls,  // set to labels to associate with node
-	uint lbl_count  // number of labels
-);
-
-// dissociates each label in 'lbls' from given node
-void Graph_RemoveNodeLabels
-(
-	Graph *g,       // graph to operate against
-	NodeID id,      // node ID to update
-	LabelID *lbls,  // set of labels to remove
-	uint lbl_count  // number of labels to remove
-);
-
-// return true if node is labeled as 'l'
-bool Graph_IsNodeLabeled
-(
-	Graph *g,   // graph to operate on
-	NodeID id,  // node ID to inspect
-	LabelID l   // label to check for
 );
 
 // creates a new relation matrix, returns id given to relation
@@ -179,42 +153,81 @@ void Graph_AllocateEdges
 	size_t n                // number of edges to create
 );
 
+// reset graph's reserved node count
 void Graph_ResetReservedNode
 (
-	Graph *g
+	Graph *g  // graph
 );
 
+// reserve a node
 Node Graph_ReserveNode
 (
 	Graph *g  // graph for which nodes will be added
 );
 
-// Create a single node and labels it accordingly.
+// create a single node and labels it accordingly.
 // Return newly created node.
 void Graph_CreateNode
 (
-	Graph *g,
-	Node *n,
-	LabelID *labels,
-	uint label_count
+	Graph *g,         // graph
+	Node *n,          // node to create
+	LabelID *labels,  // node's labels
+	uint label_count  // number of labels
+);
+
+// label node with each label in 'lbls'
+void Graph_LabelNode
+(
+	Graph *g,       // graph to operate on
+	NodeID id,      // node ID to update
+	LabelID *lbls,  // set to labels to associate with node
+	uint lbl_count  // number of labels
+);
+
+// return true if node is labeled as 'l'
+bool Graph_IsNodeLabeled
+(
+	Graph *g,   // graph to operate on
+	NodeID id,  // node ID to inspect
+	LabelID l   // label to check for
+);
+
+// dissociates each label in 'lbls' from given node
+void Graph_RemoveNodeLabels
+(
+	Graph *g,       // graph to operate against
+	NodeID id,      // node ID to update
+	LabelID *lbls,  // set of labels to remove
+	uint lbl_count  // number of labels to remove
+);
+
+// update ADJ and relation matrices with a new entry
+// ADJ[src, dest] = true & R[src, dest] = edge_id
+void Graph_FormConnection
+(
+	Graph *g,        // graph
+	NodeID src,      // src node id
+	NodeID dest,     // dest node id
+	EdgeID edge_id,  // edge id
+	RelationID r     // relation id
 );
 
 // connects source node to destination node
 void Graph_CreateEdge
 (
-	Graph *g,           // graph on which to operate
-	NodeID src,         // source node ID
-	NodeID dest,        // destination node ID
-	RelationID r,       // edge type
-	Edge *e
+	Graph *g,      // graph on which to operate
+	NodeID src,    // source node ID
+	NodeID dest,   // destination node ID
+	RelationID r,  // edge type
+	Edge *e        // [output] created edge
 );
 
-// connects all source nodes to destination nodes
+// create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,           // graph on which to operate
-	RelationID r,       // edge type
-	Edge **edges
+	Graph *g,      // graph on which to operate
+	RelationID r,  // relationship type
+	Edge **edges   // edges to create
 );
 
 // deletes nodes from the graph
@@ -301,7 +314,7 @@ uint64_t Graph_RelationEdgeCount
 // returns number of deleted edges in the graph
 uint Graph_DeletedEdgeCount
 (
-	const Graph *g
+	const Graph *g  // graph
 );
 
 // returns number of different edge types
@@ -321,8 +334,7 @@ int Graph_LabelTypeCount
 bool Graph_RelationshipContainsMultiEdge
 (
 	const Graph *g,  // Graph containing matrix to inspect
-	RelationID r,    // Relationship ID
-	bool transpose   // false for R, true for transpose R
+	RelationID r     // Relationship ID
 );
 
 // retrieves node with given id from graph,
@@ -348,21 +360,21 @@ bool Graph_GetEdge
 // about edge type
 void Graph_GetEdgesConnectingNodes
 (
-	const Graph *g,     // Graph to get edges from.
-	NodeID srcID,       // Source node of edge
-	NodeID destID,      // Destination node of edge
-	RelationID r,       // Edge type.
-	Edge **edges        // array_t of edges connecting src to dest of type r.
+	const Graph *g,  // Graph to get edges from.
+	NodeID srcID,    // Source node of edge
+	NodeID destID,   // Destination node of edge
+	RelationID r,    // Edge type.
+	Edge **edges     // array_t of edges connecting src to dest of type r.
 );
 
 // get node edges
 void Graph_GetNodeEdges
 (
-	const Graph *g,         // graph to get edges from
-	const Node *n,          // node to extract edges from
-	GRAPH_EDGE_DIR dir,     // edge direction
-	RelationID edgeType,    // relation type
-	Edge **edges            // array_t incoming/outgoing edges
+	const Graph *g,       // graph to get edges from
+	const Node *n,        // node to extract edges from
+	GRAPH_EDGE_DIR dir,   // edge direction
+	RelationID edgeType,  // relation type
+	Edge **edges          // array_t incoming/outgoing edges
 );
 
 // returns node incoming/outgoing degree
@@ -371,7 +383,7 @@ uint64_t Graph_GetNodeDegree
 	const Graph *g,      // graph to inquery
 	const Node *n,       // node to get degree of
 	GRAPH_EDGE_DIR dir,  // incoming/outgoing/both
-	RelationID edgeType  // relation type
+	RelationID r         // relation type
 );
 
 // populate array of node's label IDs, return number of labels on node.
@@ -401,19 +413,11 @@ Delta_Matrix Graph_GetLabelMatrix
 
 // retrieves a typed adjacency matrix
 // matrix is resized if its size doesn't match graph's node count
-Delta_Matrix Graph_GetRelationMatrix
+Tensor Graph_GetRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
 	RelationID relation_idx,  // relation described by matrix
-	bool transposed
-);
-
-// retrieves a typed multi-edge matrix
-// matrix is resized if its size doesn't match graph's node count
-Delta_Matrix Graph_GetMultiEdgeRelationMatrix
-(
-	const Graph *g,            // graph from which to get multi-edge matrix
-	RelationID relation_idx    // relation described by matrix
+	bool transposed           // transposed
 );
 
 // retrieves the node-label mapping matrix,
@@ -442,3 +446,4 @@ void Graph_Free
 (
 	Graph *g
 );
+

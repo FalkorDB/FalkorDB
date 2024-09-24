@@ -138,12 +138,12 @@ static void _OptimizedSingleEdgeFormConnection
 	int r
 ) {
 	GrB_Info info;
-	Delta_Matrix  M      =  Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix  adj    =  Graph_GetAdjacencyMatrix(g, false);
-	GrB_Matrix m         =  Delta_Matrix_M(M);
-	GrB_Matrix tm        =  Delta_Matrix_M(Delta_Matrix_getTranspose(M));
-	GrB_Matrix adj_m     =  Delta_Matrix_M(adj);
-	GrB_Matrix adj_tm    =  Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
+	Delta_Matrix M      = Graph_GetRelationMatrix(g, r, false);
+	Delta_Matrix adj    = Graph_GetAdjacencyMatrix(g, false);
+	GrB_Matrix   m      = Delta_Matrix_M(M);
+	GrB_Matrix   tm     = Delta_Matrix_M(Delta_Matrix_getTranspose(M));
+	GrB_Matrix   adj_m  = Delta_Matrix_M(adj);
+	GrB_Matrix   adj_tm = Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
 	UNUSED(info);
 
@@ -162,6 +162,7 @@ static void _OptimizedSingleEdgeFormConnection
 		Graph_EnsureNodeCap(g, max_id);
 		info = GrB_Matrix_setElement_BOOL(adj_m, true, src, dest);
 	}
+
 	ASSERT(info == GrB_SUCCESS);
 	info = GrB_Matrix_setElement_BOOL(adj_tm, true, dest, src);
 	ASSERT(info == GrB_SUCCESS);
@@ -172,6 +173,7 @@ static void _OptimizedSingleEdgeFormConnection
 
 	info = GrB_Matrix_setElement_UINT64(m, edge_id, src, dest);
 	ASSERT(info == GrB_SUCCESS);
+
 	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -194,11 +196,11 @@ void Serializer_Graph_SetEdge
 	AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, edge_id);
 	*set = NULL;
 
-	e->id         =  edge_id;
-	e->src_id     =  src;
-	e->dest_id    =  dest;
-	e->attributes =  set;
-	e->relationID =  r;
+	e->id         = edge_id;
+	e->src_id     = src;
+	e->dest_id    = dest;
+	e->attributes = set;
+	e->relationID = r;
 
 	if(multi_edge) {
 		Graph_FormConnection(g, src, dest, edge_id, r);

@@ -309,13 +309,13 @@ void RdbSaveEdges_v15
 	// already set to the next entry to fetch
 	// for previous edge encide or create new one
 	uint relation_count = Graph_RelationTypeCount(gc->g);
-	RelationIterator *iter = GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
+	TensorIterator *iter =
+		GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
 	if(r < relation_count) {
-		Graph_GetRelationMatrix(gc->g, r, false);
-		Graph_GetMultiEdgeRelationMatrix(gc->g, r);
+		Delta_Matrix R = Graph_GetRelationMatrix(gc->g, r, false);
 
-		if(!RelationIterator_is_attached(iter, gc->g->relations[r])) {
-			RelationIterator_AttachSourceRange(iter, gc->g->relations[r], 0, UINT64_MAX, false);
+		if(!TensorIterator_is_attached(iter, R)) {
+			TensorIterator_ScanRange(iter, R, 0, UINT64_MAX, false);
 		}
 	}
 
@@ -325,7 +325,7 @@ void RdbSaveEdges_v15
 		EdgeID edgeID;
 
 		// try to get next tuple
-		depleted = !RelationIterator_next(iter, &src, &dest, &edgeID);
+		depleted = !TensorIterator_next(iter, &src, &dest, &edgeID);
 
 		// if iterator is depleted
 		// get new tuple from different matrix or finish encode
@@ -337,10 +337,10 @@ void RdbSaveEdges_v15
 			if(r == relation_count) goto finish;
 
 			// get matrix and set iterator
-			Graph_GetRelationMatrix(gc->g, r, false);
-			Graph_GetMultiEdgeRelationMatrix(gc->g, r);
-			RelationIterator_AttachSourceRange(iter, gc->g->relations[r], 0, UINT64_MAX, false);
-			depleted = !RelationIterator_next(iter, &src, &dest, &edgeID);
+			Delta_Matrix R = Graph_GetRelationMatrix(gc->g, r, false);
+
+			TensorIterator_ScanRange(iter, R, 0, UINT64_MAX, false);
+			depleted = !TensorIterator_next(iter, &src, &dest, &edgeID);
 		}
 		
 		ASSERT(!depleted);
@@ -355,7 +355,7 @@ void RdbSaveEdges_v15
 finish:
 	// check if done encoding edges
 	if(offset + edges_to_encode == graph_edges) {
-		*iter = (RelationIterator){0};
+		*iter = (TensorIterator){0};
 	}
 
 	// update context
