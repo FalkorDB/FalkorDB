@@ -238,12 +238,12 @@ void Graph_DeleteNodes
 	uint64_t count  // number of nodes
 );
 
-// removes edges from Graph and updates graph relevent matrices
+// deletes edges from the graph
 void Graph_DeleteEdges
 (
-	Graph *g,
-	Edge *edges,
-	uint64_t n
+	Graph *g,     // graph to delete edges from
+	Edge *edges,  // edges to delete
+	uint64_t n    // number of edges
 );
 
 // returns true if the given entity has been deleted

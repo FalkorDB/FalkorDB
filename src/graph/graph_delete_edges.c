@@ -74,11 +74,11 @@ static void _clear_adj
 	}
 }
 
-// removes edges from Graph and updates graph relevant matrices
-void Graph_DeleteEdges
+// clears connections from the graph by updating relevent matrices
+void Graph_ClearConnections
 (
-	Graph *g,     // graph
-	Edge *edges,  // edges to remove
+	Graph *g,     // graph to update
+	Edge *edges,  // edges to clear
 	uint64_t n    // number of edges
 ) {
 	ASSERT(n > 0);
@@ -104,13 +104,6 @@ void Graph_DeleteEdges
 		// gather edges by relationship-type
 		uint64_t j = i;
 		while(Edge_GetRelationID(e) == r) {
-			// make sure edge isn't already deleted
-			ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
-
-			// free and remove edges from datablock
-			EdgeID edge_id = ENTITY_GET_ID(e);
-			DataBlock_DeleteItem(g->edges, edge_id);
-
 			// advance
 			if(++j == n) break;
 

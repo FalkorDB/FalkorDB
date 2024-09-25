@@ -458,8 +458,16 @@ static void _Graph_FreeRelationMatrices
 	const Graph *g
 ) {
 	uint n = Graph_RelationTypeCount(g);
+
 	for(uint i = 0; i < n; i++) {
-		Tensor_free(g->relations + i);
+		// in case relation contains multi-edges free tensor
+		// otherwise treat the relation matrix as a regular 2D matrix
+		// which is a bit faster to free
+		if(Graph_RelationshipContainsMultiEdge(g, i)) {
+			Tensor_free(g->relations + i);
+		} else {
+			Delta_Matrix_free(g->relations + i);
+		}
 	}
 }
 
@@ -846,6 +854,40 @@ void Graph_CreateEdges
 
 	// update graph statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);
+}
+
+// forward declaration
+// defined in graph_delete_edges.c
+// clears connections from the graph by updating relevent matrices
+void Graph_ClearConnections
+(
+	Graph *g,     // graph to update
+	Edge *edges,  // edges to clear
+	uint64_t n    // number of edges
+);
+
+// deletes edges from the graph
+void Graph_DeleteEdges
+(
+	Graph *g,     // graph to delete edges from
+	Edge *edges,  // edges to delete
+	uint64_t n    // number of edges
+) {
+	ASSERT(n     > 0);
+	ASSERT(g     != NULL);
+	ASSERT(edges != NULL);
+
+	for(uint64_t i = 0; i < n; i++) {
+		Edge *e = edges + i;
+
+		// make sure edge isn't already deleted
+		ASSERT(!DataBlock_ItemIsDeleted((void *)e->attributes));
+
+		EdgeID id = ENTITY_GET_ID(e);
+		DataBlock_DeleteItem(g->edges, id);
+	}
+
+	Graph_ClearConnections(g, edges, n);
 }
 
 // returns true if the given entity has been deleted
@@ -1327,7 +1369,6 @@ static void _Graph_Free
 
 	_Graph_FreeRelationMatrices(g);
 	array_free(g->relations);
-	GraphStatistics_FreeInternals(&g->stats);
 
 	uint32_t labelCount = array_len(g->labels);
 	for(int i = 0; i < labelCount; i++) Delta_Matrix_free(&g->labels[i]);
@@ -1354,6 +1395,8 @@ static void _Graph_Free
 	// free blocks
 	DataBlock_Free(g->nodes);
 	DataBlock_Free(g->edges);
+
+	GraphStatistics_FreeInternals(&g->stats);
 
 	int res;
 	UNUSED(res);

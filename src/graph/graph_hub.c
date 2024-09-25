@@ -160,15 +160,16 @@ void DeleteEdges
 	UndoLog undo_log  = (log == true) ? QueryCtx_GetUndoLog() : NULL;
 	EffectsBuffer *eb = (log == true) ? QueryCtx_GetEffectsBuffer() : NULL;
 
-	if(has_indecise == true || log == true) {
-		for (uint i = 0; i < n; i++) {
+	if(log == true || has_indecise == true) {
+		for(uint i = 0; i < n; i++) {
+			Edge *e = edges + i;
 			if(log == true) {
-				UndoLog_DeleteEdge(undo_log, edges + i);
-				EffectsBuffer_AddDeleteEdgeEffect(eb, edges + i);
+				UndoLog_DeleteEdge(undo_log, e);
+				EffectsBuffer_AddDeleteEdgeEffect(eb, e);
 			}
 
 			if(has_indecise == true) {
-				GraphContext_DeleteEdgeFromIndices(gc, edges + i);
+				GraphContext_DeleteEdgeFromIndices(gc, e);
 			}
 		}
 	}
@@ -211,10 +212,10 @@ void UpdateEntityProperties
 
 void UpdateNodeProperty
 (
-	GraphContext *gc,             // graph context
-	NodeID id,                    // node ID
-	AttributeID attr_id,          // attribute ID
-	SIValue v                     // new attribute value
+	GraphContext *gc,     // graph context
+	NodeID id,            // node ID
+	AttributeID attr_id,  // attribute ID
+	SIValue v             // new attribute value
 ) {
 	ASSERT(gc      != NULL);
 	ASSERT(id      != INVALID_ENTITY_ID);
@@ -255,13 +256,13 @@ void UpdateNodeProperty
 
 void UpdateEdgeProperty
 (
-	GraphContext *gc,             // graph context
-	EdgeID id,                    // edge ID
-	RelationID r_id,              // relation ID
-	NodeID src_id,                // source node ID
-	NodeID dest_id,               // destination node ID
-	AttributeID attr_id,          // attribute ID
-	SIValue v                     // new attribute value
+	GraphContext *gc,     // graph context
+	EdgeID id,            // edge ID
+	RelationID r_id,      // relation ID
+	NodeID src_id,        // source node ID
+	NodeID dest_id,       // destination node ID
+	AttributeID attr_id,  // attribute ID
+	SIValue v             // new attribute value
 ) {
 	ASSERT(gc      != NULL);
 	ASSERT(id      != INVALID_ENTITY_ID);
