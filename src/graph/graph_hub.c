@@ -68,6 +68,43 @@ void CreateEdge
 	}
 }
 
+void CreateEdges
+(
+	GraphContext *gc,
+	Edge **edges,
+	RelationID r,
+	AttributeSet *sets,
+	bool log
+) {
+	ASSERT(edges  != NULL);
+	ASSERT(gc != NULL);
+
+	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
+
+	Graph_CreateEdges(gc->g, r, edges);
+
+	uint count = array_len(edges);
+	for(uint i = 0; i < count; i++) {
+		Edge *e = edges[i];
+		ASSERT(e->relationID == r);
+
+		AttributeSet set = sets[i];
+		*e->attributes = set;
+
+		// all schemas have been created in the edge blueprint loop or earlier
+		ASSERT(s != NULL);
+		Schema_AddEdgeToIndex(s, e);
+
+		// add edge creation operation to undo log
+		if(log == true) {
+			UndoLog undo_log = QueryCtx_GetUndoLog();
+			UndoLog_CreateEdge(undo_log, e);
+			EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
+			EffectsBuffer_AddCreateEdgeEffect(eb, e);
+		}
+	}
+}
+
 // delete a node
 // remove the node from the relevant indexes
 // add node deletion operation to undo-log
@@ -123,15 +160,16 @@ void DeleteEdges
 	UndoLog undo_log  = (log == true) ? QueryCtx_GetUndoLog() : NULL;
 	EffectsBuffer *eb = (log == true) ? QueryCtx_GetEffectsBuffer() : NULL;
 
-	if(has_indecise == true || log == true) {
-		for (uint i = 0; i < n; i++) {
+	if(log == true || has_indecise == true) {
+		for(uint i = 0; i < n; i++) {
+			Edge *e = edges + i;
 			if(log == true) {
-				UndoLog_DeleteEdge(undo_log, edges + i);
-				EffectsBuffer_AddDeleteEdgeEffect(eb, edges + i);
+				UndoLog_DeleteEdge(undo_log, e);
+				EffectsBuffer_AddDeleteEdgeEffect(eb, e);
 			}
 
 			if(has_indecise == true) {
-				GraphContext_DeleteEdgeFromIndices(gc, edges + i);
+				GraphContext_DeleteEdgeFromIndices(gc, e);
 			}
 		}
 	}
@@ -174,10 +212,10 @@ void UpdateEntityProperties
 
 void UpdateNodeProperty
 (
-	GraphContext *gc,             // graph context
-	NodeID id,                    // node ID
-	AttributeID attr_id,          // attribute ID
-	SIValue v                     // new attribute value
+	GraphContext *gc,     // graph context
+	NodeID id,            // node ID
+	AttributeID attr_id,  // attribute ID
+	SIValue v             // new attribute value
 ) {
 	ASSERT(gc      != NULL);
 	ASSERT(id      != INVALID_ENTITY_ID);
@@ -218,13 +256,13 @@ void UpdateNodeProperty
 
 void UpdateEdgeProperty
 (
-	GraphContext *gc,             // graph context
-	EdgeID id,                    // edge ID
-	RelationID r_id,              // relation ID
-	NodeID src_id,                // source node ID
-	NodeID dest_id,               // destination node ID
-	AttributeID attr_id,          // attribute ID
-	SIValue v                     // new attribute value
+	GraphContext *gc,     // graph context
+	EdgeID id,            // edge ID
+	RelationID r_id,      // relation ID
+	NodeID src_id,        // source node ID
+	NodeID dest_id,       // destination node ID
+	AttributeID attr_id,  // attribute ID
+	SIValue v             // new attribute value
 ) {
 	ASSERT(gc      != NULL);
 	ASSERT(id      != INVALID_ENTITY_ID);
@@ -332,7 +370,7 @@ void UpdateNodeLabels
 				// sync matrix
 				// make sure label matrix is of the right dimensions
 				if(schema_created) {
-					RG_Matrix m = Graph_GetLabelMatrix(gc->g, schema_id);
+					Delta_Matrix m = Graph_GetLabelMatrix(gc->g, schema_id);
 				}
 				// append label id
 				add_labels_ids[add_labels_index++] = schema_id;

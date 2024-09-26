@@ -32,31 +32,39 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
       run: |
-        rustup toolchain list
         rustup default nightly
         apt-get update
-        apt-get install -y clang libomp-dev libc6-dbg python3-venv
+        apt-get install -y lsb-release wget software-properties-common gnupg
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        ./llvm.sh 17
+        apt-get update
+        apt-get install -y libomp-17-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
+        update-alternatives \
+          --verbose \
+          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
+          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
         make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests

@@ -1,0 +1,62 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+if [[ $1 == --help || $1 == help || $HELP == 1 ]]; then
+	cat <<-'END'
+		Install Intel Compiler
+
+		[ARGVARS...] getintelcc [--help|help]
+
+		Argument variables:
+		ICX_DIR=dir     Install into `dir` (default: /opt/intelcc)
+
+        POST=0          Do not perform post-installation
+		JUST_POST=1     Perform only post-installation (idempotent)
+
+		NOP=1           Do not execute, just print commands
+		V|VERBOSE=1     Print commands
+		HELP=1          Print help
+
+		Notes:
+		This installs profile.d script. Invoke `bash -l` to activate.
+	END
+	exit 0
+fi
+
+ICX_DIR=${ICX_DIR:-/opt/intel}
+
+if [[ -e $ICX_DIR && $JUST_POST != 1 ]]; then
+	# eprint "$ICX_DIR exists. Aboring."
+	echo "$ICX_DIR exists."
+	exit 0
+fi
+
+OP=""
+[[ $NOP == 1 ]] && OP=echo
+
+# https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html
+# https://www.intel.com/content/www/us/en/develop/documentation/get-started-with-intel-oneapi-base-linux/top/before-you-begin.html
+# https://www.intel.com/content/dam/develop/external/us/en/documents/oneapi_dpcpp_cpp_compiler.pdf
+
+[[ $NOP != 1 && -n $SUDO ]] && $SUDO echo
+
+if [[ -n $POST || $POST != 0 ]]; then
+	runn $SUDO $READIES/bin/getget
+	shfile=$(mktemp /tmp/icx.XXXXXX)
+	runn wget -O $shfile https://registrationcenter-download.intel.com/akdlm/irc_nas/19079/l_BaseKit_p_2023.0.0.25537.sh
+	runn $SUDO bash $shfile -a -s --eula accept --install-dir $ICX_DIR --components intel.oneapi.lin.dpcpp-cpp-compiler
+	# rm $shfile
+fi
+
+tmp_profiled=$(mktemp -d)
+cat <<-END > $tmp_profiled/intelcc.sh
+	if [[ -z $ONEAPI_ROOT ]]; then
+		. $ICX_DIR/setvars.sh > /dev/null
+	fi
+	END
+add_to_profile_d $tmp_profiled/intelcc.sh
+rm -rf $tmp_profiled

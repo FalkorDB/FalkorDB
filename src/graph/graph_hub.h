@@ -40,6 +40,19 @@ void CreateEdge
 	bool log           // log operation in undo-log
 );
 
+// create edges from the same relation type
+// set the edge src, dst endpoints and attributes
+// add the edge to the relevant indexes
+// add edge creation operation to undo-log
+void CreateEdges
+(
+	GraphContext *gc,    // graph context to create the edge
+	Edge **edges,         // output edge created
+	RelationID r,        // edge relation type
+	AttributeSet *sets,  // edge attributes
+	bool log             // log operation in undo-log
+);
+
 // delete nodes
 // remove nodes from the relevant indexes
 // add node deletion operations to undo-log

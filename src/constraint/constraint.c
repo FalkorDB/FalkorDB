@@ -12,7 +12,7 @@
 #include "../util/thpool/pools.h"
 #include "../graph//graphcontext.h"
 #include "../graph/entities/attribute_set.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
+#include "../graph/delta_matrix/delta_matrix_iter.h"
 
 #include <stdatomic.h>
 
@@ -408,12 +408,12 @@ void Constraint_EnforceNodes
 	ASSERT(c != NULL);
 	ASSERT(g != NULL);
 
-	RG_MatrixTupleIter it         = {0};           // matrix iterator
-	bool               holds      = true;          // constraint holds
-	GrB_Index          rowIdx     = 0;             // current row being scanned
-	int                enforced   = 0;             // #entities in current batch
-	int                schema_id  = c->schema_id;  // constraint schema ID
-	int                batch_size = 10000;         // #entities to enforce
+	Delta_MatrixTupleIter it         = {0};           // matrix iterator
+	bool                  holds      = true;          // constraint holds
+	GrB_Index             rowIdx     = 0;             // current row being scanned
+	int                   enforced   = 0;             // #entities in current batch
+	int                   schema_id  = c->schema_id;  // constraint schema ID
+	int                   batch_size = 10000;         // #entities to enforce
 
 	while(holds) {
 		// lock graph for reading
@@ -427,7 +427,7 @@ void Constraint_EnforceNodes
 			break;
 		}
 
-		const RG_Matrix m = Graph_GetLabelMatrix(g, schema_id);
+		const Delta_Matrix m = Graph_GetLabelMatrix(g, schema_id);
 		ASSERT(m != NULL);
 
 		// reset number of enforce nodes in batch
@@ -438,7 +438,7 @@ void Constraint_EnforceNodes
 		//----------------------------------------------------------------------
 
 		GrB_Info info;
-		info = RG_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX);
 		ASSERT(info == GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -447,7 +447,7 @@ void Constraint_EnforceNodes
 
 		EntityID id;
 		while(enforced < batch_size &&
-			  RG_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
+			  Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
@@ -471,7 +471,7 @@ void Constraint_EnforceNodes
 			Graph_ReleaseLock(g);
 
 			// finished current batch
-			RG_MatrixTupleIter_detach(&it);
+			Delta_MatrixTupleIter_detach(&it);
 
 			// continue next batch from row id+1
 			// this is true because we're iterating over a diagonal matrix
@@ -479,7 +479,7 @@ void Constraint_EnforceNodes
 		}
 	}
 
-	RG_MatrixTupleIter_detach(&it);
+	Delta_MatrixTupleIter_detach(&it);
 
 	// update constraint status
 	ConstraintStatus status = (holds) ? CT_ACTIVE : CT_FAILED;
@@ -495,18 +495,18 @@ void Constraint_EnforceEdges
 	Constraint c,
 	Graph *g
 ) {
-	GrB_Info info;
-	RG_MatrixTupleIter it = {0};
+	bool info;
+	TensorIterator it = {0};
 
-	bool      holds        = true;          // constraint holds
-	EntityID  src_id       = 0;             // current processed row idx
-	EntityID  dest_id      = 0;             // current processed column idx
-	EntityID  edge_id      = 0;             // current processed edge id
-	EntityID  prev_src_id  = 0;             // last processed row idx
-	EntityID  prev_dest_id = 0;             // last processed column idx
-	int       enforced     = 0;             // # entities enforced in batch
-	int       schema_id    = c->schema_id;  // edge relationship type ID
-	int       batch_size   = 1000;          // max number of entities to enforce
+	bool      holds        = true;               // constraint holds
+	EntityID  src_id       = 0;                  // current processed row idx
+	EntityID  dest_id      = 0;                  // current processed column idx
+	EntityID  edge_id      = 0;                  // current processed edge idx
+	EntityID  prev_src_id  = INVALID_ENTITY_ID;  // last processed row idx
+	EntityID  prev_dest_id = INVALID_ENTITY_ID;  // last processed column idx
+	int       enforced     = 0;                  // # entities enforced in batch
+	int       schema_id    = c->schema_id;       // edge relationship type ID
+	int       batch_size   = 1000;               // max number of entities to enforce
 
 	while(holds) {
 		// lock graph for reading
@@ -521,30 +521,25 @@ void Constraint_EnforceEdges
 		}
 
 		// reset number of enforced edges in batch
-		enforced     = 0;
-		prev_src_id  = src_id;
-		prev_dest_id = dest_id;
+		enforced = 0;
 
-		// fetch relation matrix
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
-		const RG_Matrix m = Graph_GetRelationMatrix(g, schema_id, false);
-		ASSERT(m != NULL);
+		// sync relation matrix
+		Delta_Matrix R = Graph_GetRelationMatrix(g, schema_id, false);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		info = RG_MatrixTupleIter_AttachRange(&it, m, src_id, UINT64_MAX);
-		ASSERT(info == GrB_SUCCESS);
+		TensorIterator_ScanRange(&it, R, src_id, UINT64_MAX, false);
 
 		// skip previously enforced edges
-		while((info = RG_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id,
-						&edge_id)) == GrB_SUCCESS &&
+		while((info = TensorIterator_next(&it, &src_id, &dest_id, &edge_id)) &&
 				src_id == prev_src_id &&
 				dest_id < prev_dest_id);
 
 		// process only if iterator is on an active entry
-		if(info != GrB_SUCCESS) {
+		if(!info) {
 			break;
 		}
 
@@ -558,31 +553,22 @@ void Constraint_EnforceEdges
 			e.dest_id    = dest_id;
 			e.relationID = schema_id;
 
-			if(SINGLE_EDGE(edge_id)) {
-				bool res = Graph_GetEdge(g, edge_id, &e);
-				assert(res == true);
-				if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-					holds = false;
-					break;
-				}
-			} else {
-				EdgeID *edgeIds = (EdgeID *)(CLEAR_MSB(edge_id));
-				uint edgeCount = array_len(edgeIds);
-
-				for(uint i = 0; i < edgeCount; i++) {
-					edge_id = edgeIds[i];
-					bool res = Graph_GetEdge(g, edge_id, &e);
-					assert(res == true);
-					if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
-						holds = false;
-						break;
-					}
-				}
+			bool res = Graph_GetEdge(g, edge_id, &e);
+			assert(res == true);
+			if(!c->enforce(c, (GraphEntity*)&e, NULL)) {
+				holds = false;
+				break;
 			}
-			enforced++; // single/multi edge are counted similarly
-		} while(enforced < batch_size &&
-			  RG_MatrixTupleIter_next_UINT64(&it, &src_id, &dest_id, &edge_id)
-				== GrB_SUCCESS && holds);
+
+			if(prev_src_id != src_id || prev_dest_id != dest_id) {
+				enforced++;
+			}
+			prev_src_id  = src_id;
+			prev_dest_id = dest_id;
+		} while((enforced < batch_size ||
+				(prev_src_id == src_id && prev_dest_id == dest_id)) &&
+			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id) &&
+			  holds);
 
 		//----------------------------------------------------------------------
 		// done with current batch
@@ -595,11 +581,8 @@ void Constraint_EnforceEdges
 			// finished current batch
 			// release read lock
 			Graph_ReleaseLock(g);
-			RG_MatrixTupleIter_detach(&it);
 		}
 	}
-
-	RG_MatrixTupleIter_detach(&it);
 
 	// update constraint status
 	ConstraintStatus status = (holds) ? CT_ACTIVE : CT_FAILED;
@@ -638,4 +621,3 @@ void Constraint_Free
 
 	*c = NULL;
 }
-

@@ -1,0 +1,122 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+OP=""
+[[ $NOP == 1 ]] && OP=echo
+
+if [[ -z $VIRTUAL_ENV ]]; then
+	PIP_USER=--user
+else
+	PIP_USER=
+fi
+
+NO_PY2=${NO_PY2:-1}
+
+if [[ $NO_PY2 != 1 ]]; then
+	if is_command python2; then
+		runn python2 -m pip install pudb
+		PY2=1
+	fi
+fi
+if [[ $NO_PY3 != 1 ]]; then
+	if is_command python3; then
+		xinstall git
+		if ! LOG=0 runn python3 -m pip install $PIP_USER --no-cache-dir git+https://github.com/inducer/pudb.git@main; then
+			if ! LOG=0 runn python3 -m pip install $PIP_USER --no-cache-dir pudb; then
+				tmpdir=$(mktemp -d /tmp/pudb.XXXXXX)
+				cd $tmpdir
+				runn git clone https://github.com/inducer/pudb.git
+				cd pudb
+				if is_command apt-get; then
+					# this is debian-specific right now, as pip/git install is failing on arm
+					xinstall python3-dev
+				fi
+				# --prefix= is required for install to succeed
+				runn python3 setup.py install $PIP_USER --prefix=
+				cd /tmp
+				$OP rm -rf $tmpdir
+				PY3=1
+			else
+				PY3=1
+			fi
+		else
+			PY3=1
+		fi
+
+		pudb=/usr/local/bin/pudb
+		if [[ ! -e $pudb ]]; then
+			pudb_tmp=$(mktemp /tmp/pudb.XXXXXX)
+			cat <<-'EOF' > $pudb_tmp
+				#!/bin/bash
+
+				python3 -m pudb "$@"
+				EOF
+			$SUDO cp $pudb_tmp $pudb
+			$SUDO chmod +x $pudb
+		fi
+	fi
+fi
+
+cfg="$HOME/.config/pudb/pudb.cfg"
+if [[ -f $cfg ]]; then
+	if ! cat $cfg | grep seen_welcome | grep e039 &>/dev/null; then
+		exit 0
+	fi
+fi
+
+$OP mkdir -p `dirname $cfg`
+if [[ $PY2 == 1 ]]; then
+	cat <<-'EOF' > $cfg
+		[pudb]
+		breakpoints_weight = 1
+		current_stack_frame = top
+		custom_shell = 
+		custom_stringifier = 
+		custom_theme = 
+		default_variables_access_level = public
+		display = auto
+		hide_cmdline_win = True
+		line_numbers = True
+		prompt_on_quit = False
+		seen_welcome = e042
+		shell = internal
+		sidebar_width = 0.5
+		stack_weight = 1
+		stringifier = repr
+		theme = midnight
+		variables_weight = 1
+		wrap_variables = True
+		EOF
+fi
+
+if [[ $PY3 == 1 ]]; then
+	cat <<-'EOF' > $cfg
+		[pudb]
+		breakpoints_weight = 1
+		current_stack_frame = top
+		custom_shell = 
+		custom_stringifier = 
+		custom_theme = 
+		default_variables_access_level = public
+		display = auto
+		hide_cmdline_win = True
+		hotkeys_breakpoints = B
+		hotkeys_code = C
+		hotkeys_stack = S
+		hotkeys_variables = V
+		line_numbers = True
+		prompt_on_quit = False
+		seen_welcome = e042
+		shell = internal
+		sidebar_width = 0.5
+		stack_weight = 1
+		stringifier = repr
+		theme = midnight
+		variables_weight = 1
+		wrap_variables = True
+		EOF
+fi
