@@ -280,6 +280,10 @@ export RUSTFLAGS=-Zsanitizer=$(SAN)
 CARGO_FLAGS=--target x86_64-unknown-linux-gnu
 endif
 
+ifneq ($(COV),)
+export RUSTFLAGS=-C instrument-coverage
+endif
+
 falkordbrs:
 	@echo Building $@ ...
 	cd deps/FalkorDB-core-rs && cargo build $(CARGO_FLAGS) --features falkordb_allocator --target-dir $(FalkorDBRS_BINDIR)
@@ -366,6 +370,7 @@ ifneq ($(BUILD),0)
 	$(SHOW)$(MAKE) build FORCE=1 UNIT_TESTS=1
 endif
 	$(SHOW)BINROOT=$(BINROOT) ./tests/unit/tests.sh
+	$(SHOW)BINROOT=$(BINROOT) cargo test --lib --target-dir $(FalkorDBRS_BINDIR)
 
 flow-tests: $(TEST_DEPS)
 	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh
@@ -396,7 +401,13 @@ benchmark: $(TARGET)
 #----------------------------------------------------------------------------------------------
 
 COV_EXCLUDE_DIRS += \
-	deps \
+	deps/GraphBLAS \
+	deps/libcypher-parser \
+	deps/oniguruma \
+	deps/rax \
+	deps/RediSearch \
+	deps/utf8proc \
+	deps/xxHash \
 	src/util/sds \
 	tests
 
@@ -404,11 +415,11 @@ COV_EXCLUDE+=$(foreach D,$(COV_EXCLUDE_DIRS),'$(realpath $(ROOT))/$(D)/*')
 
 coverage:
 	$(SHOW)$(MAKE) build COV=1
-	$(SHOW)$(COVERAGE_RESET)
+	$(SHOW)$(COVERAGE_RESET.llvm)
 	-$(SHOW)$(MAKE) unit-tests COV=1
 	-$(SHOW)$(MAKE) flow-tests COV=1
 	-$(SHOW)$(MAKE) tck-tests COV=1
-	$(SHOW)$(COVERAGE_COLLECT_REPORT)
+	$(SHOW)$(COVERAGE_COLLECT_REPORT.llvm)
 
 .PHONY: coverage
 

@@ -444,7 +444,7 @@ class testEffects():
 
         self.assert_graph_eq()
 
-    def _test07_update_edge_effect(self, expect_effect=True):
+    def test07_update_edge_effect(self, expect_effect=True):
 
         # no leftovers from previous test
         self.env.assertFalse(self.monitor_containt_effect())
@@ -801,7 +801,7 @@ class testEffects():
         self.test04_create_node_effect(False)
         self.test05_create_edge_effect(False)
         self.test06_update_node_effect(False)
-        #self.test07_update_edge_effect(False)
+        self.test07_update_edge_effect(False)
         self.test08_set_labels_effect(False)
         self.test09_remove_labels_effect(False)
         self.test10_delete_edge_effect(False)
