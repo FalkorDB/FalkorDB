@@ -30,7 +30,7 @@ AlgebraicExpression *_AlgebraicExpression_FromString
 	int len = 0;
 	char *alias;
 	const char *operand;
-	RG_Matrix m;
+	Delta_Matrix m;
 	AlgebraicExpression *op;
 	AlgebraicExpression *rhs;
 	AlgebraicExpression *root = NULL;
@@ -83,7 +83,7 @@ AlgebraicExpression *_AlgebraicExpression_FromString
 
 			m = NULL;
 			if(matrices) {
-				m = (RG_Matrix)raxFind(matrices, (unsigned char *)alias, strlen(alias));
+				m = (Delta_Matrix)raxFind(matrices, (unsigned char *)alias, strlen(alias));
 				ASSERT(m != raxNotFound && "Missing matrix");
 			}
 			root = AlgebraicExpression_NewOperand(m, false, alias, alias, NULL, NULL);

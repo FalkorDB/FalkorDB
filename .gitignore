@@ -67,3 +67,7 @@ deps/GraphBLAS/Config/GraphBLAS.h.tmp
 /1/
 
 target
+cmake-build-*
+cov
+cov.all
+cov.json

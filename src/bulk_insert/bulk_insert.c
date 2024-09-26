@@ -40,15 +40,15 @@ static int* _BulkInsert_ReadHeaderLabels
 	ASSERT(data      !=  NULL);
 	ASSERT(data_idx  !=  NULL);
 
-    // first sequence is entity label(s)
-    const char* labels = data + *data_idx;
-    int labels_len = strlen(labels);
-    *data_idx += labels_len + 1;
+	// first sequence is entity label(s)
+	const char* labels = data + *data_idx;
+	int labels_len = strlen(labels);
+	*data_idx += labels_len + 1;
 
-    // array of all label IDs
-    int* label_ids = array_new(int, 1);
-    // stack variable to contain a single label
-    char label[labels_len + 1];
+	// array of all label IDs
+	int* label_ids = array_new(int, 1);
+	// stack variable to contain a single label
+	char label[labels_len + 1];
 
 	while (true) {
 		// look for a colon delimiting another label
@@ -82,7 +82,7 @@ static int* _BulkInsert_ReadHeaderLabels
 		if (!found) break;
 	}
 
-    return label_ids;
+	return label_ids;
 }
 
 // read the property keys from a header
@@ -99,15 +99,15 @@ static AttributeID* _BulkInsert_ReadHeaderProperties
 	ASSERT(data_idx    !=  NULL);
 	ASSERT(prop_count  !=  NULL);
 
-    // next 4 bytes are property count
-    *prop_count = *(uint*)&data[*data_idx];
-    *data_idx += sizeof(unsigned int);
+	// next 4 bytes are property count
+	*prop_count = *(uint*)&data[*data_idx];
+	*data_idx += sizeof(unsigned int);
 
-    if (*prop_count == 0) return NULL;
+	if (*prop_count == 0) return NULL;
 
-    AttributeID* prop_indices = rm_malloc(*prop_count * sizeof(AttributeID));
+	AttributeID* prop_indices = rm_malloc(*prop_count * sizeof(AttributeID));
 
-    // the rest of the line is [char *prop_key] * prop_count
+	// the rest of the line is [char *prop_key] * prop_count
 	for (uint j = 0; j < *prop_count; j++) {
 		char* prop_key = (char*)data + *data_idx;
 		*data_idx += strlen(prop_key) + 1;
@@ -116,7 +116,7 @@ static AttributeID* _BulkInsert_ReadHeaderProperties
 		prop_indices[j] = GraphContext_FindOrAddAttribute(gc, prop_key, NULL);
 	}
 
-    return prop_indices;
+	return prop_indices;
 }
 
 // read an SIValue from the data stream and update the index appropriately
@@ -125,7 +125,7 @@ static SIValue _BulkInsert_ReadProperty
 	const char* data,
 	size_t* data_idx
 ) {
-    // binary property format:
+	// binary property format:
 	// - property type : 1-byte integer corresponding to TYPE enum
 	// - Nothing if type is NULL
 	// - 1-byte true/false if type is boolean
@@ -134,16 +134,16 @@ static SIValue _BulkInsert_ReadProperty
 	// - Null-terminated C string if type is string
 	// - 8-byte array length followed by N values if type is array
 
-    // possible property values
-    bool b;
-    double d;
-    int64_t i;
-    int64_t len;
-    const char* s;
+	// possible property values
+	bool b;
+	double d;
+	int64_t i;
+	int64_t len;
+	const char* s;
 
-    SIValue v = SI_NullVal();
-    TYPE t = data[*data_idx];
-    *data_idx += 1;
+	SIValue v = SI_NullVal();
+	TYPE t = data[*data_idx];
+	*data_idx += 1;
 
 	switch (t) {
 		case BI_NULL:
@@ -191,7 +191,7 @@ static SIValue _BulkInsert_ReadProperty
 			break;
 	}
 
-    return v;
+	return v;
 }
 
 static int _BulkInsert_ProcessNodeFile
@@ -200,30 +200,30 @@ static int _BulkInsert_ProcessNodeFile
 	const char* data,
 	size_t data_len
 ) {
-    uint prop_count;
-    size_t data_idx = 0;
+	uint prop_count;
+	size_t data_idx = 0;
 
-    // read the CSV file header labels and update all schemas
-    int* label_ids = _BulkInsert_ReadHeaderLabels(gc, SCHEMA_NODE, data, &data_idx);
-    uint label_count = array_len(label_ids);
-    // read the CSV header properties and collect their indices
-    AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_NODE, data,
+	// read the CSV file header labels and update all schemas
+	int* label_ids = _BulkInsert_ReadHeaderLabels(gc, SCHEMA_NODE, data, &data_idx);
+	uint label_count = array_len(label_ids);
+	// read the CSV header properties and collect their indices
+	AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_NODE, data,
 	&data_idx, &prop_count);
 
-    // sync each matrix once
-    ASSERT(Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE);
+	// sync each matrix once
+	ASSERT(Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE);
 
 	for (uint i = 0; i < label_count; i++) {
 		Graph_GetLabelMatrix(gc->g, label_ids[i]);
 	}
 
-    // sync node-label matrix
-    Graph_GetNodeLabelMatrix(gc->g);
-    Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
+	// sync node-label matrix
+	Graph_GetNodeLabelMatrix(gc->g);
+	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
-    //--------------------------------------------------------------------------
-    // load nodes
-    //--------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+	// load nodes
+	//--------------------------------------------------------------------------
 
 	while (data_idx < data_len) {
 		Node n = GE_NEW_NODE();
@@ -240,11 +240,11 @@ static int _BulkInsert_ProcessNodeFile
 		}
 	}
 
-    Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
-    if (prop_indices) rm_free(prop_indices);
-    array_free(label_ids);
+	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
+	if (prop_indices) rm_free(prop_indices);
+	array_free(label_ids);
 
-    return BULK_OK;
+	return BULK_OK;
 }
 
 static int _BulkInsert_ProcessEdgeFile
@@ -253,31 +253,31 @@ static int _BulkInsert_ProcessEdgeFile
 	const char* data,
 	size_t data_len
 ) {
-    int relation_id;
-    uint prop_count;
-    size_t data_idx = 0;
+	int relation_id;
+	uint prop_count;
+	size_t data_idx = 0;
 
-    // read the CSV file header
-    // and commit all labels and properties it introduces
-    int* type_ids = _BulkInsert_ReadHeaderLabels(gc, SCHEMA_EDGE, data, &data_idx);
-    uint type_count = array_len(type_ids);
+	// read the CSV file header
+	// and commit all labels and properties it introduces
+	int* type_ids = _BulkInsert_ReadHeaderLabels(gc, SCHEMA_EDGE, data, &data_idx);
+	uint type_count = array_len(type_ids);
 
-    // edges can only have one type
-    ASSERT(type_count == 1);
+	// edges can only have one type
+	ASSERT(type_count == 1);
 
-    int type_id = type_ids[0];
-    AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_EDGE,
+	int type_id = type_ids[0];
+	AttributeID* prop_indices = _BulkInsert_ReadHeaderProperties(gc, SCHEMA_EDGE,
 	data, &data_idx, &prop_count);
 
-    // sync matrix once
-    ASSERT(Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE);
-    Graph_GetRelationMatrix(gc->g, type_id, false);
-    Graph_GetAdjacencyMatrix(gc->g, false);
-    Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
+	// sync matrix once
+	ASSERT(Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE);
+	Graph_GetRelationMatrix(gc->g, type_id, false);
+	Graph_GetAdjacencyMatrix(gc->g, false);
+	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
-    //--------------------------------------------------------------------------
-    // load edges
-    //--------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+	// load edges
+	//--------------------------------------------------------------------------
 
 	while (data_idx < data_len) {
 		Edge e;
@@ -305,11 +305,11 @@ static int _BulkInsert_ProcessEdgeFile
 		}
 	}
 
-    array_free(type_ids);
-    if (prop_indices) rm_free(prop_indices);
-    Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
+	array_free(type_ids);
+	if (prop_indices) rm_free(prop_indices);
+	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_RESIZE);
 
-    return BULK_OK;
+	return BULK_OK;
 }
 
 static int _BulkInsert_ProcessTokens
@@ -330,7 +330,7 @@ static int _BulkInsert_ProcessTokens
 		ASSERT(rc == BULK_OK);
 	}
 
-    return BULK_OK;
+	return BULK_OK;
 }
 
 int BulkInsert

@@ -1,0 +1,64 @@
+#!/bin/bash
+
+PROGNAME="${BASH_SOURCE[0]}"
+HERE="$(cd "$(dirname "$PROGNAME")" &>/dev/null && pwd)"
+READIES=$(cd $HERE/.. && pwd)
+. $READIES/shibumi/defs
+
+OS=`uname -s`
+ARCH=`uname -m`
+
+# GOOD_NIGHTLY=nightly-2022-01-09
+
+if [[ -f $HOME/.cargo/env ]]; then
+	source $HOME/.cargo/env
+fi
+if ! is_command rustup; then
+	runn $READIES/bin/getget
+	runn "curl --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/rust-lang/rustup/master/rustup-init.sh -sSf | sh -s -- -y"
+	source $HOME/.cargo/env
+elif ! runn rustup update stable; then
+	runn rustup toolchain uninstall stable
+	runn rustup toolchain install stable
+fi
+
+runn rustup toolchain uninstall nightly
+if [[ -n $GOOD_NIGHTLY ]]; then
+	# workaround for nightly install issues https://github.com/rust-lang/rls/issues/623
+	runn rustup toolchain install nightly
+	runn rustup component add --toolchain nightly rust-src
+
+	runn rustup toolchain install $GOOD_NIGHTLY
+	runn rustup component add --toolchain $GOOD_NIGHTLY rust-src
+else
+	runn rustup toolchain install nightly
+	runn rustup component add --toolchain nightly rust-src
+fi
+
+# if [[ $OS == Darwin && $ARCH == x86_64 ]]; then
+# 	runn rustup toolchain install 1.66.1
+# 	runn rustup default 1.66.1
+# fi
+
+rustup show
+
+profile_d=`get_profile_d`
+if [[ -f $HOME/.cargo/env ]]; then
+    $SUDO cp $HOME/.cargo/env $profile_d/rust.sh
+elif [[ -f /usr/local/cargo/env ]]; then
+	$SUDO cp /usr/local/cargo/env $profile_d/rust.sh
+else
+	eprint "rust: environment file not found"
+	exit 1
+fi
+
+if [[ -n $GOOD_NIGHTLY ]]; then
+	f1=$(mktemp /tmp/rust.sh.XXXXXX)
+	cat <<-END > $f1
+		export RUST_GOOD_NIGHTLY="$GOOD_NIGHTLY"
+		END
+	$SUDO bash -c "cat $f1 >> $profile_d/rust.sh"
+	rm $f1
+fi
+
+exit 0

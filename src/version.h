@@ -8,7 +8,7 @@
 
 #define FALKORDB_VERSION_MAJOR 4
 #define FALKORDB_VERSION_MINOR 2
-#define FALKORDB_VERSION_PATCH 1
+#define FALKORDB_VERSION_PATCH 2
 
 #define FALKORDB_SEMANTIC_VERSION(major, minor, patch) \
   (major * 10000 + minor * 100 + patch)

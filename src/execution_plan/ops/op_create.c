@@ -18,7 +18,7 @@ static void CreateFree(OpBase *opBase);
 OpBase *NewCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateCtx *edges) {
 	OpCreate *op = rm_calloc(1, sizeof(OpCreate));
 	op->records = NULL;
-	NewPendingCreationsContainer(&op->pending, nodes, edges); // Prepare all creation variables.
+
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
 				NULL, NULL, CreateClone, CreateFree, true, plan);
@@ -42,6 +42,9 @@ OpBase *NewCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateC
 		ASSERT(aware == true);
 	}
 
+	// prepare all creation variables
+	NewPendingCreationsContainer(&op->pending, nodes, edges); 
+
 	return (OpBase *)op;
 }
 
@@ -52,10 +55,10 @@ static void _CreateNodes
 	Record r,
 	GraphContext *gc
 ) {
-	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
+	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
-		NodeCreateCtx *n = op->pending.nodes_to_create + i;
+		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
 		// create a new node
 		Node newNode = Graph_ReserveNode(gc->g);
@@ -71,13 +74,13 @@ static void _CreateNodes
 		}
 
 		// save node for later insertion
-		array_append(op->pending.created_nodes, node_ref);
+		array_append(op->pending.nodes.created_nodes, node_ref);
 
 		// save attributes to insert with node
-		array_append(op->pending.node_attributes, converted_attr);
+		array_append(op->pending.nodes.node_attributes, converted_attr);
 
 		// save labels to assigned to node
-		array_append(op->pending.node_labels, n->labelsId);
+		array_append(op->pending.nodes.node_labels, n->labelsId);
 	}
 }
 
@@ -88,10 +91,11 @@ static void _CreateEdges
 	Record r,
 	GraphContext *gc
 ) {
-	uint edges_to_create_count = array_len(op->pending.edges_to_create);
+	uint edges_to_create_count = array_len(op->pending.edges);
 	for(uint i = 0; i < edges_to_create_count; i++) {
+		PendingEdgeCreations *pending_edge = op->pending.edges + i;
 		// get specified edge to create
-		EdgeCreateCtx *e = op->pending.edges_to_create + i;
+		EdgeCreateCtx *e = &pending_edge->edges_to_create;
 
 		// retrieve source and dest nodes
 		GraphEntity *src_node  = (GraphEntity*)Record_GetNode(r, e->src_idx);
@@ -114,17 +118,17 @@ static void _CreateEdges
 		Edge *edge_ref = Record_AddEdge(r, e->edge_idx, newEdge);
 
 		// convert query-level properties
-		PropertyMap *map = op->pending.edges_to_create[i].properties;
+		PropertyMap *map = e->properties;
 		AttributeSet converted_attr = NULL;
 		if(map != NULL) {
 			ConvertPropertyMap(gc, &converted_attr, r, map, false);
 		}
 
 		// save edge for later insertion
-		array_append(op->pending.created_edges, edge_ref);
+		array_append(pending_edge->created_edges, edge_ref);
 
 		// save attributes to insert with node
-		array_append(op->pending.edge_attributes, converted_attr);
+		array_append(pending_edge->edge_attributes, converted_attr);
 	}
 }
 
@@ -193,9 +197,12 @@ static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	ASSERT(opBase->type == OPType_CREATE);
 	OpCreate *op = (OpCreate *)opBase;
 	NodeCreateCtx *nodes;
-	EdgeCreateCtx *edges;
-	array_clone_with_cb(nodes, op->pending.nodes_to_create, NodeCreateCtx_Clone);
-	array_clone_with_cb(edges, op->pending.edges_to_create, EdgeCreateCtx_Clone);
+	EdgeCreateCtx *edges = array_new(EdgeCreateCtx, array_len(op->pending.edges));
+	array_clone_with_cb(nodes, op->pending.nodes.nodes_to_create, NodeCreateCtx_Clone);
+	for(uint i = 0; i < array_len(op->pending.edges); i++) {
+		EdgeCreateCtx ctx = EdgeCreateCtx_Clone(op->pending.edges[i].edges_to_create);
+		array_append(edges, ctx);
+	}
 	return NewCreateOp(plan, nodes, edges);
 }
 

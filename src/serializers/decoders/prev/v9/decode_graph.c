@@ -192,19 +192,19 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 		// update the node statistics
 		for(uint i = 0; i < node_schemas_count; i++) {
 			GrB_Index nvals;
-			RG_Matrix L = g->labels[i];
-			RG_Matrix_nvals(&nvals, L);
+			Delta_Matrix L = g->labels[i];
+			Delta_Matrix_nvals(&nvals, L);
 			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
 		}
-		
+
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
 		// update the node statistics, enable node indices
 		for(uint i = 0; i < label_count; i++) {
 			GrB_Index nvals;
-			RG_Matrix L = Graph_GetLabelMatrix(g, i);
-			RG_Matrix_nvals(&nvals, L);
+			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
+			Delta_Matrix_nvals(&nvals, L);
 			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
 
 			Index idx;

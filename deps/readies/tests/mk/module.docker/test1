@@ -1,0 +1,112 @@
+#!/bin/bash
+
+set -e
+
+title() {
+	echo
+	echo "--- $*"
+}
+
+test_make() {
+	cmd="make $* DOCKERFILE=/tmp/Dockerfile.mk AT=/tmp ARTIFACTS=0 NOP=1"
+	echo "Testing: $cmd"
+	$cmd > /tmp/test.mk.1
+	diff /tmp/test.mk.1 /tmp/expect.1
+}
+
+title "version (not official: latest)"
+
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:1.2.3-x64-bionic -f /tmp/Dockerfile.mk /tmp
+END
+test_make "OSNICK=bionic VERSION=1.2.3"
+
+title "version (official: not latest)"
+
+# OSNICK.official=bionic
+cat <<-END > /tmp/expect.1
+	# OFFICIAL=1 requested, but OSNICK=centos7 is not OSNICK.official=bionic
+	docker build -t redisfab/redisfoo:1.2.3-x64-centos7 -f /tmp/Dockerfile.mk /tmp
+END
+test_make "OSNICK=centos7 VERSION=1.2.3 OFFICIAL=1"
+
+# 1.2 not latest branch
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:1.2.3-x64-bionic -f /tmp/Dockerfile.mk /tmp
+	docker tag redisfab/redisfoo:1.2.3-x64-bionic redislabs/redisfoo:1.2.3
+END
+test_make "OSNICK=bionic VERSION=1.2.3 OFFICIAL=1"
+
+# need to support multiarch build (after building all images):
+# docker manifest create -a redislasbs/redisfoo:1.2.3 -a redisfab/redisfoo:1.2.3-x64-bionic -a redisfab/redisfoo:1.2.3-arm64v8-bionic
+# docker manifest annotate redislasbs/redisfoo:1.2.3 redisfab/redisfoo:1.2.3-arm64v8-bionic --os linux --arch arm64 --variant v8
+# docker manifest push -p redislabs/redisfoo:1.2.3
+
+title "version (with official: latest)"
+
+# 2.2 is latest branch
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:2.2.3-x64-bionic -f /tmp/Dockerfile.mk /tmp
+	docker tag redisfab/redisfoo:2.2.3-x64-bionic redislabs/redisfoo:2.2.3
+	docker tag redisfab/redisfoo:2.2.3-x64-bionic redislabs/redisfoo:latest
+END
+test_make "OSNICK=bionic VERSION=2.2.3 OFFICIAL=1"
+
+title "version (with official: preview)"
+
+# 2.4 is preview branch
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:2.4.3-x64-bionic -f /tmp/Dockerfile.mk /tmp
+	docker tag redisfab/redisfoo:2.4.3-x64-bionic redislabs/redisfoo:2.4.3
+	docker tag redisfab/redisfoo:2.4.3-x64-bionic redislabs/redisfoo:preview
+END
+test_make "OSNICK=bionic VERSION=2.4.3 OFFICIAL=1"
+
+title "master branch (official: edge)"
+
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:master-x64-bionic -f /tmp/Dockerfile.mk /tmp
+END
+test_make "OSNICK=bionic BRANCH=master"
+
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:master-x64-bionic -f /tmp/Dockerfile.mk /tmp
+	docker tag redisfab/redisfoo:master-x64-bionic redislabs/redisfoo:edge
+END
+test_make "OSNICK=bionic BRANCH=master OFFICIAL=1"
+
+# this too is subject to multiarch build (manifest etc)
+
+echo
+echo "--- explicit version branch"
+
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:1.2-x64-bionic -f /tmp/Dockerfile.mk /tmp
+END
+test_make "OSNICK=bionic BRANCH=1.2"
+
+# OFFICIAL=1 has no effect (branch 1.2 not master/preview)
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:1.2-x64-bionic -f /tmp/Dockerfile.mk /tmp
+END
+test_make "OSNICK=bionic BRANCH=1.2 OFFICIAL=1"
+
+title "preview branch"
+
+# 2.4 is preview branch (i.e. `PREVIEW_BRANCH=2.2`)
+cat <<-END > /tmp/expect.1
+	docker build -t redisfab/redisfoo:2.4-x64-bionic -f /tmp/Dockerfile.mk /tmp
+	docker tag redisfab/redisfoo:2.4-x64-bionic redislabs/redisfoo:preview
+END
+test_make "OSNICK=bionic BRANCH=2.4 OFFICIAL=1"
+
+# this too is subject to multiarch build (manifest etc)
+
+title "implicit branch"
+
+MYBRANCH=`git rev-parse --abbrev-ref HEAD`
+cat <<-END > /tmp/expect.1
+	# Running with BRANCH=$MYBRANCH
+	docker build -t redisfab/redisfoo:$MYBRANCH-x64-bionic -f /tmp/Dockerfile.mk /tmp
+END
+test_make "OSNICK=bionic"
