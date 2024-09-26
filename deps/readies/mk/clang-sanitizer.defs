@@ -1,0 +1,43 @@
+
+ifneq ($(SAN),)
+	ifeq ($(GCC),1)
+		_:=$(error Cannot build for SAN=$(SAN) with GCC=1)
+	endif
+	CLANG=1
+endif
+
+ifeq ($(SAN),memory)
+    ifneq ($(MSAN_PREFIX),)
+        MSAN_PREFIX=/opt/llvm-project/build-msan
+		ifeq ($(wildcard $(MSAN_PREFIX)),)
+			_:=$(error LLVM/MSAN stdlibc++ directory '$(MSAN_PREFIX)' is missing)
+        endif
+    endif
+endif
+
+CC_FLAGS.asan=-fno-omit-frame-pointer -fsanitize=address -fsanitize-recover=all 
+ifneq ($(SAN_IGNORELIST),)
+CC_FLAGS.asan += -fsanitize-blacklist=$(SAN_IGNORELIST)
+endif
+LD_FLAGS.asan=-fsanitize=address
+
+CC_FLAGS.tsan=-fno-omit-frame-pointer -fsanitize=thread -pie
+LD_FLAGS.tsan=-fsanitize=thread
+
+CC_FLAGS.msan=-fno-omit-frame-pointer -fsanitize=memory -fsanitize-memory-track-origins=2
+CXX_FLAGS.msan=$(CC_FLAGS.msan) -stdlib=libc++ -I$(MSAN_PREFIX)/include -I$(MSAN_PREFIX)/include/c++/v1
+LD_FLAGS.msan=-fsanitize=memory -stdlib=libc++ -Wl,-rpath=$(MSAN_PREFIX)/lib -L$(MSAN_PREFIX)/lib -lc++abi
+
+ifeq ($(SAN),address)
+	CC_FLAGS.sanitizer += $(CC_FLAGS.asan)
+	LD_FLAGS.sanitizer += $(LD_FLAGS.asan)
+
+else ifeq ($(SAN),memory)
+	CC_FLAGS.sanitizer += $(CC_FLAGS.msan)
+	CC_CXX_FLAGS.sanitizer += $(CXX_FLAGS.msan)
+	LD_FLAGS.sanitizer += $(LD_FLAGS.msan)
+
+else ifeq ($(SAN),thread)
+	CC_FLAGS.sanitizer += $(CC_FLAGS.tsan)
+	LD_FLAGS.sanitizer += $(LD_FLAGS.tsan)
+endif

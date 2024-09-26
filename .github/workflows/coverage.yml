@@ -32,39 +32,51 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-release-cov/GraphBLAS
-        key: graphblas-coverage-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+        key: graphblas-coverage-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
     - name: Cache parser
       id: cache_parser
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-release-cov/libcypher-parser
-        key: parser-coverage-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        key: parser-coverage-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
     - name: Cache search
       id: cache_search
       uses: actions/cache@v4
       with:
         path: ./bin/linux-x64-debug-cov/search-static
-        key: search-coverage-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+        key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
     - name: Build
       run: |
-        rustup toolchain list
-        rustup default nightly
+        rustup default 1.76.0
         apt-get update
-        apt-get install -y clang libomp-dev libc6-dbg python3-venv
+        apt-get install -y lsb-release wget software-properties-common gnupg
+        wget https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        ./llvm.sh 17
+        apt-get update
+        apt-get install -y libomp-17-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
-        apt update && apt install lsb-release -y
         curl -fsSL https://packages.redis.io/gpg | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg && \
         echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/redis.list
         apt update && apt install redis -y
-        make coverage NPROC=16
-      continue-on-error: true
+        update-alternatives \
+          --verbose \
+          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
+          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17 \
+          --slave   /usr/bin/llvm-profdata        llvm-profdata        /usr/bin/llvm-profdata-17 \
+          --slave   /usr/bin/llvm-cov             llvm-cov             /usr/bin/llvm-cov-17
+        make coverage NPROC=16 CLANG=1 || true
 
     - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4.4.0
+      uses: codecov/codecov-action@v4.5.0
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        file: codecov.txt
+        plugin: noop
+        disable_search: true
+        verbose: true

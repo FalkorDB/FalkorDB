@@ -5,6 +5,7 @@
  */
 
 #include "globals.h"
+#include "util/arr.h"
 #include "util/thpool/pools.h"
 
 struct Globals {

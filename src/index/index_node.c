@@ -9,7 +9,6 @@
 #include "../value.h"
 #include "../query_ctx.h"
 #include "../graph/graphcontext.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
 
 extern RSDoc *Index_IndexGraphEntity(Index idx, const GraphEntity *e,
 		const void *key, size_t key_len, uint *doc_field_count);

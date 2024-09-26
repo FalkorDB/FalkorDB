@@ -1,0 +1,42 @@
+
+ifneq ($(MK.cmake),)
+ifneq ($(MK_CUSTOM_CMAKE_BUILD),1)
+
+.PHONY: __force
+
+#----------------------------------------------------------------------------------------------
+
+ifeq ($(FORCE),1)
+$(BINDIR)/Makefile: __force
+else
+$(BINDIR)/Makefile : $(MK_CMAKE_FILES) $(CMAKE_FILES)
+endif
+	@echo
+	@echo Generating $(BINDIR)/Makefile ...
+	$(SHOW)mkdir -p $(BINROOT)
+	$(SHOW)cmake $(CMAKE_WHY) $(CMAKE_FLAGS) -S $(abspath $(SRCDIR)) -B $(BINDIR) $(CMAKE_SINK)
+ifeq ($(WHY),1)
+	@echo CMake log is in /tmp/cmake.why
+endif
+
+#----------------------------------------------------------------------------------------------
+
+ifneq ($(HELP),1)
+
+# TODO: __force triggers build even when in HELP=1 mode -> fix this
+
+$(TARGET): $(MISSING_DEPS) $(MK_MAKEFILES) __force
+	@echo
+	@echo Building $(TARGET) ...
+ifneq ($(DRY_RUN),1)
+	$(SHOW)$(MAKE) -C $(BINDIR) $(MAKE_J) $(CMAKE_TARGETS)
+else
+	@make -C $(BINDIR) $(MAKE_J) $(CMAKE_TARGETS)
+endif
+
+endif
+
+#----------------------------------------------------------------------------------------------
+
+endif # MK_CUSTOM_CMAKE_BUILD
+endif # MK.cmake

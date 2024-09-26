@@ -25,7 +25,7 @@ static void CondTraverseToString(const OpBase *ctx, sds *buf) {
 }
 
 static void _populate_filter_matrix(OpCondTraverse *op) {
-	GrB_Matrix FM = RG_MATRIX_M(op->F);
+	GrB_Matrix FM = Delta_Matrix_M(op->F);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
@@ -51,8 +51,8 @@ void _traverse(OpCondTraverse *op) {
 	if(op->F == NULL) {
 		// create both filter and result matrices
 		size_t required_dim = Graph_RequiredMatrixDim(op->graph);
-		RG_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim);
-		RG_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim);
+		Delta_Matrix_new(&op->M, GrB_BOOL, op->record_cap, required_dim, false);
+		Delta_Matrix_new(&op->F, GrB_BOOL, op->record_cap, required_dim, false);
 
 		// prepend filter matrix to algebraic expression as the leftmost operand
 		AlgebraicExpression_MultiplyToTheLeft(&op->ae, op->F);
@@ -67,7 +67,7 @@ void _traverse(OpCondTraverse *op) {
 	// evaluate expression
 	AlgebraicExpression_Eval(op->ae, op->M);
 
-	RG_MatrixTupleIter_attach(&op->iter, op->M);
+	Delta_MatrixTupleIter_attach(&op->iter, op->M);
 }
 
 OpBase *NewCondTraverseOp
@@ -147,7 +147,7 @@ static Record CondTraverseConsume
 
 	while(true) {
 		GrB_Info info =
-			RG_MatrixTupleIter_next_UINT64(&op->iter, &src_id, &dest_id, NULL);
+      Delta_MatrixTupleIter_next_BOOL(&op->iter, &src_id, &dest_id, NULL);
 
 		// managed to get a tuple, break
 		if(info == GrB_SUCCESS) break;
@@ -217,10 +217,10 @@ static OpResult CondTraverseReset(OpBase *ctx) {
 
 	if(op->edge_ctx) EdgeTraverseCtx_Reset(op->edge_ctx);
 
-	GrB_Info info = RG_MatrixTupleIter_detach(&op->iter);
+	GrB_Info info = Delta_MatrixTupleIter_detach(&op->iter);
 	ASSERT(info == GrB_SUCCESS);
 
-	if(op->F != NULL) RG_Matrix_clear(op->F);
+	if(op->F != NULL) Delta_Matrix_clear(op->F);
 	return OP_OK;
 }
 
@@ -234,16 +234,16 @@ static inline OpBase *CondTraverseClone(const ExecutionPlan *plan, const OpBase 
 static void CondTraverseFree(OpBase *ctx) {
 	OpCondTraverse *op = (OpCondTraverse *)ctx;
 
-	GrB_Info info = RG_MatrixTupleIter_detach(&op->iter);
+	GrB_Info info = Delta_MatrixTupleIter_detach(&op->iter);
 	ASSERT(info == GrB_SUCCESS);
 
 	if(op->F != NULL) {
-		RG_Matrix_free(&op->F);
+		Delta_Matrix_free(&op->F);
 		op->F = NULL;
 	}
 
 	if(op->M != NULL) {
-		RG_Matrix_free(&op->M);
+		Delta_Matrix_free(&op->M);
 		op->M = NULL;
 	}
 
