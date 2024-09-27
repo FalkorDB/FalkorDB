@@ -1,0 +1,35 @@
+#!/bin/bash
+
+PRE=1
+while [[ -n $1 ]]; do
+	if [[ $1 =~ ^-[0-9]+$ ]]; then
+		PRE=${1:1}
+	elif [[ $1 =~ ^\+[0-9]+$ ]]; then
+		POST=${1:1}
+	fi
+	shift
+done
+
+if [[ -n $W ]]; then
+	COLS="$W"
+else
+	COLS="$(stty size | cut -d" " -f2)"
+
+	if [[ -z $COLS || $COLS == 0 || $COLS == 1 ]]; then
+		if [[ $CIRCLECI == true ]]; then
+			COLS=200
+		elif [[ -n $STTY_SIZE ]]; then
+			COLS="$(cut -d" " -f2 < $STTY_SIZE)"
+		fi
+	fi
+fi
+if [[ -z $COLS || $COLS == 0 || $COLS == 1 ]]; then
+	COLS=80
+fi
+
+[[ -n $PRE && $PRE != 0 ]] && printf -- '\n%.0s' $(seq 1 $PRE)
+printf -- '-%.0s' $(seq 1 $COLS)
+echo
+[[ -n $POST && $POST != 0 ]] && printf -- '\n%.0s' $(seq 1 $POST)
+
+exit 0

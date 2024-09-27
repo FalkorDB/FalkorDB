@@ -229,9 +229,8 @@ void RdbLoadEdges_v14
 		NodeID    destId   = SerializerIO_ReadUnsigned(rdb);
 		uint64_t  relation = SerializerIO_ReadUnsigned(rdb);
 
-		Serializer_Graph_SetEdge(gc->g,
-				gc->decoding_context->multi_edge[relation], edgeId, srcId,
-				destId, relation, &e);
+		Serializer_Graph_SetEdge(gc->g, gc->decoding_context->multi_edge[relation],
+			edgeId, srcId, destId, relation, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge

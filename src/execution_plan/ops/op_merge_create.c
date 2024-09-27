@@ -54,15 +54,16 @@ static void _RollbackPendingCreations
 (
 	OpMergeCreate *op
 ) {
-	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
+	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
 	for(uint i = 0; i < nodes_to_create_count; i++) {
-		AttributeSet props = array_pop(op->pending.node_attributes);
+		AttributeSet props = array_pop(op->pending.nodes.node_attributes);
 		AttributeSet_Free(&props);
 	}
 
-	uint edges_to_create_count = array_len(op->pending.edges_to_create);
+	uint edges_to_create_count = array_len(op->pending.edges);
 	for(uint i = 0; i < edges_to_create_count; i++) {
-		AttributeSet props = array_pop(op->pending.edge_attributes);
+		PendingEdgeCreations *pending_edge = op->pending.edges + i;
+		AttributeSet props = array_pop(pending_edge->edge_attributes);
 		AttributeSet_Free(&props);
 	}
 }
@@ -72,7 +73,6 @@ OpBase *NewMergeCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCr
 	op->unique_entities = raxNew();       // Create a map to unique pending creations.
 	op->hash_state = XXH64_createState(); // Create a hash state.
 
-	NewPendingCreationsContainer(&op->pending, nodes, edges); // Prepare all creation variables.
 	op->handoff_mode = false;
 	op->records = array_new(Record, 32);
 
@@ -102,6 +102,9 @@ OpBase *NewMergeCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCr
 		ASSERT(aware == true);
 	}
 
+	// prepare all creation variables
+	NewPendingCreationsContainer(&op->pending, nodes, edges);
+
 	return (OpBase *)op;
 }
 
@@ -123,11 +126,11 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	// hash nodes
 	//--------------------------------------------------------------------------
 
-	uint nodes_to_create_count = array_len(op->pending.nodes_to_create);
+	uint nodes_to_create_count = array_len(op->pending.nodes.nodes_to_create);
 
 	for(uint i = 0; i < nodes_to_create_count; i++) {
 		// get specified node to create
-		NodeCreateCtx *n = op->pending.nodes_to_create + i;
+		NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
 		// convert properties
 		PropertyMap *map = n->properties;
@@ -142,10 +145,10 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 				&converted_attr);
 
 		// save attributes
-		array_append(op->pending.node_attributes, converted_attr);
+		array_append(op->pending.nodes.node_attributes, converted_attr);
 
 		// save labels
-		array_append(op->pending.node_labels, n->labelsId);
+		array_append(op->pending.nodes.node_labels, n->labelsId);
 	}
 
 
@@ -153,11 +156,12 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	// hash edges
 	//--------------------------------------------------------------------------
 
-	uint edges_to_create_count = array_len(op->pending.edges_to_create);
+	uint edges_to_create_count = array_len(op->pending.edges);
 
 	for(uint i = 0; i < edges_to_create_count; i++) {
+		PendingEdgeCreations *pending_edge = op->pending.edges + i;
 		// get specified edge to create
-		EdgeCreateCtx *e = op->pending.edges_to_create + i;
+		EdgeCreateCtx *e = &pending_edge->edges_to_create;
 
 		// retrieve source and dest nodes
 		Node *src_node = Record_GetNode(r, e->src_idx);
@@ -200,7 +204,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 		}
 
 		// save attributes
-		array_append(op->pending.edge_attributes, converted_attr);
+		array_append(pending_edge->edge_attributes, converted_attr);
 	}
 
 	// finalize the hash value for all processed creations
@@ -215,7 +219,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 	if(should_create_entities) {
 		// reserve node ids for edges creation
 		for(uint i = 0; i < nodes_to_create_count; i++) {
-			NodeCreateCtx *n = op->pending.nodes_to_create + i;
+			NodeCreateCtx *n = op->pending.nodes.nodes_to_create + i;
 
 			Node newNode = Graph_ReserveNode(gc->g);
 
@@ -223,12 +227,13 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			Node *node_ref = Record_AddNode(r, n->node_idx, newNode);
 
 			// save node for later insertion
-			array_append(op->pending.created_nodes, node_ref);
+			array_append(op->pending.nodes.created_nodes, node_ref);
 		}
 
 		// updated edges with reserved node ids
 		for(uint i = 0; i < edges_to_create_count; i++) {
-			EdgeCreateCtx *ctx = op->pending.edges_to_create + i;
+			PendingEdgeCreations *pending_edge = op->pending.edges + i;
+			EdgeCreateCtx *ctx = &pending_edge->edges_to_create;
 
 			// retrieve source and dest nodes
 			Node *src_node  = Record_GetNode(r, ctx->src_idx);
@@ -248,7 +253,7 @@ static bool _CreateEntities(OpMergeCreate *op, Record r, GraphContext *gc) {
 			Edge_SetDestNodeID(e, ENTITY_GET_ID(dest_node));
 
 			// save edge for later insertion
-			array_append(op->pending.created_edges, e);
+			array_append(pending_edge->created_edges, e);
 		}
 	} else {
 		_RollbackPendingCreations(op);
@@ -314,9 +319,12 @@ static OpBase *MergeCreateClone(const ExecutionPlan *plan, const OpBase *opBase)
 	ASSERT(opBase->type == OPType_MERGE_CREATE);
 	OpMergeCreate *op = (OpMergeCreate *)opBase;
 	NodeCreateCtx *nodes;
-	EdgeCreateCtx *edges;
-	array_clone_with_cb(nodes, op->pending.nodes_to_create, NodeCreateCtx_Clone);
-	array_clone_with_cb(edges, op->pending.edges_to_create, EdgeCreateCtx_Clone);
+	EdgeCreateCtx *edges = array_new(EdgeCreateCtx, array_len(op->pending.edges));
+	array_clone_with_cb(nodes, op->pending.nodes.nodes_to_create, NodeCreateCtx_Clone);
+	for(uint i = 0; i < array_len(op->pending.edges); i++) {
+		EdgeCreateCtx ctx = EdgeCreateCtx_Clone(op->pending.edges[i].edges_to_create);
+		array_append(edges, ctx);
+	}
 	return NewMergeCreateOp(plan, nodes, edges);
 }
 
