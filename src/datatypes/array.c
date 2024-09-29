@@ -11,7 +11,10 @@
 #include <limits.h>
 #include "xxhash.h"
 
-SIValue SIArray_New(uint32_t initialCapacity) {
+SIValue SIArray_New
+(
+	uint32_t initialCapacity
+) {
 	SIValue siarray;
 	siarray.array = array_new(SIValue, initialCapacity);
 	siarray.type = T_ARRAY;
@@ -19,20 +22,30 @@ SIValue SIArray_New(uint32_t initialCapacity) {
 	return siarray;
 }
 
-void SIArray_Append(SIValue *siarray, SIValue value) {
+void SIArray_Append
+(
+	SIValue *siarray, SIValue value
+) {
 	// clone and persist incase of pointer values
 	SIValue clone = SI_CloneValue(value);
 	// append
 	array_append(siarray->array, clone);
 }
 
-SIValue SIArray_Get(SIValue siarray, uint32_t index) {
+SIValue SIArray_Get
+(
+	SIValue siarray,
+	uint32_t index
+) {
 	// check index
 	if(index >= SIArray_Length(siarray)) return SI_NullVal();
 	return SI_ShareValue(siarray.array[index]);
 }
 
-uint32_t SIArray_Length(SIValue siarray) {
+uint32_t SIArray_Length
+(
+	SIValue siarray
+) {
 	return array_len(siarray.array);
 }
 
@@ -43,7 +56,11 @@ uint32_t SIArray_Length(SIValue siarray) {
   * @param  t: bitmap of types to search for
   * @retval a boolean indicating whether any types were matched
   */
-bool SIArray_ContainsType(SIValue siarray, SIType t) {
+bool SIArray_ContainsType
+(
+	SIValue siarray,
+	SIType t
+) {
 	uint array_len = SIArray_Length(siarray);
 	for(uint i = 0; i < array_len; i++) {
 		SIValue elem = siarray.array[i];
@@ -69,7 +86,12 @@ bool SIArray_ContainsType(SIValue siarray, SIType t) {
   * @param  comparedNull: indicate if there was a null comparison during the array scan
   * @retval a boolean indicating whether value was found in siarray
   */
-bool SIArray_ContainsValue(SIValue siarray, SIValue value, bool *comparedNull) {
+bool SIArray_ContainsValue
+(
+	SIValue siarray,
+	SIValue value,
+	bool *comparedNull
+) {
 	// indicate if there was a null comparison during the array scan
 	if(comparedNull) *comparedNull = false;
 	uint array_len = SIArray_Length(siarray);
@@ -86,7 +108,11 @@ bool SIArray_ContainsValue(SIValue siarray, SIValue value, bool *comparedNull) {
 	return false;
 }
 
-bool SIArray_AllOfType(SIValue siarray, SIType t) {
+bool SIArray_AllOfType
+(
+	SIValue siarray,
+	SIType t
+) {
 	uint array_len = SIArray_Length(siarray);
 	for(uint i = 0; i < array_len; i++) {
 		SIValue elem = siarray.array[i];
@@ -133,7 +159,10 @@ void SIArray_Sort
 	}
 }
 
-SIValue SIArray_Clone(SIValue siarray) {
+SIValue SIArray_Clone
+(
+	SIValue siarray
+) {
 	uint arrayLen = SIArray_Length(siarray);
 	SIValue newArray = SIArray_New(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
@@ -181,7 +210,10 @@ void SIArray_ToString
 
 // this method referenced by Java ArrayList.hashCode() method, which takes
 // into account the hasing of nested values
-XXH64_hash_t SIArray_HashCode(SIValue siarray) {
+XXH64_hash_t SIArray_HashCode
+(
+	SIValue siarray
+) {
 	SIType t = T_ARRAY;
 	XXH64_hash_t hashCode = XXH64(&t, sizeof(t), 0);
 
@@ -215,7 +247,10 @@ SIValue SIArray_FromBinary
 	return arr;
 }
 
-void SIArray_Free(SIValue siarray) {
+void SIArray_Free
+(
+	SIValue siarray
+) {
 	uint arrayLen = SIArray_Length(siarray);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue value = siarray.array[i];

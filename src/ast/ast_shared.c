@@ -187,6 +187,7 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 	clone->properties    = array_new(PropertySetCtx, count);
 	clone->add_labels    = NULL;
 	clone->remove_labels = NULL;
+
 	if(orig->add_labels != NULL) {
 		array_clone(clone->add_labels, orig->add_labels);
 	}
@@ -196,9 +197,10 @@ EntityUpdateEvalCtx *UpdateCtx_Clone
 
 	for(uint i = 0; i < count; i ++) {
 		PropertySetCtx update = {
+			.attr_id   = orig->properties[i].attr_id,
 			.attribute = orig->properties[i].attribute,
-			.exp = AR_EXP_Clone(orig->properties[i].exp),
-			.mode = orig->properties[i].mode,
+				.exp   = AR_EXP_Clone(orig->properties[i].exp),
+				.mode  = orig->properties[i].mode,
 		};
 		array_append(clone->properties, update);
 	}

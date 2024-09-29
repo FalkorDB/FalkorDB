@@ -252,7 +252,8 @@ void EvalEntityUpdates
 				break;
 			}
 
-			AttributeID attr_id = FindOrAddAttribute(gc, attribute, true);
+			AttributeID attr_id = property->attr_id;
+			ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
 			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
 			{

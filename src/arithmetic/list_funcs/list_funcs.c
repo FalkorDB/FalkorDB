@@ -235,30 +235,75 @@ static inline bool normalize_index
 	return true;
 }
 
-// If given an array, returns a value in a specific index in an array.
-//    Valid index range is [-arrayLen, arrayLen).
-//    Invalid index will return null.
-//    "RETURN [1, 2, 3][0]" will yield 1.
-// If given a map or graph entity, returns the property value associated
-//    with the given key string.
-SIValue AR_SUBSCRIPT(SIValue *argv, int argc, void *private_data) {
+// if given an array, returns a value in a specific index in an array
+//    valid index range is [-arrayLen, arrayLen)
+//    invalid index will return Null
+//    "RETURN [1, 2, 3][0]" will yield 1
+// if given a map or graph entity, returns the property value associated
+//    with the given key string
+SIValue AR_SUBSCRIPT
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	ASSERT(argc == 2);
-	if(SI_TYPE(argv[0]) == T_NULL || SI_TYPE(argv[1]) == T_NULL) return SI_NullVal();
+	if(SI_TYPE(argv[0]) == T_NULL || SI_TYPE(argv[1]) == T_NULL)
+		return SI_NullVal();
+
+	//--------------------------------------------------------------------------
+	// subscript access on a map or graph entity
+	//--------------------------------------------------------------------------
+
+	// RETURN {'a':2, 'b': {'c': 3}}['b']
+	// MATCH (n) RETURN n['val']
 	if(SI_TYPE(argv[0]) & (T_MAP | SI_GRAPHENTITY)) {
 		if(SI_TYPE(argv[1]) != T_STRING) {
 			Error_SITypeMismatch(argv[1], T_STRING);
 			return SI_NullVal();
 		}
-		/* If the first argument is a map or graph entity, this is a property lookup of a form like:
-		 * WITH {val: 5} AS a return a['val']
-		 * MATCH (a) RETURN a['val']
-		 * Pass the arguments to the AR_PROPERTY function. */
-		SIValue property_args[3] = {argv[0], argv[1], SI_LongVal(ATTRIBUTE_ID_NONE)};
-		return AR_PROPERTY(property_args, 3, NULL);
+
+		// if the first argument is a map or graph entity
+		// this is a property lookup of a form like:
+		// WITH {val: 5} AS a return a['val']
+		// MATCH (a) RETURN a['val']
+		// pass the arguments to the AR_PROPERTY function
+
+		// AR_PROPERTY expects:
+		//	1. map
+		//  2. [(attr_name, optional attr_id)]
+		//  3. length of second argument
+
+		// prepare second argument
+		SIValue attr = SI_Array(2);
+		SIArray_Append(&attr, argv[1]);
+		SIArray_Append(&attr, SI_LongVal(ATTRIBUTE_ID_NONE));
+
+		// arguments for AR_PROPERTY
+		SIValue property_args[3] = {
+			argv[0],
+			attr,
+			SI_LongVal(1)
+		};
+
+		// TODO: this is a bit of a waste as we're allocating and freeing
+		// the attr array on every call, the problem is that the "entity"
+		// we're working on might be a node / edge / array / map
+		// and we can't know in advance, this is a run-time value.
+		SIValue ret = AR_PROPERTY(property_args, 3, NULL);
+
+		SIValue_Free(attr);
+
+		return ret;
 	}
 
+	//--------------------------------------------------------------------------
+	// subscript access on an array
+	//--------------------------------------------------------------------------
+
+	// RETURN [1,2,3][-1]
 	if(SI_TYPE(argv[1]) == T_STRING) {
-		// String indexes are only permitted on maps, not arrays.
+		// string indexes are only permitted on maps, not arrays
 		Error_SITypeMismatch(argv[1], T_INT64);
 		return SI_NullVal();
 	}

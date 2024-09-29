@@ -176,7 +176,7 @@ static inline void _buildUpdateOp
 	ExecutionPlan *plan,
 	const cypher_astnode_t *clause
 ) {
-	rax *update_exps = AST_PrepareUpdateOp(gc, clause);
+	EntityUpdateEvalCtx **update_exps = AST_PrepareUpdateOp(gc, clause);
 	OpBase *op = NewUpdateOp(plan, update_exps);
 	ExecutionPlan_UpdateRoot(plan, op);
 }

@@ -64,7 +64,11 @@ inline bool AR_EXP_IsOperation(const AR_ExpNode *exp) {
 	return exp->type == AR_EXP_OP;
 }
 
-bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr) {
+bool AR_EXP_IsAttribute
+(
+	const AR_ExpNode *exp,
+	char **attr
+) {
 	ASSERT(exp != NULL);
 
 	// an arithmetic expression performs attribute extraction
@@ -79,8 +83,10 @@ bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr) {
 		AR_ExpNode *r = exp->op.children[1];
 		ASSERT(AR_EXP_IsConstant(r));
 		SIValue v = r->operand.constant;
-		ASSERT(SI_TYPE(v) == T_STRING);
-		*attr = v.stringval;
+		ASSERT(SI_TYPE(v) == T_ARRAY);
+
+		// note: attr is volotile
+		*attr = SIArray_Get(v, 0).stringval;
 	}
 
 	return true;
@@ -747,14 +753,19 @@ void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases) {
 	}
 }
 
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes) {
+void AR_EXP_CollectAttributes
+(
+	AR_ExpNode *root,
+	rax *attributes
+) {
 	if(AR_EXP_IsOperation(root)) {
 		if(strcmp(AR_EXP_GetFuncName(root), "property") == 0) {
 			AR_ExpNode *arg = root->op.children[1];
 			ASSERT(AR_EXP_IsConstant(arg));
-			ASSERT(SI_TYPE(arg->operand.constant) == T_STRING);
+			ASSERT(SI_TYPE(arg->operand.constant) == T_ARRAY);
 
-			const char *attr = arg->operand.constant.stringval;
+			const char *attr = SIArray_Get(arg->operand.constant, 0).stringval;
+			// note: attr is volotile
 			raxInsert(attributes, (unsigned char *)attr, strlen(attr), NULL, NULL);
 		}
 

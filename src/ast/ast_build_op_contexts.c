@@ -8,6 +8,7 @@
 #include "ast_shared.h"
 #include "../util/arr.h"
 #include "../errors/errors.h"
+#include "../graph/graph_hub.h"
 #include "../util/rax_extensions.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
 #include "../query_ctx.h"
@@ -227,7 +228,16 @@ static void _ConvertUpdateItem
 			// this is done by performing a.v = NULL
 			exp = AR_EXP_NewConstOperandNode(SI_NullVal());
 		}
-		PropertySetCtx update = { .attribute  = attribute, .exp = exp, .mode = update_mode };
+
+		AttributeID attr_id = ATTRIBUTE_ID_NONE;
+		if(attribute) {
+			attr_id = FindOrAddAttribute(gc, attribute, true);
+		}
+
+		PropertySetCtx update =
+			{ .attribute  = attribute, attr_id = attr_id, .exp = exp,
+				.mode = update_mode };
+
 		array_append(ctx->properties, update);
 	}
 }
@@ -399,7 +409,9 @@ AST_MergeContext AST_PrepareMergeOp
 // UPDATE operation
 //------------------------------------------------------------------------------
 
-rax *AST_PrepareUpdateOp
+// extract the necessary information to populate an update operation
+// from a SET clause
+EntityUpdateEvalCtx **AST_PrepareUpdateOp
 (
 	GraphContext *gc,
 	const cypher_astnode_t *clause
@@ -424,7 +436,11 @@ rax *AST_PrepareUpdateOp
 		}
 	}
 
-	return updates;
+	// convert from rax to array
+	EntityUpdateEvalCtx **ctx = (EntityUpdateEvalCtx**)raxValues(updates);
+	raxFree(updates);
+
+	return ctx;
 }
 
 //------------------------------------------------------------------------------
