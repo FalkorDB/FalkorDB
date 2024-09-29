@@ -31,8 +31,11 @@ static bool _ValidateAttrType
 	// in case of an array, make sure each element is of an
 	// acceptable type
 	if(t == T_ARRAY) {
-		SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE;
-		return !SIArray_ContainsType(v, invalid_properties);
+		SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
+		return !SIArray_ContainsType(v, invalid_types);
+	} else if(t == T_MAP) {
+		SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
+		return !Map_ContainsType(v, invalid_types);
 	}
 
 	return true;
@@ -166,10 +169,10 @@ void EvalEntityUpdates
 	dict *updates;
 	GraphEntityType entity_type;
 	if(t == REC_TYPE_NODE) {
-		updates = node_updates;
+		updates     = node_updates;
 		entity_type = GETYPE_NODE;
 	} else {
-		updates = edge_updates;
+		updates     = edge_updates;
 		entity_type = GETYPE_EDGE;
 	}
 
@@ -249,7 +252,8 @@ void EvalEntityUpdates
 				break;
 			}
 
-			AttributeID attr_id = FindOrAddAttribute(gc, attribute, true);
+			AttributeID attr_id = property->attr_id;
+			ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
 			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
 			{

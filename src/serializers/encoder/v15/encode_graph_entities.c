@@ -60,6 +60,29 @@ static void _RdbSaveSIVector
 		SerializerIO_WriteFloat(rdb, values[i]);
 	}
 }
+static void _RdBSaveMap
+(
+	SerializerIO rdb,
+	SIValue v
+) {
+	// saves map as
+	// unsigned : map key count
+	// key:value
+	// .
+	// .
+	// .
+	// key:value
+
+	uint n = Map_KeyCount(v);
+	SerializerIO_WriteUnsigned(rdb, n);
+	for(uint i = 0; i < n; i ++) {
+		SIValue key;
+		SIValue val;
+		Map_GetIdx(v, i, &key, &val);
+		_RdbSaveSIValue(rdb, &key);
+		_RdbSaveSIValue(rdb, &val);
+	}
+}
 
 static void _RdbSaveSIValue
 (
@@ -93,6 +116,9 @@ static void _RdbSaveSIValue
 			break;
 		case T_VECTOR_F32:
 			_RdbSaveSIVector(rdb, *v);
+			break;
+		case T_MAP:
+			_RdBSaveMap(rdb, *v);
 			break;
 		case T_NULL:
 			break;  // no data beyond type needs to be encoded for NULL

@@ -231,9 +231,10 @@ inline AttributeSet GraphEntity_GetAttributes
 	return *e->attributes;
 }
 
+// frees entity attribute set
 inline int GraphEntity_ClearAttributes
 (
-	GraphEntity *e
+	GraphEntity *e  // entity to modify
 ) {
 	ASSERT(e != NULL);
 

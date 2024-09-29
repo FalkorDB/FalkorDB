@@ -188,9 +188,13 @@ SIValue SI_ShallowCloneValue(const SIValue v) {
 	return SI_CloneValue(v);
 }
 
-/* Make an SIValue that shares the original's allocations but can safely expect those allocations
- *  to remain in scope. This is most frequently the case for GraphEntity properties. */
-SIValue SI_ConstValue(const SIValue *v) {
+// make an SIValue that shares the original's allocations but can safely expect
+// those allocations to remain in scope
+// this is most frequently the case for GraphEntity properties
+SIValue SI_ConstValue
+(
+	const SIValue *v
+) {
 	SIValue dup = *v;
 	if(v->allocation != M_NONE) dup.allocation = M_CONST;
 	return dup;
@@ -853,6 +857,9 @@ SIValue SIValue_FromBinary
 			break;
 		case T_VECTOR_F32:
 			v = SIVector_FromBinary(stream, t);
+			break;
+		case T_MAP:
+			v = Map_FromBinary(stream);
 			break;
 		case T_NULL:
 			v = SI_NullVal();

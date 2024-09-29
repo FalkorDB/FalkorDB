@@ -7,6 +7,7 @@
 #include "decode_v15.h"
 
 // forward declarations
+static SIValue _RdbLoadMap(SerializerIO rdb);
 static SIValue _RdbLoadPoint(SerializerIO rdb);
 static SIValue _RdbLoadSIArray(SerializerIO rdb);
 static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
@@ -20,25 +21,27 @@ static SIValue _RdbLoadSIValue
 	// Value
 	SIType t = SerializerIO_ReadUnsigned(rdb);
 	switch(t) {
-	case T_INT64:
-		return SI_LongVal(SerializerIO_ReadSigned(rdb));
-	case T_DOUBLE:
-		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
-	case T_STRING:
-		// transfer ownership of the heap-allocated string to the
-		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
-	case T_BOOL:
-		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
-	case T_ARRAY:
-		return _RdbLoadSIArray(rdb);
-	case T_POINT:
-		return _RdbLoadPoint(rdb);
-	case T_VECTOR_F32:
-		return _RdbLoadVector(rdb, t);
-	case T_NULL:
-	default: // currently impossible
-		return SI_NullVal();
+		case T_INT64:
+			return SI_LongVal(SerializerIO_ReadSigned(rdb));
+		case T_DOUBLE:
+			return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
+		case T_STRING:
+			// transfer ownership of the heap-allocated string to the
+			// newly-created SIValue
+			return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		case T_BOOL:
+			return SI_BoolVal(SerializerIO_ReadSigned(rdb));
+		case T_ARRAY:
+			return _RdbLoadSIArray(rdb);
+		case T_POINT:
+			return _RdbLoadPoint(rdb);
+		case T_VECTOR_F32:
+			return _RdbLoadVector(rdb, t);
+		case T_MAP:
+			return _RdbLoadMap(rdb);
+		case T_NULL:
+		default: // currently impossible
+			return SI_NullVal();
 	}
 }
 
@@ -49,6 +52,30 @@ static SIValue _RdbLoadPoint
 	double lat = SerializerIO_ReadDouble(rdb);
 	double lon = SerializerIO_ReadDouble(rdb);
 	return SI_Point(lat, lon);
+}
+
+static SIValue _RdbLoadMap
+(
+	SerializerIO rdb
+) {
+	// load map
+	// unsigned : map key count
+	// key:value
+	// .
+	// .
+	// .
+	// key:value
+
+	uint n = SerializerIO_ReadUnsigned(rdb);
+	SIValue keys[n];
+	SIValue vals[n];
+
+	for(uint i = 0; i < n; i++) {
+		keys[i] = _RdbLoadSIValue(rdb);
+		vals[i] = _RdbLoadSIValue(rdb);
+	}
+
+	return Map_FromArrays(keys, vals, n);
 }
 
 static SIValue _RdbLoadSIArray

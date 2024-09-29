@@ -170,9 +170,13 @@ static inline void _buildUnwindOp(ExecutionPlan *plan, const cypher_astnode_t *c
 	ExecutionPlan_UpdateRoot(plan, op);
 }
 
-static inline void _buildUpdateOp(GraphContext *gc, ExecutionPlan *plan,
-								  const cypher_astnode_t *clause) {
-	rax *update_exps = AST_PrepareUpdateOp(gc, clause);
+static inline void _buildUpdateOp
+(
+	GraphContext *gc,
+	ExecutionPlan *plan,
+	const cypher_astnode_t *clause
+) {
+	EntityUpdateEvalCtx **update_exps = AST_PrepareUpdateOp(gc, clause);
 	OpBase *op = NewUpdateOp(plan, update_exps);
 	ExecutionPlan_UpdateRoot(plan, op);
 }

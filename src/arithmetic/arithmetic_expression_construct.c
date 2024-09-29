@@ -149,14 +149,17 @@ static AR_ExpNode *_AR_EXP_FromIdentifier(const cypher_astnode_t *expr) {
 	return _AR_EXP_FromIdentifierExpression(expr);
 }
 
-static AR_ExpNode *_AR_EXP_FromPropertyExpression(const cypher_astnode_t *expr) {
+static AR_ExpNode *_AR_EXP_FromPropertyExpression
+(
+	const cypher_astnode_t *expr
+) {
 	// the property expression is constructed of two parts:
-	// 1. an expression evaluating to a graph entity, in the future a map type
+	// 1. an expression evaluating the object from which data is extracted
 	// 2. a property name string.
 	// examples: a.v, arr[0].v
 
 	//--------------------------------------------------------------------------
-	// Extract entity and property name expressions.
+	// extract entity and property name expressions
 	//--------------------------------------------------------------------------
 
 	const cypher_astnode_t *prop_expr = cypher_ast_property_operator_get_expression(expr);
@@ -164,7 +167,38 @@ static AR_ExpNode *_AR_EXP_FromPropertyExpression(const cypher_astnode_t *expr) 
 	const char *prop_name = cypher_ast_prop_name_get_value(prop_name_node);
 
 	AR_ExpNode *entity = _AR_EXP_FromASTNode(prop_expr);
-	AR_ExpNode *root = AR_EXP_NewAttributeAccessNode(entity, prop_name);
+
+	//--------------------------------------------------------------------------
+	// merge properties access
+	//--------------------------------------------------------------------------
+	//
+	// expression such as: node.val.a.b
+	// property(property(property(a,[val, 0],1),[a, 3],1),[b, 4],1)
+	//
+	// will be transformed into
+	// property(a, [val, 0, a, 3, b, 4], 3)
+	// reducing the number of function calls
+
+	AR_ExpNode *root;
+
+	if(AR_EXP_IsOperation(entity) &&
+	   strcmp(AR_EXP_GetFuncName(entity), "property") == 0) {
+		// nested calls to property, fold into a single call
+		GraphContext *gc        = QueryCtx_GetGraphCtx();
+		SIValue       attr_name = SI_ConstStringVal((char *)prop_name);
+		AttributeID   idx       = GraphContext_GetAttributeID(gc, prop_name);
+
+		// append current attribute to path
+		SIArray_Append(&entity->op.children[1]->operand.constant, attr_name);
+		SIArray_Append(&entity->op.children[1]->operand.constant, SI_LongVal(idx));
+
+		// update path length
+		entity->op.children[2]->operand.constant.longval++;
+
+		root = entity;
+	} else {
+		root = AR_EXP_NewAttributeAccessNode(entity, prop_name);
+	}
 
 	return root;
 }
