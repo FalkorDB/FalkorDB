@@ -181,7 +181,7 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 		Graph *g = gc->g;
 
 		// set the node label matrix
-		Serializer_Graph_SetNodeLabels(g);
+		Graph_SetNodeLabels(g);
 
 		Graph_ApplyAllPending(g, true);
 
@@ -189,13 +189,6 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
 
 		uint node_schemas_count = array_len(gc->node_schemas);
-		// update the node statistics
-		for(uint i = 0; i < node_schemas_count; i++) {
-			GrB_Index nvals;
-			Delta_Matrix L = g->labels[i];
-			Delta_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
-		}
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
@@ -205,7 +198,6 @@ GraphContext *RdbLoadGraphContext_v9(RedisModuleIO *rdb) {
 			GrB_Index nvals;
 			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
 			Delta_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
 
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);

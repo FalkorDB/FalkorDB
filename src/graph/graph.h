@@ -13,7 +13,6 @@
 #include "entities/node.h"
 #include "entities/edge.h"
 #include "../redismodule.h"
-#include "graph_statistics.h"
 #include "tensor/tensor.h"
 #include "delta_matrix/delta_matrix.h"
 #include "../util/datablock/datablock.h"
@@ -33,7 +32,6 @@ typedef enum {
 } GRAPH_EDGE_DIR;
 
 typedef enum {
-	SYNC_POLICY_UNKNOWN,
 	SYNC_POLICY_FLUSH_RESIZE,
 	SYNC_POLICY_RESIZE,
 	SYNC_POLICY_NOP,
@@ -44,20 +42,6 @@ typedef struct Graph Graph;
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
-struct Graph {
-	int reserved_node_count;           // number of nodes not commited yet
-	DataBlock *nodes;                  // graph nodes stored in blocks
-	DataBlock *edges;                  // graph edges stored in blocks
-	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
-	Delta_Matrix *labels;              // label matrices
-	Delta_Matrix node_labels;          // mapping of all node IDs to all labels possessed by each node
-	Tensor *relations;                 // relation matrices
-	Delta_Matrix _zero_matrix;         // zero matrix
-	pthread_rwlock_t _rwlock;          // read-write lock scoped to this specific graph
-	bool _writelocked;                 // true if the read-write lock was acquired by a writer
-	SyncMatrixFunc SynchronizeMatrix;  // function pointer to matrix synchronization routine
-	GraphStatistics stats;             // graph related statistics
-};
 
 // graph synchronization functions
 // the graph is initialized with a read-write lock allowing
@@ -119,24 +103,10 @@ LabelID Graph_AddLabel
 	Graph *g
 );
 
-// adds a label from the graph
-void Graph_RemoveLabel
-(
-	Graph *g,
-	LabelID label_id
-);
-
 // creates a new relation matrix, returns id given to relation
 RelationID Graph_AddRelationType
 (
 	Graph *g
-);
-
-// removes a relation from the graph
-void Graph_RemoveRelation
-(
-	Graph *g,
-	int relation_id
 );
 
 // make sure graph can hold an additional N nodes
@@ -225,9 +195,10 @@ void Graph_CreateEdge
 // create multiple edges
 void Graph_CreateEdges
 (
-	Graph *g,      // graph on which to operate
-	RelationID r,  // relationship type
-	Edge **edges   // edges to create
+	Graph *g,       // graph on which to operate
+	RelationID r,   // relationship type
+	Edge **edges,   // edges to create
+	int edge_count  // number of edges to create 
 );
 
 // deletes nodes from the graph
@@ -433,6 +404,60 @@ Delta_Matrix Graph_GetNodeLabelMatrix
 Delta_Matrix Graph_GetZeroMatrix
 (
 	const Graph *g
+);
+
+// sets a node in the graph
+void Graph_SetNode
+(
+	Graph *g,               // graph to add node to
+	NodeID id,              // node ID
+	LabelID *labels,        // node labels
+	uint label_count,       // label count
+	Node *n                 // pointer to node
+);
+
+// sets graph's node labels matrix
+void Graph_SetNodeLabels
+(
+	Graph *g
+);
+
+// set a given edge in the graph
+void Graph_SetEdge
+(
+	Graph *g,               // graph to add edge to
+	bool multi_edge,        // true if graph supports multi-edge
+	EdgeID edge_id,         // edge ID
+	NodeID src,             // edge source
+	NodeID dest,            // edge destination
+	int r,                  // edge relationship-type
+	Edge *e                 // pointer to edge
+);
+
+// marks a node ID as deleted
+void Graph_MarkNodeDeleted
+(
+	Graph *g,               // graph from which to mark node as deleted
+	NodeID ID               // node ID
+);
+
+// marks a edge ID as deleted
+void Graph_MarkEdgeDeleted
+(
+	Graph *g,               // graph from which to mark edge as deleted
+	EdgeID ID               // edge ID
+);
+
+// returns the graph deleted nodes list
+uint64_t *Graph_GetDeletedNodesList
+(
+	Graph *g
+);
+
+// returns the graph deleted nodes list
+uint64_t *Graph_GetDeletedEdgesList
+(
+	Graph *g
 );
 
 // free partial graph

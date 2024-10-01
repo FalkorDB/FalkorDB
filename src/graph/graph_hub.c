@@ -81,7 +81,7 @@ void CreateEdges
 
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 
-	Graph_CreateEdges(gc->g, r, edges);
+	Graph_CreateEdges(gc->g, r, edges, array_len(edges));
 
 	uint count = array_len(edges);
 	for(uint i = 0; i < count; i++) {

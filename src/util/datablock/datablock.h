@@ -68,6 +68,11 @@ DataBlock *DataBlock_New
 // returns number of items stored
 uint64_t DataBlock_ItemCount(const DataBlock *dataBlock);
 
+// returns number of items datablock can hold
+uint64_t DataBlock_ItemCap(const DataBlock *dataBlock);
+
+uint64_t *DataBlock_DeletedItems(DataBlock *dataBlock);
+
 // Make sure datablock can accommodate at least k items.
 void DataBlock_Accommodate(DataBlock *dataBlock, int64_t k);
 

@@ -104,12 +104,6 @@ GrB_Info Delta_Matrix_new
 	bool transpose           // if true, create a transpose of the matrix
 );
 
-// returns transposed matrix of C
-Delta_Matrix Delta_Matrix_getTranspose
-(
-	const Delta_Matrix C
-);
-
 GrB_Matrix Delta_Matrix_M
 (
 	const Delta_Matrix C
@@ -133,24 +127,9 @@ GrB_Info Delta_Matrix_nvals    // get the number of entries in a matrix
 	const Delta_Matrix A    // matrix to query
 );
 
-GrB_Info Delta_Matrix_resize      // change the size of a matrix
-(
-	Delta_Matrix C,             // matrix to modify
-	GrB_Index nrows_new,        // new number of rows in matrix
-	GrB_Index ncols_new         // new number of columns in matrix
-);
-
 GrB_Info Delta_Matrix_setElement_BOOL      // C (i,j) = x
 (
 	Delta_Matrix C,                     // matrix to modify
-	GrB_Index i,                        // row index
-	GrB_Index j                         // column index
-);
-
-GrB_Info Delta_Matrix_setElement_UINT64      // C (i,j) = x
-(
-	Delta_Matrix C,                     // matrix to modify
-	uint64_t x,                         // value
 	GrB_Index i,                        // row index
 	GrB_Index j                         // column index
 );
@@ -162,28 +141,6 @@ GrB_Info Delta_Matrix_extractElement_BOOL     // x = A(i,j)
 	GrB_Index i,                           // row index
 	GrB_Index j                            // column index
 ) ;
-
-GrB_Info Delta_Matrix_extractElement_UINT64     // x = A(i,j)
-(
-	uint64_t *x,                           // extracted scalar
-	const Delta_Matrix A,                  // matrix to extract a scalar from
-	GrB_Index i,                           // row index
-	GrB_Index j                            // column index
-) ;
-
-// remove entry at position C[i,j]
-GrB_Info Delta_Matrix_removeElement
-(
-	Delta_Matrix C,                 // matrix to remove entry from
-	GrB_Index i,                    // row index
-	GrB_Index j                     // column index
-);
-
-GrB_Info Delta_Matrix_removeElements
-(
-	Delta_Matrix C,                 // matrix to remove entry from
-	GrB_Matrix m                    // elements to remove
-);
 
 GrB_Info Delta_mxm                     // C = A * B
 (
@@ -219,24 +176,10 @@ GrB_Info Delta_Matrix_export
 	Delta_Matrix C
 );
 
-// checks to see if matrix has pending operations
-GrB_Info Delta_Matrix_pending
-(
-	const Delta_Matrix C,           // matrix to query
-	bool *pending                   // are there any pending operations
-);
-
 GrB_Info Delta_Matrix_wait
 (
 	Delta_Matrix C,
 	bool force_sync
-);
-
-void Delta_Matrix_synchronize
-(
-	Delta_Matrix C,
-	GrB_Index nrows,
-	GrB_Index ncols
 );
 
 void Delta_Matrix_free

@@ -210,7 +210,7 @@ void RdbSaveDeletedNodes_v15
 
 	if(deleted_nodes_to_encode == 0) return;
 	// get deleted nodes list
-	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
+	uint64_t *deleted_nodes_list = Graph_GetDeletedNodesList(gc->g);
 	_RdbSaveDeletedEntities_v15(rdb, gc, deleted_nodes_to_encode, deleted_nodes_list);
 }
 
@@ -226,7 +226,7 @@ void RdbSaveDeletedEdges_v15
 	if(deleted_edges_to_encode == 0) return;
 
 	// get deleted edges list
-	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
+	uint64_t *deleted_edges_list = Graph_GetDeletedEdgesList(gc->g);
 	_RdbSaveDeletedEntities_v15(rdb, gc, deleted_edges_to_encode, deleted_edges_list);
 }
 
