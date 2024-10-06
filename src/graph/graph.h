@@ -454,7 +454,7 @@ uint64_t *Graph_GetDeletedNodesList
 	Graph *g
 );
 
-// returns the graph deleted nodes list
+// returns the graph deleted edges list
 uint64_t *Graph_GetDeletedEdgesList
 (
 	Graph *g

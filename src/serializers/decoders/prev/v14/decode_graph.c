@@ -222,10 +222,6 @@ GraphContext *RdbLoadGraphContext_v14
 
 		// enable node indices
 		for(uint i = 0; i < label_count; i++) {
-			GrB_Index nvals;
-			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
-			Delta_Matrix_nvals(&nvals, L);
-
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
