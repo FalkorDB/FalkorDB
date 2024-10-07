@@ -299,7 +299,7 @@ SIValue AR_PROPERTY
 				// retrieve map key
 				//--------------------------------------------------------------
 
-				Map_Get(obj, key, &obj);
+				Map_Get(obj, key.stringval, &obj);
 				break;
 			case T_POINT:
 				obj = Point_GetCoordinate(obj, key);

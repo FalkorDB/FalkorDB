@@ -230,7 +230,6 @@ void EvalEntityUpdates
 	//
 	// collect all updates into a single attribute-set
 	//
-	QueryCtx *query_ctx = QueryCtx_GetQueryCtx();
 	for(uint i = 0; i < exp_count && !error; i++) {
 		PropertySetCtx *property = ctx->properties + i;
 
@@ -255,8 +254,11 @@ void EvalEntityUpdates
 			AttributeID attr_id = property->attr_id;
 			ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
-			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
-			{
+			AttributeSetChangeType ct =
+				AttributeSet_Set_Allow_Null(entity->attributes, attr_id,
+						property->sub_path, v);
+
+			switch(ct) {
 				case CT_DEL:
 					// attribute removed
 					EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
@@ -279,6 +281,7 @@ void EvalEntityUpdates
 					assert("unknown change type value" && false);
 					break;
 			}
+
 			SIValue_Free(v);
 			continue;
 		}
@@ -307,11 +310,11 @@ void EvalEntityUpdates
 		//----------------------------------------------------------------------
 
 		if(t == T_MAP) {
-			// value is of type map e.g. n.v = {a:1, b:2}
+			// value is of type map e.g. n = {a:1, b:2}
 			// iterate over all map elements to build updates
 			uint map_size = Map_KeyCount(v);
 			for(uint j = 0; j < map_size; j ++) {
-				SIValue key;
+				const char *key;
 				SIValue value;
 
 				Map_GetIdx(v, j, &key, &value);
@@ -322,9 +325,9 @@ void EvalEntityUpdates
 					break;
 				}
 
-				AttributeID attr_id = FindOrAddAttribute(gc, key.stringval, true);
+				AttributeID attr_id = FindOrAddAttribute(gc, key, true);
 				// TODO: would have been nice we just sent n = {v:2}
-				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, value))
+				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, NULL, value))
 				{
 					case CT_DEL:
 						// attribute removed
@@ -372,7 +375,7 @@ void EvalEntityUpdates
 			SIValue v = AttributeSet_GetIdx(set, j, &attr_id);
 
 			// simple assignment, no need to validate value
-			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
+			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, NULL, v))
 			{
 				case CT_ADD:
 					// attribute added

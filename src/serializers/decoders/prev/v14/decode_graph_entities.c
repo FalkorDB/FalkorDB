@@ -119,11 +119,11 @@ static SIValue _RdbLoadMap
 	// key:val
 
 	uint n = SerializerIO_ReadUnsigned(rdb);
-	SIValue keys[n];
+	char*   keys[n];
 	SIValue vals[n];
 
 	for(uint i = 0; i < n; i++) {
-		keys[i] = _RdbLoadSIValue(rdb);
+		keys[i] = _RdbLoadSIValue(rdb).stringval;
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 

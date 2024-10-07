@@ -282,12 +282,9 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	SIValue options = SI_Map(3);
 	for(uint i = 0; i < fields_count; i++) {
 		// construct options map
-		Map_Add(&options, SI_ConstStringVal("weight"),
-				SI_DoubleVal(weights[i]));
-		Map_Add(&options, SI_ConstStringVal("phonetic"),
-				SI_ConstStringVal(phonetics[i]));
-		Map_Add(&options, SI_ConstStringVal("nostem"),
-				SI_BoolVal(nostems[i]));
+		Map_Add(&options, "weight",   SI_DoubleVal(weights[i]));
+		Map_Add(&options, "phonetic", SI_ConstStringVal(phonetics[i]));
+		Map_Add(&options, "nostem",   SI_BoolVal(nostems[i]));
 
 		idx = AddIndex(label, _fields[i], GETYPE_NODE, INDEX_FLD_FULLTEXT,
 				options, true);

@@ -17,43 +17,42 @@ static inline int _key_cmp
 	const Pair *a,
 	const Pair *b
 ) {
-	return strcmp(a->key.stringval, b->key.stringval);
+	return strcmp(a->key, b->key);
 }
 
 static inline Pair Pair_New
 (
-	SIValue key,
+	const char *key,
 	SIValue val
 ) {
-	ASSERT(SI_TYPE(key) & T_STRING);
 	return (Pair) {
-		.key = SI_CloneValue(key), .val = SI_CloneValue(val)
+		.key = rm_strdup(key), .val = SI_CloneValue(val)
 	};
 }
 
 static void Pair_Free
 (
-	Pair p
+	Pair *p
 ) {
-	SIValue_Free(p.key);
-	SIValue_Free(p.val);
+	rm_free(p->key);
+	SIValue_Free(p->val);
 }
 
 static int Map_KeyIdx
 (
 	SIValue map,
-	SIValue key
+	const char *key
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(map) == T_MAP);
+	ASSERT(key          != NULL);
 
 	Map m = map.map;
 	uint n = array_len(m);
 
 	// search for key in map
 	for(uint i = 0; i < n; i++) {
-		Pair pair = m[i];
-		if(strcmp(pair.key.stringval, key.stringval) == 0) {
+		Pair *p = m + i;
+		if(strcmp(p->key, key) == 0) {
 			return i;
 		}
 	}
@@ -77,10 +76,10 @@ SIValue Map_New
 // create a map from keys and values arrays
 // keys and values are both of length n
 // map takes ownership over keys and values elements
-// the function will nullify both arrays
+// the function will nullify each element within the arrays
 SIValue Map_FromArrays
 (
-	SIValue *keys,    // keys
+	char **keys,      // keys
 	SIValue *values,  // values
 	uint n            // arrays length
 ) {
@@ -97,7 +96,7 @@ SIValue Map_FromArrays
 
 		array_append(map.map, p);
 
-		keys[i]   = SI_NullVal();
+		keys[i]   = NULL;
 		values[i] = SI_NullVal();
 	}
 
@@ -109,14 +108,14 @@ SIValue Map_Clone
 (
 	SIValue map  // map to clone
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	uint key_count = Map_KeyCount(map);
 	SIValue clone = Map_New(key_count);
 
 	for(uint i = 0; i < key_count; i++) {
-		Pair p = map.map[i];
-		Map_Add(&clone, p.key, p.val);
+		Pair *p = map.map + i;
+		Map_Add(&clone, p->key, p->val);
 	}
 
 	return clone;
@@ -127,58 +126,148 @@ SIValue Map_FromBinary
 (
 	FILE *stream  // binary stream
 ) {
+	ASSERT(false && "implement!");
 	// format:
 	// key count
 	// key:value
 
 	ASSERT(stream != NULL);
+	return SI_NullVal();
 
 	// read number of keys in map
-	uint32_t n;
-	fread_assert(&n, sizeof(uint32_t), stream);
-
-	SIValue map = Map_New(n);
-
-	for(uint32_t i = 0; i < n; i++) {
-		Pair p = {
-			.key = SIValue_FromBinary(stream),
-			.val = SIValue_FromBinary(stream)
-		};
-
-		array_append(map.map, p);
-	}
-
-	return map;
+//	uint32_t n;
+//	fread_assert(&n, sizeof(uint32_t), stream);
+//
+//	SIValue map = Map_New(n);
+//
+//	for(uint32_t i = 0; i < n; i++) {
+//		Pair p = {
+//			.key = SIValue_FromBinary(stream),
+//			.val = SIValue_FromBinary(stream)
+//		};
+//
+//		array_append(map.map, p);
+//	}
+//
+//	return map;
 }
 
 // adds key/value to map
 void Map_Add
 (
-	SIValue *map,
-	SIValue key,
-	SIValue value
+	SIValue *map,     // map to add element to
+	const char *key,  // key under which value is added
+	SIValue value     // value to add under key
 ) {
-	ASSERT(SI_TYPE(*map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(map           != NULL);
+	ASSERT(key           != NULL);
+	ASSERT(SI_TYPE(*map) == T_MAP);
 
 	// remove key if already existed
 	Map_Remove(*map, key);
 
 	// create a new pair
-	Pair pair = Pair_New(key, value);
-
 	// add pair to the end of map
-	array_append(map->map, pair);
+	array_append(map->map, Pair_New(key, value));
+}
+
+// adds value under path to map
+// returns true is value was added
+// false otherwise
+//
+// example: M[a][b][c] = 8
+bool Map_AddPath
+(
+	SIValue *map,       // map to add element to
+	const char **path,  // path under which value is added
+	uint8_t n,          // path's length
+	SIValue value       // value to add under key
+) {
+	ASSERT(map  != NULL);
+	ASSERT(path != NULL);
+	ASSERT(n    > 0)
+	ASSERT(SI_TYPE(*map) == T_MAP);
+
+	// add keys along the path
+	// e.g. map[a][b][c] = 8
+	// making sure 'a' and 'b' are nested maps
+	for(uint8_t i = 0; i < n-1; i++) {
+		const char *key = path[i];  // current element on path
+
+		// see if key exists
+		int idx = Map_KeyIdx(*map, key);
+
+		//----------------------------------------------------------------------
+		// missing key
+		//----------------------------------------------------------------------
+
+		if(idx == -1) {
+			// add nested maps: path[i..i-1]
+			for(uint8_t j = i; j < n-1; j++) {
+				key = path[j];
+
+				// create a new nested map
+				Pair pair = Pair_New(key, SI_NullVal());  // avoid value cloning
+				pair.val = Map_New(1);
+
+				// add pair to the end of map
+				array_append(map->map, pair);
+
+				// update map
+				uint last_key_idx = Map_KeyCount(*map) -1;
+				map = &(map->map[last_key_idx].val);
+			}
+
+			// entire path had been created
+			break;
+		}
+
+		//----------------------------------------------------------------------
+		// key exists
+		//----------------------------------------------------------------------
+
+		// make sure key's value is a map, if it isn't fail
+		map = &(map->map[idx].val);
+		if(SI_TYPE(*map) != T_MAP) {
+			// can't continue following path, reached a none map type
+			// e.g. m['a']['b']['c'] = 8
+			// where m['a']['b'] is a string
+			return false;
+		}
+	}
+
+	// map contains entire path, add value
+	const char *key = path[n-1];
+	int idx = Map_KeyIdx(*map, key);
+
+	if(idx != -1) {
+		// compare current value to new value, only update if current != new
+		SIValue curr = map->map[idx].val;
+		if(unlikely(SIValue_Compare(curr, value, NULL) == 0)) {
+			// values are the same, do not update
+			return false;
+		}
+
+		// values are different, perform update
+		SIValue_Free(curr);
+		map->map[idx].val = SI_CloneValue(value);
+	} else {
+		// map doesn't contains key, add it
+		Pair pair = Pair_New(key, value);
+		array_append(map->map, pair);
+	}
+
+	return true;
 }
 
 // removes key from map
-void Map_Remove
+bool Map_Remove
 (
-	SIValue map,
-	SIValue key
+	SIValue map,     // map to remove key from
+	const char *key  // key to remove
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(map) == T_MAP);
+	ASSERT(key          != NULL);
 
 	Map m = map.map;
 
@@ -186,11 +275,58 @@ void Map_Remove
 	int idx = Map_KeyIdx(map, key);
 
 	// key missing from map
-	if(idx == -1) return;
+	if(idx == -1) return false;
 
 	// override removed key with last pair
-	Pair_Free(m[idx]);
+	Pair_Free(m + idx);
 	array_del_fast(m, idx);
+
+	return true;
+}
+
+// removes key from map
+// del M['a']['b']['c']
+// deletes key 'c' from the path M['a']['b']
+bool Map_RemovePath
+(
+	SIValue map,        // map to remove key from
+	const char **path,  // key to remove
+	uint8_t n           // path's length
+) {
+	ASSERT(SI_TYPE(map) == T_MAP);
+
+	Map m = map.map;
+
+	// follow path
+	for(uint8_t i = 0; i < n-1; i++) {
+		const char *key = path[i];  // current element on path
+
+		// see if key exists
+		int idx = Map_KeyIdx(map, key);
+
+		//----------------------------------------------------------------------
+		// missing key
+		//----------------------------------------------------------------------
+
+		if(idx == -1) {
+			// can't proceed on path, nothing to delete
+			return false;
+		}
+
+		//----------------------------------------------------------------------
+		// key exists
+		//----------------------------------------------------------------------
+
+		// make sure key's value is a map, if it isn't return
+		map = m[idx].val;
+		if(SI_TYPE(map) != T_MAP) {
+			// can't proceed on path, reached a none map type
+			return false;
+		}
+	}
+
+	// delete key
+	return Map_Remove(map, path[n-1]);
 }
 
 // clears map
@@ -198,29 +334,30 @@ void Map_Clear
 (
 	SIValue map  // map to clear
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	Map m  = map.map;
 	uint n = array_len(m);
 
 	for(uint i = 0; i < n; i++) {
-		Pair_Free(m[i]);
+		Pair_Free(m + i);
 	}
 
 	array_clear(m);
 }
 
 // retrieves value under key, map[key]
-// sets 'value' to NULL if key isn't in map
+// return true and set 'value' if key is in map
+// otherwise return false
 bool Map_Get
 (
-	SIValue map,
-	SIValue key,
-	SIValue *value
+	SIValue map,      // map to get value from
+	const char *key,  // key to lookup value
+	SIValue *value    // [output] value to retrieve
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
-	ASSERT(value != NULL);
+	ASSERT(key          != NULL);
+	ASSERT(value        != NULL);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	int idx = Map_KeyIdx(map, key);
 
@@ -234,32 +371,43 @@ bool Map_Get
 	}
 }
 
-void Map_GetIdx
+// retrieves value under path
+// return true and set 'value' if path is in map
+// otherwise return false
+bool Map_GetPath
 (
-	const SIValue map,
-	uint idx,
-	SIValue *key,
-	SIValue *value
+	SIValue map,        // map to get value from
+	const char **path,  // path to lookup
+	uint8_t n,          // path's length
+	SIValue *value      // [output] value to retrieve
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(idx < Map_KeyCount(map));
-	ASSERT(key != NULL);
-	ASSERT(value != NULL);
+	ASSERT(n            > 0);
+	ASSERT(path         != NULL);
+	ASSERT(value        != NULL);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
-	Pair p = map.map[idx];
+	//--------------------------------------------------------------------------
+	// advance on path
+	//--------------------------------------------------------------------------
 
-	*key = SI_ShareValue(p.key);
-	*value = SI_ShareValue(p.val);
+	// as long as current path element exists and element is a map
+	uint8_t i = 0;
+	while(i < n-1 && Map_Get(map, path[i], &map) && SI_TYPE(map) == T_MAP) i++;
+
+	// did we reach last path element?
+	if(i != n-1) return false;
+
+	return Map_Get(map, path[i], value);
 }
 
 // checks if 'key' is in map
 bool Map_Contains
 (
-	SIValue map,
-	SIValue key
+	SIValue map,     // map to query
+	const char *key  // key to look-up
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(key          != NULL);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	return (Map_KeyIdx(map, key) != -1);
 }
@@ -274,8 +422,8 @@ bool Map_ContainsType
 
 	uint n = Map_KeyCount(map);
 	for(uint i = 0; i < n; i++) {
-		Pair    p = map.map[i];
-		SIValue v = p.val;
+		Pair   *p = map.map + i;
+		SIValue v = p->val;
 
 		if(SI_TYPE(v) & t) return true;
 
@@ -290,31 +438,70 @@ bool Map_ContainsType
 	return false;
 }
 
+// return number of keys in map
 uint Map_KeyCount
 (
-	SIValue map
+	SIValue map  // map to count number of keys in
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(map) == T_MAP);
 	return array_len(map.map);
 }
 
-SIValue Map_Keys
+// return an array of all keys in map
+// caller should free returned array rm_free
+const char **Map_Keys
 (
-	SIValue map
+	SIValue map  // map to extract keys from
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	uint key_count = Map_KeyCount(map);
-	SIValue keys = SIArray_New(key_count);
+	const char **keys = rm_malloc(sizeof(char *) * key_count);
 
 	for(uint i = 0; i < key_count; i++) {
-		Pair p = map.map[i];
-		SIArray_Append(&keys, p.key);
+		Pair *p = map.map + i;
+		keys[i] = p->key;
 	}
 
 	return keys;
 }
 
+// populate 'key' and 'value' pointers with
+// the map contents at the indicated index
+void Map_GetIdx
+(
+	const SIValue map,  // map
+	uint idx,           // key position
+	const char **key,   // key
+	SIValue *value      // map[key]
+) {
+	ASSERT(idx          < Map_KeyCount(map));
+	ASSERT(key          != NULL);
+	ASSERT(value        != NULL);
+	ASSERT(SI_TYPE(map) == T_MAP);
+
+	Pair *p = map.map + idx;
+
+	*key   = p->key;
+	*value = SI_ShareValue(p->val);
+}
+
+// compare two maps
+// if map lengths are not equal, the map with the greater length is
+// considered greater
+//
+// {a:1, b:2} > {Z:100}
+//
+// if both maps have the same length they are sorted and comparision is done
+// on a key by key basis:
+//
+// if the key sets are not equal, key names are compared lexicographically
+
+// otherwise compare the values for that key and, if they are
+// inequal, return the inequality
+//
+// {a:1, b:3} > {a:1, b:2} as 3 > 2
+// {a:1, c:1} > {b:1, a:1} as 'c' > 'b'
 int Map_Compare
 (
 	SIValue mapA,
@@ -343,7 +530,7 @@ int Map_Compare
 	for(uint i = 0; i < key_count; i++) {
 		// if the maps contain different keys, order in favor
 		// of the first lexicographically greater key
-		order = SIValue_Compare(A[i].key, B[i].key, NULL);
+		order = strcmp(A[i].key, B[i].key);
 		if(order != 0) return order;
 	}
 
@@ -379,9 +566,11 @@ XXH64_hash_t Map_HashCode
 	XXH64_hash_t hashCode = XXH64(&t, sizeof(t), 0);
 
 	for(uint i = 0; i < key_count; i++) {
-		Pair p = map.map[i];
-		hashCode = 31 * hashCode + SIValue_HashCode(p.key);
-		hashCode = 31 * hashCode + SIValue_HashCode(p.val);
+		Pair *p = map.map + i;
+		SIValue key = SI_ConstStringVal(p->key);
+
+		hashCode = 31 * hashCode + SIValue_HashCode(key);
+		hashCode = 31 * hashCode + SIValue_HashCode(p->val);
 	}
 
 	return hashCode;
@@ -394,10 +583,10 @@ void Map_ToString
 	size_t *bufferLen,    // size of buffer
 	size_t *bytesWritten  // length of string
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
-	ASSERT(buf != NULL);
-	ASSERT(bufferLen != NULL);
+	ASSERT(buf          != NULL);
+	ASSERT(bufferLen    != NULL);
 	ASSERT(bytesWritten != NULL);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	// resize buffer if buffer length is less than 64
 	if(*bufferLen - *bytesWritten < 64) str_ExtendBuffer(buf, bufferLen, 64);
@@ -408,12 +597,13 @@ void Map_ToString
 	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "{");
 
 	for(uint i = 0; i < key_count; i ++) {
-		Pair p = map.map[i];
+		Pair *p = map.map + i;
 		// write the next key/value pair
-		SIValue_ToString(p.key, buf, bufferLen, bytesWritten);
+		SIValue key = SI_ConstStringVal(p->key);
+		SIValue_ToString(key, buf, bufferLen, bytesWritten);
 		if(*bufferLen - *bytesWritten < 64) str_ExtendBuffer(buf, bufferLen, 64);
 		*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, ": ");
-		SIValue_ToString(p.val, buf, bufferLen, bytesWritten);
+		SIValue_ToString(p->val, buf, bufferLen, bytesWritten);
 		// if this is not the last element, add ", "
 		if(i != key_count - 1) {
 			if(*bufferLen - *bytesWritten < 64) str_ExtendBuffer(buf, bufferLen, 64);
@@ -433,15 +623,12 @@ void Map_Free
 (
 	SIValue map
 ) {
-	ASSERT(SI_TYPE(map) & T_MAP);
+	ASSERT(SI_TYPE(map) == T_MAP);
 
 	uint l = Map_KeyCount(map);
 
 	// free stored pairs
-	for(uint i = 0; i < l; i++) {
-		Pair p = map.map[i];
-		Pair_Free(p);
-	}
+	for(uint i = 0; i < l; i++) Pair_Free(map.map + i);
 
 	array_free(map.map);
 }

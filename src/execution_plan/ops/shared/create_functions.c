@@ -8,6 +8,7 @@
 #include "RG.h"
 #include "../../../query_ctx.h"
 #include "../../../errors/errors.h"
+#include "../../../datatypes/map.h"
 #include "../../../ast/ast_shared.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
@@ -341,35 +342,28 @@ void ConvertPropertyMap
 		}
 
 		// emit an error and exit if we're trying to add
-		// an array containing an invalid type
+		// an array/map containing an invalid type
+		bool invalid_property_value = false;
 		if(SI_TYPE(val) == T_ARRAY) {
 			SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
-			bool res = SIArray_ContainsType(val, invalid_types);
-			if(res) {
-				// validation failed
-				SIValue_Free(val);
-				for(int j = 0; j < i; j++) {
-					SIValue_Free(vals[j]);
-				}
-				Error_InvalidPropertyValue();
-				ErrorCtx_RaiseRuntimeException(NULL);
-			}
+			invalid_property_value = SIArray_ContainsType(val, invalid_types);
 		}
 
-		// emit an error and exit if we're trying to add
-		// a map containing an invalid type
 		if(SI_TYPE(val) == T_MAP) {
-			SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
-			bool res = SIArray_ContainsType(val, invalid_types);
-			if(res) {
-				// validation failed
-				SIValue_Free(val);
-				for(int j = 0; j < i; j++) {
-					SIValue_Free(vals[j]);
-				}
-				Error_InvalidPropertyValue();
-				ErrorCtx_RaiseRuntimeException(NULL);
+			SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & T_NULL;
+			invalid_property_value = Map_ContainsType(val, invalid_types);
+		}
+
+		if(invalid_property_value) {
+			// validation failed
+			SIValue_Free(val);
+
+			for(int j = 0; j < i; j++) {
+				SIValue_Free(vals[j]);
 			}
+
+			Error_InvalidPropertyValue();
+			ErrorCtx_RaiseRuntimeException(NULL);
 		}
 
 		// set the converted attribute

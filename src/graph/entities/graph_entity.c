@@ -67,16 +67,18 @@ SIValue GraphEntity_Properties
 (
 	const GraphEntity *e
 ) {
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	const AttributeSet set = GraphEntity_GetAttributes(e);
-	int propCount = AttributeSet_Count(set);
-	SIValue map = SI_Map(propCount);
+	GraphContext      *gc        = QueryCtx_GetGraphCtx();
+	const AttributeSet set       = GraphEntity_GetAttributes(e);
+	int                propCount = AttributeSet_Count(set);
+	SIValue            map       = SI_Map(propCount);
+
 	for(int i = 0; i < propCount; i++) {
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
-		Map_Add(&map, SI_ConstStringVal(key), value);
+		Map_Add(&map, key, value);
 	}
+
 	return map;
 }
 

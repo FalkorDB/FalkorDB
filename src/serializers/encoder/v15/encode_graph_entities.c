@@ -75,11 +75,14 @@ static void _RdBSaveMap
 
 	uint n = Map_KeyCount(v);
 	SerializerIO_WriteUnsigned(rdb, n);
-	for(uint i = 0; i < n; i ++) {
-		SIValue key;
+
+	for(uint i = 0; i < n; i++) {
 		SIValue val;
+		const char *key;
+
 		Map_GetIdx(v, i, &key, &val);
-		_RdbSaveSIValue(rdb, &key);
+
+		SerializerIO_WriteBuffer(rdb, key, strlen(key) + 1);
 		_RdbSaveSIValue(rdb, &val);
 	}
 }

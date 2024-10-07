@@ -89,9 +89,10 @@ void AttributeSet_Add
 // returns the type of change performed
 AttributeSetChangeType AttributeSet_Set_Allow_Null
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // attribute value
+	AttributeSet *set,    // set to update
+	AttributeID attr_id,  // attribute identifier
+	const char **path,    // [optional] sub path
+	SIValue value         // attribute value
 );
 
 // updates existing attribute (without cloning)

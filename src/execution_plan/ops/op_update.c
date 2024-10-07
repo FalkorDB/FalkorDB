@@ -10,7 +10,6 @@
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 #include "../../errors/errors.h"
-#include "shared/update_functions.h"
 #include "../../arithmetic/arithmetic_expression.h"
 
 // forward declarations

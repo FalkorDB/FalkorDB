@@ -70,9 +70,9 @@ void _ResultSet_BoltReplyWithSIValue
 	case T_MAP:
 		bolt_reply_map(client, Map_KeyCount(v));
 		for(uint i = 0; i < Map_KeyCount(v); i ++) {
-			Pair p = v.map[i];
-			_ResultSet_BoltReplyWithSIValue(client, gc, p.key);
-			_ResultSet_BoltReplyWithSIValue(client, gc, p.val);
+			Pair *p = v.map + i;
+			bolt_reply_string(client, p->key, strlen(p->key));
+			_ResultSet_BoltReplyWithSIValue(client, gc, p->val);
 		}
 		break;
 	case T_POINT:

@@ -67,15 +67,15 @@ static SIValue _RdbLoadMap
 	// key:value
 
 	uint n = SerializerIO_ReadUnsigned(rdb);
-	SIValue keys[n];
-	SIValue vals[n];
+	char    *keys[n];
+	SIValue  vals[n];
 
 	for(uint i = 0; i < n; i++) {
-		keys[i] = _RdbLoadSIValue(rdb);
+		keys[i] = SerializerIO_ReadBuffer(rdb, NULL);
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
-	return Map_FromArrays(keys, vals, n);
+	return Map_FromArrays((char **)keys, vals, n);
 }
 
 static SIValue _RdbLoadSIArray

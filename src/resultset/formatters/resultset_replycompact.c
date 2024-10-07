@@ -11,7 +11,7 @@
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
 
-// Forward declarations.
+// forward declarations
 static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n);
 static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e);
 static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext *gc, SIValue array);
@@ -279,7 +279,12 @@ static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *g
 	SIValue_Free(relationships);
 }
 
-static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc, SIValue v) {
+static void _ResultSet_CompactReplyWithMap
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue v
+) {
 	// map will be returned as an array of key/value pairs
 	// consider the map object: {a:1, b:'str', c: {x:1, y:2}}
 	//
@@ -300,9 +305,9 @@ static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc
 	// (string, value type, value)
 	RedisModule_ReplyWithArray(ctx, key_count * 2);
 	for(int i = 0; i < key_count; i++) {
-		Pair     p     =  m[i];
-		SIValue  val   =  p.val;
-		char     *key  =  p.key.stringval;
+		Pair       *p   = m + i;
+		SIValue     val = p->val;
+		const char *key = p->key;
 
 		// emit key
 		RedisModule_ReplyWithCString(ctx, key);

@@ -47,32 +47,6 @@ typedef struct {
 	struct AR_ExpNode **values;
 } PropertyMap;
 
-// enum describing how a SET directive should treat pre-existing properties
-typedef enum {
-	UPDATE_UNSET   = 0,  // default, should not be encountered
-	UPDATE_MERGE   = 1,  // merge new properties into existing property map
-	UPDATE_REPLACE = 2,  // replace existing property map with new properties
-} UPDATE_MODE;
-
-// key-value pair of an attribute ID and the value to be associated with it
-// TODO: consider replacing contents of PropertyMap
-// (for ops like Create) with this
-typedef struct {
-	const char *attribute;
-	AttributeID attr_id;
-	struct AR_ExpNode *exp;
-	UPDATE_MODE mode;
-} PropertySetCtx;
-
-// context describing an update expression
-typedef struct {
-	int record_idx;              // record offset this entity is stored at
-	const char *alias;           // access-safe alias of the entity being updated
-	const char **add_labels;     // labels to add to the node
-	const char **remove_labels;  // labels to remove from node
-	PropertySetCtx *properties;  // properties to set
-} EntityUpdateEvalCtx;
-
 // Context describing a node in a CREATE or MERGE clause
 typedef struct {
 	int src_idx;                // source node record index
@@ -110,11 +84,6 @@ void NodeCreateCtx_Free(NodeCreateCtx ctx);
 EdgeCreateCtx EdgeCreateCtx_Clone(EdgeCreateCtx ctx);
 
 void PropertyMap_Free(PropertyMap *map);
-
-EntityUpdateEvalCtx *UpdateCtx_New(const char *alias);
-EntityUpdateEvalCtx *UpdateCtx_Clone(const EntityUpdateEvalCtx *ctx);
-void UpdateCtx_Clear(EntityUpdateEvalCtx *ctx);
-void UpdateCtx_Free(EntityUpdateEvalCtx *ctx);
 
 // collect aliases defined in a scope bounded by scope_start and scope_end
 void collect_aliases_in_scope

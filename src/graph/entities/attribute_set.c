@@ -8,7 +8,9 @@
 
 #include "RG.h"
 #include "attribute_set.h"
+#include "../../util/arr.h"
 #include "../../util/rmalloc.h"
+#include "../../datatypes/map.h"
 #include "../../errors/errors.h"
 
 // compute size of attribute set in bytes
@@ -28,10 +30,15 @@ SIValue *ATTRIBUTE_NOTFOUND = &(SIValue) {
 // returns true if attribute was removed false otherwise
 static bool _AttributeSet_Remove
 (
-	AttributeSet *set,
-	AttributeID attr_id
+	AttributeSet *set,    // set to modify
+	AttributeID attr_id,  // attribute id
+	const char **path     // [optional] sub path
 ) {
 	AttributeSet _set = *set;
+
+	// trying to remove from a none existing attribute set
+	if(unlikely(_set == NULL)) return false;
+
 	const uint16_t attr_count = _set->attr_count;
 
 	// attribute-set can't be read-only
@@ -43,13 +50,27 @@ static bool _AttributeSet_Remove
 			continue;
 		}
 
+		//----------------------------------------------------------------------
+		// attribute located
+		//----------------------------------------------------------------------
+
+		// remove sub path
+		// e.g. n.a.b.c = NULL
+		if(unlikely(path != NULL)) {
+			SIValue v = _set->attributes[i].value;
+			// fail of value is not a map
+			if(SI_TYPE(v) != T_MAP) return false;
+
+			// try to remove sub path
+			return Map_RemovePath(v, path, array_len(path));
+		}
+
 		// if this is the last attribute free the attribute-set
 		if(_set->attr_count == 1) {
 			AttributeSet_Free(set);
 			return true;
 		}
 
-		// attribute located
 		// free attribute value
 		SIValue_Free(_set->attributes[i].value);
 
@@ -106,7 +127,7 @@ SIValue *AttributeSet_Get
 	// sorted set
 	// array divided in two:
 	// [attr_id_0, attr_id_1, attr_id_2, value_0, value_1, value_2]
-	for (uint16_t i = 0; i < _set->attr_count; ++i) {
+	for(uint16_t i = 0; i < _set->attr_count; i++) {
 		Attribute *attr = _set->attributes + i;
 		if(attr_id == attr->id) {
 			// note, unsafe as attribute-set can get reallocated
@@ -253,10 +274,14 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 (
 	AttributeSet *set,    // set to update
 	AttributeID attr_id,  // attribute identifier
+	const char **path,    // [optional] sub path
 	SIValue value         // attribute value
 ) {
-	ASSERT(set != NULL);
+	ASSERT(set     != NULL);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+
+	// validate value type
+	ASSERT(SI_TYPE(value) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 
 	AttributeSet _set = *set;
 
@@ -265,39 +290,95 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 		return CT_NONE;
 	}
 
-	// validate value type
-	ASSERT(SI_TYPE(value) & (SI_VALID_PROPERTY_VALUE | T_NULL));
+	AttributeSetChangeType ret      = CT_NONE;
+	bool                   update   = false;
+	bool                   remove   = SIValue_IsNull(value);
+	bool                   sub_path = (path !=  NULL);
+	SIValue                *curr    = NULL;
 
-	// update the attribute if it is already presented in the set
-	if(AttributeSet_Get(_set, attr_id) != ATTRIBUTE_NOTFOUND) {
-		if(AttributeSet_Update(&_set, attr_id, value)) {
-			// update pointer
-			*set = _set;
-			// if value is NULL, indicate attribute removal
-			// otherwise indicate attribute update
-			return SIValue_IsNull(value) ? CT_DEL : CT_UPDATE;
-		}
-
-		// value did not change, indicate no modification
-		return CT_NONE;
+	if(!remove) {
+		curr = AttributeSet_Get(_set, attr_id);
+		update = (curr != ATTRIBUTE_NOTFOUND);
 	}
 
-	// can't remove a none existing attribute, indicate no modification
-	if(SIValue_IsNull(value)) return CT_NONE;
+	if(sub_path) {
 
-	// allocate room for new attribute
-	_set = AttributeSet_AddPrepare(set, 1);
+		//----------------------------------------------------------------------
+		// remove sub-path
+		//----------------------------------------------------------------------
 
-	// set attribute
-	Attribute *attr = _set->attributes + _set->attr_count - 1;
-	attr->id = attr_id;
-	attr->value = SI_CloneValue(value);
+		if(remove) {
+			return _AttributeSet_Remove(set, attr_id, path) ?
+				CT_UPDATE :
+				CT_NONE;
+		}
 
-	// update pointer
-	*set = _set;
+		//----------------------------------------------------------------------
+		// update sub-path
+		//----------------------------------------------------------------------
 
-	// new attribute added, indicate attribute addition
-	return CT_ADD;
+		else if(update) {
+			if(SI_TYPE(*curr) != T_MAP) {
+				// trying to access a path of a none map object
+				// fail
+				return CT_NONE;
+			}
+
+			ret = CT_UPDATE;
+		}
+
+		//----------------------------------------------------------------------
+		// new sub-path
+		//----------------------------------------------------------------------
+
+		else {
+			_set = AttributeSet_AddPrepare(set, 1);
+			*set = _set;
+
+			// set attribute
+			Attribute *attr = _set->attributes + _set->attr_count - 1;
+
+			// set attribute
+			attr->id    = attr_id;
+			attr->value = SI_Map(1);
+			curr        = &attr->value;
+
+			ret = CT_ADD;
+		}
+
+		// add / update path
+		return Map_AddPath(curr, path, array_len(path), value) ?
+			ret:
+			CT_NONE;
+	}
+
+	//--------------------------------------------------------------------------
+	// root attribute
+	//--------------------------------------------------------------------------
+
+	if(remove) {
+		ret = _AttributeSet_Remove(set, attr_id, NULL) ?
+			CT_DEL :
+			CT_NONE;
+	}
+	else if(update) {
+		ret = AttributeSet_Update(set, attr_id, value) ?
+			CT_UPDATE :
+			CT_NONE;
+	} else {
+		// allocate room for new attribute
+		_set = AttributeSet_AddPrepare(set, 1);
+		*set = _set;
+
+		// set attribute
+		Attribute *attr = _set->attributes + _set->attr_count - 1;
+		attr->id        = attr_id;
+		attr->value     = SI_CloneValue(value);
+
+		ret = CT_ADD;
+	}
+
+	return ret;
 }
 
 // updates existing attribute, return true if attribute been updated
@@ -317,7 +398,7 @@ bool AttributeSet_UpdateNoClone
 
 	// setting an attribute value to NULL removes that attribute
 	if(unlikely(SIValue_IsNull(value))) {
-		return _AttributeSet_Remove(set, attr_id);
+		return _AttributeSet_Remove(set, attr_id, NULL);
 	}
 
 	SIValue *current = AttributeSet_Get(*set, attr_id);
@@ -338,7 +419,7 @@ bool AttributeSet_Update
 	AttributeID attr_id,   // attribute identifier
 	SIValue value          // new value
 ) {
-	ASSERT(set != NULL);
+	ASSERT(set     != NULL);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
 	AttributeSet _set = *set;
@@ -352,7 +433,7 @@ bool AttributeSet_Update
 
 	// setting an attribute value to NULL removes that attribute
 	if(unlikely(SIValue_IsNull(value))) {
-		return _AttributeSet_Remove(set, attr_id);
+		return _AttributeSet_Remove(set, attr_id, NULL);
 	}
 
 	SIValue *current = AttributeSet_Get(_set, attr_id);
@@ -400,10 +481,10 @@ void AttributeSet_PersistValues
 (
 	const AttributeSet set  // set to persist
 ) {
+	if(set == NULL) return;
+
 	// return if set is read-only
 	ASSERT(ATTRIBUTE_SET_IS_READONLY(set) == false);
-
-	if(set == NULL) return;
 
 	for (uint16_t i = 0; i < set->attr_count; ++i) {
 		Attribute *attr = set->attributes + i;

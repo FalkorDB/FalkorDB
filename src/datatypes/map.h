@@ -6,20 +6,20 @@
 
 #pragma once
 
-/* A map is a set of key/value pairs
- * where key is a string and value can be anyone of the following types:
- * map, array, node, edge, path, date, string, bool, numeric and NULL
- *
- * this implimantaion of map, uses SIValue for the stored values
- * and keeps the keys sorted for quick lookup.
- *
- * the underline structure of map is an array of key/value pairs
- * [ (key/value), (key/value), ... (key/value) ] */
+// a map is a set of key/value pairs
+// where key is a string and value can be anyone of the following types:
+// map, array, node, edge, path, date, string, bool, numeric and NULL
+//
+// this implimantaion of map, uses SIValue for the stored values
+// and keeps the keys sorted for quick lookup
+//
+// the underline structure of map is an array of key/value pairs
+// [ (key/value), (key/value), ... (key/value) ]
 
 #include "../value.h"
 
 typedef struct Pair {
-	SIValue key;  // key associated with value
+	char *key;    // key associated with value
 	SIValue val;  // value stored under key
 } Pair;
 
@@ -29,7 +29,7 @@ typedef Pair *Map;
 // where key is const string 
 // return true and set 'value' if key is in map
 // otherwise return false
-#define MAP_GET(map, key, value) Map_Get(map, SI_ConstStringVal(key), &value)
+#define MAP_GET(map, key, value) Map_Get(map, key, &value)
 
 // create a new map
 SIValue Map_New
@@ -43,7 +43,7 @@ SIValue Map_New
 // the function will nullify each element within the arrays
 SIValue Map_FromArrays
 (
-	SIValue *keys,    // keys
+	char **keys,      // keys
 	SIValue *values,  // values
 	uint n            // arrays length
 );
@@ -63,16 +63,39 @@ SIValue Map_FromBinary
 // adds key/value to map
 void Map_Add
 (
-	SIValue *map,  // map to add element to
-	SIValue key,   // key under which value is added
-	SIValue value  // value to add under key
+	SIValue *map,     // map to add element to
+	const char *key,  // key under which value is added
+	SIValue value     // value to add under key
+);
+
+// adds value under path to map
+// returns true is value was added
+// false otherwise
+//
+// example: M[a][b][c] = 8
+bool Map_AddPath
+(
+	SIValue *map,       // map to add element to
+	const char **path,  // path under which value is added
+	uint8_t n,          // path's length
+	SIValue value       // value to add under key
 );
 
 // removes key from map
-void Map_Remove
+bool Map_Remove
 (
-	SIValue map,  // map to remove key from
-	SIValue key   // key to remove
+	SIValue map,     // map to remove key from
+	const char *key  // key to remove
+);
+
+// removes key from map
+// del M['a']['b']['c']
+// deletes key 'c' from the path M['a']['b']
+bool Map_RemovePath
+(
+	SIValue map,        // map to remove key from
+	const char **path,  // key to remove
+	uint8_t n           // path's length
 );
 
 // clears map
@@ -86,16 +109,27 @@ void Map_Clear
 // otherwise return false
 bool Map_Get
 (
-	SIValue map,    // map to get value from
-	SIValue key,    // key to lookup value
-	SIValue *value  // [output] value to retrieve
+	SIValue map,      // map to get value from
+	const char *key,  // key to lookup value
+	SIValue *value    // [output] value to retrieve
+);
+
+// retrieves value under path
+// return true and set 'value' if path is in map
+// otherwise return false
+bool Map_GetPath
+(
+	SIValue map,        // map to get value from
+	const char **path,  // path to lookup
+	uint8_t n,          // path's length
+	SIValue *value      // [output] value to retrieve
 );
 
 // checks if 'key' is in map
 bool Map_Contains
 (
-	SIValue map,  // map to query
-	SIValue key   // key to look-up
+	SIValue map,     // map to query
+	const char *key  // key to look-up
 );
 
 // check if map contains a key with type 't'
@@ -111,9 +145,9 @@ uint Map_KeyCount
 	SIValue map  // map to count number of keys in
 );
 
-// return an SIArray of all keys in map
-// caller should free returned array with SIArray_Free
-SIValue Map_Keys
+// return an array of all keys in map
+// caller should free returned array rm_free
+const char **Map_Keys
 (
 	SIValue map  // map to extract keys from
 );
@@ -122,10 +156,10 @@ SIValue Map_Keys
 // the map contents at the indicated index
 void Map_GetIdx
 (
-	const SIValue map,
-	uint idx,
-	SIValue *key,
-	SIValue *value
+	const SIValue map,  // map
+	uint idx,           // key position
+	const char **key,   // key
+	SIValue *value      // map[key]
 );
 
 // compare two maps
