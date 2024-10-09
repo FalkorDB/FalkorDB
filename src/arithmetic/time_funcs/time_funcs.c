@@ -21,7 +21,7 @@ void Register_TimeFuncs() {
 
 	types = array_new(SIType, 0);
 	ret_type = T_INT64;
-	func_desc = AR_FuncDescNew("timestamp", AR_TIMESTAMP, 0, 0, types, ret_type, false, false);
+	func_desc = AR_FuncDescNew("timestamp", AR_TIMESTAMP, 0, 0, types, ret_type, false, false, "timestamp()");
 	AR_RegFunc(func_desc);
 }
 

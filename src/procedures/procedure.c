@@ -31,6 +31,7 @@ void Proc_Register() {
 	_procRegister("db.constraints", Proc_ConstraintsCtx);
 	_procRegister("db.propertyKeys", Proc_PropKeysCtx);
 	_procRegister("dbms.procedures", Proc_ProceduresCtx);
+	_procRegister("dbms.functions", Proc_FunctionsCtx);
 	_procRegister("db.relationshipTypes", Proc_RelationsCtx);
 
 	// Register graph algorithms.

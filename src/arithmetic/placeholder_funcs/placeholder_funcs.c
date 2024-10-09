@@ -20,7 +20,7 @@ void Register_PlaceholderFuncs() {
 
 	types = array_new(SIType, 0);
 	ret_type = T_NULL;
-	func_desc = AR_FuncDescNew("path_filter", AR_PATH_FILTER, 0, 0, types, ret_type, true, false);
+	func_desc = AR_FuncDescNew("path_filter", AR_PATH_FILTER, 0, 0, types, ret_type, true, false, "path filter");
 	AR_RegFunc(func_desc);
 }
 

@@ -386,196 +386,196 @@ void Register_NumericFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_NULL));
 	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true, "numeric addition");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true, "numeric subtraction");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("mul", AR_MUL, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("mul", AR_MUL, 2, 2, types, ret_type, true, true, "numeric multiplication");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("div", AR_DIV, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("div", AR_DIV, 2, 2, types, ret_type, true, true, "numeric division");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("mod", AR_MODULO, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("mod", AR_MODULO, 2, 2, types, ret_type, true, true, "numeric modulo");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("abs", AR_ABS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("abs", AR_ABS, 1, 1, types, ret_type, false, true, "numeric absolute value");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("ceil", AR_CEIL, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("ceil", AR_CEIL, 1, 1, types, ret_type, false, true, "numeric ceil");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("floor", AR_FLOOR, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("floor", AR_FLOOR, 1, 1, types, ret_type, false, true, "numeric floor");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 0);
 	ret_type = T_DOUBLE;
-	func_desc = AR_FuncDescNew("rand", AR_RAND, 0, 0, types, ret_type, false, false);
+	func_desc = AR_FuncDescNew("rand", AR_RAND, 0, 0, types, ret_type, false, false, "random number");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("round", AR_ROUND, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("round", AR_ROUND, 1, 1, types, ret_type, false, true, "numeric round");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("sign", AR_SIGN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("sign", AR_SIGN, 1, 1, types, ret_type, false, true, "numeric signum");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_STRING | T_NULL | T_BOOL));
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("tointeger", AR_TOINTEGER, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tointeger", AR_TOINTEGER, 1, 1, types, ret_type, false, true, "convert to integer");
 	AR_RegFunc(func_desc);
 	
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("tointegerornull", AR_TOINTEGER, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tointegerornull", AR_TOINTEGER, 1, 1, types, ret_type, false, true, "convert to integer or return NULL");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_STRING | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("tofloat", AR_TOFLOAT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tofloat", AR_TOFLOAT, 1, 1, types, ret_type, false, true, "convert to float");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("tofloatornull", AR_TOFLOAT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tofloatornull", AR_TOFLOAT, 1, 1, types, ret_type, false, true, "convert to float or return NULL");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("sqrt", AR_SQRT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("sqrt", AR_SQRT, 1, 1, types, ret_type, false, true, "square root");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("pow", AR_POW, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("pow", AR_POW, 2, 2, types, ret_type, false, true, "power");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("exp", AR_EXP, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("exp", AR_EXP, 1, 1, types, ret_type, false, true, "exponential function");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 0);
 	ret_type = T_DOUBLE;
-	func_desc = AR_FuncDescNew("e", AR_E, 0, 0, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("e", AR_E, 0, 0, types, ret_type, false, true, "base of the natural logarithm");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("log", AR_LOG, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("log", AR_LOG, 1, 1, types, ret_type, false, true, "natural logarithm");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("log10", AR_LOG10, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("log10", AR_LOG10, 1, 1, types, ret_type, false, true, "logarithm base 10");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("sin", AR_SIN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("sin", AR_SIN, 1, 1, types, ret_type, false, true, "sine");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("cos", AR_COS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("cos", AR_COS, 1, 1, types, ret_type, false, true, "cosine");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("tan", AR_TAN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tan", AR_TAN, 1, 1, types, ret_type, false, true, "tangent");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("cot", AR_COT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("cot", AR_COT, 1, 1, types, ret_type, false, true, "cotangent");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("asin", AR_ASIN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("asin", AR_ASIN, 1, 1, types, ret_type, false, true, "arc sine");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("acos", AR_ACOS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("acos", AR_ACOS, 1, 1, types, ret_type, false, true, "arc cosine");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("atan", AR_ATAN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("atan", AR_ATAN, 1, 1, types, ret_type, false, true, "arc tangent");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("atan2", AR_ATAN2, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("atan2", AR_ATAN2, 2, 2, types, ret_type, false, true, "arc tangent of y/x");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("degrees", AR_DEGREES, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("degrees", AR_DEGREES, 1, 1, types, ret_type, false, true, "convert radians to degrees");
 	AR_RegFunc(func_desc);	
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("radians", AR_RADIANS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("radians", AR_RADIANS, 1, 1, types, ret_type, false, true, "convert degrees to radians");
 	AR_RegFunc(func_desc);	
 
 	types = array_new(SIType, 0);
 	ret_type = T_DOUBLE;
-	func_desc = AR_FuncDescNew("pi", AR_PI, 0, 0, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("pi", AR_PI, 0, 0, types, ret_type, false, true, "pi");
 	AR_RegFunc(func_desc);	
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("haversin", AR_HAVERSIN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("haversin", AR_HAVERSIN, 1, 1, types, ret_type, false, true, "haversine");
 	AR_RegFunc(func_desc);
 }
