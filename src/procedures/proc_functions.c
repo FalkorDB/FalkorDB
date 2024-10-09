@@ -89,7 +89,7 @@ SIValue *Proc_FunctionsStep
         AR_FuncDesc *func = (AR_FuncDesc*)pdata->iter.data;
     
         if(func->name &&  !func->internal){
-            SITypes_SignatureToString(func->name, func->ret_type, func->types, buf, bufferLen); // get the function signature into
+            SITypes_SignatureToString(func->name, func->ret_type, func->types, buf, bufferLen); // get the function signature into buf
             *pdata->yield_name = SI_ConstStringVal(func->name);
             *pdata->yield_signature = SI_DuplicateStringVal(buf);    
             *pdata->yield_description = func->description ? SI_ConstStringVal(func->description) : SI_ConstStringVal("No description available");
