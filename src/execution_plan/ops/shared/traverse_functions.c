@@ -16,11 +16,13 @@ static void _Traverse_CollectEdges
 	Graph *g = QueryCtx_GetGraph();
 	uint count = array_len(edge_ctx->edgeRelationTypes);
 	for(uint i = 0; i < count; i++) {
-		Graph_GetEdgesConnectingNodes(g,
-									  src,
-									  dest,
-									  edge_ctx->edgeRelationTypes[i],
-									  &edge_ctx->edges);
+		if (edge_ctx->edgeRelationTypes[i] == GRAPH_UNKNOWN_RELATION) continue;
+		EdgeIterator it;
+		Edge edge;
+		Graph_EdgeIteratorInit(g, &it, src, dest, edge_ctx->edgeRelationTypes[i]);
+		while(EdgeIterator_Next(&it, &edge)) {
+			array_append(edge_ctx->edges, edge);
+		}
 	}
 }
 

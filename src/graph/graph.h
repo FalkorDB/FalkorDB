@@ -326,16 +326,29 @@ bool Graph_GetEdge
 	Edge *e
 );
 
+typedef struct EdgeIterator EdgeIterator;
+struct EdgeIterator {
+	char private[192];
+};
+
+
 // retrieves edges connecting source to destination,
 // relation is optional, pass GRAPH_NO_RELATION if you do not care
 // about edge type
-void Graph_GetEdgesConnectingNodes
+void Graph_EdgeIteratorInit
 (
-	const Graph *g,  // Graph to get edges from.
-	NodeID srcID,    // Source node of edge
-	NodeID destID,   // Destination node of edge
-	RelationID r,    // Edge type.
-	Edge **edges     // array_t of edges connecting src to dest of type r.
+	const Graph *g,    // Graph to iterate over
+	EdgeIterator *it,  // Iterator to initialize
+	NodeID srcID,      // Source node of edge
+	NodeID destID,     // Destination node of edge
+	RelationID r       // Edge type.
+);
+
+// returns the next edge in the iterator
+bool EdgeIterator_Next
+(
+	EdgeIterator *it,  // Iterator to extract edge from
+	Edge *e            // Edge to populate
 );
 
 // get node edges
