@@ -13,6 +13,7 @@
 #include "proc_ss_paths.h"
 #include "proc_relations.h"
 #include "proc_procedures.h"
+#include "proc_functions.h"
 #include "proc_list_indexes.h"
 #include "proc_list_constraints.h"
 #include "proc_property_keys.h"

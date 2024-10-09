@@ -306,58 +306,58 @@ void Register_EntityFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true, "entity id");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_NODE);
 	ret_type = T_NULL | T_ARRAY;
-	func_desc = AR_FuncDescNew("labels", AR_LABELS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("labels", AR_LABELS, 1, 1, types, ret_type, false, true, "node labels");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_ARRAY);
 	ret_type = T_NULL | T_BOOL;
-	func_desc = AR_FuncDescNew("hasLabels", AR_HAS_LABELS, 2, 2, types, ret_type, false, false);
+	func_desc = AR_FuncDescNew("hasLabels", AR_HAS_LABELS, 2, 2, types, ret_type, false, false, "node has labels");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_STRING;
-	func_desc = AR_FuncDescNew("type", AR_TYPE, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("type", AR_TYPE, 1, 1, types, ret_type, false, true, "relationship type");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_NODE;
-	func_desc = AR_FuncDescNew("startNode", AR_STARTNODE, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("startNode", AR_STARTNODE, 1, 1, types, ret_type, false, true, "relationship start node");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_NODE;
-	func_desc = AR_FuncDescNew("endNode", AR_ENDNODE, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("endNode", AR_ENDNODE, 1, 1, types, ret_type, false, true, "relationship end node");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | SI_ALL);
 	ret_type = T_NULL | T_BOOL;
-	func_desc = AR_FuncDescNew("exists", AR_EXISTS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("exists", AR_EXISTS, 1, 1, types, ret_type, false, true, "property exists");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true, "node indegree");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true, "node outdegree");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
@@ -365,13 +365,13 @@ void Register_EntityFuncs() {
 	array_append(types, T_STRING);
 	array_append(types, T_INT64);
 	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type, true, true, "entity property");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | SI_ALL);
 	ret_type = T_STRING;
-	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type, false, true, "type of entity");
 	AR_RegFunc(func_desc);
 }
 
