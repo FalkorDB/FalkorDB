@@ -193,10 +193,9 @@ static SIValue *Proc_BFS_Step
 			ASSERT(res == GrB_SUCCESS);
 			EdgeIterator it;
 			Graph_EdgeIteratorInit(bfs_ctx->g, &it, parent_id, id, bfs_ctx->reltype_id);
-			while(EdgeIterator_Next(&it, &edge)) {
+			if(EdgeIterator_Next(&it, &edge)) {
 				// Append the edge to the path
 				SIArray_Append(&edges, SI_Edge(&edge));
-				break;
 			}
 		}
 

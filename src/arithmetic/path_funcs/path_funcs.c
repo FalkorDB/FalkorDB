@@ -235,16 +235,15 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 		if(ctx->reltype_count == 0) {
 			EdgeIterator it;
 			Graph_EdgeIteratorInit(gc->g, &it, parent_id, id, GRAPH_NO_RELATION);
-			while(EdgeIterator_Next(&it, &edge)) {
+			if(EdgeIterator_Next(&it, &edge)) {
 				// Append the edge to the path
 				SIPathBuilder_AppendEdge(p, SI_Edge(&edge), false);
-				break;
 			}
 		} else {
 			for(uint j = 0; j < ctx->reltype_count; j ++) {
 				EdgeIterator it;
 				Graph_EdgeIteratorInit(gc->g, &it, parent_id, id, ctx->reltypes[j]);
-				while(EdgeIterator_Next(&it, &edge)) {
+				if(EdgeIterator_Next(&it, &edge)) {
 					// Append the edge to the path
 					SIPathBuilder_AppendEdge(p, SI_Edge(&edge), false);
 					break;
