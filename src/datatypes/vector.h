@@ -19,13 +19,6 @@ SIValue SIVector_Clone
 	SIValue vector // vector to clone
 );
 
-// creates a vector from its binary representation
-SIValue SIVector_FromBinary
-(
-	FILE *stream, // binary stream
-	SIType t      // vector type
-);
-
 // compares two vectors
 // return values:
 // 0 - vectors are equal

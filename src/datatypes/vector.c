@@ -60,35 +60,6 @@ SIValue SIVector_Clone
 	};
 }
 
-// creates a vector from its binary representation
-SIValue SIVector_FromBinary
-(
-	FILE *stream, // binary stream
-	SIType t      // vector type
-) {
-	// format:
-	// number of elements
-	// elements
-
-	ASSERT(stream != NULL);
-	ASSERT(t & T_VECTOR);
-
-	// read vector dimension from stream
-	uint32_t dim;
-	fread_assert(&dim, sizeof(uint32_t), stream);
-
-	// create vector
-	SIValue v = SIVectorf32_New(dim);
-	size_t elem_size = sizeof(float);
-
-	// set vector's elements
-	if(dim > 0) {
-		fread_assert(SIVector_Elements(v), dim * elem_size, stream);
-	}
-
-	return v;
-}
-
 // compares two vectors
 // return values:
 // 0 - vectors are equal

@@ -226,27 +226,6 @@ XXH64_hash_t SIArray_HashCode
 	return hashCode;
 }
 
-// creates an array from its binary representation
-// this is the reverse of SIArray_ToBinary
-// x = SIArray_FromBinary(SIArray_ToBinary(y));
-// x == y
-SIValue SIArray_FromBinary
-(
-	FILE *stream  // stream containing binary representation of an array
-) {
-	// read number of elements
-	uint32_t n;
-	fread_assert(&n, sizeof(uint32_t), stream);
-
-	SIValue arr = SIArray_New(n);
-
-	for(uint32_t i = 0; i < n; i++) {
-		array_append(arr.array, SIValue_FromBinary(stream));
-	}
-
-	return arr;
-}
-
 void SIArray_Free
 (
 	SIValue siarray

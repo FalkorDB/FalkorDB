@@ -54,12 +54,6 @@ SIValue Map_Clone
 	SIValue map  // map to clone
 );
 
-// create map from binary stream
-SIValue Map_FromBinary
-(
-	FILE *stream  // binary stream
-);
-
 // adds key/value to map
 void Map_Add
 (

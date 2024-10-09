@@ -32,7 +32,8 @@ static bool _AttributeSet_Remove
 (
 	AttributeSet *set,    // set to modify
 	AttributeID attr_id,  // attribute id
-	const char **path     // [optional] sub path
+	const char **path,    // [optional] sub path
+	uint8_t n
 ) {
 	AttributeSet _set = *set;
 
@@ -62,7 +63,7 @@ static bool _AttributeSet_Remove
 			if(SI_TYPE(v) != T_MAP) return false;
 
 			// try to remove sub path
-			return Map_RemovePath(v, path, array_len(path));
+			return Map_RemovePath(v, path, n);
 		}
 
 		// if this is the last attribute free the attribute-set
@@ -275,6 +276,7 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 	AttributeSet *set,    // set to update
 	AttributeID attr_id,  // attribute identifier
 	const char **path,    // [optional] sub path
+	uint8_t n,            // sub path length
 	SIValue value         // attribute value
 ) {
 	ASSERT(set     != NULL);
@@ -308,7 +310,7 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 		//----------------------------------------------------------------------
 
 		if(remove) {
-			return _AttributeSet_Remove(set, attr_id, path) ?
+			return _AttributeSet_Remove(set, attr_id, path, n) ?
 				CT_UPDATE :
 				CT_NONE;
 		}
@@ -347,7 +349,7 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 		}
 
 		// add / update path
-		return Map_AddPath(curr, path, array_len(path), value) ?
+		return Map_AddPath(curr, path, n, value) ?
 			ret:
 			CT_NONE;
 	}
@@ -384,11 +386,11 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 // updates existing attribute, return true if attribute been updated
 bool AttributeSet_UpdateNoClone
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
+	AttributeSet *set,    // set to update
+	AttributeID attr_id,  // attribute identifier
+	SIValue value         // new value
 ) {
-	ASSERT(set != NULL);
+	ASSERT(set     != NULL);
 	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
 	// return if set is read-only

@@ -256,7 +256,7 @@ void EvalEntityUpdates
 
 			AttributeSetChangeType ct =
 				AttributeSet_Set_Allow_Null(entity->attributes, attr_id,
-						property->sub_path, v);
+						property->sub_path, array_len(property->sub_path), v);
 
 			switch(ct) {
 				case CT_DEL:

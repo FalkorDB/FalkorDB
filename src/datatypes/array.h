@@ -97,15 +97,6 @@ void SIArray_ToString(SIValue list, char **buf, size_t *bufferLen, size_t *bytes
  */
 XXH64_hash_t SIArray_HashCode(SIValue siarray);
 
-// creates an array from its binary representation
-// this is the reverse of SIArray_ToBinary
-// x = SIArray_FromBinary(SIArray_ToBinary(y));
-// x == y
-SIValue SIArray_FromBinary
-(
-	FILE *stream  // stream containing binary representation of an array
-);
-
 /**
   * @brief  delete an array
   * @param  siarray:

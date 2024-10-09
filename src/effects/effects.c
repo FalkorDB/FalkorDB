@@ -32,28 +32,6 @@ struct _EffectsBuffer {
 	uint64_t n;                          // number of effects in buffer
 };
 
-// forward declarations
-
-// write array to effects buffer
-static void EffectsBuffer_WriteSIArray
-(
-	const SIValue *arr,  // array
-	EffectsBuffer *buff  // effect buffer
-);
-
-// write vector to effects buffer
-static void EffectsBuffer_WriteSIVector
-(
-	const SIValue *v,    // vector
-	EffectsBuffer *buff  // effect buffer
-);
-
-static void EffectsBuffer_WriteMap
-(
-	const SIValue *map,  // map
-	EffectsBuffer *buff  // effects buffer
-);
-
 // create a new effects-buffer block
 static struct EffectsBufferBlock *EffectsBufferBlock_New
 (
@@ -145,137 +123,6 @@ static void EffectsBuffer_WriteString
 	size_t l = strlen(str) + 1;
 	EffectsBuffer_WriteBytes(&l, sizeof(size_t), eb);
 	EffectsBuffer_WriteBytes(str, l, eb);
-}
-
-// writes a binary representation of v into Effect-Buffer
-static void EffectsBuffer_WriteSIValue
-(
-	const SIValue *v,
-	EffectsBuffer *buff
-) {
-	ASSERT(v != NULL);
-	ASSERT(buff != NULL);
-
-	// format:
-	//    type
-	//    value
-	bool b;
-	size_t len = 0;
-
-	SIType t = v->type;
-
-	// write type
-	EffectsBuffer_WriteBytes(&t, sizeof(SIType), buff);
-
-	// write value
-	switch(t) {
-		case T_POINT:
-			// write value to stream
-			EffectsBuffer_WriteBytes(&v->point, sizeof(Point), buff);
-			break;
-		case T_ARRAY:
-			// write array to stream
-			EffectsBuffer_WriteSIArray(v, buff);
-			break;
-		case T_STRING:
-			EffectsBuffer_WriteString(v->stringval, buff);
-			break;
-		case T_BOOL:
-			// write bool to stream
-			b = SIValue_IsTrue(*v);
-			EffectsBuffer_WriteBytes(&b, sizeof(bool), buff);
-			break;
-		case T_INT64:
-			// write int to stream
-			EffectsBuffer_WriteBytes(&v->longval, sizeof(v->longval), buff);
-			break;
-		case T_DOUBLE:
-			// write double to stream
-			EffectsBuffer_WriteBytes(&v->doubleval, sizeof(v->doubleval), buff);
-			break;
-		case T_NULL:
-			// no additional data is required to represent NULL
-			break;
-		case T_VECTOR_F32:
-			EffectsBuffer_WriteSIVector(v, buff);
-			break;
-		case T_MAP:
-			EffectsBuffer_WriteMap(v, buff);
-			break;
-		default:
-			assert(false && "unknown SIValue type");
-	}
-}
-
-// writes a binary representation of arr into Effect-Buffer
-static void EffectsBuffer_WriteSIArray
-(
-	const SIValue *arr,  // array
-	EffectsBuffer *buff  // effect buffer
-) {
-	// format:
-	// number of elements
-	// elements
-
-	SIValue *elements = arr->array;
-	uint32_t len = array_len(elements);
-
-	// write number of elements
-	EffectsBuffer_WriteBytes(&len, sizeof(uint32_t), buff);
-
-	// write each element
-	for (uint32_t i = 0; i < len; i++) {
-		EffectsBuffer_WriteSIValue(elements + i, buff);
-	}
-}
-
-// write vector to effects buffer
-static void EffectsBuffer_WriteSIVector
-(
-	const SIValue *v,    // vector
-	EffectsBuffer *buff  // effect buffer
-) {
-	// format:
-	// number of elements
-	// elements
-
-	// write vector dimension
-	uint32_t dim = SIVector_Dim(*v);
-	EffectsBuffer_WriteBytes(&dim, sizeof(uint32_t), buff);
-
-	// write vector elements
-	void *elements   = SIVector_Elements(*v);
-	size_t elem_size = sizeof(float);
-	size_t n = dim * elem_size;
-
-	if(n > 0) {
-		EffectsBuffer_WriteBytes(elements, n, buff);
-	}
-}
-
-static void EffectsBuffer_WriteMap
-(
-	const SIValue *map,  // map
-	EffectsBuffer *buff  // effects buffer
-) {
-	// format:
-	// key count
-	// key:value
-
-	// write number of keys in map
-	uint32_t n = Map_KeyCount(*map);
-	EffectsBuffer_WriteBytes(&n, sizeof(uint32_t), buff);
-
-	// write each key:value pair to buffer
-	for(uint32_t i = 0; i < n; i++) {
-		const char *key;
-		SIValue value;
-		Map_GetIdx(*map, i, &key, &value);
-
-		ASSERT(key != NULL);
-		EffectsBuffer_WriteString(key, buff);
-		EffectsBuffer_WriteSIValue(&value, buff);
-	}
 }
 
 // dump attributes to stream
@@ -440,7 +287,7 @@ void EffectsBuffer_AddCreateNodeEffect
 	// label count
 	// labels
 	// attribute count
-	// attributes (id,value) pair
+	// attributes (id, value) pair
 	//--------------------------------------------------------------------------
 	
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
@@ -595,6 +442,8 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	EffectsBuffer *buff,  // effect buffer
 	Node *node,           // updated node
 	AttributeID attr_id,  // updated attribute ID
+	const char **path,    // sub path
+	uint8_t n,            // sub path length
  	SIValue value         // value
 ) {
 	//--------------------------------------------------------------------------
@@ -602,6 +451,8 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	//    effect type
 	//    entity ID
 	//    attribute id
+	//    path's length
+	//    path
 	//    attribute value
 	//--------------------------------------------------------------------------
 
@@ -621,6 +472,20 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
 
 	//--------------------------------------------------------------------------
+	// write sub path length
+	//--------------------------------------------------------------------------
+
+	EffectsBuffer_WriteBytes(&n, sizeof(uint8_t), buff);
+
+	//--------------------------------------------------------------------------
+	// write sub path
+	//--------------------------------------------------------------------------
+
+	for(uint8_t i = 0; i < n; i++) {
+		EffectsBuffer_WriteString(path[i], buff);
+	}
+
+	//--------------------------------------------------------------------------
 	// write attribute value
 	//--------------------------------------------------------------------------
 
@@ -635,6 +500,8 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	EffectsBuffer *buff,  // effect buffer
 	Edge *edge,           // updated edge
 	AttributeID attr_id,  // updated attribute ID
+	const char **path,    // sub path
+	uint8_t n,            // sub path length
  	SIValue value         // value
 ) {
 	//--------------------------------------------------------------------------
@@ -644,8 +511,10 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	//    relation ID
 	//    src ID
 	//    dest ID
-	//    attribute count (=n)
-	//    attributes (id,value) pair
+	//    attribute id
+	//    path's length
+	//    path
+	//    value
 	//--------------------------------------------------------------------------
 
 	EffectType t = EFFECT_UPDATE_EDGE;
@@ -685,6 +554,20 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
 
 	//--------------------------------------------------------------------------
+	// write sub path length
+	//--------------------------------------------------------------------------
+
+	EffectsBuffer_WriteBytes(&n, sizeof(uint8_t), buff);
+
+	//--------------------------------------------------------------------------
+	// write sub path
+	//--------------------------------------------------------------------------
+
+	for(uint8_t i = 0; i < n; i++) {
+		EffectsBuffer_WriteString(path[i], buff);
+	}
+
+	//--------------------------------------------------------------------------
 	// write attribute value
 	//--------------------------------------------------------------------------
 
@@ -699,6 +582,8 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
+	const char **path,           // sub path
+	uint8_t n,                   // sub path length
 	GraphEntityType entity_type  // entity type
 ) {
 	// attribute was deleted
@@ -711,9 +596,11 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 
 	SIValue v = SI_NullVal();
 	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, v);
+		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, path,
+				n, v);
 	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, v);
+		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, path,
+				n, v);
 	}
 }
 
@@ -723,6 +610,8 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
+	const char **path,           // sub path
+	uint8_t n,                   // sub path length
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {
@@ -730,9 +619,11 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 	QueryCtx_GetResultSetStatistics()->properties_set++;
 
 	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
+		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, path,
+				n, value);
 	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, value);
+		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, path,
+				n, value);
 	}
 }
 
@@ -742,6 +633,8 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	EffectsBuffer *buff,         // effect buffer
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
+	const char **path,           // sub path
+	uint8_t n,                   // sub path length
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 ) {
@@ -750,9 +643,11 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	stats->properties_removed++; // old attribute was deleted
 
 	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
+		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, path,
+				n, value);
 	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, value);
+		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, path,
+				n, value);
 	}
 }
 
