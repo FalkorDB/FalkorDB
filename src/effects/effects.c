@@ -268,12 +268,12 @@ static void EffectsBuffer_WriteMap
 
 	// write each key:value pair to buffer
 	for(uint32_t i = 0; i < n; i++) {
-		SIValue key;
+		const char *key;
 		SIValue value;
 		Map_GetIdx(*map, i, &key, &value);
 
-		ASSERT(SI_TYPE(key) == T_STRING);
-		EffectsBuffer_WriteSIValue(&key, buff);
+		ASSERT(key != NULL);
+		EffectsBuffer_WriteString(key, buff);
 		EffectsBuffer_WriteSIValue(&value, buff);
 	}
 }

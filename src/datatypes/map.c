@@ -126,30 +126,36 @@ SIValue Map_FromBinary
 (
 	FILE *stream  // binary stream
 ) {
-	ASSERT(false && "implement!");
 	// format:
 	// key count
 	// key:value
 
 	ASSERT(stream != NULL);
-	return SI_NullVal();
 
 	// read number of keys in map
-//	uint32_t n;
-//	fread_assert(&n, sizeof(uint32_t), stream);
-//
-//	SIValue map = Map_New(n);
-//
-//	for(uint32_t i = 0; i < n; i++) {
-//		Pair p = {
-//			.key = SIValue_FromBinary(stream),
-//			.val = SIValue_FromBinary(stream)
-//		};
-//
-//		array_append(map.map, p);
-//	}
-//
-//	return map;
+	uint32_t n;
+	fread_assert(&n, sizeof(uint32_t), stream);
+
+	SIValue map = Map_New(n);
+
+	for(uint32_t i = 0; i < n; i++) {
+		// read string length from stream
+		size_t len;
+		fread_assert(&len, sizeof(len), stream);
+
+		// read string from stream
+		char *key = rm_malloc(sizeof(char) * len);
+		fread_assert(key, sizeof(char) * len, stream);
+
+		Pair p = {
+			.key = key,
+			.val = SIValue_FromBinary(stream)
+		};
+
+		array_append(map.map, p);
+	}
+
+	return map;
 }
 
 // adds key/value to map

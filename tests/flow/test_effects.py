@@ -161,12 +161,13 @@ class testEffects():
         q = """MATCH (n:L) WITH n
                 LIMIT 1
                 SET
-                n.a = 1,
-                n.b = 'str',
-                n.c = True,
-                n.d = [1, [2], '3'],
-                n.v = vecf32([1.0, 2.0, 3.0]),
-                n.m = {a:1, b:{c:'string_val'}}
+                n.a       = 1,
+                n.b       = 'str',
+                n.c       = True,
+                n.d       = [1, [2], '3'],
+                n.v       = vecf32([1.0, 2.0, 3.0]),
+                n.m       = {a:1, b:{c:'string_val'}},
+                n.p.x.y.z = -3
             """
 
         res = self.query_master_and_wait(q)
@@ -185,7 +186,8 @@ class testEffects():
                 e.f=3.14,
                 e.empty_string = '',
                 e.v = vecf32([1.0, 2.0, 3.0]),
-                e.m = {a:1, b:{c:'string_val'}}
+                e.m = {a:1, b:{c:'string_val'}},
+                e.p.x.y.z = -3
             """
 
         res = self.query_master_and_wait(q)
@@ -307,7 +309,8 @@ class testEffects():
                     n.f=6.28,
                     n.xempty_string = '',
                     n.v = vecf32([-1.0, -2.0, -3.0]),
-                    n.m = {a:1, b:{c:'string_val'}}
+                    n.m = {a:1, b:{c:'string_val'}},
+                    n.p.x.y.q = -4
                     """
 
         res = self.query_master_and_wait(q)
@@ -474,7 +477,8 @@ class testEffects():
                     e.f=6.28,
                     e.empty_string = '',
                     e.v = vecf32([-1.0, -2.0, -3.0]),
-                    e.m = {a:1, b:{c:'string_val'}}
+                    e.m = {a:1, b:{c:'string_val'}},
+                    e.p.x.y.z = 5
                     """
 
         res = self.query_master_and_wait(q)

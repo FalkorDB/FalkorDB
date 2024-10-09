@@ -277,6 +277,7 @@ void EvalEntityUpdates
 				case CT_NONE:
 					// no change
 					break;
+
 				default:
 					assert("unknown change type value" && false);
 					break;
