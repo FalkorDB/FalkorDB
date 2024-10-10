@@ -12,7 +12,7 @@
 #include "../../datatypes/vector.h"
 
 // create a vector from an array of floats
-// vector32f([0.2, 0.12, 0.3178])
+// vecf32([0.2, 0.12, 0.3178])
 SIValue AR_VECTOR32F
 (
 	SIValue *argv,      // arguments
@@ -129,13 +129,13 @@ void Register_VectorFuncs() {
 	SIType ret_type;
 	AR_FuncDesc *func_desc;
 
+	// create a vector from array
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_ARRAY);
 	ret_type = T_NULL | T_VECTOR;
 	func_desc = AR_FuncDescNew("vecf32", AR_VECTOR32F, 1, 1, types, ret_type,
 			false, true);
 	AR_RegFunc(func_desc);
-
 
 	// euclidean distance between two vectors
 	types = array_new(SIType, 2);
