@@ -351,14 +351,25 @@ bool EdgeIterator_Next
 	Edge *e            // Edge to populate
 );
 
-// get node edges
-void Graph_GetNodeEdges
+typedef struct NodeEdgeIterator NodeEdgeIterator;
+struct NodeEdgeIterator {
+	char private[632];
+};
+
+void Graph_NodeEdgeIteratorInit
 (
-	const Graph *g,       // graph to get edges from
-	const Node *n,        // node to extract edges from
-	GRAPH_EDGE_DIR dir,   // edge direction
-	RelationID edgeType,  // relation type
-	Edge **edges          // array_t incoming/outgoing edges
+	const Graph *g,    // Graph to iterate over
+	NodeEdgeIterator *it,  // Iterator to initialize
+	NodeID nodeID,      // Source node of edge
+	GRAPH_EDGE_DIR dir, // Direction of edge
+	RelationID r        // Edge type.
+);
+
+// returns the next edge in the iterator
+bool NodeEdgeIterator_Next
+(
+	NodeEdgeIterator *it,  // Iterator to extract edge from
+	Edge *e                // Edge to populate
 );
 
 // returns node incoming/outgoing degree
