@@ -1,13 +1,14 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "../util/arr.h"
+
+
 #include "rax.h"
 #include "../RG.h"
 #include "procedure.h"
+#include "../util/arr.h"
 #include "proc_functions.h"
 
 extern rax *__aeRegisteredFuncs;
@@ -58,6 +59,7 @@ ProcedureResult Proc_FunctionsInvoke
 	if(array_len((SIValue *)args) != 0) return PROCEDURE_ERR;
 
 	ProcFunctionsPrivateData *pdata = rm_malloc(sizeof(ProcFunctionsPrivateData));
+	memset(pdata, 0, sizeof(ProcFunctionsPrivateData));
 
 	// initialize an iterator to the rax that contains all functions
 	rax *functions = __aeRegisteredFuncs;
@@ -77,6 +79,7 @@ SIValue *Proc_FunctionsStep
 	ProcedureCtx *ctx
 ) {
 	ASSERT(ctx->privateData);
+	ASSERT(ctx->privateData != NULL);
     
     size_t bufferLen = MULTIPLE_TYPE_STRING_BUFFER_SIZE * 15;
 	char buf[bufferLen];
@@ -106,6 +109,7 @@ ProcedureResult Proc_FunctionsFree
 	// clean up
 	if(ctx->privateData) {
 		ProcFunctionsPrivateData *pdata = ctx->privateData;
+		raxStop(&pdata->iter);
 		array_free(pdata->output);
 		rm_free(ctx->privateData);
 	}
@@ -116,8 +120,8 @@ ProcedureResult Proc_FunctionsFree
 ProcedureCtx *Proc_FunctionsCtx() {
 	void *privateData = NULL;
 
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 3);
-	ProcedureOutput out_name = {.name = "name", .type = T_STRING};
+    ProcedureOutput *outputs = array_new(ProcedureOutput, 3);
+    ProcedureOutput out_name = {.name = "name", .type = T_STRING};
     ProcedureOutput out_signature = {.name = "signature", .type = T_STRING};
     ProcedureOutput out_description = {.name = "description", .type = T_STRING};
 
@@ -125,7 +129,7 @@ ProcedureCtx *Proc_FunctionsCtx() {
     array_append(outputs, out_signature);
     array_append(outputs, out_description);
 
-	ProcedureCtx *ctx = ProcCtxNew("dbms.functions",
+    ProcedureCtx *ctx = ProcCtxNew("dbms.functions",
 								   0,
 								   outputs,
 								   Proc_FunctionsStep,

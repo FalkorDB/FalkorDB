@@ -38,7 +38,7 @@ AR_FuncDesc *AR_FuncDescNew
 	desc->internal                =  internal;
 	desc->aggregate               =  false;
 	desc->reducible               =  reducible;
-	desc->description 		      =  description;
+	desc->description             =  description;
 
 	return desc;
 }

@@ -6,9 +6,6 @@
 
 #include "value.h"
 #include "RG.h"
-#include "graph/entities/graph_entity.h"
-#include "graph/entities/node.h"
-#include "graph/entities/edge.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -17,6 +14,9 @@
 #include "util/rmalloc.h"
 #include "util/arr.h"
 #include "datatypes/datatypes.h"
+#include "graph/entities/node.h"
+#include "graph/entities/edge.h"
+#include "graph/entities/graph_entity.h"
 
 static inline void _SIString_ToString(SIValue str, char **buf, size_t *bufferLen,
 									  size_t *bytesWritten) {
@@ -290,6 +290,7 @@ const char *SIType_ToString(SIType t) {
 }
 
 void SITypes_SignatureToString(const char * fName, SIType ret, SIType *args, char *buf, size_t bufferLen) {
+	ASSERT(fName != NULL && buf != NULL);
 	// Up to 15 arguments - Len(fName) spaces and '->', ':'  
 	ASSERT(bufferLen >= MULTIPLE_TYPE_STRING_BUFFER_SIZE * 15);
 	
@@ -309,10 +310,11 @@ void SITypes_SignatureToString(const char * fName, SIType ret, SIType *args, cha
 
 
 size_t SIType_ToMultipleTypeStringSimple(SIType t, char seperator, char *buf, size_t bufferLen) {
+	ASSERT(buf != NULL);
 	// Worst case: Len(SIType names) + 19(seperator)  = 177 + 19  = 196
 	ASSERT(bufferLen >= MULTIPLE_TYPE_STRING_BUFFER_SIZE);
 
-	uint   count		= __builtin_popcount(t);
+	uint   count        = __builtin_popcount(t);
 	SIType currentType  = 1;
 	size_t bytesWritten = 0;
 
@@ -329,7 +331,7 @@ size_t SIType_ToMultipleTypeStringSimple(SIType t, char seperator, char *buf, si
 		if(t & currentType) {
 			bytesWritten += snprintf(buf + bytesWritten, bufferLen - bytesWritten, "%c%s", seperator, SIType_ToString(currentType));
 		}
-	} while((t & currentType) == 0);
+	} while((t & currentType) == 0 && currentType != 0);
 
 	return bytesWritten;
 }
