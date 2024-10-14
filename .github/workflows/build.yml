@@ -2,6 +2,11 @@ name: Build on ubuntu
 
 on:
   workflow_dispatch:
+    inputs:
+      browser_tag:
+        description: 'Browser tag'
+        required: false
+        default: 'latest'
   pull_request:
     branches: [master, "v[0-9]+.[0-9]+"]
   push:
@@ -125,19 +130,20 @@ jobs:
       - name: Set browser tag
         id: set_browser_tag
         run: |
+          BROWSER_TAG="latest"
+          
           # If the event is a workflow_dispatch, use the input value
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            BROWSER_TAG=${{ github.event.inputs.tag }}
-            BROWSER_TAG="latest"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            BROWSER_TAG=${{ github.event.inputs.browser_tag }}
           fi
 
           # If the branch is master, set to "edge"
-          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/master" ]; then
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
             BROWSER_TAG="edge"
           fi
 
-          # If the branch is not master, set to 'lastest'
-          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" != "refs/heads/master" ]; then
+          # If the branch is not master, set to 'latest'
+          if [[ "${{ github.ref }}" != "refs/heads/master" ]]; then
             BROWSER_TAG="latest"
           fi
 
