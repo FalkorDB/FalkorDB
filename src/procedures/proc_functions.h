@@ -9,5 +9,5 @@
 #include "proc_ctx.h"
 
 // Returns all the system functions. 
-// This procedure yields the function name description and signature.
+// This procedure yields the function name, description and signature.
 ProcedureCtx *Proc_FunctionsCtx();
