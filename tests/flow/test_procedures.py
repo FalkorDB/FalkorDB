@@ -375,3 +375,9 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
 
+    def test13_functions(self):
+        # Yield results of procedure in a non-default sequence
+        actual_resultset = self.graph.query("CALL dbms.dbms.functions() YIELD name RETURN name ORDER BY name").result_set
+        actual_len = len(actual_resultset)
+        self.env.assertEquals(actual_len, 94)
+        
