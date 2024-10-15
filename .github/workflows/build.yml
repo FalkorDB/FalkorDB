@@ -8,11 +8,12 @@ on:
         required: false
         default: 'latest'
   pull_request:
-    branches: [master, "v[0-9]+.[0-9]+"]
+    branches: [master]
   push:
     branches:
       - master
-      - "v[0-9]+.[0-9]+"
+    tags: 
+      - v[0-9]+.[0-9]+
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
