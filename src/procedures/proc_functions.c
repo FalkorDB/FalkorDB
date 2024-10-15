@@ -5,10 +5,10 @@
 
 
 
+#include "../util/arr.h"
 #include "rax.h"
 #include "../RG.h"
 #include "procedure.h"
-#include "../util/arr.h"
 #include "proc_functions.h"
 
 extern rax *__aeRegisteredFuncs;

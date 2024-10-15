@@ -306,58 +306,65 @@ void Register_EntityFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true, "entity id");
+	func_desc = AR_FuncDescNew("id", AR_ID, 1, 1, types, ret_type, false, true, "Returns the internal ID of a node or relationship (which is not immutable)\n\nParameters:\n- node_or_relationship: Node or relationship to get the I\
+D for\n\nReturns the internal ID as an integer");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_NODE);
 	ret_type = T_NULL | T_ARRAY;
-	func_desc = AR_FuncDescNew("labels", AR_LABELS, 1, 1, types, ret_type, false, true, "node labels");
+	func_desc = AR_FuncDescNew("labels", AR_LABELS, 1, 1, types, ret_type, false, true,  "Returns a list of strings: all labels of node\nReturns null when node evaluates to null\n\nParameters:\n- node: Node to get labels for\n\nReturn\
+s a list of label strings");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_ARRAY);
 	ret_type = T_NULL | T_BOOL;
-	func_desc = AR_FuncDescNew("hasLabels", AR_HAS_LABELS, 2, 2, types, ret_type, false, false, "node has labels");
+	func_desc = AR_FuncDescNew("hasLabels", AR_HAS_LABELS, 2, 2, types, ret_type, false, false, "Returns true when node contains all labels in labelsList, otherwise false\nReturn true when labelsList evaluates to an empty list\n\nParamete\
+rs:\n- node: Node to check labels for\n- labelsList: List of labels to check\n\nReturns true if node has all specified labels, false otherwise");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_STRING;
-	func_desc = AR_FuncDescNew("type", AR_TYPE, 1, 1, types, ret_type, false, true, "relationship type");
+	func_desc = AR_FuncDescNew("type", AR_TYPE, 1, 1, types, ret_type, false, true, "Returns a string: the type of relationship\nReturns null when relationship evaluates to null\n\nParameters:\n- relationship: Relationship to get t\
+he type for\n\nReturns a string representing the relationship type");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_NODE;
-	func_desc = AR_FuncDescNew("startNode", AR_STARTNODE, 1, 1, types, ret_type, false, true, "relationship start node");
+	func_desc = AR_FuncDescNew("startNode", AR_STARTNODE, 1, 1, types, ret_type, false, true, "Returns the source node of a relationship\nReturns null when relationship evaluates to null\n\nParameters:\n- relationship: Relationship to g\
+et the start node from\n\nReturns the start node of the relationship");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_EDGE);
 	ret_type = T_NULL | T_NODE;
-	func_desc = AR_FuncDescNew("endNode", AR_ENDNODE, 1, 1, types, ret_type, false, true, "relationship end node");
+	func_desc = AR_FuncDescNew("endNode", AR_ENDNODE, 1, 1, types, ret_type, false, true, "Returns the destination node of a relationship\nReturns null when relationship evaluates to null\n\nParameters:\n- relationship: Relationship t\
+o get the end node from\n\nReturns the end node of the relationship");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | SI_ALL);
 	ret_type = T_NULL | T_BOOL;
-	func_desc = AR_FuncDescNew("exists", AR_EXISTS, 1, 1, types, ret_type, false, true, "property exists");
+	func_desc = AR_FuncDescNew("exists", AR_EXISTS, 1, 1, types, ret_type, false, true, "Returns true when at least one match for pattern exists\n\nParameters:\n- pattern: Pattern to match\n\nReturns true if at least one match is fou\
+nd, false otherwise");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true, "node indegree");
+	func_desc = AR_FuncDescNew("indegree", AR_INCOMEDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true, "Returns the number of incoming relationships of a node\nReturns null when node evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_STRING | T_ARRAY);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true, "node outdegree");
+	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true, "Returns the number of outgoing relationships of a node\nReturns null when node evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
@@ -371,7 +378,9 @@ void Register_EntityFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | SI_ALL);
 	ret_type = T_STRING;
-	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type, false, true, "type of entity");
+	func_desc = AR_FuncDescNew("typeof", AR_TYPEOF, 1, 1, types, ret_type, false, true, "Returns a string: the type of a literal, an expression's evaluation, an alias, a node's property, or a relationship's property\nReturn value is \
+one of `Map`, `String`, `Integer`, `Boolean`, `Float`, `Node`, `Edge`, `List`, `Path`, `Point`, or `Null`\n\nParameters:\n- expr: Expression to get the typ\
+e for\n\nReturns a string representing the type");
 	AR_RegFunc(func_desc);
 }
 

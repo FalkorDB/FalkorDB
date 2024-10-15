@@ -114,13 +114,15 @@ void Register_MapFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_MAP | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_ARRAY;
-	func_desc = AR_FuncDescNew("keys", AR_KEYS, 1, 1, types, ret_type, false, true, "keys");
+	func_desc = AR_FuncDescNew("keys", AR_KEYS, 1, 1, types, ret_type, false, true, "Returns a list of strings: all key names for given map or all property names for a given node or edge\nReturns null when expr evaluates to null\n\
+nParameters:\n- expr: Map, node, or relationship to get keys from\n\nReturns a list of key strings");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_MAP | T_NODE | T_EDGE);
 	ret_type = T_NULL | T_MAP;
-	func_desc = AR_FuncDescNew("properties", AR_PROPERTIES, 1, 1, types, ret_type, false, true, "properties");
+	func_desc = AR_FuncDescNew("properties", AR_PROPERTIES, 1, 1, types, ret_type, false, true, "When expr is a node or relationship: Returns a map containing all the properties of the given node or relationship\nWhen expr evaluates to a\
+ map: Returns expr unchanged\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);

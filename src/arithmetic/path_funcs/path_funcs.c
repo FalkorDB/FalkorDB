@@ -296,26 +296,26 @@ void Register_PathFuncs() {
 	array_append(types, T_NULL | T_NODE);
 	array_append(types, T_NULL | T_NODE);
 	ret_type = T_PATH | T_NULL;
-	func_desc = AR_FuncDescNew("shortestpath", AR_SHORTEST_PATH, 2, 2, types, ret_type, true, false, "return the shortest path that resolves the given pattern");
+	func_desc = AR_FuncDescNew("shortestpath", AR_SHORTEST_PATH, 2, 2, types, ret_type, true, false, "Return the shortest path that resolves the given pattern");
 	AR_SetPrivateDataRoutines(func_desc, ShortestPath_Free, ShortestPath_Clone);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_PATH);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("nodes", AR_PATH_NODES, 1, 1, types, ret_type, false, false, "return the nodes of the given path");
+	func_desc = AR_FuncDescNew("nodes", AR_PATH_NODES, 1, 1, types, ret_type, false, false, "Returns a list containing all the nodes in path\nReturns null if path evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_PATH);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("relationships", AR_PATH_RELATIONSHIPS, 1, 1, types, ret_type, false, false, "return the relationships of the given path");
+	func_desc = AR_FuncDescNew("relationships", AR_PATH_RELATIONSHIPS, 1, 1, types, ret_type, false, false, "Returns a list containing all the relationships in path\nReturns null if path evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_PATH);
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type, false, false, "return the length of the given path");
+	func_desc = AR_FuncDescNew("length", AR_PATH_LENGTH, 1, 1, types, ret_type, false, false, "Return the length (number of edges) of path\nReturns null if path evaluates to null");
 	AR_RegFunc(func_desc);
 }
 

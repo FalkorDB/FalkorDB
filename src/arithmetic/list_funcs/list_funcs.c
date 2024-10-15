@@ -760,25 +760,25 @@ void Register_ListFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("toBooleanList", AR_TOBOOLEANLIST, 1, 1, types, ret_type, false, true, "toBooleanList");
+	func_desc = AR_FuncDescNew("toBooleanList", AR_TOBOOLEANLIST, 1, 1, types, ret_type, false, true, "Converts a list to a list of Booleans. Each element in the list is converted using toBooleanOrNull()");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("toFloatList", AR_TOFLOATLIST, 1, 1, types, ret_type, false, true, "toFloatList");
+	func_desc = AR_FuncDescNew("toFloatList", AR_TOFLOATLIST, 1, 1, types, ret_type, false, true, "Converts a list to a list of floating points. Each element in the list is converted using toFloatOrNull()");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("toIntegerList", AR_TOINTEGERLIST, 1, 1, types, ret_type, false, true, "toIntegerList");
+	func_desc = AR_FuncDescNew("toIntegerList", AR_TOINTEGERLIST, 1, 1, types, ret_type, false, true, "Converts a list to a list of integer values. Each element in the list is converted using toIntegerOrNull()");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("toStringList", AR_TOSTRINGLIST, 1, 1, types, ret_type, false, true, "toStringList");
+	func_desc = AR_FuncDescNew("toStringList", AR_TOSTRINGLIST, 1, 1, types, ret_type, false, true, "Converts a list to a list of strings. Each element in the list is converted using toStringOrNull()");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
@@ -801,7 +801,7 @@ void Register_ListFuncs() {
 	array_append(types, T_INT64);
 	array_append(types, T_INT64);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("range", AR_RANGE, 2, 3, types, ret_type, false, true, "range");
+	func_desc = AR_FuncDescNew("range", AR_RANGE, 2, 3, types, ret_type, false, true, "Returns a list of integers in the range of [start, end]. step, an optional integer argument, is the increment between consecutive elements");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
@@ -814,13 +814,13 @@ void Register_ListFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_STRING | T_ARRAY | T_NULL);
 	ret_type = T_NULL | T_INT64;
-	func_desc = AR_FuncDescNew("size", AR_SIZE, 1, 1, types, ret_type, false, true, "size");
+	func_desc = AR_FuncDescNew("size", AR_SIZE, 1, 1, types, ret_type, false, true, "Returns the number of elements in a list\nReturns null with expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("head", AR_HEAD, 1, 1, types, ret_type, false, true, "head");
+	func_desc = AR_FuncDescNew("head", AR_HEAD, 1, 1, types, ret_type, false, true, "Returns the first element of a list\nReturns null when expr evaluates to null or an empty list");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
@@ -840,14 +840,21 @@ void Register_ListFuncs() {
 	array_append(types, T_INT64);
 	array_append(types, T_INT64);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("list.remove", AR_REMOVE, 2, 3, types, ret_type, false, true, "list.remove(list, idx, count = 1) -> list");
+	func_desc = AR_FuncDescNew("list.remove", AR_REMOVE, 2, 3, types, ret_type, false, true, "Given a list, returns a list after removing a given number of consecutive elements (or less, if the end of the list has been reached) start\
+ing at a given index.\nidx is 0-based when non-negative, or from the end of the list when negative\nReturns null when list evaluates to null\nReturns list \
+when idx evaluates to an integer not in [-NumItems.. NumItems-1]\nReturns list when count evaluates to a non-positive integer\nEmit an error when list does\
+ not evaluate to a list or to null\nEmit an error when idx does not evaluate to an integer\nEmit an error when count, if specified, does not evaluate to an\
+ integer\n\nParameters:\n- list: List to remove elements from\n- idx: Starting index for removal\n- count: (Optional) Number of elements to remove, default\
+s to 1\n\nReturns a new list with elements removed");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, T_ARRAY | T_NULL);
 	array_append(types, T_BOOL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("list.sort", AR_SORT, 1, 2, types, ret_type, false, true, "list.sort(list, ascending = TRUE) -> list");
+	func_desc = AR_FuncDescNew("list.sort", AR_SORT, 1, 2, types, ret_type, false, true, "Given a list, returns a list with similar elements, but sorted (inversely-sorted if ascending is evaluated to FALSE)\nReturns null when list \
+evaluates to null\nEmit an error when list does not evaluate to a list or to null\nEmit an error when ascending, if specified, does not evaluate to a Boole\
+an\n\nParameters:\n- list: List to sort\n- ascending: (Optional) Sort in ascending order, defaults to TRUE\n\nReturns a new sorted list");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 4);
@@ -856,7 +863,12 @@ void Register_ListFuncs() {
 	array_append(types, SI_ALL);
 	array_append(types, T_BOOL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("list.insert", AR_INSERT, 3, 4, types, ret_type, false, true, "list.insert(list, idx, val, dups = TRUE) -> list");
+	func_desc = AR_FuncDescNew("list.insert", AR_INSERT, 3, 4, types, ret_type, false, true, "Given a list, returns a list after inserting a given value at a given index\nidx is 0-based when non-negative, or from the end of the list \
+when negative\nReturns null when list evaluates to null\nReturns list when val evaluates to null\nReturns list when idx evaluates to an integer not in [-Nu\
+mItems-1.. NumItems]\nWhen dups evaluates to FALSE: returns list when val evaluates to a value that is already an element of list\nEmit an error when list \
+does not evaluate to a list or to null\nEmit an error when idx does not evaluate to an integer\nEmit an error when dups, if specified, does not evaluate to\
+ a Boolean\n\nParameters:\n- list: List to insert into\n- idx: Index to insert at\n- val: Value to insert\n- dups: (Optional) Allow duplicates, defaults to\
+ TRUE\n\nReturns a new list with the value inserted");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 4);
@@ -865,13 +877,21 @@ void Register_ListFuncs() {
 	array_append(types, T_INT64);
 	array_append(types, T_BOOL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("list.insertListElements", AR_INSERTLISTELEMENTS, 3, 4, types, ret_type, false, true, "list.insertListElements(list, list2, idx, dups = TRUE) -> list");
+	func_desc = AR_FuncDescNew("list.insertListElements", AR_INSERTLISTELEMENTS, 3, 4, types, ret_type, false, true, "Given a list, returns a list after inserting the elements of a second list at a given index\nidx is 0-based when non-negative, \
+or from the end of the list when negative\nReturns null when list evaluates to null\nReturns list when list2 evaluates to null\nReturns list when idx evalu\
+ates to an integer not in [-NumItems-1.. NumItems]\nWhen dups evaluates to FALSE: If an element of list2 evaluates to an element of list it would be skippe\
+d; If multiple elements of list2 evaluate to the same value - this value would be inserted at most once to list\nEmit an error when list does not evaluate \
+to a list or to null\nEmit an error when list2 does not evaluate to a list or to null\nEmit an error when idx does not evaluate to an integer\nEmit an erro\
+r when dups, if specified, does not evaluate to a Boolean\n\nParameters:\n- list: List to insert into\n- list2: List of elements to insert\n- idx: Index to\
+ insert at\n- dups: (Optional) Allow duplicates, defaults to TRUE\n\nReturns a new list with the elements inserted");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, T_ARRAY | T_NULL);
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("list.dedup", AR_DEDUP, 1, 1, types, ret_type, false, true, "list.dedup(list) -> list");
+	func_desc = AR_FuncDescNew("list.dedup", AR_DEDUP, 1, 1, types, ret_type, false, true, "Given a list, returns a similar list after removing duplicate elements\nOrder is preserved, duplicates are removed from the end of the list\\
+nReturns null when list evaluates to null\nEmit an error when list does not evaluate to a list or to null\n\nParameters:\n- list: List to remove duplicates\
+ from\n\nReturns a new list with duplicates removed");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 4);
@@ -879,7 +899,9 @@ void Register_ListFuncs() {
 	array_append(types, T_ARRAY | T_NULL);  // array to iterate over
 	array_append(types, T_PTR);             // input record
 	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("reduce", AR_REDUCE, 3, 3, types, ret_type, true, true, "reduce(sum = 0, n IN [1,2,3] | sum + n)");
+	func_desc = AR_FuncDescNew("reduce", AR_REDUCE, 3, 3, types, ret_type, true, true, "Returns a scalar produced by evaluating an expression against each list member\n\nParameters:\n- accumulator: Variable to store the accumulated \
+result\n- initial: Initial value for the accumulator\n- var: Variable to bind to each list element\n- list: List to iterate over\n- expression: Expression \
+to evaluate for each element\n\nReturns the final accumulated value");
 	AR_SetPrivateDataRoutines(func_desc, ListReduceCtx_Free,
 							  ListReduceCtx_Clone);
 	AR_RegFunc(func_desc);
