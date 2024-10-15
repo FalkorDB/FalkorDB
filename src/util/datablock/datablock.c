@@ -105,6 +105,14 @@ uint64_t DataBlock_ItemCount(const DataBlock *dataBlock) {
 	return dataBlock->itemCount;
 }
 
+uint64_t DataBlock_ItemCap(const DataBlock *dataBlock) {
+	return dataBlock->itemCap;
+}
+
+uint64_t *DataBlock_DeletedItems(DataBlock *dataBlock) {
+	return dataBlock->deletedIdx;
+}
+
 DataBlockIterator *DataBlock_Scan(const DataBlock *dataBlock) {
 	ASSERT(dataBlock != NULL);
 	Block *startBlock = dataBlock->blocks[0];

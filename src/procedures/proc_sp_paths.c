@@ -337,7 +337,22 @@ static void addOutgoingNeighbors
 
 	// Get frontier neighbors.
 	for(int i = 0; i < ctx->relationCount; i++) {
-		Graph_GetNodeEdges(ctx->g, &frontier->node, GRAPH_EDGE_DIR_OUTGOING, ctx->relationIDs[i], &ctx->neighbors);
+		Edge edge;
+		NodeEdgeIterator it;
+		if(ctx->relationIDs[i] == GRAPH_NO_RELATION) {
+			int c = Graph_RelationTypeCount(ctx->g);
+			for(int j = 0; j < c; j++) {
+				Graph_NodeEdgeIteratorInit(ctx->g, &it, ENTITY_GET_ID(&frontier->node), GRAPH_EDGE_DIR_OUTGOING, j);
+				while(NodeEdgeIterator_Next(&it, &edge)) {
+					array_append(ctx->neighbors, edge);
+				}
+			}
+		} else {
+			Graph_NodeEdgeIteratorInit(ctx->g, &it, ENTITY_GET_ID(&frontier->node), GRAPH_EDGE_DIR_OUTGOING, ctx->relationIDs[i]);
+			while(NodeEdgeIterator_Next(&it, &edge)) {
+				array_append(ctx->neighbors, edge);
+			}
+		}
 	}
 
 	// Add unvisited neighbors to next level.
@@ -367,7 +382,22 @@ static void addIncomingNeighbors
 
 	// Get frontier neighbors.
 	for(int i = 0; i < ctx->relationCount; i++) {
-		Graph_GetNodeEdges(ctx->g, &frontier->node, GRAPH_EDGE_DIR_INCOMING, ctx->relationIDs[i], &ctx->neighbors);
+		Edge edge;
+		NodeEdgeIterator it;
+		if(ctx->relationIDs[i] == GRAPH_NO_RELATION) {
+			int c = Graph_RelationTypeCount(ctx->g);
+			for(int j = 0; j < c; j++) {
+				Graph_NodeEdgeIteratorInit(ctx->g, &it, ENTITY_GET_ID(&frontier->node), GRAPH_EDGE_DIR_INCOMING, j);
+				while(NodeEdgeIterator_Next(&it, &edge)) {
+					array_append(ctx->neighbors, edge);
+				}
+			}
+		} else {
+			Graph_NodeEdgeIteratorInit(ctx->g, &it, ENTITY_GET_ID(&frontier->node), GRAPH_EDGE_DIR_INCOMING, ctx->relationIDs[i]);
+			while(NodeEdgeIterator_Next(&it, &edge)) {
+				array_append(ctx->neighbors, edge);
+			}
+		}
 	}
 
 	// Add unvisited neighbors to next level.
