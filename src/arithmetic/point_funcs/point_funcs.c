@@ -108,7 +108,7 @@ void Register_PointFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, T_NULL | T_MAP);
 	ret_type = T_NULL | T_POINT;
-	func_desc = AR_FuncDescNew("point", AR_TOPOINT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("point", AR_TOPOINT, 1, 1, types, ret_type, false, true, "Returns a Point representing a lat/lon coordinates");
 	AR_RegFunc(func_desc);
 
 
@@ -116,6 +116,6 @@ void Register_PointFuncs() {
 	array_append(types, T_NULL | T_POINT);
 	array_append(types, T_NULL | T_POINT);
 	ret_type = T_NULL | T_DOUBLE;
-	func_desc = AR_FuncDescNew("distance", AR_DISTANCE, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("distance", AR_DISTANCE, 2, 2, types, ret_type, false, true, "Returns the distance in meters between the two given points\nReturns null when either evaluates to null");
 	AR_RegFunc(func_desc);
 }

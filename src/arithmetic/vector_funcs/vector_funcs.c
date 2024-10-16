@@ -134,7 +134,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_ARRAY);
 	ret_type = T_NULL | T_VECTOR;
 	func_desc = AR_FuncDescNew("vecf32", AR_VECTOR32F, 1, 1, types, ret_type,
-			false, true);
+			false, true, "Creates a new float 32 vector\nall elements of input array must be of type float");
 	AR_RegFunc(func_desc);
 
 	// euclidean distance between two vectors
@@ -143,7 +143,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_VECTOR);
 	ret_type = T_NULL | T_DOUBLE;
 	func_desc = AR_FuncDescNew("vec.euclideanDistance", AR_EUCLIDEAN_DISTANCE, 2, 2, types, ret_type,
-			false, true);
+			false, true, "Returns the Euclidean distance between the two input vectors");
 	AR_RegFunc(func_desc);
 
 	// cosine distance between two vectors
@@ -152,7 +152,7 @@ void Register_VectorFuncs() {
 	array_append(types, T_NULL | T_VECTOR);
 	ret_type = T_NULL | T_DOUBLE;
 	func_desc = AR_FuncDescNew("vec.cosineDistance", AR_COSINE_DISTANCE, 2, 2, types, ret_type,
-			false, true);
+			false, true, "Returns the Cosine distance between the two input vectors");
 	AR_RegFunc(func_desc);
 }
 

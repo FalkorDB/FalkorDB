@@ -386,196 +386,204 @@ void Register_NumericFuncs() {
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_NULL));
 	ret_type = SI_NUMERIC | T_STRING | T_ARRAY | T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("add", AR_ADD, 2, 2, types, ret_type, true, true, "numeric addition");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("sub", AR_SUB, 2, 2, types, ret_type, true, true, "numeric subtraction");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("mul", AR_MUL, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("mul", AR_MUL, 2, 2, types, ret_type, true, true, "numeric multiplication");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("div", AR_DIV, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("div", AR_DIV, 2, 2, types, ret_type, true, true, "numeric division");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("mod", AR_MODULO, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("mod", AR_MODULO, 2, 2, types, ret_type, true, true, "numeric modulo");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("abs", AR_ABS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("abs", AR_ABS, 1, 1, types, ret_type, false, true, "Returns the absolute value of a numeric value\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the a\
+bsolute value");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("ceil", AR_CEIL, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("ceil", AR_CEIL, 1, 1, types, ret_type, false, true, "When expr evaluates to an integer: returns its evaluation\nWhen expr evaluates to floating point: returns a floating point equals to the smallest \
+integer greater than or equal to expr\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the ceiling value");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("floor", AR_FLOOR, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("floor", AR_FLOOR, 1, 1, types, ret_type, false, true, "When expr evaluates to an integer: returns its evaluation\nWhen expr evaluates to a floating point: returns a floating point equals to the greate\
+st integer less than or equal to expr\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the floor value");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 0);
 	ret_type = T_DOUBLE;
-	func_desc = AR_FuncDescNew("rand", AR_RAND, 0, 0, types, ret_type, false, false);
+	func_desc = AR_FuncDescNew("rand", AR_RAND, 0, 0, types, ret_type, false, false, "Returns a random floating point in the range [0,1]\n\nReturns a random float between 0 and 1");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = SI_NUMERIC | T_NULL;
-	func_desc = AR_FuncDescNew("round", AR_ROUND, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("round", AR_ROUND, 1, 1, types, ret_type, false, true, "When expr evaluates to an integer: returns its evaluation\nWhen expr evaluates to a floating point: returns a floating point equals to the intege\
+r closest to expr\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the rounded value");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("sign", AR_SIGN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("sign", AR_SIGN, 1, 1, types, ret_type, false, true, "Returns the signum of a numeric value: 0 when expr evaluates to 0, -1 when expr evaluates to a negative numeric value, and 1 when expr evaluates to a positive numeric value\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_STRING | T_NULL | T_BOOL));
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("tointeger", AR_TOINTEGER, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tointeger", AR_TOINTEGER, 1, 1, types, ret_type, false, true, "Returns an integer when expr evaluates to an integer\nConverts a floating point to an integer\nConverts a string to an integer or null\nRetur\
+ns null when expr evaluates to null\nEmit an error on other types");
 	AR_RegFunc(func_desc);
 	
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
 	ret_type = T_INT64 | T_NULL;
-	func_desc = AR_FuncDescNew("tointegerornull", AR_TOINTEGER, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tointegerornull", AR_TOINTEGER, 1, 1, types, ret_type, false, true, "Returns an integer when expr evaluates to an integer\nConverts a floating point to an integer\nConverts a string to an integer or null\
+nReturns null when expr evaluates to null\nReturns null for other types");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_STRING | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("tofloat", AR_TOFLOAT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tofloat", AR_TOFLOAT, 1, 1, types, ret_type, false, true, "Returns a floating point when expr evaluates to a floating point\nConverts an integer to a floating point\nConverts a string to a floating poin\
+t or null\nReturns null when expr evaluates to null\nEmit an error on other types");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("tofloatornull", AR_TOFLOAT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tofloatornull", AR_TOFLOAT, 1, 1, types, ret_type, false, true, "Returns a floating point when expr evaluates to a floating point\nConverts an integer to a floating point\nConverts a string to a floatin\
+g point or null\nReturns null when expr evaluates to null\nReturns null for other types");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("sqrt", AR_SQRT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("sqrt", AR_SQRT, 1, 1, types, ret_type, false, true, "Returns the square root of a numeric value\nReturns nan when expr evaluates to a negative value and null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("pow", AR_POW, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("pow", AR_POW, 2, 2, types, ret_type, false, true, "Returns base raised to the power of exponent (equivalent to base^exponent)\nReturns null when either evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("exp", AR_EXP, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("exp", AR_EXP, 1, 1, types, ret_type, false, true, "Returns e^expr, where e is the base of the natural logarithm\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 0);
 	ret_type = T_DOUBLE;
-	func_desc = AR_FuncDescNew("e", AR_E, 0, 0, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("e", AR_E, 0, 0, types, ret_type, false, true, "Returns the constant e, the base of the natural logarithm");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("log", AR_LOG, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("log", AR_LOG, 1, 1, types, ret_type, false, true, "Returns the natural logarithm of a numeric value\nReturns nan when expr evaluates to a negative numeric value, -inf when expr evaluates to 0, and null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("log10", AR_LOG10, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("log10", AR_LOG10, 1, 1, types, ret_type, false, true, "Returns the base-10 logarithm of a numeric value\nReturns nan when expr evaluates to a negative numeric value, -inf when expr evaluates to 0, and null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("sin", AR_SIN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("sin", AR_SIN, 1, 1, types, ret_type, false, true, "Returns the sine of a numeric value that represents an angle in radians\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("cos", AR_COS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("cos", AR_COS, 1, 1, types, ret_type, false, true, "Returns the cosine of a numeric value that represents an angle in radians\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("tan", AR_TAN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tan", AR_TAN, 1, 1, types, ret_type, false, true, "	Returns the tangent of a numeric value that represents an angle in radians\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("cot", AR_COT, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("cot", AR_COT, 1, 1, types, ret_type, false, true, "eturns the cotangent of a numeric value that represents an angle in radians\nReturns inf when expr evaluates to 0 and null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("asin", AR_ASIN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("asin", AR_ASIN, 1, 1, types, ret_type, false, true, "Returns the arcsine, in radians, of a numeric value\nReturns nan when expr evaluates to a numeric value not in [-1, 1] and null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("acos", AR_ACOS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("acos", AR_ACOS, 1, 1, types, ret_type, false, true, "Returns the arccosine, in radians, of a numeric value\nReturns nan when expr evaluates to a numeric value not in [-1, 1] and null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("atan", AR_ATAN, 1, 1, types, ret_type, false, true);
+    func_desc = AR_FuncDescNew("atan", AR_ATAN, 1, 1, types, ret_type, false, true, "Returns the arctangent, in radians, of a numeric value\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("atan2", AR_ATAN2, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("atan2", AR_ATAN2, 2, 2, types, ret_type, false, true, "Returns the 2-argument arctangent, in radians, of a pair of numeric values (Cartesian coordinates)\nReturns 0 when both expressions evaluate to 0\nReturns null when either expression evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("degrees", AR_DEGREES, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("degrees", AR_DEGREES, 1, 1, types, ret_type, false, true, "Converts a numeric value from radians to degrees\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);	
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("radians", AR_RADIANS, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("radians", AR_RADIANS, 1, 1, types, ret_type, false, true, "Converts a numeric value from degrees to radians\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);	
 
 	types = array_new(SIType, 0);
 	ret_type = T_DOUBLE;
-	func_desc = AR_FuncDescNew("pi", AR_PI, 0, 0, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("pi", AR_PI, 0, 0, types, ret_type, false, true, "Returns the mathematical constant pi");
 	AR_RegFunc(func_desc);	
 
 	types = array_new(SIType, 1);
 	array_append(types, (SI_NUMERIC | T_NULL));
 	ret_type = T_DOUBLE | T_NULL;
-	func_desc = AR_FuncDescNew("haversin", AR_HAVERSIN, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("haversin", AR_HAVERSIN, 1, 1, types, ret_type, false, true, "Returns half the versine of a numeric value that represents an angle in radians\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 }
