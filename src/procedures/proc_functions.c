@@ -16,11 +16,12 @@ extern rax *__aeRegisteredFuncs;
 // CALL dbms.functions()
 
 typedef struct {
-	SIValue *output;              // array with a one entry: [name]
-	raxIterator iter;             // procedures iterator
-	SIValue *yield_name;          // yield name
-    SIValue *yield_signature;     // yield the function signature in the format name: t1 ... tn -> tn+1
-    SIValue *yield_description;   // yield document string
+	SIValue *output;                    // array with a one entry: [name]
+	raxIterator iter;                   // procedures iterator
+	SIValue *yield_name;                // yield name
+    SIValue *yield_signature;           // yield the function signature in the format name: t1 ... tn -> tn+1
+    SIValue *yield_description;         // yield document string
+    SIValue *yield_return_description;  // yield the description of the return value of the function
 } ProcFunctionsPrivateData;
 
 static void _process_yield
@@ -46,6 +47,11 @@ static void _process_yield
 			idx++;
 			continue;
 		}
+        if(strcasecmp("return_description", yield[i]) == 0) {
+            ctx->yield_return_description = ctx->output + idx;
+            idx++;
+            continue;
+        }
 
 	}
 }
@@ -65,7 +71,7 @@ ProcedureResult Proc_FunctionsInvoke
 	rax *functions = __aeRegisteredFuncs;
 	raxStart(&pdata->iter, functions);
 	raxSeek(&pdata->iter, "^", NULL, 0);
-	pdata->output = array_new(SIValue, 3);
+	pdata->output = array_new(SIValue, 4);
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;
@@ -102,6 +108,11 @@ SIValue *Proc_FunctionsStep
             if(pdata->yield_description && func->description){
                 *pdata->yield_description = func->description ? SI_ConstStringVal(func->description) : SI_ConstStringVal("No description available");
             }
+            if(pdata->yield_return_description && func->ret_type){
+                // get the return value description into buf
+                SIType_ToMultipleTypeStringSimple(func->ret_type, '|', buf, bufferLen);
+                *pdata->yield_return_description = SI_ConstStringVal(buf);
+            }
             return pdata->output;
         }
 
@@ -127,14 +138,16 @@ ProcedureResult Proc_FunctionsFree
 ProcedureCtx *Proc_FunctionsCtx() {
 	void *privateData = NULL;
 
-    ProcedureOutput *outputs = array_new(ProcedureOutput, 3);
+    ProcedureOutput *outputs = array_new(ProcedureOutput, 4);
     ProcedureOutput out_name = {.name = "name", .type = T_STRING};
     ProcedureOutput out_signature = {.name = "signature", .type = T_STRING};
     ProcedureOutput out_description = {.name = "description", .type = T_STRING};
+    ProcedureOutput out_return_description = {.name = "return_description", .type = T_STRING};
 
 	array_append(outputs, out_name);
     array_append(outputs, out_signature);
     array_append(outputs, out_description);
+    array_append(outputs, out_return_description);
 
     ProcedureCtx *ctx = ProcCtxNew("dbms.functions",
 								   0,
