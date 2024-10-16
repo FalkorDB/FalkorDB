@@ -43,31 +43,31 @@ typedef struct {
 } AR_FuncCBs;
 
 typedef struct {
-	AR_Func func;            // function pointer to scalar or aggregate function routine
-	SIType *types;           // types of arguments
-	SIType ret_type;         // return type
-	uint min_argc;           // minimal number of arguments function expects
-	uint max_argc;           // maximal number of arguments function expects
-	bool internal;           // is function internal
-	bool reducible;          // can be reduced using static evaluation
-	bool aggregate;          // true if the function is an aggregation
-	const char *name;        // function name
-	AR_FuncCBs callbacks;    // aggregation callbacks
-	const char *description; // function description
+	AR_Func func;             // function pointer to scalar or aggregate function routine
+	SIType *types;            // types of arguments
+	SIType ret_type;          // return type
+	uint min_argc;            // minimal number of arguments function expects
+	uint max_argc;            // maximal number of arguments function expects
+	bool internal;            // is function internal
+	bool reducible;           // can be reduced using static evaluation
+	bool aggregate;           // true if the function is an aggregation
+	const char *name;         // function name
+	AR_FuncCBs callbacks;     // aggregation callbacks
+	const char *description;  // function description
 } AR_FuncDesc;
 
 // create a new function descriptor
 AR_FuncDesc *AR_FuncDescNew
 (
-	const char *name,       // function name
-	AR_Func func,           // pointer to function
-	uint min_argc,          // minimum number of arguments
-	uint max_argc,          // maximum number of arguments
-	SIType *types,          // acceptable types
-	SIType ret_type,        // return type
-	bool internal,          // is function internal
-	bool reducible,         // is function reducible
-	const char *description // function description
+	const char *name,        // function name
+	AR_Func func,            // pointer to function
+	uint min_argc,           // minimum number of arguments
+	uint max_argc,           // maximum number of arguments
+	SIType *types,           // acceptable types
+	SIType ret_type,         // return type
+	bool internal,           // is function internal
+	bool reducible,          // is function reducible
+	const char *description  // function description
 );
 
 // register arithmetic function to repository
