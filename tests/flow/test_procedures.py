@@ -380,4 +380,15 @@ class testProcedures(FlowTestsBase):
         actual_resultset = self.graph.query("CALL dbms.functions() YIELD name RETURN name ORDER BY name").result_set
         actual_len = len(actual_resultset)
         self.env.assertEquals(actual_len, 95)
-        
+
+    def test14_procedure_get_all_functions(self):
+        actual_resultset = self.graph.query("CALL dbms.functions() YIELD name, signature, description, return_description, argument_description RETURN name, signature, description, return_description, argument_description ORDER BY name").result_set
+        actual_len = len(actual_resultset)
+        self.env.assertEquals(actual_len, 95)
+    
+        expected_first_result = ["abs", 
+                                 "abs: Integer|Float -> Integer|Float",
+                                 "Returns the absolute value of a numeric value\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the absolute value",
+                                 "List|Null", 
+                                 "[Integer|Float]"]
+        self.env.assertEquals(actual_resultset[0], expected_first_result)            
