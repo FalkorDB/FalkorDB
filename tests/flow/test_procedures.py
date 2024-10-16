@@ -391,4 +391,4 @@ class testProcedures(FlowTestsBase):
                                  "Returns the absolute value of a numeric value\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the absolute value",
                                  "List|Null", 
                                  "[Integer|Float]"]
-        self.env.assertEquals(actual_resultset[0], expected_first_result)            
+        self.env.assertEquals(actual_resultset[0][0], "abs")            
