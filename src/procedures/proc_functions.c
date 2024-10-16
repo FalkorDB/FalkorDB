@@ -141,7 +141,6 @@ SIValue *Proc_FunctionsStep
             }
             return pdata->output;
         }
-
     }
     return NULL;
 }
