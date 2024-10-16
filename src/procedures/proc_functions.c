@@ -10,18 +10,20 @@
 #include "../RG.h"
 #include "procedure.h"
 #include "proc_functions.h"
+#include "../datatypes/array.h"
 
 extern rax *__aeRegisteredFuncs;
 
 // CALL dbms.functions()
 
 typedef struct {
-	SIValue *output;                    // array with a one entry: [name]
-	raxIterator iter;                   // procedures iterator
-	SIValue *yield_name;                // yield name
-    SIValue *yield_signature;           // yield the function signature in the format name: t1 ... tn -> tn+1
-    SIValue *yield_description;         // yield document string
-    SIValue *yield_return_description;  // yield the description of the return value of the function
+	SIValue *output;                      // array with a one entry: [name]
+	raxIterator iter;                     // procedures iterator
+	SIValue *yield_name;                  // yield name
+    SIValue *yield_signature;             // yield the function signature in the format name: t1 ... tn -> tn+1
+    SIValue *yield_description;           // yield document string
+    SIValue *yield_return_description;    // yield the description of the return value of the function
+    SIValue *yield_argument_description;  // yield the description of the function arguments
 } ProcFunctionsPrivateData;
 
 static void _process_yield
@@ -29,7 +31,12 @@ static void _process_yield
 	ProcFunctionsPrivateData *ctx,
 	const char **yield
 ) {
-	ctx->yield_name = NULL;
+	ctx->yield_name                 = NULL;
+    ctx->yield_signature            = NULL;
+    ctx->yield_description          = NULL;
+    ctx->yield_return_description   = NULL;
+    ctx->yield_argument_description = NULL;
+
 	int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
 		if(strcasecmp("name", yield[i]) == 0) {
@@ -52,7 +59,11 @@ static void _process_yield
             idx++;
             continue;
         }
-
+        if(strcasecmp("argument_description", yield[i]) == 0) {
+            ctx->yield_argument_description = ctx->output + idx;
+            idx++;
+            continue;
+        }
 	}
 }
 
@@ -71,7 +82,7 @@ ProcedureResult Proc_FunctionsInvoke
 	rax *functions = __aeRegisteredFuncs;
 	raxStart(&pdata->iter, functions);
 	raxSeek(&pdata->iter, "^", NULL, 0);
-	pdata->output = array_new(SIValue, 4);
+	pdata->output = array_new(SIValue, 5);
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;
@@ -92,10 +103,11 @@ SIValue *Proc_FunctionsStep
 
 	ProcFunctionsPrivateData *pdata = (ProcFunctionsPrivateData *)ctx->privateData;
 
-	// filter out all internal functions
+	
     while(raxNext(&pdata->iter)){
 
         AR_FuncDesc *func = (AR_FuncDesc*)pdata->iter.data;
+        // filter out all internal functions
         if(!func->internal){      
             if(pdata->yield_name && func->name ){
                 *pdata->yield_name = SI_ConstStringVal(func->name);
@@ -112,6 +124,20 @@ SIValue *Proc_FunctionsStep
                 // get the return value description into buf
                 SIType_ToMultipleTypeStringSimple(func->ret_type, '|', buf, bufferLen);
                 *pdata->yield_return_description = SI_ConstStringVal(buf);
+            }
+            if(pdata->yield_argument_description && func->types){
+                int arg_count = array_len(func->types);
+                if(0 < arg_count){
+                    *pdata->yield_argument_description = SI_Array(arg_count);
+                    for (int i = 0; i < arg_count; i++) {
+                        // get the argument description into buf
+                        SIType_ToMultipleTypeStringSimple(func->types[i], '|', buf, bufferLen);
+                        SIValue value = SI_ConstStringVal(buf);
+				        SIArray_Append(pdata->yield_argument_description, value);
+                    }
+                }else{
+                   *pdata->yield_argument_description = SI_Array(0); 
+                }
             }
             return pdata->output;
         }
@@ -138,16 +164,18 @@ ProcedureResult Proc_FunctionsFree
 ProcedureCtx *Proc_FunctionsCtx() {
 	void *privateData = NULL;
 
-    ProcedureOutput *outputs = array_new(ProcedureOutput, 4);
+    ProcedureOutput *outputs = array_new(ProcedureOutput, 5);
     ProcedureOutput out_name = {.name = "name", .type = T_STRING};
     ProcedureOutput out_signature = {.name = "signature", .type = T_STRING};
     ProcedureOutput out_description = {.name = "description", .type = T_STRING};
     ProcedureOutput out_return_description = {.name = "return_description", .type = T_STRING};
+    ProcedureOutput out_argument_description = {.name = "argument_description", .type = T_ARRAY};
 
 	array_append(outputs, out_name);
     array_append(outputs, out_signature);
     array_append(outputs, out_description);
     array_append(outputs, out_return_description);
+    array_append(outputs, out_argument_description);
 
     ProcedureCtx *ctx = ProcCtxNew("dbms.functions",
 								   0,
