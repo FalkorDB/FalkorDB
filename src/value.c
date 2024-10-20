@@ -6,16 +6,17 @@
 
 #include "value.h"
 #include "RG.h"
-#include "graph/entities/graph_entity.h"
-#include "graph/entities/node.h"
-#include "graph/entities/edge.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <sys/param.h>
 #include "util/rmalloc.h"
+#include "util/arr.h"
 #include "datatypes/datatypes.h"
+#include "graph/entities/node.h"
+#include "graph/entities/edge.h"
+#include "graph/entities/graph_entity.h"
 
 static inline void _SIString_ToString(SIValue str, char **buf, size_t *bufferLen,
 									  size_t *bytesWritten) {
@@ -288,6 +289,62 @@ const char *SIType_ToString(SIType t) {
 	}
 }
 
+void SITypes_SignatureToString(const char * fName, SIType ret, SIType *args, char *buf, size_t bufferLen) {
+	ASSERT(fName != NULL && buf != NULL);
+	// Up to 15 arguments - Len(fName) spaces and '->', ':'  
+	ASSERT(bufferLen >= MULTIPLE_TYPE_STRING_BUFFER_SIZE * 15);
+	
+	size_t bytesWritten = 0;
+
+	bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%s: ", fName);
+
+	for (int i = 0; i < array_len(args); i++) {
+		bytesWritten += SIType_ToMultipleTypeStringSimple(args[i], '|', buf + bytesWritten, bufferLen - bytesWritten);
+		bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%c", ' ');
+	}
+
+    bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%s", "-> ");
+
+	SIType_ToMultipleTypeStringSimple(ret, '|', buf + bytesWritten, bufferLen - bytesWritten);
+}
+
+
+size_t SIType_ToMultipleTypeStringSimple(SIType t, char seperator, char *buf, size_t bufferLen) {
+	ASSERT(buf != NULL);
+	// Worst case: Len(SIType names) + 19(seperator)  = 177 + 19  = 196
+	ASSERT(bufferLen >= MULTIPLE_TYPE_STRING_BUFFER_SIZE);
+
+	uint   count        = __builtin_popcount(t);
+	SIType currentType  = 1;
+	size_t bytesWritten = 0;
+
+	// Find first type
+	while((t & currentType) == 0) {
+		currentType = currentType << 1;
+	}
+	int n = snprintf(buf + bytesWritten, bufferLen - bytesWritten, "%s", SIType_ToString(currentType));
+	if (n < 0 || n >= bufferLen - bytesWritten) {
+		return bytesWritten;
+	}
+	bytesWritten += n;
+	if(count == 1) return bytesWritten;
+
+	// Iterate over all possible SITypes 
+	do {
+		currentType = currentType << 1;
+		if(t & currentType) {
+			n = snprintf(buf + bytesWritten, bufferLen - bytesWritten, "%c%s", seperator, SIType_ToString(currentType));
+			if (n < 0 || n >= bufferLen - bytesWritten) {
+				return bytesWritten;
+			}
+			bytesWritten += n;
+		}
+	} while((t & currentType) == 0 && currentType != 0);
+
+	return bytesWritten;
+}
+
+
 void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	// Worst case: Len(SIType names) + 19*Len(", ") + Len("Or") = 177 + 38 + 2 = 217
 	ASSERT(bufferLen >= MULTIPLE_TYPE_STRING_BUFFER_SIZE);
@@ -301,7 +358,11 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	while((t & currentType) == 0) {
 		currentType = currentType << 1;
 	}
-	bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%s", SIType_ToString(currentType));
+	int n = snprintf(buf + bytesWritten, bufferLen - bytesWritten, "%s", SIType_ToString(currentType));
+	if (n < 0 || n >= bufferLen - bytesWritten) {
+		return;
+	}
+	bytesWritten += n;
 	if(count == 1) return;
 
 	count--;
@@ -309,7 +370,11 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 	while(count > 1) {
 		currentType = currentType << 1;
 		if(t & currentType) {
-			bytesWritten += snprintf(buf + bytesWritten, bufferLen, ", %s", SIType_ToString(currentType));
+			n = snprintf(buf + bytesWritten, bufferLen - bytesWritten, ", %s", SIType_ToString(currentType));
+			if (n < 0 || n >= bufferLen - bytesWritten) {
+				return;
+			}
+			bytesWritten += n;
 			count--;
 		}
 	}
@@ -321,7 +386,11 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen) {
 
 	// Concatenate "or" before the last SIType name
 	// If there are more than two, the last comma should be present
-	bytesWritten += snprintf(buf + bytesWritten, bufferLen, "%s%s", comma, SIType_ToString(currentType));
+	n = snprintf(buf + bytesWritten, bufferLen - bytesWritten, "%s%s", comma, SIType_ToString(currentType));
+	if (n < 0 || n >= bufferLen - bytesWritten) {
+		return;
+	}
+	bytesWritten += n;
 }
 
 void SIValue_ToString

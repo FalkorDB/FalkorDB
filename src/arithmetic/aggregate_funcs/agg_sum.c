@@ -44,7 +44,7 @@ void Register_SUM(void) {
 	array_append(types, T_NULL | T_INT64 | T_DOUBLE);
 	ret_type = T_NULL | T_DOUBLE;
 	func_desc = AR_AggFuncDescNew("sum", AGG_SUM, 1, 1, types, ret_type, NULL,
-			NULL, SUM_PrivateData);
+			NULL, SUM_PrivateData, "aggregate sum");
 	AR_RegFunc(func_desc);
 }
 
