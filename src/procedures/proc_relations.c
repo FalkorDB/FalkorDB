@@ -83,7 +83,8 @@ ProcedureCtx *Proc_RelationsCtx() {
 								   Proc_RelationsInvoke,
 								   Proc_RelationsFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Yields all relationship types in the graph.");
 	return ctx;
 }
 

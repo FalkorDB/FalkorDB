@@ -345,6 +345,6 @@ ProcedureCtx *Proc_FulltextCreateNodeIdxGen() {
 	return ProcCtxNew("db.idx.fulltext.createNodeIndex",
 			PROCEDURE_VARIABLE_ARG_COUNT, output,
 			Proc_FulltextCreateNodeIdxStep, Proc_FulltextCreateNodeIdxInvoke,
-			NULL, NULL, false);
+			NULL, NULL, false, "Builds a full-text searchable index on a label and the 1 or more specified properties.");
 }
 
