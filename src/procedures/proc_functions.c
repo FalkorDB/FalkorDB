@@ -22,8 +22,8 @@ typedef struct {
     SIValue *yield_name;                  // yield name
     SIValue *yield_signature;             // yield the function signature in the format name: t1 ... tn -> tn+1
     SIValue *yield_description;           // yield document string
-    SIValue *yield_return_description;    // yield the description of the return value of the function
-    SIValue *yield_argument_description;  // yield the description of the function arguments
+    SIValue *yield_return_type;           // yield the return type of the function
+    SIValue *yield_arguments_type;        // yield the function arguments type
 } ProcFunctionsPrivateData;
 
 static void _process_yield
@@ -34,8 +34,8 @@ static void _process_yield
     ctx->yield_name                 = NULL;
     ctx->yield_signature            = NULL;
     ctx->yield_description          = NULL;
-    ctx->yield_return_description   = NULL;
-    ctx->yield_argument_description = NULL;
+    ctx->yield_return_type          = NULL;
+    ctx->yield_arguments_type       = NULL;
 
     int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
@@ -54,13 +54,13 @@ static void _process_yield
             idx++;
             continue;
         }
-        if(strcasecmp("return_description", yield[i]) == 0) {
-            ctx->yield_return_description = ctx->output + idx;
+        if(strcasecmp("return_type", yield[i]) == 0) {
+            ctx->yield_return_type = ctx->output + idx;
             idx++;
             continue;
         }
-        if(strcasecmp("argument_description", yield[i]) == 0) {
-            ctx->yield_argument_description = ctx->output + idx;
+        if(strcasecmp("arguments_type", yield[i]) == 0) {
+            ctx->yield_arguments_type = ctx->output + idx;
             idx++;
             continue;
         }
@@ -103,7 +103,8 @@ SIValue *Proc_FunctionsStep
 
     ProcFunctionsPrivateData *pdata = (ProcFunctionsPrivateData *)ctx->privateData;
 
-    
+    // looping over all the yield outputs for this function and yielding the data if requested
+    // filtering out internal functions.
     while(raxNext(&pdata->iter)){
 
         AR_FuncDesc *func = (AR_FuncDesc*)pdata->iter.data;
@@ -120,28 +121,30 @@ SIValue *Proc_FunctionsStep
             if(pdata->yield_description && func->description){
                 *pdata->yield_description = func->description ? SI_ConstStringVal(func->description) : SI_ConstStringVal("No description available");
             }
-            if(pdata->yield_return_description && func->ret_type){
+            if(pdata->yield_return_type && func->ret_type){
                 // get the return value description into buf
                 SIType_ToMultipleTypeStringSimple(func->ret_type, '|', buf, bufferLen);
-                *pdata->yield_return_description = SI_ConstStringVal(buf);
+                *pdata->yield_return_type = SI_ConstStringVal(buf);
             }
-            if(pdata->yield_argument_description && func->types){
+            if(pdata->yield_arguments_type && func->types){
                 int arg_count = array_len(func->types);
-                if(0 < arg_count){
-                    *pdata->yield_argument_description = SI_Array(arg_count);
+                if(0 < arg_count) {
+                    *pdata->yield_arguments_type = SI_Array(arg_count);
                     for (int i = 0; i < arg_count; i++) {
                         // get the argument description into buf
                         SIType_ToMultipleTypeStringSimple(func->types[i], '|', buf, bufferLen);
                         SIValue value = SI_ConstStringVal(buf);
-                        SIArray_Append(pdata->yield_argument_description, value);
+                        SIArray_Append(pdata->yield_arguments_type, value);
                     }
-                }else{
-                *pdata->yield_argument_description = SI_Array(0); 
+                } else {
+                    *pdata->yield_arguments_type = SI_Array(0); 
                 }
             }
+            // no more data to yield for this function return the output
             return pdata->output;
         }
     }
+    // this function is internal, skip it
     return NULL;
 }
 
@@ -167,14 +170,14 @@ ProcedureCtx *Proc_FunctionsCtx() {
     ProcedureOutput out_name = {.name = "name", .type = T_STRING};
     ProcedureOutput out_signature = {.name = "signature", .type = T_STRING};
     ProcedureOutput out_description = {.name = "description", .type = T_STRING};
-    ProcedureOutput out_return_description = {.name = "return_description", .type = T_STRING};
-    ProcedureOutput out_argument_description = {.name = "argument_description", .type = T_ARRAY};
+    ProcedureOutput out_return_type = {.name = "return_type", .type = T_STRING};
+    ProcedureOutput out_arguments_type = {.name = "arguments_type", .type = T_ARRAY};
 
     array_append(outputs, out_name);
     array_append(outputs, out_signature);
     array_append(outputs, out_description);
-    array_append(outputs, out_return_description);
-    array_append(outputs, out_argument_description);
+    array_append(outputs, out_return_type);
+    array_append(outputs, out_arguments_type);
 
     ProcedureCtx *ctx = ProcCtxNew("dbms.functions",
                                 0,
@@ -186,7 +189,3 @@ ProcedureCtx *Proc_FunctionsCtx() {
                                 true);
     return ctx;
 }
-
-
-
-

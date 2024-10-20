@@ -382,7 +382,7 @@ class testProcedures(FlowTestsBase):
         self.env.assertEquals(actual_len, 95)
 
     def test14_procedure_get_all_functions(self):
-        actual_resultset = self.graph.query("CALL dbms.functions() YIELD name, signature, description, return_description, argument_description RETURN name, signature, description, return_description, argument_description ORDER BY name").result_set
+        actual_resultset = self.graph.query("CALL dbms.functions() YIELD name, signature, description, return_type, arguments_type RETURN name, signature, description, return_type, arguments_type ORDER BY name").result_set
         actual_len = len(actual_resultset)
         self.env.assertEquals(actual_len, 95)
     

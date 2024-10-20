@@ -171,10 +171,6 @@ void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen);
 // Return the number of bytes written in this call
 size_t SIType_ToMultipleTypeStringSimple(SIType t, char seperator, char *buf, size_t bufferLen);
 
-// format into buf the signature of a function with return type 'ret' and argument types 'args'
-// the format of the result is: 'name: t1 ... tn -> tn+1'
-void SITypes_SignatureToString(const char * fName, SIType ret, SIType *args, char *buf, size_t bufferLen);
-
 // Prints an SIValue to a given buffer, with length (bufferLen), sets bytesWritten to the actual length
 // of string representation
 // if there is not enough space for the value to be printed, the buffer will be re allocated with
