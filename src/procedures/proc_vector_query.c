@@ -405,7 +405,8 @@ ProcedureCtx *Proc_VectorQueryNodeCtx() {
 								   Proc_VectorQueryNodeInvoke,
 								   Proc_VectorKNNFree,
 								   NULL,
-								   true);
+								   true,
+                                   "");
 	return ctx;
 }
 
@@ -423,7 +424,8 @@ ProcedureCtx *Proc_VectorQueryRelCtx() {
 								   Proc_VectorQueryRelInvoke,
 								   Proc_VectorKNNFree,
 								   NULL,
-								   true);
+								   true,
+                                   "");
 	return ctx;
 }
 

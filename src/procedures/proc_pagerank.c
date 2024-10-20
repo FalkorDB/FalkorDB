@@ -234,7 +234,9 @@ ProcedureCtx *Proc_PagerankCtx() {
 								   Proc_PagerankInvoke,
 								   Proc_PagerankFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Runs the pagerank algorithm over nodes of given label, \
+considering only edges of given relationship type.");
 	return ctx;
 }
 

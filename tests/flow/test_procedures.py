@@ -321,8 +321,13 @@ class testProcedures(FlowTestsBase):
                            ["db.propertyKeys", "READ"], ["dbms.procedures", "READ"], ["db.relationshipTypes", "READ"],
                            ["algo.BFS", "READ"], ["algo.pageRank", "READ"], ["db.idx.fulltext.queryNodes", "READ"],
                            ["db.idx.fulltext.drop", "WRITE"]]
+        
+        # Remove the third element from each sub-array in actual_resultset
+        # Because testing the procedure documentation is will add too much noise in the future.
+        processed_resultset = [res[:2] for res in actual_resultset]
+        
         for res in expected_result:
-            self.env.assertContains(res, actual_resultset)
+            self.env.assertContains(res, processed_resultset)
 
     def test11_procedure_indexes(self):
         # Verify that the full-text index is reported properly.

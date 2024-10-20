@@ -737,6 +737,7 @@ ProcedureCtx *Proc_SSpathCtx() {
 								   Proc_SSpathsInvoke,
 								   Proc_SSpathsFree,
 								   privateData,
-								   true);
+								   true,
+                                   "");
 	return ctx;
 }

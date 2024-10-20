@@ -486,7 +486,10 @@ ProcedureCtx *Proc_IndexesCtx(void) {
 								   Proc_IndexesInvoke,
 								   Proc_IndexesFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Yield all indexes in the graph, denoting whether \
+they are exact-match or full-text and which label and properties each covers \
+and whether they are indexing node or relationship attributes.");
 	return ctx;
 }
 

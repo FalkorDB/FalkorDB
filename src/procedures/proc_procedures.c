@@ -15,10 +15,11 @@ extern rax *__procedures;
 // CALL dbms.procedures()
 
 typedef struct {
-	SIValue *output;      // array with a maximum of 2 entries: [name, mode]
-	raxIterator iter;     // procedures iterator
-	SIValue *yield_name;  // yield name
-	SIValue *yield_mode;  // yield mode
+	SIValue *output;             // array with a maximum of 2 entries: [name, mode]
+	raxIterator iter;            // procedures iterator
+	SIValue *yield_name;         // yield name
+	SIValue *yield_mode;         // yield mode
+    SIValue *yield_description;  // yield mode
 } ProcProceduresPrivateData;
 
 static void _process_yield
@@ -40,6 +41,11 @@ static void _process_yield
 			idx++;
 			continue;
 		}
+		if(strcasecmp("description", yield[i]) == 0) {
+			ctx->yield_description = ctx->output + idx;
+			idx++;
+			continue;
+		}
 	}
 }
 
@@ -57,7 +63,7 @@ ProcedureResult Proc_ProceduresInvoke
 	rax *procedures = __procedures;
 	raxStart(&pdata->iter, procedures);
 	raxSeek(&pdata->iter, "^", NULL, 0);
-	pdata->output = array_new(SIValue, 2);
+	pdata->output = array_new(SIValue, 3);
 	_process_yield(pdata, yield);
 
 	ctx->privateData = pdata;
@@ -84,6 +90,8 @@ SIValue *Proc_ProceduresStep
 	if(pdata->yield_mode) *pdata->yield_mode =
 			Procedure_IsReadOnly(curr_proc_ctx) ? SI_ConstStringVal("READ") :
 			SI_ConstStringVal("WRITE");
+    if(pdata->yield_description) *pdata->yield_description =
+            SI_ConstStringVal(Procedure_GetDescription(curr_proc_ctx));
 
 	Proc_Free(curr_proc_ctx);
 	return pdata->output;
@@ -106,11 +114,13 @@ ProcedureResult Proc_ProceduresFree
 ProcedureCtx *Proc_ProceduresCtx() {
 	void *privateData = NULL;
 
-	ProcedureOutput *outputs = array_new(ProcedureOutput, 2);
-	ProcedureOutput out_name = {.name = "name", .type = T_STRING};
-	ProcedureOutput out_mode = {.name = "mode", .type = T_STRING};
+	ProcedureOutput *outputs        = array_new(ProcedureOutput, 3);
+	ProcedureOutput out_name        = {.name = "name", .type = T_STRING};
+	ProcedureOutput out_mode        = {.name = "mode", .type = T_STRING};
+    ProcedureOutput out_description = {.name = "description", .type = T_STRING};
 	array_append(outputs, out_name);
 	array_append(outputs, out_mode);
+    array_append(outputs, out_description);
 
 	ProcedureCtx *ctx = ProcCtxNew("dbms.procedures",
 								   0,
@@ -119,7 +129,9 @@ ProcedureCtx *Proc_ProceduresCtx() {
 								   Proc_ProceduresInvoke,
 								   Proc_ProceduresFree,
 								   privateData,
-								   true);
+								   true,
+                                   "List all procedures in the DBMS, yields for every procedure its name, \
+mode (read/write) and description.");
 	return ctx;
 }
 

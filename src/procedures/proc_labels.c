@@ -86,7 +86,8 @@ ProcedureCtx *Proc_LabelsCtx() {
 								   Proc_LabelsInvoke,
 								   Proc_LabelsFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Yields all node labels in the graph.");
 	return ctx;
 }
 

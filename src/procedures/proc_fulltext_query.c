@@ -166,7 +166,8 @@ ProcedureCtx *Proc_FulltextQueryNodeGen() {
 								   Proc_FulltextQueryNodeInvoke,
 								   Proc_FulltextQueryNodeFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Retrieve all nodes that contain the specified string in the full-text indexes on the given label.");
 	return ctx;
 }
 

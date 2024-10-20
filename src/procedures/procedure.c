@@ -56,7 +56,8 @@ ProcedureCtx *ProcCtxNew(const char *name,
 						 ProcInvoke fInvoke,
 						 ProcFree fFree,
 						 void *privateData,
-						 bool readOnly) {
+						 bool readOnly,
+                         const char *description) {
 
 	ProcedureCtx *ctx = rm_malloc(sizeof(ProcedureCtx));
 
@@ -68,6 +69,7 @@ ProcedureCtx *ProcCtxNew(const char *name,
 	ctx->Invoke      = fInvoke;
 	ctx->privateData = privateData;
 	ctx->readOnly    = readOnly;
+    ctx->description = description;
 
 	return ctx;
 }
@@ -152,6 +154,11 @@ const char *Procedure_GetName(const ProcedureCtx *proc) {
 bool Procedure_IsReadOnly(const ProcedureCtx *proc) {
 	ASSERT(proc != NULL);
 	return proc->readOnly;
+}
+
+const char *Procedure_GetDescription(const ProcedureCtx *proc) {
+    ASSERT(proc != NULL);
+    return proc->description;
 }
 
 void Proc_Free(ProcedureCtx *proc) {
