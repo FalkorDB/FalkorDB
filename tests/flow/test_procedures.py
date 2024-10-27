@@ -386,9 +386,8 @@ class testProcedures(FlowTestsBase):
         actual_len = len(actual_resultset)
         self.env.assertEquals(actual_len, 95)
     
-        expected_first_result = ["abs", 
-                                 "abs: Integer|Float -> Integer|Float",
-                                 "Returns the absolute value of a numeric value\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the absolute value",
-                                 "List|Null", 
-                                 "[Integer|Float]"]
-        self.env.assertEquals(actual_resultset[0][0], "abs")            
+        expected_first_result = ['abs', 'abs: Integer|Float -> Integer|Float', 'Returns the absolute value of a numeric value\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the absolute value', 'List|Null', ['Integer|Float']]
+        expected_second_result = ['acos', 'acos: Integer|Float -> Float|Null', 'Returns the arccosine, in radians, of a numeric value\nReturns nan when expr evaluates to a numeric value not in [-1, 1] and null when expr evaluates to null', 'List|Null', ['Integer|Float']]
+
+        self.env.assertEquals(actual_resultset[0], expected_first_result)   
+        self.env.assertEquals(actual_resultset[1], expected_second_result)          
