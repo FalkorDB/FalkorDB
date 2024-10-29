@@ -52,7 +52,6 @@ typedef struct {
 	// makes the whole header fit in 64 bit
 	uint32_t cap;
 	uint32_t elem_sz;
-  uint32_t pad;
 	char buf[];
 } array_hdr_t;
 
