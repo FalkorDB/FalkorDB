@@ -97,14 +97,14 @@ static ProcedureResult Proc_BFS_Invoke
 	GraphContext  *gc  =  QueryCtx_GetGraphCtx();
 
 	if(reltype == NULL) {
-		Delta_Matrix_export(&R, Graph_GetAdjacencyMatrix(gc->g, false));
+		Delta_Matrix_export(&R, Graph_GetAdjacencyMatrix(gc->g));
 	} else {
 		Schema *s = GraphContext_GetSchema(gc, reltype, SCHEMA_EDGE);
 		// failed to find schema, first step will return NULL
 		if(!s) return PROCEDURE_OK;
 
 		bfs_ctx->reltype_id = s->id;
-		Delta_Matrix_export(&R, Graph_GetRelationMatrix(gc->g, s->id, false));
+		Delta_Matrix_export(&R, Graph_GetRelationMatrix(gc->g, s->id));
 	}
 
 	// if we're not collecting edges, pass a NULL parent pointer

@@ -9,8 +9,7 @@
 #include "GraphBLAS.h"
 
 // forward declaration of Delta_Matrix type
-typedef struct _Delta_Matrix _Delta_Matrix;
-typedef _Delta_Matrix *Delta_Matrix;
+typedef struct _Delta_Matrix *Delta_Matrix;
 
 
 //------------------------------------------------------------------------------
@@ -147,7 +146,8 @@ GrB_Info Delta_mxm                     // C = A * B
 	Delta_Matrix C,                    // input/output matrix for results
 	const GrB_Semiring semiring,       // defines '+' and '*' for A*B
 	const Delta_Matrix A,              // first input:  matrix A
-	const Delta_Matrix B               // second input: matrix B
+	const Delta_Matrix B,              // second input: matrix B
+	GrB_Descriptor desc                // descriptor for C=A*B
 );
 
 GrB_Info Delta_eWiseAdd                // C = A + B
@@ -155,7 +155,8 @@ GrB_Info Delta_eWiseAdd                // C = A + B
     Delta_Matrix C,                    // input/output matrix for results
     const GrB_Semiring semiring,       // defines '+' for T=A+B
     const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B               // second input: matrix B
+    const Delta_Matrix B,              // second input: matrix B
+	GrB_Descriptor desc                // descriptor for C=A+B
 );
 
 GrB_Info Delta_Matrix_clear    // clear a matrix of all entries;

@@ -38,13 +38,10 @@ QueryGraph *qg;
 // Matrices.
 Delta_Matrix mat_p;
 Delta_Matrix mat_ef;
-Delta_Matrix mat_tef;
 Delta_Matrix mat_f;
 Delta_Matrix mat_ev;
-Delta_Matrix mat_tev;
 Delta_Matrix mat_c;
 Delta_Matrix mat_ew;
-Delta_Matrix mat_tew;
 Delta_Matrix mat_e;
 rax *_matrices;
 
@@ -151,16 +148,13 @@ static void _bind_matrices() {
 	mat_e = Graph_GetLabelMatrix(g, mat_id);
 
 	mat_id = GraphContext_GetSchema(gc, "friend", SCHEMA_EDGE)->id;
-	mat_ef = Graph_GetRelationMatrix(g, mat_id, false);
-	mat_tef = Graph_GetRelationMatrix(g, mat_id, true);
+	mat_ef = Graph_GetRelationMatrix(g, mat_id);
 
 	mat_id = GraphContext_GetSchema(gc, "visit", SCHEMA_EDGE)->id;
-	mat_ev = Graph_GetRelationMatrix(g, mat_id, false);
-	mat_tev = Graph_GetRelationMatrix(g, mat_id, true);
+	mat_ev = Graph_GetRelationMatrix(g, mat_id);
 
 	mat_id = GraphContext_GetSchema(gc, "war", SCHEMA_EDGE)->id;
-	mat_ew = Graph_GetRelationMatrix(g, mat_id, false);
-	mat_tew = Graph_GetRelationMatrix(g, mat_id, true);
+	mat_ew = Graph_GetRelationMatrix(g, mat_id);
 
 	GrB_Matrix dummy_matrix;
 	GrB_Matrix_new(&dummy_matrix, GrB_BOOL, 2, 2);
@@ -172,9 +166,6 @@ static void _bind_matrices() {
 	raxInsert(_matrices, (unsigned char *)"F", strlen("F"), mat_ef, NULL);
 	raxInsert(_matrices, (unsigned char *)"V", strlen("V"), mat_ev, NULL);
 	raxInsert(_matrices, (unsigned char *)"W", strlen("W"), mat_ew, NULL);
-	raxInsert(_matrices, (unsigned char *)"tF", strlen("tF"), mat_tef, NULL);
-	raxInsert(_matrices, (unsigned char *)"tV", strlen("tV"), mat_tev, NULL);
-	raxInsert(_matrices, (unsigned char *)"tW", strlen("tW"), mat_tew, NULL);
 	raxInsert(_matrices, (unsigned char *)"A", strlen("A"), dummy_matrix, NULL);
 	raxInsert(_matrices, (unsigned char *)"B", strlen("B"), dummy_matrix, NULL);
 	raxInsert(_matrices, (unsigned char *)"C", strlen("C"), dummy_matrix, NULL);
@@ -733,7 +724,7 @@ void test_Exp_OP_ADD_Transpose() {
 	// Matrix used for intermidate computations of AlgebraicExpression_Eval
 	// but also contains the result of expression evaluation.
 	Delta_Matrix_new(&res, GrB_BOOL, n, n, false);
-	AlgebraicExpression *exp = AlgebraicExpression_FromString("V+tV", _matrices);
+	AlgebraicExpression *exp = AlgebraicExpression_FromString("V+TV", _matrices);
 	AlgebraicExpression_Eval(exp, res);
 
 	// Using the A matrix described above,
@@ -787,7 +778,7 @@ void test_Exp_OP_MUL_Transpose() {
 	Delta_Matrix_new(&res, GrB_BOOL, n, n, false);
 
 	// Transpose(A) * A
-	AlgebraicExpression *exp = AlgebraicExpression_FromString("V*tV", _matrices);
+	AlgebraicExpression *exp = AlgebraicExpression_FromString("V*TV", _matrices);
 	AlgebraicExpression_Eval(exp, res);
 
 	// Using the A matrix described above,
@@ -1160,7 +1151,7 @@ void test_BothDirections() {
 	TEST_ASSERT(exp_count == 1);
 
 	AlgebraicExpression *expected[1];
-	expected[0] = AlgebraicExpression_FromString("p*F*f*tV*c*W*e", _matrices);
+	expected[0] = AlgebraicExpression_FromString("p*F*f*T(V)*c*W*e", _matrices);
 	compare_algebraic_expressions(actual, expected, 1);
 
 	// Clean up.
@@ -1212,7 +1203,7 @@ void test_ShareableEntity() {
 	exp_count = array_len(actual);
 	TEST_ASSERT(exp_count == 1);
 
-	expected[0] = AlgebraicExpression_FromString("e*W*c*V*f*tF*p", _matrices);
+	expected[0] = AlgebraicExpression_FromString("e*W*c*V*f*T(F)*p", _matrices);
 	compare_algebraic_expressions(actual, expected, 1);
 
 	// Clean up.
@@ -1242,7 +1233,7 @@ void test_ShareableEntity() {
 	exp_count = array_len(actual);
 	TEST_ASSERT(exp_count == 1);
 
-	expected[0] = AlgebraicExpression_FromString("p*F*p*tF*p", _matrices);
+	expected[0] = AlgebraicExpression_FromString("p*F*p*T(F)*p", _matrices);
 	compare_algebraic_expressions(actual, expected, 1);
 
 	// Clean up.
@@ -1259,7 +1250,7 @@ void test_ShareableEntity() {
 	TEST_ASSERT(exp_count == 3);
 
 	expected[0] = AlgebraicExpression_FromString("p*F*p", _matrices);
-	expected[1] = AlgebraicExpression_FromString("tF*p", _matrices);
+	expected[1] = AlgebraicExpression_FromString("T(F)*p", _matrices);
 	expected[2] = AlgebraicExpression_FromString("p*F*p", _matrices);
 	compare_algebraic_expressions(actual, expected, 3);
 
@@ -1276,7 +1267,7 @@ void test_ShareableEntity() {
 	exp_count = array_len(actual);
 	TEST_ASSERT(exp_count == 3);
 
-	expected[0] = AlgebraicExpression_FromString("p*tF*p", _matrices);
+	expected[0] = AlgebraicExpression_FromString("p*T(F)*p", _matrices);
 	expected[1] = AlgebraicExpression_FromString("F*p", _matrices);
 	expected[2] = AlgebraicExpression_FromString("F*p", _matrices);
 	compare_algebraic_expressions(actual, expected, 3);
@@ -1426,7 +1417,7 @@ void test_ShareableEntity() {
 	exp_count = array_len(actual);
 	TEST_ASSERT(exp_count == 4);
 
-	expected[0] = AlgebraicExpression_FromString("tF", _matrices);
+	expected[0] = AlgebraicExpression_FromString("TF", _matrices);
 	expected[1] = AlgebraicExpression_FromString("F", _matrices);
 	expected[2] = AlgebraicExpression_FromString("F*F*F", _matrices);
 	expected[3] = AlgebraicExpression_FromString("F", _matrices);
@@ -1445,7 +1436,7 @@ void test_ShareableEntity() {
 	exp_count = array_len(actual);
 	TEST_ASSERT(exp_count == 6);
 
-	expected[0] = AlgebraicExpression_FromString("tF", _matrices);
+	expected[0] = AlgebraicExpression_FromString("TF", _matrices);
 	expected[1] = AlgebraicExpression_FromString("F", _matrices);
 	expected[2] = AlgebraicExpression_FromString("F", _matrices);
 	expected[3] = AlgebraicExpression_FromString("F", _matrices);
@@ -1488,7 +1479,7 @@ void test_VariableLength() {
 	TEST_ASSERT(exp_count == 3);
 
 	expected[0] = AlgebraicExpression_FromString("p*F*f", _matrices);
-	expected[1] = AlgebraicExpression_FromString("tV", _matrices);
+	expected[1] = AlgebraicExpression_FromString("TV", _matrices);
 	expected[2] = AlgebraicExpression_FromString("c*W*e", _matrices);
 	compare_algebraic_expressions(actual, expected, 3);
 
@@ -1759,7 +1750,6 @@ void test_LocateOperand() {
 	AlgebraicExpression  *B       =  NULL;
 	AlgebraicExpression  *r       =  NULL;
 	AlgebraicExpression  *op      =  NULL;
-	AlgebraicExpression  *p       =  NULL;
 
 	// ( T(A) * B )
 	A = AlgebraicExpression_NewOperand(mat, false, "a", "b", "e0", NULL);
@@ -1770,7 +1760,7 @@ void test_LocateOperand() {
 	AlgebraicExpression_AddChild(r, B);
 
 	// search for A operand
-	located = AlgebraicExpression_LocateOperand(r, &op, &p, "a", "b", "e0", NULL);
+	located = AlgebraicExpression_LocateOperand(r, &op, "a", "b", "e0", NULL);
 
 	// validate located operand
 	TEST_ASSERT(located);
@@ -1779,16 +1769,13 @@ void test_LocateOperand() {
 	TEST_ASSERT(strcmp(op->operand.dest, "b") == 0);
 	TEST_ASSERT(strcmp(op->operand.edge, "e0") == 0);
 
-	TEST_ASSERT(p->type == AL_OPERATION);
-	TEST_ASSERT(p->operation.op == AL_EXP_TRANSPOSE);
-
 	// search for none existing operand
-	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, &p, "x", "b", "e0", NULL));
-	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, &p, "a", "x", "e0", NULL));
-	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, &p, "a", "b", "x", NULL));
-	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, &p, NULL, "b", "e0", NULL));
-	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, &p, "a", NULL, "e0", NULL));
-	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, &p, "a", "b", NULL, NULL));
+	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, "x", "b", "e0", NULL));
+	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, "a", "x", "e0", NULL));
+	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, "a", "b", "x", NULL));
+	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, NULL, "b", "e0", NULL));
+	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, "a", NULL, "e0", NULL));
+	TEST_ASSERT(!AlgebraicExpression_LocateOperand(r, &op, "a", "b", NULL, NULL));
 
 	AlgebraicExpression_Free(r);
 }

@@ -312,7 +312,7 @@ void RdbSaveEdges_v15
 	TensorIterator *iter =
 		GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
 	if(r < relation_count) {
-		Delta_Matrix R = Graph_GetRelationMatrix(gc->g, r, false);
+		Tensor R = Graph_GetRelationMatrix(gc->g, r);
 
 		if(!TensorIterator_is_attached(iter, R)) {
 			TensorIterator_ScanRange(iter, R, 0, UINT64_MAX, false);
@@ -337,7 +337,7 @@ void RdbSaveEdges_v15
 			if(r == relation_count) goto finish;
 
 			// get matrix and set iterator
-			Delta_Matrix R = Graph_GetRelationMatrix(gc->g, r, false);
+			Tensor R = Graph_GetRelationMatrix(gc->g, r);
 
 			TensorIterator_ScanRange(iter, R, 0, UINT64_MAX, false);
 			depleted = !TensorIterator_next(iter, &src, &dest, &edgeID);

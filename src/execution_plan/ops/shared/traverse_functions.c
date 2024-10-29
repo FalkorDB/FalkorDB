@@ -62,20 +62,16 @@ static GRAPH_EDGE_DIR _Traverse_SetDirection
 
 	// push down transpose operations to individual operands
 	AlgebraicExpression_PushDownTranspose(ae);
-	AlgebraicExpression *parent = NULL;
 	AlgebraicExpression *operand = NULL;
 
 	// locate operand representing the referenced edge
-	bool located = AlgebraicExpression_LocateOperand(ae, &operand, &parent,
+	bool located = AlgebraicExpression_LocateOperand(ae, &operand,
 			e->src->alias, e->dest->alias, e->alias, NULL);
 	ASSERT(located == true);
 
-	// if parent exists and it is a transpose operation, edge is reversed
-	if(parent != NULL) {
-		ASSERT(parent->type == AL_OPERATION);
-		if(parent->operation.op == AL_EXP_TRANSPOSE) {
-			dir = GRAPH_EDGE_DIR_INCOMING;
-		}
+	// if it is a transpose operation, edge is reversed
+	if(operand->operand.transpose) {
+		dir = GRAPH_EDGE_DIR_INCOMING;
 	}
 
 	return dir;

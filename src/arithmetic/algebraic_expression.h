@@ -36,6 +36,7 @@ struct AlgebraicExpression {
 		struct {
 			bool bfree;                 // should matrix be free
 			bool diagonal;              // diagonal matrix
+			bool transpose;             // transpose matrix
 			const char *src;            // alias given to operand's rows
 			const char *dest;           // alias given to operand's columns
 			const char *edge;           // alias given to operand (edge)
@@ -228,13 +229,11 @@ Delta_Matrix AlgebraicExpression_Eval
 
 // locates operand based on row,column domain and edge or label
 // sets 'operand' if found otherwise set it to NULL
-// sets 'parent' if requested, parent can still be set to NULL
 // if 'root' is the seeked operand
 bool AlgebraicExpression_LocateOperand
 (
 	AlgebraicExpression *root,       // Root to search
 	AlgebraicExpression **operand,   // [output] set to operand, NULL if missing
-	AlgebraicExpression **parent,    // [output] set to operand parent
 	const char *row_domain,          // operand row domain
 	const char *column_domain,       // operand column domain
 	const char *edge,                // operand edge name

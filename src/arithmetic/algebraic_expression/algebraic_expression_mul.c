@@ -28,10 +28,11 @@ Delta_Matrix _Eval_Mul
 
 	UNUSED(info) ;
 
-	Delta_Matrix     A          =  NULL                                 ; 
+	Delta_Matrix  A             =  NULL                                 ; 
 	bool          res_modified  =  false                                ;
 	GrB_Semiring  semiring      =  GxB_ANY_PAIR_BOOL                    ;
 	uint          child_count   =  AlgebraicExpression_ChildCount(exp)  ;
+	GrB_Descriptor desc         =  GrB_NULL                             ;
 
 	for(uint i = 0; i < child_count; i++) {
 		c = CHILD_AT(exp, i) ;
@@ -42,11 +43,18 @@ Delta_Matrix _Eval_Mul
 		// first time A is set
 		if(A == NULL) {
 			A = M ;
+			if(c->operand.transpose) {
+				desc = GrB_DESC_T0 ;
+			}
 			continue ;
 		}
 
+		desc = c->operand.transpose
+			? GrB_DESC_T1
+			: GrB_NULL ;
+
 		// both A and M are valid matrices, perform multiplication
-		info = Delta_mxm(res, semiring, A, M) ;
+		info = Delta_mxm(res, semiring, A, M, desc) ;
 		res_modified = true ;
 		// setup for next iteration
 		A = res ;

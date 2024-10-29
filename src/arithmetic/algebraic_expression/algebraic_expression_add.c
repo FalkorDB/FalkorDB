@@ -21,10 +21,11 @@ Delta_Matrix _Eval_Add
 	GrB_Index nrows;                   // number of rows of operand
 	GrB_Index ncols;                   // number of columns of operand
 
-	bool        res_in_use  =  false;  //  can we use `res` for intermediate evaluation
+	bool           res_in_use  =  false;  //  can we use `res` for intermediate evaluation
 	Delta_Matrix   A           =  NULL;   //  left operand
 	Delta_Matrix   B           =  NULL;   //  right operand
 	Delta_Matrix   inter       =  NULL;   //  intermediate matrix
+	GrB_Descriptor desc        =  GrB_NULL;
 
 	// get left and right operands
 	AlgebraicExpression *left = CHILD_AT(exp, 0);
@@ -37,6 +38,9 @@ Delta_Matrix _Eval_Add
 		res_in_use = true;
 	} else {
 		A = left->operand.matrix;
+		desc = left->operand.transpose
+			? GrB_DESC_T0
+			: GrB_NULL;
 	}
 
 	// if right operand is a matrix, simply get it
@@ -56,22 +60,29 @@ Delta_Matrix _Eval_Add
 		}
 	} else {
 		B = right->operand.matrix;
+		desc = right->operand.transpose
+			? desc == GrB_DESC_T0
+				? GrB_DESC_T0T1
+				: GrB_DESC_T1
+			: desc;
 	}
 
 	//--------------------------------------------------------------------------
 	// perform addition
 	//--------------------------------------------------------------------------
 
-	info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, A, B);
+	info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, A, B, desc);
 	ASSERT(info == GrB_SUCCESS);
 
 	uint child_count = AlgebraicExpression_ChildCount(exp);
+	desc = GrB_NULL;
 	// expression has more than 2 operands, e.g. A+B+C...
 	for(uint i = 2; i < child_count; i++) {
 		right = CHILD_AT(exp, i);
 
 		if(right->type == AL_OPERAND) {
 			B = right->operand.matrix;
+			desc = right->operand.transpose ? GrB_DESC_T1 : GrB_NULL;
 		} else {
 			// 'right' represents either + or * operation
 			if(inter == NULL) {
@@ -86,7 +97,7 @@ Delta_Matrix _Eval_Add
 		}
 
 		// perform addition
-		info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, res, B);
+		info = Delta_eWiseAdd(res, GxB_ANY_PAIR_BOOL, res, B, desc);
 		ASSERT(info == GrB_SUCCESS);
 	}
 

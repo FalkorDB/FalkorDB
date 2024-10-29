@@ -171,7 +171,7 @@ AlgebraicExpression *AlgebraicExpression_NewOperation
 // Create a new AlgebraicExpression operand node
 AlgebraicExpression *AlgebraicExpression_NewOperand
 (
-	Delta_Matrix mat,      // Matrix
+	Delta_Matrix mat,   // Matrix
 	bool diagonal,      // Is operand a diagonal matrix?
 	const char *src,    // Operand row domain (src node)
 	const char *dest,   // Operand column domain (destination node)
@@ -188,6 +188,7 @@ AlgebraicExpression *AlgebraicExpression_NewOperand
 	node->operand.bfree       =  false;
 	node->operand.diagonal    =  diagonal;
 	node->operand.matrix      =  mat;
+	node->operand.transpose   =  false;
 
 	return node;
 }
@@ -327,6 +328,10 @@ bool AlgebraicExpression_Transposed
 		n = FIRST_CHILD(n);
 	}
 
+	if(n->type == AL_OPERAND && n->operand.transpose) {
+		transposed = !transposed;
+	}
+
 	// TODO: handle cases such as T(A) + T(B).
 	return transposed;
 }
@@ -370,7 +375,6 @@ bool _AlgebraicExpression_LocateOperand
 	AlgebraicExpression *root,      // Root to search
 	AlgebraicExpression *proot,     // Root to search
 	AlgebraicExpression **operand,  // [output] set to operand
-	AlgebraicExpression **parent,   // [output] set to operand parent
 	const char *row_domain,         // operand row domain
 	const char *column_domain,      // operand column domain
 	const char *edge,               // operand edge name
@@ -414,7 +418,6 @@ bool _AlgebraicExpression_LocateOperand
 
 		// found seeked operand
 		*operand = root;
-		if(parent != NULL) *parent = proot;
 		return true;
 	}
 
@@ -422,7 +425,7 @@ bool _AlgebraicExpression_LocateOperand
 		uint child_count = AlgebraicExpression_ChildCount(root);
 		for(uint i = 0; i < child_count; i++) {
 			AlgebraicExpression *child = CHILD_AT(root, i);
-			if(_AlgebraicExpression_LocateOperand(child, root, operand, parent,
+			if(_AlgebraicExpression_LocateOperand(child, root, operand,
 						row_domain, column_domain, edge, label)) {
 				return true;
 			}
@@ -436,7 +439,6 @@ bool AlgebraicExpression_LocateOperand
 (
 	AlgebraicExpression *root,       // Root to search
 	AlgebraicExpression **operand,   // [output] set to operand, NULL if missing
-	AlgebraicExpression **parent,    // [output] set to operand parent
 	const char *row_domain,          // operand row domain
 	const char *column_domain,       // operand column domain
 	const char *edge,                // operand edge name
@@ -447,9 +449,8 @@ bool AlgebraicExpression_LocateOperand
 	ASSERT(!(edge && label));
 
 	*operand = NULL;
-	if(parent) *parent = NULL;
 
-	return _AlgebraicExpression_LocateOperand(root, NULL, operand, parent,
+	return _AlgebraicExpression_LocateOperand(root, NULL, operand,
 			row_domain, column_domain, edge, label);
 }
 
