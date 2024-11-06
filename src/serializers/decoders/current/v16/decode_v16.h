@@ -14,35 +14,31 @@ GraphContext *RdbLoadGraphContext_latest
 	const RedisModuleString *rm_key_name
 );
 
-void RdbLoadNodes_v15
+void RdbLoadNodes_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t node_count
+	GraphContext *gc
 );
 
-void RdbLoadDeletedNodes_v15
+void RdbLoadDeletedNodes_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t deleted_node_count
+	GraphContext *gc
 );
 
-void RdbLoadEdges_v15
+void RdbLoadEdges_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t edge_count
+	GraphContext *gc
 );
 
-void RdbLoadDeletedEdges_v15
+void RdbLoadDeletedEdges_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t deleted_edge_count
+	GraphContext *gc
 );
 
-void RdbLoadGraphSchema_v15
+void RdbLoadGraphSchema_v16
 (
 	SerializerIO rdb,
 	GraphContext *gc,

@@ -9,4 +9,5 @@
 #include "v12/decode_v12.h"
 #include "v13/decode_v13.h"
 #include "v14/decode_v14.h"
+#include "v15/decode_v15.h"
 

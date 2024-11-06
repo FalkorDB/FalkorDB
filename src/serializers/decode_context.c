@@ -12,10 +12,12 @@
 
 GraphDecodeContext *GraphDecodeContext_New() {
 	GraphDecodeContext *ctx = rm_malloc(sizeof(GraphDecodeContext));
-	ctx->keys_processed = 0;
+
+	ctx->keys_processed   = 0;
 	ctx->graph_keys_count = 1;
-	ctx->meta_keys = raxNew();
-	ctx->multi_edge = NULL;
+	ctx->meta_keys        = raxNew();
+	ctx->multi_edge       = NULL;
+
 	return ctx;
 }
 

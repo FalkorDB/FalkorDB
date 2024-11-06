@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v15.h"
+#include "encode_v16.h"
 #include "../../../datatypes/datatypes.h"
 
 // forword decleration
@@ -153,7 +153,25 @@ static void _RdbSaveEdge
 	_RdbSaveEntity(rdb, (GraphEntity *)e);
 }
 
-static void _RdbSaveNode_v15
+// encode a node end marker denoting the end of a set of encoded nodes
+static void _RdbSaveNodeEndMarker
+(
+	SerializerIO rdb
+) {
+	// save node end marker
+	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
+}
+
+// encode an edge end marker denoting the end of a set of encoded edges
+static void _RdbSaveEdgeEndMarker
+(
+	SerializerIO rdb
+) {
+	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
+}
+
+// encode a single node
+static void _RdbSaveNode_v16
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -176,65 +194,88 @@ static void _RdbSaveNode_v15
 	SerializerIO_WriteUnsigned(rdb, l_count);
 
 	// save labels
-	for(uint i = 0; i < l_count; i++) SerializerIO_WriteUnsigned(rdb, labels[i]);
+	for(uint i = 0; i < l_count; i++) {
+		SerializerIO_WriteUnsigned(rdb, labels[i]);
+	}
 
 	// properties N
 	// (name, value type, value) X N
 	_RdbSaveEntity(rdb, (GraphEntity *)n);
 }
 
-static void _RdbSaveDeletedEntities_v15
+// encode deleted entities IDs
+static void _RdbSaveDeletedEntities_v16
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t deleted_entities_to_encode,
+	uint64_t n,
+	uint64_t offset,
 	uint64_t *deleted_id_list
 ) {
-	// Get the number of deleted entities already encoded.
-	uint64_t offset = GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
+	ASSERT(n > 0);
 
-	// Iterated over the required range in the datablock deleted items.
-	for(uint64_t i = offset; i < offset + deleted_entities_to_encode; i++) {
+	// iterated over the required range in the datablock deleted items
+	for(uint64_t i = offset; i < offset + n; i++) {
 		SerializerIO_WriteUnsigned(rdb, deleted_id_list[i]);
 	}
 }
 
-void RdbSaveDeletedNodes_v15
+// encode deleted node IDs
+// return number of elements encoded
+uint64_t RdbSaveDeletedNodes_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t deleted_nodes_to_encode
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	uint64_t offset,   // offset
+	uint64_t n         // number of deleted nodes to encode
 ) {
 	// Format:
 	// node id X N
 
-	if(deleted_nodes_to_encode == 0) return;
+	ASSERT(n > 0);
+
 	// get deleted nodes list
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
-	_RdbSaveDeletedEntities_v15(rdb, gc, deleted_nodes_to_encode, deleted_nodes_list);
+	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_nodes_list);
+
+	// place end marker
+	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
+
+	return n;
 }
 
-void RdbSaveDeletedEdges_v15
+// encode deleted edges IDs
+// return number of elements encoded
+uint64_t RdbSaveDeletedEdges_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t deleted_edges_to_encode
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	uint64_t offset,   // offset
+	uint64_t n         // number of deleted edges to encode
 ) {
 	// Format:
 	// edge id X N
 
-	if(deleted_edges_to_encode == 0) return;
+	ASSERT(n > 0);
 
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
-	_RdbSaveDeletedEntities_v15(rdb, gc, deleted_edges_to_encode, deleted_edges_list);
+	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_edges_list);
+
+	// place end marker
+	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
+
+	return n;
 }
 
-void RdbSaveNodes_v15
+// encode nodes
+// returns number of nodes encoded
+uint64_t RdbSaveNodes_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t nodes_to_encode
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	uint64_t offset,   // iterator offset
+	uint64_t n         // number of nodes to encode
 ) {
 	// Format:
 	// Node Format * nodes_to_encode:
@@ -244,100 +285,106 @@ void RdbSaveNodes_v15
 	//  #properties N
 	//  (name, value type, value) X N
 
-	if(nodes_to_encode == 0) return;
+	ASSERT(n != 0);
+
 	// get graph's node count
 	uint64_t graph_nodes = Graph_NodeCount(gc->g);
-	// get the number of nodes already encoded
-	uint64_t offset = GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
 
 	// get datablock iterator from context,
 	// already set to offset by a previous encodeing of nodes, or create new one
-	DataBlockIterator *iter = GraphEncodeContext_GetDatablockIterator(gc->encoding_context);
+	DataBlockIterator *iter =
+		GraphEncodeContext_GetDatablockIterator(gc->encoding_context);
 	if(!iter) {
 		iter = Graph_ScanNodes(gc->g);
 		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
 	}
 
-	for(uint64_t i = 0; i < nodes_to_encode; i++) {
+	for(uint64_t i = 0; i < n; i++) {
 		GraphEntity e;
 		e.attributes = (AttributeSet *)DataBlockIterator_Next(iter, &e.id);
-		_RdbSaveNode_v15(rdb, gc, &e);
+		_RdbSaveNode_v16(rdb, gc, &e);
 	}
 
 	// check if done encodeing nodes
-	if(offset + nodes_to_encode == graph_nodes) {
+	if(offset + n == graph_nodes) {
 		DataBlockIterator_Free(iter);
 		iter = NULL;
 		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
 	}
+
+	// place end marker
+	_RdbSaveNodeEndMarker(rdb);
+
+	return n;
 }
 
-void RdbSaveEdges_v15
+// encode edges
+// returns number of encoded edges.
+uint64_t RdbSaveEdges_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t edges_to_encode
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	uint64_t offset,   // offset
+	uint64_t n         // number of edges to encode
 ) {
 	// Format:
-	// Edge format * edges_to_encode:
+	// Edge format:
 	//  edge ID
 	//  source node ID
 	//  destination node ID
 	//  relation type
 	//  edge properties
+	//  END MARKER
+	
+	ASSERT(n > 0);
 
-	bool depleted;
-
-	if(edges_to_encode == 0) return;
-
-	// get graph's edge count
-	uint64_t graph_edges = Graph_EdgeCount(gc->g);
-
-	// get the number of edges already encoded
-	uint64_t offset = GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
+	// number of relationship matrices in the graph
+	int relations_count = Graph_RelationTypeCount(gc->g);
 
 	// count the edges that will be encoded in this phase
 	uint64_t encoded_edges = 0;
 
-	// get current relation matrix
-	uint r = GraphEncodeContext_GetCurrentRelationID(gc->encoding_context);
-
-	NodeID src;
-	NodeID dest;
+	Delta_Matrix R;       // current relation matrix
+	Edge         e;       // current edge
+	NodeID       src;     // edge source node id
+	NodeID       dest;    // edge destination node id
+	EdgeID       edgeID;  // edge id
 
 	// get matrix tuple iterator from context
 	// already set to the next entry to fetch
 	// for previous edge encide or create new one
-	uint relation_count = Graph_RelationTypeCount(gc->g);
 	TensorIterator *iter =
 		GraphEncodeContext_GetMatrixTupleIterator(gc->encoding_context);
-	if(r < relation_count) {
-		Delta_Matrix R = Graph_GetRelationMatrix(gc->g, r, false);
 
+	// get current relation matrix
+	uint r = GraphEncodeContext_GetCurrentRelationID(gc->encoding_context);
+
+	// first relationship matrix
+	if(r == 0) {
+		R = Graph_GetRelationMatrix(gc->g, r, false);
+
+		// attach iterator if not already attached
 		if(!TensorIterator_is_attached(iter, R)) {
 			TensorIterator_ScanRange(iter, R, 0, UINT64_MAX, false);
 		}
 	}
 
-	// write the required number of edges
-	while(encoded_edges < edges_to_encode) {
-		Edge e;
-		EdgeID edgeID;
+	//--------------------------------------------------------------------------
+	// encode edges
+	//--------------------------------------------------------------------------
 
+	while(encoded_edges < n) {
 		// try to get next tuple
-		depleted = !TensorIterator_next(iter, &src, &dest, &edgeID);
+		bool depleted = !TensorIterator_next(iter, &src, &dest, &edgeID);
 
 		// if iterator is depleted
-		// get new tuple from different matrix or finish encode
+		// get new tuple from different matrix or finish encoding
 		while(depleted) {
-			// proceed to next relation matrix
-			r++;
-
 			// if done iterating over all the matrices, jump to finish
-			if(r == relation_count) goto finish;
+			if(++r == relations_count) goto finish;
 
 			// get matrix and set iterator
-			Delta_Matrix R = Graph_GetRelationMatrix(gc->g, r, false);
+			R = Graph_GetRelationMatrix(gc->g, r, false);
 
 			TensorIterator_ScanRange(iter, R, 0, UINT64_MAX, false);
 			depleted = !TensorIterator_next(iter, &src, &dest, &edgeID);
@@ -345,19 +392,56 @@ void RdbSaveEdges_v15
 		
 		ASSERT(!depleted);
 
-		e.src_id = src;
+		// set edge endpoints
+		e.src_id  = src;
 		e.dest_id = dest;
+
+		// get edge attribute set
 		Graph_GetEdge(gc->g, edgeID, &e);
+
+		// encode edge
 		_RdbSaveEdge(rdb, gc->g, &e, r);
+
 		encoded_edges++;
 	}
 
+	// we want to stop encoding right at the begining of a new row
+	// and so continue encoding edges until a new row is encountered
+	NodeID prev_src = e.src_id;
+	while(TensorIterator_next(iter, &src, &dest, &edgeID)) {
+		// same row
+		if(src == prev_src) {
+			// set edge endpoints
+			e.src_id  = src;
+			e.dest_id = dest;
+
+			// get edge attribute set
+			Graph_GetEdge(gc->g, edgeID, &e);
+
+			// encode edge
+			_RdbSaveEdge(rdb, gc->g, &e, r);
+
+			encoded_edges++;
+			prev_src = e.src_id;
+		} else {
+			// a new row encountered
+			// reset iterator to the begining of the row
+			TensorIterator_ScanRange(iter, R, src, UINT64_MAX, false);
+		}
+	}
+
 finish:
+	// place end marker
+	_RdbSaveEdgeEndMarker(rdb);
+
 	// check if done encoding edges
-	if(offset + edges_to_encode == graph_edges) {
+	if(offset + encoded_edges == Graph_EdgeCount(gc->g)) {
 		*iter = (TensorIterator){0};
 	}
 
 	// update context
 	GraphEncodeContext_SetCurrentRelationID(gc->encoding_context, r);
+
+	return encoded_edges;
 }
+

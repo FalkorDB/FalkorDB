@@ -13,10 +13,10 @@
 
 // A struct that maintains the state of a graph decoding from RDB.
 typedef struct {
-	uint64_t keys_processed;    // Count the number of procssed graph keys.
-	uint64_t graph_keys_count;  // The number of keys representing the graph.
-	rax *meta_keys;             // The meta keys encountered so far in the decode process.
-	uint64_t *multi_edge;       // Is relation contains multi edge values.
+	uint64_t keys_processed;    // count the number of procssed graph keys.
+	uint64_t graph_keys_count;  // the number of keys representing the graph.
+	rax *meta_keys;             // the meta keys encountered so far in the decode process.
+	uint64_t *multi_edge;       // is relation contains multi edge values.
 } GraphDecodeContext;
 
 // Creates a new graph decoding context.

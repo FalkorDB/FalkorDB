@@ -6,45 +6,46 @@
 
 #pragma once
 
-#include "../../serializers_include.h"
+#include "../../../serializers_include.h"
 
-void RdbSaveGraph_latest
+GraphContext *RdbLoadGraphContext_v15
 (
 	SerializerIO rdb,
-	void *value
+	const RedisModuleString *rm_key_name
 );
 
-void RdbSaveNodes_v15
+void RdbLoadNodes_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t nodes_to_encode
+	uint64_t node_count
 );
 
-void RdbSaveDeletedNodes_v15
+void RdbLoadDeletedNodes_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t deleted_nodes_to_encode
+	uint64_t deleted_node_count
 );
 
-void RdbSaveEdges_v15
+void RdbLoadEdges_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t edges_to_encode
+	uint64_t edge_count
 );
 
-void RdbSaveDeletedEdges_v15
+void RdbLoadDeletedEdges_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
-	uint64_t deleted_edges_to_encode
+	uint64_t deleted_edge_count
 );
 
-void RdbSaveGraphSchema_v15
+void RdbLoadGraphSchema_v15
 (
 	SerializerIO rdb,
-	GraphContext *gc
+	GraphContext *gc,
+	bool already_loaded
 );
 

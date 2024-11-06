@@ -138,7 +138,7 @@ static PayloadInfo *_RdbLoadKeySchema
 	return payloads;
 }
 
-GraphContext *RdbLoadGraphContext_latest
+GraphContext *RdbLoadGraphContext_v15
 (
 	SerializerIO rdb,
 	const RedisModuleString *rm_key_name
