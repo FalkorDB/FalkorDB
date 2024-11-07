@@ -427,6 +427,7 @@ uint64_t RdbSaveEdges_v16
 			// a new row encountered
 			// reset iterator to the begining of the row
 			TensorIterator_ScanRange(iter, R, src, UINT64_MAX, false);
+			break;
 		}
 	}
 
