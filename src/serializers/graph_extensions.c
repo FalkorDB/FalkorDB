@@ -129,84 +129,100 @@ void Serializer_Graph_SetNodeLabels
 }
 
 // optimized version of Graph_FormConnection
-static void _OptimizedSingleEdgeFormConnection
+void Serializer_OptimizedFormConnections
 (
 	Graph *g,
-	NodeID src,
-	NodeID dest,
-	EdgeID edge_id,
-	int r
+	RelationID r,                     // relation id
+	const NodeID *restrict srcs,      // src node id
+	const NodeID *restrict dests,     // dest node id
+	const EdgeID *restrict ids,       // edge id
+	uint64_t n,                       // number of entries
+	NodeID max_id,
+	bool multi_edge                   // multi edge batch
 ) {
-	GrB_Info info;
-	Delta_Matrix M      = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix adj    = Graph_GetAdjacencyMatrix(g, false);
-	GrB_Matrix   m      = Delta_Matrix_M(M);
-	GrB_Matrix   tm     = Delta_Matrix_M(Delta_Matrix_getTranspose(M));
-	GrB_Matrix   adj_m  = Delta_Matrix_M(adj);
-	GrB_Matrix   adj_tm = Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
+	// validations
+	ASSERT(n      >  0);
+	ASSERT(g      != NULL);
+	ASSERT(ids    != NULL);
+	ASSERT(srcs   != NULL);
+	ASSERT(dests  != NULL);
+	ASSERT(max_id != INVALID_ENTITY_ID);
+
+	GrB_Info   info;   // GraphBLAS operation result
+	GrB_Index  nrows;  // #rows
+
+	Tensor       M   = Graph_GetRelationMatrix(g, r, false);  // relation matrix
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);    // adj matrix
+
+	GrB_Matrix m      = Delta_Matrix_M(M);
+	GrB_Matrix tm     = Delta_Matrix_M(Delta_Matrix_getTranspose(M));
+	GrB_Matrix adj_m  = Delta_Matrix_M(adj);
+	GrB_Matrix adj_tm = Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
 	UNUSED(info);
 
-	// rows represent source nodes, columns represent destination nodes
+	// make sure matrix dimension includes max_id
+	info = GrB_Matrix_nrows(&nrows, m);
+	ASSERT(info == GrB_SUCCESS);
 
-	//--------------------------------------------------------------------------
-	// update adjacency matrix
-	//--------------------------------------------------------------------------
-
-	info = GrB_Matrix_setElement_BOOL(adj_m, true, src, dest);
-	if(info == GrB_INVALID_INDEX) {
-		// in case of writing out of matrix bounds resize the matrices
-		RedisModule_Log(NULL, "notice", "RESIZE MATRIX SINGLE EDGE");
-
-		uint64_t max_id = MAX(src, dest);
+	if(nrows < max_id) {
+		// resize the matrices
+		RedisModule_Log(NULL, "notice", "RESIZE MATRIX");
 		Graph_EnsureNodeCap(g, max_id);
-		info = GrB_Matrix_setElement_BOOL(adj_m, true, src, dest);
 	}
 
-	ASSERT(info == GrB_SUCCESS);
-	info = GrB_Matrix_setElement_BOOL(adj_tm, true, dest, src);
-	ASSERT(info == GrB_SUCCESS);
+	for(uint64_t i = 0; i < n; i++) {
+		uint64_t  x   = ids[i];
+		GrB_Index row = srcs[i];
+		GrB_Index col = dests[i];
 
-	//--------------------------------------------------------------------------
-	// update relationship matrix
-	//--------------------------------------------------------------------------
+		//----------------------------------------------------------------------
+		// update adjacency matrix
+		//----------------------------------------------------------------------
 
-	info = GrB_Matrix_setElement_UINT64(m, edge_id, src, dest);
-	ASSERT(info == GrB_SUCCESS);
+		info = GrB_Matrix_setElement_BOOL(adj_m, true, row, col);
+		ASSERT(info == GrB_SUCCESS);
 
-	info = GrB_Matrix_setElement_BOOL(tm, true, dest, src);
-	ASSERT(info == GrB_SUCCESS);
+		// TODO: might be better to compute transposes at the very end of the load
+		// process
+		info = GrB_Matrix_setElement_BOOL(adj_tm, true, col, row);
+		ASSERT(info == GrB_SUCCESS);
 
-	GraphStatistics_IncEdgeCount(&g->stats, r, 1);
-}
+		//----------------------------------------------------------------------
+		// update relationship matrix
+		//----------------------------------------------------------------------
 
-// set a given edge in the graph - Used for deserialization of graph
-void Serializer_Graph_SetEdge
-(
-	Graph *g,
-	bool multi_edge,
-	EdgeID edge_id,
-	NodeID src,
-	NodeID dest,
-	int r,
-	Edge *e
-) {
-	GrB_Info info;
+		if(!multi_edge) {
+			//uint64_t _x;
+			//info = GrB_Matrix_extractElement_UINT64(&_x, m, row, col);
+			//ASSERT(info == GrB_NO_VALUE);
 
-	AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, edge_id);
-	*set = NULL;
+			info = GrB_Matrix_setElement_UINT64(m, x, row, col);
+			ASSERT(info == GrB_SUCCESS);
 
-	e->id         = edge_id;
-	e->src_id     = src;
-	e->dest_id    = dest;
-	e->attributes = set;
-	e->relationID = r;
+			info = GrB_Matrix_setElement_UINT64(tm, x, col, row);
+			ASSERT(info == GrB_SUCCESS);
+		}
+	}
 
 	if(multi_edge) {
-		Graph_FormConnection(g, src, dest, edge_id, r);
-	} else {
-		_OptimizedSingleEdgeFormConnection(g, src, dest, edge_id, r);
+		Tensor_SetElements(M, srcs, dests, ids, n);
 	}
+
+	// update graph statistics
+	GraphStatistics_IncEdgeCount(&g->stats, r, n);
+}
+
+// allocate edge attribute-set
+void Serializer_Graph_AllocEdgeAttributes
+(
+	Graph *g,
+	EdgeID edge_id,
+	Edge *e
+) {
+	AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, edge_id);
+	*set = NULL;
+	e->attributes = set;
 }
 
 // returns the graph deleted nodes list

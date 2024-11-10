@@ -91,10 +91,6 @@ static PayloadInfo _StatePayloadInfo
 		case ENCODE_STATE_DELETED_EDGES:
 			required_entities_count = Graph_DeletedEdgeCount(gc->g);
 			break;
-		case ENCODE_STATE_GRAPH_SCHEMA:
-			// always 0, unused. here for historical reasons
-			required_entities_count = 0;
-			break;
 		default:
 			ASSERT(false && "Unknown encoding state in _CurrentStatePayloadInfo");
 			break;
@@ -174,7 +170,6 @@ static PayloadInfo *_RdbSaveKeySchema
 		}
 	}
 
-encode_payloads:
 	// save the number of payloads
 	payloads_count = array_len(payloads);
 	SerializerIO_WriteUnsigned(rdb, payloads_count);
@@ -185,7 +180,6 @@ encode_payloads:
 		// save its type and the number of entities it contains
 		PayloadInfo payload_info = payloads[i];
 		SerializerIO_WriteUnsigned(rdb, payload_info.state);
-		//SerializerIO_WriteUnsigned(rdb, payload_info.entities_count);
 	}
 
 	return payloads;
@@ -262,13 +256,16 @@ void RdbSaveGraph_latest
 				encoded_entities = RdbSaveDeletedEdges_v16(rdb, gc,
 						payload->offset, payload->entities_count);
 				break;
-			case ENCODE_STATE_GRAPH_SCHEMA:
-				// skip, handled in _RdbSaveHeader
-				break;
 			default:
 				ASSERT(false && "Unknown encoding phase");
 				break;
 		}
+
+		// place end marker
+		SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
+
+		// place nunmber of encoded entities, used for validation at the decoder
+		SerializerIO_WriteUnsigned(rdb, encoded_entities);
 	}
 
 	// update encoding state for next virtual key

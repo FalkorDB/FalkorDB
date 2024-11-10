@@ -39,8 +39,19 @@ void Tensor_SetElement
 // set multiple entries
 void Tensor_SetElements
 (
-	Tensor T,           // tensor
-	const Edge **edges  // assume edges are sorted by src and dest
+	Tensor T,                        // tensor
+	const GrB_Index *restrict rows,  // array of row indices
+	const GrB_Index *restrict cols,  // array of column indices
+	const uint64_t *restrict vals,   // values
+	uint64_t n                       // number of elements
+);
+
+// set multiple entries
+void Tensor_SetEdges
+(
+	Tensor T,            // tensor
+	const Edge **edges,  // assume edges are sorted by src and dest
+	uint64_t n           // number of edges
 );
 
 // remove multiple entries

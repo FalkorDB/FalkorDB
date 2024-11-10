@@ -113,6 +113,8 @@ static void _RdbLoadEntity
 	// (name, value type, value) X N
 
 	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	if(n == 0) return;
+
 	SIValue vals[n];
 	AttributeID ids[n];
 
@@ -193,23 +195,128 @@ void RdbLoadEdges_v14
 	// } X N
 	// edge properties X N
 
-	// construct connections
-	for(uint64_t i = 0; i < edge_count; i++) {
-		Edge e;
-		EdgeID    edgeId   = SerializerIO_ReadUnsigned(rdb);
-		NodeID    srcId    = SerializerIO_ReadUnsigned(rdb);
-		NodeID    destId   = SerializerIO_ReadUnsigned(rdb);
-		uint64_t  relation = SerializerIO_ReadUnsigned(rdb);
+	NodeID     prev_src      = INVALID_ENTITY_ID;
+	NodeID     prev_dest     = INVALID_ENTITY_ID;
+	NodeID     max_node_id   = 0;
+	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
 
-		Serializer_Graph_SetEdge(gc->g, gc->decoding_context->multi_edge[relation],
-			edgeId, srcId, destId, relation, &e);
+	int       idx            = 0;      // batch next element position
+	int       multi_edge_idx = 0;      //
+	const int MAX_BATCH_SIZE = MIN(edge_count, 16384);  // max batch size
+
+	EdgeID ids  [MAX_BATCH_SIZE];
+	NodeID srcs [MAX_BATCH_SIZE];
+	NodeID dests[MAX_BATCH_SIZE];
+
+	EdgeID multi_edge_ids  [MAX_BATCH_SIZE];
+	NodeID multi_edge_srcs [MAX_BATCH_SIZE];
+	NodeID multi_edge_dests[MAX_BATCH_SIZE];
+
+	// construct edges
+	for(uint64_t i = 0; i < edge_count; i++) {
+		//----------------------------------------------------------------------
+		// populate edge
+		//----------------------------------------------------------------------
+
+		Edge e;
+
+		e.id         = SerializerIO_ReadUnsigned(rdb);
+		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		e.relationID = SerializerIO_ReadUnsigned(rdb);
+
+		// determine if relation contains "multi-edge"
+		bool multi_edge_relation = gc->decoding_context->multi_edge[e.relationID];
+
+		//----------------------------------------------------------------------
+		// load edge attributes
+		//----------------------------------------------------------------------
+
+		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
+		//----------------------------------------------------------------------
 		// index edge
-		Schema *s = GraphContext_GetSchemaByID(gc, relation, SCHEMA_EDGE);
-		ASSERT(s != NULL);
+		//----------------------------------------------------------------------
 
+		Schema *s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
+		ASSERT(s != NULL);
 		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
+
+		//----------------------------------------------------------------------
+		// flush batches
+		//----------------------------------------------------------------------
+
+		// flush batch when:
+		// 1. batch is full
+		// 2. relation id changed
+		if(idx > 0 && (idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
+			// flush batch
+			Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
+					dests, ids, idx, max_node_id, false);
+
+			// reset batch state
+			idx = 0;
+		}
+
+		// flush multi-edge batch when:
+		// 1. batch is full
+		// 2. relation id changed
+		if(multi_edge_idx > 0 &&
+		   (multi_edge_idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
+			// flush batch
+			Serializer_OptimizedFormConnections(gc->g, prev_relation,
+					multi_edge_srcs, multi_edge_dests, multi_edge_ids,
+					multi_edge_idx, max_node_id, true);
+
+			// reset multi-edge batch state
+			multi_edge_idx = 0;
+		}
+
+		// determine if we're dealing with a multi-edge
+		// first iteration is considered multi_edge, as we don't know which edge
+		// was introduced in the previous virtual key
+		bool multi_edge = (multi_edge_relation                              &&
+						  ((e.src_id == prev_src && e.dest_id == prev_dest) ||
+						   i == 0));
+
+		// accumulate edge
+		if(multi_edge) {
+			// batch multi-edge src, dest and id
+			multi_edge_ids[multi_edge_idx]   = e.id;
+			multi_edge_srcs[multi_edge_idx]  = e.src_id;
+			multi_edge_dests[multi_edge_idx] = e.dest_id;
+			multi_edge_idx++;  // advance batch index
+		} else {
+			// batch edge src, dest and id
+			ids[idx]   = e.id;
+			srcs[idx]  = e.src_id;
+			dests[idx] = e.dest_id;
+			idx++;  // advance batch index
+		}
+
+		// maintain max src and max dest
+		max_node_id = MAX(max_node_id, MAX(e.src_id, e.dest_id));
+
+		// update prev values
+		prev_src      = e.src_id;
+		prev_dest     = e.dest_id;
+		prev_relation = e.relationID;
+	}
+
+	// flush last batch
+	if(idx > 0) {
+		// flush batch
+		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
+				dests, ids, idx, max_node_id, false);
+	}
+
+	// flush last multi-edge batch
+	if(multi_edge_idx > 0) {
+		// flush batch
+		Serializer_OptimizedFormConnections(gc->g, prev_relation,
+				multi_edge_srcs, multi_edge_dests, multi_edge_ids,
+				multi_edge_idx, max_node_id, true);
 	}
 }
 

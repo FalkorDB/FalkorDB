@@ -132,7 +132,6 @@ static PayloadInfo *_RdbLoadKeySchema
 		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
 		payload_info.state =  SerializerIO_ReadUnsigned(rdb);
-		payload_info.entities_count =  SerializerIO_ReadUnsigned(rdb);
 		array_append(payloads, payload_info);
 	}
 	return payloads;
@@ -155,7 +154,7 @@ GraphContext *RdbLoadGraphContext_latest
 	GraphContext *gc = _DecodeHeader(rdb);
 
 	// load the key schema
-	PayloadInfo *key_schema = _RdbLoadKeySchema(rdb);
+	PayloadInfo *payloads = _RdbLoadKeySchema(rdb);
 
 	// The decode process contains the decode operation of many meta keys, representing independent parts of the graph
 	// Each key contains data on one or more of the following:
@@ -165,9 +164,9 @@ GraphContext *RdbLoadGraphContext_latest
 	// 4. Deleted edges - Edges that were deleted and there ids can be re-used. Used for exact replication of data block state
 	// 5. Graph schema - Properties, indices
 	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
-	uint payloads_count = array_len(key_schema);
+	uint payloads_count = array_len(payloads);
 	for(uint i = 0; i < payloads_count; i++) {
-		PayloadInfo payload = key_schema[i];
+		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
@@ -183,16 +182,13 @@ GraphContext *RdbLoadGraphContext_latest
 			case ENCODE_STATE_DELETED_EDGES:
 				RdbLoadDeletedEdges_v16(rdb, gc);
 				break;
-			case ENCODE_STATE_GRAPH_SCHEMA:
-				// skip, handled in _DecodeHeader
-				break;
 			default:
 				ASSERT(false && "Unknown encoding");
 				break;
 		}
 	}
 
-	array_free(key_schema);
+	array_free(payloads);
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);

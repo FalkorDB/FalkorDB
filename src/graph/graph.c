@@ -850,7 +850,7 @@ void Graph_CreateEdges
 	}
 
 	// update R tensor
-	Tensor_SetElements(R, (const Edge **)edges);
+	Tensor_SetEdges(R, (const Edge **)edges, edge_count);
 
 	// update graph statistics
 	GraphStatistics_IncEdgeCount(&g->stats, r, edge_count);

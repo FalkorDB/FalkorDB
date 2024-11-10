@@ -5,7 +5,6 @@
  */
 
 #include "decode_v16.h"
-#include "util/datablock/oo_datablock.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
@@ -140,15 +139,20 @@ void RdbLoadNodes_v16
 	//      #properties N
 	//      (name, value type, value) X N
 
+	uint64_t decoded_node_count = 0;
+	uint64_t prev_graph_node_count = Graph_NodeCount(gc->g);
+
 	while(true) {
 		Node n;
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
+
+		// break on end marker
 		if(id == INVALID_ENTITY_ID) break;
 
 		// #labels M
 		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned(rdb);
 
-		// * (labels) x M
+		// (labels) x M
 		LabelID labels[nodeLabelCount];
 		for(uint64_t i = 0; i < nodeLabelCount; i ++){
 			labels[i] = SerializerIO_ReadUnsigned(rdb);
@@ -163,9 +167,17 @@ void RdbLoadNodes_v16
 			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
 			ASSERT(s != NULL);
 
+			// index node
 			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
 		}
+
+		decoded_node_count++;
 	}
+
+	// read encoded node count and validate
+	uint64_t encoded_node_count = SerializerIO_ReadUnsigned(rdb);
+	ASSERT(encoded_node_count == decoded_node_count);
+	ASSERT(prev_graph_node_count + decoded_node_count == Graph_NodeCount(gc->g));
 }
 
 void RdbLoadDeletedNodes_v16
@@ -175,6 +187,10 @@ void RdbLoadDeletedNodes_v16
 ) {
 	// Format:
 	// node id X N
+
+	uint64_t decoded_deleted_node_count = 0;
+	uint64_t prev_deleted_node_count = Graph_DeletedNodeCount(gc->g);
+
 	while(true) {
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
 
@@ -182,7 +198,15 @@ void RdbLoadDeletedNodes_v16
 		if(id == INVALID_ENTITY_ID) break;
 
 		Serializer_Graph_MarkNodeDeleted(gc->g, id);
+
+		decoded_deleted_node_count++;
 	}
+
+	// read encoded deleted node count and validate
+	uint64_t encoded_deleted_node_count = SerializerIO_ReadUnsigned(rdb);
+	ASSERT(encoded_deleted_node_count == decoded_deleted_node_count);
+	ASSERT(decoded_deleted_node_count + prev_deleted_node_count ==
+			Graph_DeletedNodeCount(gc->g));
 }
 
 void RdbLoadEdges_v16
@@ -199,23 +223,29 @@ void RdbLoadEdges_v16
 	// } X N
 	// edge properties X N
 
-
 	Edge          e;
+	Schema*       s;
 	AttributeSet* set;
+	bool          multi_edge_relation;
 
 	NodeID     prev_src      = INVALID_ENTITY_ID;
 	NodeID     prev_dest     = INVALID_ENTITY_ID;
 	NodeID     max_node_id   = 0;
 	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
 
-	int       idx            = 0;      // batch next element position
-	int       multi_edge_idx = 0;      //
-	const int MAX_BATCH_SIZE = 16384;  // max batch size
+	uint64_t  prev_edge_count    = Graph_EdgeCount(gc->g); // number of edges in the graph
+	uint64_t  decoded_edge_count = 0;    // number of edges decoded
+	int       idx                = 0;    // batch next element position
+	int       multi_edge_idx     = 0;    // multi-edge batch next element position
+	const int MAX_BATCH_SIZE     = 256;  // max batch size
+	//const int MAX_BATCH_SIZE = 16384;  // max batch size
 
+	// single edge batch
 	EdgeID ids  [MAX_BATCH_SIZE];
 	NodeID srcs [MAX_BATCH_SIZE];
 	NodeID dests[MAX_BATCH_SIZE];
 
+	// multi-edge batch
 	EdgeID multi_edge_ids  [MAX_BATCH_SIZE];
 	NodeID multi_edge_srcs [MAX_BATCH_SIZE];
 	NodeID multi_edge_dests[MAX_BATCH_SIZE];
@@ -228,63 +258,70 @@ void RdbLoadEdges_v16
 
 		e.id = SerializerIO_ReadUnsigned(rdb);
 
-		// end marker, no more edges in this virtual key
+		// break on end marker
 		if(e.id == INVALID_ENTITY_ID) break;
+
+		decoded_edge_count++;
 
 		e.src_id     = SerializerIO_ReadUnsigned(rdb);
 		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
 		e.relationID = SerializerIO_ReadUnsigned(rdb);
 
-		// determine if relation contains "multi-edge"
-		bool multi_edge_relation = gc->decoding_context->multi_edge[e.relationID];
-
 		//----------------------------------------------------------------------
 		// load edge attributes
 		//----------------------------------------------------------------------
 
-		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(gc->g->edges, e.id);
-		*set = NULL;
-		e.attributes = set;
+		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
+
+		// handle transition to a new relationship type
+		bool relation_changed = e.relationID != prev_relation;
+		if(relation_changed) {
+			s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
+			ASSERT(s != NULL);
+
+			// determine if relation contains "multi-edge"
+			multi_edge_relation = gc->decoding_context->multi_edge[e.relationID];
+
+			// reset prev
+			prev_src  = INVALID_ENTITY_ID;
+			prev_dest = INVALID_ENTITY_ID;
+		}
 
 		//----------------------------------------------------------------------
 		// index edge
 		//----------------------------------------------------------------------
 
-		Schema *s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
-		ASSERT(s != NULL);
 		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
 
 		//----------------------------------------------------------------------
 		// flush batches
 		//----------------------------------------------------------------------
 
+		// flush batch when:
+		// 1. batch is full
+		// 2. relation id changed
+		if(idx > 0 && (idx == MAX_BATCH_SIZE || relation_changed)) {
+			// flush batch
+			Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
+					dests, ids, idx, max_node_id, false);
+
+			// reset batch count
+			idx = 0;
+		}
+
 		// flush multi-edge batch when:
 		// 1. batch is full
 		// 2. relation id changed
 		if(multi_edge_idx > 0 &&
-		   (multi_edge_idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
-			printf("Flush multi-edge batch\n");
-			printf("batch size: %d\n", multi_edge_idx);
+		   (multi_edge_idx == MAX_BATCH_SIZE || relation_changed)) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, prev_relation,
 					multi_edge_srcs, multi_edge_dests, multi_edge_ids,
 					multi_edge_idx, max_node_id, true);
 
-			// reset multi-edge batch state
+			// reset multi-edge batch count
 			multi_edge_idx = 0;
-		}
-
-		// flush batch when:
-		// 1. batch is full
-		// 2. relation id changed
-		if(idx > 0 && (idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
-			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
-					dests, ids, idx, max_node_id, false);
-
-			// reset batch state
-			idx = 0;
 		}
 
 		// determine if we're dealing with a multi-edge
@@ -316,22 +353,25 @@ void RdbLoadEdges_v16
 		prev_relation = e.relationID;
 	}
 
-	// flush last multi-edge batch
-	if(multi_edge_idx > 0) {
-		printf("Flush multi-edge batch\n");
-		printf("batch size: %d\n", multi_edge_idx);
-		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, prev_relation,
-				multi_edge_srcs, multi_edge_dests, multi_edge_ids,
-				multi_edge_idx, max_node_id, true);
-	}
-
 	// flush last batch
 	if(idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
 				dests, ids, idx, max_node_id, false);
 	}
+
+	// flush last multi-edge batch
+	if(multi_edge_idx > 0) {
+		// flush batch
+		Serializer_OptimizedFormConnections(gc->g, prev_relation,
+				multi_edge_srcs, multi_edge_dests, multi_edge_ids,
+				multi_edge_idx, max_node_id, true);
+	}
+
+	// read encoded deleted edge count and validate
+	uint64_t encoded_edge_count = SerializerIO_ReadUnsigned(rdb);
+	ASSERT(encoded_edge_count == decoded_edge_count);
+	ASSERT(decoded_edge_count + prev_edge_count == Graph_EdgeCount(gc->g));
 }
 
 void RdbLoadDeletedEdges_v16
@@ -341,13 +381,25 @@ void RdbLoadDeletedEdges_v16
 ) {
 	// Format:
 	// edge id X N
+
+	uint64_t decoded_deleted_edge_count = 0;
+	uint64_t prev_deleted_edge_count = Graph_DeletedEdgeCount(gc->g);
+
 	while(true) {
 		EdgeID id = SerializerIO_ReadUnsigned(rdb);
 
-		// end marker, no more deleted edges to load
+		// break on end marker
 		if(id == INVALID_ENTITY_ID) break;
 
 		Serializer_Graph_MarkEdgeDeleted(gc->g, id);
+
+		decoded_deleted_edge_count++;
 	}
+
+	// read encoded deleted edge count and validate
+	uint64_t encoded_deleted_edge_count = SerializerIO_ReadUnsigned(rdb);
+	ASSERT(encoded_deleted_edge_count == decoded_deleted_edge_count);
+	ASSERT(decoded_deleted_edge_count + prev_deleted_edge_count ==
+			Graph_DeletedNodeCount(gc->g));
 }
 

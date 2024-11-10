@@ -153,23 +153,6 @@ static void _RdbSaveEdge
 	_RdbSaveEntity(rdb, (GraphEntity *)e);
 }
 
-// encode a node end marker denoting the end of a set of encoded nodes
-static void _RdbSaveNodeEndMarker
-(
-	SerializerIO rdb
-) {
-	// save node end marker
-	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
-}
-
-// encode an edge end marker denoting the end of a set of encoded edges
-static void _RdbSaveEdgeEndMarker
-(
-	SerializerIO rdb
-) {
-	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
-}
-
 // encode a single node
 static void _RdbSaveNode_v16
 (
@@ -238,9 +221,6 @@ uint64_t RdbSaveDeletedNodes_v16
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
 	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_nodes_list);
 
-	// place end marker
-	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
-
 	return n;
 }
 
@@ -261,9 +241,6 @@ uint64_t RdbSaveDeletedEdges_v16
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
 	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_edges_list);
-
-	// place end marker
-	SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
 
 	return n;
 }
@@ -312,9 +289,6 @@ uint64_t RdbSaveNodes_v16
 		GraphEncodeContext_SetDatablockIterator(gc->encoding_context, iter);
 	}
 
-	// place end marker
-	_RdbSaveNodeEndMarker(rdb);
-
 	return n;
 }
 
@@ -334,7 +308,6 @@ uint64_t RdbSaveEdges_v16
 	//  destination node ID
 	//  relation type
 	//  edge properties
-	//  END MARKER
 	
 	ASSERT(n > 0);
 
@@ -397,7 +370,8 @@ uint64_t RdbSaveEdges_v16
 		e.dest_id = dest;
 
 		// get edge attribute set
-		Graph_GetEdge(gc->g, edgeID, &e);
+		bool edge_found = Graph_GetEdge(gc->g, edgeID, &e);
+		ASSERT(edge_found == true);
 
 		// encode edge
 		_RdbSaveEdge(rdb, gc->g, &e, r);
@@ -416,13 +390,13 @@ uint64_t RdbSaveEdges_v16
 			e.dest_id = dest;
 
 			// get edge attribute set
-			Graph_GetEdge(gc->g, edgeID, &e);
+			bool edge_found = Graph_GetEdge(gc->g, edgeID, &e);
+			ASSERT(edge_found == true);
 
 			// encode edge
 			_RdbSaveEdge(rdb, gc->g, &e, r);
 
 			encoded_edges++;
-			prev_src = e.src_id;
 		} else {
 			// a new row encountered
 			// reset iterator to the begining of the row
@@ -432,9 +406,6 @@ uint64_t RdbSaveEdges_v16
 	}
 
 finish:
-	// place end marker
-	_RdbSaveEdgeEndMarker(rdb);
-
 	// check if done encoding edges
 	if(offset + encoded_edges == Graph_EdgeCount(gc->g)) {
 		*iter = (TensorIterator){0};

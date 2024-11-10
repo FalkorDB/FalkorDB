@@ -5,7 +5,6 @@
  */
 
 #include "decode_v15.h"
-#include "util/datablock/oo_datablock.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
@@ -197,10 +196,6 @@ void RdbLoadEdges_v15
 	// } X N
 	// edge properties X N
 
-
-	Edge          e;
-	AttributeSet* set;
-
 	NodeID     prev_src      = INVALID_ENTITY_ID;
 	NodeID     prev_dest     = INVALID_ENTITY_ID;
 	NodeID     max_node_id   = 0;
@@ -224,6 +219,8 @@ void RdbLoadEdges_v15
 		// populate edge
 		//----------------------------------------------------------------------
 
+		Edge e;
+
 		e.id         = SerializerIO_ReadUnsigned(rdb);
 		e.src_id     = SerializerIO_ReadUnsigned(rdb);
 		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
@@ -236,9 +233,7 @@ void RdbLoadEdges_v15
 		// load edge attributes
 		//----------------------------------------------------------------------
 
-		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(gc->g->edges, e.id);
-		*set = NULL;
-		e.attributes = set;
+		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		//----------------------------------------------------------------------
@@ -253,22 +248,6 @@ void RdbLoadEdges_v15
 		// flush batches
 		//----------------------------------------------------------------------
 
-		// flush multi-edge batch when:
-		// 1. batch is full
-		// 2. relation id changed
-		if(multi_edge_idx > 0 &&
-		   (multi_edge_idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
-			printf("Flush multi-edge batch\n");
-			printf("batch size: %d\n", multi_edge_idx);
-			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, prev_relation,
-					multi_edge_srcs, multi_edge_dests, multi_edge_ids,
-					multi_edge_idx, max_node_id, true);
-
-			// reset multi-edge batch state
-			multi_edge_idx = 0;
-		}
-
 		// flush batch when:
 		// 1. batch is full
 		// 2. relation id changed
@@ -281,10 +260,26 @@ void RdbLoadEdges_v15
 			idx = 0;
 		}
 
+		// flush multi-edge batch when:
+		// 1. batch is full
+		// 2. relation id changed
+		if(multi_edge_idx > 0 &&
+		   (multi_edge_idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
+			// flush batch
+			Serializer_OptimizedFormConnections(gc->g, prev_relation,
+					multi_edge_srcs, multi_edge_dests, multi_edge_ids,
+					multi_edge_idx, max_node_id, true);
+
+			// reset multi-edge batch state
+			multi_edge_idx = 0;
+		}
+
 		// determine if we're dealing with a multi-edge
+		// first iteration is considered multi_edge, as we don't know which edge
+		// was introduced in the previous virtual key
 		bool multi_edge = (multi_edge_relation                              &&
 						  ((e.src_id == prev_src && e.dest_id == prev_dest) ||
-						  (prev_src == INVALID_ENTITY_ID && prev_dest == INVALID_ENTITY_ID)));
+						   i == 0));
 
 		// accumulate edge
 		if(multi_edge) {
@@ -310,21 +305,19 @@ void RdbLoadEdges_v15
 		prev_relation = e.relationID;
 	}
 
-	// flush last multi-edge batch
-	if(multi_edge_idx > 0) {
-		printf("Flush multi-edge batch\n");
-		printf("batch size: %d\n", multi_edge_idx);
-		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, prev_relation,
-				multi_edge_srcs, multi_edge_dests, multi_edge_ids,
-				multi_edge_idx, max_node_id, true);
-	}
-
 	// flush last batch
 	if(idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
 				dests, ids, idx, max_node_id, false);
+	}
+
+	// flush last multi-edge batch
+	if(multi_edge_idx > 0) {
+		// flush batch
+		Serializer_OptimizedFormConnections(gc->g, prev_relation,
+				multi_edge_srcs, multi_edge_dests, multi_edge_ids,
+				multi_edge_idx, max_node_id, true);
 	}
 }
 

@@ -13,8 +13,6 @@ GraphContext *Decode_Previous
 	int encver
 ) {
 	switch(encver) {
-		case 9:
-			return RdbLoadGraphContext_v9(rdb);
 		case 10:
 			return RdbLoadGraphContext_v10(rdb);
 		case 11:
