@@ -16,25 +16,29 @@ GraphContext *RdbLoadGraphContext_latest
 void RdbLoadNodes_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc
+	GraphContext *gc,
+	const uint64_t node_count
 );
 
 void RdbLoadDeletedNodes_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc
+	GraphContext *gc,
+	const uint64_t deleted_node_count
 );
 
 void RdbLoadEdges_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc
+	GraphContext *gc,
+	const uint64_t n
 );
 
 void RdbLoadDeletedEdges_v16
 (
 	SerializerIO rdb,
-	GraphContext *gc
+	GraphContext *gc,
+	const uint64_t deleted_edge_count
 );
 
 void RdbLoadGraphSchema_v16

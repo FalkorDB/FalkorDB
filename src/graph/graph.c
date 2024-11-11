@@ -120,7 +120,7 @@ static void _Graph_GetEdgesConnectingNodes
 	TensorIterator it;
 	TensorIterator_ScanEntry(&it, R, srcID, destID);
 
-	while(TensorIterator_next(&it, NULL, NULL, &edge_id)) {
+	while(TensorIterator_next(&it, NULL, NULL, &edge_id, NULL)) {
 		e.id         = edge_id;
 		e.attributes = DataBlock_GetItem(g->edges, edge_id);
 		ASSERT(e.attributes);
@@ -411,7 +411,7 @@ static void _GetOutgoingNodeEdges
 	Edge e = {.src_id = src_id, .relationID = r};
 
 	TensorIterator_ScanRange(&it, R, src_id, src_id, false);
-	while(TensorIterator_next(&it, NULL, &e.dest_id, &e.id)) {
+	while(TensorIterator_next(&it, NULL, &e.dest_id, &e.id, NULL)) {
 		e.attributes = DataBlock_GetItem(g->edges, e.id);
 		ASSERT(e.attributes);
 		array_append(*edges, e);
@@ -440,7 +440,7 @@ static void _GetIncomingNodeEdges
 	Edge e = {.dest_id = dest_id, .relationID = r};
 
 	TensorIterator_ScanRange(&it, T, dest_id, dest_id, true);
-	while(TensorIterator_next(&it, &e.src_id, NULL, &e.id)) {
+	while(TensorIterator_next(&it, &e.src_id, NULL, &e.id, NULL)) {
 		// skip self edges
 		if(skip_self_edges && e.src_id == e.dest_id) {
 			continue;

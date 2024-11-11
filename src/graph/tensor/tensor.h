@@ -107,7 +107,12 @@ typedef struct TensorIterator TensorIterator;
 // 2. scalar           - single entry
 // 3. vector           - list of entries
 // 4. range of vectors - list of vectors
-typedef bool (*IterFunc)(TensorIterator *, GrB_Index*, GrB_Index*, uint64_t*);
+typedef bool (*IterFunc)(
+		TensorIterator *,
+		GrB_Index*,
+		GrB_Index*,
+		uint64_t*,
+		bool*);
 
 // tensor iterator
 struct TensorIterator {
@@ -147,7 +152,8 @@ bool TensorIterator_next
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional out] source id
 	GrB_Index *col,      // [optional out] dest id
-	uint64_t *x          // [optional out] edge id
+	uint64_t *x,         // [optional out] edge id
+	bool *tensor         // [optional out] tensor
 );
 
 // checks whether iterator is attached to tensor

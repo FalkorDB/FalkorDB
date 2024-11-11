@@ -161,7 +161,6 @@ GraphContext *RdbLoadGraphContext_latest
 	// 2. Deleted nodes - Nodes that were deleted and there ids can be re-used. Used for exact replication of data block state
 	// 4. Edges - The edges that are currently valid in the graph
 	// 4. Deleted edges - Edges that were deleted and there ids can be re-used. Used for exact replication of data block state
-	// 5. Graph schema - Properties, indices
 	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
 	uint payloads_count = array_len(payloads);
 	for(uint i = 0; i < payloads_count; i++) {
@@ -169,17 +168,17 @@ GraphContext *RdbLoadGraphContext_latest
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v16(rdb, gc);
+				RdbLoadNodes_v16(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v16(rdb, gc);
+				RdbLoadDeletedNodes_v16(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v16(rdb, gc);
+				RdbLoadEdges_v16(rdb, gc, payload.entities_count);
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v16(rdb, gc);
+				RdbLoadDeletedEdges_v16(rdb, gc, payload.entities_count);
 				break;
 			default:
 				ASSERT(false && "Unknown encoding");

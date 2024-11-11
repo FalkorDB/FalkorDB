@@ -180,6 +180,7 @@ static PayloadInfo *_RdbSaveKeySchema
 		// save its type and the number of entities it contains
 		PayloadInfo payload_info = payloads[i];
 		SerializerIO_WriteUnsigned(rdb, payload_info.state);
+		SerializerIO_WriteUnsigned(rdb, payload_info.entities_count);
 	}
 
 	return payloads;
@@ -233,7 +234,6 @@ void RdbSaveGraph_latest
 	PayloadInfo *payloads = _RdbSaveKeySchema(rdb, gc);
 
 	PayloadInfo *payload = NULL;
-	uint64_t encoded_entities = 0;
 	uint32_t payloads_count = array_len(payloads);
 
 	for(uint i = 0; i < payloads_count; i++) {
@@ -241,31 +241,25 @@ void RdbSaveGraph_latest
 
 		switch(payload->state) {
 			case ENCODE_STATE_NODES:
-				encoded_entities = RdbSaveNodes_v16(rdb, gc, payload->offset,
+				RdbSaveNodes_v16(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 			case ENCODE_STATE_DELETED_NODES:
-				encoded_entities = RdbSaveDeletedNodes_v16(rdb, gc,
-						payload->offset, payload->entities_count);
+				RdbSaveDeletedNodes_v16(rdb, gc, payload->offset,
+						payload->entities_count);
 				break;
 			case ENCODE_STATE_EDGES:
-				encoded_entities = RdbSaveEdges_v16(rdb, gc, payload->offset,
+				RdbSaveEdges_v16(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				encoded_entities = RdbSaveDeletedEdges_v16(rdb, gc,
-						payload->offset, payload->entities_count);
+				RdbSaveDeletedEdges_v16(rdb, gc, payload->offset,
+						payload->entities_count);
 				break;
 			default:
 				ASSERT(false && "Unknown encoding phase");
 				break;
 		}
-
-		// place end marker
-		SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
-
-		// place nunmber of encoded entities, used for validation at the decoder
-		SerializerIO_WriteUnsigned(rdb, encoded_entities);
 	}
 
 	// update encoding state for next virtual key
@@ -275,7 +269,7 @@ void RdbSaveGraph_latest
 
 		// save offset
 		GraphEncodeContext_SetProcessedEntitiesOffset(gc->encoding_context,
-				payload->offset + encoded_entities);
+				payload->offset + payload->entities_count);
 	}
 
 	// free payloads

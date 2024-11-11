@@ -15,42 +15,42 @@ void RdbSaveGraph_latest
 
 // encode nodes
 // returns number of nodes encoded
-uint64_t RdbSaveNodes_v16
+void RdbSaveNodes_v16
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
 	uint64_t offset,   // iterator offset
-	uint64_t n         // number of nodes to encode
+	const uint64_t n   // number of nodes to encode
 );
 
 // encode deleted node IDs
 // return number of elements encoded
-uint64_t RdbSaveDeletedNodes_v16
+void RdbSaveDeletedNodes_v16
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
 	uint64_t offset,   // offset
-	uint64_t n         // number of deleted nodes to encode
+	const uint64_t n   // number of deleted nodes to encode
 );
 
 // encode edges
 // returns number of encoded edges.
-uint64_t RdbSaveEdges_v16
+void RdbSaveEdges_v16
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
 	uint64_t offset,   // offset
-	uint64_t n         // number of edges to encode
+	const uint64_t n   // number of edges to encode
 );
 
 // encode deleted edges IDs
 // return number of elements encoded
-uint64_t RdbSaveDeletedEdges_v16
+void RdbSaveDeletedEdges_v16
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
 	uint64_t offset,   // offset
-	uint64_t n         // number of deleted edges to encode
+	const uint64_t n   // number of deleted edges to encode
 );
 
 void RdbSaveGraphSchema_v16
