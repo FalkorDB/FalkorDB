@@ -201,17 +201,17 @@ void RdbLoadEdges_v15
 	NodeID     max_node_id   = 0;
 	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
 
-	int       idx            = 0;      // batch next element position
-	int       multi_edge_idx = 0;      //
-	const int MAX_BATCH_SIZE = MIN(edge_count, 16384);  // max batch size
+	int       idx            = 0;                     // edge batch index
+	int       tensor_idx     = 0;                     // tensor batch index
+	const int BATCH_SIZE     = MIN(edge_count, 256);  // max batch size
 
-	EdgeID ids  [MAX_BATCH_SIZE];
-	NodeID srcs [MAX_BATCH_SIZE];
-	NodeID dests[MAX_BATCH_SIZE];
+	EdgeID ids  [BATCH_SIZE];
+	NodeID srcs [BATCH_SIZE];
+	NodeID dests[BATCH_SIZE];
 
-	EdgeID multi_edge_ids  [MAX_BATCH_SIZE];
-	NodeID multi_edge_srcs [MAX_BATCH_SIZE];
-	NodeID multi_edge_dests[MAX_BATCH_SIZE];
+	EdgeID tensor_ids  [BATCH_SIZE];
+	NodeID tensor_srcs [BATCH_SIZE];
+	NodeID tensor_dests[BATCH_SIZE];
 
 	// construct edges
 	for(uint64_t i = 0; i < edge_count; i++) {
@@ -226,8 +226,15 @@ void RdbLoadEdges_v15
 		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
 		e.relationID = SerializerIO_ReadUnsigned(rdb);
 
-		// determine if relation contains "multi-edge"
-		bool multi_edge_relation = gc->decoding_context->multi_edge[e.relationID];
+		// determine if relation contains tensors
+		bool tensor = gc->decoding_context->multi_edge[e.relationID];
+
+		bool relation_changed = e.relationID != prev_relation;
+		if(relation_changed) {
+			// reset prev src and dest node ids
+			prev_src  = INVALID_ENTITY_ID;
+			prev_dest = INVALID_ENTITY_ID;
+		}
 
 		//----------------------------------------------------------------------
 		// load edge attributes
@@ -251,7 +258,7 @@ void RdbLoadEdges_v15
 		// flush batch when:
 		// 1. batch is full
 		// 2. relation id changed
-		if(idx > 0 && (idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
+		if(idx > 0 && (idx >= BATCH_SIZE || relation_changed)) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
 					dests, ids, idx, max_node_id, false);
@@ -263,31 +270,30 @@ void RdbLoadEdges_v15
 		// flush multi-edge batch when:
 		// 1. batch is full
 		// 2. relation id changed
-		if(multi_edge_idx > 0 &&
-		   (multi_edge_idx >= MAX_BATCH_SIZE || e.relationID != prev_relation)) {
+		if(tensor_idx > 0 && (tensor_idx >= BATCH_SIZE || relation_changed)) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, prev_relation,
-					multi_edge_srcs, multi_edge_dests, multi_edge_ids,
-					multi_edge_idx, max_node_id, true);
+					tensor_srcs, tensor_dests, tensor_ids, tensor_idx,
+					max_node_id, true);
 
 			// reset multi-edge batch state
-			multi_edge_idx = 0;
+			tensor_idx = 0;
 		}
 
 		// determine if we're dealing with a multi-edge
 		// first iteration is considered multi_edge, as we don't know which edge
 		// was introduced in the previous virtual key
-		bool multi_edge = (multi_edge_relation                              &&
+		bool multi_edge = (tensor                                           &&
 						  ((e.src_id == prev_src && e.dest_id == prev_dest) ||
 						   i == 0));
 
 		// accumulate edge
 		if(multi_edge) {
 			// batch multi-edge src, dest and id
-			multi_edge_ids[multi_edge_idx]   = e.id;
-			multi_edge_srcs[multi_edge_idx]  = e.src_id;
-			multi_edge_dests[multi_edge_idx] = e.dest_id;
-			multi_edge_idx++;  // advance batch index
+			tensor_ids[tensor_idx]   = e.id;
+			tensor_srcs[tensor_idx]  = e.src_id;
+			tensor_dests[tensor_idx] = e.dest_id;
+			tensor_idx++;  // advance batch index
 		} else {
 			// batch edge src, dest and id
 			ids[idx]   = e.id;
@@ -308,16 +314,16 @@ void RdbLoadEdges_v15
 	// flush last batch
 	if(idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
-				dests, ids, idx, max_node_id, false);
+		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
+				ids, idx, max_node_id, false);
 	}
 
 	// flush last multi-edge batch
-	if(multi_edge_idx > 0) {
+	if(tensor_idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, prev_relation,
-				multi_edge_srcs, multi_edge_dests, multi_edge_ids,
-				multi_edge_idx, max_node_id, true);
+				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, max_node_id,
+				true);
 	}
 }
 
