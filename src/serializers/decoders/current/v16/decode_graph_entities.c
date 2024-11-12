@@ -126,11 +126,12 @@ static void _RdbLoadEntity
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
 }
 
+// decode nodes
 void RdbLoadNodes_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	const uint64_t node_count
+	SerializerIO rdb,          // RDB
+	GraphContext *gc,          // graph context
+	const uint64_t node_count  // number of nodes to decode
 ) {
 	// Node Format:
 	//      ID
@@ -171,11 +172,12 @@ void RdbLoadNodes_v16
 	ASSERT(prev_graph_node_count + node_count == Graph_NodeCount(gc->g));
 }
 
+// decode deleted nodes
 void RdbLoadDeletedNodes_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	const uint64_t deleted_node_count
+	SerializerIO rdb,                  // RDB
+	GraphContext *gc,                  // graph context
+	const uint64_t deleted_node_count  // number of deleted nodes
 ) {
 	// Format:
 	// node id X N
@@ -192,11 +194,12 @@ void RdbLoadDeletedNodes_v16
 			Graph_DeletedNodeCount(gc->g));
 }
 
+// decode edge relationship header
 static void _DecodeRelationHeader
 (
-	SerializerIO rdb,
-	RelationID *r,
-	bool *tensor
+	SerializerIO rdb,  // RDB
+	RelationID *r,     // [output] relation id
+	bool *tensor       // [output] tensor
 ) {
 	// format:
 	//
@@ -205,21 +208,21 @@ static void _DecodeRelationHeader
 	//     rather or not relationship contains tensors
 	//
 
-	*r = SerializerIO_ReadUnsigned(rdb);
+	ASSERT(r      != NULL);
+	ASSERT(tensor != NULL);
 
-	// end marker
-	if(*r == GRAPH_NO_RELATION) {
-		return;
-	}
+	*r = SerializerIO_ReadUnsigned(rdb);
+	ASSERT(*r != GRAPH_NO_RELATION);
 
 	*tensor = SerializerIO_ReadUnsigned(rdb);
 }
 
-uint64_t _DecodeTensors
+// decode tensors
+static uint64_t _DecodeTensors
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	RelationID r
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	RelationID r       // relationship type
 ) {
 	// format:
 	// edge format:
@@ -229,70 +232,68 @@ uint64_t _DecodeTensors
 	//     multi-edge
 	//     edge properties
 
-	Edge e;
+	Edge e;                           // current decoded edge
+	int       idx            = 0;    // batch index
+	NodeID    max_id         = 0;    // maintain max node ID
+	uint64_t  decoded_edges  = 0;    // number of decoded edges
+	int       tensor_idx     = 0;    // tensors batch index
+	const int BATCH_SIZE     = 256;  // batch size
 
-	int      idx            = 0;  // batch next element position
-	NodeID   max_id         = 0;  // max node id
-	uint64_t decoded_edges  = 0;  // number of decoded edges
-	int      multi_edge_idx = 0;  // tensors batch next element position
+	// single edge batch
+	EdgeID ids  [BATCH_SIZE];
+	NodeID srcs [BATCH_SIZE];
+	NodeID dests[BATCH_SIZE];
 
+	// tensors batch
+	EdgeID tensors_ids  [BATCH_SIZE];
+	NodeID tensors_srcs [BATCH_SIZE];
+	NodeID tensors_dests[BATCH_SIZE];
+
+	// get relationship type schema
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
-	const int MAX_BATCH_SIZE     = 256;  // max batch size
-	//const int MAX_BATCH_SIZE = 16384;  // max batch size
-
-	// single edge batch
-	EdgeID ids  [MAX_BATCH_SIZE];
-	NodeID srcs [MAX_BATCH_SIZE];
-	NodeID dests[MAX_BATCH_SIZE];
-
-	// multi-edge batch
-	EdgeID multi_edge_ids  [MAX_BATCH_SIZE];
-	NodeID multi_edge_srcs [MAX_BATCH_SIZE];
-	NodeID multi_edge_dests[MAX_BATCH_SIZE];
-
+	// as long as we didn't hit our END MARKER
 	while(true) {
-		// decode edge id
+		// decode edge ID
 		e.id = SerializerIO_ReadUnsigned(rdb);
 
-		// break on end marker
+		// break on END MARKER
 		if(e.id == INVALID_ENTITY_ID) {
 			break;
 		}
 
-		// decode edge src, dest and tensor marker
-		e.relationID = r;
+		// decode edge source node id
 		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		// decode edge destination node id
 		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		// set edge relation id
+		e.relationID = r;
 
+		// decode tensor marker
 		bool tensor = SerializerIO_ReadUnsigned(rdb);
 
-		//----------------------------------------------------------------------
 		// load edge attributes
-		//----------------------------------------------------------------------
-
 		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
-		//----------------------------------------------------------------------
 		// index edge
-		//----------------------------------------------------------------------
-
-		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
+		if(PENDING_IDX(s)) {
+			Index_IndexEdge(PENDING_IDX(s), &e);
+		}
 
 		// update max node id
 		max_id = MAX(max_id, MAX(e.src_id, e.dest_id));
 
-		// accumulate edge
+		// batch edge
 		if(tensor) {
-			// batch multi-edge src, dest and id
-			multi_edge_ids[multi_edge_idx]   = e.id;
-			multi_edge_srcs[multi_edge_idx]  = e.src_id;
-			multi_edge_dests[multi_edge_idx] = e.dest_id;
-			multi_edge_idx++;  // advance batch index
+			// batch tensor
+			tensors_ids[tensor_idx]   = e.id;
+			tensors_srcs[tensor_idx]  = e.src_id;
+			tensors_dests[tensor_idx] = e.dest_id;
+			tensor_idx++;  // advance batch index
 		} else {
-			// batch edge src, dest and id
+			// batch edge
 			ids[idx]   = e.id;
 			srcs[idx]  = e.src_id;
 			dests[idx] = e.dest_id;
@@ -303,29 +304,27 @@ uint64_t _DecodeTensors
 		// flush batches
 		//----------------------------------------------------------------------
 
-		// flush multi-edge batch when:
-		if(multi_edge_idx == MAX_BATCH_SIZE) {
+		// flush tensors batch
+		if(tensor_idx == BATCH_SIZE) {
 			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, r, multi_edge_srcs,
-					multi_edge_dests, multi_edge_ids, multi_edge_idx,
-					max_id, true);
+			Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
+					tensors_dests, tensors_ids, tensor_idx, max_id, true);
 
 			// reset multi-edge batch count
-			multi_edge_idx = 0;
+			tensor_idx = 0;
 		}
 
-		// flush batch when:
-		// 1. batch is full
-		// 2. relation id changed
-		if(idx == MAX_BATCH_SIZE) {
+		// flush batch
+		if(idx == BATCH_SIZE) {
 			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids,
-					idx, max_id, false);
+			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+					max_id, false);
 
 			// reset batch count
 			idx = 0;
 		}
 
+		// update number of decode edges
 		decoded_edges++;
 	}
 
@@ -333,37 +332,29 @@ uint64_t _DecodeTensors
 	// flush batches
 	//----------------------------------------------------------------------
 
-	// flush multi-edge batch when:
-	if(multi_edge_idx == MAX_BATCH_SIZE) {
+	// flush tensors batch
+	if(tensor_idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, r, multi_edge_srcs,
-				multi_edge_dests, multi_edge_ids, multi_edge_idx,
-				max_id, true);
-
-		// reset multi-edge batch count
-		multi_edge_idx = 0;
+		Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
+				tensors_dests, tensors_ids, tensor_idx, max_id, true);
 	}
 
-	// flush batch when:
-	// 1. batch is full
-	// 2. relation id changed
-	if(idx == MAX_BATCH_SIZE) {
+	// flush batch
+	if(idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids,
-				idx, max_id, false);
-
-		// reset batch count
-		idx = 0;
+		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+				max_id, false);
 	}
 
 	return decoded_edges;
 }
 
-uint64_t _DecodeEdges
+// decode edges
+static uint64_t _DecodeEdges
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	RelationID r
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	RelationID r       // relationship type
 ) {
 	// Format:
 	//  edge ID
@@ -371,53 +362,83 @@ uint64_t _DecodeEdges
 	//  destination node ID
 	//  edge properties
 
-	Edge e;
-	NodeID max_id = 0;
-	uint64_t decoded_edges = 0;
+	Edge e;                        // current decoded edge
+	uint64_t idx           = 0;    // batch index
+	NodeID   max_id        = 0;    // maintain max node ID
+	uint64_t decoded_edges = 0;    // number of decoded edges
+	const int BATCH_SIZE   = 256;  // batch size
 
+	// batch
+	EdgeID ids  [BATCH_SIZE];
+	NodeID srcs [BATCH_SIZE];
+	NodeID dests[BATCH_SIZE];
+
+	// get relationship type schema
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
+	// as long as we didn't hit our END MARKER
 	while(true) {
+		// decode edge ID
 		e.id = SerializerIO_ReadUnsigned(rdb);
 
-		// break on end marker
+		// break on END MARKER
 		if(e.id == INVALID_ENTITY_ID) {
 			break;
 		}
 
+		// decode edge source node id
 		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		// decode edge destination node id
 		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		// set edge relation id
 		e.relationID = r;
 
-		//----------------------------------------------------------------------
 		// load edge attributes
-		//----------------------------------------------------------------------
-
 		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
-		//----------------------------------------------------------------------
 		// index edge
-		//----------------------------------------------------------------------
+		if(PENDING_IDX(s)) {
+			Index_IndexEdge(PENDING_IDX(s), &e);
+		}
 
-		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
-
+		// update max node id
 		max_id = MAX(max_id, MAX(e.src_id, e.dest_id));
-		Serializer_OptimizedFormConnections(gc->g, r, &e.src_id, &e.dest_id,
-				&e.id, 1, max_id, false);
 
+		// batch edge
+		ids[idx]   = e.id;
+		srcs[idx]  = e.src_id;
+		dests[idx] = e.dest_id;
+		idx++;  // advance batch index
+
+		// flush batch
+		if(idx == BATCH_SIZE) {
+			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+					max_id, false);
+			// reset batch index
+			idx = 0;
+		}
+
+		// update number of decode edges
 		decoded_edges++;
+	}
+
+	// flush batch
+	if(idx > 0) {
+		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+				max_id, false);
 	}
 
 	return decoded_edges;
 }
 
+// decode edges
 void RdbLoadEdges_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	const uint64_t n
+	SerializerIO rdb,  // RDB
+	GraphContext *gc,  // graph context
+	const uint64_t n   // virtual key capacity
 ) {
 	// Format:
 	// {
@@ -425,7 +446,7 @@ void RdbLoadEdges_v16
 	//  source node ID
 	//  destination node ID
 	//  relation type
-	//  multi-edge
+	//  multi-edge [only when relationship type has tensors]
 	// } X N
 	// edge properties X N
 
@@ -451,11 +472,12 @@ void RdbLoadEdges_v16
 	ASSERT(n + prev_edge_count == Graph_EdgeCount(gc->g));
 }
 
+// decode deleted edges
 void RdbLoadDeletedEdges_v16
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	const uint64_t deleted_edge_count
+	SerializerIO rdb,                  // RDB
+	GraphContext *gc,                  // graph context
+	const uint64_t deleted_edge_count  // number of deleted edges
 ) {
 	// Format:
 	// edge id X N

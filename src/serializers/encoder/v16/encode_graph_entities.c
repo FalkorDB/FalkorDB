@@ -323,30 +323,35 @@ static void _EncodeEdges
 	//  destination node ID
 	//  edge properties
 
-	Edge   e;
-	EdgeID edgeID;
-	uint64_t _n = *n;
+	Edge   e;          // current edge
+	EdgeID edgeID;     // edge id
+	uint64_t _n = *n;  // virtual key capacity
 
-	while(_n > 0 && (TensorIterator_next(it, &e.src_id, &e.dest_id, &edgeID, NULL))) {
+	// as long as there's room in the virtual key
+	// and iterator isn't depleted
+	while(_n > 0 &&
+		  (TensorIterator_next(it, &e.src_id, &e.dest_id, &edgeID, NULL))) {
 		// get edge attribute set
 		bool edge_found = Graph_GetEdge(g, edgeID, &e);
 		ASSERT(edge_found == true);
 
-		// write edge ID
+		// encode edge ID
 		SerializerIO_WriteUnsigned(rdb, edgeID);
 
-		// source node ID
+		// encode source node ID
 		SerializerIO_WriteUnsigned(rdb, e.src_id);
 
-		// destination node ID
+		// encode destination node ID
 		SerializerIO_WriteUnsigned(rdb, e.dest_id);
 
-		// edge properties
+		// encode edge properties
 		_RdbSaveEntity(rdb, (GraphEntity *)&e);
 
+		// reduce capacity
 		_n--;
 	}
 
+	// update capacity
 	*n = _n;
 }
 
@@ -366,34 +371,39 @@ static void _EncodeTensors
 	//     multi-edge
 	//     edge properties
 
-	Edge   e;
-	bool tensor;
-	EdgeID edgeID;
-	uint64_t _n = *n;
+	Edge   e;            // current encoded edge
+	bool tensor;         // rather or not the edge is part of a tensor
+	EdgeID edgeID;       // edge ID
+	uint64_t _n = *n;    // virtual key capacity
 
-	while(_n > 0 && (TensorIterator_next(it, &e.src_id, &e.dest_id, &edgeID, &tensor))) {
+	// as long as there's room in the virtual key
+	// and iterator isn't depleted
+	while(_n > 0 &&
+		  (TensorIterator_next(it, &e.src_id, &e.dest_id, &edgeID, &tensor))) {
 		// get edge attribute set
 		bool edge_found = Graph_GetEdge(g, edgeID, &e);
 		ASSERT(edge_found == true);
 
-		// write edge ID
+		// encode edge ID
 		SerializerIO_WriteUnsigned(rdb, edgeID);
 
-		// source node ID
+		// encode source node ID
 		SerializerIO_WriteUnsigned(rdb, e.src_id);
 
-		// destination node ID
+		// encode destination node ID
 		SerializerIO_WriteUnsigned(rdb, e.dest_id);
 
-		// tensor
+		// encode tensor
 		SerializerIO_WriteUnsigned(rdb, tensor);
 
-		// edge properties
+		// encode edge properties
 		_RdbSaveEntity(rdb, (GraphEntity *)&e);
 
+		// reduce capacity
 		_n--;
 	}
 
+	// update capacity
 	*n = _n;
 }
 
@@ -417,9 +427,11 @@ void RdbSaveEdges_v16
 	//     source node id
 	//     destination node id
 	//     relation type
-	//     multi-edge
+	//     multi-edge [only if relation contains tensors]
 	//     edge properties
 	
+
+	// make sure there's capacity
 	ASSERT(n > 0);
 
 	// number of relationship matrices in the graph
@@ -451,14 +463,16 @@ void RdbSaveEdges_v16
 	//--------------------------------------------------------------------------
 
 	uint64_t _n = n;
+
+	// as long as there's capacity in this virtual key
 	while(_n > 0) {
 		// encode relation header
 		_EncodeRelationHeader(rdb, gc->g, r);
 
 		// check if current relationship matrix contains tensors
-		bool contains_tensors = Graph_RelationshipContainsMultiEdge(gc->g, r);
+		bool tensors = Graph_RelationshipContainsMultiEdge(gc->g, r);
 
-		if(contains_tensors) {
+		if(tensors) {
 			// encode tensors
 			_EncodeTensors(rdb, gc->g, it, &_n);
 		} else {
@@ -466,15 +480,16 @@ void RdbSaveEdges_v16
 			_EncodeEdges(rdb, gc->g, it, &_n);
 		}
 
-		// place end marker
+		// encode end marker
 		SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
 
 		// move to the next relation
 		if(++r == relations_count) {
+			// no more relations break
 			break;
 		}
 
-		// get matrix and set iterator
+		// set iterator on new relation matrix
 		R = Graph_GetRelationMatrix(gc->g, r, false);
 		TensorIterator_ScanRange(it, R, 0, UINT64_MAX, false);
 	}
@@ -484,7 +499,7 @@ void RdbSaveEdges_v16
 		*it = (TensorIterator){0};
 	}
 
-	// update context
+	// update encoding context
 	GraphEncodeContext_SetCurrentRelationID(gc->encoding_context, r);
 }
 
