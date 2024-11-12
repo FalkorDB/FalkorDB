@@ -182,6 +182,9 @@ GraphContext *RdbLoadGraphContext_v13
 			case ENCODE_STATE_DELETED_EDGES:
 				RdbLoadDeletedEdges_v13(rdb, gc, payload.entities_count);
 				break;
+			case ENCODE_STATE_GRAPH_SCHEMA:
+				// skip, handled in _DecodeHeader
+				break;
 			default:
 				ASSERT(false && "Unknown encoding");
 				break;

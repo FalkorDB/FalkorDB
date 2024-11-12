@@ -23,6 +23,7 @@ typedef enum {
 	ENCODE_STATE_DELETED_NODES, // encoding deleted nodes
 	ENCODE_STATE_EDGES,         // encoding edges
 	ENCODE_STATE_DELETED_EDGES, // encoding deleted edges
+	ENCODE_STATE_GRAPH_SCHEMA,  // encoding graph schemas
 	ENCODE_STATE_FINAL          // encoding final state
 } EncodeState;
 

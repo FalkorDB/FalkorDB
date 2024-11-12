@@ -91,6 +91,10 @@ static PayloadInfo _StatePayloadInfo
 		case ENCODE_STATE_DELETED_EDGES:
 			required_entities_count = Graph_DeletedEdgeCount(gc->g);
 			break;
+		case ENCODE_STATE_GRAPH_SCHEMA:
+			// here for historical reasons
+			// can be removed once encoder / decoder version 15 is removed.
+			break;
 		default:
 			ASSERT(false && "Unknown encoding state in _CurrentStatePayloadInfo");
 			break;
