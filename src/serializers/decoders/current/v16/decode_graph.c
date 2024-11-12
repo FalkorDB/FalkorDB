@@ -130,9 +130,13 @@ static PayloadInfo *_RdbLoadKeySchema
 		// for each payload
 		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
-		payload_info.state =  SerializerIO_ReadUnsigned(rdb);
+
+		payload_info.state          = SerializerIO_ReadUnsigned(rdb);
+		payload_info.entities_count = SerializerIO_ReadUnsigned(rdb);
+
 		array_append(payloads, payload_info);
 	}
+
 	return payloads;
 }
 

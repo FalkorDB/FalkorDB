@@ -491,6 +491,6 @@ void RdbLoadDeletedEdges_v16
 
 	// read encoded deleted edge count and validate
 	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
-			Graph_DeletedNodeCount(gc->g));
+			Graph_DeletedEdgeCount(gc->g));
 }
 
