@@ -33,8 +33,7 @@ void Serializer_OptimizedFormConnections
 	const NodeID *restrict dests,  // dest node id
 	const EdgeID *restrict ids,    // edge id
 	uint64_t n,                    // number of entries
-	NodeID max_id,                 //
-	bool multi_edge                //
+	bool multi_edge                // multi edge batch
 );
 
 void Serializer_OptimizedSingleEdgeFormConnection

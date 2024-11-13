@@ -234,7 +234,6 @@ static uint64_t _DecodeTensors
 
 	Edge e;                           // current decoded edge
 	int       idx            = 0;    // batch index
-	NodeID    max_id         = 0;    // maintain max node ID
 	uint64_t  decoded_edges  = 0;    // number of decoded edges
 	int       tensor_idx     = 0;    // tensors batch index
 	const int BATCH_SIZE     = 256;  // batch size
@@ -282,9 +281,6 @@ static uint64_t _DecodeTensors
 			Index_IndexEdge(PENDING_IDX(s), &e);
 		}
 
-		// update max node id
-		max_id = MAX(max_id, MAX(e.src_id, e.dest_id));
-
 		// batch edge
 		if(tensor) {
 			// batch tensor
@@ -308,7 +304,7 @@ static uint64_t _DecodeTensors
 		if(tensor_idx == BATCH_SIZE) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
-					tensors_dests, tensors_ids, tensor_idx, max_id, true);
+					tensors_dests, tensors_ids, tensor_idx, true);
 
 			// reset multi-edge batch count
 			tensor_idx = 0;
@@ -318,7 +314,7 @@ static uint64_t _DecodeTensors
 		if(idx == BATCH_SIZE) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-					max_id, false);
+					false);
 
 			// reset batch count
 			idx = 0;
@@ -336,14 +332,14 @@ static uint64_t _DecodeTensors
 	if(tensor_idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
-				tensors_dests, tensors_ids, tensor_idx, max_id, true);
+				tensors_dests, tensors_ids, tensor_idx, true);
 	}
 
 	// flush batch
 	if(idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-				max_id, false);
+				false);
 	}
 
 	return decoded_edges;
@@ -364,7 +360,6 @@ static uint64_t _DecodeEdges
 
 	Edge e;                        // current decoded edge
 	uint64_t idx           = 0;    // batch index
-	NodeID   max_id        = 0;    // maintain max node ID
 	uint64_t decoded_edges = 0;    // number of decoded edges
 	const int BATCH_SIZE   = 256;  // batch size
 
@@ -403,9 +398,6 @@ static uint64_t _DecodeEdges
 			Index_IndexEdge(PENDING_IDX(s), &e);
 		}
 
-		// update max node id
-		max_id = MAX(max_id, MAX(e.src_id, e.dest_id));
-
 		// batch edge
 		ids[idx]   = e.id;
 		srcs[idx]  = e.src_id;
@@ -415,7 +407,7 @@ static uint64_t _DecodeEdges
 		// flush batch
 		if(idx == BATCH_SIZE) {
 			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-					max_id, false);
+					false);
 			// reset batch index
 			idx = 0;
 		}
@@ -427,7 +419,7 @@ static uint64_t _DecodeEdges
 	// flush batch
 	if(idx > 0) {
 		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-				max_id, false);
+				false);
 	}
 
 	return decoded_edges;

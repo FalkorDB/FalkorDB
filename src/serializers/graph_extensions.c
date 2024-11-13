@@ -12,36 +12,6 @@
 // functions declerations - implemented in graph.c
 void Graph_FormConnection(Graph *g, NodeID src, NodeID dest, EdgeID edge_id, int r);
 
-void Graph_EnsureNodeCap
-(
-	Graph *g,
-	uint64_t cap
-) {
-	DataBlock_Ensure(g->nodes, cap);
-
-	uint       n;
-	GrB_Index  dim = Graph_RequiredMatrixDim(g);
-	Delta_Matrix  M   =  NULL;
-
-	M = Graph_GetAdjacencyMatrix(g, false);
-	Delta_Matrix_resize(M, dim, dim);
-
-	M = Graph_GetNodeLabelMatrix(g);
-	Delta_Matrix_resize(M, dim, dim);
-
-	n = array_len(g->labels);
-	for(int i = 0; i < n; i ++) {
-		M = Graph_GetLabelMatrix(g, i);
-		Delta_Matrix_resize(M, dim, dim);
-	}
-
-	n = array_len(g->relations);
-	for(int i = 0; i < n; i ++) {
-		M = Graph_GetRelationMatrix(g, i, false);
-		Delta_Matrix_resize(M, dim, dim);
-	}
-}
-
 inline void Serializer_Graph_MarkEdgeDeleted
 (
 	Graph *g,
@@ -71,22 +41,19 @@ void Serializer_Graph_SetNode
 	AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
 	*set = NULL;
 
-	n->id =  id;
-	n->attributes =  set;
+	n->id = id;
+	n->attributes = set;
+
 	GrB_Info info;
 	UNUSED(info);
 
 	for(uint i = 0; i < label_count; i ++) {
 		LabelID label = labels[i];
 		// set label matrix at position [id, id]
-		Delta_Matrix  M = Graph_GetLabelMatrix(g, label);
-		GrB_Matrix m    = Delta_Matrix_M(M);
+		Delta_Matrix M = Graph_GetLabelMatrix(g, label);
+		GrB_Matrix   m = Delta_Matrix_M(M);
+
 		info = GrB_Matrix_setElement_BOOL(m, true, id, id);
-		if(info == GrB_INVALID_INDEX) {
-			RedisModule_Log(NULL, "notice", "RESIZE LABEL MATRIX");
-			Graph_EnsureNodeCap(g, id);
-			info = GrB_Matrix_setElement_BOOL(m, true, id, id);
-		}
 		ASSERT(info == GrB_SUCCESS);
 	}
 }
@@ -137,7 +104,6 @@ void Serializer_OptimizedFormConnections
 	const NodeID *restrict dests,     // dest node id
 	const EdgeID *restrict ids,       // edge id
 	uint64_t n,                       // number of entries
-	NodeID max_id,
 	bool multi_edge                   // multi edge batch
 ) {
 	// validations
@@ -146,10 +112,8 @@ void Serializer_OptimizedFormConnections
 	ASSERT(ids    != NULL);
 	ASSERT(srcs   != NULL);
 	ASSERT(dests  != NULL);
-	ASSERT(max_id != INVALID_ENTITY_ID);
 
 	GrB_Info   info;   // GraphBLAS operation result
-	GrB_Index  nrows;  // #rows
 
 	Tensor       M   = Graph_GetRelationMatrix(g, r, false);  // relation matrix
 	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);    // adj matrix
@@ -160,16 +124,6 @@ void Serializer_OptimizedFormConnections
 	GrB_Matrix adj_tm = Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
 
 	UNUSED(info);
-
-	// make sure matrix dimension includes max_id
-	info = GrB_Matrix_nrows(&nrows, m);
-	ASSERT(info == GrB_SUCCESS);
-
-	if(nrows < max_id) {
-		// resize the matrices
-		RedisModule_Log(NULL, "notice", "RESIZE MATRIX");
-		Graph_EnsureNodeCap(g, max_id);
-	}
 
 	for(uint64_t i = 0; i < n; i++) {
 		uint64_t  x   = ids[i];

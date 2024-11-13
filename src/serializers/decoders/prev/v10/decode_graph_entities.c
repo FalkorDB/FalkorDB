@@ -147,7 +147,6 @@ void RdbLoadEdges_v10
 
 	NodeID     prev_src      = INVALID_ENTITY_ID;
 	NodeID     prev_dest     = INVALID_ENTITY_ID;
-	NodeID     max_node_id   = 0;
 	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
 
 	int       idx            = 0;                     // edge batch index
@@ -210,7 +209,7 @@ void RdbLoadEdges_v10
 		if(idx > 0 && (idx >= BATCH_SIZE || relation_changed)) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
-					dests, ids, idx, max_node_id, false);
+					dests, ids, idx, false);
 
 			// reset batch state
 			idx = 0;
@@ -222,8 +221,7 @@ void RdbLoadEdges_v10
 		if(tensor_idx > 0 && (tensor_idx >= BATCH_SIZE || relation_changed)) {
 			// flush batch
 			Serializer_OptimizedFormConnections(gc->g, prev_relation,
-					tensor_srcs, tensor_dests, tensor_ids, tensor_idx,
-					max_node_id, true);
+					tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 
 			// reset multi-edge batch state
 			tensor_idx = 0;
@@ -251,9 +249,6 @@ void RdbLoadEdges_v10
 			idx++;  // advance batch index
 		}
 
-		// maintain max src and max dest
-		max_node_id = MAX(max_node_id, MAX(e.src_id, e.dest_id));
-
 		// update prev values
 		prev_src      = e.src_id;
 		prev_dest     = e.dest_id;
@@ -264,19 +259,23 @@ void RdbLoadEdges_v10
 	if(idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
-				ids, idx, max_node_id, false);
+				ids, idx, false);
 	}
 
 	// flush last multi-edge batch
 	if(tensor_idx > 0) {
 		// flush batch
 		Serializer_OptimizedFormConnections(gc->g, prev_relation,
-				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, max_node_id,
-				true);
+				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 	}
 }
 
-void RdbLoadDeletedEdges_v10(RedisModuleIO *rdb, GraphContext *gc, uint64_t deleted_edge_count) {
+void RdbLoadDeletedEdges_v10
+(
+	RedisModuleIO *rdb,
+	GraphContext *gc,
+	uint64_t deleted_edge_count
+) {
 	/* Format:
 	 * edge id X N */
 	Graph_AllocateEdges(gc->g, deleted_edge_count);

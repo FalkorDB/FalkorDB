@@ -281,6 +281,20 @@ void Tensor_SetEdges
 	ASSERT(T        != NULL);
 	ASSERT(elements != NULL);
 
+	// assert assumption
+	#ifdef RG_DEBUG
+	for(uint64_t i = 0; i < n-1; i++) {
+		const Edge *e    = elements[i];
+		const Edge *next = elements[i+1];
+
+		// make sure current edge has either a lower source node id
+		// or has the same source node id but a lower destination node id
+		ASSERT((Edge_GetSrcNodeID(e)  < Edge_GetSrcNodeID(next))   ||
+			   (Edge_GetSrcNodeID(e)  == Edge_GetSrcNodeID(next)   &&
+				Edge_GetDestNodeID(e) <= Edge_GetDestNodeID(next)));
+	}
+	#endif
+
 	// a new entry can cause one of the following transitions:
 	// 1. the new entry creates a new scalar at T[i,j]
 	// 2. the new entry convers an existing scalar at T[i,j] to a vector

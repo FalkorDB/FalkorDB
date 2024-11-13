@@ -207,7 +207,6 @@ static void _RdbSaveDeletedEntities_v16
 }
 
 // encode deleted node IDs
-// return number of elements encoded
 void RdbSaveDeletedNodes_v16
 (
 	SerializerIO rdb,  // RDB
@@ -226,7 +225,6 @@ void RdbSaveDeletedNodes_v16
 }
 
 // encode deleted edges IDs
-// return number of elements encoded
 void RdbSaveDeletedEdges_v16
 (
 	SerializerIO rdb,  // RDB
@@ -245,7 +243,6 @@ void RdbSaveDeletedEdges_v16
 }
 
 // encode nodes
-// returns number of nodes encoded
 void RdbSaveNodes_v16
 (
 	SerializerIO rdb,  // RDB
@@ -408,7 +405,6 @@ static void _EncodeTensors
 }
 
 // encode edges
-// returns number of encoded edges.
 void RdbSaveEdges_v16
 (
 	SerializerIO rdb,  // RDB

@@ -14,7 +14,6 @@ void RdbSaveGraph_latest
 );
 
 // encode nodes
-// returns number of nodes encoded
 void RdbSaveNodes_v16
 (
 	SerializerIO rdb,  // RDB
@@ -24,7 +23,6 @@ void RdbSaveNodes_v16
 );
 
 // encode deleted node IDs
-// return number of elements encoded
 void RdbSaveDeletedNodes_v16
 (
 	SerializerIO rdb,  // RDB
@@ -34,7 +32,6 @@ void RdbSaveDeletedNodes_v16
 );
 
 // encode edges
-// returns number of encoded edges.
 void RdbSaveEdges_v16
 (
 	SerializerIO rdb,  // RDB
@@ -44,7 +41,6 @@ void RdbSaveEdges_v16
 );
 
 // encode deleted edges IDs
-// return number of elements encoded
 void RdbSaveDeletedEdges_v16
 (
 	SerializerIO rdb,  // RDB
