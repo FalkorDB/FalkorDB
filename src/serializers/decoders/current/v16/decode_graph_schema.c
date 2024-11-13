@@ -15,7 +15,7 @@ static void _RdbDecodeIndexField
 	bool *nostem,            // index field option nostem
 	char **phonetic,         // index field option phonetic
 	uint32_t *dimension,     // index field option dimension
-	size_t *M, 		         // index field option M
+	size_t *M,               // index field option M
 	size_t *efConstruction,  // index field option efConstruction
 	size_t *efRuntime,       // index field option efRuntime
 	VecSimMetric *simFunc    // index field option similarity function

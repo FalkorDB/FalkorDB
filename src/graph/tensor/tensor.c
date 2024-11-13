@@ -122,7 +122,7 @@ void Tensor_SetElements
 	GrB_Info info;
 
 	// i's is advanced within the loop's body
-	for(uint i = 0; i < n;) {
+	for(uint64_t i = 0; i < n;) {
 		enum SetMethod method;  // insert method
 
 		uint64_t  x   = vals[i];  // element value

@@ -150,7 +150,7 @@ static void _RdbSaveEdge
 	SerializerIO_WriteUnsigned(rdb, r);
 
 	// multi-edge
-	SerializerIO_WriteFloat(rdb, (float)multi_edge);
+	SerializerIO_WriteUnsigned(rdb, multi_edge);
 
 	// edge properties
 	_RdbSaveEntity(rdb, (GraphEntity *)e);

@@ -147,10 +147,6 @@ void Serializer_OptimizedFormConnections
 		//----------------------------------------------------------------------
 
 		if(!multi_edge) {
-			//uint64_t _x;
-			//info = GrB_Matrix_extractElement_UINT64(&_x, m, row, col);
-			//ASSERT(info == GrB_NO_VALUE);
-
 			info = GrB_Matrix_setElement_UINT64(m, x, row, col);
 			ASSERT(info == GrB_SUCCESS);
 
@@ -164,6 +160,7 @@ void Serializer_OptimizedFormConnections
 	}
 
 	// update graph statistics
+	// must be performed here due to tensors
 	GraphStatistics_IncEdgeCount(&g->stats, r, n);
 }
 

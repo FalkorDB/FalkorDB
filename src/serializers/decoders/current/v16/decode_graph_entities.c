@@ -118,7 +118,7 @@ static void _RdbLoadEntity
 	SIValue vals[n];
 	AttributeID ids[n];
 
-	for(int i = 0; i < n; i++) {
+	for(uint64_t i = 0; i < n; i++) {
 		ids[i]  = SerializerIO_ReadUnsigned(rdb);
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
@@ -160,8 +160,8 @@ void RdbLoadNodes_v16
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		for (int i = 0; i < nodeLabelCount; i++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
+		for (int j = 0; j < nodeLabelCount; j++) {
+			Schema *s = GraphContext_GetSchemaByID(gc, labels[j], SCHEMA_NODE);
 			ASSERT(s != NULL);
 
 			// index node
