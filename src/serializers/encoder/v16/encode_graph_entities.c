@@ -483,15 +483,17 @@ void RdbSaveEdges_v16
 		// encode end marker
 		SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);
 
-		// move to the next relation
-		if(++r == relations_count) {
-			// no more relations break
-			break;
+		// there's still room in the VKey
+		if(_n > 0) {
+			// move to the next relation
+			if(++r == relations_count) {
+				// no more relations break
+				break;
+			}
+			// set iterator on new relation matrix
+			R = Graph_GetRelationMatrix(gc->g, r, false);
+			TensorIterator_ScanRange(it, R, 0, UINT64_MAX, false);
 		}
-
-		// set iterator on new relation matrix
-		R = Graph_GetRelationMatrix(gc->g, r, false);
-		TensorIterator_ScanRange(it, R, 0, UINT64_MAX, false);
 	}
 
 	// check if done encoding edges
