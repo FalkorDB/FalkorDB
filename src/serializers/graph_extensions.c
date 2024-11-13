@@ -150,7 +150,7 @@ void Serializer_OptimizedFormConnections
 			info = GrB_Matrix_setElement_UINT64(m, x, row, col);
 			ASSERT(info == GrB_SUCCESS);
 
-			info = GrB_Matrix_setElement_UINT64(tm, x, col, row);
+			info = GrB_Matrix_setElement_BOOL(tm, true, col, row);
 			ASSERT(info == GrB_SUCCESS);
 		}
 	}
