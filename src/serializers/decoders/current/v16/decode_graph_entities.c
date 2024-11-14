@@ -151,8 +151,8 @@ void RdbLoadNodes_v16
 
 		// (labels) x M
 		LabelID labels[nodeLabelCount];
-		for(uint64_t i = 0; i < nodeLabelCount; i ++){
-			labels[i] = SerializerIO_ReadUnsigned(rdb);
+		for(uint64_t j = 0; j < nodeLabelCount; j ++){
+			labels[j] = SerializerIO_ReadUnsigned(rdb);
 		}
 
 		Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
