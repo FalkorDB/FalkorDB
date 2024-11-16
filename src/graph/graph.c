@@ -91,14 +91,6 @@ void Graph_ReleaseLock
 // Graph utility functions
 //------------------------------------------------------------------------------
 
-// return number of nodes graph can contain
-static inline size_t _Graph_NodeCap
-(
-	const Graph *g
-) {
-	return g->nodes->itemCap;
-}
-
 // retrieves edges connecting source to destination
 static void _Graph_GetEdgesConnectingNodes
 (
@@ -111,8 +103,8 @@ static void _Graph_GetEdgesConnectingNodes
 	ASSERT(g);
 	ASSERT(r      != GRAPH_NO_RELATION);
 	ASSERT(r      < Graph_RelationTypeCount(g));
-	ASSERT(srcID  < _Graph_NodeCap(g));
-	ASSERT(destID < _Graph_NodeCap(g));
+	ASSERT(srcID  < Graph_NodeCap(g));
+	ASSERT(destID < Graph_NodeCap(g));
 
 	Tensor R = Graph_GetRelationMatrix(g, r, false);
 	Edge e = {.src_id = srcID, .dest_id = destID, .relationID = r};
@@ -909,7 +901,7 @@ inline size_t Graph_RequiredMatrixDim
 (
 	const Graph *g
 ) {
-	return _Graph_NodeCap(g);
+	return Graph_NodeCap(g);
 }
 
 // retrieves a node iterator which can be used to access
@@ -932,8 +924,16 @@ DataBlockIterator *Graph_ScanEdges
 	return DataBlock_Scan(g->edges);
 }
 
+// return number of nodes graph can contain
+uint64_t Graph_NodeCap
+(
+	const Graph *g
+) {
+	return g->nodes->itemCap;
+}
+
 // returns number of nodes in the graph
-size_t Graph_NodeCount
+uint64_t Graph_NodeCount
 (
 	const Graph *g
 ) {
@@ -968,7 +968,7 @@ uint64_t Graph_LabeledNodeCount
 }
 
 // returns number of edges in the graph
-size_t Graph_EdgeCount
+uint64_t Graph_EdgeCount
 (
 	const Graph *g
 ) {

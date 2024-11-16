@@ -154,6 +154,11 @@ GraphContext *RdbLoadGraphContext_v15
 
 	GraphContext *gc = _DecodeHeader(rdb);
 
+	// log progress
+	RedisModule_Log(NULL, "notice", "Graph '%s' processing virtual key: %lld/%lld",
+			GraphContext_GetName(gc), gc->decoding_context->keys_processed + 1,
+			gc->decoding_context->graph_keys_count);
+
 	// load the key schema
 	PayloadInfo *key_schema = _RdbLoadKeySchema(rdb);
 
@@ -172,16 +177,42 @@ GraphContext *RdbLoadGraphContext_v15
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 				RdbLoadNodes_v15(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %zu/%llu nodes",
+						GraphContext_GetName(gc),
+						Graph_UncompactedNodeCount(gc->g),
+						Graph_NodeCap(gc->g));
+
 				break;
 			case ENCODE_STATE_DELETED_NODES:
 				RdbLoadDeletedNodes_v15(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %u deleted nodes",
+						GraphContext_GetName(gc), Graph_DeletedNodeCount(gc->g));
+
 				break;
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 				RdbLoadEdges_v15(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %lld edges",
+						GraphContext_GetName(gc), Graph_EdgeCount(gc->g));
+
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
 				RdbLoadDeletedEdges_v15(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %u deleted edges",
+						GraphContext_GetName(gc), Graph_DeletedEdgeCount(gc->g));
+
 				break;
 			case ENCODE_STATE_GRAPH_SCHEMA:
 				// skip, handled in _DecodeHeader

@@ -145,7 +145,6 @@ GraphContext *RdbLoadGraphContext_latest
 	SerializerIO rdb,
 	const RedisModuleString *rm_key_name
 ) {
-
 	// Key format:
 	//  Header
 	//  Payload(s) count: N
@@ -155,6 +154,11 @@ GraphContext *RdbLoadGraphContext_latest
 	//  Payload(s) X N
 
 	GraphContext *gc = _DecodeHeader(rdb);
+
+	// log progress
+	RedisModule_Log(NULL, "notice", "Graph '%s' processing virtual key: %lld/%lld",
+			GraphContext_GetName(gc), gc->decoding_context->keys_processed + 1,
+			gc->decoding_context->graph_keys_count);
 
 	// load the key schema
 	PayloadInfo *payloads = _RdbLoadKeySchema(rdb);
@@ -173,16 +177,44 @@ GraphContext *RdbLoadGraphContext_latest
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 				RdbLoadNodes_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %zu/%llu nodes",
+						GraphContext_GetName(gc),
+						Graph_UncompactedNodeCount(gc->g),
+						Graph_NodeCap(gc->g));
+
 				break;
 			case ENCODE_STATE_DELETED_NODES:
 				RdbLoadDeletedNodes_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %u deleted nodes",
+						GraphContext_GetName(gc),
+						Graph_DeletedNodeCount(gc->g));
+
 				break;
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 				RdbLoadEdges_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %lld edges",
+						GraphContext_GetName(gc), Graph_EdgeCount(gc->g));
+
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
 				RdbLoadDeletedEdges_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %u deleted edges",
+						GraphContext_GetName(gc),
+						Graph_DeletedEdgeCount(gc->g));
+
 				break;
 			default:
 				ASSERT(false && "Unknown encoding");
@@ -249,6 +281,8 @@ GraphContext *RdbLoadGraphContext_latest
 		ASSERT(Graph_Pending(g) == false);
 
 		GraphDecodeContext_Reset(gc->decoding_context);
+
+		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
 	}
 
 	return gc;
