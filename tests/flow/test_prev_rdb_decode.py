@@ -1,7 +1,7 @@
 import os
 import time
-import random
 from common import *
+from falkordb import FalkorDB
 
 # decoders versions to tests
 VERSIONS = [
@@ -22,16 +22,20 @@ QUERIES = [
 def graph_id(v):
     return f"v{v}_rdb_restore"
 
+def get_image_tag(v):
+    return [item['tag'] for item in VERSIONS if item ['decoder_version'] == v][0]
+
 # starts db using docker
 def run_db(image):
     import docker
+    from random import randint
 
     # Initialize the Docker client
     client = docker.from_env()
 
-    random_port = random.randint(49152, 65535)
+    random_port = randint(49152, 65535)
 
-    # Run the RedisGraph container
+    # Run the FalkorDB container
     container = client.containers.run(
         image,                            # Image
         detach=True,                      # Run container in the background
@@ -47,8 +51,6 @@ def stop_db(container):
 
 # generate a graph dump
 def generate_dump(key, port):
-    from falkordb import FalkorDB
-
     # Connect to FalkorDB
     db = FalkorDB(port=port)
 
@@ -71,7 +73,7 @@ def get_dump(v):
     # get dump
     if not os.path.exists(path):
         # get decoder docker image tag
-        tag = [item['tag'] for item in VERSIONS if item ['decoder_version'] == v][0]
+        tag = get_image_tag(v)
 
         # start Docker container
         container, port = run_db(tag)
@@ -99,7 +101,7 @@ def get_dump(v):
         with open(path, 'rb') as f:
             return f.read()
 
-class test_prev_rdb_decode(FlowTestsBase):
+class test_prev_rdb_decode():
     def __init__(self):
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()

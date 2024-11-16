@@ -109,6 +109,7 @@ void Serializer_OptimizedFormConnections
 	// validations
 	ASSERT(n      >  0);
 	ASSERT(g      != NULL);
+	ASSERT(r      != GRAPH_UNKNOWN_RELATION);
 	ASSERT(ids    != NULL);
 	ASSERT(srcs   != NULL);
 	ASSERT(dests  != NULL);

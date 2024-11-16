@@ -200,14 +200,13 @@ void RdbLoadEdges_v15
 	NodeID     prev_dest     = INVALID_ENTITY_ID;
 	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
 
-	int       idx            = 0;                     // edge batch index
-	int       tensor_idx     = 0;                     // tensor batch index
-	const int BATCH_SIZE     = MIN(edge_count, 256);  // max batch size
+	int       idx        = 0;                     // edge batch index
+	int       tensor_idx = 0;                     // tensor batch index
+	const int BATCH_SIZE = MIN(edge_count, 256);  // max batch size
 
-	EdgeID ids  [BATCH_SIZE];
-	NodeID srcs [BATCH_SIZE];
-	NodeID dests[BATCH_SIZE];
-
+	EdgeID ids         [BATCH_SIZE];
+	NodeID srcs        [BATCH_SIZE];
+	NodeID dests       [BATCH_SIZE];
 	EdgeID tensor_ids  [BATCH_SIZE];
 	NodeID tensor_srcs [BATCH_SIZE];
 	NodeID tensor_dests[BATCH_SIZE];
@@ -257,25 +256,28 @@ void RdbLoadEdges_v15
 		// flush batch when:
 		// 1. batch is full
 		// 2. relation id changed
-		if(idx > 0 && (idx >= BATCH_SIZE || relation_changed)) {
-			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
-					dests, ids, idx, false);
+		if(relation_changed ||
+		   (idx > 0 && idx >= BATCH_SIZE) ||
+		   (tensor_idx > 0 && tensor_idx >= BATCH_SIZE)) {
 
-			// reset batch state
-			idx = 0;
-		}
+			if(idx > 0) {
+				// flush batch
+				Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
+						dests, ids, idx, false);
 
-		// flush multi-edge batch when:
-		// 1. batch is full
-		// 2. relation id changed
-		if(tensor_idx > 0 && (tensor_idx >= BATCH_SIZE || relation_changed)) {
-			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, prev_relation,
-					tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
+				// reset batch state
+				idx = 0;
+			}
 
-			// reset multi-edge batch state
-			tensor_idx = 0;
+			// flush multi-edge batch when:
+			if(tensor_idx > 0) {
+				// flush batch
+				Serializer_OptimizedFormConnections(gc->g, prev_relation,
+						tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
+
+				// reset multi-edge batch state
+				tensor_idx = 0;
+			}
 		}
 
 		// determine if we're dealing with a multi-edge
@@ -283,11 +285,10 @@ void RdbLoadEdges_v15
 		// was introduced in the previous virtual key
 		bool multi_edge = (tensor                                           &&
 						  ((e.src_id == prev_src && e.dest_id == prev_dest) ||
-						   i == 0));
+						   relation_changed));
 
 		// accumulate edge
 		if(multi_edge) {
-			// batch multi-edge src, dest and id
 			tensor_ids[tensor_idx]   = e.id;
 			tensor_srcs[tensor_idx]  = e.src_id;
 			tensor_dests[tensor_idx] = e.dest_id;
