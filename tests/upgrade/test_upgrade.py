@@ -1,4 +1,9 @@
 import time
+import sys
+import os
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../flow/')
+
 from common import *
 from graph_utils import *
 from random_graph import *
@@ -54,19 +59,7 @@ class test_upgrade():
         self.replica_conn.replicaof("localhost", master_port)
 
         # Wait for replica to sync
-        while True:
-            # Get replication info
-            replication_info = self.replica_conn.info("replication")
-
-            # Check if the replica is synced with the master
-            if replication_info.get("master_link_status") == "up":
-                print("Replica has finished syncing.")
-                break
-            else:
-                print("Waiting for replica to sync...")
-
-            # Wait before checking again
-            time.sleep(1)
+        master_db.connection.wait(1, 0)
 
         replica_graph = self.replica_db.select_graph('upgrade')
 
@@ -79,6 +72,8 @@ class test_upgrade():
 
         # Terminate docker container
         stop_db(container)
+
+        self.replica_conn.replicaof("NO", "ONE")
 
     def test_v14_upgrade(self):
         image = 'falkordb/falkordb:v4.0.7'
