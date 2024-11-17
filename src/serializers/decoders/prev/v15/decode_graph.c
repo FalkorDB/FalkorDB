@@ -111,6 +111,13 @@ static GraphContext *_DecodeHeader
 	// decode graph schemas
 	RdbLoadGraphSchema_v15(rdb, gc, !first_vkey);
 
+	// save decode statistics for later progess reporting
+	// e.g. "Decoded 20000/4500000 nodes"
+	gc->decoding_context->node_count         = node_count;
+	gc->decoding_context->edge_count         = edge_count;
+	gc->decoding_context->deleted_node_count = deleted_node_count;
+	gc->decoding_context->deleted_edge_count = deleted_edge_count;
+
 	return gc;
 }
 
@@ -183,7 +190,7 @@ GraphContext *RdbLoadGraphContext_v15
 						"Graph '%s' processed %zu/%llu nodes",
 						GraphContext_GetName(gc),
 						Graph_UncompactedNodeCount(gc->g),
-						Graph_NodeCap(gc->g));
+						gc->decoding_context->node_count);
 
 				break;
 			case ENCODE_STATE_DELETED_NODES:
@@ -191,8 +198,10 @@ GraphContext *RdbLoadGraphContext_v15
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %u deleted nodes",
-						GraphContext_GetName(gc), Graph_DeletedNodeCount(gc->g));
+						"Graph '%s' processed %u/%lld deleted nodes",
+						GraphContext_GetName(gc),
+						Graph_DeletedNodeCount(gc->g),
+						gc->decoding_context->deleted_node_count);
 
 				break;
 			case ENCODE_STATE_EDGES:
@@ -201,8 +210,9 @@ GraphContext *RdbLoadGraphContext_v15
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %lld edges",
-						GraphContext_GetName(gc), Graph_EdgeCount(gc->g));
+						"Graph '%s' processed %lld/%lld edges",
+						GraphContext_GetName(gc), Graph_EdgeCount(gc->g),
+						gc->decoding_context->edge_count);
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
@@ -210,8 +220,10 @@ GraphContext *RdbLoadGraphContext_v15
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
-						"Graph '%s' processed %u deleted edges",
-						GraphContext_GetName(gc), Graph_DeletedEdgeCount(gc->g));
+						"Graph '%s' processed %u/%lld deleted edges",
+						GraphContext_GetName(gc),
+						Graph_DeletedEdgeCount(gc->g),
+						gc->decoding_context->deleted_edge_count);
 
 				break;
 			case ENCODE_STATE_GRAPH_SCHEMA:
@@ -282,6 +294,8 @@ GraphContext *RdbLoadGraphContext_v15
 		ASSERT(Graph_Pending(g) == false);
 
 		GraphDecodeContext_Reset(gc->decoding_context);
+
+		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
 	}
 
 	return gc;
