@@ -1,6 +1,7 @@
 import time
 import sys
 import os
+import threading
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../flow/")
 
@@ -8,6 +9,11 @@ from common import *
 from graph_utils import *
 from random_graph import *
 from falkordb import FalkorDB
+
+
+def display_logs(container):
+    for line in container.logs(stream=True):
+        print(line.strip())
 
 
 # starts db using docker
@@ -27,6 +33,9 @@ def run_db(image):
         ports={"6379/tcp": random_port},  # Map port 6379
         network=os.getenv("DOCKER_NETWORK", None),  # Use host network
     )
+
+    # output container logs in a separate thread
+    threading.Thread(target=display_logs, args=(container,)).start()
 
     return container, random_port
 
