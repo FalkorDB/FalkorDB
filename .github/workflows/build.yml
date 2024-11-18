@@ -386,7 +386,8 @@ jobs:
 
       - name: Upgrade tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
+          sudo chmod 666 /var/run/docker.sock
+          docker run -i --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
 
   cleanup-upgrade-tests:
     needs: upgrade-tests
