@@ -2,6 +2,9 @@ import time
 import sys
 import os
 import threading
+import docker
+import docker.models
+import docker.models.containers
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/../flow/")
 
@@ -11,13 +14,13 @@ from random_graph import *
 from falkordb import FalkorDB
 
 
-def display_logs(container):
-    container.logs(follow=True)
+def display_logs(container: docker.models.containers.Container):
+    for line in container.logs(stream=True):
+        print(line.decode("utf-8").strip())
 
 
 # starts db using docker
 def run_db(image):
-    import docker
     from random import randint
 
     # Initialize the Docker client
