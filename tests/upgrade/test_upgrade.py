@@ -32,6 +32,7 @@ def run_db(image):
         detach=True,  # Run container in the background
         ports={"6379/tcp": random_port},  # Map port 6379
         network=os.getenv("DOCKER_NETWORK", None),  # Use host network
+        tty=True,  # Allocate pseudo-TTY
     )
 
     # output container logs in a separate thread
