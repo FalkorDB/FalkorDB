@@ -12,8 +12,7 @@ from falkordb import FalkorDB
 
 
 def display_logs(container):
-    for line in container.logs(stream=True):
-        print(line.strip())
+    container.logs(follow=True)
 
 
 # starts db using docker
@@ -36,7 +35,7 @@ def run_db(image):
     )
 
     # output container logs in a separate thread
-    threading.Thread(target=display_logs, args=(container,)).start()
+    threading.Thread(target=display_logs, args=(container)).start()
 
     return container, random_port
 
@@ -56,38 +55,43 @@ class test_upgrade:
         # start FalkorDB previous version
         container, master_port = run_db(image)
 
-        # wait for DB to accept connections
-        time.sleep(2)
+        try:
+            # wait for DB to accept connections
+            time.sleep(10)
 
-        master_db = FalkorDB(port=master_port)
+            master_db = FalkorDB(port=master_port)
 
-        # Select the social graph
-        master_graph = master_db.select_graph("upgrade")
+            # Select the social graph
+            master_graph = master_db.select_graph("upgrade")
 
-        # Generate random graph
-        nodes, edges = create_random_schema()
-        res = create_random_graph(master_graph, nodes, edges)
-        res = run_random_graph_ops(master_graph, nodes, edges, ALL_OPS)
+            # Generate random graph
+            nodes, edges = create_random_schema()
+            res = create_random_graph(master_graph, nodes, edges)
+            res = run_random_graph_ops(master_graph, nodes, edges, ALL_OPS)
 
-        # Connect FlakorDB latest version as a replica and wait for it to sync
-        self.replica_conn.replicaof("localhost", master_port)
+            # Connect FlakorDB latest version as a replica and wait for it to sync
+            self.replica_conn.replicaof("localhost", master_port)
 
-        # Wait for replica to sync
-        master_db.connection.wait(1, 0)
+            # Wait for replica to sync
+            master_db.connection.wait(1, 0)
 
-        replica_graph = self.replica_db.select_graph("upgrade")
+            replica_graph = self.replica_db.select_graph("upgrade")
 
-        # Validate that both DBs are the same
+            # Validate that both DBs are the same
 
-        master_db.config_set("RESULTSET_SIZE", -1)  # unlimited result-set size
+            master_db.config_set("RESULTSET_SIZE", -1)  # unlimited result-set size
 
-        if not graph_eq(replica_graph, master_graph):
-            self.env.assertTrue(graph_eq(replica_graph, master_graph))
+            if not graph_eq(replica_graph, master_graph):
+                self.env.assertTrue(graph_eq(replica_graph, master_graph))
 
-        # Terminate docker container
-        stop_db(container)
+            # Terminate docker container
+            stop_db(container)
 
-        self.replica_conn.replicaof("NO", "ONE")
+            self.replica_conn.replicaof("NO", "ONE")
+        except Exception as e:
+            if container is not None:
+                stop_db(container)
+            raise e
 
     def test_v14_upgrade(self):
         image = "falkordb/falkordb:v4.0.7"
