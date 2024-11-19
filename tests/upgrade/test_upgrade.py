@@ -45,6 +45,8 @@ def run_db(image):
 
     print(f"started container {container.id} in network {os.getenv('DOCKER_NETWORK', None)}")
 
+    print(f"all containers: {client.containers.list()}")
+
     # output container logs in a separate thread
     threading.Thread(target=display_logs, args=(container,)).start()
 
@@ -70,7 +72,7 @@ class test_upgrade:
             # wait for DB to accept connections
             time.sleep(10)
 
-            master_db = FalkorDB(port=master_port)
+            master_db = FalkorDB(host="127.0.0.1", port=master_port)
 
             # Select the social graph
             master_graph = master_db.select_graph("upgrade")
