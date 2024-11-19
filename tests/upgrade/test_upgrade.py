@@ -15,8 +15,14 @@ from falkordb import FalkorDB
 
 
 def display_logs(container: docker.models.containers.Container):
+    line_text = ""
     for line in container.logs(stream=True):
-        print(line.decode("utf-8").strip())
+        if line == b"\n":
+            print(line_text)
+            print('\n')
+            line_text = ""
+        else:
+            line_text += line.decode("utf-8", errors="ignore").strip()
 
 
 # starts db using docker
@@ -38,7 +44,7 @@ def run_db(image):
     )
 
     # output container logs in a separate thread
-    threading.Thread(target=display_logs, args=(container)).start()
+    threading.Thread(target=display_logs, args=(container,)).start()
 
     return container, random_port
 
