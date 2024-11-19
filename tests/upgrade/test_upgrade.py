@@ -45,7 +45,10 @@ def run_db(image):
 
     print(f"started container {container.id} in network {os.getenv('DOCKER_NETWORK', None)}")
 
-    print(f"all containers: {client.containers.list()}")
+    all_containers = client.containers.list()
+    # print container image, network and port
+    for container in all_containers:
+        print(f"container {container.id} image: {container.image.tags[0]}, network: {container.attrs['HostConfig']['NetworkMode']}, port: {container.ports}")
 
     # output container logs in a separate thread
     threading.Thread(target=display_logs, args=(container,)).start()
