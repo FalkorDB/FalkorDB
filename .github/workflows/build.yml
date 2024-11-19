@@ -385,10 +385,10 @@ jobs:
           docker load --input /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
 
       - name: Upgrade tests
+        env:
+          DOCKER_NETWORK: falkordb-network
         run: |
           sudo chmod 666 /var/run/docker.sock
-          # create network
-          export DOCKER_NETWORK=falkordb-network
           docker network create --driver bridge $DOCKER_NETWORK
           docker run -i --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock --network $DOCKER_NETWORK -e DOCKER_NETWORK=$DOCKER_NETWORK falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
 

@@ -43,6 +43,8 @@ def run_db(image):
         tty=True,  # Allocate pseudo-TTY
     )
 
+    print(f"started container {container.id} in network {os.getenv('DOCKER_NETWORK', None)}")
+
     # output container logs in a separate thread
     threading.Thread(target=display_logs, args=(container,)).start()
 
