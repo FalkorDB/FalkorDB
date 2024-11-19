@@ -140,6 +140,10 @@ void RdbLoadNodes_v16
 	//      #properties N
 	//      (name, value type, value) X N
 
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 	uint64_t prev_graph_node_count = Graph_NodeCount(gc->g);
 
 	for(uint64_t i = 0; i < node_count; i++) {
@@ -160,12 +164,15 @@ void RdbLoadNodes_v16
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		for (int j = 0; j < nodeLabelCount; j++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[j], SCHEMA_NODE);
-			ASSERT(s != NULL);
+		if(!delay_indexing) {
+			for (int j = 0; j < nodeLabelCount; j++) {
+				Schema *s = GraphContext_GetSchemaByID(gc, labels[j],
+						SCHEMA_NODE);
+				ASSERT(s != NULL);
 
-			// index node
-			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+				// index node
+				if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+			}
 		}
 	}
 
@@ -252,6 +259,15 @@ static uint64_t _DecodeTensors
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
+	Index index = PENDING_IDX(s);
+
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
+	// perform indexing if there's an index and delay indexing is false
+	bool perform_indexing = (!delay_indexing && index != NULL);
+
 	// as long as we didn't hit our END MARKER
 	while(true) {
 		// decode edge ID
@@ -277,8 +293,8 @@ static uint64_t _DecodeTensors
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
-		if(PENDING_IDX(s)) {
-			Index_IndexEdge(PENDING_IDX(s), &e);
+		if(perform_indexing) {
+			Index_IndexEdge(index, &e);
 		}
 
 		// batch edge
@@ -372,6 +388,15 @@ static uint64_t _DecodeEdges
 	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
 	ASSERT(s != NULL);
 
+	Index index = PENDING_IDX(s);
+
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
+	// perform indexing if there's an index and delay indexing is false
+	bool perform_indexing = (!delay_indexing && index != NULL);
+
 	// as long as we didn't hit our END MARKER
 	while(true) {
 		// decode edge ID
@@ -394,8 +419,8 @@ static uint64_t _DecodeEdges
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
-		if(PENDING_IDX(s)) {
-			Index_IndexEdge(PENDING_IDX(s), &e);
+		if(perform_indexing) {
+			Index_IndexEdge(index, &e);
 		}
 
 		// batch edge

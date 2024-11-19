@@ -260,6 +260,10 @@ GraphContext *RdbLoadGraphContext_latest
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
+		// get delay indexing configuration
+		bool delay_indexing;
+		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 		// update the node statistics, enable node indices
 		for(uint i = 0; i < label_count; i++) {
 			GrB_Index nvals;
@@ -270,9 +274,16 @@ GraphContext *RdbLoadGraphContext_latest
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
+
 			if(idx != NULL) {
-				Index_Enable(idx);
-				Schema_ActivateIndex(s);
+				if(delay_indexing) {
+					// start async indexing
+					Indexer_PopulateIndex(gc, s, idx);
+				} else {
+					// index populated enable it
+					Index_Enable(idx);
+					Schema_ActivateIndex(s);
+				}
 			}
 		}
 
@@ -282,8 +293,14 @@ GraphContext *RdbLoadGraphContext_latest
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
 			if(idx != NULL) {
-				Index_Enable(idx);
-				Schema_ActivateIndex(s);
+				if(delay_indexing) {
+					// start async indexing
+					Indexer_PopulateIndex(gc, s, idx);
+				} else {
+					// index populated enable it
+					Index_Enable(idx);
+					Schema_ActivateIndex(s);
+				}
 			}
 		}
 

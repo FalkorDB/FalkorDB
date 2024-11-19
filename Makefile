@@ -66,11 +66,11 @@ make test         # Run tests
   TESTFILE=file     # Run tests listed in file
   FAILFILE=file     # Write failed tests to file
 
-make unit-tests   # Run unit tests
-make flow-tests   # Run flow tests
-make tck-tests    # Run TCK tests
-make upgrade-tests # Run upgrade tests
-make fuzz-tests   # Run fuzz tester
+make unit-tests     # Run unit tests
+make flow-tests     # Run flow tests
+make tck-tests      # Run TCK tests
+make upgrade-tests  # Run upgrade tests
+make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
 make benchmark    # Run benchmarks

@@ -140,6 +140,10 @@ void RdbLoadNodes_v15
 	//      #properties N
 	//      (name, value type, value) X N
 
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 	for(uint64_t i = 0; i < node_count; i++) {
 		Node n;
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
@@ -158,11 +162,15 @@ void RdbLoadNodes_v15
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		for (int i = 0; i < nodeLabelCount; i++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
-			ASSERT(s != NULL);
+		if(!delay_indexing) {
+			for (int i = 0; i < nodeLabelCount; i++) {
+				Schema *s = GraphContext_GetSchemaByID(gc, labels[i],
+						SCHEMA_NODE);
+				ASSERT(s != NULL);
 
-			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+				// index node
+				if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+			}
 		}
 	}
 }
@@ -196,9 +204,12 @@ void RdbLoadEdges_v15
 	// } X N
 	// edge properties X N
 
-	NodeID     prev_src      = INVALID_ENTITY_ID;
-	NodeID     prev_dest     = INVALID_ENTITY_ID;
-	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
+	Schema     *s               = NULL;
+	Index      index            = NULL;
+	bool       perform_indexing = false;
+	NodeID     prev_src         = INVALID_ENTITY_ID;
+	NodeID     prev_dest        = INVALID_ENTITY_ID;
+	RelationID prev_relation    = GRAPH_UNKNOWN_RELATION;
 
 	int       idx        = 0;                     // edge batch index
 	int       tensor_idx = 0;                     // tensor batch index
@@ -210,6 +221,10 @@ void RdbLoadEdges_v15
 	EdgeID tensor_ids  [BATCH_SIZE];
 	NodeID tensor_srcs [BATCH_SIZE];
 	NodeID tensor_dests[BATCH_SIZE];
+
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
 
 	// construct edges
 	for(uint64_t i = 0; i < edge_count; i++) {
@@ -232,6 +247,12 @@ void RdbLoadEdges_v15
 			// reset prev src and dest node ids
 			prev_src  = INVALID_ENTITY_ID;
 			prev_dest = INVALID_ENTITY_ID;
+
+			// update schema
+			s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
+			ASSERT(s != NULL);
+			index = PENDING_IDX(s);
+			perform_indexing = (!delay_indexing && index != NULL);
 		}
 
 		//----------------------------------------------------------------------
@@ -245,9 +266,9 @@ void RdbLoadEdges_v15
 		// index edge
 		//----------------------------------------------------------------------
 
-		Schema *s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
-		ASSERT(s != NULL);
-		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
+		if(perform_indexing) {
+			Index_IndexEdge(PENDING_IDX(s), &e);
+		}
 
 		//----------------------------------------------------------------------
 		// flush batches
