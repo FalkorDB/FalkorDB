@@ -39,19 +39,7 @@ def run_db(image):
         image,  # Image
         detach=True,  # Run container in the background
         ports={"6379/tcp": random_port},  # Map port 6379
-        network=os.getenv("DOCKER_NETWORK", None),  # Use host network
-        tty=True,  # Allocate pseudo-TTY
     )
-
-    print(f"started container {container.id} in network {os.getenv('DOCKER_NETWORK', None)}")
-
-    all_containers = client.containers.list()
-    # print container image, network and port
-    for container in all_containers:
-        print(f"container {container.id} image: {container.image.tags[0]}, network: {container.attrs['HostConfig']['NetworkMode']}, port: {container.ports}")
-
-    # output container logs in a separate thread
-    threading.Thread(target=display_logs, args=(container,)).start()
 
     return container, random_port
 
@@ -77,7 +65,6 @@ class test_upgrade:
 
             master_db = FalkorDB(host="127.0.0.1", port=master_port)
 
-            # Select the social graph
             master_graph = master_db.select_graph("upgrade")
 
             # Generate random graph
@@ -87,6 +74,9 @@ class test_upgrade:
 
             # Connect FlakorDB latest version as a replica and wait for it to sync
             self.replica_conn.replicaof("localhost", master_port)
+
+            # Wait for replica to connect
+            time.sleep(3)
 
             # Wait for replica to sync
             master_db.connection.wait(1, 0)
