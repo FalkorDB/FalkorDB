@@ -4,35 +4,38 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v13.h"
+#include "decode_v15.h"
 
 // forward declarations
-static SIValue _RdbLoadPoint(RedisModuleIO *rdb);
-static SIValue _RdbLoadSIArray(RedisModuleIO *rdb);
+static SIValue _RdbLoadPoint(SerializerIO rdb);
+static SIValue _RdbLoadSIArray(SerializerIO rdb);
+static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
 
 static SIValue _RdbLoadSIValue
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
 	// Format:
 	// SIType
 	// Value
-	SIType t = RedisModule_LoadUnsigned(rdb);
+	SIType t = SerializerIO_ReadUnsigned(rdb);
 	switch(t) {
 	case T_INT64:
-		return SI_LongVal(RedisModule_LoadSigned(rdb));
+		return SI_LongVal(SerializerIO_ReadSigned(rdb));
 	case T_DOUBLE:
-		return SI_DoubleVal(RedisModule_LoadDouble(rdb));
+		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(RedisModule_LoadStringBuffer(rdb, NULL));
+		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
 	case T_BOOL:
-		return SI_BoolVal(RedisModule_LoadSigned(rdb));
+		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
 	case T_ARRAY:
 		return _RdbLoadSIArray(rdb);
 	case T_POINT:
 		return _RdbLoadPoint(rdb);
+	case T_VECTOR_F32:
+		return _RdbLoadVector(rdb, t);
 	case T_NULL:
 	default: // currently impossible
 		return SI_NullVal();
@@ -41,16 +44,16 @@ static SIValue _RdbLoadSIValue
 
 static SIValue _RdbLoadPoint
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
-	double lat = RedisModule_LoadDouble(rdb);
-	double lon = RedisModule_LoadDouble(rdb);
+	double lat = SerializerIO_ReadDouble(rdb);
+	double lon = SerializerIO_ReadDouble(rdb);
 	return SI_Point(lat, lon);
 }
 
 static SIValue _RdbLoadSIArray
 (
-	RedisModuleIO *rdb
+	SerializerIO rdb
 ) {
 	/* loads array as
 	   unsinged : array legnth
@@ -60,7 +63,7 @@ static SIValue _RdbLoadSIArray
 	   .
 	   array[array length -1]
 	 */
-	uint arrayLen = RedisModule_LoadUnsigned(rdb);
+	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		SIValue elem = _RdbLoadSIValue(rdb);
@@ -70,9 +73,38 @@ static SIValue _RdbLoadSIArray
 	return list;
 }
 
+static SIValue _RdbLoadVector
+(
+	SerializerIO rdb,
+	SIType t
+) {
+	ASSERT(t & T_VECTOR);
+
+	// loads vector
+	// unsigned : vector length
+	// vector[0]
+	// .
+	// .
+	// .
+	// vector[vector length -1]
+
+	SIValue vector;
+
+	uint32_t dim = SerializerIO_ReadUnsigned(rdb);
+
+	vector = SI_Vectorf32(dim);
+	float *values = SIVector_Elements(vector);
+
+	for(uint32_t i = 0; i < dim; i++) {
+		values[i] = SerializerIO_ReadFloat(rdb);
+	}
+
+	return vector;
+}
+
 static void _RdbLoadEntity
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	GraphEntity *e
 ) {
@@ -80,21 +112,24 @@ static void _RdbLoadEntity
 	// #properties N
 	// (name, value type, value) X N
 
-	uint64_t n = RedisModule_LoadUnsigned(rdb);
+	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+
+	if(n == 0) return;
+
 	SIValue vals[n];
 	AttributeID ids[n];
 
 	for(int i = 0; i < n; i++) {
-		ids[i]  = RedisModule_LoadUnsigned(rdb);
+		ids[i]  = SerializerIO_ReadUnsigned(rdb);
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
 }
 
-void RdbLoadNodes_v13
+void RdbLoadNodes_v15
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t node_count
 ) {
@@ -105,50 +140,58 @@ void RdbLoadNodes_v13
 	//      #properties N
 	//      (name, value type, value) X N
 
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 	for(uint64_t i = 0; i < node_count; i++) {
 		Node n;
-		NodeID id = RedisModule_LoadUnsigned(rdb);
+		NodeID id = SerializerIO_ReadUnsigned(rdb);
 
 		// #labels M
-		uint64_t nodeLabelCount = RedisModule_LoadUnsigned(rdb);
+		uint64_t nodeLabelCount = SerializerIO_ReadUnsigned(rdb);
 
 		// * (labels) x M
 		LabelID labels[nodeLabelCount];
 		for(uint64_t i = 0; i < nodeLabelCount; i ++){
-			labels[i] = RedisModule_LoadUnsigned(rdb);
+			labels[i] = SerializerIO_ReadUnsigned(rdb);
 		}
 
-		Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
+		Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
 
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		for (int i = 0; i < nodeLabelCount; i++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
-			ASSERT(s != NULL);
+		if(!delay_indexing) {
+			for (int i = 0; i < nodeLabelCount; i++) {
+				Schema *s = GraphContext_GetSchemaByID(gc, labels[i],
+						SCHEMA_NODE);
+				ASSERT(s != NULL);
 
-			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+				// index node
+				if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+			}
 		}
 	}
 }
 
-void RdbLoadDeletedNodes_v13
+void RdbLoadDeletedNodes_v15
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_node_count
 ) {
 	// Format:
 	// node id X N
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
-		NodeID id = RedisModule_LoadUnsigned(rdb);
-		Graph_MarkNodeDeleted(gc->g, id);
+		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		Serializer_Graph_MarkNodeDeleted(gc->g, id);
 	}
 }
 
-void RdbLoadEdges_v13
+void RdbLoadEdges_v15
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t edge_count
 ) {
@@ -161,9 +204,12 @@ void RdbLoadEdges_v13
 	// } X N
 	// edge properties X N
 
-	NodeID     prev_src      = INVALID_ENTITY_ID;
-	NodeID     prev_dest     = INVALID_ENTITY_ID;
-	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
+	Schema     *s               = NULL;
+	Index      index            = NULL;
+	bool       perform_indexing = false;
+	NodeID     prev_src         = INVALID_ENTITY_ID;
+	NodeID     prev_dest        = INVALID_ENTITY_ID;
+	RelationID prev_relation    = GRAPH_UNKNOWN_RELATION;
 
 	int       idx        = 0;                     // edge batch index
 	int       tensor_idx = 0;                     // tensor batch index
@@ -176,6 +222,10 @@ void RdbLoadEdges_v13
 	NodeID tensor_srcs [BATCH_SIZE];
 	NodeID tensor_dests[BATCH_SIZE];
 
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 	// construct edges
 	for(uint64_t i = 0; i < edge_count; i++) {
 		//----------------------------------------------------------------------
@@ -184,10 +234,10 @@ void RdbLoadEdges_v13
 
 		Edge e;
 
-		e.id         = RedisModule_LoadUnsigned(rdb);
-		e.src_id     = RedisModule_LoadUnsigned(rdb);
-		e.dest_id    = RedisModule_LoadUnsigned(rdb);
-		e.relationID = RedisModule_LoadUnsigned(rdb);
+		e.id         = SerializerIO_ReadUnsigned(rdb);
+		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		e.relationID = SerializerIO_ReadUnsigned(rdb);
 
 		// determine if relation contains tensors
 		bool tensor = gc->decoding_context->multi_edge[e.relationID];
@@ -197,6 +247,12 @@ void RdbLoadEdges_v13
 			// reset prev src and dest node ids
 			prev_src  = INVALID_ENTITY_ID;
 			prev_dest = INVALID_ENTITY_ID;
+
+			// update schema
+			s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
+			ASSERT(s != NULL);
+			index = PENDING_IDX(s);
+			perform_indexing = (!delay_indexing && index != NULL);
 		}
 
 		//----------------------------------------------------------------------
@@ -210,9 +266,9 @@ void RdbLoadEdges_v13
 		// index edge
 		//----------------------------------------------------------------------
 
-		Schema *s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
-		ASSERT(s != NULL);
-		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
+		if(perform_indexing) {
+			Index_IndexEdge(PENDING_IDX(s), &e);
+		}
 
 		//----------------------------------------------------------------------
 		// flush batches
@@ -287,16 +343,16 @@ void RdbLoadEdges_v13
 	}
 }
 
-void RdbLoadDeletedEdges_v13
+void RdbLoadDeletedEdges_v15
 (
-	RedisModuleIO *rdb,
+	SerializerIO rdb,
 	GraphContext *gc,
 	uint64_t deleted_edge_count
 ) {
 	// Format:
 	// edge id X N
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
-		EdgeID id = RedisModule_LoadUnsigned(rdb);
-		Graph_MarkEdgeDeleted(gc->g, id);
+		EdgeID id = SerializerIO_ReadUnsigned(rdb);
+		Serializer_Graph_MarkEdgeDeleted(gc->g, id);
 	}
 }

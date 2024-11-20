@@ -57,6 +57,7 @@ make test         # Run tests
   UNIT=1            # Run unit tests
   FLOW=1            # Run flow tests (Python)
   TCK=1             # Run TCK framework tests
+  UPGRADE=1         # Run upgrade tests
   COV=1             # Perform coverage analysis
   SLOW=1            # Do not run in parallel
   PARALLEL=n        # Set testing parallelism
@@ -65,10 +66,11 @@ make test         # Run tests
   TESTFILE=file     # Run tests listed in file
   FAILFILE=file     # Write failed tests to file
 
-make unit-tests   # Run unit tests
-make flow-tests   # Run flow tests
-make tck-tests    # Run TCK tests
-make fuzz-tests   # Run fuzz tester
+make unit-tests     # Run unit tests
+make flow-tests     # Run flow tests
+make tck-tests      # Run TCK tests
+make upgrade-tests  # Run upgrade tests
+make fuzz-tests     # Run fuzz tester
   TIMEOUT=secs      # Timeout in `secs`
 
 make benchmark    # Run benchmarks
@@ -363,7 +365,7 @@ ifneq ($(BUILD),0)
 TEST_DEPS=$(TARGET)
 endif
 
-test: unit-tests flow-tests tck-tests
+test: unit-tests flow-tests tck-tests upgrade-tests
 
 unit-tests:
 ifneq ($(BUILD),0)
@@ -373,12 +375,15 @@ endif
 	$(SHOW)BINROOT=$(BINROOT) cargo test --lib --target-dir $(FalkorDBRS_BINDIR)
 
 flow-tests: $(TEST_DEPS)
-	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 ./tests/flow/tests.sh
+	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=$(GEN) AOF=$(AOF) TCK=0 UPGRADE=0 ./tests/flow/tests.sh
+
+upgrade-tests: $(TEST_DEPS)
+	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=0 AOF=0 TCK=0 SLOW=1 UPGRADE=1 ./tests/flow/tests.sh
 
 tck-tests: $(TEST_DEPS)
-	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=0 AOF=0 TCK=1 ./tests/flow/tests.sh
+	$(SHOW)MODULE=$(TARGET) BINROOT=$(BINROOT) PARALLEL=$(_RLTEST_PARALLEL) GEN=0 AOF=0 TCK=1 UPGRADE=0 ./tests/flow/tests.sh
 
-.PHONY: test unit-tests flow-tests tck-tests
+.PHONY: test unit-tests flow-tests tck-tests upgrade-tests
 
 #----------------------------------------------------------------------------------------------
 

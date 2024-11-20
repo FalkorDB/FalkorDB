@@ -7,12 +7,12 @@
 #pragma once
 
 #include "op.h"
-#include "rax.h"
+#include "../../util/dict.h"
 #include "../execution_plan.h"
 
 typedef struct {
 	OpBase op;
-	rax *found;
+	dict *found;
 	rax *mapping;          // record mapping
 	uint *offsets;         // offsets to expression values
 	const char **aliases;  // expression aliases to distinct by

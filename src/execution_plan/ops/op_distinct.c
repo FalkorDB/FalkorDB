@@ -57,7 +57,7 @@ OpBase *NewDistinctOp(const ExecutionPlan *plan, const char **aliases, uint alia
 
 	OpDistinct *op = rm_malloc(sizeof(OpDistinct));
 
-	op->found           =  raxNew();
+	op->found           =  HashTableCreate(&def_dt);
 	op->mapping         =  NULL;
 	op->aliases         =  rm_malloc(alias_count * sizeof(const char *));
 	op->offset_count    =  alias_count;
@@ -95,7 +95,7 @@ static Record DistinctConsume(OpBase *opBase) {
 		}
 
 		unsigned long long const hash = _compute_hash(op, r);
-		int is_new = raxInsert(op->found, (unsigned char *) &hash, sizeof(hash), NULL, NULL);
+		int is_new = HashTableAddRaw(op->found, (void *)hash, NULL) != NULL;
 		if(is_new) return r;
 		OpBase_DeleteRecord(&r);
 	}
@@ -114,8 +114,7 @@ static OpResult DistinctReset
 	OpDistinct *op = (OpDistinct *)opBase;
 
 	if(op->found) {
-		raxFree(op->found);
-		op->found = raxNew();
+		HashTableEmpty(op->found, NULL);
 	}
 
 	return OP_OK;
@@ -124,7 +123,7 @@ static OpResult DistinctReset
 static void DistinctFree(OpBase *ctx) {
 	OpDistinct *op = (OpDistinct *)ctx;
 	if(op->found) {
-		raxFree(op->found);
+		HashTableRelease(op->found);
 		op->found = NULL;
 	}
 

@@ -113,6 +113,8 @@ static void _RdbLoadEntity
 	// (name, value type, value) X N
 
 	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	if(n == 0) return;
+
 	SIValue vals[n];
 	AttributeID ids[n];
 
@@ -137,6 +139,10 @@ void RdbLoadNodes_v14
 	//      #properties N
 	//      (name, value type, value) X N
 
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 	for(uint64_t i = 0; i < node_count; i++) {
 		Node n;
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
@@ -155,11 +161,16 @@ void RdbLoadNodes_v14
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		for (int i = 0; i < nodeLabelCount; i++) {
-			Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
-			ASSERT(s != NULL);
+		// introduce n to each relevant index
+		if(!delay_indexing) {
+			for (int i = 0; i < nodeLabelCount; i++) {
+				Schema *s = GraphContext_GetSchemaByID(gc, labels[i],
+						SCHEMA_NODE);
+				ASSERT(s != NULL);
 
-			if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+				// index node
+				if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
+			}
 		}
 	}
 }
@@ -193,23 +204,142 @@ void RdbLoadEdges_v14
 	// } X N
 	// edge properties X N
 
-	// construct connections
-	for(uint64_t i = 0; i < edge_count; i++) {
-		Edge e;
-		EdgeID    edgeId   = SerializerIO_ReadUnsigned(rdb);
-		NodeID    srcId    = SerializerIO_ReadUnsigned(rdb);
-		NodeID    destId   = SerializerIO_ReadUnsigned(rdb);
-		uint64_t  relation = SerializerIO_ReadUnsigned(rdb);
+	Schema     *s               = NULL;
+	Index      index            = NULL;
+	bool       perform_indexing = false;
+	NodeID     prev_src      = INVALID_ENTITY_ID;
+	NodeID     prev_dest     = INVALID_ENTITY_ID;
+	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
 
-		Graph_SetEdge(gc->g, gc->decoding_context->multi_edge[relation],
-			edgeId, srcId, destId, relation, &e);
+	int       idx        = 0;                     // edge batch index
+	int       tensor_idx = 0;                     // tensor batch index
+	const int BATCH_SIZE = MIN(edge_count, 256);  // max batch size
+
+	EdgeID ids         [BATCH_SIZE];
+	NodeID srcs        [BATCH_SIZE];
+	NodeID dests       [BATCH_SIZE];
+	EdgeID tensor_ids  [BATCH_SIZE];
+	NodeID tensor_srcs [BATCH_SIZE];
+	NodeID tensor_dests[BATCH_SIZE];
+
+	// get delay indexing configuration
+	bool delay_indexing;
+	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
+	// construct edges
+	for(uint64_t i = 0; i < edge_count; i++) {
+		//----------------------------------------------------------------------
+		// populate edge
+		//----------------------------------------------------------------------
+
+		Edge e;
+
+		e.id         = SerializerIO_ReadUnsigned(rdb);
+		e.src_id     = SerializerIO_ReadUnsigned(rdb);
+		e.dest_id    = SerializerIO_ReadUnsigned(rdb);
+		e.relationID = SerializerIO_ReadUnsigned(rdb);
+
+		// determine if relation contains tensors
+		bool tensor = gc->decoding_context->multi_edge[e.relationID];
+
+		bool relation_changed = e.relationID != prev_relation;
+		if(relation_changed) {
+			// reset prev src and dest node ids
+			prev_src  = INVALID_ENTITY_ID;
+			prev_dest = INVALID_ENTITY_ID;
+
+			// update schema
+			s = GraphContext_GetSchemaByID(gc, e.relationID, SCHEMA_EDGE);
+			ASSERT(s != NULL);
+			index = PENDING_IDX(s);
+			perform_indexing = (!delay_indexing && index != NULL);
+		}
+
+		//----------------------------------------------------------------------
+		// load edge attributes
+		//----------------------------------------------------------------------
+
+		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
+		//----------------------------------------------------------------------
 		// index edge
-		Schema *s = GraphContext_GetSchemaByID(gc, relation, SCHEMA_EDGE);
-		ASSERT(s != NULL);
+		//----------------------------------------------------------------------
 
-		if(PENDING_IDX(s)) Index_IndexEdge(PENDING_IDX(s), &e);
+		if(perform_indexing) {
+			Index_IndexEdge(PENDING_IDX(s), &e);
+		}
+
+		//----------------------------------------------------------------------
+		// flush batches
+		//----------------------------------------------------------------------
+
+		// flush batch when:
+		// 1. batch is full
+		// 2. relation id changed
+		if(relation_changed ||
+		   (idx > 0 && idx >= BATCH_SIZE) ||
+		   (tensor_idx > 0 && tensor_idx >= BATCH_SIZE)) {
+
+			if(idx > 0) {
+				// flush batch
+				Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
+						dests, ids, idx, false);
+
+				// reset batch state
+				idx = 0;
+			}
+
+			// flush multi-edge batch when:
+			if(tensor_idx > 0) {
+				// flush batch
+				Serializer_OptimizedFormConnections(gc->g, prev_relation,
+						tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
+
+				// reset multi-edge batch state
+				tensor_idx = 0;
+			}
+		}
+
+		// determine if we're dealing with a multi-edge
+		// first iteration is considered multi_edge, as we don't know which edge
+		// was introduced in the previous virtual key
+		bool multi_edge = (tensor                                           &&
+						  ((e.src_id == prev_src && e.dest_id == prev_dest) ||
+						   relation_changed));
+
+		// accumulate edge
+		if(multi_edge) {
+			tensor_ids[tensor_idx]   = e.id;
+			tensor_srcs[tensor_idx]  = e.src_id;
+			tensor_dests[tensor_idx] = e.dest_id;
+			tensor_idx++;  // advance batch index
+		} else {
+			// batch edge src, dest and id
+			ids[idx]   = e.id;
+			srcs[idx]  = e.src_id;
+			dests[idx] = e.dest_id;
+			idx++;  // advance batch index
+		}
+
+		// update prev values
+		prev_src      = e.src_id;
+		prev_dest     = e.dest_id;
+		prev_relation = e.relationID;
+	}
+
+	// flush last batch
+	if(idx > 0) {
+		// flush batch
+		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
+				ids, idx, false);
+	}
+
+	// flush last multi-edge batch
+	if(tensor_idx > 0) {
+		// flush batch
+		Serializer_OptimizedFormConnections(gc->g, prev_relation,
+				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 	}
 }
 

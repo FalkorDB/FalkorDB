@@ -244,8 +244,14 @@ DataBlockIterator *Graph_ScanEdges
 	const Graph *g
 );
 
+// return number of nodes graph can contain
+uint64_t Graph_NodeCap
+(
+	const Graph *g
+);
+
 // returns number of nodes in the graph
-size_t Graph_NodeCount
+uint64_t Graph_NodeCount
 (
 	const Graph *g
 );
@@ -270,7 +276,7 @@ uint64_t Graph_LabeledNodeCount
 );
 
 // returns number of edges in the graph
-size_t Graph_EdgeCount
+uint64_t Graph_EdgeCount
 (
 	const Graph *g
 );

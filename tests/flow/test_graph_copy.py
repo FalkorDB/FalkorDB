@@ -156,7 +156,7 @@ class testGraphCopy():
     def test_05_chain_of_copies(self):
         # make multiple copies of essentially the same graph
         # start with graph A
-        # copy A to B, copy B to C and so on and so forth up to J
+        # copy A to B, copy B to C and C to D
         # A == B == C == D
         src = 'A'
 
