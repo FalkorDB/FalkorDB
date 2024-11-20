@@ -202,7 +202,7 @@ void RdbLoadEdges_v12
 		// load edge attributes
 		//----------------------------------------------------------------------
 
-		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		//----------------------------------------------------------------------
@@ -226,7 +226,7 @@ void RdbLoadEdges_v12
 
 			if(idx > 0) {
 				// flush batch
-				Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
+				Graph_OptimizedFormConnections(gc->g, prev_relation, srcs,
 						dests, ids, idx, false);
 
 				// reset batch state
@@ -236,7 +236,7 @@ void RdbLoadEdges_v12
 			// flush multi-edge batch when:
 			if(tensor_idx > 0) {
 				// flush batch
-				Serializer_OptimizedFormConnections(gc->g, prev_relation,
+				Graph_OptimizedFormConnections(gc->g, prev_relation,
 						tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 
 				// reset multi-edge batch state
@@ -274,14 +274,14 @@ void RdbLoadEdges_v12
 	// flush last batch
 	if(idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
+		Graph_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
 				ids, idx, false);
 	}
 
 	// flush last multi-edge batch
 	if(tensor_idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, prev_relation,
+		Graph_OptimizedFormConnections(gc->g, prev_relation,
 				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 	}
 }

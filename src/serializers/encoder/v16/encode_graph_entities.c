@@ -220,7 +220,7 @@ void RdbSaveDeletedNodes_v16
 	ASSERT(n > 0);
 
 	// get deleted nodes list
-	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
+	uint64_t *deleted_nodes_list = Graph_GetDeletedNodesList(gc->g);
 	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_nodes_list);
 }
 
@@ -238,7 +238,7 @@ void RdbSaveDeletedEdges_v16
 	ASSERT(n > 0);
 
 	// get deleted edges list
-	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
+	uint64_t *deleted_edges_list = Graph_GetDeletedEdgesList(gc->g);
 	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_edges_list);
 }
 
@@ -446,7 +446,7 @@ void RdbSaveEdges_v16
 
 	// first relationship matrix
 	if(r == 0) {
-		R = Graph_GetRelationMatrix(gc->g, r, false);
+		R = Graph_GetRelationMatrix(gc->g, r);
 
 		// attach iterator if not already attached
 		if(!TensorIterator_is_attached(it, R)) {
@@ -487,7 +487,7 @@ void RdbSaveEdges_v16
 				break;
 			}
 			// set iterator on new relation matrix
-			R = Graph_GetRelationMatrix(gc->g, r, false);
+			R = Graph_GetRelationMatrix(gc->g, r);
 			TensorIterator_ScanRange(it, R, 0, UINT64_MAX, false);
 		}
 	}

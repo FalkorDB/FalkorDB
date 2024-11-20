@@ -450,16 +450,24 @@ void Graph_SetNodeLabels
 	Graph *g
 );
 
-// set a given edge in the graph
-void Graph_SetEdge
+// optimized version of Graph_FormConnection
+void Graph_OptimizedFormConnections
 (
-	Graph *g,               // graph to add edge to
-	bool multi_edge,        // true if graph supports multi-edge
-	EdgeID edge_id,         // edge ID
-	NodeID src,             // edge source
-	NodeID dest,            // edge destination
-	int r,                  // edge relationship-type
-	Edge *e                 // pointer to edge
+	Graph *g,
+	RelationID r,                  // relation id
+	const NodeID *restrict srcs,   // src node id
+	const NodeID *restrict dests,  // dest node id
+	const EdgeID *restrict ids,    // edge id
+	uint64_t n,                    // number of entries
+	bool multi_edge                // multi edge batch
+);
+
+// allocate edge attribute-set
+void Graph_AllocEdgeAttributes
+(
+	Graph *g,
+	EdgeID edge_id,
+	Edge *e
 );
 
 // marks a node ID as deleted
