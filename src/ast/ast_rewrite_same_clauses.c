@@ -192,6 +192,37 @@ static void _replace_remove_clause
 	array_free(items);
 }
 
+// compresses multiple consecutive MERGE clauses into a single MERGE clause
+static void _replace_merge_clause
+(
+	cypher_astnode_t *root,      // ast root
+	cypher_astnode_t **clauses,  // clause being replaced
+	int scope_start,             // beginning of scope
+	int scope_end,               // ending of scope
+	replace_func replace         // replace function pointer
+) {
+	uint count = array_len(clauses);
+
+	struct cypher_input_range range = cypher_astnode_range(clauses[0]);
+	cypher_astnode_t **paths = array_new(cypher_astnode_t *, count);
+
+	// collect MERGE patterns
+	for (uint i = 0; i < count; i++) {
+		const cypher_astnode_t *path =
+			cypher_ast_merge_get_pattern_path(clauses[i]);
+		array_append(paths, cypher_ast_clone(path));
+	}
+	
+	// build the replacement clause
+	cypher_astnode_t *new_clause = cypher_ast_merge(paths, array_len(paths),
+			paths, array_len(paths), range);
+
+	// replace original clause with the new one
+	replace(root, new_clause, scope_start, scope_end);
+	
+	array_free(paths);
+}
+
 // tries to compress clauses of a query or a foreach clause
 // returns true if a rewrite occurred
 static bool _compress_clauses
@@ -269,6 +300,8 @@ static bool _compress_clauses
 				_replace_set_clause((cypher_astnode_t *)node, clauses, s, e, replace_func);
 			} else if(t == CYPHER_AST_REMOVE) {
 				_replace_remove_clause((cypher_astnode_t *)node, clauses, s, e, replace_func);
+			} else if(t == CYPHER_AST_MERGE) {
+				_replace_merge_clause((cypher_astnode_t *)node, clauses, s, e, replace_func);
 			}
 
 			rewritten = true;
@@ -295,11 +328,13 @@ static inline bool is_compressible
 	// 2. SET
 	// 3. DELETE
 	// 4. REMOVE
+	// 5. MERGE
 	return ((type == CYPHER_AST_MATCH &&
 			  !cypher_ast_match_is_optional(clause)) ||
 			  type == CYPHER_AST_SET                 ||
 			  type == CYPHER_AST_DELETE              ||
-			  type == CYPHER_AST_REMOVE);
+			  type == CYPHER_AST_REMOVE              ||
+			  type == CYPHER_AST_MERGE);
 }
 
 // rewrite result by compressing consecutive clauses of the same type
@@ -324,4 +359,3 @@ bool AST_RewriteSameClauses
 	// compress consecutive clauses
 	return _compress_clauses(body);
 }
-
