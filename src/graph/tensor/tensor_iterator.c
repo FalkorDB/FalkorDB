@@ -16,7 +16,8 @@ static bool _DepletedIter
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional] row
 	GrB_Index *col,      // [optional] col
-	uint64_t *x          // [optional] value
+	uint64_t *x,         // [optional] value
+	bool *tensor         // [optional out] tensor
 ) {
 	ASSERT(it != NULL);
 
@@ -30,13 +31,15 @@ static bool _ScalarIter
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional] row
 	GrB_Index *col,      // [optional] col
-	uint64_t *x          // [optional] value
+	uint64_t *x,         // [optional] value
+	bool *tensor         // [optional out] tensor
 ) {
 	ASSERT(it != NULL);
 
-	if(x)   *x   = it->x;
-	if(row) *row = it->row;
-	if(col) *col = it->col;
+	if(x)      *x      = it->x;
+	if(row)    *row    = it->row;
+	if(col)    *col    = it->col;
+	if(tensor) *tensor = !SCALAR_ENTRY(it->x);
 
 	// set iterator as depleted
 	it->iter_func = _DepletedIter;
@@ -51,15 +54,17 @@ static bool _VectorIter
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional] row
 	GrB_Index *col,      // [optional] col
-	uint64_t *x          // [optional] value
+	uint64_t *x,         // [optional] value
+	bool *tensor         // [optional out] tensor
 ) {
 	ASSERT(it != NULL);
 
 	GxB_Iterator v_it = &it->v_it;
 
-	if(x)   *x   = GxB_Vector_Iterator_getIndex(v_it);
-	if(row) *row = it->row;
-	if(col) *col = it->col;
+	if(x)      *x      = GxB_Vector_Iterator_getIndex(v_it);
+	if(row)    *row    = it->row;
+	if(col)    *col    = it->col;
+	if(tensor) *tensor = true;
 
 	// advance to next entry
 	GrB_Info info = GxB_Vector_Iterator_next(v_it);
@@ -78,7 +83,8 @@ static bool _TransposeRangeIter
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional] row
 	GrB_Index *col,      // [optional] col
-	uint64_t *x          // [optional] value
+	uint64_t *x,         // [optional] value
+	bool *tensor         // [optional out] tensor
 ) {
 	ASSERT(it != NULL);
 
@@ -91,9 +97,10 @@ vector_consume:
 		// consume vector entry
 		v_it = &it->v_it;
 
-		if(x)   *x   = GxB_Vector_Iterator_getIndex(v_it);
-		if(row) *row = it->row;
-		if(col) *col = it->col;
+		if(x)      *x      = GxB_Vector_Iterator_getIndex(v_it);
+		if(row)    *row    = it->row;
+		if(col)    *col    = it->col;
+		if(tensor) *tensor = true;
 
 		// preparing next call
 		info = GxB_Vector_Iterator_next(v_it);
@@ -116,9 +123,10 @@ vector_consume:
 
 		if(SCALAR_ENTRY(it->x)) {
 			// set outputs
-			if(x)   *x   = it->x;
-			if(row) *row = it->row;
-			if(col) *col = it->col;
+			if(x)      *x      = it->x;
+			if(row)    *row    = it->row;
+			if(col)    *col    = it->col;
+			if(tensor) *tensor = false;
 
 			return true;
 		}
@@ -149,7 +157,8 @@ static bool _RangeIter
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional] row
 	GrB_Index *col,      // [optional] col
-	uint64_t *x          // [optional] value
+	uint64_t *x,         // [optional] value
+	bool *tensor         // [optional out] tensor
 ) {
 	ASSERT(it != NULL);
 
@@ -162,9 +171,10 @@ vector_consume:
 		// consume vector entry
 		v_it = &it->v_it;
 
-		if(x)   *x   = GxB_Vector_Iterator_getIndex(v_it);
-		if(row) *row = it->row;
-		if(col) *col = it->col;
+		if(x)      *x      = GxB_Vector_Iterator_getIndex(v_it);
+		if(row)    *row    = it->row;
+		if(col)    *col    = it->col;
+		if(tensor) *tensor = true;
 
 		// preparing next call
 		info = GxB_Vector_Iterator_next(v_it);
@@ -181,9 +191,10 @@ vector_consume:
 	if(info == GrB_SUCCESS) {
 		if(SCALAR_ENTRY(it->x)) {
 			// set outputs
-			if(x)   *x   = it->x;
-			if(row) *row = it->row;
-			if(col) *col = it->col;
+			if(x)      *x      = it->x;
+			if(row)    *row    = it->row;
+			if(col)    *col    = it->col;
+			if(tensor) *tensor = false;
 
 			return true;
 		}
@@ -286,11 +297,12 @@ bool TensorIterator_next
 	TensorIterator *it,  // iterator
 	GrB_Index *row,      // [optional out] source id
 	GrB_Index *col,      // [optional out] dest id
-	uint64_t *x          // [optional out] edge id
+	uint64_t *x,         // [optional out] edge id
+	bool *tensor         // [optional out] tensor
 ) {
 	ASSERT(it != NULL);
 
-	return it->iter_func(it, row, col, x);
+	return it->iter_func(it, row, col, x, tensor);
 }
 
 // checks whether iterator is attached to tensor

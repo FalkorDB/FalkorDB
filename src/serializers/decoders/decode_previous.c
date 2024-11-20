@@ -12,25 +12,41 @@ GraphContext *Decode_Previous
 	RedisModuleIO *rdb,
 	int encver
 ) {
+	SerializerIO io   = NULL;
+	GraphContext *ctx = NULL;
+
 	switch(encver) {
-		case 9:
-			return RdbLoadGraphContext_v9(rdb);
 		case 10:
-			return RdbLoadGraphContext_v10(rdb);
+			ctx = RdbLoadGraphContext_v10(rdb);
+			break;
 		case 11:
-			return RdbLoadGraphContext_v11(rdb);
+			ctx = RdbLoadGraphContext_v11(rdb);
+			break;
 		case 12:
-			return RdbLoadGraphContext_v12(rdb);
+			ctx = RdbLoadGraphContext_v12(rdb);
+			break;
 		case 13:
-			return RdbLoadGraphContext_v13(rdb);
+			ctx = RdbLoadGraphContext_v13(rdb);
+			break;
 		case 14: {
-			SerializerIO io = SerializerIO_FromRedisModuleIO(rdb);
+			io = SerializerIO_FromRedisModuleIO(rdb);
 			const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
-			return RdbLoadGraphContext_v14(io, rm_key_name);
+			ctx = RdbLoadGraphContext_v14(io, rm_key_name);
+			SerializerIO_Free(&io);
+			break;
+		}
+		case 15: {
+			io = SerializerIO_FromRedisModuleIO(rdb);
+			const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
+			ctx = RdbLoadGraphContext_v15(io, rm_key_name);
+			SerializerIO_Free(&io);
+			break;
 		}
 		default:
 			ASSERT(false && "attempted to read unsupported RedisGraph version from RDB file.");
-			return NULL;
+			break;
 	}
+
+	return ctx;
 }
 

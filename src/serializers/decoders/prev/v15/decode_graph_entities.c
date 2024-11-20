@@ -4,7 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v14.h"
+#include "decode_v15.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
@@ -113,6 +113,7 @@ static void _RdbLoadEntity
 	// (name, value type, value) X N
 
 	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+
 	if(n == 0) return;
 
 	SIValue vals[n];
@@ -126,7 +127,7 @@ static void _RdbLoadEntity
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
 }
 
-void RdbLoadNodes_v14
+void RdbLoadNodes_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -161,7 +162,6 @@ void RdbLoadNodes_v14
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		// introduce n to each relevant index
 		if(!delay_indexing) {
 			for (int i = 0; i < nodeLabelCount; i++) {
 				Schema *s = GraphContext_GetSchemaByID(gc, labels[i],
@@ -175,7 +175,7 @@ void RdbLoadNodes_v14
 	}
 }
 
-void RdbLoadDeletedNodes_v14
+void RdbLoadDeletedNodes_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -189,7 +189,7 @@ void RdbLoadDeletedNodes_v14
 	}
 }
 
-void RdbLoadEdges_v14
+void RdbLoadEdges_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -207,9 +207,9 @@ void RdbLoadEdges_v14
 	Schema     *s               = NULL;
 	Index      index            = NULL;
 	bool       perform_indexing = false;
-	NodeID     prev_src      = INVALID_ENTITY_ID;
-	NodeID     prev_dest     = INVALID_ENTITY_ID;
-	RelationID prev_relation = GRAPH_UNKNOWN_RELATION;
+	NodeID     prev_src         = INVALID_ENTITY_ID;
+	NodeID     prev_dest        = INVALID_ENTITY_ID;
+	RelationID prev_relation    = GRAPH_UNKNOWN_RELATION;
 
 	int       idx        = 0;                     // edge batch index
 	int       tensor_idx = 0;                     // tensor batch index
@@ -343,7 +343,7 @@ void RdbLoadEdges_v14
 	}
 }
 
-void RdbLoadDeletedEdges_v14
+void RdbLoadDeletedEdges_v15
 (
 	SerializerIO rdb,
 	GraphContext *gc,

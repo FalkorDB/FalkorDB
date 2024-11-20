@@ -67,6 +67,8 @@
 // bolt protocol port
 #define BOLT_PORT "BOLT_PORT"
 
+// delay indexing
+#define DELAY_INDEXING "DELAY_INDEXING"
 
 //------------------------------------------------------------------------------
 // Configuration defaults
@@ -78,6 +80,7 @@
 #define CMD_INFO_DEFAULT                   true
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
+#define DELAY_INDEXING_DEFAULT             false
 
 // configuration object
 typedef struct {
@@ -99,6 +102,7 @@ typedef struct {
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
 	uint32_t max_info_queries_count;   // Maximum number of query info elements.
 	int16_t bolt_port;                 // bolt protocol port
+	bool delay_indexing;               // delay index construction when decoding
 } RG_Config;
 
 RG_Config config; // global module configuration
@@ -457,6 +461,21 @@ static int16_t Config_bolt_port_get(void) {
 	return config.bolt_port;
 }
 
+//------------------------------------------------------------------------------
+// delay indexing
+//------------------------------------------------------------------------------
+
+static bool Config_delay_indexing_get(void) {
+	return config.delay_indexing;
+}
+
+static void Config_delay_indexing_set
+(
+	const bool delay_indexing
+) {
+	config.delay_indexing = delay_indexing;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -501,6 +520,8 @@ bool Config_Contains_field
 		f = Config_EFFECTS_THRESHOLD;
 	} else if (!(strcasecmp(field_str, BOLT_PORT))) {
 		f = Config_BOLT_PORT;
+	} else if (!(strcasecmp(field_str, DELAY_INDEXING))) {
+		f = Config_DELAY_INDEXING;
 	} else {
 		return false;
 	}
@@ -583,6 +604,10 @@ const char *Config_Field_name
 			name = BOLT_PORT;
 			break;
 
+		case Config_DELAY_INDEXING:
+			name = DELAY_INDEXING;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -653,6 +678,9 @@ static void _Config_SetToDefaults(void) {
 
 	// bolt protocol port (disabled by default)
 	config.bolt_port = BOLT_PROTOCOL_PORT_DEFAULT;
+
+	// index entities as they're being decoded
+	config.delay_indexing = DELAY_INDEXING_DEFAULT;
 }
 
 int Config_Init
@@ -976,6 +1004,20 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
+		// delay indexing
+		//----------------------------------------------------------------------
+
+		case Config_DELAY_INDEXING: {
+			va_start(ap, field);
+			bool *delay_indexing = va_arg(ap, bool *);
+			va_end(ap);
+
+			ASSERT(delay_indexing != NULL);
+			(*delay_indexing) = Config_delay_indexing_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
@@ -1225,6 +1267,18 @@ bool Config_Option_set
 				return false;
 			}
 			Config_bolt_port_set(port);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// delay indexing
+		//----------------------------------------------------------------------
+
+		case Config_DELAY_INDEXING: {
+			bool delay_indexing;
+			if(!_Config_ParseYesNo(val, &delay_indexing)) return false;
+
+			Config_delay_indexing_set(delay_indexing);
 		}
 		break;
 

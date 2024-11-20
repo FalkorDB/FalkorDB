@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v15.h"
+#include "encode_v16.h"
 #include "../../../globals.h"
 
 // Determine whether we are in the context of a bgsave, in which case
@@ -64,7 +64,7 @@ static void _RdbSaveHeader
 	SerializerIO_WriteUnsigned(rdb, header->key_count);
 
 	// save graph schemas
-	RdbSaveGraphSchema_v15(rdb, gc);
+	RdbSaveGraphSchema_v16(rdb, gc);
 }
 
 // returns a state information regarding the number of entities required
@@ -74,36 +74,43 @@ static PayloadInfo _StatePayloadInfo
 	GraphContext *gc,
 	EncodeState state,
 	uint64_t offset,
-	uint64_t entities_to_encode
+	uint64_t capacity
 ) {
 	uint64_t required_entities_count = 0;
+
 	switch(state) {
-	case ENCODE_STATE_NODES:
-		required_entities_count = Graph_NodeCount(gc->g);
-		break;
-	case ENCODE_STATE_DELETED_NODES:
-		required_entities_count = Graph_DeletedNodeCount(gc->g);
-		break;
-	case ENCODE_STATE_EDGES:
-		required_entities_count = Graph_EdgeCount(gc->g);
-		break;
-	case ENCODE_STATE_DELETED_EDGES:
-		required_entities_count = Graph_DeletedEdgeCount(gc->g);
-		break;
-	case ENCODE_STATE_GRAPH_SCHEMA:
-		required_entities_count = 1;
-		break;
-	default:
-		ASSERT(false && "Unknown encoding state in _CurrentStatePayloadInfo");
-		break;
+		case ENCODE_STATE_NODES:
+			required_entities_count = Graph_NodeCount(gc->g);
+			break;
+		case ENCODE_STATE_DELETED_NODES:
+			required_entities_count = Graph_DeletedNodeCount(gc->g);
+			break;
+		case ENCODE_STATE_EDGES:
+			required_entities_count = Graph_EdgeCount(gc->g);
+			break;
+		case ENCODE_STATE_DELETED_EDGES:
+			required_entities_count = Graph_DeletedEdgeCount(gc->g);
+			break;
+		case ENCODE_STATE_GRAPH_SCHEMA:
+			// here for historical reasons
+			// can be removed once encoder / decoder version 15 is removed.
+			break;
+		default:
+			ASSERT(false && "Unknown encoding state in _CurrentStatePayloadInfo");
+			break;
 	}
 
 	PayloadInfo payload_info;
-	payload_info.state = state;
+
+	payload_info.state  = state;
+	payload_info.offset = offset;
+
 	// when this state will be encoded, the number of entities to encode
 	// is the minimum between the number of entities to encode and
 	// the remaining entities left to encode from the same type
-	payload_info.entities_count = MIN(entities_to_encode, required_entities_count - offset);
+	payload_info.entities_count =
+		MIN(capacity, required_entities_count - offset);
+
 	return payload_info;
 }
 
@@ -120,42 +127,58 @@ static PayloadInfo *_RdbSaveKeySchema
 	//      Encode state
 	//      Number of entities encoded in this state
 
+	uint32_t payloads_count = 0;
 	PayloadInfo *payloads = array_new(PayloadInfo, 1);
 
 	// get current encoding state
-	EncodeState current_state = GraphEncodeContext_GetEncodeState(gc->encoding_context);
+	EncodeState current_state =
+		GraphEncodeContext_GetEncodeState(gc->encoding_context);
 
 	// if this is the start of the encodeing, set the state to be NODES
 	if(current_state == ENCODE_STATE_INIT) current_state = ENCODE_STATE_NODES;
 
-	uint64_t remaining_entities;
-	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &remaining_entities);
+	// number of "elements" this encoded key can hold
+	uint64_t capacity;
+	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &capacity);
 
 	// check if this is the last key
-	bool last_key = GraphEncodeContext_GetProcessedKeyCount(gc->encoding_context) ==
-					(GraphEncodeContext_GetKeyCount(gc->encoding_context) - 1);
-	if(last_key) remaining_entities = VKEY_ENTITY_COUNT_UNLIMITED;
+	bool last_key =
+		GraphEncodeContext_GetProcessedKeyCount(gc->encoding_context) ==
+		(GraphEncodeContext_GetKeyCount(gc->encoding_context) - 1);
+
+	// remove capacity limitation on last key
+	if(last_key) capacity = VKEY_ENTITY_COUNT_UNLIMITED;
 
 	// get the current state encoded entities count
-	uint64_t offset = GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
+	uint64_t offset =
+		GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
 
-	// while there are still remaining entities to encode in this key
-	// and the state is valid
-	while(remaining_entities > 0 && current_state < ENCODE_STATE_FINAL) {
+	// while there are still capacity in this key and the state is valid
+	while(capacity > 0 && current_state < ENCODE_STATE_FINAL) {
 		// get the current state payload info, with respect to offset
-		PayloadInfo current_state_payload_info = _StatePayloadInfo(gc,
-				current_state, offset, remaining_entities);
-		array_append(payloads, current_state_payload_info);
-		if(!last_key) remaining_entities -= current_state_payload_info.entities_count;
-		if(remaining_entities > 0) {
-			offset = 0; // new state offset is 0
-			current_state++; // advance in the states
+		PayloadInfo payload =
+			_StatePayloadInfo(gc, current_state, offset, capacity);
+
+		// only include non empty states
+		if(payload.entities_count > 0) {
+			array_append(payloads, payload);
+			if(!last_key) capacity -= payload.entities_count;
+		}
+
+		// if there's still room in this key
+		// meaning all entities of the current type are encoded
+		// reset offset for the next entity type
+		if(capacity > 0) {
+			offset = 0;       // new state offset is 0
+			current_state++;  // advance in the states
 		}
 	}
 
 	// save the number of payloads
-	uint payloads_count = array_len(payloads);
+	payloads_count = array_len(payloads);
 	SerializerIO_WriteUnsigned(rdb, payloads_count);
+
+	// save paylopads
 	for(uint i = 0; i < payloads_count; i++) {
 		// for each payload
 		// save its type and the number of entities it contains
@@ -185,7 +208,6 @@ void RdbSaveGraph_latest
 	// 2. Deleted nodes
 	// 3. Edges
 	// 4. Deleted edges
-	// 5. Graph schema
 	//
 	// Each payload type can spread over one or more keys. For example:
 	// A graph with 200,000 nodes, and the number of entities per payload
@@ -199,53 +221,63 @@ void RdbSaveGraph_latest
 	// acquire a read lock if we're not in a thread-safe context
 	if(_shouldAcquireLocks()) Graph_AcquireReadLock(gc->g);
 
-	EncodeState current_state = GraphEncodeContext_GetEncodeState(gc->encoding_context);
+	// get last encoded state
+	EncodeState current_state =
+		GraphEncodeContext_GetEncodeState(gc->encoding_context);
 
 	if(current_state == ENCODE_STATE_INIT) {
 		// inital state, populate encoding context header
-		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name, gc->g);
+		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name,
+				gc->g);
 	}
 
 	// save header
 	_RdbSaveHeader(rdb, gc);
 
 	// save payloads info for this key and retrive the key schema
-	PayloadInfo *key_schema = _RdbSaveKeySchema(rdb, gc);
+	PayloadInfo *payloads = _RdbSaveKeySchema(rdb, gc);
 
-	uint payloads_count = array_len(key_schema);
+	PayloadInfo *payload = NULL;
+	uint32_t payloads_count = array_len(payloads);
+
 	for(uint i = 0; i < payloads_count; i++) {
-		// if the current key encoding more than one payload type,
-		// payloads count >1 and we are in a new state, zero the entities count
-		if(i > 0) GraphEncodeContext_SetProcessedEntitiesOffset(gc->encoding_context, 0);
-		PayloadInfo payload = key_schema[i];
-		switch(payload.state) {
-		case ENCODE_STATE_NODES:
-			RdbSaveNodes_v15(rdb, gc, payload.entities_count);
-			break;
-		case ENCODE_STATE_DELETED_NODES:
-			RdbSaveDeletedNodes_v15(rdb, gc, payload.entities_count);
-			break;
-		case ENCODE_STATE_EDGES:
-			RdbSaveEdges_v15(rdb, gc, payload.entities_count);
-			break;
-		case ENCODE_STATE_DELETED_EDGES:
-			RdbSaveDeletedEdges_v15(rdb, gc, payload.entities_count);
-			break;
-		case ENCODE_STATE_GRAPH_SCHEMA:
-			// skip, handled in _RdbSaveHeader
-			break;
-		default:
-			ASSERT(false && "Unknown encoding phase");
-			break;
-		}
+		payload = payloads+i;
 
-		// save the current state and the number of encoded entities
-		GraphEncodeContext_SetEncodeState(gc->encoding_context, payload.state);
-		uint64_t offset = GraphEncodeContext_GetProcessedEntitiesOffset(gc->encoding_context);
-		GraphEncodeContext_SetProcessedEntitiesOffset(gc->encoding_context,
-													  payload.entities_count + offset);
+		switch(payload->state) {
+			case ENCODE_STATE_NODES:
+				RdbSaveNodes_v16(rdb, gc, payload->offset,
+						payload->entities_count);
+				break;
+			case ENCODE_STATE_DELETED_NODES:
+				RdbSaveDeletedNodes_v16(rdb, gc, payload->offset,
+						payload->entities_count);
+				break;
+			case ENCODE_STATE_EDGES:
+				RdbSaveEdges_v16(rdb, gc, payload->offset,
+						payload->entities_count);
+				break;
+			case ENCODE_STATE_DELETED_EDGES:
+				RdbSaveDeletedEdges_v16(rdb, gc, payload->offset,
+						payload->entities_count);
+				break;
+			default:
+				ASSERT(false && "Unknown encoding phase");
+				break;
+		}
 	}
-	array_free(key_schema);
+
+	// update encoding state for next virtual key
+	if(payload != NULL) {
+		// save the current state
+		GraphEncodeContext_SetEncodeState(gc->encoding_context, payload->state);
+
+		// save offset
+		GraphEncodeContext_SetProcessedEntitiesOffset(gc->encoding_context,
+				payload->offset + payload->entities_count);
+	}
+
+	// free payloads
+	array_free(payloads);
 
 	// increase processed key count
 	// if finished encoding, reset context
