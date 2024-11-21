@@ -215,7 +215,7 @@ static bool _EmitIndex
 			// report progress
 			char *status;
 			size_t m = info.numDocuments;
-			asprintf(&status, "UNDER CONSTRUCTION %zu/%zu", m, n);
+			asprintf(&status, "[Indexing] %zu/%zu: UNDER CONSTRUCTION", m, n);
 			*ctx->yield_status = SI_TransferStringVal(status);
 		}
 	}

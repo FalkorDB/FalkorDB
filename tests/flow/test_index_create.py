@@ -1,5 +1,6 @@
 import asyncio
 from common import *
+from time import sleep
 from index_utils import *
 from time import sleep, time
 from collections import OrderedDict
@@ -830,13 +831,17 @@ class testIndexCreationFlow():
         while "UNDER CONSTRUCTION" in status:
             # extract progress n/m
             # "UNDER CONSTRUCTION 8000001/7537358"
-            status = status[len("UNDER CONSTRUCTION "):]
+            # "[Indexing] 800001/742387462: UNDER CONSTRUCTION"
+            status = status[len("[Indexing] "):]
+            status = status[:-len(": UNDER CONSTRUCTION")]
             n, m = status.split('/')
             n = int(n)
             m = int(m)
 
             self.env.assertGreaterEqual(m, n) # m >= n
             self.env.assertEqual(m, node_count)   # m == node_count
+
+            sleep(0.1)
 
             # re-pull index status
             status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
