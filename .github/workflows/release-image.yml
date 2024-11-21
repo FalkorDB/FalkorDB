@@ -105,3 +105,16 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect falkordb/falkordb:${{ env.TAG_NAME }}
+
+      - name: Upload falkordb.so files to release
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Copy .so file from images
+          docker run --rm --entrypoint cat falkordb/falkordb-x64 /FalkorDB/bin/src/falkordb.so > /tmp/falkordb.x64.so
+          docker run --rm --entrypoint cat falkordb/falkordb-arm64v8 /FalkorDB/bin/src/falkordb.so > /tmp/falkordb.arm64v8.so
+
+          # Upload .so files to release
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.arm64v8.so
