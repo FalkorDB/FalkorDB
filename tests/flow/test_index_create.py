@@ -809,3 +809,35 @@ class testIndexCreationFlow():
         self.env.assertEquals(types, expected_types)
         self.env.assertEquals(language, 'english')
         self.env.assertEquals(entitytype, 'NODE')
+
+    def test15_index_progress_report(self):
+        # create a relatively large graph
+        node_count = 200000
+        q = "UNWIND range(1, $node_count) AS x CREATE (:P {v:x})"
+        self.graph.query(q, {'node_count': node_count})
+
+        # create index over P.v
+        self.graph.create_node_range_index('P', 'v')
+
+        # pull index status
+        status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
+
+        # index is operational
+        if("OPERATIONAL" in status):
+            return
+
+        self.env.assertTrue("UNDER CONSTRUCTION" in status)
+        while "UNDER CONSTRUCTION" in status:
+            # extract progress n/m
+            # "UNDER CONSTRUCTION 8000001/7537358"
+            status = status[len("UNDER CONSTRUCTION "):]
+            n, m = status.split('/')
+            n = int(n)
+            m = int(m)
+
+            self.env.assertGreaterEqual(m, n) # m >= n
+            self.env.assertEqual(m, node_count)   # m == node_count
+
+            # re-pull index status
+            status = self.graph.query("CALL db.indexes() yield status").result_set[0][0]
+
