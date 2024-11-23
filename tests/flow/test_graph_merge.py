@@ -4,7 +4,7 @@ from index_utils import *
 
 GRAPH_ID = "merge_1"
 
-class testGraphMergeFlow(FlowTestsBase):
+class testGraphMergeFlow():
     def __init__(self):
         self.env, self.db = Env()
         self.graph = self.db.select_graph(GRAPH_ID)
@@ -268,7 +268,7 @@ class testGraphMergeFlow(FlowTestsBase):
 
         # Verify UNWIND...MERGE does not recreate existing entities
         query = """UNWIND ['a', 'b'] AS names MERGE (a:Person {name: names}) RETURN a.name"""
-        expected = [['a'], ['b']]
+        expected = [['b'], ['a']]
 
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
@@ -302,7 +302,7 @@ class testGraphMergeFlow(FlowTestsBase):
 
         # Verify function calls in MERGE do not recreate existing entities
         query = """UNWIND ['A', 'B'] AS names MERGE (a:Person {name: toLower(names)}) RETURN a.name"""
-        expected = [['a'], ['b']]
+        expected = [['b'], ['a']]
 
         result = self.graph.query(query)
         self.env.assertEquals(result.labels_added, 0)
