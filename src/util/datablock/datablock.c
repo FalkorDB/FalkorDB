@@ -62,6 +62,8 @@ static inline bool _DataBlock_IndexOutOfBounds
 	const DataBlock *dataBlock,
 	uint64_t idx
 ) {
+	ASSERT(dataBlock != NULL);
+
 	return (idx >= (dataBlock->itemCount + array_len(dataBlock->deletedIdx)));
 }
 
@@ -70,6 +72,8 @@ DataBlockItemHeader *DataBlock_GetItemHeader
 	const DataBlock *dataBlock,
 	uint64_t idx
 ) {
+	ASSERT(dataBlock != NULL);
+
 	Block *block = GET_ITEM_BLOCK(dataBlock, idx);
 	idx = ITEM_POSITION_WITHIN_BLOCK(idx, dataBlock->blockCap);
 	return (DataBlockItemHeader *)block->data + (idx * block->itemSize);
@@ -105,6 +109,8 @@ uint64_t DataBlock_ItemCount
 (
 	const DataBlock *dataBlock
 ) {
+	ASSERT(dataBlock != NULL);
+
 	return dataBlock->itemCount;
 }
 
@@ -112,6 +118,8 @@ uint64_t DataBlock_ItemCap
 (
 	const DataBlock *dataBlock
 ) {
+	ASSERT(dataBlock != NULL);
+
 	return dataBlock->itemCap;
 }
 
@@ -119,6 +127,8 @@ uint64_t *DataBlock_DeletedItems
 (
 	DataBlock *dataBlock
 ) {
+	ASSERT(dataBlock != NULL);
+
 	return dataBlock->deletedIdx;
 }
 
@@ -152,6 +162,8 @@ void DataBlock_Accommodate
 	DataBlock *dataBlock,
 	int64_t k
 ) {
+	ASSERT(dataBlock != NULL);
+
 	// compute number of free slots
 	int64_t freeSlotsCount = dataBlock->itemCap - dataBlock->itemCount;
 	int64_t additionalItems = k - freeSlotsCount;
@@ -220,6 +232,8 @@ void *DataBlock_AllocateItem
 	DataBlock *dataBlock,
 	uint64_t *idx
 ) {
+	ASSERT(dataBlock != NULL);
+
 	// make sure we've got room for items
 	if(dataBlock->itemCount >= dataBlock->itemCap) {
 		// allocate an additional block
@@ -271,6 +285,8 @@ uint DataBlock_DeletedItemsCount
 (
 	const DataBlock *dataBlock
 ) {
+	ASSERT(dataBlock != NULL);
+
 	return array_len(dataBlock->deletedIdx);
 }
 
@@ -291,6 +307,8 @@ void *DataBlock_AllocateItemOutOfOrder
 	DataBlock *dataBlock,
 	uint64_t idx
 ) {
+	ASSERT(dataBlock != NULL);
+
 	// check if idx<=data block's current capacity
 	// if needed allocate additional blocks
 	DataBlock_Ensure(dataBlock, idx);
@@ -305,6 +323,8 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	DataBlock *dataBlock,
 	uint64_t idx
 ) {
+	ASSERT(dataBlock != NULL);
+
 	// check if idx<=data block's current capacity. If needed, allocate additional blocks.
 	DataBlock_Ensure(dataBlock, idx);
 	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
@@ -317,6 +337,8 @@ void DataBlock_Free
 (
 	DataBlock *dataBlock
 ) {
+	ASSERT(dataBlock != NULL);
+
 	for(uint i = 0; i < dataBlock->blockCount; i++) Block_Free(dataBlock->blocks[i]);
 
 	rm_free(dataBlock->blocks);
