@@ -25,6 +25,16 @@ OpResult _OpBase_reset_noop
 	return OP_OK;
 }
 
+Record _OpBase_consume
+(
+	OpBase *op
+) {
+	ASSERT(op != NULL);
+	op->init(op);
+	op->consume = op->op_consume;
+	return op->consume(op);
+}
+
 void OpBase_Init
 (
 	OpBase *op,
@@ -44,20 +54,18 @@ void OpBase_Init
 	op->plan           = plan;
 	op->stats          = NULL;
 	op->parent         = NULL;
-	op->parent         = NULL;
 	op->writer         = writer;
 	op->modifies       = NULL;
 	op->children       = NULL;
 	op->childCount     = 0;
-	op->op_initialized = false;
 
 	// function pointers
 	op->init     = init;
 	op->free     = free;
 	op->clone    = clone;
 	op->reset    = (reset) ? reset : _OpBase_reset_noop;
-	op->profile  = NULL;
-	op->consume  = consume;
+	op->consume  = init ? _OpBase_consume : consume;
+	op->op_consume = consume;
 	op->toString = toString;
 }
 
@@ -65,6 +73,8 @@ inline Record OpBase_Consume
 (
 	OpBase *op
 ) {
+	ASSERT(op != NULL);
+
 	return op->consume(op);
 }
 
@@ -224,7 +234,7 @@ Record OpBase_Profile
 	double tic [2];
 	// Start timer.
 	simple_tic(tic);
-	Record r = op->profile(op);
+	Record r = op->op_consume(op);
 	// Stop timer and accumulate.
 	op->stats->profileExecTime += simple_toc(tic);
 	if(r) op->stats->profileRecordCount++;
@@ -258,10 +268,11 @@ void OpBase_UpdateConsume
 	fpConsume consume
 ) {
 	ASSERT(op != NULL);
-	// if Operation is profiled, update profiled function
-	// otherwise update consume function
-	if(op->profile != NULL) op->profile = consume;
-	else op->consume = consume;
+	// if no wrapper consume function is set, set it
+	if(op->consume ==  op->op_consume) {
+		op->consume = consume;
+	}
+	op->op_consume = consume;
 }
 
 // updates the plan of an operation

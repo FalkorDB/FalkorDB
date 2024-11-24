@@ -442,9 +442,6 @@ static void _ExecutionPlanInit(OpBase *root) {
 	// If the ExecutionPlan associated with this op hasn't built a record pool yet, do so now.
 	_ExecutionPlan_InitRecordPool((ExecutionPlan *)root->plan);
 
-	// Initialize the operation if necessary.
-	if(root->init) root->init(root);
-
 	// Continue initializing downstream operations.
 	for(int i = 0; i < root->childCount; i++) {
 		_ExecutionPlanInit(root->children[i]);
@@ -509,9 +506,19 @@ void ExecutionPlan_Drain(ExecutionPlan *plan) {
 // Execution plan profiling
 //------------------------------------------------------------------------------
 
+Record OpBase_Profile_init
+(
+	OpBase *op
+) {
+	ASSERT(op);
+
+	op->init(op);
+	op->consume = OpBase_Profile;
+	return OpBase_Profile(op);
+}
+
 static void _ExecutionPlan_InitProfiling(OpBase *root) {
-	root->profile = root->consume;
-	root->consume = OpBase_Profile;
+	root->consume = root->init ? OpBase_Profile_init : OpBase_Profile;
 	root->stats = rm_malloc(sizeof(OpStats));
 	root->stats->profileExecTime = 0;
 	root->stats->profileRecordCount = 0;

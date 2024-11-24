@@ -128,12 +128,11 @@ struct OpBase {
 	fpFree free;                // Free operation.
 	fpReset reset;              // Reset operation state.
 	fpClone clone;              // Operation clone.
+	fpConsume op_consume;       // Produce next record.
 	fpConsume consume;          // Produce next record.
-	fpConsume profile;          // Profiled version of consume.
 	fpToString toString;        // Operation string representation.
 	const char *name;           // Operation name.
 	int childCount;             // Number of children.
-	bool op_initialized;        // True if the operation has already been initialized.
 	struct OpBase **children;   // Child operations.
 	const char **modifies;      // List of entities this op modifies.
 	OpStats *stats;             // Profiling statistics.
