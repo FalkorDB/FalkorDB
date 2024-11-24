@@ -123,22 +123,22 @@ typedef struct {
 }  OpStats;
 
 struct OpBase {
-	OPType type;                // Type of operation.
-	fpInit init;                // Called once before execution.
-	fpFree free;                // Free operation.
-	fpReset reset;              // Reset operation state.
-	fpClone clone;              // Operation clone.
-	fpConsume op_consume;       // Produce next record.
-	fpConsume consume;          // Produce next record.
-	fpToString toString;        // Operation string representation.
-	const char *name;           // Operation name.
-	int childCount;             // Number of children.
-	struct OpBase **children;   // Child operations.
-	const char **modifies;      // List of entities this op modifies.
-	OpStats *stats;             // Profiling statistics.
-	struct OpBase *parent;      // Parent operations.
-	const struct ExecutionPlan *plan; // ExecutionPlan this operation is part of.
-	bool writer;             // Indicates this is a writer operation.
+	OPType type;                       // type of operation
+	fpInit init;                       // called once before execution
+	fpFree free;                       // free operation
+	fpReset reset;                     // reset operation state
+	fpClone clone;                     // operation clone
+	fpConsume consume;                 // produce next record
+	fpConsume _consume;                // backup for the original consume func
+	fpToString toString;               // operation string representation
+	const char *name;                  // operation name
+	int childCount;                    // number of children
+	struct OpBase **children;          // child operations
+	const char **modifies;             // list of entities this op modifies
+	OpStats *stats;                    // profiling statistics
+	struct OpBase *parent;             // parent operations
+	const struct ExecutionPlan *plan;  // executionPlan this operation is part of
+	bool writer;                       // indicates this is a writer operation
 };
 typedef struct OpBase OpBase;
 

@@ -17,7 +17,8 @@ rax *ExecutionPlan_GetMappings(const struct ExecutionPlan *plan);
 void ExecutionPlan_ReturnRecord(const struct ExecutionPlan *plan, Record r);
 
 // default reset function for operations
-OpResult _OpBase_reset_noop
+// does nothing
+static OpResult _OpBase_reset_noop
 (
 	OpBase *op
 ) {
@@ -25,16 +26,41 @@ OpResult _OpBase_reset_noop
 	return OP_OK;
 }
 
-Record _OpBase_consume
+// defualt init function for operations
+// does nothing
+static OpResult _OpBase_init_noop
 (
 	OpBase *op
 ) {
 	ASSERT(op != NULL);
+	return OP_OK;
+}
+
+// before the fist call to consume is made, we need to initialize the operation
+// operation initializion is done lazily right before the fist invocation
+// further invocation go stright to the operation's consume function
+static Record _InitialConsume
+(
+	OpBase *op  // operation to initialize and consume from
+) {
+	// validations
+	ASSERT(op           != NULL);
+	ASSERT(op->init     != NULL);
+	ASSERT(op->_consume != NULL);
+	ASSERT(op->consume  == _InitialConsume);
+
+	// first and ONLY call to operation initialization
 	op->init(op);
-	op->consume = op->op_consume;
+
+	// overwrite op's initial consume WRAPPER function (this one)
+	// with the op's original consume func
+	op->consume = op->_consume;
+
+	// run consume
 	return op->consume(op);
 }
 
+// initialize operation
 void OpBase_Init
 (
 	OpBase *op,
@@ -49,24 +75,25 @@ void OpBase_Init
 	bool writer,
 	const struct ExecutionPlan *plan
 ) {
-	op->type           = type;
-	op->name           = name;
-	op->plan           = plan;
-	op->stats          = NULL;
-	op->parent         = NULL;
-	op->writer         = writer;
-	op->modifies       = NULL;
-	op->children       = NULL;
-	op->childCount     = 0;
+	op->type       = type;
+	op->name       = name;
+	op->plan       = plan;
+	op->stats      = NULL;
+	op->parent     = NULL;
+	op->writer     = writer;
+	op->modifies   = NULL;
+	op->children   = NULL;
+	op->childCount = 0;
 
-	// function pointers
-	op->init     = init;
+	// set op's function pointers
 	op->free     = free;
 	op->clone    = clone;
-	op->reset    = (reset) ? reset : _OpBase_reset_noop;
-	op->consume  = init ? _OpBase_consume : consume;
-	op->op_consume = consume;
+	op->consume  = _InitialConsume;  // initial consume wrapper function
+	op->_consume = consume;          // op's consume function
 	op->toString = toString;
+
+	op->init  = (init)  ? init  : _OpBase_init_noop;
+	op->reset = (reset) ? reset : _OpBase_reset_noop;
 }
 
 inline Record OpBase_Consume
@@ -227,16 +254,22 @@ void OpBase_ToString
 	if(op->stats) _OpBase_StatsToString(op, buff);
 }
 
+// profile function
+// used to profile an operation consume function
 Record OpBase_Profile
 (
 	OpBase *op
 ) {
 	double tic [2];
-	// Start timer.
+	// start timer
 	simple_tic(tic);
-	Record r = op->op_consume(op);
-	// Stop timer and accumulate.
+
+	// call op's consume function
+	Record r = op->_consume(op);
+
+	// stop timer and accumulate
 	op->stats->profileExecTime += simple_toc(tic);
+
 	if(r) op->stats->profileRecordCount++;
 	return r;
 }
@@ -268,11 +301,10 @@ void OpBase_UpdateConsume
 	fpConsume consume
 ) {
 	ASSERT(op != NULL);
-	// if no wrapper consume function is set, set it
-	if(op->consume ==  op->op_consume) {
-		op->consume = consume;
-	}
-	op->op_consume = consume;
+
+	// update both consume and backup consume function
+	op->consume  = consume;  // in case update performed within op consume
+	op->_consume = consume;  // in case update performed within op init
 }
 
 // updates the plan of an operation
