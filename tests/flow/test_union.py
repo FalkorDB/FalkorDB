@@ -159,3 +159,16 @@ class testUnion(FlowTestsBase):
         result = self.graph.query(query)
         expected_result = [['10'],['12'],['15']]
         self.env.assertEquals(result.result_set, expected_result)
+
+    def test09_union_write_read(self):
+        # test when we have a read operation followed by a write operation
+        # that checks we don't crash when iterating a matrix that was updated
+        self.graph.delete()
+        self.graph.query("CREATE (:N), (:N:M)")
+
+        query = """MERGE ()-[:R]->(:N) MERGE (:N:M) RETURN 0 AS n0 UNION MATCH (:N) RETURN 0 AS n0"""
+
+        result = self.graph.query(query)
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEquals(result.result_set, [[0]])
+        self.env.assertEquals(result.nodes_created, 2)
