@@ -7,9 +7,6 @@
 [submodule "deps/RediSearch"]
 	path = deps/RediSearch
 	url = https://github.com/FalkorDB/RediSearch.git
-[submodule "deps/readies"]
-	path = deps/readies
-	url = https://github.com/RedisLabsModules/readies.git
 [submodule "deps/utf8proc"]
 	path = deps/utf8proc
 	url = https://github.com/JuliaStrings/utf8proc.git

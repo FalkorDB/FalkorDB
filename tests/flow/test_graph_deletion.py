@@ -348,7 +348,7 @@ class testGraphDeletionFlow(FlowTestsBase):
 
     def test19_random_delete(self):
         # test random graph deletion added as a result of a crash found in Graph_GetNodeEdges
-        # when iterating RG_Matrix of type BOOL with RG_MatrixTupleIter_next_UINT64
+        # when iterating Delta_Matrix of type BOOL with Delta_MatrixTupleIter_next_UINT64
         for i in range(1, 10):
             self.graph.delete()
 
@@ -405,12 +405,22 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.nodes_created, 11)
 
         # expecting IDs to be reused
-        res = self.graph.query("MATCH (a:A) DELETE a CREATE (b:A) RETURN id(b)")
+        res = self.graph.query("""
+            MATCH (a:A)
+            DELETE a
+            CREATE (b:A)
+            RETURN ID(b) ORDER BY ID(b)"""
+        )
         self.env.assertEquals(res.nodes_deleted, 11)
         self.env.assertEquals(res.nodes_created, 11)
         self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
 
-        res = self.graph.query("MATCH (a:A) DELETE a CREATE (b:A) RETURN id(b)")
+        res = self.graph.query("""
+            MATCH (a:A)
+            DELETE a
+            CREATE (b:A)
+            RETURN ID(b) ORDER BY ID(b)"""
+        )
         self.env.assertEquals(res.nodes_deleted, 11)
         self.env.assertEquals(res.nodes_created, 11)
         self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
@@ -418,18 +428,32 @@ class testGraphDeletionFlow(FlowTestsBase):
         # clean the db
         self.graph.delete()
 
-        res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
-        self.env.assertEquals(res.nodes_created, 11)
+        res = self.graph.query("UNWIND range(0, 9) AS i CREATE (:A {id: i})")
+        self.env.assertEquals(res.nodes_created, 10)
 
-        res = self.graph.query("MATCH (a:A) WITH a, a.id as id DELETE a MERGE (b:A {id: id}) RETURN id(b), b.id")
-        self.env.assertEquals(res.nodes_deleted, 11)
-        self.env.assertEquals(res.nodes_created, 11)
-        self.env.assertEquals(res.result_set, [[10, 0], [9, 1], [8, 2], [7, 3], [6, 4], [5, 5], [4, 6], [3, 7], [2, 8], [1, 9], [0, 10]])
+        res = self.graph.query("""
+            MATCH (a:A)
+            WITH a, a.id as id
+            DELETE a
+            MERGE (b:A {id: id})
+            RETURN ID(b), b.id ORDER BY ID(b)"""
+        )
+        self.env.assertEquals(res.nodes_deleted, 10)
+        self.env.assertEquals(res.nodes_created, 10)
+        self.env.assertEquals(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
 
-        res = self.graph.query("MATCH (a:A) WITH a, a.id as id DELETE a MERGE (b:A {id: id}) RETURN id(b), b.id")
-        self.env.assertEquals(res.nodes_deleted, 11)
-        self.env.assertEquals(res.nodes_created, 11)
-        self.env.assertEquals(res.result_set, [[10, 10], [9, 9], [8, 8], [7, 7], [6, 6], [5, 5], [4, 4], [3, 3], [2, 2], [1, 1], [0, 0]])
+        res = self.graph.query("""
+            MATCH (a:A)
+            WITH a, a.id as id
+            DELETE a
+            MERGE (b:A {id: id})
+            RETURN ID(b), b.id ORDER BY ID(b) DESC"""
+        )
+        self.env.assertEquals(res.nodes_deleted, 10)
+        self.env.assertEquals(res.nodes_created, 10)
+        expected = [[i,i] for i in range(0, 10)]
+        expected.reverse()
+        self.env.assertEquals(res.result_set, expected)
 
     def test23_delete_edges(self):
         # clean the db

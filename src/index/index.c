@@ -140,7 +140,7 @@ static void _Index_ConstructStructure
 					field->vector_name);
 
 			RediSearch_VectorFieldSetDim(rsIdx, fieldID, field->hnsw_options.dimension);
-			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, field->hnsw_options.M, field->hnsw_options.efConstruction, field->hnsw_options.efRuntime);
+			RediSearch_VectorFieldSetHNSWParams(rsIdx, fieldID, IndexField_OptionsGetM(field), IndexField_OptionsGetEfConstruction(field), IndexField_OptionsGetEfRuntime(field), IndexField_OptionsGetSimFunc(field));
 		}
 
 		//----------------------------------------------------------------------

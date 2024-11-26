@@ -18,18 +18,19 @@ typedef enum {
 } ColumnType;
 
 typedef enum {
-	VALUE_UNKNOWN = 0,
-	VALUE_NULL = 1,
-	VALUE_STRING = 2,
-	VALUE_INTEGER = 3,
-	VALUE_BOOLEAN = 4,
-	VALUE_DOUBLE = 5,
-	VALUE_ARRAY = 6,
-	VALUE_EDGE = 7,
-	VALUE_NODE = 8,
-	VALUE_PATH = 9,
-	VALUE_MAP = 10,
-	VALUE_POINT = 11,
+	VALUE_UNKNOWN   = 0,
+	VALUE_NULL      = 1,
+	VALUE_STRING    = 2,
+	VALUE_INTEGER   = 3,
+	VALUE_BOOLEAN   = 4,
+	VALUE_DOUBLE    = 5,
+	VALUE_ARRAY     = 6,
+	VALUE_EDGE      = 7,
+	VALUE_NODE      = 8,
+	VALUE_PATH      = 9,
+	VALUE_MAP       = 10,
+	VALUE_POINT     = 11,
+	VALUE_VECTORF32 = 12,
 } ValueType;
 
 typedef struct ResultSet ResultSet;

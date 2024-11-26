@@ -2,10 +2,11 @@ ARG BASE_IMAGE=falkordb/falkordb-compiler
 
 ARG TARGETPLATFORM=linux/amd64
 
+ARG BROWSER_TAG=latest
+
 FROM --platform=$TARGETPLATFORM $BASE_IMAGE as compiler
 
-
-FROM falkordb/falkordb-browser as browser
+FROM falkordb/falkordb-browser:$BROWSER_TAG as browser
 
 
 FROM redis:7.2.4

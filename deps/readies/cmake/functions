@@ -1,0 +1,42 @@
+
+function(append_lists_to_string STRVAR)
+	set(STR "${${STRVAR}}")
+    foreach(LIST ${ARGN})
+        string(REPLACE ";" " " LIST_STR "${LIST}")
+		string(APPEND STR " ${LIST_STR}")
+    endforeach()
+	set(${STRVAR} "${STR}" PARENT_SCOPE)
+endfunction()
+
+#----------------------------------------------------------------------------------------------
+
+function(lists_from_env)
+    foreach(VARNAME ${ARGN})
+        if (CMK_VERBOSE)
+            # message("# ENV ${VARNAME}='$ENV{${VARNAME}}'")
+        endif()
+        if (DEFINED ENV{${VARNAME}})
+            string(REPLACE " " ";" V "$ENV{${VARNAME}}")
+            set(${VARNAME} "${V}" PARENT_SCOPE)
+        else()
+            message(WARNING "# warning: no ${VARNAME} in environment")
+        endif()
+    endforeach()
+endfunction()
+
+#----------------------------------------------------------------------------------------------
+
+function(str_from_env)
+    foreach(VARNAME ${ARGN})
+        if (CMK_VERBOSE)
+            # message("# ENV ${VARNAME}='$ENV{${VARNAME}}'")
+        endif()
+        if (DEFINED ENV{${VARNAME}})
+            set(${VARNAME} "$ENV{${VARNAME}}" PARENT_SCOPE)
+        else()
+            message(WARNING "# warning: no ${VARNAME} in environment")
+        endif()
+    endforeach()
+endfunction()
+
+#----------------------------------------------------------------------------------------------

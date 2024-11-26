@@ -6,34 +6,63 @@
 
 #include "set.h"
 
+// fake hash function
+// hash of key is simply key
+static uint64_t _id_hash
+(
+	const void *key
+) {
+	return (uint64_t)key;
+}
+
+static dictType _dt = {_id_hash, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+
 set *Set_New(void) {
-	return raxNew();
+	return HashTableCreate(&_dt);
 }
 
-bool Set_Contains(set *s, SIValue v) {
+bool Set_Contains
+(
+	set *s,
+	SIValue v
+) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	return (raxFind(s, (unsigned char *)&hash, sizeof(hash)) != raxNotFound);
+	return HashTableFind(s, (void*)hash) != NULL;
 }
 
-/* Adds v to set. */
-bool Set_Add(set *s, SIValue v) {
+// adds v to set
+bool Set_Add
+(
+	set *s,
+	SIValue v
+) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	return raxTryInsert(s, (unsigned char *)&hash, sizeof(hash), NULL, NULL);
+	return HashTableAdd(s, (void*)hash, NULL) == DICT_OK;
 }
 
-/* Removes v from set. */
-void Set_Remove(set *s, SIValue v) {
+// removes v from set
+void Set_Remove
+(
+	set *s,
+	SIValue v
+) {
 	unsigned long long const hash = SIValue_HashCode(v);
-	raxRemove(s, (unsigned char *)&hash, sizeof(hash), NULL);
+	HashTableDelete(s, (void*)hash);
 }
 
-/* Return number of elements in set. */
-uint64_t Set_Size(set *s) {
-	return raxSize(s);
+// Return number of elements in set
+uint64_t Set_Size
+(
+	set *s
+) {
+	return HashTableElemCount(s);
 }
 
-/* Free set. */
-void Set_Free(set *s) {
-	raxFree(s);
+// free set
+void Set_Free
+(
+	set *s
+) {
+	HashTableRelease(s);
 }
 

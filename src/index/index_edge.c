@@ -9,7 +9,6 @@
 #include "../query_ctx.h"
 #include "../graph/graphcontext.h"
 #include "../graph/entities/edge.h"
-#include "../graph/rg_matrix/rg_matrix_iter.h"
 
 extern RSDoc *Index_IndexGraphEntity(Index idx,const GraphEntity *e,
 		const void *key, size_t key_len, uint *doc_field_count);
@@ -19,8 +18,8 @@ void Index_IndexEdge
 	Index idx,
 	const Edge *e
 ) {
-	ASSERT(idx  !=  NULL);
-	ASSERT(e    !=  NULL);
+	ASSERT(e   != NULL);
+	ASSERT(idx != NULL);
 
 	RSDoc    *doc    = NULL;
 	RSIndex  *rsIdx  = Index_RSIndex(idx);

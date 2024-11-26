@@ -23,6 +23,7 @@
 // this struct is used to describe the payload content of a key
 // it contains the type and the number of entities that were encoded
 typedef struct {
+	uint64_t offset;          // offset within state
 	EncodeState state;        // payload type
 	uint64_t entities_count;  // number of entities in the payload
 } PayloadInfo;

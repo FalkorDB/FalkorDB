@@ -49,7 +49,7 @@
 // Max mem(bytes) that query/thread can utilize at any given time
 #define QUERY_MEM_CAPACITY "QUERY_MEM_CAPACITY"
 
-// number of pending changed befor RG_Matrix flushed
+// number of pending changed before Delta_Matrix flushed
 #define DELTA_MAX_PENDING_CHANGES "DELTA_MAX_PENDING_CHANGES"
 
 // size of node creation buffer
@@ -67,6 +67,8 @@
 // bolt protocol port
 #define BOLT_PORT "BOLT_PORT"
 
+// delay indexing
+#define DELAY_INDEXING "DELAY_INDEXING"
 
 //------------------------------------------------------------------------------
 // Configuration defaults
@@ -78,6 +80,7 @@
 #define CMD_INFO_DEFAULT                   true
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
+#define DELAY_INDEXING_DEFAULT             false
 
 // configuration object
 typedef struct {
@@ -93,12 +96,13 @@ typedef struct {
 	uint64_t max_queued_queries;       // max number of queued queries
 	int64_t query_mem_capacity;        // Max mem(bytes) that query/thread can utilize at any given time
 	uint64_t node_creation_buffer;     // Number of extra node creations to buffer as margin in matrices
-	int64_t delta_max_pending_changes; // number of pending changed befor RG_Matrix flushed
+	int64_t delta_max_pending_changes; // number of pending changed before Delta_Matrix flushed
 	Config_on_change cb;               // callback function which being called when config param changed
 	bool cmd_info_on;                  // If true, the GRAPH.INFO is enabled.
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
 	uint32_t max_info_queries_count;   // Maximum number of query info elements.
 	int16_t bolt_port;                 // bolt protocol port
+	bool delay_indexing;               // delay index construction when decoding
 } RG_Config;
 
 RG_Config config; // global module configuration
@@ -457,6 +461,21 @@ static int16_t Config_bolt_port_get(void) {
 	return config.bolt_port;
 }
 
+//------------------------------------------------------------------------------
+// delay indexing
+//------------------------------------------------------------------------------
+
+static bool Config_delay_indexing_get(void) {
+	return config.delay_indexing;
+}
+
+static void Config_delay_indexing_set
+(
+	const bool delay_indexing
+) {
+	config.delay_indexing = delay_indexing;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -501,6 +520,8 @@ bool Config_Contains_field
 		f = Config_EFFECTS_THRESHOLD;
 	} else if (!(strcasecmp(field_str, BOLT_PORT))) {
 		f = Config_BOLT_PORT;
+	} else if (!(strcasecmp(field_str, DELAY_INDEXING))) {
+		f = Config_DELAY_INDEXING;
 	} else {
 		return false;
 	}
@@ -583,6 +604,10 @@ const char *Config_Field_name
 			name = BOLT_PORT;
 			break;
 
+		case Config_DELAY_INDEXING:
+			name = DELAY_INDEXING;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -636,7 +661,7 @@ static void _Config_SetToDefaults(void) {
 	// no limit on query memory capacity
 	config.query_mem_capacity = QUERY_MEM_CAPACITY_UNLIMITED;
 
-	// number of pending changed befor RG_Matrix flushed
+	// number of pending changed before Delta_Matrix flushed
 	config.delta_max_pending_changes = DELTA_MAX_PENDING_CHANGES_DEFAULT;
 
 	// the amount of empty space to reserve for node creations in matrices
@@ -653,6 +678,9 @@ static void _Config_SetToDefaults(void) {
 
 	// bolt protocol port (disabled by default)
 	config.bolt_port = BOLT_PROTOCOL_PORT_DEFAULT;
+
+	// index entities as they're being decoded
+	config.delay_indexing = DELAY_INDEXING_DEFAULT;
 }
 
 int Config_Init
@@ -891,7 +919,7 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
-		// number of pending changed befor RG_Matrix flushed
+		// number of pending changed before Delta_Matrix flushed
 		//----------------------------------------------------------------------
 
 		case Config_DELTA_MAX_PENDING_CHANGES: {
@@ -972,6 +1000,20 @@ bool Config_Option_get
 
 			ASSERT(bolt_port != NULL);
 			(*bolt_port) = Config_bolt_port_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// delay indexing
+		//----------------------------------------------------------------------
+
+		case Config_DELAY_INDEXING: {
+			va_start(ap, field);
+			bool *delay_indexing = va_arg(ap, bool *);
+			va_end(ap);
+
+			ASSERT(delay_indexing != NULL);
+			(*delay_indexing) = Config_delay_indexing_get();
 		}
 		break;
 
@@ -1138,7 +1180,7 @@ bool Config_Option_set
 		break;
 
 		//----------------------------------------------------------------------
-		// number of pending changed befor RG_Matrix flushed
+		// number of pending changed befor Delta_Matrix flushed
 		//----------------------------------------------------------------------
 
 		case Config_DELTA_MAX_PENDING_CHANGES: {
@@ -1225,6 +1267,18 @@ bool Config_Option_set
 				return false;
 			}
 			Config_bolt_port_set(port);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// delay indexing
+		//----------------------------------------------------------------------
+
+		case Config_DELAY_INDEXING: {
+			bool delay_indexing;
+			if(!_Config_ParseYesNo(val, &delay_indexing)) return false;
+
+			Config_delay_indexing_set(delay_indexing);
 		}
 		break;
 

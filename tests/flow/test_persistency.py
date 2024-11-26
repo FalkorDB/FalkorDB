@@ -58,7 +58,8 @@ class testGraphPersistency():
         graph.create_node_range_index("country", "name", "population")
         graph.create_edge_range_index("visit", "purpose")
         graph.query("CALL db.idx.fulltext.createNodeIndex({label: 'person', stopwords: ['A', 'B'], language: 'english'}, { field: 'text', nostem: true, weight: 2, phonetic: 'dm:en' })")
-        create_node_vector_index(graph, "person", 'embedding', dim=128, m=64, efConstruction=10, efRuntime=10)
+        create_node_vector_index(graph, "person", 'embedding1', dim=128, m=64, efConstruction=10, efRuntime=10)
+        create_node_vector_index(graph, "person", 'embedding2', dim=256, similarity_function='cosine', m=32, efConstruction=20, efRuntime=20)
         wait_for_indices_to_sync(graph)
 
         return graph
@@ -128,7 +129,7 @@ class testGraphPersistency():
                 indices = graph.query("""CALL db.indexes()""").result_set
                 expected_indices = {
                         'country': [['name', 'population'], 'english', [], 'NODE'],
-                        'person': [['name', 'height', 'text', 'embedding'], OrderedDict({'name': ['RANGE'], 'height': ['RANGE'], 'text': ['FULLTEXT'], 'embedding': ['VECTOR']}), OrderedDict({'name': OrderedDict({}), 'height': OrderedDict({}), 'text': OrderedDict({}), 'embedding': OrderedDict({'dimension': 128, 'M': 64, 'efConstruction': 10, 'efRuntime': 10})}), 'english', ['a', 'b'], 'NODE'],
+                        'person': [['name', 'height', 'text', 'embedding1', 'embedding2'], OrderedDict({'name': ['RANGE'], 'height': ['RANGE'], 'text': ['FULLTEXT'], 'embedding1': ['VECTOR'], 'embedding2': ['VECTOR']}), OrderedDict({'name': OrderedDict({}), 'height': OrderedDict({}), 'text': OrderedDict({}), 'embedding1': OrderedDict({'dimension': 128, 'similarityFunction': 'euclidean', 'M': 64, 'efConstruction': 10, 'efRuntime': 10}), 'embedding2': OrderedDict({'dimension': 256, 'similarityFunction': 'cosine', 'M': 32, 'efConstruction': 20, 'efRuntime': 20})}), 'english', ['a', 'b'], 'NODE'],
                         'visit': [['purpose'], 'english', [], 'RELATIONSHIP']
                 }
 
@@ -186,8 +187,8 @@ class testGraphPersistency():
         graph_names = ["repeated_edges", "{tag}_repeated_edges"]
         for graph_name in graph_names:
             graph = self.db.select_graph(graph_name)
-            graph.query("""CREATE (src:p {name: 'src'}), (dest:p {name: 'dest'}),
-                        (src)-[:e {val: 1}]->(dest), (src)-[:e {val: 2}]->(dest)""")
+            graph.query("""CREATE (src:P {name: 'src'}), (dest:P {name: 'dest'}),
+                        (src)-[:R {val: 1}]->(dest), (src)-[:R {val: 2}]->(dest)""")
 
             # Verify the new edge
             q = """MATCH (a)-[e]->(b) RETURN e.val, a.name, b.name ORDER BY e.val"""
