@@ -11,6 +11,7 @@
 #include "src/util/thpool/pools.h"
 #include "src/procedures/procedure.h"
 #include "src/execution_plan/execution_plan_clone.h"
+#include "src/execution_plan/optimizations/optimizer.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,8 @@ static void build_ast_and_plan
 	cypher_parse_result_t *parse_result = cypher_parse(query, NULL, NULL, CYPHER_PARSE_ONLY_STATEMENTS);
 	*ast = AST_Build(parse_result);
 	*plan = ExecutionPlan_FromTLS_AST();
+	Optimizer_CompileTimeOptimize(*plan);
+	Optimizer_RuntimeOptimize(*plan);
 }
 
 static void _fake_graph_context() {
@@ -247,6 +250,15 @@ void test_procCall() {
 	array_free(queries);
 }
 
+void test_callSubquery() {
+	const char **queries = array_new(const char *, 2);
+	array_append(queries, "CALL { MATCH (n) RETURN n } RETURN n");
+	array_append(queries, "MATCH (m) CALL { CREATE (:M) } RETURN n");
+
+	validate_query_plans_clone(queries);
+	array_free(queries);
+}
+
 void test_unwind() {
 	const char **queries = array_new(const char *, 1);
 	array_append(queries, "UNWIND [1,2,3] as x RETURN x");
@@ -256,11 +268,12 @@ void test_unwind() {
 }
 
 void test_with() {
-	const char **queries = array_new(const char *, 6);
+	const char **queries = array_new(const char *, 7);
 	array_append(queries, "MATCH (n) WITH n RETURN n");
 	array_append(queries, "MATCH (n) WITH n AS m RETURN m");
 	array_append(queries, "MATCH (n) WITH n AS m SKIP 5 RETURN m");
 	array_append(queries, "MATCH (n) WITH n AS m LIMIT 5 RETURN m");
+	array_append(queries, "MATCH (n) WITH collect(n) AS ns RETURN ns");
 	array_append(queries, "MATCH (n) WITH n AS m ORDER BY n.val RETURN m");
 	array_append(queries, "MATCH (n) WITH n AS m WHERE n.val < 5 RETURN m");
 
@@ -276,6 +289,15 @@ void test_union() {
 	array_free(queries);
 }
 
+void test_foreach() {
+	const char **queries = array_new(const char *, 2);
+	array_append(queries, "FOREACH (x in [1,2,3] | CREATE (:L {val:x}))");
+	array_append(queries, "MATCH (n) WITH collect(n) AS ns FOREACH (x in ns | CREATE (:L {val:x.v}))");
+
+	validate_query_plans_clone(queries);
+	array_free(queries);
+}
+
 TEST_LIST = {
 	{"createClause", test_createClause},
 	{"matchClause", test_matchClause},
@@ -286,9 +308,11 @@ TEST_LIST = {
 	{"skipLimitSort", test_skipLimitSort},
 	{"optionalMatch", test_optionalMatch},
 	{"procCall", test_procCall},
+	{"callSubquery", test_callSubquery},
 	{"unwind", test_unwind},
 	{"with", test_with},
 	{"union", test_union},
+	{"foreach", test_foreach},
 	{NULL, NULL}
 };
 
