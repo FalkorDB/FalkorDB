@@ -355,6 +355,8 @@ void test_edge_by_index_scan() {
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
 	AST_Free(ast);
+	Index_Free(idx);
+	QGEdge_Free(e);
 }
 
 void test_expand_into() {
@@ -398,7 +400,8 @@ void test_node_by_index_scan() {
 
 	// add node_by_index_scan operation to plan
 	Index idx = Index_New("L", 0, GETYPE_NODE);
-	NodeScanCtx *n = NodeScanCtx_New("a", "L", 0, QGNode_New("a"));
+	QGNode *node = QGNode_New("a");
+	NodeScanCtx *n = NodeScanCtx_New("a", "L", 0, node);
 
 	AR_ExpNode *exp = AR_EXP_NewVariableOperandNode("a");
 	FT_FilterNode *ft = FilterTree_CreateExpressionFilter(exp);
@@ -410,6 +413,8 @@ void test_node_by_index_scan() {
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
 	AST_Free(ast);
+	Index_Free(idx);
+	QGNode_Free(node);
 }
 
 void test_semi_apply() {
