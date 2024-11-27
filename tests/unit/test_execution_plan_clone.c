@@ -28,7 +28,8 @@ void tearDown();
 
 static ExecutionPlan *build_fake_plan
 (
-	const char *query  // [OPTIONAL] initial query
+	const char *query,  // [OPTIONAL] initial query
+	AST **ast
 ) {
 	QueryCtx *ctx = QueryCtx_GetQueryCtx();
 	if(query == NULL) query = "RETURN 1";
@@ -36,7 +37,7 @@ static ExecutionPlan *build_fake_plan
 	ctx->query_data.query_no_params = query;
 	cypher_parse_result_t *parse_result =
 		cypher_parse(query, NULL, NULL, CYPHER_PARSE_ONLY_STATEMENTS);
-	AST_Build(parse_result);
+	*ast = AST_Build(parse_result);
 	return ExecutionPlan_FromTLS_AST();
 }
 
@@ -318,7 +319,8 @@ void test_foreach() {
 
 void test_apply_multiplexer() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan(NULL);
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add apply multiplexer to plan
@@ -327,11 +329,13 @@ void test_apply_multiplexer() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 void test_edge_by_index_scan() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan(NULL);
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add edge_index_scan operation to plan
@@ -350,11 +354,13 @@ void test_edge_by_index_scan() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 void test_expand_into() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan("MATCH (a) RETURN a");
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan("MATCH (a) RETURN a", &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add expand_into operation to plan
@@ -366,11 +372,13 @@ void test_expand_into() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 void test_node_by_id_seek() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan(NULL);
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add node_by_id_seek operation to plan
@@ -379,11 +387,13 @@ void test_node_by_id_seek() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 void test_node_by_index_scan() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan(NULL);
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add node_by_index_scan operation to plan
@@ -399,11 +409,13 @@ void test_node_by_index_scan() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 void test_semi_apply() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan(NULL);
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add semi_apply operation to plan
@@ -413,11 +425,13 @@ void test_semi_apply() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 void test_value_hash_join() {
 	// build a simple plan just so we can add our desiered operation(s) to
-	ExecutionPlan *plan = build_fake_plan(NULL);
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
 	TEST_ASSERT(plan != NULL);
 
 	// add semi_apply operation to plan
@@ -429,6 +443,7 @@ void test_value_hash_join() {
 
 	// free plan and all of its operations
 	ExecutionPlan_Free(plan);
+	AST_Free(ast);
 }
 
 TEST_LIST = {
