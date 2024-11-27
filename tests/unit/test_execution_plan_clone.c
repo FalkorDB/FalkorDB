@@ -340,7 +340,8 @@ void test_edge_by_index_scan() {
 
 	Index idx = Index_New("R", 0, GETYPE_EDGE);
 
-	FT_FilterNode *ft = FilterTree_CreateConditionFilter(OP_EQUAL);
+	AR_ExpNode *exp = AR_EXP_NewVariableOperandNode("a");
+	FT_FilterNode *ft = FilterTree_CreateExpressionFilter(exp);
 
 	OpBase *edge_by_index_scan = NewEdgeIndexScanOp(plan, QueryCtx_GetGraph(),
 			e, idx, ft);
@@ -388,7 +389,9 @@ void test_node_by_index_scan() {
 	// add node_by_index_scan operation to plan
 	Index idx = Index_New("L", 0, GETYPE_NODE);
 	NodeScanCtx *n = NodeScanCtx_New("a", "L", 0, QGNode_New("a"));
-	FT_FilterNode *ft = FilterTree_CreateConditionFilter(OP_EQUAL);
+
+	AR_ExpNode *exp = AR_EXP_NewVariableOperandNode("a");
+	FT_FilterNode *ft = FilterTree_CreateExpressionFilter(exp);
 
 	OpBase *node_by_index_scan = NewIndexScanOp(plan, QueryCtx_GetGraph(), n,
 			idx, ft);
