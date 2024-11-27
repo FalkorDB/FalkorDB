@@ -237,6 +237,10 @@ OpBase *NewValueHashJoin
 	AR_ExpNode *lhs_exp,
 	AR_ExpNode *rhs_exp
 ) {
+	ASSERT(plan    != NULL);
+	ASSERT(lhs_exp != NULL);
+	ASSERT(rhs_exp != NULL);
+
 	OpValueHashJoin *op = rm_malloc(sizeof(OpValueHashJoin));
 
 	op->rhs_rec                 = NULL;
