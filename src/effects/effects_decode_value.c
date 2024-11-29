@@ -3,6 +3,9 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
+#include "../value.h"
+
 // creates an array from its binary representation
 // this is the reverse of SIArray_ToBinary
 // x = SIArray_FromBinary(SIArray_ToBinary(y));
@@ -15,7 +18,7 @@ static SIValue SIArray_FromBinary
 	uint32_t n;
 	fread_assert(&n, sizeof(uint32_t), stream);
 
-	SIValue arr = SIArray_New(n);
+	SIValue arr = SI_Array(n);
 
 	for(uint32_t i = 0; i < n; i++) {
 		array_append(arr.array, SIValue_FromBinary(stream));

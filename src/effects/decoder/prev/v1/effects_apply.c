@@ -5,8 +5,8 @@
  */
 
 #include "RG.h"
-#include "effects.h"
-#include "../graph/graph_hub.h"
+#include "../../../effects.h"
+#include "../../../graph/graph_hub.h"
 
 #include <stdio.h>
 

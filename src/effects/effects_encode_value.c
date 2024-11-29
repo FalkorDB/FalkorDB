@@ -3,6 +3,9 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "../value.h"
+#include "effects.h"
+
 // forward declarations
 
 // writes a binary representation of v into Effect-Buffer
