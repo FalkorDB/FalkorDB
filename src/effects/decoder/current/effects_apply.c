@@ -1,7 +1,6 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "RG.h"
@@ -303,10 +302,8 @@ static void ApplyUpdateEdge_V2
 	// effect format:
 	//    edge ID
 	//    relation ID
-	//    src ID
-	//    dest ID
-	//    attribute ID
-	//    path's length
+	//    src node ID
+	//    dest node ID
 	//    path
 	//    attribute value
 	//--------------------------------------------------------------------------
@@ -361,28 +358,28 @@ static void ApplyUpdateEdge_V2
 	// read path's length
 	//--------------------------------------------------------------------------
 
-	fread_assert(&n, sizeof(uint8_t), stream);
-	const char *path[n];
-
-	for(uint8_t i = 0; i < n; i++) {
-		// read sub path element
-		size_t l;
-		fread_assert(&l, sizeof(l), stream);
-
-		const char *attr = rm_malloc(sizeof(char) * l);
-		fread_assert(attr, l, stream);
-		path[i] = attr;
-	}
+//	fread_assert(&n, sizeof(uint8_t), stream);
+//	const char *path[n];
+//
+//	for(uint8_t i = 0; i < n; i++) {
+//		// read sub path element
+//		size_t l;
+//		fread_assert(&l, sizeof(l), stream);
+//
+//		const char *attr = rm_malloc(sizeof(char) * l);
+//		fread_assert(attr, l, stream);
+//		path[i] = attr;
+//	}
 
 	//--------------------------------------------------------------------------
 	// read attribute value
 	//--------------------------------------------------------------------------
 
-	v = EffectsBuffer_ReadSIValue(stream);
-	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
-	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
-
-	UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
+//	v = EffectsBuffer_ReadSIValue(stream);
+//	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
+//	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
+//
+//	UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
 }
 
 // process UpdateNode effect

@@ -35,6 +35,8 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadPoint(rdb);
 	case T_VECTOR_F32:
 		return _RdbLoadVector(rdb, t);
+	case T_MAP:
+		return Map_FromBinary(stream);
 	case T_NULL:
 	default: // currently impossible
 		return SI_NullVal();

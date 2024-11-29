@@ -260,6 +260,34 @@ void SIVector_ToString
 	*bytesWritten += sprintf(*buf + *bytesWritten, ">");
 }
 
+// encode vector to binary stream
+void SIVector_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	SIValue *vector       // vector to encode
+) {
+	SerializerIO_WriteBuffer(stream, vector->ptrval,
+			sizeof(SIVector) + SIVector_Dim(*vector) * sizeof(uint32_t));
+}
+
+// read a vector from binary stream
+SIValue SIVector_FromBinary
+(
+	SerializerIO stream  // binary stream
+) {
+	// format:
+	// number of elements
+	// elements
+
+	ASSERT(stream != NULL);
+
+	// read vector dimension from stream
+	SIValue v;
+	v.ptrval = SerializerIO_ReadBuffer(stream, NULL);
+
+	return v;
+}
+
 void SIVector_Free
 (
 	SIValue vector // vector to free

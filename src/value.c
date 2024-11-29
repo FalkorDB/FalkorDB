@@ -191,10 +191,7 @@ SIValue SI_ShallowCloneValue(const SIValue v) {
 // make an SIValue that shares the original's allocations but can safely expect
 // those allocations to remain in scope
 // this is most frequently the case for GraphEntity properties
-SIValue SI_ConstValue
-(
-	const SIValue *v
-) {
+SIValue SI_ConstValue(const SIValue *v) {
 	SIValue dup = *v;
 	if(v->allocation != M_NONE) dup.allocation = M_CONST;
 	return dup;
@@ -207,25 +204,37 @@ SIValue SI_TransferOwnership(SIValue *v) {
 	return dup;
 }
 
-/* Update an SIValue marked as owning its internal allocations so that it instead is sharing them,
- * with no responsibility for freeing or guarantee regarding scope.
- * This is used in cases like performing shallow copies of scalars in Record entries. */
-void SIValue_MakeVolatile(SIValue *v) {
+// update an SIValue marked as owning its internal allocations so that it
+// instead is sharing them, with no responsibility for freeing or guarantee
+// regarding scope this is used in cases like performing shallow copies of
+// scalars in Record entries
+void SIValue_MakeVolatile
+(
+	SIValue *v
+) {
 	if(v->allocation == M_SELF) v->allocation = M_VOLATILE;
 }
 
-/* Ensure that any allocation held by the given SIValue is guaranteed to not go out
- * of scope during the lifetime of this query by copying references to volatile memory.
- * Heap allocations that are not scoped to the input SIValue, such as strings from the AST
- * or a GraphEntity property, are not modified. */
-void SIValue_Persist(SIValue *v) {
+// ensure that any allocation held by the given SIValue is guaranteed to not go
+// out of scope during the lifetime of this query by copying references to
+// volatile memory
+// heap allocations that are not scoped to the input SIValue
+// such as strings from the AST or a GraphEntity property, are not modified
+void SIValue_Persist
+(
+	SIValue *v
+) {
 	// do nothing for non-volatile values
 	// for volatile values, persisting uses the same logic as cloning
 	if(v->allocation == M_VOLATILE) *v = SI_CloneValue(*v);
 }
 
-/* Update an SIValue's allocation type to the provided value. */
-inline void SIValue_SetAllocationType(SIValue *v, SIAllocation allocation) {
+// update an SIValue's allocation type to the provided value
+inline void SIValue_SetAllocationType
+(
+	SIValue *v,
+	SIAllocation allocation
+) {
 	v->allocation = allocation;
 }
 
@@ -802,7 +811,133 @@ XXH64_hash_t SIValue_HashCode(SIValue v) {
 	return XXH64_digest(&state);
 }
 
-void SIValue_Free(SIValue v) {
+// reads SIValue off of binary stream
+SIValue SIValue_FromBinary
+(
+    SerializerIO stream  // stream to read value from
+) {
+	ASSERT(stream != NULL);
+
+	// read value type
+	SIType t;
+	SIValue v;
+	size_t len;  // string length
+
+	bool     b;
+	int64_t  i;
+	double   d;
+	Point    p;
+	char    *s;
+
+	t = SerializerIO_ReadUnsigned(string);
+	switch(t) {
+		case T_STRING:
+			// read string from stream
+			s = SerializerIO_ReadBuffer(stream);
+			v = SI_TransferStringVal(s);
+			break;
+		case T_BOOL:
+			// read bool from stream
+			b = SerializerIO_ReadUnsigned(stream);
+			v = SI_BoolVal(b);
+			break;
+		case T_INT64:
+			// read int from stream
+			i = SerializerIO_ReadSigned(stream);
+			v = SI_LongVal(i);
+			break;
+		case T_DOUBLE:
+			// read double from stream
+			d = SerializerIO_ReadDouble(stream);
+			v = SI_DoubleVal(d);
+			break;
+		case T_POINT:
+			// read point from stream
+			v = Point_FromBinary(stream);
+			break;
+		case T_ARRAY:
+			// read array from stream
+			v = SIArray_FromBinary(stream);
+			break;
+		case T_VECTOR_F32:
+			v = SIVector_FromBinary(stream);
+			break;
+		caset T_MAP:
+			v = Map_FromBinary(stream);
+		case T_NULL:
+			v = SI_NullVal();
+			break;
+		default:
+			assert(false && "unknown SIValue type");
+	}
+
+	return v;
+}
+
+// writes a binary representation of v into Effect-Buffer
+void SIValue_ToBinary
+(
+	SerializerIO stream,  // stream to encode to
+	const SIValue *v      // value to encode
+) {
+	ASSERT(v      != NULL);
+	ASSERT(stream != NULL);
+
+	// format:
+	//    type
+	//    value
+	bool b;
+	size_t len = 0;
+
+	SIType t = v->type;
+
+	// write type
+	SerializerIO_WriteUnsigned(stream, t);
+
+	// write value
+	switch(t) {
+		case T_STRING:
+			SerializerIO_WriteBuffer(stream, v->stringval, strlen(v->stringval));
+			break;
+		case T_BOOL:
+			// write bool to stream
+			b = SIValue_IsTrue(*v);
+			SerializerIO_WriteUnsigned(stream, b);
+			break;
+		case T_INT64:
+			// write int to stream
+			SerializerIO_WriteSigned(stream, v->longval);
+			break;
+		case T_DOUBLE:
+			// write double to stream
+			SerializerIO_WriteDouble(stream, v->doubleval);
+			break;
+		case T_POINT:
+			// write value to stream
+			Point_ToBinary(stream, v);
+			break;
+		case T_ARRAY:
+			// write array to stream
+			SIArray_ToBinary(stream, v);
+			break;
+		case T_VECTOR_F32:
+			SIVector_ToBinary(stream, v);
+			break;
+		case T_MAP:
+			Map_ToBinary(stream, v);
+			break;
+		case T_NULL:
+			// no additional data is required to represent NULL
+			break;
+		default:
+			assert(false && "unknown SIValue type");
+	}
+}
+
+void SIValue_Free
+(
+	SIValue v
+) {
 	// The free routine only performs work if it owns a heap allocation.
 	if(v.allocation != M_SELF) return;
 

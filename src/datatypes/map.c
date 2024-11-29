@@ -587,6 +587,62 @@ void Map_ToString
 	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "}");
 }
 
+// encode map to binary stream
+void Map_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	SIValue *map          // map to encode
+) {
+	ASSERT(stream != NULL);
+	ASSERT(SI_TYPE(*map) == T_MAP);
+
+	// write number of keys
+	uint32_t n = Map_KeyCount(*map);
+	SerializerIO_WriteUnsigned(stream, n);
+
+	// write individual key value pairs
+	for(uint32_t i = 0; i < n; i++) {
+		Pair *p = map->map + i;
+
+		// write key
+		SerializerIO_WriteBuffer(stream, p->key, strlen(p->key));
+
+		// write value
+		SIValue_ToBinary(stream, &p->val);
+	}
+}
+
+// read a map from binary stream
+SIValue Map_FromBinary
+(
+	SerializerIO stream  // binary stream
+) {
+	// format:
+	// key count
+	// key:value
+
+	ASSERT(stream != NULL);
+
+	// read number of keys in map
+	uint32_t n = SerializerIO_ReadUnsigned(stream);
+
+	SIValue map = Map_New(n);
+
+	for(uint32_t i = 0; i < n; i++) {
+		// read string from stream
+		char *key = SerializerIO_ReadBuffer(stream, NULL);
+
+		Pair p = {
+			.key = key,
+			.val = SIValue_FromBinary(stream)
+		};
+
+		array_append(map.map, p);
+	}
+
+	return map;
+}
+
 // free map
 void Map_Free
 (

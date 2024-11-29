@@ -80,6 +80,19 @@ void SIVector_ToString
 	size_t *bytesWritten  // output bytes written
 );
 
+// encode vector to binary stream
+void SIVector_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	SIValue *vector       // vector to encode
+);
+
+// read a vector from binary stream
+SIValue SIVector_FromBinary
+(
+	SerializerIO stream  // binary stream
+);
+
 void SIVector_Free
 (
 	SIValue vector // vector to free

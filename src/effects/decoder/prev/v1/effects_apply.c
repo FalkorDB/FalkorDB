@@ -6,7 +6,7 @@
 
 #include "RG.h"
 #include "../../../effects.h"
-#include "../../../graph/graph_hub.h"
+#include "../../../../graph/graph_hub.h"
 
 #include <stdio.h>
 
@@ -302,6 +302,9 @@ static void ApplyUpdateEdge_V1
 	//--------------------------------------------------------------------------
 	// effect format:
 	//    edge ID
+	//    relation ID
+	//    src node ID
+	//    dest node ID
 	//    attribute ID
 	//    attribute value
 	//--------------------------------------------------------------------------

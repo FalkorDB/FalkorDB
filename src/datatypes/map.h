@@ -194,6 +194,19 @@ void Map_ToString
 	size_t *bytesWritten  // length of string
 );
 
+// encode map to binary stream
+void Map_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	SIValue *map          // map to encode
+);
+
+// read a map from binary stream
+SIValue Map_FromBinary
+(
+	SerializerIO stream  // binary stream
+);
+
 // free map
 void Map_Free
 (

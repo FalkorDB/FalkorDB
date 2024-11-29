@@ -226,6 +226,49 @@ XXH64_hash_t SIArray_HashCode
 	return hashCode;
 }
 
+// encode array to binary stream
+void SIArray_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	SIValue *siarray      // array to encode
+) {
+	ASSERT(stream != NULL);
+	ASSERT(SI_TYPE(*siarray) == T_ARRAY);
+
+	// saves array as
+	// unsigned : array legnth
+	// array[0]
+	// .
+	// .
+	// .
+	// array[array length -1]
+
+	uint32_t l = SIArray_Length(*siarray);
+	SerializerIO_WriteUnsigned(stream, l);
+
+	for(uint32_t i = 0; i < l; i ++) {
+		SIValue_ToBinary(stream, siarray->array+i);
+	}
+}
+
+// read array from binary stream
+SIValue SIArray_FromBinary
+(
+	SerializerIO stream  // binary stream
+) {
+	ASSERT(stream != NULL);
+	
+	// read number of elements
+	uint32_t l = SerializerIO_ReadUnsigned(stream);
+	SIValue arr = SIArray_New(l);
+
+	for(uint32_t i = 0; i < l; i++) {
+		array_append(arr.array, SIValue_FromBinary(stream));
+	}
+
+	return arr;
+}
+
 void SIArray_Free
 (
 	SIValue siarray

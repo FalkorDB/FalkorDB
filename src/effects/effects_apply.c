@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "effects.h"
+#include "decoder/effects_decoders.h"
 
 #include <stdio.h>
 
