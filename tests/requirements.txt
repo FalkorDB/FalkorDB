@@ -1,7 +1,8 @@
 behave
-falkordb-bulk-loader
 click
+docker
 FalkorDB
+falkordb-bulk-loader
 neo4j
 git+https://github.com/renatahodovan/grammarinator.git@7dace5450b7136d641d065f649b406a22ef4d7f7
 wheel

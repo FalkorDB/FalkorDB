@@ -15,22 +15,30 @@ static Record CreateConsume(OpBase *opBase);
 static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void CreateFree(OpBase *opBase);
 
-OpBase *NewCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateCtx *edges) {
+OpBase *NewCreateOp
+(
+	const ExecutionPlan *plan,
+	NodeCreateCtx *nodes,
+	EdgeCreateCtx *edges
+) {
 	OpCreate *op = rm_calloc(1, sizeof(OpCreate));
-	op->records = NULL;
 
-	// Set our Op operations
+	op->rec_idx  = 0;
+	op->records  = NULL;
+
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CREATE, "Create", NULL, CreateConsume,
 				NULL, NULL, CreateClone, CreateFree, true, plan);
 
 	uint node_blueprint_count = array_len(nodes);
 	uint edge_blueprint_count = array_len(edges);
 
-	// Construct the array of IDs this operation modifies
+	// construct the array of IDs this operation modifies
 	for(uint i = 0; i < node_blueprint_count; i ++) {
 		NodeCreateCtx *n = nodes + i;
 		n->node_idx = OpBase_Modifies((OpBase *)op, n->alias);
 	}
+
 	for(uint i = 0; i < edge_blueprint_count; i ++) {
 		EdgeCreateCtx *e = edges + i;
 		e->edge_idx = OpBase_Modifies((OpBase *)op, e->alias);
@@ -137,8 +145,11 @@ static Record _handoff
 (
 	OpCreate *op
 ) {
-	if(array_len(op->records) > 0) return array_pop(op->records);
-	else return NULL;
+	if(op->rec_idx < array_len(op->records)) {
+		return op->records[op->rec_idx++];
+	} else {
+		return NULL;
+	}
 }
 
 static Record CreateConsume
@@ -193,25 +204,39 @@ static Record CreateConsume
 	return _handoff(op);
 }
 
-static OpBase *CreateClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *CreateClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_CREATE);
+
 	OpCreate *op = (OpCreate *)opBase;
 	NodeCreateCtx *nodes;
 	EdgeCreateCtx *edges = array_new(EdgeCreateCtx, array_len(op->pending.edges));
 	array_clone_with_cb(nodes, op->pending.nodes.nodes_to_create, NodeCreateCtx_Clone);
+
 	for(uint i = 0; i < array_len(op->pending.edges); i++) {
 		EdgeCreateCtx ctx = EdgeCreateCtx_Clone(op->pending.edges[i].edges_to_create);
 		array_append(edges, ctx);
 	}
+
 	return NewCreateOp(plan, nodes, edges);
 }
 
-static void CreateFree(OpBase *ctx) {
+static void CreateFree
+(
+	OpBase *ctx
+) {
 	OpCreate *op = (OpCreate *)ctx;
 
 	if(op->records) {
 		uint rec_count = array_len(op->records);
-		for(uint i = 0; i < rec_count; i++) OpBase_DeleteRecord(op->records+i);
+		// records[0..op->rec_idx] had already been emitted, skip them
+		for(uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord(op->records+i);
+		}
+
 		array_free(op->records);
 		op->records = NULL;
 	}

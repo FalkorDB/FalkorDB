@@ -34,7 +34,8 @@ typedef enum {
 	Config_CMD_INFO_MAX_QUERY_COUNT  = 14,  // the max number of info queries count
 	Config_EFFECTS_THRESHOLD         = 15,  // bolt protocol port
 	Config_BOLT_PORT                 = 16,  // replicate queries via effects
-	Config_END_MARKER                = 17
+	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
+	Config_END_MARKER                = 18
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
@@ -54,7 +55,8 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 	Config_DELTA_MAX_PENDING_CHANGES,
 	Config_CMD_INFO,
 	Config_CMD_INFO_MAX_QUERY_COUNT,
-	Config_EFFECTS_THRESHOLD
+	Config_EFFECTS_THRESHOLD,
+	Config_DELAY_INDEXING
 };
 static const size_t RUNTIME_CONFIG_COUNT = sizeof(RUNTIME_CONFIGS) / sizeof(RUNTIME_CONFIGS[0]);
 

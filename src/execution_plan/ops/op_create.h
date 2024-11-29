@@ -13,12 +13,19 @@
 #include "../../graph/entities/node.h"
 #include "../../graph/entities/edge.h"
 
-/* Creates new entities according to the CREATE clause. */
+// creates new entities according to the CREATE clause
 
 typedef struct {
-	OpBase op;                 // The base operation.
-	Record *records;           // Array of Records created by this operation.
-	PendingCreations pending;  // Container struct for all graph changes to be committed.
+	OpBase op;                 // the base operation
+	uint64_t rec_idx;          // emit record index
+	Record *records;           // array of Records created by this operation
+	PendingCreations pending;  // container struct for all graph changes to be committed
 } OpCreate;
 
-OpBase *NewCreateOp(const ExecutionPlan *plan, NodeCreateCtx *nodes, EdgeCreateCtx *edges);
+OpBase *NewCreateOp
+(
+	const ExecutionPlan *plan,
+	NodeCreateCtx *nodes,
+	EdgeCreateCtx *edges
+);
+

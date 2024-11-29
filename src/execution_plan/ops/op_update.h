@@ -14,6 +14,7 @@
 typedef struct {
 	OpBase op;
 	uint n;                             // number of update ctxs
+	uint64_t rec_idx;                   // emit record index
 	Record *records;                    // updated records
 	GraphContext *gc;                   // graph context
 	EntityUpdateEvalCtx **update_ctxs;  // update context

@@ -187,8 +187,8 @@ class testGraphPersistency():
         graph_names = ["repeated_edges", "{tag}_repeated_edges"]
         for graph_name in graph_names:
             graph = self.db.select_graph(graph_name)
-            graph.query("""CREATE (src:p {name: 'src'}), (dest:p {name: 'dest'}),
-                        (src)-[:e {val: 1}]->(dest), (src)-[:e {val: 2}]->(dest)""")
+            graph.query("""CREATE (src:P {name: 'src'}), (dest:P {name: 'dest'}),
+                        (src)-[:R {val: 1}]->(dest), (src)-[:R {val: 2}]->(dest)""")
 
             # Verify the new edge
             q = """MATCH (a)-[e]->(b) RETURN e.val, a.name, b.name ORDER BY e.val"""

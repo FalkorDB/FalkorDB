@@ -18,9 +18,12 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path);
 static void _ResultSet_CompactReplyWithMap(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
 static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v);
-static void _ResultSet_CompactReplyWithVector(RedisModuleCtx *ctx, SIValue vec);
+static void _ResultSet_CompactReplyWithVector32F(RedisModuleCtx *ctx, SIValue vec);
 
-static inline ValueType _mapValueType(SIType t) {
+static inline ValueType _mapValueType
+(
+	SIType t
+) {
 	switch(t) {
 	case T_NULL:
 		return VALUE_NULL;
@@ -35,7 +38,7 @@ static inline ValueType _mapValueType(SIType t) {
 	case T_ARRAY:
 		return VALUE_ARRAY;
 	case T_VECTOR_F32:
-		return VALUE_ARRAY;
+		return VALUE_VECTORF32;
 	case T_NODE:
 		return VALUE_NODE;
 	case T_EDGE:
@@ -51,15 +54,20 @@ static inline ValueType _mapValueType(SIType t) {
 	}
 }
 
-static inline void _ResultSet_ReplyWithValueType(RedisModuleCtx *ctx, SIType t) {
+static inline void _ResultSet_ReplyWithValueType
+(
+	RedisModuleCtx *ctx,
+	SIType t
+) {
 	RedisModule_ReplyWithLongLong(ctx, _mapValueType(t));
 }
 
+// emit value to reply stream
 static void _ResultSet_CompactReplyWithSIValue
 (
-	RedisModuleCtx *ctx,
-	GraphContext *gc,
-	const SIValue v
+	RedisModuleCtx *ctx,  // redis context
+	GraphContext *gc,     // graph context
+	const SIValue v       // value to emit
 ) {
 	// Emit the value type, then the actual value (to facilitate client-side parsing)
 	_ResultSet_ReplyWithValueType(ctx, SI_TYPE(v));
@@ -82,7 +90,7 @@ static void _ResultSet_CompactReplyWithSIValue
 		_ResultSet_CompactReplyWithSIArray(ctx, gc, v);
 		break;
 	case T_VECTOR_F32:
-		_ResultSet_CompactReplyWithVector(ctx, v);
+		_ResultSet_CompactReplyWithVector32F(ctx, v);
 		break;
 	case T_NULL:
 		RedisModule_ReplyWithNull(ctx);
@@ -108,25 +116,37 @@ static void _ResultSet_CompactReplyWithSIValue
 	}
 }
 
-static void _ResultSet_CompactReplyWithProperties(RedisModuleCtx *ctx, GraphContext *gc,
-												  const GraphEntity *e) {
+static void _ResultSet_CompactReplyWithProperties
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	const GraphEntity *e
+) {
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int prop_count = AttributeSet_Count(set);
 	RedisModule_ReplyWithArray(ctx, prop_count);
-	// Iterate over all properties stored on entity
+
+	// iterate over all properties stored on entity
 	for(int i = 0; i < prop_count; i ++) {
-		// Compact replies include the value's type; verbose replies do not
+		// compact replies include the value's type; verbose replies do not
 		RedisModule_ReplyWithArray(ctx, 3);
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		// Emit the string index
+
+		// emit the attribute id
 		RedisModule_ReplyWithLongLong(ctx, attr_id);
-		// Emit the value
+
+		// emit the value
 		_ResultSet_CompactReplyWithSIValue(ctx, gc, value);
 	}
 }
 
-static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n) {
+static void _ResultSet_CompactReplyWithNode
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	Node *n
+) {
 	/*  Compact node reply format:
 	 *  [
 	 *      Node ID (integer),
@@ -154,7 +174,12 @@ static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *g
 	_ResultSet_CompactReplyWithProperties(ctx, gc, (GraphEntity *)n);
 }
 
-static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *gc, Edge *e) {
+static void _ResultSet_CompactReplyWithEdge
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	Edge *e
+) {
 	/*  Compact edge reply format:
 	 *  [
 	 *      Edge ID (integer),
@@ -186,8 +211,12 @@ static void _ResultSet_CompactReplyWithEdge(RedisModuleCtx *ctx, GraphContext *g
 	_ResultSet_CompactReplyWithProperties(ctx, gc, (GraphEntity *)e);
 }
 
-static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext *gc,
-											   SIValue array) {
+static void _ResultSet_CompactReplyWithSIArray
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue array
+) {
 
 	/*  Compact array reply format:
 	 *  [
@@ -207,23 +236,22 @@ static void _ResultSet_CompactReplyWithSIArray(RedisModuleCtx *ctx, GraphContext
 	}
 }
 
-static void _ResultSet_CompactReplyWithVector
+static void _ResultSet_CompactReplyWithVector32F
 (
 	RedisModuleCtx *ctx,
 	SIValue vec
 ) {
 	/*  Compact vector reply format:
 	 *  [
-	 *      [double, value]
-	 *      [double, value]
+	 *      value
 	 *      .
 	 *      .
 	 *      .
-	 *      [double, value]
+	 *      value
 	 *  ]
 	 */
 
-	ASSERT(SI_TYPE(vec) & T_VECTOR);
+	ASSERT(SI_TYPE(vec) == T_VECTOR_F32);
 
 	// construct arrry of vector elements
 	uint32_t dim = SIVector_Dim(vec);
@@ -235,13 +263,16 @@ static void _ResultSet_CompactReplyWithVector
 	// reply with vector elements
 	float *values = (float*)elements;
 	for(uint i = 0; i < dim; i++) {
-		RedisModule_ReplyWithArray(ctx, 2);
-		_ResultSet_ReplyWithValueType(ctx, T_DOUBLE);
-		_ResultSet_ReplyWithRoundedDouble(ctx, (double)values[i]);
+		RedisModule_ReplyWithDouble(ctx, (double)values[i]);
 	}
 }
 
-static void _ResultSet_CompactReplyWithPath(RedisModuleCtx *ctx, GraphContext *gc, SIValue path) {
+static void _ResultSet_CompactReplyWithPath
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue path
+) {
 	/* Path will return as an array of two SIArrays, the first is path nodes and the second is edges,
 	* see array compact format.
 	* Compact path reply:
@@ -318,7 +349,12 @@ static void _ResultSet_CompactReplyWithMap
 	}
 }
 
-static void _ResultSet_CompactReplyWithPoint(RedisModuleCtx *ctx, GraphContext *gc, SIValue v) {
+static void _ResultSet_CompactReplyWithPoint
+(
+	RedisModuleCtx *ctx,
+	GraphContext *gc,
+	SIValue v
+) {
 	ASSERT(SI_TYPE(v) == T_POINT);
 	RedisModule_ReplyWithArray(ctx, 2);
 
@@ -464,3 +500,4 @@ void ResultSet_EmitCompactStats
 	buflen = sprintf(buff, "Query internal execution time: %.6f milliseconds", t);
 	RedisModule_ReplyWithStringBuffer(ctx, buff, buflen);
 }
+

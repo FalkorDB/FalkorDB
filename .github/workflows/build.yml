@@ -2,12 +2,19 @@ name: Build on ubuntu
 
 on:
   workflow_dispatch:
+    inputs:
+      browser_tag:
+        description: "Browser tag"
+        required: false
+        default: "latest"
   pull_request:
     branches: [master, "[0-9]+.[0-9]+"]
   push:
     branches:
       - master
       - "[0-9]+.[0-9]+"
+    tags:
+      - v[0-9]+.[0-9]+
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -23,6 +30,7 @@ jobs:
           - flow-tests
           - tck-tests
           - fuzz-tests
+            #- upgrade-tests
     runs-on: ubuntu-latest
     steps:
       - name: Create Arm runners
@@ -122,6 +130,29 @@ jobs:
           docker rm -v $id
           ls -l -R /FalkorDB/bin
 
+      - name: Set browser tag
+        id: set_browser_tag
+        run: |
+          BROWSER_TAG="latest"
+
+          # If the event is a workflow_dispatch, use the input value
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            BROWSER_TAG=${{ github.event.inputs.browser_tag }}
+          fi
+
+          # If the branch is master, set to "edge"
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+            BROWSER_TAG="edge"
+          fi
+
+          # If the branch is not master, set to 'latest'
+          if [[ "${{ github.ref }}" != "refs/heads/master" ]]; then
+            BROWSER_TAG="latest"
+          fi
+
+
+          echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
+
       - name: Build tests image
         uses: docker/build-push-action@v5
         with:
@@ -153,6 +184,7 @@ jobs:
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
             TARGETPLATFORM=${{ matrix.platform }}
+            BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Upload image
         uses: actions/upload-artifact@v4
@@ -328,3 +360,46 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           zone: ${{ vars.GCP_ZONE }}
           instance_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}
+
+            #upgrade-tests:
+            #  needs: build
+            #  runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('upgrade-tests-{0}-{1}', github.run_id, github.run_number) }}
+            #  strategy:
+            #    fail-fast: false
+            #    matrix:
+            #      platform:
+            #        - linux/amd64
+            #        - linux/arm64
+            #  env:
+            #    ARCH_SUFFIX: ${{ matrix.platform == 'linux/amd64' && 'x64' || 'arm64v8' }}
+            #  steps:
+            #    - name: Download image
+            #      uses: actions/download-artifact@v4
+            #      with:
+            #        name: falkordb-tests-${{ env.ARCH_SUFFIX }}
+            #        path: /tmp
+
+            #    - name: Load image
+            #      id: load_image
+            #      run: |
+            #        docker load --input /tmp/falkordb-tests-${{ env.ARCH_SUFFIX }}.tar
+
+            #    - name: Upgrade tests
+            #      env:
+            #        DOCKER_NETWORK: falkordb-network
+            #      run: |
+            #        sudo chmod 666 /var/run/docker.sock
+            #        docker network create --driver bridge $DOCKER_NETWORK
+            #        docker run -i --rm --privileged -v /var/run/docker.sock:/var/run/docker.sock --network $DOCKER_NETWORK -e DOCKER_NETWORK=$DOCKER_NETWORK falkordb/falkordb-tests make upgrade-tests TIMEOUT=180
+
+            #cleanup-upgrade-tests:
+            #  needs: upgrade-tests
+            #  runs-on: ubuntu-latest
+            #  steps:
+            #    - uses: actions/checkout@v4
+            #    - uses: ./.github/actions/cleanup-runner
+            #      with:
+            #        service_account_key: ${{ secrets.GCP_SA_KEY }}
+            #        project_id: ${{ secrets.GCP_PROJECT_ID }}
+            #        zone: ${{ vars.GCP_ZONE }}
+            #        instance_label: upgrade-tests-${{ github.run_id }}-${{ github.run_number }}

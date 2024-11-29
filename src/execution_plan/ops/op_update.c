@@ -22,11 +22,11 @@ static Record _handoff
 (
 	OpUpdate *op
 ) {
-	// TODO: popping a record out of op->records
-	// will reverse the order in which records
-	// are passed down the execution plan
-	if(op->records && array_len(op->records) > 0) return array_pop(op->records);
-	return NULL;
+	if(op->rec_idx < array_len(op->records)) {
+		return op->records[op->rec_idx++];
+	} else {
+		return NULL;
+	}
 }
 
 // fake hash function
@@ -60,11 +60,11 @@ OpBase *NewUpdateOp
 
 	op->n                 = array_len(update_exps);
 	op->gc                = QueryCtx_GetGraphCtx();
+	op->rec_idx           = 0;
 	op->records           = array_new(Record, 64);
 	op->update_ctxs       = update_exps;
 	op->node_updates      = HashTableCreate(&_dt);
 	op->edge_updates      = HashTableCreate(&_dt);
-	op->updates_committed = false;
 
 	// set our op operations
 	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,
@@ -89,7 +89,7 @@ static Record UpdateConsume
 	Record r;
 
 	// updates already performed
-	if(op->updates_committed) return _handoff(op);
+	if(array_len(op->records) > 0) return _handoff(op);
 
 	while((r = OpBase_Consume(child))) {
 		// evaluate update expressions
@@ -121,8 +121,6 @@ static Record UpdateConsume
 	HashTableEmpty(op->node_updates, NULL);
 	HashTableEmpty(op->edge_updates, NULL);
 
-	op->updates_committed = true;
-
 	return _handoff(op);
 }
 
@@ -140,13 +138,23 @@ static OpBase *UpdateClone
 	return NewUpdateOp(plan, update_ctxs);
 }
 
-static OpResult UpdateReset(OpBase *ctx) {
+static OpResult UpdateReset
+(
+	OpBase *ctx
+) {
 	OpUpdate *op = (OpUpdate *)ctx;
 
 	HashTableEmpty(op->node_updates, NULL);
 	HashTableEmpty(op->edge_updates, NULL);
 
-	op->updates_committed = false;
+	uint records_count = array_len(op->records);
+	// records[0..op->record_idx] had been already emitted, skip them
+	for(uint i = op->rec_idx; i < records_count; i++) {
+		OpBase_DeleteRecord(op->records+i);
+	}
+	array_clear(op->records);
+	op->rec_idx = 0;
+
 	return OP_OK;
 }
 
@@ -169,10 +177,10 @@ static void UpdateFree(OpBase *ctx) {
 		op->update_ctxs = NULL;
 	}
 
-	if(op->records) {
-		uint records_count = array_len(op->records);
-		for(uint i = 0; i < records_count; i++) OpBase_DeleteRecord(op->records+i);
-		array_free(op->records);
-		op->records = NULL;
+	uint records_count = array_len(op->records);
+	// records[0..op->record_idx] had been already emitted, skip them
+	for(uint i = op->rec_idx; i < records_count; i++) {
+		OpBase_DeleteRecord(op->records+i);
 	}
+	array_free(op->records);
 }
