@@ -4,6 +4,7 @@
  */
 
 #include "RG.h"
+#include "util/rmalloc.h"
 #include "property_path.h"
 
 // create a new empty property path
@@ -37,10 +38,10 @@ unsigned int PropertyPath_len
 // returns false if element doesn't exists, true otherwise
 bool PropertyPath_getElement
 (
-	const PropertyPathElementType *t,  // [output] [optional] element type
-	const void *v,                     // [output] [optional] element value
-	const PropertyPath *path,          // path object
-	unsigned int i                     // element position
+	PropertyPathElementType *t,  // [output] [optional] element type
+	PropertyPathElement *v,      // [output] [optional] element value
+	const PropertyPath *path,    // path object
+	unsigned int i               // element position
 ) {
 	ASSERT(path != NULL);
 
@@ -54,18 +55,7 @@ bool PropertyPath_getElement
 	}
 
 	if(v != NULL) {
-		switch(path->types[i]) {
-			case PATH_ELEMENT_INDEX:
-			case PATH_ELEMENT_PROPERTY_ID:
-				*v = path->elements[i].index;
-				break;
-			case PATH_ELEMENT_PROPERTY:
-				*v = path->elements[i].property;
-				break;
-			case default:
-				ASSERT(false && "unknown PropertyPathElementType");
-				break;
-		}
+		*v = path->elements[i];
 	}
 
 	return true;
@@ -74,7 +64,7 @@ bool PropertyPath_getElement
 // get a property element from position i
 void PropertyPath_getProperty
 (
-	const char *v,             // [output] element value
+	const char **v,            // [output] element value
 	const PropertyPath *path,  // path object
 	unsigned int i             // element position
 ) {
@@ -90,7 +80,7 @@ void PropertyPath_getProperty
 // get a property id element from position i
 void PropertyPath_getPropertyID
 (
-	const AttributeID *v,      // [output] element value
+	AttributeID *v,            // [output] element value
 	const PropertyPath *path,  // path object
 	unsigned int i             // element position
 ) {
@@ -106,7 +96,7 @@ void PropertyPath_getPropertyID
 // get a array subscript element from position i
 void PropertyPath_getArrayIdx
 (
-	const unsigned int *v,     // [output] element value
+	unsigned int *v,           // [output] element value
 	const PropertyPath *path,  // path object
 	unsigned int i             // element position
 ) {
@@ -128,7 +118,6 @@ static void _PropertyPath_grow
 (
 	PropertyPath *path
 ) {
-	ASSERT(n > 0);
 	ASSERT(path != NULL);
 
 	// make room for new element
@@ -145,14 +134,14 @@ static void _PropertyPath_grow
 // appends property access to the end of the path
 void PropertyPath_addProperty
 (
-	PropertyPath *path,  // path to append to
+	PropertyPath *path,   // path to append to
 	const char *property  // property to add
 ) {
 	// validations
 	ASSERT(path     != NULL);
 	ASSERT(property != NULL);
 
-	_PropertyPath_grow(path, 1);
+	_PropertyPath_grow(path);
 
 	// set new element
 	path->types[path->size-1]             = PATH_ELEMENT_PROPERTY;
@@ -162,34 +151,33 @@ void PropertyPath_addProperty
 // appends property ID access to the end of the path
 void PropertyPath_addPropertyID
 (
-	PropertyPath **path,  // path to append to
-	AttributeID id        // property ID to add
+	PropertyPath *path,  // path to append to
+	AttributeID id       // property ID to add
 ) {
 	// validations
-	ASSERT(path     != NULL);
-	ASSERT(property != NULL);
+	ASSERT(path != NULL);
+	ASSERT(id   != ATTRIBUTE_ID_ALL && id != ATTRIBUTE_ID_NONE);
 
-	_PropertyPath_grow(path, 1);
+	_PropertyPath_grow(path);
 
 	// set new element
-	path->types[path->size-1]    = PATH_ELEMENT_PROPERTY_ID;
+	path->types[path->size-1] = PATH_ELEMENT_PROPERTY_ID;
 	path->elements[path->size-1].index = id;
 }
 
 // appends array subscript access to the end of the path
 void PropertyPath_addArrayIdx
 (
-	PropertyPath **path,  // path to append to
-	unsigned int idx      // property ID to add
+	PropertyPath *path,  // path to append to
+	unsigned int idx     // property ID to add
 ) {
 	// validations
-	ASSERT(path     != NULL);
-	ASSERT(property != NULL);
+	ASSERT(path != NULL);
 
-	_PropertyPath_grow(path, 1);
+	_PropertyPath_grow(path);
 
 	// set new element
-	path->types[path->size-1]    = PATH_ELEMENT_INDEX;
+	path->types[path->size-1] = PATH_ELEMENT_INDEX;
 	path->elements[path->size-1].index = idx;
 }
 
@@ -201,12 +189,12 @@ void PropertyPath_updateElement
 	PropertyPathElementType t,  // new element type
 	PropertyPathElement v       // new element value
 ) {
-	ASSERT(i           < path->size);
-	ASSERT(path        != NULL);
-	ASSERT(path->types != t);
+	ASSERT(i              < path->size);
+	ASSERT(path           != NULL);
+	ASSERT(path->types[i] != t);
 
-	path->types[i]   = t;
-	path->element[i] = v;
+	path->types[i]    = t;
+	path->elements[i] = v;
 }
 
 //------------------------------------------------------------------------------
@@ -220,7 +208,7 @@ void PropertyPath_print
 ) {
 	ASSERT(path != NULL);
 
-	for(unsigned int i = 0; i < path->size) {
+	for(unsigned int i = 0; i < path->size; i++) {
 		switch(path->types[i]) {
 			case PATH_ELEMENT_INDEX:
 				printf("[%d]", path->elements[i].index);
@@ -231,7 +219,7 @@ void PropertyPath_print
 			case PATH_ELEMENT_PROPERTY:
 				printf(".%s", path->elements[i].property);
 				break;
-			case default:
+			default:
 				ASSERT(false && "unknown PropertyPathElementType");
 				break;
 		}

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "graph/entities/attribute_set.h"
+
 // property path defines an access path to either a node or edge attribute-set
 // as well as a dictionary
 // e.g.
@@ -27,10 +29,10 @@ typedef enum {
 } PropertyPathElementType;
 
 // PropertyPathElement a element on the path
-typedef union PropertyPathElement {
-	char *property;      // property name
-	unsigned int index;  // either a property ID or an array index
-};
+typedef union {
+	const char *property;  // property name
+	unsigned int index;    // either a property ID or an array index
+} PropertyPathElement;
 
 // PropertyPath defines an access path e.g. `flight[1].duration.minutes`
 // by breaking the path into its individual elements:
@@ -61,35 +63,35 @@ unsigned int PropertyPath_len
 // returns false if element doesn't exists, true otherwise
 bool PropertyPath_getElement
 (
-	const PropertyPathElementType *t,  // [output] [optional] element type
-	const void *v,                     // [output] [optional] element value
-	const PropertyPath *path,          // path object
-	unsigned int i                     // element position
+	PropertyPathElementType *t,  // [output] [optional] element type
+	PropertyPathElement *v,      // [output] [optional] element value
+	const PropertyPath *path,    // path object
+	unsigned int i               // element position
 );
 
 // get a property element from position i
 // return false if element doesn't exists, true otherwise
 void PropertyPath_getProperty
 (
-	const char *v,             // [output] element value
+	const char **v,            // [output] element value
 	const PropertyPath *path,  // path object
-	unsigned int i                   // element position
+	unsigned int i             // element position
 );
 
 // get a property id element from position i
 // return false if element doesn't exists, true otherwise
 void PropertyPath_getPropertyID
 (
-	const AttributeID *v,      // [output] element value
+	AttributeID *v,            // [output] element value
 	const PropertyPath *path,  // path object
-	unsigned int i                   // element position
+	unsigned int i             // element position
 );
 
 // get a array subscript element from position i
 // return false if element doesn't exists, true otherwise
 void PropertyPath_getArrayIdx
 (
-	const unsigned int *v,     // [output] element value
+	unsigned int *v,           // [output] element value
 	const PropertyPath *path,  // path object
 	unsigned int i             // element position
 );
@@ -108,8 +110,8 @@ void PropertyPath_addProperty
 // appends property ID access to the end of the path
 void PropertyPath_addPropertyID
 (
-	PropertyPath *path,   // path to append to
-	AttributeID id        // property ID to add
+	PropertyPath *path,  // path to append to
+	AttributeID id       // property ID to add
 );
 
 // appends array subscript access to the end of the path

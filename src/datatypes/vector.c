@@ -263,8 +263,8 @@ void SIVector_ToString
 // encode vector to binary stream
 void SIVector_ToBinary
 (
-	SerializerIO stream,  // binary stream
-	SIValue *vector       // vector to encode
+	SerializerIO stream,   // binary stream
+	const SIValue *vector  // vector to encode
 ) {
 	SerializerIO_WriteBuffer(stream, vector->ptrval,
 			sizeof(SIVector) + SIVector_Dim(*vector) * sizeof(uint32_t));

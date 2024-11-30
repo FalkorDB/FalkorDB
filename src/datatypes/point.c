@@ -46,7 +46,7 @@ SIValue Point_GetCoordinate
 void Point_ToBinary
 (
 	SerializerIO stream,  // binary stream
-	SIValue *point        // point to encode
+	const SIValue *point  // point to encode
 ) {
 	ASSERT(SI_TYPE(*point) == T_POINT);
 

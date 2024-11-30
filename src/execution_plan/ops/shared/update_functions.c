@@ -261,18 +261,21 @@ void EvalEntityUpdates
 			switch(ct) {
 				case CT_DEL:
 					// attribute removed
-					EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
-							attr_id, entity_type);
+					assert("implement" && false);
+					//EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
+					//		attr_id, entity_type);
 					continue;
 				case CT_ADD:
 					// attribute added
-					EffectsBuffer_AddEntityAddAttributeEffect(eb, entity,
-							attr_id, v, entity_type);
+					assert("implement" && false);
+					//EffectsBuffer_AddEntityAddAttributeEffect(eb, entity,
+					//		attr_id, v, entity_type);
 					break;
 				case CT_UPDATE:
 					// attribute update
-					EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
-							attr_id, v, entity_type);
+					assert("implement" && false);
+					//EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
+					//		attr_id, v, entity_type);
 					break;
 				case CT_NONE:
 					// no change
@@ -301,8 +304,9 @@ void EvalEntityUpdates
 		if(mode == UPDATE_REPLACE) {
 			// if this update replaces all existing properties
 			// enqueue a 'clear' update to do so
-			EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
-							ATTRIBUTE_ID_ALL, entity_type);
+			assert("implement" && false);
+			//EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
+			//				ATTRIBUTE_ID_ALL, entity_type);
 			AttributeSet_Free(entity->attributes);
 		}
 
@@ -328,22 +332,25 @@ void EvalEntityUpdates
 
 				AttributeID attr_id = FindOrAddAttribute(gc, key, true);
 				// TODO: would have been nice we just sent n = {v:2}
-				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, NULL, value))
+				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, NULL, 0, value))
 				{
 					case CT_DEL:
 						// attribute removed
-						EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
-								attr_id, entity_type);
+						assert("implement" && false);
+						//EffectsBuffer_AddEntityRemoveAttributeEffect(eb, entity,
+						//		attr_id, entity_type);
 						break;
 					case CT_ADD:
 						// attribute added
-						EffectsBuffer_AddEntityAddAttributeEffect(eb, entity,
-								attr_id, value, entity_type);
+						assert("implement" && false);
+						//EffectsBuffer_AddEntityAddAttributeEffect(eb, entity,
+						//		attr_id, value, entity_type);
 						break;
 					case CT_UPDATE:
 						// attribute update
-						EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
-								attr_id, value, entity_type);
+						assert("implement" && false);
+						//EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
+						//		attr_id, value, entity_type);
 						break;
 					case CT_NONE:
 						// no change
@@ -376,17 +383,19 @@ void EvalEntityUpdates
 			SIValue v = AttributeSet_GetIdx(set, j, &attr_id);
 
 			// simple assignment, no need to validate value
-			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, NULL, v))
+			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, NULL, 0, v))
 			{
 				case CT_ADD:
 					// attribute added
-					EffectsBuffer_AddEntityAddAttributeEffect(eb, entity,
-							attr_id, v, entity_type);
+					assert("implement" && false);
+					//EffectsBuffer_AddEntityAddAttributeEffect(eb, entity,
+					//		attr_id, v, entity_type);
 					break;
 				case CT_UPDATE:
 					// attribute update
-					EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
-							attr_id, v, entity_type);
+					assert("implement" && false);
+					//EffectsBuffer_AddEntityUpdateAttributeEffect(eb, entity,
+					//		attr_id, v, entity_type);
 					break;
 				default:
 					break;

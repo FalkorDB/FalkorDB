@@ -91,8 +91,8 @@ XXH64_hash_t SIArray_HashCode
 // encode array to binary stream
 void SIArray_ToBinary
 (
-	SerializerIO stream,  // binary stream
-	SIValue *siarray      // array to encode
+	SerializerIO stream,    // binary stream
+	const SIValue *siarray  // array to encode
 );
 
 // read array from binary stream

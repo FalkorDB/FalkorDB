@@ -359,7 +359,7 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 	//--------------------------------------------------------------------------
 
 	if(remove) {
-		ret = _AttributeSet_Remove(set, attr_id, NULL) ?
+		ret = _AttributeSet_Remove(set, attr_id, NULL, 0) ?
 			CT_DEL :
 			CT_NONE;
 	}
@@ -400,7 +400,7 @@ bool AttributeSet_UpdateNoClone
 
 	// setting an attribute value to NULL removes that attribute
 	if(unlikely(SIValue_IsNull(value))) {
-		return _AttributeSet_Remove(set, attr_id, NULL);
+		return _AttributeSet_Remove(set, attr_id, NULL, 0);
 	}
 
 	SIValue *current = AttributeSet_Get(*set, attr_id);
@@ -435,7 +435,7 @@ bool AttributeSet_Update
 
 	// setting an attribute value to NULL removes that attribute
 	if(unlikely(SIValue_IsNull(value))) {
-		return _AttributeSet_Remove(set, attr_id, NULL);
+		return _AttributeSet_Remove(set, attr_id, NULL, 0);
 	}
 
 	SIValue *current = AttributeSet_Get(_set, attr_id);

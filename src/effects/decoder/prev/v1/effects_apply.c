@@ -47,13 +47,16 @@ static AttributeSet ReadAttributeSet
 	SIValue values[attr_count];
 	AttributeID ids[attr_count];
 
+	// wrap stream with serializer, required for SIValue decoding
+	SerializerIO serializer = SerializerIO_FromStream(stream);
 	for(ushort i = 0; i < attr_count; i++) {
 		// read attribute ID
 		fread_assert(ids + i, sizeof(AttributeID), stream);
 		
 		// read attribute value
-		values[i] = SIValue_FromBinary(stream);
+		values[i] = SIValue_FromBinary(serializer);
 	}
+	SerializerIO_Free(&serializer);
 
 	AttributeSet attr_set = NULL;
 	AttributeSet_AddNoClone(&attr_set, ids, values, attr_count, false);
@@ -358,7 +361,11 @@ static void ApplyUpdateEdge_V1
 	// read attribute value
 	//--------------------------------------------------------------------------
 
-	v = SIValue_FromBinary(stream);
+	// wrap stream with serializer, required for SIValue decoding
+	SerializerIO serializer = SerializerIO_FromStream(stream);
+	v = SIValue_FromBinary(serializer);
+	SerializerIO_Free(&serializer);
+
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
@@ -401,7 +408,11 @@ static void ApplyUpdateNode_V1
 	// read attribute ID
 	//--------------------------------------------------------------------------
 
-	v = SIValue_FromBinary(stream);
+	// wrap stream with serializer, required for SIValue decoding
+	SerializerIO serializer = SerializerIO_FromStream(stream);
+	v = SIValue_FromBinary(serializer);
+	SerializerIO_Free(&serializer);
+
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 

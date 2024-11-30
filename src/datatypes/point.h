@@ -31,7 +31,7 @@ SIValue Point_GetCoordinate
 void Point_ToBinary
 (
 	SerializerIO stream,  // binary stream
-	SIValue *point        // point to encode
+	const SIValue *point  // point to encode
 );
 
 // read point from binary stream

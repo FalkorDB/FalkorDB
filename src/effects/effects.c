@@ -14,7 +14,7 @@ struct _EffectsBuffer {
 	uint64_t n;               // number of effects encoded
 	FILE *stream;             // effects get written into this stream
 	char *buffer;             // effects stream buffer
-	size buffer_size;         // effects stream buffer size
+	size_t buffer_size;       // effects stream buffer size
 	SerializerIO serializer;  // effects encoder
 };
 
@@ -23,22 +23,38 @@ EffectsBuffer *EffectsBuffer_New(void) {
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
 	// init effects buffer
-	eb->n                   = 0;
-	eb->effects_buffer      = NULL;
-	eb->effects_buffer_size = 0;
+	eb->n           = 0;
+	eb->buffer      = NULL;
+	eb->buffer_size = 0;
 
 	// create memory stream
-	eb->effects_stream = open_memstream(&eb->effects_buffer,
-			&eb->effects_buffer_size);
+	eb->stream = open_memstream(&eb->buffer, &eb->buffer_size);
 
 	// create encoder
-	eb->serializer = SerializerIO_FromStream(eb->effects_buffer);
+	eb->serializer = SerializerIO_FromStream(eb->stream);
 
 	// write effects version to newly created buffer
 	uint8_t v = EFFECTS_VERSION;
-	SerializerIO_WriteUnsigned(eb->stream, v);
+	SerializerIO_WriteUnsigned(eb->serializer, v);
 
 	return eb;
+}
+
+// reset effects-buffer
+void EffectsBuffer_Reset
+(
+	EffectsBuffer *eb  // effects-buffer
+) {
+	ASSERT(eb != NULL);
+
+	// reset effects count
+	eb->n = 0;
+
+	// seek to the begining of the stream
+	rewind(eb->stream);
+
+	// write effects version
+	SerializerIO_WriteUnsigned(eb->serializer, EFFECTS_VERSION);
 }
 
 // increase effects count
@@ -54,7 +70,7 @@ static inline void EffectsBuffer_IncEffectCount
 // dump attributes into stream
 static void _WriteAttributeSet
 (
-	EffectsBuffer *eb         // effects buffer
+	EffectsBuffer *eb,        // effects buffer
 	const AttributeSet attrs  // attribute set to write to stream
 ) {
 	ASSERT(eb    != NULL);
@@ -84,23 +100,6 @@ static void _WriteAttributeSet
 	}
 }
 
-// reset effects-buffer
-void EffectsBuffer_Reset
-(
-	EffectsBuffer *eb  // effects-buffer
-) {
-	ASSERT(eb != NULL);
-
-	// reset effects count
-	eb->n = 0;
-
-	// seek to the begining of the stream
-	rewind(eb->effects_stream);
-
-	// write effects version
-	SerializerIO_WriteUnsigned(eb->serializer, EFFECTS_VERSION);
-}
-
 // returns number of effects in buffer
 uint64_t EffectsBuffer_Length
 (
@@ -112,10 +111,10 @@ uint64_t EffectsBuffer_Length
 }
 
 // gets the effects-buffer internal buffer
-unsigned char *EffectsBuffer_Buffer
+char *EffectsBuffer_Buffer
 (
-	const EffectsBuffer *eb,  // effects-buffer
-	size_t *n                 // [output] size of returned buffer
+	EffectsBuffer *eb,  // effects-buffer
+	size_t *n           // [output] size of returned buffer
 ) {
 	ASSERT(n  != NULL);
 	ASSERT(eb != NULL);
@@ -135,7 +134,7 @@ unsigned char *EffectsBuffer_Buffer
 // add a node creation effect to buffer
 void EffectsBuffer_AddCreateNodeEffect
 (
-	EffectsBuffer *eb       // effects buffer
+	EffectsBuffer *eb,      // effects buffer
 	const Node *n,          // node created
 	const LabelID *labels,  // node labels
 	ushort label_count      // number of labels
@@ -308,9 +307,9 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	uint8_t n,            // sub path length
  	SIValue value         // value
 ) {
-	ASSERT(eb    != NULL);
-	ASSERT(node  != NULL);
-	ASSERT(value & SI_VALID_PROPERTY_VALUE);
+	ASSERT(eb   != NULL);
+	ASSERT(node != NULL);
+	ASSERT(SI_TYPE(value) & SI_VALID_PROPERTY_VALUE);
 
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -358,7 +357,7 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 ) {
 	ASSERT(eb    != NULL);
 	ASSERT(edge  != NULL);
-	ASSERT(value & SI_VALID_PROPERTY_VALUE);
+	ASSERT(SI_TYPE(value) & SI_VALID_PROPERTY_VALUE);
 
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -416,7 +415,7 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
 	const char **path,           // sub path
-	uint8_t n,                   // sub path length
+	uint8_t l,                   // sub path length
 	GraphEntityType entity_type  // entity type
 ) {
 	ASSERT(eb     != NULL);
@@ -454,7 +453,7 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 ) {
 	ASSERT(eb     != NULL);
 	ASSERT(entity != NULL);
-	ASSERT(value  & SI_VALID_PROPERTY_VALUE);
+	ASSERT(SI_TYPE(value)  & SI_VALID_PROPERTY_VALUE);
 
 	// TODO: find a better place for this logic
 	// attribute was added
@@ -482,7 +481,7 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 ) {
 	ASSERT(eb     != NULL);
 	ASSERT(entity != NULL);
-	ASSERT(value  & SI_VALID_PROPERTY_VALUE);
+	ASSERT(SI_TYPE(value)  & SI_VALID_PROPERTY_VALUE);
 
 	// TODO: find a better place for this logic
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics();
@@ -658,8 +657,8 @@ void EffectsBuffer_Free
 ) {
 	if(eb == NULL) return;
 
-	fclose(eb->effects_stream);  // close stream
-	free(eb->effects_buffer);    // free buffer
+	fclose(eb->stream);  // close stream
+	free(eb->buffer);    // free buffer
 
 	rm_free(eb);
 }

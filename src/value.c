@@ -829,11 +829,11 @@ SIValue SIValue_FromBinary
 	Point    p;
 	char    *s;
 
-	t = SerializerIO_ReadUnsigned(string);
+	t = SerializerIO_ReadUnsigned(stream);
 	switch(t) {
 		case T_STRING:
 			// read string from stream
-			s = SerializerIO_ReadBuffer(stream);
+			s = SerializerIO_ReadBuffer(stream, NULL);
 			v = SI_TransferStringVal(s);
 			break;
 		case T_BOOL:
@@ -862,8 +862,9 @@ SIValue SIValue_FromBinary
 		case T_VECTOR_F32:
 			v = SIVector_FromBinary(stream);
 			break;
-		caset T_MAP:
+		case T_MAP:
 			v = Map_FromBinary(stream);
+			break;
 		case T_NULL:
 			v = SI_NullVal();
 			break;

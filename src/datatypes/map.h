@@ -198,7 +198,7 @@ void Map_ToString
 void Map_ToBinary
 (
 	SerializerIO stream,  // binary stream
-	SIValue *map          // map to encode
+	const SIValue *map    // map to encode
 );
 
 // read a map from binary stream

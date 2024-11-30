@@ -591,7 +591,7 @@ void Map_ToString
 void Map_ToBinary
 (
 	SerializerIO stream,  // binary stream
-	SIValue *map          // map to encode
+	const SIValue *map    // map to encode
 ) {
 	ASSERT(stream != NULL);
 	ASSERT(SI_TYPE(*map) == T_MAP);

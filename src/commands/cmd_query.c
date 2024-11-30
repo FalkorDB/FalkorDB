@@ -255,7 +255,7 @@ static void _ExecuteQuery(void *args) {
 			   _should_replicate_effects()) {
 				// compute effects buffer
 				size_t effects_len = 0;
-				u_char *effects = EffectsBuffer_Buffer(
+				char *effects = EffectsBuffer_Buffer(
 						QueryCtx_GetEffectsBuffer(), &effects_len);
 				ASSERT(effects_len > 0 && effects != NULL);
 
