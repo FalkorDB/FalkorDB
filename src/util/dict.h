@@ -38,7 +38,7 @@
 #include "mt19937-64.h"
 #include <limits.h>
 #include <stdint.h>
-#include <stdlib.h>
+#include "rmalloc.h"
 
 #define DICT_OK 0
 #define DICT_ERR 1
