@@ -139,7 +139,7 @@ dict *HashTableCreate
     assert(type != NULL);
 
     size_t metasize = type->dictMetadataBytes ? type->dictMetadataBytes() : 0;
-    dict *d = malloc(sizeof(*d) + metasize);
+    dict *d = rm_malloc(sizeof(*d) + metasize);
     if (metasize) {
         memset(HashTableMetadata(d), 0, metasize);
     }
@@ -216,12 +216,12 @@ int _HashTableExpand
 
     /* Allocate the new hash table and initialize all pointers to NULL */
     if (malloc_failed) {
-        new_ht_table = calloc(1, newsize*sizeof(dictEntry*));
+        new_ht_table = rm_calloc(1, newsize*sizeof(dictEntry*));
         *malloc_failed = new_ht_table == NULL;
         if (*malloc_failed)
             return DICT_ERR;
     } else
-        new_ht_table = calloc(1, newsize*sizeof(dictEntry*));
+        new_ht_table = rm_calloc(1, newsize*sizeof(dictEntry*));
 
     new_ht_used = 0;
 
@@ -306,7 +306,7 @@ int HashTableRehash(dict *d, int n) {
 
     /* Check if we already rehashed the whole table... */
     if (d->ht_used[0] == 0) {
-        free(d->ht_table[0]);
+        rm_free(d->ht_table[0]);
         /* Copy the new ht onto the old one */
         d->ht_table[0] = d->ht_table[1];
         d->ht_used[0] = d->ht_used[1];
@@ -415,7 +415,7 @@ dictEntry *HashTableAddRaw
      * more frequently. */
     htidx = dictIsRehashing(d) ? 1 : 0;
     size_t metasize = HashTableEntryMetadataSize(d);
-    entry = malloc(sizeof(*entry) + metasize);
+    entry = rm_malloc(sizeof(*entry) + metasize);
     if (metasize > 0) {
         memset(HashTableEntryMetadata(entry), 0, metasize);
     }
@@ -545,7 +545,7 @@ void HashTableFreeUnlinkedEntry(dict *d, dictEntry *he) {
     if (he == NULL) return;
     dictFreeKey(d, he);
     dictFreeVal(d, he);
-    free(he);
+    rm_free(he);
 }
 
 /* Destroy an entire dictionary */
@@ -563,13 +563,13 @@ static int _dictClear(dict *d, int htidx, void(callback)(dict*)) {
             nextHe = he->next;
             dictFreeKey(d, he);
             dictFreeVal(d, he);
-            free(he);
+            rm_free(he);
             d->ht_used[htidx]--;
             he = nextHe;
         }
     }
     /* Free the table and the allocated cache structure */
-    free(d->ht_table[htidx]);
+    rm_free(d->ht_table[htidx]);
     /* Re-initialize the table */
     _dictReset(d, htidx);
     return DICT_OK; /* never fails */
@@ -580,7 +580,7 @@ void HashTableRelease(dict *d)
 {
     _dictClear(d,0,NULL);
     _dictClear(d,1,NULL);
-    free(d);
+    rm_free(d);
 }
 
 dictEntry *HashTableFind(dict *d, const void *key)
@@ -661,7 +661,7 @@ void HashTableTwoPhaseUnlinkFree(dict *d, dictEntry *he, dictEntry **plink, int 
     *plink = he->next;
     dictFreeKey(d, he);
     dictFreeVal(d, he);
-    free(he);
+    rm_free(he);
     dictResumeRehashing(d);
 }
 
@@ -766,7 +766,7 @@ void HashTableResetIterator(dictIterator *iter)
 
 dictIterator *HashTableGetIterator(dict *d)
 {
-    dictIterator *iter = malloc(sizeof(*iter));
+    dictIterator *iter = rm_malloc(sizeof(*iter));
     HashTableInitIterator(iter, d);
     return iter;
 }
@@ -814,7 +814,7 @@ dictEntry *HashTableNext(dictIterator *iter)
 void HashTableReleaseIterator(dictIterator *iter)
 {
     HashTableResetIterator(iter);
-    free(iter);
+    rm_free(iter);
 }
 
 /* Reallocate the dictEntry allocations in a bucket using the provided
