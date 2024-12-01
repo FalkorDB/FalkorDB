@@ -103,7 +103,7 @@ void RdbLoadNodes_v10(RedisModuleIO *rdb, GraphContext *gc, uint64_t node_count)
 		// * (labels) x M
 		// M will currently always be 0 or 1
 		LabelID l = (nodeLabelCount) ? RedisModule_LoadUnsigned(rdb) : GRAPH_NO_LABEL;
-		Graph_SetNode(gc->g, id, &l, nodeLabelCount, &n);
+		Serializer_SetNode(gc->g, id, &l, nodeLabelCount, &n);
 
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
@@ -126,7 +126,7 @@ void RdbLoadDeletedNodes_v10
 	Graph_AllocateNodes(gc->g, deleted_node_count);
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = RedisModule_LoadUnsigned(rdb);
-		Graph_MarkNodeDeleted(gc->g, id);
+		Serializer_MarkNodeDeleted(gc->g, id);
 	}
 }
 
@@ -187,7 +187,7 @@ void RdbLoadEdges_v10
 		// load edge attributes
 		//----------------------------------------------------------------------
 
-		Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		Serializer_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		//----------------------------------------------------------------------
@@ -211,7 +211,7 @@ void RdbLoadEdges_v10
 
 			if(idx > 0) {
 				// flush batch
-				Graph_OptimizedFormConnections(gc->g, prev_relation, srcs,
+				Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs,
 						dests, ids, idx, false);
 
 				// reset batch state
@@ -221,7 +221,7 @@ void RdbLoadEdges_v10
 			// flush multi-edge batch when:
 			if(tensor_idx > 0) {
 				// flush batch
-				Graph_OptimizedFormConnections(gc->g, prev_relation,
+				Serializer_OptimizedFormConnections(gc->g, prev_relation,
 						tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 
 				// reset multi-edge batch state
@@ -259,14 +259,14 @@ void RdbLoadEdges_v10
 	// flush last batch
 	if(idx > 0) {
 		// flush batch
-		Graph_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
+		Serializer_OptimizedFormConnections(gc->g, prev_relation, srcs, dests,
 				ids, idx, false);
 	}
 
 	// flush last multi-edge batch
 	if(tensor_idx > 0) {
 		// flush batch
-		Graph_OptimizedFormConnections(gc->g, prev_relation,
+		Serializer_OptimizedFormConnections(gc->g, prev_relation,
 				tensor_srcs, tensor_dests, tensor_ids, tensor_idx, true);
 	}
 }
@@ -282,6 +282,6 @@ void RdbLoadDeletedEdges_v10
 	Graph_AllocateEdges(gc->g, deleted_edge_count);
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = RedisModule_LoadUnsigned(rdb);
-		Graph_MarkEdgeDeleted(gc->g, id);
+		Serializer_MarkEdgeDeleted(gc->g, id);
 	}
 }

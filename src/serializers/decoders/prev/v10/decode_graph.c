@@ -189,7 +189,7 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 		Graph *g = gc->g;
 
 		// set the node label matrix
-		Graph_SetNodeLabels(g);
+		Serializer_SetNodeLabels(g);
 
 		Graph_ApplyAllPending(g, true);
 
@@ -198,6 +198,9 @@ GraphContext *RdbLoadGraphContext_v10(RedisModuleIO *rdb) {
 
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
+
+		// update the node statistics
+		Serializer_UpdateNodeStatistics(g);
 
 		// enable node indices
 		for(uint i = 0; i < label_count; i++) {

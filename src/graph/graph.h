@@ -435,7 +435,7 @@ Delta_Matrix Graph_GetZeroMatrix
 );
 
 // sets a node in the graph
-void Graph_SetNode
+void Serializer_SetNode
 (
 	Graph *g,               // graph to add node to
 	NodeID id,              // node ID
@@ -445,13 +445,13 @@ void Graph_SetNode
 );
 
 // sets graph's node labels matrix
-void Graph_SetNodeLabels
+void Serializer_SetNodeLabels
 (
 	Graph *g
 );
 
 // optimized version of Graph_FormConnection
-void Graph_OptimizedFormConnections
+void Serializer_OptimizedFormConnections
 (
 	Graph *g,
 	RelationID r,                  // relation id
@@ -463,7 +463,7 @@ void Graph_OptimizedFormConnections
 );
 
 // allocate edge attribute-set
-void Graph_AllocEdgeAttributes
+void Serializer_AllocEdgeAttributes
 (
 	Graph *g,
 	EdgeID edge_id,
@@ -471,27 +471,32 @@ void Graph_AllocEdgeAttributes
 );
 
 // marks a node ID as deleted
-void Graph_MarkNodeDeleted
+void Serializer_MarkNodeDeleted
 (
 	Graph *g,               // graph from which to mark node as deleted
 	NodeID ID               // node ID
 );
 
 // marks an edge ID as deleted
-void Graph_MarkEdgeDeleted
+void Serializer_MarkEdgeDeleted
 (
 	Graph *g,               // graph from which to mark edge as deleted
 	EdgeID ID               // edge ID
 );
 
 // returns the graph deleted nodes list
-uint64_t *Graph_GetDeletedNodesList
+uint64_t *Serializer_GetDeletedNodesList
 (
 	Graph *g
 );
 
 // returns the graph deleted edges list
-uint64_t *Graph_GetDeletedEdgesList
+uint64_t *Serializer_GetDeletedEdgesList
+(
+	Graph *g
+);
+
+void Serializer_UpdateNodeStatistics
 (
 	Graph *g
 );

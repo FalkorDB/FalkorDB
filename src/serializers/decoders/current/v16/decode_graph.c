@@ -249,7 +249,7 @@ GraphContext *RdbLoadGraphContext_latest
 		Graph *g = gc->g;
 
 		// set the node label matrix
-		Graph_SetNodeLabels(g);
+		Serializer_SetNodeLabels(g);
 
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
@@ -263,6 +263,9 @@ GraphContext *RdbLoadGraphContext_latest
 		// get delay indexing configuration
 		bool delay_indexing;
 		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
+		// update the node statistics
+		Serializer_UpdateNodeStatistics(g);
 
 		// enable node indices
 		for(uint i = 0; i < label_count; i++) {

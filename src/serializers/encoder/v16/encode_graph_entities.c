@@ -220,7 +220,7 @@ void RdbSaveDeletedNodes_v16
 	ASSERT(n > 0);
 
 	// get deleted nodes list
-	uint64_t *deleted_nodes_list = Graph_GetDeletedNodesList(gc->g);
+	uint64_t *deleted_nodes_list = Serializer_GetDeletedNodesList(gc->g);
 	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_nodes_list);
 }
 
@@ -238,7 +238,7 @@ void RdbSaveDeletedEdges_v16
 	ASSERT(n > 0);
 
 	// get deleted edges list
-	uint64_t *deleted_edges_list = Graph_GetDeletedEdgesList(gc->g);
+	uint64_t *deleted_edges_list = Serializer_GetDeletedEdgesList(gc->g);
 	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_edges_list);
 }
 

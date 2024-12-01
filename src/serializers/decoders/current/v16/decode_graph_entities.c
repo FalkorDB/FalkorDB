@@ -159,7 +159,7 @@ void RdbLoadNodes_v16
 			labels[j] = SerializerIO_ReadUnsigned(rdb);
 		}
 
-		Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
+		Serializer_SetNode(gc->g, id, labels, nodeLabelCount, &n);
 
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
@@ -193,7 +193,7 @@ void RdbLoadDeletedNodes_v16
 
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
-		Graph_MarkNodeDeleted(gc->g, id);
+		Serializer_MarkNodeDeleted(gc->g, id);
 	}
 
 	// read encoded deleted node count and validate
@@ -289,7 +289,7 @@ static uint64_t _DecodeTensors
 		bool tensor = SerializerIO_ReadUnsigned(rdb);
 
 		// load edge attributes
-		Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		Serializer_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
@@ -319,7 +319,7 @@ static uint64_t _DecodeTensors
 		// flush tensors batch
 		if(tensor_idx == BATCH_SIZE) {
 			// flush batch
-			Graph_OptimizedFormConnections(gc->g, r, tensors_srcs,
+			Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
 					tensors_dests, tensors_ids, tensor_idx, true);
 
 			// reset multi-edge batch count
@@ -329,7 +329,7 @@ static uint64_t _DecodeTensors
 		// flush batch
 		if(idx == BATCH_SIZE) {
 			// flush batch
-			Graph_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
 					false);
 
 			// reset batch count
@@ -347,14 +347,14 @@ static uint64_t _DecodeTensors
 	// flush tensors batch
 	if(tensor_idx > 0) {
 		// flush batch
-		Graph_OptimizedFormConnections(gc->g, r, tensors_srcs,
+		Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
 				tensors_dests, tensors_ids, tensor_idx, true);
 	}
 
 	// flush batch
 	if(idx > 0) {
 		// flush batch
-		Graph_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
 				false);
 	}
 
@@ -415,7 +415,7 @@ static uint64_t _DecodeEdges
 		e.relationID = r;
 
 		// load edge attributes
-		Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		Serializer_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
@@ -431,7 +431,7 @@ static uint64_t _DecodeEdges
 
 		// flush batch
 		if(idx == BATCH_SIZE) {
-			Graph_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
 					false);
 			// reset batch index
 			idx = 0;
@@ -443,7 +443,7 @@ static uint64_t _DecodeEdges
 
 	// flush batch
 	if(idx > 0) {
-		Graph_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
 				false);
 	}
 
@@ -503,7 +503,7 @@ void RdbLoadDeletedEdges_v16
 
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = SerializerIO_ReadUnsigned(rdb);
-		Graph_MarkEdgeDeleted(gc->g, id);
+		Serializer_MarkEdgeDeleted(gc->g, id);
 	}
 
 	// read encoded deleted edge count and validate
