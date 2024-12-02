@@ -97,6 +97,10 @@ static bool _ConstructIterator
 	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 
 	if(array_len(op->ranges) > 0) {
+		if(op->ids == NULL) {
+			op->ids   = roaring64_bitmap_create();
+			op->ID_it = roaring64_iterator_create(op->ids);
+		}
 		// use range iterator
 		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
 				Graph_UncompactedNodeCount(op->g))) {
