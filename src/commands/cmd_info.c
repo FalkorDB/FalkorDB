@@ -218,7 +218,7 @@ static void _info_waiting_queries
 	// collect waiting queries
 	//--------------------------------------------------------------------------
 
-	uint32_t n = ThreadPools_ThreadCount() + 1;
+	uint32_t n;
 	CommandCtx **cmds = (CommandCtx**)ThreadPools_GetTasksByHandler(Graph_Query,
 			(void(*)(void *))CommandCtx_Incref, &n);
 
@@ -307,3 +307,4 @@ int Graph_Info
 
 	return REDISMODULE_OK;
 }
+
