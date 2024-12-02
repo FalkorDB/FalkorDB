@@ -52,4 +52,9 @@ typedef struct OpApplyMultiplexer {
 	AST_Operator boolean_operator;  // Defines the operation logic - OR/AND.
 } OpApplyMultiplexer;
 
-OpBase *NewApplyMultiplexerOp(const ExecutionPlan *plan, AST_Operator boolean_operator);
+OpBase *NewApplyMultiplexerOp
+(
+	const ExecutionPlan *plan,
+	AST_Operator boolean_operator
+);
+
