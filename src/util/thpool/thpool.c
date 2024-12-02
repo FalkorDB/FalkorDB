@@ -325,11 +325,11 @@ void thpool_get_tasks
 	job *job = jobqueue_p->front;
 
 	// iterate through job queue
-	uint32_t i = 0;
-	for(; i < jobqueue_p->len && i < *num_tasks; i++) {
+	uint32_t k = 0;  // number of matched tasks
+	for(uint32_t i = 0; i < jobqueue_p->len && i < *num_tasks; i++) {
 		// check if job matches given handler
 		if(job->function == handler) {
-			tasks[i] = job->arg;
+			tasks[k++] = job->arg;
 
 			// execute match function if given
 			if(match != NULL) {
@@ -345,7 +345,7 @@ void thpool_get_tasks
 	pthread_mutex_unlock(&jobqueue_p->rwmutex);
 
 	// set number of tasks collected
-	*num_tasks = i;
+	*num_tasks = k;
 }
 
 /* ============================ THREAD ============================== */
