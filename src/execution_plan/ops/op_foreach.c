@@ -22,6 +22,7 @@ OpBase *NewForeachOp
 
 	op->body           = NULL;
 	op->first          = true;
+	op->rec_idx        = 0;
 	op->records        = NULL;
 	op->supplier       = NULL;
 	op->body_records   = NULL;
@@ -65,18 +66,20 @@ static OpResult ForeachInit
 	op->records = array_new(Record, 1);
 	op->body_records = array_new(Record, 1);
 
-	// insert a NULL value to both arrays, so that execution terminates when it
-	// is consumed by the parent
-	array_append(op->records, NULL);
-
     return OP_OK;
 }
 
 // if there is a record to return, it is returned
 // otherwise, returns NULL (last value in op->records)
-static Record _handoff(OpForeach *op) {
-	if(array_len(op->records) > 0) return array_pop(op->records);
-	else return NULL;
+static Record _handoff
+(
+	OpForeach *op
+) {
+	if(op->rec_idx < array_len(op->records)) {
+		return op->records[op->rec_idx++];
+	} else {
+		return NULL;
+	}
 }
 
 // the Foreach consume function aggregates all the records from the supplier if
@@ -149,7 +152,8 @@ static void _freeInternals
 	if(op->records != NULL) {
 		// free record list components (except first element, which is NULL)
 		uint nrecords = array_len(op->records);
-		for(uint i = 1; i < nrecords; i++) {
+		// records[0..rec_idx] had been emitted, skip them
+		for(uint i = op->rec_idx; i < nrecords; i++) {
 			OpBase_DeleteRecord(op->records+i);
 		}
 
@@ -179,8 +183,8 @@ static OpResult ForeachReset
 
 	_freeInternals(op);
 
+	op->rec_idx = 0;
 	op->records = array_new(Record, 1);
-	array_append(op->records, NULL);
 
 	return OP_OK;
 }

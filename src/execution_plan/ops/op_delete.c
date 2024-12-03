@@ -130,12 +130,17 @@ static void _DeleteEntities
 	array_free(distinct_edges);
 }
 
-OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
+OpBase *NewDeleteOp
+(
+	const ExecutionPlan *plan,
+	AR_ExpNode **exps
+) {
 	OpDelete *op = rm_calloc(1, sizeof(OpDelete));
 
-	op->gc = QueryCtx_GetGraphCtx();
-	op->exps = exps;
-	op->exp_count = array_len(exps);
+	op->gc            = QueryCtx_GetGraphCtx();
+	op->exps          = exps;
+	op->rec_idx       = 0;
+	op->exp_count     = array_len(exps);
 	op->deleted_nodes = array_new(Node, 32);
 	op->deleted_edges = array_new(Edge, 32);
 
@@ -147,7 +152,11 @@ OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps) {
 }
 
 // collect nodes and edges to be deleted
-static inline void _CollectDeletedEntities(Record r, OpBase *opBase) {
+static inline void _CollectDeletedEntities
+(
+	Record r,
+	OpBase *opBase
+) {
 	OpDelete *op = (OpDelete *)opBase;
 
 	// expression should be evaluated to either a node, an edge or a path
@@ -190,15 +199,21 @@ static inline void _CollectDeletedEntities(Record r, OpBase *opBase) {
 	}
 }
 
-static inline Record _handoff(OpDelete *op) {
-	Record r = NULL;
-	if(array_len(op->records)) {
-		r = array_pop(op->records);
+static inline Record _handoff
+(
+	OpDelete *op
+) {
+	if(op->rec_idx < array_len(op->records)) {
+		return op->records[op->rec_idx++];
+	} else {
+		return NULL;
 	}
-	return r;
 }
 
-static Record DeleteConsume(OpBase *opBase) {
+static Record DeleteConsume
+(
+	OpBase *opBase
+) {
 	OpDelete *op = (OpDelete *)opBase;
 	Record r;
 	ASSERT(op->op.childCount > 0);
@@ -208,9 +223,6 @@ static Record DeleteConsume(OpBase *opBase) {
 
 	// consume mode
 	op->records = array_new(Record, 32);
-	// initialize the records array with NULL
-	// which will terminate execution upon depletion
-	array_append(op->records, NULL);
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	// pull data until child is depleted
@@ -235,7 +247,11 @@ static Record DeleteConsume(OpBase *opBase) {
 	return _handoff(op);
 }
 
-static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *DeleteClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_DELETE);
 
 	OpDelete *op = (OpDelete *)opBase;
@@ -244,12 +260,18 @@ static OpBase *DeleteClone(const ExecutionPlan *plan, const OpBase *opBase) {
 	return NewDeleteOp(plan, exps);
 }
 
-static void DeleteFree(OpBase *opBase) {
+static void DeleteFree
+(
+	OpBase *opBase
+) {
 	OpDelete *op = (OpDelete *)opBase;
 
 	if(op->records) {
 		uint rec_count = array_len(op->records);
-		for(uint i = 1; i < rec_count; i++) OpBase_DeleteRecord(op->records+i);
+		// records[0..op->rec_idx] had been already emitted, skip them
+		for(uint i = op->rec_idx; i < rec_count; i++) {
+			OpBase_DeleteRecord(op->records+i);
+		}
 		array_free(op->records);
 		op->records = NULL;
 	}
@@ -270,3 +292,4 @@ static void DeleteFree(OpBase *opBase) {
 		op->exps = NULL;
 	}
 }
+

@@ -73,6 +73,7 @@ static void _UpdateProperties
 //------------------------------------------------------------------------------
 // Merge logic
 //------------------------------------------------------------------------------
+
 static inline Record _pullFromStream
 (
 	OpBase *branch
@@ -129,6 +130,7 @@ OpBase *NewMergeOp
 
 	op->on_match             = on_match;
 	op->on_create            = on_create;
+	op->output_rec_idx       = 0;
 	op->node_pending_updates = NULL;
 	op->edge_pending_updates = NULL;
 	
@@ -198,11 +200,11 @@ static Record _handoff
 (
 	OpMerge *op
 ) {
-	Record r = NULL;
-	if(array_len(op->output_records)) {
-		r = array_pop(op->output_records);
+	if(op->output_rec_idx < array_len(op->output_records)) {
+		return op->output_records[op->output_rec_idx++];
+	} else {
+		return NULL;
 	}
-	return r;
 }
 
 static Record MergeConsume
@@ -238,9 +240,9 @@ static Record MergeConsume
 	// match pattern
 	//--------------------------------------------------------------------------
 
-	uint match_count         = 0;
-	bool reading_matches     = true;
-	bool must_create_records = false;
+	uint match_count          = 0;
+	bool reading_matches      = true;
+	bool must_create_records  = false;
 	// match mode: attempt to resolve the pattern for every record from
 	// the bound variable stream, or once if we have no bound variables
 	while(reading_matches) {
@@ -254,6 +256,7 @@ static Record MergeConsume
 
 			// pull a new input record
 			lhs_record = array_pop(op->input_records);
+
 			// propagate record to the top of the Match stream
 			// (must clone the Record, as it will be freed in the Match stream)
 			Argument_AddRecord(op->match_argument_tap, OpBase_CloneRecord(lhs_record));
@@ -406,7 +409,8 @@ static void MergeFree
 
 	if(op->output_records) {
 		uint output_count = array_len(op->output_records);
-		for(uint i = 0; i < output_count; i ++) {
+		// output_records[0..output_rec_idx] had been already emitted, skip them
+		for(uint i = op->output_rec_idx; i < output_count; i ++) {
 			OpBase_DeleteRecord(op->output_records+i);
 		}
 		array_free(op->output_records);

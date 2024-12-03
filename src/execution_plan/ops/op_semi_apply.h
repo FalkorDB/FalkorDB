@@ -28,4 +28,8 @@ typedef struct OpSemiApply {
 	Argument *op_arg;               // Match branch tap.
 } OpSemiApply;
 
-OpBase *NewSemiApplyOp(const ExecutionPlan *plan, bool anti);
+OpBase *NewSemiApplyOp
+(
+	const ExecutionPlan *plan,
+	bool anti
+);

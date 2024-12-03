@@ -92,17 +92,15 @@ def single_iteration(bench: str, idx: int, bench_end: int):
     except subprocess.CalledProcessError:
         pass
 
-
 def verify_and_download_graph500():
     if not os.path.exists("./datasets/graph500.rdb"):
         print("Downloading missing dataset")
         try:
             urlretrieve("https://storage.googleapis.com/falkordb-benchmark-datasets/"
-                        "graph500-scale18-ef16_v2.4.7_dump.rdb", "./datasets/graph500.rdb")
+                        "graph500.rdb", "./datasets/graph500.rdb")
         except Exception as e:
             print(f"Failed to download the dataset: {e}")
             exit(1)
-
 
 def verify_sha256_checksum(target_file, checksum_file):
     # Read the existing checksum

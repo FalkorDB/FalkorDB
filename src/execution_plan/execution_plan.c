@@ -427,28 +427,48 @@ void ExecutionPlan_ReturnRecord
 // Execution plan initialization
 //------------------------------------------------------------------------------
 
-static inline void _ExecutionPlan_InitRecordPool(ExecutionPlan *plan) {
-	if(plan->record_pool) return;
-	// Initialize record pool.
-	// Determine Record size to inform ObjectPool allocation
+static inline void _ExecutionPlan_InitRecordPool
+(
+	ExecutionPlan *plan
+) {
+	ASSERT(plan->record_pool == NULL);
+
+	// initialize record pool
+	// determine Record size to inform ObjectPool allocation
 	uint entries_count = raxSize(plan->record_map);
 	uint rec_size = sizeof(_Record) + (sizeof(Entry) * entries_count);
 
-	// Create a data block with initial capacity of 256 records.
-	plan->record_pool = ObjectPool_New(256, rec_size, (fpDestructor)Record_FreeEntries);
+	// create a data block with initial capacity of 256 records
+	plan->record_pool = ObjectPool_New(256, rec_size,
+			(fpDestructor)Record_FreeEntries);
 }
 
-static void _ExecutionPlanInit(OpBase *root) {
-	// If the ExecutionPlan associated with this op hasn't built a record pool yet, do so now.
-	_ExecutionPlan_InitRecordPool((ExecutionPlan *)root->plan);
+static void _ExecutionPlanInit
+(
+	OpBase *root
+) {
+	// TODO: would have been better to get a direct access to every sub-plan
+	// stack of operations
+	OpBase **ops = array_new(OpBase*, 1);
+	array_append(ops, root);
 
-	// Initialize the operation if necessary.
-	if(root->init) root->init(root);
+	// as long as there are ops to process
+	while(array_len(ops) > 0) {
+		// get current op from ops stack
+		OpBase *current = array_pop(ops);
 
-	// Continue initializing downstream operations.
-	for(int i = 0; i < root->childCount; i++) {
-		_ExecutionPlanInit(root->children[i]);
+		// add child ops to stack
+		for(int i = 0; i < current->childCount; i++) {
+			array_append(ops, current->children[i]);
+		}
+
+		// if the plan associated with this op hasn't built a record pool
+		if(current->plan->record_pool == NULL) {
+			_ExecutionPlan_InitRecordPool((ExecutionPlan *)current->plan);
+		}
 	}
+
+	array_free(ops);
 }
 
 void ExecutionPlan_Init(ExecutionPlan *plan) {
@@ -509,22 +529,61 @@ void ExecutionPlan_Drain(ExecutionPlan *plan) {
 // Execution plan profiling
 //------------------------------------------------------------------------------
 
-static void _ExecutionPlan_InitProfiling(OpBase *root) {
-	root->profile = root->consume;
-	root->consume = OpBase_Profile;
-	root->stats = rm_malloc(sizeof(OpStats));
-	root->stats->profileExecTime = 0;
-	root->stats->profileRecordCount = 0;
+// initial op's consume function
+// performs init followed by consume
+Record OpBase_Profile_init
+(
+	OpBase *op
+) {
+	ASSERT(op);
+	ASSERT(op->init     != NULL);
+	ASSERT(op->consume  == OpBase_Profile_init);
+	ASSERT(op->_consume != NULL);
 
-	if(root->childCount) {
-		for(int i = 0; i < root->childCount; i++) {
-			OpBase *child = root->children[i];
-			_ExecutionPlan_InitProfiling(child);
-		}
-	}
+	// call op init function
+	op->init(op);
+
+	// update op's consume wrapper function
+	op->consume = OpBase_Profile;  // calls _consume internally
+
+	// profile
+	return OpBase_Profile(op);
 }
 
-static void _ExecutionPlan_FinalizeProfiling(OpBase *root) {
+static void _ExecutionPlan_InitProfiling
+(
+	OpBase *root
+) {
+	ASSERT(root != NULL);
+
+	OpBase **ops = array_new(OpBase*, 1);
+	array_append(ops, root);
+
+	// as long as there are operations to process
+	while(array_len(ops) > 0) {
+		// get current op
+		OpBase *current = array_pop(ops);
+
+		// add child operations to stack
+		for(int i = 0; i < current->childCount; i++) {
+			array_append(ops, current->children[i]);
+		}
+
+		// set operation consume wrapper function
+		current->consume                   = OpBase_Profile_init;
+		current->stats                     = rm_malloc(sizeof(OpStats));
+		current->stats->profileExecTime    = 0;
+		current->stats->profileRecordCount = 0;
+	}
+
+	// clean up
+	array_free(ops);
+}
+
+static void _ExecutionPlan_FinalizeProfiling
+(
+	OpBase *root
+) {
 	if(root->childCount) {
 		for(int i = 0; i < root->childCount; i++) {
 			OpBase *child = root->children[i];
@@ -535,7 +594,10 @@ static void _ExecutionPlan_FinalizeProfiling(OpBase *root) {
 	root->stats->profileExecTime *= 1000;   // Milliseconds.
 }
 
-ResultSet *ExecutionPlan_Profile(ExecutionPlan *plan) {
+ResultSet *ExecutionPlan_Profile
+(
+	ExecutionPlan *plan
+) {
 	_ExecutionPlan_InitProfiling(plan->root);
 	ResultSet *rs = ExecutionPlan_Execute(plan);
 	_ExecutionPlan_FinalizeProfiling(plan->root);
