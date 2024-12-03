@@ -186,6 +186,11 @@ jobs:
             TARGETPLATFORM=${{ matrix.platform }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
+      - name: Load base image
+        id: load_base_image
+        run: |
+          docker load --input /tmp/falkordb-${{ env.ARCH_SUFFIX }}.tar
+      
       - name: Upload image
         uses: actions/upload-artifact@v4
         with:
