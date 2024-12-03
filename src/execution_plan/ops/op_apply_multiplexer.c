@@ -21,7 +21,11 @@ static Record _pullFromBranchStream(OpApplyMultiplexer *op, int branch_index) {
 	return OpBase_Consume(op->op.children[branch_index]);
 }
 
-OpBase *NewApplyMultiplexerOp(const ExecutionPlan *plan, AST_Operator boolean_operator) {
+OpBase *NewApplyMultiplexerOp
+(
+	const ExecutionPlan *plan,
+	AST_Operator boolean_operator
+) {
 
 	OpApplyMultiplexer *op = rm_calloc(1, sizeof(OpApplyMultiplexer));
 	op->boolean_operator = boolean_operator;

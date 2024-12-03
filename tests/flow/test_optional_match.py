@@ -272,7 +272,7 @@ class testOptionalFlow(FlowTestsBase):
 
     def test24_optional_and_cartesian_product(self):
         self.graph.delete()
-        self.graph.query("CREATE ()<-[:A]-()")
+        self.graph.query("CREATE ()-[:A]->()")
         query = """OPTIONAL MATCH (), ({x:0, x:1}) RETURN 0"""
         actual_result = self.graph.query(query)
         expected_result = [[0]]

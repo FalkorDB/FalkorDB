@@ -89,16 +89,16 @@ OpBase *NewExpandIntoOp
 ) {
 	OpExpandInto *op = rm_malloc(sizeof(OpExpandInto));
 
-	op->r               =  NULL;
-	op->F               =  NULL;
-	op->M               =  NULL;
-	op->ae              =  ae;
-	op->graph           =  g;
-	op->records         =  NULL;
-	op->edge_ctx        =  NULL;
-	op->record_cap      =  BATCH_SIZE;
-	op->record_count    =  0;
-	op->single_operand  =  false;
+	op->r              = NULL;
+	op->F              = NULL;
+	op->M              = NULL;
+	op->ae             = ae;
+	op->graph          = g;
+	op->records        = NULL;
+	op->edge_ctx       = NULL;
+	op->record_cap     = BATCH_SIZE;
+	op->record_count   = 0;
+	op->single_operand = false;
 
 	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_EXPAND_INTO, "Expand Into", ExpandIntoInit,

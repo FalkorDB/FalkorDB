@@ -82,6 +82,13 @@ void NodeByLabelScanOp_SetIDRange
 	op->ranges  = ranges;
 	op->op.type = OPType_NODE_BY_LABEL_AND_ID_SCAN;
 	op->op.name = "Node By Label and ID Scan";
+
+	// initialize IDs bitmap
+	ASSERT(op->ids   == NULL);
+	ASSERT(op->ID_it == NULL);
+
+	op->ids   = roaring64_bitmap_create();
+	op->ID_it = roaring64_iterator_create(op->ids);
 }
 
 // constructs either a range iterator or a matrix iterator
@@ -96,7 +103,8 @@ static bool _ConstructIterator
 
 	op->L = Graph_GetLabelMatrix(op->g, op->n->label_id);
 
-	if(array_len(op->ranges) > 0) {
+	bool has_ranges = array_len(op->ranges) > 0;
+	if(has_ranges) {
 		// use range iterator
 		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
 				Graph_UncompactedNodeCount(op->g))) {
@@ -130,11 +138,6 @@ static OpResult NodeByLabelScanInit
 	OpBase_UpdateConsume(opBase, has_ranges
 		? NodeByLabelAndIDScanConsume 
 		: NodeByLabelScanConsume); // default consume function
-
-	if(has_ranges) {
-		op->ids   = roaring64_bitmap_create();
-		op->ID_it = roaring64_iterator_create(op->ids);
-	}
 
 	// operation has children, consume from child
 	if(OpBase_ChildCount(opBase) > 0) {
