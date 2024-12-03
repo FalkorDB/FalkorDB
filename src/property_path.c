@@ -4,6 +4,7 @@
  */
 
 #include "RG.h"
+#include "query_ctx.h"
 #include "util/rmalloc.h"
 #include "property_path.h"
 
@@ -18,6 +19,50 @@ PropertyPath *PropertyPath_new(void) {
 	path->size     = 0;
 
 	return path;
+}
+
+// create a new property path for a property access
+PropertyPath *PropertyPath_propertyAccess
+(
+	const char *property  // property to access
+) {
+	ASSERT(property != NULL);
+
+	PropertyPath *path = rm_malloc(sizeof(PropertyPath));
+
+	path->size     = 1;
+	path->types    = rm_malloc(sizeof(PropertyPathElementType));
+	path->elements = rm_malloc(sizeof(PropertyPathElement));
+
+	path->types[0]             = PATH_ELEMENT_PROPERTY;
+	path->elements[0].property = property;
+
+	// set propery ID
+	GraphContext *gc        = QueryCtx_GetGraphCtx();
+	path->elements[0].index = GraphContext_GetAttributeID(gc, property);
+
+	return path;
+}
+
+// reverse path
+// a.b.c -> c.b.a
+void PropertyPath_reverse
+(
+	PropertyPath *path  // path to reverse
+) {
+	ASSERT(path != NULL);
+
+	for(int i = 0; i < path->size / 2; i++) {
+		int j = path->size -i -1;  // replace i <-> j
+
+		PropertyPathElementType t_type = path->types[i];
+		path->types[i] = path->types[j];
+		path->types[j] = t_type;
+
+		PropertyPathElement t_elem = path->elements[i];
+		path->elements[i] = path->elements[j];
+		path->elements[j] = t_elem;
+	}
 }
 
 // returns the length of the path
@@ -86,9 +131,9 @@ void PropertyPath_getPropertyID
 ) {
 	// validations
 	ASSERT(v              != NULL);
-	ASSERT(i              <= path->size);                // i must be within bounds
+	ASSERT(i              <= path->size);             // i must be within bounds
 	ASSERT(path           != NULL);
-	ASSERT(path->types[i] == PATH_ELEMENT_PROPERTY_ID);  // assert element type
+	ASSERT(path->types[i] == PATH_ELEMENT_PROPERTY);  // assert element type
 
 	*v = path->elements[i].index;
 }
@@ -121,11 +166,11 @@ static void _PropertyPath_grow
 	ASSERT(path != NULL);
 
 	// make room for new element
-	path->elements = rm_realloc(path->types,
-			sizeof(PropertyPathElement) * path->size + 1);
+	path->elements = rm_realloc(path->elements,
+			sizeof(PropertyPathElement) * (path->size + 1));
 
 	path->types = rm_realloc(path->types,
-			sizeof(PropertyPathElementType) * path->size + 1);
+			sizeof(PropertyPathElementType) * (path->size + 1));
 
 	// increase element count
 	path->size++;
@@ -143,26 +188,14 @@ void PropertyPath_addProperty
 
 	_PropertyPath_grow(path);
 
-	// set new element
+	// set property name
 	path->types[path->size-1]             = PATH_ELEMENT_PROPERTY;
 	path->elements[path->size-1].property = property;
-}
 
-// appends property ID access to the end of the path
-void PropertyPath_addPropertyID
-(
-	PropertyPath *path,  // path to append to
-	AttributeID id       // property ID to add
-) {
-	// validations
-	ASSERT(path != NULL);
-	ASSERT(id   != ATTRIBUTE_ID_ALL && id != ATTRIBUTE_ID_NONE);
-
-	_PropertyPath_grow(path);
-
-	// set new element
-	path->types[path->size-1] = PATH_ELEMENT_PROPERTY_ID;
-	path->elements[path->size-1].index = id;
+	// set property ID
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	AttributeID attr_id = GraphContext_GetAttributeID(gc, property);
+	path->elements[path->size-1].index = attr_id;
 }
 
 // appends array subscript access to the end of the path
@@ -176,25 +209,10 @@ void PropertyPath_addArrayIdx
 
 	_PropertyPath_grow(path);
 
-	// set new element
-	path->types[path->size-1] = PATH_ELEMENT_INDEX;
-	path->elements[path->size-1].index = idx;
-}
-
-// update an existing element
-void PropertyPath_updateElement
-(
-	PropertyPath *path,         // path to update
-	unsigned int i,             // element index to update
-	PropertyPathElementType t,  // new element type
-	PropertyPathElement v       // new element value
-) {
-	ASSERT(i              < path->size);
-	ASSERT(path           != NULL);
-	ASSERT(path->types[i] != t);
-
-	path->types[i]    = t;
-	path->elements[i] = v;
+	// set array index
+	path->types[path->size-1]             = PATH_ELEMENT_INDEX;
+	path->elements[path->size-1].index    = idx;
+	path->elements[path->size-1].property = NULL;
 }
 
 //------------------------------------------------------------------------------
@@ -212,9 +230,6 @@ void PropertyPath_print
 		switch(path->types[i]) {
 			case PATH_ELEMENT_INDEX:
 				printf("[%d]", path->elements[i].index);
-				break;
-			case PATH_ELEMENT_PROPERTY_ID:
-				printf("._%d_", path->elements[i].index);
 				break;
 			case PATH_ELEMENT_PROPERTY:
 				printf(".%s", path->elements[i].property);

@@ -228,36 +228,27 @@ AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias) {
 	return node;
 }
 
+// build a property access expression
 AR_ExpNode *AR_EXP_NewAttributeAccessNode
 (
-	AR_ExpNode *entity,
-	const char *attr
+	AR_ExpNode *entity,  // entity expression
+	PropertyPath *path   // property access path
 ) {
-	ASSERT(attr   != NULL);
-	ASSERT(entity != NULL);
+	// validations
+	ASSERT(path                   != NULL);
+	ASSERT(PropertyPath_len(path) > 0);
+	ASSERT(entity                 != NULL);
 
-	// use attribute index when possible, attr_idx is set to ATTRIBUTE_NOTFOUND
-	// if the graph is not aware of it in which case we'll try to resolve
-	// the attribute using its string representation
-
-	GraphContext *gc  = QueryCtx_GetGraphCtx();
-	SIValue attr_name = SI_ConstStringVal((char *)attr);
-	SIValue attr_idx  = SI_LongVal(GraphContext_GetAttributeID(gc, attr));
+	// pass the path object using an SIValue pointer
+	SIValue arg = SI_PtrVal(path);
 
 	// entity is an expression which should be evaluated to a container
-	// attr is the name of the attribute we want to extract
-	AR_ExpNode *root = AR_EXP_NewOpNode("property", true, 3);
-
-	// construct named attribute to extract
-	// include both the attribute name along with its ID
-	SIValue args = SI_Array(2);
-	SIArray_Append(&args, attr_name);
-	SIArray_Append(&args, attr_idx);
+	// path is the property access pattern
+	AR_ExpNode *root = AR_EXP_NewOpNode("property", true, 2);
 
 	// set root's children
 	root->op.children[0] = entity;
-	root->op.children[1] = AR_EXP_NewConstOperandNode(args);
-	root->op.children[2] = AR_EXP_NewConstOperandNode(SI_LongVal(1));
+	root->op.children[1] = AR_EXP_NewConstOperandNode(arg);
 
 	return root;
 }

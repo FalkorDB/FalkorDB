@@ -248,27 +248,35 @@ SIValue AR_PROPERTY
 	//
 	// inputs:
 	// argv[0] - node/edge/map/point
-	// argv[1] - array [attr name, attr index, attr name, attr index,...]
-	// argv[2] - array's length
+	// argv[1] - PropertyPath
 
 	//--------------------------------------------------------------------------
 	// Process inputs
 	//--------------------------------------------------------------------------
 
-	SIValue obj  = argv[0];          // container
-	SIValue path = argv[1];          // path
-	int64_t n    = argv[2].longval;  // path's length
+	SIValue obj        = argv[0];                        // container
+	PropertyPath *path = (PropertyPath*)argv[1].ptrval;  // path
 
-	ASSERT(SIArray_Length(path) == n * 2);
+	ASSERT(path != NULL);
 
-	for(int64_t i = 0; i < n; i++) {
-		GraphEntity *e;
-		SIType t = SI_TYPE(obj);
-		int64_t idx = 2*i;
-		SIValue key = SIArray_Get(path, idx);
-		AttributeID attr_idx = SIArray_Get(path, idx+1).longval;
+	// walk the property path
+	// e.g.
+	// path = N.a.b.c
+	//
+	// 'N' is the current accessed object e.g. a Node
+	// 'a' is the current property to access
 
-		switch(t) {
+	GraphEntity *e;
+	PropertyPathElement k;
+	PropertyPathElementType t;
+	uint n = PropertyPath_len(path);
+
+	for(uint i = 0; i < n; i++) {
+		// get current accessed property
+		PropertyPath_getElement(&t, &k, path, i);
+
+		// determine the type of object being accessed
+		switch(SI_TYPE(obj)) {
 			case T_NODE:
 			case T_EDGE:
 
@@ -276,41 +284,63 @@ SIValue AR_PROPERTY
 				// retrieve entity property
 				//--------------------------------------------------------------
 
-				e = (GraphEntity *)obj.ptrval;
+				// current accessed element should be a property
+				if(t != PATH_ELEMENT_PROPERTY) {
+					// TODO: raise runtime exception
+					ASSERT(t == PATH_ELEMENT_PROPERTY);
+				}
+
+				// get attribute ID of accessed property
+				AttributeID attr_id = k.index;
 
 				// missing attribute's index
-				if(attr_idx == ATTRIBUTE_ID_NONE) {
+				if(attr_id == ATTRIBUTE_ID_NONE) {
 					// we have the property string, attempt to look up the index
 					GraphContext *gc = QueryCtx_GetGraphCtx();
-					attr_idx = GraphContext_GetAttributeID(gc, key.stringval);
+					attr_id = GraphContext_GetAttributeID(gc, k.property);
 				}
 
 				// retrieve the attribute
-				// turn into const only if this is the end of the path
-				if(i == n-1) {
-					obj = SI_ConstValue(GraphEntity_GetProperty(e, attr_idx));
-				} else {
-					obj = *GraphEntity_GetProperty(e, attr_idx);
-				}
+				e = (GraphEntity *)obj.ptrval;
+				obj = *GraphEntity_GetProperty(e, attr_id);
 				break;
+
 			case T_MAP:
 
 				//--------------------------------------------------------------
 				// retrieve map key
 				//--------------------------------------------------------------
 
-				Map_Get(obj, key.stringval, &obj);
+				// current accessed element should be a property
+				if(t != PATH_ELEMENT_PROPERTY) {
+					// TODO: raise runtime exception
+					ASSERT(t == PATH_ELEMENT_PROPERTY);
+				}
+
+				Map_Get(obj, k.property, &obj);
 				break;
+
 			case T_POINT:
-				obj = Point_GetCoordinate(obj, key);
+				// current accessed element should be a property
+				if(t != PATH_ELEMENT_PROPERTY) {
+					// TODO: raise runtime exception
+					ASSERT(t == PATH_ELEMENT_PROPERTY);
+				}
+				obj = Point_GetCoordinate(obj, SI_ConstStringVal(k.property));
 				break;
+
+			case T_NULL:
+				return SI_NullVal();
+
 			default:
+				// TODO: support array
+				ASSERT("unsupported type" && false);
 				// unexpected type
 				return SI_NullVal();
 		}
 	}
 
-	return obj;
+	return SI_ConstValue(&obj);
 }
 
 SIValue AR_TYPEOF(SIValue *argv, int argc, void *private_data) {
@@ -379,12 +409,11 @@ void Register_EntityFuncs() {
 	func_desc = AR_FuncDescNew("outdegree", AR_OUTGOINGDEGREE, 1, VAR_ARG_LEN, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 
-	types = array_new(SIType, 3);
+	types = array_new(SIType, 2);
 	array_append(types, T_NULL | T_NODE | T_EDGE | T_MAP | T_POINT);
-	array_append(types, T_ARRAY);
-	array_append(types, T_INT64);
+	array_append(types, T_PTR);
 	ret_type = SI_ALL;
-	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 3, 3, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("property", AR_PROPERTY, 2, 2, types, ret_type, true, true);
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);

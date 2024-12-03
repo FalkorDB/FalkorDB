@@ -23,13 +23,12 @@
 
 // PropertyPathElementType defines the different path element types
 typedef enum {
-	PATH_ELEMENT_PROPERTY_ID = 1,  // access a property by its ID
-	PATH_ELEMENT_PROPERTY    = 2,  // access a property by its name
-	PATH_ELEMENT_INDEX       = 4,  // access an array by index
+	PATH_ELEMENT_PROPERTY    = 1,  // access a property by its name
+	PATH_ELEMENT_INDEX       = 2,  // access an array by index
 } PropertyPathElementType;
 
 // PropertyPathElement a element on the path
-typedef union {
+typedef struct {
 	const char *property;  // property name
 	unsigned int index;    // either a property ID or an array index
 } PropertyPathElement;
@@ -48,6 +47,19 @@ typedef struct {
 
 // create a new empty property path
 PropertyPath *PropertyPath_new(void);
+
+// create a new property path for a property access
+PropertyPath *PropertyPath_propertyAccess
+(
+	const char *property  // property to access
+);
+
+// reverse path
+// a.b.c -> c.b.a
+void PropertyPath_reverse
+(
+	PropertyPath *path  // path to reverse
+);
 
 // returns the length of the path
 unsigned int PropertyPath_len
@@ -107,27 +119,11 @@ void PropertyPath_addProperty
 	const char *property  // property to add
 );
 
-// appends property ID access to the end of the path
-void PropertyPath_addPropertyID
-(
-	PropertyPath *path,  // path to append to
-	AttributeID id       // property ID to add
-);
-
 // appends array subscript access to the end of the path
 void PropertyPath_addArrayIdx
 (
 	PropertyPath *path,   // path to append to
 	unsigned int idx      // property ID to add
-);
-
-// update an existing element
-void PropertyPath_updateElement
-(
-	PropertyPath *path,         // path to update
-	unsigned int i,             // element index to update
-	PropertyPathElementType t,  // new element type
-	PropertyPathElement v       // new element value
 );
 
 //------------------------------------------------------------------------------
