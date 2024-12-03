@@ -8,6 +8,7 @@
 #include "RG.h"
 #include "../../../query_ctx.h"
 #include "../../../errors/errors.h"
+#include "../../../datatypes/map.h"
 #include "../../../ast/ast_shared.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
@@ -305,6 +306,7 @@ void ConvertPropertyMap
 	SIValue vals[property_count];
 	AttributeID ids[property_count];
 	uint attrs_count = 0;
+
 	for(int i = 0; i < property_count; i++) {
 		// note that AR_EXP_Evaluate may raise a run-time exception
 		// in which case the allocations in this function will leak
@@ -322,6 +324,7 @@ void ConvertPropertyMap
 				Error_InvalidPropertyValue();
 				ErrorCtx_RaiseRuntimeException(NULL);
 			}
+
 			// the value was NULL
 			// if this was prohibited in this context, raise an exception,
 			// otherwise skip this value
@@ -330,7 +333,8 @@ void ConvertPropertyMap
 				for(int j = 0; j < i; j++) {
 					SIValue_Free(vals[j]);
 				}
-				ErrorCtx_RaiseRuntimeException("Cannot merge node using null property value");
+				ErrorCtx_RaiseRuntimeException(
+						"Cannot merge node using null property value");
 			}
 
 			// don't add null to attrribute set
@@ -338,19 +342,28 @@ void ConvertPropertyMap
 		}
 
 		// emit an error and exit if we're trying to add
-		// an array containing an invalid type
+		// an array/map containing an invalid type
+		bool invalid_property_value = false;
 		if(SI_TYPE(val) == T_ARRAY) {
-			SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE;
-			bool res = SIArray_ContainsType(val, invalid_properties);
-			if(res) {
-				// validation failed
-				SIValue_Free(val);
-				for(int j = 0; j < i; j++) {
-					SIValue_Free(vals[j]);
-				}
-				Error_InvalidPropertyValue();
-				ErrorCtx_RaiseRuntimeException(NULL);
+			SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & ~T_NULL;
+			invalid_property_value = SIArray_ContainsType(val, invalid_types);
+		}
+
+		if(SI_TYPE(val) == T_MAP) {
+			SIType invalid_types = ~SI_VALID_PROPERTY_VALUE & T_NULL;
+			invalid_property_value = Map_ContainsType(val, invalid_types);
+		}
+
+		if(invalid_property_value) {
+			// validation failed
+			SIValue_Free(val);
+
+			for(int j = 0; j < i; j++) {
+				SIValue_Free(vals[j]);
 			}
+
+			Error_InvalidPropertyValue();
+			ErrorCtx_RaiseRuntimeException(NULL);
 		}
 
 		// set the converted attribute

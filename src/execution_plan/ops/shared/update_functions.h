@@ -8,6 +8,7 @@
 
 #include "../../execution_plan.h"
 #include "../../../util/dict.h"
+#include "../../../ast/entity_update_ctx.h"
 
 // context representing a single update to perform on an entity
 typedef struct {

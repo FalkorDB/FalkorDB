@@ -110,7 +110,7 @@ RedisModuleString *SerializerIO_ReadString
 char *SerializerIO_ReadBuffer
 (
 	SerializerIO io,  // stream
-	size_t *lenptr     // number of bytes to read
+	size_t *lenptr    // number of bytes to read
 );
 
 // read double from stream

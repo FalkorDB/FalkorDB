@@ -1566,7 +1566,9 @@ static VISITOR_STRATEGY _Validate_set_property
 
 	const cypher_astnode_t *ast_prop = cypher_ast_set_property_get_property(n);
 	const cypher_astnode_t *ast_entity = cypher_ast_property_operator_get_expression(ast_prop);
-	if(cypher_astnode_type(ast_entity) != CYPHER_AST_IDENTIFIER) {
+	cypher_astnode_type_t t = cypher_astnode_type(ast_entity);
+
+	if(t != CYPHER_AST_IDENTIFIER && t != CYPHER_AST_PROPERTY_OPERATOR) {
 		ErrorCtx_SetError(EMSG_SET_LHS_NON_ALIAS);
 		return VISITOR_BREAK;
 	}

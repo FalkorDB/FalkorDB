@@ -278,8 +278,7 @@ static bool _EmitIndex
 				SIArray_Append(&prop_types, SI_ConstStringVal("FULLTEXT"));
 			}
 
-			Map_Add(ctx->yield_types,
-					SI_ConstStringVal(IndexField_GetName(field)), prop_types);
+			Map_Add(ctx->yield_types, IndexField_GetName(field), prop_types);
 
 			SIValue_Free(prop_types);
 		}
@@ -307,20 +306,19 @@ static bool _EmitIndex
 			SIValue prop_types = SI_Map(0);
 
 			if(types & INDEX_FLD_VECTOR) {
-				Map_Add(&prop_types, SI_ConstStringVal("dimension"),
+				Map_Add(&prop_types, "dimension",
 						SI_LongVal(IndexField_OptionsGetDimension(field)));
-				Map_Add(&prop_types, SI_ConstStringVal("similarityFunction"),
+				Map_Add(&prop_types, "similarityFunction",
 						SI_ConstStringVal(IndexField_OptionsGetSimFunc(field) == VecSimMetric_L2 ? "euclidean" : "cosine"));
-				Map_Add(&prop_types, SI_ConstStringVal("M"),
+				Map_Add(&prop_types, "M",
 						SI_LongVal(IndexField_OptionsGetM(field)));
-				Map_Add(&prop_types, SI_ConstStringVal("efConstruction"),
+				Map_Add(&prop_types, "efConstruction",
 						SI_LongVal(IndexField_OptionsGetEfConstruction(field)));
-				Map_Add(&prop_types, SI_ConstStringVal("efRuntime"),
+				Map_Add(&prop_types, "efRuntime",
 						SI_LongVal(IndexField_OptionsGetEfRuntime(field)));
 			}
 
-			Map_Add(ctx->yield_options,
-					SI_ConstStringVal(IndexField_GetName(field)), prop_types);
+			Map_Add(ctx->yield_options, IndexField_GetName(field), prop_types);
 
 			SIValue_Free(prop_types);
 		}
@@ -362,44 +360,44 @@ static bool _EmitIndex
 	if(ctx->yield_info) {
 		SIValue map = SI_Map(23);
 
-		Map_Add(&map, SI_ConstStringVal("gcPolicy"), SI_LongVal(info.gcPolicy));
-		Map_Add(&map, SI_ConstStringVal("score"),    SI_DoubleVal(info.score));
-		Map_Add(&map, SI_ConstStringVal("lang"),     SI_ConstStringVal(info.lang));
+		Map_Add(&map, "gcPolicy", SI_LongVal(info.gcPolicy));
+		Map_Add(&map, "score",    SI_DoubleVal(info.score));
+		Map_Add(&map, "lang",     SI_ConstStringVal(info.lang));
 
 		SIValue fields = SIArray_New(info.numFields);
 		for (uint i = 0; i < info.numFields; i++) {
 			struct RSIdxField f = info.fields[i];
 			SIValue field = SI_Map(6);
-			Map_Add(&field, SI_ConstStringVal("path"),             SI_ConstStringVal(f.path));
-			Map_Add(&field, SI_ConstStringVal("name"),             SI_ConstStringVal(f.name));
-			Map_Add(&field, SI_ConstStringVal("options"),          SI_LongVal(f.options));
-			Map_Add(&field, SI_ConstStringVal("textWeight"),       SI_DoubleVal(f.textWeight));
-			Map_Add(&field, SI_ConstStringVal("tagCaseSensitive"), SI_BoolVal(f.tagCaseSensitive));
+			Map_Add(&field, "path",             SI_ConstStringVal(f.path));
+			Map_Add(&field, "name",             SI_ConstStringVal(f.name));
+			Map_Add(&field, "options",          SI_LongVal(f.options));
+			Map_Add(&field, "textWeight",       SI_DoubleVal(f.textWeight));
+			Map_Add(&field, "tagCaseSensitive", SI_BoolVal(f.tagCaseSensitive));
 			SIArray_Append(&fields, field);
 			SIValue_Free(field);
 		}
-		Map_Add(&map, SI_ConstStringVal("fields"), fields);
+		Map_Add(&map, "fields", fields);
 		SIValue_Free(fields);
 
-		Map_Add(&map, SI_ConstStringVal("numDocuments"),     SI_LongVal(info.numDocuments));
-		Map_Add(&map, SI_ConstStringVal("maxDocId"),         SI_LongVal(info.maxDocId));
-		Map_Add(&map, SI_ConstStringVal("docTableSize"),     SI_LongVal(info.docTableSize));
-		Map_Add(&map, SI_ConstStringVal("sortablesSize"),    SI_LongVal(info.sortablesSize));
-		Map_Add(&map, SI_ConstStringVal("docTrieSize"),      SI_LongVal(info.docTrieSize));
-		Map_Add(&map, SI_ConstStringVal("numTerms"),         SI_LongVal(info.numTerms));
-		Map_Add(&map, SI_ConstStringVal("numRecords"),       SI_LongVal(info.numRecords));
-		Map_Add(&map, SI_ConstStringVal("invertedSize"),     SI_LongVal(info.invertedSize));
-		Map_Add(&map, SI_ConstStringVal("invertedCap"),      SI_LongVal(info.invertedCap));
-		Map_Add(&map, SI_ConstStringVal("skipIndexesSize"),  SI_LongVal(info.skipIndexesSize));
-		Map_Add(&map, SI_ConstStringVal("scoreIndexesSize"), SI_LongVal(info.scoreIndexesSize));
-		Map_Add(&map, SI_ConstStringVal("offsetVecsSize"),   SI_LongVal(info.offsetVecsSize));
-		Map_Add(&map, SI_ConstStringVal("offsetVecRecords"), SI_LongVal(info.offsetVecRecords));
-		Map_Add(&map, SI_ConstStringVal("termsSize"),        SI_LongVal(info.termsSize));
-		Map_Add(&map, SI_ConstStringVal("indexingFailures"), SI_LongVal(info.indexingFailures));
-		Map_Add(&map, SI_ConstStringVal("totalCollected"),   SI_LongVal(info.totalCollected));
-		Map_Add(&map, SI_ConstStringVal("numCycles"),        SI_LongVal(info.numCycles));
-		Map_Add(&map, SI_ConstStringVal("totalMSRun"),       SI_LongVal(info.totalMSRun));
-		Map_Add(&map, SI_ConstStringVal("lastRunTimeMs"),    SI_LongVal(info.lastRunTimeMs));
+		Map_Add(&map, "numDocuments",     SI_LongVal(info.numDocuments));
+		Map_Add(&map, "maxDocId",         SI_LongVal(info.maxDocId));
+		Map_Add(&map, "docTableSize",     SI_LongVal(info.docTableSize));
+		Map_Add(&map, "sortablesSize",    SI_LongVal(info.sortablesSize));
+		Map_Add(&map, "docTrieSize",      SI_LongVal(info.docTrieSize));
+		Map_Add(&map, "numTerms",         SI_LongVal(info.numTerms));
+		Map_Add(&map, "numRecords",       SI_LongVal(info.numRecords));
+		Map_Add(&map, "invertedSize",     SI_LongVal(info.invertedSize));
+		Map_Add(&map, "invertedCap",      SI_LongVal(info.invertedCap));
+		Map_Add(&map, "skipIndexesSize",  SI_LongVal(info.skipIndexesSize));
+		Map_Add(&map, "scoreIndexesSize", SI_LongVal(info.scoreIndexesSize));
+		Map_Add(&map, "offsetVecsSize",   SI_LongVal(info.offsetVecsSize));
+		Map_Add(&map, "offsetVecRecords", SI_LongVal(info.offsetVecRecords));
+		Map_Add(&map, "termsSize",        SI_LongVal(info.termsSize));
+		Map_Add(&map, "indexingFailures", SI_LongVal(info.indexingFailures));
+		Map_Add(&map, "totalCollected",   SI_LongVal(info.totalCollected));
+		Map_Add(&map, "numCycles",        SI_LongVal(info.numCycles));
+		Map_Add(&map, "totalMSRun",       SI_LongVal(info.totalMSRun));
+		Map_Add(&map, "lastRunTimeMs",    SI_LongVal(info.lastRunTimeMs));
 
 		*ctx->yield_info = map;
 	}

@@ -27,8 +27,12 @@ static inline void _AST_UpdateRefMap(AST *ast, const char *name) {
 	raxInsert(ast->referenced_entities, (unsigned char *)name, strlen(name), NULL, NULL);
 }
 
-// Map identifiers within an expression.
-static void _AST_MapExpression(AST *ast, const cypher_astnode_t *exp) {
+// map identifiers within an expression
+static void _AST_MapExpression
+(
+	AST *ast,
+	const cypher_astnode_t *exp
+) {
 	cypher_astnode_type_t type = cypher_astnode_type(exp);
 
 	// In case of identifier.
@@ -151,17 +155,28 @@ static void _AST_MapCreateClauseReferences(AST *ast, const cypher_astnode_t *cre
 	}
 }
 
-// Maps entities in SET clauses that update an individual property.
-static void _AST_MapSetPropertyReferences(AST *ast, const cypher_astnode_t *set_item) {
-	// Retrieve the alias being modified from the property descriptor.
+// maps entities in SET clauses that update an individual property
+static void _AST_MapSetPropertyReferences
+(
+	AST *ast,
+	const cypher_astnode_t *set_item
+) {
+	// retrieve the alias being modified from the property descriptor
 	const cypher_astnode_t *ast_prop = cypher_ast_set_property_get_property(set_item);
 	const cypher_astnode_t *ast_entity = cypher_ast_property_operator_get_expression(ast_prop);
-	ASSERT(cypher_astnode_type(ast_entity) == CYPHER_AST_IDENTIFIER);
+	cypher_astnode_type_t t = cypher_astnode_type(ast_entity);
+	ASSERT(t == CYPHER_AST_IDENTIFIER || t == CYPHER_AST_PROPERTY_OPERATOR);
+
+	while(t == CYPHER_AST_PROPERTY_OPERATOR) {
+		ast_entity = cypher_astnode_get_child(ast_entity, 0);
+		t = cypher_astnode_type(ast_entity);
+	}
+	ASSERT(t == CYPHER_AST_IDENTIFIER);
 
 	const char *alias = cypher_ast_identifier_get_name(ast_entity);
 	_AST_UpdateRefMap(ast, alias);
 
-	// Map expression right hand side, e.g. a.v = 1, a.x = b.x
+	// map expression right hand side, e.g. a.v = 1, a.x = b.x
 	const cypher_astnode_t *set_exp = cypher_ast_set_property_get_expression(set_item);
 	_AST_MapExpression(ast, set_exp);
 }

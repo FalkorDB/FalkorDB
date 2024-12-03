@@ -336,9 +336,9 @@ static void _ResultSet_CompactReplyWithMap
 	// (string, value type, value)
 	RedisModule_ReplyWithArray(ctx, key_count * 2);
 	for(int i = 0; i < key_count; i++) {
-		Pair     p     =  m[i];
-		SIValue  val   =  p.val;
-		char     *key  =  p.key.stringval;
+		Pair       *p   = m + i;
+		SIValue     val = p->val;
+		const char *key = p->key;
 
 		// emit key
 		RedisModule_ReplyWithCString(ctx, key);

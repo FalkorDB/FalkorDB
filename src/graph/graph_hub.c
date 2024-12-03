@@ -225,6 +225,10 @@ void UpdateNodeProperty
 	int res = Graph_GetNode(gc->g, id, &n);
 	ASSERT(res == true);  // make sure entity was found
 
+	//--------------------------------------------------------------------------
+	// update attribute set
+	//--------------------------------------------------------------------------
+
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
 	} else if(GraphEntity_GetProperty((GraphEntity *)&n, attr_id) == ATTRIBUTE_NOTFOUND) {
@@ -232,6 +236,10 @@ void UpdateNodeProperty
 	} else {
 		AttributeSet_UpdateNoClone(n.attributes, attr_id, v);
 	}
+
+	//--------------------------------------------------------------------------
+	// update indices
+	//--------------------------------------------------------------------------
 
 	// retrieve node labels
 	uint label_count;
