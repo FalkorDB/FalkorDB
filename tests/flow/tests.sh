@@ -35,6 +35,7 @@ help() {
 		GEN=1                 General tests on standalone Redis (default)
 		AOF=1                 AOF persistency tests on standalone Redis
 		TCK=1                 Cypher Technology Compatibility Kit tests
+		UPGRADE=1             Upgrade tests
 		REDIS_SERVER=path     Location of redis-server
 		REDIS_PORT=n          Redis server port
 
@@ -441,6 +442,7 @@ if [[ $RLEC != 1 ]]; then
 	GEN=${GEN:-1}
 	AOF=${AOF:-1}
 	TCK=${TCK:-1}
+	UPGRADE=${UPGRADE:-1}
 
 	if [[ -z $MODULE || ! -f $MODULE ]]; then
 		echo "Module not found at ${MODULE}. Aborting."
@@ -450,6 +452,7 @@ else
 	GEN=1
 	AOF=0
 	TCK=0
+	UPGRADE=0
 fi
 
 #------------------------------------------------------------------------------------ Debugging
@@ -567,7 +570,7 @@ fi
 #-------------------------------------------------------------------------------- Running tests
 
 if [[ $CLEAR_LOGS != 0 ]]; then
-	rm -rf $HERE/logs $HERE/../tck/logs
+	rm -rf $HERE/logs $HERE/../tck/logs $HERE/../upgrade/logs
 fi
 
 if [[ $OS == macos ]]; then
@@ -594,6 +597,14 @@ if [[ $TCK == 1 ]]; then
 		{ (cd $HERE/../tck; run_tests "TCK tests"); (( E |= $? )); } || true
 	else
 		TCK=0
+	fi
+fi
+
+if [[ $UPGRADE == 1 ]]; then
+	if [[ -z $TEST ]]; then
+		{ (cd $HERE/../upgrade; run_tests "Upgrade tests"); (( E |= $? )); } || true
+	else
+		UPGRADE=0
 	fi
 fi
 
@@ -624,6 +635,9 @@ if [[ $COLLECT_LOGS == 1 ]]; then
 	fi
 	if [[ $TCK == 1 ]]; then
 		{ find tests/tck/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-tck-logs-${ARCH}-${OSNICK}.tgz -T - ; } || true
+	fi
+	if [[ $UPGRADE == 1 ]]; then
+		{ find tests/upgrade/logs -name "*.log" | tar -czf bin/artifacts/tests/tests-upgrade-logs-${ARCH}-${OSNICK}.tgz -T - ; } || true
 	fi
 fi
 

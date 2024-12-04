@@ -1,7 +1,7 @@
 from common import *
 
-# Number of options available.
-NUMBER_OF_OPTIONS = 17
+# Number of configurations available.
+NUMBER_OF_CONFIGURATIONS = 18
 GRAPH_ID = "config"
 
 class testConfig(FlowTestsBase):
@@ -20,7 +20,7 @@ class testConfig(FlowTestsBase):
         # Try reading all configurations
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
         # 16 configurations should be reported
-        self.env.assertEquals(len(response), NUMBER_OF_OPTIONS)
+        self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
@@ -209,6 +209,10 @@ class testConfig(FlowTestsBase):
 
         response = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 16384
+        self.env.assertEqual(response, expected_response)
+
+        response = self.db.config_get("DELAY_INDEXING")
+        expected_response = 0
         self.env.assertEqual(response, expected_response)
 
     def test09_set_invalid_values(self):

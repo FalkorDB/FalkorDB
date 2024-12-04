@@ -21,5 +21,10 @@ typedef struct {
 	int64_t number_of_intersections;    // Number of intersections located.
 } OpValueHashJoin;
 
-/* Creates a new ValueHashJoin operation */
-OpBase *NewValueHashJoin(const ExecutionPlan *plan, AR_ExpNode *lhs_exp, AR_ExpNode *rhs_exp);
+// creates a new ValueHashJoin operation
+OpBase *NewValueHashJoin
+(
+	const ExecutionPlan *plan,
+	AR_ExpNode *lhs_exp,
+	AR_ExpNode *rhs_exp
+);

@@ -1,10 +1,9 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v15.h"
+#include "decode_v16.h"
 #include "../../../../index/indexer.h"
 
 static GraphContext *_GetOrCreateGraphContext
@@ -109,7 +108,14 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v15(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v16(rdb, gc, !first_vkey);
+
+	// save decode statistics for later progess reporting
+	// e.g. "Decoded 20000/4500000 nodes"
+	gc->decoding_context->node_count         = node_count;
+	gc->decoding_context->edge_count         = edge_count;
+	gc->decoding_context->deleted_node_count = deleted_node_count;
+	gc->decoding_context->deleted_edge_count = deleted_edge_count;
 
 	return gc;
 }
@@ -131,10 +137,13 @@ static PayloadInfo *_RdbLoadKeySchema
 		// for each payload
 		// load its type and the number of entities it contains
 		PayloadInfo payload_info;
-		payload_info.state =  SerializerIO_ReadUnsigned(rdb);
-		payload_info.entities_count =  SerializerIO_ReadUnsigned(rdb);
+
+		payload_info.state          = SerializerIO_ReadUnsigned(rdb);
+		payload_info.entities_count = SerializerIO_ReadUnsigned(rdb);
+
 		array_append(payloads, payload_info);
 	}
+
 	return payloads;
 }
 
@@ -143,7 +152,6 @@ GraphContext *RdbLoadGraphContext_latest
 	SerializerIO rdb,
 	const RedisModuleString *rm_key_name
 ) {
-
 	// Key format:
 	//  Header
 	//  Payload(s) count: N
@@ -154,8 +162,13 @@ GraphContext *RdbLoadGraphContext_latest
 
 	GraphContext *gc = _DecodeHeader(rdb);
 
+	// log progress
+	RedisModule_Log(NULL, "notice", "Graph '%s' processing virtual key: %lld/%lld",
+			GraphContext_GetName(gc), gc->decoding_context->keys_processed + 1,
+			gc->decoding_context->graph_keys_count);
+
 	// load the key schema
-	PayloadInfo *key_schema = _RdbLoadKeySchema(rdb);
+	PayloadInfo *payloads = _RdbLoadKeySchema(rdb);
 
 	// The decode process contains the decode operation of many meta keys, representing independent parts of the graph
 	// Each key contains data on one or more of the following:
@@ -163,28 +176,55 @@ GraphContext *RdbLoadGraphContext_latest
 	// 2. Deleted nodes - Nodes that were deleted and there ids can be re-used. Used for exact replication of data block state
 	// 4. Edges - The edges that are currently valid in the graph
 	// 4. Deleted edges - Edges that were deleted and there ids can be re-used. Used for exact replication of data block state
-	// 5. Graph schema - Properties, indices
 	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
-	uint payloads_count = array_len(key_schema);
+	uint payloads_count = array_len(payloads);
 	for(uint i = 0; i < payloads_count; i++) {
-		PayloadInfo payload = key_schema[i];
+		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v15(rdb, gc, payload.entities_count);
+				RdbLoadNodes_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %zu/%llu nodes",
+						GraphContext_GetName(gc),
+						Graph_UncompactedNodeCount(gc->g),
+						gc->decoding_context->node_count);
+
 				break;
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v15(rdb, gc, payload.entities_count);
+				RdbLoadDeletedNodes_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %u/%lld deleted nodes",
+						GraphContext_GetName(gc),
+						Graph_DeletedNodeCount(gc->g),
+						gc->decoding_context->deleted_node_count);
+
 				break;
 			case ENCODE_STATE_EDGES:
 				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v15(rdb, gc, payload.entities_count);
+				RdbLoadEdges_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %lld/%lld edges",
+						GraphContext_GetName(gc), Graph_EdgeCount(gc->g),
+						gc->decoding_context->edge_count);
+
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v15(rdb, gc, payload.entities_count);
-				break;
-			case ENCODE_STATE_GRAPH_SCHEMA:
-				// skip, handled in _DecodeHeader
+				RdbLoadDeletedEdges_v16(rdb, gc, payload.entities_count);
+
+				// log progress
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' processed %u/%lld deleted edges",
+						GraphContext_GetName(gc),
+						Graph_DeletedEdgeCount(gc->g),
+						gc->decoding_context->deleted_edge_count);
+
 				break;
 			default:
 				ASSERT(false && "Unknown encoding");
@@ -192,7 +232,7 @@ GraphContext *RdbLoadGraphContext_latest
 		}
 	}
 
-	array_free(key_schema);
+	array_free(payloads);
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
@@ -220,6 +260,10 @@ GraphContext *RdbLoadGraphContext_latest
 		uint rel_count   = Graph_RelationTypeCount(g);
 		uint label_count = Graph_LabelTypeCount(g);
 
+		// get delay indexing configuration
+		bool delay_indexing;
+		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
+
 		// update the node statistics, enable node indices
 		for(uint i = 0; i < label_count; i++) {
 			GrB_Index nvals;
@@ -230,9 +274,16 @@ GraphContext *RdbLoadGraphContext_latest
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);
+
 			if(idx != NULL) {
-				Index_Enable(idx);
-				Schema_ActivateIndex(s);
+				if(delay_indexing) {
+					// start async indexing
+					Indexer_PopulateIndex(gc, s, idx);
+				} else {
+					// index populated enable it
+					Index_Enable(idx);
+					Schema_ActivateIndex(s);
+				}
 			}
 		}
 
@@ -242,8 +293,14 @@ GraphContext *RdbLoadGraphContext_latest
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
 			if(idx != NULL) {
-				Index_Enable(idx);
-				Schema_ActivateIndex(s);
+				if(delay_indexing) {
+					// start async indexing
+					Indexer_PopulateIndex(gc, s, idx);
+				} else {
+					// index populated enable it
+					Index_Enable(idx);
+					Schema_ActivateIndex(s);
+				}
 			}
 		}
 
@@ -251,6 +308,8 @@ GraphContext *RdbLoadGraphContext_latest
 		ASSERT(Graph_Pending(g) == false);
 
 		GraphDecodeContext_Reset(gc->decoding_context);
+
+		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
 	}
 
 	return gc;

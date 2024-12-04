@@ -180,14 +180,14 @@ AlgebraicExpression *AlgebraicExpression_NewOperand
 ) {
 	AlgebraicExpression *node = rm_malloc(sizeof(AlgebraicExpression));
 
-	node->type                =  AL_OPERAND;
-	node->operand.src         =  src;
-	node->operand.dest        =  dest;
-	node->operand.edge        =  edge;
-	node->operand.label       =  label;
-	node->operand.bfree       =  false;
-	node->operand.diagonal    =  diagonal;
-	node->operand.matrix      =  mat;
+	node->type             = AL_OPERAND;
+	node->operand.src      = src;
+	node->operand.dest     = dest;
+	node->operand.edge     = edge;
+	node->operand.label    = label;
+	node->operand.bfree    = false;
+	node->operand.diagonal = diagonal;
+	node->operand.matrix   = mat;
 
 	return node;
 }

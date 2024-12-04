@@ -18,8 +18,8 @@ void Index_IndexEdge
 	Index idx,
 	const Edge *e
 ) {
-	ASSERT(idx  !=  NULL);
-	ASSERT(e    !=  NULL);
+	ASSERT(e   != NULL);
+	ASSERT(idx != NULL);
 
 	RSDoc    *doc    = NULL;
 	RSIndex  *rsIdx  = Index_RSIndex(idx);

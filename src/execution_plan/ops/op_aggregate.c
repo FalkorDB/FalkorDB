@@ -36,7 +36,7 @@ static void freeCallback
 }
 
 // hashtable callbacks
-static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
+static dictType _dt = {_id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
 
 // migrate each expression projected by this operation to either
