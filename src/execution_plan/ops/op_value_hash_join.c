@@ -179,7 +179,7 @@ void _cache_records
 	OpBase *left_child = OpBase_GetChild((OpBase*)op, 0);
 	op->cached_records = array_new(Record, 32);
 
-	Record r = left_child->consume(left_child);
+	Record r = OpBase_Consume(left_child);
 	if(r == NULL) return;
 
 	// as long as there's data coming in from left branch
@@ -199,7 +199,7 @@ void _cache_records
 
 		// cache the record
 		array_append(op->cached_records, r);
-	} while((r = left_child->consume(left_child)));
+	} while((r = OpBase_Consume(left_child)));
 }
 
 // string representation of operation
@@ -237,6 +237,10 @@ OpBase *NewValueHashJoin
 	AR_ExpNode *lhs_exp,
 	AR_ExpNode *rhs_exp
 ) {
+	ASSERT(plan    != NULL);
+	ASSERT(lhs_exp != NULL);
+	ASSERT(rhs_exp != NULL);
+
 	OpValueHashJoin *op = rm_malloc(sizeof(OpValueHashJoin));
 
 	op->rhs_rec                 = NULL;
@@ -301,7 +305,7 @@ static Record ValueHashJoinConsume
 	// which intersect with a left hand side record
 	while(true) {
 		// pull from right branch
-		op->rhs_rec = right_child->consume(right_child);
+		op->rhs_rec = OpBase_Consume(right_child);
 		if(!op->rhs_rec) return NULL;
 
 		// get value on which we're intersecting

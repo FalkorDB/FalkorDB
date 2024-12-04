@@ -5,7 +5,7 @@
  */
 
 #include "decode_graph.h"
-#include "current/v15/decode_v15.h"
+#include "current/v16/decode_v16.h"
 
 GraphContext *RdbLoadGraph(RedisModuleIO *rdb) {
 	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);

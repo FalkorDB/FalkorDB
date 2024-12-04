@@ -168,6 +168,14 @@ static bool _EmitIndex
 	IndexesContext *ctx,
 	Index idx
 ) {
+	GraphContext *gc = ctx->gc;
+	Graph        *g = GraphContext_GetGraph(gc);
+
+	// get index info
+	RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
+	RSIndex *rsIdx = Index_RSIndex(idx);
+	RediSearch_IndexInfo(rsIdx, &info);
+
 	//--------------------------------------------------------------------------
 	// index entity type
 	//--------------------------------------------------------------------------
@@ -186,9 +194,30 @@ static bool _EmitIndex
 
 	if(ctx->yield_status != NULL) {
 		if(Index_Enabled(idx)) {
+			// index is operational
 			*ctx->yield_status = SI_ConstStringVal("OPERATIONAL");
 		} else {
-			*ctx->yield_status = SI_ConstStringVal("UNDER CONSTRUCTION");
+			// report index construction progress
+			// determine number of entities being indexed
+			size_t n;                               // total number of entities
+			Schema *s;                              // entities schema
+			const char *lbl = Index_GetLabel(idx);  // entities label
+
+			// get total number of entities from the graph
+			if(Index_GraphEntityType(idx) == GETYPE_NODE) {
+				s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
+				n = Graph_LabeledNodeCount(g, Schema_GetID(s));
+			} else {
+				s = GraphContext_GetSchema(gc, lbl, SCHEMA_EDGE);
+				n = Graph_RelationEdgeCount(g, Schema_GetID(s));
+			}
+
+			// report progress
+			char *status;
+			size_t m = info.numDocuments;
+			asprintf(&status, "[Indexing] %zu/%zu: UNDER CONSTRUCTION", m, n);
+			*ctx->yield_status = SI_DuplicateStringVal(status);
+			free(status);
 		}
 	}
 
@@ -331,11 +360,6 @@ static bool _EmitIndex
 	//--------------------------------------------------------------------------
 
 	if(ctx->yield_info) {
-		RSIdxInfo info = { .version = RS_INFO_CURRENT_VERSION };
-
-		RSIndex *rsIdx = Index_RSIndex(idx);
-
-		RediSearch_IndexInfo(rsIdx, &info);
 		SIValue map = SI_Map(23);
 
 		Map_Add(&map, SI_ConstStringVal("gcPolicy"), SI_LongVal(info.gcPolicy));
@@ -377,9 +401,11 @@ static bool _EmitIndex
 		Map_Add(&map, SI_ConstStringVal("totalMSRun"),       SI_LongVal(info.totalMSRun));
 		Map_Add(&map, SI_ConstStringVal("lastRunTimeMs"),    SI_LongVal(info.lastRunTimeMs));
 
-		RediSearch_IndexInfoFree(&info);
 		*ctx->yield_info = map;
 	}
+
+	// clean up
+	RediSearch_IndexInfoFree(&info);
 
 	return true;
 }

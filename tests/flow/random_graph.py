@@ -102,7 +102,7 @@ def create_random_graph(g, nodes, edges):
     Create random graph
     Example:
     nodes, edges = create_random_schema()
-    res = create_random_graph(redis_graph, nodes, edges)
+    res = create_random_graph(graph, nodes, edges)
     """
     result = {}
     result["indexes"] = []
@@ -207,8 +207,8 @@ def run_random_graph_ops(g, nodes, edges, ops):
     Run random graph write operations
     Example:
     nodes, edges = create_random_schema()
-    res = create_random_graph(redis_graph, nodes, edges)
-    res = run_random_graph_ops(redis_graph, nodes, edges, ALL_OPS)
+    res = create_random_graph(graph, nodes, edges)
+    res = run_random_graph_ops(graph, nodes, edges, ALL_OPS)
     """
     result = []
     total = {}
@@ -226,7 +226,7 @@ def create_random_schema():
     """
     Create random graph schema
     Example:
-    res = create_random_schema(redis_graph, {"N": 100, "M": 200}, {
+    res = create_random_schema(graph, {"N": 100, "M": 200}, {
                            "R": {"source": "N", "target": "M", "count": 500}})
     """
     nodes = []
@@ -259,3 +259,4 @@ def create_random_schema():
 
 ALL_OPS = [create_node, create_edge, delete_node,
            delete_edge, update_node, update_edge]
+

@@ -38,26 +38,29 @@ static void _GraphEncodeContext_ResetHeader
 	}
 }
 
-void GraphEncodeContext_Reset(GraphEncodeContext *ctx) {
+void GraphEncodeContext_Reset
+(
+	GraphEncodeContext *ctx
+) {
 	ASSERT(ctx != NULL);
 
 	_GraphEncodeContext_ResetHeader(ctx);
 
-	ctx->offset = 0;
-	ctx->keys_processed = 0;
-	ctx->state = ENCODE_STATE_INIT;
-	ctx->matrix_tuple_iterator = (TensorIterator) {0};
+	ctx->state                      = ENCODE_STATE_INIT;
+	ctx->offset                     = 0;
+	ctx->keys_processed             = 0;
+	ctx->matrix_tuple_iterator      = (TensorIterator) {0};
 	ctx->current_relation_matrix_id = 0;
 
 	Config_Option_get(Config_VKEY_MAX_ENTITY_COUNT, &ctx->vkey_entity_count);
 
-	// Avoid leaks in case or reset during encodeing.
+	// avoid leaks in case or reset during encodeing
 	if(ctx->datablock_iterator != NULL) {
 		DataBlockIterator_Free(ctx->datablock_iterator);
 		ctx->datablock_iterator = NULL;
 	}
 
-	// Avoid leaks in case or reset during encodeing.
+	// avoid leaks in case or reset during encodeing
 	ctx->matrix_tuple_iterator = (TensorIterator){0};
 }
 
@@ -93,61 +96,97 @@ void GraphEncodeContext_InitHeader
 	}
 }
 
-EncodeState GraphEncodeContext_GetEncodeState(const GraphEncodeContext *ctx) {
+EncodeState GraphEncodeContext_GetEncodeState
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return ctx->state;
 }
 
-void GraphEncodeContext_SetEncodeState(GraphEncodeContext *ctx, EncodeState state) {
+void GraphEncodeContext_SetEncodeState
+(
+	GraphEncodeContext *ctx,
+	EncodeState state
+) {
 	ASSERT(ctx);
 	ctx->state = state;
 }
 
-uint64_t GraphEncodeContext_GetKeyCount(const GraphEncodeContext *ctx) {
+uint64_t GraphEncodeContext_GetKeyCount
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
-	// The `meta_keys` rax contains only the meta keys names. Add one for the graph context key.
+	// the `meta_keys` rax contains only the meta keys names
+	// add one for the graph context key
 	return raxSize(ctx->meta_keys) + 1;
 }
 
-void GraphEncodeContext_AddMetaKey(GraphEncodeContext *ctx, const char *key) {
+void GraphEncodeContext_AddMetaKey
+(
+	GraphEncodeContext *ctx,
+	const char *key
+) {
 	ASSERT(ctx);
 	raxInsert(ctx->meta_keys, (unsigned char *)key, strlen(key), NULL, NULL);
 }
 
-unsigned char **GraphEncodeContext_GetMetaKeys(const GraphEncodeContext *ctx) {
+unsigned char **GraphEncodeContext_GetMetaKeys
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return raxKeys(ctx->meta_keys);
 }
 
-void GraphEncodeContext_ClearMetaKeys(GraphEncodeContext *ctx) {
+void GraphEncodeContext_ClearMetaKeys
+(
+	GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	raxFree(ctx->meta_keys);
 	ctx->meta_keys = raxNew();
 }
 
-uint64_t GraphEncodeContext_GetProcessedKeyCount(const GraphEncodeContext *ctx) {
+uint64_t GraphEncodeContext_GetProcessedKeyCount
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return ctx->keys_processed;
 }
 
-uint64_t GraphEncodeContext_GetProcessedEntitiesOffset(const GraphEncodeContext *ctx) {
+uint64_t GraphEncodeContext_GetProcessedEntitiesOffset
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return ctx->offset;
 }
 
-void GraphEncodeContext_SetProcessedEntitiesOffset(GraphEncodeContext *ctx,
-												   uint64_t offset) {
+void GraphEncodeContext_SetProcessedEntitiesOffset
+(
+	GraphEncodeContext *ctx,
+	uint64_t offset
+) {
 	ASSERT(ctx);
 	ctx->offset = offset;
 }
 
-DataBlockIterator *GraphEncodeContext_GetDatablockIterator(const GraphEncodeContext *ctx) {
+DataBlockIterator *GraphEncodeContext_GetDatablockIterator
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return ctx->datablock_iterator;
 }
 
-void GraphEncodeContext_SetDatablockIterator(GraphEncodeContext *ctx,
-											 DataBlockIterator *iter) {
+void GraphEncodeContext_SetDatablockIterator
+(
+	GraphEncodeContext *ctx,
+	DataBlockIterator *iter
+) {
 	ASSERT(ctx);
 	ctx->datablock_iterator = iter;
 }
@@ -177,25 +216,38 @@ TensorIterator *GraphEncodeContext_GetMatrixTupleIterator
 	return &ctx->matrix_tuple_iterator;
 }
 
-bool GraphEncodeContext_Finished(const GraphEncodeContext *ctx) {
+bool GraphEncodeContext_Finished
+(
+	const GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	return ctx->keys_processed == GraphEncodeContext_GetKeyCount(ctx);
 }
 
-void GraphEncodeContext_IncreaseProcessedKeyCount(GraphEncodeContext *ctx) {
+void GraphEncodeContext_IncreaseProcessedKeyCount
+(
+	GraphEncodeContext *ctx
+) {
 	ASSERT(ctx);
 	ASSERT(ctx->keys_processed < GraphEncodeContext_GetKeyCount(ctx));
 	ctx->keys_processed++;
 }
 
-static void GraphEncodeContext_FreeHeader(GraphEncodeContext *ctx) {
+static void GraphEncodeContext_FreeHeader
+(
+	GraphEncodeContext *ctx
+) {
 	if(ctx->header.multi_edge != NULL) rm_free(ctx->header.multi_edge);
 }
 
-void GraphEncodeContext_Free(GraphEncodeContext *ctx) {
+void GraphEncodeContext_Free
+(
+	GraphEncodeContext *ctx
+) {
 	if(ctx) {
 		GraphEncodeContext_FreeHeader(ctx);
 		raxFree(ctx->meta_keys);
 		rm_free(ctx);
 	}
 }
+

@@ -36,14 +36,14 @@ OpBase *NewIndexScanOp
 	ASSERT(filter != NULL);
 
 	IndexScan *op = rm_malloc(sizeof(IndexScan));
-	op->g                    =  g;
-	op->n                    =  n;
-	op->idx                  =  idx;
-	op->iter                 =  NULL;
-	op->filter               =  filter;
-	op->child_record         =  NULL;
-	op->unresolved_filters   =  NULL;
-	op->rebuild_index_query  =  false;
+	op->g                   = g;
+	op->n                   = n;
+	op->idx                 = idx;
+	op->iter                = NULL;
+	op->filter              = filter;
+	op->child_record        = NULL;
+	op->unresolved_filters  = NULL;
+	op->rebuild_index_query = false;
 
 	// Set our Op operations
 	OpBase_Init((OpBase *)op, OPType_NODE_BY_INDEX_SCAN, "Node By Index Scan", IndexScanInit, IndexScanConsume,

@@ -534,7 +534,8 @@ void Constraint_EnforceEdges
 		TensorIterator_ScanRange(&it, R, src_id, UINT64_MAX, false);
 
 		// skip previously enforced edges
-		while((info = TensorIterator_next(&it, &src_id, &dest_id, &edge_id)) &&
+		while((info =
+				TensorIterator_next(&it, &src_id, &dest_id, &edge_id, NULL)) &&
 				src_id == prev_src_id &&
 				dest_id < prev_dest_id);
 
@@ -567,7 +568,7 @@ void Constraint_EnforceEdges
 			prev_dest_id = dest_id;
 		} while((enforced < batch_size ||
 				(prev_src_id == src_id && prev_dest_id == dest_id)) &&
-			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id) &&
+			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id, NULL) &&
 			  holds);
 
 		//----------------------------------------------------------------------

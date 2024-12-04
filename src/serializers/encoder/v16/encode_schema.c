@@ -1,10 +1,9 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v15.h"
+#include "encode_v16.h"
 #include "../../../util/arr.h"
 
 static void _RdbSaveAttributeKeys
@@ -12,10 +11,9 @@ static void _RdbSaveAttributeKeys
 	SerializerIO rdb,
 	GraphContext *gc
 ) {
-	/* Format:
-	 * #attribute keys
-	 * attribute keys
-	*/
+	// Format:
+	// #attribute keys
+	// attribute keys
 
 	uint count = GraphContext_AttributeCount(gc);
 	SerializerIO_WriteUnsigned(rdb, count);
@@ -80,12 +78,12 @@ static inline void _RdbSaveIndexData
 ) {
 	if(idx == NULL) return;
 
-	/* Format:
-	 * language
-	 * #stopwords - N
-	 * N * stopword
-	 * #properties - M
-	 * M * property {options} */
+	// Format:
+	// language
+	// #stopwords - N
+	// N * stopword
+	// #properties - M
+	// M * property {options}
 
 	// encode language
 	const char *language = Index_GetLanguage(idx);
@@ -118,10 +116,10 @@ static void _RdbSaveConstraint
 	SerializerIO rdb,
 	const Constraint c
 ) {
-	/* Format:
-	 * constraint type
-	 * fields count
-	 * field IDs */
+	// Format:
+	// constraint type
+	// fields count
+	// field IDs
 
 	// only encode active constraint
 	ASSERT(Constraint_GetStatus(c) == CT_ACTIVE);
@@ -181,15 +179,18 @@ static void _RdbSaveConstraintsData
 	array_free(active_constraints);
 }
 
-static void _RdbSaveSchema(SerializerIO rdb, Schema *s) {
-	/* Format:
-	 * id
-	 * name
-	 * #indices
-	 * (indexed property) X M 
-	 * #constraints 
-	 * (constraint type, constraint fields) X N
-	 */
+static void _RdbSaveSchema
+(
+	SerializerIO rdb,
+	Schema *s
+) {
+	// Format:
+	// id
+	// name
+	// #indices
+	// (indexed property) X M 
+	// #constraints 
+	// (constraint type, constraint fields) X N
 
 	// Schema ID.
 	SerializerIO_WriteUnsigned(rdb, s->id);
@@ -211,14 +212,17 @@ static void _RdbSaveSchema(SerializerIO rdb, Schema *s) {
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v15(SerializerIO rdb, GraphContext *gc) {
-	/* Format:
-	 * attribute keys (unified schema)
-	 * #node schemas
-	 * node schema X #node schemas
-	 * #relation schemas
-	 * relation schema X #relation schemas
-	*/
+void RdbSaveGraphSchema_v16
+(
+	SerializerIO rdb,
+	GraphContext *gc
+) {
+	// Format:
+	// attribute keys (unified schema)
+	// #node schemas
+	// node schema X #node schemas
+	// #relation schemas
+	// relation schema X #relation schemas
 
 	// Serialize all attribute keys
 	_RdbSaveAttributeKeys(rdb, gc);

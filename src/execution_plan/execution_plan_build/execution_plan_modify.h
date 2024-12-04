@@ -17,14 +17,25 @@ typedef struct ExecutionPlan ExecutionPlan;
 //  API for restructuring the op tree.
 //------------------------------------------------------------------------------
 
-/* Removes operation from execution plan. */
-void ExecutionPlan_RemoveOp(ExecutionPlan *plan, OpBase *op);
+// removes operation from execution plan
+void ExecutionPlan_RemoveOp
+(
+	ExecutionPlan *plan,
+	OpBase *op
+);
 
-/* Detaches operation from its parent. */
-void ExecutionPlan_DetachOp(OpBase *op);
+// detaches operation from its parent
+void ExecutionPlan_DetachOp
+(
+	OpBase *op
+);
 
-/* Adds operation to execution plan as a child of parent. */
-void ExecutionPlan_AddOp(OpBase *parent, OpBase *newOp);
+// adds operation to execution plan as a child of parent
+void ExecutionPlan_AddOp
+(
+	OpBase *parent,
+	OpBase *newOp
+);
 
 // adds child to be the ind'th child of parent
 void ExecutionPlan_AddOpInd
@@ -34,23 +45,40 @@ void ExecutionPlan_AddOpInd
 	uint ind         // index of child
 );
 
-/* Push b right below a. */
-void ExecutionPlan_PushBelow(OpBase *a, OpBase *b);
+// Push b right below a
+void ExecutionPlan_PushBelow
+(
+	OpBase *a,
+	OpBase *b
+);
 
-/* Introduce new_root as the parent of old_root. */
-void ExecutionPlan_NewRoot(OpBase *old_root, OpBase *new_root);
+// introduce new_root as the parent of old_root
+void ExecutionPlan_NewRoot
+(
+	OpBase *old_root,
+	OpBase *new_root
+);
 
-/* Update the root op of the execution plan. */
-void ExecutionPlan_UpdateRoot(ExecutionPlan *plan, OpBase *new_root);
+// update the root op of the execution plan
+void ExecutionPlan_UpdateRoot
+(
+	ExecutionPlan *plan,
+	OpBase *new_root
+);
 
-/* Replace a with b. */
-void ExecutionPlan_ReplaceOp(ExecutionPlan *plan, OpBase *a, OpBase *b);
+// replace a with b
+void ExecutionPlan_ReplaceOp
+(
+	ExecutionPlan *plan,
+	OpBase *a,
+	OpBase *b
+);
 
 //------------------------------------------------------------------------------
 //  API for binding ops to plans.
 //------------------------------------------------------------------------------
 
-// For all ops in the given tree, associate the provided ExecutionPlan.
+// for all ops in the given tree, associate the provided ExecutionPlan
 // if qg is set, merge the query graphs of the temporary and main plans
 void ExecutionPlan_BindOpsToPlan
 (
@@ -67,3 +95,4 @@ void ExecutionPlan_MigrateOpsExcludeType
 	uint op_count,              // number of ops in the array
 	const ExecutionPlan *plan   // plan to bind the ops to
 );
+

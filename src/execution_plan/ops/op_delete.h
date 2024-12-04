@@ -11,17 +11,23 @@
 #include "../../graph/entities/node.h"
 #include "../../resultset/resultset_statistics.h"
 #include "rax.h"
-/* Deletes entities specified within the DELETE clause. */
 
+// deletes entities specified within the DELETE clause
 
 typedef struct {
 	OpBase op;
 	GraphContext *gc;
-	Record *records;        // Eagerly collected records.
-	AR_ExpNode **exps;      // Expressions evaluated to an entity about to be deleted.
-	uint exp_count;         // Number of expressions.
-	Node *deleted_nodes;    // Array of nodes to be removed.
-	Edge *deleted_edges;    // Array of edges to be removed.
+	uint64_t rec_idx;       // index of record to emit
+	Record *records;        // eagerly collected records
+	AR_ExpNode **exps;      // expressions evaluated to an entity about to be deleted
+	uint exp_count;         // number of expressions
+	Node *deleted_nodes;    // array of nodes to be removed
+	Edge *deleted_edges;    // array of edges to be removed
 } OpDelete;
 
-OpBase *NewDeleteOp(const ExecutionPlan *plan, AR_ExpNode **exps);
+OpBase *NewDeleteOp
+(
+	const ExecutionPlan *plan,
+	AR_ExpNode **exps
+);
+
