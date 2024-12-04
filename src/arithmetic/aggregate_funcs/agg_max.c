@@ -48,7 +48,7 @@ void Register_MAX(void) {
 	array_append(types, SI_ALL);
 	ret_type = SI_ALL;
 	func_desc = AR_AggFuncDescNew("max", AGG_MAX, 1, 1, types, ret_type, NULL,
-			NULL, Max_PrivateData);
+			NULL, Max_PrivateData, "aggregate maximum");
 	AR_RegFunc(func_desc);
 }
 

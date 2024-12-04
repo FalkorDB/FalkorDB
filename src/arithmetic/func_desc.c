@@ -24,7 +24,8 @@ AR_FuncDesc *AR_FuncDescNew
 	SIType *types,
 	SIType ret_type,
 	bool internal,
-	bool reducible
+	bool reducible,
+	const char *description
 ) {
 	AR_FuncDesc *desc = rm_calloc(1, sizeof(AR_FuncDesc));
 
@@ -37,6 +38,7 @@ AR_FuncDesc *AR_FuncDescNew
 	desc->internal                =  internal;
 	desc->aggregate               =  false;
 	desc->reducible               =  reducible;
+	desc->description             =  description;
 
 	return desc;
 }

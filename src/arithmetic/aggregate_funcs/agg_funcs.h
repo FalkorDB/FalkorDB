@@ -24,7 +24,8 @@ AR_FuncDesc *AR_AggFuncDescNew
 	SIType ret_type,                    // return type
 	AR_Func_Free free,                  // free aggregation callback
 	AR_Func_Finalize finalize,          // finalize aggregation callback
-	AR_Func_PrivateData private_data    // generate private data
+	AR_Func_PrivateData private_data,   // generate private data
+	const char *description             // function description
 );
 
 // register all aggregation funcitons

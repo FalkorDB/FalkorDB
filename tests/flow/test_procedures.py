@@ -371,6 +371,23 @@ class testProcedures(FlowTestsBase):
                            ["READ",  "db.labels"],
                            ["READ",  "db.propertyKeys"],
                            ["READ",  "db.relationshipTypes"],
+                           ["READ",  "dbms.functions"],
                            ["READ",  "dbms.procedures"]]
         self.env.assertEquals(actual_resultset, expected_result)
 
+    def test13_functions(self):
+        # Yield results of procedure in a non-default sequence
+        actual_resultset = self.graph.query("CALL dbms.functions() YIELD name RETURN name ORDER BY name").result_set
+        actual_len = len(actual_resultset)
+        self.env.assertEquals(actual_len, 95)
+
+    def test14_procedure_get_all_functions(self):
+        actual_resultset = self.graph.query("CALL dbms.functions() YIELD name, signature, description, return_type, arguments_type RETURN name, signature, description, return_type, arguments_type ORDER BY name").result_set
+        actual_len = len(actual_resultset)
+        self.env.assertEquals(actual_len, 95)
+    
+        expected_first_result = ['abs', 'abs: Integer|Float -> Integer|Float', 'Returns the absolute value of a numeric value\nReturns null when expr evaluates to null\n\nParameters:\n- expr: Numeric expression\n\nReturns the absolute value', 'List|Null', ['Integer|Float']]
+        expected_second_result = ['acos', 'acos: Integer|Float -> Float|Null', 'Returns the arccosine, in radians, of a numeric value\nReturns nan when expr evaluates to a numeric value not in [-1, 1] and null when expr evaluates to null', 'List|Null', ['Integer|Float']]
+
+        self.env.assertEquals(actual_resultset[0], expected_first_result)   
+        self.env.assertEquals(actual_resultset[1], expected_second_result)          

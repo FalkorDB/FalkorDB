@@ -747,32 +747,32 @@ void Register_StringFuncs() {
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, T_INT64 | T_NULL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("left", AR_LEFT, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("left", AR_LEFT, 2, 2, types, ret_type, false, true, "Returns a string containing the len leftmost characters of str\nreturns null when str evaluates to null, otherwise emit an error if len evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("ltrim", AR_LTRIM, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("ltrim", AR_LTRIM, 1, 1, types, ret_type, false, true, "Returns str with leading whitespace removed\nReturns null when str evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, T_INT64 | T_NULL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("right", AR_RIGHT, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("right", AR_RIGHT, 2, 2, types, ret_type, false, true, "Returns a string containing the len rightmost characters of str\nreturns null when str evaluates to null, otherwise emit an error if len evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("rtrim", AR_RTRIM, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("rtrim", AR_RTRIM, 1, 1, types, ret_type, false, true, "Returns str with trailing whitespace removed\nReturns null when str evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (T_STRING | T_ARRAY | T_NULL));
 	ret_type = T_STRING | T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("reverse", AR_REVERSE, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("reverse", AR_REVERSE, 1, 1, types, ret_type, false, true, "Returns a string in which the order of all characters in str are reversed\nReturns null when str evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
@@ -780,21 +780,21 @@ void Register_StringFuncs() {
 	array_append(types, T_INT64);
 	array_append(types, T_INT64);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("substring", AR_SUBSTRING, 2, 3, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("substring", AR_SUBSTRING, 2, 3, types, ret_type, false, true, "Returns a substring of the original string, beginning with a 0-based index start and length\nIf length is omitted, the function returns the substring starting at the position given by start and extending to the end of original\nIf either start or length is null or a negative integer, an error is raised\nIf start is 0, the substring will start at the beginning of original\nIf length is 0, the empty string will be returned");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_ARRAY | T_NULL));
 	array_append(types, T_STRING);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("string.join", AR_JOIN, 1, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("string.join", AR_JOIN, 1, 2, types, ret_type, false, true, "Returns a concatenation of a list of strings using a given delimiter\nReturns null when strList evaluates to null\nReturns null when delimiter, if specified, evaluates to null\nEmit an error when strList does not evaluate to a list or to null\nEmit an error when an element of strList does not evaluate to a string\nEmit an error when delimiter, if specified, does not evaluate to a string or to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("string.matchRegEx", AR_MATCHREGEX, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("string.matchRegEx", AR_MATCHREGEX, 2, 2, types, ret_type, false, true, "Given a string and a regular expression, returns a list of all matches and matching regions\nReturns an empty list when str evaluates to null\nReturns an empty list when regex evaluates to null\nEmit an error when str does not evaluate to a string or to null\nEmit an error when regex does not evaluate to a valid regex string or to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
@@ -802,69 +802,69 @@ void Register_StringFuncs() {
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("string.replaceRegEx", AR_REPLACEREGEX, 2, 3, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("string.replaceRegEx", AR_REPLACEREGEX, 2, 3, types, ret_type, false, true, "Given a string and a regular expression, returns a string after replacing each regex match with a given replacement\nReturns null when str evaluates to null\nReturns null when regex evaluates to null\nReturns null when replacement evaluates to null\nEmit an error when str does not evaluate to a string or to null\nEmit an error when regex does not evaluate to a valid regex string or to null\nEmit an error when replacement does not evaluate to a string or to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tolower", AR_TOLOWER, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tolower", AR_TOLOWER, 1, 1, types, ret_type, false, true, "Returns str in lowercase\nReturns null when str evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("toupper", AR_TOUPPER, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("toupper", AR_TOUPPER, 1, 1, types, ret_type, false, true, "Returns str in uppercase\nReturns null when str evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, STRINGABLE | T_NULL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tostring", AR_TOSTRING, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tostring", AR_TOSTRING, 1, 1, types, ret_type, false, true, "Returns a string when expr evaluates to a string\nConverts an integer, float, Boolean, string, or point to a string representation\nReturns null when expr evaluates to null\nEmit an error on other types");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tostringornull", AR_TOSTRING, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tostringornull", AR_TOSTRING, 1, 1, types, ret_type, false, true, "Returns a string when expr evaluates to a string\nConverts an integer, float, Boolean, string, or point to a string representation\nReturns null when expr evaluates to null\nReturns null for other types");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, SI_ALL);
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("tojson", AR_TOJSON, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("tojson", AR_TOJSON, 1, 1, types, ret_type, false, true, "Returns a JSON representation of a value\nReturns null when expr evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 1);
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("trim", AR_TRIM, 1, 1, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("trim", AR_TRIM, 1, 1, types, ret_type, false, true, "Returns str with leading and trailing whitespace removed\nReturns null when str evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("contains", AR_CONTAINS, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("contains", AR_CONTAINS, 2, 2, types, ret_type, true, true, "returns true if str2 is a substring of str");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("starts with", AR_STARTSWITH, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("starts with", AR_STARTSWITH, 2, 2, types, ret_type, true, true, "returns true if str1 starts with str2");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_BOOL | T_NULL;
-	func_desc = AR_FuncDescNew("ends with", AR_ENDSWITH, 2, 2, types, ret_type, true, true);
+	func_desc = AR_FuncDescNew("ends with", AR_ENDSWITH, 2, 2, types, ret_type, true, true, "returns true if str1 ends with str2");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 0);
 	ret_type = T_STRING;
-	func_desc = AR_FuncDescNew("randomuuid", AR_RANDOMUUID, 0, 0, types, ret_type, false, false);
+	func_desc = AR_FuncDescNew("randomuuid", AR_RANDOMUUID, 0, 0, types, ret_type, false, false, "Returns a random UUID (Universal Unique IDentifier)");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 3);
@@ -872,13 +872,13 @@ void Register_StringFuncs() {
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_STRING | T_NULL;
-	func_desc = AR_FuncDescNew("replace", AR_REPLACE, 3, 3, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("replace", AR_REPLACE, 3, 3, types, ret_type, false, true, "Returns str with all occurrences of search replaced with replace\nReturns null when any argument evaluates to null");
 	AR_RegFunc(func_desc);
 
 	types = array_new(SIType, 2);
 	array_append(types, (T_STRING | T_NULL));
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
-	func_desc = AR_FuncDescNew("split", AR_SPLIT, 2, 2, types, ret_type, false, true);
+	func_desc = AR_FuncDescNew("split", AR_SPLIT, 2, 2, types, ret_type, false, true, "Returns a list of strings from splitting str by delimiter\nReturns null when any argument evaluates to null");
 	AR_RegFunc(func_desc);
 }

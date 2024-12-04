@@ -163,8 +163,13 @@ bool SIValue_IsTrue(SIValue v);
 const char *SIType_ToString(SIType t);
 
 // Prints all individual types represented by 't', multiple types are separated by comma,
-// to a given buffer with length (bufferLen)
+// to a given buffer with length (bufferLen) last representation is preceeding by 'or' when more than 1 type
 void SIType_ToMultipleTypeString(SIType t, char *buf, size_t bufferLen);
+
+// Prints all individual types represented by 't', multiple types are separated by seperator,
+// to a given buffer with length (bufferLen), do not treat the last type differently
+// Return the number of bytes written in this call
+size_t SIType_ToMultipleTypeStringSimple(SIType t, char seperator, char *buf, size_t bufferLen);
 
 // Prints an SIValue to a given buffer, with length (bufferLen), sets bytesWritten to the actual length
 // of string representation
