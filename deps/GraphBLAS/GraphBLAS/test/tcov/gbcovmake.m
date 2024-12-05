@@ -86,14 +86,13 @@ else
     libraries = '-L../../../../../../build -L. -L/usr/local/lib -lgraphblas' ;
 end
 
-
 if (~ismac && isunix)
     flags = [ flags   ' CFLAGS="$CXXFLAGS -fopenmp -fPIC -Wno-pragmas" '] ;
     flags = [ flags ' CXXFLAGS="$CXXFLAGS -fopenmp -fPIC -Wno-pragmas" '] ;
     flags = [ flags  ' LDFLAGS="$LDFLAGS  -fopenmp -fPIC" '] ;
 end
 
-inc = [ inc '-I. -I../util -I../../../../../../Include -I../../../../../../Source -I../../../../../../Source/Template -I../../../../../../cpu_features/include ' ] ;
+inc = [ inc '-I. -I../util -I../../../../../../Include -I../../../../../../Source -I../../../../../../Source/include -I../../../../../../cpu_features/include ' ] ;
 
 cd tmp/@GrB/private
 try

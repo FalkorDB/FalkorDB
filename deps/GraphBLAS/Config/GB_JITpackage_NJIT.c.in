@@ -1,0 +1,29 @@
+//------------------------------------------------------------------------------
+// GB_JITpackage.c: packaged GraphBLAS source code for the JIT (empty case)
+//------------------------------------------------------------------------------
+
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+//------------------------------------------------------------------------------
+
+#include "GB_JITpackage.h"
+
+// The JIT is disabled; GraphBLAS was compiled with GRAPHBLAS_USE_JIT=OFF.
+// PreJIT kernels may still be used, but no JIT kernels can be compiled or
+// loaded at run time.  In this case, GrB_init will not copy the GraphBLAS
+// source files from this set of files into the ~/.SuiteSparse/GrBX.Y.Z/src
+// folder anyway, so there is no need to build the JITpackage.
+
+int GB_JIT_package_nfiles_get (void)
+{
+    return (0) ;
+}
+
+static GB_JITpackage_index_struct GB_JITpackage_index [1] =
+    {{0, 0, NULL, NULL}} ;
+
+void * GB_JITpackage_index_get (void)
+{
+    return ((void *) GB_JITpackage_index) ;
+}

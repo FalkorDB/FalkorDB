@@ -76,17 +76,23 @@ if ( TARGET grb_jitpackage )
     file ( GLOB GRB_SOURCE_FILES
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         "../Include/GraphBLAS.h"
-        "../Source/Template/*.[ch]"
-        "../Source/JitKernels/*.[ch]"
-        "../CUDA/Template/*"
-        "../CUDA/JitKernels/*"
-        "../Source/Shared/*.h" )
+        "../CUDA/template/*"
+        "../CUDA/include/*"
+        "../Source/*/template/*"
+        "../Source/*/include/*"
+        "../Source/include/*" )
+
+    # write list of source files for generator to file
+    file ( WRITE ${PROJECT_BINARY_DIR}/grb_source_file_list "" )
+    foreach ( src_file ${GRB_SOURCE_FILES} )
+        file ( APPEND ${PROJECT_BINARY_DIR}/grb_source_file_list ${src_file}\n )
+    endforeach ( )
 
     add_custom_command ( OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/GB_JITpackage.c
         COMMAND $<TARGET_FILE:grb_jitpackage>
-        ARGS ${GRB_SOURCE_FILES}
+        ARGS @${PROJECT_BINARY_DIR}/grb_source_file_list
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS ${GRB_SOURCE_FILES}
+        DEPENDS ${GRB_SOURCE_FILES} ${PROJECT_BINARY_DIR}/grb_source_file_list
         COMMENT "Generating compressed sources for JIT compiler..." )
 
     # target to make sure the file exists when building libgraphblas

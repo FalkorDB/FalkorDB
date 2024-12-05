@@ -12,10 +12,6 @@
 // scaling up the 1-byte and 2-byte cases to 4-bytes.
 
 #include "GB_cuda.hpp"
-extern "C"
-{
-    #include "GB_binop.h"
-}
 
 void GB_cuda_upscale_identity
 (

@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_dense_phase1.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_dense_phase1.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -46,7 +46,7 @@ __global__ void GB_cuda_AxB_dot3_dense_phase1_kernel
 
     int64_t *__restrict__ Ci = C->i ;   // for zombies, or vector k
 
-    // Ci [p] for an entry C(i,j) contains either GB_FLIP(i) if C(i,j) is a
+    // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE(i) if C(i,j) is a
     // zombie, or k otherwise, where C(:,j) is the kth vector of C (j = Ch [k]
     // if hypersparse or j = k if standard sparse).
 
@@ -66,10 +66,10 @@ __global__ void GB_cuda_AxB_dot3_dense_phase1_kernel
 
         // This threadblock works on Mi/Mx and Ci/Cx, in positions pfirst to
         // pfirst + my_chunk_size - 1.
-        int64_t my_chunk_size, mnvec1 ;
+        int64_t my_chunk_size, mnvec1, kfirst, klast ;
         float slope ;
-        int64_t kfirst = GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst,
-            chunk_size, &my_chunk_size, &mnvec1, &slope) ;
+        GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst, chunk_size,
+            &kfirst, &klast, &my_chunk_size, &mnvec1, &slope) ;
 
         //----------------------------------------------------------------------
         // assign entries in C(i,j): either its vector k or its zombie status
@@ -94,7 +94,7 @@ __global__ void GB_cuda_AxB_dot3_dense_phase1_kernel
             {
                 bool mij = (bool) GB_MCAST (Mx, pM, ) ;
                 int64_t i = Mi [pM] ;
-                Ci [pM] = (!mij) * (GB_FLIP (i))
+                Ci [pM] = (!mij) * (GB_ZOMBIE (i))
                         +   mij  * (k) ;
             }
             #endif

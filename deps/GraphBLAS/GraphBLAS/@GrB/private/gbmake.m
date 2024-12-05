@@ -54,7 +54,7 @@ if ispc
     % First do the following in GraphBLAS/build, in the Windows console:
     %
     %   cmake ..
-    %   devenv graphblas.sln /build "release|x64" /project graphblas
+    %   cmake --build . --config Release
     %
     % The above commands require MS Visual Studio.  The graphblas.lib is
     % compiled and placed in GraphBLAS/build/Release.  Then in the
@@ -63,9 +63,9 @@ if ispc
     %   gbmake
     %
     if (need_rename)
-        library = sprintf ('%s/../../build/Release', pwd) ;
+        library_path = sprintf ('%s/../../build/Release', pwd) ;
     else
-        library = sprintf ('%s/../../../build/Release', pwd) ;
+        library_path = sprintf ('%s/../../../build/Release', pwd) ;
     end
 else
     % First do one the following in GraphBLAS (use JOBS=n for a parallel
@@ -82,9 +82,9 @@ else
     %   gbmake
     %
     if (need_rename)
-        library = sprintf ('%s/../../build', pwd) ;
+        library_path = sprintf ('%s/../../build', pwd) ;
     else
-        library = sprintf ('%s/../../../build', pwd) ;
+        library_path = sprintf ('%s/../../../build', pwd) ;
     end
 end
 
@@ -125,7 +125,7 @@ else
         rpath = '-rpath=' ;
     end
     if (ismac || isunix)
-        rpath = sprintf (' -Wl,%s''''%s'''' ', rpath, library) ;
+        rpath = sprintf (' -Wl,%s''''%s'''' ', rpath, library_path) ;
         flags = [ flags ' CFLAGS=''$CFLAGS ' cflags ' -Wno-pragmas'' '] ;
         flags = [ flags ' CXXFLAGS=''$CXXFLAGS ' cflags ' -Wno-pragmas'' '] ;
         flags = [ flags ' LDFLAGS=''$LDFLAGS ' ldflags rpath ' '' '] ;
@@ -140,7 +140,16 @@ else
     object_suffix = '.o' ;
 end
 
-inc = '-Iutil -I../../../Include -I../../../Source -I../../../Source/Shared -I../../../Source/Template -I../../../Source/Factories ' ;
+inc = '-Iutil -I../../../Include -I../../../Source ' ;
+    inc = [inc '-I../../../Source/include '] ;
+    inc = [inc '-I../../.. ' ] ;
+    inc = [inc '-I../../../Source/ij ' ] ;
+    inc = [inc '-I../../../Source/math ' ] ;
+    inc = [inc '-I../../../Source/cast ' ] ;
+    inc = [inc '-I../../../Source/binaryop ' ] ;
+    inc = [inc '-I../../../Source/transpose ' ] ;
+    inc = [inc '-I../../../Source/helper ' ] ;
+    inc = [inc '-I../../../Source/builtin ' ] ;
 
 if (need_rename)
     % use the renamed library for MATLAB
@@ -152,10 +161,32 @@ else
     libgraphblas = '-lgraphblas' ;
 end
 
-Lflags = sprintf ('-L''%s''', library) ;
+% determine if the compiler supports C99 or MSVC complex types
+try
+    % try C99 complex types
+    cflag = ' -DGxB_HAVE_COMPLEX_C99=1' ;
+    mexcmd = sprintf ('mex -silent %s %s complex/mex_complex.c', ...
+        flags, cflag) ;
+    eval (mexcmd) ;
+catch me
+    % try MSVC complex types
+    try
+        cflag = ' -DGxB_HAVE_COMPLEX_MSVC=1' ;
+        mexcmd = sprintf ('mex -silent %s %s complex/mex_complex.c', ...
+            flags, cflag) ;
+        eval (mexcmd) ;
+    catch me
+        error ('C99 or MSVC complex support required') ;
+    end
+end
+flags = [flags cflag] ;
+mex_complex
+
+Lflags = sprintf ('-L''%s''', library_path) ;
 
 fprintf ('compiler flags: %s\n', flags) ;
 fprintf ('compiler incs:  %s\n', inc) ;
+fprintf ('linking flags:  %s\n', Lflags) ;
 fprintf ('library:        %s\n', libgraphblas) ;
 
 hfiles = [ dir('*.h') ; dir('util/*.h') ] ;
