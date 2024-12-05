@@ -1,6 +1,6 @@
 # GraphBLAS/GraphBLAS: MATLAB/Octave interface for SuiteSparse:GraphBLAS
 
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 The @GrB class provides an easy-to-use interface to SuiteSparse:GraphBLAS.
@@ -8,41 +8,13 @@ The @GrB class provides an easy-to-use interface to SuiteSparse:GraphBLAS.
 To install it for use in MATLAB/Octave, first compile the GraphBLAS library,
 -lgraphblas (for Octave) or -lgraphblas_matlab (for MATLAB).  See the
 instructions in the top-level GraphBLAS folder for details.  Be sure to use
-OpenMP for best performance.  The default installation process places the
-GraphBLAS library in /usr/local/lib.  If you do not have root access and cannot
-install GraphBLAS into /usr/local/lib, then follow the instructions below to
-modify your library path, but instead of /usr/local/lib, use
-/home/me/SuiteSparse/GraphBLAS/build, where "/home/me/SuiteSparse/GraphBLAS" is
-where you placed your copy of GraphBLAS.
+OpenMP for best performance.
 
 MATLAB (not Octave) the gbmake script will link against the library
 -lgraphblas_matlab, not -lgraphblas, because that version of MATLAB includes
 its own version of SuiteSparse:GraphBLAS (v3.3.3, an earlier one).  To avoid a
 name conflict, you must compile the -lgraphblas_matlab library in
 /home/me/SuiteSparse/GraphBLAS/GraphBLAS/build.
-
-MATLAB/Octave needs to know where to find the compiled GraphBLAS library.  On
-Linux/Unix, if you are using the bash or korn shells, make sure that add the
-following to your login profile (typically .bash_profile for bash, or .profile
-for korn):
-
-    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib
-    export LD_LIBRARY_PATH
-
-On Linux/Unix with the csh, tcsh or related shells, use:
-
-    setenv PATH $PATH\:/usr/local/lib
-
-On the Mac, use the following:
-
-    DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH:/usr/local/lib
-    export DYLD_LIBRARY_PATH
-
-If you don't have system priveledges to change /usr/local/lib, then add the
-build folder to your LD_LIBRARY_PATH instead, either.  For Octave, use
-/home/me/SuiteSparse/GraphBLAS/build for libgraphblas.so,
-For MATLAB, use: /home/me/SuiteSparse/GraphBLAS/GraphBLAS/build for
-libgraphblas_matlab.so.
 
 On Windows 10, on the Search bar type env and hit enter; (or you can
 right-click My Computer or This PC and select Properties, and then select

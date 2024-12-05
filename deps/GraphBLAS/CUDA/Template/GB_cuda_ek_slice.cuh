@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/Template/GB_cuda_ek_slice.cuh
+// GraphBLAS/CUDA/template/GB_cuda_ek_slice.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -53,11 +53,20 @@
 // Otherwise, the set of k values can be computed in a shared array ks, using
 // the single method GB_cuda_ek_slice.
 
+// FIXME: discuss grid-stride loops, the pdelta loop, and the max chunk size
+// here
+
+// question: why chunks are necessary? why not just do ek_slice_setup across
+// all entries in one go?  answer: the slope method is only useful for a small
+// range of entries; non-uniform entry distributions can distort the usefulness
+// of the slope (will require an exhaustive linear search) for a large range of
+// entries
+
 //------------------------------------------------------------------------------
 // GB_cuda_ek_slice_setup
 //------------------------------------------------------------------------------
 
-static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
+static __device__ __inline__ void GB_cuda_ek_slice_setup
 (
     // inputs, not modified:
     const int64_t *Ap,          // array of size anvec+1
@@ -66,6 +75,8 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
     const int64_t pfirst,       // first entry in A to find k
     const int64_t max_pchunk,   // max # of entries in A to find k
     // output:
+    int64_t *kfirst,            // first vector of the slice for this chunk
+    int64_t *klast,             // last vector of the slice for this chunk
     int64_t *my_chunk_size,     // size of the chunk for this threadblock
     int64_t *anvec1,            // anvec-1
     float *slope                // slope of vectors from kfirst to klast
@@ -94,17 +105,17 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
     // the vector that owns the entry Ai [pfirst] and Ax [pfirst].  The search
     // does not need to be exact, so kfirst is an estimate.
 
-    int64_t kfirst = 0 ;
+    (*kfirst) = 0 ;
     int64_t kright = anvec ;
-    GB_TRIM_BINARY_SEARCH (pfirst, Ap, kfirst, kright) ;
+    GB_TRIM_BINARY_SEARCH (pfirst, Ap, (*kfirst), kright) ;
 
     // find klast, the last vector of the slice for this chunk.  klast is the
     // vector that owns the entry Ai [plast-1] and Ax [plast-1].  The search
     // does not have to be exact, so klast is an estimate.
 
-    int64_t klast = kfirst ;
+    (*klast) = (*kfirst) ;
     kright = anvec ;
-    GB_TRIM_BINARY_SEARCH (plast, Ap, klast, kright) ;
+    GB_TRIM_BINARY_SEARCH (plast, Ap, (*klast), kright) ;
 
     //--------------------------------------------------------------------------
     // find slope of vectors in this chunk, and return result
@@ -112,14 +123,12 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_setup
 
     // number of vectors in A for this chunk, where
     // Ap [kfirst:klast-1] will be searched.
-    int64_t nk = klast - kfirst + 1 ;
+    int64_t nk = (*klast) - (*kfirst) + 1 ;
 
     // slope is the estimated # of vectors in this chunk, divided by the
     // chunk size.
     (*slope) = ((float) nk) / ((float) (*my_chunk_size)) ;
-
     (*anvec1) = anvec - 1 ;
-    return (kfirst) ;
 }
 
 //------------------------------------------------------------------------------
@@ -207,10 +216,10 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
     // determine the chunk for this threadblock and its slope
     //--------------------------------------------------------------------------
 
-    int64_t my_chunk_size, anvec1 ;
+    int64_t my_chunk_size, anvec1, kfirst, klast ;
     float slope ;
-    int64_t kfirst = GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst,
-        max_pchunk, &my_chunk_size, &anvec1, &slope) ;
+    GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst, max_pchunk,
+        &kfirst, &klast, &my_chunk_size, &anvec1, &slope) ;
 
     //--------------------------------------------------------------------------
     // find the kth vector that contains each entry p = pfirst:plast-1

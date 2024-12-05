@@ -76,13 +76,11 @@ GrB_Info GB_cuda_reduce_to_scalar
     int gridsz = (int) raw_gridsz ;
 
     // FIXME: GB_enumify_reduce is called twice: here (to get has_cheeseburger)
-    // and in GB_cuda_reduce_to_scalar_jit.  Can we just call it once?  One
-    // solution: The code from here to the call to GB_cuda_reduce_to_scalar_jit
-    // could be added to the GB_cuda_reduce_to_scalar_jit function itself.
+    // and in GB_cuda_reduce_to_scalar_jit.  Can we just call it once?
 
     uint64_t rcode ;
     GB_enumify_reduce (&rcode, monoid, A) ;
-    bool has_cheeseburger = GB_RSHIFT (rcode, 27, 1) ;
+    bool has_cheeseburger = GB_RSHIFT (rcode, 16, 1) ;
     GBURBLE ("has_cheeseburger %d\n", has_cheeseburger) ;
 
     // determine the kind of reduction: partial (to &V), or complete

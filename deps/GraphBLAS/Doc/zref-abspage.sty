@@ -1,0 +1,66 @@
+%%
+%% This is file `zref-abspage.sty',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% zref.dtx  (with options: `abspage')
+%% 
+%% This is a generated file.
+%% 
+%% Project: zref
+%% Version: 2016/05/21 v2.26
+%% 
+%% Copyright (C) 2006-2012 by
+%%    Heiko Oberdiek <heiko.oberdiek at googlemail.com>
+%% 
+%% This work may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either
+%% version 1.3c of this license or (at your option) any later
+%% version. This version of this license is in
+%%    http://www.latex-project.org/lppl/lppl-1-3c.txt
+%% and the latest version of this license is in
+%%    http://www.latex-project.org/lppl.txt
+%% and version 1.3 or later is part of all distributions of
+%% LaTeX version 2005/12/01 or later.
+%% 
+%% This work has the LPPL maintenance status "maintained".
+%% 
+%% This Current Maintainer of this work is Heiko Oberdiek.
+%% 
+%% This work consists of the main source file zref.dtx
+%% and the derived files
+%%    zref.sty, zref.pdf, zref.ins, zref.drv, zref-base.sty,
+%%    zref-abspage.sty, zref-abspos.sty, zref-counter.sty,
+%%    zref-dotfill.sty, zref-env.sty, zref-hyperref.sty,
+%%    zref-lastpage.sty, zref-marks.sty, zref-nextpage.sty,
+%%    zref-pageattr.sty, zref-pagelayout.sty, zref-perpage.sty,
+%%    zref-runs.sty, zref-savepos.sty, zref-thepage.sty,
+%%    zref-titleref.sty, zref-totpages.sty, zref-user.sty,
+%%    zref-xr.sty, zref-example.tex, zref-example-lastpage.tex,
+%%    zref-example-nextpage.tex, zref-test1.tex,
+%%    zref-test-base.tex, zref-test-runs.tex,
+%%    zref-test-titleref-memoir.tex.
+%% 
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{zref-abspage}%
+  [2016/05/21 v2.26 Module abspage for zref (HO)]%
+\RequirePackage{zref-base}[2016/05/21]
+\ifx\ZREF@base@ok Y%
+\else
+  \expandafter\endinput
+\fi
+\RequirePackage{atbegshi}[2011/10/05]%
+\begingroup
+  \let\@addtoreset\ltx@gobbletwo
+  \newcounter{abspage}%
+\endgroup
+\setcounter{abspage}{0}%
+\AtBeginShipout{%
+  \stepcounter{abspage}%
+}%
+\zref@newprop*{abspage}[0]{\the\c@abspage}%
+\zref@addprop\ZREF@mainlist{abspage}%
+\endinput
+%%
+%% End of file `zref-abspage.sty'.

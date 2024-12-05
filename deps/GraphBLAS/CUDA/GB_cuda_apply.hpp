@@ -6,8 +6,8 @@
 
 //------------------------------------------------------------------------------
 
-#ifndef GB_CUDA_EWISE_H
-#define GB_CUDA_EWISE_H
+#ifndef GB_CUDA_APPLY_H
+#define GB_CUDA_APPLY_H
 
 #include "GB_cuda.hpp"
 

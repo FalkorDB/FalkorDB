@@ -2,7 +2,7 @@
 // GB_mex_rdiv: compute C=A*B with the rdiv operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -56,6 +56,7 @@ GrB_BinaryOp My_rdiv = NULL ;
 "{\n"                                                           \
 "    // escape this quote: \"\n"                                \
 "    /* escape this backslash \\ */\n"                          \
+"    /* revised for GrB 9.4.1 */\n"                             \
 "    (*z) = (*y) / (*x) ;\n"                                    \
 "}"
 

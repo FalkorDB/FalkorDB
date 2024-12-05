@@ -1,7 +1,7 @@
 function test135
 %TEST135 reduce-to-scalar, built-in monoids with terminal values
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test135: reduce to scalar\n') ;
@@ -14,34 +14,63 @@ n = 10e6 ;
 nthreads_max = feature_numcores
 
 %-------------------------------------------------------------------------------
+
+fprintf ('================== int32 min:\n') ;
+
+    X = rand (n,1) ;
+    X = (double (int32 (inf)) * X) - double (int32 (inf) / 2) ;
+    X = int32 (X) ;
+    X (n/2) = int32 (-inf) ;
+    s = int32 (inf) ;
+    tic
+    c0 = min (X) ;
+    tm = toc ;
+    fprintf ('built-in: %g sec\n', tm) ;
+    A.matrix = sparse (double (X)) ;
+    A.pattern = logical (spones (X)) ;
+    A.class = 'int32' ;
+    nthreads_set (1,1) ;
+    tic
+    c1 = GB_mex_reduce_to_scalar (s, [ ], 'min', A) ;
+    t1 = toc ;
+    assert (c1 == c0) ;
+    fprintf ('1 thread  %g sec\n', t1) ;
+    for nth = 2:64
+        nthreads_set (nth,1) ;
+        tic
+        c2 = GB_mex_reduce_to_scalar (s, [ ], 'min', A) ;
+        t2 = toc ;
+        assert (c2 == c0) ;
+        % fprintf ('%d threads %g sec\n', nth, t2) ;
+    end
+
+%-------------------------------------------------------------------------------
+
 fprintf ('================== int8 min:\n') ;
 
-X = rand (n,1) ;
-X = (256 * X) - 128 ;
-X = int8 (X) ;
-s = int8 (inf) ;
-tic
-c0 = min (X) ;
-tm = toc ;
-fprintf ('built-in: %g sec\n', tm) ;
-
-A.matrix = sparse (double (X)) ;
-A.pattern = logical (spones (X)) ;
-A.class = 'int8' ;
-
-nthreads_set (1,1) ;
-tic
-c1 = GB_mex_reduce_to_scalar (s, [ ], 'min', A) ;
-t1 = toc ;
-assert (c1 == c0) ;
-fprintf ('1 thread  %g sec\n', t1) ;
-
-nthreads_set (nthreads_max,1) ;
-tic
-c2 = GB_mex_reduce_to_scalar (s, [ ], 'min', A) ;
-t2 = toc ;
-assert (c2 == c0) ;
-fprintf ('%d threads %g sec\n', nthreads_max, t2) ;
+    X = rand (n,1) ;
+    X = (256 * X) - 128 ;
+    X = int8 (X) ;
+    s = int8 (inf) ;
+    tic
+    c0 = min (X) ;
+    tm = toc ;
+    fprintf ('built-in: %g sec\n', tm) ;
+    A.matrix = sparse (double (X)) ;
+    A.pattern = logical (spones (X)) ;
+    A.class = 'int8' ;
+    nthreads_set (1,1) ;
+    tic
+    c1 = GB_mex_reduce_to_scalar (s, [ ], 'min', A) ;
+    t1 = toc ;
+    assert (c1 == c0) ;
+    fprintf ('1 thread  %g sec\n', t1) ;
+    nthreads_set (nthreads_max,1) ;
+    tic
+    c2 = GB_mex_reduce_to_scalar (s, [ ], 'min', A) ;
+    t2 = toc ;
+    assert (c2 == c0) ;
+    fprintf ('%d threads %g sec\n', nthreads_max, t2) ;
 
 %-------------------------------------------------------------------------------
 fprintf ('================== double min:\n') ;

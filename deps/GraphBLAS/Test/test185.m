@@ -1,4 +1,4 @@
-function test185
+function test185(tasks)
 %TEST185 test dot4 for all sparsity formats
 % GB_AxB_dot4 computes C+=A'*B when C is dense.
 
@@ -7,8 +7,26 @@ function test185
 
 fprintf ('test185 -------------------- C+=A''*B when C is dense\n') ;
 
+if (nargin < 1)
+    tasks = [ ] ;
+end
+
+if (isempty (tasks))
+    tasks = {
+    {1, 3, 1, 1}, ... % (  3,   3)
+    {3, 1, 1, 1}, ... % (  3,   6)
+    } ;
+end
+
+track_coverage = false ;
+if (track_coverage)
+    global GraphBLAS_grbcov
+    track_coverage = ~isempty (GraphBLAS_grbcov) ;
+    clast = sum (GraphBLAS_grbcov > 0) ;
+    cfirst = clast ;
+end
+
 rng ('default') ;
-GB_mex_burble (0) ;
 
 semiring.add = 'plus' ;
 semiring.multiply = 'times' ;
@@ -30,16 +48,38 @@ maxerr = 0 ;
 
 M = sparse (rand (n, n) > 0.5) ;
 
-for da = [0.01 0.1 .5 0.9 inf]
+densities = [0.01 0.1 .5 0.9 inf] ;
+
+% create the test matrices
+for ka = 1:length(densities)
+    da = densities (ka) ;
     A = GB_spec_random (n, n, da, 1, 'double') ;
-
-    for db = [0.01 0.1 .5 0.9 inf]
+    AA {ka} = A ;
+    for kb = 1:length(densities)
+        db = densities (kb) ;
         B = GB_spec_random (n, n, db, 1, 'double') ;
+        BB {ka,kb} = B ;
+    end
+end
 
-        for A_sparsity = [1 2 4 8]
-            fprintf ('.') ;
+% run the tests
+for kk = 1:length(tasks)
+    task = tasks {kk} ;
+    ka = task {1} ;
+    kb = task {2} ;
+    A_sparsity = task {3} ;
+    B_sparsity = task {4} ;
 
-            for B_sparsity = [1 2 4 8]
+% end
+% for ka = 1:length(densities)
+    A = AA {ka} ;
+%   for kb = 1:length(densities)
+        B = BB {ka,kb} ;
+
+%       for A_sparsity = [1 2 4 8]
+            % fprintf ('.') ;
+
+%           for B_sparsity = [1 2 4 8]
                 A.sparsity = A_sparsity ;
                 B.sparsity = B_sparsity ;
 
@@ -87,13 +127,26 @@ for da = [0.01 0.1 .5 0.9 inf]
                 err = norm (C3 - C2.matrix, 1) ;
                 maxerr = max (maxerr, err) ;
                 assert (err < 1e-12) ;
+
+            if (track_coverage)
+                c = sum (GraphBLAS_grbcov > 0) ;
+                d = c - clast ;
+                if (d > 0)
+                    fprintf ('    {%d, %d, %d, %d},', ...
+                        ka, kb, A_sparsity, B_sparsity) ;
+                    fprintf (' ... %% (%3d, %3d)\n', d, c-cfirst) ;
+                end
+                clast = c ;
+            else
+                fprintf ('.') ;
             end
-        end
-    end
+
+%           end
+%       end
+%   end
 end
 
 fprintf ('\n') ;
-GB_mex_burble (0) ;
 fprintf ('maxerr: %g\n', maxerr) ;
 fprintf ('test185: all tests passed\n') ;
 

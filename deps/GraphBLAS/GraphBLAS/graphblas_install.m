@@ -94,19 +94,10 @@ try
     cmd1 = sprintf ('cmake %s ..', cmake_options) ;
 
     % build the GraphBLAS library
-    if (ispc)
-        if (need_rename)
-            library = 'graphblas_matlab' ;
-        else
-            library = 'graphblas' ;
-        end
-        cmd2 = sprintf ('devenv %s.sln /build "release|x64" /project %s', ...
-            library, library) ;
-    else
-        cmd2 = sprintf ('cmake --build . --config Release -j%d', threads) ;
-    end
+    cmd2 = sprintf ('cmake --build . --config Release -j%d', threads) ;
 
     % execute cmd1: configure with cmake
+    clear mex
     fprintf ('\n================================\n%s\n', cmd1) ;
     [status, result] = system (cmd1, '-echo') ;
     if (status ~= 0)

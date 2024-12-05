@@ -98,6 +98,7 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
     //--------------------------------------------------------------------------
 
     bool A_iso = false ;
+    bool A_no_hyper_hash = false ;
     const mxArray *Amatrix = NULL ;
     GrB_Type atype_in, atype_out ;
     GB_Type_code atype_in_code, atype_out_code ;
@@ -154,6 +155,21 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
             else
             {
                 A_iso = (mxGetScalar (s) != 0) ;
+            }
+        }
+
+        // get the no_hyper_hash property (false if not present)
+        fieldnumber = mxGetFieldNumber (A_builtin, "no_hyper_hash") ;
+        if (fieldnumber >= 0)
+        {
+            mxArray *s = mxGetFieldByNumber (A_builtin, 0, fieldnumber) ;
+            if (mxIsLogicalScalar (s))
+            {
+                A_no_hyper_hash = mxIsLogicalScalarTrue (s) ;
+            }
+            else
+            {
+                A_no_hyper_hash = (mxGetScalar (s) != 0) ;
             }
         }
 
@@ -385,14 +401,17 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
         {
             // create a shallow cnz-by-1 matrix T to wrap the array MatlabX
             T = NULL ;
-            GrB_Type ttype = (atype_in_code == GB_UDT_code) ? GxB_FC64 : atype_in ;
+            GrB_Type ttype = (atype_in_code == GB_UDT_code) ?
+                GxB_FC64 : atype_in ;
             void *Tx = MatlabX ;
             GrB_Index nrows = anz, ncols = 1, Tx_size = anz * asize ;
-            GxB_Matrix_import_FullC (&T, ttype, nrows, ncols, &Tx, Tx_size, false, NULL) ;
+            GxB_Matrix_import_FullC (&T, ttype, nrows, ncols, &Tx, Tx_size,
+                false, NULL) ;
             GB_cast_array (A->x, code1, T, 1) ;
             // GB_cast_array (A->x, code1, MatlabX, code2, NULL, anz, 1) ;
             bool iso ;
-            GxB_Matrix_export_FullC (&T, &ttype, &nrows, &ncols, &Tx, &Tx_size, &iso, NULL) ;
+            GxB_Matrix_export_FullC (&T, &ttype, &nrows, &ncols, &Tx,
+                &Tx_size, &iso, NULL) ;
         }
     }
 
@@ -437,6 +456,15 @@ GrB_Matrix GB_mx_mxArray_to_Matrix     // returns GraphBLAS version of A
 
     ASSERT_MATRIX_OK (A, "got natural A from built-in", GB0) ;
     ASSERT (A->h == NULL) ;
+
+    //--------------------------------------------------------------------------
+    // set A->no_hyper_hash
+    //--------------------------------------------------------------------------
+
+    if (A_no_hyper_hash)
+    {
+        A->no_hyper_hash = A_no_hyper_hash ;
+    }
 
     //--------------------------------------------------------------------------
     // look for CSR/CSC and hyper/non-hyper format

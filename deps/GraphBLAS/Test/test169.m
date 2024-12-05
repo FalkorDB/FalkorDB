@@ -19,6 +19,11 @@ for trial = 1:5
     A = GB_spec_random (n, n, 0.5, 1, 'double') ;
     B = GB_spec_random (n, n, 0.5, 1, 'double') ;
 
+    % test the no_hyper_hash cases
+    A.no_hyper_hash = true ;
+    C.no_hyper_hash = true ;
+    B.no_hyper_hash = true ;
+
     for C_sparsity = [1 2 4 8]
         C.sparsity = C_sparsity ;
 

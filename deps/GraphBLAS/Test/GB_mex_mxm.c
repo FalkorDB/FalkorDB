@@ -8,7 +8,6 @@
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
-#include "GB_stringify.h"
 
 #define USAGE "C = GB_mex_mxm (C, M, accum, semiring, A, B, desc, macrofy)"
 

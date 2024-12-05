@@ -1,35 +1,44 @@
 function test247
-%TEST247 test saxpy3 fine-hash method
+%TEST247 test GrB_mxm (for GB_AxB_saxpy3_fineHash_phase2.c)
+%
+% This tests the "if (hf == i_unlocked) // f == 2" case in the last block of
+% code in GB_AxB_saxpy3_fineHash_phase2.c.  The test is nondeterministic so
+% it the test coverage might vary, or even be zero.  See also test246.m.
+% It is thus run many times.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
 
-n = 1000000 ;
-A.matrix = sparse (n, n) ;
-B.matrix = sprand (n, 1, 0.01) ;
-A.matrix (1:100, 1:100) = sprand (100, 100, 0.4) ;
-S = sparse (n, 1) ;
+fprintf ('test247: testing of GB_AxB_saxpy3_fineHash_phase2.c\n') ;
 
-semiring.multiply = 'times' ;
-semiring.add = 'plus' ;
-semiring.class = 'double' ;
+for trial = 1:40
 
-[nth chk] = nthreads_get ;
+    n = 1000000 ;
+    A.matrix = sparse (n, n) ;
+    B.matrix = sprand (n, 1, 0.01) ;
+    A.matrix (1:100, 1:100) = sprand (100, 100, 0.4) ;
+    S = sparse (n, 1) ;
 
-desc.axb = 'hash' ;
-nthreads_set (16, 1) ;
-GB_mex_burble (1) ;
-C1 = GB_mex_mxm (S, [ ], [ ], semiring, A, B, desc) ;
-GB_mex_burble (0) ;
+    semiring.multiply = 'times' ;
+    semiring.add = 'plus' ;
+    semiring.class = 'double' ;
 
-C2 = A.matrix * B.matrix ;
-err = norm (C1.matrix - C2, 1) ;
-fprintf ('err: %g\n', err) ;
-assert (err < 1e-12) ;
+    [nth chk] = nthreads_get ;
 
-nthreads_set (nth, chk) ;
+    desc.axb = 'hash' ;
+    nthreads_set (16, 1) ;
+    C1 = GB_mex_mxm (S, [ ], [ ], semiring, A, B, desc) ;
+
+    C2 = A.matrix * B.matrix ;
+    err = norm (C1.matrix - C2, 1) ;
+    assert (err < 1e-12) ;
+
+    nthreads_set (nth, chk) ;
+
+    fprintf ('.') ;
+end
 
 fprintf ('\ntest247: all tests passed\n') ;
 

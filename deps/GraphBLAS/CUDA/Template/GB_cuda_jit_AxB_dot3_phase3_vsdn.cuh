@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase3_vsdn.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase3_vsdn.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -33,7 +33,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsdn_kernel
     GrB_Matrix C, 
     GrB_Matrix M, 
     GrB_Matrix A, 
-    GrB_Matrix B
+    GrB_Matrix B,
+    const void *theta
 )
 {
 
@@ -119,9 +120,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsdn_kernel
 
         int64_t pair_id = all_in_one ? kk : Bucket[ kk ];
         int64_t i = Mi [pair_id] ;
-
         int64_t k = Ci [pair_id] >> 4;  // vector of C encoded in phase1
-
+        // assert: Ci [pair_id] & 0xF == GB_BUCKET_VSDN
         // j = k or j = Mh [k] if C and M are hypersparse
         int64_t j = GBH_M (Mh, k) ;
 
@@ -263,13 +263,13 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsdn_kernel
         else
         {
             my_nzombies++ ;
-            Ci [pair_id] = GB_FLIP (i) ;
+            Ci [pair_id] = GB_ZOMBIE (i) ;
         }
 
         // sum up the zombie count:
         thread_block_tile<tile_sz> tile =
             tiled_partition<tile_sz> (this_thread_block ()) ;
-        zc += GB_cuda_warp_sum_uint64 (tile, my_nzombies) ;
+        zc += GB_cuda_tile_sum_uint64 (tile, my_nzombies) ;
     }
 
     if (threadIdx.x == 0 && zc > 0)

@@ -8,10 +8,10 @@
 #-------------------------------------------------------------------------------
 
 # version of SuiteSparse:GraphBLAS
-set ( GraphBLAS_DATE "May 22, 2024" )
+set ( GraphBLAS_DATE "Nov 18, 2024" )
 set ( GraphBLAS_VERSION_MAJOR 9 CACHE STRING "" FORCE )
-set ( GraphBLAS_VERSION_MINOR 2 CACHE STRING "" FORCE )
-set ( GraphBLAS_VERSION_SUB   0 CACHE STRING "" FORCE )
+set ( GraphBLAS_VERSION_MINOR 4 CACHE STRING "" FORCE )
+set ( GraphBLAS_VERSION_SUB   2 CACHE STRING "" FORCE )
 
 # GraphBLAS C API Specification version, at graphblas.org
 set ( GraphBLAS_API_DATE "Dec 22, 2023" )
@@ -27,3 +27,23 @@ message ( STATUS "GraphBLAS C API: v"
     ${GraphBLAS_API_VERSION_MAJOR}.${GraphBLAS_API_VERSION_MINOR}
     ", date: ${GraphBLAS_API_DATE}" )
 
+# Notes from Sebastien Villemot (sebastien@debian.org):
+# SOVERSION policy: if a binary compiled against the old version of the shared
+# library needs recompiling in order to work with the new version, then a
+# SO_VERSION increase # is needed. Otherwise not.  Examples of the changes that
+# require a SO_VERSION increase:
+#
+#   - a public function or static variable is removed
+#   - the prototype of a public function changes
+#   - the integer value attached to a public #define or enum changes
+#   - the fields of a public structure are modified
+#
+# Examples of changes that do not require a SO_VERSION increase:
+#
+#   - a new public function or static variable is added
+#   - a private function or static variable is removed or modified
+#   - changes in the internals of a structure that is opaque to the calling
+#       program (i.e. is only a pointer manipulated through public functions of
+#       the library)
+#   - a public enum is extended (by adding a new item at the end, but without
+#       changing the already existing items)

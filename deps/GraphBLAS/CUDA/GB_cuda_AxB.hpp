@@ -11,7 +11,6 @@
 #define GB_CUDA_AXB_H
 
 #include "GB_cuda.hpp"
-#include "GB_hash.h"
 
 GrB_Info GB_cuda_AxB_dot3_jit
 (

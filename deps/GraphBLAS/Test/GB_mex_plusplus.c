@@ -8,7 +8,6 @@
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
-#include "GB_stringify.h"
 
 #define USAGE "C = GB_mex_plusplus (C, M, accum, [ ], A, B, desc, macrofy)"
 

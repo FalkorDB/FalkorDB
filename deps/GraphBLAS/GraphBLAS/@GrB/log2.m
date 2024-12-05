@@ -18,7 +18,7 @@ G = G.opaque ;
 
 if (nargout == 1)
     % C = log2 (G)
-    F = GrB (gb_check_imag_zero (gb_trig ('log2', gbfull (G)))) ;
+    F = GrB (gb_make_real (gb_trig ('log2', gbfull (G)))) ;
 else
     % [F,E] = log2 (G)
     type = gbtype (G) ;

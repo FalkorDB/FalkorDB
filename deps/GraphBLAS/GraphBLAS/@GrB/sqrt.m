@@ -8,5 +8,5 @@ function C = sqrt (G)
 % SPDX-License-Identifier: Apache-2.0
 
 G = G.opaque ;
-C = GrB (gb_check_imag_zero (gb_trig ('sqrt', G))) ;
+C = GrB (gb_make_real (gb_trig ('sqrt', G))) ;
 

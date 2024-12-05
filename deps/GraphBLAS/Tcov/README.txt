@@ -1,4 +1,4 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 GraphBLAS/Tcov: statement coverage tests
@@ -41,7 +41,9 @@ Files in GraphBLAS/Tcov:
     Contents.m     for 'help Tcov'; list of files
 
     grbcov.m        makes the tests, runs them, and lists the test coverage
-    grbcover.m      compile GraphBLAS for statement coverage testing
+
+    grbmake.m       compile GraphBLAS for test coverage
+    grbcov_testmake.m   compile ../Tests/*.c for statement coverage testing
     grbcover_edit.m create a version of GraphBLAS for statement coverage tests
     testcov.m       run all GraphBLAS tests, with statement coverage
     grbshow.m       create a test coverage report in tmp_cover/

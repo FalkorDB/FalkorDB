@@ -850,7 +850,7 @@ void mexFunction
     bool scalar_is_full = GB_IS_FULL (a_scalar) ;
     if (!scalar_is_full)
     {
-        a_scalar->i [0] = GB_FLIP (0) ;
+        a_scalar->i [0] = GB_ZOMBIE (0) ;
         a_scalar->nzombies = 1 ;
     }
 
@@ -3999,7 +3999,7 @@ void mexFunction
 
     Werk->where = "GB_Monoid_check" ;
 
-    info = GB_Monoid_check (NULL, "null monoid", G3, ff) ;
+    info = GB_Monoid_check (NULL, "null monoid", G3, ff, false) ;
     CHECK (info == GrB_NULL_POINTER) ;
 
     CHECK (monoidb == NULL) ;
@@ -4007,26 +4007,29 @@ void mexFunction
     CHECK (monoidb != NULL) ;
 
     Werk->where = "GB_Monoid_check" ;
-    OK (GB_Monoid_check (monoidb, "monoidb ok", G3, ff)) ;
+    OK (GB_Monoid_check (monoidb, "monoidb ok", G3, ff, false)) ;
 
     expected = GrB_UNINITIALIZED_OBJECT ;
 
     monoidb->magic = GB_FREED ;
-    ERR (GB_Monoid_check (monoidb, "monoidb freed", G1, ff)) ;
+    ERR (GB_Monoid_check (monoidb, "monoidb freed", G1, ff, false)) ;
     monoidb->magic = GB_MAGIC ;
 
     expected = GrB_INVALID_OBJECT ;
 
     monoidb->op = NULL ;
-    ERR (GB_Monoid_check (monoidb, "monoidb invalid op", G1, ff)) ;
+    ERR (GB_Monoid_check (monoidb, "monoidb invalid op", G1, ff, false)) ;
     monoidb->op = GrB_TIMES_INT32 ;
 
     monoidb->op = GrB_EQ_INT32 ;
-    ERR (GB_Monoid_check (monoidb, "monoidb invalid op domains", G1, ff)) ;
+    ERR (GB_Monoid_check (monoidb, "monoidb invalid op domains", G1, ff,
+        false)) ;
     monoidb->op = GrB_TIMES_INT32 ;
 
-    OK (GB_Monoid_check (Complex_plus_monoid, "complex plus monoid", G3, ff)) ;
-    OK (GB_Monoid_check (Complex_times_monoid, "complex times monoid", G3, ff)) ;
+    OK (GB_Monoid_check (Complex_plus_monoid, "complex plus monoid", G3, ff,
+        false)) ;
+    OK (GB_Monoid_check (Complex_times_monoid, "complex times monoid", G3, ff,
+        false)) ;
 
     printf ("\nAll GB_Monoid_check tests passed (errors expected)\n") ;
 
@@ -4863,7 +4866,7 @@ void mexFunction
     ERR (GB_Type_check (Tcrud, "", G0, NULL)) ;
     ERR (GB_UnaryOp_check (op1crud, "", G0, NULL)) ;
     ERR (GB_BinaryOp_check (op2crud, "", G0, NULL)) ;
-    ERR (GB_Monoid_check (monoid_crud, "", G0, NULL)) ;
+    ERR (GB_Monoid_check (monoid_crud, "", G0, NULL, false)) ;
     ERR (GB_Semiring_check (semicrud, "", G0, NULL)) ;
     ERR (GB_Vector_check (vcrud, "", G0, NULL)) ;
     ERR (GB_Matrix_check (Acrud, "", G0, NULL)) ;
@@ -4892,7 +4895,7 @@ void mexFunction
     OK (GB_Type_check (Tcrud, "", G0, NULL)) ;
     OK (GB_UnaryOp_check (op1crud, "", G0, NULL)) ;
     OK (GB_BinaryOp_check (op2crud, "", G0, NULL)) ;
-    OK (GB_Monoid_check (monoid_crud, "", G0, NULL)) ;
+    OK (GB_Monoid_check (monoid_crud, "", G0, NULL, false)) ;
     OK (GB_Semiring_check (semicrud, "", G0, NULL)) ;
     OK (GB_Vector_check (vcrud, "", G0, NULL)) ;
     OK (GB_Matrix_check (Acrud, "", G0, NULL)) ;

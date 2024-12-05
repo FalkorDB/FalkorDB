@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase1.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase1.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -34,9 +34,8 @@
 // GB_BUCKET_VSVS       both A(:,i) and B(:,j) are very sparse.
 // GB_BUCKET_MERGEPATH  both A(:,i) and B(:,j) are sparse, but neither are
 //                      very sparse
-
-// FIXME: What if all entries are in one bucket;
-// can we skip the bucket creation?
+// GB_BUCKET_VSSP:      one of A(:,i) or B(:,j) is very sparse, and the other
+//                      is sparse but with many entries
 
 __global__ void GB_jit_AxB_dot3_phase1_kernel
 (
@@ -103,7 +102,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
     // FIXME: use (k << 2) not (k << 4)
 
-    // Ci [p] for an entry C(i,j) contains either GB_FLIP(i) if C(i,j) is a
+    // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE(i) if C(i,j) is a
     // zombie, or (k << 4) + bucket otherwise, where C(:,j) is the kth vector
     // of C (j = Ch [k] if hypersparse or j = k if standard sparse), and
     // where bucket is the bucket assignment for C(i,j).
@@ -140,15 +139,17 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
         // This threadblock works on Mi/Mx and Ci/Mx, in positions pfirst to
         // pfirst + my_chunk_size - 1.
-        int64_t my_chunk_size, mnvec1 ;
+        int64_t my_chunk_size, mnvec1, kfirst, klast ;
         float slope ;
-        int64_t kfirst = GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst,
-            chunk_size, &my_chunk_size, &mnvec1, &slope) ;
+        GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst, chunk_size,
+            &kfirst, &klast, &my_chunk_size, &mnvec1, &slope) ;
 
         //----------------------------------------------------------------------
         // assign entries in C(i,j) to the buckets
         //----------------------------------------------------------------------
 
+        // block-stride loop for all threads in a threadblock, to do the whole
+        // chunk assigned to this threadblock.
         for (int64_t pdelta = threadIdx.x ;
                      pdelta < my_chunk_size ;
                      pdelta += blockDim.x)
@@ -222,27 +223,77 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
                     // A is bitmap or full: no need to look up A(:,i)
                     #endif
                     {
+
+                        //------------------------------------------------------
                         // determine the bucket for C(i,j)
+                        //------------------------------------------------------
+
+                        // ainz is the # of entries in A(:,i)
+                        // bjnz is the # of entries in B(:,j)
+
                         #if (GB_A_IS_SPARSE || GB_A_IS_HYPER) && \
                             (GB_B_IS_SPARSE || GB_B_IS_HYPER)
-                        // A and B are both sparse/hyper
-                        bool vsvs = (ainz + bjnz <= 128) ;
-                        bucket = (GB_bucket_code)
-                           (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSVS)
-                            + ((int) (!vsvs)) * ((int) GB_BUCKET_MERGEPATH)) ;
+                        {
+                            // A and B are both sparse/hyper
+
+                            // NOTE: these methods are about the same:
+#if 0
+                            // use vsvs if both are very sparse:
+                            int vsvs = (int) (ainz + bjnz <= 128) ;
+                            // otherwise, use vssp if
+                            // max(ainz,bjnz) >= 8 * min (ainz,bjnz)
+                            int vssp = ((int) (!vsvs)) * (int)
+                              ((ainz >= (bjnz << 3)) || (bjnz >= (ainz << 3))) ;
+                            // otherwise, use mp
+                            int mp = (int) (!vsvs && !vssp) ;
+                            bucket = (GB_bucket_code) (
+                                ((vsvs) * (int) GB_BUCKET_VSVS) +
+                                ((vssp) * (int) GB_BUCKET_VSSP) +
+                                ((mp  ) * (int) GB_BUCKET_MERGEPATH)) ;
+#else
+                            if (ainz + bjnz <= 128)
+                            {
+                                bucket = GB_BUCKET_VSVS ;
+                            }
+                            else
+                            {
+                                int64_t dmax = max (ainz, bjnz) ;
+                                int64_t dmin = min (ainz, bjnz) ;
+                                if (dmax >= 8 * dmin)
+                                {
+                                    bucket = GB_BUCKET_VSSP ;
+                                }
+                                else
+                                {
+                                    bucket = GB_BUCKET_MERGEPATH ;
+                                }
+                            }
+#endif
+
+//                          // bool vsvs = (ainz < 128) || (bjnz < 128) ;
+//                          bucket = (GB_bucket_code)
+//                             (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSVS)
+//                              + ((int) (!vsvs)) * ((int) GB_BUCKET_MERGEPATH)) ;
+
+
+                        }
                         #elif (GB_A_IS_SPARSE || GB_A_IS_HYPER) && \
                               (GB_B_IS_BITMAP || GB_B_IS_FULL)
-                        // A is sparse/hyper, B is bitmap/full
-                        bool vsvs = (ainz <= 128) ;
-                        bucket = (GB_bucket_code)
-                           (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSDN)
-                            + ((int) (!vsvs)) * ((int) GB_BUCKET_SPDN)) ;
+                        {
+                            // A is sparse/hyper, B is bitmap/full
+                            bool vsvs = (ainz <= 128) ;
+                            bucket = (GB_bucket_code)
+                               (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSDN)
+                                + ((int) (!vsvs)) * ((int) GB_BUCKET_SPDN)) ;
+                        }
                         #else
-                        // A is bitmap/full, B is sparse/hyper
-                        bool vsvs = (bjnz <= 128) ;
-                        bucket = (GB_bucket_code)
-                           (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSDN)
-                            + ((int) (!vsvs)) * ((int) GB_BUCKET_SPDN)) ;
+                        {
+                            // A is bitmap/full, B is sparse/hyper
+                            bool vsvs = (bjnz <= 128) ;
+                            bucket = (GB_bucket_code)
+                               (  ((int) ( vsvs)) * ((int) GB_BUCKET_VSDN)
+                                + ((int) (!vsvs)) * ((int) GB_BUCKET_SPDN)) ;
+                        }
                         #endif
                     }
                 }
@@ -253,7 +304,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
             //------------------------------------------------------------------
 
             // encode the bucket or zombie status in the row index of C(i,j)
-            Ci [pM] = (bucket == GB_BUCKET_ZOMBIE) * ( GB_FLIP(i) << 4)
+            Ci [pM] = (bucket == GB_BUCKET_ZOMBIE) * ( GB_ZOMBIE(i) << 4)
                     + (bucket != GB_BUCKET_ZOMBIE) * ((k << 4) + bucket) ;
 
             // each thread counts its own bucket sizes

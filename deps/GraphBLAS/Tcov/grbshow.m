@@ -1,7 +1,7 @@
 function grbshow
-%GBSHOW create a test coverage report in tmp_cover/
+%GRBSHOW create a test coverage report in tmp_cover/
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (ispc)
@@ -13,7 +13,14 @@ infiles = [ dir('tmp_source/*.*') ; dir('tmp_include/*.*') ] ;
 
 nfiles = length (infiles) ;
 
-load grbstat.mat
+% load grbstat.mat
+global GraphBLAS_grbcov
+n = grblines ;
+c = sum (GraphBLAS_grbcov > 0) ;
+if (c == n)
+    fprintf ('all %d lines covered\n', n) ;
+    return
+end
 
 for k = 1:nfiles
 
@@ -58,5 +65,6 @@ for k = 1:nfiles
     fclose (f_input) ;
 
 end
+
 
 
