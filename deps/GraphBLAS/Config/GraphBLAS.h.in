@@ -2573,6 +2573,16 @@ GB_GLOBAL GrB_Semiring
     GrB_LXOR_LAND_SEMIRING_BOOL,
     GrB_LXNOR_LOR_SEMIRING_BOOL ;
 
+//------------------------------------------------------------------------------
+// GxB_Matrix_Pending:  Checks to see if matrix has pending operations
+//------------------------------------------------------------------------------
+
+GrB_Info GxB_Matrix_Pending
+(
+	GrB_Matrix A,                   // matrix to query
+	bool *pending                   // are there any pending operations
+) ;
+
 //==============================================================================
 // GxB_fprint and GxB_print: print the contents of a GraphBLAS object
 //==============================================================================
