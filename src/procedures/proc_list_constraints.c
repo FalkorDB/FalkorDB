@@ -279,7 +279,9 @@ ProcedureCtx *Proc_ConstraintsCtx(void) {
 								   Proc_ConstraintsInvoke,
 								   Proc_ConstraintsFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Yield all constraints in the graph, denoting constraint type (UNIQIE/MANDATORY), \
+which label/relationship-type and properties each enforces.");
 	return ctx;
 }
 

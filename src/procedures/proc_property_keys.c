@@ -85,7 +85,8 @@ ProcedureCtx *Proc_PropKeysCtx() {
 								   Proc_PropKeysInvoke,
 								   Proc_PropKeysFree,
 								   privateData,
-								   true);
+								   true,
+                                   "Yields all property keys in the graph.");
 	return ctx;
 }
 

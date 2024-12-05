@@ -270,7 +270,10 @@ ProcedureCtx *Proc_BFS_Ctx() {
 								   Proc_BFS_Invoke,
 								   Proc_BFS_Free,
 								   privdata,
-								   true);
+								   true,
+                                   "Performs BFS to find all nodes connected to the source.\
+A max level of 0 indicates unlimited and a non-NULL relationship-type \
+defines the relationship type that may be traversed.");
 	return ctx;
 }
 

@@ -53,6 +53,7 @@ struct ProcedureCtx {
 	ProcInvoke Invoke;          //
 	ProcFree Free;              //
 	bool readOnly;              // Indicates if the procedure is able to mutate the graph.
+    const char *description;    // Procedure description, taken from the docs (https://docs.falkordb.com/cypher/procedures.html).
 };
 typedef struct ProcedureCtx ProcedureCtx;
 
@@ -64,6 +65,7 @@ ProcedureCtx *ProcCtxNew(
 	ProcInvoke fInvoke,         // Procedure Invoke function.
 	ProcFree fFree,             // Procedure Free function.
 	void *privateData,          // Procedure private data.
-	bool readOnly               // Indicates if the procedure is able to mutate the graph.
+	bool readOnly,              // Indicates if the procedure is able to mutate the graph.
+    const char *description     // Procedure description, taken from the docs (https://docs.falkordb.com/cypher/procedures.html).
 );
 
