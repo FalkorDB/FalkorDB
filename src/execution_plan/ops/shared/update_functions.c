@@ -57,8 +57,7 @@ void CommitUpdates
 
 	dictEntry *entry;
 	dictIterator *it = HashTableGetIterator(updates);
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy(gc->g);
-	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
+	MATRIX_POLICY policy = Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
 	while((entry = HashTableNext(it)) != NULL) {
 		PendingUpdateCtx *update = HashTableGetVal(entry);

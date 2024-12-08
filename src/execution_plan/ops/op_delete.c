@@ -69,8 +69,15 @@ static void _DeleteEntities
 		array_append(distinct_nodes, *n);
 
 		// mark node's edges for deletion
-		Graph_GetNodeEdges(g, n, GRAPH_EDGE_DIR_BOTH, GRAPH_NO_RELATION,
-				&op->deleted_edges);
+		int c = Graph_RelationTypeCount(g);
+		for(int i = 0; i < c; i++) {
+			Edge edge;
+			NodeEdgeIterator it;
+			Graph_NodeEdgeIteratorInit(g, &it, ENTITY_GET_ID(n), GRAPH_EDGE_DIR_BOTH, i);
+			while(NodeEdgeIterator_Next(&it, &edge)) {
+				array_append(op->deleted_edges, edge);
+			}
+		}
 	}
 
 	node_count = array_len(distinct_nodes);

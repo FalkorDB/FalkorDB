@@ -97,14 +97,14 @@ static ProcedureResult Proc_BFS_Invoke
 	GraphContext  *gc  =  QueryCtx_GetGraphCtx();
 
 	if(reltype == NULL) {
-		Delta_Matrix_export(&R, Graph_GetAdjacencyMatrix(gc->g, false));
+		Delta_Matrix_export(&R, Graph_GetAdjacencyMatrix(gc->g));
 	} else {
 		Schema *s = GraphContext_GetSchema(gc, reltype, SCHEMA_EDGE);
 		// failed to find schema, first step will return NULL
 		if(!s) return PROCEDURE_OK;
 
 		bfs_ctx->reltype_id = s->id;
-		Delta_Matrix_export(&R, Graph_GetRelationMatrix(gc->g, s->id, false));
+		Delta_Matrix_export(&R, Graph_GetRelationMatrix(gc->g, s->id));
 	}
 
 	// if we're not collecting edges, pass a NULL parent pointer
@@ -160,7 +160,7 @@ static SIValue *Proc_BFS_Step
 	SIValue nodes, edges;
 	if(yield_nodes) nodes = SI_Array(n);
 	if(yield_edges) edges = SI_Array(n);
-	Edge *edge = array_new(Edge, 1);
+	Edge edge;
 
 	// setup result iterator
 	NodeID               id;
@@ -186,18 +186,17 @@ static SIValue *Proc_BFS_Step
 		}
 
 		if(yield_edges) {
-			array_clear(edge);
 			GrB_Index parent_id;
 			// find the parent of the reached node
 			GrB_Info res = GrB_Vector_extractElement(&parent_id,
 					bfs_ctx->parents, id);
 			ASSERT(res == GrB_SUCCESS);
-			// retrieve edges connecting the parent node to the current node
-			// TODO: we only require a single edge
-			// `Graph_GetEdgesConnectingNodes` can return multiple edges
-			Graph_GetEdgesConnectingNodes(bfs_ctx->g, parent_id, id, bfs_ctx->reltype_id, &edge);
-			// append one edge to the edges output array
-			SIArray_Append(&edges, SI_Edge(edge));
+			EdgeIterator it;
+			Graph_EdgeIteratorInit(bfs_ctx->g, &it, parent_id, id, bfs_ctx->reltype_id);
+			if(EdgeIterator_Next(&it, &edge)) {
+				// Append the edge to the path
+				SIArray_Append(&edges, SI_Edge(&edge));
+			}
 		}
 
 		res = GxB_Vector_Iterator_next(iter);
@@ -210,9 +209,6 @@ static SIValue *Proc_BFS_Step
 	// populate output
 	if(yield_nodes) *bfs_ctx->yield_nodes = nodes;
 	if(yield_edges) *bfs_ctx->yield_edges = edges;
-
-	// clean up
-	array_free(edge);
 
 	return bfs_ctx->output;
 }

@@ -156,7 +156,7 @@ void RdbLoadNodes_v14
 			labels[i] = SerializerIO_ReadUnsigned(rdb);
 		}
 
-		Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
+		Serializer_SetNode(gc->g, id, labels, nodeLabelCount, &n);
 
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
@@ -185,7 +185,7 @@ void RdbLoadDeletedNodes_v14
 	// node id X N
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
-		Serializer_Graph_MarkNodeDeleted(gc->g, id);
+		Serializer_MarkNodeDeleted(gc->g, id);
 	}
 }
 
@@ -259,7 +259,7 @@ void RdbLoadEdges_v14
 		// load edge attributes
 		//----------------------------------------------------------------------
 
-		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		Serializer_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		//----------------------------------------------------------------------
@@ -353,6 +353,6 @@ void RdbLoadDeletedEdges_v14
 	// edge id X N
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = SerializerIO_ReadUnsigned(rdb);
-		Serializer_Graph_MarkEdgeDeleted(gc->g, id);
+		Serializer_MarkEdgeDeleted(gc->g, id);
 	}
 }

@@ -309,14 +309,7 @@ static void _Pushdown_TransposeOperand
 	// No need to transpose a diagonal matrix.
 	if(exp->operand.diagonal) return;
 
-	// A -> Transpose(A)
-	// We're going to repurpose exp, make a clone.
-	AlgebraicExpression *operand = AlgebraicExpression_Clone(exp);
-	_InplaceRepurposeOperandToOperation(exp, AL_EXP_TRANSPOSE);
-
-	/* Add original operand as a child of exp (which is now a transpose operation).
-	 * Transpose(A) */
-	AlgebraicExpression_AddChild(exp, operand);
+	exp->operand.transpose = !exp->operand.transpose;
 }
 
 static void _Pushdown_TransposeExp
@@ -400,6 +393,10 @@ void AlgebraicExpression_PushDownTranspose(AlgebraicExpression *root) {
 				/* It is possible for `root` to contain a transpose subexpression
 				 * push it further down. */
 				AlgebraicExpression_PushDownTranspose(root);
+			} else {
+				child->operand.transpose = !child->operand.transpose;
+				_AlgebraicExpression_OperationRemoveDest(root);
+				_AlgebraicExpression_InplaceRepurpose(root, child);
 			}
 			break;
 		default:
