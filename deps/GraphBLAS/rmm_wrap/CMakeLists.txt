@@ -25,6 +25,7 @@ if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY} )
 endif ( )
 
 if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/spdlog )
+    message ( status "cloning spdlog v1.10.0" )
     execute_process (
         COMMAND git clone "https://github.com/gabime/spdlog.git" --branch v1.10.0 --recursive spdlog
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )
@@ -34,6 +35,7 @@ set ( SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/external_includes/spdlog/in
 include_directories ( ${SPDLOG_INCLUDE_DIR} )
 
 if ( NOT EXISTS ${EXTERNAL_INCLUDES_DIRECTORY}/rmm )
+    message ( status "cloning rmm branch-21.10" )
     execute_process (
         COMMAND git clone "https://github.com/rapidsai/rmm.git" --branch branch-21.10 --recursive rmm
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/external_includes )

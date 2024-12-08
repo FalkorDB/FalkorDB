@@ -1,7 +1,7 @@
 function test04
 %TEST04 test and demo for accumulator/mask and transpose
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\n-------------------- simple mask and transpose tests\n') ;

@@ -61,6 +61,7 @@ void mexFunction
     GxB_Context Context = NULL ;
     METHOD (GxB_Context_new (&Context)) ;
     OK (GxB_Context_set (Context, GxB_NTHREADS, 5)) ;
+    OK (GxB_Context_set_String (Context, "my context", GrB_NAME)) ;
     OK (GxB_Context_fprint (Context, "context", 3, stdout)) ;
     int nth = 0 ;
     OK (GxB_Context_get (GxB_CONTEXT_WORLD, GxB_NTHREADS, &nth)) ;

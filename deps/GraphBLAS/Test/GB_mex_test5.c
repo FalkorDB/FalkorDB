@@ -11,7 +11,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_serialize.h"
+#include "../Source/serialize/GB_serialize.h"
 
 #define USAGE "GB_mex_test5"
 #define FREE_ALL ;

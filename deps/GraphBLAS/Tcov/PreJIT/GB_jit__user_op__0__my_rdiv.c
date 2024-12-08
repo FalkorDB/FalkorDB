@@ -1,14 +1,14 @@
 //------------------------------------------------------------------------------
 // GB_jit__user_op__0__my_rdiv.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v9.0.0, Timothy A. Davis, (c) 2017-2023,
+// SuiteSparse:GraphBLAS v9.4.1, Timothy A. Davis, (c) 2017-2024,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
 // user-defined types and operators defined below.
 //------------------------------------------------------------------------------
 
-#include "GB_jit_kernel.h"
+#include "include/GB_jit_kernel.h"
 
 #define GB_USER_OP_FUNCTION my_rdiv
 void my_rdiv (double *z, const double *x, const double *y)
@@ -18,6 +18,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 {
     // escape this quote: "
     /* escape this backslash \ */
+    /* modified for GrB 9.4.1 */
     (*z) = (*y) / (*x) ;
 }
 #define GB_my_rdiv_USER_DEFN \
@@ -25,6 +26,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 "{\n" \
 "    // escape this quote: \"\n" \
 "    /* escape this backslash \\ */\n" \
+"    /* modified for GrB 9.4.1 */\n" \
 "    (*z) = (*y) / (*x) ;\n" \
 "}"
 #define GB_USER_OP_DEFN GB_my_rdiv_USER_DEFN
@@ -32,7 +34,7 @@ void my_rdiv (double *z, const double *x, const double *y)
 #define GB_jit_kernel GB_jit__user_op__0__my_rdiv
 #define GB_jit_query  GB_jit__user_op__0__my_rdiv_query
 #endif
-#include "GB_jit_kernel_user_op.c"
+#include "template/GB_jit_kernel_user_op.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {

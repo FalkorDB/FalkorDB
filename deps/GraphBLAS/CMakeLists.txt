@@ -42,7 +42,7 @@ endif ( )
 
 # CUDA is under development for now, and not deployed in production:
   set ( GRAPHBLAS_USE_CUDA OFF )
-# set ( GRAPHBLAS_USE_CUDA ON )     # FIXME: use this for CUDA development
+# set ( GRAPHBLAS_USE_CUDA ON )     # use this for CUDA development only
 
 include ( SuiteSparsePolicy )
 
@@ -207,17 +207,44 @@ configure_file ( "Config/README.md.in"
 # include directories for both graphblas and the demos
 #-------------------------------------------------------------------------------
 
-if ( GRAPHBLAS_COMPACT )
-    # do not compile the FactoryKernels
-    include_directories ( Source/Template Source Include Source/Shared
-        Config xxHash Config lz4 zstd zstd/zstd_subset JITpackage
-        Source/Factories Demo/Include rmm_wrap Source/JitKernels )
-else ( )
-    include_directories ( Source/Template Source Include Source/Shared
-        Config xxHash Config lz4 zstd zstd/zstd_subset JITpackage
-        Source/FactoryKernels
-        Source/Factories Demo/Include rmm_wrap Source/JitKernels )
-endif ( )
+include_directories ( ${PROJECT_SOURCE_DIR} Source Include Config
+    xxHash lz4 zstd zstd/zstd_subset JITpackage Demo/Include rmm_wrap
+    # include all Source/* folders that have include/ or template/ subfolders:
+    Source/add
+    Source/apply
+    Source/assign
+    Source/builder
+    Source/builtin
+    Source/callback
+    Source/concat
+    Source/convert
+    Source/cumsum
+    Source/emult
+    Source/ewise
+    Source/extract
+    Source/hyper
+    Source/ij
+    Source/jit_kernels
+    Source/kronecker
+    Source/mask
+    Source/math
+    Source/matrix
+    Source/memory
+    Source/monoid
+    Source/mxm
+    Source/ok
+    Source/omp
+    Source/print
+    Source/reduce
+    Source/select
+    Source/split
+    Source/slice
+    Source/sort
+    Source/transpose
+    Source/type
+    Source/wait
+    Source/werk
+    )
 
 #-------------------------------------------------------------------------------
 # compiler options
@@ -229,50 +256,29 @@ include ( GraphBLAS_compiler_options )
 # dynamic graphblas library properties
 #-------------------------------------------------------------------------------
 
-# Notes from Sebastien Villemot (sebastien@debian.org):
-# SOVERSION policy: if a binary compiled against the old version of the shared
-# library needs recompiling in order to work with the new version, then a
-# SO_VERSION increase # is needed. Otherwise not.  Examples of the changes that
-# require a SO_VERSION increase:
-#
-#   - a public function or static variable is removed
-#   - the prototype of a public function changes
-#   - the integer value attached to a public #define or enum changes
-#   - the fields of a public structure are modified
-#
-# Examples of changes that do not require a SO_VERSION increase:
-#
-#   - a new public function or static variable is added
-#   - a private function or static variable is removed or modified
-#   - changes in the internals of a structure that is opaque to the calling
-#       program (i.e. is only a pointer manipulated through public functions of
-#       the library)
-#   - a public enum is extended (by adding a new item at the end, but without
-#       changing the already existing items)
+file ( GLOB GRAPHBLAS_SOURCES "PreJIT/*.c" "Config/*.c" "Source/*/*.c" )
+
+if ( NOT GRAPHBLAS_COMPACT )
+    # compile the FactoryKernels
+    file ( GLOB GRAPHBLAS_FACTORYKERNELS "FactoryKernels/*.c" )
+    list ( APPEND GRAPHBLAS_SOURCES ${GRAPHBLAS_FACTORYKERNELS} )
+endif ( )
 
 if ( GRAPHBLAS_USE_JIT )
-    # generate compressed JIT sources
+    # generate compressed JIT sources to create GB_JITpackage.c
+    message ( STATUS "Creating the GraphBLAS/JITpackage:" )
     add_subdirectory ( JITpackage )
-    if ( GRAPHBLAS_COMPACT )
-        # with the JIT; but do not compile the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "Source/*.c" "Config/*.c" "PreJIT/*.c" )
-    else ( )
-        # with the JIT and the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "Source/*.c" "Config/*.c" "PreJIT/*.c"
-            "Source/FactoryKernels/*.c" )
-    endif ( )
     # GLOB does not include files that do not yet exist, so prepend
     # the GB_JITpackage.c file here:
-    list ( PREPEND GRAPHBLAS_SOURCES $<TARGET_PROPERTY:GB_JITpackage,GENERATED_FILE> )
+    list ( PREPEND GRAPHBLAS_SOURCES
+        $<TARGET_PROPERTY:GB_JITpackage,GENERATED_FILE> )
 else ( )
-    if ( GRAPHBLAS_COMPACT )
-        # no JIT, do not compile the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "Source/*.c" "Config/*.c" "PreJIT/*.c" )
-    else ( )
-        # no JIT, but do compile the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "Source/*.c" "Config/*.c" "PreJIT/*.c"
-            "Source/FactoryKernels/*.c" )
-    endif ( )
+    # create an empty GB_JITpackage.c file:
+    message ( STATUS "Creating an empty GraphBLAS/JITpackage (JIT disabled):" )
+    configure_file ( "Config/GB_JITpackage_NJIT.c.in"
+        "${PROJECT_SOURCE_DIR}/JITpackage/GB_JITpackage.c"
+        NEWLINE_STYLE LF )
+    list ( PREPEND GRAPHBLAS_SOURCES "JITpackage/GB_JITpackage.c")
 endif ( )
 
 if ( BUILD_SHARED_LIBS )
@@ -412,13 +418,13 @@ if ( NOT NO_LIBM )
 endif ( )
 
 # libdl
-if ( NOT WIN32 )
+if ( NOT "${CMAKE_DL_LIBS}" STREQUAL "" )
     if ( BUILD_SHARED_LIBS )
-        target_link_libraries ( GraphBLAS PRIVATE dl )
+        target_link_libraries ( GraphBLAS PRIVATE ${CMAKE_DL_LIBS} )
     endif ( )
     if ( BUILD_STATIC_LIBS )
-        list ( APPEND GRAPHBLAS_STATIC_LIBS "dl" )
-        target_link_libraries ( GraphBLAS_static PUBLIC dl )
+        list ( APPEND GRAPHBLAS_STATIC_LIBS ${CMAKE_DL_LIBS} )
+        target_link_libraries ( GraphBLAS_static PUBLIC ${CMAKE_DL_LIBS} )
     endif ( )
 endif ( )
 
@@ -522,6 +528,7 @@ if ( SUITESPARSE_DEMOS )
     add_executable ( wathen_demo   "Demo/Program/wathen_demo.c" )
     add_executable ( context_demo  "Demo/Program/context_demo.c" )
     add_executable ( gauss_demo    "Demo/Program/gauss_demo.c" )
+    add_executable ( grow_demo     "Demo/Program/grow_demo.c" )
 
     # Libraries required for Demo programs
     if ( BUILD_SHARED_LIBS )
@@ -536,6 +543,7 @@ if ( SUITESPARSE_DEMOS )
         target_link_libraries ( wathen_demo PUBLIC GraphBLAS )
         target_link_libraries ( context_demo PUBLIC GraphBLAS )
         target_link_libraries ( gauss_demo PUBLIC GraphBLAS )
+        target_link_libraries ( grow_demo PUBLIC GraphBLAS )
     else ( )
         target_link_libraries ( openmp_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( openmp2_demo PUBLIC GraphBLAS_static )
@@ -548,6 +556,7 @@ if ( SUITESPARSE_DEMOS )
         target_link_libraries ( wathen_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( context_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( gauss_demo PUBLIC GraphBLAS_static )
+        target_link_libraries ( grow_demo PUBLIC GraphBLAS_static )
     endif ( )
 
     target_link_libraries ( openmp_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
@@ -561,6 +570,7 @@ if ( SUITESPARSE_DEMOS )
     target_link_libraries ( wathen_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( context_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( gauss_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
+    target_link_libraries ( grow_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
 
     if ( GRAPHBLAS_HAS_OPENMP )
         target_link_libraries ( openmp_demo PUBLIC OpenMP::OpenMP_C )
@@ -568,6 +578,7 @@ if ( SUITESPARSE_DEMOS )
         target_link_libraries ( reduce_demo PUBLIC OpenMP::OpenMP_C )
         target_link_libraries ( wathen_demo PUBLIC OpenMP::OpenMP_C )
         target_link_libraries ( context_demo PUBLIC OpenMP::OpenMP_C )
+        target_link_libraries ( grow_demo PUBLIC OpenMP::OpenMP_C )
     endif ( )
 
 else ( )

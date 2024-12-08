@@ -9,7 +9,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_stringify.h"
+#include "../Source/jitifyer/GB_stringify.h"
 
 #define USAGE "GB_mex_test23"
 

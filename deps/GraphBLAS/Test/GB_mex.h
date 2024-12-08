@@ -10,19 +10,19 @@
 #ifndef GB_MEXH
 #define GB_MEXH
 
-#include "GB_mxm.h"
-#include "GB_Pending.h"
-#include "GB_add.h"
-#include "GB_subref.h"
-#include "GB_transpose.h"
-#include "GB_sort.h"
-#include "GB_apply.h"
+#include "../Source/mxm/GB_mxm.h"
+#include "../Source/pending/GB_Pending.h"
+#include "../Source/add/GB_add.h"
+#include "../Source/extract/GB_subref.h"
+#include "../Source/transpose/GB_transpose.h"
+#include "../Source/sort/GB_sort.h"
+#include "../Source/apply/GB_apply.h"
 #include "GB_mex_generic.h"
 #undef OK
 #include "GB_mx_usercomplex.h"
 #include "mex.h"
 #include "matrix.h"
-#include "GB_dev.h"
+#include "../Source/include/GB_dev.h"
 
 #define SIMPLE_RAND_MAX 32767
 uint64_t simple_rand (void) ;

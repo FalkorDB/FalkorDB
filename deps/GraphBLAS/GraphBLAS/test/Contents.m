@@ -37,7 +37,7 @@
 %  gbtest32  - test nonzeros
 %  gbtest33  - test spones, numel, nzmax, size, length, is*, ...
 %  gbtest34  - test repmat
-%  gbtest35  - test reshape
+%  gbtest35  - test reshape (built-in variant)
 %  gbtest36  - test abs, sign
 %  gbtest37  - test istril, istriu, isbanded, isdiag, ishermitian, ...
 %  gbtest38  - test sqrt, eps, ceil, floor, round, fix, real, conj, ...
@@ -125,6 +125,7 @@
 %  gbtest119 - test GrB.eunion
 %  gbtest120 - test subsref
 %  gbtest121 - test times with scalars
+%  gbtest122 - test reshape (extended methods in GrB)
 %
 % Utilities and other tests:
 %
@@ -139,6 +140,6 @@
 %  gb_contains    - same as contains (text, pattern)
 %  gb_octave      - return true if Octave is in use, false for MATLAB
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 

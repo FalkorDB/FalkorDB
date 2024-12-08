@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase3_vsvs.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase3_vsvs.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -25,49 +25,10 @@
 //  A         <- input matrix A
 //  B         <- input matrix B
 
-//  Blocksize is 1024, uses warp and block reductions to count zombies produced.
+//  Blocksize is 1024, uses tile and block reductions to count zombies produced.
 //******************************************************************************
 
-//------------------------------------------------------------------------------
-// GB_block_ReduceSum_uint64
-//------------------------------------------------------------------------------
-
-__inline__ __device__ uint64_t GB_block_ReduceSum_uint64
-(
-    thread_block g,
-    uint64_t val
-)
-{
-    // Shared mem for 32 partial sums
-    static __shared__ uint64_t shared [tile_sz] ;
-
-    // FIXME: assumes tile_sz is 32:  (use an #if .. #else ... #endif)
-    int lane = threadIdx.x & 31 ; // % tile_sz;
-    int wid  = threadIdx.x >> 5 ; // / tile_sz;
-    thread_block_tile<tile_sz> tile = tiled_partition<tile_sz> (g) ;
-
-    // Each warp performs partial reduction
-    val = GB_cuda_warp_sum_uint64 (tile, val) ;    
-
-    // Wait for all partial reductions
-    if (lane == 0)
-    {
-        shared [wid] = val ; // Write reduced value to shared memory
-    }
-
-    g.sync();                     // Wait for all partial reductions
-
-    // read from shared memory only if that warp existed
-    val = (threadIdx.x <  (blockDim.x / tile_sz ) ) ? shared[lane] : 0;
-
-    // Final reduce within first warp
-    if (wid == 0)
-    {
-        val = GB_cuda_warp_sum_uint64 (tile, val) ;
-    }
-
-    return (val) ;
-}
+#include "template/GB_cuda_threadblock_sum_uint64.cuh"
 
 //------------------------------------------------------------------------------
 // GB_cuda_AxB_dot3_phase3_vsvs_kernel
@@ -81,7 +42,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
     GrB_Matrix C,
     GrB_Matrix M,
     GrB_Matrix A,
-    GrB_Matrix B
+    GrB_Matrix B,
+    const void *theta
 )
 {
 
@@ -139,6 +101,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
 
         int64_t i = Mi [pair_id] ;
         int64_t k = Ci [pair_id]>>4 ;
+        // assert: Ci [pair_id] & 0xF == GB_BUCKET_VSVS
 
         // j = k or j = Mh [k] if C and M are hypersparse
         int64_t j = GBH_M (Mh, k) ;
@@ -189,6 +152,10 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
 
 
         GB_CIJ_EXIST_POSTCHECK ;
+
+// HACK
+// cij_exists = false ;
+
         if (cij_exists)
         {
             GB_PUTC (cij, Cx, pair_id) ;    // Cx [pair_id] = (GB_C_TYPE) cij
@@ -198,15 +165,11 @@ __global__ void GB_cuda_AxB_dot3_phase3_vsvs_kernel
         {
             // cij is a zombie
             my_nzombies++;
-            Ci [pair_id] = GB_FLIP (i) ;
+            Ci [pair_id] = GB_ZOMBIE (i) ;
         }
     }
 
-    // FIXME: use this in spdn and vsdn:
-    this_thread_block().sync(); 
-
-    my_nzombies = GB_block_ReduceSum_uint64 (this_thread_block(), my_nzombies) ;
-    this_thread_block().sync(); 
+    my_nzombies = GB_cuda_threadblock_sum_uint64 (my_nzombies) ;
 
     if( threadIdx.x == 0 && my_nzombies > 0)
     {

@@ -11,7 +11,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_stringify.h"
+#include "../Source/jitifyer/GB_stringify.h"
 
 #define USAGE "GB_mex_test9"
 #define FREE_ALL ;
@@ -133,30 +133,33 @@ void mexFunction
 
     // Using GB_boolean_rename results in these cases not being tested.
     int ecode = -1 ;
-    GB_enumify_binop (&ecode, GB_MIN_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_MIN_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 18) ;
-    GB_enumify_binop (&ecode, GB_MAX_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_MAX_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 17) ;
-    GB_enumify_binop (&ecode, GB_TIMES_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_TIMES_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 18) ;
-    GB_enumify_binop (&ecode, GB_PLUS_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_PLUS_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 17) ;
-    GB_enumify_binop (&ecode, GB_NE_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_NE_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 16) ;
-    GB_enumify_binop (&ecode, GB_ISEQ_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_ISEQ_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 15) ;
-    GB_enumify_binop (&ecode, GB_ISNE_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_ISNE_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 16) ;
-    GB_enumify_binop (&ecode, GB_DIV_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_DIV_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 1) ;
-    GB_enumify_binop (&ecode, GB_RDIV_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_RDIV_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 2) ;
-    GB_enumify_binop (&ecode, GB_RMINUS_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_RMINUS_binop_code, GB_BOOL_code, false, false);
     CHECK (ecode == 16) ;
-    GB_enumify_binop (&ecode, GB_POW_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_POW_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 71) ;
-    GB_enumify_binop (&ecode, GB_MINUS_binop_code, GB_BOOL_code, false) ;
+    GB_enumify_binop (&ecode, GB_MINUS_binop_code, GB_BOOL_code, false, false) ;
     CHECK (ecode == 16) ;
+
+    GB_enumify_binop (&ecode, GB_NOP_code, GB_BOOL_code, false, false) ;
+    CHECK (ecode == 255) ;
 
     GB_enumify_identity (&ecode, GB_MIN_binop_code, GB_BOOL_code) ;
     CHECK (ecode == 2) ;
@@ -173,7 +176,7 @@ void mexFunction
     CHECK (ecode == 2) ;
 
     FILE *fp = fopen ("/tmp/GB_tcov_gunk.h", "w") ;
-    GB_macrofy_binop (fp, "nothing", false, false, false,
+    GB_macrofy_binop (fp, "nothing", false, false, false, false, false,
         199, false, NULL, NULL, NULL, NULL) ;
     fclose (fp) ;
 

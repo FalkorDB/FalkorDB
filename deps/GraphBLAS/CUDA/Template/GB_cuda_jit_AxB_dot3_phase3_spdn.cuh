@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase3_spdn.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase3_spdn.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -31,7 +31,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
     GrB_Matrix C,       // result matrix 
     GrB_Matrix M,       // mask matrix
     GrB_Matrix A,       // input matrix A
-    GrB_Matrix B        // input matrix B
+    GrB_Matrix B,       // input matrix B
+    const void *theta
 )
 {
 
@@ -124,6 +125,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
         int64_t pair_id = all_in_one ? kk : Bucket [kk] ;
         int64_t i = Mi [pair_id] ;
         int64_t k = Ci [pair_id] >> 4 ;
+        // assert: Ci [pair_id] & 0xF == GB_BUCKET_SPDN
         // j = k or j = Mh [k] if C and M are hypersparse
         int64_t j = GBH_M (Mh, k) ;
 
@@ -263,7 +265,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
         if (cij_exists)
         {
             // FIXME: the ANY monoid needs cij_exists for each thread
-            cij = GB_cuda_warp_reduce_ztype (tile, cij) ;
+            cij = GB_cuda_tile_reduce_ztype (tile, cij) ;
         }
         #endif
 
@@ -280,7 +282,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_spdn_kernel
             {
                 // cij is a zombie
                 zc++ ;
-                Ci [pair_id] = GB_FLIP (i) ;
+                Ci [pair_id] = GB_ZOMBIE (i) ;
             }
         }
         //__syncthreads(); 

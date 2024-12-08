@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
-#include "GB_binop.h"
+#include "../Source/binaryop/GB_binop.h"
 
 // See GraphBLAS/GraphBLAS/@GrB/private/util/gb_semiring.c for a description
 

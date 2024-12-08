@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase2end.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase2end.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -35,7 +35,7 @@ __global__ void GB_cuda_AxB_dot3_phase2end_kernel
     // get C information 
     //--------------------------------------------------------------------------
 
-    // Ci [p] for an entry C(i,j) contains either GB_FLIP(i) if C(i,j) is a
+    // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE(i) if C(i,j) is a
     // zombie, or (k << 4) + bucket otherwise, where C(:,j) is the kth vector
     // of C (j = Ch [k] if hypersparse or j = k if standard sparse), and
     // where bucket is the bucket assignment for C(i,j).  This phase does not
@@ -117,7 +117,10 @@ __global__ void GB_cuda_AxB_dot3_phase2end_kernel
             //bucket_s[ibucket][ idx ] = p;
 
             bucket_idx [tid] = my_bucket [ibucket]++ ;
-            Ci [p] = (ibucket==0) * (Ci [p] >> 4) + (ibucket > 0) * Ci [p] ;
+
+            // finalize the zombie bucket; no change to the rest of Ci
+            Ci [p] = (ibucket == GB_BUCKET_ZOMBIE) * (Ci [p] >> 4) +
+                     (ibucket != GB_BUCKET_ZOMBIE) * (Ci [p]) ;
 
             //if(ibucket == 0) {
             ////    bucket[my_bucket[0]++] = p;

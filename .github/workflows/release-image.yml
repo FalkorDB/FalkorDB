@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Retrieve built image AMD
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v7
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
@@ -42,12 +42,32 @@ jobs:
           if_no_artifact_found: error
 
       - name: Retrieve built image ARM
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v7
         with:
           workflow: ${{ env.BUILD_WORKFLOW_NAME }}
           commit: ${{ env.COMMIT_SHA }}
           workflow_conclusion: success
           name: falkordb-arm64v8
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so AMD
+        uses: dawidd6/action-download-artifact@v7
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-x64.so
+          path: /tmp
+          if_no_artifact_found: error
+
+      - name: Retrieve built .so ARM
+        uses: dawidd6/action-download-artifact@v7
+        with:
+          workflow: ${{ env.BUILD_WORKFLOW_NAME }}
+          commit: ${{ env.COMMIT_SHA }}
+          workflow_conclusion: success
+          name: falkordb-arm64v8.so
           path: /tmp
           if_no_artifact_found: error
 
@@ -111,10 +131,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Copy .so file from images
-          docker run --rm --entrypoint cat falkordb/falkordb-x64 /FalkorDB/bin/src/falkordb.so > /tmp/falkordb.x64.so
-          docker run --rm --entrypoint cat falkordb/falkordb-arm64v8 /FalkorDB/bin/src/falkordb.so > /tmp/falkordb.arm64v8.so
-
-          # Upload .so files to release
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.x64.so
-          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb.arm64v8.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-x64.so
+          gh release upload ${{ github.event.release.tag_name }} /tmp/falkordb-arm64v8.so

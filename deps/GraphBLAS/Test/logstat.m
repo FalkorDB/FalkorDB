@@ -22,14 +22,20 @@ GB_mex_finalize ;
 GB_mex_factory_control (1) ;
 [debug, compact, malloc, covered] = GB_mex_debug ;
 
+test_coverage = (~isempty (strfind (pwd, 'Tcov'))) ;
+if (test_coverage)
+    global GraphBLAS_debug GraphBLAS_grbcov
+%   global GraphBLAS_grbcovs GraphBLAS_scripts GraphBLAS_times
+end
+
 % default JIT controls
 if (nargin < 3)
     jit_controls = [ ] ;
 end
 if (isempty (jit_controls))
     jit_controls {1} = 4 ;      % JIT on
-    jit_controls {2} = 0 ;      % JIT off
-    jit_controls {3} = 4 ;      % JIT on
+%   jit_controls {2} = 0 ;      % JIT off
+%   jit_controls {3} = 4 ;      % JIT on
 end
 
 % default factory controls
@@ -38,8 +44,15 @@ if (nargin < 4)
 end
 if (isempty (factory_controls))
     factory_controls {1} = 1 ;  % factory on
-    factory_controls {2} = 1 ;  % factory on
-    factory_controls {3} = 0 ;  % factory off
+%   factory_controls {2} = 1 ;  % factory on
+%   factory_controls {3} = 0 ;  % factory off
+end
+
+if (0)
+    jall = {4,3,2,1,0,4,3,2,1,0} ;
+    fall = {1,1,1,1,1,0,0,0,0,0} ;
+    jit_controls    = jall ;
+    factory_controls = fall ;
 end
 
 if (nargin < 2)
@@ -58,13 +71,10 @@ else
     end
 end
 
-n = 1 ;
-if (~isempty (strfind (pwd, 'Tcov')))
-    % load in the # of lines in the test coverage
-    fp = fopen ('tmp_cover/count', 'r') ;
-    n = textscan (fp, '%f') ;
-    n = n {1} ;
-    fclose (fp) ;
+try
+    n = grblines ;  % total # of lines in the test coverage
+catch
+    n = 0 ;
 end
 
 for control_trial = 1:length (jit_controls)
@@ -80,7 +90,8 @@ for control_trial = 1:length (jit_controls)
             factory_control = 1 ;
         end
         GB_mex_factory_control (factory_control) ;
-        fprintf ('\nTrial: jit: %d factory: %d\n', jit_control, factory_control) ;
+        fprintf ('\nTrial: jit: %d factory: %d\n', ...
+            jit_control, factory_control) ;
 
         clast = grb_get_coverage ;
 
@@ -141,14 +152,15 @@ for control_trial = 1:length (jit_controls)
         fprintf (   '%s %-11s %7.1f sec ', s, testscript, t) ;
         fprintf (f, '%s %-11s %7.1f sec ', s, testscript, t) ;
 
-        if (~isempty (strfind (pwd, 'Tcov')))
-            global GraphBLAS_debug GraphBLAS_grbcov GraphBLAS_grbcovs ...
-                GraphBLAS_scripts GraphBLAS_times
-            GraphBLAS_grbcovs {end+1} = GraphBLAS_grbcov (1:n) ;
-            GraphBLAS_scripts {end+1} = testscript ;
-            GraphBLAS_times   {end+1} = t ;
-            save grbstat GraphBLAS_debug GraphBLAS_grbcov GraphBLAS_grbcovs ...
-                GraphBLAS_scripts GraphBLAS_times
+        if (test_coverage)
+
+%           GraphBLAS_grbcovs {end+1} = GraphBLAS_grbcov (1:n) ;
+%           GraphBLAS_scripts {end+1} = sprintf ('%s.%d.%d.%d', testscript, ...
+%               jit_control, factory_control, trial) ;
+%           GraphBLAS_times   {end+1} = t ;
+%           save grbstat GraphBLAS_debug GraphBLAS_grbcov
+%               GraphBLAS_grbcovs GraphBLAS_scripts GraphBLAS_times
+
             if (isempty (GraphBLAS_debug))
                 GraphBLAS_debug = false ;
             end
@@ -192,4 +204,8 @@ for control_trial = 1:length (jit_controls)
         fclose (f) ;
     end
 end
+
+% f = fopen ('log.txt', 'a') ;
+% fprintf (f,'\n') ;
+% fclose (f) ;
 

@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/JitKernels/GB_cuda_jit_AxB_dot3_phase3_mp.cuh
+// GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase3_mp.cuh
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
@@ -40,6 +40,8 @@
 //------------------------------------------------------------------------------
 // GB_cuda_AxB_dot3_phase3_mp_kernel
 //------------------------------------------------------------------------------
+
+//#include <time.h>
   
 __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
 (
@@ -49,7 +51,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
     GrB_Matrix C,
     GrB_Matrix M,
     GrB_Matrix A,
-    GrB_Matrix B
+    GrB_Matrix B,
+    const void *theta
 )
 {
 
@@ -95,7 +98,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
     #endif
 
     // zombie count
-    int64_t zc = 0;
+    uint64_t zc = 0;
 
     // set thread ID
 //  int tid_global = threadIdx.x+ blockDim.x* blockIdx.x;
@@ -111,9 +114,14 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
          kk += gridDim.x )
     {
 
+        //----------------------------------------------------------------------
+        // get A(:,i) and B(:,j)
+        //----------------------------------------------------------------------
+
         int64_t pair_id = all_in_one ? kk : Bucket [kk] ;
         int64_t i = Mi[pair_id];
         int64_t k = Ci[pair_id] >> 4;
+        // assert: Ci [pair_id] & 0xF == GB_BUCKET_MERGEPATH
 
         // j = k or j = Mh [k] if C and M are hypersparse
         int64_t j = GBH_M (Mh, k) ;
@@ -128,25 +136,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
         pA_end   = Ap[i+1] ;
         #endif
 
-        int64_t ainz = pA_end - pA_start ;
-
-        GB_DECLAREA (aki) ;
-        GB_DECLAREB (bkj) ;
-        GB_DECLARE_IDENTITY (cij) ;         // GB_Z_TYPE cij = identity
-
-        int cij_exists = 0 ;       // FIXME: make a bool
-
-        __shared__ int64_t Ai_s[shared_vector_size];
-        int shared_steps_A = (ainz + shared_vector_size -1)/shared_vector_size;
-
-        int64_t step_end = (shared_steps_A <= 1? ainz : shared_vector_size);
-        for ( int64_t i = tid; i< step_end; i+= blockDim.x)
-        {
-            Ai_s[i] = Ai[ i + pA_start];
-        }   
-        this_thread_block().sync();
-         
-
         // find B(:,j)
         int64_t pB_start, pB_end ;
         #if GB_B_IS_HYPER
@@ -157,165 +146,59 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
         pB_end   = Bp[j+1] ;
         #endif
 
-        int64_t bjnz = pB_end - pB_start;          // bjnz
-        int shared_steps_B = (bjnz + shared_vector_size -1)/shared_vector_size;
-         
-        __shared__ int64_t Bj_s[shared_vector_size];
+        //----------------------------------------------------------------------
+        // compute cij
+        //----------------------------------------------------------------------
+    
+        __shared__ int64_t Xi_s[shared_vector_size];
+        __shared__ int64_t Yi_s[shared_vector_size];
 
-        step_end = (shared_steps_B <= 1 ? bjnz : shared_vector_size);
-        for ( int64_t i =tid; i< step_end; i+= blockDim.x)
+        GB_DECLAREA (aki) ;
+        GB_DECLAREB (bkj) ;
+        GB_DECLARE_IDENTITY (cij) ;         // GB_Z_TYPE cij = identity
+        int cij_exists = 0 ;
+
+//      int64_t total_ainz = pA_start - pA_end ;
+//      int64_t total_bjnz = pB_start - pB_end ;
+
+//      if (total_ainz < total_bjnz)
         {
-            Bj_s[i] = Bi[ i + pB_start];
-        }   
-        this_thread_block().sync();
+            // A(:,i) is sparser than B(:,j)
+            #define MP_FLIP 0
 
-        //we want more than one intersection per thread
-        while ( (shared_steps_A > 0) && (shared_steps_B > 0) )
+            #define pX       pA
+            #define pX_start pA_start
+            #define pX_end   pA_end
+            #define Xi       Ai
+
+            #define pY       pB
+            #define pY_start pB_start
+            #define pY_end   pB_end
+            #define Yi       Bi
+
+            #include "GB_cuda_jit_AxB_dot3_phase3_mp_guts.cuh"
+        }
+#if 0
+        else
         {
-            int64_t awork = pA_end - pA_start;
-            int64_t bwork = pB_end - pB_start;
-            if ( shared_steps_A > 1) awork = shared_vector_size;  
-            if ( shared_steps_B > 1) bwork = shared_vector_size;  
-            int64_t nxy = awork + bwork;
+            // B(:,j) is sparser than A(:,i)
+            // (this works but it has the same performance)
+            #define MP_FLIP 1
 
-            // ceil Divide by 32 = blockDim.x :
-            int work_per_thread = (nxy + blockDim.x -1)/blockDim.x;
-            int diag     = GB_IMIN( work_per_thread*tid, nxy);
-            int diag_end = GB_IMIN( diag + work_per_thread, nxy);
+            #define pX       pB
+            #define pX_start pB_start
+            #define pX_end   pB_end
+            #define Xi       Bi
 
-            // bwork takes place of bjnz:
-            int x_min = GB_IMAX( (diag - bwork) , 0);
+            #define pY       pA
+            #define pY_start pA_start
+            #define pY_end   pA_end
+            #define Yi       Ai
 
-            //awork takes place of ainz:
-            int x_max = GB_IMIN( diag, awork);
-
-            while ( x_min < x_max)
-            {
-                //binary search for correct diag break
-                int pivot = (x_min +x_max) >> 1;
-                int64_t Apiv =  Ai_s[pivot] ;
-                int64_t Bpiv = Bj_s[diag -pivot -1] ;
-
-                x_min = (pivot + 1)* (Apiv < Bpiv)  + x_min * (1 - (Apiv < Bpiv));
-                x_max = pivot * (1 - (Apiv < Bpiv)) + x_max * (Apiv < Bpiv);
-
-            }
-
-            int xcoord = x_min;
-            int ycoord = diag -x_min -1;
-            int64_t Atest = Ai_s[xcoord] ;
-            int64_t Btest = Bj_s[ycoord] ;
-            if ( (diag > 0) && (diag < nxy ) && (ycoord >= 0 ) && (Atest == Btest)) 
-            { 
-                diag--; //adjust for intersection incrementing both pointers 
-            }
-            // two start points are known now
-            int tx_start = xcoord; // +pA_start;
-            int ty_start = diag -xcoord; // +pB_start; 
-
-
-            x_min = GB_IMAX( (diag_end - bwork), 0); //bwork replace bjnz
-            x_max = GB_IMIN( diag_end, awork);      //awork replace ainz
-
-            while ( x_min < x_max) 
-            {
-                int pivot = (x_min +x_max) >> 1;
-                int64_t Apiv = Ai_s[pivot] ;
-                int64_t Bpiv = Bj_s[diag_end -pivot -1] ;
-
-                x_min = (pivot + 1)* (Apiv < Bpiv)   + x_min * (1 - (Apiv < Bpiv));
-                x_max = pivot * (1 - (Apiv < Bpiv))  + x_max * (Apiv < Bpiv);
-            }
-
-            xcoord = x_min;
-            ycoord = diag_end -x_min -1;
-
-            // two end points are known now
-            int tx_end = xcoord; // +pA_start; 
-            int ty_end = diag_end - xcoord; // + pB_start; 
-
-            //merge-path dot product
-            int64_t pA = tx_start;       // pA
-            int64_t pB = ty_start;       // pB
-
-            while ( pA < tx_end && pB < ty_end ) 
-            {
-                int64_t Aind = Ai_s[pA] ;
-                int64_t Bind = Bj_s[pB] ;
-                #if GB_IS_PLUS_PAIR_REAL_SEMIRING && GB_Z_IGNORE_OVERFLOW
-                    cij += (Aind == Bind) ;
-                #else
-                    if (Aind == Bind)
-                    {
-                        // cij += aki * bkj
-                        GB_DOT_MERGE (pA + pA_start, pB + pB_start) ;
-                        // TODO check terminal condition, using tile.any
-                    }
-                #endif
-                pA += (Aind <= Bind) ;
-                pB += (Aind >= Bind) ;
-            }
-            GB_CIJ_EXIST_POSTCHECK ;
-
-            this_thread_block().sync();
-
-            if  (  (shared_steps_A >= 1) 
-            && (shared_steps_B >= 1) 
-            && ( Ai_s[awork-1] == Bj_s[bwork-1]) )
-            {
-
-                pA_start += shared_vector_size;
-                shared_steps_A -= 1;
-                if (shared_steps_A == 0) break;
-                pB_start += shared_vector_size;
-                shared_steps_B -= 1;
-                if (shared_steps_B == 0) break;
-
-                step_end = ( (pA_end - pA_start) < shared_vector_size ? (pA_end - pA_start) : shared_vector_size);
-                for ( int64_t i = tid; i< step_end; i+= blockDim.x)
-                {
-                    Ai_s[i] = Ai[ i + pA_start];
-                }   
-                this_thread_block().sync();
-
-                step_end = ( (pB_end - pB_start) < shared_vector_size ? (pB_end - pB_start) : shared_vector_size);
-                for ( int64_t i = tid; i< step_end; i+= blockDim.x)
-                {
-                    Bj_s[i] = Bi[ i + pB_start];
-                }   
-                this_thread_block().sync();
-
-            } 
-            else if ( (shared_steps_A >= 1) && (Ai_s[awork-1] < Bj_s[bwork-1] ))
-            {
-                pA_start += shared_vector_size;
-                shared_steps_A -= 1;
-                if (shared_steps_A == 0) break;
-
-                step_end= ( (pA_end - pA_start) < shared_vector_size ? (pA_end - pA_start) : shared_vector_size);
-                for ( int64_t i = tid; i< step_end; i+= blockDim.x)
-                {
-                    Ai_s[i] = Ai[ i + pA_start];
-                }   
-                this_thread_block().sync();
-
-            }
-            else if ( (shared_steps_B >= 1) && (Bj_s[bwork-1] < Ai_s[awork-1]) )
-            {
-                pB_start += shared_vector_size;
-                shared_steps_B -= 1;
-                if (shared_steps_B == 0) break;
-
-                step_end = ( (pB_end - pB_start) < shared_vector_size ? (pB_end - pB_start) : shared_vector_size);
-                for ( int64_t i = tid; i< step_end; i+= blockDim.x)
-                {
-                    Bj_s[i] = Bi[ i + pB_start];
-                }   
-                this_thread_block().sync();
-            }
-        } // end while shared_steps A > 0 && shared_steps_B >0
-
-        //tile.sync( ) ;
+            // flip the roles of A(:,i) and B(:,j)
+            #include "GB_cuda_jit_AxB_dot3_phase3_mp_guts.cuh"
+        }
+#endif
 
         //----------------------------------------------------------------------
         // reduce sum per-thread values to a single scalar, get OR of flag
@@ -329,9 +212,14 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
         if (cij_exists)
         {
             // FIXME: the ANY monoid needs the cij_exists for each thread
-            cij = GB_cuda_warp_reduce_ztype (tile, cij) ;
+            cij = GB_cuda_tile_reduce_ztype (tile, cij) ;
         }
         #endif
+
+// HACK
+//int64_t end_time = (int64_t) clock ( ) ;
+//cij = end_time - start_time ;
+//cij_exists = 1 ;
 
         // write result for this block to global mem
         if (tid == 0)
@@ -346,7 +234,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
             {
                // cij is a zombie
                zc++;
-               Ci [pair_id] = GB_FLIP (i) ;
+               Ci [pair_id] = GB_ZOMBIE (i) ;
             }
         }
         //__syncthreads(); 
@@ -358,7 +246,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
 
     if( tid ==0 && zc > 0)
     {
-        GB_cuda_atomic_add <uint64_t>( &(C->nzombies), (uint64_t) zc) ;
+        GB_cuda_atomic_add <uint64_t>( &(C->nzombies), zc) ;
     }
 }
 

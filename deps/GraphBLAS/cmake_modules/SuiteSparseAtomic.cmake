@@ -50,7 +50,11 @@ if ( NOT TEST_FOR_STDATOMIC )
     check_c_source_compiles ( "${atomic_source}" TEST_FOR_STDATOMIC_WITH_LIBATOMIC )
     if ( NOT TEST_FOR_STDATOMIC_WITH_LIBATOMIC )
         # fails with -latomic
-        message ( FATAL_ERROR "C11 atomics: failed" )
+        string ( CONCAT ERR_MSG
+            "C11 atomics: failed.\n"
+            "Cannot build GraphBLAS with the used C compiler "
+            "(${CMAKE_C_COMPILER_ID}) and/or libraries." )
+        message ( FATAL_ERROR "${ERR_MSG}" )
     endif ( )
     # source compiles but -latomic is required
     set ( LIBATOMIC_REQUIRED true )

@@ -9,10 +9,8 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_file.h"
-#include "GB_jitifyer.h"
-
-#define USAGE "GB_mex_test11"
+#include "../Source/jitifyer/GB_file.h"
+#include "../Source/jitifyer/GB_jitifyer.h"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -89,6 +87,7 @@ void mexFunction
 
 if (jit_enabled)
 {
+    printf ("JIT enabled:\n") ;
 
     OK (GrB_Matrix_new (&A, GrB_FP32, 3, 4)) ;
     OK (GrB_assign (A, NULL, NULL, 1, GrB_ALL, 3, GrB_ALL, 4, NULL)) ;
@@ -258,8 +257,9 @@ if (jit_enabled)
     OK (GrB_free (&MyType)) ;
 
     printf ("\n--------------------------- intentional compile errors:\n") ;
-    expected = GrB_INVALID_VALUE ;
-    ERR (GxB_Type_new (&MyType, 0, "mytype2", "garbage")) ;
+
+    expected = GxB_JIT_ERROR ;
+    ERR (GxB_Type_new (&MyType, 0, "mytype2_crud", "garbage")) ;
     CHECK (MyType == NULL) ;
     printf ("\n-------------------------------------------------------\n\n") ;
 
@@ -276,8 +276,7 @@ if (jit_enabled)
     printf ("new error log: [%s]\n", t) ;
     CHECK (MATCH (t, "/tmp/grb_error_log.txt")) ;
 
-    expected = GrB_INVALID_VALUE ;
-    ERR (GxB_Type_new (&MyType, 0, "mytype2", "garbage")) ;
+    ERR (GxB_Type_new (&MyType, 0, "mytype2_crud", "garbage")) ;
     CHECK (MyType == NULL) ;
 
     printf ("\n------------------------ compile error log (intentional):\n") ;
@@ -291,8 +290,7 @@ if (jit_enabled)
     CHECK (MATCH (s, "/tmp/grberr2.txt")) ;
 
     OK (GxB_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
-    expected = GrB_INVALID_VALUE ;
-    ERR (GxB_Type_new (&MyType, 0, "mytype2", "more garbage")) ;
+    ERR (GxB_Type_new (&MyType, 0, "mytype2_crud", "more garbage")) ;
     CHECK (MyType == NULL) ;
 
     printf ("\n------------------------ compile error log (intentional):\n") ;
@@ -478,6 +476,8 @@ if (jit_enabled)
 
 if (jit_enabled)
 {
+    printf ("JIT enabled:\n") ;
+
     bool ok = GB_file_mkdir (NULL) ;
     CHECK (!ok) ;
     ok = GB_file_unlock_and_close (NULL, NULL) ;

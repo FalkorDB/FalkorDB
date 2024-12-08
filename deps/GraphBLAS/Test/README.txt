@@ -1,4 +1,4 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 GraphBLAS/Test:
@@ -27,7 +27,7 @@ For Linux or Mac, in the GraphBLAS/GraphBLAS folder, type
 To run the tests, use the following command in this directory, in the 
 MATLAB/Octave Command Window:
 
-    make ; testall
+    testmake ; testall
 
 Longer tests can be done as well (this can take a whole day):
 
@@ -79,8 +79,8 @@ GB_mex.h        include file for the mexFunctions
 Template/*.c    a template file for building two mexFunctions:
                 GB_mex_Matrix_build and GB_mex_Vector_build.
 
-make.m          compiles the Test interface to GraphBLAS (links with
-                dynamic -lgraphblas)
+testmake.m      compiles the Test interface to GraphBLAS (links with
+                dynamic -lgraphblas_matlab or -lgraphblas)
 
 debug_off.m     turns off malloc debugging
 debug_on.m      turns on malloc debugging; the interface will be *very* slow,

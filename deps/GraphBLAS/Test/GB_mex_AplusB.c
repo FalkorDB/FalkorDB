@@ -72,7 +72,7 @@ void mexFunction
     // C = A+B using the op.  No mask, so this will always work.
     bool ignore ;
     METHOD (GB_add (C, A->type, true, NULL, false, false, &ignore, A, B,
-        false, NULL, NULL, op, false, Werk)) ;
+        false, NULL, NULL, op, false, false, Werk)) ;
 
     // return C as a plain sparse matrix
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C AplusB result", false) ;

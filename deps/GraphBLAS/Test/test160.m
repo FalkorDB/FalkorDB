@@ -9,7 +9,8 @@ rng ('default') ;
 n = 100 ;
 Mask.matrix = (rand (n) > 0.5) ;
 Mask.pattern = true (n) ;
-mtypes = { 'int8', 'int16', 'int32', 'int64', 'double complex' } ;
+% mtypes = { 'int8', 'int16', 'int32', 'int64', 'double complex' } ;
+mtypes = { 'int8', 'int16', 'int32', 'double complex' } ;
 
 Mask2 = GB_spec_random (n, n, 1, 0.01, 'logical') ;
 Mask2.matrix = logical (Mask2.matrix) ;
@@ -68,10 +69,9 @@ maskz.pattern (1,1) = true ;
 maskz.class = 'logical' ;
 cinz = sparse (1000, 1) ;
 
-
 for k = 1:length (mtypes)
 
-    fprintf ('%s ', mtypes {k}) ;
+    fprintf ('%s\n', mtypes {k}) ;
     Mask.class = mtypes {k} ;
     Mask2.class = mtypes {k} ;
     mask.class = mtypes {k} ;
@@ -81,61 +81,65 @@ for k = 1:length (mtypes)
     C2 = GB_mex_mxm  (Cin, Mask, [ ], semiring, A, B, dnn) ;
     GB_spec_compare (C1, C2) ;
 
-    % C<M,struct> = A*B
-    C1 = GB_spec_mxm (Cin, Mask, [ ], semiring, A, B, dnn_struct) ;
-    C2 = GB_mex_mxm  (Cin, Mask, [ ], semiring, A, B, dnn_struct) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<M,struct> = A*B
+%   C1 = GB_spec_mxm (Cin, Mask, [ ], semiring, A, B, dnn_struct) ;
+%   C2 = GB_mex_mxm  (Cin, Mask, [ ], semiring, A, B, dnn_struct) ;
+%   GB_spec_compare (C1, C2) ;
 
-    % C<!M,struct> = A*B
-    C1 = GB_spec_mxm (Cin, Mask, [ ], semiring, A, B, dnn_notM_struct) ;
-    C2 = GB_mex_mxm  (Cin, Mask, [ ], semiring, A, B, dnn_notM_struct) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<!M,struct> = A*B
+%   C1 = GB_spec_mxm (Cin, Mask, [ ], semiring, A, B, dnn_notM_struct) ;
+%   C2 = GB_mex_mxm  (Cin, Mask, [ ], semiring, A, B, dnn_notM_struct) ;
+%   GB_spec_compare (C1, C2) ;
 
     % C<!M> = A*B
     C1 = GB_spec_mxm (Cin, Mask, [ ], semiring, A, B, dnn_notM) ;
     C2 = GB_mex_mxm  (Cin, Mask, [ ], semiring, A, B, dnn_notM) ;
     GB_spec_compare (C1, C2) ;
 
-    % C<M> = G*b
-    C1 = GB_spec_mxm (cin, mask, [ ], semiring, G, b, dnn) ;
-    C2 = GB_mex_mxm  (cin, mask, [ ], semiring, G, b, dnn) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<M> = G*b
+%   C1 = GB_spec_mxm (cin, mask, [ ], semiring, G, b, dnn) ;
+%   C2 = GB_mex_mxm  (cin, mask, [ ], semiring, G, b, dnn) ;
+%   GB_spec_compare (C1, C2) ;
 
-    % C<!M> = G*b
-    C1 = GB_spec_mxm (cin, mask, [ ], semiring, G, b, dnn_notM) ;
-    C2 = GB_mex_mxm  (cin, mask, [ ], semiring, G, b, dnn_notM) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<!M> = G*b
+%   C1 = GB_spec_mxm (cin, mask, [ ], semiring, G, b, dnn_notM) ;
+%   C2 = GB_mex_mxm  (cin, mask, [ ], semiring, G, b, dnn_notM) ;
+%   GB_spec_compare (C1, C2) ;
 
-    % C<!M,struct> = A*B
-    C1 = GB_spec_mxm (cin, mask, [ ], semiring, G, b, dnn_notM_struct) ;
-    C2 = GB_mex_mxm  (cin, mask, [ ], semiring, G, b, dnn_notM_struct) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<!M,struct> = A*B
+%   C1 = GB_spec_mxm (cin, mask, [ ], semiring, G, b, dnn_notM_struct) ;
+%   C2 = GB_mex_mxm  (cin, mask, [ ], semiring, G, b, dnn_notM_struct) ;
+%   GB_spec_compare (C1, C2) ;
 
-    % C<!M> = A*B
-    C1 = GB_spec_mxm (Cin, Mask2, [ ], semiring, A, B, dnn_notM) ;
-    C2 = GB_mex_mxm  (Cin, Mask2, [ ], semiring, A, B, dnn_notM) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<!M> = A*B
+%   C1 = GB_spec_mxm (Cin, Mask2, [ ], semiring, A, B, dnn_notM) ;
+%   C2 = GB_mex_mxm  (Cin, Mask2, [ ], semiring, A, B, dnn_notM) ;
+%   GB_spec_compare (C1, C2) ;
 
     % C<!Mask2> = G*B
+    if (k == 1)
     C1 = GB_spec_mxm (Cin, Mask2, [ ], semiring, G, B, dnn_notM) ;
     C2 = GB_mex_mxm  (Cin, Mask2, [ ], semiring, G, B, dnn_notM) ;
     GB_spec_compare (C1, C2) ;
+    end
 
-    % C<!M> = H*x
-    C1 = GB_spec_mxm (cin, mask2, [ ], semiring, H, x, dnn_notM) ;
-    C2 = GB_mex_mxm  (cin, mask2, [ ], semiring, H, x, dnn_notM) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<!M> = H*x
+%   C1 = GB_spec_mxm (cin, mask2, [ ], semiring, H, x, dnn_notM) ;
+%   C2 = GB_mex_mxm  (cin, mask2, [ ], semiring, H, x, dnn_notM) ;
+%   GB_spec_compare (C1, C2) ;
 
-    % C<!M> = G*x
-    C1 = GB_spec_mxm (cin, mask2, [ ], semiring, G, x, dnn_notM_hash) ;
-    C2 = GB_mex_mxm  (cin, mask2, [ ], semiring, G, x, dnn_notM_hash) ;
-    GB_spec_compare (C1, C2) ;
+%   % C<!M> = G*x
+%   C1 = GB_spec_mxm (cin, mask2, [ ], semiring, G, x, dnn_notM_hash) ;
+%   C2 = GB_mex_mxm  (cin, mask2, [ ], semiring, G, x, dnn_notM_hash) ;
+%   GB_spec_compare (C1, C2) ;
 
     % C<!M> = K*z
     z.sparsity = 4 ;
+    if (k == 1)
     C1 = GB_spec_mxm (cinz, maskz, [ ], semiring, K, z, dnn_notM_hash) ;
     C2 = GB_mex_mxm  (cinz, maskz, [ ], semiring, K, z, dnn_notM_hash) ;
     GB_spec_compare (C1, C2) ;
+    end
 
 end
 
@@ -156,3 +160,4 @@ GB_spec_compare (C1, C2) ;
 GB_spec_compare (C1, C3) ;
 
 fprintf ('\ntest160: all tests passed\n') ;
+

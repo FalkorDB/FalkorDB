@@ -9,9 +9,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_get_set.h"
-
-#define USAGE "GB_mex_test25"
+#include "../Source/get_set/GB_get_set.h"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;

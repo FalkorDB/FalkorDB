@@ -10,8 +10,6 @@
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
 
-#define USAGE "GB_mex_test29"
-
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
@@ -197,7 +195,7 @@ void mexFunction
     OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &use_cmake, (GrB_Field) GxB_JIT_USE_CMAKE)) ;
     printf ("jit cmake %d\n", use_cmake) ;
     OK (GrB_Global_set_INT32_ (GrB_GLOBAL, 1, (GrB_Field) GxB_JIT_USE_CMAKE)) ;
-    OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &i,(GrB_Field)  GxB_JIT_USE_CMAKE)) ;
+    OK (GrB_Global_get_INT32_ (GrB_GLOBAL, &i,(GrB_Field) GxB_JIT_USE_CMAKE)) ;
     CHECK (i == 1) ;
     OK (GrB_Global_set_INT32_ (GrB_GLOBAL, use_cmake, (GrB_Field) GxB_JIT_USE_CMAKE)) ;
 

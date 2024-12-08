@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// grb_jitpackage: package GraphBLAS source code for the JIT 
+// grb_jitpackage: package GraphBLAS source code for the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,6 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+
+#if defined (__GNUC__)
+// ignore strlen warning
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 
 //------------------------------------------------------------------------------
 // zstd.h include file
@@ -20,7 +27,7 @@
 #pragma GCC diagnostic ignored "-Wswitch-default"
 #endif
 
-// disable ZSTD deprecation warnings and include all ZSTD definitions  
+// disable ZSTD deprecation warnings and include all ZSTD definitions
 
 // GraphBLAS does not use deprecated functions, but the warnings pop up anyway
 // when GraphBLAS is built, so silence them with this #define:
@@ -73,13 +80,107 @@
 */
 
 //------------------------------------------------------------------------------
+// match_prefix: return true if the input string matches the prefix
+//------------------------------------------------------------------------------
+
+bool match_prefix (char *string, char *prefix) ;
+
+bool match_prefix (char *string, char *prefix)
+{
+    char *s = string ;
+    char *p = prefix ;
+    while (*s && *p)
+    {
+        if (*s != *p)
+        {
+            // both the string and prefix character are present, but
+            // do not match
+            return (false) ;
+        }
+        s++ ;
+        p++ ;
+        if (*p == '\0')
+        {
+            // the prefix is exhausted, so it has been found as the first part
+            // of the string
+            return (true) ;
+        }
+    }
+    return (false) ;
+}
+
+//------------------------------------------------------------------------------
 // grb_prepackage main program
 //------------------------------------------------------------------------------
 
-#define OK(x) if (!(x)) { printf ("Error line %d\n", __LINE__) ; abort ( ) ; }
+#define OK(x)                                                               \
+{                                                                           \
+    if (!(x))                                                               \
+    {                                                                       \
+        fprintf (stderr, "grb_jitpackage.c: error line %d\n", __LINE__) ;   \
+        abort ( ) ;                                                         \
+    }                                                                       \
+}
 
 int main (int argc, char **argv)
 {
+
+    //--------------------------------------------------------------------------
+    // get list of files to be processed
+    //--------------------------------------------------------------------------
+
+    char **file_list = NULL;
+    size_t nfiles = 0;
+    fprintf (stderr, "grb_jitpackage: building JITpackge\n") ;
+
+    if (argc == 2 && argv[1][0] == '@')
+    {
+        // input argument is a "response file" containing the file list
+
+        // open file
+        FILE *fr = fopen (argv[1]+1, "r") ;
+        OK (fr != NULL) ;
+
+        // get number of lines in file
+        int ch;
+        do
+        {
+            ch = fgetc (fr);
+            if (ch == '\n')
+            {
+                nfiles++;
+            }
+        } while (ch != EOF);
+
+        // read file list from response file
+        rewind (fr);
+        file_list = malloc ( (nfiles+1) * sizeof (file_list) );
+        OK (file_list != NULL) ;
+        // prepend empty element for compatibility with argv
+        file_list[0] = malloc (1);
+        OK (file_list [0] != NULL) ;
+        file_list[0][0] = '\0';
+        // glibc defines MAX_PATH to 4096.
+        // Use this as a buffer size on all platforms.
+        #define BUF_LENGTH 4096
+        char temp[BUF_LENGTH];
+        size_t length;
+        for (size_t i = 1 ; i < nfiles+1 ; i++)
+        {
+            OK ( fgets (temp, BUF_LENGTH, fr) != NULL );
+            length = strlen (temp); // this is safe; ignore -Wstringop-overflow
+            file_list[i] = malloc (length+1);
+            OK (file_list [i] != NULL) ;
+            strncpy (file_list[i], temp, length);
+            file_list[i][length-1] = '\0';
+        }
+    }
+    else
+    {
+        // input argument list is the file list
+        nfiles = argc - 1 ;
+        file_list = argv;
+    }
 
     //--------------------------------------------------------------------------
     // start the GB_JITpackage.c file
@@ -87,15 +188,14 @@ int main (int argc, char **argv)
 
     FILE *fp = fopen ("GB_JITpackage.c", "wb") ;
     OK (fp != NULL) ;
-    int nfiles = argc - 1 ;
-    printf ("Processing %d input files ...\n", nfiles) ;
+    fprintf (stderr, "Processing %zu input files ...\n", nfiles) ;
 
     fprintf (fp,
         "//------------------------------------------------------------------------------\n"
         "// GB_JITpackage.c: packaged GraphBLAS source code for the JIT\n"
         "//------------------------------------------------------------------------------\n"
         "\n"
-        "// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.\n"
+        "// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.\n"
         "// SPDX-License-Identifier: Apache-2.0\n"
         "\n"
         "//------------------------------------------------------------------------------\n"
@@ -104,11 +204,11 @@ int main (int argc, char **argv)
         "\n"
         "#ifdef NJIT\n"
         "// JIT is disabled at compile time\n"
-        "int GB_JITpackage_nfiles = 0 ;\n"
-        "GB_JITpackage_index_struct GB_JITpackage_index [1] "
-        "= {{0, 0, NULL, NULL}} ;\n"
+        "int GB_JITpackage_nfiles_get (void) { return (0) ; }\n"
+        "static GB_JITpackage_index_struct GB_JITpackage_index [1] =\n"
+        "   {{0, 0, NULL, NULL}} ;\n"
         "#else\n"
-        "int GB_JITpackage_nfiles = %d ;\n\n", argc-1) ;
+        "int GB_JITpackage_nfiles_get (void) { return (%zu) ; }\n\n", nfiles) ;
 
     //--------------------------------------------------------------------------
     // allocate the index
@@ -125,14 +225,15 @@ int main (int argc, char **argv)
     // compress each file
     //--------------------------------------------------------------------------
 
-    for (int k = 1 ; k < argc ; k++)
+    for (size_t k = 1 ; k < nfiles+1 ; k++)
     {
 
         //----------------------------------------------------------------------
         // read the input file
         //----------------------------------------------------------------------
 
-        FILE *ff = fopen (argv [k], "r") ;
+//      fprintf (stderr, "k: %zu file: %s\n", k, file_list [k]) ;
+        FILE *ff = fopen (file_list [k], "rb") ; // open as binary, for Windows
         OK (ff != NULL) ;
         fseek (ff, 0, SEEK_END) ;
         size_t inputsize = ftell (ff) ;
@@ -141,8 +242,9 @@ int main (int argc, char **argv)
         char *input = malloc (inputsize+2) ;
         OK (input != NULL) ;
         size_t nread = fread (input, sizeof (char), inputsize, ff) ;
+//      fprintf (stderr, "inputsize %zu nread %zu\n", inputsize, nread) ;
         OK (nread == inputsize) ;
-        input [inputsize] = '\0' ; 
+        input [inputsize] = '\0' ;
         fclose (ff) ;
 
         //----------------------------------------------------------------------
@@ -155,11 +257,11 @@ int main (int argc, char **argv)
         size_t dsize = ZSTD_compress (dst, dbound+2, input, inputsize, 19) ;
 
         //----------------------------------------------------------------------
-        // append the bytes to the output file 
+        // append the bytes to the output file
         //----------------------------------------------------------------------
 
-        fprintf (fp, "// %s:\n", argv [k]) ;
-        fprintf (fp, "uint8_t GB_JITpackage_%d [%zu] = {\n", k-1, dsize) ;
+        fprintf (fp, "// %s:\n", file_list [k]) ;
+        fprintf (fp, "uint8_t GB_JITpackage_%zu [%zu] = {\n", k-1, dsize) ;
         for (int64_t k = 0 ; k < dsize ; k++)
         {
             fprintf (fp, "%3d,", dst [k]) ;
@@ -183,31 +285,45 @@ int main (int argc, char **argv)
     // print the index
     //--------------------------------------------------------------------------
 
-    printf ("Total uncompressed: %zu bytes\n", total_uncompressed_size) ;
-    printf ("Total compressed:   %zu bytes\n", total_compressed_size) ;
-    printf ("Compression:        %g\n", 
+    fprintf (stderr, "Total uncompressed: %zu bytes\n",
+        total_uncompressed_size) ;
+    fprintf (stderr, "Total compressed:   %zu bytes\n", total_compressed_size) ;
+    fprintf (stderr, "Compression:        %g\n",
         (double) total_compressed_size / (double) total_uncompressed_size) ;
 
-    fprintf (fp, "\nGB_JITpackage_index_struct GB_JITpackage_index [%d] =\n{\n",
-        nfiles) ;
-    for (int k = 1 ; k < argc ; k++)
+    fprintf (fp, "\nstatic GB_JITpackage_index_struct "
+        "GB_JITpackage_index [%zu] =\n{\n", nfiles) ;
+    for (int k = 1 ; k < nfiles+1 ; k++)
     {
-        // get the filename (without the path)
-        char *name = argv [k] ;
-        for (char *p = argv [k] ; *p != '\0' ; p++)
+        // get the filename
+        char *fullname = file_list [k] ;
+        char *filename = fullname ;
+        int len = (int) strlen (fullname) ;
+        for (int i = 0 ; i < len ; i++)
         {
-            if (*p == '/')
+            if (fullname [i] == '/')
             {
-                name = p + 1 ;
+                filename = fullname + i + 1 ;
+                if (match_prefix (filename, "template") ||
+                    match_prefix (filename, "include"))
+                {
+                    break ;
+                }
             }
         }
         // append this file to the index
         fprintf (fp, "    { %8zu, %8zu, GB_JITpackage_%-3d, \"%s\" },\n",
-            Uncompressed_size [k], Compressed_size [k], k-1, name) ;
+            Uncompressed_size [k], Compressed_size [k], k-1, filename) ;
     }
-    fprintf (fp, "} ;\n#endif\n\n") ;
+    fprintf (fp,
+        "} ;\n#endif\n\n"
+        "void *GB_JITpackage_index_get (void)\n"
+        "{\n"
+        "    return ((void *) GB_JITpackage_index) ;\n"
+        "}\n\n") ;
     fclose (fp) ;
     free (Uncompressed_size) ;
     free (Compressed_size) ;
+    return (0) ;
 }
 

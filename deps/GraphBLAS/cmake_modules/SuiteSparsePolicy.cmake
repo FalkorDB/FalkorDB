@@ -132,6 +132,10 @@ set ( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
 # Use OpenMP
 option ( SUITESPARSE_USE_OPENMP "ON (default): Use OpenMP in libraries by default if available.  OFF: Do not use OpenMP by default." ON )
 
+# control the use of Python interfaces in SuiteSparse packages (currently only
+# for SPEX)
+option ( SUITESPARSE_USE_PYTHON "ON (default): build Python interfaces for SuiteSparse packages (SPEX).  OFF: do not build Python interfaces for SuiteSparse packages" ON )
+
 # strict usage
 option ( SUITESPARSE_USE_STRICT "ON: treat all _USE__ settings as strict if they are ON. OFF (default): consider *_USE_* as preferences, not strict" OFF )
 
