@@ -19,8 +19,16 @@
 // Forward declaration
 sds _JsonEncoder_SIValue(SIValue v, sds s);
 
+static inline sds _JsonEncoder_CString
+(
+	const char *str,
+	sds s
+) {
+	return sdscatfmt(s, "\"%s\"", str);
+}
+
 static inline sds _JsonEncoder_String(SIValue v, sds s) {
-	return sdscatfmt(s, "\"%s\"", v.stringval);
+	return _JsonEncoder_CString(v.stringval, s);
 }
 
 static sds _JsonEncoder_Properties(const GraphEntity *ge, sds s) {
@@ -171,11 +179,11 @@ static sds _JsonEncoder_Map(SIValue map, sds s) {
 
 	uint key_count = Map_KeyCount(map);
 	for(uint i = 0; i < key_count; i ++) {
-		Pair p = map.map[i];
+		Pair *p = map.map + i;
 		// write the next key/value pair
-		s = _JsonEncoder_String(p.key, s);
+		s = _JsonEncoder_CString(p->key, s);
 		s = sdscat(s, ": ");
-		s = _JsonEncoder_SIValue(p.val, s);
+		s = _JsonEncoder_SIValue(p->val, s);
 		// if this is not the last element, add ", "
 		if(i != key_count - 1) s = sdscat(s, ", ");
 	}

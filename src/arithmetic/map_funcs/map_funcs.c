@@ -36,14 +36,22 @@ SIValue AR_TOMAP(SIValue *argv, int argc, void *private_data) {
 			break;
 		}
 
-		Map_Add(&map, key, val);
+		Map_Add(&map, key.stringval, val);
 	}
 
 	return map;
 }
 
-SIValue AR_KEYS(SIValue *argv, int argc, void *private_data) {
+SIValue AR_KEYS
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	ASSERT(argc == 1);
+
+	SIValue m;  // map
+
 	switch(SI_TYPE(argv[0])) {
 		case T_NULL:
 			return SI_NullVal();
@@ -51,7 +59,19 @@ SIValue AR_KEYS(SIValue *argv, int argc, void *private_data) {
 		case T_EDGE:
 			return GraphEntity_Keys(argv[0].ptrval);
 		case T_MAP:
-			return Map_Keys(argv[0]);
+			// TODO: getting map's keys as an SIArray is expensive
+			m = argv[0];
+			uint n = Map_KeyCount(m);
+			const char **keys = Map_Keys(m);
+
+			SIValue arr = SIArray_New(n);
+			for(uint i = 0; i < n; i++) {
+				SIArray_Append(&arr, SI_ConstStringVal(keys[i]));
+			}
+
+			rm_free(keys);
+
+			return arr;
 		default:
 			ASSERT(false);
 	}
@@ -74,8 +94,13 @@ SIValue AR_PROPERTIES(SIValue *argv, int argc, void *private_data) {
 	return SI_NullVal();
 }
 
-// Receives two maps and merges them
-SIValue AR_MERGEMAP(SIValue *argv, int argc, void *private_data) {
+// receives two maps and merges them
+SIValue AR_MERGEMAP
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	ASSERT(argc == 2);
 
 	SIValue map0 = argv[0];
@@ -91,7 +116,7 @@ SIValue AR_MERGEMAP(SIValue *argv, int argc, void *private_data) {
 		uint keyCount0 = Map_KeyCount(map0);
 		SIValue map = Map_Clone(map1);
 		for(int i = 0; i < keyCount0; i++) {
-			SIValue key;
+			const char *key;
 			SIValue value;
 			Map_GetIdx(map0, i, &key, &value);
 			Map_Add(&map, key, value);

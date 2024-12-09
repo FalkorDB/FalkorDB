@@ -51,13 +51,13 @@ void test_empty_map() {
 void test_map_add() {
 	SIValue map = Map_New(2);
 
-	SIValue  k0  =  SI_ConstStringVal("key0");
-	SIValue  k1  =  SI_ConstStringVal("key1");
-	SIValue  k2  =  SI_ConstStringVal("key2");
-	SIValue  v0  =  SI_LongVal(0);
-	SIValue  v1  =  SI_DoubleVal(1);
-	SIValue  v2  =  SI_ConstStringVal("");
-	SIValue keys[3] = {k0, k1, k2};
+	SIValue k0        = SI_ConstStringVal("key0");
+	SIValue k1        = SI_ConstStringVal("key1");
+	SIValue k2        = SI_ConstStringVal("key2");
+	SIValue v0        = SI_LongVal(0);
+	SIValue v1        = SI_DoubleVal(1);
+	SIValue v2        = SI_ConstStringVal("");
+	SIValue keys[3]   = {k0, k1, k2};
 	SIValue values[3] = {v0, v1, v2};
 
 	// add elements to map
@@ -96,6 +96,98 @@ void test_map_add() {
 
 	// clean up
 	SIArray_Free(stored_keys);
+	Map_Free(map);
+}
+
+void test_map_add_path() {
+	SIValue map = Map_New(0);
+
+	SIValue t       = SI_NullVal();
+	SIValue A       = SI_ConstStringVal("A");
+	SIValue B       = SI_ConstStringVal("B");
+	SIValue C       = SI_ConstStringVal("C");
+	SIValue v       = SI_LongVal(0);
+	SIValue path[4] = {A, B, C, A};
+
+	//--------------------------------------------------------------------------
+	// set map['A']['B']['C'] = 0
+	//--------------------------------------------------------------------------
+
+	TEST_ASSERT(Map_AddPath(&map, path, 3, v) == true);
+
+	// get map['A']['B']['C']
+	TEST_ASSERT(Map_GetPath(map, path, 3, &t) == true);
+	TEST_ASSERT(SIValue_Compare(t, v, NULL) == 0);
+
+	// get map['A']
+	TEST_ASSERT(Map_Get(map, A, &t) == true);
+	TEST_ASSERT(SI_TYPE(t) == T_MAP);
+	TEST_ASSERT(Map_KeyCount(t) == 1);
+
+	// get map['A']['B']
+	TEST_ASSERT(Map_Get(t, B, &t) == true);
+	TEST_ASSERT(SI_TYPE(t) == T_MAP);
+	TEST_ASSERT(Map_KeyCount(t) == 1);
+
+	// get map['A']['B']['C']
+	TEST_ASSERT(Map_Get(t, C, &t) == true);
+	TEST_ASSERT(SIValue_Compare(t, v, NULL) == 0);
+
+	//--------------------------------------------------------------------------
+	// set map['A']['C'] = 1
+	//--------------------------------------------------------------------------
+
+	path[1] = C;
+	v = SI_LongVal(1);
+	TEST_ASSERT(Map_AddPath(&map, path, 2, v) == true);
+
+	// get map['A']['C']
+	TEST_ASSERT(Map_GetPath(map, path, 2, &t) == true);
+	TEST_ASSERT(SIValue_Compare(t, v, NULL) == 0);
+
+
+	//--------------------------------------------------------------------------
+	// set map['C'] = 2
+	//--------------------------------------------------------------------------
+
+	path[0] = C;
+	v = SI_LongVal(2);
+	TEST_ASSERT(Map_AddPath(&map, path, 1, v) == true);
+
+	// get map['C']
+	TEST_ASSERT(Map_GetPath(map, path, 1, &t) == true);
+	TEST_ASSERT(SIValue_Compare(t, v, NULL) == 0);
+
+	//--------------------------------------------------------------------------
+	// set map['A']['B']['C']['A'] = 3
+	//--------------------------------------------------------------------------
+
+	// set should fail!
+	path[0] = A;
+	path[1] = B;
+	path[2] = C;
+	path[3] = A;
+	v = SI_LongVal(3);
+	TEST_ASSERT(Map_AddPath(&map, path, 4, v) == false);
+
+	// get map['A']['B']['C']['A']
+	TEST_ASSERT(Map_GetPath(map, path, 4, &t) == false);
+
+	//--------------------------------------------------------------------------
+	// update same element
+	//--------------------------------------------------------------------------
+
+	// set map['A']['B']['C'] = v
+	TEST_ASSERT(Map_AddPath(&map, path, 3, v) == true);
+
+	// reset map['A']['B']['C'] = v
+	TEST_ASSERT(Map_AddPath(&map, path, 3, v) == false);
+
+	// assign a different value to map['A']['B']['C'] = v
+	v = SI_LongVal(-3);
+	TEST_ASSERT(Map_AddPath(&map, path, 3, v) == true);
+
+	// clean up
 	Map_Free(map);
 }
 
@@ -146,6 +238,57 @@ void test_map_remove() {
 	Map_Free(map);
 }
 
+void test_map_remove_path() {
+	SIValue map = Map_New(0);
+
+	SIValue A       = SI_ConstStringVal("A");
+	SIValue B       = SI_ConstStringVal("B");
+	SIValue C       = SI_ConstStringVal("C");
+	SIValue t       = SI_NullVal();
+	SIValue v       = SI_LongVal(0);
+	SIValue path[3] = {A, B, C};
+
+	//--------------------------------------------------------------------------
+	// remove non existing path
+	//--------------------------------------------------------------------------
+
+	// try to delete map['A']['B']['C']
+	TEST_ASSERT(Map_RemovePath(map, path, 3) == false);
+
+	// create map['A']['B']['C'] = 0
+	TEST_ASSERT(Map_AddPath(&map, path, 3, v) == true);
+
+	// try to delete map['A']['B']['A']
+	path[2] = A;
+	TEST_ASSERT(Map_RemovePath(map, path, 3) == false);
+
+	// try to delete map['C']
+	TEST_ASSERT(Map_RemovePath(map, &C, 1) == false);
+
+	//--------------------------------------------------------------------------
+	// remove existing path
+	//--------------------------------------------------------------------------
+
+	// delete map['A']['B']
+	TEST_ASSERT(Map_RemovePath(map, path, 2) == true);
+	// repeate same deletion
+	TEST_ASSERT(Map_RemovePath(map, path, 2) == false);
+
+	// make sure map['A'] exists
+	TEST_ASSERT(Map_Get(map, A, &t) == true);
+	TEST_ASSERT(SI_TYPE(t) == T_MAP);
+
+	// make sure map['A']['B'] doesn't exists
+	TEST_ASSERT(Map_GetPath(map, path, 2, &t) == false);
+
+	// remove root element map['A']
+	TEST_ASSERT(Map_RemovePath(map, path, 1) == true);
+	TEST_ASSERT(Map_KeyCount(map) == 0);
+
+	// clean up
+	Map_Free(map);
+}
+
 void test_map_tostring() {
 	SIValue  k;
 	SIValue  v;
@@ -185,8 +328,10 @@ void test_map_tostring() {
 
 TEST_LIST = {
 	{"empty_map", test_empty_map},
-	{"map_add", test_map_add},
-	{"map_remove", test_map_remove},
-	{"map_tostring", test_map_tostring},
+	{"map_Add", test_map_add},
+	{"map_AddPath", test_map_add_path},
+	{"map_Remove", test_map_remove},
+	{"map_RemovePath", test_map_remove_path},
+	{"map_ToString", test_map_tostring},
 	{NULL, NULL}
 };

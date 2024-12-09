@@ -46,26 +46,26 @@ EffectsBuffer *EffectsBuffer_New(void);
 // reset effects-buffer
 void EffectsBuffer_Reset
 (
-	EffectsBuffer *buff  // effects-buffer
+	EffectsBuffer *eb  // effects-buffer
 );
 
 // returns number of effects in buffer
 uint64_t EffectsBuffer_Length
 (
-	const EffectsBuffer *buff  // effects-buffer
+	const EffectsBuffer *eb  // effects-buffer
 );
 
 // get a copy of effectspbuffer internal buffer
-unsigned char *EffectsBuffer_Buffer
+char *EffectsBuffer_Buffer
 (
-	const EffectsBuffer *eb,  // effects-buffer
-	size_t *n                 // size of returned buffer
+	EffectsBuffer *eb,  // effects-buffer
+	size_t *n           // size of returned buffer
 );
 
 // add a node creation effect to buffer
 void EffectsBuffer_AddCreateNodeEffect
 (
-	EffectsBuffer *buff,    // effect buffer
+	EffectsBuffer *eb,      // effect buffer
 	const Node *n,          // node created
 	const LabelID *labels,  // node labels
 	ushort label_count      // number of labels
@@ -74,39 +74,43 @@ void EffectsBuffer_AddCreateNodeEffect
 // add a edge creation effect to buffer
 void EffectsBuffer_AddCreateEdgeEffect
 (
-	EffectsBuffer *buff,  // effect buffer
-	const Edge *edge      // edge created
+	EffectsBuffer *eb,  // effect buffer
+	const Edge *edge    // edge created
 );
 
 // add a node deletion effect to buffer
 void EffectsBuffer_AddDeleteNodeEffect
 (
-	EffectsBuffer *buff,  // effect buffer
-	const Node *node      // node deleted
+	EffectsBuffer *eb,  // effect buffer
+	const Node *node    // node deleted
 );
 
 // add a edge deletion effect to buffer
 void EffectsBuffer_AddDeleteEdgeEffect
 (
-	EffectsBuffer *buff,  // effect buffer
-	const Edge *edge      // edge deleted
+	EffectsBuffer *eb,  // effect buffer
+	const Edge *edge    // edge deleted
 );
 
 // add an entity attribute removal effect to buffer
 void EffectsBuffer_AddEntityRemoveAttributeEffect
 (
-	EffectsBuffer *buff,         // effect buffer
+	EffectsBuffer *eb,           // effects buffer
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
+	const char **path,           // sub path
+	uint8_t l,                   // sub path length
 	GraphEntityType entity_type  // entity type
 );
 
 // add an entity add new attribute effect to buffer
 void EffectsBuffer_AddEntityAddAttributeEffect
 (
-	EffectsBuffer *buff,         // effect buffer
+	EffectsBuffer *eb,           // effects buffer
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
+	const char **path,           // sub path
+	uint8_t n,                   // sub path length
 	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 );
@@ -114,17 +118,19 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 // add an entity update attribute effect to buffer
 void EffectsBuffer_AddEntityUpdateAttributeEffect
 (
-	EffectsBuffer *buff,         // effect buffer
+	EffectsBuffer *eb,           // effects buffer
 	GraphEntity *entity,         // updated entity ID
 	AttributeID attr_id,         // updated attribute ID
- 	SIValue value,               // value
+	const char **path,           // sub path
+	uint8_t n,                   // sub path length
+	SIValue value,               // value
 	GraphEntityType entity_type  // entity type
 );
 
 // add a node add label effect to buffer
 void EffectsBuffer_AddLabelsEffect
 (
-	EffectsBuffer *buff,     // effect buffer
+	EffectsBuffer *eb,       // effect buffer
 	const Node *node,        // updated node
 	const LabelID *lbl_ids,  // added labels
 	size_t lbl_count         // number of removed labels
@@ -133,7 +139,7 @@ void EffectsBuffer_AddLabelsEffect
 // add a node remove label effect to buffer
 void EffectsBuffer_AddRemoveLabelsEffect
 (
-	EffectsBuffer *buff,     // effect buffer
+	EffectsBuffer *eb,       // effect buffer
 	const Node *node,        // updated node
 	const LabelID *lbl_ids,  // removed labels
 	size_t lbl_count         // number of removed labels
@@ -142,7 +148,7 @@ void EffectsBuffer_AddRemoveLabelsEffect
 // add a schema addition effect to buffer
 void EffectsBuffer_AddNewSchemaEffect
 (
-	EffectsBuffer *buff,      // effect buffer
+	EffectsBuffer *eb,        // effect buffer
 	const char *schema_name,  // id of the schema
 	SchemaType t              // type of the schema
 );
@@ -150,7 +156,7 @@ void EffectsBuffer_AddNewSchemaEffect
 // add an attribute addition effect to buffer
 void EffectsBuffer_AddNewAttributeEffect
 (
-	EffectsBuffer *buff,  // effect buffer
+	EffectsBuffer *eb,    // effect buffer
 	const char *attr      // attribute name
 );
 

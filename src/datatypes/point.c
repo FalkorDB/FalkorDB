@@ -7,19 +7,29 @@
 #include "RG.h"
 #include "point.h"
 
-float Point_lat(SIValue point) {
+float Point_lat
+(
+	SIValue point
+) {
 	ASSERT(SI_TYPE(point) == T_POINT);
 
 	return point.point.latitude;
 }
 
-float Point_lon(SIValue point) {
+float Point_lon
+(
+	SIValue point
+) {
 	ASSERT(SI_TYPE(point) == T_POINT);
 
 	return point.point.longitude;
 }
 
-SIValue Point_GetCoordinate(SIValue point, SIValue key) {
+SIValue Point_GetCoordinate
+(
+	SIValue point,
+	SIValue key
+) {
 	ASSERT(SI_TYPE(point) == T_POINT);
 	ASSERT(SI_TYPE(key) == T_STRING);
 
@@ -30,5 +40,27 @@ SIValue Point_GetCoordinate(SIValue point, SIValue key) {
 	} else {
 		return SI_NullVal();
 	}
+}
+
+// encode point to binary stream
+void Point_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	const SIValue *point  // point to encode
+) {
+	ASSERT(SI_TYPE(*point) == T_POINT);
+
+	SerializerIO_WriteFloat(stream, Point_lat(*point));
+	SerializerIO_WriteFloat(stream, Point_lon(*point));
+}
+
+// read point from binary stream
+SIValue Point_FromBinary
+(
+	SerializerIO stream  // binary stream
+) {
+	double lat = SerializerIO_ReadDouble(stream);
+	double lon = SerializerIO_ReadDouble(stream);
+	return SI_Point(lat, lon);
 }
 

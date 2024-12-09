@@ -466,7 +466,12 @@ void QueryCtx_Free(void) {
 		UndoLog_Free(ctx->undo_log);
 		ctx->undo_log = NULL;
 	}
-	EffectsBuffer_Free(ctx->effects_buffer);
+
+	// free effects buffer
+	if(ctx->effects_buffer != NULL) {
+		EffectsBuffer_Free(ctx->effects_buffer);
+		ctx->effects_buffer = NULL;
+	}
 
 	if(ctx->query_data.params != NULL) {
 		raxFreeWithCallback(ctx->query_data.params, _ParameterFreeCallback);

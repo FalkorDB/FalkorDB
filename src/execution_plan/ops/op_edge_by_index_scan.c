@@ -107,10 +107,13 @@ static OpResult EdgeIndexScanInit
 	if(opBase->childCount > 0) {
 		const char *alias =  QGEdge_Alias(op->edge);
 		if(op->srcAware) {
-			op->current_src_node_id  = AR_EXP_NewConstOperandNode(SI_NullVal());
-			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL, 
-				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias), "_src_id"), 
-				op->current_src_node_id);
+			op->current_src_node_id = AR_EXP_NewConstOperandNode(SI_NullVal());
+
+			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL,
+					AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias),
+					PropertyPath_propertyAccess("_src_id")),
+					op->current_src_node_id);
+
 			FT_FilterNode *root = FilterTree_CreateConditionFilter(OP_AND);
 			FilterTree_AppendLeftChild(root, op->filter);
 			FilterTree_AppendRightChild(root, ft);
@@ -119,10 +122,12 @@ static OpResult EdgeIndexScanInit
 		}
 
 		if(op->destAware) {
-			op->current_dest_node_id  = AR_EXP_NewConstOperandNode(SI_NullVal());
+			op->current_dest_node_id = AR_EXP_NewConstOperandNode(SI_NullVal());
 			FT_FilterNode *ft = FilterTree_CreatePredicateFilter(OP_EQUAL, 
-				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias), "_dest_id"), 
+				AR_EXP_NewAttributeAccessNode(AR_EXP_NewVariableOperandNode(alias),
+				PropertyPath_propertyAccess("_dest_id")),
 				op->current_dest_node_id);
+
 			FT_FilterNode *root = FilterTree_CreateConditionFilter(OP_AND);
 			FilterTree_AppendLeftChild(root, op->filter);
 			FilterTree_AppendRightChild(root, ft);

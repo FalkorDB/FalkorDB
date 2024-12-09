@@ -9,6 +9,7 @@
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
 static SIValue _RdbLoadSIArray(SerializerIO rdb);
+static SIValue _RdbLoadMap (SerializerIO rdb, SIType t);
 static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
 
 static SIValue _RdbLoadSIValue
@@ -36,6 +37,8 @@ static SIValue _RdbLoadSIValue
 		return _RdbLoadPoint(rdb);
 	case T_VECTOR_F32:
 		return _RdbLoadVector(rdb, t);
+	case T_MAP:
+		return _RdbLoadMap(rdb, t);
 	case T_NULL:
 	default: // currently impossible
 		return SI_NullVal();
@@ -100,6 +103,31 @@ static SIValue _RdbLoadVector
 	}
 
 	return vector;
+}
+
+static SIValue _RdbLoadMap
+(
+	SerializerIO rdb,
+	SIType t
+) {
+	// loads map as
+	// unsinged : key count
+	// key:val
+	// .
+	// .
+	// .
+	// key:val
+
+	uint n = SerializerIO_ReadUnsigned(rdb);
+	char*   keys[n];
+	SIValue vals[n];
+
+	for(uint i = 0; i < n; i++) {
+		keys[i] = _RdbLoadSIValue(rdb).stringval;
+		vals[i] = _RdbLoadSIValue(rdb);
+	}
+
+	return Map_FromArrays(keys, vals, n);
 }
 
 static void _RdbLoadEntity

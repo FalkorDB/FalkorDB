@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include "rax.h"
 #include "./func_desc.h"
+#include "../property_path.h"
 #include "../../deps/rax/rax.h"
 #include "../execution_plan/record.h"
 #include "../graph/entities/graph_entity.h"
@@ -73,80 +74,152 @@ typedef struct AR_ExpNode {
 } AR_ExpNode;
 
 // creates a new Arithmetic expression operation node
-AR_ExpNode *AR_EXP_NewOpNode(const char *func_name, bool include_internal, uint child_count);
+AR_ExpNode *AR_EXP_NewOpNode
+(
+	const char *func_name,
+	bool include_internal,
+	uint child_count
+);
 
 // creates a new Arithmetic expression variable operand node
-AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias);
+AR_ExpNode *AR_EXP_NewVariableOperandNode
+(
+	const char *alias
+);
 
-// creates a new Arithmetic expression extracting an attribute from an entity
-AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity, const char *attr);
+// build a property access expression
+AR_ExpNode *AR_EXP_NewAttributeAccessNode
+(
+	AR_ExpNode *entity,  // entity expression
+	PropertyPath *path   // property access path
+);
 
 // creates a new Arithmetic expression constant operand node
-AR_ExpNode *AR_EXP_NewConstOperandNode(SIValue constant);
+AR_ExpNode *AR_EXP_NewConstOperandNode
+(
+	SIValue constant
+);
 
 // creates a new Arithmetic expression parameter operand node
-AR_ExpNode *AR_EXP_NewParameterOperandNode(const char *param_name);
+AR_ExpNode *AR_EXP_NewParameterOperandNode
+(
+	const char *param_name
+);
 
 // creates a new Arithmetic expression that will resolve to the current Record
 AR_ExpNode *AR_EXP_NewRecordNode(void);
 
 // set node private data
-void AR_SetPrivateData(AR_ExpNode *node, void *pdata);
+void AR_SetPrivateData
+(
+	AR_ExpNode *node,
+	void *pdata
+);
 
 // compact tree by evaluating all contained functions that can be resolved right now
 // the function returns true if it managed to compact the expression
 // the reduce_params flag indicates if parameters should be evaluated
 // the val pointer is out-by-ref returned computation
-bool AR_EXP_ReduceToScalar(AR_ExpNode *root, bool reduce_params, SIValue *val);
+bool AR_EXP_ReduceToScalar
+(
+	AR_ExpNode *root,
+	bool reduce_params,
+	SIValue *val
+);
 
 // resolve variables to constants
-void AR_EXP_ResolveVariables(AR_ExpNode *root, const Record r);
+void AR_EXP_ResolveVariables
+(
+	AR_ExpNode *root,
+	const Record r
+);
 
 // evaluate arithmetic expression tree
 // this function raise exception
-SIValue AR_EXP_Evaluate(AR_ExpNode *root, const Record r);
+SIValue AR_EXP_Evaluate
+(
+	AR_ExpNode *root,
+	const Record r
+);
 
 // evaluate arithmmetic expression tree
 // this function will not raise exception in case of error
 // use it in arithmetic function for example comprehension function
-SIValue AR_EXP_Evaluate_NoThrow(AR_ExpNode *root, const Record r);
+SIValue AR_EXP_Evaluate_NoThrow
+(
+	AR_ExpNode *root,
+	const Record r
+);
 
 // evaluate aggregate functions in expression tree
-void AR_EXP_Aggregate(AR_ExpNode *root, const Record r);
+void AR_EXP_Aggregate
+(
+	AR_ExpNode *root,
+	const Record r
+);
 
 // reduce aggregation functions to their scalar values
 // and evaluates the expression
-SIValue AR_EXP_FinalizeAggregations(AR_ExpNode *root, const Record r);
+SIValue AR_EXP_FinalizeAggregations
+(
+	AR_ExpNode *root,
+	const Record r
+);
 
 //------------------------------------------------------------------------------
 // Utility functions
 //------------------------------------------------------------------------------
 
 // traverse an expression tree and add all entity aliases to a rax
-void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases);
+void AR_EXP_CollectEntities
+(
+	AR_ExpNode *root,
+	rax *aliases
+);
 
 // traverse an expression tree and add all mentioned attributes:
 // n.attr > 3 to a prefix tree
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes);
+void AR_EXP_CollectAttributes
+(
+	AR_ExpNode *root,
+	rax *attributes
+);
 
 // search for an aggregation node within the expression tree
 // return 1 if one exists
 // please note an expression tree can't contain nested aggregation nodes
-bool AR_EXP_ContainsAggregation(AR_ExpNode *root);
+bool AR_EXP_ContainsAggregation
+(
+	AR_ExpNode *root
+);
 
 // constructs string representation of arithmetic expression tree
-void AR_EXP_ToString(const AR_ExpNode *root, char **str);
+void AR_EXP_ToString
+(
+	const AR_ExpNode *root,
+	char **str
+);
 
 // checks to see if expression contains given function
 // root - expression root to traverse
 // func - function name to lookup
-bool AR_EXP_ContainsFunc(const AR_ExpNode *root, const char *func);
+bool AR_EXP_ContainsFunc
+(
+	const AR_ExpNode *root,
+	const char *func
+);
 
 // checks to see if expression contains a variable
-bool AR_EXP_ContainsVariadic(const AR_ExpNode *root);
+bool AR_EXP_ContainsVariadic
+(
+	const AR_ExpNode *root
+);
 
 // returns true if an arithmetic expression node is a constant
-bool AR_EXP_IsConstant(const AR_ExpNode *exp);
+bool AR_EXP_IsConstant
+(
+	const AR_ExpNode *exp
+);
 
 // returns true if an arithmetic expression node is variadic
 bool AR_EXP_IsVariadic(const AR_ExpNode *exp);
