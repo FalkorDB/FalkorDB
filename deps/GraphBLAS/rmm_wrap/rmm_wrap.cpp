@@ -170,14 +170,23 @@ bool rmm_wrap_is_initialized (void)
 
 void rmm_wrap_finalize (void)
 {
-    if (rmm_wrap_context != NULL)
+    try
     {
-        for(int device_id = 0; device_id < devices.size(); ++device_id) {
-            RMM_WRAP_CHECK_CUDA(cudaStreamDestroy(rmm_wrap_context[device_id]->main_stream));
-            delete rmm_wrap_context[device_id];
+        if (rmm_wrap_context != NULL)
+        {
+            for (int device_id = 0; device_id < devices.size(); ++device_id)
+            {
+                RMM_WRAP_CHECK_CUDA(cudaStreamDestroy(rmm_wrap_context[device_id]->main_stream));
+                delete rmm_wrap_context[device_id];
+            }
+            delete rmm_wrap_context ;
+            rmm_wrap_context = NULL ;
         }
-        delete rmm_wrap_context ;
-        rmm_wrap_context = NULL ;
+    }
+    catch (...)
+    {
+        // something failed; just return
+        return ;
     }
 }
 
@@ -187,6 +196,7 @@ void rmm_wrap_finalize (void)
 
 int get_current_device(void)
 {
+    // FIXME: return an error code if this method fails
     int device_id;
     cudaGetDevice(&device_id);
     return device_id;
@@ -205,88 +215,96 @@ int rmm_wrap_initialize     // returns -1 on error, 0 on success
     size_t stream_pool_size // TODO: describe. Should we default this?
 )
 {
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    if (rmm_wrap_context[device_id] != NULL)
+    
+    try
     {
+
+        //----------------------------------------------------------------------
+        // check inputs
+        //----------------------------------------------------------------------
+
+        if (rmm_wrap_context[device_id] != NULL)
+        {
+            return (-1) ;
+        }
+
+        if(stream_pool_size <= 0)
+        {
+            // std::cout << "Stream pool size must be >=0" << std::endl;
+            // failed to create the alloc_map
+            return (-1) ;
+        }
+
+        // create the RMM wrap handle and save it as a global pointer.
+        rmm_wrap_context [device_id] = new RMM_Wrap_Handle() ;
+        // FIXME: check for error?
+
+        //  std::cout<< " init called with mode "<<mode<<" init_size "
+        // <<init_pool_size<<" max_size "<<max_pool_size<<"\n";
+
+        //----------------------------------------------------------------------
+        // Construct a resource that uses a coalescing best-fit pool allocator
+        //----------------------------------------------------------------------
+
+        // Set CUDA stream pool
+        // std::cout << "Creating rmm_wrap stream pool" << std::endl;
+        rmm_wrap_context[device_id]->stream_pool = make_and_set_cuda_stream_pool(stream_pool_size);
+        RMM_WRAP_CHECK_CUDA(cudaStreamCreate(&(rmm_wrap_context[device_id]->main_stream)));
+
+        if (mode == rmm_wrap_host )
+        {
+            // rmm_wrap_context->host_resource =
+            //  std::pmr::synchronized_pool_resource() ;
+            //  // (init_pool_size, max_pool_size) ;
+            // rmm_wrap_context->host_resource =  make_and_set_host_pool() ;
+            //  // (init_pool_size, max_pool_size) ;
+        }
+        else if (mode == rmm_wrap_host_pinned )
+        {
+            // rmm_wrap_context->host_resource =
+            //  std::pmr::synchronized_pool_resource() ;
+            //  // (init_pool_size, max_pool_size) ;
+        }
+        else if (mode == rmm_wrap_device )
+        {
+            rmm_wrap_context[device_id]->resource =
+                make_and_set_device_pool( init_pool_size, max_pool_size) ;
+        }
+        else if ( mode == rmm_wrap_managed )
+        {
+            // std::cout << "Seting managed pool" << std::endl;
+            rmm_wrap_context[device_id]->resource = 
+                make_and_set_managed_pool( init_pool_size, max_pool_size);
+        }
+        else
+        {
+            // invalid mode
+            return (-1) ;
+        }
+
+        // std::cout << "Setting mode for rmm_wrap context" << std::endl;
+        // Mark down the mode for reference later
+        rmm_wrap_context[device_id]->mode = mode;
+
+        //----------------------------------------------------------------------
+        // create size map to lookup size of each allocation
+        //----------------------------------------------------------------------
+
+        // std::cout << "Setting size_map for rmm_wrap context" << std::endl;
+        rmm_wrap_context[device_id]->size_map = std::make_shared<alloc_map> () ;
+        if (rmm_wrap_context[device_id]->size_map.get() == NULL)
+        {
+            // std::cout << "Failed to create size_map" << std::endl;
+            // failed to create the alloc_map
+            return (-1) ;
+        }
+        return (0) ;
+    }
+    catch (...)
+    {
+        // something failed; return an error code
         return (-1) ;
     }
-
-    if(stream_pool_size <= 0)
-    {
-        // std::cout << "Stream pool size must be >=0" << std::endl;
-        // failed to create the alloc_map
-        return (-1) ;
-    }
-
-//    // create the RMM wrap handle and save it as a global pointer.
-    rmm_wrap_context [device_id] = new RMM_Wrap_Handle() ;
-    // FIXME: check for error?
-
-    //  std::cout<< " init called with mode "<<mode<<" init_size "
-    // <<init_pool_size<<" max_size "<<max_pool_size<<"\n";
-
-    //--------------------------------------------------------------------------
-    // Construct a resource that uses a coalescing best-fit pool allocator
-    //--------------------------------------------------------------------------
-
-    // Set CUDA stream pool
-    // std::cout << "Creating rmm_wrap stream pool" << std::endl;
-    rmm_wrap_context[device_id]->stream_pool = make_and_set_cuda_stream_pool(stream_pool_size);
-    RMM_WRAP_CHECK_CUDA(cudaStreamCreate(&(rmm_wrap_context[device_id]->main_stream)));
-
-    if (mode == rmm_wrap_host )
-    {
-        // rmm_wrap_context->host_resource =
-        //  std::pmr::synchronized_pool_resource() ;
-        //  // (init_pool_size, max_pool_size) ;
-        // rmm_wrap_context->host_resource =  make_and_set_host_pool() ;
-        //  // (init_pool_size, max_pool_size) ;
-    }
-    else if (mode == rmm_wrap_host_pinned )
-    {
-        // rmm_wrap_context->host_resource =
-        //  std::pmr::synchronized_pool_resource() ;
-        //  // (init_pool_size, max_pool_size) ;
-    }
-    else if (mode == rmm_wrap_device )
-    {
-        rmm_wrap_context[device_id]->resource =
-            make_and_set_device_pool( init_pool_size, max_pool_size) ;
-    }
-    else if ( mode == rmm_wrap_managed )
-    {
-        // std::cout << "Seting managed pool" << std::endl;
-        rmm_wrap_context[device_id]->resource = 
-            make_and_set_managed_pool( init_pool_size, max_pool_size);
-    }
-    else
-    {
-        // invalid mode
-        return (-1) ;
-    }
-
-    // std::cout << "Setting mode for rmm_wrap context" << std::endl;
-    // Mark down the mode for reference later
-    rmm_wrap_context[device_id]->mode = mode;
-
-    //--------------------------------------------------------------------------
-    // create size map to lookup size of each allocation
-    //--------------------------------------------------------------------------
-
-    // std::cout << "Setting size_map for rmm_wrap context" << std::endl;
-    rmm_wrap_context[device_id]->size_map = std::make_shared<alloc_map> () ;
-    if (rmm_wrap_context[device_id]->size_map.get() == NULL)
-    {
-        // std::cout << "Failed to create size_map" << std::endl;
-        // failed to create the alloc_map
-        return (-1) ;
-    }
-
-    return (0) ;
 }
 
 //------------------------------------------------------------------------------
@@ -301,61 +319,71 @@ int rmm_wrap_initialize_all_same
     size_t stream_pool_size     // TODO: describe. Should we default this?
 )
 {
-
-    if (rmm_wrap_context != NULL)
+    try
     {
-        return (-1);
-    }
 
-    devices.clear();
-
-    const char* cuda_visible_devices = std::getenv("CUDA_VISIBLE_DEVICES");
-
-    /**
-     * Start with "CUDA_VISIBLE_DEVICES" var if it's defined.
-     */
-    if(cuda_visible_devices != nullptr) {
-        std::stringstream check1;
-        check1 << cuda_visible_devices;
-        std::string intermediate;
-        while(getline(check1, intermediate, ','))
+        if (rmm_wrap_context != NULL)
         {
-
-            intermediate.erase(std::remove_if(intermediate.begin(), intermediate.end(), ::isspace), intermediate.end());
-            uint32_t device_id = static_cast<uint32_t>(stoi(intermediate));
-            // std::cout << "Found device_id " << device_id << std::endl;
-            devices.push_back(device_id);
+            return (-1);
         }
-    /**
-     * If CUDA_VISIBLE_DEVICES not explicitly specified,
-     * default to device 0.
-     */
-    } else {
-        devices.push_back(0);
-        // std::cout << "Using default device_id 0" << std::endl;
-    }
 
-    // Allocate rmm_wrap_contexts
-    rmm_wrap_context = (RMM_Wrap_Handle**)malloc(devices.size() * sizeof(RMM_Wrap_Handle*));
-    for(int i = 0; i < devices.size(); ++i) {
-        rmm_wrap_context[i] = NULL;
-        uint32_t device_id = devices[i];
-        // std::cout << "Creating rmm_wrap_context for device_id " << device_id << std::endl;
-        int ret = rmm_wrap_initialize(device_id, mode, init_pool_size, max_pool_size, stream_pool_size);
-        if(ret < 0) {
-            return ret;
+        devices.clear();
+
+        const char* cuda_visible_devices = std::getenv("CUDA_VISIBLE_DEVICES");
+
+        /**
+         * Start with "CUDA_VISIBLE_DEVICES" var if it's defined.
+         */
+        if(cuda_visible_devices != nullptr) {
+            std::stringstream check1;
+            check1 << cuda_visible_devices;
+            std::string intermediate;
+            while(getline(check1, intermediate, ','))
+            {
+
+                intermediate.erase(std::remove_if(intermediate.begin(), intermediate.end(), ::isspace), intermediate.end());
+                uint32_t device_id = static_cast<uint32_t>(stoi(intermediate));
+                // std::cout << "Found device_id " << device_id << std::endl;
+                devices.push_back(device_id);
+            }
+        /**
+         * If CUDA_VISIBLE_DEVICES not explicitly specified,
+         * default to device 0.
+         */
+        } else {
+            devices.push_back(0);
+            // std::cout << "Using default device_id 0" << std::endl;
         }
-    }
 
-    return 0;
+        // Allocate rmm_wrap_contexts
+        rmm_wrap_context = (RMM_Wrap_Handle**)malloc(devices.size() * sizeof(RMM_Wrap_Handle*));
+        for(int i = 0; i < devices.size(); ++i) {
+            rmm_wrap_context[i] = NULL;
+            uint32_t device_id = devices[i];
+            // std::cout << "Creating rmm_wrap_context for device_id " << device_id << std::endl;
+            int ret = rmm_wrap_initialize(device_id, mode, init_pool_size, max_pool_size, stream_pool_size);
+            if(ret < 0) {
+                return ret;
+            }
+        }
+
+        return 0;
+    }
+    catch (...)
+    {
+        // something failed; return an error state
+        return (-1) ;
+    }
 }
 
 //------------------------------------------------------------------------------
-// rmm_wrap_get_next_stream_from_pool: return the next available stream from the pool
-// Output is cudaStream_t
+// rmm_wrap_get_next_stream_from_pool: return the next available stream from
+// the pool Output is cudaStream_t
 //------------------------------------------------------------------------------
+
 void* rmm_wrap_get_next_stream_from_pool(void)
 {
+    // FIXME: check for errors
     return rmm_wrap_context[get_current_device()]->stream_pool->get_stream();
 }
 
@@ -363,8 +391,10 @@ void* rmm_wrap_get_next_stream_from_pool(void)
 // rmm_wrap_get_stream_from_pool: return specific stream from the pool
 // Output is cudaStream_t
 //------------------------------------------------------------------------------
+
 void* rmm_wrap_get_stream_from_pool(std::size_t stream_id)
 {
+    // FIXME: check for errors
     return rmm_wrap_context[get_current_device()]->stream_pool->get_stream(stream_id);
 }
 
@@ -374,6 +404,7 @@ void* rmm_wrap_get_stream_from_pool(std::size_t stream_id)
 //------------------------------------------------------------------------------
 void* rmm_wrap_get_main_stream(void)
 {
+    // FIXME: check for errors
     return rmm_wrap_context[get_current_device()]->main_stream;
 }
 //------------------------------------------------------------------------------
@@ -402,7 +433,10 @@ void *rmm_wrap_calloc (std::size_t n, std::size_t size)
     // NOTE: this is single-threaded on the CPU.  If you want a faster method,
     // malloc the space and use cudaMemset for the GPU or GB_memset on the CPU.
     // The GraphBLAS GB_calloc_memory method uses malloc and GB_memset.
-    memset (p, 0, s) ;
+    if (p != NULL)
+    {
+        memset (p, 0, s) ;
+    }
     return (p) ;
 }
 
@@ -415,58 +449,67 @@ void *rmm_wrap_calloc (std::size_t n, std::size_t size)
 
 void *rmm_wrap_realloc (void *p, std::size_t newsize)
 {
-    if (p == NULL)
+    try
     {
-        // allocate a new block.  This is OK.
-        return (rmm_wrap_allocate (&newsize)) ;
-    }
+        if (p == NULL)
+        {
+            // allocate a new block.  This is OK.
+            return (rmm_wrap_allocate (&newsize)) ;
+        }
 
-    if (newsize == 0)
+        if (newsize == 0)
+        {
+            // free the block.  This OK.
+            rmm_wrap_deallocate (p, 0) ;
+            return (NULL) ;
+        }
+
+        uint32_t device_id = get_current_device();
+
+        alloc_map *am = rmm_wrap_context[device_id]->size_map.get() ;
+        std::size_t oldsize = am->at( (std::size_t)(p) ) ;
+
+        if (oldsize == 0)
+        {
+            // the block is not in the hashmap; cannot realloc it.
+            // This is a failure.
+            return (NULL) ;
+        }
+
+        // check for quick return
+        if (newsize >= oldsize/2 && newsize <= oldsize)
+        {
+            // Be lazy. If the block does not change, or is shrinking but only
+            // by a small amount, then leave the block as-is.
+            return (p) ;
+        }
+
+        // allocate the new space
+        void *pnew = rmm_wrap_allocate (&newsize) ;
+        if (pnew == NULL)
+        {
+            // old block is not modified.  This is a failure, but the old block
+            // is still in the hashmap.
+            return (NULL) ;
+        }
+
+        // copy the old space into the new space
+        std::size_t s = (oldsize < newsize) ? oldsize : newsize ;
+        // FIXME: query the pointer if it's on the GPU.
+        memcpy (pnew, p, s) ; // NOTE: single-thread CPU, not GPU.  Slow!
+
+        // free the old space
+        rmm_wrap_deallocate (p, oldsize) ;
+
+        // return the new space
+        return (pnew) ;
+
+    }
+    catch (...)
     {
-        // free the block.  This OK.
-        rmm_wrap_deallocate (p, 0) ;
+        // something failed; just return NULL
         return (NULL) ;
     }
-
-    uint32_t device_id = get_current_device();
-
-    alloc_map *am = rmm_wrap_context[device_id]->size_map.get() ;
-    std::size_t oldsize = am->at( (std::size_t)(p) ) ;
-
-    if (oldsize == 0)
-    {
-        // the block is not in the hashmap; cannot realloc it.
-        // This is a failure.
-        return (NULL) ;
-    }
-
-    // check for quick return
-    if (newsize >= oldsize/2 && newsize <= oldsize)
-    {
-        // Be lazy. If the block does not change, or is shrinking but only by a
-        // small amount, then leave the block as-is.
-        return (p) ;
-    }
-
-    // allocate the new space
-    void *pnew = rmm_wrap_allocate (&newsize) ;
-    if (pnew == NULL)
-    {
-        // old block is not modified.  This is a failure, but the old block is
-        // still in the hashmap.
-        return (NULL) ;
-    }
-
-    // copy the old space into the new space
-    std::size_t s = (oldsize < newsize) ? oldsize : newsize ;
-    // FIXME: query the pointer if it's on the GPU.
-    memcpy (pnew, p, s) ; // NOTE: single-thread CPU, not GPU.  Slow!
-
-    // free the old space
-    rmm_wrap_deallocate (p, oldsize) ;
-
-    // return the new space
-    return (pnew) ;
 }
 
 //------------------------------------------------------------------------------
@@ -487,46 +530,58 @@ void rmm_wrap_free (void *p)
 
 void *rmm_wrap_allocate( std::size_t *size)
 {
-    if (rmm_wrap_context == NULL)
+    try
     {
+        void *p = NULL ;
+
+        if (rmm_wrap_context == NULL)
+        {
+            return (NULL) ;
+        }
+
+        // FIXME: check for failure of get_current_device
+        uint32_t device_id = get_current_device();
+
+        alloc_map *am = rmm_wrap_context[device_id]->size_map.get() ;
+        if (am == NULL)
+        {
+            // PANIC!
+            // std::cout<< "Uh oh, can't allocate before initializing RMM"
+            // << std::endl;
+            return (NULL) ;
+        }
+
+        // ensure size is nonzero
+        if (*size == 0) *size = 256 ;
+        // round-up the allocation to a multiple of 256
+        std::size_t aligned = (*size) % 256 ;
+        if (aligned > 0)
+        {
+            *size += (256 - aligned) ;
+        }
+
+        rmm::mr::device_memory_resource *memoryresource =
+            rmm::mr::get_current_device_resource() ;
+        p = memoryresource->allocate( *size ) ;
+        if (p == NULL)
+        {
+            // out of memory
+            *size = 0 ;
+            return (NULL) ;
+        }
+
+        // insert p into the hashmap
+        am->emplace ((std::size_t)p, (std::size_t)(*size)) ;
+
+        // return the allocated block
+        return (p) ;
+
+    }
+    catch (...)
+    {
+        // something failed; just return NULL
         return (NULL) ;
     }
-
-    uint32_t device_id = get_current_device();
-
-    alloc_map *am = rmm_wrap_context[device_id]->size_map.get() ;
-    if (am == NULL)
-    {
-        // PANIC!
-        // std::cout<< "Uh oh, can't allocate before initializing RMM"
-        // << std::endl;
-        return (NULL) ;
-    }
-
-    // ensure size is nonzero
-    if (*size == 0) *size = 256 ;
-    // round-up the allocation to a multiple of 256
-    std::size_t aligned = (*size) % 256 ;
-    if (aligned > 0)
-    {
-        *size += (256 - aligned) ;
-    }
-
-    rmm::mr::device_memory_resource *memoryresource =
-        rmm::mr::get_current_device_resource() ;
-    void *p = memoryresource->allocate( *size ) ;
-    if (p == NULL)
-    {
-        // out of memory
-        *size = 0 ;
-        return (NULL) ;
-    }
-
-    // insert p into the hashmap
-    am->emplace ((std::size_t)p, (std::size_t)(*size)) ;
-
-    // return the allocated block
-    return (p) ;
 }
 
 //------------------------------------------------------------------------------
@@ -535,68 +590,78 @@ void *rmm_wrap_allocate( std::size_t *size)
 
 void rmm_wrap_deallocate( void *p, std::size_t size)
 {
-    if (rmm_wrap_context == NULL)
+    try
     {
-        return ;
-    }
-
-    // Note: there are 3 PANIC cases below.  The API of rmm_wrap_deallocate
-    // does not allow an error condition to be returned.  These PANICs could be
-    // logged, or they could terminate the program if debug mode enabled, etc.
-    // In production, all we can do is ignore the PANIC.
-
-    if (p == NULL)
-    {
-        // nothing to do; ignore a double-free
-        if (size > 0)
+        if (rmm_wrap_context == NULL)
         {
-            // PANIC!  Why does a NULL pointer have a nonzero size??
+            return ;
         }
+
+        // Note: there are 3 PANIC cases below.  The API of rmm_wrap_deallocate
+        // does not allow an error condition to be returned.  These PANICs
+        // could be logged, or they could terminate the program if debug mode
+        // enabled, etc.  In production, all we can do is ignore the PANIC.
+
+        if (p == NULL)
+        {
+            // nothing to do; ignore a double-free
+            if (size > 0)
+            {
+                // PANIC!  Why does a NULL pointer have a nonzero size??
+            }
+            return ;
+        }
+
+        uint32_t device_id = get_current_device();
+
+        // check the size given.  If the input size is zero, then the size is
+        // unknown (say rmm_wrap_free(p)).  In that case, just trust the
+        // hashmap.  Otherwise, double-check to make sure the size is correct.
+        alloc_map *am = rmm_wrap_context[device_id]->size_map.get() ;
+        size_t actual_size = 0 ;
+        if (am == NULL)
+        {
+            // PANIC!
+            // std::cout<< "Uh oh, can't deallocate before initializing RMM"
+            // << std::endl;
+            return ;
+        }
+        else
+        {
+           //actual_size = am->at( (std::size_t)(p) )  ;
+           auto iter = am->find( (std::size_t)(p) )  ;
+           if (iter != am->end() ) actual_size = iter->second;
+           // else std::cout <<
+           // " rmm_wrap:: tried to free unallocated pointer !" << p ;
+        }
+
+        if (actual_size == 0)
+        {
+            // PANIC!  oops, p is not in the hashmap.  Ignore it.  TODO: could
+            // add a printf here, write to a log file, etc.  if debug mode,
+            // abort, etc.
+            return ;
+        }
+
+        if (size > 0 && size != actual_size)
+        {
+            // PANIC!  oops, invalid old size.  Ignore the input size, and free
+            // p anyway.  TODO: could add a printf here, write to a log file,
+            // etc.  if debug mode, abort, etc.
+        }
+
+        // remove p from the hashmap
+        am->erase ( (std::size_t)(p) ) ;
+
+        // deallocate the block of memory
+        rmm::mr::device_memory_resource *memoryresource =
+            rmm::mr::get_current_device_resource() ;
+        memoryresource->deallocate( p, actual_size ) ;
+    }
+    catch (...)
+    {
+        // something failed; just catch the error and return
         return ;
     }
-
-    uint32_t device_id = get_current_device();
-
-    // check the size given.  If the input size is zero, then the
-    // size is unknown (say rmm_wrap_free(p)).  In that case, just trust the
-    // hashmap.  Otherwise, double-check to make sure the size is correct.
-    alloc_map *am = rmm_wrap_context[device_id]->size_map.get() ;
-    size_t actual_size = 0 ;
-    if (am == NULL)
-    {
-        // PANIC!
-        // std::cout<< "Uh oh, can't deallocate before initializing RMM"
-        // << std::endl;
-        return ;
-    }
-    else
-    {
-       //actual_size = am->at( (std::size_t)(p) )  ;
-       auto iter = am->find( (std::size_t)(p) )  ;
-       if (iter != am->end() ) actual_size = iter->second;
-       // else std::cout<< " rmm_wrap:: tried to free unallocated pointer ! " << p ;
-    }
-
-    if (actual_size == 0)
-    {
-        // PANIC!  oops, p is not in the hashmap.  Ignore it.  TODO: could add
-        // a printf here, write to a log file, etc.  if debug mode, abort, etc.
-        return ;
-    }
-
-    if (size > 0 && size != actual_size)
-    {
-        // PANIC!  oops, invalid old size.  Ignore the input size, and free p
-        // anyway.  TODO: could add a printf here, write to a log file, etc.
-        // if debug mode, abort, etc.
-    }
-
-    // remove p from the hashmap
-    am->erase ( (std::size_t)(p) ) ;
-
-    // deallocate the block of memory
-    rmm::mr::device_memory_resource *memoryresource =
-        rmm::mr::get_current_device_resource() ;
-    memoryresource->deallocate( p, actual_size ) ;
 }
 

@@ -70,5 +70,16 @@ for k1 = 1:length (types)
     end
 end
 
+% iso bitmap case
+clear A
+A.matrix = pi * sparse (rand (5) > 0.5) ;
+A.iso = true ;
+A.sparsity = 4 ;
+[I1, J1, X1] = GB_mex_extractTuples  (A, 'double') ;
+[I2, J2, X2] = GB_spec_extractTuples (A, 'double') ;
+assert (isequal (I1, I2)) ;
+assert (isequal (J1, J2)) ;
+assert (isequal (X1, X2)) ;
+
 fprintf ('\ntest11: all tests passed\n') ;
 

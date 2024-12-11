@@ -6,7 +6,7 @@ function test268
 
 rng ('default') ;
 
-% test Method04e, Factories/GB_sparse_masker_template.c
+% test Method04e, GB_sparse_masker_template.c
 % when M(:,j) is much denser than Z(:,j)
 
 n = 1000 ;

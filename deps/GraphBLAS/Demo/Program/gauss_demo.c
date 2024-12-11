@@ -211,6 +211,7 @@ int main (void)
     // MINGW it is treated as always false).  Only Linux and Mac can change
     // this setting.
     TRY (GxB_Global_Option_set (GxB_JIT_USE_CMAKE, true)) ;
+//  TRY (GxB_Global_Option_set (GxB_JIT_ERROR_FALLBACK, false)) ;
 
     printf ("Gauss demo.  Note that all transposes are array transposes,\n"
         "not matrix (conjugate) transposes.\n\n") ;
@@ -259,28 +260,39 @@ int main (void)
     // require a new JIT kernel to be compiled: if this is the first run of
     // this demo, the cache folder is empty.  Otherwise, the good gauss type
     // will be left in the cache folder from a prior run of this program, and
-    // its type defintion does not match this one.  The burble will say "jit:
-    // loaded but must recompile" in this case.
-    GrB_Type BadGauss = NULL ;
-    info = GxB_Type_new (&BadGauss, 0, "gauss", BAD_GAUSS_DEFN) ;
-    if (info != GrB_SUCCESS)
-    {
-        // JIT disabled
-        printf ("JIT: unable to determine type size: set it to %d\n",
-            (int) sizeof (badgauss)) ;
-        TRY (GrB_Type_new (&BadGauss, sizeof (badgauss))) ;
-    }
-    TRY (GxB_Type_fprint (BadGauss, "BadGauss", GxB_COMPLETE, stdout)) ;
+    // its type definition does not match this one.  The burble will say "jit:
+    // loaded but must recompile" in this case.  This is skipped if the JIT
+    // is disabled, since trying the BadGauss type will disable the good
+    // PreJIT kernel.
     size_t sizeof_gauss ;
-    TRY (GxB_Type_size (&sizeof_gauss, BadGauss)) ;
-    OK (sizeof_gauss == sizeof (badgauss)) ;
-    GrB_Type_free (&BadGauss) ;
+    if (control == GxB_JIT_ON)
+    {
+        GrB_Type BadGauss = NULL ;
+        info = GxB_Type_new (&BadGauss, 0, "gauss", BAD_GAUSS_DEFN) ;
+        if (info != GrB_SUCCESS)
+        {
+            // JIT disabled
+            printf ("JIT: unable to determine type size: set it to %d\n",
+                (int) sizeof (badgauss)) ;
+            TRY (GrB_Type_new (&BadGauss, sizeof (badgauss))) ;
+        }
+        TRY (GxB_Type_fprint (BadGauss, "BadGauss", GxB_COMPLETE, stdout)) ;
+        TRY (GxB_Type_size (&sizeof_gauss, BadGauss)) ;
+        OK (sizeof_gauss == sizeof (badgauss)) ;
+        GrB_Type_free (&BadGauss) ;
+    }
 
     // the JIT should have been successful, unless it was originally off
     #define OK_JIT \
     TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ; \
     OK (control == save) ;
     OK_JIT
+
+    // renable the JIT in case the JIT was disabled when GraphBLAS was built;
+    // this will enable any prejit kernels.
+    TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &save)) ;
+    printf ("jit: status %d\n", save) ;
 
     // create the Gauss type, and let the JIT determine the size.  This causes
     // an intentional name collision.  The new 'gauss' type does not match the
@@ -307,23 +319,36 @@ int main (void)
         OK_JIT
     }
 
+    printf ("JIT: off\n") ;
+    TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_OFF)) ;
+    printf ("JIT: on\n") ;
+    TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &control)) ;
+    printf ("jit: status %d\n", control) ;
+
     // create the BadAddGauss operator; use a NULL function pointer to test the
     // JIT.  Like the BadGauss type, this will always require a JIT
     // compilation, because the type will not match the good 'addgauss'
-    // definition from a prior run of this demo.
+    // definition from a prior run of this demo.  Skip this if the JIT is
+    // disabled, to allow PreJIT kernels to be used instead.  Creating
+    // the invalid addgauss operator will disable the good PreJIT addgauss.
     GrB_BinaryOp BadAddGauss = NULL ; 
-    info = GxB_BinaryOp_new (&BadAddGauss, NULL,
-        Gauss, Gauss, Gauss, "addgauss", BAD_ADDGAUSS_DEFN) ;
-    if (info != GrB_SUCCESS)
+    if (control == GxB_JIT_ON)
     {
-        // JIT disabled
-        printf ("JIT: unable to compile the BadAddGauss kernel\n") ;
-        TRY (GrB_BinaryOp_new (&BadAddGauss, (void *) badaddgauss,
-            Gauss, Gauss, Gauss)) ;
+        info = GxB_BinaryOp_new (&BadAddGauss, NULL,
+            Gauss, Gauss, Gauss, "addgauss", BAD_ADDGAUSS_DEFN) ;
+        if (info != GrB_SUCCESS)
+        {
+            // JIT disabled
+            printf ("JIT: unable to compile the BadAddGauss kernel\n") ;
+            TRY (GrB_BinaryOp_new (&BadAddGauss, (void *) badaddgauss,
+                Gauss, Gauss, Gauss)) ;
+        }
+        TRY (GxB_BinaryOp_fprint (BadAddGauss, "BadAddGauss", GxB_COMPLETE,
+            stdout)) ;
+        GrB_BinaryOp_free (&BadAddGauss) ;
     }
-    TRY (GxB_BinaryOp_fprint (BadAddGauss, "BadAddGauss", GxB_COMPLETE,
-        stdout)) ;
-    GrB_BinaryOp_free (&BadAddGauss) ;
+
     OK_JIT
 
     // create the AddGauss operator; use a NULL function pointer to test the
@@ -349,10 +374,16 @@ int main (void)
         OK_JIT
     }
 
-//  printf ("JIT: off\n") ;
-//  TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_OFF)) ;
-//  printf ("JIT: on\n") ;
-//  TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
+    printf ("JIT: off\n") ;
+    TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_OFF)) ;
+    printf ("JIT: on\n") ;
+    TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
+
+    // renable the JIT in case the JIT was disabled when GraphBLAS was built;
+    // this will enable any prejit kernels.
+    TRY (GxB_Global_Option_set (GxB_JIT_C_CONTROL, GxB_JIT_ON)) ;
+    TRY (GxB_Global_Option_get (GxB_JIT_C_CONTROL, &save)) ;
+    printf ("jit: status %d\n", save) ;
 
     // create the AddMonoid
     gauss zero ;

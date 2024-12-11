@@ -43,8 +43,11 @@ GrB_Info GB_cuda_apply_unop
 
     GrB_Index anz = GB_nnz_held (A) ;
 
-    int32_t gridsz = GB_ICEIL (anz, BLOCK_SIZE) ; 
-
+    int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
+    int64_t raw_gridsz = GB_ICEIL (anz, BLOCK_SIZE) ;
+    // cap #of blocks to 256 * #of sms
+    int32_t gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
+    
     GrB_Info info = GB_cuda_apply_unop_jit (Cx, ctype, op, flipij, A, 
         ythunk_cuda, stream, gridsz, BLOCK_SIZE) ;
 

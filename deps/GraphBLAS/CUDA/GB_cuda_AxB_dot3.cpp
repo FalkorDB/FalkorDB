@@ -52,7 +52,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 
     // FIXME: pass in a stream instead, or checkout a stream
     CUDA_OK (cudaStreamCreate (&stream)) ;
-    GpuTimer kernel_timer; 
+    GpuTimer kernel_timer;
 
     //--------------------------------------------------------------------------
     // check inputs
@@ -165,7 +165,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     GB_OK (GB_new_bix (&C, // sparse or hyper (from M), existing header
         ctype, cvlen, cvdim, GB_Ap_malloc, true,
         M_sparsity, false, M->hyper_switch, cnvec,
-        cnz+1,  // add one to cnz for GB_cumsum of Cwork 
+        cnz+1,  // add one to cnz for cumsum of Cwork
         true, C_iso)) ;
 
     //--------------------------------------------------------------------------
@@ -219,7 +219,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 
     // M might be very very sparse.  A(:,i) is not needed if M(:,i) is empty.
     // Likewise, B(:,j) is not needed if M(:,j) is empty.  For now, try this
-    // heuristic:  if M is hypersparse, then do not prefetch A->b or A->x.  
+    // heuristic:  if M is hypersparse, then do not prefetch A->b or A->x.
 
     int prefetch_b = (M_is_hyper) ? 0 : GB_PREFETCH_B ;
     int prefetch_x = (M_is_hyper) ? 0 : GB_PREFETCH_X ;
@@ -252,6 +252,6 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    return GrB_SUCCESS; 
+    return GrB_SUCCESS;
 }
 

@@ -11,8 +11,8 @@
 // indexed the following 0 kernels in GraphBLAS/PreJIT:
 
 #include "GB.h"
-#include "GB_jit_kernel_proto.h"
-#include "GB_jitifyer.h"
+#include "jitifyer/GB_jitifyer.h"
+#include "jit_kernels/include/GB_jit_kernel_proto.h"
 
 //------------------------------------------------------------------------------
 // prototypes for all PreJIT kernels

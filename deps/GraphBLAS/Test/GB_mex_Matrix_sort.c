@@ -17,9 +17,13 @@
     GrB_Matrix_free_(&A) ;              \
     GrB_Matrix_free_(&P) ;              \
     GrB_Matrix_free_(&C) ;              \
+    GrB_free (&lt) ;                    \
     GrB_Descriptor_free_(&desc) ;       \
     GB_mx_put_global (true) ;           \
 }
+
+void my_lt_double (bool *z, double *x, double *y) ;
+void my_lt_double (bool *z, double *x, double *y) { (*z) = (*x) < (*y) ; }
 
 void mexFunction
 (
@@ -33,6 +37,7 @@ void mexFunction
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Matrix A = NULL, C = NULL, P = NULL ;
     GrB_Descriptor desc = NULL ;
+    GrB_BinaryOp lt = NULL ;
 
     // check inputs
     if (nargout > 2 || nargin < 2 || nargin > 4)
@@ -65,13 +70,23 @@ void mexFunction
         mexErrMsgTxt ("desc failed") ;
     }
 
+    // get arg1
+    int GET_SCALAR (3, int, arg1, false) ;
+
+    if (arg1 < 0 && op == GrB_LT_FP64)
+    { 
+        // use a user-defined "<" op instead of GrB_LT_FP64
+        GrB_BinaryOp_new (&lt, my_lt_double, GrB_BOOL, GrB_FP64, GrB_FP64) ;
+        op = lt ;
+    }
+
     // create C and P
     GrB_Index nrows, ncols ;
     GrB_Matrix_nrows (&nrows, A) ;
     GrB_Matrix_ncols (&ncols, A) ;
 
     // P = GB_mex_Matrix_sort (op, A, desc, 1): do not compute C
-    bool P_only = (nargin == 4 && nargout == 1) ;
+    bool P_only = (arg1 >= 1 && nargout == 1) ;
     if (!P_only)
     {
         GrB_Matrix_new (&C, A->type, nrows, ncols) ;
