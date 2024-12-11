@@ -19,13 +19,18 @@ GrB_Info GB_cuda_init (void)
 {
 
     // get the GPU properties
-    if (!GB_Global_gpu_count_set (true)) return (GrB_PANIC) ;
+    if (!GB_Global_gpu_count_set (true))
+    {
+        printf ("GB_cuda_init line %d\n", __LINE__) ;
+        return (GrB_PANIC) ;
+    }
     int gpu_count = GB_Global_gpu_count_get ( ) ;
     for (int device = 0 ; device < 1 ; device++) // TODO for GPU: gpu_count
     {
         // query the GPU and then warm it up
         if (!GB_Global_gpu_device_properties_get (device))
         {
+            printf ("GB_cuda_init line %d\n", __LINE__) ;
             return (GrB_PANIC) ;
         }
     }
@@ -41,7 +46,7 @@ GrB_Info GB_cuda_init (void)
             // of the work.  Alternatively, move GB_cuda_init here (if so,
             // ensure that it doesn't depend on any other initializations
             // below).
-            256 * 1000000L, 256 * 100000000L, 1) ;
+            256 * 1000000L, 1024 * 100000000L, 1) ; // FIXME: ask the GPU(s)
     }
 
     // warm up the GPUs
@@ -49,6 +54,7 @@ GrB_Info GB_cuda_init (void)
     {
         if (!GB_cuda_warmup (device))
         {
+            printf ("GB_cuda_init line %d\n", __LINE__) ;
             return (GrB_PANIC) ;
         }
     }

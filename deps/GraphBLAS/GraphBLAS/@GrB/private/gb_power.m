@@ -92,6 +92,6 @@ end
 
 % convert C to real if imaginary part is zero
 if (~c_is_real)
-    C = gb_check_imag_zero (C) ;
+    C = gb_make_real (C) ;
 end
 

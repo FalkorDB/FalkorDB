@@ -10,5 +10,5 @@ function C = log10 (G)
 % SPDX-License-Identifier: Apache-2.0
 
 G = G.opaque ;
-C = GrB (gb_check_imag_zero (gb_trig ('log10', gbfull (G)))) ;
+C = GrB (gb_make_real (gb_trig ('log10', gbfull (G)))) ;
 

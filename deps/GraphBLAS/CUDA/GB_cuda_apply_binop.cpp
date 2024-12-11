@@ -28,10 +28,12 @@ GrB_Info GB_cuda_apply_binop
     size_t scalarx_cuda_size = 0 ;
     if (bind1st)
     {
+        ASSERT (op->xtype != NULL) ;
         scalarx_cuda = GB_MALLOC_WORK (op->xtype->size, GB_void, &scalarx_cuda_size) ;
     }
     else
     {
+        ASSERT (op->ytype != NULL) ;
         scalarx_cuda = GB_MALLOC_WORK (op->ytype->size, GB_void, &scalarx_cuda_size) ;
     }
     if (scalarx_cuda == NULL)
@@ -46,7 +48,10 @@ GrB_Info GB_cuda_apply_binop
 
     GrB_Index anz = GB_nnz_held (A) ;
 
-    int32_t gridsz = GB_ICEIL (anz, BLOCK_SIZE) ;
+    int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
+    int64_t raw_gridsz = GB_ICEIL (anz, BLOCK_SIZE) ;
+    // cap #of blocks to 256 * #of sms
+    int32_t gridsz = std::min (raw_gridsz, (int64_t) (number_of_sms * 256)) ;
     
     GrB_Info info ;
     if (bind1st) {

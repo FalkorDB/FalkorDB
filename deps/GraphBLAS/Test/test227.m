@@ -112,5 +112,18 @@ for k2 = [4 7 45:52 ]
     end
 end
 
+% test the empty case
+clear op
+op.opname = 'times' ;
+op.optype = 'double' ;
+clear A C
+A.matrix = sparse (10,10) ;
+A.pattern = zeros (10) ;
+C.matrix = sparse (100,100) ;
+C.pattern = zeros (100) ;
+C0 = GB_spec_kron (C, [ ], [ ], op, A, A, dnn) ;
+C1 = GB_mex_kron  (C, [ ], [ ], op, A, A, dnn) ;
+GB_spec_compare (C0, C1) ;
+
 fprintf ('\ntest227: all tests passed\n') ;
 

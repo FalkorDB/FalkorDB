@@ -12,6 +12,7 @@ TODO (Mar 2024):
     can rmm_wrap be thread safe?
     set/get which GPU(s) to use
     handling nvcc compiler errors
+    handle all CUDA errors
 
     Tim:
     reduce calls GB_enumify_reduce twice     

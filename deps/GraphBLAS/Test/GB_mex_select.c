@@ -66,7 +66,8 @@ void mexFunction
     // get C (make a deep copy)
     #define GET_DEEP_COPY \
     C = GB_mx_mxArray_to_Matrix (pargin [0], "C input", true, true) ;   \
-    if (nargin > 7 && C != NULL) C->nvec_nonempty = -1 ;
+    if (nargin > 7 && C != NULL) C->nvec_nonempty = -1 ;                \
+    GrB_set (C, false, (GrB_Field) GxB_HYPER_HASH) ;
     #define FREE_DEEP_COPY GrB_Matrix_free_(&C) ;
     GET_DEEP_COPY ;
     if (C == NULL)

@@ -11,9 +11,6 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_AxB_saxpy.h"
-
-#define USAGE "GB_mex_test1"
 
 GrB_Info ack (int64_t *stuff, GrB_Matrix GunkIt) ;
 
@@ -145,7 +142,8 @@ void mexFunction
 
     OK (GrB_Monoid_new_UINT16_(&m, GrB_PLUS_UINT16, (uint16_t) 0)) ;
     OK (GrB_Monoid_wait_(m, GrB_MATERIALIZE)) ;
-    OK (GB_Monoid_check (m, "plus uint16 monoid", GxB_COMPLETE, stdout)) ;
+    OK (GB_Monoid_check (m, "plus uint16 monoid", GxB_COMPLETE, stdout,
+        false)) ;
     uint16_t id ;
     OK (GxB_Monoid_identity (&id, m)) ;
     printf ("id is %d\n", id) ;
@@ -157,7 +155,7 @@ void mexFunction
     m->identity = NULL ;
     GrB_Info expected = GrB_INVALID_OBJECT ;
     ERR (GB_Monoid_check (m, "mangled monoid, no identity", GxB_COMPLETE,
-        stdout)) ;
+        stdout, false)) ;
     m->identity = save_identity ;
 
     GrB_Monoid_free_(&m) ;
@@ -165,7 +163,8 @@ void mexFunction
     int16_t id0 = INT16_MIN ;
 
     GrB_Monoid_new_INT16_(&m, GrB_MAX_INT16, id0) ;
-    OK (GB_Monoid_check (m, "max int16 monoid", GxB_COMPLETE, stdout)) ;
+    OK (GB_Monoid_check (m, "max int16 monoid", GxB_COMPLETE, stdout,
+        false)) ;
     int16_t id1 ;
     OK (GxB_Monoid_identity (&id1, m)) ;
     printf ("id1 is %d\n", id1) ;
@@ -179,7 +178,8 @@ void mexFunction
 
     GrB_Monoid mm ;
     OK (GxB_Semiring_add (&mm, sem)) ;
-    OK (GB_Monoid_check (mm, "sem mm", GxB_COMPLETE, stdout)) ;
+    OK (GB_Monoid_check (mm, "sem mm", GxB_COMPLETE, stdout,
+        false)) ;
     OK (GxB_Semiring_multiply (&op, sem)) ;
     OK (GB_BinaryOp_check (op, "sem mult", GxB_COMPLETE, stdout)) ;
 
@@ -750,11 +750,11 @@ void mexFunction
     GB_Global_hack_set (1, save1) ; CHECK (GB_Global_hack_get (1) == save1) ;
 
     //--------------------------------------------------------------------------
-    // GB_pslice
+    // GB_p_slice
     //--------------------------------------------------------------------------
 
     int64_t Slice [30] ;
-    GB_pslice (Slice, NULL, 0, 4, true) ;
+    GB_p_slice (Slice, NULL, 0, 4, true) ;
     for (int t = 0 ; t < 4 ; t++) CHECK (Slice [t] == 0) ;
 
     //--------------------------------------------------------------------------

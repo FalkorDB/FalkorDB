@@ -6,28 +6,15 @@ function test125
 % SPDX-License-Identifier: Apache-2.0
 
 [binops, ~, add_ops, types, ~, ~] = GB_spec_opsall ;
-% mult_ops = binops.positional ;
 mult_ops = binops.all ;
 types = types.all ;
 
-if (nargin < 1)
-    fulltest = 1 ;
-end
-
-if (fulltest)
-    fprintf ('-------------- GrB_mxm on all semirings (row,col scale)\n') ;
-    n_semirings_max = inf ;
-else
-    fprintf ('quick test of GrB_mxm (dot product method)\n') ;
-    n_semirings_max = 1 ;
-end
+fprintf ('-------------- GrB_mxm on all semirings (row,col scale)\n') ;
 
 dnn = struct ;
 dtn = struct ( 'inp0', 'tran' ) ;
 dnt = struct ( 'inp1', 'tran' ) ;
 dtt = struct ( 'inp0', 'tran', 'inp1', 'tran' ) ;
-
-ntrials = 0 ;
 
 rng ('default') ;
 
@@ -46,16 +33,12 @@ M = spones (sprandn (n, n, 0.3)) ;
 
 for k1 = 1:length(mult_ops)
     mulop = mult_ops {k1} ;
-    if (fulltest)
-        fprintf ('\n%-10s ', mulop) ;
-    end
+    fprintf ('\n%-10s ', mulop) ;
     nmult_semirings = 0 ;
 
     for k2 = 1:length(add_ops)
         addop = add_ops {k2} ;
-        if (fulltest)
-            fprintf ('.') ;
-        end
+        fprintf ('.') ;
 
         for k3 = 1:length (types)
             type = types {k3} ;
@@ -79,11 +62,6 @@ for k1 = 1:length(mult_ops)
                 continue
             end
 
-            if (n_semirings+1 > n_semirings_max)
-                fprintf ('\ntest125: all quick tests passed\n') ;
-                return ;
-            end
-
             n_semirings = n_semirings + 1 ;
             nmult_semirings = nmult_semirings + 1 ;
             A.class = type ;
@@ -100,42 +78,6 @@ for k1 = 1:length(mult_ops)
             C0 = GB_spec_mxm (C, [ ], [ ], semiring, B, A, dnn);
             GB_spec_compare (C0, C1, identity) ;
 
-            % dump the semiring list to compare with Source/FactoryKernels
-            switch (xtype)
-                case { 'logical' }
-                    xtype = 'bool' ;
-                case { 'single complex' }
-                    xtype = 'fc32' ;
-                case { 'double complex' }
-                    xtype = 'fc64' ;
-                case { 'single' }
-                    xtype = 'fp32' ;
-                case { 'double' }
-                    xtype = 'fp64' ;
-            end
-
-            switch (add_opname)
-                case { 'xor' }
-                    add_opname = 'lxor' ;
-                case { 'or' }
-                    add_opname = 'lor' ;
-                case { 'and' }
-                    add_opname = 'land' ;
-            end
-
-            switch (mult_opname)
-                case { 'xor' }
-                    mult_opname = 'lxor' ;
-                case { 'or' }
-                    mult_opname = 'lor' ;
-                case { 'and' }
-                    mult_opname = 'land' ;
-                case { 'pair', 'oneb' }
-                    switch (add_opname)
-                        case { 'eq', 'land', 'lor', 'min', 'max', 'times' }
-                            add_opname = 'any' ;
-                    end
-            end
         end
     end
     fprintf (' %4d', nmult_semirings) ;

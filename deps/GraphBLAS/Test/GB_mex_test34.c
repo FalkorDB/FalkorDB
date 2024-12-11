@@ -10,40 +10,43 @@
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
 
-#define USAGE "GB_mex_test34"
-
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
 
-#define DGET(desc,value,field)                                  \
-{                                                               \
+#define DGET(desc,value,field)                                                \
+{                                                                             \
+    if (print)                                                                \
+    {                                                                         \
+        printf ("\ndescriptor: %s\n", #desc) ;                                \
+        OK (GxB_Descriptor_fprint (desc, "desc", 5, stdout)) ;                \
+    }                                                                         \
     OK (GrB_Descriptor_get_INT32 (desc, &i, (GrB_Field) (field))) ;           \
-    CHECK (i == value) ;                                        \
-    OK (GrB_Scalar_clear (s_int32)) ;                           \
+    CHECK (i == value) ;                                                      \
+    OK (GrB_Scalar_clear (s_int32)) ;                                         \
     OK (GrB_Descriptor_get_Scalar (desc, s_int32, (GrB_Field) (field))) ;     \
-    int32_t iscalar = -1 ;                                      \
-    OK (GrB_Scalar_extractElement_INT32 (&iscalar, s_int32)) ;  \
-    CHECK (iscalar == value) ;                                  \
-    OK (GrB_Descriptor_get_SIZE (desc, &size, GrB_NAME)) ;      \
-    CHECK (size == GxB_MAX_NAME_LEN) ;                          \
-    OK (GrB_Descriptor_get_String (desc, name, GrB_NAME)) ;     \
-    CHECK (MATCH (name, #desc)) ;                               \
+    int32_t iscalar = -1 ;                                                    \
+    OK (GrB_Scalar_extractElement_INT32 (&iscalar, s_int32)) ;                \
+    CHECK (iscalar == value) ;                                                \
+    OK (GrB_Descriptor_get_SIZE (desc, &size, GrB_NAME)) ;                    \
+    CHECK (size == GxB_MAX_NAME_LEN) ;                                        \
+    OK (GrB_Descriptor_get_String (desc, name, GrB_NAME)) ;                   \
+    CHECK (MATCH (name, #desc)) ;                                             \
 }   
 
-#define DSET(desc,value,field)                                  \
-{                                                               \
+#define DSET(desc,value,field)                                                \
+{                                                                             \
     OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (GrB_Field) (field))) ;  \
     OK (GrB_Descriptor_set_INT32 (desc, value, (GrB_Field) (field))) ;        \
-    int32_t i2 ;                                                \
+    int32_t i2 ;                                                              \
     OK (GrB_Descriptor_get_INT32 (desc, &i2, (GrB_Field) (field))) ;          \
-    CHECK (i2 == value) ;                                       \
+    CHECK (i2 == value) ;                                                     \
     OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (GrB_Field) (field))) ;  \
-    OK (GrB_Scalar_setElement_INT32 (s_int32, value)) ;         \
+    OK (GrB_Scalar_setElement_INT32 (s_int32, value)) ;                       \
     OK (GrB_Descriptor_set_Scalar (desc, s_int32, (GrB_Field) (field))) ;     \
-    int32_t i3 ;                                                \
+    int32_t i3 ;                                                              \
     OK (GrB_Descriptor_get_INT32 (desc, &i2, (GrB_Field) (field))) ;          \
-    CHECK (i2 == value) ;                                       \
+    CHECK (i2 == value) ;                                                     \
 }
 
 void mexFunction
@@ -130,7 +133,12 @@ GrB_DESC_RSCT0T1 ; // GrB_REPLACE  GrB_STRUCTURE  GrB_COMP   GrB_TRAN  GrB_TRAN
 
 #endif
 
+    bool print = false ;
+
     DGET (GrB_NULL         , GrB_DEFAULT, GrB_OUTP_FIELD) ;
+
+    print = true ;
+
     DGET (GrB_DESC_T1      , GrB_DEFAULT, GrB_OUTP_FIELD) ;
     DGET (GrB_DESC_T0      , GrB_DEFAULT, GrB_OUTP_FIELD) ;
     DGET (GrB_DESC_T0T1    , GrB_DEFAULT, GrB_OUTP_FIELD) ;
@@ -170,6 +178,8 @@ GrB_DESC_RSCT0T1 ; // GrB_REPLACE  GrB_STRUCTURE  GrB_COMP   GrB_TRAN  GrB_TRAN
     DGET (GrB_DESC_RSCT0   , GrB_REPLACE, GrB_OUTP_FIELD) ;
     DGET (GrB_DESC_RSCT0T1 , GrB_REPLACE, GrB_OUTP_FIELD) ;
 
+    print = false ;
+    printf ("\n") ;
 
 
     DGET (GrB_NULL         , GrB_DEFAULT, GrB_MASK_FIELD) ;

@@ -10,7 +10,10 @@
 #include "src/arithmetic/funcs.h"
 #include "src/util/thpool/pools.h"
 #include "src/procedures/procedure.h"
+#include "src/execution_plan/ops/ops.h"
 #include "src/execution_plan/execution_plan_clone.h"
+#include "src/execution_plan/optimizations/optimizer.h"
+#include "src/execution_plan/execution_plan_build/execution_plan_modify.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -23,6 +26,21 @@ void tearDown();
 
 #include "acutest.h"
 
+static ExecutionPlan *build_fake_plan
+(
+	const char *query,  // [OPTIONAL] initial query
+	AST **ast
+) {
+	QueryCtx *ctx = QueryCtx_GetQueryCtx();
+	if(query == NULL) query = "RETURN 1";
+
+	ctx->query_data.query_no_params = query;
+	cypher_parse_result_t *parse_result =
+		cypher_parse(query, NULL, NULL, CYPHER_PARSE_ONLY_STATEMENTS);
+	*ast = AST_Build(parse_result);
+	return ExecutionPlan_FromTLS_AST();
+}
+
 static void build_ast_and_plan
 (
 	const char *query,
@@ -31,9 +49,13 @@ static void build_ast_and_plan
 ) {
 	QueryCtx *ctx = QueryCtx_GetQueryCtx();
 	ctx->query_data.query_no_params = query;
-	cypher_parse_result_t *parse_result = cypher_parse(query, NULL, NULL, CYPHER_PARSE_ONLY_STATEMENTS);
+	cypher_parse_result_t *parse_result =
+		cypher_parse(query, NULL, NULL, CYPHER_PARSE_ONLY_STATEMENTS);
+
 	*ast = AST_Build(parse_result);
 	*plan = ExecutionPlan_FromTLS_AST();
+	Optimizer_CompileTimeOptimize(*plan);
+	Optimizer_RuntimeOptimize(*plan);
 }
 
 static void _fake_graph_context() {
@@ -247,6 +269,15 @@ void test_procCall() {
 	array_free(queries);
 }
 
+void test_callSubquery() {
+	const char **queries = array_new(const char *, 2);
+	array_append(queries, "CALL { MATCH (n) RETURN n } RETURN n");
+	array_append(queries, "MATCH (m) CALL { CREATE (:M) } RETURN n");
+
+	validate_query_plans_clone(queries);
+	array_free(queries);
+}
+
 void test_unwind() {
 	const char **queries = array_new(const char *, 1);
 	array_append(queries, "UNWIND [1,2,3] as x RETURN x");
@@ -256,11 +287,12 @@ void test_unwind() {
 }
 
 void test_with() {
-	const char **queries = array_new(const char *, 6);
+	const char **queries = array_new(const char *, 7);
 	array_append(queries, "MATCH (n) WITH n RETURN n");
 	array_append(queries, "MATCH (n) WITH n AS m RETURN m");
 	array_append(queries, "MATCH (n) WITH n AS m SKIP 5 RETURN m");
 	array_append(queries, "MATCH (n) WITH n AS m LIMIT 5 RETURN m");
+	array_append(queries, "MATCH (n) WITH collect(n) AS ns RETURN ns");
 	array_append(queries, "MATCH (n) WITH n AS m ORDER BY n.val RETURN m");
 	array_append(queries, "MATCH (n) WITH n AS m WHERE n.val < 5 RETURN m");
 
@@ -276,6 +308,149 @@ void test_union() {
 	array_free(queries);
 }
 
+void test_foreach() {
+	const char **queries = array_new(const char *, 2);
+	array_append(queries, "FOREACH (x in [1,2,3] | CREATE (:L {val:x}))");
+	array_append(queries, "MATCH (n) WITH collect(n) AS ns FOREACH (x in ns | CREATE (:L {val:x.v}))");
+
+	validate_query_plans_clone(queries);
+	array_free(queries);
+}
+
+void test_apply_multiplexer() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add apply multiplexer to plan
+	OpBase *apply_multiplexer = NewApplyMultiplexerOp(plan, OP_OR);
+	ExecutionPlan_UpdateRoot(plan, apply_multiplexer);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+}
+
+void test_edge_by_index_scan() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add edge_index_scan operation to plan
+	QGEdge *e = QGEdge_New("R", "e");
+	array_append(e->reltypes, 0);
+
+	Index idx = Index_New("R", 0, GETYPE_EDGE);
+
+	AR_ExpNode *exp = AR_EXP_NewVariableOperandNode("a");
+	FT_FilterNode *ft = FilterTree_CreateExpressionFilter(exp);
+
+	OpBase *edge_by_index_scan = NewEdgeIndexScanOp(plan, QueryCtx_GetGraph(),
+			e, idx, ft);
+
+	ExecutionPlan_UpdateRoot(plan, edge_by_index_scan);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+	Index_Free(idx);
+	QGEdge_Free(e);
+}
+
+void test_expand_into() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan("MATCH (a) RETURN a", &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add expand_into operation to plan
+	AlgebraicExpression *ae = AlgebraicExpression_NewOperand(NULL, false, "a",
+			"a", NULL, "a");
+
+	OpBase *expand_into = NewExpandIntoOp(plan, QueryCtx_GetGraph(), ae);
+	ExecutionPlan_UpdateRoot(plan, expand_into);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+}
+
+void test_node_by_id_seek() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add node_by_id_seek operation to plan
+	OpBase *node_by_id_seek = NewNodeByIdSeekOp(plan, "a", NULL);
+	ExecutionPlan_UpdateRoot(plan, node_by_id_seek);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+}
+
+void test_node_by_index_scan() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add node_by_index_scan operation to plan
+	Index idx = Index_New("L", 0, GETYPE_NODE);
+	QGNode *node = QGNode_New("a");
+	NodeScanCtx *n = NodeScanCtx_New("a", "L", 0, node);
+
+	AR_ExpNode *exp = AR_EXP_NewVariableOperandNode("a");
+	FT_FilterNode *ft = FilterTree_CreateExpressionFilter(exp);
+
+	OpBase *node_by_index_scan = NewIndexScanOp(plan, QueryCtx_GetGraph(), n,
+			idx, ft);
+	ExecutionPlan_UpdateRoot(plan, node_by_index_scan);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+	Index_Free(idx);
+	QGNode_Free(node);
+}
+
+void test_semi_apply() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add semi_apply operation to plan
+
+	OpBase *semi_apply = NewSemiApplyOp(plan, true);
+	ExecutionPlan_UpdateRoot(plan, semi_apply);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+}
+
+void test_value_hash_join() {
+	// build a simple plan just so we can add our desiered operation(s) to
+	AST *ast = NULL;
+	ExecutionPlan *plan = build_fake_plan(NULL, &ast);
+	TEST_ASSERT(plan != NULL);
+
+	// add semi_apply operation to plan
+
+	AR_ExpNode *lhs = AR_EXP_NewVariableOperandNode("a");
+	AR_ExpNode *rhs = AR_EXP_NewVariableOperandNode("b");
+	OpBase *value_hash_join = NewValueHashJoin(plan, lhs, rhs);
+	ExecutionPlan_UpdateRoot(plan, value_hash_join);
+
+	// free plan and all of its operations
+	ExecutionPlan_Free(plan);
+	AST_Free(ast);
+}
+
 TEST_LIST = {
 	{"createClause", test_createClause},
 	{"matchClause", test_matchClause},
@@ -286,9 +461,18 @@ TEST_LIST = {
 	{"skipLimitSort", test_skipLimitSort},
 	{"optionalMatch", test_optionalMatch},
 	{"procCall", test_procCall},
+	{"callSubquery", test_callSubquery},
 	{"unwind", test_unwind},
 	{"with", test_with},
 	{"union", test_union},
+	{"foreach", test_foreach},
+	{"apply_multiplexer", test_apply_multiplexer},
+	{"edge_by_index_scan", test_edge_by_index_scan},
+	{"expand_into", test_expand_into},
+	{"node_by_id_seek", test_node_by_id_seek},
+	{"node_by_index_scan", test_node_by_index_scan},
+	{"semi_apply", test_semi_apply},
+	{"value_hash_join", test_value_hash_join},
 	{NULL, NULL}
 };
 
