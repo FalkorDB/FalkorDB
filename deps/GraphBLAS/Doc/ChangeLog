@@ -1,3 +1,47 @@
+Nov 18, 2024: version 9.4.2
+
+    * clarified User Guide: regarding when the hyper-hash is built
+    * JIT: reduced JIT kernel encodings
+    * also: includes the updates from 9.4.0.beta and 9.4.1.beta listed below
+
+Nov 15, 2024: version 9.4.1 (only released as BETA)
+
+    * new JIT kernels added: for GrB_assign, GrB_extract, GxB_sort,
+        GrB_kronecker, stand-alone mask phase, and utilities (convert to/from
+        sparse/bitmap, unjumble).  All kernels formerly tagged "JIT: needed"
+        are now finished.
+    * removed Factory kernels for: types int8 and uint8, and semirings:
+        max_min, max_plus, max_times, min_max, min_times, plus_min, plus_max,
+        non-Boolean land/lor/lxor/lxnor, and integer times_first/second,
+        to reduce size of compiled library.  JIT kernels will be used instead
+        for these types and semirings.
+    * GxB_IndexBinaryOp: finalized and named as GxB_*.
+
+Oct 15, 2024: version 9.4.0 (only released as BETA)
+
+    * new operator and associated methods: added the draft G*B_IndexBinaryOp
+    * JIT error-handling behavior changed:  if a compiler error occurs in the
+        JIT, GxB_JIT_ERROR is now returned.  Previously, GraphBLAS would fall
+        back to a generic method if such an error occurred.
+
+Aug 12, 2024: version 9.3.1
+
+    * (56) bug fix:  wrong type for fgetc return value in JITpackage; leads
+        to infinite loop on some systems when building GraphBLAS.
+
+Aug 2, 2024: version 9.3.0
+
+    * code restructuring:  Source folder split into many subfolders, and
+        some files and internal functions renamed.  No visible external change.
+    * (55) bug fix: GrB_apply with user-defined index-unary op would fail if
+        A was iso and the JIT was disabled (failure in generic case).
+        Caught by Christina Koutsou.
+    * (54) bug fix: reducing a huge iso full matrix to a scalar resulted in
+        integer overflow if nrows*ncols was larger than about 2^60.
+    * reduced size of compiled library: int16 and uint16 types and operators
+        for FactoryKernels are disabled in GB_control.h.  The JIT will always
+        be used instead.
+
 May 22, 2024: version 9.2.0
 
     * Added graphblas_install.m: for a simpler method of compiling

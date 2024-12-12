@@ -126,14 +126,14 @@ void gb_isnanfc64 (bool *z, const GxB_FC64_t *aij,
 void gb_isnotnanfc32 (bool *z, const GxB_FC32_t *aij,
                       int64_t i, int64_t j, const void *thunk)
 { 
-    (*z) = !isnan (GB_crealf (*aij)) && !isnan (GB_cimag (*aij)) ;
+    (*z) = !isnan (GB_crealf (*aij)) && !isnan (GB_cimagf (*aij)) ;
 }
 
 #define GB_ISNOTNANFC32_DEFN                                        \
 "void gb_isnotnanfc32 (bool *z, const GxB_FC32_t *aij,          \n" \
 "                      int64_t i, int64_t j, const void *thunk) \n" \
 "{                                                              \n" \
-"    (*z) = !isnan (GB_crealf (*aij)) && !isnan (GB_cimag (*aij)) ; \n" \
+"    (*z) = !isnan (GB_crealf (*aij)) && !isnan (GB_cimagf (*aij)) ; \n" \
 "}"
 
 void gb_isnotnanfc64 (bool *z, const GxB_FC64_t *aij,

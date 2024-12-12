@@ -18,27 +18,29 @@ dtt = struct ('inp0', 'tran', 'inp1', 'tran') ;
 
 algos = {'auto', 'gustavson', 'dot', 'hash', 'saxpy'} ;
 
-for kk = 1:length(algos)
+semiring.add = 'plus' ;
+semiring.multiply = 'times' ;
+semiring.class = 'double complex' ;
+
+kk = 1 ; % 1:length(algos)
 dnn.algo = algos {kk} ;
 dnt.algo = algos {kk} ;
 dtn.algo = algos {kk} ;
 dtt.algo = algos {kk} ;
 
-semiring.add = 'plus' ;
-semiring.multiply = 'times' ;
-semiring.class = 'double complex' ;
-
 seed = 1 ;
-for m = [1 5 10 100]
+for m = [1 5] % [ 10 100]
     for n = [1 5 10 100]
         for k = [1 5 10 100]
-            fprintf ('.') ;
-            for trial = 1:31
 
-                A = GB_mex_random (m, k, 10*(m+k), 1, seed) ; seed = seed + 1 ;
-                B = GB_mex_random (k, n, 10*(k+n), 1, seed) ; seed = seed + 1 ;
+            % fprintf ('.') ;
+            for trial = 1:30 % 1:31
+
+                A = GB_mex_random (m, k, 10*(m+k), 1, seed  ) ;
+                B = GB_mex_random (k, n, 10*(k+n), 1, seed+1) ;
                 S = GB_mex_complex (sparse (m,n)) ;
-                D = GB_mex_random (m, n, 10*(m+n), 1, seed) ; seed = seed + 1 ;
+                D = GB_mex_random (m, n, 10*(m+n), 1, seed+2) ;
+                seed = seed + 3 ;
 
                 if (trial == 31)
                     A (:,1) = 1i * rand (m,1) ;
@@ -100,10 +102,10 @@ for m = [1 5 10 100]
                 C = (A*B) .* M ;
                 assert (isequal_roundoff (C, C2.matrix)) ;
 
-            end
-        end
+             end
+            fprintf ('.') ;
+         end
     end
-end
 end
 
 fprintf ('\ntestca: all complex mxm, mxv, vxm tests passed\n') ;

@@ -38,29 +38,20 @@ set_target_properties ( GraphBLAS_CUDA PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON )
 
-# find rmm_wrap, the malloc/calloc/realloc/free wrapper for the Rapids
-# memory manager
-set ( RMM_WRAP_INCLUDES "../rmm_wrap" )
-
-message ( STATUS "RMM_WRAP_INCLUDES: ${RMM_WRAP_INCLUDES}" )
-set ( GRAPHBLAS_CUDA_INCLUDES
-        ${RMM_WRAP_INCLUDES}
-        ../Source
-        ../Source/Shared
-        ../Source/Template
-        ../Source/Factories
-        Template
-        ../Include
-        ../CUDA )
-
-message ( STATUS "GraphBLAS CUDA includes: ${GRAPHBLAS_CUDA_INCLUDES}" )
-
 #-------------------------------------------------------------------------------
 # GraphBLAS_CUDA properties
 #-------------------------------------------------------------------------------
 
 target_include_directories ( GraphBLAS_CUDA PRIVATE
-        ${GRAPHBLAS_CUDA_INCLUDES})
+        ${PROJECT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/../
+        include
+        ../Include
+        ../rmm_wrap
+        ../Source
+        ../Source/builtin
+        )
+
 set_target_properties ( GraphBLAS_CUDA PROPERTIES POSITION_INDEPENDENT_CODE ON )
 set_target_properties ( GraphBLAS_CUDA PROPERTIES CUDA_SEPARABLE_COMPILATION ON )
 # FIXME: use SUITESPARSE_CUDA_ARCHITECTURES

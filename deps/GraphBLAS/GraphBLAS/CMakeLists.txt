@@ -21,6 +21,13 @@ set ( CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
 include ( GraphBLAS_version )
 
 #-------------------------------------------------------------------------------
+# define the project
+#-------------------------------------------------------------------------------
+
+project ( graphblas_matlab
+    VERSION "${GraphBLAS_VERSION_MAJOR}.${GraphBLAS_VERSION_MINOR}.${GraphBLAS_VERSION_SUB}" LANGUAGES C )
+
+#-------------------------------------------------------------------------------
 # SuiteSparse policies
 #-------------------------------------------------------------------------------
 
@@ -50,13 +57,6 @@ if ( SUITESPARSE_USE_STRICT AND GRAPHBLAS_USE_CUDA AND NOT GRAPHBLAS_HAS_CUDA )
 endif ( )
 
 include ( GraphBLAS_JIT_paths )
-
-#-------------------------------------------------------------------------------
-# define the project
-#-------------------------------------------------------------------------------
-
-project ( graphblas_matlab
-    VERSION "${GraphBLAS_VERSION_MAJOR}.${GraphBLAS_VERSION_MINOR}.${GraphBLAS_VERSION_SUB}" LANGUAGES C )
 
 #-------------------------------------------------------------------------------
 # find OpenMP
@@ -143,17 +143,45 @@ message ( STATUS "CMAKE have OpenMP:          ${OpenMP_C_FOUND}" )
 
 set ( CMAKE_INCLUDE_CURRENT_DIR ON )
 
-if ( GRAPHBLAS_COMPACT )
-    # do not compile the FactoryKernels
-    include_directories ( ../Source/Template ../Source ../Include rename
-        ../Source/Shared Config ../Source/JitKernels ../JITpackage
-        ../lz4 ../zstd ../zstd/zstd_subset ../xxHash ../Source/Factories )
-else ( )
-    include_directories ( ../Source/Template ../Source ../Include rename
-        ../Source/Shared Config ../Source/JitKernels ../JITpackage
-        ../Source/FactoryKernels
-        ../lz4 ../zstd ../zstd/zstd_subset ../xxHash ../Source/Factories )
-endif ( )
+include_directories ( ${PROJECT_SOURCE_DIR}/../ ../Source ../Include Config
+    ../xxHash ../lz4 ../zstd ../zstd/zstd_subset ../JITpackage
+    rename
+    # include all Source/* folders that have include/ or template/ subfolders:
+    ../Source/add
+    ../Source/apply
+    ../Source/assign
+    ../Source/builder
+    ../Source/builtin
+    ../Source/callback
+    ../Source/concat
+    ../Source/convert
+    ../Source/cumsum
+    ../Source/emult
+    ../Source/ewise
+    ../Source/extract
+    ../Source/hyper
+    ../Source/ij
+    ../Source/jit_kernels
+    ../Source/kronecker
+    ../Source/mask
+    ../Source/math
+    ../Source/matrix
+    ../Source/memory
+    ../Source/monoid
+    ../Source/mxm
+    ../Source/ok
+    ../Source/omp
+    ../Source/print
+    ../Source/reduce
+    ../Source/select
+    ../Source/split
+    ../Source/slice
+    ../Source/sort
+    ../Source/transpose
+    ../Source/type
+    ../Source/wait
+    ../Source/werk
+    )
 
 #-------------------------------------------------------------------------------
 # compiler options:
@@ -165,28 +193,30 @@ include ( GraphBLAS_compiler_options )
 # dynamic graphblas_matlab library properties
 #-------------------------------------------------------------------------------
 
+file ( GLOB GRAPHBLAS_SOURCES "../PreJIT/*.c" "../Config/*.c"
+    "../Source/*/*.c" )
+
+if ( NOT GRAPHBLAS_COMPACT )
+    # compile the FactoryKernels
+    file ( GLOB GRAPHBLAS_FACTORYKERNELS "../FactoryKernels/*.c" )
+    list ( APPEND GRAPHBLAS_SOURCES ${GRAPHBLAS_FACTORYKERNELS} )
+endif ( )
+
 if ( GRAPHBLAS_USE_JIT )
-    if ( GRAPHBLAS_COMPACT )
-        # with the JIT; but do not compile the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "../Source/*.c" 
-            "../PreJIT/*.c" "../Config/GB_prejit.c" "../JITpackage/*.c" )
-    else ( )
-        # with the JIT and the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "../Source/*.c" 
-            "../PreJIT/*.c" "../Config/GB_prejit.c" "../JITpackage/*.c"
-            "../Source/FactoryKernels/*.c" )
-    endif ( )
+    # generate compressed JIT sources to create GB_JITpackage.c
+    message ( STATUS "Creating the GraphBLAS/JITpackage:" )
+    add_subdirectory ( ../JITpackage build )
+    # GLOB does not include files that do not yet exist, so prepend
+    # the GB_JITpackage.c file here:
+    list ( PREPEND GRAPHBLAS_SOURCES
+        $<TARGET_PROPERTY:GB_JITpackage,GENERATED_FILE> )
 else ( )
-    if ( GRAPHBLAS_COMPACT )
-        # no JIT, do not compile the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "../Source/*.c"
-            "../PreJIT/*.c" "../Config/GB_prejit.c" )
-    else ( )
-        # no JIT, but do compile the FactoryKernels
-        file ( GLOB GRAPHBLAS_SOURCES "../Source/*.c" 
-            "../PreJIT/*.c" "../Config/GB_prejit.c"
-            "../Source/FactoryKernels/*.c" )
-    endif ( )
+    # create an empty GB_JITpackage.c file:
+    message ( STATUS "Creating an empty GraphBLAS/JITpackage (JIT disabled):" )
+    configure_file ( "../Config/GB_JITpackage_NJIT.c.in"
+        "../JITpackage/GB_JITpackage.c"
+        NEWLINE_STYLE LF )
+    list ( PREPEND GRAPHBLAS_SOURCES "../JITpackage/GB_JITpackage.c")
 endif ( )
 
 add_library ( graphblas_matlab SHARED ${GRAPHBLAS_SOURCES} )
@@ -196,6 +226,11 @@ set_target_properties ( graphblas_matlab PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     PUBLIC_HEADER "../Include/GraphBLAS.h" )
+
+if ( GRAPHBLAS_USE_JIT )
+    # Make sure compressed sources are built before library
+    add_dependencies ( graphblas_matlab GB_JITpackage )
+endif ( )
 
 #-------------------------------------------------------------------------------
 # select the math library (not required for Microsoft Visual Studio)
@@ -254,6 +289,21 @@ endif ( )
 
 # get the current library list
 get_target_property ( GB_CMAKE_LIBRARIES graphblas_matlab LINK_LIBRARIES )
+if ( NOT GB_CMAKE_LIBRARIES )
+    set ( GB_CMAKE_LIBRARIES "" )
+endif ( )
+
+#-------------------------------------------------------------------------------
+# determine complex type
+#-------------------------------------------------------------------------------
+
+include ( GraphBLAS_complex )
+if ( GxB_HAVE_COMPLEX_C99 )
+    set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -DGxB_HAVE_COMPLEX_C99=1 " )
+endif ( )
+if ( GxB_HAVE_COMPLEX_MSVC )
+    set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -DGxB_HAVE_COMPLEX_MSVC=1 " )
+endif ( )
 
 #-------------------------------------------------------------------------------
 # print final C flags

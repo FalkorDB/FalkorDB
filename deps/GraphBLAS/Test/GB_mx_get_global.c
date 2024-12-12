@@ -8,7 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
-#include "GB_jitifyer.h"
+#include "../Source/jitifyer/GB_jitifyer.h"
 
 bool GB_mx_get_global       // true if doing malloc_debug
 (

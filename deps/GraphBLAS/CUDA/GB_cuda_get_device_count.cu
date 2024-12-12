@@ -15,7 +15,10 @@ bool GB_cuda_get_device_count   // true if OK, false if failure
     int *gpu_count              // return # of GPUs in the system
 )
 {
+    (*gpu_count) = 0 ;
     cudaError_t err = cudaGetDeviceCount (gpu_count) ;
+    printf ("GB_cuda_get_device_count: %d, cudaError_t: %d\n",
+        *gpu_count, err) ;
     return (err == cudaSuccess) ;
 }
 

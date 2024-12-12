@@ -30,7 +30,7 @@ GrB_Info GB_cuda_rowscale_jit
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_CUDA_KERNEL_ROWSCALE, false,
         false, false, GB_sparsity (C), C->type, NULL, false, false,
-        binaryop, flipxy, D, B) ;
+        binaryop, false, flipxy, D, B) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed

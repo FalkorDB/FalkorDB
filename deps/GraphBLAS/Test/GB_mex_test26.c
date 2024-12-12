@@ -10,8 +10,6 @@
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
 
-#define USAGE "GB_mex_test26"
-
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
@@ -301,6 +299,7 @@ void mexFunction
     CHECK (type->hash != UINT64_MAX) ;
     printf ("    hash: %016lx\n", type->hash) ;
 
+    printf ("    test user name:\n") ;
     OK (GrB_Type_get_SIZE_(type, &size, GrB_NAME)) ;
     CHECK (size == 1) ;
     OK (GrB_Type_set_String_ (type, "user name of a type", GrB_NAME)) ;
@@ -308,6 +307,7 @@ void mexFunction
     CHECK (size == strlen ("user name of a type") + 1) ;
     OK (GrB_Type_get_String_ (type, name, GrB_NAME)) ;
     CHECK (MATCH (name, "user name of a type")) ;
+    OK (GxB_print (type, 3)) ;
 
     expected = GrB_ALREADY_SET ;
     ERR (GrB_Type_set_String_ (type, "another user name of a type", GrB_NAME)) ;

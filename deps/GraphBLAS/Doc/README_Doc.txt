@@ -6,7 +6,7 @@ This folder contains the following files:
 
     CONTRIBUTOR-LICENSE.txt     how to contribute to GraphBLAS
     ChangeLog                   changes in GraphBLAS
-    GraphBLAS_API_C_2.0.0.pdf   v2.0 C API (see https://graphblas.org)
+    GraphBLAS_API_C_v2.1.0.pdf  v2.1.0 C API (see https://graphblas.org)
     GraphBLAS_API_version.tex   the version of the C API that this version
                                 of SuiteSparse:GraphBLAS conforms to.
     GraphBLAS_UserGuide.pdf     the SuiteSparse:GraphBLAS User Guide
@@ -76,4 +76,9 @@ The_GraphBLAS_in_Julia_and_Python_the_PageRank_and_Triangle_Centralities.pdf
     Julia and Python: the PageRank and Triangle Centralities," 2021 IEEE High
     Performance Extreme Computing Conference (HPEC), Waltham, MA, USA, 2021,
     pp. 1-7, doi: 10.1109/HPEC49654.2021.9622789.
+
+IndexBinaryOps_IEEE_HPEC24.pdf
+
+    T. G. Mattson, M. Bezbaruah, M. Maier, S. McMillan, M. Peletier, E. Welch,
+    and T. A. Davis, Indexed Binary operations in the GraphBLAS, IEEE HPEC'24.
 

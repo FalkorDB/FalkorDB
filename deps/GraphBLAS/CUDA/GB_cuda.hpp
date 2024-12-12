@@ -11,23 +11,14 @@
 #ifndef GB_CUDA_HPP
 #define GB_CUDA_HPP
 
-extern "C"
-{ 
-    #include "GB_dev.h"
-    #include "GB_compiler.h"
-    #include "GB_cpu_features.h"
-    #include "GB_warnings.h"
-}
-
-#include "GraphBLAS_cuda.hpp"
+#include "CUDA/include/GraphBLAS_cuda.hpp"
 
 extern "C"
 {
     #include <cassert>
     #include <cmath>
     #include "GB.h"
-    #include "GB_stringify.h"
-    #include "GB_iceil.h"
+    #include "jitifyer/GB_stringify.h"
 }
 
 // Finally, include the CUDA definitions
@@ -40,8 +31,8 @@ extern "C"
 #include <stdint.h>
 #include <stdio.h>
 
-#include "GB_cuda_error.hpp"
-#include "GB_cuda_timer.hpp"
+#include "CUDA/include/GB_cuda_error.hpp"
+#include "CUDA/include/GB_cuda_timer.hpp"
 
 //------------------------------------------------------------------------------
 // prefetch and memadvise

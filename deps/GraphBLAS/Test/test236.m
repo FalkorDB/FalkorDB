@@ -70,6 +70,11 @@ for k = 1:length (types)
             GB_spec_compare (C1, C2) ;
             GB_spec_compare (P1, P2) ;
 
+            [C1,P1] = GB_mex_Matrix_sort  (lt, A, desc, -1) ;
+            [C2,P2] = GB_spec_Matrix_sort (lt, A, desc) ;
+            GB_spec_compare (C1, C2) ;
+            GB_spec_compare (P1, P2) ;
+
             [C1,P1] = GB_mex_Matrix_sort  (gt, A, desc) ;
             [C2,P2] = GB_spec_Matrix_sort (gt, A, desc) ;
             GB_spec_compare (C1, C2) ;
@@ -146,19 +151,37 @@ GB_spec_compare (C1, C2) ;
 fprintf (' typecast') ;
 lt.optype = 'single' ;
 gt.optype = 'single' ;
-A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
 
-fprintf ('.') ;
-[C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
-[C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
-GB_spec_compare (C1, C2) ;
-GB_spec_compare (P1, P2) ;
+    A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
 
-fprintf ('.') ;
-[C1,P1] = GB_mex_Matrix_sort  (gt, A) ;
-[C2,P2] = GB_spec_Matrix_sort (gt, A, [ ]) ;
-GB_spec_compare (C1, C2) ;
-GB_spec_compare (P1, P2) ;
+    fprintf ('.') ;
+    [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
+    [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
+    GB_spec_compare (C1, C2) ;
+    GB_spec_compare (P1, P2) ;
+
+    fprintf ('.') ;
+    [C1,P1] = GB_mex_Matrix_sort  (gt, A) ;
+    [C2,P2] = GB_spec_Matrix_sort (gt, A, [ ]) ;
+    GB_spec_compare (C1, C2) ;
+    GB_spec_compare (P1, P2) ;
+
+% with typecasing, to bool 
+lt.optype = 'bool' ;
+
+    A.matrix = double (A.matrix > 0) ;
+    A.pattern = logical (spones (A.matrix)) ;
+
+    fprintf ('.') ;
+    [C1,P1] = GB_mex_Matrix_sort  (lt, A) ;
+    [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
+    GB_spec_compare (C1, C2) ;
+    GB_spec_compare (P1, P2) ;
+
+lt.opname = 'lt' ;
+gt.opname = 'gt' ;
+lt.optype = 'double' ;
+gt.optype = 'double' ;
 
 % matrix with large vectors
 fprintf (' large') ;
@@ -166,7 +189,6 @@ m = 100000 ;
 n = 2 ;
 A = sparse (rand (m, n)) ;
 A (:,2) = sprand (m, 1, 0.02) ;
-lt.optype = 'double' ;
 
 fprintf ('.') ;
 [C1,P1] = GB_mex_Matrix_sort  (lt, A, desc) ;

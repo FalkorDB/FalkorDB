@@ -9,9 +9,7 @@
 
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
-#include "GB_stringify.h"
-
-#define USAGE "GB_mex_test16"
+#include "../Source/jitifyer/GB_stringify.h"
 
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
@@ -123,8 +121,11 @@ void mexFunction
     code = GB_encodify_reduce (&e, &suffix, GB_JIT_KERNEL_REDUCE, mon, A) ;
     CHECK (code == UINT64_MAX) ;
 
-    code = GB_encodify_assign (&e, &suffix, 0, C, false, 0, 0, NULL,
-        false, false, mult, A, NULL, 0) ;
+    code = GB_encodify_assign (&e, &suffix, /* kcode: */ 0, C,
+        /* C_replace: */ false, /* Ikind: */ 0, /* Jkind: */ 0, /* M: */ NULL,
+        /* Mask_comp: */ false, /* Mask_struct: */ false,
+        /* accum: */ mult, A, /* scalar_type: */ NULL, /* S: */ NULL,
+        /* assign_kind: */ 0) ;
     CHECK (code == UINT64_MAX) ;
 
     code = GB_encodify_build (&e, &suffix, 0, mult, GrB_FP32, GrB_FP32) ;

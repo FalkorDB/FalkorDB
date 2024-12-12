@@ -10,8 +10,6 @@
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
 
-#define USAGE "GB_mex_test30"
-
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
@@ -23,7 +21,8 @@
     CHECK (MATCH (name, opname)) ;                                          \
     OK (GrB_IndexUnaryOp_get_String (op, cname,                             \
         (GrB_Field) GxB_JIT_C_NAME));                                       \
-    printf ("%s: %s\n", name, cname) ;                                      \
+    printf ("\n%s: %s\n", name, cname) ;                                    \
+    OK (GxB_IndexUnaryOp_fprint (op, "idxunop", 5, stdout)) ;               \
     OK (GrB_IndexUnaryOp_get_SIZE (op, &size, GrB_NAME)) ;                  \
     CHECK (size == strlen (name) + 1) ;                                     \
     GrB_Info info2, info3 ;                                                 \
@@ -47,7 +46,6 @@
 #define GETNAME(op)                                         \
 {                                                           \
     GETOP (op, #op) ;                                       \
-/*  OK (GxB_IndexUnaryOp_fprint (op, "idxop", 3, NULL)) ; */\
 }
 
 void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,

@@ -114,6 +114,18 @@ for k0 = 1:size (problems,1) ;
             assert (isequal (C.matrix .* Mask, (A.matrix).*Mask)) ;
         end
 
+        if (isequal (atype, 'double') && isequal (C.class, 'double'))
+            % C<Mask> = A (:,:) with user-defined types
+            C = GB_mex_Matrix_extract_UDT (Cempty, Mask, [ ], A, ...
+                [ ], [ ], [ ], true) ;
+            assert (GB_spok (C.matrix*1) == 1) ;
+            S = GB_spec_Matrix_extract (Cempty, Mask, [ ], A, [ ], [ ], [ ]) ;
+            assert (isequal (C.class, A.class)) ;
+            assert (isequal (C.class, S.class)) ;
+            assert (isequal (full (double (C.matrix)), double (S.matrix))) ;
+            assert (isequal (C.matrix .* Mask, (A.matrix).*Mask)) ;
+        end
+
         % C<Mask> = A (:,:)'
         clear D
         D = struct ('inp0', 'tran') ;

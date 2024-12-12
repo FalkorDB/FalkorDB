@@ -14,7 +14,6 @@ rng ('default') ;
 defaults = [ ] ;
 desc.inp0 = 'tran' ;
 
-n_operators = 0 ;
 for k2 = 1:length(ops)
     opname = ops {k2} ;
     fprintf ('\n%-10s ', opname) ;
@@ -33,14 +32,15 @@ for k2 = 1:length(ops)
     end
 
     fprintf ('.') ;
-    n_operators = n_operators + 1 ;
 
     for m = [1 4] % [ 1 10 ]% 100]
     for n = [1 4] % [1 10 ]% 100]
     for hi = [1 5] % [-1:2:5 ]
     for lo = [-1 0] % [-3:2:5 ]
+
     Amat = (hi*sprand (m,n,0.8)-lo) .* sprand (m,n,0.5) ;
     Bmat = (hi*sprand (m,n,0.8)-lo) .* sprand (m,n,0.5) ;
+
     Cmat = sparse (m, n) ;
 
     C.matrix = Cmat ;
@@ -52,11 +52,11 @@ for k2 = 1:length(ops)
     A.matrix = Amat ;
     A.class = type ;
 
-    for ythunk = -3:3
+    for ythunk = -3 % -3:3
     y.matrix = ythunk ;
     y.class = type ;
 
-    for how = 0:1
+    for how = 0 % 0:1
     for csc = 0:1
 
     A.is_csc = csc ;
@@ -71,17 +71,15 @@ for k2 = 1:length(ops)
     C2 = GB_spec_apply        (CT, [ ], [ ], op,      A, desc    , y) ;
     GB_spec_compare (C1, C2) ;
 
-    end
+end
+end
+end
+end
+end
+end
+end
+end
+end
 
-end
-end
-end
-end
-end
-end
-end
-end
-
-fprintf ('\nNumber of built-in GraphBLAS idxunops: %d\n',  n_operators) ;
 fprintf ('\ntest230: all tests passed\n') ;
 

@@ -10,8 +10,6 @@
 #include "GB_mex.h"
 #include "GB_mex_errors.h"
 
-#define USAGE "GB_mex_test31"
-
 #define FREE_ALL ;
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
@@ -21,21 +19,23 @@
     size_t siz1, siz2, siz3 ;                                           \
     OK (GrB_Monoid_get_String (op, name, GrB_NAME)) ;                   \
     CHECK (MATCH (name, opname)) ;                                      \
+    printf ("\n%s\n", name) ;                                           \
+    OK (GxB_Monoid_fprint (op, "monoid", 5, stdout)) ;                  \
     OK (GrB_Monoid_get_SIZE (op, &size, GrB_NAME)) ;                    \
     CHECK (size == strlen (name) + 1) ;                                 \
     GrB_Info info2, info3 ;                                             \
-    info2 = GrB_Monoid_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;    \
-    info3 = GrB_Monoid_get_String (op, name, GrB_INP0_TYPE_STRING) ;   \
+    info2 = GrB_Monoid_get_SIZE (op, &siz1, GrB_INP0_TYPE_STRING) ;     \
+    info3 = GrB_Monoid_get_String (op, name, GrB_INP0_TYPE_STRING) ;    \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz1 == strlen (name) + 1) ;                                 \
     CHECK (info2 == GrB_SUCCESS) ;                                      \
-    info2 = GrB_Monoid_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;    \
-    info3 = GrB_Monoid_get_String (op, name, GrB_INP1_TYPE_STRING) ;   \
+    info2 = GrB_Monoid_get_SIZE (op, &siz2, GrB_INP1_TYPE_STRING) ;     \
+    info3 = GrB_Monoid_get_String (op, name, GrB_INP1_TYPE_STRING) ;    \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz2 == strlen (name) + 1) ;                                 \
     CHECK (info2 == GrB_SUCCESS) ;                                      \
-    info2 = GrB_Monoid_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;    \
-    info3 = GrB_Monoid_get_String (op, name, GrB_OUTP_TYPE_STRING) ;   \
+    info2 = GrB_Monoid_get_SIZE (op, &siz3, GrB_OUTP_TYPE_STRING) ;     \
+    info3 = GrB_Monoid_get_String (op, name, GrB_OUTP_TYPE_STRING) ;    \
     CHECK (info2 == info3) ;                                            \
     CHECK (siz3 == strlen (name) + 1) ;                                 \
     CHECK (info2 == GrB_SUCCESS) ;                                      \
@@ -44,13 +44,11 @@
 #define GETNAME(op)                                         \
 {                                                           \
     GETOP (op, #op) ;                                       \
-/*  OK (GxB_Monoid_fprint (op, "binop", 3, NULL)) ;     */  \
 }
 
 #define GETNAM2(op,alias)                                   \
 {                                                           \
     GETOP (op,alias) ;                                      \
-/*  OK (GxB_Monoid_fprint (op, "binop", 3, NULL)) ;     */  \
 }
 
 void myfunc (float *z, const float *x, const float *y) ;
