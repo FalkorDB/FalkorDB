@@ -40,6 +40,10 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             records_count = len(actual_result.result_set)
             self.env.assertEquals(records_count, expected_resultset_size)
 
+        # crash from fuzzer
+        q = """MATCH (n0:X), (n1:X), (:X) WHERE n0.v = n1.v OR 0 <> NULL DELETE n0 , n1 RETURN *"""
+        self.graph.query(q)
+
     # Connect every node to every node.
     def test03_create_fully_connected_graph(self):
         query = """MATCH(a:person), (b:person) WHERE a.name <> b.name CREATE (a)-[f:friend]->(b) RETURN count(f)"""
