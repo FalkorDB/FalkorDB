@@ -110,7 +110,7 @@ jobs:
 
       - name: Build compiler image
         id: build_compiler
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile.compiler
@@ -154,7 +154,7 @@ jobs:
           echo "BROWSER_TAG=${BROWSER_TAG}" >> $GITHUB_ENV
 
       - name: Build tests image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: /FalkorDB/tests/Dockerfile
@@ -174,7 +174,7 @@ jobs:
 
       - name: Build base image
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
