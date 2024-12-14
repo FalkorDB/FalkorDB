@@ -236,12 +236,13 @@ static Record DeleteConsume
 	}
 
 	// done reading, we're not going to call consume any longer
-	// there might be operations e.g. index scan that need to free
-	// index R/W lock, as such reset all execution plan operation up the chain
-	OpBase_PropagateReset(child);
-
-	// delete entities
-	_DeleteEntities(op);
+	if(array_len(op->deleted_nodes) > 0 || array_len(op->deleted_edges) > 0) {
+		// delete entities
+		// there might be operations e.g. index scan that need to free
+		// index R/W lock, as such reset all operation up the chain
+		OpBase_PropagateReset(child);
+		_DeleteEntities(op);
+	}
 
 	// return record
 	return _handoff(op);

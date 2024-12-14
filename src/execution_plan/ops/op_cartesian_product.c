@@ -173,7 +173,9 @@ static OpResult CartesianProductReset
 	CartesianProduct *op = (CartesianProduct *)opBase;
 
 	op->init = true;
-	_FreeStreamRecords(opBase);
+	if(op->records != NULL) {
+		_FreeStreamRecords(opBase);
+	}
 
 	return OP_OK;
 }
