@@ -1740,6 +1740,8 @@ void test_RemoveOperand() {
 	}
 
 	raxFree(matrices);
+	GrB_free(&A);
+	GrB_free(&B);
 }
 
 void test_LocateOperand() {

@@ -106,6 +106,7 @@ void test_pagerank() {
 	}
     
 	rm_free(ranking);
+	GrB_free(&A);
 }
 
 TEST_LIST = {
