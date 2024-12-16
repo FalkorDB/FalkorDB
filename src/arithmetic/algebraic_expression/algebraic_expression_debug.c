@@ -146,6 +146,9 @@ static void _AlgebraicExpression_PrintTree
 		break;
 	case AL_OPERAND:
 		if(exp->operand.edge) alias = exp->operand.edge;
+		if(exp->operand.transpose) {
+			printf("Transpose\n");
+		}
 		else alias = exp->operand.src;
 		printf("%s\n", alias);
 		break;
@@ -208,6 +211,9 @@ void AlgebraicExpression_Print
 		if(exp->operand.edge) alias = exp->operand.edge;
 		else if(exp->operand.label) alias = exp->operand.label;
 		else alias = exp->operand.src;
+		if(exp->operand.transpose) {
+			printf("Transpose(");
+		}
 		printf("%s", alias);
 	default:
 		ASSERT("Unknown algebraic expression node type");
@@ -261,6 +267,9 @@ void _AlgebraicExpression_ToString
 	case AL_OPERAND:
 		if(exp->operand.edge) alias = exp->operand.edge;
 		else alias = exp->operand.src;
+		if(exp->operand.transpose) {
+			sprintf(buff + strlen(buff), "Transpose(");
+		}
 		sprintf(buff + strlen(buff), "%s", alias);
 	default:
 		ASSERT("Unknown algebraic expression node type");

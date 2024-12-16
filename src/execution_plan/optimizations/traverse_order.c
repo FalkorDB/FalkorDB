@@ -39,20 +39,11 @@ static bool _should_transpose_entry_point
 	exps[1] = AlgebraicExpression_NewOperand(GrB_NULL, false, dest, dest, NULL,
 											 NULL);
 
-	// compute src score
+	// compute src and dest score
 	TraverseOrder_ScoreExpressions(scored_exp, exps, 2, bound_vars,
 								   filtered_entities, qg);
 	int src_score = scored_exp[0].score;
-
-	// transpose
-	AlgebraicExpression *tmp = exps[0];
-	exps[0] = exps[1];
-	exps[1] = tmp;
-
-	// compute dest score
-	TraverseOrder_ScoreExpressions(scored_exp, exps, 2, bound_vars,
-								   filtered_entities, qg);
-	int dest_score = scored_exp[0].score;
+	int dest_score = scored_exp[1].score;
 
 	// transpose if top scored expression is 'dest_exp'
 	bool transpose = dest_score > src_score;

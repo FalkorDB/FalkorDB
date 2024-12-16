@@ -242,11 +242,11 @@ static Record CondVarLenTraverseOptimizedConsume
 
 		if(op->allNeighborsCtx == NULL) {
 			op->allNeighborsCtx = AllNeighborsCtx_New(srcNode->id, op->M,
-					op->minHops, op->maxHops);
+					op->ae->operand.transpose, op->minHops, op->maxHops);
 		} else {
 			// in case ctx already allocated simply reset it
 			AllNeighborsCtx_Reset(op->allNeighborsCtx, srcNode->id, op->M,
-					op->minHops, op->maxHops);
+					op->ae->operand.transpose, op->minHops, op->maxHops);
 		}
 	}
 

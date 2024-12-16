@@ -58,9 +58,7 @@ static void _Index_PopulateNodeIndex
 		//----------------------------------------------------------------------
 
 		GrB_Info info;
-		info = Delta_MatrixTupleIter_attach(&it, m);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_MatrixTupleIter_iterate_range(&it, rowIdx, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX, false);
 		ASSERT(info == GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -146,7 +144,7 @@ static void _Index_PopulateEdgeIndex
 		indexed = 0;
 
 		// fetch relation matrix
-		Tensor R = Graph_GetRelationMatrix(g, Index_GetLabelID(idx), false);
+		Tensor R = Graph_GetRelationMatrix(g, Index_GetLabelID(idx));
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
