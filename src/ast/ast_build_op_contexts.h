@@ -39,11 +39,12 @@ PropertyMap *AST_ConvertPropertiesMap
 	const cypher_astnode_t *props
 );
 
-// extract the necessary information to populate an update operation from a SET clause
-rax *AST_PrepareUpdateOp
+// extract the necessary information to populate an update operation
+// from a SET clause
+EntityUpdateEvalCtx **AST_PrepareUpdateOp
 (
 	GraphContext *gc,
-	const cypher_astnode_t *set_clause
+	const cypher_astnode_t *clause
 );
 
 // extract the necessary information to populate a delete operation from a DELETE clause

@@ -4,13 +4,15 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "ast_build_op_contexts.h"
 #include "ast_shared.h"
 #include "../util/arr.h"
+#include "../query_ctx.h"
 #include "../errors/errors.h"
+#include "entity_update_ctx.h"
+#include "../graph/graph_hub.h"
+#include "ast_build_op_contexts.h"
 #include "../util/rax_extensions.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
-#include "../query_ctx.h"
 
 static inline EdgeCreateCtx _NewEdgeCreateCtx
 (
@@ -47,6 +49,34 @@ static inline NodeCreateCtx _NewNodeCreateCtx
 	return new_node;
 }
 
+// extract properties path from a cypher ast property operator node
+// e.g. for the property access: n.a.b.c = 3
+// the function will return ['a', 'b', 'c']
+static const char** _ExtractPropertiesPath
+(
+	const cypher_astnode_t *root
+) {
+	const char *prop_name = NULL;
+	const cypher_astnode_t *prop = NULL;
+
+	cypher_astnode_type_t t = cypher_astnode_type(root);
+	ASSERT(t == CYPHER_AST_PROPERTY_OPERATOR);
+
+	const char** path = array_new(const char *, 1);
+
+	do {
+		prop = cypher_ast_property_operator_get_prop_name(root);
+		prop_name = cypher_ast_prop_name_get_value(prop);
+		array_append(path, prop_name);
+
+		// advance
+		root = cypher_astnode_get_child(root, 0);
+		t = cypher_astnode_type(root);
+	} while(t == CYPHER_AST_PROPERTY_OPERATOR);
+
+	return path;
+}
+
 // updates a single property or label
 static void _ConvertUpdateItem
 (
@@ -60,6 +90,7 @@ static void _ConvertUpdateItem
 
 	const char                  *alias     = NULL;  // entity being updated
 	const char                  *attribute = NULL;  // attribute being set
+	const char                  **sub_path = NULL;  // nested attribute path
 	const cypher_astnode_t      *prop_expr = NULL;
 	const cypher_astnode_t      *ast_prop  = NULL;
 	const cypher_astnode_t      *ast_key   = NULL;  // AST node attribute set
@@ -69,6 +100,7 @@ static void _ConvertUpdateItem
 	bool         set_labels    = false;
 	bool         remove_labels = false;
 	UPDATE_MODE  update_mode   = UPDATE_MERGE;
+
 	//--------------------------------------------------------------------------
 	// determine the type of assignment
 	//--------------------------------------------------------------------------
@@ -104,15 +136,33 @@ static void _ConvertUpdateItem
 		// alias
 		ast_prop = cypher_ast_set_property_get_property(update_item);
 		prop_expr = cypher_ast_property_operator_get_expression(ast_prop);
-		ASSERT(cypher_astnode_type(prop_expr) == CYPHER_AST_IDENTIFIER);
-		alias = cypher_ast_identifier_get_name(prop_expr);
-
-		// attribute
-		ast_key = cypher_ast_property_operator_get_prop_name(ast_prop);
-		attribute = cypher_ast_prop_name_get_value(ast_key);
-
 		// updated value
 		ast_value = cypher_ast_set_property_get_expression(update_item);
+
+		cypher_astnode_type_t t = cypher_astnode_type(prop_expr);
+		ASSERT(t == CYPHER_AST_IDENTIFIER || t == CYPHER_AST_PROPERTY_OPERATOR);
+		if(t == CYPHER_AST_IDENTIFIER) {
+			// a.v = 5
+			alias = cypher_ast_identifier_get_name(prop_expr);
+			// attribute
+			ast_key = cypher_ast_property_operator_get_prop_name(ast_prop);
+			attribute = cypher_ast_prop_name_get_value(ast_key);
+		} else {
+			// a.v.x.y = 5
+			while(cypher_astnode_type(prop_expr) != CYPHER_AST_IDENTIFIER) {
+				prop_expr = cypher_astnode_get_child(prop_expr, 0);
+			}
+
+			alias = cypher_ast_identifier_get_name(prop_expr);
+
+			// get the updated path
+			// for the path is returned in reversed order
+			// e.g. SET n.a.v.x.y = 5
+			// sub_path will be ['y', 'x', 'v', 'a']
+			sub_path = _ExtractPropertiesPath(ast_prop);
+			attribute = array_pop(sub_path);  // top level attribute 'a'
+			array_reverse(sub_path);          // reverse path ['v', 'x', 'y']
+		}
 	} else if(type == CYPHER_AST_SET_LABELS) {
 		// MATCH (a) SET a:Label1:Label2
 		const cypher_astnode_t *id =
@@ -217,6 +267,7 @@ static void _ConvertUpdateItem
 		if(update_mode == UPDATE_REPLACE) {
 			UpdateCtx_Clear(ctx);
 		}
+
 		// updated value
 		AR_ExpNode *exp;
 		if(ast_value != NULL) {
@@ -226,7 +277,16 @@ static void _ConvertUpdateItem
 			// this is done by performing a.v = NULL
 			exp = AR_EXP_NewConstOperandNode(SI_NullVal());
 		}
-		PropertySetCtx update = { .attribute  = attribute, .exp = exp, .mode = update_mode };
+
+		AttributeID attr_id = ATTRIBUTE_ID_NONE;
+		if(attribute) {
+			attr_id = FindOrAddAttribute(gc, attribute, true);
+		}
+
+		PropertySetCtx update =
+			{ .attribute  = attribute, attr_id = attr_id, .exp = exp,
+				.mode = update_mode, .sub_path = sub_path };
+
 		array_append(ctx->properties, update);
 	}
 }
@@ -398,7 +458,9 @@ AST_MergeContext AST_PrepareMergeOp
 // UPDATE operation
 //------------------------------------------------------------------------------
 
-rax *AST_PrepareUpdateOp
+// extract the necessary information to populate an update operation
+// from a SET clause
+EntityUpdateEvalCtx **AST_PrepareUpdateOp
 (
 	GraphContext *gc,
 	const cypher_astnode_t *clause
@@ -423,7 +485,11 @@ rax *AST_PrepareUpdateOp
 		}
 	}
 
-	return updates;
+	// convert from rax to array
+	EntityUpdateEvalCtx **ctx = (EntityUpdateEvalCtx**)raxValues(updates);
+	raxFree(updates);
+
+	return ctx;
 }
 
 //------------------------------------------------------------------------------

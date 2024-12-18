@@ -149,24 +149,43 @@ static AR_ExpNode *_AR_EXP_FromIdentifier(const cypher_astnode_t *expr) {
 	return _AR_EXP_FromIdentifierExpression(expr);
 }
 
-static AR_ExpNode *_AR_EXP_FromPropertyExpression(const cypher_astnode_t *expr) {
+static AR_ExpNode *_AR_EXP_FromPropertyExpression
+(
+	const cypher_astnode_t *expr
+) {
 	// the property expression is constructed of two parts:
-	// 1. an expression evaluating to a graph entity, in the future a map type
-	// 2. a property name string.
+	// 1. an expression evaluating the object from which data is extracted
+	// 2. a property path
 	// examples: a.v, arr[0].v
 
 	//--------------------------------------------------------------------------
-	// Extract entity and property name expressions.
+	// extract entity and property name expressions
 	//--------------------------------------------------------------------------
 
-	const cypher_astnode_t *prop_expr = cypher_ast_property_operator_get_expression(expr);
-	const cypher_astnode_t *prop_name_node = cypher_ast_property_operator_get_prop_name(expr);
-	const char *prop_name = cypher_ast_prop_name_get_value(prop_name_node);
+	PropertyPath *path = PropertyPath_new();
+
+	const char *prop_name;
+	const cypher_astnode_t *prop_expr;
+	const cypher_astnode_t *prop_name_node;
+
+	// consume all property operators
+	do {
+		prop_expr      = cypher_ast_property_operator_get_expression(expr);
+		prop_name_node = cypher_ast_property_operator_get_prop_name(expr);
+		prop_name      = cypher_ast_prop_name_get_value(prop_name_node);
+
+		// collect property access
+		PropertyPath_addProperty(path, prop_name);
+
+		// update expression
+		expr = prop_expr;
+	} while(cypher_astnode_type(prop_expr) == CYPHER_AST_PROPERTY_OPERATOR);
+
+	PropertyPath_reverse(path);
 
 	AR_ExpNode *entity = _AR_EXP_FromASTNode(prop_expr);
-	AR_ExpNode *root = AR_EXP_NewAttributeAccessNode(entity, prop_name);
 
-	return root;
+	return AR_EXP_NewAttributeAccessNode(entity, path);
 }
 
 static SIValue _AR_EXP_FromIntegerString(const char *value_str) {
@@ -382,7 +401,10 @@ static AR_ExpNode *_AR_ExpFromMapExpression(const cypher_astnode_t *expr) {
 	return op;
 }
 
-static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
+static AR_ExpNode *_AR_ExpFromMapProjection
+(
+	const cypher_astnode_t *expr
+) {
 	// MATCH (n) RETURN n { .name, .age, scores: collect(m.score) }
 	// MATCH (n) RETURN n { .* }
 
@@ -399,10 +421,11 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 	const cypher_astnode_t *selector = NULL;
 	unsigned int n_selectors = cypher_ast_map_projection_nselectors(expr);
 
-	AR_ExpNode *tomapOp = NULL;
+	AR_ExpNode *tomapOp      = NULL;
 	AR_ExpNode *propertiesOp = NULL;
 
-	// Count the number of selectors of type CYPHER_AST_MAP_PROJECTION_ALL_PROPERTIES, because these are not children of tomap OpNode
+	// count the number of selectors of type
+	// CYPHER_AST_MAP_PROJECTION_ALL_PROPERTIES, because these are not children of tomap OpNode
 	uint allProps_selectors = 0;
 	for(uint i = 0; i < n_selectors; i++) {
 		selector = cypher_ast_map_projection_get_selector(expr, i);
@@ -439,7 +462,8 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 			prop_name = cypher_ast_prop_name_get_value(prop);
 			tomapOp->op.children[j * 2] = AR_EXP_NewConstOperandNode(SI_ConstStringVal((char *)prop_name));
 			AR_ExpNode *entity = AR_EXP_NewVariableOperandNode(entity_name);
-			tomapOp->op.children[j * 2 + 1] = AR_EXP_NewAttributeAccessNode(entity, prop_name);
+			tomapOp->op.children[j * 2 + 1] =
+				AR_EXP_NewAttributeAccessNode(entity, PropertyPath_propertyAccess(prop_name));
 			j++;
 		} else if(t == CYPHER_AST_MAP_PROJECTION_LITERAL) {
 			// { v: n.v }
@@ -889,12 +913,15 @@ static AR_ExpNode *_AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 	return NULL;
 }
 
-AR_ExpNode *AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
+AR_ExpNode *AR_EXP_FromASTNode
+(
+	const cypher_astnode_t *expr
+) {
 	AR_ExpNode *root = _AR_EXP_FromASTNode(expr);
 	AR_EXP_ReduceToScalar(root, false, NULL);
 
-	/* Make sure expression doesn't contain nested aggregation functions
-	 * count(max(n.v)) */
+	// make sure expression doesn't contain nested aggregation functions
+	// count(max(n.v))
 	if(_AR_EXP_ContainsNestedAgg(root)) {
 		// Set error (compile-time), this error will be raised later on.
 		ErrorCtx_SetError(EMSG_NESTED_AGGREGATION);

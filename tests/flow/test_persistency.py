@@ -407,3 +407,31 @@ class testGraphPersistency():
         for q in queries:
             actual_result = g.query(q)
             self.env.assertEquals(actual_result.result_set[0], [1])
+
+    # Verify that nested containers are saved and restored correctly.
+    def test08_persist_nested_containers(self):
+        graph_id = "nested_containers"
+        g = self.db.select_graph(graph_id)
+        queries = ["CREATE ({v: {}})",      # empty map
+                   "CREATE ({v: []})",      # empty array
+                   "CREATE ({v: [[]]})",    # nested array
+                   "CREATE ({v: [{}]})",    # map within array
+                   "CREATE ({v: {x:{}}})",  # nested map
+                   "CREATE ({v: {x:[]}})",  # array within map
+                   ]
+
+        # create graph
+        for q in queries:
+            actual_result = g.query(q)
+            self.env.assertEquals(actual_result.nodes_created, 1)
+
+        # collect nodes
+        q = "MATCH (a) RETURN a.v ORDER BY a"
+        expected_result = g.query(q).result_set
+
+        # Save RDB & Load from RDB
+        self.env.dumpAndReload()
+
+        # Verify that the graph was properly saved and loaded
+        actual_result = g.query(q).result_set
+        self.env.assertEquals(actual_result, expected_result)

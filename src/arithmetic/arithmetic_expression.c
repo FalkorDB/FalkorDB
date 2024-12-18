@@ -64,7 +64,11 @@ inline bool AR_EXP_IsOperation(const AR_ExpNode *exp) {
 	return exp->type == AR_EXP_OP;
 }
 
-bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr) {
+bool AR_EXP_IsAttribute
+(
+	const AR_ExpNode *exp,
+	char **attr
+) {
 	ASSERT(exp != NULL);
 
 	// an arithmetic expression performs attribute extraction
@@ -79,8 +83,10 @@ bool AR_EXP_IsAttribute(const AR_ExpNode *exp, char **attr) {
 		AR_ExpNode *r = exp->op.children[1];
 		ASSERT(AR_EXP_IsConstant(r));
 		SIValue v = r->operand.constant;
-		ASSERT(SI_TYPE(v) == T_STRING);
-		*attr = v.stringval;
+		ASSERT(SI_TYPE(v) == T_ARRAY);
+
+		// note: attr is volotile
+		*attr = SIArray_Get(v, 0).stringval;
 	}
 
 	return true;
@@ -222,29 +228,27 @@ AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias) {
 	return node;
 }
 
-AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity,
-										  const char *attr) {
+// build a property access expression
+AR_ExpNode *AR_EXP_NewAttributeAccessNode
+(
+	AR_ExpNode *entity,  // entity expression
+	PropertyPath *path   // property access path
+) {
+	// validations
+	ASSERT(path                   != NULL);
+	ASSERT(PropertyPath_len(path) > 0);
+	ASSERT(entity                 != NULL);
 
-	ASSERT(attr != NULL);
-	ASSERT(entity != NULL);
+	// pass the path object using an SIValue pointer
+	SIValue arg = SI_PtrVal(path);
 
-	// use property index when possible, prop_idx is set to ATTRIBUTE_NOTFOUND
-	// if the graph is not aware of it in which case we'll try to resolve
-	// the property using its string representation
+	// entity is an expression which should be evaluated to a container
+	// path is the property access pattern
+	AR_ExpNode *root = AR_EXP_NewOpNode("property", true, 2);
 
-	GraphContext *gc = QueryCtx_GetGraphCtx();
-	SIValue prop_idx = SI_LongVal(ATTRIBUTE_ID_NONE);
-	SIValue prop_name = SI_ConstStringVal((char *)attr);
-	AttributeID idx = GraphContext_GetAttributeID(gc, attr);
-
-	if(idx != ATTRIBUTE_ID_NONE) prop_idx = SI_LongVal(idx);
-
-	// entity is an expression which should be evaluated to a graph entity
-	// attr is the name of the attribute we want to extract from entity
-	AR_ExpNode *root = AR_EXP_NewOpNode("property", true, 3);
+	// set root's children
 	root->op.children[0] = entity;
-	root->op.children[1] = AR_EXP_NewConstOperandNode(prop_name);
-	root->op.children[2] = AR_EXP_NewConstOperandNode(prop_idx);
+	root->op.children[1] = AR_EXP_NewConstOperandNode(arg);
 
 	return root;
 }
@@ -740,14 +744,19 @@ void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases) {
 	}
 }
 
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes) {
+void AR_EXP_CollectAttributes
+(
+	AR_ExpNode *root,
+	rax *attributes
+) {
 	if(AR_EXP_IsOperation(root)) {
 		if(strcmp(AR_EXP_GetFuncName(root), "property") == 0) {
 			AR_ExpNode *arg = root->op.children[1];
 			ASSERT(AR_EXP_IsConstant(arg));
-			ASSERT(SI_TYPE(arg->operand.constant) == T_STRING);
+			ASSERT(SI_TYPE(arg->operand.constant) == T_ARRAY);
 
-			const char *attr = arg->operand.constant.stringval;
+			const char *attr = SIArray_Get(arg->operand.constant, 0).stringval;
+			// note: attr is volotile
 			raxInsert(attributes, (unsigned char *)attr, strlen(attr), NULL, NULL);
 		}
 

@@ -14,12 +14,21 @@
 // Forward declaration
 FT_FilterNode *_FilterNode_FromAST(const cypher_astnode_t *expr);
 
-FT_FilterNode *_CreatePredicateFilterNode(AST_Operator op, const cypher_astnode_t *lhs,
-										  const cypher_astnode_t *rhs) {
-	return FilterTree_CreatePredicateFilter(op, AR_EXP_FromASTNode(lhs), AR_EXP_FromASTNode(rhs));
+FT_FilterNode *_CreatePredicateFilterNode
+(
+	AST_Operator op,
+	const cypher_astnode_t *lhs,
+	const cypher_astnode_t *rhs
+) {
+	return FilterTree_CreatePredicateFilter(op, AR_EXP_FromASTNode(lhs),
+			AR_EXP_FromASTNode(rhs));
 }
 
-void _FT_Append(FT_FilterNode **root_ptr, FT_FilterNode *child) {
+void _FT_Append
+(
+	FT_FilterNode **root_ptr,
+	FT_FilterNode *child
+) {
 	ASSERT(child);
 
 	FT_FilterNode *root = *root_ptr;
@@ -48,8 +57,12 @@ void _FT_Append(FT_FilterNode **root_ptr, FT_FilterNode *child) {
 	*root_ptr = new_root;
 }
 
-FT_FilterNode *_CreateFilterSubtree(AST_Operator op, const cypher_astnode_t *lhs,
-									const cypher_astnode_t *rhs) {
+FT_FilterNode *_CreateFilterSubtree
+(
+	AST_Operator op,
+	const cypher_astnode_t *lhs,
+	const cypher_astnode_t *rhs
+) {
 	FT_FilterNode *filter = NULL;
 	switch(op) {
 	case OP_OR:
@@ -84,8 +97,13 @@ FT_FilterNode *_CreateFilterSubtree(AST_Operator op, const cypher_astnode_t *lhs
 // AND, OR, XOR (others?)
 /* WHERE (condition) AND (condition),
  * WHERE a.val = b.val */
-static FT_FilterNode *_convertBinaryOperator(const cypher_astnode_t *op_node) {
-	const cypher_operator_t *operator = cypher_ast_binary_operator_get_operator(op_node);
+static FT_FilterNode *_convertBinaryOperator
+(
+	const cypher_astnode_t *op_node
+) {
+	const cypher_operator_t *operator =
+		cypher_ast_binary_operator_get_operator(op_node);
+
 	AST_Operator op = AST_ConvertOperatorNode(operator);
 	const cypher_astnode_t *lhs;
 	const cypher_astnode_t *rhs;
@@ -100,7 +118,7 @@ static FT_FilterNode *_convertBinaryOperator(const cypher_astnode_t *op_node) {
 	case OP_LE:
 	case OP_GT:
 	case OP_GE:
-		// Arguments are of type CYPHER_AST_EXPRESSION
+		// arguments are of type CYPHER_AST_EXPRESSION
 		lhs = cypher_ast_binary_operator_get_argument1(op_node);
 		rhs = cypher_ast_binary_operator_get_argument2(op_node);
 		return _CreateFilterSubtree(op, lhs, rhs);
@@ -112,9 +130,13 @@ static FT_FilterNode *_convertBinaryOperator(const cypher_astnode_t *op_node) {
 	}
 }
 
-static FT_FilterNode *_convertUnaryOperator(const cypher_astnode_t *op_node) {
-	const cypher_operator_t *operator = cypher_ast_unary_operator_get_operator(op_node);
-	// Argument is of type CYPHER_AST_EXPRESSION
+static FT_FilterNode *_convertUnaryOperator
+(
+	const cypher_astnode_t *op_node
+) {
+	const cypher_operator_t *operator =
+		cypher_ast_unary_operator_get_operator(op_node);
+	// argument is of type CYPHER_AST_EXPRESSION
 	const cypher_astnode_t *arg = cypher_ast_unary_operator_get_argument(op_node);
 	AST_Operator op = AST_ConvertOperatorNode(operator);
 	switch(op) {
@@ -125,32 +147,41 @@ static FT_FilterNode *_convertUnaryOperator(const cypher_astnode_t *op_node) {
 	}
 }
 
-static FT_FilterNode *_convertOperator(const cypher_astnode_t *expr) {
+static FT_FilterNode *_convertOperator
+(
+	const cypher_astnode_t *expr
+) {
 	AR_ExpNode *exp = AR_EXP_FromASTNode(expr);
 	return FilterTree_CreateExpressionFilter(exp);
 }
 
-/* A comparison node contains two arrays - one of operators, and one of expressions.
- * Most comparisons will only have one operator and two expressions, but Cypher
- * allows more complex formulations like "x < y <= z".
- * A comparison takes a form such as "WHERE a.val < y.val". */
-static FT_FilterNode *_convertComparison(const cypher_astnode_t *comparison_node) {
+// a comparison node contains two arrays - one of operators, and one of expressions
+// most comparisons will only have one operator and two expressions, but Cypher
+// allows more complex formulations like "x < y <= z"
+// a comparison takes a form such as "WHERE a.val < y.val"
+static FT_FilterNode *_convertComparison
+(
+	const cypher_astnode_t *comparison_node
+) {
 	// "x < y <= z"
 	uint nelems = cypher_ast_comparison_get_length(comparison_node);
 	FT_FilterNode **filters = array_new(FT_FilterNode *, nelems);
 
 	// Create and accumulate simple predicates x < y.
 	for(int i = 0; i < nelems; i++) {
-		const cypher_operator_t *operator = cypher_ast_comparison_get_operator(comparison_node, i);
-		const cypher_astnode_t *lhs = cypher_ast_comparison_get_argument(comparison_node, i);
-		const cypher_astnode_t *rhs = cypher_ast_comparison_get_argument(comparison_node, i + 1);
+		const cypher_operator_t *operator =
+			cypher_ast_comparison_get_operator(comparison_node, i);
+		const cypher_astnode_t *lhs =
+			cypher_ast_comparison_get_argument(comparison_node, i);
+		const cypher_astnode_t *rhs =
+			cypher_ast_comparison_get_argument(comparison_node, i + 1);
 
 		AST_Operator op = AST_ConvertOperatorNode(operator);
 		FT_FilterNode *filter = _CreatePredicateFilterNode(op, lhs, rhs);
 		array_append(filters, filter);
 	}
 
-	// Reduce by anding.
+	// reduce by anding
 	while(array_len(filters) > 1) {
 		FT_FilterNode *a = array_pop(filters);
 		FT_FilterNode *b = array_pop(filters);
@@ -167,52 +198,64 @@ static FT_FilterNode *_convertComparison(const cypher_astnode_t *comparison_node
 	return root;
 }
 
-static FT_FilterNode *_convertInlinedProperties(const cypher_astnode_t *entity,
-												GraphEntityType type) {
+// convert an inline property e.g. (n {score:100})
+// to a filter tree
+static FT_FilterNode *_convertInlinedProperties
+(
+	const cypher_astnode_t *entity,
+	GraphEntityType type
+) {
 	const cypher_astnode_t *props = NULL;
 	const cypher_astnode_t *ast_identifer;
 	if(type == GETYPE_NODE) {
 		props = cypher_ast_node_pattern_get_properties(entity);
-	} else { // relation
+	} else { // edge
 		props = cypher_ast_rel_pattern_get_properties(entity);
 	}
 
 	if(!props) return NULL;
 
-	// Retrieve the entity's alias.
+	// retrieve the entity's alias
 	const char *alias = AST_ToString(entity);
 
 	FT_FilterNode *root = NULL;
 	uint nelems = cypher_ast_map_nentries(props);
 	for(uint i = 0; i < nelems; i ++) {
 		// key is of type CYPHER_AST_PROP_NAME
-		const char *prop = cypher_ast_prop_name_get_value(cypher_ast_map_get_key(props, i));
+		const char *prop =
+			cypher_ast_prop_name_get_value(cypher_ast_map_get_key(props, i));
+
+		// create a property access pattern
+		PropertyPath *path = PropertyPath_propertyAccess(prop);
 
 		AR_ExpNode *graph_entity = AR_EXP_NewVariableOperandNode(alias);
-		AR_ExpNode *lhs = AR_EXP_NewAttributeAccessNode(graph_entity, prop);
+		AR_ExpNode *lhs = AR_EXP_NewAttributeAccessNode(graph_entity, path);
 		// val is of type CYPHER_AST_EXPRESSION
 		const cypher_astnode_t *val = cypher_ast_map_get_value(props, i);
 		AR_ExpNode *rhs = AR_EXP_FromASTNode(val);
-		/* TODO In a query like:
-		 * "MATCH (r:person {name:"Roi"}) RETURN r"
-		 * (note the repeated double quotes) - this creates a variable rather than a scalar.
-		 * Can we use this to handle escape characters or something? How does it work? */
+		// TODO In a query like:
+		// "MATCH (r:person {name:"Roi"}) RETURN r"
+		// (note the repeated double quotes) - this creates a variable rather than a scalar
+		// can we use this to handle escape characters or something? How does it work?
 		FT_FilterNode *t = FilterTree_CreatePredicateFilter(OP_EQUAL, lhs, rhs);
 		_FT_Append(&root, t);
 	}
 	return root;
 }
 
-static FT_FilterNode *_convertPatternPath(const cypher_astnode_t *entity) {
-	// Collect aliases specified in pattern.
+static FT_FilterNode *_convertPatternPath
+(
+	const cypher_astnode_t *entity
+) {
+	// collect aliases specified in pattern.
 	const char **aliases = array_new(const char *, 1);
 	AST_CollectAliases(&aliases, entity);
 	uint alias_count = array_len(aliases);
 
-	/* Create a function call expression
-	 * First argument is a pointer to the original AST pattern node.
-	 * argument 1..alias_count are the referenced aliases,
-	 * required for filter positioning when constructing an execution plan. */
+	// create a function call expression
+	// first argument is a pointer to the original AST pattern node
+	// argument 1..alias_count are the referenced aliases,
+	// required for filter positioning when constructing an execution plan
 	AR_ExpNode *exp = AR_EXP_NewOpNode("path_filter", true, 1 + alias_count);
 	exp->op.children[0] = AR_EXP_NewConstOperandNode(SI_PtrVal((void *)entity));
 	for(uint i = 0; i < alias_count; i++) {
@@ -223,7 +266,10 @@ static FT_FilterNode *_convertPatternPath(const cypher_astnode_t *entity) {
 	return FilterTree_CreateExpressionFilter(exp);
 }
 
-FT_FilterNode *_FilterNode_FromAST(const cypher_astnode_t *expr) {
+FT_FilterNode *_FilterNode_FromAST
+(
+	const cypher_astnode_t *expr
+) {
 	ASSERT(expr);
 	cypher_astnode_type_t type = cypher_astnode_type(expr);
 
@@ -240,23 +286,27 @@ FT_FilterNode *_FilterNode_FromAST(const cypher_astnode_t *expr) {
 	}
 }
 
-void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
-									  const cypher_astnode_t *pattern) {
+void _AST_ConvertGraphPatternToFilter
+(
+	const AST *ast,
+	FT_FilterNode **root,
+	const cypher_astnode_t *pattern
+) {
 	if(!pattern) return;
 	FT_FilterNode *ft_node = NULL;
 	uint npaths = cypher_ast_pattern_npaths(pattern);
-	// Go over each path in the pattern.
+	// go over each path in the pattern
 	for(uint i = 0; i < npaths; i++) {
 		const cypher_astnode_t *path = cypher_ast_pattern_get_path(pattern, i);
-		// Go over each element in the path pattern and check if there is an inline filter.
+		// go over each element in the path pattern and check if there is an inline filter
 		uint nelements = cypher_ast_pattern_path_nelements(path);
-		// Nodes are in even places.
+		// nodes are in even places
 		for(uint n = 0; n < nelements; n += 2) {
 			const cypher_astnode_t *node = cypher_ast_pattern_path_get_element(path, n);
 			ft_node = _convertInlinedProperties(node, GETYPE_NODE);
 			if(ft_node) _FT_Append(root, ft_node);
 		}
-		// Edges are in odd places.
+		// edges are in odd places
 		for(uint e = 1; e < nelements; e += 2) {
 			const cypher_astnode_t *edge = cypher_ast_pattern_path_get_element(path, e);
 			ft_node = _convertInlinedProperties(edge, GETYPE_EDGE);
@@ -265,7 +315,11 @@ void _AST_ConvertGraphPatternToFilter(const AST *ast, FT_FilterNode **root,
 	}
 }
 
-void AST_ConvertFilters(FT_FilterNode **root, const cypher_astnode_t *entity) {
+void AST_ConvertFilters
+(
+	FT_FilterNode **root,
+	const cypher_astnode_t *entity
+) {
 	if(!entity) return;
 
 	cypher_astnode_type_t type = cypher_astnode_type(entity);
@@ -286,13 +340,16 @@ void AST_ConvertFilters(FT_FilterNode **root, const cypher_astnode_t *entity) {
 	if(node) _FT_Append(root, node);
 }
 
-FT_FilterNode *AST_BuildFilterTree(AST *ast) {
+FT_FilterNode *AST_BuildFilterTree
+(
+	AST *ast
+) {
 	FT_FilterNode *filter_tree = NULL;
 	const cypher_astnode_t **match_clauses = AST_GetClauses(ast, CYPHER_AST_MATCH);
 	if(match_clauses) {
 		uint match_count = array_len(match_clauses);
 		for(uint i = 0; i < match_count; i ++) {
-			// Optional match clauses are handled separately.
+			// optional match clauses are handled separately
 			if(cypher_ast_match_is_optional(match_clauses[i])) continue;
 			const cypher_astnode_t *pattern = cypher_ast_match_get_pattern(match_clauses[i]);
 			_AST_ConvertGraphPatternToFilter(ast, &filter_tree, pattern);
@@ -367,7 +424,7 @@ FT_FilterNode *AST_BuildFilterTreeFromClauses
 		return NULL;
 	}
 
-	// Apply De Morgan's laws
+	// apply De Morgan's laws
 	FilterTree_DeMorgan(&filter_tree);
 
 	return filter_tree;

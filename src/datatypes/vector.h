@@ -19,13 +19,6 @@ SIValue SIVector_Clone
 	SIValue vector // vector to clone
 );
 
-// creates a vector from its binary representation
-SIValue SIVector_FromBinary
-(
-	FILE *stream, // binary stream
-	SIType t      // vector type
-);
-
 // compares two vectors
 // return values:
 // 0 - vectors are equal
@@ -85,6 +78,19 @@ void SIVector_ToString
 	char **buf,           // output buffer
 	size_t *bufferLen,    // output buffer length
 	size_t *bytesWritten  // output bytes written
+);
+
+// encode vector to binary stream
+void SIVector_ToBinary
+(
+	SerializerIO stream,   // binary stream
+	const SIValue *vector  // vector to encode
+);
+
+// read a vector from binary stream
+SIValue SIVector_FromBinary
+(
+	SerializerIO stream  // binary stream
 );
 
 void SIVector_Free

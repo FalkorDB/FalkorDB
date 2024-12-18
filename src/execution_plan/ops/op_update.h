@@ -10,22 +10,21 @@
 #include "../../util/dict.h"
 #include "../execution_plan.h"
 #include "shared/update_functions.h"
-#include "../../resultset/resultset_statistics.h"
 
 typedef struct {
 	OpBase op;
-	raxIterator it;      // iterator for traversing update contexts
-	uint64_t rec_idx;    // emit record index
-	Record *records;     // updated records
-	GraphContext *gc;    // graph context
-	rax *update_ctxs;    // entities to update and their expressions
-	dict *node_updates;  // enqueued node updates
-	dict *edge_updates;  // enqueued edge updates
+	uint n;                             // number of update ctxs
+	uint64_t rec_idx;                   // emit record index
+	Record *records;                    // updated records
+	GraphContext *gc;                   // graph context
+	EntityUpdateEvalCtx **update_ctxs;  // update context
+	bool updates_committed;             // true if updates been performed
+	dict *node_updates;                 // enqueued node updates
+	dict *edge_updates;                 // enqueued edge updates
 } OpUpdate;
 
 OpBase *NewUpdateOp
 (
-	const ExecutionPlan *plan,
-	rax *update_exps
+	const ExecutionPlan *plan,         // execution plan
+	EntityUpdateEvalCtx **update_exps  // array of update context
 );
-

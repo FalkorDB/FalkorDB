@@ -9,11 +9,34 @@
 #include "../value.h"
 
 // returns latitude of given point
-float Point_lat(SIValue point);
+float Point_lat
+(
+	SIValue point
+);
 
 // returns longitude of given point
-float Point_lon(SIValue point);
+float Point_lon
+(
+	SIValue point
+);
 
 // returns a coordinate (latitude or longitude) of a given point
-SIValue Point_GetCoordinate(SIValue point, SIValue key);
+SIValue Point_GetCoordinate
+(
+	SIValue point,
+	SIValue key
+);
+
+// encode point to binary stream
+void Point_ToBinary
+(
+	SerializerIO stream,  // binary stream
+	const SIValue *point  // point to encode
+);
+
+// read point from binary stream
+SIValue Point_FromBinary
+(
+	SerializerIO stream  // binary stream
+);
 

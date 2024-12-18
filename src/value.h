@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include "xxhash.h"
+#include "serializers/serializer_io.h"
 
 /* Type defines the supported types by the system. The types are powers
  * of 2 so they can be used in bitmasks of matching types.
@@ -54,7 +55,7 @@ typedef enum {
 #define SI_NUMERIC (T_INT64 | T_DOUBLE)
 #define SI_GRAPHENTITY (T_NODE | T_EDGE)
 #define SI_ALL (T_MAP | T_NODE | T_EDGE | T_ARRAY | T_PATH | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_NULL | T_PTR | T_POINT | T_VECTOR)
-#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR)
+#define SI_VALID_PROPERTY_VALUE (T_POINT | T_ARRAY | T_DATETIME | T_LOCALDATETIME | T_DATE | T_TIME | T_LOCALTIME | T_DURATION | T_STRING | T_BOOL | T_INT64 | T_DOUBLE | T_VECTOR | T_MAP)
 #define SI_INDEXABLE (SI_NUMERIC | T_BOOL | T_STRING | T_POINT | T_VECTOR)
 
 /* Any values (except durations) are comparable with other values of the same type.
@@ -210,10 +211,17 @@ void SIValue_HashUpdate(SIValue v, XXH64_state_t *state);
 /* Returns a hash code for a given SIValue. */
 XXH64_hash_t SIValue_HashCode(SIValue v);
 
+// write SIValue into binary stream
+void SIValue_ToBinary
+(
+	SerializerIO stream,  // stream to encode to
+	const SIValue *v      // value to encode
+);
+
 // reads SIValue off of binary stream
 SIValue SIValue_FromBinary
 (
-	FILE *stream  // stream to read value from
+	SerializerIO stream  // stream to read value from
 );
 
 /* Free an SIValue's internal property if that property is a heap allocation owned

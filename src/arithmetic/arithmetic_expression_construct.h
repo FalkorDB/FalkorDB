@@ -9,6 +9,9 @@
 #include "../ast/ast.h"
 #include "arithmetic_expression.h"
 
-// Construct arithmetic expression from AST node
-AR_ExpNode *AR_EXP_FromASTNode(const cypher_astnode_t *expr);
+// construct arithmetic expression from AST node
+AR_ExpNode *AR_EXP_FromASTNode
+(
+	const cypher_astnode_t *expr
+);
 
