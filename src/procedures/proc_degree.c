@@ -56,7 +56,7 @@ static void _process_yield
 //
 //	{
 //		'source':      <label>,
-//		'dir':         'incoming' / 'outgoing' / 'both',
+//		'dir':         'incoming' / 'outgoing',
 //		'relation':    <relationship-type>,
 //		'destination': <label>,
 //	}
@@ -110,8 +110,6 @@ static bool parse_arguments
 				*dir = GRAPH_EDGE_DIR_INCOMING;
 			} else if(strcmp(tmp.stringval, "outgoing") == 0) {
 				*dir = GRAPH_EDGE_DIR_OUTGOING;
-			} else if(strcmp(tmp.stringval, "both") == 0) {
-				*dir = GRAPH_EDGE_DIR_BOTH;
 			} else {
 				// unknown edge direction, fail
 				return false;
@@ -416,13 +414,13 @@ ProcedureResult Proc_DegreeFree
 // procedure input:
 //	{
 //		'source':      <label>,
-//		'dir':         'incoming' / 'outgoing' / 'both',
+//		'dir':         'incoming' / 'outgoing',
 //		'relation':    <relationship-type>,
 //		'destination': <label>,
 //	}
 //
 //  source      - [optional] [string] type of nodes for which degree is computed
-//  dir         - [optional] [string] edge direction: 'incoming', 'outgoing' or 'both'
+//  dir         - [optional] [string] edge direction: 'incoming' or 'outgoing'
 //  relation    - [optional] [string] the type of edges to consider
 //  destination - [optional] [string] type of reachable nodes
 //
