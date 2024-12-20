@@ -211,8 +211,8 @@ GrB_Info Delta_eWiseAdd                // C = A + B
 );
 
 GrB_Info Delta_Matrix_clear    // clear a matrix of all entries;
-(                           // type and dimensions remain unchanged
-    Delta_Matrix A          // matrix to clear
+(                              // type and dimensions remain unchanged
+    Delta_Matrix A             // matrix to clear
 );
 
 GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C

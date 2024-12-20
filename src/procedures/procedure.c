@@ -45,6 +45,7 @@ void Proc_Register() {
 	_procRegister("algo.SSpaths",          Proc_SSpathCtx);
 	_procRegister("algo.betweenness",      Proc_BetweennessCtx);
 	_procRegister("algo.labelPropagation", Proc_CDLPCtx);
+	_procRegister("algo.Degree", Proc_DegreeCtx);
 
 	// register FullText Search generator
 	_procRegister("db.idx.fulltext.drop",               Proc_FulltextDropIdxGen);
@@ -55,6 +56,7 @@ void Proc_Register() {
 	// register vector search generator
 	_procRegister("db.idx.vector.queryNodes",         Proc_VectorQueryNodeCtx);
 	_procRegister("db.idx.vector.queryRelationships", Proc_VectorQueryRelCtx);
+
 }
 
 ProcedureCtx *ProcCtxNew
