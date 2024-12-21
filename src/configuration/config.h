@@ -35,7 +35,8 @@ typedef enum {
 	Config_EFFECTS_THRESHOLD         = 15,  // bolt protocol port
 	Config_BOLT_PORT                 = 16,  // replicate queries via effects
 	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
-	Config_END_MARKER                = 18
+	Config_DATA_FOLDER               = 18,  // path to data folder
+	Config_END_MARKER                = 19
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of

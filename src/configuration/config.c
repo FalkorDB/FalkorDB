@@ -10,12 +10,14 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
+#include "util/rmalloc.h"
 #include "util/redis_version.h"
 #include "../deps/GraphBLAS/Include/GraphBLAS.h"
 
 //-----------------------------------------------------------------------------
 // Configuration parameters
 //-----------------------------------------------------------------------------
+
 // config param, the timeout for each query in milliseconds
 #define TIMEOUT "TIMEOUT"
 
@@ -70,6 +72,9 @@
 // delay indexing
 #define DELAY_INDEXING "DELAY_INDEXING"
 
+// data folder
+#define DATA_FOLDER "DATA_FOLDER"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -81,6 +86,7 @@
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
+#define DATA_FOLDER_DEFAULT                "/FalkorDB/data/"
 
 // configuration object
 typedef struct {
@@ -103,6 +109,7 @@ typedef struct {
 	uint32_t max_info_queries_count;   // Maximum number of query info elements.
 	int16_t bolt_port;                 // bolt protocol port
 	bool delay_indexing;               // delay index construction when decoding
+	char *data_folder;                 // path to data folder, used for CSV upload
 } RG_Config;
 
 RG_Config config; // global module configuration
@@ -171,9 +178,9 @@ static inline bool _Config_ParseYesNo
 	return res;
 }
 
-//==============================================================================
+//------------------------------------------------------------------------------
 // Config access functions
-//==============================================================================
+//------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
 // max queued queries
@@ -476,6 +483,27 @@ static void Config_delay_indexing_set
 	config.delay_indexing = delay_indexing;
 }
 
+//------------------------------------------------------------------------------
+// data folder
+//------------------------------------------------------------------------------
+
+static void Config_data_folder_set
+(
+	const char *path
+) {
+	ASSERT(path != NULL);
+
+	// free previous value
+	rm_free(config.data_folder);
+
+	// copy new path
+	config.data_folder = rm_strdup(path);
+}
+
+static const char *Config_data_folder_get(void) {
+	return config.data_folder;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -522,6 +550,8 @@ bool Config_Contains_field
 		f = Config_BOLT_PORT;
 	} else if (!(strcasecmp(field_str, DELAY_INDEXING))) {
 		f = Config_DELAY_INDEXING;
+	} else if (!(strcasecmp(field_str, DATA_FOLDER))) {
+		f = Config_DATA_FOLDER;
 	} else {
 		return false;
 	}
@@ -608,6 +638,10 @@ const char *Config_Field_name
 			name = DELAY_INDEXING;
 			break;
 
+		case Config_DATA_FOLDER:
+			name = DATA_FOLDER;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -681,6 +715,9 @@ static void _Config_SetToDefaults(void) {
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
+
+	// set default data folder path
+	config.data_folder = rm_strdup(DATA_FOLDER_DEFAULT);
 }
 
 int Config_Init
@@ -738,10 +775,11 @@ int Config_Init
 		if(!Config_Option_set(field, val_str, &error)) {
 			if(error != NULL) {
 				RedisModule_Log(ctx, "error",
-							"Failed setting field '%s' with error: %s", field_str, error);
+							"Failed setting field '%s' with error: %s",
+							field_str, error);
 			} else {
 				RedisModule_Log(ctx, "error",
-							"Failed setting field '%s'", field_str);
+						"Failed setting field '%s'", field_str);
 			}
 			return REDISMODULE_ERR;
 		}
@@ -1018,6 +1056,20 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
+		// data folder path
+		//----------------------------------------------------------------------
+
+		case Config_DATA_FOLDER: {
+			va_start(ap, field);
+			const char **data_folder = va_arg(ap, const char **);
+			va_end(ap);
+
+			ASSERT(data_folder != NULL);
+			(*data_folder) = Config_data_folder_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
@@ -1279,6 +1331,16 @@ bool Config_Option_set
 			if(!_Config_ParseYesNo(val, &delay_indexing)) return false;
 
 			Config_delay_indexing_set(delay_indexing);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// data folder path
+		//----------------------------------------------------------------------
+
+		case Config_DATA_FOLDER: {
+			ASSERT(val != NULL);
+			Config_data_folder_set(val);
 		}
 		break;
 

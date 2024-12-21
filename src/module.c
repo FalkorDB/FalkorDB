@@ -61,7 +61,7 @@ static bool _Cron_Start(void) {
 	return res;
 }
 
-// print RedisGraph configuration
+// print FalkorDB configuration
 static void _Print_Config
 (
 	RedisModuleCtx *ctx
