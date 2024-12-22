@@ -375,7 +375,7 @@ int BulkInsert
 	// lock graph under write lock
 	// allocate space for new nodes and edges
 	// set graph sync policy to resize only
-	Graph_AcquireWriteLock(g);
+	CRWGuard guard = Graph_AcquireWriteLock(g);
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
 	Graph_AllocateNodes(g, node_count);
 	Graph_AllocateEdges(g, edge_count);
@@ -413,7 +413,7 @@ int BulkInsert
 cleanup:
 	// reset graph sync policy
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 	return res;
 }
 

@@ -151,6 +151,7 @@ inline static bool _readonly_cmd_mode(CommandCtx *ctx) {
 static void _ExecuteQuery(void *args) {
 	ASSERT(args != NULL);
 
+	CRWGuard       guard;
 	GraphQueryCtx  *gq_ctx      = args;
 	QueryCtx       *query_ctx   = gq_ctx->query_ctx;
 	GraphContext   *gc          = gq_ctx->graph_ctx;
@@ -193,7 +194,7 @@ static void _ExecuteQuery(void *args) {
 
 	// acquire the appropriate lock
 	if(readonly) {
-		Graph_AcquireReadLock(gc->g);
+		guard = Graph_AcquireReadLock(gc->g);
 	} else {
 		// if this is a writer query `we need to re-open the graph key with write flag
 		// this notifies Redis that the key is "dirty" any watcher on that key will
@@ -283,7 +284,7 @@ static void _ExecuteQuery(void *args) {
 		QueryCtx_AdvanceStage(query_ctx);
 	}
 
-	if(readonly) Graph_ReleaseLock(gc->g); // release read lock
+	if(readonly) Graph_ReleaseLock(gc->g, guard); // release read lock
 
 	// log query to slowlog
 	SlowLog *slowlog = GraphContext_GetSlowLog(gc);

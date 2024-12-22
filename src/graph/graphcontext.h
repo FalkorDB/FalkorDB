@@ -28,6 +28,7 @@
 
 typedef struct {
 	Graph *g;                              // container for all matrices and entity properties
+	CRWGuard guard;
 	int ref_count;                         // number of active references
 	rax *attributes;                       // from strings to attribute IDs
 	pthread_rwlock_t _attribute_rwlock;    // read-write lock to protect access to the attribute maps

@@ -408,6 +408,7 @@ void Constraint_EnforceNodes
 	ASSERT(c != NULL);
 	ASSERT(g != NULL);
 
+	CRWGuard              guard;
 	Delta_MatrixTupleIter it         = {0};           // matrix iterator
 	bool                  holds      = true;          // constraint holds
 	GrB_Index             rowIdx     = 0;             // current row being scanned
@@ -417,7 +418,7 @@ void Constraint_EnforceNodes
 
 	while(holds) {
 		// lock graph for reading
-		Graph_AcquireReadLock(g);
+		guard = Graph_AcquireReadLock(g);
 
 		// constraint state changed, abort enforcement
 		// this can happen if for example the following sequance is issued:
@@ -468,7 +469,7 @@ void Constraint_EnforceNodes
 			break;
 		} else {
 			// release read lock
-			Graph_ReleaseLock(g);
+			Graph_ReleaseLock(g, guard);
 
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
@@ -486,7 +487,7 @@ void Constraint_EnforceNodes
 	Constraint_SetStatus(c, status);
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 }
 
 // enforce constraint on all relevant edges
@@ -498,6 +499,7 @@ void Constraint_EnforceEdges
 	bool info;
 	TensorIterator it = {0};
 
+	CRWGuard  guard;
 	bool      holds        = true;               // constraint holds
 	EntityID  src_id       = 0;                  // current processed row idx
 	EntityID  dest_id      = 0;                  // current processed column idx
@@ -510,7 +512,7 @@ void Constraint_EnforceEdges
 
 	while(holds) {
 		// lock graph for reading
-		Graph_AcquireReadLock(g);
+		guard = Graph_AcquireReadLock(g);
 
 		// constraint state changed, abort enforcement
 		// this can happen if for example the following sequance is issued:
@@ -581,7 +583,7 @@ void Constraint_EnforceEdges
 		} else {
 			// finished current batch
 			// release read lock
-			Graph_ReleaseLock(g);
+			Graph_ReleaseLock(g, guard);
 		}
 	}
 
@@ -590,7 +592,7 @@ void Constraint_EnforceEdges
 	Constraint_SetStatus(c, status);
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 }
 
 // enforce constraint on entity

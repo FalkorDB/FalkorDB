@@ -380,7 +380,7 @@ bool QueryCtx_LockForCommit(void) {
 	ctx->internal_exec_ctx.key = key;
 
 	// acquire graph write lock
-	Graph_AcquireWriteLock(gc->g);
+	gc->guard = Graph_AcquireWriteLock(gc->g);
 	ctx->internal_exec_ctx.locked_for_commit = true;
 
 	return true;
@@ -405,7 +405,7 @@ static void _QueryCtx_UnlockCommit
 
 	ctx->internal_exec_ctx.locked_for_commit = false;
 	// release graph R/W lock
-	Graph_ReleaseLock(gc->g);
+	Graph_ReleaseLock(gc->g, gc->guard);
 
 	// close Key
 	RedisModule_CloseKey(ctx->internal_exec_ctx.key);

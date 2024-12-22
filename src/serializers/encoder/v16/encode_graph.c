@@ -214,12 +214,15 @@ void RdbSaveGraph_latest
 	// is 100,000 then there will be two nodes payloads,
 	// each containing 100,000 nodes, encoded into two different RDB meta keys
 
+	CRWGuard guard;
 	GraphContext *gc = value;
 
 	// TODO: remove, no need, as GIL is taken
 
 	// acquire a read lock if we're not in a thread-safe context
-	if(_shouldAcquireLocks()) Graph_AcquireReadLock(gc->g);
+	if(_shouldAcquireLocks()) {
+		guard = Graph_AcquireReadLock(gc->g);
+	}
 
 	// get last encoded state
 	EncodeState current_state =
@@ -287,6 +290,6 @@ void RdbSaveGraph_latest
 	}
 
 	// if a lock was acquired, release it
-	if(_shouldAcquireLocks()) Graph_ReleaseLock(gc->g);
+	if(_shouldAcquireLocks()) Graph_ReleaseLock(gc->g, guard);
 }
 

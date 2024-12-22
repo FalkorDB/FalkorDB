@@ -92,7 +92,7 @@ static void _build_graph() {
 
 	Node n;
 	Graph *g = gc->g;
-	Graph_AcquireWriteLock(g);
+	CRWGuard guard = Graph_AcquireWriteLock(g);
 
 	size_t city_count = 2;
 	size_t person_count = 2;
@@ -131,7 +131,7 @@ static void _build_graph() {
 	Graph_CreateEdge(g, 3, 2, war_relation_id, &e);
 
 	Graph_ApplyAllPending(g, true);
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 }
 
 static void _bind_matrices() {

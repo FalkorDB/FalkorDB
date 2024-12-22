@@ -51,7 +51,7 @@ void Graph_Explain(void *args) {
 		goto cleanup;
 	}
 
-	Graph_AcquireReadLock(gc->g);
+	CRWGuard guard = Graph_AcquireReadLock(gc->g);
 	lock_acquired = true;
 
 	ExecutionPlan_PreparePlan(plan);
@@ -66,7 +66,7 @@ void Graph_Explain(void *args) {
 
 cleanup:
 	if(ErrorCtx_EncounteredError()) ErrorCtx_EmitException();
-	if(lock_acquired) Graph_ReleaseLock(gc->g);
+	if(lock_acquired) Graph_ReleaseLock(gc->g, guard);
 	ExecutionCtx_Free(exec_ctx);
 	GraphContext_DecreaseRefCount(gc);
 	Globals_UntrackCommandCtx(command_ctx);

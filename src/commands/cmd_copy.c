@@ -417,13 +417,13 @@ static void _Graph_Copy
 		// acquire READ lock on gc
 		// we do not want to fork while the graph is modified
 		// might be redundant, see: GraphContext_LockForCommit
-		Graph_AcquireReadLock(gc->g);
+		CRWGuard guard = Graph_AcquireReadLock(gc->g);
 
 		pid = RedisModule_Fork(ForkDoneHandler, copy_ctx);
 		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
 
 		// release graph READ lock
-		Graph_ReleaseLock(gc->g);
+		Graph_ReleaseLock(gc->g, guard);
 
 		if(pid < 0) {
 			// failed to fork! retry in a bit

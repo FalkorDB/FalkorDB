@@ -42,18 +42,22 @@ typedef struct Graph Graph;
 // typedef for synchronization function pointer
 typedef void (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index);
 
+typedef struct CRWGuard CRWGuard;
+struct CRWGuard {
+	char _private[16];
+};
 
 // graph synchronization functions
 // the graph is initialized with a read-write lock allowing
 // concurrent access from one writer or N readers
 // acquire a lock that does not restrict access from additional reader threads
-void Graph_AcquireReadLock
+CRWGuard Graph_AcquireReadLock
 (
 	Graph *g
 );
 
 // acquire a lock for exclusive access to this graph's data
-void Graph_AcquireWriteLock
+CRWGuard Graph_AcquireWriteLock
 (
 	Graph *g
 );
@@ -61,7 +65,8 @@ void Graph_AcquireWriteLock
 // release the held lock
 void Graph_ReleaseLock
 (
-	Graph *g
+	Graph *g,
+	CRWGuard guard
 );
 
 // retrieve graph matrix synchronization policy
