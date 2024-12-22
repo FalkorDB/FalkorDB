@@ -58,41 +58,6 @@ static bool _Init_CSVReader
 		return false;
 	}
 
-	op->ncols = CSVReader_ColumnCount(op->reader);
-
-	//--------------------------------------------------------------------------
-	// save headers
-	//--------------------------------------------------------------------------
-
-	if(op->with_headers) {
-		// free old headers
-		if(op->headers != NULL) {
-			for(int i = 0; i < op->ncols; i++) {
-				SIValue_Free(op->headers[i]);
-			}
-			rm_free(op->headers);
-		}
-
-		char *columns[op->ncols];
-		size_t lengths[op->ncols];
-		if(!CSVReader_GetHeaders(op->reader, (const char**)&columns, lengths)) {
-			ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_READ_CSV_HEADERS);
-			return false;
-		}
-
-		// save headers
-		op->headers = rm_malloc(sizeof(SIValue) * op->ncols);
-		for(int i = 0; i < op->ncols; i++) {
-			size_t l = lengths[i];
-			char *s  = rm_malloc(l+1);
-			memcpy(s, columns[i], l);
-			s[l] = '\0';  // nullify
-
-			// add value to row array
-			op->headers[i] = SI_TransferStringVal(s);
-		}
-	}
-
 	return true;
 }
 
@@ -105,58 +70,9 @@ static bool _CSV_GetRow
 	ASSERT(op  != NULL);
 	ASSERT(row != NULL);
 
-	char *values[op->ncols];
-	size_t lengths[op->ncols];
-
 	// try to get a new row from CSV
-	int res = CSVReader_GetRow(op->reader, (const char**)&values, lengths);
-	if(res == -1) {
-		ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_READ_CSV_ROW);
-		return false;
-	} else if (res == -2) {
-		// reached the end of the file
-		return false;
-	}
-
-	// 0 indicates success
-	ASSERT(res == 0);
-
-	//--------------------------------------------------------------------------
-	// copy values
-	//--------------------------------------------------------------------------
-
-	if(op->with_headers) {
-		SIValue _row[op->ncols];
-
-		for(int i = 0; i < op->ncols; i++) {
-			size_t l = lengths[i];
-			char *s  = rm_malloc(l+1);
-			memcpy(s, values[i], l);
-			s[l] = '\0';  // nullify
-
-			// add value to row array
-			_row[i] = SI_TransferStringVal(s);
-		}
-
-		*row = Map_FromArrays(op->headers, _row, op->ncols);
-	} else {
-		SIValue *_row = array_new(SIValue, op->ncols);
-
-		for(int i = 0; i < op->ncols; i++) {
-			size_t l = lengths[i];
-			char *s  = rm_malloc(l+1);
-			memcpy(s, values[i], l);
-			s[l] = '\0';  // nullify
-
-			// add value to row array
-			array_append(_row, SI_TransferStringVal(s));
-		}
-
-		*row = SIArray_FromRaw(&_row);
-		ASSERT(_row == NULL);
-	}
-
-	return true;
+	*row = CSVReader_GetRow(op->reader);
+	return (!SIValue_IsNull(*row));
 }
 
 // create a new load CSV operation
@@ -195,6 +111,7 @@ static OpResult LoadCSVInit
 	// set operation's consume function
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
+
 	// update consume function in case operation has a child
 	if(OpBase_ChildCount(opBase) > 0) {
 		op->child = OpBase_GetChild(opBase, 0);
@@ -214,7 +131,7 @@ static OpResult LoadCSVInit
 		// update consume function
 		OpBase_UpdateConsume(opBase, LoadCSVConsumeDepleted);
 	}
-	OpBase_DeleteRecord(r);
+	OpBase_DeleteRecord(&r);
 
 	if(!_Init_CSVReader(op)) {
 		// failed to init CSV
@@ -274,7 +191,7 @@ pull_from_child:
 	if(!_CSV_GetRow(op, &row)) {
 		// failed to get a CSV row
 		// reset CSV reader and free current child record
-		OpBase_DeleteRecord(op->child_record);
+		OpBase_DeleteRecord(&op->child_record);
 		op->child_record = NULL;
 
 		// free CSV path, just in case it relies on record data
@@ -287,7 +204,7 @@ pull_from_child:
 
 	// managed to get a new CSV row
 	// update record and return to caller
-	Record r = OpBase_DeepCloneRecord(op->child_record);
+	Record r = OpBase_CloneRecord(op->child_record);
 	Record_AddScalar(r, op->recIdx, row);
 
 	return r;
@@ -334,7 +251,7 @@ static OpResult LoadCSVReset (
 	op->path = SI_NullVal();
 
 	if(op->child_record != NULL) {
-		OpBase_DeleteRecord(op->child_record);
+		OpBase_DeleteRecord(&op->child_record);
 		op->child_record = NULL;
 	}
 
@@ -368,21 +285,13 @@ static void LoadCSVFree
 	}
 	
 	if(op->child_record != NULL) {
-		OpBase_DeleteRecord(op->child_record);
+		OpBase_DeleteRecord(&op->child_record);
 		op->child_record = NULL;	
 	}
 
 	if(op->reader != NULL) {
 		CSVReader_Free(op->reader);
 		op->reader = NULL;
-	}
-
-	if(op->headers != NULL) {
-		for(int i = 0; i < op->ncols; i++) {
-			SIValue_Free(op->headers[i]);
-		}
-		rm_free(op->headers);
-		op->headers = NULL;
 	}
 }
 

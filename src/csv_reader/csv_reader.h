@@ -5,8 +5,7 @@
 
 #pragma once
 
-#include <stdint.h>
-#include <stdio.h>
+#include "../value.h"
 
 typedef struct Opaque_CSVReader *CSVReader;
 
@@ -18,33 +17,14 @@ CSVReader CSVReader_New
     char delimiter          // column delimiter character
 );
 
-// returns the number of columns in CSV file
-size_t CSVReader_ColumnCount
-(
-    const CSVReader reader  // CSV reader
-);
-
-// extracts the header row
-// length of 'values' and 'lengths' arrays must be the same
-// returns true on success false otherwise
-bool CSVReader_GetHeaders
-(
-    const CSVReader reader,  // CSV reader
-	const char **values,     // header values
-	const size_t *lengths    // length of each value
-);
-
 // extract the current row
-// length of 'values' and 'lengths' arrays must be the same
-// returns:
-// 0 success
-// -1 failed to get row
-// -2 end of file
-int CSVReader_GetRow
+// returns either
+// SIArray when CSV doesn't contains a header row
+// SIMap when CSV does contains a header row
+// SINull value upon failure to produce a row
+SIValue CSVReader_GetRow
 (
-	const CSVReader reader,  // CSV reader
-	const char **values,     // row values
-	const size_t *lengths    // length of each value
+	const CSVReader reader  // CSV reader
 );
 
 // free CSV reader
@@ -52,3 +32,4 @@ void CSVReader_Free
 (
 	CSVReader reader  // CSV reader to free
 );
+

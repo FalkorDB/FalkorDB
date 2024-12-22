@@ -17,9 +17,7 @@ typedef struct {
 	SIValue path;         // CSV path
 	char *alias;          // CSV row alias
 	int recIdx;           // record index to populate with CSV row
-	size_t ncols;         // number of columns
 	bool with_headers;    // CSV contains header row
-	SIValue *headers;     // header columns
 	OpBase *child;        // child operation
 	Record child_record;  // child record
 } OpLoadCSV;
