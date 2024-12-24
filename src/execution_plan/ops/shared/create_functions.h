@@ -12,10 +12,10 @@
 
 // nodes commited one at a time as we reserved the node ids and need to be commited in order
 typedef struct {
-	NodeCreateCtx *nodes_to_create; // array of node blueprints
-	AttributeSet *node_attributes;  // array of node attribute sets created 
-	int  **node_labels;             // array of node labels
-	Node **created_nodes;           // array of created nodes
+	NodeCreateCtx *nodes_to_create;  // array of node blueprints
+	AttributeSet *node_attributes;   // array of node attribute sets created
+	LabelID      **node_labels;      // array of node labels
+	Node         **created_nodes;    // array of created nodes
 } PendingNodeCreations;
 
 // edges commited to the graph in baches all the edges from the same blueprint
@@ -39,10 +39,9 @@ void NewPendingCreationsContainer
 	EdgeCreateCtx *edges
 );
 
-// lock the graph and commit all changes introduced by the operation
+// lock the graph and commit all pending changes
 void CommitNewEntities
 (
-	OpBase *op,
 	PendingCreations *pending
 );
 
