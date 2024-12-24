@@ -1,3 +1,4 @@
+import os
 import csv
 from common import *
 from collections import OrderedDict
@@ -5,12 +6,14 @@ from collections import OrderedDict
 GRAPH_ID = "load_csv"
 
 EMPTY_CSV                               = "empty.csv"
-EMPTY_CSV_RELATIVE_PATH                 = "./tests/flow/" + EMPTY_CSV
+EMPTY_CSV_RELATIVE_PATH                 = "./" + EMPTY_CSV
+EMPTY_CSV_ABSOLUTE_PATH                 = os.path.abspath(EMPTY_CSV_RELATIVE_PATH)
 EMPTY_CSV_HEADER                        = []
 EMPTY_CSV_DATA                          = []
 
 SHORT_CSV_WITH_HEADERS                  = "short_with_header.csv"
-SHORT_CSV_WITH_HEADERS_RELATIVE_PATH    = "./tests/flow/" + SHORT_CSV_WITH_HEADERS
+SHORT_CSV_WITH_HEADERS_RELATIVE_PATH    = "./" + SHORT_CSV_WITH_HEADERS
+SHORT_CSV_WITH_HEADERS_ABSOLUTE_PATH    = os.path.abspath(SHORT_CSV_WITH_HEADERS_RELATIVE_PATH)
 SHORT_CSV_WITH_HEADERS_HEADER           = [["First Name", "Last Name"]]
 SHORT_CSV_WITH_HEADERS_DATA             = [["Adam", "Lipman"],
                                            ["Hila", "Lipman"],
@@ -18,7 +21,8 @@ SHORT_CSV_WITH_HEADERS_DATA             = [["Adam", "Lipman"],
                                            ["Yoav", "Lipman"]]
 
 SHORT_CSV_WITHOUT_HEADERS               = "short_without_header.csv"
-SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH = "./tests/flow/" + SHORT_CSV_WITHOUT_HEADERS
+SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH = "./" + SHORT_CSV_WITHOUT_HEADERS
+SHORT_CSV_WITHOUT_HEADERS_ABSOLUTE_PATH = os.path.abspath(SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH)
 SHORT_CSV_WITHOUT_HEADERS_HEADER        = []
 SHORT_CSV_WITHOUT_HEADERS_DATA          = [["Adam", "Lipman"],
                                            ["Hila", "Lipman"],
@@ -26,7 +30,7 @@ SHORT_CSV_WITHOUT_HEADERS_DATA          = [["Adam", "Lipman"],
                                            ["Yoav", "Lipman"]]
 
 MALFORMED_CSV                           = "malformed.csv"
-MALFORMED_CSV_RELATIVE_PATH             = "./tests/flow/" + MALFORMED_CSV
+MALFORMED_CSV_RELATIVE_PATH             = "./" + MALFORMED_CSV
 MALFORMED_CSV_HEADER                    = [["FirstName", "LastName"]]
 MALFORMED_CSV_DATA                      = [["Roi",  "Lipman"],
                                            ["Hila", "Lipman"],
@@ -140,9 +144,9 @@ class testLoadCSV():
                RETURN row
                ORDER BY row"""
 
-        datasets = [(EMPTY_CSV_RELATIVE_PATH,                 []),
-                    (SHORT_CSV_WITH_HEADERS_RELATIVE_PATH,    [*SHORT_CSV_WITH_HEADERS_HEADER,    *SHORT_CSV_WITH_HEADERS_DATA]),
-                    (SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH, [*SHORT_CSV_WITHOUT_HEADERS_HEADER, *SHORT_CSV_WITHOUT_HEADERS_DATA])]
+        datasets = [(EMPTY_CSV_ABSOLUTE_PATH,                 []),
+                    (SHORT_CSV_WITH_HEADERS_ABSOLUTE_PATH,    [*SHORT_CSV_WITH_HEADERS_HEADER,    *SHORT_CSV_WITH_HEADERS_DATA]),
+                    (SHORT_CSV_WITHOUT_HEADERS_ABSOLUTE_PATH, [*SHORT_CSV_WITHOUT_HEADERS_HEADER, *SHORT_CSV_WITHOUT_HEADERS_DATA])]
 
         for dataset in datasets:
             # project all rows from CSV file
@@ -163,12 +167,12 @@ class testLoadCSV():
                 RETURN row
                 ORDER BY row"""
 
-        #datasets = [(EMPTY_CSV_RELATIVE_PATH,                 EMPTY_CSV_HEADER,                  EMPTY_CSV_DATA),
-        #            (SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH, SHORT_CSV_WITHOUT_HEADERS_DATA[0], SHORT_CSV_WITHOUT_HEADERS_DATA[1:]),
-        #            (SHORT_CSV_WITH_HEADERS_RELATIVE_PATH,    SHORT_CSV_WITH_HEADERS_HEADER[0],  SHORT_CSV_WITH_HEADERS_DATA)]
+        #datasets = [(EMPTY_CSV_ABSOLUTE_PATH,                 EMPTY_CSV_HEADER,                  EMPTY_CSV_DATA),
+        #            (SHORT_CSV_WITHOUT_HEADERS_ABSOLUTE_PATH, SHORT_CSV_WITHOUT_HEADERS_DATA[0], SHORT_CSV_WITHOUT_HEADERS_DATA[1:]),
+        #            (SHORT_CSV_WITH_HEADERS_ABSOLUTE_PATH,    SHORT_CSV_WITH_HEADERS_HEADER[0],  SHORT_CSV_WITH_HEADERS_DATA)]
 
-        datasets = [(SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH, SHORT_CSV_WITHOUT_HEADERS_DATA[0], SHORT_CSV_WITHOUT_HEADERS_DATA[1:]),
-                    (SHORT_CSV_WITH_HEADERS_RELATIVE_PATH,    SHORT_CSV_WITH_HEADERS_HEADER[0],  SHORT_CSV_WITH_HEADERS_DATA)]
+        datasets = [(SHORT_CSV_WITHOUT_HEADERS_ABSOLUTE_PATH, SHORT_CSV_WITHOUT_HEADERS_DATA[0], SHORT_CSV_WITHOUT_HEADERS_DATA[1:]),
+                    (SHORT_CSV_WITH_HEADERS_ABSOLUTE_PATH,    SHORT_CSV_WITH_HEADERS_HEADER[0],  SHORT_CSV_WITH_HEADERS_DATA)]
 
         for dataset in datasets:
             file    = dataset[0]
@@ -192,7 +196,7 @@ class testLoadCSV():
                RETURN x, row
                ORDER BY x, row"""
 
-        result = self.graph.query(q, {'file': SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH}).result_set
+        result = self.graph.query(q, {'file': SHORT_CSV_WITHOUT_HEADERS_ABSOLUTE_PATH}).result_set
 
         expected = []
         for i in range(4):
@@ -210,8 +214,8 @@ class testLoadCSV():
                LOAD CSV FROM $file_2 AS row
                RETURN file_1_rows, collect(row) as file_2_rows
                """
-        result = g.query(q, {'file_1': SHORT_CSV_WITHOUT_HEADERS_RELATIVE_PATH,
-                             'file_2': SHORT_CSV_WITH_HEADERS_RELATIVE_PATH}).result_set
+        result = g.query(q, {'file_1': SHORT_CSV_WITHOUT_HEADERS_ABSOLUTE_PATH,
+                             'file_2': SHORT_CSV_WITH_HEADERS_ABSOLUTE_PATH}).result_set
 
         file_1_rows = SHORT_CSV_WITHOUT_HEADERS_DATA
         file_2_rows = SHORT_CSV_WITH_HEADERS_HEADER + SHORT_CSV_WITH_HEADERS_DATA
