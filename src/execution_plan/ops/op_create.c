@@ -198,7 +198,7 @@ static Record CreateConsume
 	}
 
 	// create entities
-	CommitNewEntities(opBase, &op->pending);
+	CommitNewEntities(&op->pending);
 
 	// return record
 	return _handoff(op);

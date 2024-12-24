@@ -185,7 +185,7 @@ static void _CommitEdges
 	}
 }
 
-// Initialize all variables for storing pending creations.
+// initialize all variables for storing pending creations
 void NewPendingCreationsContainer
 (
 	PendingCreations *pending,
@@ -195,7 +195,7 @@ void NewPendingCreationsContainer
 	ASSERT(pending != NULL);
 
 	pending->nodes.nodes_to_create = nodes;
-	pending->nodes.node_labels     = array_new(int *, 0);
+	pending->nodes.node_labels     = array_new(LabelID *, 0);
 	pending->nodes.created_nodes   = array_new(Node *, 0);
 	pending->nodes.node_attributes = array_new(AttributeSet, 0);
 
@@ -215,10 +215,9 @@ void NewPendingCreationsContainer
 	array_free(edges);
 }
 
-// Lock the graph and commit all changes introduced by the operation.
+// lock the graph and commit all pending changes
 void CommitNewEntities
 (
-	OpBase *op,
 	PendingCreations *pending
 ) {
 	Graph *g = QueryCtx_GetGraph();
