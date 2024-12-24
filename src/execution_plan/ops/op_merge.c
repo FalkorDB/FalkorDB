@@ -207,6 +207,55 @@ static Record _handoff
 	}
 }
 
+
+// records which were scheduled for creation but resulted in duplications
+// e.g.
+// UNWIND [{a:1, b:1}, {a:1, b:2}] AS x
+// MERGE (n {v:x.a})
+// ON CREATE SET n.created = true
+// ON MATCH  SET n.matched = true
+//
+// in this example the first record {a:1, b:1} will create the node 'n'
+// the second record {a:1, b:2} will also be scheduled for creation but we'll
+// detect it will create a duplication, and so for the {a:1, b:2} record
+// we'll need to match the 'n' node
+//
+// this function matches duplicates and apply the ON MATCH directive if present
+static void _processPostponedRecords
+(
+	OpMerge *op,
+	uint match_count,  // number of records matched
+	uint create_count  // number of records created
+
+) {
+	ASSERT(op != NULL);
+
+	// run through the postponed records
+	// match each one and add them to the output array
+	int n = array_len(op->postponed_match);
+	for(int i = 0; i < n; i++) {
+		Record r = array_pop(op->postponed_match);
+
+		// propagate record to the top of the Match stream
+		Argument_AddRecord(op->match_argument_tap, r);
+
+		// pull match stream
+		r = _pullFromStream(op->match_stream);
+		ASSERT(r != NULL);
+		ASSERT(_pullFromStream(op->match_stream) == NULL);  // expecting a single record
+
+		// add record to outputs
+		array_append(op->output_records, r);
+	}
+
+	// if we are setting properties with ON MATCH, compute pending updates
+	if(op->on_match && n > 0) {
+		_UpdateProperties(op->node_pending_updates, op->edge_pending_updates,
+				op->on_match_it,
+				op->output_records + match_count + create_count, n);
+	}
+}
+
 static Record MergeConsume
 (
 	OpBase *opBase
@@ -226,7 +275,9 @@ static Record MergeConsume
 	// consume bound stream
 	//--------------------------------------------------------------------------
 
-	op->output_records = array_new(Record, 32);
+	op->output_records  = array_new(Record, 32);
+	op->postponed_match = array_new(Record, 0);
+
 	// if we have a bound variable stream
 	// pull from it and store records until depleted
 	if(op->bound_variable_stream) {
@@ -240,9 +291,11 @@ static Record MergeConsume
 	// match pattern
 	//--------------------------------------------------------------------------
 
-	uint match_count          = 0;
-	bool reading_matches      = true;
-	bool must_create_records  = false;
+	uint match_count         = 0;
+	uint create_count        = 0;
+	bool reading_matches     = true;
+	bool must_create_records = false;
+
 	// match mode: attempt to resolve the pattern for every record from
 	// the bound variable stream, or once if we have no bound variables
 	while(reading_matches) {
@@ -277,8 +330,7 @@ static Record MergeConsume
 		}
 
 		if(should_create_pattern) {
-			// transfer the LHS record to the Create stream
-			// to build once we finish reading
+			// transfer the unmatched record to the Create stream
 			// we don't need to clone the record
 			// as it won't be accessed again outside that stream
 			// but we must make sure its elements are access-safe
@@ -288,10 +340,15 @@ static Record MergeConsume
 				Argument_AddRecord(op->create_argument_tap, lhs_record);
 				lhs_record = NULL;
 			}
+
 			Record r = _pullFromStream(op->create_stream);
-			UNUSED(r);
-			ASSERT(r == NULL); // don't expect returned records
-			must_create_records = true;
+			if(r != NULL) {
+				// duplicate detected, this record need to be matched
+				// once we commit all of the changes
+				array_append(op->postponed_match, r);
+			} else {
+				must_create_records = true;
+			}
 		}
 
 		// free the LHS Record if we haven't transferred it to the Create stream
@@ -328,7 +385,6 @@ static Record MergeConsume
 		// we only need to pull the created records if we're returning results
 		// or performing updates on creation
 		// pull all records from the Create stream
-		uint create_count = 0;
 		Record created_record;
 		while((created_record = _pullFromStream(op->create_stream))) {
 			array_append(op->output_records, created_record);
@@ -344,6 +400,13 @@ static Record MergeConsume
 				op->edge_pending_updates, op->on_create_it,
 				op->output_records + match_count, create_count);
 		}
+	}
+
+	// handle postpone records
+	if(array_len(op->postponed_match) > 0) {
+		// reset match stream, required as we've commited data to the graph
+		OpBase_PropagateReset(op->match_stream);
+		_processPostponedRecords(op, match_count, create_count);
 	}
 
 	//--------------------------------------------------------------------------
@@ -398,6 +461,7 @@ static void MergeFree
 ) {
 	OpMerge *op = (OpMerge *)opBase;
 
+	// free input records
 	if(op->input_records) {
 		uint input_count = array_len(op->input_records);
 		for(uint i = 0; i < input_count; i ++) {
@@ -407,7 +471,18 @@ static void MergeFree
 		op->input_records = NULL;
 	}
 
-	if(op->output_records) {
+	// free postponed match records
+	if(op->postponed_match != NULL) {
+		uint n = array_len(op->postponed_match);
+		for(uint i = 0; i < n; i ++) {
+			OpBase_DeleteRecord(op->postponed_match + i);
+		}
+		array_free(op->postponed_match);
+		op->postponed_match = NULL;
+	}
+
+	// free output records
+	if(op->output_records != NULL) {
 		uint output_count = array_len(op->output_records);
 		// output_records[0..output_rec_idx] had been already emitted, skip them
 		for(uint i = op->output_rec_idx; i < output_count; i ++) {

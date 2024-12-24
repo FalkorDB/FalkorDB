@@ -636,3 +636,30 @@ class testGraphMergeFlow():
         # ensure that only 11 nodes are created and no crash
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i}) MERGE (:B {id: i % 10})")
         self.env.assertEquals(res.nodes_created, 11)
+
+    def test34_merge_handle_duplicates(self):
+        # duplicates scheduled for creation should be matched
+        # consider the following:
+        # UNWIND [{a:1, b:1}, {a:1, b:2}] AS x
+        # MERGE (n {v:x.a})
+        # ON CREATE SET n.created = true
+        # ON MATCH  SET n.matched = true
+        #
+        # given an empty graph the first record {a:1, b:1} will create the node
+        # the second record {a:1, b:2} will be detected as a duplicate
+        # MERGE need to match the second record applying the ON MATCH directive
+        # on it and include it in its output
+
+        q = """UNWIND [{a:1, b:1}, {a:1, b:2}, {a:1, b:3}] AS x
+               MERGE (n {v:x.a})
+               ON CREATE SET n.created = true
+               ON MATCH  SET n.matched = true
+               RETURN n.v, n.created, n.matched"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 3)
+        for row in res:
+            self.env.assertEquals(row[0], 1)
+            self.env.assertEquals(row[1], True)
+            self.env.assertEquals(row[2], True)
+
