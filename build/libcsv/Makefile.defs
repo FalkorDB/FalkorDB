@@ -1,0 +1,2 @@
+
+export LIBCSV=$(LIBCSV_BINDIR)/.libs/libcsv.a
