@@ -170,6 +170,31 @@ static inline void _buildUnwindOp(ExecutionPlan *plan, const cypher_astnode_t *c
 	ExecutionPlan_UpdateRoot(plan, op);
 }
 
+static void _buildLoadCSVOp
+(
+	ExecutionPlan *plan,
+	const cypher_astnode_t *clause
+) {
+	ASSERT(plan   != NULL);
+	ASSERT(clause != NULL);
+
+	// extract information from AST
+
+	// with headers
+	bool with_headers = cypher_ast_load_csv_has_with_headers(clause);
+
+	// URI expression
+	const cypher_astnode_t *node = cypher_ast_load_csv_get_url(clause);
+	AR_ExpNode *exp = AR_EXP_FromASTNode(node);
+
+	// alias
+	node = cypher_ast_load_csv_get_identifier(clause);
+	const char *alias = cypher_ast_identifier_get_name(node);
+
+	OpBase *op = NewLoadCSVOp(plan, exp, alias, with_headers);
+	ExecutionPlan_UpdateRoot(plan, op);
+}
+
 static inline void _buildUpdateOp(GraphContext *gc, ExecutionPlan *plan,
 								  const cypher_astnode_t *clause) {
 	rax *update_exps = AST_PrepareUpdateOp(gc, clause);
@@ -376,6 +401,8 @@ void ExecutionPlanSegment_ConvertClause
 		_buildForeachOp(plan, clause, gc);
 	} else if(t == CYPHER_AST_CALL_SUBQUERY) {
 		buildCallSubqueryPlan(plan, clause);
+	} else if(t == CYPHER_AST_LOAD_CSV) {
+		_buildLoadCSVOp(plan, clause);
 	} else {
 		assert(false && "unhandeled clause");
 	}

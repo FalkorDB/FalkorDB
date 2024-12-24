@@ -37,6 +37,15 @@ SIValue Map_New
 	uint capacity     // map initial capacity
 );
 
+// create a map from keys and values arrays
+// keys and values are both of length n
+SIValue Map_FromArrays
+(
+	const SIValue *keys,    // keys
+	const SIValue *values,  // values
+	uint n                  // arrays length
+);
+
 // clones map
 SIValue Map_Clone
 (

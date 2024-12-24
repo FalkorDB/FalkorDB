@@ -34,7 +34,7 @@ class testShortestPath(FlowTestsBase):
             self.graph.query(query)
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
-            self.env.assertIn("RedisGraph currently only supports shortestPaths in WITH or RETURN clauses", str(e))
+            self.env.assertIn("FalkorDB currently only supports shortestPaths in WITH or RETURN clauses", str(e))
 
         query = """MATCH (a {v: 1}), (b {v: 4}) RETURN shortestPath((a)-[*2..]->(b))"""
         try:

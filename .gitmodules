@@ -16,3 +16,6 @@
 [submodule "deps/FalkorDB-core-rs"]
 	path = deps/FalkorDB-core-rs
 	url = https://github.com/FalkorDB/FalkorDB-core-rs.git
+[submodule "deps/libcsv"]
+	path = deps/libcsv
+	url = https://github.com/rgamble/libcsv.git
