@@ -7,50 +7,19 @@
 //
 // 1. a cron task is created with the responsibility of creating a fork
 //
-// 2. the forked child process encodes the graph into a temporary file
-//    once done the child exists and a callback is invoked on Redis main thread
+// 2. the forked child process encodes the graph into a pipe
 //
-// 3. a second cron task is created with the responsibility of decoding the
-//    dumped file and creating a new graph key
+// 3. the parent process on the cron thread is decoding the graph as it being
+//    encoded
 //
-//
-//
-// ┌────────────────┐                  ┌────────────────┐
-// │                │                  │                │
-// │   Cron Task    │                  │     Child      │
-// │                │                  │                │
-// │                │                  │                │       ┌────────┐
-// │                │                  │                │       │        │
-// │                │                  │                │       │ Dump   │
-// │      Fork      ├─────────────────►│                ├──────►│ Graph  │
-// │                │                  │                │       │        │
-// │                │                  │                │       │        │
-// └────────────────┘                  └───────┬────────┘       │        │
-//                                             │                │        │
-//                                             │                └────────┘
-//                                             │                    ▲
-// ┌────────────────┐                          │                    │
-// │                │                          │                    │
-// │  Main thread   │      Done callback       │                    │
-// │                │◄─────────────────────────┘                    │
-// │                │                                               │
-// │                │                                               │
-// │                │                                               │
-// └────────┬───────┘                                               │
-//          │                                                       │
-//          │                                                       │
-//          ▼                                                       │
-// ┌────────────────┐                                               │
-// │                │                                               │
-// │   Cron Task    │                                               │
-// │                │                                               │
-// │                │                                               │
-// │  Decode Graph  ├───────────────────────────────────────────────┘
-// │                │
-// │                │
-// │                │
-// │                │
-// └────────────────┘
+// ┌──────────────────────┐
+// │                      │                          ┌─────────────────────┐
+// │    Parent process    │                          │                     │
+// │    CRON thread       │                          │    Child process    │
+// │                      │        ┌──────────┐      │                     │
+// │        decode graph <├────────┼  Pipe    ├──────┼< encode graph       │
+// │                      │        └──────────┘      │                     │
+// └──────────────────────┘                          └─────────────────────┘
 
 
 #include "RG.h"
@@ -90,12 +59,10 @@ static GraphCopyContext *GraphCopyContext_New
 	ASSERT(src  != NULL);
 	ASSERT(dest != NULL);
 
-	// create a pipe through which the graph will be encoded (write end)
-	// and decoded (read end)
-
 	GraphCopyContext *ctx = rm_malloc(sizeof(GraphCopyContext));
 
-	// create the pipe
+	// create a pipe through which the graph will be encoded (write end)
+	// and decoded (read end)
 	if(pipe(ctx->pipe_fd) == -1) {
 		rm_free(ctx);
 		return NULL;
