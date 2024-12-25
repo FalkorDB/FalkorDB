@@ -117,14 +117,14 @@ ProcedureResult Proc_PagerankInvoke
 		s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
 		// unknown relation, quickly return
 		if(!s) return PROCEDURE_OK;
-		Delta_Matrix_export(&r, Graph_GetRelationMatrix(g, s->id, false));
+		Delta_Matrix_export(&r, Graph_GetRelationMatrix(g, s->id));
 
 		// convert the values to true
 		info = GrB_Matrix_apply(r, NULL, NULL, GxB_ONE_BOOL, r, GrB_DESC_R);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
 		// relation isn't specified, 'r' is the adjacency matrix
-		Delta_Matrix_export(&r, Graph_GetAdjacencyMatrix(g, false));
+		Delta_Matrix_export(&r, Graph_GetAdjacencyMatrix(g));
 	}
 	// if label is specified:
 	// filter 'r' to contain only rows and columns associated with

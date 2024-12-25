@@ -35,7 +35,8 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 	Delta_MatrixTupleIter *iter,    // iterator to update
 	const Delta_Matrix A,           // matrix to scan
 	GrB_Index min_row,              // minimum row for iteration
-	GrB_Index max_row               // maximum row for iteration
+	GrB_Index max_row,              // maximum row for iteration
+	bool transpose                  // iterate over the transpose of A
 );
 
 // free iterator internals, keeping the iterator intact
@@ -49,19 +50,6 @@ bool Delta_MatrixTupleIter_is_attached
 (
 	const Delta_MatrixTupleIter *iter,       // iterator to check
 	const Delta_Matrix M                     // matrix attached to
-);
-
-GrB_Info Delta_MatrixTupleIter_iterate_row
-(
-	Delta_MatrixTupleIter *iter,      // iterator to use
-	GrB_Index rowIdx                  // row to iterate
-);
-
-GrB_Info Delta_MatrixTupleIter_iterate_range
-(
-	Delta_MatrixTupleIter *iter,   // iterator to use
-	GrB_Index startRowIdx,         // row index to start with
-	GrB_Index endRowIdx            // row index to finish with
 );
 
 // advance iterator
@@ -80,11 +68,5 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 	GrB_Index *row,                 // optional output row index
 	GrB_Index *col,                 // optional output column index
 	uint64_t *val                   // optional value at A[row, col]
-);
-
-// reset iterator
-GrB_Info Delta_MatrixTupleIter_reset
-(
-	Delta_MatrixTupleIter *iter       // iterator to reset
 );
 

@@ -25,7 +25,7 @@ static void CondTraverseToString(const OpBase *ctx, sds *buf) {
 }
 
 static void _populate_filter_matrix(OpCondTraverse *op) {
-	GrB_Matrix FM = Delta_Matrix_M(op->F);
+	GrB_Matrix FM = Delta_Matrix_M(op->F, false);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);

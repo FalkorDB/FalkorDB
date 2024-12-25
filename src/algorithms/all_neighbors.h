@@ -24,6 +24,7 @@
 typedef struct {
 	EntityID src;                   // traverse begin here
 	Delta_Matrix M;                 // adjacency matrix
+	bool transpose;                 // traverse in reverse direction
 	uint minLen;                    // minimum required depth
 	uint maxLen;                    // maximum allowed depth
 	int current_level;              // current depth
@@ -38,6 +39,7 @@ void AllNeighborsCtx_Reset
 	AllNeighborsCtx *ctx,  // all neighbors context to reset
 	EntityID src,          // source node from which to traverse
 	Delta_Matrix M,        // matrix describing connections
+	bool transpose,        // traverse in reverse direction
 	uint minLen,           // minimum traversal depth
 	uint maxLen            // maximum traversal depth
 );
@@ -46,6 +48,7 @@ AllNeighborsCtx *AllNeighborsCtx_New
 (
 	EntityID src,    // source node from which to traverse
 	Delta_Matrix M,  // matrix describing connections
+	bool transpose,  // traverse in reverse direction
 	uint minLen,     // minimum traversal depth
 	uint maxLen      // maximum traversal depth
 );

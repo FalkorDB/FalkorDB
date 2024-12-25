@@ -281,12 +281,10 @@ void TensorIterator_ScanRange
 
 	it->T = T;
 
+	Delta_MatrixTupleIter_AttachRange(&it->a_it, T, min_row, max_row, transpose);
 	if(transpose) {
-		Delta_Matrix TT = Delta_Matrix_getTranspose(T);
-		Delta_MatrixTupleIter_AttachRange(&it->a_it, TT, min_row, max_row);
 		it->iter_func = _TransposeRangeIter;
 	} else {
-		Delta_MatrixTupleIter_AttachRange(&it->a_it, it->T, min_row, max_row);
 		it->iter_func = _RangeIter;
 	}
 }

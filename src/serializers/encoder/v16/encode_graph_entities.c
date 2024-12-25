@@ -446,7 +446,7 @@ void RdbSaveEdges_v16
 
 	// first relationship matrix
 	if(r == 0) {
-		R = Graph_GetRelationMatrix(gc->g, r, false);
+		R = Graph_GetRelationMatrix(gc->g, r);
 
 		// attach iterator if not already attached
 		if(!TensorIterator_is_attached(it, R)) {
@@ -487,7 +487,7 @@ void RdbSaveEdges_v16
 				break;
 			}
 			// set iterator on new relation matrix
-			R = Graph_GetRelationMatrix(gc->g, r, false);
+			R = Graph_GetRelationMatrix(gc->g, r);
 			TensorIterator_ScanRange(it, R, 0, UINT64_MAX, false);
 		}
 	}

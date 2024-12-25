@@ -438,7 +438,7 @@ void Constraint_EnforceNodes
 		//----------------------------------------------------------------------
 
 		GrB_Info info;
-		info = Delta_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX, false);
 		ASSERT(info == GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -525,7 +525,7 @@ void Constraint_EnforceEdges
 
 		ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_FLUSH_RESIZE);
 		// sync relation matrix
-		Delta_Matrix R = Graph_GetRelationMatrix(g, schema_id, false);
+		Delta_Matrix R = Graph_GetRelationMatrix(g, schema_id);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices

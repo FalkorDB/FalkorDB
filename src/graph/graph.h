@@ -405,8 +405,7 @@ uint Graph_GetNodeLabels
 // matrix is resized if its size doesn't match graph's node count
 Delta_Matrix Graph_GetAdjacencyMatrix
 (
-	const Graph *g,
-	bool transposed
+	const Graph *g
 );
 
 // retrieves a label matrix
@@ -422,8 +421,7 @@ Delta_Matrix Graph_GetLabelMatrix
 Tensor Graph_GetRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
-	RelationID relation_idx,  // relation described by matrix
-	bool transposed           // transposed
+	RelationID relation_idx   // relation described by matrix
 );
 
 // retrieves the node-label mapping matrix,

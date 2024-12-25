@@ -392,7 +392,7 @@ void reduce_scan_op
 			const char *row_domain = scan->n->alias;
 			const char *column_domain = scan->n->alias;
 
-			bool found = AlgebraicExpression_LocateOperand(ae, &operand, NULL,
+			bool found = AlgebraicExpression_LocateOperand(ae, &operand,
 					row_domain, column_domain, NULL, min_label_str);
 			ASSERT(found == true);
 

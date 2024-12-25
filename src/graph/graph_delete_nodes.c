@@ -87,7 +87,7 @@ void Graph_DeleteNodes
 		Node *n = nodes + i;
 		EntityID id = ENTITY_GET_ID(n);
 
-		info = Delta_MatrixTupleIter_AttachRange(&it, lbls, id, id);
+		info = Delta_MatrixTupleIter_AttachRange(&it, lbls, id, id, false);
 		ASSERT(info == GrB_SUCCESS);
 
 		// for each deleted node label
