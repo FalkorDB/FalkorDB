@@ -23,6 +23,7 @@
 #include "op_foreach.h"
 #include "op_optional.h"
 #include "op_argument.h"
+#include "op_load_csv.h"
 #include "op_distinct.h"
 #include "op_aggregate.h"
 #include "op_semi_apply.h"
