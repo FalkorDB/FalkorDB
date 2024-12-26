@@ -216,7 +216,7 @@ jobs:
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-            TARGETPLATFORM=${{ matrix.platform }}
+            TARGETPLATFORM=${{ matrix.platform.name }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Load base image
