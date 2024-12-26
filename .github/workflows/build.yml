@@ -29,27 +29,27 @@ jobs:
             machine_type: t2a-standard-4
             runner_label: build-${{ github.run_id }}-${{ github.run_number }}
             arm: true
-            image: projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-arm64-v20241219
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: unit-tests
             machine_type: t2a-standard-4
             runner_label: unit-tests-${{ github.run_id }}-${{ github.run_number }}
             arm: true
-            image: projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-arm64-v20241219
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: flow-tests
             machine_type: t2a-standard-4
             runner_label: flow-tests-${{ github.run_id }}-${{ github.run_number }}
             arm: true
-            image: projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-arm64-v20241219
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: tck-tests
             machine_type: t2a-standard-4
             runner_label: tck-tests-${{ github.run_id }}-${{ github.run_number }}
             arm: true
-            image: projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-arm64-v20241219
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: fuzz-tests
             machine_type: t2a-standard-4
             runner_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}
             arm: true
-            image: projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-arm64-v20241219
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: rhel-build
             machine_type: e2-standard-4
             runner_label: rhel-build-${{ github.run_id }}-${{ github.run_number }}
@@ -91,7 +91,7 @@ jobs:
             machine_label: ubuntu-latest
           - name: linux/arm64
             suffix: arm64v8
-            os: ubuntu
+            os: debian
             machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
           - name: rhel/amd64
             suffix: rhel-x64
@@ -146,7 +146,7 @@ jobs:
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile.compiler
-          platforms: ${{ matrix.platform }}
+          platforms: ${{ matrix.platform.name }}
           tags: localhost:5000/falkordb/falkordb-compiler
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
