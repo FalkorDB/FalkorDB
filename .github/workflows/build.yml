@@ -86,14 +86,17 @@ jobs:
       matrix:
         platform:
           - name: linux/amd64
+            platform: linux/amd64
             suffix: x64
             os: ubuntu
             machine_label: ubuntu-latest
           - name: linux/arm64
+            platform: linux/arm64
             suffix: arm64v8
             os: debian
             machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
           - name: rhel/amd64
+            platform: linux/amd64
             suffix: rhel-x64
             os: rhel
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
@@ -151,7 +154,7 @@ jobs:
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
           build-args: |
-            TARGETPLATFORM=${{ matrix.platform.name }}
+            TARGETPLATFORM=${{ matrix.platform.platform }}
             OS=${{ matrix.platform.os }}
 
       - name: Copy bin from docker for caching
@@ -196,7 +199,7 @@ jobs:
           platforms: ${{ matrix.platform.name }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-            TARGETPLATFORM=${{ matrix.platform.name }}
+            TARGETPLATFORM=${{ matrix.platform.platform }}
 
       - name: Upload tests image
         uses: actions/upload-artifact@v4
@@ -216,7 +219,7 @@ jobs:
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
-            TARGETPLATFORM=${{ matrix.platform.name }}
+            TARGETPLATFORM=${{ matrix.platform.platform }}
             BROWSER_TAG=${{ env.BROWSER_TAG }}
 
       - name: Load base image
