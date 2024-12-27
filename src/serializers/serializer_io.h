@@ -144,6 +144,14 @@ long double SerializerIO_ReadLongDouble
 	)                                                              \
 	(io, value)
 
+// saves all read / write data into buffer
+void SerializerIO_SaveDataToBuffer
+(
+	SerializerIO io,  // serializer
+	char **buffer,    // pointer to buffer, should be NULL
+	size_t *size      // holds the buffer size once SerializerIO_Free is called
+);
+
 void SerializerIO_Free
 (
 	SerializerIO *io  // serializer to free

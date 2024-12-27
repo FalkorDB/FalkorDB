@@ -142,13 +142,11 @@ static int encode_graph
 
 	RdbSaveGraph_latest(io, gc);
 
-cleanup:
-
 	// free serializer
-	if(io != NULL) SerializerIO_Free(&io);
+	SerializerIO_Free(&io);
 
 	// close file
-	if(f != NULL) fclose(f);
+	fclose(f);
 
 	// all done, no errors
 	return res;
@@ -172,9 +170,19 @@ static void LoadGraphFromFile
 	io = SerializerIO_FromStream(f);
 	ASSERT(io != NULL);
 
+	// make sure each byte read off the stream is saved into buffer
+	size_t size  = 0;     // buffer size
+	char *buffer = NULL;  // read data off stream
+	SerializerIO_SaveDataToBuffer(io, &buffer, &size);
+
 	// decode graph from stream
 	GraphContext *gc = RdbLoadGraphContext_latest(io, copy_ctx->rm_dest);
 	ASSERT(gc != NULL);
+
+	// free serializer, flush buffer
+	SerializerIO_Free(&io);
+	ASSERT(size   >  0);
+	ASSERT(buffer != NULL);
 
 	//--------------------------------------------------------------------------
 	// add cloned graph to keyspace
@@ -206,6 +214,11 @@ static void LoadGraphFromFile
 
 		RedisModule_CloseKey(key);
 
+		// replicate graph
+		// GRAPH.RESTORE dest <payload>
+		RedisModule_Replicate(ctx, "GRAPH.RESTORE", "cb", copy_ctx->dest,
+				buffer, size);
+
 		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
 
 		// register graph context for BGSave
@@ -214,10 +227,9 @@ static void LoadGraphFromFile
 		RedisModule_ReplyWithCString(ctx, "OK");
 	}
 
-	// free serializer
-	SerializerIO_Free(&io);
-
 	RedisModule_FreeThreadSafeContext(ctx);
+
+	free(buffer);
 }
 
 // implements GRAPH.COPY logic
@@ -282,16 +294,10 @@ static void _Graph_Copy
 		// try to fork
 		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
 
-		// acquire READ lock on gc
-		// we do not want to fork while the graph is modified
-		// might be redundant, see: GraphContext_LockForCommit
-		Graph_AcquireReadLock(gc->g);
-
 		pid = RedisModule_Fork(NULL, copy_ctx);
 
 		if(pid < 0) {
 			RedisModule_ThreadSafeContextUnlock(ctx); // release GIL
-			Graph_ReleaseLock(gc->g);                 // release graph READ lock
 
 			// failed to fork! retry in a bit
 			// go to sleep for 5.0ms
@@ -304,8 +310,8 @@ static void _Graph_Copy
 			// child process
 			//------------------------------------------------------------------
 
-			//close(copy_ctx->pipe_fd[0]);  // close unused read-end
-			//copy_ctx->pipe_fd[0] = -1;
+			close(copy_ctx->pipe_fd[0]);  // close unused read-end
+			copy_ctx->pipe_fd[0] = -1;
 
 			// convert the write-end of the pipe to a FILE* stream
 			FILE *write_fp = fdopen(copy_ctx->pipe_fd[1], "wb");
@@ -322,10 +328,9 @@ static void _Graph_Copy
 			//------------------------------------------------------------------
 
 			RedisModule_ThreadSafeContextUnlock(ctx); // release GIL
-			Graph_ReleaseLock(gc->g);                 // release graph READ lock
 
-			//close(copy_ctx->pipe_fd[1]); // close unused write-end
-			//copy_ctx->pipe_fd[1] = -1;
+			close(copy_ctx->pipe_fd[1]); // close unused write-end
+			copy_ctx->pipe_fd[1] = -1;
 
 			// convert the read-end of the pipe to a FILE* stream
 			FILE *read_fp = fdopen(copy_ctx->pipe_fd[0], "r");
@@ -373,6 +378,7 @@ int Graph_Copy
 	}
 
 	// block the client
+	// TODO: determine if replica should use blocked client
 	RedisModuleBlockedClient *bc = RedisModule_BlockClient(ctx, NULL, NULL,
 			NULL, 0);
 
@@ -386,8 +392,6 @@ int Graph_Copy
 	// add GRAPH.COPY as a cron task to run as soon as possible
 	Cron_AddTask(0, _Graph_Copy, NULL, context);
 
-	// replicate copy command
-	RedisModule_ReplicateVerbatim(ctx);
 
 	return REDISMODULE_OK;
 }
