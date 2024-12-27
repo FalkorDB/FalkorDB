@@ -93,6 +93,14 @@ Requirements:
 * On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
     * The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
 
+* Make sure your `automake` and `aclocal` versions are >= `1.14`
+    * Create symbolic links for both `automake` and `aclocal`
+
+```sh
+ln -s $(which aclocal) /usr/local/bin/aclocal-1.14
+ln -s $(which automake) /usr/local/bin/automake-1.14
+```
+
 To build, run `make` in the project's directory.
 
 Congratulations! You can find the compiled binary at `bin/<arch>/src/falkordb.so`.
