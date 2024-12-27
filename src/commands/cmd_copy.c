@@ -89,12 +89,12 @@ static void GraphCopyContext_Free
 	//--------------------------------------------------------------------------
 
 	// close the read end
-	if(copy_ctx->pipe_fd[0] > 0) {
+	if(copy_ctx->pipe_fd[0] >= 0) {
 		close(copy_ctx->pipe_fd[0]);
 	}
 
 	// close the write end
-	if(copy_ctx->pipe_fd[1] > 0) {
+	if(copy_ctx->pipe_fd[1] >= 0) {
 		close(copy_ctx->pipe_fd[1]);
 	}
 
@@ -144,9 +144,6 @@ static int encode_graph
 
 	// free serializer
 	SerializerIO_Free(&io);
-
-	// close file
-	fclose(f);
 
 	// all done, no errors
 	return res;
@@ -320,6 +317,11 @@ static void _Graph_Copy
 			// encode graph
 			int res = encode_graph(ctx, gc, copy_ctx, write_fp);
 
+			// close file handle which in turn closes PIPE write end
+			fclose(write_fp);
+			copy_ctx->pipe_fd[1] = -1;
+
+
 			// all done, Redis require us to call 'RedisModule_ExitFromChild'
 			RedisModule_ExitFromChild(res);
 		} else {
@@ -337,6 +339,10 @@ static void _Graph_Copy
 			ASSERT(read_fp != NULL);
 
 			LoadGraphFromFile(context, read_fp);
+
+			// close file handle which in turn closes PIPE read end
+			fclose(read_fp);
+			copy_ctx->pipe_fd[0] = -1;
 		}
 	}
 
