@@ -92,7 +92,7 @@ ProcedureResult Proc_PagerankInvoke
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
 	// setup context
-	PagerankContext *pdata = rm_malloc(sizeof(PagerankContext));
+	PagerankContext *pdata = rm_calloc(1, sizeof(PagerankContext));
 	pdata->n = n;
 	pdata->i = 0;
 	pdata->g = g;
@@ -197,8 +197,8 @@ SIValue *Proc_PagerankStep
 	NodeID node_id = (pdata->mapping) ? pdata->mapping[rank.page] : rank.page;
 
 	Graph_GetNode(pdata->g, node_id, &pdata->node);
-	if(pdata->yield_node)   *pdata->yield_node   =  SI_Node(&pdata->node);
-	if(pdata->yield_score)  *pdata->yield_score  =  SI_DoubleVal(rank.pagerank);
+	if(pdata->yield_node)   *pdata->yield_node  = SI_Node(&pdata->node);
+	if(pdata->yield_score)  *pdata->yield_score = SI_DoubleVal(rank.pagerank);
 
 	return pdata->output;
 }

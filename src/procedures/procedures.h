@@ -8,6 +8,7 @@
 
 #include "proc_bfs.h"
 #include "proc_labels.h"
+#include "proc_degree.h"
 #include "proc_pagerank.h"
 #include "proc_sp_paths.h"
 #include "proc_ss_paths.h"
