@@ -43,18 +43,54 @@ static bool _Init_CSVReader
 ) {
 	ASSERT(op != NULL);
 
-	// free old reader
+	// free old downloader & reader
+	if(op->curl != NULL) {
+		Curl_Free(&op->curl);
+	}
+
 	if(op->reader != NULL) {
 		CSVReader_Free(op->reader);
 	}
 
 	// initialize a new CSV reader
-	const char *path = op->path.stringval;
-	op->reader = CSVReader_New(path, op->with_headers, ',');
+	const char *uri = op->path.stringval;
+	FILE *stream = NULL;
+
+	// check if URI is a remote file
+	if(strncmp(uri, "http://", 7) == 0 || strncmp(uri, "https://", 8) == 0) {
+		int pipefd[2];
+		// create pipe from which to read remote file
+		if(pipe(pipefd) == -1) {
+			ErrorCtx_RaiseRuntimeException("Error creating pipe");
+			return false;
+		}
+
+		// download remote file, file content will be written to pipe
+		op->curl = Curl_Download(uri, fdopen(pipefd[1], "wb"));
+		if(op->curl == NULL) {
+			// close pipe read end
+			close(pipefd[0]);
+
+			ErrorCtx_RaiseRuntimeException("Error downloading file: %s", uri);
+			return false;
+		}
+
+		// get file descriptor from read end of pipe
+		stream = fdopen(pipefd[0], "r");
+	} else {
+		// open local file
+		stream = fopen(uri, "r");
+		if(stream == NULL) {
+			ErrorCtx_RaiseRuntimeException("Error opening file: %s", uri);
+			return false;
+		}
+	}
+
+	op->reader = CSVReader_New(stream, op->with_headers, ',');
 
 	// raise exception if we've failed to initialize a new CSV reader
 	if(op->reader == NULL) {
-		ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_LOAD_CSV, path);
+		ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_LOAD_CSV, uri);
 		return false;
 	}
 
@@ -274,6 +310,13 @@ static void LoadCSVFree
 
 	SIValue_Free(op->path);
 
+	if(op->curl != NULL) {
+		// aborts in-progress download
+		// must be called before csv reader is freed
+		// due to pipe read end being closed before write end
+		Curl_Free(&op->curl);
+	}
+
 	if(op->exp != NULL) {
 		AR_EXP_Free(op->exp);
 		op->exp = NULL;
@@ -290,6 +333,9 @@ static void LoadCSVFree
 	}
 
 	if(op->reader != NULL) {
+		// must be called after curl_free
+		ASSERT(op->curl == NULL);
+
 		CSVReader_Free(op->reader);
 		op->reader = NULL;
 	}
