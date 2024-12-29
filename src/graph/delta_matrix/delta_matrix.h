@@ -190,16 +190,16 @@ GrB_Info Delta_mxm                     // C = A * B
 
 GrB_Info Delta_eWiseAdd                // C = A + B
 (
-    Delta_Matrix C,                    // input/output matrix for results
-    const GrB_Semiring semiring,       // defines '+' for T=A+B
-    const Delta_Matrix A,              // first input:  matrix A
-    const Delta_Matrix B,              // second input: matrix B
+	Delta_Matrix C,                    // input/output matrix for results
+	const GrB_Semiring semiring,       // defines '+' for T=A+B
+	const Delta_Matrix A,              // first input:  matrix A
+	const Delta_Matrix B,              // second input: matrix B
 	GrB_Descriptor desc                // descriptor for C=A+B
 );
 
 GrB_Info Delta_Matrix_clear    // clear a matrix of all entries;
 (                           // type and dimensions remain unchanged
-    Delta_Matrix A          // matrix to clear
+	Delta_Matrix A          // matrix to clear
 );
 
 GrB_Info Delta_Matrix_copy     // copy matrix A to matrix C
