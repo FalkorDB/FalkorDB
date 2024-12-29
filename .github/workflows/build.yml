@@ -149,7 +149,7 @@ jobs:
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile.compiler
-          platforms: ${{ matrix.platform.name }}
+          platforms: ${{ matrix.platform.platform }}
           tags: localhost:5000/falkordb/falkordb-compiler
           # outputs: type=docker,dest=/tmp/falkordb-compiler.tar
           push: true
@@ -161,7 +161,7 @@ jobs:
         working-directory: /FalkorDB
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false
         run: |
-          id=$(docker create --platform=${{ matrix.platform.name }} localhost:5000/falkordb/falkordb-compiler)
+          id=$(docker create --platform=${{ matrix.platform.platform }} localhost:5000/falkordb/falkordb-compiler)
           docker cp $id:/FalkorDB/bin .
           docker rm -v $id
           ls -l -R /FalkorDB/bin
@@ -196,7 +196,7 @@ jobs:
           file: /FalkorDB/tests/Dockerfile
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-tests
-          platforms: ${{ matrix.platform.name }}
+          platforms: ${{ matrix.platform.platform }}
           build-args: |
             BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
             TARGETPLATFORM=${{ matrix.platform.platform }}
@@ -214,7 +214,7 @@ jobs:
         with:
           context: /FalkorDB
           file: /FalkorDB/build/docker/Dockerfile
-          platforms: ${{ matrix.platform.name }}
+          platforms: ${{ matrix.platform.platform }}
           outputs: type=docker,dest=/tmp/falkordb-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-${{ matrix.platform.suffix }}
           build-args: |
