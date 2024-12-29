@@ -44,9 +44,7 @@ void SerializerIO_Write##suffix(SerializerIO io, t value) {    \
 	ASSERT(io != NULL);                                        \
 	io->Write##suffix(io->stream, value);                      \
 	/* save read buffer to memory stream */                    \
-	if(io->memstream != NULL) {                                \
-		fwrite(&value, 1, sizeof(t), io->memstream);           \
-	}                                                          \
+	fwrite(&value, 1, sizeof(t), io->memstream);               \
 }
 
 SERIALIZERIO_WRITE(Unsigned, uint64_t)
@@ -67,9 +65,7 @@ void SerializerIO_WriteBuffer
 	io->WriteBuffer(io->stream, buff, len);
 
 	// save read buffer to memory stream
-	if(io->memstream != NULL) {
-		fwrite(buff, sizeof(char), len, io->memstream);
-	}
+	fwrite(buff, sizeof(char), len, io->memstream);
 }
 
 // macro for creating stream serializer write functions
@@ -161,9 +157,7 @@ t SerializerIO_Read##suffix(SerializerIO io) {    \
 	ASSERT(io != NULL);                           \
 	t v = io->Read##suffix(io->stream);           \
 	/* save read buffer to memory stream */       \
-	if(io->memstream != NULL) {                   \
-		fwrite(&v, 1, sizeof(t), io->memstream);  \
-	}                                             \
+	fwrite(&v, 1, sizeof(t), io->memstream);      \
 	return v;                                     \
 }
 
@@ -184,9 +178,7 @@ char *SerializerIO_ReadBuffer
 	char *v = io->ReadBuffer(io->stream, &l);
 
 	// save read buffer to memory stream
-	if(io->memstream != NULL) {
-		fwrite(v, sizeof(char), l, io->memstream);
-	}
+	fwrite(v, sizeof(char), l, io->memstream);
 
 	if(lenptr != NULL) {
 		*lenptr = l;
@@ -208,7 +200,8 @@ SerializerIO SerializerIO_FromStream
 
 	SerializerIO serializer = rm_calloc(1, sizeof(struct SerializerIO_Opaque));
 
-	serializer->stream = (void*)f;
+	serializer->stream    = (void*)f;
+	serializer->memstream = fopen("/dev/null", "wb");  // dummy stream
 
 	// set serializer function pointers
 	serializer->WriteUnsigned   = Stream_WriteUnsigned;
@@ -239,7 +232,8 @@ SerializerIO SerializerIO_FromRedisModuleIO
 
 	SerializerIO serializer = rm_calloc(1, sizeof(struct SerializerIO_Opaque));
 
-	serializer->stream = io;
+	serializer->stream    = io;
+	serializer->memstream = fopen("/dev/null", "wb");  // dummy stream
 
 	// set serializer function pointers
 	serializer->WriteUnsigned   = (void (*)(void*, uint64_t))RedisModule_SaveUnsigned;
@@ -271,7 +265,9 @@ void SerializerIO_SaveDataToBuffer
 	ASSERT(io            != NULL);
 	ASSERT(buffer        != NULL);
 	ASSERT(*buffer       == NULL);
-	ASSERT(io->memstream == NULL);
+
+	// close previous memory stream
+	fclose(io->memstream);
 
 	// create memory stream from buffer
 	io->memstream = open_memstream(buffer, size);
@@ -288,10 +284,8 @@ void SerializerIO_Free
 	SerializerIO _io = *io;
 
 	// close memory stream
-	if(_io->memstream != NULL) {
-		fflush(_io->memstream);
-		fclose(_io->memstream);
-	}
+	fflush(_io->memstream);
+	fclose(_io->memstream);
 
 	rm_free(*io);
 	*io = NULL;
