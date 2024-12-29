@@ -93,7 +93,7 @@ jobs:
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
-            os: debian
+            os: ubuntu
             machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
           - name: rhel/amd64
             platform: linux/amd64
