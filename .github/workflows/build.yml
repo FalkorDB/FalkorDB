@@ -90,16 +90,19 @@ jobs:
             suffix: x64
             os: ubuntu
             machine_label: ubuntu-latest
+            test_dockerfile: Dockerfile.debian
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
             os: ubuntu
             machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
+            test_dockerfile: Dockerfile.debian
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
             os: rhel
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
+            test_dockerfile: Dockerfile.rhel
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -193,7 +196,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: /FalkorDB/tests/Dockerfile
+          file: /FalkorDB/tests/${{ matrix.platform.test_dockerfile }}
           outputs: type=docker,dest=/tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
           tags: falkordb/falkordb-tests
           platforms: ${{ matrix.platform.platform }}
