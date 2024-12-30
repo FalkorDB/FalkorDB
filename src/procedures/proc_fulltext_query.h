@@ -9,3 +9,5 @@
 #include "proc_ctx.h"
 
 ProcedureCtx *Proc_FulltextQueryNodeGen();
+ProcedureCtx *Proc_FulltextQueryRelationshipGen();
+
