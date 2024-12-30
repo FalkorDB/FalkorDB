@@ -290,10 +290,14 @@ static void _Graph_Copy
 	while(pid == -1) {
 		// try to fork
 		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
+		Graph_AcquireWriteLock(gc->g);          // lock graph for write
 
 		pid = RedisModule_Fork(NULL, copy_ctx);
 
 		if(pid < 0) {
+			// failed to fork
+			// release locks
+			Graph_ReleaseLock(gc->g);
 			RedisModule_ThreadSafeContextUnlock(ctx); // release GIL
 
 			// failed to fork! retry in a bit
@@ -329,6 +333,8 @@ static void _Graph_Copy
 			// parent process
 			//------------------------------------------------------------------
 
+			// release locks
+			Graph_ReleaseLock(gc->g);
 			RedisModule_ThreadSafeContextUnlock(ctx); // release GIL
 
 			close(copy_ctx->pipe_fd[1]); // close unused write-end
