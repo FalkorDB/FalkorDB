@@ -15,6 +15,7 @@ class testFulltextIndexQuery():
         self.graph.query("CALL db.idx.fulltext.createNodeIndex('L3', { field: 'v1', weight: 1 }, { field: 'v2', weight: 2 })")
         self.graph.query("CALL db.idx.fulltext.createNodeIndex('L4', { field: 'v', phonetic: 'dm:en' })")
         self.graph.query("CALL db.idx.fulltext.createNodeIndex('L5', { field: 'v', nostem: true })")
+        self.graph.query("CREATE FULLTEXT INDEX FOR ()-[e:E]-() on (e.name)") 
         wait_for_indices_to_sync(self.graph)
 
         n0 = Node(labels="L1", properties={"v": 'hello redis world'})
@@ -23,7 +24,10 @@ class testFulltextIndexQuery():
         n3 = Node(labels="L3", properties={"v1": 'hello redis', "v2": 'hello world'})
         n4 = Node(labels="L4", properties={"v": 'felix'})
         n5 = Node(labels="L5", properties={"v": 'there are seven words in this sentence'})
-        self.graph.query(f"CREATE {n0}, {n1}, {n2}, {n3}, {n4}, {n5}")
+        e0 = Edge(n5, "E", n0, properties={"name": "just another nice relationship"})
+        e1 = Edge(n5, "E", n0, properties={"name": "a nice place to be"})
+        e2 = Edge(n5, "E1", n0, properties={"name": "don't find me please, I'm not full text indexed"})
+        self.graph.query(f"CREATE {n0}, {n1}, {n2}, {n3}, {n4}, {n5}, {e0}, {e1}, {e2}")
 
     # full-text query
     def test01_fulltext_query(self):
@@ -76,4 +80,18 @@ class testFulltextIndexQuery():
         # as such no results are expected
         result = self.graph.query("CALL db.idx.fulltext.queryNodes('L5', 'word')")
         self.env.assertEquals(result.result_set, [])
+
+        # full text query on a relationship E1 (not indexed)
+        result = self.graph.query("CALL db.idx.fulltext.queryRelationships('E1', 'please')")
+        self.env.assertEquals(result.result_set, [])
+
+        # full text query on a relationship E (indexed) 'nice' appears in two relationships
+        result = self.graph.query("CALL db.idx.fulltext.queryRelationships('E', 'nice')")
+        self.env.assertEquals(len(result.result_set), 2)
+        actual = [x[0].properties["name"] for x in result.result_set]
+        actual.sort()
+        expected = ["a nice place to be", "just another nice relationship"]
+        self.env.assertEquals(actual, expected)
+      
+
 
