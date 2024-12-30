@@ -90,19 +90,21 @@ jobs:
             suffix: x64
             os: ubuntu
             machine_label: ubuntu-latest
+            build_test_image: true
             test_dockerfile: Dockerfile.debian
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
             os: ubuntu
             machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
+            build_test_image: true
             test_dockerfile: Dockerfile.debian
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
             os: rhel
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
-            test_dockerfile: Dockerfile.rhel
+            build_test_image: false
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -194,6 +196,7 @@ jobs:
 
       - name: Build tests image
         uses: docker/build-push-action@v6
+        if: ${{ matrix.platform.build_test_image }}
         with:
           context: .
           file: /FalkorDB/tests/${{ matrix.platform.test_dockerfile }}
@@ -206,6 +209,7 @@ jobs:
 
       - name: Upload tests image
         uses: actions/upload-artifact@v4
+        if: ${{ matrix.platform.build_test_image }}
         with:
           name: falkordb-tests-${{ matrix.platform.suffix }}
           path: /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
