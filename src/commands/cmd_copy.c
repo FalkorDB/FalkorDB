@@ -286,8 +286,11 @@ static void _Graph_Copy
 	// child process will encode src graph to a file
 	// parent process will decode cloned graph from file
 
+	uint backoff_ms  = 5;  // backoff time in ms
+	int fork_retries = 5;  // number of retries
+
 	int pid = -1;
-	while(pid == -1) {
+	while(pid == -1 && fork_retries-- > 0) {
 		// try to fork
 		RedisModule_ThreadSafeContextLock(ctx); // lock GIL
 		Graph_AcquireWriteLock(gc->g);          // lock graph for write
@@ -301,11 +304,16 @@ static void _Graph_Copy
 			RedisModule_ThreadSafeContextUnlock(ctx); // release GIL
 
 			// failed to fork! retry in a bit
-			// go to sleep for 5.0ms
+			// backoff time is doubled on each retry
+			backoff_ms *= 2;
 			struct timespec sleep_time;
-			sleep_time.tv_sec = 0;
-			sleep_time.tv_nsec = 5000000;
+			sleep_time.tv_sec  = backoff_ms / 1000;              // seconds
+			sleep_time.tv_nsec = (backoff_ms % 1000) * 1000000;  // nano-seconds
 			nanosleep(&sleep_time, NULL);
+
+			// log warning
+			RedisModule_Log(ctx, "warning",
+					"GRAPH.COPY failed to fork, retrying in %d ms", backoff_ms);
 		} else if(pid == 0) {
 			//------------------------------------------------------------------
 			// child process
@@ -350,6 +358,11 @@ static void _Graph_Copy
 			fclose(read_fp);
 			copy_ctx->pipe_fd[0] = -1;
 		}
+	}
+
+	if(fork_retries < 0) {
+		// failed to fork
+		RedisModule_ReplyWithError(ctx, "GRAPH.COPY aborted, failed to fork");
 	}
 
 	// clean up
