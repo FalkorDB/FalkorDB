@@ -281,7 +281,6 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	pdata->g      = gc->g;
-	//pdata->n      = GE_NEW_NODE();
 	pdata->idx    = idx;
 	pdata->output = array_new(SIValue,  2);
 
@@ -306,6 +305,12 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 
 	return PROCEDURE_OK;
 }
+
+// Implement full text query for relationships
+// CALL db.idx.fulltext.queryRelationships(label, query)
+// Example:
+// GRAPH.QUERY falkor "CREATE (n1:Person {name: 'Alice', title: 'Manager'})-[r:WORKS_WITH {title: 'Joe, Good Collaboration, well ballanced'}]->(n2:Person {name: 'Bob', title: 'Developer'}) return n1, r, n2"
+// GRAPH.QUERY falkor "CALL db.idx.fulltext.queryRelationships('WORKS_WITH', 'Joe') YIELD relationship RETURN relationship.title"
 
 ProcedureCtx *Proc_FulltextRelationshipNodeGen() {
 	void *privateData = NULL;
