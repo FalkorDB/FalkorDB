@@ -58,7 +58,7 @@ static void _clear_adj
 	for(int ri = 0; ri < relationCount; ri++) {
 		if(ri == r) continue;
 
-		Delta_Matrix A = Graph_GetRelationMatrix(g, ri, false);
+		Delta_Matrix A = Graph_GetRelationMatrix(g, ri);
 		info = Delta_Matrix_extractElement_BOOL(NULL, A, src, dest);
 		if(info == GrB_SUCCESS) {
 			connected = true;
@@ -121,8 +121,8 @@ void Graph_ClearConnections
 		GraphStatistics_DecEdgeCount(&g->stats, r, d);
 
 		// delete edges[i..j]
-		Delta_Matrix R   = Graph_GetRelationMatrix(g, r, false);
-		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+		Delta_Matrix R   = Graph_GetRelationMatrix(g, r);
+		Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g);
 
 		if(flat_deletion) {
 			// tensor R doesn't contains any vector

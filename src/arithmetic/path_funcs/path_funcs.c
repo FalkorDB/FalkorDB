@@ -162,8 +162,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 		if(ctx->reltypes == NULL) {
 			// No edge types were specified, use the overall adjacency matrix.
 			ctx->free_matrices = true;
-			res = Delta_Matrix_export(&ctx->R, Graph_GetAdjacencyMatrix(gc->g,
-						false));
+			res = Delta_Matrix_export(&ctx->R, Graph_GetAdjacencyMatrix(gc->g));
 			ASSERT(res == GrB_SUCCESS);
 		} else if(ctx->reltype_count == 0) {
 			// If edge types were specified but none were valid,
@@ -174,7 +173,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 		} else if(ctx->reltype_count == 1) {
 			ctx->free_matrices = true;
 			res = Delta_Matrix_export(&ctx->R, Graph_GetRelationMatrix(gc->g,
-						ctx->reltypes[0], false));
+						ctx->reltypes[0]));
 			ASSERT(res == GrB_SUCCESS);
 		} else {
 			// we have multiple edge types, combine them into a boolean matrix
@@ -186,7 +185,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 			for(uint i = 0; i < ctx->reltype_count; i ++) {
 				GrB_Matrix adj;
 				res = Delta_Matrix_export(&adj, Graph_GetRelationMatrix(gc->g,
-							ctx->reltypes[i], false));
+							ctx->reltypes[i]));
 				ASSERT(res == GrB_SUCCESS);
 				res = GrB_eWiseAdd(ctx->R, GrB_NULL, GrB_NULL,
 						GxB_ANY_PAIR_BOOL, ctx->R, adj, GrB_NULL);

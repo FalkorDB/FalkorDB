@@ -16,9 +16,14 @@ void AlgebraicExpression_Transpose
 	AlgebraicExpression **exp    // Expression to transpose.
 ) {
 	ASSERT(exp);
-	AlgebraicExpression *root =
-		AlgebraicExpression_NewOperation(AL_EXP_TRANSPOSE);
-	AlgebraicExpression_AddChild(root, *exp);
-	*exp = root;
+	AlgebraicExpression *e = *exp;
+	if(e->type == AL_OPERAND) {
+		e->operand.transpose = !e->operand.transpose;
+	} else {
+		AlgebraicExpression *root =
+			AlgebraicExpression_NewOperation(AL_EXP_TRANSPOSE);
+		AlgebraicExpression_AddChild(root, *exp);
+		*exp = root;
+	}
 }
 

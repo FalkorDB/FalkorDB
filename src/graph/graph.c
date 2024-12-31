@@ -106,7 +106,7 @@ static void _Graph_GetEdgesConnectingNodes
 	ASSERT(srcID  < Graph_NodeCap(g));
 	ASSERT(destID < Graph_NodeCap(g));
 
-	Tensor R = Graph_GetRelationMatrix(g, r, false);
+	Tensor R = Graph_GetRelationMatrix(g, r);
 	Edge e = {.src_id = srcID, .dest_id = destID, .relationID = r};
 	GrB_Index edge_id;
 	TensorIterator it;
@@ -248,7 +248,7 @@ void Graph_ApplyAllPending
 	//--------------------------------------------------------------------------
 
 	// sync the adjacency matrix
-	M = Graph_GetAdjacencyMatrix(g, false);
+	M = Graph_GetAdjacencyMatrix(g);
 	Delta_Matrix_wait(M, force_flush);
 
 	// sync node labels matrix
@@ -269,7 +269,7 @@ void Graph_ApplyAllPending
 	// sync each relation matrix
 	n = array_len(g->relations);
 	for(int i = 0; i < n; i ++) {
-		M = Graph_GetRelationMatrix(g, i, false);
+		M = Graph_GetRelationMatrix(g, i);
 		Delta_Matrix_wait(M, force_flush);
 	}
 
@@ -398,7 +398,7 @@ static void _GetOutgoingNodeEdges
 
 	TensorIterator it;
 	NodeID src_id = ENTITY_GET_ID(n);
-	Tensor R      = Graph_GetRelationMatrix(g, r, false);
+	Tensor R      = Graph_GetRelationMatrix(g, r);
 
 	Edge e = {.src_id = src_id, .relationID = r};
 
@@ -425,7 +425,7 @@ static void _GetIncomingNodeEdges
 	ASSERT(r != GRAPH_NO_RELATION && r != GRAPH_UNKNOWN_RELATION);
 
 	TensorIterator it;
-	Tensor T       = Graph_GetRelationMatrix(g, r, false);
+	Tensor T       = Graph_GetRelationMatrix(g, r);
 	NodeID src_id  = INVALID_ENTITY_ID;
 	NodeID dest_id = ENTITY_GET_ID(n);
 
@@ -724,8 +724,8 @@ void Graph_FormConnection
 	UNUSED(info);
 
 	// sync matrices
-	Tensor       R   = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	Tensor       R   = Graph_GetRelationMatrix(g, r);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g);
 
 	// rows represent source nodes, columns represent destination nodes
 	info = Delta_Matrix_setElement_BOOL(adj, src, dest);
@@ -819,8 +819,8 @@ void Graph_CreateEdges
 	GrB_Info info;
 
 	// sync matrices
-	Tensor       R   = Graph_GetRelationMatrix(g, r, false);
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	Tensor       R   = Graph_GetRelationMatrix(g, r);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g);
 
 	// allocate edges and update ADJ matrix
 	for(uint i = 0; i < edge_count; i++) {
@@ -1023,7 +1023,7 @@ bool Graph_RelationshipContainsMultiEdge
 	GrB_Index nvals;
 
 	// get the number of active entries in Tensor
-	Tensor R = Graph_GetRelationMatrix(g, r, false);
+	Tensor R = Graph_GetRelationMatrix(g, r);
 	info = Delta_Matrix_nvals(&nvals, R);
 	ASSERT(info == GrB_SUCCESS);
 
@@ -1203,7 +1203,7 @@ uint64_t Graph_GetNodeDegree
 		// outgoing edges
 		//----------------------------------------------------------------------
 
-		Tensor R = Graph_GetRelationMatrix(g, edgeType, false);
+		Tensor R = Graph_GetRelationMatrix(g, edgeType);
 
 		if(outgoing) {
 			edge_count += Tensor_RowDegree(R, srcID);
@@ -1241,7 +1241,7 @@ uint Graph_GetNodeLabels
 
 	EntityID id = ENTITY_GET_ID(n);
 	Delta_MatrixTupleIter iter = {0};
-	res = Delta_MatrixTupleIter_AttachRange(&iter, M, id, id);
+	res = Delta_MatrixTupleIter_AttachRange(&iter, M, id, id, false);
 	ASSERT(res == GrB_SUCCESS);
 
 	uint i = 0;
@@ -1263,10 +1263,9 @@ uint Graph_GetNodeLabels
 // matrix is resized if its size doesn't match graph's node count
 Delta_Matrix Graph_GetAdjacencyMatrix
 (
-	const Graph *g,
-	bool transposed
+	const Graph *g
 ) {
-	return Graph_GetRelationMatrix(g, GRAPH_NO_RELATION, transposed);
+	return Graph_GetRelationMatrix(g, GRAPH_NO_RELATION);
 }
 
 // retrieves a label matrix
@@ -1294,8 +1293,7 @@ Delta_Matrix Graph_GetLabelMatrix
 Tensor Graph_GetRelationMatrix
 (
 	const Graph *g,           // graph from which to get adjacency matrix
-	RelationID relation_idx,  // relation described by matrix
-	bool transposed           // transposed
+	RelationID relation_idx   // relation described by matrix
 ) {
 	ASSERT(g);
 	ASSERT(relation_idx == GRAPH_NO_RELATION ||
@@ -1311,8 +1309,6 @@ Tensor Graph_GetRelationMatrix
 
 	size_t n = Graph_RequiredMatrixDim(g);
 	g->SynchronizeMatrix(g, m, n, n);
-
-	if(transposed) m = Delta_Matrix_getTranspose(m);
 
 	return m;
 }

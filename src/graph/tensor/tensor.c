@@ -674,11 +674,8 @@ uint64_t Tensor_RowDegree
 	Delta_MatrixTupleIter it;
 
 	// iterate over T[row:]
-	info = Delta_MatrixTupleIter_attach(&it, T);
-	ASSERT(info == GrB_SUCCESS);
-
 	uint64_t x;
-	info = Delta_MatrixTupleIter_iterate_row(&it, row);
+	info = Delta_MatrixTupleIter_AttachRange(&it, T, row, row, false);
 	ASSERT(info == GrB_SUCCESS);
 
 	// scan T[row:]
@@ -715,13 +712,8 @@ uint64_t Tensor_ColDegree
 	Delta_MatrixTupleIter it;
 
 	// scan transpose matrix
-	Delta_Matrix TT = Delta_Matrix_getTranspose(T);
-
 	// iterate over T[col:]
-	info = Delta_MatrixTupleIter_attach(&it, TT);
-	ASSERT(info == GrB_SUCCESS);
-
-	info = Delta_MatrixTupleIter_iterate_row(&it, col);
+	info = Delta_MatrixTupleIter_AttachRange(&it, T, col, col, true);
 	ASSERT(info == GrB_SUCCESS);
 
 	// scan TT[col:]
@@ -776,7 +768,7 @@ void Tensor_free
 	ASSERT(info == GrB_SUCCESS);
 
 	// get delta matrix M matrix
-	GrB_Matrix M = Delta_Matrix_M(t);
+	GrB_Matrix M = Delta_Matrix_M(t, false);
 
 	// initialize unaryop only once
 	static GrB_UnaryOp unaryop = NULL;

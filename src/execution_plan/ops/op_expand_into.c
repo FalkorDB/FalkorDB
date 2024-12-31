@@ -34,7 +34,7 @@ static void _populate_filter_matrix
 (
 	OpExpandInto *op
 ) {
-	GrB_Matrix FM = Delta_Matrix_M(op->F);
+	GrB_Matrix FM = Delta_Matrix_M(op->F, false);
 
 	// clear filter matrix
 	GrB_Matrix_clear(FM);
@@ -146,7 +146,7 @@ static OpResult ExpandIntoInit
 		const char *label = AlgebraicExpression_Label(op->ae);
 		if(label == NULL) {
 			// matrix isn't associated with a label, use the adjacency matrix
-			op->M = Graph_GetAdjacencyMatrix(op->graph, false);
+			op->M = Graph_GetAdjacencyMatrix(op->graph);
 		} else {
 			// try to retrieve relationship matrix
 			// it is OK if the relationship doesn't exists, in this case
@@ -154,7 +154,7 @@ static OpResult ExpandIntoInit
 			Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
 			if(s != NULL) {
 				// stream records as they enter
-				op->M = Graph_GetRelationMatrix(op->graph, Schema_GetID(s), false);
+				op->M = Graph_GetRelationMatrix(op->graph, Schema_GetID(s));
 			}
 		}
 
@@ -223,11 +223,15 @@ static Record _handoff
 
 		Node *destNode  =  Record_GetNode(r, op->destNodeIdx);
 		NodeID col      =  ENTITY_GET_ID(destNode);
-		// TODO: in the case of multiple operands ()-[:A]->()-[:B]->()
-		// M is the result of F*A*B, in which case we can switch from
-		// M being a Delta_Matrix to a GrB_Matrix, making the extract element
-		// operation a bit cheaper to compute
-		GrB_Info res    =  Delta_Matrix_extractElement_BOOL(&x, op->M, row, col);
+		GrB_Info res;
+		if(op->ae->type == AL_OPERATION) {
+			GrB_Matrix M = Delta_Matrix_M(op->M, false);
+			res = GrB_Matrix_extractElement_BOOL(&x, M, row, col);
+		} else if(op->ae->operand.transpose) {
+			res = Delta_Matrix_extractElement_BOOL(&x, op->M, col, row);
+		} else {
+			res = Delta_Matrix_extractElement_BOOL(&x, op->M, row, col);
+		}
 
 		// src is not connected to dest, free the current record and continue
 		if(res != GrB_SUCCESS) {

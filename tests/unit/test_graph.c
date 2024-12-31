@@ -45,7 +45,7 @@ void _test_node_creation(Graph *g, size_t node_count) {
 	}
 
 	// Validate nodes creation.
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g);
 	TEST_ASSERT(Delta_Matrix_nrows(&nrows, adj) == GrB_SUCCESS);
 	TEST_ASSERT(Delta_Matrix_ncols(&ncols, adj) == GrB_SUCCESS);
 	TEST_ASSERT(Delta_Matrix_nvals(&nvals, adj) == GrB_SUCCESS);
@@ -289,11 +289,11 @@ void test_removeNodes() {
 
 	// validate graph creation
 	TEST_ASSERT(Graph_NodeCount(g) == 3);
-	M = Graph_GetRelationMatrix(g, r, false);
+	M = Graph_GetRelationMatrix(g, r);
 	Delta_Matrix_nvals(&nnz, M);
 	TEST_ASSERT(nnz == 3);
 
-	M = Graph_GetAdjacencyMatrix(g, false);
+	M = Graph_GetAdjacencyMatrix(g);
 	Delta_Matrix_nvals(&nnz, M);
 	TEST_ASSERT(nnz == 3);
 

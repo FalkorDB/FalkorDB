@@ -111,7 +111,7 @@ static void _costBaseLabelScan
 
 	// locate the operand corresponding to the about to be replaced label
 	// in the parent operation (conditional traverse)
-	bool found = AlgebraicExpression_LocateOperand(ae, &operand, NULL,
+	bool found = AlgebraicExpression_LocateOperand(ae, &operand,
 			row_domain, column_domain, NULL, min_label_str);
 	ASSERT(found == true);
 
