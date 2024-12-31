@@ -43,6 +43,11 @@ static const AlgebraicExpression *_AlgebraicExpression_SrcOperand
 		}
 	}
 
+	if(exp->operand.transpose) {
+		// negate transpose
+		t = !t;
+	}
+
 	*transposed = t;
 	return exp;
 }

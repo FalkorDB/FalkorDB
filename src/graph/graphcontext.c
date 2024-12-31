@@ -232,7 +232,7 @@ void GraphContext_LockForCommit
 	RedisModule_ThreadSafeContextLock(ctx);
 
 	// acquire graph write lock
-	Graph_AcquireWriteLock(gc->g);
+	gc->guard = Graph_AcquireWriteLock(gc->g);
 }
 
 void GraphContext_UnlockCommit
@@ -241,7 +241,7 @@ void GraphContext_UnlockCommit
 	GraphContext *gc
 ) {
 	// release graph R/W lock
-	Graph_ReleaseLock(gc->g);
+	Graph_ReleaseLock(gc->g, gc->guard);
 
 	// unlock GIL
 	RedisModule_ThreadSafeContextUnlock(ctx);

@@ -17,10 +17,10 @@ static void _AllNeighborsCtx_CollectNeighbors
 	ctx->current_level++;
 	if(ctx->current_level == array_len(ctx->levels)) {
 		Delta_MatrixTupleIter iter = {0};
-		Delta_MatrixTupleIter_AttachRange(&iter, ctx->M, id, id);
+		Delta_MatrixTupleIter_AttachRange(&iter, ctx->M, id, id, ctx->transpose);
 		array_append(ctx->levels, iter);
 	} else {
-		Delta_MatrixTupleIter_iterate_row(&ctx->levels[ctx->current_level], id);
+		Delta_MatrixTupleIter_AttachRange(&ctx->levels[ctx->current_level], ctx->M, id, id, ctx->transpose);
 	}
 }
 
@@ -29,6 +29,7 @@ void AllNeighborsCtx_Reset
 	AllNeighborsCtx *ctx,  // all neighbors context to reset
 	EntityID src,          // source node from which to traverse
 	Delta_Matrix M,        // matrix describing connections
+	bool transpose,        // traverse in reverse direction
 	uint minLen,           // minimum traversal depth
 	uint maxLen            // maximum traversal depth
 ) {
@@ -42,6 +43,7 @@ void AllNeighborsCtx_Reset
 	ctx->src           = src;
 	ctx->minLen        = minLen;
 	ctx->maxLen        = maxLen;
+	ctx->transpose     = transpose;
 	ctx->first_pull    = true;
 	ctx->current_level = 0;
 
@@ -60,8 +62,9 @@ AllNeighborsCtx *AllNeighborsCtx_New
 (
 	EntityID src,    // source node from which to traverse
 	Delta_Matrix M,  // matrix describing connections
+	bool transpose,  // traverse in reverse direction
 	uint minLen,     // minimum traversal depth
-	uint maxLen      // maximum traversal depth
+	uint maxLen     // maximum traversal depth
 ) {
 	ASSERT(M   != NULL);
 	ASSERT(src != INVALID_ENTITY_ID);
@@ -74,6 +77,7 @@ AllNeighborsCtx *AllNeighborsCtx_New
 	ctx->maxLen         = maxLen;
 	ctx->levels         = array_new(Delta_MatrixTupleIter, 1);
 	ctx->visited        = array_new(EntityID, 1);
+	ctx->transpose      = transpose;
 	ctx->first_pull     = true;
 	ctx->current_level  = 0;
 	ctx->visited_nodes  = HashTableCreate(&def_dt);

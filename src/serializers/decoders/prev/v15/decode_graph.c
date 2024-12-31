@@ -252,7 +252,7 @@ GraphContext *RdbLoadGraphContext_v15
 		Graph *g = gc->g;
 
 		// set the node label matrix
-		Serializer_Graph_SetNodeLabels(g);
+		Serializer_SetNodeLabels(g);
 
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
@@ -267,13 +267,11 @@ GraphContext *RdbLoadGraphContext_v15
 		bool delay_indexing;
 		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
 
-		// update the node statistics, enable node indices
-		for(uint i = 0; i < label_count; i++) {
-			GrB_Index nvals;
-			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
-			Delta_Matrix_nvals(&nvals, L);
-			GraphStatistics_IncNodeCount(&g->stats, i, nvals);
+		// update the node statistics
+		Serializer_UpdateNodeStatistics(g);
 
+		// enable node indices
+		for(uint i = 0; i < label_count; i++) {
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_NODE);
 			idx = PENDING_IDX(s);

@@ -262,7 +262,7 @@ static void _AlgebraicExpression_PopulateOperand(AlgebraicExpression *operand,
 
 	if(label == NULL) {
 		// no label, use THE adjacency matrix
-		m = Graph_GetRelationMatrix(g, GRAPH_NO_RELATION, false);
+		m = Graph_GetAdjacencyMatrix(g);
 	} else if(operand->operand.diagonal) {
 		// diagonal operand refers to label matrix
 		s = GraphContext_GetSchema(gc, label, SCHEMA_NODE);
@@ -270,45 +270,13 @@ static void _AlgebraicExpression_PopulateOperand(AlgebraicExpression *operand,
 	} else {
 		// none diagonal matrix, use relationship matrix
 		s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
-		if(s) m = Graph_GetRelationMatrix(g, s->id, false);
+		if(s) m = Graph_GetRelationMatrix(g, s->id);
 	}
 
 	// m is unset, use zero matrix
 	if(m == NULL) m = Graph_GetZeroMatrix(g);
 
 	// set operand matrix
-	operand->operand.matrix = m;
-}
-
-// populate a transposed operand with a transposed relationship matrix
-// and swap the row/col domains
-static void _AlgebraicExpression_PopulateTransposedOperand(AlgebraicExpression *operand,
-														   const GraphContext *gc) {
-	// swap the row and column domains of the operand
-	const char *tmp = operand->operand.dest;
-	operand->operand.dest = operand->operand.src;
-	operand->operand.src = tmp;
-
-	// diagonal matrices do not need to be transposed
-	if(operand->operand.diagonal == true) return;
-
-	// do not update matrix if already set
-	// as algebraic expression test depends on this behavior
-	// TODO: Redesign _AlgebraicExpression_FromString to remove this condition
-	if(operand->operand.matrix != NULL) return;
-
-	Schema *s = NULL;
-	Delta_Matrix m = NULL;
-	const char *label = operand->operand.label;
-
-	if(label == NULL) {
-		m = Graph_GetAdjacencyMatrix(gc->g, true);
-	} else {
-		s = GraphContext_GetSchema(gc, operand->operand.label, SCHEMA_EDGE);
-		if(!s) m = Graph_GetZeroMatrix(gc->g);
-		else m = Graph_GetRelationMatrix(gc->g, s->id, true);
-	}
-
 	operand->operand.matrix = m;
 }
 
@@ -320,15 +288,6 @@ void _AlgebraicExpression_PopulateOperands(AlgebraicExpression *root, const Grap
 	switch(root->type) {
 	case AL_OPERATION:
 		child_count = AlgebraicExpression_ChildCount(root);
-		if(root->operation.op == AL_EXP_TRANSPOSE) {
-			ASSERT(child_count == 1 && "Transpose operation had invalid number of children");
-			AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
-			// fetch the transposed matrix and update the operand
-			_AlgebraicExpression_PopulateTransposedOperand(child, gc);
-			// replace this operation with the transposed operand
-			_AlgebraicExpression_InplaceRepurpose(root, child);
-			break;
-		}
 		for(uint i = 0; i < child_count; i++) {
 			_AlgebraicExpression_PopulateOperands(CHILD_AT(root, i), gc);
 		}
