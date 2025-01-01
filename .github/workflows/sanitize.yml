@@ -58,14 +58,14 @@ jobs:
 
     - name: Build
       run: |
-        apt-get update
-        apt-get install -y lsb-release wget software-properties-common gnupg gcc python3-dev cmake peg
+        sudo apt-get update
+        sudo apt-get install -y lsb-release wget software-properties-common gnupg gcc python3-dev cmake peg
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         ./llvm.sh 17
-        apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg
-        update-alternatives \
+        sudo apt-get update
+        sudo apt-get install -y libomp-17-dev libc6-dbg
+        sudo update-alternatives \
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
