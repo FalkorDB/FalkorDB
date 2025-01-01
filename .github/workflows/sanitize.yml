@@ -60,16 +60,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y lsb-release wget software-properties-common gnupg gcc python3-dev cmake peg
-        wget https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        ./llvm.sh 17
+        sudo wget https://apt.llvm.org/llvm.sh
+        sudo chmod +x llvm.sh
+        sudo ./llvm.sh 17
         sudo apt-get update
         sudo apt-get install -y libomp-17-dev libc6-dbg
         sudo update-alternatives \
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
           --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=address NPROC=16
+        sudo make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
