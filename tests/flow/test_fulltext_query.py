@@ -24,10 +24,12 @@ class testFulltextIndexQuery():
         n3 = Node(labels="L3", properties={"v1": 'hello redis', "v2": 'hello world'})
         n4 = Node(labels="L4", properties={"v": 'felix'})
         n5 = Node(labels="L5", properties={"v": 'there are seven words in this sentence'})
+        self.graph.query(f"CREATE {n0}, {n1}, {n2}, {n3}, {n4}, {n5}")
+        # create relationships
         e0 = Edge(n5, "E", n0, properties={"name": "just another nice relationship"})
         e1 = Edge(n5, "E", n0, properties={"name": "a nice place to be"})
         e2 = Edge(n5, "E1", n0, properties={"name": "don't find me please, I'm not full text indexed"})
-        self.graph.query(f"CREATE {n0}, {n1}, {n2}, {n3}, {n4}, {n5}, {e0}, {e1}, {e2}")
+        self.graph.query(f"CREATE {e0}, {e1}, {e2}")
 
     # full-text query
     def test01_fulltext_query(self):
