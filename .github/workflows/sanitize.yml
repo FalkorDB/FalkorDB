@@ -16,7 +16,6 @@ concurrency:
 jobs:
   sanitize-test:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:ubuntu
     steps:
 
     - name: Safe dir
@@ -26,6 +25,12 @@ jobs:
       with:
         set-safe-directory: '*'
         submodules: recursive
+
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
+
+    - uses: actions/setup-python@v5
 
     - name: Cache GraphBLAS
       id: cache_graphblas
@@ -48,19 +53,18 @@ jobs:
         path: ./bin/linux-x64-debug-asan/search-static
         key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
+    - name: Install python requirements
+      run: pip install -r tests/requirements.txt
+
     - name: Build
       run: |
-        rustup default nightly
         apt-get update
-        apt-get install -y lsb-release wget software-properties-common gnupg
+        apt-get install -y lsb-release wget software-properties-common gnupg gcc python3-dev cmake peg
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         ./llvm.sh 17
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
-        python3 -m venv venv
-        . venv/bin/activate
-        pip install -r tests/requirements.txt
+        apt-get install -y libomp-17-dev libc6-dbg
         update-alternatives \
           --verbose \
           --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
@@ -69,8 +73,9 @@ jobs:
 
     - name: Unit tests
       id: unit_tests
-      run: make unit-tests CLEAR_LOGS=0 SAN=address
       continue-on-error: true
+      run: |
+        make unit-tests CLEAR_LOGS=0 SAN=address
 
     - uses: actions/upload-artifact@v4
       with:
@@ -80,10 +85,10 @@ jobs:
 
     - name: Flow tests
       id: flow_tests
+      continue-on-error: true
       run: |
         . venv/bin/activate
         make flow-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
 
     - uses: actions/upload-artifact@v4
       with:
@@ -93,10 +98,10 @@ jobs:
 
     - name: TCK tests
       id: tck_tests
+      continue-on-error: true
       run: |
         . venv/bin/activate
         make tck-tests CLEAR_LOGS=0 SAN=address
-      continue-on-error: true
 
     - uses: actions/upload-artifact@v4
       with:
