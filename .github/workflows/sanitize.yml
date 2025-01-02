@@ -81,9 +81,9 @@ jobs:
         if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false
         run: |
           id=$(docker create localhost:5000/falkordb/falkordb-compiler)
-          docker cp $id:/FalkorDB/bin .
+          sudo docker cp $id:/FalkorDB/bin .
           docker rm -v $id
-          ls -l -R /FalkorDB/bin
+          sudo ls -l -R /FalkorDB/bin
 
       - name: Build tests image
         uses: docker/build-push-action@v6
