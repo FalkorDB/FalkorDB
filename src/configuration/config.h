@@ -6,15 +6,17 @@
 
 #pragma once
 
-#include <stdbool.h>
+#include "../value.h"
 #include "redismodule.h"
 
-#define RESULTSET_SIZE_UNLIMITED           UINT64_MAX
-#define CONFIG_TIMEOUT_NO_TIMEOUT          0
-#define VKEY_ENTITY_COUNT_UNLIMITED        UINT64_MAX
-#define QUERY_MEM_CAPACITY_UNLIMITED       0
-#define NODE_CREATION_BUFFER_DEFAULT       16384
-#define DELTA_MAX_PENDING_CHANGES_DEFAULT  10000
+#include <stdbool.h>
+
+#define RESULTSET_SIZE_UNLIMITED          UINT64_MAX
+#define CONFIG_TIMEOUT_NO_TIMEOUT         0
+#define VKEY_ENTITY_COUNT_UNLIMITED       UINT64_MAX
+#define QUERY_MEM_CAPACITY_UNLIMITED      0
+#define NODE_CREATION_BUFFER_DEFAULT      16384
+#define DELTA_MAX_PENDING_CHANGES_DEFAULT 10000
 
 typedef enum {
 	Config_TIMEOUT                   = 0,   // timeout value for queries
@@ -35,7 +37,7 @@ typedef enum {
 	Config_EFFECTS_THRESHOLD         = 15,  // bolt protocol port
 	Config_BOLT_PORT                 = 16,  // replicate queries via effects
 	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
-	Config_DATA_FOLDER               = 18,  // path to data folder
+	Config_IMPORT_FOLDER             = 18,  // path to CSV import folder
 	Config_END_MARKER                = 19
 } Config_Option_Field;
 
@@ -77,6 +79,12 @@ bool Config_Contains_field
 (
 	const char *field_str,
 	Config_Option_Field *field
+);
+
+// returns the field type
+SIType Config_Field_type
+(
+	Config_Option_Field field  // field
 );
 
 // returns field name
