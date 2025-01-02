@@ -208,7 +208,7 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	pdata->e.dest_id = edge_key->dest_id;
 	pdata->e.relationID = pdata->s->id;
 	EntityID edge_id = edge_key->edge_id;
-    bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
+	bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
 	ASSERT(edge_exists);
 	
 	if(pdata->yield_relationship)  *pdata->yield_relationship  = SI_Edge(e);
