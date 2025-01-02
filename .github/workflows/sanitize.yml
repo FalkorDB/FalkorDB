@@ -53,8 +53,8 @@ jobs:
 
       - name: Relocate source
         run: |
-          mkdir -p /FalkorDB
-          mv $GITHUB_WORKSPACE/* /FalkorDB
+          sudo mkdir -p /FalkorDB
+          sudo mv $GITHUB_WORKSPACE/* /FalkorDB
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
