@@ -92,6 +92,10 @@ class testFulltextIndexQuery():
         actual.sort()
         expected = ["a nice place to be", "just another nice relationship"]
         self.env.assertEquals(actual, expected)
-      
-
-
+        # full text query on an indexed label that does not return any match
+        result = self.graph.query("CALL db.idx.fulltext.queryRelationships('E', 'foo')")
+        self.env.assertEquals(result.result_set, [])
+        # full text query on an indexed label that returns only one of the relationship with that label
+        result = self.graph.query("CALL db.idx.fulltext.queryRelationships('E', 'place')")
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEquals(result.result_set[0][0].properties['name'], "a nice place to be")
