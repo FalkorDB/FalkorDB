@@ -4,7 +4,7 @@ ARG TARGETPLATFORM=linux/amd64
 
 FROM $BASE_IMAGE AS compiler
 
-ENV DEPS "curl lsb-release automake peg libtool autoconf python-is-python3 2to3 python3-venv python3-pip wget build-essential cmake m4 git valgrind gcc python3-dev"
+ENV DEPS "curl lsb-release automake peg libtool autoconf python-is-python3 2to3 python3-venv python3-pip wget build-essential cmake m4 git valgrind gcc python3-dev clang"
 
 # Set up a build environment
 RUN set -ex ;\
