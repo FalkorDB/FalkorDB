@@ -65,11 +65,11 @@ jobs:
         sudo ./llvm.sh 17
         sudo apt-get update
         sudo apt-get install -y libomp-17-dev libc6-dbg
-        sudo update-alternatives \
-          --verbose \
-          --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
-          --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        sudo make CLANG=1 SAN=address NPROC=16
+        # sudo update-alternatives \
+        #   --verbose \
+        #   --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
+        #   --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
+        make CLANG=1 SAN=address NPROC=16
 
     - name: Unit tests
       id: unit_tests
