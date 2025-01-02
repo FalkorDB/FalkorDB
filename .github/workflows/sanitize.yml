@@ -14,101 +14,177 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sanitize-test:
+  build:
     runs-on: ubuntu-latest
+    container: falkordb/falkordb-build:latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     steps:
+      - name: Safe dir
+        run: git config --global --add safe.directory '*'
 
-    - name: Safe dir
-      run: git config --global --add safe.directory '*'
+      - uses: actions/checkout@v4
+        with:
+          set-safe-directory: "*"
+          submodules: recursive
 
-    - uses: actions/checkout@v4
-      with:
-        set-safe-directory: '*'
-        submodules: recursive
+      - name: Cache GraphBLAS
+        id: cache_graphblas
+        uses: actions/cache@v4
+        with:
+          path: /FalkorDB/bin/linux-x64-debug-asan/GraphBLAS
+          key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
 
-    - uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: nightly
+      - name: Cache parser
+        id: cache_parser
+        uses: actions/cache@v4
+        with:
+          path: /FalkorDB/bin/linux-x64-debug-asan/libcypher-parser
+          key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
 
-    - uses: actions/setup-python@v5
+      - name: Cache search
+        id: cache_search
+        uses: actions/cache@v4
+        with:
+          path: /FalkorDB/bin/linux-x64-debug-asan/search-static
+          key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
-    - name: Cache GraphBLAS
-      id: cache_graphblas
-      uses: actions/cache@v4
-      with:
-        path: ./bin/linux-x64-debug-asan/GraphBLAS
-        key: graphblas-sanitizer-llvm-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
+      - name: Relocate source
+        run: |
+          mkdir -p /FalkorDB
+          mv $GITHUB_WORKSPACE/* /FalkorDB
 
-    - name: Cache parser
-      id: cache_parser
-      uses: actions/cache@v4
-      with:
-        path: ./bin/linux-x64-debug-asan/libcypher-parser
-        key: parser-sanitizer-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+      - name: Build compiler image
+        id: build_compiler
+        uses: docker/build-push-action@v6
+        with:
+          context: /FalkorDB
+          file: /FalkorDB/build/docker/Dockerfile.compiler
+          platforms: linux/amd64
+          tags: localhost:5000/falkordb/falkordb-compiler
+          push: true
+          build-args: |
+            TARGETPLATFORM=linux/amd64
+            OS=ubuntu
+            MAKE_ARGS="CLANG=1 SAN=address NPROC=16"
 
-    - name: Cache search
-      id: cache_search
-      uses: actions/cache@v4
-      with:
-        path: ./bin/linux-x64-debug-asan/search-static
-        key: search-sanitizer-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+      - name: Copy bin from docker for caching
+        working-directory: /FalkorDB
+        if: steps.cache_graphblas.outputs.cache-hit == false || steps.cache_parser.outputs.cache-hit == false || steps.cache_search.outputs.cache-hit == false
+        run: |
+          id=$(docker create localhost:5000/falkordb/falkordb-compiler)
+          docker cp $id:/FalkorDB/bin .
+          docker rm -v $id
+          ls -l -R /FalkorDB/bin
 
-    - name: Install python requirements
-      run: pip install -r tests/requirements.txt
+      - name: Build tests image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: /FalkorDB/tests/Dockerfile.debian
+          outputs: type=docker,dest=/tmp/falkordb-tests-sanitizer.tar
+          tags: falkordb/falkordb-tests
+          platforms: linux/amd64
+          build-args: |
+            BASE_IMAGE=localhost:5000/falkordb/falkordb-compiler
+            TARGETPLATFORM=linux/amd64
 
-    - name: Build
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y lsb-release wget software-properties-common gnupg gcc python3-dev cmake peg
-        sudo wget https://apt.llvm.org/llvm.sh
-        sudo chmod +x llvm.sh
-        sudo ./llvm.sh 17
-        sudo apt-get update
-        sudo apt-get install -y libomp-17-dev libc6-dbg
-        # sudo update-alternatives \
-        #   --verbose \
-        #   --install /usr/bin/clang                clang                /usr/bin/clang-17 100 \
-        #   --slave   /usr/bin/clang++              clang++              /usr/bin/clang++-17
-        make CLANG=1 SAN=address NPROC=16
+      - name: Upload tests image
+        uses: actions/upload-artifact@v4
+        with:
+          name: falkordb-tests-sanitizer
+          path: /tmp/falkordb-tests-sanitizer.tar
+          if-no-files-found: error
 
-    - name: Unit tests
-      id: unit_tests
-      continue-on-error: true
-      run: |
-        make unit-tests CLEAR_LOGS=0 SAN=address
+  unit_tests:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    needs: build
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-tests-sanitizer
+          path: /tmp
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Upload unit tests logs
-        path: ${{ github.workspace }}/tests/unit/logs/
-        retention-days: 7
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-tests-sanitizer.tar
 
-    - name: Flow tests
-      id: flow_tests
-      continue-on-error: true
-      run: |
-        . venv/bin/activate
-        make flow-tests CLEAR_LOGS=0 SAN=address
+      - name: Unit tests
+        run: |
+          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests make unit-tests CLEAR_LOGS=0 SAN=address
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Upload flow tests logs
-        path: ${{ github.workspace }}/tests/flow/logs/
-        retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unit_tests_logs
+          path: ${{ github.workspace }}/tests/unit/logs/
+          retention-days: 7
 
-    - name: TCK tests
-      id: tck_tests
-      continue-on-error: true
-      run: |
-        . venv/bin/activate
-        make tck-tests CLEAR_LOGS=0 SAN=address
+  flow_tests:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    needs: build
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-tests-sanitizer
+          path: /tmp
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Upload TCK tests logs
-        path: ${{ github.workspace }}/tests/tck/logs/
-        retention-days: 7
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-tests-sanitizer.tar
 
-    - name: Check on failures
-      if: steps.unit_tests.outcome != 'success' || steps.flow_tests.outcome != 'success' || steps.tck_tests.outcome != 'success'
-      run: exit 1
+      - name: Flow tests
+        run: |
+          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests make flow-tests CLEAR_LOGS=0 SAN=address
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flow_tests_logs
+          path: ${{ github.workspace }}/tests/flow/logs/
+          retention-days: 7
+
+  tck_tests:
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    needs: build
+    steps:
+      - name: Download image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-tests-sanitizer
+          path: /tmp
+
+      - name: Load image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-tests-sanitizer.tar
+
+      - name: TCK tests
+        run: |
+          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests make tck-tests CLEAR_LOGS=0 SAN=address
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tck_tests_logs
+          path: ${{ github.workspace }}/tests/tck/logs/
+          retention-days: 7
