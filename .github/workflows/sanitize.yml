@@ -16,7 +16,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: falkordb/falkordb-build:latest
     services:
       registry:
         image: registry:2
@@ -127,7 +126,7 @@ jobs:
 
       - name: Unit tests
         run: |
-          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests make unit-tests CLEAR_LOGS=0 SAN=address
+          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests rustup default nightly && make unit-tests CLEAR_LOGS=0 SAN=address
 
       - uses: actions/upload-artifact@v4
         with:
@@ -157,7 +156,7 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests make flow-tests CLEAR_LOGS=0 SAN=address
+          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests rustup default nightly && make flow-tests CLEAR_LOGS=0 SAN=address
 
       - uses: actions/upload-artifact@v4
         with:
@@ -187,7 +186,7 @@ jobs:
 
       - name: TCK tests
         run: |
-          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests make tck-tests CLEAR_LOGS=0 SAN=address
+          docker run -i --rm -v ${{github.workspace}}/tests:/tests falkordb/falkordb-tests rustup default nightly && make tck-tests CLEAR_LOGS=0 SAN=address
 
       - uses: actions/upload-artifact@v4
         with:
