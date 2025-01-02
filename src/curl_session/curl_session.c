@@ -13,10 +13,22 @@
 
 // curl download session
 struct Opaque_CurlSession {
-	CURL *handle;  // curl handle
-	FILE *stream;  // output stream
-	bool abort;    // download abort flag
+	CURL *handle;      // curl handle
+	FILE *stream;      // output stream
+	bool abort;        // download abort flag
+	pthread_t thread;  // download thread
 };
+
+// aborts the download
+static void _Curl_Abort
+(
+	CurlSession session  // session handle
+) {
+	ASSERT(session != NULL);
+
+	// set abort flag
+	session->abort = true;
+}
 
 // curl write callback
 // called when curl downloads data
@@ -26,7 +38,7 @@ static size_t _curl_write_cb
 	void *ptr,     // data to write
 	size_t size,   // size of each element
 	size_t nmemb,  // number of elements
-	void *pdata    // stream to write to
+	void *pdata    // CurlSession
 ) {
 	CurlSession session = (CurlSession)pdata;
 
@@ -53,7 +65,7 @@ static void *_curl_thread
 	if(res != CURLE_OK) {
 		if(!session->abort) {
 			// if download was not aborted, raise an exception
-			ErrorCtx_RaiseRuntimeException("Error downloading file");
+			ErrorCtx_SetError("Error downloading file, error_code: %d", res);
 		}
 	}
 
@@ -67,15 +79,20 @@ static void *_curl_thread
 // asynchonously download a file from the internet
 // populates the stream with the downloaded file
 // returns a session handle
+// NOTE: this function runs on a dedicated thread spwaned by Curl_Download
 CurlSession Curl_Download
 (
 	const char *url,  // URL to download
-	FILE *stream      // output stream
+	FILE **stream     // output stream
 ) {
 	ASSERT(url    != NULL);
-	ASSERT(stream != NULL);
+	ASSERT(stream != NULL && *stream != NULL);
 
-	CurlSession session = rm_calloc(1, sizeof(struct Opaque_CurlSession));
+	CurlSession s = rm_calloc(1, sizeof(struct Opaque_CurlSession));
+
+	// take ownership over the stream
+	s->stream = *stream;
+	*stream   = NULL;
 
 	// create a new session
 	CURL *curl = curl_easy_init();
@@ -86,36 +103,28 @@ CurlSession Curl_Download
 
 	// set curl options
 	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_WRITEDATA, session);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, s);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, _curl_write_cb);
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);      // treat HTTP errors as failures
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);  // establish connection timeout
 
-	session->handle = curl;
-	session->stream = stream;
+	s->handle = curl;
 
 	// download file in a separate thread
-	pthread_t thread;
-	if(pthread_create(&thread, NULL, _curl_thread, (void*)session) != 0) {
+	if(pthread_create(&(s->thread), NULL, _curl_thread, (void*)s) != 0) {
 		ErrorCtx_SetError("Error creating thread");
 		goto error;
 	}
 
-	return session;
+	return s;
 
 error:
-	fclose(stream);
-	Curl_Free(&session);
+	fclose(s->stream);
+	s->stream = NULL;
+
+	Curl_Free(&s);
+
 	return NULL;
-}
-
-// aborts the download
-void Curl_Abort
-(
-	CurlSession session  // session handle
-) {
-	ASSERT(session != NULL);
-
-	// set abort flag
-	session->abort = true;
 }
 
 // frees the session handle
@@ -127,14 +136,18 @@ void Curl_Free
 
 	CurlSession _session = *session;
 
-	// download is still in progress
+	//--------------------------------------------------------------------------
+	// abort download
+	//--------------------------------------------------------------------------
+
 	if(_session->stream != NULL) {
 		// abort download and close stream
-		Curl_Abort(_session);
+		_Curl_Abort(_session);
 	}
 
-	// busy wait for download thread to exit
-	while(_session->stream != NULL);
+	// wait for download thread to exit, OK if thread already existed
+	pthread_join(_session->thread, NULL);
+	ASSERT(_session->stream == NULL);
 
 	// free curl handle
 	if(_session->handle != NULL) {

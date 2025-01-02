@@ -13,13 +13,7 @@ typedef struct Opaque_CurlSession *CurlSession;
 CurlSession Curl_Download
 (
 	const char* url,  // URL to download
-	FILE* stream      // output stream
-);
-
-// aborts the download
-void Curl_Abort
-(
-	CurlSession session  // session handle
+	FILE **stream     // output stream
 );
 
 // frees the session handle

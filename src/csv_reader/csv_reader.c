@@ -16,6 +16,8 @@
 typedef void (*field_cb)  (void *data, size_t n, void *pdata);
 typedef void (*record_cb) (int t, void *pdata);
 
+static char* empty_string = "";
+
 struct Opaque_CSVReader {
 	FILE *stream;              // CSV stream handle
 	struct csv_parser parser;  // CSV parser
@@ -44,6 +46,12 @@ static void _array_cell_cb
 ) {
 	CSVReader reader = (CSVReader)pdata;
 
+	// empty cell is treated as an empty string
+	if(unlikely(n == 0)) {
+		ASSERT(data == NULL);
+		data = empty_string;
+	}
+
 	// append cell to current row
 	SIArray_Append(&reader->row, SI_ConstStringVal((char*)data));
 }
@@ -71,8 +79,15 @@ static void _map_cell_cb
 ) {
 	CSVReader reader = (CSVReader)pdata;
 
-	// append cell to current row
 	SIValue key = reader->columns[reader->col_idx++];
+
+	// empty cell is treated as an empty string
+	if(unlikely(n == 0)) {
+		ASSERT(data == NULL);
+		data = empty_string;
+	}
+
+	// append cell to current map
 	Map_Add(&reader->row, key, SI_ConstStringVal((char*)data));
 }
 
@@ -102,6 +117,11 @@ static void _header_cell_cb
     void *pdata   // original buffer
 ) {
 	CSVReader reader = (CSVReader)pdata;
+
+	// empty cell is treated as an empty string
+	if(unlikely(n == 0)) {
+		data = empty_string;
+	}
 
 	// append cell to current row
 	SIValue col = SI_DuplicateStringVal((char*)data);

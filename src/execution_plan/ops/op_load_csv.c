@@ -7,6 +7,7 @@
 #include "op_load_csv.h"
 #include "../../datatypes/map.h"
 #include "../../datatypes/array.h"
+#include "../../configuration/config.h"
 
 // forward declarations
 static OpResult LoadCSVInit(OpBase *opBase);
@@ -17,23 +18,131 @@ static OpBase *LoadCSVClone(const ExecutionPlan *plan, const OpBase *opBase);
 static OpResult LoadCSVReset(OpBase *opBase);
 static void LoadCSVFree(OpBase *opBase);
 
-// evaluate path expression
+// evaluate URI expression
 // expression must evaluate to string representing a valid URI
 // if that's not the case an exception is raised
-static bool _compute_path
+static bool _computeURI
 (
 	OpLoadCSV *op,
 	Record r
 ) {
 	ASSERT(op != NULL);
 
-	op->path = AR_EXP_Evaluate(op->exp, r);
-	if(SI_TYPE(op->path) != T_STRING) {
-		ErrorCtx_RaiseRuntimeException(EMSG_INVALID_CSV_PATH);
+	op->uri = AR_EXP_Evaluate(op->exp, r);
+
+	// check uri type
+	if(SI_TYPE(op->uri) != T_STRING) {
+		ErrorCtx_RaiseRuntimeException(EMSG_INVALID_CSV_URI);
 		return false;
 	}
 
-	return true;
+	// supported URIs: file:// & https://
+	const char *csv_uri = op->uri.stringval;
+	static const char* URIS[2] = {"file://", "https://"};
+
+	// make sure uri is supported
+	for(int i = 0; i < 2; i++) {
+		const char *uri = URIS[i];
+		if(strncmp(csv_uri, uri, strlen(uri)) == 0) {
+			return true;
+		}
+	}
+
+	// unsupported CSV URI
+	ErrorCtx_RaiseRuntimeException(EMSG_UNSUPPORTED_CSV_URI);
+	return false;
+}
+
+// initialize CSV reader from https URI
+static FILE *_getRemoteURIReadStream
+(
+	OpLoadCSV *op  // load CSV operation
+) {
+	int pipefd[2];  // pipe ends
+	const char *uri = op->uri.stringval;
+
+	// create pipe from which to read remote file
+	if(pipe(pipefd) == -1) {
+		ErrorCtx_RaiseRuntimeException("Error creating pipe");
+		return NULL;
+	}
+
+	// download remote file
+	// file content will be written to pipe
+	FILE *f = fdopen(pipefd[1], "wb");
+	op->curl = Curl_Download(uri, &f);
+	if(op->curl == NULL) {
+		// close pipe read end, write-end closed by Curl_Download
+		close(pipefd[0]);
+
+		ErrorCtx_RaiseRuntimeException("Error downloading file: %s", uri);
+		return NULL;
+	}
+
+	// return file descriptor from read end of pipe
+	return fdopen(pipefd[0], "r");
+}
+
+// validate that the user's specified path remains within
+// the configuration base path
+//
+// e.g.
+// configuration import dir: /var/lib/FalkorDB/import
+// user's relative path:   /../../unauthorized/access.pem
+// if were to access /var/lib/FalkorDB/import/../../unauthorized/access.pem
+// malicious actor whould have gain access to restricted data
+bool is_safe_path
+(
+	const char *base,  // configuration import dir e.g. /var/lib/FalkorDB/import
+	const char *path   // path being accessed
+) {
+    char resolved_path[PATH_MAX];
+
+    // resolve the full path to absolute canonical paths
+    if(realpath(path, resolved_path) == NULL) {
+		if(errno == ENOENT) {
+			// part of the path doesn't exists
+			// return true as we're going to fail opening a non existing file
+			return true;
+		}
+
+        return false;
+    }
+
+    // ensure the resolved_full starts with base
+    return (strncmp(base, resolved_path, strlen(base)) == 0);
+}
+
+// initialize CSV reader from a local file URI file://
+static FILE *_getLocalURIReadStream
+(
+	OpLoadCSV *op  // load CSV operation
+) {
+	const char *uri = op->uri.stringval + 7;  // skip file://
+
+    char full_path[PATH_MAX];
+
+	// read import folder path from configuration
+	const char *import_folder = NULL;
+	if(!Config_Option_get(Config_IMPORT_FOLDER, &import_folder)) {
+		return NULL;
+	}
+
+    // construct the full path
+    snprintf(full_path, sizeof(full_path), "%s%s", import_folder, uri);
+
+	if(!is_safe_path(import_folder, full_path)) {
+		// log file access
+		RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_WARNING,
+				"attempt to access unauthorized path %s", full_path);
+		return NULL;
+	}
+
+	// log file access
+	RedisModule_Log(NULL, REDISMODULE_LOGLEVEL_NOTICE, "opening %s", full_path);
+
+	// open local file
+	return fopen(full_path, "r");
 }
 
 // initialize CSV reader
@@ -53,37 +162,19 @@ static bool _Init_CSVReader
 	}
 
 	// initialize a new CSV reader
-	const char *uri = op->path.stringval;
 	FILE *stream = NULL;
+	const char *uri = op->uri.stringval;
 
-	// check if URI is a remote file
-	if(strncmp(uri, "http://", 7) == 0 || strncmp(uri, "https://", 8) == 0) {
-		int pipefd[2];
-		// create pipe from which to read remote file
-		if(pipe(pipefd) == -1) {
-			ErrorCtx_RaiseRuntimeException("Error creating pipe");
-			return false;
-		}
-
-		// download remote file, file content will be written to pipe
-		op->curl = Curl_Download(uri, fdopen(pipefd[1], "wb"));
-		if(op->curl == NULL) {
-			// close pipe read end
-			close(pipefd[0]);
-
-			ErrorCtx_RaiseRuntimeException("Error downloading file: %s", uri);
-			return false;
-		}
-
-		// get file descriptor from read end of pipe
-		stream = fdopen(pipefd[0], "r");
+	// get CSV URI read stream
+	if(strncmp(uri, "file://", 7) == 0) {
+		stream = _getLocalURIReadStream(op);
 	} else {
-		// open local file
-		stream = fopen(uri, "r");
-		if(stream == NULL) {
-			ErrorCtx_RaiseRuntimeException("Error opening file: %s", uri);
-			return false;
-		}
+		stream = _getRemoteURIReadStream(op);
+	}
+
+	if(stream == NULL) {
+		ErrorCtx_RaiseRuntimeException("Error opening CSV URI: %s", uri);
+		return NULL;
 	}
 
 	op->reader = CSVReader_New(stream, op->with_headers, ',');
@@ -115,7 +206,7 @@ static bool _CSV_GetRow
 OpBase *NewLoadCSVOp
 (
 	const ExecutionPlan *plan,  // execution plan
-	AR_ExpNode *exp,            // CSV URI path expression
+	AR_ExpNode *exp,            // CSV URI expression
 	const char *alias,          // CSV row alias
 	bool with_headers           // CSV contains header row
 ) {
@@ -126,11 +217,11 @@ OpBase *NewLoadCSVOp
 	OpLoadCSV *op = rm_calloc(1, sizeof(OpLoadCSV));
 
 	op->exp          = exp;
-	op->path         = SI_NullVal();
+	op->uri          = SI_NullVal();
 	op->alias        = strdup(alias);
 	op->with_headers = with_headers;
 
-	// Set our Op operations
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_LOAD_CSV, "Load CSV", LoadCSVInit,
 			LoadCSVConsume, NULL, NULL, LoadCSVClone, LoadCSVFree, false, plan);
 
@@ -157,17 +248,20 @@ static OpResult LoadCSVInit
 	}
 
 	//--------------------------------------------------------------------------
-	// no child operation evaluate path expression
+	// no child operation evaluate URI expression
 	//--------------------------------------------------------------------------
 
-	// try to evaluate expression
-	Record r = OpBase_CreateRecord(opBase);
-	if(!_compute_path(op, r)) {
-		// failed to evaluate CSV path
+	// evaluate URI expression
+	Record r   = OpBase_CreateRecord(opBase);
+	bool   res = _computeURI(op, r);
+
+	OpBase_DeleteRecord(&r);
+
+	if(!res) {
+		// failed to evaluate CSV URI
 		// update consume function
 		OpBase_UpdateConsume(opBase, LoadCSVConsumeDepleted);
 	}
-	OpBase_DeleteRecord(&r);
 
 	if(!_Init_CSVReader(op)) {
 		// failed to init CSV
@@ -206,9 +300,9 @@ pull_from_child:
 			return NULL;
 		}
 
-		// first call, evaluate CSV path
-		if(!_compute_path(op, op->child_record)) {
-			// failed to evaluate CSV path, quickly return
+		// first call, evaluate CSV URI
+		if(!_computeURI(op, op->child_record)) {
+			// failed to evaluate CSV URI, quickly return
 			return NULL;
 		}
 
@@ -230,9 +324,9 @@ pull_from_child:
 		OpBase_DeleteRecord(&op->child_record);
 		op->child_record = NULL;
 
-		// free CSV path, just in case it relies on record data
-		SIValue_Free(op->path);
-		op->path = SI_NullVal();
+		// free CSV URI, just in case it relies on record data
+		SIValue_Free(op->uri);
+		op->uri = SI_NullVal();
 
 		// try to get a new record from child
 		goto pull_from_child;
@@ -283,12 +377,19 @@ static OpResult LoadCSVReset (
 ) {
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 
-	SIValue_Free(op->path);
-	op->path = SI_NullVal();
+	SIValue_Free(op->uri);
+	op->uri = SI_NullVal();
 
 	if(op->child_record != NULL) {
 		OpBase_DeleteRecord(&op->child_record);
 		op->child_record = NULL;
+	}
+
+	if(op->curl != NULL) {
+		// aborts in-progress download
+		// must be called before csv reader is freed
+		// due to pipe read end being closed before write end
+		Curl_Free(&op->curl);
 	}
 
 	if(op->reader != NULL) {
@@ -308,7 +409,7 @@ static void LoadCSVFree
 
 	OpLoadCSV *op = (OpLoadCSV*)opBase;
 
-	SIValue_Free(op->path);
+	SIValue_Free(op->uri);
 
 	if(op->curl != NULL) {
 		// aborts in-progress download
@@ -329,7 +430,7 @@ static void LoadCSVFree
 	
 	if(op->child_record != NULL) {
 		OpBase_DeleteRecord(&op->child_record);
-		op->child_record = NULL;	
+		op->child_record = NULL;
 	}
 
 	if(op->reader != NULL) {
