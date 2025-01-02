@@ -174,6 +174,7 @@ ProcedureCtx *Proc_FulltextQueryNodeGen() {
 typedef struct {
 	Edge e;
 	Graph *g;
+	Schema *s;
 	SIValue *output;
 	Index idx;
 	RSResultsIterator *iter;
@@ -205,6 +206,7 @@ SIValue *Proc_FulltextQueryRelationshipStep
 	Edge *e = &pdata->e;
 	pdata->e.src_id = edge_key->src_id;
 	pdata->e.dest_id = edge_key->dest_id;
+	pdata->e.relationID = pdata->s->id;
 	EntityID edge_id = edge_key->edge_id;
     bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
 	ASSERT(edge_exists);
@@ -277,11 +279,15 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 			SCHEMA_EDGE);
 	if(!idx) return PROCEDURE_ERR; // TODO: this should cause an error to be emitted
 
+    Schema *s = GraphContext_GetSchema(gc, label, SCHEMA_EDGE);
+	if(s == NULL) return PROCEDURE_ERR;
+
 	ctx->privateData = rm_malloc(sizeof(QueryRelationshipContext));
 	QueryRelationshipContext *pdata = ctx->privateData;
 
 	pdata->g      = gc->g;
 	pdata->idx    = idx;
+	pdata->s	  = s;
 	pdata->output = array_new(SIValue,  2);
 
 	_relationship_process_yield(pdata, yield);
