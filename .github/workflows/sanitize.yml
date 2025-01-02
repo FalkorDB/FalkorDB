@@ -57,6 +57,12 @@ jobs:
           mkdir -p /FalkorDB
           mv $GITHUB_WORKSPACE/* /FalkorDB
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # network=host driver-opt needed to push to local registry
+          driver-opts: network=host
+  
       - name: Build compiler image
         id: build_compiler
         uses: docker/build-push-action@v6
