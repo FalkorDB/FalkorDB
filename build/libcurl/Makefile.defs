@@ -1,0 +1,2 @@
+
+export LIBCURL=$(LIBCURL_BINDIR)/lib/.libs/libcurl.a
