@@ -165,10 +165,7 @@ static void _reduce_cp_to_hashjoin(ExecutionPlan *plan, OpBase *cp) {
 			 * Since the original cartesian product is no longer a valid operation, and there might be
 			 * additional filters which are applicable to re position after the optimization is done,
 			 * the following code tries to propagate up the remaining filters, and finish the loop. */
-			i++;
-			for(; i < filter_count; i++) {
-				ExecutionPlan_RePositionFilterOp(plan, value_hash_join, NULL, (OpBase *)filter_ops[i]);
-			}
+			break;
 		} else {
 			// The Cartesian Product still has a child operation; introduce the join op as another child.
 			ExecutionPlan_AddOp(cp, value_hash_join);
