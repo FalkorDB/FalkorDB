@@ -274,6 +274,7 @@ libcurl: $(LIBCURL)
 
 $(LIBCURL):
 	@echo Building $@ ...
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl autoreconf
 	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl
 
 libcsv: $(LIBCSV)

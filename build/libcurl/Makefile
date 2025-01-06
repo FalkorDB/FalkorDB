@@ -4,7 +4,8 @@
 ROOT=../..
 include $(ROOT)/deps/readies/mk/main
 
-#MK.configure=1
+MK.configure=1
+CONFIGURE_FLAGS.$(OS)=--with-openssl --disable-ldap --without-libpsl --disable-shared --enable-static --disable-manual --disable-docs
 
 define HELPTEXT
 make build    # configure and compile
@@ -37,20 +38,19 @@ include $(MK)/defs
 include $(MK)/rules
 
 #----------------------------------------------------------------------------------------------
+# build: bindirs $(TARGET)
 
-build: bindirs $(TARGET)
+# bindirs:
+# 	@echo Creating binary directories
+# 	$(SHOW)mkdir -p $(BINDIR)/lib/.libs
 
-bindirs:
-	@echo Creating binary directories
-	$(SHOW)mkdir -p $(BINDIR)/lib/.libs
-
-$(TARGET): autoreconf
-	@echo Building libcurl
-	$(SHOW)cd $(SRCDIR); $(MAKE)
+# $(TARGET): autoreconf
+# 	@echo Building libcurl
+# 	$(SHOW)cd $(SRCDIR); $(MAKE)
 
 autoreconf:
 	@echo Running configure
-	$(SHOW)cd $(SRCDIR); autoreconf -fi; ./configure --with-openssl --without-libpsl --disable-shared
+	$(SHOW)cd $(SRCDIR); autoreconf
 
 .PHONY: autoreconf
 

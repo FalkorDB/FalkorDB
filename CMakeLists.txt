@@ -17,6 +17,9 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 
 add_library(falkordb SHARED ${SOURCES})
 
+find_library(CoreFoundation_Library CoreFoundation)
+find_library(SystemConfiguration_Library SystemConfiguration)
+
 include_directories(
 	${root}/src
 	${root}
@@ -56,7 +59,7 @@ lists_from_env(GRAPHBLAS LIBXXHASH LIBCURL LIBCSV RAX LIBCYPHER_PARSER REDISEARC
 set(FALKORDB_LIBS ${FalkorDBRS} ${GRAPHBLAS} ${LIBXXHASH} ${LIBCURL} ${LIBCSV} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
+target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS} ${CoreFoundation_Library} ${SystemConfiguration_Library})
 
 extract_debug_symbols(falkordb)
 
