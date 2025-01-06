@@ -14,67 +14,17 @@
 #include "proc_fulltext_query.h"
 #include "../graph/graphcontext.h"
 
+// Context for full-text query on relationships
 typedef struct {
-	Edge e;
-	Graph *g;
-	Schema *s;
-	SIValue *output;
-	Index idx;
-	RSResultsIterator *iter;
-	SIValue *yield_relationship;     // yield relationship
-	SIValue *yield_score;            // yield score
+	Edge e;                       // edge
+	Graph *g;                     // graph
+	Schema *s;                    // schema
+	SIValue *output;              // output
+	Index idx;                    // index
+	RSResultsIterator *iter;      // iterator
+	SIValue *yield_relationship;  // yield relationship
+	SIValue *yield_score;         // yield score
 } QueryRelationshipContext;
-
-SIValue *Proc_FulltextQueryRelationshipStep
-(
-	ProcedureCtx *ctx
-) {
-	if(!ctx->privateData) return NULL; // no index was attached to this procedure
-
-	QueryRelationshipContext *pdata = (QueryRelationshipContext *)ctx->privateData;
-	if(!pdata || !pdata->iter) return NULL;
-
-	// try to get a result out of the iterator
-	// NULL is returned if iterator id depleted
-	size_t len = 0;
-	const EdgeIndexKey *edge_key = (EdgeIndexKey *)RediSearch_ResultsIteratorNext(pdata->iter,
-			Index_RSIndex(pdata->idx), &len);
-
-	// depleted
-	if(!edge_key) return NULL;
-
-	double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
-
-	// get edge
-	Edge *e = &pdata->e;
-	pdata->e.src_id = edge_key->src_id;
-	pdata->e.dest_id = edge_key->dest_id;
-	pdata->e.relationID = pdata->s->id;
-	EntityID edge_id = edge_key->edge_id;
-	bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
-	ASSERT(edge_exists);
-	
-	if(pdata->yield_relationship)  *pdata->yield_relationship  = SI_Edge(e);
-	if(pdata->yield_score) *pdata->yield_score = SI_DoubleVal(score);
-
-	return pdata->output;
-}
-
-ProcedureResult Proc_FulltextQueryRelationshipFree
-(
-	ProcedureCtx *ctx
-) {
-	// Clean up.
-	if(!ctx->privateData) return PROCEDURE_OK;
-
-	QueryRelationshipContext *pdata = ctx->privateData;
-	array_free(pdata->output);
-	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
-	rm_free(pdata);
-
-	return PROCEDURE_OK;
-}
-
 
 static void _relationship_process_yield
 (
@@ -99,11 +49,89 @@ static void _relationship_process_yield
 	}
 }
 
+// step function
+SIValue *Proc_FulltextQueryRelationshipStep
+(
+	ProcedureCtx *ctx  // procedure context
+) {
+	// validate context
+	ASSERT(ctx              != NULL);
+	ASSERT(ctx->privateData != NULL);
+
+	QueryRelationshipContext *pdata =
+		(QueryRelationshipContext *)ctx->privateData;
+
+	ASSERT(pdata != NULL && pdata->iter != NULL);
+
+	//--------------------------------------------------------------------------
+	// pull from iterator
+	//--------------------------------------------------------------------------
+
+	// try to get a result out of the iterator
+	// NULL is returned if iterator id depleted
+	size_t len = 0;
+	const EdgeIndexKey *edge_key = (EdgeIndexKey *)
+		RediSearch_ResultsIteratorNext(pdata->iter, Index_RSIndex(pdata->idx),
+				&len);
+
+	// depleted
+	if(!edge_key) return NULL;
+
+	//--------------------------------------------------------------------------
+	// set up edge
+	//--------------------------------------------------------------------------
+
+	// get edge
+	Edge *e = &pdata->e;
+
+	e->src_id     = edge_key->src_id;
+	e->dest_id    = edge_key->dest_id;
+	e->relationID = pdata->s->id;
+
+	EntityID edge_id = edge_key->edge_id;
+	bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
+	ASSERT(edge_exists);
+	
+	//--------------------------------------------------------------------------
+	// emit result
+	//--------------------------------------------------------------------------
+
+	if(pdata->yield_score) {
+		double score = RediSearch_ResultsIteratorGetScore(pdata->iter);
+		*pdata->yield_score = SI_DoubleVal(score);
+	}
+
+	if(pdata->yield_relationship) {
+		*pdata->yield_relationship = SI_Edge(e);
+	}
+
+	return pdata->output;
+}
+
+ProcedureResult Proc_FulltextQueryRelationshipFree
+(
+	ProcedureCtx *ctx
+) {
+	// clean up
+	if(!ctx->privateData) return PROCEDURE_OK;
+
+	QueryRelationshipContext *pdata = ctx->privateData;
+
+	array_free(pdata->output);
+
+	if(pdata->iter) RediSearch_ResultsIteratorFree(pdata->iter);
+
+	rm_free(pdata);
+
+	return PROCEDURE_OK;
+}
+
+// procedure invocation function
 ProcedureResult Proc_FulltextQueryRelationshipInvoke
 (
-	ProcedureCtx *ctx,
-	const SIValue *args,
-	const char **yield
+	ProcedureCtx *ctx,    // procedure context
+	const SIValue *args,  // arguments
+	const char **yield    // output names
 ) {
 	if(array_len((SIValue *)args) != 2) return PROCEDURE_ERR;
 	if(!(SI_TYPE(args[0]) & SI_TYPE(args[1]) & T_STRING)) return PROCEDURE_ERR;
@@ -119,10 +147,15 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 	// get full-text index from schema
 	Index idx = GraphContext_GetIndex(gc, relation, NULL, 0, INDEX_FLD_ANY,
 			SCHEMA_EDGE);
-	if(!idx) return PROCEDURE_ERR; // TODO: this should cause an error to be emitted
+
+	if(idx == NULL) {
+		return PROCEDURE_ERR; // TODO: this should cause an error to be emitted
+	}
 
     Schema *s = GraphContext_GetSchema(gc, relation, SCHEMA_EDGE);
-	if(s == NULL) return PROCEDURE_ERR;
+	if(s == NULL) {
+		return PROCEDURE_ERR;
+	}
 
 	ctx->privateData = rm_calloc(1, sizeof(QueryRelationshipContext));
 	QueryRelationshipContext *pdata = ctx->privateData;
