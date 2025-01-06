@@ -38,12 +38,11 @@ include $(MK)/rules
 
 #----------------------------------------------------------------------------------------------
 
-source: $(SRCDIR)/configure
+autoreconf:
+	@echo Running autoreconf
+	$(SHOW)cd $(SRCDIR); autoreconf
 
-.PHONY: source
-
-$(SRCDIR)/configure: $(SRCDIR)/configure.ac
-	$(SHOW)cd $(SRCDIR); ./configure
+.PHONY: autoreconf
 
 clean:
 ifeq ($(ALL),1)
