@@ -5,7 +5,54 @@ ROOT=../..
 include $(ROOT)/deps/readies/mk/main
 
 MK.configure=1
-CONFIGURE_FLAGS.$(OS)=--with-openssl --disable-ldap --without-libpsl --disable-shared --enable-static --disable-manual --disable-docs
+
+CONFIGURE_FLAGS.$(OS)=            \
+	--with-openssl                \
+	--enable-static               \
+	--without-libidn2             \
+	--without-libpsl              \
+	--without-brotli              \
+	--without-librtmp             \
+	--without-winidn              \
+	--without-libgsasl            \
+	--disable-debug               \
+	--disable-curldebug           \
+	--disable-ldap                \
+	--disable-shared              \
+	--disable-manual              \
+	--disable-docs                \
+	--disable-rt                  \
+	--disable-httpsrr             \
+	--disable-threaded-resolver   \
+	--disable-ech                 \
+	--disable-ftp                 \
+	--disable-file                \
+	--disable-ipfs                \
+	--disable-ldap                \
+	--disable-ldaps               \
+	--disable-rtsp                \
+	--disable-proxy               \
+	--disable-dict                \
+	--disable-telnet              \
+	--disable-tftp                \
+	--disable-pop3                \
+	--disable-imap                \
+	--disable-smb                 \
+	--disable-smtp                \
+	--disable-gopher              \
+	--disable-mqtt                \
+	--disable-ca-search           \
+	--disable-windows-unicode     \
+	--disable-sspi                \
+	--disable-kerberos-auth       \
+	--disable-ntlm                \
+	--disable-cookies             \
+	--disable-doh                 \
+	--disable-form-api            \
+	--disable-alt-svc             \
+	--disable-headers-api         \
+	--disable-hsts                \
+	--disable-netrc               \
 
 define HELPTEXT
 make build    # configure and compile
@@ -38,15 +85,6 @@ include $(MK)/defs
 include $(MK)/rules
 
 #----------------------------------------------------------------------------------------------
-# build: bindirs $(TARGET)
-
-# bindirs:
-# 	@echo Creating binary directories
-# 	$(SHOW)mkdir -p $(BINDIR)/lib/.libs
-
-# $(TARGET): autoreconf
-# 	@echo Building libcurl
-# 	$(SHOW)cd $(SRCDIR); $(MAKE)
 
 autoreconf:
 	@echo Running configure
