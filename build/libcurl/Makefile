@@ -88,7 +88,7 @@ include $(MK)/rules
 
 autoreconf:
 	@echo Running configure
-	$(SHOW)cd $(SRCDIR); autoreconf
+	$(SHOW)cd $(SRCDIR); autoreconf -fi
 
 .PHONY: autoreconf
 
