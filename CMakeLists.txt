@@ -17,9 +17,6 @@ file(GLOB_RECURSE SOURCES "src/*.c")
 
 add_library(falkordb SHARED ${SOURCES})
 
-find_library(CoreFoundation_Library CoreFoundation)
-find_library(SystemConfiguration_Library SystemConfiguration)
-
 include_directories(
 	${root}/src
 	${root}
