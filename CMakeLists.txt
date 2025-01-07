@@ -27,6 +27,7 @@ include_directories(
 	${root}/deps/oniguruma
 	${root}/deps/RediSearch/src
 	${root}/deps/GraphBLAS/Include
+	${root}/deps/libcurl/include/curl
 	${root}/deps/libcypher-parser/lib/src
 	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
 

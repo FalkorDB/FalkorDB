@@ -4,12 +4,12 @@
  */
 
 #include "RG.h"
+#include "curl.h"
 #include "curl_session.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 
 #include <pthread.h>
-#include <curl/curl.h>
 
 // curl download session
 struct Opaque_CurlSession {
