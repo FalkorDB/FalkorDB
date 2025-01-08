@@ -42,6 +42,7 @@ void Proc_Register() {
 	// Register FullText Search generator.
 	_procRegister("db.idx.fulltext.drop", Proc_FulltextDropIdxGen);
 	_procRegister("db.idx.fulltext.queryNodes", Proc_FulltextQueryNodeGen);
+	_procRegister("db.idx.fulltext.queryRelationships", Proc_FulltextQueryRelationshipGen);
 	_procRegister("db.idx.fulltext.createNodeIndex", Proc_FulltextCreateNodeIdxGen);
 
 	// register vector search generator

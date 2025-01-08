@@ -4,7 +4,6 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "proc_fulltext_query.h"
 #include "RG.h"
 #include "../value.h"
 #include "../util/arr.h"
@@ -12,6 +11,7 @@
 #include "../index/index.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
+#include "proc_fulltext_query.h"
 #include "../graph/graphcontext.h"
 
 //------------------------------------------------------------------------------
