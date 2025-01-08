@@ -33,9 +33,9 @@
 #include "arithmetic/arithmetic_expression.h"
 
 // minimal supported Redis version
-#define MIN_REDIS_VERION_MAJOR 7
-#define MIN_REDIS_VERION_MINOR 2
-#define MIN_REDIS_VERION_PATCH 0
+#define MIN_REDIS_VERSION_MAJOR 7
+#define MIN_REDIS_VERSION_MINOR 2
+#define MIN_REDIS_VERSION_PATCH 0
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
@@ -120,12 +120,12 @@ int RedisModule_OnLoad
 	});
 
 	// validate minimum redis-server version
-	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERION_MAJOR,
-				MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH)) {
+	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERSION_MAJOR,
+				MIN_REDIS_VERSION_MINOR, MIN_REDIS_VERSION_PATCH)) {
 		RedisModule_Log(ctx, "warning",
 				"FalkorDB requires redis-server version %d.%d.%d and up",
-				MIN_REDIS_VERION_MAJOR, MIN_REDIS_VERION_MINOR,
-				MIN_REDIS_VERION_PATCH);
+				MIN_REDIS_VERSION_MAJOR, MIN_REDIS_VERSION_MINOR,
+				MIN_REDIS_VERSION_PATCH);
 		return REDISMODULE_ERR;
 	}
 
