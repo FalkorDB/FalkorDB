@@ -9,6 +9,7 @@ MK.configure=1
 CONFIGURE_FLAGS.$(OS)=            \
 	--with-openssl                \
 	--enable-static               \
+	--without-zlib                \
 	--without-libidn2             \
 	--without-libpsl              \
 	--without-brotli              \
