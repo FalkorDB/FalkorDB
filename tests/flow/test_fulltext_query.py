@@ -29,7 +29,7 @@ class testFulltextIndexQuery():
         n5 = Node(labels="L5", properties={"v": 'there are seven words in this sentence'})
 
         # introduce a number of relationships of type E and E1
-        e0 = Edge(n5, "E", n0, properties={"name": "just another nice relationship"})
+        e0 = Edge(n5, "E", n0, properties={"name": "just another nice relationship", "relation_id": "e0"})
         e1 = Edge(n5, "E", n0, properties={"name": "a nice place to be"})
         e2 = Edge(n5, "E1", n0, properties={"name": "don't find me please, I'm not full text indexed"})
 
@@ -123,10 +123,32 @@ class testFulltextIndexQuery():
     def test03_fulltext_edge_query_with_crud(self):
         # this test make sure the index returns valid results
         # after performing CRUD operations on the indexed entities
-        #
-        # 1. deleting an indexed edge
-        # 2. updateing an indexed edge
-        # 3. adding a new indexed edge
-
-        # TODO: implement this test
+              
+        # 1. update an indexed edge (relation_id:e0), adding the word 'updated' to its name
+        result = self.graph.query("MATCH ()-[e:E {relation_id:'e0'}]-() SET e.name='just another nice relationship that was updated'")
+        # query full text search edge with 'updated'
+        result = self.graph.query("""CALL db.idx.fulltext.queryRelationships('E', 'updated')
+                                  YIELD relationship AS r
+                                  RETURN r.relation_id""")
+        # verify only one correct result
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEquals(result.result_set[0][0], "e0")
+        
+        # 2. adding a new indexed edge
+        self.graph.query(f"MATCH (n:L1), (m:L2) CREATE (n)-[e:E {{name: 'new edge'}}]->(m)")
+        # query full text search edge with 'new'
+        result = self.graph.query("""CALL db.idx.fulltext.queryRelationships('E', 'new')
+                                  YIELD relationship AS r
+                                  RETURN r.name""")
+        # verify only one correct result
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertEquals(result.result_set[0][0], "new edge")
+        
+        # 4. deleting an indexed edge
+        self.graph.query("MATCH ()-[e:E {name:'new edge'}]-() DELETE e")
+        # query full text search edge with 'new'
+        result = self.graph.query("CALL db.idx.fulltext.queryRelationships('E', 'new')")
+        # verify no results
+        self.env.assertEquals(result.result_set, [])
+    
 
