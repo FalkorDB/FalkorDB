@@ -345,7 +345,7 @@ jobs:
 
       - name: Flow tests
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 SLOW=1 flow-tests
 
   cleanup-flow-tests:
     needs: flow-tests
