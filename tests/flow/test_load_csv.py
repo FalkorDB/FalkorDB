@@ -161,6 +161,14 @@ class testLoadLocalCSV():
         self.env.assertEquals(actual['FirstName'], 'roi')
         self.env.assertEquals(actual['Age'], '40')
 
+        # create nodes from empty cell csv
+        q = "LOAD CSV WITH HEADERS FROM $file AS row CREATE (p:Person) SET p = row RETURN p"
+        result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
+        node = result[0][0]
+        self.env.assertEqual(len(node.properties), 2)
+        self.env.assertEquals(node.properties['Age'], '40')
+        self.env.assertEquals(node.properties['FirstName'], 'roi')
+
     def test05_project_csv_rows(self):
         g = self.graph
 
