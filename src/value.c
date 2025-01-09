@@ -517,7 +517,12 @@ SIValue SIValue_Add(const SIValue a, const SIValue b) {
 	if(a.type == T_NULL || b.type == T_NULL) return SI_NullVal();
 	if(a.type == T_ARRAY || b.type == T_ARRAY) return SIValue_ConcatList(a, b);
 	if(a.type == T_STRING || b.type == T_STRING) return SIValue_ConcatString(a, b);
-	if(a.type == T_MAP || b.type == T_MAP) return SIValue_MergeMap(a, b);
+	if(a.type == T_MAP && b.type == T_MAP) return Map_Merge(a, b);
+	if(a.type == T_MAP || b.type == T_MAP) {
+		// one of the operands is a map and the other is not
+		// return NULL
+		return SI_NullVal();
+	}
 	/* Only construct an integer return if both operands are integers. */
 	if(a.type & b.type & T_INT64) {
 		return SI_LongVal(a.longval + b.longval);

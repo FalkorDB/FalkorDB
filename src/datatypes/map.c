@@ -298,6 +298,25 @@ int Map_Compare
 	return 0;
 }
 
+// assumption: a and b are maps
+SIValue Map_Merge
+(
+	const SIValue a,
+	const SIValue b
+) {
+	SIValue result = Map_Clone(a);
+
+	// Merge b into result
+	uint bLen = Map_KeyCount(b);
+	for(uint i = 0; i < bLen; i++) {
+		SIValue key, value;
+		Map_GetIdx(b, i, &key, &value);
+		Map_Add(&result, key, value);
+	}
+
+	return result;
+}
+
 // this method referenced by Java ArrayList.hashCode() method, which takes
 // into account the hashing of nested values
 XXH64_hash_t Map_HashCode
