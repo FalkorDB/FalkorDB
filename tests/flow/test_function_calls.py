@@ -2782,7 +2782,3 @@ class testFunctionCallsFlow(FlowTestsBase):
         for q in queries_with_errors:
             self.expect_error(q, err_msg)
 
-    def test95_merge_map(self):
-        query = """RETURN {name: 'John', age: 30} + {age: 40, city: 'New York'}"""
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], {'name': 'John', 'age': 40, 'city': 'New York'})
