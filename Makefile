@@ -274,15 +274,15 @@ libcurl: $(LIBCURL)
 
 $(LIBCURL):
 	@echo Building $@ ...
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl autoreconf
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl autoreconf DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcurl DEBUG=$(DEPS_DEBUG)
 
 libcsv: $(LIBCSV)
 
 $(LIBCSV):
 	@echo Building $@ ...
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv autoreconf
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv 
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv autoreconf DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv DEBUG=$(DEPS_DEBUG)
 
 utf8proc: $(UTF8PROC)
 
