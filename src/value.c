@@ -498,21 +498,6 @@ static SIValue SIValue_ConcatList(const SIValue a, const SIValue b) {
 	return resultArray;
 }
 
-// assumption: a and b are maps
-static SIValue SIValue_MergeMap(const SIValue a, const SIValue b) {
-	SIValue result = Map_Clone(a);
-
-	// Merge b into result
-	uint bLen = Map_KeyCount(b);
-	for(uint i = 0; i < bLen; i++) {
-		SIValue key, value;
-		Map_GetIdx(b, i, &key, &value);
-		Map_Add(&result, key, value);
-	}
-
-	return result;
-}
-
 SIValue SIValue_Add(const SIValue a, const SIValue b) {
 	if(a.type == T_NULL || b.type == T_NULL) return SI_NullVal();
 	if(a.type == T_ARRAY || b.type == T_ARRAY) return SIValue_ConcatList(a, b);

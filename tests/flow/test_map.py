@@ -224,3 +224,7 @@ class testMap(FlowTestsBase):
         query = """RETURN {name: 'John', age: 30} + {age: 40, city: 'New York'}"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], {'name': 'John', 'age': 40, 'city': 'New York'})
+
+        query = """RETURN {name: 'John', age: 30} + 1"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)

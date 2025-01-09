@@ -298,12 +298,16 @@ int Map_Compare
 	return 0;
 }
 
-// assumption: a and b are maps
+// merge two maps
+// in case of key collision, the value from 'b' is used
 SIValue Map_Merge
 (
 	const SIValue a,
 	const SIValue b
 ) {
+	ASSERT(SI_TYPE(a) & T_MAP);
+	ASSERT(SI_TYPE(b) & T_MAP);
+
 	SIValue result = Map_Clone(a);
 
 	// Merge b into result
