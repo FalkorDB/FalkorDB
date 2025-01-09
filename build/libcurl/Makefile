@@ -16,6 +16,8 @@ CONFIGURE_FLAGS.$(OS)=            \
 	--without-librtmp             \
 	--without-winidn              \
 	--without-libgsasl            \
+	--without-nghttp2             \
+	--disable-zlib                \
 	--disable-debug               \
 	--disable-curldebug           \
 	--disable-ldap                \
