@@ -498,7 +498,7 @@ static SIValue SIValue_ConcatList(const SIValue a, const SIValue b) {
 	return resultArray;
 }
 
-// assumption: either a or b is a map
+// assumption: a and b are maps
 static SIValue SIValue_MergeMap(const SIValue a, const SIValue b) {
 	SIValue result = Map_Clone(a);
 
