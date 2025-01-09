@@ -218,7 +218,7 @@ OpBase *NewLoadCSVOp
 
 	op->exp          = exp;
 	op->uri          = SI_NullVal();
-	op->alias        = strdup(alias);
+	op->alias        = rm_strdup(alias);
 	op->with_headers = with_headers;
 
 	// set our Op operations
