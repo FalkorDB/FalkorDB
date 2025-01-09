@@ -46,14 +46,14 @@ static void _array_cell_cb
 ) {
 	CSVReader reader = (CSVReader)pdata;
 
-	// empty cell is treated as an empty string
 	if(unlikely(n == 0)) {
+		// empty cell is treated as NULL
 		ASSERT(data == NULL);
-		data = empty_string;
+		SIArray_Append(&reader->row, SI_NullVal());
+	} else {
+		// append cell to current row
+		SIArray_Append(&reader->row, SI_ConstStringVal((char*)data));
 	}
-
-	// append cell to current row
-	SIArray_Append(&reader->row, SI_ConstStringVal((char*)data));
 }
 
 // handle row by accumulating the row into an array of rows
@@ -84,7 +84,8 @@ static void _map_cell_cb
 	// empty cell is treated as an empty string
 	if(unlikely(n == 0)) {
 		ASSERT(data == NULL);
-		data = empty_string;
+		// do not add key to map for missing cells
+		return;
 	}
 
 	// append cell to current map

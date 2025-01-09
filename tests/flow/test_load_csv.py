@@ -152,13 +152,13 @@ class testLoadLocalCSV():
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[1][0] # skip header row
         self.env.assertIn("roi", actual)
-        self.env.assertIn("", actual)
+        self.env.assertIn(None, actual)
 
         q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[0][0] # skip header row
+        self.env.assertNotIn('LastName', actual)
         self.env.assertEquals(actual['FirstName'], 'roi')
-        self.env.assertEquals(actual['LastName'], '')
         self.env.assertEquals(actual['Age'], '40')
 
     def test05_project_csv_rows(self):
