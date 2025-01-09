@@ -9,7 +9,6 @@
 #include "graph/entities/graph_entity.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
-#include "errors/errors.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
