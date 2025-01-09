@@ -7,6 +7,7 @@
 #include "map.h"
 #include "array.h"
 #include "../util/arr.h"
+#include "errors/errors.h"
 #include "../util/rmalloc.h"
 #include "../util/strutil.h"
 
@@ -296,6 +297,33 @@ int Map_Compare
 
 	// maps are equal
 	return 0;
+}
+
+// merge two maps
+// in case of key collision, the value from 'b' is used
+SIValue Map_Merge
+(
+	const SIValue a,
+	const SIValue b
+) {
+	// in case both operands aren't maps
+	if(! (SI_TYPE(a) & T_MAP && SI_TYPE(b) & T_MAP)) {
+		// raise an error
+		ErrorCtx_RaiseRuntimeException(EMSG_MERGE_MAP_ERROR);
+		return SI_NullVal();
+	}
+
+	SIValue result = Map_Clone(a);
+
+	// merge b into result
+	uint bLen = Map_KeyCount(b);
+	for(uint i = 0; i < bLen; i++) {
+		SIValue key, value;
+		Map_GetIdx(b, i, &key, &value);
+		Map_Add(&result, key, value);
+	}
+
+	return result;
 }
 
 // this method referenced by Java ArrayList.hashCode() method, which takes
