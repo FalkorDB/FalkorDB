@@ -226,5 +226,7 @@ class testMap(FlowTestsBase):
         self.env.assertEquals(actual_result.result_set[0][0], {'name': 'John', 'age': 40, 'city': 'New York'})
 
         query = """RETURN {name: 'John', age: 30} + 1"""
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], None)
+        try:
+            self.graph.query(query)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("Cannot merge a map with a non-map value", str(e))

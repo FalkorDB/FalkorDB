@@ -9,6 +9,7 @@
 #include "graph/entities/graph_entity.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
+#include "errors/errors.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -504,6 +505,7 @@ SIValue SIValue_Add(const SIValue a, const SIValue b) {
 	if(a.type == T_STRING || b.type == T_STRING) return SIValue_ConcatString(a, b);
 	if(a.type == T_MAP && b.type == T_MAP) return Map_Merge(a, b);
 	if(a.type == T_MAP || b.type == T_MAP) {
+		ErrorCtx_RaiseRuntimeException(EMSG_MERGE_MAP_ERROR);
 		// one of the operands is a map and the other is not
 		// return NULL
 		return SI_NullVal();
