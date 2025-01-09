@@ -505,9 +505,9 @@ SIValue SIValue_Add(const SIValue a, const SIValue b) {
 	if(a.type == T_STRING || b.type == T_STRING) return SIValue_ConcatString(a, b);
 	if(a.type == T_MAP && b.type == T_MAP) return Map_Merge(a, b);
 	if(a.type == T_MAP || b.type == T_MAP) {
-		ErrorCtx_RaiseRuntimeException(EMSG_MERGE_MAP_ERROR);
 		// one of the operands is a map and the other is not
-		// return NULL
+		// raise an error
+		ErrorCtx_RaiseRuntimeException(EMSG_MERGE_MAP_ERROR);
 		return SI_NullVal();
 	}
 	/* Only construct an integer return if both operands are integers. */
