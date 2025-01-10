@@ -56,7 +56,7 @@ lists_from_env(GRAPHBLAS LIBXXHASH LIBCSV RAX LIBCYPHER_PARSER REDISEARCH_LIBS U
 set(FALKORDB_LIBS ${FalkorDBRS} ${GRAPHBLAS} ${LIBXXHASH} ${LIBCSV} ${RAX} ${LIBCYPHER_PARSER} ${REDISEARCH_LIBS} ${UTF8PROC} ${ONIGURUMA} OpenSSL::SSL)
 
 target_link_options(falkordb PRIVATE ${CMAKE_LD_FLAGS_LIST} ${CMAKE_SO_LD_FLAGS_LIST})
-target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS} ${CoreFoundation_Library} ${SystemConfiguration_Library})
+target_link_libraries(falkordb PRIVATE ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 
 extract_debug_symbols(falkordb)
 
