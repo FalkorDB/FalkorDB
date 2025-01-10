@@ -68,9 +68,9 @@ static void _Print_Config
 ) {
 	// TODO: consider adding Config_Print
 
-	int ompThreadCount;
+	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
-	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %d", ompThreadCount);
+	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %llu", ompThreadCount);
 
 	bool cmd_info_enabled = false;
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {

@@ -266,8 +266,8 @@ libcsv: $(LIBCSV)
 
 $(LIBCSV):
 	@echo Building $@ ...
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv autoreconf
-	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv 
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv autoreconf DEBUG=$(DEPS_DEBUG)
+	$(SHOW)$(MAKE) --no-print-directory -C $(ROOT)/build/libcsv DEBUG=$(DEPS_DEBUG)
 
 utf8proc: $(UTF8PROC)
 
