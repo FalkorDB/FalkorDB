@@ -36,9 +36,9 @@ static bool _computeURI
 		return false;
 	}
 
-	// supported URIs: file:// & https://
+	// supported URIs: file://
 	const char *csv_uri = op->uri.stringval;
-	static const char* URIS[2] = {"file://", "https://"};
+	static const char* URIS[1] = {"file://"};
 
 	// make sure uri is supported
 	for(int i = 0; i < 2; i++) {
@@ -51,36 +51,6 @@ static bool _computeURI
 	// unsupported CSV URI
 	ErrorCtx_RaiseRuntimeException(EMSG_UNSUPPORTED_CSV_URI);
 	return false;
-}
-
-// initialize CSV reader from https URI
-static FILE *_getRemoteURIReadStream
-(
-	OpLoadCSV *op  // load CSV operation
-) {
-	int pipefd[2];  // pipe ends
-	const char *uri = op->uri.stringval;
-
-	// create pipe from which to read remote file
-	if(pipe(pipefd) == -1) {
-		ErrorCtx_RaiseRuntimeException("Error creating pipe");
-		return NULL;
-	}
-
-	// download remote file
-	// file content will be written to pipe
-	FILE *f = fdopen(pipefd[1], "wb");
-	op->curl = Curl_Download(uri, &f);
-	if(op->curl == NULL) {
-		// close pipe read end, write-end closed by Curl_Download
-		close(pipefd[0]);
-
-		ErrorCtx_RaiseRuntimeException("Error downloading file: %s", uri);
-		return NULL;
-	}
-
-	// return file descriptor from read end of pipe
-	return fdopen(pipefd[0], "r");
 }
 
 // validate that the user's specified path remains within
@@ -152,11 +122,6 @@ static bool _Init_CSVReader
 ) {
 	ASSERT(op != NULL);
 
-	// free old downloader & reader
-	if(op->curl != NULL) {
-		Curl_Free(&op->curl);
-	}
-
 	if(op->reader != NULL) {
 		CSVReader_Free(op->reader);
 	}
@@ -168,8 +133,6 @@ static bool _Init_CSVReader
 	// get CSV URI read stream
 	if(strncmp(uri, "file://", 7) == 0) {
 		stream = _getLocalURIReadStream(op);
-	} else {
-		stream = _getRemoteURIReadStream(op);
 	}
 
 	if(stream == NULL) {
@@ -385,13 +348,6 @@ static OpResult LoadCSVReset (
 		op->child_record = NULL;
 	}
 
-	if(op->curl != NULL) {
-		// aborts in-progress download
-		// must be called before csv reader is freed
-		// due to pipe read end being closed before write end
-		Curl_Free(&op->curl);
-	}
-
 	if(op->reader != NULL) {
 		CSVReader_Free(op->reader);
 		op->reader = NULL;
@@ -411,13 +367,6 @@ static void LoadCSVFree
 
 	SIValue_Free(op->uri);
 
-	if(op->curl != NULL) {
-		// aborts in-progress download
-		// must be called before csv reader is freed
-		// due to pipe read end being closed before write end
-		Curl_Free(&op->curl);
-	}
-
 	if(op->exp != NULL) {
 		AR_EXP_Free(op->exp);
 		op->exp = NULL;
@@ -434,9 +383,6 @@ static void LoadCSVFree
 	}
 
 	if(op->reader != NULL) {
-		// must be called after curl_free
-		ASSERT(op->curl == NULL);
-
 		CSVReader_Free(op->reader);
 		op->reader = NULL;
 	}
