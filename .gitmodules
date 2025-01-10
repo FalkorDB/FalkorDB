@@ -19,6 +19,3 @@
 [submodule "deps/libcsv"]
 	path = deps/libcsv
 	url = https://github.com/rgamble/libcsv.git
-[submodule "deps/libcurl"]
-	path = deps/libcurl
-	url = https://github.com/curl/curl.git
