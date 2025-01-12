@@ -30,6 +30,6 @@ SIValue CSVReader_GetRow
 // free CSV reader
 void CSVReader_Free
 (
-	CSVReader reader  // CSV reader to free
+	CSVReader *reader  // CSV reader to free
 );
 

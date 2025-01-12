@@ -13,10 +13,10 @@
 
 // curl download session
 struct Opaque_CurlSession {
-	CURL *handle;      // curl handle
-	FILE *stream;      // output stream
-	bool abort;        // download abort flag
-	pthread_t thread;  // download thread
+	CURL *handle;         // curl handle
+	FILE *stream;         // output stream
+	volatile bool abort;  // download abort flag
+	pthread_t thread;     // download thread
 };
 
 // aborts the download
@@ -62,18 +62,17 @@ static void *_curl_thread
 
 	// start curl download
 	CURLcode res = curl_easy_perform(session->handle);
-	if(res != CURLE_OK) {
-		if(!session->abort) {
-			// if download was not aborted, raise an exception
-			ErrorCtx_SetError("Error downloading file, error_code: %d", res);
-		}
-	}
 
 	// close write end of pipe
 	fclose(session->stream);
 	session->stream = NULL;
 
-	return NULL;
+	if(res != CURLE_OK && !session->abort) {
+		// if download was not aborted, set thread exit code to 'res'
+		return (void *)(intptr_t)res;
+	}
+
+	return (void*)(intptr_t)CURLE_OK;
 }
 
 // asynchonously download a file from the internet
@@ -146,8 +145,16 @@ void Curl_Free
 	}
 
 	// wait for download thread to exit, OK if thread already existed
-	pthread_join(_session->thread, NULL);
-	ASSERT(_session->stream == NULL);
+	if(_session->thread != 0) {
+		void *thread_result;
+		pthread_join(_session->thread, &thread_result);
+		ASSERT(_session->stream == NULL);
+
+		intptr_t result = (intptr_t)thread_result;
+		if(result != CURLE_OK) {
+			ErrorCtx_SetError("Error downloading file, error_code: %d", result);
+		}
+	}
 
 	// free curl handle
 	if(_session->handle != NULL) {

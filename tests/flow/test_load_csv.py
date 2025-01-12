@@ -33,6 +33,8 @@ MALFORMED_CSV_DATA                      = [["Roi",  "Lipman"],
 EMPTY_CELL_CSV                          = "empty_cell.csv"
 EMPTY_CELL_CSV_HEADER                   = ["FirstName", "LastName", "Age"]
 
+EMPTY_COLUMN_CSV                        = "empty_column.csv"
+
 IMPORT_DIR = None
 
 # write a CSV file using 'name' as the file name
@@ -51,33 +53,33 @@ def create_csv_file(name, header, data, delimiter=','):
 # create an empty CSV file
 def create_empty_csv():
     name   = EMPTY_CSV
-    DATA   = EMPTY_CSV_DATA
-    HEADER = EMPTY_CSV_HEADER
-    create_csv_file(name, HEADER, DATA)
+    data   = EMPTY_CSV_DATA
+    header = EMPTY_CSV_HEADER
+    create_csv_file(name, header, data)
 
 # create a short CSV file with a header row
 def create_short_csv_with_header():
     name   = SHORT_CSV_WITH_HEADERS
-    DATA   = SHORT_CSV_WITH_HEADERS_DATA
-    HEADER = SHORT_CSV_WITH_HEADERS_HEADER
+    data   = SHORT_CSV_WITH_HEADERS_DATA
+    header = SHORT_CSV_WITH_HEADERS_HEADER
 
-    create_csv_file(name, HEADER, DATA)
+    create_csv_file(name, header, data)
 
 # create a short CSV file without a header row
 def create_short_csv_without_header():
     name   = SHORT_CSV_WITHOUT_HEADERS 
-    DATA   = SHORT_CSV_WITHOUT_HEADERS_DATA
-    HEADER = SHORT_CSV_WITHOUT_HEADERS_HEADER
+    data   = SHORT_CSV_WITHOUT_HEADERS_DATA
+    header = SHORT_CSV_WITHOUT_HEADERS_HEADER
 
-    create_csv_file(name, HEADER, DATA)
+    create_csv_file(name, header, data)
 
 # create a malformed CSV file
 def create_malformed_csv():
     name   = MALFORMED_CSV
-    DATA   = MALFORMED_CSV_DATA
-    HEADER = MALFORMED_CSV_HEADER
+    data   = MALFORMED_CSV_DATA
+    header = MALFORMED_CSV_HEADER
 
-    create_csv_file(name, HEADER, DATA)
+    create_csv_file(name, header, data)
 
 # create a CSV with an empty cell
 def create_empty_cell_csv():
@@ -90,6 +92,18 @@ def create_empty_cell_csv():
         header = ",".join(EMPTY_CELL_CSV_HEADER)
         f.write(f"{header}\n")
         f.write("roi,,40\n")
+
+# create a CSV with an empty column
+def create_empty_column_csv():
+    # create any missing directories in the path
+    name = EMPTY_COLUMN_CSV
+    path = IMPORT_DIR + name
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    with open(path, 'w') as f:
+        header = "fist_column,,third_column"
+        f.write(f"{header}\n")
+        f.write("A,B,C\nD,E,F")
 
 class testLoadLocalCSV():
     def __init__(self):
@@ -104,6 +118,7 @@ class testLoadLocalCSV():
         create_empty_csv()
         create_malformed_csv()
         create_empty_cell_csv()
+        create_empty_column_csv()
         create_short_csv_with_header()
         create_short_csv_without_header()
  
@@ -130,7 +145,7 @@ class testLoadLocalCSV():
                 continue
 
     def test02_none_existing_csv_file(self):
-        q = "LOAD CSV FROM 'none_existing.csv' AS row RETURN row"
+        q = "LOAD CSV FROM 'file://none_existing.csv' AS row RETURN row"
         try:
             self.graph.query(q)
             self.env.assertFalse(True)
@@ -138,16 +153,31 @@ class testLoadLocalCSV():
             # failed to open CSV file: a
             pass
 
-    def _test03_malformed_csv(self):
-        q = "LOAD CSV FROM $file AS row RETURN row"
-        try:
-            self.graph.query(q, {'file': 'file://' + MALFORMED_CSV})
-            self.env.assertFalse(True)
-        except Exception as e:
-            # failed to process malformed csv
-            pass
 
-    def test04_empty_cell_csv(self):
+    def test03_none_supported_uri(self):
+        URIS = ["http", "ftp", "ssh", "telnet"]
+        for uri in URIS:
+            q = f"LOAD CSV FROM '{uri}://none_existing.csv' AS row RETURN row"
+            try:
+                self.graph.query(q)
+                self.env.assertFalse(True)
+            except Exception as e:
+                # failed to open CSV file: a
+                pass
+
+    def test04_malformed_csv(self):
+        queries = ["LOAD CSV FROM $file AS row RETURN row",
+                   "LOAD CSV WITH HEADERS FROM $file AS row RETURN row"]
+
+        for q in queries:
+            try:
+                self.graph.query(q, {'file': 'file://' + MALFORMED_CSV})
+                self.env.assertFalse(True)
+            except Exception as e:
+                # failed to process malformed csv
+                pass
+
+    def test05_empty_cell_csv(self):
         q = "LOAD CSV FROM $file AS row RETURN row ORDER BY row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
         actual = result[1][0] # skip header row
@@ -156,7 +186,7 @@ class testLoadLocalCSV():
 
         q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row"
         result = self.graph.query(q, {'file': 'file://' + EMPTY_CELL_CSV}).result_set
-        actual = result[0][0] # skip header row
+        actual = result[0][0]
         self.env.assertNotIn('LastName', actual)
         self.env.assertEquals(actual['FirstName'], 'roi')
         self.env.assertEquals(actual['Age'], '40')
@@ -169,7 +199,16 @@ class testLoadLocalCSV():
         self.env.assertEquals(node.properties['Age'], '40')
         self.env.assertEquals(node.properties['FirstName'], 'roi')
 
-    def test05_project_csv_rows(self):
+    def test06_empty_column_csv(self):
+        q = "LOAD CSV WITH HEADERS FROM $file AS row RETURN row ORDER BY row"
+        try:
+            self.graph.query(q, {'file': 'file://' + EMPTY_COLUMN_CSV})
+            # CSV empty column name
+            self.env.assertFalse("we should have failed" and False)
+        except Exception:
+            pass
+
+    def test07_project_csv_rows(self):
         g = self.graph
 
         # project all rows in a CSV file
@@ -192,7 +231,7 @@ class testLoadLocalCSV():
                 # validate result
                 self.env.assertEquals(row[0], expected[i])
 
-    def test06_project_csv_as_map(self):
+    def test08_project_csv_as_map(self):
         g = self.graph
 
         # project all rows in a CSV file
@@ -222,7 +261,7 @@ class testLoadLocalCSV():
             result = g.query(q, {'file': 'file://' + file}).result_set
             self.env.assertEquals(result, expected)
 
-    def test07_load_csv_multiple_times(self):
+    def test09_load_csv_multiple_times(self):
         # project the same CSV multiple times
         q = """UNWIND range(0, 3) AS x
                LOAD CSV FROM $file AS row
@@ -238,7 +277,7 @@ class testLoadLocalCSV():
 
         self.env.assertEquals(result, expected)
 
-    def test08_load_multiple_files(self):
+    def test10_load_multiple_files(self):
         g = self.graph
 
         # project multiple CSV files

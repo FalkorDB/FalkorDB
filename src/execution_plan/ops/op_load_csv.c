@@ -43,7 +43,7 @@ static bool _computeURI
 	// make sure uri is supported
 	for(int i = 0; i < 2; i++) {
 		const char *uri = URIS[i];
-		if(strncmp(csv_uri, uri, strlen(uri)) == 0) {
+		if(strncasecmp(csv_uri, uri, strlen(uri)) == 0) {
 			return true;
 		}
 	}
@@ -158,7 +158,7 @@ static bool _Init_CSVReader
 	}
 
 	if(op->reader != NULL) {
-		CSVReader_Free(op->reader);
+		CSVReader_Free(&op->reader);
 	}
 
 	// initialize a new CSV reader
@@ -166,7 +166,7 @@ static bool _Init_CSVReader
 	const char *uri = op->uri.stringval;
 
 	// get CSV URI read stream
-	if(strncmp(uri, "file://", 7) == 0) {
+	if(strncasecmp(uri, "file://", 7) == 0) {
 		stream = _getLocalURIReadStream(op);
 	} else {
 		stream = _getRemoteURIReadStream(op);
@@ -241,6 +241,8 @@ static OpResult LoadCSVInit
 
 	// update consume function in case operation has a child
 	if(OpBase_ChildCount(opBase) > 0) {
+		ASSERT(OpBase_ChildCount(opBase) == 1);
+
 		op->child = OpBase_GetChild(opBase, 0);
 		OpBase_UpdateConsume(opBase, LoadCSVConsumeFromChild);	
 
@@ -393,8 +395,7 @@ static OpResult LoadCSVReset (
 	}
 
 	if(op->reader != NULL) {
-		CSVReader_Free(op->reader);
-		op->reader = NULL;
+		CSVReader_Free(&op->reader);
 	}
 
 	return OP_OK;
@@ -437,8 +438,7 @@ static void LoadCSVFree
 		// must be called after curl_free
 		ASSERT(op->curl == NULL);
 
-		CSVReader_Free(op->reader);
-		op->reader = NULL;
+		CSVReader_Free(&op->reader);
 	}
 }
 
