@@ -124,9 +124,7 @@ static FILE *_getLocalURIReadStream
 
 	// read import folder path from configuration
 	const char *import_folder = NULL;
-	if(!Config_Option_get(Config_IMPORT_FOLDER, &import_folder)) {
-		return NULL;
-	}
+	Config_Option_get(Config_IMPORT_FOLDER, &import_folder);
 
     // construct the full path
     snprintf(full_path, sizeof(full_path), "%s%s", import_folder, uri);
@@ -174,7 +172,7 @@ static bool _Init_CSVReader
 
 	if(stream == NULL) {
 		ErrorCtx_RaiseRuntimeException("Error opening CSV URI: %s", uri);
-		return NULL;
+		return false;
 	}
 
 	op->reader = CSVReader_New(stream, op->with_headers, ',');

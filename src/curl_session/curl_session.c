@@ -152,7 +152,7 @@ void Curl_Free
 
 		intptr_t result = (intptr_t)thread_result;
 		if(result != CURLE_OK) {
-			ErrorCtx_SetError("Error downloading file, error_code: %d", result);
+			ErrorCtx_SetError("Error downloading file, error_code: %ld", result);
 		}
 	}
 
