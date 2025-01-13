@@ -32,7 +32,7 @@ static bool _computeURI
 
 	// check uri type
 	if(SI_TYPE(op->uri) != T_STRING) {
-		ErrorCtx_RaiseRuntimeException(EMSG_INVALID_CSV_URI);
+		ErrorCtx_SetError(EMSG_INVALID_CSV_URI);
 		return false;
 	}
 
@@ -49,7 +49,7 @@ static bool _computeURI
 	}
 
 	// unsupported CSV URI
-	ErrorCtx_RaiseRuntimeException(EMSG_UNSUPPORTED_CSV_URI);
+	ErrorCtx_SetError(EMSG_UNSUPPORTED_CSV_URI);
 	return false;
 }
 
@@ -177,13 +177,7 @@ static bool _Init_CSVReader
 
 	op->reader = CSVReader_New(stream, op->with_headers, ',');
 
-	// raise exception if we've failed to initialize a new CSV reader
-	if(op->reader == NULL) {
-		ErrorCtx_RaiseRuntimeException(EMSG_FAILED_TO_LOAD_CSV, uri);
-		return false;
-	}
-
-	return true;
+	return (op->reader != NULL);
 }
 
 // get a single CSV row

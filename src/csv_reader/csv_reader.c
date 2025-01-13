@@ -232,8 +232,8 @@ CSVReader CSVReader_New
 		reader->step    = 1;  // read one byte at a time when processing header
 
 		if(!_read_header(reader)) {
-			ErrorCtx_RaiseRuntimeException("Failed reading CSV header row");
 			CSVReader_Free(&reader);
+			ErrorCtx_RaiseRuntimeException("Failed reading CSV header row");
 			return NULL;
 		}
 	} else {
