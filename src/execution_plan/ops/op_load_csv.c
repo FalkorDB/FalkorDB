@@ -255,6 +255,7 @@ static OpResult LoadCSVInit
 		// failed to evaluate CSV URI
 		// update consume function
 		OpBase_UpdateConsume(opBase, LoadCSVConsumeDepleted);
+		return OP_ERR;
 	}
 
 	if(!_Init_CSVReader(op)) {
