@@ -28,7 +28,7 @@ env:
 jobs:
   release:
     # Only run this job if the workflow_run event is successful or if the event is not a workflow_run
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' || github.event_name != 'workflow_run' }}
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name != 'workflow_run' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
