@@ -158,12 +158,12 @@ int RedisModule_OnLoad
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPools_ReadersCount());
 
-	int ompThreadCount;
+	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
 	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
-				"Failed to set OpenMP thread count to %d", ompThreadCount);
+				"Failed to set OpenMP thread count to %llu", ompThreadCount);
 		return REDISMODULE_ERR;
 	}
 
