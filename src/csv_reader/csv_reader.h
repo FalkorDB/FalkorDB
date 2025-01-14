@@ -12,9 +12,9 @@ typedef struct Opaque_CSVReader *CSVReader;
 // create a new CSV reader
 CSVReader CSVReader_New
 (
-    const char *file_name,  // URI to CSV
-    bool has_headers,       // first row is a header row
-    char delimiter          // column delimiter character
+	FILE *stream,      // CSV stream handle
+	bool has_headers,  // first row is a header row
+	char delimiter     // column delimiter character
 );
 
 // extract the current row
@@ -30,6 +30,6 @@ SIValue CSVReader_GetRow
 // free CSV reader
 void CSVReader_Free
 (
-	CSVReader reader  // CSV reader to free
+	CSVReader *reader  // CSV reader to free
 );
 

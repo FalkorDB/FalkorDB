@@ -13,28 +13,32 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define DEFAULT_STEP 4096
+
 typedef void (*field_cb)  (void *data, size_t n, void *pdata);
 typedef void (*record_cb) (int t, void *pdata);
 
+static char* empty_string = "";
+
 struct Opaque_CSVReader {
-	FILE *file;                // CSV file handle
-	struct csv_parser parser;  // CSV parser
-	char delimiter;            // CSV delimiter
-	SIValue row;               // parsed row
-	SIValue *rows;             // parsed rows
-	bool reached_eof;          // processed entire file
-	field_cb cell_cb;          // function called for each cell
-	record_cb row_cb;          // function called for each row
-	SIValue *columns;          // CSV columns
-	int col_idx;               // current processed column idx
-	int step;                  // number of bytes to read in each call to fread
-	char buffer[1024];         // input buffer
+	FILE *stream;               // CSV stream handle
+	struct csv_parser parser;   // CSV parser
+	char delimiter;             // CSV delimiter
+	SIValue row;                // parsed row
+	SIValue *rows;              // parsed rows
+	bool reached_eof;           // processed entire stream
+	field_cb cell_cb;           // function called for each cell
+	record_cb row_cb;           // function called for each row
+	SIValue *columns;           // CSV columns
+	int col_idx;                // current processed column idx
+	int col_count;              // number of columns in the last row
+	int step;                   // number of bytes to read in each call to fread
+	char buffer[DEFAULT_STEP];  // input buffer
 };
 
 //------------------------------------------------------------------------------
 // cell & row callbacks
 //------------------------------------------------------------------------------
-
 
 // handle cell by adding it to an array
 static void _array_cell_cb
@@ -45,8 +49,14 @@ static void _array_cell_cb
 ) {
 	CSVReader reader = (CSVReader)pdata;
 
-	// append cell to current row
-	SIArray_Append(&reader->row, SI_ConstStringVal((char*)data));
+	if(unlikely(n == 0)) {
+		// empty cell is treated as NULL
+		ASSERT(data == NULL);
+		SIArray_Append(&reader->row, SI_NullVal());
+	} else {
+		// append cell to current row
+		SIArray_Append(&reader->row, SI_ConstStringVal((char*)data));
+	}
 }
 
 // handle row by accumulating the row into an array of rows
@@ -56,6 +66,24 @@ static void _array_row_cb
     void *pdata  // original buffer
 ) {
 	CSVReader reader = (CSVReader)pdata;
+
+	//--------------------------------------------------------------------------
+	// verify that this new row has the same length as the previous row
+	//--------------------------------------------------------------------------
+
+	// on first row set column count
+	if(unlikely(reader->col_count == -1)) {
+		reader->col_count = SIArray_Length(reader->row);
+	}
+
+	if(unlikely(SIArray_Length(reader->row) != reader->col_count)) {
+		ErrorCtx_SetError("CSV row of unexpected length");
+
+		// adding NULL to the rows array will cause our reader to stop
+		// pulling additional rows
+		array_append(reader->rows, SI_NullVal());
+		return;
+	}
 
 	// done parsing row
 	// add row to rows array and create a new empty row
@@ -72,8 +100,21 @@ static void _map_cell_cb
 ) {
 	CSVReader reader = (CSVReader)pdata;
 
-	// append cell to current row
+	if(unlikely(reader->col_idx >= reader->col_count)) {
+		ErrorCtx_SetError("CSV row of unexpected length");
+		return;
+	}
+
 	SIValue key = reader->columns[reader->col_idx++];
+
+	// empty cell is treated as an empty string
+	if(unlikely(n == 0)) {
+		ASSERT(data == NULL);
+		// do not add key to map for missing cells
+		return;
+	}
+
+	// append cell to current map
 	Map_Add(&reader->row, key, SI_ConstStringVal((char*)data));
 }
 
@@ -84,6 +125,19 @@ static void _map_row_cb
     void *pdata  // original buffer
 ) {
 	CSVReader reader = (CSVReader)pdata;
+
+	//--------------------------------------------------------------------------
+	// verify that this new row has the same length as the previous row
+	//--------------------------------------------------------------------------
+
+	if(unlikely(reader->col_idx != reader->col_count)) {
+		ErrorCtx_SetError("CSV row of unexpected length");
+
+		// adding NULL to the rows array will cause our reader to stop
+		// pulling additional rows
+		array_append(reader->rows, SI_NullVal());
+		return;
+	}
 
 	// done parsing row
 	// add row to rows array and create a new empty row
@@ -104,6 +158,13 @@ static void _header_cell_cb
 ) {
 	CSVReader reader = (CSVReader)pdata;
 
+	// empty cell is treated as an empty string
+	if(unlikely(n == 0)) {
+		// invalid header
+		ErrorCtx_SetError("CSV empty column name");
+		return;
+	}
+
 	// append cell to current row
 	SIValue col = SI_DuplicateStringVal((char*)data);
 	array_append(reader->columns, col);
@@ -119,13 +180,15 @@ static void _header_row_cb
 	CSVReader reader = (CSVReader)pdata;
 
 	// update step, map cell and row callbacks
-	reader->step    = 1023;
-	reader->row_cb  = _map_row_cb;
-	reader->cell_cb = _map_cell_cb;
+	reader->col_count = array_len(reader->columns);
+	reader->step      = DEFAULT_STEP;
+	reader->row_cb    = _map_row_cb;
+	reader->cell_cb   = _map_cell_cb;
 
 	array_append(reader->rows, SI_NullVal());
 }
 
+// read header row from CSV
 static bool _read_header
 (
 	CSVReader reader
@@ -144,35 +207,26 @@ static bool _read_header
 // create a new CSV reader
 CSVReader CSVReader_New
 (
-    const char *file_name,  // URI to CSV
-    bool has_headers,       // first row is a header row
-    char delimiter          // column delimiter character
+	FILE *stream,      // CSV stream handle
+	bool has_headers,  // first row is a header row
+	char delimiter     // column delimiter character
 ) {
-	ASSERT(file_name != NULL);
-
-	//--------------------------------------------------------------------------
-	// open the file in read mode
-	//--------------------------------------------------------------------------
-
-	FILE *file = fopen(file_name, "r");
-	if (file == NULL) {
-		ErrorCtx_RaiseRuntimeException("Error opening file");
-		return NULL;
-	}
+	ASSERT(stream != NULL);
 
 	CSVReader reader = rm_calloc(1, sizeof(struct Opaque_CSVReader));
 
-	reader->file        = file;
 	reader->rows        = array_new(SIValue, 0);
+	reader->stream      = stream;
 	reader->delimiter   = delimiter;
 	reader->reached_eof = false;
+	reader->col_count   = -1;  // unknown number of columns
 
 	//--------------------------------------------------------------------------
 	// init csv parser
 	//--------------------------------------------------------------------------
 
 	// enables strict mode
-	unsigned char options = CSV_STRICT | CSV_APPEND_NULL | CSV_EMPTY_IS_NULL;  
+	unsigned char options = CSV_STRICT | CSV_APPEND_NULL | CSV_EMPTY_IS_NULL;
 	int res = csv_init(&(reader->parser), options);
 	ASSERT(res == 0);
 
@@ -186,8 +240,8 @@ CSVReader CSVReader_New
 		reader->step    = 1;  // read one byte at a time when processing header
 
 		if(!_read_header(reader)) {
+			CSVReader_Free(&reader);
 			ErrorCtx_RaiseRuntimeException("Failed reading CSV header row");
-			CSVReader_Free(reader);
 			return NULL;
 		}
 	} else {
@@ -196,7 +250,7 @@ CSVReader CSVReader_New
 		reader->row     = SIArray_New(0);
 		reader->row_cb  = _array_row_cb;
 		reader->cell_cb = _array_cell_cb;
-		reader->step    = 1023;
+		reader->step    = DEFAULT_STEP;
 	}
 
 	return reader;
@@ -216,18 +270,18 @@ SIValue CSVReader_GetRow
 	while(!reader->reached_eof && array_len(reader->rows) == 0) {
 		// read up to step bytes from the file
 		size_t bytesRead = fread(reader->buffer, sizeof(char), reader->step,
-				reader->file);
+				reader->stream);
 
 		// check if an error occurred during reading
-		if(ferror(reader->file)) {
-			ErrorCtx_RaiseRuntimeException("Error reading file");
+		if(ferror(reader->stream)) {
+			ErrorCtx_SetError("Error reading file");
 			return SI_NullVal();
 		}
 
 		// no data was read
 		if(bytesRead == 0) {
 			// reached end of file
-			ASSERT(feof(reader->file));
+			ASSERT(feof(reader->stream));
 			reader->reached_eof = true;
 
 			// last call to csv parser
@@ -245,7 +299,7 @@ SIValue CSVReader_GetRow
 
 		// expecting number of bytes processed to equal number of bytes read
 		if(bytesRead != bytesProcessed) {
-			ErrorCtx_RaiseRuntimeException("csv reader error: %s\n",
+			ErrorCtx_SetError("csv reader error: %s\n",
 					csv_strerror(csv_error(&reader->parser)));
 			return SI_NullVal();
 		}
@@ -261,34 +315,30 @@ SIValue CSVReader_GetRow
 // free CSV reader
 void CSVReader_Free
 (
-	CSVReader reader  // CSV reader to free
+	CSVReader *reader  // CSV reader to free
 ) {
-	// close input file
-	fclose(reader->file);
+	ASSERT(reader != NULL && *reader != NULL);
+	CSVReader _reader = *reader;
 
-	int n;
+	// close stream
+	fclose(_reader->stream);
 
-	if(reader->columns != NULL) {
-		n = array_len(reader->columns);
-		for(int i = 0; i < n; i++) {
-			SIValue_Free(reader->columns[i]);
-		}
-		array_free(reader->columns);
+	// free header columns
+	if(_reader->columns != NULL) {
+		array_free_cb(_reader->columns, SIValue_Free);
 	}
-
-	// free remaining rows
-	n = array_len(reader->rows);
-	for(int i = 0; i < n; i++) {
-		SIValue_Free(reader->rows[i]);
-	}
-	array_free(reader->rows);
 
 	// free current parsed row
-	SIValue_Free(reader->row);
+	SIValue_Free(_reader->row);
+
+	// free remaining rows
+	array_free_cb(_reader->rows, SIValue_Free);
 
 	// free csv parser
-	csv_free(&reader->parser);
+	csv_free(&_reader->parser);
 
-	rm_free(reader);
+	rm_free(_reader);
+
+	*reader = NULL;
 }
 

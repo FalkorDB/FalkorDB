@@ -8,5 +8,5 @@ git+https://github.com/renatahodovan/grammarinator.git@7dace5450b7136d641d065f64
 wheel
 rmtest
 psutil
-git+https://github.com/RedisLabsModules/RLTest.git@master
+git+https://github.com/falkordb/RLTest.git@master
 
