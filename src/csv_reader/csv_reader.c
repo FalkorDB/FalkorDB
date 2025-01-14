@@ -153,7 +153,7 @@ static void _header_cell_cb
 	// empty cell is treated as an empty string
 	if(unlikely(n == 0)) {
 		// invalid header
-		ErrorCtx_RaiseRuntimeException("CSV empty column name");
+		ErrorCtx_SetError("CSV empty column name");
 		return;
 	}
 
