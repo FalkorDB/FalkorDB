@@ -296,6 +296,21 @@ class testLoadLocalCSV():
         for item in file_2_rows:
             self.env.assertTrue(item in result[0][1])
 
+    def test11_breakout_import_folder(self):
+        # try accessing files outside of the import directory
+        g = self.graph
+
+        # try accessing the hosts file
+        # default import path: /var/lib/FalkorDB/import/
+        q = """LOAD CSV FROM 'file://../../../etc/hosts AS row
+               RETURN row"""
+
+        try:
+            res = g.query(q).result_set
+            self.env.assertFalse("we should not be here" and False)
+        except:
+            pass
+
 class testLoadRemoteCSV():
     def __init__(self):
         self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
