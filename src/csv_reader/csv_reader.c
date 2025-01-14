@@ -77,7 +77,11 @@ static void _array_row_cb
 	}
 
 	if(unlikely(SIArray_Length(reader->row) != reader->col_count)) {
-		ErrorCtx_RaiseRuntimeException("CSV row of unexpected length");
+		ErrorCtx_SetError("CSV row of unexpected length");
+
+		// adding NULL to the rows array will cause our reader to stop
+		// pulling additional rows
+		array_append(reader->rows, SI_NullVal());
 		return;
 	}
 
@@ -97,7 +101,7 @@ static void _map_cell_cb
 	CSVReader reader = (CSVReader)pdata;
 
 	if(unlikely(reader->col_idx >= reader->col_count)) {
-		ErrorCtx_RaiseRuntimeException("CSV row of unexpected length");
+		ErrorCtx_SetError("CSV row of unexpected length");
 		return;
 	}
 
@@ -127,7 +131,11 @@ static void _map_row_cb
 	//--------------------------------------------------------------------------
 
 	if(unlikely(reader->col_idx != reader->col_count)) {
-		ErrorCtx_RaiseRuntimeException("CSV row of unexpected length");
+		ErrorCtx_SetError("CSV row of unexpected length");
+
+		// adding NULL to the rows array will cause our reader to stop
+		// pulling additional rows
+		array_append(reader->rows, SI_NullVal());
 		return;
 	}
 
@@ -266,7 +274,7 @@ SIValue CSVReader_GetRow
 
 		// check if an error occurred during reading
 		if(ferror(reader->stream)) {
-			ErrorCtx_RaiseRuntimeException("Error reading file");
+			ErrorCtx_SetError("Error reading file");
 			return SI_NullVal();
 		}
 
@@ -291,7 +299,7 @@ SIValue CSVReader_GetRow
 
 		// expecting number of bytes processed to equal number of bytes read
 		if(bytesRead != bytesProcessed) {
-			ErrorCtx_RaiseRuntimeException("csv reader error: %s\n",
+			ErrorCtx_SetError("csv reader error: %s\n",
 					csv_strerror(csv_error(&reader->parser)));
 			return SI_NullVal();
 		}

@@ -56,7 +56,7 @@ static size_t _curl_write_cb
 // closes write end of pipe when download is complete
 static void *_curl_thread
 (
-	void *pdata  // CSVReader
+	void *pdata  // CurlSession
 ) {
 	CurlSession session = (CurlSession)pdata;
 

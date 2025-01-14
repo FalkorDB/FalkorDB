@@ -86,7 +86,7 @@
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
-#define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import"
+#define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
 
 // configuration object
 typedef struct {
