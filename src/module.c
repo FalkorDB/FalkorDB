@@ -33,9 +33,9 @@
 #include "arithmetic/arithmetic_expression.h"
 
 // minimal supported Redis version
-#define MIN_REDIS_VERION_MAJOR 7
-#define MIN_REDIS_VERION_MINOR 2
-#define MIN_REDIS_VERION_PATCH 0
+#define MIN_REDIS_VERSION_MAJOR 7
+#define MIN_REDIS_VERSION_MINOR 2
+#define MIN_REDIS_VERSION_PATCH 0
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
@@ -68,9 +68,9 @@ static void _Print_Config
 ) {
 	// TODO: consider adding Config_Print
 
-	int ompThreadCount;
+	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
-	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %d", ompThreadCount);
+	RedisModule_Log(ctx, "notice", "Maximum number of OpenMP threads set to %llu", ompThreadCount);
 
 	bool cmd_info_enabled = false;
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {
@@ -120,12 +120,12 @@ int RedisModule_OnLoad
 	});
 
 	// validate minimum redis-server version
-	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERION_MAJOR,
-				MIN_REDIS_VERION_MINOR, MIN_REDIS_VERION_PATCH)) {
+	if(!Redis_Version_GreaterOrEqual(MIN_REDIS_VERSION_MAJOR,
+				MIN_REDIS_VERSION_MINOR, MIN_REDIS_VERSION_PATCH)) {
 		RedisModule_Log(ctx, "warning",
 				"FalkorDB requires redis-server version %d.%d.%d and up",
-				MIN_REDIS_VERION_MAJOR, MIN_REDIS_VERION_MINOR,
-				MIN_REDIS_VERION_PATCH);
+				MIN_REDIS_VERSION_MAJOR, MIN_REDIS_VERSION_MINOR,
+				MIN_REDIS_VERSION_PATCH);
 		return REDISMODULE_ERR;
 	}
 
@@ -158,12 +158,12 @@ int RedisModule_OnLoad
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPools_ReadersCount());
 
-	int ompThreadCount;
+	uint64_t ompThreadCount;
 	Config_Option_get(Config_OPENMP_NTHREAD, &ompThreadCount);
 
 	if(GxB_set(GxB_NTHREADS, ompThreadCount) != GrB_SUCCESS) {
 		RedisModule_Log(ctx, "warning",
-				"Failed to set OpenMP thread count to %d", ompThreadCount);
+				"Failed to set OpenMP thread count to %llu", ompThreadCount);
 		return REDISMODULE_ERR;
 	}
 
