@@ -8,7 +8,57 @@
 #include "RG.h"
 #include "configuration/config.h"
 
-void _Config_get_all
+// emit config field name and value
+static void _Emit_config
+(
+	RedisModuleCtx *ctx,       // redis module context
+	Config_Option_Field field  // config field
+) {
+	bool res;
+	bool bool_value;
+	char *str_value;
+	long long numeric_value;
+
+	// get config name
+	const char *config_name = Config_Field_name(field);
+	ASSERT(config_name != NULL);
+
+	// get config according to its type
+	switch(Config_Field_type(field)) {
+		case T_BOOL:
+			res = Config_Option_get(field, &bool_value);
+			ASSERT(res == true);
+
+			RedisModule_ReplyWithArray(ctx, 2);
+			RedisModule_ReplyWithCString(ctx, config_name);
+			RedisModule_ReplyWithBool(ctx, bool_value);
+
+			break;
+
+		case T_INT64:
+			res = Config_Option_get(field, &numeric_value);
+			ASSERT(res == true);
+
+			RedisModule_ReplyWithArray(ctx, 2);
+			RedisModule_ReplyWithCString(ctx, config_name);
+			RedisModule_ReplyWithLongLong(ctx, numeric_value);
+
+			break;
+		case T_STRING:
+			res = Config_Option_get(field, &str_value);
+			ASSERT(res == true);
+
+			RedisModule_ReplyWithArray(ctx, 2);
+			RedisModule_ReplyWithCString(ctx, config_name);
+			RedisModule_ReplyWithCString(ctx, str_value);
+			break;
+
+		default:
+			ASSERT(false && "unsupported config type");
+	}
+}
+
+static void _Config_get_all
 (
 	RedisModuleCtx *ctx
 ) {
@@ -16,18 +66,7 @@ void _Config_get_all
 	RedisModule_ReplyWithArray(ctx, config_count);
 
 	for(Config_Option_Field field = 0; field < Config_END_MARKER; field++) {
-		long long value = 0;
-		const char *config_name = Config_Field_name(field);
-		bool res = Config_Option_get(field, &value);
-
-		if(!res || config_name == NULL) {
-			RedisModule_ReplyWithError(ctx, "Configuration field was not found");
-			return;
-		} else {
-			RedisModule_ReplyWithArray(ctx, 2);
-			RedisModule_ReplyWithCString(ctx, config_name);
-			RedisModule_ReplyWithLongLong(ctx, value);
-		}
+		_Emit_config(ctx, field);
 	}
 }
 
@@ -51,16 +90,8 @@ void _Config_get
 	if(!Config_Contains_field(config_name, &config_field)) {
 		RedisModule_ReplyWithError(ctx, "Unknown configuration field");
 		return;
-	}
-
-	long long value = 0;
-
-	if(Config_Option_get(config_field, &value)) {
-		RedisModule_ReplyWithArray(ctx, 2);
-		RedisModule_ReplyWithCString(ctx, config_name);
-		RedisModule_ReplyWithLongLong(ctx, value);
 	} else {
-		RedisModule_ReplyWithError(ctx, "Configuration field was not found");
+		_Emit_config(ctx, config_field);
 	}
 }
 
