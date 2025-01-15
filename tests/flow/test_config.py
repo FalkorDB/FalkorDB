@@ -1,7 +1,7 @@
 from common import *
 
 # Number of configurations available.
-NUMBER_OF_CONFIGURATIONS = 18
+NUMBER_OF_CONFIGURATIONS = 19
 GRAPH_ID = "config"
 
 class testConfig(FlowTestsBase):

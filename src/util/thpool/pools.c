@@ -19,10 +19,10 @@ static threadpool _writers_thpool = NULL;  // writers
 int ThreadPools_Init
 (
 ) {
-	bool      config_read     =  true;
-	int       reader_count    =  1;
-	int       writer_count    =  1;
-	uint64_t  max_queue_size  =  UINT64_MAX;
+	bool      config_read    = true;
+	uint64_t  reader_count   = 1;
+	int       writer_count   = 1;
+	uint64_t  max_queue_size = UINT64_MAX;
 
 	UNUSED(config_read);
 

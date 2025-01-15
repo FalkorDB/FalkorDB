@@ -10,12 +10,14 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
+#include "util/rmalloc.h"
 #include "util/redis_version.h"
 #include "../deps/GraphBLAS/Include/GraphBLAS.h"
 
 //-----------------------------------------------------------------------------
 // Configuration parameters
 //-----------------------------------------------------------------------------
+
 // config param, the timeout for each query in milliseconds
 #define TIMEOUT "TIMEOUT"
 
@@ -70,39 +72,44 @@
 // delay indexing
 #define DELAY_INDEXING "DELAY_INDEXING"
 
+// import folder
+#define IMPORT_FOLDER "IMPORT_FOLDER"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
 
 #define CACHE_SIZE_DEFAULT                 25
-#define QUEUED_QUERIES_UNLIMITED           UINT64_MAX
+#define QUEUED_QUERIES_UNLIMITED           INT64_MAX
 #define VKEY_MAX_ENTITY_COUNT_DEFAULT      100000
 #define CMD_INFO_DEFAULT                   true
 #define CMD_INFO_QUERIES_MAX_COUNT_DEFAULT 1000
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
+#define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
 
 // configuration object
 typedef struct {
-	uint64_t timeout;                  // The timeout for each query in milliseconds.
-	uint64_t timeout_max;              // max timeout that can be enforced
+	uint64_t timeout;                  // the timeout for each query in milliseconds
 	uint64_t timeout_default;          // default timeout for read and write queries
-	bool async_delete;                 // If true, graph deletion is done asynchronously.
-	uint64_t cache_size;               // The cache size for each thread, per graph.
-	uint thread_pool_size;             // Thread count for thread pool.
-	uint omp_thread_count;             // Maximum number of OpenMP threads.
+	uint64_t timeout_max;              // max timeout that can be enforced
+	uint64_t cache_size;               // the cache size for each thread, per graph
+	bool async_delete;                 // if true, graph deletion is done asynchronously
+	uint64_t omp_thread_count;         // maximum number of OpenMP threads
+	uint64_t thread_pool_size;         // thread count for thread pool
 	uint64_t resultset_size;           // resultset maximum size, UINT64_MAX unlimited
-	uint64_t vkey_entity_count;        // The limit of number of entities encoded at once for each RDB key.
+	uint64_t vkey_entity_count;        // the limit of number of entities encoded at once for each RDB key
 	uint64_t max_queued_queries;       // max number of queued queries
-	int64_t query_mem_capacity;        // Max mem(bytes) that query/thread can utilize at any given time
-	uint64_t node_creation_buffer;     // Number of extra node creations to buffer as margin in matrices
+	int64_t query_mem_capacity;        // max mem(bytes) that query/thread can utilize at any given time
 	int64_t delta_max_pending_changes; // number of pending changed before Delta_Matrix flushed
-	Config_on_change cb;               // callback function which being called when config param changed
-	bool cmd_info_on;                  // If true, the GRAPH.INFO is enabled.
+	uint64_t node_creation_buffer;     // number of extra node creations to buffer as margin in matrices
+	bool cmd_info_on;                  // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
-	uint32_t max_info_queries_count;   // Maximum number of query info elements.
+	uint32_t max_info_queries_count;   // maximum number of query info elements
 	int16_t bolt_port;                 // bolt protocol port
 	bool delay_indexing;               // delay index construction when decoding
+	char *import_folder;               // path to import folder, used for CSV loading
+	Config_on_change cb;               // callback function which being called when config param changed
 } RG_Config;
 
 RG_Config config; // global module configuration
@@ -171,9 +178,9 @@ static inline bool _Config_ParseYesNo
 	return res;
 }
 
-//==============================================================================
+//------------------------------------------------------------------------------
 // Config access functions
-//==============================================================================
+//------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
 // max queued queries
@@ -267,12 +274,12 @@ static uint Config_timeout_max_get(void) {
 
 static void Config_thread_pool_size_set
 (
-	uint nthreads
+	uint64_t nthreads
 ) {
 	config.thread_pool_size = nthreads;
 }
 
-static uint Config_thread_pool_size_get(void) {
+static uint64_t Config_thread_pool_size_get(void) {
 	return config.thread_pool_size;
 }
 
@@ -280,11 +287,11 @@ static uint Config_thread_pool_size_get(void) {
 // OpenMP thread count
 //------------------------------------------------------------------------------
 
-static void Config_OMP_thread_count_set(uint nthreads) {
+static void Config_OMP_thread_count_set(uint64_t nthreads) {
 	config.omp_thread_count = nthreads;
 }
 
-static uint Config_OMP_thread_count_get(void) {
+static uint64_t Config_OMP_thread_count_get(void) {
 	return config.omp_thread_count;
 }
 
@@ -476,6 +483,27 @@ static void Config_delay_indexing_set
 	config.delay_indexing = delay_indexing;
 }
 
+//------------------------------------------------------------------------------
+// import folder
+//------------------------------------------------------------------------------
+
+static void Config_import_folder_set
+(
+	const char *path
+) {
+	ASSERT(path != NULL);
+
+	// free previous value
+	rm_free(config.import_folder);
+
+	// copy new path
+	config.import_folder = rm_strdup(path);
+}
+
+static const char *Config_import_folder_get(void) {
+	return config.import_folder;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -522,12 +550,89 @@ bool Config_Contains_field
 		f = Config_BOLT_PORT;
 	} else if (!(strcasecmp(field_str, DELAY_INDEXING))) {
 		f = Config_DELAY_INDEXING;
+	} else if (!(strcasecmp(field_str, IMPORT_FOLDER))) {
+		f = Config_IMPORT_FOLDER;
 	} else {
 		return false;
 	}
 
 	if(field) *field = f;
 	return true;
+}
+
+// returns the field type
+SIType Config_Field_type
+(
+	Config_Option_Field field  // field
+) {
+	switch(field) {
+		case Config_TIMEOUT:
+			return T_INT64;
+
+		case Config_TIMEOUT_DEFAULT:
+			return T_INT64;
+
+		case Config_TIMEOUT_MAX:
+			return T_INT64;
+
+		case Config_CACHE_SIZE:
+			return T_INT64;
+
+		case Config_OPENMP_NTHREAD:
+			return T_INT64;
+
+		case Config_THREAD_POOL_SIZE:
+			return T_INT64;
+
+		case Config_RESULTSET_MAX_SIZE:
+			return T_INT64;
+
+		case Config_VKEY_MAX_ENTITY_COUNT:
+			return T_INT64;
+
+		case Config_ASYNC_DELETE:
+			return T_BOOL;
+
+		case Config_MAX_QUEUED_QUERIES:
+			return T_INT64;
+
+		case Config_QUERY_MEM_CAPACITY:
+			return T_INT64;
+
+		case Config_DELTA_MAX_PENDING_CHANGES:
+			return T_INT64;
+
+		case Config_NODE_CREATION_BUFFER:
+			return T_INT64;
+
+		case Config_CMD_INFO:
+			return T_BOOL;
+
+		case Config_CMD_INFO_MAX_QUERY_COUNT:
+			return T_INT64;
+
+		case Config_EFFECTS_THRESHOLD:
+			return T_INT64;
+
+		case Config_BOLT_PORT:
+			return T_INT64;
+
+		case Config_DELAY_INDEXING:
+			return T_BOOL;
+
+		case Config_IMPORT_FOLDER:
+			return T_STRING;
+
+		//----------------------------------------------------------------------
+		// invalid option
+		//----------------------------------------------------------------------
+
+		default :
+			ASSERT("invalid option field" && false);
+			break;
+	}
+
+	return T_NULL;
 }
 
 const char *Config_Field_name
@@ -608,6 +713,10 @@ const char *Config_Field_name
 			name = DELAY_INDEXING;
 			break;
 
+		case Config_IMPORT_FOLDER:
+			name = IMPORT_FOLDER;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -681,6 +790,9 @@ static void _Config_SetToDefaults(void) {
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
+
+	// set default import folder path
+	config.import_folder = rm_strdup(IMPORT_DIR_DEFAULT);
 }
 
 int Config_Init
@@ -699,7 +811,7 @@ int Config_Init
 		// emit an error if we received an odd number of arguments,
 		// as this indicates an invalid configuration
 		RedisModule_Log(ctx, "warning",
-						"RedisGraph received %d arguments, all configurations should be key-value pairs", argc);
+						"FalkorDB received %d arguments, all configurations should be key-value pairs", argc);
 		return REDISMODULE_ERR;
 	}
 
@@ -738,10 +850,11 @@ int Config_Init
 		if(!Config_Option_set(field, val_str, &error)) {
 			if(error != NULL) {
 				RedisModule_Log(ctx, "error",
-							"Failed setting field '%s' with error: %s", field_str, error);
+							"Failed setting field '%s' with error: %s",
+							field_str, error);
 			} else {
 				RedisModule_Log(ctx, "error",
-							"Failed setting field '%s'", field_str);
+						"Failed setting field '%s'", field_str);
 			}
 			return REDISMODULE_ERR;
 		}
@@ -769,7 +882,6 @@ bool Config_Option_get
 
 	switch(field) {
 		case Config_MAX_QUEUED_QUERIES: {
-
 			va_start(ap, field);
 			uint64_t *max_queued_queries = va_arg(ap, uint64_t *);
 			va_end(ap);
@@ -778,6 +890,7 @@ bool Config_Option_get
 			(*max_queued_queries) = Config_max_queued_queries_get();
 		}
 		break;
+
 		//----------------------------------------------------------------------
 		// timeout
 		//----------------------------------------------------------------------
@@ -840,7 +953,7 @@ bool Config_Option_get
 
 		case Config_OPENMP_NTHREAD: {
 			va_start(ap, field);
-			uint *omp_nthreads = va_arg(ap, uint *);
+			uint64_t *omp_nthreads = va_arg(ap, uint64_t *);
 			va_end(ap);
 
 			ASSERT(omp_nthreads != NULL);
@@ -854,7 +967,7 @@ bool Config_Option_get
 
 		case Config_THREAD_POOL_SIZE: {
 			va_start(ap, field);
-			uint *pool_nthreads = va_arg(ap, uint *);
+			uint64_t *pool_nthreads = va_arg(ap, uint64_t *);
 			va_end(ap);
 
 			ASSERT(pool_nthreads != NULL);
@@ -971,8 +1084,8 @@ bool Config_Option_get
 
 			ASSERT(count != NULL);
 			(*count) = Config_cmd_info_max_queries_get();
-      }
-      break;
+		}
+		break;
 
 		//----------------------------------------------------------------------
 		// effects threshold
@@ -1014,6 +1127,20 @@ bool Config_Option_get
 
 			ASSERT(delay_indexing != NULL);
 			(*delay_indexing) = Config_delay_indexing_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// import folder path
+		//----------------------------------------------------------------------
+
+		case Config_IMPORT_FOLDER: {
+			va_start(ap, field);
+			const char **import_folder = va_arg(ap, const char **);
+			va_end(ap);
+
+			ASSERT(import_folder != NULL);
+			(*import_folder) = Config_import_folder_get();
 		}
 		break;
 
@@ -1279,6 +1406,16 @@ bool Config_Option_set
 			if(!_Config_ParseYesNo(val, &delay_indexing)) return false;
 
 			Config_delay_indexing_set(delay_indexing);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// import folder path
+		//----------------------------------------------------------------------
+
+		case Config_IMPORT_FOLDER: {
+			ASSERT(val != NULL);
+			Config_import_folder_set(val);
 		}
 		break;
 

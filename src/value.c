@@ -679,8 +679,11 @@ int SIValue_Compare
 	return a.type - b.type;
 }
 
-/* Hashes the id and properties of the node*/
-XXH64_hash_t SINode_HashCode(const SIValue v) {
+// hashes the id and properties of the node
+XXH64_hash_t SINode_HashCode
+(
+	const SIValue v
+) {
 	XXH_errorcode res;
 	XXH64_state_t state;
 	res = XXH64_reset(&state, 0);
@@ -697,8 +700,11 @@ XXH64_hash_t SINode_HashCode(const SIValue v) {
 	return hashCode;
 }
 
-/* Hashes the id and properties of the edge. */
-XXH64_hash_t SIEdge_HashCode(const SIValue v) {
+// Hashes the id and properties of the edge
+XXH64_hash_t SIEdge_HashCode
+(
+	const SIValue v
+) {
 	XXH_errorcode res;
 	XXH64_state_t state;
 	res = XXH64_reset(&state, 0);

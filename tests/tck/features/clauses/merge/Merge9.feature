@@ -45,7 +45,6 @@ Feature: Merge9 - Merge clause interoperation with other clauses
       | +nodes      | 4 |
       | +properties | 4 |
 
-  @skip
   Scenario: [2] UNWIND with multiple MERGE
     Given an empty graph
     When executing query:
@@ -62,7 +61,6 @@ Feature: Merge9 - Merge clause interoperation with other clauses
       | +labels        | 2 |
       | +properties    | 5 |
 
-  @skip
   Scenario: [3] Mixing MERGE with CREATE
     Given an empty graph
     When executing query:
