@@ -136,6 +136,14 @@ int Map_Compare
 	int *disjointOrNull
 );
 
+// merge two maps
+// in case of key collision, the value from 'b' is used
+SIValue Map_Merge
+(
+	const SIValue a,
+	const SIValue b
+);
+
 // compute hash code for map
 XXH64_hash_t Map_HashCode
 (
