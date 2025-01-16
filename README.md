@@ -110,7 +110,7 @@ For more verbose output, run ```make test V=1```.
 
 ### Building in a docker
 
-The FalkorDB build system runs within docker. For detailed instructions on building, please [see here](docs/docker-examples/README.md).
+The FalkorDB build system runs within docker. For detailed instructions on building, please [see here](https://docs.falkordb.com/docker-examples/README.html).
 
 ## Loading FalkorDB into Redis
 
