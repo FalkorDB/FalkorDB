@@ -3,7 +3,7 @@ from common import *
 GRAPH_ID = "pagerank"
 
 
-class testPagerankFlow(FlowTestsBase):
+class testPagerankFlow():
     def __init__(self):
         self.env, self.db = Env()
         self.conn = self.env.getConnection()
