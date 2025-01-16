@@ -175,7 +175,7 @@ ProcedureResult Proc_DegreeInvoke
 	if(!parse_arguments(args[0], &src_label, &dir, &rel_type, &dest_label)) {
 		// failed to parse input configuration
 		// emit an error and return
-		ErrorCtx_RaiseRuntimeException(EMSG_PROC_INVALID_ARGUMENTS, "algo.degree");
+		ErrorCtx_SetError(EMSG_PROC_INVALID_ARGUMENTS, "algo.degree");
 		return PROCEDURE_ERR;
 	}
 
@@ -212,7 +212,8 @@ ProcedureResult Proc_DegreeInvoke
 			// error in case relationship contains tensors
 			// TODO: support tensors
 			if(Graph_RelationshipContainsMultiEdge(g, Schema_GetID(s))) {
-				ErrorCtx_RaiseRuntimeException("'algo.degree' can't run against a graph containing tensors");
+				ErrorCtx_SetError(EMSG_CANT_RUN_ON_GRAPH_WITH_TENSORS,
+						"algo.degree");
 				return PROCEDURE_ERR;
 			}
 		} else {
@@ -227,7 +228,8 @@ ProcedureResult Proc_DegreeInvoke
 
 		if(Graph_EdgeCount(g) != nvals) {
 			// error in case graph contains tensors
-			ErrorCtx_RaiseRuntimeException("'algo.degree' can't run against a graph containing tensors");
+			ErrorCtx_SetError(EMSG_CANT_RUN_ON_GRAPH_WITH_TENSORS,
+					"algo.degree");
 			return PROCEDURE_ERR;
 		}
 	}
@@ -434,7 +436,7 @@ ProcedureCtx *Proc_DegreeCtx()
 
 	ProcedureOutput *outputs      = array_new(ProcedureOutput, 1);
 	ProcedureOutput output_node   = {.name = "node",   .type = T_NODE};
-	ProcedureOutput output_degree = {.name = "degree", .type = T_DOUBLE};
+	ProcedureOutput output_degree = {.name = "degree", .type = T_INT64};
 
 	array_append(outputs, output_node);
 	array_append(outputs, output_degree);

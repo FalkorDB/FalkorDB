@@ -92,6 +92,7 @@ class testDegree():
         self.env.assertEqual(result_set[3][0], 'c')
         self.env.assertEqual(result_set[3][1], 1) # multi-edge
 
+        # 0 is implicit
         #self.env.assertEqual(result_set[4][0], 'd')
         #self.env.assertEqual(result_set[4][1], 0)
 
