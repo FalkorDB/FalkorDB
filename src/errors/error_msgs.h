@@ -132,4 +132,5 @@
 #define EMSG_FAILED_TO_READ_CSV_ROW "Failed to get next row"
 #define EMSG_FAILED_TO_READ_CSV_HEADERS "failed to read headers row"
 #define EMSG_MERGE_MAP_ERROR "Cannot merge a map with a non-map value"
+#define EMSG_INVALID_CONSTRAINT_COMMAND "Invalid constraint command use GRAPH.CONSTRAINT command instead"
 
