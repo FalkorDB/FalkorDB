@@ -267,25 +267,25 @@ class testConstraintNodes():
             g.query("CREATE CONSTRAINT ON (n:N) ASSERT n.v IS UNIQUE")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Invalid constraint command use GRAPH.CONSTRAINT command instead", str(e))
+            self.env.assertContains("Invalid constraint command use the GRAPH.CONSTRAINT command instead", str(e))
 
         try:
             g.query("DROP CONSTRAINT ON (n:N) ASSERT n.v IS UNIQUE")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Invalid constraint command use GRAPH.CONSTRAINT command instead", str(e))
+            self.env.assertContains("Invalid constraint command use the GRAPH.CONSTRAINT command instead", str(e))
 
         try:
             g.query("CREATE CONSTRAINT ON ()-[r:R]->() ASSERT r.v")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Invalid constraint command use GRAPH.CONSTRAINT command instead", str(e))
+            self.env.assertContains("Invalid constraint command use the GRAPH.CONSTRAINT command instead", str(e))
 
         try:
             g.query("DROP CONSTRAINT ON ()-[r:R]->() ASSERT r.v")
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Invalid constraint command use GRAPH.CONSTRAINT command instead", str(e))
+            self.env.assertContains("Invalid constraint command use the GRAPH.CONSTRAINT command instead", str(e))
 
 
     def test03_drop_constraint(self):
