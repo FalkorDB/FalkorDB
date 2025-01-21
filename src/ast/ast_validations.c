@@ -2381,6 +2381,15 @@ AST_Validation AST_Validate_Query
 	ast.root = body;
 
 	cypher_astnode_type_t body_type = cypher_astnode_type(body);
+
+	if(body_type == CYPHER_AST_CREATE_NODE_PROP_CONSTRAINT ||
+	   body_type == CYPHER_AST_CREATE_REL_PROP_CONSTRAINT ||
+	   body_type == CYPHER_AST_DROP_NODE_PROP_CONSTRAINT ||
+	   body_type == CYPHER_AST_DROP_REL_PROP_CONSTRAINT) {
+		ErrorCtx_SetError(EMSG_INVALID_CONSTRAINT_COMMAND);
+		return AST_INVALID;
+	}
+
 	if(body_type == CYPHER_AST_CREATE_NODE_PROPS_INDEX    ||
 	   body_type == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX ||
 	   body_type == CYPHER_AST_DROP_PROPS_INDEX           ||
