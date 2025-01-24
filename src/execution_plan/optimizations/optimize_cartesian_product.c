@@ -90,23 +90,27 @@ static FilterCtx *_locate_filters_and_entities
 	return filter_ctx_arr;
 }
 
-// Finds all the cartesian product's children which solve a specific filter entities.
+// finds all the cartesian product's children which solve a specific filter entities
 static OpBase **_find_entities_solving_branches
 (
 	rax *entities,
 	OpBase *cp
 ) {
 	int entities_count = raxSize(entities);
-	if(entities_count == 0) return NULL; // No dependencies in filters.
+	if(entities_count == 0) return NULL; // no dependencies in filters
 
 	OpBase **solving_branches = array_new(OpBase *, 1);
-	// Iterate over all the children or until all the entities are resolved.
+
+	// iterate over all the children or until all the entities are resolved.
 	for(int i = 0; i < cp->childCount && entities_count > 0; i++) {
 		OpBase *branch = cp->children[i];
-		// Don't recurse into previous scopes when trying to resolve references.
-		OpBase *recurse_limit = ExecutionPlan_LocateOpMatchingTypes(branch, PROJECT_OPS, PROJECT_OP_COUNT);
-		/* Locate references reduces the amount of entities upon each call
-		 * that partially solves the references. */
+
+		// don't recurse into previous scopes when trying to resolve references
+		OpBase *recurse_limit = ExecutionPlan_LocateOpMatchingTypes(branch,
+				PROJECT_OPS, PROJECT_OP_COUNT, NULL, 0);
+
+		// locate references reduces the amount of entities upon each call
+		// that partially solves the references
 		ExecutionPlan_LocateReferences(branch, recurse_limit, entities);
 		int new_entities_count = raxSize(entities);
 		if(new_entities_count != entities_count) {
@@ -122,6 +126,7 @@ static OpBase **_find_entities_solving_branches
 		array_free(solving_branches);
 		return NULL;
 	}
+
 	return solving_branches;
 }
 

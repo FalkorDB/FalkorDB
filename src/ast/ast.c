@@ -456,12 +456,13 @@ AST *AST_NewSegment
 	ast->root = cypher_ast_query(NULL, 0, (cypher_astnode_t *const *)clauses, n,
 								 (cypher_astnode_t **)clauses, n, range);
 
-	// TODO This overwrites the previously-held AST pointer, which could lead to inconsistencies
-	// in the future if we expect the variable to hold a different AST.
+	// TODO This overwrites the previously-held AST pointer
+	// which could lead to inconsistencies
+	// in the future if we expect the variable to hold a different AST
 	QueryCtx_SetAST(ast);
 
-	// If the segments are split, the next clause is either RETURN or WITH,
-	// and its references should be included in this segment's map.
+	// if the segments are split, the next clause is either RETURN or WITH,
+	// and its references should be included in this segment's map
 	const cypher_astnode_t *project_clause = NULL;
 	uint clause_count = cypher_ast_query_nclauses(master_ast->root);
 	if(end_offset == clause_count) end_offset = clause_count - 1;
@@ -473,7 +474,7 @@ AST *AST_NewSegment
 	cypher_astnode_type_t project_type = cypher_astnode_type(project_clause);
 	if(project_type != CYPHER_AST_WITH && project_type != CYPHER_AST_RETURN) project_clause = NULL;
 
-	// Build the map of referenced entities in this AST segment.
+	// build the map of referenced entities in this AST segment
 	AST_BuildReferenceMap(ast, project_clause);
 
 	return ast;

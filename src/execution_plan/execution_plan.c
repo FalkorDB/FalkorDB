@@ -18,7 +18,7 @@
 
 #include <setjmp.h>
 
-// Allocate a new ExecutionPlan segment.
+// allocate a new ExecutionPlan segment
 inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
 	return rm_calloc(1, sizeof(ExecutionPlan));
 }
@@ -45,95 +45,231 @@ void ExecutionPlan_PopulateExecutionPlan(ExecutionPlan *plan) {
 	}
 }
 
-static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
-	uint end_offset = 0;
-	uint start_offset = 0;
-	uint clause_count = cypher_ast_query_nclauses(ast->root);
+// build an execution plan composed of several sub-plans
+// one for each joint query
+// RETURN 1 AS x
+// UNION
+// RETURN 2 AS x
+static ExecutionPlan *_ExecutionPlan_UnionPlans
+(
+	AST *ast
+) {
+	uint start_offset   = 0;  // UNION query start index
+	uint end_offset     = 0;  // UNION query end index
+
+	// break down AST into UNION sections:
+	//--------------------------------------------------------------------------
+	// -> MATCH (n)
+	//    WHERE n.v > 2
+	//    RETURN n.v AS v
+	//--------------------------------------------------------------------------
+	//    UNION
+	//--------------------------------------------------------------------------
+	// -> WITH 4 AS x
+	//    MATCH (n:N)
+	//    WHERE n.score > x
+	//    RETURN n.v AS v
+	//--------------------------------------------------------------------------
+	uint clause_count   = cypher_ast_query_nclauses(ast->root);
 	uint *union_indices = AST_GetClauseIndices(ast, CYPHER_AST_UNION);
-	array_append(union_indices, clause_count);
+
+	array_append(union_indices, clause_count);  // add last clause index
 	int union_count = array_len(union_indices);
 	ASSERT(union_count > 1);
 
-	// Placeholder for each execution plan, these all will be joined
-	// via a single UNION operation
+	//--------------------------------------------------------------------------
+	// collect UNION projected expressions
+	//--------------------------------------------------------------------------
+
+	// e.g.
+	//
+	// RETURN 1 AS A, 2 AS B
+	// UNION
+	// RETURN 3 AS A, 4 AS B
+	//
+	// projections[0] = 'A' & projections[1] = 'B'
+
+	const cypher_astnode_t *last_clause =
+		cypher_ast_query_get_clause(ast->root, clause_count - 1);
+
+	// last clause must be RETURN
+	ASSERT(cypher_astnode_type(last_clause) == CYPHER_AST_RETURN);
+
+	uint n_projections = cypher_ast_return_nprojections(last_clause);
+	const char *projections[n_projections];
+
+	for(uint i = 0; i < n_projections; i++) {
+		// collect aliases from the RETURN clause
+		const cypher_astnode_t *projection =
+			cypher_ast_return_get_projection(last_clause, i);
+
+		const cypher_astnode_t *alias =
+			cypher_ast_projection_get_alias(projection);
+
+		if(alias == NULL) {
+			alias = cypher_ast_projection_get_expression(projection);
+		}
+
+		ASSERT(alias != NULL);
+		projections[i] = cypher_ast_identifier_get_name(alias);
+	}
+
+	//--------------------------------------------------------------------------
+	// build individual plans
+	//--------------------------------------------------------------------------
+
 	ExecutionPlan *plans[union_count];
 
 	for(int i = 0; i < union_count; i++) {
-		// Create an AST segment from which we will build an execution plan.
+		// create an AST segment from which we will build an execution plan
 		end_offset = union_indices[i];
 		AST *ast_segment = AST_NewSegment(ast, start_offset, end_offset);
-		plans[i] = ExecutionPlan_FromTLS_AST();
-		AST_Free(ast_segment); // Free the AST segment.
 
-		// Next segment starts where this one ends.
+		plans[i] = ExecutionPlan_FromTLS_AST();
+		AST_Free(ast_segment); // free the AST segment
+
+		// next segment starts where this one ends
 		start_offset = union_indices[i] + 1;
 	}
 
-	QueryCtx_SetAST(ast); // AST segments have been freed, set master AST in QueryCtx.
-
 	array_free(union_indices);
+	QueryCtx_SetAST(ast); // restore master AST
 
-	/* Join streams:
-	 * MATCH (a) RETURN a UNION MATCH (a) RETURN a ....
-	 * left stream:     [Scan]->[Project]->[Results]
-	 * right stream:    [Scan]->[Project]->[Results]
-	 *
-	 * Joined:
-	 * left stream:     [Scan]->[Project]
-	 * right stream:    [Scan]->[Project]
-	 *                  [Union]->[Distinct]->[Result] */
-	ExecutionPlan *plan = ExecutionPlan_NewEmptyExecutionPlan();
-	plan->record_map = raxNew();
+	// join streams:
+	//
+	// MATCH (a) RETURN a
+	//
+	// UNION
+	//
+	// MATCH (a) RETURN a
+	//
+	// left stream:     [Scan]->[Project]->[Results]
+	// right stream:    [Scan]->[Project]->[Results]
+	//
+	// Joined:
+	// left stream:     [Scan]->[Project]
+	// right stream:    [Scan]->[Project]
+	// union:           [Join]->[Distinct]->[Result]
 
-	OpBase *results_op = NewResultsOp(plan);
-	OpBase *parent = results_op;
-	ExecutionPlan_UpdateRoot(plan, results_op);
+	ExecutionPlan *joint_plan = ExecutionPlan_NewEmptyExecutionPlan();
+	joint_plan->record_map = raxNew();
 
-	// Introduce distinct only if `ALL` isn't specified.
-	const cypher_astnode_t *union_clause = AST_GetClause(ast, CYPHER_AST_UNION,
-														 NULL);
-	if(!cypher_ast_union_has_all(union_clause)) {
-		uint clause_count = cypher_ast_query_nclauses(ast->root);
-		const cypher_astnode_t *last_clause = cypher_ast_query_get_clause(ast->root, clause_count - 1);
-		if(cypher_astnode_type(last_clause) == CYPHER_AST_RETURN) {
-			uint projection_count = cypher_ast_return_nprojections(last_clause);
-			// Build a stack array to hold the aliases to perform Distinct on
-			const char *projections[projection_count];
-			for(uint i = 0; i < projection_count; i++) {
-				// Retrieve aliases from the RETURN clause
-				const cypher_astnode_t *projection = cypher_ast_return_get_projection(last_clause, i);
-				const cypher_astnode_t *alias = cypher_ast_projection_get_alias(projection);
-				if(alias == NULL) alias = cypher_ast_projection_get_expression(projection);
-				projections[i] = cypher_ast_identifier_get_name(alias);
-			}
-			// Build a Distinct op and add it to the op tree
-			OpBase *distinct_op = NewDistinctOp(plan, projections, projection_count);
-			ExecutionPlan_AddOp(results_op, distinct_op);
-			parent = distinct_op;
-		}
+	//--------------------------------------------------------------------------
+	// result operation
+	//--------------------------------------------------------------------------
+
+	OpBase *results_op = NewResultsOp(joint_plan);
+	OpBase *parent     = results_op;
+	ExecutionPlan_UpdateRoot(joint_plan, results_op);
+
+	//--------------------------------------------------------------------------
+	// distinct operation
+	//--------------------------------------------------------------------------
+
+	// introduce distinct only if `UNION ALL` isn't specified
+	const cypher_astnode_t *u = AST_GetClause(ast, CYPHER_AST_UNION, NULL);
+	if(!cypher_ast_union_has_all(u)) {
+		// build a Distinct op and add it to the op tree
+		OpBase *distinct_op = NewDistinctOp(joint_plan, projections,
+				n_projections);
+		ExecutionPlan_AddOp(results_op, distinct_op);
+		parent = distinct_op;
 	}
 
-	OpBase *join_op = NewJoinOp(plan);
+	//--------------------------------------------------------------------------
+	// join operation
+	//--------------------------------------------------------------------------
+
+	OpBase *join_op = NewJoinOp(joint_plan);
 	ExecutionPlan_AddOp(parent, join_op);
 
-	// Join execution plans.
+	//--------------------------------------------------------------------------
+	// join sub-plans
+	//--------------------------------------------------------------------------
+
 	for(int i = 0; i < union_count; i++) {
 		ExecutionPlan *sub_plan = plans[i];
 		ASSERT(sub_plan->root->type == OPType_RESULTS);
 
-		// Remove OP_Result.
+		// remove OP_Result
 		OpBase *op_result = sub_plan->root;
 		ExecutionPlan_RemoveOp(sub_plan, sub_plan->root);
 		OpBase_Free(op_result);
 
-		ExecutionPlan_AddOp(join_op, sub_plan->root);
+		// migrate projection from the sub-plan to joint-plan
+		// we want the sub-plan projection operation to belong to the joint-plan
+		// this will gurentee that each stream
+		// will place the unioned projections at the same position within the
+		// passed record
+		// otherwise we risk accessing wrong record indices when switching from
+		// one joint stream to another
+		OpBase *op = sub_plan->root;
+		OPType  t  = OpBase_Type(op);
+
+		// migrate projection
+		if(t == OPType_PROJECT || t == OPType_AGGREGATE) {
+			// TODO: see if there's a migrate_op function
+			// remove projection operation from sub-plan
+			ExecutionPlan_RemoveOp(sub_plan, op);
+
+			// bind projection operation to joint plan
+			OpBase_BindOpToPlan(op, joint_plan);
+
+			if(sub_plan->root != NULL) {
+				// sub_plan isn't empty
+				// connect projection operation to the sub-plan root
+				OpBase_AddChild(op, sub_plan->root);
+			} else {
+				// empty plan, free it
+				ExecutionPlan_Free(sub_plan);
+			}
+		} else {
+			ASSERT(t == OPType_SORT     ||
+				   t == OPType_SKIP     ||
+				   t == OPType_LIMIT    ||
+				   t == OPType_DISTINCT);
+
+			// as much as we would like to bind the sub-plan projection op
+			// to the joint-plan, it's possible for other operations e.g.
+			// SORT / DISTINCT / ORDER BY to sit between the sub-plan root
+			// and the projection opeartion, in such cases we don't have much
+			// of a choice but to introduce a new projection operation
+			// which will project the unioned expressions and be bounded to the
+			// joint-plan, note the additional clauses mentioned above have the
+			// potential to extend the record to included unwanted entries
+			// e.g.
+			//
+			// MATCH (a:A) RETURN a ORDER BY a.v - introduce a.v to the record
+			// UNION
+			// MATCH (b:B) RETURN b AS a
+
+			// create a new projection operation, create unioned expressions
+			AR_ExpNode **exps = array_new(AR_ExpNode*, n_projections);
+			for(int j = 0; j < n_projections; j++) {
+				const char *alias = projections[j];
+				AR_ExpNode *exp = AR_EXP_NewVariableOperandNode(alias);
+				exp->resolved_name = alias;
+				array_append(exps, exp);
+			}
+			// add new projection to joint-plan and connect it to the root
+			// of the sub-plan
+			op = NewProjectOp(joint_plan, exps);
+			OpBase_AddChild(op, sub_plan->root);
+		}
+
+		// add projection operation as a child of JOIN
+		ExecutionPlan_AddOp(join_op, op);
 	}
 
-	return plan;
+	return joint_plan;
 }
 
-static ExecutionPlan *_process_segment(AST *ast, uint segment_start_idx,
-									   uint segment_end_idx) {
+static ExecutionPlan *_process_segment
+(
+	AST *ast,
+	uint segment_start_idx,
+	uint segment_end_idx
+) {
 	ASSERT(ast != NULL);
 	ASSERT(segment_start_idx <= segment_end_idx);
 

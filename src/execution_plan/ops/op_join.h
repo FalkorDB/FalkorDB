@@ -4,6 +4,19 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+// the OpJoin operation joins multiple sub queries
+// records pass through as is
+// all records must have the same structure
+//
+// MATCH (n)-[:R]->(m)
+// RETURN n.v AS value
+// SORT BY n.k
+//
+// UNION
+//
+// MATCH (n)-[:S]->(m)->[]->()
+// RETURN m.v + n.v AS value
+
 #pragma once
 
 #include "op.h"
@@ -11,11 +24,12 @@
 
 typedef struct {
 	OpBase op;
-	OpBase *stream;          // Current stream to pull from.
-	int streamIdx;           // Current stream index.
-	bool update_column_map;  // Update column map.
+	OpBase *stream;  // current stream to pull from
+	uint streamIdx;  // current stream index
 } OpJoin;
 
-OpBase *NewJoinOp(const ExecutionPlan *plan);
+OpBase *NewJoinOp
+(
+	const ExecutionPlan *plan
+);
 
-bool JoinGetUpdateColumnMap(const OpBase *op);

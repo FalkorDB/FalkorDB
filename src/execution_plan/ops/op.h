@@ -159,12 +159,6 @@ void OpBase_Init
 	const struct ExecutionPlan *plan
 );
 
-// free op
-void OpBase_Free
-(
-	OpBase *op
-);
-
 // consume op
 Record OpBase_Consume
 (
@@ -199,6 +193,14 @@ OPType OpBase_Type
 uint OpBase_ChildCount
 (
 	const OpBase *op
+);
+
+// sets a child parent relationship between parent and child
+// child must be an orphan
+void OpBase_AddChild
+(
+	OpBase *restrict parent,  // parent operation
+	OpBase *restrict child    // child operation
 );
 
 // returns the i'th child of the op
@@ -271,8 +273,8 @@ void OpBase_UpdateConsume
 // updates the plan of an operation
 void OpBase_BindOpToPlan
 (
-	OpBase *op,
-	const struct ExecutionPlan *plan
+	OpBase *op,                       // operation to bind
+	const struct ExecutionPlan *plan  // plan to bind to
 );
 
 // creates a new record that will be populated during execution
@@ -298,5 +300,11 @@ void OpBase_MergeRecords
 (
 	Record dest,  // entries are merged into this record
 	Record *src   // entries are merged from this record
+);
+
+// free op
+void OpBase_Free
+(
+	OpBase *op
 );
 
