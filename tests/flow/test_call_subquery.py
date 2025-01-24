@@ -1346,6 +1346,34 @@ updating clause.")
         self.env.assertEquals(res.result_set[0][0], 0)
         self.env.assertEquals(res.result_set[1][0], 1)
 
+        # sort projected expression
+        self.graph.delete()
+
+        # create 4 nodes
+        self.graph.query("UNWIND range(0, 3) AS x CREATE ({v:x})")
+
+        res = self.graph.query(
+                """
+                CALL {
+                    MATCH (a)
+                    RETURN a
+
+                    UNION ALL
+
+                    MATCH (a)
+                    RETURN a
+                    ORDER BY a.v desc
+                }
+                RETURN a
+                """
+        )
+
+        self.env.assertEquals(len(res.result_set), 8)
+
+        expected = [0, 1, 2, 3, 3, 2, 1, 0]
+        actual = [row[0].properties['v'] for row in res.result_set]
+        self.env.assertEquals(actual, expected)
+
     def test22_indexes(self):
         """Tests that operations on indexes are properly executed (and reset)
         in subqueries"""
