@@ -207,10 +207,12 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
-| [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | ![Stars][jfalkordb-stars] | [Maven][jfalkordb-package]||
-| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
-| [falkordb-ts][falkordb-ts-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-ts-stars] | [npm][falkordb-ts-package]||
-| [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
+| [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | [![jfalkordb-stars]][jfalkordb-url] | [Maven][jfalkordb-package]||
+| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | [![falkordb-py-stars]][falkordb-py-url] | [pypi][falkordb-py-package]||
+| [falkordb-ts][falkordb-ts-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | [![falkordb-ts-stars]][falkordb-ts-url] | [npm][falkordb-ts-package]||
+| [falkordb-rs][falkordb-rs-url] | Rust | MIT | [FalkorDB][falkordb-url] | [![falkordb-rs-stars]][falkordb-rs-url] | [Crate][falkordb-rs-package]||
+| [falkordb-go][falkordb-go-url] | Go | BSD | [FalkorDB][falkordb-url] | [![falkordb-go-stars]][falkordb-go-url] | [GitHub][falkordb-go-url]||
+| [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | [![nredisstack-stars]][nredisstack-url] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
 | [redgraph][redgraph-url]                                  | Ruby       | MIT     | [pzac][redgraph-author]                | [![redgraph-stars]][redgraph-url]                                 | [GitHub][redgraph-url] ||
 | [redisgraph-go][redisgraph-go-url]                        | Go         | BSD     | [Redis][redisgraph-go-author]          | [![redisgraph-go-stars]][redisgraph-go-url]                       | [GitHub][redisgraph-go-url]||
@@ -244,6 +246,14 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 [falkordb-ts-url]: https://github.com/falkordb/falkordb-ts
 [falkordb-ts-stars]: https://img.shields.io/github/stars/falkordb/falkordb-ts.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [falkordb-ts-package]: https://www.npmjs.com/package/falkordb
+
+[falkordb-rs-url]: https://github.com/falkordb/falkordb-rs
+[falkordb-rs-stars]: https://img.shields.io/github/stars/falkordb/falkordb-rs.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-rs-package]: https://crates.io/crates/falkordb
+
+[falkordb-go-url]: https://github.com/falkordb/falkordb-go
+[falkordb-go-stars]: https://img.shields.io/github/stars/falkordb/falkordb-go.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-go-package]: https://github.com/falkordb/falkordb-go
 
 [redisgraph-rb-author]: https://redislabs.com
 [redisgraph-rb-url]: https://github.com/RedisGraph/redisgraph-rb
