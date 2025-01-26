@@ -42,7 +42,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 * **Contributing**: We welcome contributions! Please see our [Contributing Guide](https://github.com/FalkorDB/FalkorDB/blob/master/CONTRIBUTING.md) for more details.
 
-* **License**: This project is licensed under the MIT License. See the [LICENSE](https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.txt) file for details.
+* **License**: This project is licensed under the Server Side Public License v1 (SSPLv1). See the [LICENSE](https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.txt) file for details.
 
 ## GET STARTED
 
