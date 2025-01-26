@@ -2,10 +2,11 @@
 # FalkorDB - Graph Database for GraphRAG & GenAI
 
 A scalable, low-latency graph database designed for development teams managing structured and unstructured interconnected data in real-time or interactive environments.
-<br>
+
 [![Try Free](https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge&link=https://app.falkordb.cloud)](https://app.falkordb.cloud)<br>
-![](/Users/danshalev/Documents/GitHub/FalkorDB/assets/header.jpg)
-<br>
+
+![FalkorDB Graph Database](/assets/header.jpg)
+
 ##UNIQUE FEATURES
 
 Our goal is to build a high-performance Knowledge Graph tailored for Large Language Models (LLMs), prioritizing exceptionally low latency to ensure fast and efficient information delivery through our Graph Database.
@@ -27,19 +28,20 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 >Explore FalkorDB in action by visiting the [Demos](https://github.com/FalkorDB/FalkorDB/tree/master/demo).
 
-<br>
 ## DOCUMENTATION
+
 [Official Docs](https://docs.falkordb.com/) | [Clients](https://docs.falkordb.com/clients.html) | [Commands](https://docs.falkordb.com/commands/) | 📊 [Latest Performance Benchmarks](https://benchmark.falkordb.com/)
 
 ###Community and Support
+
 * **Discussions**: Join our community discussions on [GitHub Discussions](https://github.com/FalkorDB/FalkorDB/discussions) to ask questions, share ideas, and connect with other users.
 
 * **Contributing**: We welcome contributions! Please see our [Contributing Guide](https://github.com/FalkorDB/FalkorDB/blob/master/CONTRIBUTING.md) for more details.
 
 * **License**: This project is licensed under the MIT License. See the [LICENSE](https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.txt) file for details.
 
-<br>
 ## GET STARTED
+
 ###Step 1
 
 To quickly try out FalkorDB, launch an instance using docker:
@@ -55,6 +57,7 @@ docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/data falkordb/falkordb:
 ```
 
 ###Step 2
+
 Then, open your browser and navigate to `http://localhost:3000`.
 
 
@@ -93,7 +96,7 @@ res = g.query("""MATCH (r:Rider)-[:rides]->(t:Team {name:'Ducati'})
 print(res.result_set[0][0])
 # Prints: 1
 ```
-<br>
+
 ## START BUILDING
 
 ### Compiling
@@ -194,8 +197,6 @@ g = db.select_graph('social')
 reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
 ```
 
-
-<br>
 ## CLIENT LIBRARIES
 
 >Note: Some languages have client libraries that provide support for FalkorDB's commands:
@@ -313,10 +314,12 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 
 
 ## LICENSE
+
 Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE.txt).
 
 
 ###Support our work
+
 ⭐️ If you find this repository helpful, please consider giving it a star!
 
 -
