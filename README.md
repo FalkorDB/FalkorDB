@@ -1,3 +1,7 @@
+[![Dockerhub](https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker)](https://hub.docker.com/r/falkordb/falkordb/)
+[![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/6M4QwDXn2w)
+[![codecov](https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0)](https://codecov.io/gh/falkordb/falkordb)
+[![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
 
 # FalkorDB - Graph Database for GraphRAG & GenAI
 
@@ -7,11 +11,11 @@ A scalable, low-latency graph database designed for development teams managing s
 
 ![FalkorDB Graph Database](/assets/header.jpg)
 
-##UNIQUE FEATURES
+## UNIQUE FEATURES
 
 Our goal is to build a high-performance Knowledge Graph tailored for Large Language Models (LLMs), prioritizing exceptionally low latency to ensure fast and efficient information delivery through our Graph Database.
 
-🆕[FalkorDB](https://www.falkordb.com/) is the first **queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to leverage sparse matrices** for representing the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](https://en.wikipedia.org/wiki/Adjacency_matrix) for querying.
+🆕 [FalkorDB](https://www.falkordb.com/) is the first **queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to leverage sparse matrices** for representing the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](https://en.wikipedia.org/wiki/Adjacency_matrix) for querying.
 
 ### Key Features
 
@@ -32,7 +36,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 [Official Docs](https://docs.falkordb.com/) | [Clients](https://docs.falkordb.com/clients.html) | [Commands](https://docs.falkordb.com/commands/) | 📊 [Latest Performance Benchmarks](https://benchmark.falkordb.com/)
 
-###Community and Support
+### Community and Support
 
 * **Discussions**: Join our community discussions on [GitHub Discussions](https://github.com/FalkorDB/FalkorDB/discussions) to ask questions, share ideas, and connect with other users.
 
@@ -42,7 +46,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 ## GET STARTED
 
-###Step 1
+### Step 1
 
 To quickly try out FalkorDB, launch an instance using docker:
 
@@ -56,14 +60,14 @@ Or, to use the built-in browser-based interface, run:
 docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/data falkordb/falkordb:edge
 ```
 
-###Step 2
+### Step 2
 
 Then, open your browser and navigate to `http://localhost:3000`.
 
 
 You can also interact with FalkorDB using any of the supported [Client Libraries](https://docs.falkordb.com/clients.html)
 
-###MotoGP League Example
+### MotoGP League Example
 
 In this example, we'll use the [FalkorDB Python client](https://pypi.org/project/FalkorDB/) to create a small graph representing a subset of motorcycle riders and teams participating in the MotoGP league. After creating the graph, we'll query the data to explore its structure and relationships.
 
@@ -306,22 +310,12 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 [rustis-author]: https://github.com/dahomey-technologies
 [rustis-stars]: https://img.shields.io/github/stars/dahomey-technologies/rustis.svg?style=social&amp;label=Star&amp;maxAge=2592000
 
-
-[![Dockerhub](https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker)](https://hub.docker.com/r/falkordb/falkordb/)
-[![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/6M4QwDXn2w)
-[![codecov](https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0)](https://codecov.io/gh/falkordb/falkordb)
-[![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
-
-
 ## LICENSE
 
 Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE.txt).
 
-
-###Support our work
+### Support our work
 
 ⭐️ If you find this repository helpful, please consider giving it a star!
-
--
 
 ↗️ Graph, graph database, RAG, graphrag, Retrieval-Augmented Generation,Information Retrieval, Natural Language Processing, LLM, Embeddings, Semantic Search
