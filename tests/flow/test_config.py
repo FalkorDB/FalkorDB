@@ -22,6 +22,34 @@ class testConfig(FlowTestsBase):
         # 16 configurations should be reported
         self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
 
+        # validate default configuration values
+        default_config = [
+                ("TIMEOUT", 0),
+                ("TIMEOUT_DEFAULT", 0),
+                ("TIMEOUT_MAX",  0),
+                ("CACHE_SIZE", 25),
+                ("ASYNC_DELETE", 1),
+                ("OMP_THREAD_COUNT", 11),
+                ("THREAD_COUNT", 11),
+                ("RESULTSET_SIZE", -1),
+                ("VKEY_MAX_ENTITY_COUNT", 100000),
+                ("MAX_QUEUED_QUERIES", 4294967295),
+                ("QUERY_MEM_CAPACITY", 0),
+                ("DELTA_MAX_PENDING_CHANGES", 10000),
+                ("NODE_CREATION_BUFFER", 16384),
+                ("CMD_INFO", 1),
+                ("MAX_INFO_QUERIES", 1000),
+                ("EFFECTS_THRESHOLD", 300),
+                ("BOLT_PORT", 65535),
+                ("DELAY_INDEXING", 0),
+                ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/")
+        ]
+
+        for i, config in enumerate(response):
+            name  = config[0]
+            value = config[1]
+            self.env.assertEquals((name, value), default_config[i])
+
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
         fake_config_name = "FAKE_CONFIG_NAME"
@@ -287,4 +315,3 @@ class testConfig(FlowTestsBase):
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
-
