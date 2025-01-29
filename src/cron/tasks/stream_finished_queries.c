@@ -217,7 +217,7 @@ bool CronTask_streamFinishedQueries
 	simple_timer_t stopwatch;
 	simple_tic(stopwatch);
 
-	uint32_t max_query_count = 0;  // determine max number of queries to collect
+	uint64_t max_query_count = 0;  // determine max number of queries to collect
 	Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &max_query_count);
 
 	KeySpaceGraphIterator it;
