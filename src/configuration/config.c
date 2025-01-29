@@ -1365,6 +1365,7 @@ bool Config_Option_set
 		case Config_CMD_INFO_MAX_QUERY_COUNT: {
 			long long count = 0;
 			if (!_Config_ParseNonNegativeInteger(val, &count)) return false;
+			if (count > UINT64_MAX) return false;
 
 			Config_cmd_info_max_queries_set(count);
       }
