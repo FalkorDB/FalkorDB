@@ -1,8 +1,8 @@
+import os
 from common import *
 
-# Number of configurations available.
-NUMBER_OF_CONFIGURATIONS = 19
 GRAPH_ID = "config"
+NUMBER_OF_CONFIGURATIONS = 19 # Number of configurations available.
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -19,18 +19,20 @@ class testConfig(FlowTestsBase):
 
         # Try reading all configurations
         response = self.redis_con.execute_command("GRAPH.CONFIG GET *")
+
         # 16 configurations should be reported
         self.env.assertEquals(len(response), NUMBER_OF_CONFIGURATIONS)
 
         # validate default configuration values
+
         default_config = [
                 ("TIMEOUT", 0),
                 ("TIMEOUT_DEFAULT", 0),
                 ("TIMEOUT_MAX",  0),
                 ("CACHE_SIZE", 25),
-                ("ASYNC_DELETE", 1),
-                ("OMP_THREAD_COUNT", 11),
-                ("THREAD_COUNT", 11),
+                ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
+                ("OMP_THREAD_COUNT", os.cpu_count()),
+                ("THREAD_COUNT", os.cpu_count()),
                 ("RESULTSET_SIZE", -1),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
                 ("MAX_QUEUED_QUERIES", 4294967295),
@@ -48,7 +50,15 @@ class testConfig(FlowTestsBase):
         for i, config in enumerate(response):
             name  = config[0]
             value = config[1]
-            self.env.assertEquals((name, value), default_config[i])
+
+            # validate config name
+            self.env.assertEquals(name, default_config[i][0])
+
+            # validate config value
+            if type(default_config[i][1]) is list:
+                self.env.assertIn(value, default_config[i][1])
+            else:
+                self.env.assertEquals(value, default_config[i][1])
 
     def test02_config_get_invalid_name(self):
         # Ensure that getter fails on invalid parameters appropriately
