@@ -105,7 +105,7 @@ typedef struct {
 	uint64_t node_creation_buffer;     // number of extra node creations to buffer as margin in matrices
 	bool cmd_info_on;                  // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
-	uint32_t max_info_queries_count;   // maximum number of query info elements
+	uint64_t max_info_queries_count;   // maximum number of query info elements
 	int16_t bolt_port;                 // bolt protocol port
 	bool delay_indexing;               // delay index construction when decoding
 	char *import_folder;               // path to import folder, used for CSV loading
@@ -422,13 +422,13 @@ static void Config_cmd_info_set
 	config.cmd_info_on = cmd_info_on;
 }
 
-static uint32_t Config_cmd_info_max_queries_get(void) {
+static uint64_t Config_cmd_info_max_queries_get(void) {
 	return config.max_info_queries_count;
 }
 
 static void Config_cmd_info_max_queries_set
 (
-	const uint32_t count
+	const uint64_t count
 ) {
 	if (count > CMD_INFO_QUERIES_MAX_COUNT_DEFAULT) {
 		config.max_info_queries_count = CMD_INFO_QUERIES_MAX_COUNT_DEFAULT;
@@ -1079,7 +1079,7 @@ bool Config_Option_get
 
 		case Config_CMD_INFO_MAX_QUERY_COUNT: {
 			va_start(ap, field);
-			uint32_t *count = va_arg(ap, uint32_t *);
+			uint64_t *count = va_arg(ap, uint64_t *);
 			va_end(ap);
 
 			ASSERT(count != NULL);
@@ -1365,8 +1365,8 @@ bool Config_Option_set
 		case Config_CMD_INFO_MAX_QUERY_COUNT: {
 			long long count = 0;
 			if (!_Config_ParseNonNegativeInteger(val, &count)) return false;
+			if (count > UINT64_MAX) return false;
 
-			// A downcast from <long long> to <uint32_t>.
 			Config_cmd_info_max_queries_set(count);
       }
   		break;

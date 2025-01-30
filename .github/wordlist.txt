@@ -97,3 +97,8 @@ md
 LLM
 Github
 txt
+GenAI
+GraphRAG
+LLMs
+Embeddings
+graphrag
