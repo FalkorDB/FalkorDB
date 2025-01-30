@@ -6,6 +6,7 @@
 
 #include "op_join.h"
 #include "op_call_subquery.h"
+#include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 
 // forward declarations
@@ -124,13 +125,10 @@ static OpResult CallSubqueryInit
 	//
 	// search for a Join op
 
-	OpJoin *op_join = NULL;
-	if((OpBase_Type(op->body) == OPType_JOIN)) {
-		op_join = (OpJoin *)op->body;
-	} else if(OpBase_ChildCount(op->body) > 0 &&
-		OpBase_Type(OpBase_GetChild(op->body, 0)) == OPType_JOIN) {
-			op_join = (OpJoin *)OpBase_GetChild(op->body, 0);
-	}
+	OPType match     = OPType_JOIN;
+	OPType blacklist = OPType_CALLSUBQUERY;
+	OpBase *op_join = ExecutionPlan_LocateOpMatchingTypes(op->body,
+			&match, 1, &blacklist, 1);
 
 	if(op_join != NULL) {
 		uint n_branches = OpBase_ChildCount((OpBase *)op_join);

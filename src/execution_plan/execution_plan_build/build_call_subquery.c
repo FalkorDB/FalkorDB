@@ -47,7 +47,7 @@ static inline bool _is_deepest_call_foreach
 }
 
 // finds the deepest operation starting from root, and appends it to deepest_ops
-// if a call {} op with one child is found, it is appended to deepest_ops
+// if a CALL op with one child is found, it is appended to deepest_ops
 static void _get_deepest
 (
 	OpBase *root,          // root op from which to look for the deepest op
@@ -71,30 +71,13 @@ static void _get_deepest
 		// Example:
 		// "CALL {CALL {RETURN 1 AS one} RETURN one} RETURN one"
 		type = OpBase_Type(deepest);
-		if(_is_deepest_call_foreach(deepest)){
+		if(_is_deepest_call_foreach(deepest)) {
 			array_append(*deepest_ops, deepest);
 			return;
 		}
 	}
 
 	array_append(*deepest_ops, deepest);
-}
-
-// looks for a Join operation at root or root->children[0] and returns it, or
-// NULL if not found
-static OpBase *_get_join
-(
-	OpBase *root  // root op from which to look for the Join op
-) {
-	// check if there is a Join operation (from UNION or UNION ALL)
-	OpBase *join_op = NULL;
-	if(root->type == OPType_JOIN) {
-		join_op = root;
-	} else if(root->childCount > 0 && root->children[0]->type == OPType_JOIN) {
-		join_op = root->children[0];
-	}
-
-	return join_op;
 }
 
 // returns an array with the deepest ops of an execution plan
@@ -105,12 +88,10 @@ static OpBase **_find_feeding_points
 ) {
 	ASSERT(plan != NULL);
 
-	// the root is a Results op if the subquery is returning.
+	// the root is a Results op if the subquery is returning
 	// search for a Join op in its first child or its first child's first child
 	// (depending on whether there is a `UNION` or `UNION ALL` clause)
-	OpBase *join = (OpBase_ChildCount(plan->root) > 0) ?
-		_get_join(plan->root->children[0]) :
-		NULL;
+	OpBase *join = ExecutionPlan_LocateOpDepth(plan->root, OPType_JOIN, 3);
 
 	// get the deepest op(s)
 	uint n_branches = 1;
@@ -130,36 +111,41 @@ static OpBase **_find_feeding_points
 	return feeding_points;
 }
 
-// binds the returning ops (effectively, all ops between the first
+// binds the projecting ops (effectively, all ops between the first
 // Project\Aggregate and CallSubquery in every branch other than the Join op,
 // inclusive) in embedded_plan to plan
 // returns true if `embedded_plan` should be free'd after binding its root to
 // the call {} op (if there are no more ops left in it), false otherwise
-static bool _bind_returning_ops_to_plan
+static bool _bind_projecting_ops_to_plan
 (
-	const ExecutionPlan *embedded_plan,  // embedded plan
-	const ExecutionPlan *plan            // plan to migrate ops to
+	ExecutionPlan *embedded_plan,  // embedded plan
+	const ExecutionPlan *plan      // plan to migrate ops to
 ) {
 	// check if there is a Join operation (from UNION or UNION ALL)
-	OpBase *root = embedded_plan->root;
-	OpBase *join_op = _get_join(root);
+	OpBase *proj_op = NULL;
+	OpBase *root    = embedded_plan->root;
+	OpBase *join_op = ExecutionPlan_LocateOpDepth(root, OPType_JOIN, 3);
 
 	// 5 place-holders are allocated for a maximum of 5 operations between the
 	// returning op (Project/Aggregate) and the CallSubquery op
 	// (Sort, Join, Distinct, Skip, Limit)
 	OpBase *ops[5];
-	OPType return_types[] = {OPType_PROJECT, OPType_AGGREGATE};
+	OPType proj_types[] = {OPType_PROJECT, OPType_AGGREGATE};
 
 	if(join_op == NULL) {
-		// only one returning projection/aggregation
-		OpBase *returning_op =
-			ExecutionPlan_LocateOpMatchingTypes(root, return_types, 2);
-		// if the returning op has no children, we need to free its exec-plan
+		// only one projection/aggregation operation
+		proj_op =
+			ExecutionPlan_LocateOpMatchingTypes(root, proj_types, 2, NULL, 0);
+
+		// if the projecting op has no children, we need to free its exec-plan
 		// after binding it to a new plan
-		ExecutionPlan *old_plan = (ExecutionPlan *)returning_op->plan;
-		uint n_ops = ExecutionPlan_CollectUpwards(ops, returning_op);
+		ExecutionPlan *old_plan = (ExecutionPlan *)proj_op->plan;
+
+		// collect parent operations e.g. DISTINCT, SORT, SKIP, LIMIT
+		uint n_ops = ExecutionPlan_CollectUpwards(ops, 5, proj_op);
 		ExecutionPlan_MigrateOpsExcludeType(ops, OPType_JOIN, n_ops, plan);
-		if(returning_op->childCount == 0) {
+
+		if(proj_op->childCount == 0) {
 			if(old_plan == embedded_plan) {
 				return true;
 			} else {
@@ -173,23 +159,25 @@ static bool _bind_returning_ops_to_plan
 		// plan
 		return false;
 	} else {
-		// if there is a Union operation, we need to look at all of its branches
-		for(uint i = 0; i < join_op->childCount; i++) {
-			OpBase *child = join_op->children[i];
-			OpBase *returning_op =
-				ExecutionPlan_LocateOpMatchingTypes(child, return_types, 2);
-			if(returning_op->childCount == 0) {
-				ExecutionPlan *old_plan = (ExecutionPlan *)returning_op->plan;
-				old_plan->root = NULL;
-				ExecutionPlan_Free(old_plan);
-			}
-			uint n_ops = ExecutionPlan_CollectUpwards(ops, child);
-			ExecutionPlan_MigrateOpsExcludeType(ops, OPType_JOIN, n_ops, plan);
+		// there's a UNION operation
+		// migrate all operations within the UNION plan
+		// that includes projections / distinct & join
 
+		// collect all reachable operations within the join plan
+		uint n;  // number of ops
+		OpBase **ops = ExecutionPlan_CollectAllOps(embedded_plan, &n);
+
+		ASSERT(n   > 0);
+		ASSERT(ops != NULL);
+
+		// migrate ops from inner-plan to outter-plan
+		for(uint i = 0; i < n; i++) {
+			OpBase_BindOpToPlan(ops[i], plan);
 		}
+		rm_free(ops);
 
-		// if there is a join op, we never free the embedded plan
-		return false;
+		// return true, indicating the later free of the inner-plan
+		return true;
 	}
 }
 
@@ -231,6 +219,8 @@ void buildCallSubqueryPlan
 
 	QueryCtx_SetAST(&subquery_ast);
 	ExecutionPlan *embedded_plan = ExecutionPlan_FromTLS_AST();
+
+	// restore AST
 	QueryCtx_SetAST(orig_ast);
 
 	// characterize whether the query is eager or not
@@ -255,11 +245,12 @@ void buildCallSubqueryPlan
 		// remove the Results op from the embedded execution-plan
 		OpBase *results_op = embedded_plan->root;
 		ASSERT(OpBase_Type(results_op) == OPType_RESULTS);
+
 		ExecutionPlan_RemoveOp(embedded_plan, embedded_plan->root);
 		OpBase_Free(results_op);
 
-		// bind the returning ops to the outer plan
-		free_embedded_plan = _bind_returning_ops_to_plan(embedded_plan, plan);
+		// bind the projecting ops to the outer plan
+		free_embedded_plan = _bind_projecting_ops_to_plan(embedded_plan, plan);
 	}
 
 	//--------------------------------------------------------------------------
@@ -296,3 +287,4 @@ void buildCallSubqueryPlan
 		ExecutionPlan_Free(embedded_plan);
 	}
 }
+

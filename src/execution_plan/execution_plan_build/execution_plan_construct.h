@@ -64,3 +64,4 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	const char **vars,
 	const cypher_astnode_t *path
 );
+
