@@ -51,7 +51,7 @@ void Serializer_Graph_SetNode
 		LabelID label = labels[i];
 		// set label matrix at position [id, id]
 		Delta_Matrix M = Graph_GetLabelMatrix(g, label);
-		GrB_Matrix   m = Delta_Matrix_M(M);
+		GrB_Matrix   m = Delta_Matrix_M(M, false);
 
 		info = GrB_Matrix_setElement_BOOL(m, true, id, id);
 		ASSERT(info == GrB_SUCCESS);
@@ -71,7 +71,7 @@ void Serializer_Graph_SetNodeLabels
 	int node_count           = Graph_RequiredMatrixDim(g);
 	int label_count          = Graph_LabelTypeCount(g);
 	Delta_Matrix node_labels = Graph_GetNodeLabelMatrix(g);
-	GrB_Matrix node_labels_m = Delta_Matrix_M(node_labels);
+	GrB_Matrix node_labels_m = Delta_Matrix_M(node_labels, false);
 
 #if RG_DEBUG
 	GrB_Index nvals;
@@ -83,7 +83,7 @@ void Serializer_Graph_SetNodeLabels
 
 	for(int i = 0; i < label_count; i++) {
 		Delta_Matrix  M  =  Graph_GetLabelMatrix(g, i);
-		GrB_Matrix m     =  Delta_Matrix_M(M);
+		GrB_Matrix m     =  Delta_Matrix_M(M, false);
 
 		GxB_Vector_diag(v, m, 0, NULL);
 
@@ -116,13 +116,13 @@ void Serializer_OptimizedFormConnections
 
 	GrB_Info   info;   // GraphBLAS operation result
 
-	Tensor       M   = Graph_GetRelationMatrix(g, r, false);  // relation matrix
-	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g, false);    // adj matrix
+	Tensor       M   = Graph_GetRelationMatrix(g, r);  // relation matrix
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(g);    // adj matrix
 
-	GrB_Matrix m      = Delta_Matrix_M(M);
-	GrB_Matrix tm     = Delta_Matrix_M(Delta_Matrix_getTranspose(M));
-	GrB_Matrix adj_m  = Delta_Matrix_M(adj);
-	GrB_Matrix adj_tm = Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
+	GrB_Matrix m      = Delta_Matrix_M(M, false);
+	GrB_Matrix tm     = Delta_Matrix_M(M, true);
+	GrB_Matrix adj_m  = Delta_Matrix_M(adj, false);
+	GrB_Matrix adj_tm = Delta_Matrix_M(adj, true);
 
 	UNUSED(info);
 
