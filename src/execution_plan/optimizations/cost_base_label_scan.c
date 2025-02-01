@@ -86,7 +86,7 @@ static void _transposeExpression
 	const GraphContext  *gc         = QueryCtx_GetGraphCtx();
 	const ExecutionPlan *plan       = op->plan;
 	QueryGraph          *qg         = plan->query_graph;
-	AlgebraicExpression *ae         = AlgebraicExpression_Clone(traversal->ae);
+	AlgebraicExpression *ae         = traversal->ae;
 	NodeScanCtx         *scan_ctx   = scan->n;
 	const char          *dest_alias = AlgebraicExpression_Dest(ae);
 
@@ -218,6 +218,9 @@ static void _transposeExpression
 	AlgebraicExpression *lhs =
 		AlgebraicExpression_NewOperand(NULL, true, scan_ctx->alias,
 				scan_ctx->alias, NULL, scan_ctx->label);
+
+	// all modifications should be performed on a copy of the expression
+	ae = AlgebraicExpression_Clone(ae);
 
 	// multiply to the left as we're adding back the old src
 	ae = _AlgebraicExpression_MultiplyToTheLeft(lhs, ae);
