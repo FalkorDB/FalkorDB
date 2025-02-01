@@ -111,6 +111,7 @@ AlgebraicExpression **AlgebraicExpression_CollectOperandsInOrder
 			operands[idx++] = current;
 		}
 	}
+	array_free(queue);
 
 	// set output 'n'
 	ASSERT(idx == _n);

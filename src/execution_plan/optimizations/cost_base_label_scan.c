@@ -113,7 +113,7 @@ static void _transposeExpression
 	// populate source labels array
 	// break upon first none diagonal operand
 	// this denotes a relationship matrix
-	for(uint i = 0; i < n; i++) {
+	for(int i = 0; i < n; i++) {
 		AlgebraicExpression *operand = operands[i];
 		if(AlgebraicExpression_Diagonal(operand) == true) {
 			src_ops[src_ops_n++] = operand;
@@ -126,7 +126,7 @@ static void _transposeExpression
 	// populate destination labels array
 	// scan from end backwards, break upon first none diagonal operand
 	// this denotes a relationship matrix
-	for(uint i = n-1; i > 0; i--) {
+	for(int i = n-1; i >= 0; i--) {
 		AlgebraicExpression *operand = operands[i];
 		if(AlgebraicExpression_Diagonal(operand) == true) {
 			dest_ops[dest_ops_n++] = operand;
