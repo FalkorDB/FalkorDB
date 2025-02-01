@@ -18,29 +18,36 @@
 
 #include <setjmp.h>
 
-// Allocate a new ExecutionPlan segment.
+// allocate a new ExecutionPlan segment
 inline ExecutionPlan *ExecutionPlan_NewEmptyExecutionPlan(void) {
 	return rm_calloc(1, sizeof(ExecutionPlan));
 }
 
-void ExecutionPlan_PopulateExecutionPlan(ExecutionPlan *plan) {
+void ExecutionPlan_PopulateExecutionPlan
+(
+	ExecutionPlan *plan
+) {
 	AST *ast = QueryCtx_GetAST();
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 
-	// Initialize the plan's record mapping if necessary.
-	// It will already be set if this ExecutionPlan has been created to populate a single stream.
+	// initialize the plan's record mapping if necessary
+	// it will already be set if this ExecutionPlan has been created to populate
+	// a single stream
 	if(plan->record_map == NULL) {
 		plan->record_map = raxNew();
 	}
 
-	// Build query graph
-	// Query graph is set if this ExecutionPlan has been created to populate a single stream.
-	if(plan->query_graph == NULL) plan->query_graph = BuildQueryGraph(ast);
+	// build query graph
+	// query graph is set if this ExecutionPlan has been created to populate a single stream
+	if(plan->query_graph == NULL) {
+		plan->query_graph = BuildQueryGraph(ast);
+	}
 
 	uint clause_count = cypher_ast_query_nclauses(ast->root);
 	for(uint i = 0; i < clause_count; i ++) {
-		// Build the appropriate operation(s) for each clause in the query.
-		const cypher_astnode_t *clause = cypher_ast_query_get_clause(ast->root, i);
+		// build the appropriate operation(s) for each clause in the query
+		const cypher_astnode_t *clause =
+			cypher_ast_query_get_clause(ast->root, i);
 		ExecutionPlanSegment_ConvertClause(gc, ast, plan, clause);
 	}
 }
@@ -132,14 +139,18 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans(AST *ast) {
 	return plan;
 }
 
-static ExecutionPlan *_process_segment(AST *ast, uint segment_start_idx,
-									   uint segment_end_idx) {
+static ExecutionPlan *_process_segment
+(
+	AST *ast,
+	uint segment_start_idx,
+	uint segment_end_idx
+) {
 	ASSERT(ast != NULL);
 	ASSERT(segment_start_idx <= segment_end_idx);
 
 	ExecutionPlan *segment = NULL;
 
-	// Construct a new ExecutionPlanSegment.
+	// construct a new ExecutionPlanSegment
 	segment = ExecutionPlan_NewEmptyExecutionPlan();
 	segment->ast_segment = ast;
 	ExecutionPlan_PopulateExecutionPlan(segment);
@@ -147,15 +158,18 @@ static ExecutionPlan *_process_segment(AST *ast, uint segment_start_idx,
 	return segment;
 }
 
-static ExecutionPlan **_process_segments(AST *ast) {
-	uint nsegments = 0;               // number of segments
-	uint seg_end_idx = 0;             // segment clause end index
-	uint clause_count = 0;            // number of clauses
-	uint seg_start_idx = 0;           // segment clause start index
-	AST *ast_segment = NULL;          // segment AST
-	uint *segment_indices = NULL;     // array segment bounds
-	ExecutionPlan *segment = NULL;    // portion of the entire execution plan
-	ExecutionPlan **segments = NULL;  // constructed segments
+static ExecutionPlan **_process_segments
+(
+	AST *ast
+) {
+	uint          nsegments        = 0;     // number of segments
+	uint          seg_end_idx      = 0;     // segment clause end index
+	uint          clause_count     = 0;     // number of clauses
+	uint          seg_start_idx    = 0;     // segment clause start index
+	AST           *ast_segment     = NULL;  // segment AST
+	uint          *segment_indices = NULL;  // array segment bounds
+	ExecutionPlan *segment         = NULL;  // portion of the entire execution plan
+	ExecutionPlan **segments       = NULL;  // constructed segments
 
 	clause_count = cypher_ast_query_nclauses(ast->root);
 
@@ -190,11 +204,11 @@ static ExecutionPlan **_process_segments(AST *ast) {
 		segment = _process_segment(ast_segment, seg_start_idx, seg_end_idx);
 		array_append(segments, segment);
 
-		// The next segment will start where the current one ended.
+		// the next segment will start where the current one ended
 		seg_start_idx = seg_end_idx;
 	}
 
-	// Restore the overall AST.
+	// restore the overall AST
 	QueryCtx_SetAST(ast);
 	array_free(segment_indices);
 

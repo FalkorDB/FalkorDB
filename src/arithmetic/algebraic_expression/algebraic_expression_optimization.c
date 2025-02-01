@@ -424,7 +424,7 @@ void AlgebraicExpression_Optimize
 	_AlgebraicExpression_MulOverAdd(exp);
 	_AlgebraicExpression_FlattenMultiplications(*exp);
 
-	// Retrieve all operands now that they are guaranteed to be leaves.
+	// retrieve all operands now that they are guaranteed to be leaves.
 	_AlgebraicExpression_PopulateOperands(*exp, QueryCtx_GetGraphCtx());
 }
 

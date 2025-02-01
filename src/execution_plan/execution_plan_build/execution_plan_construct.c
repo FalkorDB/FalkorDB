@@ -375,7 +375,7 @@ void ExecutionPlanSegment_ConvertClause
 	const cypher_astnode_t *clause
 ) {
 	cypher_astnode_type_t t = cypher_astnode_type(clause);
-	// Because 't' is set using the offsetof() call
+	// because 't' is set using the offsetof() call
 	// it cannot be used in switch statements
 	if(t == CYPHER_AST_MATCH) {
 		buildMatchOpTree(plan, ast, clause);
