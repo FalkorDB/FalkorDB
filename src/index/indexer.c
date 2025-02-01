@@ -78,7 +78,7 @@ static void _indexer_idx_populate
 	// as Schema_ActivateIndex might drop an index
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
 	RedisModule_ThreadSafeContextLock(rm_ctx);
-	Graph_AcquireWriteLock(ctx->gc->g);
+	CRWGuard guard = Graph_AcquireWriteLock(ctx->gc->g);
 
 	// index populated, try to enable
 	Index_Enable(idx);
@@ -88,7 +88,7 @@ static void _indexer_idx_populate
 	}
 
 	// release locks
-	Graph_ReleaseLock(ctx->gc->g);
+	Graph_ReleaseLock(ctx->gc->g, guard);
 	RedisModule_ThreadSafeContextUnlock(rm_ctx);
 	RedisModule_FreeThreadSafeContext(rm_ctx);
 

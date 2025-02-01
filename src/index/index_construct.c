@@ -29,6 +29,7 @@ static void _Index_PopulateNodeIndex
 	ASSERT(g   != NULL);
 	ASSERT(idx != NULL);
 
+	CRWGuard guard;
 	GrB_Index          rowIdx     = 0;
 	int                indexed    = 0;      // #entities in current batch
 	int                batch_size = 10000;  // max #entities to index in one go
@@ -36,7 +37,7 @@ static void _Index_PopulateNodeIndex
 
 	while(true) {
 		// lock graph for reading
-		Graph_AcquireReadLock(g);
+		guard = Graph_AcquireReadLock(g);
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
@@ -58,9 +59,7 @@ static void _Index_PopulateNodeIndex
 		//----------------------------------------------------------------------
 
 		GrB_Info info;
-		info = Delta_MatrixTupleIter_attach(&it, m);
-		ASSERT(info == GrB_SUCCESS);
-		info = Delta_MatrixTupleIter_iterate_range(&it, rowIdx, UINT64_MAX);
+		info = Delta_MatrixTupleIter_AttachRange(&it, m, rowIdx, UINT64_MAX, false);
 		ASSERT(info == GrB_SUCCESS);
 
 		//----------------------------------------------------------------------
@@ -86,7 +85,7 @@ static void _Index_PopulateNodeIndex
 			break;
 		} else {
 			// release read lock
-			Graph_ReleaseLock(g);
+			Graph_ReleaseLock(g, guard);
 
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
@@ -98,7 +97,7 @@ static void _Index_PopulateNodeIndex
 	}
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 	Delta_MatrixTupleIter_detach(&it);
 }
 
@@ -119,6 +118,7 @@ static void _Index_PopulateEdgeIndex
 	ASSERT(g   != NULL);
 	ASSERT(idx != NULL);
 
+	CRWGuard guard;
 	bool  info;
 	EntityID  src_id       = 0;                      // current processed row idx
 	EntityID  dest_id      = 0;                      // current processed column idx
@@ -132,7 +132,7 @@ static void _Index_PopulateEdgeIndex
 
 	while(true) {
 		// lock graph for reading
-		Graph_AcquireReadLock(g);
+		guard = Graph_AcquireReadLock(g);
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
@@ -146,7 +146,7 @@ static void _Index_PopulateEdgeIndex
 		indexed = 0;
 
 		// fetch relation matrix
-		Tensor R = Graph_GetRelationMatrix(g, Index_GetLabelID(idx), false);
+		Tensor R = Graph_GetRelationMatrix(g, Index_GetLabelID(idx));
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
@@ -196,12 +196,12 @@ static void _Index_PopulateEdgeIndex
 		} else {
 			// finished current batch
 			// release read lock
-			Graph_ReleaseLock(g);
+			Graph_ReleaseLock(g, guard);
 		}
 	}
 
 	// release read lock
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 }
 
 // constructs index

@@ -445,7 +445,7 @@ static void RG_ForkPrepare() {
 	while((gc = GraphIterator_Next(&it)) != NULL) {
 		// acquire read lock, guarantee graph isn't modified
 		Graph *g = gc->g;
-		Graph_AcquireReadLock(g);
+		gc->guard = Graph_AcquireReadLock(g);
 
 		// set matrix synchronization policy to default
 		Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
@@ -472,7 +472,7 @@ static void RG_AfterForkParent() {
 	Globals_ScanGraphs(&it);
 
 	while((gc = GraphIterator_Next(&it)) != NULL) {
-		Graph_ReleaseLock(gc->g);
+		Graph_ReleaseLock(gc->g, gc->guard);
 		GraphContext_DecreaseRefCount(gc);
 	}
 }

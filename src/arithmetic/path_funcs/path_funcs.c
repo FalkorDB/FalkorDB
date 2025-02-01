@@ -136,7 +136,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 
 	GrB_Info res;
 	UNUSED(res);
-	Edge *edges = NULL;
+	Edge edge;
 	GrB_Vector V = GrB_NULL;  // vector of results
 	GrB_Vector PI = GrB_NULL; // vector backtracking results to their parents
 	GraphContext *gc = QueryCtx_GetGraphCtx();
@@ -162,8 +162,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 		if(ctx->reltypes == NULL) {
 			// No edge types were specified, use the overall adjacency matrix.
 			ctx->free_matrices = true;
-			res = Delta_Matrix_export(&ctx->R, Graph_GetAdjacencyMatrix(gc->g,
-						false));
+			res = Delta_Matrix_export(&ctx->R, Graph_GetAdjacencyMatrix(gc->g));
 			ASSERT(res == GrB_SUCCESS);
 		} else if(ctx->reltype_count == 0) {
 			// If edge types were specified but none were valid,
@@ -174,7 +173,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 		} else if(ctx->reltype_count == 1) {
 			ctx->free_matrices = true;
 			res = Delta_Matrix_export(&ctx->R, Graph_GetRelationMatrix(gc->g,
-						ctx->reltypes[0], false));
+						ctx->reltypes[0]));
 			ASSERT(res == GrB_SUCCESS);
 		} else {
 			// we have multiple edge types, combine them into a boolean matrix
@@ -186,7 +185,7 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 			for(uint i = 0; i < ctx->reltype_count; i ++) {
 				GrB_Matrix adj;
 				res = Delta_Matrix_export(&adj, Graph_GetRelationMatrix(gc->g,
-							ctx->reltypes[i], false));
+							ctx->reltypes[i]));
 				ASSERT(res == GrB_SUCCESS);
 				res = GrB_eWiseAdd(ctx->R, GrB_NULL, GrB_NULL,
 						GxB_ANY_PAIR_BOOL, ctx->R, adj, GrB_NULL);
@@ -224,11 +223,8 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 	p = SIPathBuilder_New(path_len);
 	SIPathBuilder_AppendNode(p, SI_Node(destNode));
 
-	edges = array_new(Edge, 1);
-
 	NodeID id = destNode->id;
 	for(uint i = 0; i < path_len; i ++) {
-		array_clear(edges);
 		GrB_Index parent_id;
 		// Find the parent of the reached node.
 		GrB_Info res = GrB_Vector_extractElement(&parent_id, PI, id);
@@ -236,19 +232,26 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 
 		// Retrieve edges connecting the parent node to the current node.
 		if(ctx->reltype_count == 0) {
-			Graph_GetEdgesConnectingNodes(gc->g, parent_id, id, GRAPH_NO_RELATION, &edges);
+			EdgeIterator it;
+			Graph_EdgeIteratorInit(gc->g, &it, parent_id, id, GRAPH_NO_RELATION);
+			if(EdgeIterator_Next(&it, &edge)) {
+				// Append the edge to the path
+				SIPathBuilder_AppendEdge(p, SI_Edge(&edge), false);
+			}
 		} else {
 			for(uint j = 0; j < ctx->reltype_count; j ++) {
-				Graph_GetEdgesConnectingNodes(gc->g, parent_id, id, ctx->reltypes[j], &edges);
-				if(array_len(edges) > 0) break;
+				EdgeIterator it;
+				Graph_EdgeIteratorInit(gc->g, &it, parent_id, id, ctx->reltypes[j]);
+				if(EdgeIterator_Next(&it, &edge)) {
+					// Append the edge to the path
+					SIPathBuilder_AppendEdge(p, SI_Edge(&edge), false);
+					break;
+				}
 			}
 		}
-		ASSERT(array_len(edges) > 0);
-		// Append the edge to the path
-		SIPathBuilder_AppendEdge(p, SI_Edge(&edges[0]), false);
 
 		// Append the reached node to the path.
-		id = Edge_GetSrcNodeID(&edges[0]);
+		id = Edge_GetSrcNodeID(&edge);
 		Node n = GE_NEW_NODE();
 		Graph_GetNode(gc->g, id, &n);
 		SIPathBuilder_AppendNode(p, SI_Node(&n));
@@ -260,7 +263,6 @@ SIValue AR_SHORTEST_PATH(SIValue *argv, int argc, void *private_data) {
 cleanup:
 	if(V) GrB_free(&V);
 	if(PI) GrB_free(&PI);
-	if(edges) array_free(edges);
 
 	return p;
 }

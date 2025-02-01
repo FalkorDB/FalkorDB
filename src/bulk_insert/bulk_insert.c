@@ -271,8 +271,8 @@ static int _BulkInsert_ProcessEdgeFile
 
 	// sync matrix once
 	ASSERT(Graph_GetMatrixPolicy(gc->g) == SYNC_POLICY_RESIZE);
-	Graph_GetRelationMatrix(gc->g, type_id, false);
-	Graph_GetAdjacencyMatrix(gc->g, false);
+	Graph_GetRelationMatrix(gc->g, type_id);
+	Graph_GetAdjacencyMatrix(gc->g);
 	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
 	//--------------------------------------------------------------------------
@@ -375,7 +375,7 @@ int BulkInsert
 	// lock graph under write lock
 	// allocate space for new nodes and edges
 	// set graph sync policy to resize only
-	Graph_AcquireWriteLock(g);
+	CRWGuard guard = Graph_AcquireWriteLock(g);
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
 	Graph_AllocateNodes(g, node_count);
 	Graph_AllocateEdges(g, edge_count);
@@ -413,7 +413,7 @@ int BulkInsert
 cleanup:
 	// reset graph sync policy
 	Graph_SetMatrixPolicy(g, SYNC_POLICY_FLUSH_RESIZE);
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 	return res;
 }
 

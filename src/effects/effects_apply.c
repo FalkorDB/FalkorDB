@@ -526,7 +526,7 @@ void Effects_Apply
 
 	// lock graph for writing
 	Graph *g = GraphContext_GetGraph(gc);
-	Graph_AcquireWriteLock(g);
+	CRWGuard guard = Graph_AcquireWriteLock(g);
 
 	// update graph sync policy
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
@@ -576,7 +576,7 @@ void Effects_Apply
 	Graph_SetMatrixPolicy(g, policy);
 
 	// release write lock
-	Graph_ReleaseLock(g);
+	Graph_ReleaseLock(g, guard);
 
 	// close stream
 	fclose(stream);
