@@ -84,7 +84,8 @@ ProcedureCtx *Proc_FulltextDropIdxGen() {
 								   Proc_FulltextDropIndexInvoke,
 								   NULL,
 								   privateData,
-								   false);
+								   false,
+                                   "Deletes the full-text index associated with the given label.");
 
 	return ctx;
 }
