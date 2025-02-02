@@ -103,7 +103,7 @@ AlgebraicExpression **AlgebraicExpression_CollectOperandsInOrder
 		if(current->type == AL_OPERATION) {
 			// push children to queue
 			uint child_count = AlgebraicExpression_ChildCount(current);
-			for(uint i = 0; i < child_count; i++) {
+			for(int i = child_count-1; i >= 0; i--) {
 				array_append(queue, CHILD_AT(current, i));
 			}
 		} else {

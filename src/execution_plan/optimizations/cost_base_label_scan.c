@@ -51,7 +51,7 @@
 //
 // Conditional Traverse | (b)<-(a:A)"
 //     Node By Label Scan | (b:B)"
-static void _transposeExpression
+static bool _transposeExpression
 (
 	NodeByLabelScan *scan
 ) {
@@ -68,7 +68,7 @@ static void _transposeExpression
 	// expecting a traverse operation following the label scan
 	// TODO: support variable length traversal
 	if(OpBase_Type(parent) != OPType_CONDITIONAL_TRAVERSE) {
-		return;
+		return false;
 	}
 
 	OpCondTraverse *traversal = (OpCondTraverse*)parent;
@@ -82,16 +82,28 @@ static void _transposeExpression
 	// due to former ordering logic which should have choosen the destination
 	// node as the 'opening" node for the traversal
 
-	Graph               *g          = QueryCtx_GetGraph();
-	const GraphContext  *gc         = QueryCtx_GetGraphCtx();
-	const ExecutionPlan *plan       = op->plan;
-	QueryGraph          *qg         = plan->query_graph;
-	AlgebraicExpression *ae         = traversal->ae;
-	NodeScanCtx         *scan_ctx   = scan->n;
-	const char          *dest_alias = AlgebraicExpression_Dest(ae);
+	Graph               *g        = QueryCtx_GetGraph();
+	const GraphContext  *gc       = QueryCtx_GetGraphCtx();
+	const ExecutionPlan *plan     = op->plan;
+	QueryGraph          *qg       = plan->query_graph;
+	NodeScanCtx         *scan_ctx = scan->n;
+
+	// adjust traversal algebraic expression
+	// make sure transposes are pushed down to the operand level
+	// this will align the operand in the expected order
+	// e.g.
+	//
+	// T(A * B)
+	// will become:
+	// Bt * At
+	// placing the operands in their correct position
+
+	AlgebraicExpression *ae = traversal->ae;
+	AlgebraicExpression_PushDownTranspose(ae);
+	const char *dest_alias = AlgebraicExpression_Dest(ae);
 
 	// split the operands within the algebraic expression into two parts
-	// 1. src labels - these are the leftmost operands
+	// 1. src labels  - these are the leftmost operands
 	// 2. dest labels - these are the rightmost operands
 	// e.g.
 	//
@@ -141,7 +153,7 @@ static void _transposeExpression
 
 	// return if destination isn't associcated with any labels
 	if(dest_ops_n == 0) {
-		return;
+		return false;
 	}
 
 	// determine nim number of entities for both source node and dest node
@@ -204,12 +216,14 @@ static void _transposeExpression
 	// check if we should replace the current label scan operation
 	if(dest_min >= src_min) {
 		// source will produce less entities, keep things as they are
-		return;
+		return false;
 	}
 
 	// scanning destination entities will produce less entities
 	// reverse traverse pattern
+	//
 	// e.g.
+	//
 	// (a)->(b)
 	// will become
 	// (b)<-(a)
@@ -256,7 +270,7 @@ static void _transposeExpression
 			(OpBase*)new_traversal);
 	OpBase_Free((OpBase*)traversal);
 
-	return;
+	return true;
 }
 
 static void _costBaseLabelScan
@@ -367,8 +381,9 @@ void costBaseLabelScan
 	uint op_count = array_len(label_scan_ops);
 	for(uint i = 0; i < op_count; i++) {
 		NodeByLabelScan *label_scan = (NodeByLabelScan*)label_scan_ops[i];
-		_costBaseLabelScan(label_scan);
-		_transposeExpression(label_scan);
+		if(!_transposeExpression(label_scan)) {
+			_costBaseLabelScan(label_scan);
+		}
 	}
 
 	array_free(label_scan_ops);
