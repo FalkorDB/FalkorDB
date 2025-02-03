@@ -41,7 +41,7 @@ QueriesLog QueriesLog_New(void) {
 
 	// create circular buffer
 	// read buffer capacity from configuration
-	uint32_t cap;
+	uint64_t cap;
 	bool get = Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &cap);
 	ASSERT(get == true);
 
