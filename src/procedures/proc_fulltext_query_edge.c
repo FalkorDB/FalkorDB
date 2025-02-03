@@ -14,11 +14,11 @@
 #include "proc_fulltext_query.h"
 #include "../graph/graphcontext.h"
 
-// Context for full-text query on relationships
+// context for full-text query on relationships
 typedef struct {
 	Edge e;                       // edge
 	Graph *g;                     // graph
-	Schema *s;                    // schema
+	RelationID r;                 // edge relation ID
 	SIValue *output;              // output
 	Index idx;                    // index
 	RSResultsIterator *iter;      // iterator
@@ -31,8 +31,8 @@ static void _relationship_process_yield
 	QueryRelationshipContext *ctx,
 	const char **yield
 ) {
-	ctx->yield_relationship = NULL;
 	ctx->yield_score        = NULL;
+	ctx->yield_relationship = NULL;
 
 	int idx = 0;
 	for(uint i = 0; i < array_len(yield); i++) {
@@ -86,7 +86,7 @@ SIValue *Proc_FulltextQueryRelationshipStep
 
 	e->src_id     = edge_key->src_id;
 	e->dest_id    = edge_key->dest_id;
-	e->relationID = pdata->s->id;
+	e->relationID = pdata->r;
 
 	EntityID edge_id = edge_key->edge_id;
 	bool edge_exists = Graph_GetEdge(pdata->g, edge_id, e);
@@ -162,7 +162,7 @@ ProcedureResult Proc_FulltextQueryRelationshipInvoke
 
 	// populate context
 	pdata->g      = gc->g;
-	pdata->s	  = s;
+	pdata->r	  = Schema_GetID(s);
 	pdata->idx    = idx;
 	pdata->output = array_new(SIValue,  2);
 
@@ -200,9 +200,10 @@ ProcedureCtx *Proc_FulltextQueryRelationshipGen() {
 	void *privateData = NULL;
 
 	ProcedureOutput *output   = array_new(ProcedureOutput, 2);
-	ProcedureOutput out_node  = {.name = "relationship", .type = T_EDGE};
-	ProcedureOutput out_score = {.name = "score", .type = T_DOUBLE};
-	array_append(output, out_node);
+	ProcedureOutput out_edge  = {.name = "relationship", .type = T_EDGE};
+	ProcedureOutput out_score = {.name = "score",        .type = T_DOUBLE};
+
+	array_append(output, out_edge);
 	array_append(output, out_score);
 
 	ProcedureCtx *ctx = ProcCtxNew("db.idx.fulltext.queryRelationships",
