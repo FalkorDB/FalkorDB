@@ -149,7 +149,7 @@ static bool _transposeExpression
 	}
 
 	// free operands array
-	free(operands);
+	rm_free(operands);
 
 	// return if destination isn't associcated with any labels
 	if(dest_ops_n == 0) {
