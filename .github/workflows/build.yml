@@ -357,21 +357,32 @@ jobs:
             sleep 5
           fi
 
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Confirm that FalkorDBBrowser exists
+        run: |
+          echo "Listing current directory:"
+          ls -la
+          echo "Listing FalkorDBBrowser folder:"
+          ls -la FalkorDBBrowser
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
 
       - name: Install dependencies
-        working-directory: /FalkorDBBrowser
+        working-directory: ./FalkorDBBrowser
         run: npm ci
 
       - name: Install Playwright Browsers
-        working-directory: /FalkorDBBrowser
+        working-directory: ./FalkorDBBrowser
         run: npx playwright install --with-deps
 
       - name: Run Playwright Tests
-        working-directory: /FalkorDBBrowser
+        working-directory: ./FalkorDBBrowser
         run: |
           npm run build
           NEXTAUTH_SECRET=SECRET npm start &
