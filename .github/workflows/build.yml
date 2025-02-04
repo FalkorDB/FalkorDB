@@ -347,7 +347,7 @@ jobs:
         run: |
           docker run --rm -i falkordb/falkordb:latest bash -c "
             cd /FalkorDBBrowser &&
-            npm ci &&
+            npm install &&
             npx playwright install --with-deps &&
             npm run build &&
             NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
