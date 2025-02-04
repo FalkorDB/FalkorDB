@@ -343,51 +343,16 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
 
-      - name: Flow tests
+      - name: Run Playwright Tests in Docker
         run: |
-          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
-
-      - name: Check if FalkorDB is running
-        run: |
-          if docker ps --filter "name=falkordb" --format '{{.Names}}' | grep -w falkordb; then
-            echo "FalkorDB is already running, skipping start"
-          else
-            echo "FalkorDB not running, starting now..."
-            docker run -d --name=falkordb -p 6379:6379 falkordb/falkordb:latest
-            sleep 5
-          fi
-
-      - name: Check out code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Confirm that FalkorDBBrowser exists
-        run: |
-          echo "Listing current directory:"
-          ls -la
-          echo "Listing FalkorDBBrowser folder:"
-          ls -la FalkorDBBrowser
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-
-      - name: Install dependencies
-        working-directory: ./FalkorDBBrowser
-        run: npm ci
-
-      - name: Install Playwright Browsers
-        working-directory: ./FalkorDBBrowser
-        run: npx playwright install --with-deps
-
-      - name: Run Playwright Tests
-        working-directory: ./FalkorDBBrowser
-        run: |
-          npm run build
-          NEXTAUTH_SECRET=SECRET npm start &
-          sleep 5
-          npx playwright test --reporter=dot
+          docker run --rm -i falkordb/falkordb:latest bash -c "
+            cd /FalkorDBBrowser &&
+            npm ci &&
+            npx playwright install --with-deps &&
+            npm run build &&
+            NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
+            sleep 5 &&
+            npx playwright test --reporter=dot"
 
   cleanup-flow-tests:
     needs: flow-tests
