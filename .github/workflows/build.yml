@@ -149,7 +149,7 @@ jobs:
           key: libcurl-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
           enableCrossOsArchive: true
 
-      - name: Cache libcsv ${{ matrix.platform }}
+      - name: Cache libcsv ${{ matrix.platform.suffix }}
         id: cache_libcsv
         uses: actions/cache@v4
         with:
