@@ -61,72 +61,43 @@ static AlgebraicExpression *_AlgebraicExpression_CloneOperand
 	return clone;
 }
 
-// Remove leftmost child node from 'root' if 'src' is set to true
-// rightmost child node otherwise
-static AlgebraicExpression *_AlgebraicExpression_RemoveOperand
+static void _AlgebraicExpression_PropagateOperandRemoval
 (
-	AlgebraicExpression **root, // Root from which to remove left most child.
-	bool src                    // Remove src operand if set, dest otherwise.
+	AlgebraicExpression **root,   // expression's root
+	AlgebraicExpression **stack,  // stack of operations leading to operand
+	AlgebraicExpression *operand  // operand to remove
 ) {
-	ASSERT(*root);
-	bool transpose                   = false;
-	AlgebraicExpression *ret         = NULL;
-	AlgebraicExpression *parent      = NULL;
-	AlgebraicExpression *current     = *root;
-	AlgebraicExpression *replacement = NULL;
-	AlgebraicExpression **stack      = array_new(AlgebraicExpression *, 0);
-
-	// search for operand
-	while(current->type == AL_OPERATION) {
-		array_append(stack, current);
-		switch(current->operation.op) {
-		case AL_EXP_TRANSPOSE:
-			transpose = !transpose;
-			current = FIRST_CHILD(current); // transpose has only one child
-			break;
-		case AL_EXP_ADD:
-			// Addition order of operands is not effected by transpose
-			if(src) current = FIRST_CHILD(current);
-			else current = LAST_CHILD(current);
-			break;
-		case AL_EXP_MUL:
-			// Multiplication order of operands depends on transpose
-			// | transpose     | src     | get dest |
-			// | transpose     | not src | get src  |
-			// | not transpose | src     | get src  |
-			// | not transpose | not src | get dest |
-			if(transpose && src) current = LAST_CHILD(current);
-			else if(transpose && !src) current = FIRST_CHILD(current);
-			else if(!transpose && src) current = FIRST_CHILD(current);
-			else if(!transpose && !src) current = LAST_CHILD(current);
-
-			break;
-		default:
-			ASSERT("Unknown algebraic expression operation" && false);
-		}
-	}
-
-	ret = current;
-	ASSERT(current->type == AL_OPERAND);
+	ASSERT(root    != NULL);
+	ASSERT(stack   != NULL);
+	ASSERT(operand != NULL);
 
 	// expression is just a single operand, set root to NULL
-	if(array_len(stack) == 0) *root = NULL;
+	if(array_len(stack) == 0) {
+		*root = NULL;
+		return;
+	}
 
 	// propagate operand removal upwards
 	// when removing A from MUL(A,B) root should become B
 	// when removing A from T(T(A)) root should become NULL
 	// when removing A from ADD(MUL(T(A),B),C) root should become ADD(B,C)
 
+	AlgebraicExpression *parent      = NULL;
+	AlgebraicExpression *current     = operand;
+	AlgebraicExpression *replacement = NULL;
+
 	while(array_len(stack) > 0) {
 		parent = array_pop(stack);
 		_AlgebraicExpression_OperationRemoveChild(parent, current);
 
-		// do not free return value
-		if(current != ret) AlgebraicExpression_Free(current);
+		// do not free operand
+		if(current != operand) {
+			AlgebraicExpression_Free(current);
+		}
 
 		AL_EXP_OP op = parent->operation.op;
-		/* binary operation with a single child, replace operation with child
-		 * removing A from A+B should become B */
+		// binary operation with a single child, replace operation with child
+		// removing A from A+B should become B
 		if(op == AL_EXP_ADD || op == AL_EXP_MUL) {
 			if(AlgebraicExpression_ChildCount(parent) == 1) {
 				// replace operation with only child
@@ -147,6 +118,61 @@ static AlgebraicExpression *_AlgebraicExpression_RemoveOperand
 			*root = NULL;
 		}
 	}
+}
+
+// remove leftmost child node from 'root' if 'src' is set to true
+// rightmost child node otherwise
+static AlgebraicExpression *_AlgebraicExpression_RemoveOperand
+(
+	AlgebraicExpression **root,  // root from which to remove left/right most child
+	bool src                     // remove src operand if set, dest otherwise
+) {
+	ASSERT(*root);
+
+	bool transpose               = false;
+	AlgebraicExpression *ret     = NULL;
+	AlgebraicExpression *parent  = NULL;
+	AlgebraicExpression *current = *root;
+	AlgebraicExpression **stack  = array_new(AlgebraicExpression*, 1);
+
+	// search for operand
+	while(current->type == AL_OPERATION) {
+		array_append(stack, current);
+
+		switch(current->operation.op) {
+			case AL_EXP_TRANSPOSE:
+				transpose = !transpose;
+				current   = FIRST_CHILD(current); // transpose has only one child
+				break;
+
+			case AL_EXP_ADD:
+				// addition order of operands is not effected by transpose
+				if(src) current = FIRST_CHILD(current);
+				else    current = LAST_CHILD(current);
+				break;
+
+			case AL_EXP_MUL:
+				// multiplication order of operands depends on transpose
+				// | transpose     | src     | get dest |
+				// | transpose     | not src | get src  |
+				// | not transpose | src     | get src  |
+				// | not transpose | not src | get dest |
+				if(transpose && src)        current = LAST_CHILD (current);
+				else if(transpose  && !src) current = FIRST_CHILD(current);
+				else if(!transpose && src)  current = FIRST_CHILD(current);
+				else if(!transpose && !src) current = LAST_CHILD (current);
+
+				break;
+
+			default:
+				ASSERT("Unknown algebraic expression operation" && false);
+		}
+	}
+
+	ret = current;
+	ASSERT(current->type == AL_OPERAND);
+
+	_AlgebraicExpression_PropagateOperandRemoval(root, stack, current);
 
 	array_free(stack);
 	return ret;
@@ -245,7 +271,7 @@ const char *AlgebraicExpression_Label
 (
   const AlgebraicExpression *exp
 ) {
-	ASSERT(exp != NULL);
+	ASSERT(exp       != NULL);
 	ASSERT(exp->type == AL_OPERAND);
 
   return exp->operand.label;
@@ -256,37 +282,44 @@ uint AlgebraicExpression_ChildCount
 (
 	const AlgebraicExpression *root   // Root of expression
 ) {
-	// Empty expression.
-	if(!root) return 0;
+	// empty expression
+	if(root == NULL) return 0;
 
-	if(root->type == AL_OPERATION) return array_len(root->operation.children);
-	else return 0;
+	if(root->type == AL_OPERATION) {
+		return array_len(root->operation.children);
+	} else {
+		return 0;
+	}
 }
 
-// Returns the number of operands in expression
+// returns the number of operands in expression
 uint AlgebraicExpression_OperandCount
 (
 	const AlgebraicExpression *root
 ) {
-	// Empty expression
-	if(!root) return 0;
-
-	uint operand_count = 0;
-	uint child_count = 0;
-	switch(root->type) {
-	case AL_OPERATION:
-		child_count = AlgebraicExpression_ChildCount(root);
-		for(uint i = 0; i < child_count; i++) {
-			operand_count += AlgebraicExpression_OperandCount(CHILD_AT(root, i));
-		}
-		break;
-	case AL_OPERAND:
-		operand_count = 1;
-		break;
-	default:
-		ASSERT("Unknown algebraic expression node type" && false);
-		break;
+	// empty expression
+	if(!root) {
+		return 0;
 	}
+
+	uint child_count   = 0;
+	uint operand_count = 0;
+
+	switch(root->type) {
+		case AL_OPERATION:
+			child_count = AlgebraicExpression_ChildCount(root);
+			for(uint i = 0; i < child_count; i++) {
+				operand_count += AlgebraicExpression_OperandCount(CHILD_AT(root, i));
+			}
+			break;
+		case AL_OPERAND:
+			operand_count = 1;
+			break;
+		default:
+			ASSERT("Unknown algebraic expression node type" && false);
+			break;
+	}
+
 	return operand_count;
 }
 
@@ -348,6 +381,17 @@ bool AlgebraicExpression_ContainsOp
 		}
 	}
 	return false;
+}
+
+// returns true if operand represents a diagonal matrix
+bool AlgebraicExpression_Diagonal
+(
+	const AlgebraicExpression *operand
+) {
+	ASSERT(operand != NULL);
+	ASSERT(operand->type == AL_OPERAND);
+
+	return operand->operand.diagonal;
 }
 
 // Checks to see if operand at position `operand_idx` is a diagonal matrix
@@ -485,6 +529,86 @@ AlgebraicExpression *AlgebraicExpression_RemoveDest
 	return _AlgebraicExpression_RemoveOperand(root, src);
 }
 
+// construct path from root to operand
+static bool _AlgebraicExpression_PathToOperand
+(
+	AlgebraicExpression ***path,
+	const AlgebraicExpression *operand,
+	AlgebraicExpression *root
+) {
+	// did we reached operand?
+	if(root == operand) {
+		// yes, add it to path and return true
+		array_append(*path, root);
+		return true;
+	}
+
+	// root is an operation, search for operand in each operation's child node
+	if(root->type == AL_OPERATION) {
+		uint n = AlgebraicExpression_ChildCount(root);
+
+		for(uint i = 0; i < n; i++) {
+			AlgebraicExpression *child = CHILD_AT(root, i);
+			if(_AlgebraicExpression_PathToOperand(path, operand, child)) {
+				// operand was found, add child to path
+				array_append(*path, root);
+				return true;
+			}
+		}
+	}
+
+	// root is an operand, not the one we're looking for
+	return false;
+}
+
+static AlgebraicExpression **AlgebraicExpression_PathToOperand
+(
+	const AlgebraicExpression *operand,
+	AlgebraicExpression *root
+) {
+	AlgebraicExpression **path = array_new(AlgebraicExpression*, 1);
+
+	bool found = _AlgebraicExpression_PathToOperand(&path, operand, root);
+	ASSERT(found == true);
+
+	// path is constructed in reverse order operand -> root
+	// reverse the order, root -> operand
+	array_reverse(path);
+
+	return path;
+}
+
+// remove operand
+void AlgebraicExpression_RemoveOperand
+(
+	AlgebraicExpression **root,   // expression root
+	AlgebraicExpression *operand  // operand to remove
+) {
+	ASSERT(root          != NULL);
+	ASSERT(*root         != NULL);
+	ASSERT(operand       != NULL);
+	ASSERT(operand->type == AL_OPERAND);
+
+	//--------------------------------------------------------------------------
+	// build path from root to operand
+	//--------------------------------------------------------------------------
+
+	AlgebraicExpression **path = AlgebraicExpression_PathToOperand(operand,
+			*root);
+	ASSERT(path != NULL);
+
+	// make sure operand is the last element on the path
+	uint n = array_len(path);
+	ASSERT(path[n-1] == operand);
+
+	//--------------------------------------------------------------------------
+	// remove the operand
+	//--------------------------------------------------------------------------
+
+	_AlgebraicExpression_PropagateOperandRemoval(root, path, operand);
+	array_free(path);
+}
+
 // Multiply root to the left with op.
 // Updates root
 void AlgebraicExpression_MultiplyToTheLeft
@@ -492,10 +616,12 @@ void AlgebraicExpression_MultiplyToTheLeft
 	AlgebraicExpression **root,
 	Delta_Matrix m
 ) {
-	ASSERT(root && m);
+	ASSERT(m    != NULL);
+	ASSERT(root != NULL);
+
 	AlgebraicExpression *rhs = *root;
-	/* Assuming new operand inherits (src, dest and edge) from
-	 * from the current left most operand. */
+	// assuming new operand inherits (src, dest and edge) from
+	// from the current left most operand
 	AlgebraicExpression *left_most_operand = _leftMostNode(rhs);
 	AlgebraicExpression *lhs = AlgebraicExpression_NewOperand(m, false, left_most_operand->operand.src,
 															  left_most_operand->operand.dest, NULL, NULL);
@@ -580,3 +706,4 @@ void AlgebraicExpression_Free
 	}
 	rm_free(root);
 }
+

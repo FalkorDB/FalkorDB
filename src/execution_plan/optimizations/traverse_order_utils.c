@@ -40,14 +40,14 @@ int TraverseOrder_LabelsScore
 	AlgebraicExpression *exp,
 	const QueryGraph *qg
 ) {
-	ASSERT(exp != NULL);
 	ASSERT(qg  != NULL);
+	ASSERT(exp != NULL);
 
-	int         score       =  0;
-	const char  *src        =  AlgebraicExpression_Src(exp);
-	const char  *dest       =  AlgebraicExpression_Dest(exp);
-	QGNode      *src_node   =  QueryGraph_GetNodeByAlias(qg, src);
-	QGNode      *dest_node  =  QueryGraph_GetNodeByAlias(qg, dest);
+	int        score      = 0;
+	const char *src       = AlgebraicExpression_Src(exp);
+	const char *dest      = AlgebraicExpression_Dest(exp);
+	QGNode     *src_node  = QueryGraph_GetNodeByAlias(qg, src);
+	QGNode     *dest_node = QueryGraph_GetNodeByAlias(qg, dest);
 
 	score += QGNode_LabelCount(src_node);
 	score += QGNode_LabelCount(dest_node);
@@ -217,9 +217,9 @@ void TraverseOrder_ScoreExpressions
 ) {
 	// scoring of algebraic expression is done according to 3 criterias
 	// ordered by strongest to weakest:
-	// 1. The source or destination are bound
-	// 2. Existence of filters on either source or destinaion
-	// 3. Label(s) on the expression source or destination
+	// 1. the source or destination are bound
+	// 2. existence of filters on either source or destinaion
+	// 3. label(s) on the expression source or destination
 	//
 	// the expressions will be evaluated in 3 phases, one for each criteria
 	// (from weakest to strongest)
@@ -238,11 +238,11 @@ void TraverseOrder_ScoreExpressions
 	// phase expression scoring = (max(phase 2 scoring results)) +  _expression_bound_variable_score
 	//
 
-	int                  max          =  0;
-	int                  score        =  0;
-	int                  currmax      =  0;
-	AlgebraicExpression  *exp         =  NULL;
-	ScoredExp            *scored_exp  =  NULL;
+	int                 max         = 0;
+	int                 score       = 0;
+	int                 currmax     = 0;
+	AlgebraicExpression *exp        = NULL;
+	ScoredExp           *scored_exp = NULL;
 
 	//--------------------------------------------------------------------------
 	//  phase 1 score label

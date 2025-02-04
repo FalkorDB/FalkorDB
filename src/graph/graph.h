@@ -301,7 +301,7 @@ size_t Graph_UncompactedNodeCount
 uint64_t Graph_LabeledNodeCount
 (
 	const Graph *g,
-	int label
+	LabelID label
 );
 
 // returns number of edges in the graph
@@ -314,7 +314,7 @@ uint64_t Graph_EdgeCount
 uint64_t Graph_RelationEdgeCount
 (
 	const Graph *g,
-	int relation_idx
+	RelationID relation_idx
 );
 
 // returns number of deleted edges in the graph

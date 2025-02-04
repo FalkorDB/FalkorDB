@@ -1368,7 +1368,7 @@ bool Config_Option_set
 			if (count > UINT64_MAX) return false;
 
 			Config_cmd_info_max_queries_set(count);
-      }
+		}
   		break;
 
 		//----------------------------------------------------------------------
