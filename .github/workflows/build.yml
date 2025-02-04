@@ -92,6 +92,7 @@ jobs:
             machine_label: ubuntu-latest
             build_test_image: true
             test_dockerfile: Dockerfile.debian
+            cache_path: linux-x64
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
@@ -99,12 +100,14 @@ jobs:
             machine_label: ${{ format('build-{0}-{1}', github.run_id, github.run_number)  }}
             build_test_image: true
             test_dockerfile: Dockerfile.debian
+            cache_path: linux-arm64v8
           - name: rhel/amd64
             platform: linux/amd64
             suffix: rhel-x64
             os: rhel
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
+            cache_path: linux-x64
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
@@ -114,35 +117,35 @@ jobs:
           set-safe-directory: "*"
           submodules: recursive
 
-      - name: Cache GraphBLAS ${{ matrix.platform }}
+      - name: Cache GraphBLAS ${{ matrix.platform.suffix }}
         id: cache_graphblas
         uses: actions/cache@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.suffix }}-release/GraphBLAS
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path }}-release/GraphBLAS
           key: graphblas-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h') }}
           enableCrossOsArchive: true
 
-      - name: Cache parser ${{ matrix.platform }}
+      - name: Cache parser ${{ matrix.platform.suffix }}
         id: cache_parser
         uses: actions/cache@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.suffix  }}-release/libcypher-parser
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcypher-parser
           key: parser-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
           enableCrossOsArchive: true
 
-      - name: Cache search ${{ matrix.platform }}
+      - name: Cache search ${{ matrix.platform.suffix }}
         id: cache_search
         uses: actions/cache@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.suffix  }}-release/search-static
-          key: search-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/search-static
+          key: search-${{ matrix.platform.suffix }}-${{ hashFiles('./deps/RediSearch/src/version.h') }}
           enableCrossOsArchive: true
 
-      - name: Cache libcurl ${{ matrix.platform }}
+      - name: Cache libcurl ${{ matrix.platform.suffix }}
         id: cache_libcurl
         uses: actions/cache@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.suffix  }}-release/libcurl
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcurl
           key: libcurl-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
           enableCrossOsArchive: true
 
@@ -150,7 +153,7 @@ jobs:
         id: cache_libcsv
         uses: actions/cache@v4
         with:
-          path: /FalkorDB/bin/${{ matrix.platform.suffix  }}-release/libcsv
+          path: /FalkorDB/bin/${{ matrix.platform.cache_path  }}-release/libcsv
           key: libcsv-${{ matrix.platform.suffix  }}-${{ hashFiles('./deps/libcsv/ChangeLog') }}
           enableCrossOsArchive: true
 
