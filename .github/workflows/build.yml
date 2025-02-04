@@ -92,7 +92,7 @@ jobs:
             machine_label: ubuntu-latest
             build_test_image: true
             test_dockerfile: Dockerfile.debian
-            cache_path: linux-amd64
+            cache_path: linux-x64
           - name: linux/arm64
             platform: linux/arm64
             suffix: arm64v8
@@ -107,7 +107,7 @@ jobs:
             os: rhel
             machine_label: ${{ format('rhel-build-{0}-{1}', github.run_id, github.run_number) }}
             build_test_image: false
-            cache_path: linux-amd64
+            cache_path: linux-x64
     steps:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
