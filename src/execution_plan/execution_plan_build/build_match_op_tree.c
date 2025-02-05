@@ -63,7 +63,7 @@ static void _ExecutionPlan_ProcessQueryGraph
 		AlgebraicExpression **exps = AlgebraicExpression_FromQueryGraph(cc);
 		uint expCount = array_len(exps);
 
-		// Reorder exps, to the most performant arrangement of evaluation.
+		// reorder exps, to the most performant arrangement of evaluation
 		orderExpressions(qg, exps, &expCount, ft, bound_vars);
 
 		// Create the SCAN operation that will be the tail of the traversal chain.
@@ -199,7 +199,12 @@ static void _buildOptionalMatchOps(ExecutionPlan *plan, AST *ast, const cypher_a
 	}
 }
 
-void buildMatchOpTree(ExecutionPlan *plan, AST *ast, const cypher_astnode_t *clause) {
+void buildMatchOpTree
+(
+	ExecutionPlan *plan,
+	AST *ast,
+	const cypher_astnode_t *clause
+) {
 	if(cypher_ast_match_is_optional(clause)) {
 		_buildOptionalMatchOps(plan, ast, clause);
 		return;
@@ -214,12 +219,13 @@ void buildMatchOpTree(ExecutionPlan *plan, AST *ast, const cypher_astnode_t *cla
 	_ExecutionPlan_ProcessQueryGraph(plan, sub_qg, ast);
 	if(ErrorCtx_EncounteredError()) goto cleanup;
 
-	// Build the FilterTree to model any WHERE predicates on these clauses and place ops appropriately.
-	FT_FilterNode *sub_ft = AST_BuildFilterTreeFromClauses(ast,
-		&clause, 1);
+	// build the FilterTree to model any WHERE predicates on these clauses
+	// and place ops appropriately
+	FT_FilterNode *sub_ft = AST_BuildFilterTreeFromClauses(ast, &clause, 1);
 	ExecutionPlan_PlaceFilterOps(plan, plan->root, NULL, sub_ft);
 
 	// Clean up
 cleanup:
 	QueryGraph_Free(sub_qg);
 }
+
