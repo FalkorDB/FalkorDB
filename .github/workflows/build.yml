@@ -357,10 +357,14 @@ jobs:
             exit 1
           fi
 
-      - name: Verify Docker Container Running
+      - name: Run Playwright Tests in Docker
         run: |
-          docker run -d --name falkordb falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          docker run -d --name falkordb \
+            -v /tmp/FalkorDBBrowser:/FalkorDBBrowser \
+            falkordb/falkordb-tests:latest
+
           sleep 5
+
           if docker ps --format '{{.Names}}' | grep -q 'falkordb'; then
             echo "FalkorDB Docker container is running."
           else
@@ -368,25 +372,21 @@ jobs:
             exit 1
           fi
 
-      - name: Run Playwright Tests in Docker
-        run: |
-          docker run --rm -i \
-            -v /tmp/FalkorDBBrowser:/FalkorDBBrowser \
-            falkordb/falkordb-${{ matrix.platform.suffix }}:latest bash -c "
-              if [ -d \"/FalkorDBBrowser\" ]; then
-                echo 'Browser files copied into Docker successfully.'
-                ls -la /FalkorDBBrowser
-              else
-                echo 'Error: Browser files missing in Docker container!' >&2
-                exit 1
-              fi
-              
-              npm install &&
-              npx playwright install --with-deps &&
-              npm run build &&
-              NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
-              sleep 5 &&
-              npx playwright test --reporter=dot"
+          docker exec -i falkordb bash -c "
+            if [ -d \"/FalkorDBBrowser\" ]; then
+              echo 'Browser files copied into Docker successfully.'
+              ls -la /FalkorDBBrowser
+            else
+              echo 'Error: Browser files missing in Docker container!' >&2
+              exit 1
+            fi
+            
+            npm install &&
+            npx playwright install --with-deps &&
+            npm run build &&
+            NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
+            sleep 5 &&
+            npx playwright test --reporter=dot"
 
 
   cleanup-flow-tests:
