@@ -343,16 +343,51 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
 
+      - name: Clone FalkorDBBrowser repository
+        run: |
+          git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/FalkorDBBrowser
+
+      - name: Verify FalkorDBBrowser Clone
+        run: |
+          if [ -d "/tmp/FalkorDBBrowser" ]; then
+            echo "FalkorDBBrowser repository cloned successfully."
+            ls -la /tmp/FalkorDBBrowser
+          else
+            echo "Error: FalkorDBBrowser repository clone failed!" >&2
+            exit 1
+          fi
+
+      - name: Verify Docker Container Running
+        run: |
+          docker run -d --name falkordb falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          sleep 5
+          if docker ps --format '{{.Names}}' | grep -q 'falkordb'; then
+            echo "FalkorDB Docker container is running."
+          else
+            echo "Error: FalkorDB Docker container is not running!" >&2
+            exit 1
+          fi
+
       - name: Run Playwright Tests in Docker
         run: |
-          docker run --rm -i falkordb/falkordb:latest bash -c "
-            cd /FalkorDBBrowser &&
-            npm install &&
-            npx playwright install --with-deps &&
-            npm run build &&
-            NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
-            sleep 5 &&
-            npx playwright test --reporter=dot"
+          docker run --rm -i \
+            -v /tmp/FalkorDBBrowser:/FalkorDBBrowser \
+            falkordb/falkordb-${{ matrix.platform.suffix }}:latest bash -c "
+              if [ -d \"/FalkorDBBrowser\" ]; then
+                echo 'Browser files copied into Docker successfully.'
+                ls -la /FalkorDBBrowser
+              else
+                echo 'Error: Browser files missing in Docker container!' >&2
+                exit 1
+              fi
+              
+              npm install &&
+              npx playwright install --with-deps &&
+              npm run build &&
+              NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
+              sleep 5 &&
+              npx playwright test --reporter=dot"
+
 
   cleanup-flow-tests:
     needs: flow-tests
