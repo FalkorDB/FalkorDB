@@ -369,6 +369,7 @@ jobs:
             echo "FalkorDB Docker container is running."
           else
             echo "Error: FalkorDB Docker container is not running!" >&2
+            docker logs falkordb || true
             exit 1
           fi
 
