@@ -20,10 +20,10 @@ typedef struct {
 // allocates and returns a new context
 NodeScanCtx *NodeScanCtx_New
 (
-    char *alias,       // alias
-    char *label,       // label
-    LabelID label_id,  // label id
-    const QGNode *n    // node
+    const char *alias,  // alias
+    const char *label,  // label
+    LabelID label_id,   // label id
+    const QGNode *n     // node
 );
 
 // clones a context
@@ -37,3 +37,4 @@ void NodeScanCtx_Free
 (
     NodeScanCtx *ctx  // context
 );
+
