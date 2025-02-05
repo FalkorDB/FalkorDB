@@ -43,7 +43,8 @@ OpBase *ExecutionPlan_LocateOpResolvingAlias
 }
 
 // locate the first operation matching one of the given types in the op tree by
-// performing DFS. Returns NULL if no matching operation was found
+// performing DFS
+// returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
     OpBase *root,

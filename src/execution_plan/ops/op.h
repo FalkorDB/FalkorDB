@@ -107,6 +107,14 @@ static const OPType EAGER_OPERATIONS[] = {
 	OPType_SORT
 };
 
+#define MODIFYING_OP_COUNT 4
+static const OPType MODIFYING_OPERATIONS[] = {
+	OPType_CREATE,
+	OPType_DELETE,
+	OPType_UPDATE,
+	OPType_MERGE
+};
+
 struct OpBase;
 struct ExecutionPlan;
 
