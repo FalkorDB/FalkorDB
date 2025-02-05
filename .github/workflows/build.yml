@@ -364,15 +364,17 @@ jobs:
           falkordb/falkordb-tests:latest \
           bash -c "
             apt-get update && apt-get install -y curl && \
-            curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+            curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
             apt-get install -y nodejs && \
             npm install -g npm@latest
 
             cd /FalkorDBBrowser &&
+            ls -la &&
+            ls -la e2e &&
             npm install &&
             npx playwright install --with-deps &&
             npm run build &&
-            NEXTAUTH_SECRET= npm start &
+            NEXTAUTH_SECRET=SECRET npm start &
             sleep 5 &&
             npx playwright test --reporter=dot
           "
