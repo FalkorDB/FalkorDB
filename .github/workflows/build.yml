@@ -360,17 +360,22 @@ jobs:
       - name: Run Playwright Tests in Docker
         run: |
           docker run --rm \
-            -v /tmp/FalkorDBBrowser:/FalkorDBBrowser \
-            falkordb/falkordb-tests:latest \
-            bash -c "
-              cd /FalkorDBBrowser &&
-              npm install &&
-              npx playwright install --with-deps &&
-              npm run build &&
-              NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }} npm start &
-              sleep 5 &&
-              npx playwright test --reporter=dot
-            "
+          -v /tmp/FalkorDBBrowser:/FalkorDBBrowser \
+          falkordb/falkordb-tests:latest \
+          bash -c "
+            apt-get update && apt-get install -y curl && \
+            curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+            apt-get install -y nodejs && \
+            npm install -g npm@latest
+
+            cd /FalkorDBBrowser &&
+            npm install &&
+            npx playwright install --with-deps &&
+            npm run build &&
+            NEXTAUTH_SECRET= npm start &
+            sleep 5 &&
+            npx playwright test --reporter=dot
+          "
 
   cleanup-flow-tests:
     needs: flow-tests
