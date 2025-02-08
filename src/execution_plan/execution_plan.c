@@ -243,12 +243,12 @@ static ExecutionPlan *_tie_segments
 	ExecutionPlan **segments,
 	uint segment_count
 ) {
-	FT_FilterNode  *ft                  =  NULL; // filters following WITH
-	OpBase         *connecting_op       =  NULL; // op connecting one segment to another
-	OpBase         *prev_connecting_op  =  NULL; // root of previous segment
-	ExecutionPlan  *prev_segment        =  NULL;
-	ExecutionPlan  *current_segment     =  NULL;
-	AST            *master_ast          =  QueryCtx_GetAST();  // top-level AST of plan
+	FT_FilterNode  *ft                 = NULL;  // filters following WITH
+	OpBase         *connecting_op      = NULL;  // op connecting one segment to another
+	OpBase         *prev_connecting_op = NULL;  // root of previous segment
+	ExecutionPlan  *prev_segment       = NULL;
+	ExecutionPlan  *current_segment    = NULL;
+	AST            *master_ast         = QueryCtx_GetAST();  // top-level AST of plan
 
 	//--------------------------------------------------------------------------
 	// merge segments
@@ -319,34 +319,35 @@ static ExecutionPlan *_tie_segments
 		// introduce projection filters
 		//----------------------------------------------------------------------
 
-		// Retrieve the current projection clause to build any necessary filters
+		// retrieve the current projection clause to build any necessary filters
 		const cypher_astnode_t *opening_clause = cypher_ast_query_get_clause(ast->root, 0);
 		cypher_astnode_type_t type = cypher_astnode_type(opening_clause);
-		// Only WITH clauses introduce filters at this level;
-		// all other scopes will be fully built at this point.
+		// only WITH clauses introduce filters at this level
+		// all other scopes will be fully built at this point
 		if(type != CYPHER_AST_WITH) continue;
 
-		// Build filters required by current segment.
+		// build filters required by current segment
 		QueryCtx_SetAST(ast);
 		ft = AST_BuildFilterTreeFromClauses(ast, &opening_clause, 1);
 		if(ft == NULL) continue;
 
-		// If any of the filtered variables operate on a WITH alias,
-		// place the filter op above the projection.
+		// if any of the filtered variables operate on a WITH alias
+		// place the filter op above the projection
 		if(FilterTree_FiltersAlias(ft, opening_clause)) {
 			OpBase *filter_op = NewFilterOp(current_segment, ft);
 			ExecutionPlan_PushBelow(connecting_op, filter_op);
 		} else {
-			// None of the filtered variables are aliases;
-			// filter ops may be placed anywhere in the scope.
-			ExecutionPlan_PlaceFilterOps(segment, connecting_op, prev_connecting_op, ft);
+			// none of the filtered variables are aliases;
+			// filter ops may be placed anywhere in the scope
+			ExecutionPlan_PlaceFilterOps(segment, connecting_op,
+					prev_connecting_op, ft);
 		}
 	}
 
-	// Restore the master AST.
+	// restore the master AST
 	QueryCtx_SetAST(master_ast);
 
-	// The last ExecutionPlan segment is the master ExecutionPlan.
+	// the last ExecutionPlan segment is the master ExecutionPlan
 	ExecutionPlan *plan = segments[segment_count - 1];
 
 	return plan;

@@ -7,14 +7,17 @@
 #include "op_apply.h"
 #include "../execution_plan_build/execution_plan_util.h"
 
-/* Forward declarations. */
+// forward declarations
 static OpResult ApplyInit(OpBase *opBase);
 static Record ApplyConsume(OpBase *opBase);
 static OpResult ApplyReset(OpBase *opBase);
 static OpBase *ApplyClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void ApplyFree(OpBase *opBase);
 
-OpBase *NewApplyOp(const ExecutionPlan *plan) {
+OpBase *NewApplyOp
+(
+	const ExecutionPlan *plan
+) {
 	Apply *op = rm_malloc(sizeof(Apply));
 
 	op->r            = NULL;
@@ -30,7 +33,10 @@ OpBase *NewApplyOp(const ExecutionPlan *plan) {
 	return (OpBase *)op;
 }
 
-static OpResult ApplyInit(OpBase *opBase) {
+static OpResult ApplyInit
+(
+	OpBase *opBase
+) {
 	ASSERT(opBase->childCount == 2);
 
 	Apply *op = (Apply *)opBase;
@@ -92,7 +98,10 @@ static Record ApplyConsume
 	return NULL;
 }
 
-static OpResult ApplyReset(OpBase *opBase) {
+static OpResult ApplyReset
+(
+	OpBase *opBase
+) {
 	Apply *op = (Apply *)opBase;
 	op->r = NULL;
 
@@ -106,11 +115,18 @@ static OpResult ApplyReset(OpBase *opBase) {
 	return OP_OK;
 }
 
-static OpBase *ApplyClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static OpBase *ApplyClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	return NewApplyOp(plan);
 }
 
-static void ApplyFree(OpBase *opBase) {
+static void ApplyFree
+(
+	OpBase *opBase
+) {
 	Apply *op = (Apply *)opBase;
 
 	// free collected records

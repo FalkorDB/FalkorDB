@@ -73,10 +73,10 @@ void ExecutionPlan_ReduceFilterToApply
 // place filter ops at the appropriate positions within the op tree
 void ExecutionPlan_PlaceFilterOps
 (
-	ExecutionPlan *plan,
-	OpBase *root,
-	const OpBase *recurse_limit,
-	FT_FilterNode *ft
+	ExecutionPlan *plan,           // plan
+	OpBase *root,                  // root
+	const OpBase *recurse_limit,   // boundry
+	FT_FilterNode *ft              // filter-tree to position
 );
 
 // convert a clause into the appropriate sequence of ops

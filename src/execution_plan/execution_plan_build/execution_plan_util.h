@@ -29,8 +29,9 @@ OpBase *ExecutionPlan_LocateOpResolvingAlias
     const char *alias
 );
 
-// Locate the first operation matching one of the given types in the op tree by
-// performing DFS. Returns NULL if no matching operation was found
+// locate the first operation matching one of the given types in the op tree by
+// performing DFS
+// returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
     OpBase *root,
