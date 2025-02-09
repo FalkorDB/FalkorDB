@@ -354,10 +354,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - name: linux/arm64
-            suffix: arm64v8
+          - name: linux/amd64
+            suffix: x64
             os: ubuntu
-            machine_label: ${{ format('browser-tests-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ubuntu-latest
     steps:
       - name: Download database image
         uses: actions/download-artifact@v4
