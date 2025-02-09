@@ -346,7 +346,7 @@ jobs:
       - name: Flow tests
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
-  
+       
   browser-tests:
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
@@ -361,7 +361,7 @@ jobs:
           - name: linux/arm64
             suffix: arm64v8
             os: ubuntu
-            machine_label: ${{ format('flow-tests-{0}-{1}', github.run_id, github.run_number)  }}
+            machine_label: ${{ format('browser-tests-{0}-{1}', github.run_id, github.run_number)  }}
     steps:
       - name: Download database image
         uses: actions/download-artifact@v4
@@ -407,7 +407,7 @@ jobs:
           npm run build
           NEXTAUTH_SECRET=SECRET npm start &
           sleep 5
-          npx playwright test --reporter=dot
+          npx playwright test --reporter=dot --verbose
 
 
   cleanup-flow-tests:
