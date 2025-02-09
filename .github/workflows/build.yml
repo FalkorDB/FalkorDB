@@ -407,7 +407,7 @@ jobs:
           npm run build
           NEXTAUTH_SECRET=SECRET npm start &
           sleep 5
-          npx playwright test --reporter=dot --verbose
+          npx playwright test --reporter=line
 
 
   cleanup-flow-tests:
