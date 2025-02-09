@@ -354,10 +354,6 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - name: amd64
-            suffix: x64
-            os: ubuntu
-            machine_label: ubuntu-latest
           - name: linux/arm64
             suffix: arm64v8
             os: ubuntu
