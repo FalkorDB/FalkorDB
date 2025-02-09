@@ -343,6 +343,43 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-tests-${{ matrix.platform.suffix }}.tar
 
+      - name: Flow tests
+        run: |
+          docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+  
+  browser-tests:
+    needs: build
+    runs-on: ${{ matrix.platform.machine_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            suffix: x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+          - name: linux/arm64
+            suffix: arm64v8
+            os: ubuntu
+            machine_label: ${{ format('flow-tests-{0}-{1}', github.run_id, github.run_number)  }}
+    steps:
+      - name: Download database image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load database image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+
+      - name: Start FalkorDB container in background
+        run: |
+          docker run -d --name falkordb -p 6379:6379 falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          sleep 5
+          docker ps
+
       - name: Clone FalkorDBBrowser repository
         run: |
           git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/FalkorDBBrowser
@@ -357,27 +394,21 @@ jobs:
             exit 1
           fi
 
-      - name: Run Playwright Tests in Docker
-        run: |
-          docker run --rm \
-          -v /tmp/FalkorDBBrowser:/FalkorDBBrowser \
-          falkordb/falkordb-tests:latest \
-          bash -c "
-            apt-get update && apt-get install -y curl && \
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-            apt-get install -y nodejs && \
-            npm install -g npm@latest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
 
-            cd /FalkorDBBrowser &&
-            ls -la &&
-            ls -la e2e &&
-            npm install &&
-            npx playwright install --with-deps &&
-            npm run build &&
-            NEXTAUTH_SECRET=SECRET npm start &
-            sleep 5 &&
-            npx playwright test --reporter=dot
-          "
+      - name: Install Dependencies & Run Tests
+        working-directory: /tmp/FalkorDBBrowser
+        run: |
+          npm install
+          npx playwright install --with-deps
+          npm run build
+          NEXTAUTH_SECRET=SECRET npm start &
+          sleep 5
+          npx playwright test --reporter=dot
+
 
   cleanup-flow-tests:
     needs: flow-tests
