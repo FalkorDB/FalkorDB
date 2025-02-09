@@ -354,7 +354,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - name: linux/amd64
+          - name: amd64
             suffix: x64
             os: ubuntu
             machine_label: ubuntu-latest
