@@ -425,7 +425,7 @@ jobs:
 
       - name: Run Playwright tests inside the container
         run: |
-          docker exec -w /FalkorDBBrowser falkordb npx playwright test --reporter=line
+          docker exec -w /FalkorDBBrowser falkordb npx playwright test --config=playwright.config.ts --reporter=line
 
   cleanup-flow-tests:
     needs: flow-tests
