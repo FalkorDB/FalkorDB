@@ -398,27 +398,27 @@ jobs:
           sleep 5
           docker ps
 
-      - name: Clone FalkorDBBrowser repository
+      - name: Clone browser repository
         run: |
-          git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/FalkorDBBrowser
+          git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
 
-      - name: Copy FalkorDBBrowser into the container
+      - name: Copy browser into the container
         run: |
-          docker cp /tmp/FalkorDBBrowser falkordb:/FalkorDBBrowser
+          docker cp /tmp/browser falkordb:/browser
       
       - name: List files inside the container
         run: |
           echo "Checking files in container..."
-          docker exec falkordb ls -la /FalkorDBBrowser
+          docker exec falkordb ls -la /browser
 
       - name: Check if playwright.config.ts exists
         run: |
-          docker exec falkordb ls -la /FalkorDBBrowser/playwright.config.ts || echo "Config file missing!"
+          docker exec falkordb ls -la /browser/playwright.config.ts || echo "Config file missing!"
 
       - name: Install dependencies inside the container
         run: |
           docker exec falkordb bash -c "
-            cd /FalkorDBBrowser &&
+            cd /browser &&
             npm install &&
             npx playwright install --with-deps
           "
@@ -426,7 +426,7 @@ jobs:
       - name: Build and start server inside the container
         run: |
           docker exec -d falkordb bash -c "
-            cd /FalkorDBBrowser &&
+            cd /browser &&
             npm run build &&
             NEXTAUTH_SECRET=SECRET npm start
           "
@@ -434,7 +434,7 @@ jobs:
 
       - name: Run Playwright tests inside the container
         run: |
-          docker exec -w /FalkorDBBrowser falkordb npx playwright test --config=playwright.config.ts --reporter=line
+          docker exec -w /browser falkordb npx playwright test --config=playwright.config.ts --reporter=line
 
   cleanup-flow-tests:
     needs: flow-tests
