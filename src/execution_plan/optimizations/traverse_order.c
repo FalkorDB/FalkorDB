@@ -23,10 +23,9 @@ static bool _should_transpose_entry_point
 	rax *bound_vars
 ) {
 	// validate inputs
-	ASSERT(qg                 !=  NULL);
-	ASSERT(ae                 !=  NULL);
-	ASSERT(bound_vars         !=  NULL);
-
+	ASSERT(qg         != NULL);
+	ASSERT(ae         != NULL);
+	ASSERT(bound_vars != NULL);
 
 	// consider src and dest as stand-alone expressions
 	const char *src  = AlgebraicExpression_Src(ae);
@@ -34,33 +33,24 @@ static bool _should_transpose_entry_point
 
 	ScoredExp scored_exp[2];
 	AlgebraicExpression *exps[2];
+
 	exps[0] = AlgebraicExpression_NewOperand(GrB_NULL, false, src, src, NULL,
 											 NULL);
 	exps[1] = AlgebraicExpression_NewOperand(GrB_NULL, false, dest, dest, NULL,
 											 NULL);
 
-	// compute src score
+	// compute scores
 	TraverseOrder_ScoreExpressions(scored_exp, exps, 2, bound_vars,
 								   filtered_entities, qg);
-	int src_score = scored_exp[0].score;
 
-	// transpose
-	AlgebraicExpression *tmp = exps[0];
-	exps[0] = exps[1];
-	exps[1] = tmp;
-
-	// compute dest score
-	TraverseOrder_ScoreExpressions(scored_exp, exps, 2, bound_vars,
-								   filtered_entities, qg);
-	int dest_score = scored_exp[0].score;
-
-	// transpose if top scored expression is 'dest_exp'
-	bool transpose = dest_score > src_score;
+	int src_score  = scored_exp[0].score;
+	int dest_score = scored_exp[1].score;
 
 	AlgebraicExpression_Free(exps[0]);
 	AlgebraicExpression_Free(exps[1]);
 
-	return transpose;
+	// transpose if top scored expression is 'dest_exp'
+	return dest_score > src_score;
 }
 
 // transpose out-of-order expressions such that each expresson's source
@@ -93,7 +83,7 @@ static void _resolve_winning_sequence
 
 // construct a sorted list of valid expressions to consider, given a subset of
 // expression already in use 'arrangement' these will not show up in the
-// returned list.
+// returned list
 // the elements are sorted by their score
 static AlgebraicExpression **_valid_expressions
 (
@@ -151,7 +141,7 @@ static bool _arrangement_set_expression
 	AlgebraicExpression **options,      // posible expressions for position i
 	uint i                              // index in arrangement to resolve
 ) {
-	// Done.
+	// done
 	if(i == nexp) {
 		array_free(options);
 		return true;
@@ -220,9 +210,9 @@ void orderExpressions
 	rax *bound_vars
 ) {
 	// Validate inputs
-	ASSERT(qg          != NULL);
-	ASSERT(exps        != NULL);
-	ASSERT(exp_count   != NULL);
+	ASSERT(qg        != NULL);
+	ASSERT(exps      != NULL);
+	ASSERT(exp_count != NULL);
 
 	uint _exp_count = *exp_count;
 	ScoredExp scored_exps[_exp_count];

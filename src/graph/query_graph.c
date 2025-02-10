@@ -4,8 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "query_graph.h"
 #include "RG.h"
+#include "query_graph.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../schema/schema.h"

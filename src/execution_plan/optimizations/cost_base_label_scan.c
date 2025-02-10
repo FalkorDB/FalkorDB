@@ -34,6 +34,245 @@
 // Scan(B)
 // Traverse A*R
 
+// expressions such as:
+// MATCH (a:A)-[]->(b:B) RETURN a, b
+//
+// where both ends 'a' and 'b' are scored evenly by the compile time
+// planner need to be tie breaked
+// the opening expression should be the one with the least amount of entities
+// associcated with it
+//
+// in case the planner determined that 'a' should be the starting point
+// but nnz(A) > nnz(B) then we'll need to transpose the expression
+// switching from:
+//
+// Conditional Traverse | (a)->(b:B)"
+//     Node By Label Scan | (a:A)"
+//
+// Conditional Traverse | (b)<-(a:A)"
+//     Node By Label Scan | (b:B)"
+static bool _transposeExpression
+(
+	NodeByLabelScan *scan
+) {
+	ASSERT(scan != NULL);
+
+	OpBase *op = (OpBase*)scan;
+
+	// only address plans where src isn't filtered
+	// as we don't want to reposition the filter
+	// it is likely that former logic determined that this is the right
+	// node to begining traversal from
+	OpBase *parent = op->parent;
+
+	// expecting a traverse operation following the label scan
+	// TODO: support variable length traversal
+	if(OpBase_Type(parent) != OPType_CONDITIONAL_TRAVERSE) {
+		return false;
+	}
+
+	OpCondTraverse *traversal = (OpCondTraverse*)parent;
+
+	// we shouldn't care about the following operation(s)
+	// the scenario where a traversal is followed by a filter is only
+	// possible when the filter is applicable to either:
+	// both the src and the destination e.g. n.v = m.v
+	// or both the destination and the edge are filtered e.g. m.v = e.v
+	// a situation where only the destination node is filtered isn't possible
+	// due to former ordering logic which should have choosen the destination
+	// node as the 'opening" node for the traversal
+
+	Graph               *g        = QueryCtx_GetGraph();
+	const GraphContext  *gc       = QueryCtx_GetGraphCtx();
+	const ExecutionPlan *plan     = op->plan;
+	QueryGraph          *qg       = plan->query_graph;
+	NodeScanCtx         *scan_ctx = scan->n;
+
+	// adjust traversal algebraic expression
+	// make sure transposes are pushed down to the operand level
+	// this will align the operand in the expected order
+	// e.g.
+	//
+	// T(A * B)
+	// will become:
+	// Bt * At
+	// placing the operands in their correct position
+
+	AlgebraicExpression *ae = traversal->ae;
+	AlgebraicExpression_PushDownTranspose(ae);
+	const char *dest_alias = AlgebraicExpression_Dest(ae);
+
+	// split the operands within the algebraic expression into two parts
+	// 1. src labels  - these are the leftmost operands
+	// 2. dest labels - these are the rightmost operands
+	// e.g.
+	//
+	// (:A:B:C)-[:R]->(:X:Y:Z)
+	//
+	// A * B * C * R * X * Y * Z
+	// A, B & C are source labels
+	// X, Y & Z are destination labels
+
+	uint n;
+	AlgebraicExpression **operands =
+		AlgebraicExpression_CollectOperandsInOrder(ae, &n);
+
+	uint src_ops_n  = 0;               // number of source labels
+	uint dest_ops_n = 0;               // number of destination labels
+	AlgebraicExpression *src_ops[n];   // source labels
+	AlgebraicExpression *dest_ops[n];  // destination labels
+
+	// populate source labels array
+	// break upon first none diagonal operand
+	// this denotes a relationship matrix
+	for(int i = 0; i < n; i++) {
+		AlgebraicExpression *operand = operands[i];
+		if(AlgebraicExpression_Diagonal(operand) == true) {
+			src_ops[src_ops_n++] = operand;
+		} else {
+			// none diagonal matrix, we're done
+			break;
+		}
+	}
+
+	// populate destination labels array
+	// scan from end backwards, break upon first none diagonal operand
+	// this denotes a relationship matrix
+	for(int i = n-1; i >= 0; i--) {
+		AlgebraicExpression *operand = operands[i];
+		if(AlgebraicExpression_Diagonal(operand) == true) {
+			dest_ops[dest_ops_n++] = operand;
+		} else {
+			// none diagonal matrix, we're done
+			break;
+		}
+	}
+
+	// free operands array
+	rm_free(operands);
+
+	// return if destination isn't associcated with any labels
+	if(dest_ops_n == 0) {
+		return false;
+	}
+
+	// determine nim number of entities for both source node and dest node
+	// src_min  = MIN(NVALS(src_lbls))
+	// dest_min = MIN(NVALS(dest_lbls))
+	const char *min_lbl    = NULL;
+	LabelID     min_lbl_id = GRAPH_NO_LABEL;
+
+	// src_min is initialized with the label-scan operation's matrix nvlas
+	uint64_t src_min  = Graph_LabeledNodeCount(g, scan_ctx->label_id);
+	uint64_t dest_min = UINT64_MAX;
+
+	//--------------------------------------------------------------------------
+	// determine source label min entities
+	//--------------------------------------------------------------------------
+
+	for(uint i = 0; i < src_ops_n; i++) {
+		const AlgebraicExpression *operand = src_ops[i];
+
+		uint64_t entity_count = 0;
+		const char *lbl = AlgebraicExpression_Label(operand);
+
+		Schema *s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
+		if(s != NULL) {
+			LabelID lbl_id = Schema_GetID(s);
+			entity_count = Graph_LabeledNodeCount(g, lbl_id);
+		}
+
+		// a new minimum found
+		if(src_min > entity_count) {
+			src_min = entity_count;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// determine destination label with min entities
+	//--------------------------------------------------------------------------
+
+	for(uint i = 0; i < dest_ops_n; i++) {
+		const AlgebraicExpression *operand = dest_ops[i];
+
+		uint64_t entity_count = 0;
+		LabelID lbl_id = GRAPH_UNKNOWN_LABEL;
+		const char *lbl = AlgebraicExpression_Label(operand);
+
+		Schema *s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
+		if(s != NULL) {
+			lbl_id = Schema_GetID(s);
+			entity_count = Graph_LabeledNodeCount(g, lbl_id);
+		}
+
+		// a new minimum found
+		if(dest_min > entity_count) {
+			dest_min   = entity_count;
+			min_lbl    = lbl;
+			min_lbl_id = lbl_id;
+		}
+	}
+
+	// check if we should replace the current label scan operation
+	if(dest_min >= src_min) {
+		// source will produce less entities, keep things as they are
+		return false;
+	}
+
+	// scanning destination entities will produce less entities
+	// reverse traverse pattern
+	//
+	// e.g.
+	//
+	// (a)->(b)
+	// will become
+	// (b)<-(a)
+
+	// add back source label matrix to traverse expression
+	AlgebraicExpression *lhs =
+		AlgebraicExpression_NewOperand(NULL, true, scan_ctx->alias,
+				scan_ctx->alias, NULL, scan_ctx->label);
+
+	// all modifications should be performed on a copy of the expression
+	ae = AlgebraicExpression_Clone(ae);
+
+	// multiply to the left as we're adding back the old src
+	ae = _AlgebraicExpression_MultiplyToTheLeft(lhs, ae);
+
+	// remove migrated destination label matrix from traverse expression
+	AlgebraicExpression *operand = NULL;
+	bool found = AlgebraicExpression_LocateOperand(ae, &operand, NULL,
+			dest_alias, dest_alias, NULL, min_lbl);
+	ASSERT(found   == true);
+	ASSERT(operand != NULL);
+
+	AlgebraicExpression_RemoveOperand(&ae, operand);
+	AlgebraicExpression_Free(operand);
+
+	// transpose conditional traverse expression
+	// as we're going in the reverse direction
+	AlgebraicExpression_Transpose(&ae);
+
+	// create a new LabelScan operation scanning the minimal destination label
+	QGNode *dest_node = QueryGraph_GetNodeByAlias(qg, dest_alias);
+	NodeScanCtx *ctx = NodeScanCtx_New(dest_alias, min_lbl, min_lbl_id,
+			dest_node);
+
+	// replace current label scan with new one
+	OpBase *new_scan = NewNodeByLabelScanOp(plan, ctx);
+	ExecutionPlan_ReplaceOp((ExecutionPlan*)plan, (OpBase*)scan,
+			(OpBase*)new_scan);
+	OpBase_Free((OpBase*)scan);
+
+	// replace current traversal with new one
+	OpBase *new_traversal = NewCondTraverseOp((ExecutionPlan*)plan, g, ae);
+	ExecutionPlan_ReplaceOp((ExecutionPlan*)plan, (OpBase*)traversal,
+			(OpBase*)new_traversal);
+	OpBase_Free((OpBase*)traversal);
+
+	return true;
+}
+
 static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
@@ -142,8 +381,11 @@ void costBaseLabelScan
 	uint op_count = array_len(label_scan_ops);
 	for(uint i = 0; i < op_count; i++) {
 		NodeByLabelScan *label_scan = (NodeByLabelScan*)label_scan_ops[i];
-		_costBaseLabelScan(label_scan);
+		if(!_transposeExpression(label_scan)) {
+			_costBaseLabelScan(label_scan);
+		}
 	}
+
 	array_free(label_scan_ops);
 }
 
