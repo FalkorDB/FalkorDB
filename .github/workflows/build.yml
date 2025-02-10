@@ -411,7 +411,7 @@ jobs:
           echo "Checking files in container..."
           docker exec falkordb ls -la /FalkorDBBrowser
 
-      - name: Debug: Check if playwright.config.ts exists
+      - name: Check if playwright.config.ts exists
         run: |
           docker exec falkordb ls -la /FalkorDBBrowser/playwright.config.ts || echo "Config file missing!"
 
