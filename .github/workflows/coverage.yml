@@ -48,6 +48,20 @@ jobs:
         path: ./bin/linux-x64-debug-cov/search-static
         key: search-coverage-llvm-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
+    - name: Cache libcurl
+      id: cache_libcurl
+      uses: actions/cache@v4
+      with:
+        path: ./bin/linux-x64-debug-cov/libcurl
+        key: libcurl-coverage-llvm-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+
+    - name: Cache libcsv
+      id: cache_libcsv
+      uses: actions/cache@v4
+      with:
+        path: ./bin/linux-x64-debug-cov/libcsv
+        key: libcsv-coverage-llvm-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+
     - name: Build
       run: |
         rustup default 1.76.0
