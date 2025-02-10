@@ -406,7 +406,7 @@ jobs:
         run: |
           docker cp /tmp/FalkorDBBrowser falkordb:/FalkorDBBrowser
       
-      - name: Debug: List files inside the container
+      - name: List files inside the container
         run: |
           echo "Checking files in container..."
           docker exec falkordb ls -la /FalkorDBBrowser
