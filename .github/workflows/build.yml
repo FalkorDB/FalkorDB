@@ -405,6 +405,15 @@ jobs:
       - name: Copy FalkorDBBrowser into the container
         run: |
           docker cp /tmp/FalkorDBBrowser falkordb:/FalkorDBBrowser
+      
+      - name: Debug: List files inside the container
+        run: |
+          echo "Checking files in container..."
+          docker exec falkordb ls -la /FalkorDBBrowser
+
+      - name: Debug: Check if playwright.config.ts exists
+        run: |
+          docker exec falkordb ls -la /FalkorDBBrowser/playwright.config.ts || echo "Config file missing!"
 
       - name: Install dependencies inside the container
         run: |
