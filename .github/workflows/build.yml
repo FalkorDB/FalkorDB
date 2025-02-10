@@ -372,7 +372,7 @@ jobs:
 
       - name: Start FalkorDB container in background
         run: |
-          docker run -d --name falkordb -p 6379:6379 falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          docker run -d --name falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb-${{ matrix.platform.suffix }}:latest
           sleep 5
           docker ps
 
@@ -380,30 +380,33 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/FalkorDBBrowser
 
-      - name: Verify FalkorDBBrowser Clone
+      - name: Copy FalkorDBBrowser into the container
         run: |
-          if [ -d "/tmp/FalkorDBBrowser" ]; then
-            echo "FalkorDBBrowser repository cloned successfully."
-            ls -la /tmp/FalkorDBBrowser
-          else
-            echo "Error: FalkorDBBrowser repository clone failed!" >&2
-            exit 1
-          fi
+          docker cp /tmp/FalkorDBBrowser falkordb:/FalkorDBBrowser
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-
-      - name: Install Dependencies & Run Tests
-        working-directory: /tmp/FalkorDBBrowser
+      - name: Install dependencies inside the container
         run: |
-          npm install
-          npx playwright install --with-deps
-          npm run build
-          NEXTAUTH_SECRET=SECRET npm start &
+          docker exec falkordb bash -c "
+            cd /FalkorDBBrowser &&
+            npm install &&
+            npx playwright install --with-deps
+          "
+
+      - name: Build and start server inside the container
+        run: |
+          docker exec -d falkordb bash -c "
+            cd /FalkorDBBrowser &&
+            npm run build &&
+            NEXTAUTH_SECRET=SECRET npm start
+          "
           sleep 5
-          npx playwright test --reporter=line
+
+      - name: Run Playwright tests inside the container
+        run: |
+          docker exec falkordb bash -c "
+            cd /FalkorDBBrowser &&
+            npx playwright test --reporter=line
+          "
 
 
   cleanup-flow-tests:
