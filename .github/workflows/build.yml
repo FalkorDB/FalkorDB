@@ -430,11 +430,11 @@ jobs:
             npm run build &&
             NEXTAUTH_SECRET=SECRET npm start
           "
-          sleep 5
+          sleep 10
 
       - name: Run Playwright tests inside the container
         run: |
-          docker exec -w /browser falkordb npx playwright test --config=playwright.config.ts --reporter=line
+          docker exec -w /browser falkordb npx playwright test --workers=1 --reporter=line
 
   cleanup-flow-tests:
     needs: flow-tests
