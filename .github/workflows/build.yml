@@ -368,6 +368,73 @@ jobs:
       - name: Flow tests
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
+       
+  browser-tests:
+    needs: build
+    runs-on: ${{ matrix.platform.machine_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            suffix: x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+    steps:
+      - name: Download database image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load database image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+
+      - name: Start FalkorDB container in background
+        run: |
+          docker run -d --name falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          sleep 5
+          docker ps
+
+      - name: Clone browser repository
+        run: |
+          git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
+
+      - name: Copy browser into the container
+        run: |
+          docker cp /tmp/browser falkordb:/browser
+      
+      - name: List files inside the container
+        run: |
+          echo "Checking files in container..."
+          docker exec falkordb ls -la /browser
+
+      - name: Check if playwright.config.ts exists
+        run: |
+          docker exec falkordb ls -la /browser/playwright.config.ts || echo "Config file missing!"
+
+      - name: Install dependencies inside the container
+        run: |
+          docker exec falkordb bash -c "
+            cd /browser &&
+            npm install &&
+            npx playwright install --with-deps
+          "
+
+      - name: Build and start server inside the container
+        run: |
+          docker exec -d falkordb bash -c "
+            cd /browser &&
+            npm run build &&
+            NEXTAUTH_SECRET=SECRET npm start
+          "
+          sleep 10
+
+      - name: Run Playwright tests inside the container
+        run: |
+          docker exec -w /browser falkordb npx playwright test --workers=1 --reporter=line
 
   cleanup-flow-tests:
     needs: flow-tests
