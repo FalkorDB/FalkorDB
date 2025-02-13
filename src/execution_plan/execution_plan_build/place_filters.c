@@ -146,9 +146,13 @@ void ExecutionPlan_PlaceFilterOps
 	const OpBase *recurse_limit,   // boundry
 	FT_FilterNode *ft              // filter-tree to position
 ) {
-	ASSERT(ft   != NULL);
 	ASSERT(plan != NULL);
 	ASSERT(root != NULL);
+
+	// quick return if there are no filters
+	if(ft == NULL) {
+		return;
+	}
 
 	//--------------------------------------------------------------------------
 	// decompose filter tree

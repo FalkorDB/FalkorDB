@@ -21,7 +21,7 @@ bool ExecutionPlan_isEager
 // For performing existence checks and looking up individual operations in tree.
 //------------------------------------------------------------------------------
 
-// Traverse upwards until an operation that resolves the given alias is found.
+// traverse upwards until an operation that resolves the given alias is found
 // Returns NULL if alias is not resolved
 OpBase *ExecutionPlan_LocateOpResolvingAlias
 (
@@ -142,11 +142,13 @@ uint ExecutionPlan_CollectUpwards
 // API for building and relocating operations in transient ExecutionPlans.
 //------------------------------------------------------------------------------
 
-// Populate a rax with all aliases that have been resolved by the given operation
-// and its children. These are the bound variables at this point in execution, and
-// subsequent operations should not introduce them as new entities. For example, in the query:
+// populate a rax with all aliases that have been resolved by the given operation
+// and its children
+// these are the bound variables at this point in execution, and
+// subsequent operations should not introduce them as new entities
+// for example, in the query:
 // MATCH (a:A) CREATE (a)-[:E]->(b:B)
-// The Create operation should never introduce a new node 'a'
+// the Create operation should not introduce a new node 'a'
 void ExecutionPlan_BoundVariables
 (
     const OpBase *op,

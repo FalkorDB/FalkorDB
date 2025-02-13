@@ -25,24 +25,35 @@ OpBase *ExecutionPlan_LocateOpResolvingAlias
     OpBase *root,
     const char *alias
 ) {
-	if(!root) return NULL;
+	ASSERT(root  != NULL);
+	ASSERT(alias != NULL);
 
-	uint count = array_len(root->modifies);
+	OpBase **queue = array_new(OpBase*, 1);
+	array_append(queue, root);
 
-	for(uint i = 0; i < count; i++) {
-		const char *resolved_alias = root->modifies[i];
-		// NOTE - if this function is later used to modify the returned
-		// operation, we should return the deepest operation that modifies the
-		// alias rather than the shallowest, as done here
-		if(strcmp(resolved_alias, alias) == 0) return root;
+	OpBase *ret = NULL;
+	while(array_len(queue) > 0) {
+		OpBase *op = array_pop(queue);
+		uint count = array_len(op->modifies);
+
+		for(uint i = 0; i < count; i++) {
+			const char *resolved_alias = op->modifies[i];
+			// NOTE - if this function is later used to modify the returned
+			// operation, we should return the deepest operation that modifies
+			// the alias rather than the shallowest, as done here
+			if(strcmp(resolved_alias, alias) == 0) {
+				ret = op;
+				break;
+			}
+		}
+
+		for(int i = 0; i < op->childCount; i++) {
+			array_append(queue, OpBase_GetChild(op, i));
+		}
 	}
 
-	for(int i = 0; i < root->childCount; i++) {
-		OpBase *op = ExecutionPlan_LocateOpResolvingAlias(root->children[i], alias);
-		if(op) return op;
-	}
-
-	return NULL;
+	array_free(queue);
+	return ret;
 }
 
 // locate the first operation matching one of the given types in the op tree by
@@ -150,7 +161,10 @@ static inline bool _aware
 	uint n                    // number of refereces
 ) {
 	// get op's awareness table
-	dict *ht = HashTableGetVal(HashTableFind(awareness_tbl, (void*)op));
+	dictEntry *entry = HashTableFind(awareness_tbl, (void*)op);
+	ASSERT(entry != NULL);
+
+	dict *ht = HashTableGetVal(entry);
 	ASSERT(ht != NULL);
 
 	// make sure op resolves all references
@@ -192,6 +206,7 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	rax *refs_to_resolve            // references to resolve
 ) {
 	// compute variabels awareness of each reachable operation from root
+	OpBase **taps  = array_new(OpBase*, 1);
 	OpBase **queue = array_new(OpBase*, 1);  // operation queue
 
 	// push root into queue and process queue in a BFS fasion
@@ -199,25 +214,24 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	uint idx = 0;
 	array_append(queue, root);
 	while(idx < array_len(queue)) {
-		OpBase *op = queue[idx];
+		OpBase *op = queue[idx++];
+		OPType t = OpBase_Type(op);
 
 		// make sure we're allowed to inspect current op
-		if(_blacklisted(op, blacklisted_ops, nblacklisted_ops)) {
-			continue;
-		}
-
-		// enforce boundries
-		if(op == recurse_limit) {
+		if(op != root && (t == OPType_PROJECT || t == OPType_AGGREGATE)) {
+			array_append(taps, op);
 			continue;
 		}
 
 		// add operation's children to queue
 		uint n = OpBase_ChildCount(op);
+		if(n == 0) {
+			array_append(taps, op);
+		}
+
 		for(uint i = 0; i < n; i++) {
 			array_append(queue, OpBase_GetChild(op, i));
 		}
-
-		idx++;
 	}
 
 	// compute variabels awareness
@@ -237,39 +251,56 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	};
 
 	dict *awareness = HashTableCreate(&def_dt);
-	while(array_len(queue) != 0) {
-		OpBase *op = array_pop(queue);
+	uint n = array_len(taps);
 
-		dict *ht = HashTableCreate(&_dt);
+	for(uint i = 0; i < n; i++) {
+		OpBase *op = taps[i];
+		OpBase *prev_op = NULL;
 
-		// add each modifier to op's awareness table
-		const char **modifiers = op->modifies;
-		uint n = array_len(modifiers);
-		for(uint i = 0; i < n; i++) {
-			HashTableAdd(ht, (void*)modifiers[i], NULL);
-		}
+		// traverse downward torwards root using the parent chain
+		while(true) {
+			// get hashtable for current op
+			dict *ht = HashTableFetchValue(awareness, (void*)op);
 
-		// union op's children awareness tables
-		n = OpBase_ChildCount(op);
-		for(uint i = 0; i < n; i++) {
-			// get child's awareness table
-			OpBase *child = OpBase_GetChild(op, i);
-			dict *child_awareness = HashTableFetchValue(awareness, child);
-			ASSERT(child_awareness != NULL);
+			// create a new hashtable incase this is the first time
+			// we encounter op
+			if(ht == NULL) {
+				ht = HashTableCreate(&_dt);
+				HashTableAdd(awareness, (void*)op, ht);
 
-			// TODO: see if iterator can be reused
-			// add each child modifier to op's awareness table
-			dictIterator *it = HashTableGetIterator(child_awareness);
-			dictEntry *e = NULL;
-			while((e = HashTableNext(it)) != NULL) {
-				void *modifier = HashTableGetKey(e);
-				HashTableAdd(ht, (void*)modifier, NULL);
+				// add each modifier to op's awareness table
+				const char **modifiers = op->modifies;
+				uint nmod = array_len(modifiers);
+				for(uint j = 0; j < nmod; j++) {
+					HashTableAdd(ht, (void*)modifiers[j], NULL);
+				}
 			}
-			HashTableReleaseIterator(it);
-		}
 
-		// add op's awareness hashtable to the global awareness hashtable
-		HashTableAdd(awareness, (void*)op, ht);
+			// union with previous op
+			if(prev_op != NULL) {
+				dict *prev_ht = HashTableFetchValue(awareness, (void*)prev_op);
+				ASSERT(prev_ht != NULL);
+
+				// TODO: see if iterator can be reused
+				// add each child modifier to op's awareness table
+				dictIterator *it = HashTableGetIterator(prev_ht);
+				dictEntry *e = NULL;
+				while((e = HashTableNext(it)) != NULL) {
+					void *modifier = HashTableGetKey(e);
+					HashTableAdd(ht, (void*)modifier, NULL);
+				}
+				HashTableReleaseIterator(it);
+			}
+
+			// processed root, stop here
+			if(op == root) {
+				break;
+			}
+
+			// add op's awareness hashtable to the global awareness hashtable
+			prev_op = op;
+			op = op->parent;
+		}
 	}
 
 	// locate earliest op under which all references are resolved
@@ -277,10 +308,11 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	//       before we compute the awareness mapping
 
 	OpBase *ret = NULL;
-	uint n = raxSize(refs_to_resolve);
+	n = raxSize(refs_to_resolve);
 	const char **references = (const char**)raxKeys(refs_to_resolve);
 
-	ASSERT(array_len(queue) == 0);
+	//ASSERT(array_len(queue) == 0);
+	array_clear(queue);
 	array_append(queue, root);
 
 	while(array_len(queue) > 0) {
@@ -297,13 +329,21 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 		ret = op;  // set op as the returned operation
 
 		// inspect children
-		uint c = OpBase_ChildCount(op);
+		uint c;
+		if(_blacklisted(op, blacklisted_ops, nblacklisted_ops) ||
+				op == recurse_limit) {
+			c = 0;
+		} else {
+			c = OpBase_ChildCount(op);
+		}
+
 		for(uint i = 0; i < c; i++) {
 			array_append(queue, OpBase_GetChild(op, i));
 		}
 	}
 
 	// clean up
+	array_free(taps);
 	array_free(queue);
 	array_free(references);
 
@@ -465,14 +505,15 @@ void ExecutionPlan_BoundVariables
 		uint modifies_count = array_len(op->modifies);
 		for(uint i = 0; i < modifies_count; i++) {
 			const char *modified = op->modifies[i];
-			raxTryInsert(modifiers, (unsigned char *)modified, strlen(modified), (void *)modified, NULL);
+			raxTryInsert(modifiers, (unsigned char *)modified, strlen(modified),
+					(void *)modified, NULL);
 		}
 	}
 
-	// Project and Aggregate operations demarcate variable scopes,
-	// collect their projections but do not recurse into their children.
-	// Note that future optimizations which operate across scopes will require different logic
-	// than this for application
+	// Project and Aggregate operations demarcate variable scopes
+	// collect their projections but do not recurse into their children
+	// note that future optimizations which operate across scopes will require
+	// different logic than this for application
 	if(op->type == OPType_PROJECT || op->type == OPType_AGGREGATE) return;
 
 	for(int i = 0; i < op->childCount; i++) {
