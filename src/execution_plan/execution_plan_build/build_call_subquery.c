@@ -296,3 +296,4 @@ void buildCallSubqueryPlan
 		ExecutionPlan_Free(embedded_plan);
 	}
 }
+
