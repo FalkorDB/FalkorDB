@@ -251,6 +251,7 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 		NULL            // entry reallocated
 	};
 
+	dictIterator it;
 	dict *awareness = HashTableCreate(&def_dt);
 	uint n = array_len(taps);
 
@@ -282,15 +283,13 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 				dict *prev_ht = HashTableFetchValue(awareness, (void*)prev_op);
 				ASSERT(prev_ht != NULL);
 
-				// TODO: see if iterator can be reused
 				// add each child modifier to op's awareness table
-				dictIterator *it = HashTableGetIterator(prev_ht);
+				HashTableInitIterator(&it, prev_ht);
 				dictEntry *e = NULL;
-				while((e = HashTableNext(it)) != NULL) {
+				while((e = HashTableNext(&it)) != NULL) {
 					void *modifier = HashTableGetKey(e);
 					HashTableAdd(ht, (void*)modifier, NULL);
 				}
-				HashTableReleaseIterator(it);
 			}
 
 			// processed root, stop here
@@ -349,9 +348,9 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	array_free(references);
 
 	// free each allocated hash-table
-	dictIterator *it = HashTableGetIterator(awareness);
+	HashTableInitIterator(&it, awareness);
 	dictEntry *de = NULL;
-	while((de = HashTableNext(it)) != NULL) {
+	while((de = HashTableNext(&it)) != NULL) {
 		dict *d = (dict*)HashTableGetVal(de);
 		HashTableRelease(d);
 	}
