@@ -345,7 +345,7 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 	// clean up
 	array_free(taps);
 	array_free(queue);
-	array_free(references);
+	array_free_cb(references, rm_free);
 
 	// free each allocated hash-table
 	HashTableInitIterator(&it, awareness);

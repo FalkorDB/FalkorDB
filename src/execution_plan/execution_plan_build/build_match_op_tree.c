@@ -191,7 +191,7 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	}
 
 	FilterTree_Free(ft);
-	array_free(arguments);
+	array_free_cb(arguments, rm_free);
 	array_free(connectedComponents);
 
 	return (cartesianProduct != NULL) ? cartesianProduct : plan->root;
