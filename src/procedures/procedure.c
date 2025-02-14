@@ -15,7 +15,11 @@
 
 rax *__procedures = NULL;
 
-static void _procRegister(const char *procedure, ProcGenerator gen) {
+static void _procRegister
+(
+	const char *procedure,
+	ProcGenerator gen
+) {
 	char lowercase_proc_name[128];
 	size_t lowercase_proc_name_len = 128;
 	str_tolower_ascii(procedure, lowercase_proc_name, &lowercase_proc_name_len);
@@ -23,7 +27,7 @@ static void _procRegister(const char *procedure, ProcGenerator gen) {
 		   lowercase_proc_name_len, gen, NULL);
 }
 
-// Register procedures.
+// register procedures
 void Proc_Register() {
 	__procedures = raxNew();
 	_procRegister("db.labels", Proc_LabelsCtx);
@@ -33,31 +37,34 @@ void Proc_Register() {
 	_procRegister("dbms.procedures", Proc_ProceduresCtx);
 	_procRegister("db.relationshipTypes", Proc_RelationsCtx);
 
-	// Register graph algorithms.
+	// register graph algorithms
 	_procRegister("algo.BFS", Proc_BFS_Ctx);
 	_procRegister("algo.pageRank", Proc_PagerankCtx);
 	_procRegister("algo.SPpaths", Proc_SPpathCtx);
 	_procRegister("algo.SSpaths", Proc_SSpathCtx);
 
-	// Register FullText Search generator.
+	// register FullText Search generator
 	_procRegister("db.idx.fulltext.drop", Proc_FulltextDropIdxGen);
 	_procRegister("db.idx.fulltext.queryNodes", Proc_FulltextQueryNodeGen);
 	_procRegister("db.idx.fulltext.createNodeIndex", Proc_FulltextCreateNodeIdxGen);
+	_procRegister("db.idx.fulltext.queryRelationships", Proc_FulltextQueryRelationshipGen);
 
 	// register vector search generator
 	_procRegister("db.idx.vector.queryNodes", Proc_VectorQueryNodeCtx);
 	_procRegister("db.idx.vector.queryRelationships", Proc_VectorQueryRelCtx);
 }
 
-ProcedureCtx *ProcCtxNew(const char *name,
-						 unsigned int argc,
-						 ProcedureOutput *output,
-						 ProcStep fStep,
-						 ProcInvoke fInvoke,
-						 ProcFree fFree,
-						 void *privateData,
-						 bool readOnly) {
-
+ProcedureCtx *ProcCtxNew
+(
+	const char *name,
+	unsigned int argc,
+	ProcedureOutput *output,
+	ProcStep fStep,
+	ProcInvoke fInvoke,
+	ProcFree fFree,
+	void *privateData,
+	bool readOnly
+) {
 	ProcedureCtx *ctx = rm_malloc(sizeof(ProcedureCtx));
 
 	ctx->argc        = argc;
@@ -66,14 +73,18 @@ ProcedureCtx *ProcCtxNew(const char *name,
 	ctx->Free        = fFree;
 	ctx->output      = output;
 	ctx->Invoke      = fInvoke;
-	ctx->privateData = privateData;
 	ctx->readOnly    = readOnly;
+	ctx->privateData = privateData;
 
 	return ctx;
 }
 
-ProcedureCtx *Proc_Get(const char *proc_name) {
+ProcedureCtx *Proc_Get
+(
+	const char *proc_name
+) {
 	if(!__procedures) return NULL;
+
 	size_t proc_name_len = strlen(proc_name) + 1;
 	char proc_name_lowercase [proc_name_len];
 	str_tolower_ascii(proc_name, proc_name_lowercase, &proc_name_len);
@@ -82,13 +93,19 @@ ProcedureCtx *Proc_Get(const char *proc_name) {
 	if(gen == raxNotFound) return NULL;
 	ProcedureCtx *ctx = gen();
 
-	// Set procedure state to not initialized.
+	// set procedure state to not initialized
 	ctx->state = PROCEDURE_NOT_INIT;
 	return ctx;
 }
 
-ProcedureResult Proc_Invoke(ProcedureCtx *proc, const SIValue *args, const char **yield) {
+ProcedureResult Proc_Invoke
+(
+	ProcedureCtx *proc,
+	const SIValue *args,
+	const char **yield
+) {
 	ASSERT(proc != NULL);
+
 	// procedure is expected to be in the `PROCEDURE_NOT_INIT` state
 	if(proc->state != PROCEDURE_NOT_INIT) {
 		proc->state = PROCEDURE_ERROR;
@@ -106,35 +123,52 @@ ProcedureResult Proc_Invoke(ProcedureCtx *proc, const SIValue *args, const char 
 	return res;
 }
 
-SIValue *Proc_Step(ProcedureCtx *proc) {
+SIValue *Proc_Step
+(
+	ProcedureCtx *proc
+) {
 	ASSERT(proc != NULL);
-	// Validate procedure state, can only consumed if state is initialized.
+	// validate procedure state, can only consumed if state is initialized
 	if(proc->state != PROCEDURE_INIT) return NULL;
 
 	SIValue *val = proc->Step(proc);
-	/* Set procedure state to depleted if NULL is returned.
-	 * NOTE: we might have errored. */
+	// set procedure state to depleted if NULL is returned
+	// NOTE: we might have errored
 	if(val == NULL) proc->state = PROCEDURE_DEPLETED;
 	return val;
 }
 
-uint Procedure_Argc(const ProcedureCtx *proc) {
+uint Procedure_Argc
+(
+	const ProcedureCtx *proc
+) {
 	ASSERT(proc != NULL);
 	return proc->argc;
 }
 
-uint Procedure_OutputCount(const ProcedureCtx *proc) {
+uint Procedure_OutputCount
+(
+	const ProcedureCtx *proc
+) {
 	ASSERT(proc != NULL);
 	return array_len(proc->output);
 }
 
-const char *Procedure_GetOutput(const ProcedureCtx *proc, uint output_idx) {
+const char *Procedure_GetOutput
+(
+	const ProcedureCtx *proc,
+	uint output_idx
+) {
 	ASSERT(proc != NULL);
 	ASSERT(output_idx < Procedure_OutputCount(proc));
 	return proc->output[output_idx].name;
 }
 
-bool Procedure_ContainsOutput(const ProcedureCtx *proc, const char *output) {
+bool Procedure_ContainsOutput
+(
+	const ProcedureCtx *proc,
+	const char *output
+) {
 	ASSERT(proc != NULL);
 	ASSERT(output != NULL);
 	uint output_count = array_len(proc->output);
@@ -144,17 +178,26 @@ bool Procedure_ContainsOutput(const ProcedureCtx *proc, const char *output) {
 	return false;
 }
 
-const char *Procedure_GetName(const ProcedureCtx *proc) {
+const char *Procedure_GetName
+(
+	const ProcedureCtx *proc
+) {
 	ASSERT(proc != NULL);
 	return proc->name;
 }
 
-bool Procedure_IsReadOnly(const ProcedureCtx *proc) {
+bool Procedure_IsReadOnly
+(
+	const ProcedureCtx *proc
+) {
 	ASSERT(proc != NULL);
 	return proc->readOnly;
 }
 
-void Proc_Free(ProcedureCtx *proc) {
+void Proc_Free
+(
+	ProcedureCtx *proc
+) {
 	if(proc == NULL) {
 		return;
 	}

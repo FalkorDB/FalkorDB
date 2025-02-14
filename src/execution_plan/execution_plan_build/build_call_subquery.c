@@ -233,8 +233,11 @@ void buildCallSubqueryPlan
 	ExecutionPlan *embedded_plan = ExecutionPlan_FromTLS_AST();
 	QueryCtx_SetAST(orig_ast);
 
-	// characterize whether the query is eager or not
-	bool is_eager = ExecutionPlan_isEager(embedded_plan->root);
+	// characterize whether the query performs modifications or not
+	// if it is the call sub-query becomes eager, consuming all possible records
+	// before running
+	bool is_eager = ExecutionPlan_LocateOpMatchingTypes(embedded_plan->root,
+			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT) != NULL;
 
 	// characterize whether the query is returning or not
 	bool is_returning = (OpBase_Type(embedded_plan->root) == OPType_RESULTS);

@@ -101,6 +101,20 @@ jobs:
           path: ./bin/linux-x64-release/search-static
           key: search-x64-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
+      - name: Cache libcurl
+        id: cache_libcurl
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/libcurl
+          key: libcurl-x64-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+
+      - name: Cache libcsv
+        id: cache_libcsv
+        uses: actions/cache@v4
+        with:
+          path: ./bin/linux-x64-release/libcsv
+          key: libcsv-x64-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+
       - name: Build
         run: |
           apt update && apt install -y lsb-release
