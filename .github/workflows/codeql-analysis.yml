@@ -95,6 +95,20 @@ jobs:
           path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
           key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}
 
+      - name: Cache libcurl
+        id: cache_libcurl
+        uses: actions/cache@v4
+        with:
+          path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcurl
+          key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES') }}
+  
+      - name: Cache libcsv
+        id: cache_libcsv
+        uses: actions/cache@v4
+        with:
+          path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcsv
+          key: libcsv-${{ hashFiles('./deps/libcsv/ChangeLog') }}
+    
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3

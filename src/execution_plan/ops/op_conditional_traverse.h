@@ -13,23 +13,28 @@
 #include "../../arithmetic/algebraic_expression.h"
 #include "../../../deps/GraphBLAS/Include/GraphBLAS.h"
 
-/* OP Traverse */
+// op traverse
 typedef struct {
 	OpBase op;
 	Graph *graph;
 	AlgebraicExpression *ae;
-	Delta_Matrix F;              // Filter matrix.
-	Delta_Matrix M;              // Algebraic expression result.
-	EdgeTraverseCtx *edge_ctx;   // Edge collection data if the edge needs to be set.
-	Delta_MatrixTupleIter iter;  // Iterator over M.
-	int srcNodeIdx;              // Source node index into record.
-	int destNodeIdx;             // Destination node index into record.
-	uint64_t record_count;       // Number of held records.
-	uint64_t record_cap;         // Max number of records to process.
-	Record *records;             // Array of records.
-	Record r;                    // Currently selected record.
+	Delta_Matrix F;              // filter matrix
+	Delta_Matrix M;              // algebraic expression result
+	EdgeTraverseCtx *edge_ctx;   // edge collection data if the edge needs to be set
+	Delta_MatrixTupleIter iter;  // iterator over M
+	int srcNodeIdx;              // source node index into record
+	int destNodeIdx;             // destination node index into record
+	uint64_t record_count;       // number of held records
+	uint64_t record_cap;         // max number of records to process
+	Record *records;             // array of records
+	Record r;                    // currently selected record
 } OpCondTraverse;
 
-/* Creates a new Traverse operation */
-OpBase *NewCondTraverseOp(const ExecutionPlan *plan, Graph *g, AlgebraicExpression *ae);
+// creates a new Traverse operation
+OpBase *NewCondTraverseOp
+(
+	const ExecutionPlan *plan,
+	Graph *g,
+	AlgebraicExpression *ae
+);
 

@@ -134,20 +134,32 @@ inline void ExecutionPlan_UpdateRoot(ExecutionPlan *plan, OpBase *new_root) {
 	plan->root = new_root;
 }
 
-void ExecutionPlan_ReplaceOp(ExecutionPlan *plan, OpBase *a, OpBase *b) {
-	// Insert the new operation between the original and its parent.
+void ExecutionPlan_ReplaceOp
+(
+	ExecutionPlan *plan,
+	OpBase *a,  // operation being replaced
+	OpBase *b   // replacement operation
+) {
+	// insert the new operation between the original and its parent
 	ExecutionPlan_PushBelow(a, b);
-	// Delete the original operation.
+
+	// delete the original operation
 	ExecutionPlan_RemoveOp(plan, a);
 }
 
-void ExecutionPlan_RemoveOp(ExecutionPlan *plan, OpBase *op) {
+void ExecutionPlan_RemoveOp
+(
+	ExecutionPlan *plan,
+	OpBase *op
+) {
 	if(op->parent == NULL) {
-		// Removing execution plan root.
+		// removing execution plan root
 		ASSERT(op->childCount == 1);
-		// Assign child as new root.
+
+		// assign child as new root
 		plan->root = op->children[0];
-		// Remove new root's parent pointer.
+
+		// remove new root's parent pointer
 		plan->root->parent = NULL;
 	} else {
 		OpBase *parent = op->parent;
