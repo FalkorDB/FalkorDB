@@ -739,8 +739,8 @@ void AR_EXP_CollectEntities
 	} else { // type == AR_EXP_OPERAND
 		if(root->operand.type == AR_EXP_VARIADIC) {
 			const char *entity = root->operand.variadic.entity_alias;
-			raxInsert(aliases, (unsigned char *)entity, strlen(entity),
-					(void*)entity, NULL);
+			raxInsert(aliases, (unsigned char *)entity, strlen(entity), NULL,
+					NULL);
 		}
 	}
 }

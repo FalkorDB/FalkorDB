@@ -113,7 +113,7 @@ static OpBase **_find_entities_solving_branches
 	ASSERT(entities != NULL);
 
 	// get an array of aliases to locate
-	char **aliases = (char**)raxValues(entities);
+	char **aliases = (char**)raxKeys(entities);
 	int n = array_len(aliases);
 
 	// expecting at least 2 entities
@@ -148,7 +148,7 @@ static OpBase **_find_entities_solving_branches
 
 	// all entities should have been resolved, error otherwise
 	n = array_len(aliases);
-	array_free(aliases);
+	array_free_cb(aliases, rm_free);
 
 	if(n != 0) {
 		Error_InvalidFilterPlacement(entities);
