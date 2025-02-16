@@ -90,9 +90,13 @@ void ExecutionPlan_AddOpInd
 	_OpBase_AddChild(parent, to_replace);
 }
 
-// Introduce the new operation B between A and A's parent op.
-void ExecutionPlan_PushBelow(OpBase *a, OpBase *b) {
-	// B belongs to A's plan.
+// introduce the new operation B between A and A's parent op
+void ExecutionPlan_PushBelow
+(
+	OpBase *a,
+	OpBase *b
+) {
+	// B belongs to A's plan
 	ExecutionPlan *plan = (ExecutionPlan *)a->plan;
 	b->plan = plan;
 

@@ -2,9 +2,11 @@ import os
 import csv
 from common import *
 from pathlib import Path
+from index_utils import create_node_range_index
 from collections import OrderedDict
 
-GRAPH_ID_LOCAL = "local_load_csv"
+GRAPH_ID        = "load_csv"
+GRAPH_ID_LOCAL  = "local_load_csv"
 GRAPH_ID_REMOTE = "remote_load_csv"
 
 EMPTY_CSV                               = "empty.csv"
@@ -35,7 +37,8 @@ EMPTY_CELL_CSV_HEADER                   = ["FirstName", "LastName", "Age"]
 
 EMPTY_COLUMN_CSV                        = "empty_column.csv"
 
-IMPORT_DIR = None
+# Get the absolute path to the current file
+IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 # write a CSV file using 'name' as the file name
 # 'header' [optional] as the first row
@@ -105,23 +108,22 @@ def create_empty_column_csv():
         f.write(f"{header}\n")
         f.write("A,B,C\nD,E,F")
 
+#-------------------------------------------------------------------------------
+# create CSV files
+#-------------------------------------------------------------------------------
+
+create_empty_csv()
+create_malformed_csv()
+create_empty_cell_csv()
+create_empty_column_csv()
+create_short_csv_with_header()
+create_short_csv_without_header()
+
 class testLoadLocalCSV():
     def __init__(self):
-        # Get the absolute path to the current file
-        global IMPORT_DIR
-        IMPORT_DIR = os.path.dirname(os.path.abspath(__file__)) + '/'
-
         self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
         self.graph = self.db.select_graph(GRAPH_ID_LOCAL)
 
-        # create CSV files
-        create_empty_csv()
-        create_malformed_csv()
-        create_empty_cell_csv()
-        create_empty_column_csv()
-        create_short_csv_with_header()
-        create_short_csv_without_header()
- 
     # test invalid invocations of the LOAD CSV command
     def test01_invalid_call(self):
         queries = ["LOAD CSV FROM a AS row RETURN row",
@@ -353,4 +355,57 @@ class testLoadRemoteCSV():
                 self.env.assertFalse("we should have failed" and False)
             except Exception:
                 pass
+
+class testLoadCsvPlan():
+    def __init__(self):
+        self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test_edge_creation(self):
+        # make sure the expected execution plan is constructed
+        # for a query which creates edges from a CSV file
+        # the common usecase is for the edge ends to be either matched
+        # or merged, afterwhich a new edge is formed
+
+        # create an index over Person:name
+        create_node_range_index(self.graph, 'Person', 'name', sync=True)
+
+        # load csv and create edges
+        queries = [
+            """LOAD CSV WITH HEADERS FROM $file AS row
+               MATCH (a:Person), (b:Person)
+               WHERE a.name = row['a'] AND b.name = row['b']
+               CREATE (a)-[:CALL]->(b)""",
+
+            """LOAD CSV FROM $file AS row
+               MATCH (a:Person), (b:Person)
+               WHERE a.name = row[0] AND b.name = row[1]
+               CREATE (a)-[:CALL]->(b)"""
+        ]
+
+
+        # expecting to find two index scan operations, a cartesian product
+        # and a create clause
+        for q in queries:
+            plan = str(self.graph.explain(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS}))
+            self.env.assertIn("Node By Index Scan | (a:Person)", plan)
+            self.env.assertIn("Node By Index Scan | (b:Person)", plan)
+            self.env.assertIn("Cartesian Product", plan)
+            self.env.assertIn("Create", plan)
+
+        # run query and validate results
+        # create nodes
+        q = """LOAD CSV WITH HEADERS FROM $file AS row
+               MERGE (a:Person {name:row['First Name']})
+               MERGE (b:Person {name: row['Last Name']})"""
+        res = self.graph.query(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS})
+        self.env.assertEqual(res.nodes_created, 5)
+
+        # create edges
+        q = """LOAD CSV WITH HEADERS FROM $file AS row
+               MATCH (a:Person), (b:Person)
+               WHERE a.name = row['First Name'] AND b.name = row['Last Name']
+               CREATE (a)-[:CALL]->(b)"""
+        res = self.graph.query(q, {'file': 'file://' + SHORT_CSV_WITH_HEADERS})
+        self.env.assertEqual(res.relationships_created, 4)
 

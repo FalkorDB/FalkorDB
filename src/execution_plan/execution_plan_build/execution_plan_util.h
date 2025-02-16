@@ -21,7 +21,7 @@ bool ExecutionPlan_isEager
 // For performing existence checks and looking up individual operations in tree.
 //------------------------------------------------------------------------------
 
-// Traverse upwards until an operation that resolves the given alias is found.
+// traverse upwards until an operation that resolves the given alias is found
 // Returns NULL if alias is not resolved
 OpBase *ExecutionPlan_LocateOpResolvingAlias
 (
@@ -29,8 +29,9 @@ OpBase *ExecutionPlan_LocateOpResolvingAlias
     const char *alias
 );
 
-// Locate the first operation matching one of the given types in the op tree by
-// performing DFS. Returns NULL if no matching operation was found
+// locate the first operation matching one of the given types in the op tree by
+// performing DFS
+// returns NULL if no matching operation was found
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
     OpBase *root,
@@ -64,16 +65,7 @@ void ExecutionPlan_LocateOps
 	OPType type       // operation type to search
 );
 
-// Find the earliest operation above the provided recurse_limit, if any,
-// at which all references are resolved
-OpBase *ExecutionPlan_LocateReferences
-(
-    OpBase *root,
-    const OpBase *recurse_limit,
-    rax *references_to_resolve
-);
-
-// Find the earliest operation at which all references are resolved, if any,
+// find the earliest operation at which all references are resolved, if any,
 // both above the provided recurse_limit and without recursing past a
 // blacklisted op
 OpBase *ExecutionPlan_LocateReferencesExcludingOps
@@ -138,14 +130,16 @@ uint ExecutionPlan_CollectUpwards
 );
 
 //------------------------------------------------------------------------------
-// API for building and relocating operations in transient ExecutionPlans.
+// API for building and relocating operations in transient ExecutionPlans
 //------------------------------------------------------------------------------
 
-// Populate a rax with all aliases that have been resolved by the given operation
-// and its children. These are the bound variables at this point in execution, and
-// subsequent operations should not introduce them as new entities. For example, in the query:
+// populate a rax with all aliases that have been resolved by the given operation
+// and its children
+// these are the bound variables at this point in execution, and
+// subsequent operations should not introduce them as new entities
+// for example, in the query:
 // MATCH (a:A) CREATE (a)-[:E]->(b:B)
-// The Create operation should never introduce a new node 'a'
+// the Create operation should not introduce a new node 'a'
 void ExecutionPlan_BoundVariables
 (
     const OpBase *op,
