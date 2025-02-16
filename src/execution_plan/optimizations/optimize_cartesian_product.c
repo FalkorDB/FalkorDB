@@ -113,7 +113,7 @@ static OpBase **_find_entities_solving_branches
 	ASSERT(entities != NULL);
 
 	// get an array of aliases to locate
-	char **aliases = (char**)raxKeys(entities);
+	char **aliases = (char**)raxValues(entities);
 	int n = array_len(aliases);
 
 	// expecting at least 2 entities

@@ -727,15 +727,20 @@ SIValue AR_EXP_FinalizeAggregations
 	return AR_EXP_Evaluate(root, r);
 }
 
-void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases) {
+void AR_EXP_CollectEntities
+(
+	AR_ExpNode *root,
+	rax *aliases
+) {
 	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < root->op.child_count; i ++) {
+		for(int i = 0; i < root->op.child_count; i++) {
 			AR_EXP_CollectEntities(root->op.children[i], aliases);
 		}
 	} else { // type == AR_EXP_OPERAND
 		if(root->operand.type == AR_EXP_VARIADIC) {
 			const char *entity = root->operand.variadic.entity_alias;
-			raxInsert(aliases, (unsigned char *)entity, strlen(entity), NULL, NULL);
+			raxInsert(aliases, (unsigned char *)entity, strlen(entity),
+					(void*)entity, NULL);
 		}
 	}
 }
