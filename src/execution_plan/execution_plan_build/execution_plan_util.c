@@ -156,10 +156,10 @@ static inline bool _blacklisted
 // checks to see if op is aware of all references
 static inline bool _aware
 (
-	dict *awareness_tbl,      // awareness table
-	const OpBase *op,         // inspected operation
-	const char **references,  // references to resolve
-	uint n                    // number of refereces
+	dict *awareness_tbl,  // awareness table
+	const OpBase *op,     // inspected operation
+	char **references,    // references to resolve
+	uint n                // number of refereces
 ) {
 	// get op's awareness table
 	dictEntry *entry = HashTableFind(awareness_tbl, (void*)op);
@@ -309,7 +309,7 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 
 	OpBase *ret = NULL;
 	n = raxSize(refs_to_resolve);
-	const char **references = (const char**)raxKeys(refs_to_resolve);
+	char **references = (char**)raxKeys(refs_to_resolve);
 
 	//ASSERT(array_len(queue) == 0);
 	array_clear(queue);
@@ -415,16 +415,6 @@ bool ExecutionPlan_ContainsSkip
 	return false;
 }
 
-OpBase *ExecutionPlan_LocateReferences
-(
-	OpBase *root,
-	const OpBase *recurse_limit,
-	rax *refs_to_resolve
-) {
-	return ExecutionPlan_LocateReferencesExcludingOps(
-			   root, recurse_limit, NULL, 0, refs_to_resolve);
-}
-
 // populates `ops` with all operations with a type in `types` in an
 // execution plan, based at `root`
 static void _ExecutionPlan_CollectOpsMatchingTypes
@@ -496,27 +486,53 @@ uint ExecutionPlan_CollectUpwards
 // collect all aliases that have been resolved by the given tree of operations
 void ExecutionPlan_BoundVariables
 (
-    const OpBase *op,
-    rax *modifiers,
-	const ExecutionPlan *plan
+	const OpBase *op,           // operation to start collection from
+	rax *modifiers,             // [output] collected modifiers
+	const ExecutionPlan *plan   // scoped plan
 ) {
-	ASSERT(op != NULL && modifiers != NULL);
-	if(op->modifies && op->plan == plan) {
-		uint modifies_count = array_len(op->modifies);
+	// validations
+	ASSERT(op        != NULL);
+	ASSERT(modifiers != NULL);
+
+	// operations queue
+	OpBase **queue = array_new(OpBase*, 1);
+	array_append(queue, (OpBase*)op);
+
+	// as long as queue isn't empty
+	while(array_len(queue) > 0) {
+		// collect modifiers from current op
+		OpBase *current = array_pop(queue);
+
+		// skip op if it's associated with a different plan
+		if(current->plan != plan) {
+			continue;
+		}
+
+		// collect modifiers
+		uint modifies_count = array_len(current->modifies);
 		for(uint i = 0; i < modifies_count; i++) {
-			const char *modified = op->modifies[i];
-			raxTryInsert(modifiers, (unsigned char *)modified, strlen(modified),
-					(void *)modified, NULL);
+			const char *modified = current->modifies[i];
+			raxTryInsert(modifiers, (unsigned char *)modified,
+					strlen(modified), (void *)modified, NULL);
+		}
+
+		// Project and Aggregate operations demarcate variable scopes
+		// collect their projections but do not recurse into their children
+		// note that future optimizations which operate across scopes will require
+		// different logic than this for application
+		OPType t = OpBase_Type(current);
+		if(t == OPType_PROJECT || t == OPType_AGGREGATE) {
+			continue;
+		}
+
+		// add current op children to queue
+		int n = OpBase_ChildCount(current);
+		for(int i = 0; i < n; i++) {
+			OpBase *child = OpBase_GetChild(current, i);
+			array_append(queue, child);
 		}
 	}
 
-	// Project and Aggregate operations demarcate variable scopes
-	// collect their projections but do not recurse into their children
-	// note that future optimizations which operate across scopes will require
-	// different logic than this for application
-	if(op->type == OPType_PROJECT || op->type == OPType_AGGREGATE) return;
-
-	for(int i = 0; i < op->childCount; i++) {
-		ExecutionPlan_BoundVariables(op->children[i], modifiers, plan);
-	}
+	array_free(queue);
 }
+

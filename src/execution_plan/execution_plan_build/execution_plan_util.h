@@ -65,16 +65,7 @@ void ExecutionPlan_LocateOps
 	OPType type       // operation type to search
 );
 
-// Find the earliest operation above the provided recurse_limit, if any,
-// at which all references are resolved
-OpBase *ExecutionPlan_LocateReferences
-(
-    OpBase *root,
-    const OpBase *recurse_limit,
-    rax *references_to_resolve
-);
-
-// Find the earliest operation at which all references are resolved, if any,
+// find the earliest operation at which all references are resolved, if any,
 // both above the provided recurse_limit and without recursing past a
 // blacklisted op
 OpBase *ExecutionPlan_LocateReferencesExcludingOps
@@ -139,7 +130,7 @@ uint ExecutionPlan_CollectUpwards
 );
 
 //------------------------------------------------------------------------------
-// API for building and relocating operations in transient ExecutionPlans.
+// API for building and relocating operations in transient ExecutionPlans
 //------------------------------------------------------------------------------
 
 // populate a rax with all aliases that have been resolved by the given operation

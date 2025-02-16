@@ -32,7 +32,6 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	// the plan's record map contains all variables bound at this time
 	uint connectedComponentsCount = array_len(connectedComponents);
 	rax *bound_vars = plan->record_map;
-	const char **arguments = (const char **)raxKeys(bound_vars);
 
 	// if we have multiple graph components
 	// the root operation is a cartesian product
@@ -171,6 +170,11 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	}
 
 	if(cartesianProduct != NULL && apply != NULL) {
+		rax *bound_args = raxNew();
+		ExecutionPlan_BoundVariables(OpBase_GetChild(apply, 0), bound_args,
+				plan);
+		const char **arguments = (const char**)raxValues(bound_args);
+
 		// add Argument op to each branch within the cartesian product
 		for(int i = 0; i < OpBase_ChildCount(cartesianProduct); i++) {
 			OpBase *child = OpBase_GetChild(cartesianProduct, i);
@@ -184,6 +188,9 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 			OpBase *arg = NewArgumentOp(plan, arguments);
 			ExecutionPlan_AddOp(child, arg);
 		}
+
+		raxFree(bound_args);
+		array_free(arguments);
 	}
 
 	for(uint i = 0; i < connectedComponentsCount; i++) {
@@ -191,7 +198,6 @@ static OpBase *_ExecutionPlan_ProcessQueryGraph
 	}
 
 	FilterTree_Free(ft);
-	array_free_cb(arguments, rm_free);
 	array_free(connectedComponents);
 
 	return (cartesianProduct != NULL) ? cartesianProduct : plan->root;

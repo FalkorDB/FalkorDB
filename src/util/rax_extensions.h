@@ -31,7 +31,8 @@ rax *raxCloneWithCallback
 );
 
 // collect all values in a rax into an array
-// this function assumes that each value is a pointer (or at least an 8-byte payload)
+// this function assumes that each value is a pointer
+// (or at least an 8-byte payload)
 void **raxValues
 (
 	rax *rax

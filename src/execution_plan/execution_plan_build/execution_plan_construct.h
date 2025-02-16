@@ -103,7 +103,7 @@ void buildPatternPathOps(
 );
 
 // given an AST path pattern, generate the tree of scan, traverse,
-// and filter operations required to represent it.
+// and filter operations required to represent it
 OpBase *ExecutionPlan_BuildOpsFromPath
 (
 	ExecutionPlan *plan,
