@@ -129,11 +129,13 @@ static OpBase **_find_entities_solving_branches
 
 		// scan through the remaining aliases
 		for(int j = 0; j < array_len(aliases); j++) {
+			char *alias = aliases[j];
 			// see if current branch resolves alias
-			if(ExecutionPlan_LocateOpResolvingAlias(branch, aliases[j])) {
+			if(ExecutionPlan_LocateOpResolvingAlias(branch, alias)) {
 				// branch resolves alias
 				// remove it from the aliases array
 				// and mark branch for output addition
+				rm_free(alias);
 				array_del_fast(aliases, j);
 				add_branch = true;
 				j--;  // compensate for the alias removal
