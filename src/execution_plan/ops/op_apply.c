@@ -22,7 +22,6 @@ OpBase *NewApplyOp
 
 	op->r            = NULL;
 	op->op_arg       = NULL;
-	op->records      = NULL;
 	op->rhs_branch   = NULL;
 	op->bound_branch = NULL;
 	op->rhs_args     = array_new(OpArgument*, 1);
@@ -43,7 +42,6 @@ static OpResult ApplyInit
 	OpApply *op = (OpApply *)opBase;
 	// the op's bound branch and optional match branch have already been
 	// built as the Apply op's first and second child ops, respectively
-	op->records      = array_new(Record, 1);
 	op->bound_branch = opBase->children[0];
 	op->rhs_branch   = opBase->children[1];
 
@@ -115,7 +113,7 @@ pull_lhs:
 
 	// RHS branch depleted for the current bound Record
 	// free it and loop back to retrieve a new one
-	op->r = NULL;
+	OpBase_DeleteRecord(&op->r);
 
 	// reset the RHS branch
 	OpBase_PropagateReset(op->rhs_branch);
@@ -129,14 +127,9 @@ static OpResult ApplyReset
 	OpBase *opBase
 ) {
 	OpApply *op = (OpApply *)opBase;
-	op->r = NULL;
-
-	// free collected records
-	uint32_t n = array_len(op->records);
-	for(uint32_t i = 0; i < n; i++) {
-		OpBase_DeleteRecord(op->records+i);
+	if(op->r != NULL) {
+		OpBase_DeleteRecord(&op->r);
 	}
-	array_clear(op->records);
 
 	return OP_OK;
 }
@@ -157,7 +150,6 @@ static void ApplyFree
 
 	if(op->r != NULL) {
 		OpBase_DeleteRecord(&op->r);
-		op->r = NULL;
 	}
 
 	if(op->rhs_args != NULL) {
