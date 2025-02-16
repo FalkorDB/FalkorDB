@@ -147,13 +147,15 @@ static OpBase **_find_entities_solving_branches
 	}
 
 	// all entities should have been resolved, error otherwise
-	if(array_len(aliases) != 0) {
+	n = array_len(aliases);
+	array_free(aliases);
+
+	if(n != 0) {
 		Error_InvalidFilterPlacement(entities);
 		array_free(resolving_branches);
 		return NULL;
 	}
 
-	array_free(aliases);
 	return resolving_branches;
 }
 
