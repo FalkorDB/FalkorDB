@@ -405,31 +405,34 @@ jobs:
           sleep 5
           docker ps
       
-      - name: List files inside the container
-        run: |
-          echo "Checking files in container..."
-          docker exec falkordb ls -la /browser
+      - name: Use Node LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
 
-      - name: Install dependencies inside the container
+      - name: Install test dependencies
         run: |
-          docker exec falkordb bash -c "
-            cd /browser &&
-            npm install &&
-            npx playwright install --with-deps
-          "
+          cd /tmp/browser
+          npm install
+          npx playwright install --with-deps
 
-      - name: Build and start server inside the container
+      - name: Verify the app is responding
         run: |
-          docker exec -d falkordb bash -c "
-            cd /browser &&
-            npm run build &&
-            NEXTAUTH_SECRET=SECRET npm start
-          "
-          sleep 10
+          for i in {1..10}; do
+            if curl -s http://localhost:3000/; then
+              echo "App is up!"
+              exit 0
+            fi
+            echo "Waiting for app to be accessible at localhost:3000..."
+            sleep 2
+          done
+          echo "App not responding" >&2
+          exit 1
 
-      - name: Run Playwright tests inside the container
+      - name: Run Playwright tests (host)
         run: |
-          docker exec -w /browser falkordb npx playwright test --workers=1 --reporter=line
+          cd /tmp/browser
+          npx playwright test --workers=1 --reporter=line
 
   cleanup-flow-tests:
     needs: flow-tests
