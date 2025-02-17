@@ -392,28 +392,23 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
-      - name: Start FalkorDB container in background
-        run: |
-          docker run -d --name falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb-${{ matrix.platform.suffix }}:latest
-          sleep 5
-          docker ps
-
       - name: Clone browser repository
         run: |
-          git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
-
-      - name: Copy browser into the container
+            git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
+  
+      - name: Start FalkorDB container in background with volume mount
         run: |
-          docker cp /tmp/browser falkordb:/browser
+          docker run -d --name falkordb \
+            -p 6379:6379 -p 3000:3000 \
+            -v /tmp/browser:/browser \
+            falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          sleep 5
+          docker ps
       
       - name: List files inside the container
         run: |
           echo "Checking files in container..."
           docker exec falkordb ls -la /browser
-
-      - name: Check if playwright.config.ts exists
-        run: |
-          docker exec falkordb ls -la /browser/playwright.config.ts || echo "Config file missing!"
 
       - name: Install dependencies inside the container
         run: |
