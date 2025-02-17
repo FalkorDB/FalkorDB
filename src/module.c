@@ -34,8 +34,8 @@
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 7
-#define MIN_REDIS_VERSION_MINOR 2
-#define MIN_REDIS_VERSION_PATCH 0
+#define MIN_REDIS_VERSION_MINOR 4
+#define MIN_REDIS_VERSION_PATCH 2
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
