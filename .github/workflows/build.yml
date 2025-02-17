@@ -429,10 +429,32 @@ jobs:
           echo "App not responding" >&2
           exit 1
 
+      - name: Ensure required directories exist
+        run: |
+          cd /tmp/browser
+          mkdir -p playwright-report
+          mkdir -p playwright-report/artifacts
+
       - name: Run Playwright tests (host)
         run: |
           cd /tmp/browser
           npx playwright test --workers=1 --reporter=line
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: /tmp/browser/playwright-report/
+          retention-days: 30
+
+      - name: Upload failed test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-test-screenshots
+          path: /tmp/browser/playwright-report/artifacts/
+          retention-days: 30
 
   cleanup-flow-tests:
     needs: flow-tests
