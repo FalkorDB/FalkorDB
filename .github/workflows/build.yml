@@ -21,33 +21,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  create-runners:
+  create-build-runners:
     strategy:
       matrix:
         machines:
           - name: build
             machine_type: t2a-standard-4
             runner_label: build-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: unit-tests
-            machine_type: t2a-standard-4
-            runner_label: unit-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: flow-tests
-            machine_type: t2a-standard-4
-            runner_label: flow-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: tck-tests
-            machine_type: t2a-standard-4
-            runner_label: tck-tests-${{ github.run_id }}-${{ github.run_number }}
-            arm: true
-            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
-          - name: fuzz-tests
-            machine_type: t2a-standard-4
-            runner_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}
             arm: true
             image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
           - name: rhel-build
@@ -57,8 +37,8 @@ jobs:
             image: projects/rhel-cloud/global/images/rhel-9-v20241210
     runs-on: ubuntu-latest
     steps:
-      - name: Create runners
-        id: create-runner
+      - name: Create build runner ${{ matrix.machines.name }}
+        id: create-build-runner
         uses: FalkorDB/gce-github-runner@install_docker
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
@@ -73,7 +53,7 @@ jobs:
           image: ${{ matrix.machines.image }}
 
   build:
-    needs: create-runners
+    needs: create-build-runners
     runs-on: ${{ matrix.platform.machine_label }}
     container: falkordb/falkordb-build:latest
     services:
@@ -291,8 +271,49 @@ jobs:
           zone: ${{ vars.GCP_ZONE }}
           instance_label: ${{ matrix.platform.machine_label }}
 
+  create-test-runners:
+    strategy:
+      matrix:
+        machines:
+          - name: unit-tests
+            machine_type: t2a-standard-4
+            runner_label: unit-tests-${{ github.run_id }}-${{ github.run_number }}
+            arm: true
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
+          - name: flow-tests
+            machine_type: t2a-standard-4
+            runner_label: flow-tests-${{ github.run_id }}-${{ github.run_number }}
+            arm: true
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
+          - name: tck-tests
+            machine_type: t2a-standard-4
+            runner_label: tck-tests-${{ github.run_id }}-${{ github.run_number }}
+            arm: true
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
+          - name: fuzz-tests
+            machine_type: t2a-standard-4
+            runner_label: fuzz-tests-${{ github.run_id }}-${{ github.run_number }}
+            arm: true
+            image: projects/debian-cloud/global/images/debian-11-bullseye-arm64-v20240611
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create test runner ${{ matrix.machines.name }}
+        id: create-test-runner
+        uses: FalkorDB/gce-github-runner@install_docker
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zone: ${{ vars.GCP_ZONE }}
+          network: gh-runner
+          disk_size: 100
+          machine_type: ${{ matrix.machines.machine_type }}
+          runner_label: ${{ matrix.machines.runner_label }}
+          arm: ${{ matrix.machines.arm }}
+          image: ${{ matrix.machines.image }}
+
   unit-tests:
-    needs: build
+    needs: [build, create-test-runners]
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -339,7 +360,7 @@ jobs:
           instance_label: ${{ matrix.platform.machine_label }}
 
   flow-tests:
-    needs: build
+    needs: [build, create-test-runners]
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -386,7 +407,7 @@ jobs:
           instance_label: ${{ matrix.platform.machine_label }}
 
   tck-tests:
-    needs: build
+    needs: [build, create-test-runners]
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -433,7 +454,7 @@ jobs:
           instance_label: ${{ matrix.platform.machine_label }}
 
   fuzz-tests:
-    needs: build
+    needs: [build, create-test-runners]
     runs-on: ${{ matrix.platform.machine_label }}
     strategy:
       fail-fast: false
@@ -481,7 +502,7 @@ jobs:
             ${{ matrix.platform.machine_label }}
 
             #upgrade-tests:
-            #  needs: build
+            #  needs: [build, create-test-runners]
             #  runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' ||  format('upgrade-tests-{0}-{1}', github.run_id, github.run_number) }}
             #  strategy:
             #    fail-fast: false
