@@ -265,7 +265,7 @@ jobs:
 
       - name: Copy .so from image
         run: |
-          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /FalkorDB/bin/src/falkordb.so > /tmp/falkordb-${{ matrix.platform.suffix }}.so
+          docker run --rm --entrypoint cat falkordb/falkordb-${{ matrix.platform.suffix }} /var/lib/falkordb/bin/falkordb.so > /tmp/falkordb-${{ matrix.platform.suffix }}.so
 
       - name: Upload .so
         uses: actions/upload-artifact@v4
