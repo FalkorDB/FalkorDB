@@ -396,7 +396,7 @@ jobs:
         run: |
             git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
   
-      - name: Start FalkorDB container in background with volume mount
+      - name: Start FalkorDB container
         run: |
           docker run -d --name falkordb \
             -p 6379:6379 -p 3000:3000 \
@@ -404,11 +404,6 @@ jobs:
             falkordb/falkordb-${{ matrix.platform.suffix }}:latest
           sleep 5
           docker ps
-      
-      - name: List files inside the container
-        run: |
-          echo "Checking files in container..."
-          docker exec falkordb ls -la /browser
 
       - name: Install dependencies inside the container
         run: |
@@ -417,15 +412,6 @@ jobs:
             npm install &&
             npx playwright install --with-deps
           "
-
-      - name: Build and start server inside the container
-        run: |
-          docker exec -d falkordb bash -c "
-            cd /browser &&
-            npm run build &&
-            NEXTAUTH_SECRET=SECRET npm start
-          "
-          sleep 10
 
       - name: Run Playwright tests inside the container
         run: |
