@@ -9,7 +9,7 @@
 #include "../../util/rmalloc.h"
 #include "../../configuration/config.h"
 
-// Performs inplace re-purposing of an operand into an operation
+// performs inplace re-purposing of an operand into an operation
 void _InplaceRepurposeOperandToOperation
 (
 	AlgebraicExpression *operand,
@@ -24,14 +24,14 @@ void _InplaceRepurposeOperandToOperation
 	rm_free(operation);
 }
 
-// Performs inplace re-purposing of an operation into an operand.
+// performs inplace re-purposing of an operation into an operand
 void _AlgebraicExpression_InplaceRepurpose
 (
 	AlgebraicExpression *exp,
 	AlgebraicExpression *replacement
 ) {
 	ASSERT(exp && replacement && AlgebraicExpression_ChildCount(exp) == 0);
-	// Free internals.
+	// free internals
 	if(exp->type == AL_OPERATION) {
 		_AlgebraicExpression_FreeOperation(exp);
 	} else if(exp->type == AL_OPERAND) {
@@ -40,9 +40,10 @@ void _AlgebraicExpression_InplaceRepurpose
 		ASSERT("Unknown algebraic expression type" && false);
 	}
 
-	// Replace.
+	// replace
 	memcpy(exp, replacement, sizeof(AlgebraicExpression));
-	// Free the memory of the migrated replacement.
+
+	// free the memory of the migrated replacement
 	rm_free(replacement);
 }
 
@@ -51,8 +52,8 @@ void _AlgebraicExpression_OperationRemoveChild
 	AlgebraicExpression *parent,
 	const AlgebraicExpression *child
 ) {
+	ASSERT(child  != NULL);
 	ASSERT(parent != NULL);
-	ASSERT(child != NULL);
 
 	if(parent->type != AL_OPERATION) return;
 
@@ -69,12 +70,13 @@ void _AlgebraicExpression_OperationRemoveChild
 		for(uint j = i; j < child_count - 1; j++) {
 			parent->operation.children[j] = parent->operation.children[j+1];
 		}
+
 		array_pop(parent->operation.children);
 		break;
 	}
 }
 
-// Removes the rightmost direct child node of root.
+// removes the rightmost direct child node of root
 AlgebraicExpression *_AlgebraicExpression_OperationRemoveDest
 (
 	AlgebraicExpression *root  // Root from which to remove a child.
@@ -90,7 +92,7 @@ AlgebraicExpression *_AlgebraicExpression_OperationRemoveDest
 	return child;
 }
 
-// Removes the leftmost direct child node of root.
+// removes the leftmost direct child node of root
 AlgebraicExpression *_AlgebraicExpression_OperationRemoveSource
 (
 	AlgebraicExpression *root   // Root from which to remove a child.
@@ -114,11 +116,11 @@ AlgebraicExpression *_AlgebraicExpression_OperationRemoveSource
 	return child;
 }
 
-/* Multiplies `exp` to the left by `lhs`.
- * Returns new expression root.
- * `lhs` = (A + B)
- * `exp` = Transpose(C)
- * Returns (A + B) * Transpose(C) where `*` is the new root. */
+// multiplies `exp` to the left by `lhs`
+// returns new expression root
+// `lhs` = (A + B)
+// `exp` = Transpose(C)
+// returns (A + B) * Transpose(C) where `*` is the new root
 AlgebraicExpression *_AlgebraicExpression_MultiplyToTheLeft
 (
 	AlgebraicExpression *lhs,
@@ -131,11 +133,11 @@ AlgebraicExpression *_AlgebraicExpression_MultiplyToTheLeft
 	return mul;
 }
 
-/* Multiplies `exp` to the right by `rhs`.
- * Returns new expression root.
- * `exp` = Transpose(C)
- * `rhs` = (A + B)
- * Returns Transpose(C) * (A + B) where `*` is the new root. */
+// multiplies `exp` to the right by `rhs`
+// returns new expression root
+// `exp` = Transpose(C)
+// `rhs` = (A + B)
+// returns Transpose(C) * (A + B) where `*` is the new root
 AlgebraicExpression *_AlgebraicExpression_MultiplyToTheRight
 (
 	AlgebraicExpression *exp,
@@ -148,11 +150,11 @@ AlgebraicExpression *_AlgebraicExpression_MultiplyToTheRight
 	return mul;
 }
 
-/* Adds `exp` to the left by `lhs`.
- * Returns new expression root.
- * `lhs` = (A * B)
- * `exp` = Transpose(C)
- * Returns (A * B) + Transpose(C) where `+` is the new root. */
+// adds `exp` to the left by `lhs`
+// returns new expression root
+// `lhs` = (A * B)
+// `exp` = Transpose(C)
+// returns (A * B) + Transpose(C) where `+` is the new root
 AlgebraicExpression *_AlgebraicExpression_AddToTheLeft
 (
 	AlgebraicExpression *lhs,
@@ -165,11 +167,11 @@ AlgebraicExpression *_AlgebraicExpression_AddToTheLeft
 	return add;
 }
 
-/* Adds `exp` to the right by `rhs`.
- * Returns new expression root.
- * `exp` = Transpose(C)
- * `rhs` = (A * B)
- * Returns Transpose(C) + (A * B) where `+` is the new root. */
+// adds `exp` to the right by `rhs`
+// returns new expression root
+// `exp` = Transpose(C)
+// `rhs` = (A * B)
+// returns Transpose(C) + (A * B) where `+` is the new root
 AlgebraicExpression *_AlgebraicExpression_AddToTheRight
 (
 	AlgebraicExpression *exp,
@@ -187,6 +189,7 @@ void _AlgebraicExpression_FreeOperation
 	AlgebraicExpression *node
 ) {
 	ASSERT(node && node->type == AL_OPERATION);
+
 	if(node->operation.children) {
 		uint child_count = AlgebraicExpression_ChildCount(node);
 		for(uint i = 0; i < child_count; i++) {
@@ -202,16 +205,17 @@ void _AlgebraicExpression_FreeOperand
 	AlgebraicExpression *node
 ) {
 	ASSERT(node && node->type == AL_OPERAND);
+
 	if(node->operand.bfree) {
 		Delta_Matrix_free(&node->operand.matrix);
 	}
 }
 
-// Locate operand at position `operand_idx` counting from left to right.
+// locate operand at position `operand_idx` counting from left to right
 AlgebraicExpression *__AlgebraicExpression_GetOperand
 (
-	const AlgebraicExpression *root,    // Root of expression.
-	uint operand_idx,                   // Operand position (LTR, zero based).
+	const AlgebraicExpression *root,  // root of expression
+	uint operand_idx,                 // operand position (LTR, zero based)
 	uint *current_operand_idx
 ) {
 	// `operand_idx` must be within [0, AlgebraicExpression_OperandCount(root)).
@@ -221,44 +225,53 @@ AlgebraicExpression *__AlgebraicExpression_GetOperand
 	AlgebraicExpression *operand = NULL;
 
 	switch(root->type) {
-	case  AL_OPERAND:
-		if(operand_idx == *current_operand_idx) return (AlgebraicExpression *)root;
-		*current_operand_idx += 1;
-		break;
-	case AL_OPERATION:
-		child_count = AlgebraicExpression_ChildCount(root);
-		for(uint i = 0; i < child_count; i++) {
-			operand = __AlgebraicExpression_GetOperand(CHILD_AT(root, i), operand_idx, current_operand_idx);
-			if(operand) return operand;
-		}
-		break;
-	default:
-		ASSERT("unknown algebraic expression node type" && false);
+		case AL_OPERAND:
+			if(operand_idx == *current_operand_idx) {
+				return (AlgebraicExpression *)root;
+			}
+			*current_operand_idx += 1;
+			break;
+		case AL_OPERATION:
+			child_count = AlgebraicExpression_ChildCount(root);
+			for(uint i = 0; i < child_count; i++) {
+				operand = __AlgebraicExpression_GetOperand(CHILD_AT(root, i),
+						operand_idx, current_operand_idx);
+				if(operand) {
+					return operand;
+				}
+			}
+			break;
+		default:
+			ASSERT("unknown algebraic expression node type" && false);
 	}
+
 	return NULL;
 }
 
 AlgebraicExpression *_AlgebraicExpression_GetOperand
 (
-	const AlgebraicExpression *root,    // Root of expression.
-	uint operand_idx                    // Operand position (LTR, zero based).
+	const AlgebraicExpression *root,  // root of expression
+	uint operand_idx                  // operand position (LTR, zero based)
 ) {
 	uint current_operand_idx = 0;
 	return __AlgebraicExpression_GetOperand(root, operand_idx, &current_operand_idx);
 }
 
 // populate an operand with a standard matrix
-static void _AlgebraicExpression_PopulateOperand(AlgebraicExpression *operand,
-												 const GraphContext *gc) {
+static void _AlgebraicExpression_PopulateOperand
+(
+	AlgebraicExpression *operand,
+	const GraphContext *gc
+) {
 	// do not update matrix if already set,
 	// as algebraic expression test depends on this behavior
 	// TODO: Redesign _AlgebraicExpression_FromString to remove this condition
 	if(operand->operand.matrix != NULL) return;
 
-	Graph       *g      =       gc->g;
-	Schema      *s      =       NULL;
-	Delta_Matrix    m   =       NULL;
-	const char  *label  =       operand->operand.label;
+	Graph *g          = gc->g;
+	Schema *s         = NULL;
+	Delta_Matrix m    = NULL;
+	const char *label = operand->operand.label;
 
 	if(label == NULL) {
 		// no label, use THE adjacency matrix
@@ -282,8 +295,11 @@ static void _AlgebraicExpression_PopulateOperand(AlgebraicExpression *operand,
 
 // populate a transposed operand with a transposed relationship matrix
 // and swap the row/col domains
-static void _AlgebraicExpression_PopulateTransposedOperand(AlgebraicExpression *operand,
-														   const GraphContext *gc) {
+static void _AlgebraicExpression_PopulateTransposedOperand
+(
+	AlgebraicExpression *operand,
+	const GraphContext *gc
+) {
 	// swap the row and column domains of the operand
 	const char *tmp = operand->operand.dest;
 	operand->operand.dest = operand->operand.src;
@@ -312,33 +328,39 @@ static void _AlgebraicExpression_PopulateTransposedOperand(AlgebraicExpression *
 	operand->operand.matrix = m;
 }
 
-// TODO: this function is only used within AlgebraicExpression_Optimize, consider moving it.
+// TODO: this function is only used within AlgebraicExpression_Optimize
+// consider moving it
 // fetch all operands, replacing transpose operations with transposed operands
 // if they are available
-void _AlgebraicExpression_PopulateOperands(AlgebraicExpression *root, const GraphContext *gc) {
+void _AlgebraicExpression_PopulateOperands
+(
+	AlgebraicExpression *root,
+	const GraphContext *gc
+) {
 	uint child_count = 0;
+
 	switch(root->type) {
-	case AL_OPERATION:
-		child_count = AlgebraicExpression_ChildCount(root);
-		if(root->operation.op == AL_EXP_TRANSPOSE) {
-			ASSERT(child_count == 1 && "Transpose operation had invalid number of children");
-			AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
-			// fetch the transposed matrix and update the operand
-			_AlgebraicExpression_PopulateTransposedOperand(child, gc);
-			// replace this operation with the transposed operand
-			_AlgebraicExpression_InplaceRepurpose(root, child);
+		case AL_OPERATION:
+			child_count = AlgebraicExpression_ChildCount(root);
+			if(root->operation.op == AL_EXP_TRANSPOSE) {
+				ASSERT(child_count == 1 && "Transpose operation had invalid number of children");
+				AlgebraicExpression *child = _AlgebraicExpression_OperationRemoveDest(root);
+				// fetch the transposed matrix and update the operand
+				_AlgebraicExpression_PopulateTransposedOperand(child, gc);
+				// replace this operation with the transposed operand
+				_AlgebraicExpression_InplaceRepurpose(root, child);
+				break;
+			}
+			for(uint i = 0; i < child_count; i++) {
+				_AlgebraicExpression_PopulateOperands(CHILD_AT(root, i), gc);
+			}
 			break;
-		}
-		for(uint i = 0; i < child_count; i++) {
-			_AlgebraicExpression_PopulateOperands(CHILD_AT(root, i), gc);
-		}
-		break;
-	case AL_OPERAND:
-		_AlgebraicExpression_PopulateOperand(root, gc);
-		break;
-	default:
-		ASSERT("Unknown algebraic expression node type" && false);
-		break;
+		case AL_OPERAND:
+			_AlgebraicExpression_PopulateOperand(root, gc);
+			break;
+		default:
+			ASSERT("Unknown algebraic expression node type" && false);
+			break;
 	}
 }
 
@@ -357,8 +379,8 @@ void _AlgebraicExpression_RemoveRedundentOperands
 	// as a general rule for every expression I where a former expression J
 	// I > J resolves I's source we should remove I's source label operands
 
-	ASSERT(qg   !=  NULL);
-	ASSERT(exps !=  NULL);
+	ASSERT(qg   != NULL);
+	ASSERT(exps != NULL);
 
 	int exp_count = array_len(exps);
 	if(exp_count < 2) return;

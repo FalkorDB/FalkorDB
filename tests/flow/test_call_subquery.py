@@ -681,7 +681,42 @@ updating clause.")
         self.graph = self.db.select_graph(GRAPH_ID)
 
         # create data
-        self.graph.query("CREATE (english: Language {name: 'English'}), (spanish: Language {name: 'Spanish'}), (french: Language {name: 'French'}), (coastal: Property {name: 'Coastal'}), (usa: Country {name: 'USA', extra_data: 'foo'}), (cali: State {name: 'California'}), (sacramento: City {name: 'Sacramento', extra_data: 'bar'}), (ny: State {name: 'New York'}), (nyc: City {name: 'New York City'}), (sacramento) - [:CITY_IN_STATE] -> (cali) - [:STATE_IN_COUNTRY] -> (usa), (cali) - [:HAS_STATE_PROP] -> (coastal), (nyc) - [:CITY_IN_STATE] -> (ny) - [:STATE_IN_COUNTRY] -> (usa), (ny) - [:HAS_STATE_PROP] -> (coastal), (nyc) - [:HAS_CITY_PROP] -> (coastal), (canada: Country {name: 'Canada'}), (ontario: State {name: 'Ontario', extra_data: 'baz'}), (toronto: City {name: 'Toronto'}), (bc: State {name: 'British Columbia'}), (victoria: City {name: 'Victoria'}), (toronto) - [:CITY_IN_STATE] -> (ontario) - [:STATE_IN_COUNTRY] -> (canada), (victoria) - [:CITY_IN_STATE] -> (bc) - [:STATE_IN_COUNTRY] -> (canada), (bc) - [:HAS_STATE_PROP] -> (coastal), (victoria) - [:HAS_CITY_PROP] -> (coastal), (canada) - [:OFFICIAL_LANGUAGE] -> (english), (canada) - [:OFFICIAL_LANGUAGE] -> (french), (mexico: Country {name: 'Mexico'}), (coahuila: State {name: 'Coahuila'}), (saltillo: City {name: 'Saltillo'}), (jalisco: State {name: 'Jalisco'}), (guadalajara: City {name: 'Guadalajara'}), (saltillo) - [:CITY_IN_STATE] -> (coahuila) - [:STATE_IN_COUNTRY] -> (mexico), (guadalajara) - [:CITY_IN_STATE] -> (jalisco) - [:STATE_IN_COUNTRY] -> (mexico), (jalisco) - [:HAS_STATE_PROP] -> (coastal), (mexico) - [:OFFICIAL_LANGUAGE] -> (spanish)")
+        self.graph.query("""
+            CREATE (english: Language {name: 'English'}),
+                   (spanish: Language {name: 'Spanish'}),
+                   (french: Language {name: 'French'}),
+                   (coastal: Property {name: 'Coastal'}),
+                   (usa: Country {name: 'USA', extra_data: 'foo'}),
+                   (cali: State {name: 'California'}),
+                   (sacramento: City {name: 'Sacramento', extra_data: 'bar'}),
+                   (ny: State {name: 'New York'}),
+                   (nyc: City {name: 'New York City'}),
+                   (sacramento)-[:CITY_IN_STATE]->(cali)-[:STATE_IN_COUNTRY]->(usa),
+                   (cali)-[:HAS_STATE_PROP]->(coastal),
+                   (nyc)-[:CITY_IN_STATE]->(ny)-[:STATE_IN_COUNTRY]->(usa),
+                   (ny)-[:HAS_STATE_PROP]->(coastal),
+                   (nyc)-[:HAS_CITY_PROP]->(coastal),
+                   (canada: Country {name: 'Canada'}),
+                   (ontario: State {name: 'Ontario', extra_data: 'baz'}),
+                   (toronto: City {name: 'Toronto'}),
+                   (bc: State {name: 'British Columbia'}),
+                   (victoria: City {name: 'Victoria'}),
+                   (toronto)-[:CITY_IN_STATE]->(ontario)-[:STATE_IN_COUNTRY]->(canada),
+                   (victoria)-[:CITY_IN_STATE]->(bc)-[:STATE_IN_COUNTRY]->(canada),
+                   (bc)-[:HAS_STATE_PROP]->(coastal),
+                   (victoria)-[:HAS_CITY_PROP]->(coastal),
+                   (canada)-[:OFFICIAL_LANGUAGE]->(english),
+                   (canada)-[:OFFICIAL_LANGUAGE]->(french),
+                   (mexico: Country {name: 'Mexico'}),
+                   (coahuila: State {name: 'Coahuila'}),
+                   (saltillo: City {name: 'Saltillo'}),
+                   (jalisco: State {name: 'Jalisco'}),
+                   (guadalajara: City {name: 'Guadalajara'}),
+                   (saltillo)-[:CITY_IN_STATE]->(coahuila)-[:STATE_IN_COUNTRY]->(mexico),
+                   (guadalajara)-[:CITY_IN_STATE]->(jalisco)-[:STATE_IN_COUNTRY]->(mexico),
+                   (jalisco)-[:HAS_STATE_PROP]->(coastal),
+                   (mexico)-[:OFFICIAL_LANGUAGE]->(spanish)"""
+        )
 
         query = """
         MATCH (c:City)-[:CITY_IN_STATE]->(state)-[:STATE_IN_COUNTRY]->(country)-[:OFFICIAL_LANGUAGE]->({name: 'English'})
@@ -701,6 +736,7 @@ updating clause.")
             RETURN {type: labels(state)[0], name:state.name, cities:citiesDetails} as stateDetails
         }
         WITH country, langs, collect(stateDetails) as statesDetails
+        ORDER BY statesDetails ASC
         RETURN {name: country.name, langs: langs, states: statesDetails}
         """
 
@@ -708,20 +744,17 @@ updating clause.")
 
         # assert results
         expected_res = {'name': 'Canada',
-            'langs': ['French', 'English'],
-            'states':
-                [OrderedDict([
-                    ('type', 'State'),
-                    ('name', 'British Columbia'),
-                    ('cities', [OrderedDict([
-                        ('type', 'City'),
-                        ('name', 'Victoria')])])]),
-                OrderedDict([
-                    ('type', 'State'),
-                    ('name', 'Ontario'),
-                    ('cities', [OrderedDict([
-                        ('type', 'City'),
-                        ('name', 'Toronto')])])])]}
+                        'langs': ['French', 'English'],
+                        'states':
+                            [OrderedDict({'type': 'State',
+                                          'name': 'Ontario',
+                                          'cities':
+                                            [OrderedDict({'type': 'City', 'name': 'Toronto'})]}),
+                             OrderedDict({'type': 'State',
+                                          'name': 'British Columbia',
+                                          'cities':
+                                            [OrderedDict({'type': 'City', 'name': 'Victoria'})]})]}
+
         self.env.assertEquals(res.result_set[0][0], expected_res)
 
     def test16_rewrite_same_clauses(self):
@@ -850,13 +883,42 @@ updating clause.")
         res = self.graph.query(query)
 
         # assert results
-        self.env.assertEquals(len(res.result_set), 3)
+        self.env.assertEquals(len(res.result_set), 6)
         self.env.assertEquals(res.result_set[0][0], 'A')
-        self.env.assertEquals(res.result_set[0][1], 2)
-        self.env.assertEquals(res.result_set[1][0], 'B')
-        self.env.assertEquals(res.result_set[1][1], 3)
-        self.env.assertEquals(res.result_set[2][0], 'C')
+        self.env.assertEquals(res.result_set[0][1], 1)
+        self.env.assertEquals(res.result_set[1][0], 'A')
+        self.env.assertEquals(res.result_set[1][1], 1)
+
+        self.env.assertEquals(res.result_set[2][0], 'B')
         self.env.assertEquals(res.result_set[2][1], 1)
+        self.env.assertEquals(res.result_set[3][0], 'B')
+        self.env.assertEquals(res.result_set[3][1], 1)
+        self.env.assertEquals(res.result_set[4][0], 'B')
+        self.env.assertEquals(res.result_set[4][1], 1)
+
+        self.env.assertEquals(res.result_set[5][0], 'C')
+        self.env.assertEquals(res.result_set[5][1], 1)
+
+
+        query = """UNWIND [ [1,2], [1,3], [1,2] ] AS x
+            CALL {
+                WITH x
+                RETURN x[0] AS k, max(x[1]) AS m
+            }
+            RETURN x, m"""
+
+        res = self.graph.query(query).result_set
+
+        # assert results
+        # expecting 3 records
+        self.env.assertEquals(len(res), 3)
+
+        self.env.assertEquals(res[0][0], [1, 2])
+        self.env.assertEquals(res[0][1], 2)
+        self.env.assertEquals(res[1][0], [1, 3] )
+        self.env.assertEquals(res[1][1], 3)
+        self.env.assertEquals(res[2][0], [1, 2])
+        self.env.assertEquals(res[2][1], 2)
 
     def test19_optional_match(self):
         """Tests that we deal properly with `OPTIONAL MATCH` clauses in a

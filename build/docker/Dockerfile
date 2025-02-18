@@ -9,9 +9,13 @@ FROM $BASE_IMAGE AS compiler
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 
-FROM redis:7.2.4
+FROM redis:7.4.2
 
-RUN apt-get update && apt-get install -y libgomp1 nodejs && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libgomp1 curl && \
+    curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
+    bash nodesource_setup.sh && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /FalkorDB
 

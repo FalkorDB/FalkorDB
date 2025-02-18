@@ -21,17 +21,17 @@ Delta_Matrix _Eval_Mul
 	ASSERT(AlgebraicExpression_ChildCount(exp) > 1) ;
 	ASSERT(AlgebraicExpression_OperationCount(exp, AL_EXP_MUL) == 1) ;
 
-	GrB_Info             info    ;
-	Delta_Matrix            M    ;  // current operand
-	GrB_Index            nvals   ;  // NNZ in res
-	AlgebraicExpression  *c      ;  // current child node
+	GrB_Info             info;
+	Delta_Matrix            M;   // current operand
+	GrB_Index            nvals;  // NNZ in res
+	AlgebraicExpression  *c;     // current child node
 
 	UNUSED(info) ;
 
-	Delta_Matrix     A          =  NULL                                 ; 
-	bool          res_modified  =  false                                ;
-	GrB_Semiring  semiring      =  GxB_ANY_PAIR_BOOL                    ;
-	uint          child_count   =  AlgebraicExpression_ChildCount(exp)  ;
+	Delta_Matrix     A         = NULL;
+	bool          res_modified = false;
+	GrB_Semiring  semiring     = GxB_ANY_PAIR_BOOL;
+	uint          child_count  = AlgebraicExpression_ChildCount(exp);
 
 	for(uint i = 0; i < child_count; i++) {
 		c = CHILD_AT(exp, i) ;
@@ -46,7 +46,7 @@ Delta_Matrix _Eval_Mul
 		}
 
 		// both A and M are valid matrices, perform multiplication
-		info = Delta_mxm(res, semiring, A, M) ;
+		info = Delta_mxm(res, semiring, A, M);
 		res_modified = true ;
 		// setup for next iteration
 		A = res ;
