@@ -405,56 +405,31 @@ jobs:
           sleep 5
           docker ps
       
-      - name: Use Node LTS
-        uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-
-      - name: Install test dependencies
+      - name: List files inside the container
         run: |
-          cd /tmp/browser
-          npm install
-          npx playwright install --with-deps
+          echo "Checking files in container..."
+          docker exec falkordb ls -la /browser
 
-      - name: Verify the app is responding
+      - name: Install dependencies inside the container
         run: |
-          for i in {1..10}; do
-            if curl -s http://localhost:3000/; then
-              echo "App is up!"
-              exit 0
-            fi
-            echo "Waiting for app to be accessible at localhost:3000..."
-            sleep 2
-          done
-          echo "App not responding" >&2
-          exit 1
+          docker exec falkordb bash -c "
+            cd /browser &&
+            npm install &&
+            npx playwright install --with-deps
+          "
 
-      - name: Ensure required directories exist
+      - name: Build and start server inside the container
         run: |
-          cd /tmp/browser
-          mkdir -p playwright-report
-          mkdir -p playwright-report/artifacts
+          docker exec -d falkordb bash -c "
+            cd /browser &&
+            npm run build &&
+            NEXTAUTH_SECRET=SECRET npm start
+          "
+          sleep 10
 
-      - name: Run Playwright tests (host)
+      - name: Run Playwright tests inside the container
         run: |
-          cd /tmp/browser
-          npx playwright test --workers=1 --reporter=line
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: /tmp/browser/playwright-report/
-          retention-days: 30
-
-      - name: Upload failed test screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failed-test-screenshots
-          path: /tmp/browser/playwright-report/artifacts/
-          retention-days: 30
+          docker exec -w /browser falkordb npx playwright test --workers=1 --reporter=line
 
   cleanup-flow-tests:
     needs: flow-tests
