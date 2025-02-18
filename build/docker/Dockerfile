@@ -11,20 +11,35 @@ FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
 FROM redis:7.4.2
 
+ENV FALKORDB_HOME=/var/lib/falkordb
+
+ENV FALKORDB_DATA_PATH=${FALKORDB_HOME}/data
+
+ENV FALKORDB_BIN_PATH=${FALKORDB_HOME}/bin
+
+ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
+
+ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
+
+# For backward compatibility, link previous bin path to new bin path
+RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
+    ln -s ${FALKORDB_BIN_PATH} /FalkorDB/bin/src && \
+    ln -s ${FALKORDB_DATA_PATH} /data
+
 RUN apt-get update && apt-get install -y libgomp1 curl && \
-    curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
-    bash nodesource_setup.sh && \
-    apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
+curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
+bash nodesource_setup.sh && \
+apt-get install -y nodejs && \
+rm -rf /var/lib/apt/lists/*
 
-WORKDIR /FalkorDB
+WORKDIR ${FALKORDB_HOME}
 
-COPY --from=compiler /FalkorDB/build/docker/run.sh /FalkorDB/build/docker/run.sh
-COPY --from=compiler /FalkorDB/build/docker/gen-certs.sh /FalkorDB/build/docker/gen-certs.sh
+COPY --from=compiler /FalkorDB/build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
+COPY --from=compiler /FalkorDB/build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
-COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
+COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-COPY --from=browser /app /FalkorDBBrowser
+COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
 
 ENV ARCH=${TARGETPLATFORM}
 
@@ -36,5 +51,5 @@ EXPOSE 6379/tcp
 
 ENV FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
 
-CMD /FalkorDB/build/docker/run.sh
+CMD ${FALKORDB_BIN_PATH}/run.sh
 
