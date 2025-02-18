@@ -22,6 +22,10 @@ ENV FALKORDB_IMPORT_PATH=${FALKORDB_HOME}/import
 ENV FALKORDB_BROWSER_PATH=${FALKORDB_HOME}/browser
 
 # For backward compatibility, link previous bin path to new bin path
+RUN mkdir -p /FalkorDB/build/docker && \
+    mkdir -p /FalkorDB/bin/src && \
+    mkdir -p /data
+
 RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_BIN_PATH} /FalkorDB/bin/src && \
     ln -s ${FALKORDB_DATA_PATH} /data
