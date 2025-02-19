@@ -368,7 +368,7 @@ jobs:
       - name: Flow tests
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
-       
+
   browser-tests:
     needs: build
     runs-on: ${{ matrix.platform.machine_label }}
@@ -394,8 +394,11 @@ jobs:
 
       - name: Clone browser repository
         run: |
-            git clone --depth=1 https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
-  
+            LATEST_TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/FalkorDB/falkordb-browser.git | awk -F'/' '{print $NF}' | grep -E '^v[0-9]+(\.[0-9]+)*$' | head -n1)
+            git clone --depth=1 --branch $LATEST_TAG --single-branch https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
+            cd /tmp/browser
+            git describe --tags
+                
       - name: Start FalkorDB container
         run: |
           docker run -d --name falkordb \
