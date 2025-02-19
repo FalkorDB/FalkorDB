@@ -392,6 +392,10 @@ jobs:
         run: |
           docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
 
+      - name: Check FalkorDB image tag
+        run: |
+            docker images | grep falkordb
+
       - name: Clone browser repository
         run: |
             LATEST_TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/FalkorDB/falkordb-browser.git | awk -F'/' '{print $NF}' | grep -E '^v[0-9]+(\.[0-9]+)*$' | head -n1)
