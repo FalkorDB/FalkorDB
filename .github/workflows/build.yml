@@ -369,6 +369,61 @@ jobs:
         run: |
           docker run -i --rm falkordb/falkordb-tests make CLEAR_LOGS=0 PARALLEL=1 flow-tests
 
+  browser-tests:
+    needs: build
+    runs-on: ${{ matrix.platform.machine_label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux/amd64
+            suffix: x64
+            os: ubuntu
+            machine_label: ubuntu-latest
+    steps:
+      - name: Download database image
+        uses: actions/download-artifact@v4
+        with:
+          name: falkordb-${{ matrix.platform.suffix }}
+          path: /tmp
+
+      - name: Load database image
+        id: load_image
+        run: |
+          docker load --input /tmp/falkordb-${{ matrix.platform.suffix }}.tar
+
+      - name: Check FalkorDB image tag
+        run: |
+            docker images | grep falkordb
+
+      - name: Clone browser repository
+        run: |
+            LATEST_TAG=$(git ls-remote --tags --sort=-v:refname https://github.com/FalkorDB/falkordb-browser.git | awk -F'/' '{print $NF}' | grep -E '^v[0-9]+(\.[0-9]+)*$' | head -n1)
+            git clone --depth=1 --branch $LATEST_TAG --single-branch https://github.com/FalkorDB/falkordb-browser.git /tmp/browser
+            cd /tmp/browser
+            git describe --tags
+                
+      - name: Start FalkorDB container
+        run: |
+          docker run -d --name falkordb \
+            -p 6379:6379 -p 3000:3000 \
+            -v /tmp/browser:/browser \
+            falkordb/falkordb-${{ matrix.platform.suffix }}:latest
+          sleep 5
+          docker ps
+
+      - name: Install dependencies inside the container
+        run: |
+          docker exec falkordb bash -c "
+            cd /browser &&
+            npm install &&
+            npx playwright install --with-deps
+          "
+
+      - name: Run Playwright tests inside the container
+        run: |
+          docker exec -w /browser falkordb npx playwright test --workers=1 --reporter=line
+
   cleanup-flow-tests:
     needs: flow-tests
     runs-on: ubuntu-latest
