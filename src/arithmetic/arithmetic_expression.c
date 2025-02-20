@@ -748,6 +748,8 @@ SIValue AR_EXP_FinalizeAggregations
 	// RETURN a, SUM(a.value) / 2
 	// finalize the aggregation and eveluate the entire expression
 
+	// note that an aggregation function can not be nested within
+	// another aggregation function
 	if(AGGREGATION_NODE(root)) {
 		return _AR_EXP_FinalizeAggregation(root);
 	} else {
