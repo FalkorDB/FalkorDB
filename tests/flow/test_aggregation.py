@@ -239,3 +239,21 @@ class testAggregations():
         res = self.graph.query(q).result_set[0]
         self.env.assertEquals(res, expected)
 
+        # Collecting passed values
+        q = """
+        WITH [{a: 'Hello', b: [1, {x: 'y'}, 'GoodBye!']}, 4] AS collection
+        MATCH (p:Person)
+        WITH p, collection[ID(p) % 2] AS elem0, collect(collection[0]) AS collection
+        ORDER BY ID(p) ASC
+        WITH elem0, collection[0] AS collection
+        RETURN elem0, collection
+        """
+
+        res = self.graph.query(q).result_set
+        expected = [
+            [4, {'a': 'Hello', 'b': [1, {'x': 'y'}, 'GoodBye!']}],
+            [{'a': 'Hello', 'b': [1, {'x': 'y'}, 'GoodBye!']},
+             {'a': 'Hello', 'b': [1, {'x': 'y'}, 'GoodBye!']}]
+        ]
+
+        self.env.assertEquals(res, expected)
