@@ -132,3 +132,110 @@ class testAggregations():
         query = 'MATCH (n:L) WHERE (null <> false) XOR true RETURN COUNT(n)'
         expected = [[0]]
         self.get_res_and_assertAlmostEquals(query, expected)
+
+    def test10_AggregateCollection(self):
+        """
+            Collect a bunch of different items
+        """
+
+        # Collecting null values
+        q = "RETURN collect(NULL) AS collection"
+        expected = [[[]]]  # Empty collection
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting integers
+        q = "RETURN collect(1) AS collection"
+        expected = [[[1]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting multiple integers
+        q = "UNWIND [1, 2, 3] AS x RETURN collect(x)"
+        expected = [[[1, 2, 3]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting floating point numbers
+        q = "UNWIND [1.1, 2.2, 3.3] AS x RETURN collect(x)"
+        expected = [[[1.1, 2.2, 3.3]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting strings
+        q = "UNWIND ['a', 'b', 'c'] AS x RETURN collect(x)"
+        expected = [[['a', 'b', 'c']]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting booleans
+        q = "UNWIND [true, false] AS x RETURN collect(x)"
+        expected = [[[True, False]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting mixed data types
+        q = "UNWIND [1, 'a', 3.14, true, NULL] AS x RETURN collect(x)"
+        expected = [[[1, 'a', 3.14, True]]]  # Null collection should be empty
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting an empty set
+        q = "MATCH (n:NoneExisting) WHERE false RETURN collect(n)"
+        expected = [[[]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Create a few nodes
+        res = self.graph.query("""CREATE (a:Person {name: 'Alice'}),
+                                         (b:Person {name: 'Bob'})
+                                  RETURN a, b""")
+        nodes = [res.result_set[0][0], res.result_set[0][1]]
+
+        # Collecting nodes properties
+        q = """MATCH (p:Person)
+               WITH p
+               ORDER BY p.name
+               RETURN collect(p.name) AS names"""
+
+        expected = ['Alice', 'Bob']
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], expected)
+
+        # Collecting nodes
+        q = """MATCH (p:Person)
+               WITH p
+               ORDER BY p.name
+               RETURN collect(p) AS nodes"""
+        expected = nodes
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(res[0][0], expected)
+
+        # Collecting relationships
+        res = self.graph.query("""UNWIND range(0,1) AS x
+                                  CREATE (:A)-[r:RELATES_TO]->(:B)
+                                  RETURN r
+                                  ORDER BY ID(r)""")
+        edges = [row[0] for row in res.result_set]
+
+        q = """MATCH (:A)-[r:RELATES_TO]->(:B)
+               WITH r
+               ORDER BY ID(r)
+               RETURN collect(r) AS edges"""
+
+        expected = edges
+        res = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(res, expected)
+
+        # Collecting maps (dictionaries)
+        q = "RETURN collect({key:'value', num:42}) AS collection"
+        expected = [[[{'key': 'value', 'num': 42}]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting lists
+        q = "RETURN collect([1, 2, 3]) AS collection"
+        expected = [[[ [1, 2, 3] ]]]
+        self.get_res_and_assertEquals(q, expected)
+
+        # Collecting large dataset
+        q = """UNWIND range(1, 10000) AS x
+               RETURN collect({x:x, str: toString(x)}), collect([x, -x])"""
+        expected = [
+                [ {'x':x, 'str': str(x)} for x in range(1, 10001) ],
+                [ [x, -x]                for x in range(1, 10001) ]
+        ]
+        res = self.graph.query(q).result_set[0]
+        self.env.assertEquals(res, expected)
+
