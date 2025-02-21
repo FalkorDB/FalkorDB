@@ -34,7 +34,7 @@ static void _append_feeder
 			(ArgumentList *)branch);
 	} else {
 		ASSERT(OpBase_Type((const OpBase *)branch) == OPType_ARGUMENT);
-		array_append(call_subquery->feeders.arguments, (Argument *)branch);
+		array_append(call_subquery->feeders.arguments, (OpArgument *)branch);
 	}
 }
 
@@ -112,7 +112,7 @@ static OpResult CallSubqueryInit
 		op->feeders.argumentLists = array_new(ArgumentList *, 1);
 	} else {
 		op->feeders.type = FEEDER_ARGUMENT;
-		op->feeders.arguments = array_new(Argument *, 1);
+		op->feeders.arguments = array_new(OpArgument *, 1);
 	}
 
 	// in the case the subquery contains a `UNION` or `UNION ALL` clause, we

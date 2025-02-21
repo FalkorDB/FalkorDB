@@ -209,7 +209,12 @@ class testWithClause(FlowTestsBase):
 
     def test10_filter_placement_validate_scopes(self):
         # Verify that filters cannot be placed in earlier scopes.
-        query = """UNWIND ['scope1'] AS a WITH a AS b UNWIND ['scope2'] AS a WITH a WHERE a = 'scope1' RETURN a"""
+        query = """UNWIND ['scope1'] AS a
+                   WITH a AS b
+                   UNWIND ['scope2'] AS a
+                   WITH a
+                   WHERE a = 'scope1'
+                   RETURN a"""
         actual_result = self.graph.query(query)
         expected = [] # No results should be returned
         self.env.assertEqual(actual_result.result_set, expected)

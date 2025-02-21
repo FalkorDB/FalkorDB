@@ -569,41 +569,76 @@ class testIndexScanFlow():
     def test19_index_scan_numeric_accuracy(self):
         create_node_range_index(self.graph, 'L1', 'id', sync=True)
         create_node_range_index(self.graph, 'L2', 'id1', 'id2', sync=True)
-        self.graph.query("UNWIND range(1, 5) AS v CREATE (:L1 {id: 990000000262240068 + v})")
-        self.graph.query("UNWIND range(1, 5) AS v CREATE (:L2 {id1: 990000000262240068 + v, id2: 990000000262240068 - v})")
+        self.graph.query("""UNWIND range(1, 5) AS v
+                            CREATE (:L1 {id: 990000000262240068 + v})"""
+        )
+
+        self.graph.query("""UNWIND range(1, 5) AS v
+                            CREATE (:L2 {id1: 990000000262240068 + v, id2: 990000000262240068 - v})"""
+        )
 
         # test index search
-        result = self.graph.query("MATCH (u:L1{id: 990000000262240069}) RETURN u.id")
+        result = self.graph.query("""MATCH (u:L1{id: 990000000262240069})
+                                     RETURN u.id"""
+        )
         expected_result = [[990000000262240069]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test index search from child
-        result = self.graph.query("MATCH (u:L1) WITH min(u.id) as id MATCH (u:L1{id: id}) RETURN u.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WITH min(u.id) AS id
+                                     MATCH (u:L1{id: id})
+                                     RETURN u.id"""
+        )
         expected_result = [[990000000262240069]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test index search with or
-        result = self.graph.query("MATCH (u:L1) WHERE u.id = 990000000262240069 OR u.id = 990000000262240070 RETURN u.id ORDER BY u.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WHERE u.id = 990000000262240069 OR
+                                           u.id = 990000000262240070
+                                     RETURN u.id
+                                     ORDER BY u.id"""
+        )
         expected_result = [[990000000262240069], [990000000262240070]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test resetting index scan operation
-        result = self.graph.query("MATCH (u1:L1), (u2:L1) WHERE u1.id = 990000000262240069 AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
+        result = self.graph.query("""MATCH (u1:L1), (u2:L1)
+                                     WHERE u1.id = 990000000262240069 AND
+                                     (u2.id = 990000000262240070 OR u2.id = 990000000262240071)
+                                     RETURN u1.id, u2.id
+                                     ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test resetting index scan operation when using the consume from child function
-        result = self.graph.query("MATCH (u:L1) WITH min(u.id) as id MATCH (u1:L1), (u2:L1) WHERE u1.id = 990000000262240069 AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WITH min(u.id) as id
+                                     MATCH (u1:L1), (u2:L1)
+                                     WHERE u1.id = 990000000262240069 AND
+                                     (u2.id = 990000000262240070 OR u2.id = 990000000262240071)
+                                     RETURN u1.id, u2.id
+                                     ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test resetting index scan operation when rebuild index is required
-        result = self.graph.query("MATCH (u:L1) WITH min(u.id) as id MATCH (u1:L1), (u2:L1) WHERE u1.id = id AND (u2.id = 990000000262240070 OR u2.id = 990000000262240071) RETURN u1.id, u2.id ORDER BY u1.id, u2.id")
+        result = self.graph.query("""MATCH (u:L1)
+                                     WITH min(u.id) as id
+                                     MATCH (u1:L1), (u2:L1)
+                                     WHERE u1.id = id AND
+                                     (u2.id = 990000000262240070 OR u2.id = 990000000262240071)
+                                     RETURN u1.id, u2.id
+                                     ORDER BY u1.id, u2.id""")
         expected_result = [[990000000262240069, 990000000262240070], [990000000262240069, 990000000262240071]]
         self.env.assertEquals(result.result_set, expected_result)
 
         # test index scan with 2 different attributes
-        result = self.graph.query("MATCH (u:L2) WHERE u.id1 = 990000000262240069 AND u.id2 = 990000000262240067 RETURN u.id1, u.id2")
+        result = self.graph.query("""MATCH (u:L2)
+                                     WHERE u.id1 = 990000000262240069 AND
+                                           u.id2 = 990000000262240067
+                                     RETURN u.id1, u.id2""")
         expected_result = [[990000000262240069, 990000000262240067]]
         self.env.assertEquals(result.result_set, expected_result)
 
