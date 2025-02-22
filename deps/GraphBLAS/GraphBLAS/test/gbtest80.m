@@ -2,7 +2,7 @@ function gbtest80
 %GBTEST80 test complex division and power
 % Tests all real, inf, and nan cases.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 list = [-2:0.5:2 inf -inf nan] ;
@@ -16,10 +16,8 @@ dtol = 1e-14 ;
 
 for xr = list
     fprintf ('\n%g ', xr) ;
-    % fprintf ('\n------------------------------------------\n') ;
     for xi = list
         fprintf ('.')
-        % fprintf ('\n') ;
         X = complex (xr, xi) ;
         GX = GrB (X) ;
         Xs = single (X) ;
@@ -50,7 +48,6 @@ for xr = list
                     fprintf (' err: %g', err) ;
                     fprintf (' DOUBLE DIFFERS') ;
                     fprintf ('\n') ;
-                    % pause
                 end
 
                 Z = Xs / Ys ;
@@ -70,7 +67,6 @@ for xr = list
                     fprintf (' err: %g', err) ;
                     fprintf (' SINGLE DIFFERS') ;
                     fprintf ('\n') ;
-                    % pause
                 end
 
                 Z = X .^ Y ;
@@ -90,7 +86,6 @@ for xr = list
                     fprintf (' err: %g', err) ;
                     fprintf (' DOUBLE DIFFERS') ;
                     fprintf ('\n') ;
-                    % pause
                 end
 
                 Z = Xs .^ Ys ;
@@ -110,9 +105,7 @@ for xr = list
                     fprintf (' err: %g', err) ;
                     fprintf (' SINGLE DIFFERS') ;
                     fprintf ('\n') ;
-                    % pause
                 end
-
             end
         end
     end

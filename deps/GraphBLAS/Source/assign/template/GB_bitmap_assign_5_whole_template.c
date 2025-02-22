@@ -2,7 +2,7 @@
 // GB_bitmap_assign_5_whole_template: C bitmap, no M, with accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -65,19 +65,19 @@
             //------------------------------------------------------------------
 
             #undef  GB_CIJ_WORK
-            #define GB_CIJ_WORK(pC)                         \
-            {                                               \
-                int8_t cb = Cb [pC] ;                       \
-                if (cb == 0)                                \
-                {                                           \
-                    /* Cx [pC] = scalar */                  \
-                    GB_COPY_cwork_to_C (Cx, pC, cwork, C_iso) ; \
-                }                                           \
-                else                                        \
-                {                                           \
-                    /* Cx [pC] += scalar */                 \
-                    GB_ACCUMULATE_scalar (Cx, pC, ywork, C_iso) ;  \
-                }                                           \
+            #define GB_CIJ_WORK(pC)                                 \
+            {                                                       \
+                int8_t cb = Cb [pC] ;                               \
+                if (cb == 0)                                        \
+                {                                                   \
+                    /* Cx [pC] = scalar */                          \
+                    GB_COPY_cwork_to_C (Cx, pC, cwork, C_iso) ;     \
+                }                                                   \
+                else                                                \
+                {                                                   \
+                    /* Cx [pC] += scalar */                         \
+                    GB_ACCUMULATE_scalar (Cx, pC, ywork, C_iso) ;   \
+                }                                                   \
             }
             if (!C_iso)
             {

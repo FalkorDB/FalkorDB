@@ -2,7 +2,7 @@
 // GB_hyper_hash_lookup: find k so that j == Ah [k], using the A->Y hyper_hash
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,122 +10,82 @@
 #ifndef GB_HYPER_HASH_LOOKUP_H
 #define GB_HYPER_HASH_LOOKUP_H
 
-// Let j = Ah [k]
-// k = A->Y (j, hash(j)), if present, or k=-1 if not found.
+#define GB_PTYPE uint32_t
+#define GB_JTYPE uint32_t
+#define GB_hyper_hash_lookup_T GB_hyper_hash_lookup_32_32
+#define GB_binary_search_T     GB_binary_search_32
+#include "include/GB_hyper_hash_lookup_template.h"
 
-GB_STATIC_INLINE int64_t GB_hyper_hash_lookup  // k if j==Ah[k]; -1 if not found
+#define GB_PTYPE uint32_t
+#define GB_JTYPE uint64_t
+#define GB_hyper_hash_lookup_T GB_hyper_hash_lookup_32_64
+#define GB_binary_search_T     GB_binary_search_64
+#include "include/GB_hyper_hash_lookup_template.h"
+
+#define GB_PTYPE uint64_t
+#define GB_JTYPE uint32_t
+#define GB_hyper_hash_lookup_T GB_hyper_hash_lookup_64_32
+#define GB_binary_search_T     GB_binary_search_32
+#include "include/GB_hyper_hash_lookup_template.h"
+
+#define GB_PTYPE uint64_t
+#define GB_JTYPE uint64_t
+#define GB_hyper_hash_lookup_T GB_hyper_hash_lookup_64_64
+#define GB_binary_search_T     GB_binary_search_64
+#include "include/GB_hyper_hash_lookup_template.h"
+
+GB_STATIC_INLINE int64_t GB_hyper_hash_lookup // k if j==Ah[k]; -1 if not found
 (
-    // new inputs, not modified
-    const int64_t *restrict Ah,     // A->h [0..A->nvec-1]: list of vectors
+    // inputs, not modified:
+    const bool Ap_is_32,            // if true, Ap is 32-bit; else 64-bit
+    const bool Aj_is_32,            // if true, Ah, Y->[pix] are 32-bit; else 64
+    const void *Ah,                 // A->h [0..A->nvec-1]: list of vectors
     const int64_t anvec,
-    // input, not modified
-    const int64_t *restrict Ap,     // A->p [0..A->nvec]: pointers to vectors
-    const int64_t *restrict Yp,     // A->Y->p
-    const int64_t *restrict Yi,     // A->Y->i
-    const int64_t *restrict Yx,     // A->Y->x
-    const int64_t hash_bits,        // A->Y->vdim-1, which is hash table size-1
+    const void *Ap,                 // A->p [0..A->nvec]: pointers to vectors
+    const void *A_Yp,               // A->Y->p
+    const void *A_Yi,               // A->Y->i
+    const void *A_Yx,               // A->Y->x
+    const uint64_t hash_bits,       // A->Y->vdim-1, which is hash table size-1
     const int64_t j,                // find j in Ah [0..anvec-1], using A->Y
-//  const bool no_hyper_hash,       // A->no_hyper_hash
-    // output
+    // outputs:
     int64_t *restrict pstart,       // start of vector: Ap [k]
     int64_t *restrict pend          // end of vector: Ap [k+1]
 )
 {
-
-    bool found = false ;
-    int64_t k ;
-
-    if (Yp == NULL)
-    { 
-
-        //----------------------------------------------------------------------
-        // no hyper_hash constructed
-        //----------------------------------------------------------------------
-
-//      if (no_hyper_hash)
-        {
-            // the hyper_hash is disabled.  Quick lookup for j == Ah [j].
-            if (j < anvec && Ah [j] == j)
-            { 
-                // found j == Ah [j], so return k = j
-                k = j ;
-                found = true ;
-            }
+    if (Ap_is_32)
+    {
+        if (Aj_is_32)
+        { 
+            // Ap is 32-bit; Ah, A_Y[pix] are 32-bit
+            return (GB_hyper_hash_lookup_32_32 ((uint32_t *) Ah, anvec,
+                (uint32_t *) Ap, (uint32_t *) A_Yp, (uint32_t *) A_Yi,
+                (uint32_t *) A_Yx, hash_bits, j, pstart, pend)) ;
         }
-
-        // binary search of Ah [0...A->nvec-1] for the value j
-        if (!found)
-        {
-            k = 0 ;
-            int64_t pright = anvec - 1 ;
-            GB_BINARY_SEARCH (j, Ah, k, pright, found) ;
+        else
+        { 
+            // Ap is 32-bit; Ah, A_Y[pix] are 64-bit
+            return (GB_hyper_hash_lookup_32_64 ((uint64_t *) Ah, anvec,
+                (uint32_t *) Ap, (uint64_t *) A_Yp, (uint64_t *) A_Yi,
+                (uint64_t *) A_Yx, hash_bits, j, pstart, pend)) ;
         }
-
     }
     else
     {
-
-        //----------------------------------------------------------------------
-        // using the hyper_hash
-        //----------------------------------------------------------------------
-
-        // determine the hash bucket that would contain vector j
-        const int64_t jhash = GB_HASHF2 (j, hash_bits) ;
-
-        //----------------------------------------------------------------------
-        // search for j in the jhash bucket: Yi [Yp [jhash] ... Yp [jhash+1]-1]
-        //----------------------------------------------------------------------
-
-        const int64_t ypstart = Yp [jhash] ;
-        const int64_t ypend = Yp [jhash+1] ;
-        k = -1 ;
-        if ((ypend - ypstart) > 256)
-        {
-            // The hash bucket jhash has over 256 entries, which is a very high
-            // number of collisions.  The load factor of the hash table ranges
-            // from 2 to 4.  Do a binary search as a fallback.
-            int64_t p = ypstart ;
-            int64_t pright = ypend - 1 ;
-            GB_BINARY_SEARCH (j, Yi, p, pright, found) ;
-            if (found)
-            { 
-                k = Yx [p] ;
-            }
+        if (Aj_is_32)
+        { 
+            // Ap is 64-bit; Ah, A_Y[pix] are 32-bit
+            return (GB_hyper_hash_lookup_64_32 ((uint32_t *) Ah, anvec,
+                (uint64_t *) Ap, (uint32_t *) A_Yp, (uint32_t *) A_Yi,
+                (uint32_t *) A_Yx, hash_bits, j, pstart, pend)) ;
         }
         else
-        {
-            // Linear-time search for j in the jhash bucket.
-            for (int64_t p = ypstart ; p < ypend ; p++)
-            {
-                if (j == Yi [p])
-                { 
-                    // found: j = Ah [k] where k is given by k = Yx [p]
-                    k = Yx [p] ;
-                    break ;
-                }
-            }
-            found = (k >= 0) ;
+        { 
+            // Ap is 64-bit; Ah, A_Y[pix] are 64-bit
+            return (GB_hyper_hash_lookup_64_64 ((uint64_t *) Ah, anvec,
+                (uint64_t *) Ap, (uint64_t *) A_Yp, (uint64_t *) A_Yi,
+                (uint64_t *) A_Yx, hash_bits, j, pstart, pend)) ;
         }
     }
-
-    //--------------------------------------------------------------------------
-    // if found, return the start and end of A(:,j)
-    //--------------------------------------------------------------------------
-
-    if (found)
-    { 
-        // found: j == Ah [k], get the vector A(:,j)
-        (*pstart) = Ap [k] ;
-        (*pend  ) = Ap [k+1] ;
-    }
-    else
-    { 
-        // not found: j is not in the hyperlist Ah [0..anvec-1]
-        k = -1 ;
-        (*pstart) = -1 ;
-        (*pend  ) = -1 ;
-    }
-    return (k) ;
 }
 
 #endif

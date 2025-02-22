@@ -2,7 +2,7 @@
 // GB_mex_mdiag: compute C=diag(v,k)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -68,7 +68,7 @@ void mexFunction
     int GET_SCALAR (3, int, fmt, GxB_BY_COL) ;
 
     // construct C
-    int64_t n ;
+    uint64_t n ;
     GrB_Matrix_nrows (&n, V) ;
     n += GB_IABS (k) ;
 

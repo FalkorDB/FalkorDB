@@ -12,7 +12,7 @@ function [C_replace Mask_comp Atrans Btrans Mask_struct descriptor] = ...
 % inp0:  'default' or 'tran'
 % inp1:  'default' or 'tran'
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isempty (descriptor))

@@ -2,7 +2,7 @@
 // GB_mex_apply2: C<Mask> = accum(C,op(A,y)) or op(A',y)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -274,11 +274,11 @@ void mexFunction
         FREE_ALL ;
         mexErrMsgTxt ("scalar failed") ;
     }
-    GrB_Index snrows, sncols, snvals ;
+    uint64_t snrows, sncols, snvals ;
     GrB_Matrix_nrows (&snrows, S) ;
     GrB_Matrix_ncols (&sncols, S) ;
     GrB_Matrix_nvals (&snvals, S) ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     GxB_Matrix_Option_get_(S, GxB_FORMAT, &fmt) ;
     if (snrows != 1 || sncols != 1 || snvals != 1 || fmt != GxB_BY_COL)
     {

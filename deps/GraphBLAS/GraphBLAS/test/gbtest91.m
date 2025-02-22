@@ -7,7 +7,7 @@ function gbtest91
 % C = GrB.trans (C, M, A, desc)
 % C = GrB.trans (C, M, accum, A, desc)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default')

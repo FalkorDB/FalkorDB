@@ -2,7 +2,7 @@
 // GB_Iterator_rc_seek: seek a row/col iterator to A(:,j) or to jth vector of A
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@
 GrB_Info GB_Iterator_rc_seek
 (
     GxB_Iterator iterator,
-    GrB_Index j_input,
+    uint64_t j_input,
     bool jth_vector
 )
 {
@@ -47,8 +47,8 @@ GrB_Info GB_Iterator_rc_seek
         case GxB_SPARSE : 
         { 
             // attach to A(:,j), which is also the jth vector of A
-            iterator->pstart = iterator->Ap [j] ;
-            iterator->pend = iterator->Ap [j+1] ;
+            iterator->pstart = GB_IGET (iterator->Ap, j) ;
+            iterator->pend   = GB_IGET (iterator->Ap, j+1) ;
             iterator->p = iterator->pstart ;
             iterator->k = j ;
         }
@@ -62,8 +62,8 @@ GrB_Info GB_Iterator_rc_seek
                 // attach to the jth vector of A; this is much faster than
                 // searching Ah for the value j, to attach to A(:,j)
                 k = j ;
-                iterator->pstart = iterator->Ap [k] ;
-                iterator->pend = iterator->Ap [k+1] ;
+                iterator->pstart = GB_IGET (iterator->Ap, k) ;
+                iterator->pend   = GB_IGET (iterator->Ap, k+1) ;
                 iterator->p = iterator->pstart ;
                 iterator->k = k ;
             }
@@ -72,12 +72,19 @@ GrB_Info GB_Iterator_rc_seek
                 // find k so that j = Ah [k], or if not found, return k as the
                 // smallest value so that j < Ah [k]. 
                 k = 0 ;
-                const int64_t *restrict Ah = iterator->Ah ;
                 if (j > 0)
                 { 
-                    bool found ;
                     int64_t pright = iterator->anvec-1 ;
-                    GB_SPLIT_BINARY_SEARCH (j, Ah, k, pright, found) ;
+                    if (iterator->Ah32 != NULL)
+                    { 
+                        GB_split_binary_search_32 (j, iterator->Ah32,
+                            &k, &pright) ;
+                    }
+                    else
+                    { 
+                        GB_split_binary_search_64 (j, iterator->Ah64,
+                            &k, &pright) ;
+                    }
                 }
             }
             // If j is found, A(:,j) is the kth vector in the Ah hyperlist.
@@ -95,8 +102,8 @@ GrB_Info GB_Iterator_rc_seek
             else
             { 
                 // the kth vector exists
-                iterator->pstart = iterator->Ap [k] ;
-                iterator->pend = iterator->Ap [k+1] ;
+                iterator->pstart = GB_IGET (iterator->Ap, k) ;
+                iterator->pend   = GB_IGET (iterator->Ap, k+1) ;
                 iterator->p = iterator->pstart ;
                 iterator->k = k ;
             }

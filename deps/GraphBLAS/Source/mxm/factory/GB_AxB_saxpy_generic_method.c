@@ -2,7 +2,7 @@
 // GB_AxB_saxpy_generic_method: C=A*B, C<M>=A*B, or C<!M>=A*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,6 @@
 //------------------------------------------------------------------------------
 
 #include "mxm/GB_AxB_saxpy.h"
-#include "slice/GB_ek_slice.h"
 #include "binaryop/GB_binop.h"
 #include "assign/GB_bitmap_assign_methods.h"
 #include "mxm/include/GB_mxm_shared_definitions.h"

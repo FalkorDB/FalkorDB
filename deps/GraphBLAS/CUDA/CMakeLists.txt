@@ -2,7 +2,7 @@
 # GraphBLAS/CUDA/CMakeLists.txt:  cmake script for GraphBLAS/CUDA
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 
 # Some files in this folder are (c) NVIDIA or (c) Google.  Please refer
 # to their individual licenses (Apache, BSD, or others).
@@ -49,6 +49,7 @@ target_include_directories ( GraphBLAS_CUDA PRIVATE
         ../Include
         ../rmm_wrap
         ../Source
+        ../Source/hyper
         ../Source/builtin
         )
 

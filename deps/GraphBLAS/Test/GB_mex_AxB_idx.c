@@ -2,7 +2,7 @@
 // GB_mex_AxB_idx: C=A*B, A'*B, A*B', or A'*B' using the indexop semirings
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,88 +37,88 @@
 //------------------------------------------------------------------------------
 
 void firsti_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
 void firsti_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
 {
     (*z) = ix + (*theta) ;
 }
 
-#define FIRSTI_THETA                                    \
+#define FIRSTI_THETA_DEFN                               \
 "void firsti_theta (int64_t *z,                     \n" \
-"    const void *x, GrB_Index ix, GrB_Index jx,     \n" \
-"    const void *y, GrB_Index iy, GrB_Index jy,     \n" \
+"    const void *x, uint64_t ix, uint64_t jx,       \n" \
+"    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
 "{                                                  \n" \
 "    (*z) = ix + (*theta) ;                         \n" \
 "}"
 
 void secondi_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
 void secondi_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
 {
     (*z) = iy + (*theta) ;
 }
 
-#define SECONDI_THETA                                   \
+#define SECONDI_THETA_DEFN                              \
 "void secondi_theta (int64_t *z,                    \n" \
-"    const void *x, GrB_Index ix, GrB_Index jx,     \n" \
-"    const void *y, GrB_Index iy, GrB_Index jy,     \n" \
+"    const void *x, uint64_t ix, uint64_t jx,       \n" \
+"    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
 "{                                                  \n" \
 "    (*z) = iy + (*theta) ;                         \n" \
 "}"
 
 void firstj_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
 void firstj_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
 {
     (*z) = jx + (*theta) ;
 }
 
-#define FIRSTJ_THETA                                    \
+#define FIRSTJ_THETA_DEFN                               \
 "void firstj_theta (int64_t *z,                     \n" \
-"    const void *x, GrB_Index ix, GrB_Index jx,     \n" \
-"    const void *y, GrB_Index iy, GrB_Index jy,     \n" \
+"    const void *x, uint64_t ix, uint64_t jx,       \n" \
+"    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
 "{                                                  \n" \
 "    (*z) = jx + (*theta) ;                         \n" \
 "}"
 
 void secondj_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
 void secondj_theta (int64_t *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
 {
     (*z) = jy + (*theta) ;
 }
 
-#define SECONDJ_THETA                                   \
+#define SECONDJ_THETA_DEFN                              \
 "void secondj_theta (int64_t *z,                    \n" \
-"    const void *x, GrB_Index ix, GrB_Index jx,     \n" \
-"    const void *y, GrB_Index iy, GrB_Index jy,     \n" \
+"    const void *x, uint64_t ix, uint64_t jx,       \n" \
+"    const void *y, uint64_t iy, uint64_t jy,       \n" \
 "    const int64_t *theta)                          \n" \
 "{                                                  \n" \
 "    (*z) = jy + (*theta) ;                         \n" \
@@ -142,7 +142,7 @@ void mexFunction
     GrB_BinaryOp mult = NULL ;
     GxB_IndexBinaryOp Iop = NULL ;
     GrB_Semiring semiring = NULL ;
-    GrB_Index anrows = 0, ancols = 0, bnrows = 0, bncols = 0 ;
+    uint64_t anrows = 0, ancols = 0, bnrows = 0, bncols = 0 ;
     GrB_Descriptor desc = NULL ;
     GrB_Monoid monoid = NULL ;
 
@@ -171,7 +171,7 @@ void mexFunction
     bool GET_SCALAR (3, bool, btrans, false) ;
 
     // get the axb_method
-    GrB_Desc_Value GET_SCALAR (4, GrB_Desc_Value, AxB_method, GxB_DEFAULT) ;
+    int GET_SCALAR (4, int, AxB_method, GxB_DEFAULT) ;
 
     // get the C_is_csc option
     bool GET_SCALAR (5, bool, C_is_csc, true) ;
@@ -215,8 +215,8 @@ void mexFunction
     OK (GrB_Matrix_ncols (&ancols, A)) ;
     OK (GrB_Matrix_nrows (&bnrows, B)) ;
     OK (GrB_Matrix_ncols (&bncols, B)) ;
-    GrB_Index cnrows = (atrans) ? ancols : anrows ;
-    GrB_Index cncols = (btrans) ? bnrows : bncols ;
+    uint64_t cnrows = (atrans) ? ancols : anrows ;
+    uint64_t cncols = (btrans) ? bnrows : bncols ;
 
     // create the output matrix C
     OK (GrB_Matrix_new (&C, GrB_INT64, cnrows, cncols)) ;
@@ -269,7 +269,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) firsti_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firsti_theta", FIRSTI_THETA)) ;
+                "firsti_theta", FIRSTI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "firsti1"))
         {
@@ -277,7 +277,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) firsti_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firsti_theta", FIRSTI_THETA)) ;
+                "firsti_theta", FIRSTI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "firstj" ))
         {
@@ -285,7 +285,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) firstj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firstj_theta", FIRSTJ_THETA)) ;
+                "firstj_theta", FIRSTJ_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "firstj1"))
         {
@@ -293,7 +293,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) firstj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "firstj_theta", FIRSTJ_THETA)) ;
+                "firstj_theta", FIRSTJ_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondi" ))
         {
@@ -301,7 +301,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) secondi_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondi_theta", SECONDI_THETA)) ;
+                "secondi_theta", SECONDI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondi1"))
         {
@@ -309,7 +309,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) secondi_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondi_theta", SECONDI_THETA)) ;
+                "secondi_theta", SECONDI_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondj" ))
         {
@@ -317,7 +317,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) secondj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondj_theta", SECONDJ_THETA)) ;
+                "secondj_theta", SECONDJ_THETA_DEFN)) ;
         }
         else if (MATCH (multname, "secondj1"))
         {
@@ -325,7 +325,7 @@ void mexFunction
             OK (GxB_IndexBinaryOp_new (&Iop,
                 (GxB_index_binary_function) secondj_theta,
                 GrB_INT64, GrB_FP64, GrB_FP64, GrB_INT64,
-                "secondj_theta", SECONDJ_THETA)) ;
+                "secondj_theta", SECONDJ_THETA_DEFN)) ;
         }
         else
         {

@@ -1,0 +1,177 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+\section{GraphBLAS Options ({\sf GrB\_get} and {\sf GrB\_set})}
+\label{options}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+GraphBLAS includes two methods, \verb'GrB_get' and \verb'GrB_set'
+that allow the user to query GraphBLAS objects and change their state.  These
+two methods are polymorphic wrappers for a suite of methods for each object.
+
+The general polymorphic signatures of these methods are given below:
+
+{\footnotesize
+\begin{verbatim}
+    GrB_Info GrB_get (object, value, int field) ;
+    GrB_Info GrB_set (object, value, int field) ;
+    GrB_Info GrB_set (object, void *value, int field, size_t s) ; \end{verbatim}}
+
+\noindent
+where \verb'object' can be any GraphBLAS object.  The \verb'value' can be a
+\verb'GrB_Scalar', an \verb'int32_t' (or a pointer to \verb'int32_t' for
+\verb'GrB_get'), a string (\verb'char *'), or a \verb'void *' pointer.  In the
+latter case, \verb'GrB_set' requires an additional parameter (\verb'size_t s')
+that specifies the size of the object pointed to by \verb'void *value'.
+
+The non-polymorphic names have the following format, where \verb'[OBJ]'
+is any GraphBLAS object. 
+
+{\footnotesize
+\begin{verbatim}
+    GrB_Info GrB_[OBJ]_get_[KIND] (object, value, int field) ;
+    GrB_Info GrB_[OBJ]_set_[KIND] (object, value, int field) ;
+    GrB_Info GrB_[OBJ]_set_VOID (object, void *value, int field, size_t s) ; \end{verbatim}}
+
+The \verb'[KIND]' suffix defines the type of second parameter, and can be:
+    \verb'Scalar' (for \verb'GrB_Scalar'),
+    \verb'String' (for \verb'char *'),
+    \verb'INT32' (for \verb'int32_t'), and
+    \verb'SIZE' (for \verb'size_t *' for \verb'GrB_get' only), and
+    \verb'VOID' (for \verb'void *').
+
+The tables below list all the valid fields that can be used for each object. 
+Each table contains four columns:  (1) the \verb'int',
+(2) a column labelled R/W, (3) a column defining the C type, and a description.
+For the R/W column:
+
+\begin{itemize}
+\item If the R/W column of a table is R, then the value can be read by \verb'GrB_get'
+    but not written by \verb'GrB_set'.
+\item R/W means that both \verb'GrB_get' and \verb'GrB_set' can be used any number of times,
+    with different values.
+\item R/W1 means that \verb'GrB_get' can be done multiple times,
+    but \verb'GrB_set' can be used only once.
+    Subsequent calls to \verb'GrB_set' return the error code \verb'GrB_ALREADY_SET'.
+\item W means that only \verb'GrB_set' can be used (any number of times),
+    but \verb'GrB_get' cannot be done.
+\end{itemize}
+
+The second parameter (\verb'value') of \verb'GrB_get' and \verb'GrB_set' can take on several
+different C types, and it can also be a \verb'GrB_Scalar' that holds a value
+with the given C type (or that can be typecasted to the given C type):
+
+\begin{itemize}
+\item \verb'int32_t': 
+    For \verb'GrB_set' the \verb'value' parameter is \verb'int32_t'.
+    For \verb'GrB_get' the \verb'value' parameter is \verb'int32_t *.'
+    The following example sets the global number of threads, and then
+    retrieves that \verb'value' into \verb'nthreads'.
+
+    {\footnotesize
+    \begin{verbatim}
+        GrB_set (GrB_GLOBAL, 8, GxB_NTHREADS) ;
+        int32_t nthreads ;
+        GrB_get (GrB_GLOBAL, &nthreads, GxB_NTHREADS) ;
+        printf ("nthreads: %d\n", nthreads) ; \end{verbatim} }
+
+    A \verb'GrB_Scalar' can also be used for an \verb'int32_t' \verb'value'.
+    For \verb'GrB_set', the scalar must not be empty.
+    Here is the same example but using a \verb'GrB_Scalar' instead:
+
+    {\footnotesize
+    \begin{verbatim}
+        GrB_Scalar s ;
+        GrB_Scalar_new (s, GrB_INT32) ;
+        GrB_Scalar_setElement (s, 8) ;
+        GrB_set (GrB_GLOBAL, s, GxB_NTHREADS) ;
+        GrB_get (GrB_GLOBAL, s, GxB_NTHREADS) ;
+        int32_t nthreads ;
+        GrB_Scalar_extractElement (&nthreads, s) ;
+        printf ("nthreads: %d\n", nthreads) ; \end{verbatim} }
+
+\item \verb'char *':
+    The \verb'value' parameter is \verb'char *' for both \verb'GrB_get' and
+    \verb'GrB_set'.  A \verb'GrB_Scalar' cannot be used.  The size of the
+    string required for \verb'GrB_get' is given by using a \verb'size_t *'
+    parameter with the same field.  For example:
+
+    {\footnotesize
+    \begin{verbatim}
+        size_t len ;
+        GrB_get (GrB_GLOBAL, &len, GrB_NAME) ;
+        char *name = malloc (len) ;
+        GrB_get (GrB_GLOBAL, name, GrB_NAME) ;
+        printf ("The library is: %s\n", name) ;
+        free (name) ; \end{verbatim} }
+
+    To get the current JIT C compiler and then set it to something else:
+
+    {\footnotesize
+    \begin{verbatim}
+        size_t len ;
+        GrB_get (GrB_GLOBAL, &len, GxB_JIT_C_COMPILER_NAME) ;
+        char *compiler = malloc (len) ;
+        GrB_get (GrB_GLOBAL, compiler, GxB_JIT_C_COMPILER_NAME) ;
+        printf ("The current JIT compiler is: %s\n", compiler) ;
+        GrB_set (GrB_GLOBAL, "gcc", GxB_JIT_C_COMPILER_NAME) ;
+        GrB_get (GrB_GLOBAL, &len, GxB_JIT_C_COMPILER_NAME) ;
+        char *new_compiler = malloc (len) ;
+        GrB_get (GrB_GLOBAL, new_compiler, GxB_JIT_C_COMPILER_NAME) ;
+        printf ("The new JIT compiler is: %s\n", new_compiler) ;
+        free (compiler) ;
+        free (new_compiler) ; \end{verbatim} }
+
+\item Other scalar data types (typically \verb'double'):
+    Only a \verb'GrB_Scalar' can be used.  When using \verb'GrB_set' with a
+    \verb'GrB_Scalar', the scalar cannot be empty.  For example, to get then
+    set the global \verb'GxB_HYPER_SWITCH' parameter to 0.3: 
+
+    {\footnotesize
+    \begin{verbatim}
+        GrB_Scalar s ;
+        GrB_Scalar_new (s, GrB_FP64) ;
+        GrB_get (GrB_GLOBAL, s, GxB_HYPER_SWITCH) ;
+        double hs ;
+        GrB_Scalar_extractElement (&hs, s) ;
+        printf ("current hyper_switch: %g\n", hs) ;
+        GrB_Scalar_setElement (s, 0.3) ;
+        GrB_set (GrB_GLOBAL, s, GxB_HYPER_SWITCH) ; \end{verbatim} }
+
+\item \verb'void *':
+    This type is used for all other cases.
+    For \verb'GrB_get', the array must have the right size, just like a
+    \verb'char *' string.  Use the same field first, but with
+    \verb'size_t *value' as the second parameter to obtain the size of the
+    \verb'void *' array, then use \verb'GrB_get' with a \verb'void *' array of
+    the right size.  In some cases, the size is always the same.  For example,
+    to query the operator of a monoid:
+
+    {\footnotesize
+    \begin{verbatim}
+        GrB_BinaryOp op ;
+        GrB_get (GrB_PLUS_MONOID_FP64, (void *) &op, GxB_MONOID_OPERATOR) ;
+        assert (op == GrB_PLUS_FP64) ; \end{verbatim} }
+
+    For \verb'GrB_set', a fourth parameter is required to tell GraphBLAS the
+    size of the input array.
+
+\end{itemize}
+
+\input{UserGuide/GrB_get_set_enum.tex}
+\input{UserGuide/GrB_get_set_Global.tex}
+\input{UserGuide/GrB_get_set_Type.tex}
+\input{UserGuide/GrB_get_set_UnaryOp.tex}
+\input{UserGuide/GrB_get_set_IndexUnaryOp.tex}
+\input{UserGuide/GrB_get_set_BinaryOp.tex}
+\input{UserGuide/GrB_get_set_IndexBinaryOp.tex}
+\input{UserGuide/GrB_get_set_Monoid.tex}
+\input{UserGuide/GrB_get_set_Semiring.tex}
+\input{UserGuide/GrB_get_set_Matrix.tex}
+\input{UserGuide/GrB_get_set_Vector.tex}
+\input{UserGuide/GrB_get_set_Scalar.tex}
+\input{UserGuide/GrB_get_set_integers.tex}
+\input{UserGuide/GrB_get_set_Descriptor.tex}
+\input{UserGuide/GrB_get_set_Context.tex}
+\input{UserGuide/GrB_get_set_Serialize.tex}
+

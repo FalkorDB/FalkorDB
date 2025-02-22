@@ -2,7 +2,7 @@
 // gbdegree: number of entries in each vector of a GraphBLAS matrix struct
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ void mexFunction
 
     GrB_Matrix d = NULL, x = NULL ;
     GrB_Matrix A = gb_get_shallow (pargin [0]) ;
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
 
@@ -85,6 +85,6 @@ void mexFunction
     OK (GrB_Matrix_free (&x)) ;
     OK (GrB_Matrix_free (&A)) ;
     pargout [0] = gb_export ((GrB_Matrix *) &d, KIND_GRB) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

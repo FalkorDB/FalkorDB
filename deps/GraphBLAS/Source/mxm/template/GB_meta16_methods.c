@@ -2,7 +2,7 @@
 // GB_meta16_methods: methods for GB_meta16_factory.c
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
     #if defined ( GB_DOT4 )
     #include "template/GB_AxB_dot4_template.c"
     #elif defined ( GB_DOT3_PHASE1 )
-    #include "template/GB_AxB_dot3_phase1_template.c"
+    #include "mxm/factory/GB_AxB_dot3_phase1_template.c"
     #elif defined ( GB_DOT3_PHASE2 )
     #include "template/GB_AxB_dot3_template.c"
     #elif defined ( GB_DOT2 )

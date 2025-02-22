@@ -17,6 +17,7 @@ ASSERT (GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (mult_binop_code)) ;
 {
     if (zcode == GB_INT32_code)
     {
+        #if !defined (GxB_NO_INT32)
         switch (add_binop_code)
         {
             case GB_MIN_binop_code   : GB_AxB_WORKER (_min,   GB_MNAME, _int32)
@@ -28,9 +29,11 @@ ASSERT (GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (mult_binop_code)) ;
             #endif
             default: ;
         }
+        #endif
     }
     else // zcode == GB_INT64_code
     {
+        #if !defined (GxB_NO_INT64)
         ASSERT (zcode == GB_INT64_code) ;
         switch (add_binop_code)
         {
@@ -43,6 +46,7 @@ ASSERT (GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (mult_binop_code)) ;
             #endif
             default: ;
         }
+        #endif
     }
 }
 

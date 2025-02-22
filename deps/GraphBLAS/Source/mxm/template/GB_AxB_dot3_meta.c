@@ -2,7 +2,7 @@
 // GB_AxB_dot3_meta: C<M>=A'*B via dot products, where C is sparse/hypersparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,34 +21,34 @@
 // GB_DOT_ALWAYS_SAVE_CIJ: C(i,j) = cij
 #if GB_CIJ_CHECK
 
-    #define GB_DOT_ALWAYS_SAVE_CIJ      \
-    {                                   \
-        cij_exists = true ;             \
-        /* Cx [pC] = cij */             \
-        GB_PUTC (cij, Cx, pC) ;         \
-        Ci [pC] = i ;                   \
+    #define GB_DOT_ALWAYS_SAVE_CIJ              \
+    {                                           \
+        cij_exists = true ;                     \
+        /* Cx [pC] = cij */                     \
+        GB_PUTC (cij, Cx, pC) ;                 \
+        GB_ISET (Ci, pC, i) ; /* Ci [pC] = i */ \
     }
 
 #else
 
-    #define GB_DOT_ALWAYS_SAVE_CIJ      \
-    {                                   \
-        /* Cx [pC] = cij */             \
-        GB_PUTC (cij, Cx, pC) ;         \
-        Ci [pC] = i ;                   \
+    #define GB_DOT_ALWAYS_SAVE_CIJ              \
+    {                                           \
+        /* Cx [pC] = cij */                     \
+        GB_PUTC (cij, Cx, pC) ;                 \
+        GB_ISET (Ci, pC, i) ; /* Ci [pC] = i */ \
     }
 
 #endif
 
 // GB_DOT_SAVE_CIJ: C(i,j) = cij, if it exists
-#define GB_DOT_SAVE_CIJ                 \
-{                                       \
-    if (GB_CIJ_EXISTS)                  \
-    {                                   \
-        /* Cx [pC] = cij */             \
-        GB_PUTC (cij, Cx, pC) ;         \
-        Ci [pC] = i ;                   \
-    }                                   \
+#define GB_DOT_SAVE_CIJ                         \
+{                                               \
+    if (GB_CIJ_EXISTS)                          \
+    {                                           \
+        /* Cx [pC] = cij */                     \
+        GB_PUTC (cij, Cx, pC) ;                 \
+        GB_ISET (Ci, pC, i) ; /* Ci [pC] = i */ \
+    }                                           \
 }
 
 {
@@ -63,15 +63,16 @@
     int64_t nzombies = 0 ;
 
     ASSERT (GB_IS_SPARSE (C) || GB_IS_HYPERSPARSE (C)) ;
-    const int64_t *restrict Cp = C->p ;
-    const int64_t *restrict Ch = C->h ;
-    int64_t  *restrict Ci = C->i ;
+
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ch_DECLARE (Ch, const) ; GB_Ch_PTR (Ch, C) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
     const int64_t cvlen = C->vlen ;
 
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
+    GB_Bp_DECLARE (Bp, const) ; GB_Bp_PTR (Bp, B) ;
+    GB_Bh_DECLARE (Bh, const) ; GB_Bh_PTR (Bh, B) ;
+    GB_Bi_DECLARE (Bi, const) ; GB_Bi_PTR (Bi, B) ;
     const int8_t  *restrict Bb = B->b ;
-    const int64_t *restrict Bi = B->i ;
     const int64_t bnvec = B->nvec ;
 
     #ifdef GB_JIT_KERNEL
@@ -85,12 +86,16 @@
     const bool B_is_bitmap = GB_IS_BITMAP (B) ;
     const bool B_is_sparse = GB_IS_SPARSE (B) ;
     const bool B_iso = B->iso ;
+    const bool Bp_is_32 = B->p_is_32 ;
+    const bool Bj_is_32 = B->j_is_32 ;
+    #define GB_Bp_IS_32 Bp_is_32
+    #define GB_Bj_IS_32 Bj_is_32
     #endif
 
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
     const int8_t  *restrict Ab = A->b ;
-    const int64_t *restrict Ai = A->i ;
     const int64_t anvec = A->nvec ;
 
     #ifdef GB_JIT_KERNEL
@@ -104,16 +109,20 @@
     const bool A_is_bitmap = GB_IS_BITMAP (A) ;
     const bool A_is_sparse = GB_IS_SPARSE (A) ;
     const bool A_iso = A->iso ;
+    const bool Ap_is_32 = A->p_is_32 ;
+    const bool Aj_is_32 = A->j_is_32 ;
+    #define GB_Ap_IS_32 Ap_is_32
+    #define GB_Aj_IS_32 Aj_is_32
     #endif
 
-    const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-    const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-    const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+    const void *A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+    const void *A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+    const void *A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
     const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
 
-    const int64_t *restrict B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
-    const int64_t *restrict B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
-    const int64_t *restrict B_Yx = (B->Y == NULL) ? NULL : B->Y->x ;
+    const void *B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
+    const void *B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
+    const void *B_Yx = (B->Y == NULL) ? NULL : B->Y->x ;
     const int64_t B_hash_bits = (B->Y == NULL) ? 0 : (B->Y->vdim - 1) ;
 
     #if !GB_A_IS_PATTERN
@@ -133,7 +142,7 @@
     #define Mask_struct GB_MASK_STRUCT
     #endif
 
-    const int64_t *restrict Mi = M->i ;
+    GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
     const size_t mvlen = M->vlen ;
     const GB_M_TYPE *restrict Mx = (GB_M_TYPE *) (Mask_struct ? NULL : (M->x)) ;
 

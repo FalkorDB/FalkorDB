@@ -2,7 +2,7 @@
 // GrB_Semiring_new: create a new semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,7 @@
 
 #define GB_FREE_ALL                     \
 {                                       \
-    GB_FREE (semiring, header_size) ;   \
+    GB_FREE_MEMORY (semiring, header_size) ;   \
 }
 
 GrB_Info GrB_Semiring_new           // create a semiring
@@ -50,12 +50,10 @@ GrB_Info GrB_Semiring_new           // create a semiring
     // check inputs
     //--------------------------------------------------------------------------
 
-    GrB_Info info ;
-
-    GB_WHERE1 ("GrB_Semiring_new (&semiring, add, multiply)") ;
-
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (semiring) ;
 
+    GrB_Info info ;
     (*semiring) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (add) ;
     GB_RETURN_IF_NULL_OR_FAULTY (multiply) ;
@@ -67,7 +65,8 @@ GrB_Info GrB_Semiring_new           // create a semiring
     //--------------------------------------------------------------------------
 
     size_t header_size ;
-    (*semiring) = GB_MALLOC (1, struct GB_Semiring_opaque, &header_size) ;
+    (*semiring) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Semiring_opaque),
+        &header_size) ;
     if (*semiring == NULL)
     { 
         // out of memory

@@ -2,7 +2,7 @@
 // GrB_Vector_removeElement: remove a single entry from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@
 static inline bool GB_removeElement     // returns true if found
 (
     GrB_Vector V,
-    GrB_Index i
+    uint64_t i
 )
 {
 
@@ -60,13 +60,14 @@ static inline bool GB_removeElement     // returns true if found
         // V is sparse
         //----------------------------------------------------------------------
 
-        const int64_t *restrict Vp = V->p ;
-        const int64_t *restrict Vi = V->i ;
+        GB_Cp_DECLARE (Vp, const) ; GB_Cp_PTR (Vp, V) ;
+        GB_Ci_DECLARE (Vi,      ) ; GB_Ci_PTR (Vi, V) ;
+
         bool found ;
 
         // look in V(:)
         int64_t pleft = 0 ;
-        int64_t pright = Vp [1] ;
+        int64_t pright = GB_IGET (Vp, 1) ;
         int64_t vnz = pright ;
 
         bool is_zombie ;
@@ -74,24 +75,30 @@ static inline bool GB_removeElement     // returns true if found
         { 
             // V(:) is as-if-full so no binary search is needed to find V(i)
             pleft = i ;
-            ASSERT (GB_UNZOMBIE (Vi [pleft]) == i) ;
+            int64_t iV = GB_IGET (Vi, pleft) ;
+            ASSERT (i == GB_UNZOMBIE (iV)) ;
             found = true ;
-            is_zombie = GB_IS_ZOMBIE (Vi [pleft]) ;
+            is_zombie = GB_IS_ZOMBIE (iV) ;
         }
         else
         { 
             // binary search for V(i): time is O(log(vnz))
-            int64_t nzombies = V->nzombies ;
             pright-- ;
-            GB_BINARY_SEARCH_ZOMBIE (i, Vi, pleft, pright, found,
-                nzombies, is_zombie) ;
+            const bool may_see_zombies = (V->nzombies > 0) ;
+            found = GB_binary_search_zombie (i, Vi, V->i_is_32,
+                &pleft, &pright, may_see_zombies, &is_zombie) ;
         }
 
-        // remove the entry
+        // remove the entry if found (unless it is already a zombie)
         if (found && !is_zombie)
         { 
             // V(i) becomes a zombie
-            V->i [pleft] = GB_ZOMBIE (i) ;
+            #ifdef GB_DEBUG
+            int64_t iV = GB_IGET (Vi, pleft) ;
+            ASSERT (i == iV) ;
+            #endif
+            i = GB_ZOMBIE (i) ;
+            GB_ISET (Vi, pleft, i) ;    // Vi [pleft] = i ;
             V->nzombies++ ;
         }
         return (found) ;
@@ -105,7 +112,7 @@ static inline bool GB_removeElement     // returns true if found
 GrB_Info GB_Vector_removeElement
 (
     GrB_Vector V,               // vector to remove entry from
-    GrB_Index i,                // index
+    uint64_t i,                 // index
     GB_Werk Werk
 )
 {
@@ -114,9 +121,9 @@ GrB_Info GB_Vector_removeElement
     // if V is jumbled, wait on the vector first.  If full, convert to nonfull
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     if (V->jumbled || GB_IS_FULL (V))
     {
-        GrB_Info info ;
         if (GB_IS_FULL (V))
         { 
             // convert V from full to sparse
@@ -170,7 +177,6 @@ GrB_Info GB_Vector_removeElement
     // assemble any pending tuples; zombies are OK
     if (V_is_pending)
     { 
-        GrB_Info info ;
         GB_OK (GB_wait ((GrB_Matrix) V, "v (removeElement:pending tuples)",
             Werk)) ;
         ASSERT (!GB_ZOMBIES (V)) ;
@@ -190,11 +196,13 @@ GrB_Info GB_Vector_removeElement
 GrB_Info GrB_Vector_removeElement
 (
     GrB_Vector V,               // vector to remove entry from
-    GrB_Index i                 // index
+    uint64_t i                  // index
 )
 {
-    GB_WHERE (V, "GrB_Vector_removeElement (v, i)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (V) ;
+    GB_RETURN_IF_NULL (V) ;
+    GB_WHERE1 (V, "GrB_Vector_removeElement (v, i)") ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (V) ;
+
     ASSERT (GB_VECTOR_OK (V)) ;
     return (GB_Vector_removeElement (V, i, Werk)) ;
 }

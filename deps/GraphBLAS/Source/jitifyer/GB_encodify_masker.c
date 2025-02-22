@@ -2,7 +2,7 @@
 // GB_encodify_masker: encode a masker problem, including types
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,10 @@ uint64_t GB_encodify_masker     // encode a masker problem
     char **suffix,              // suffix for user-defined kernel
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
-    const GrB_Matrix R,
+    const GrB_Matrix R,         // may be NULL, for phase1
+    const bool Rp_is_32,        // if true, R->p is 32 bit; else 64 bit
+    const bool Rj_is_32,        // if true, R->h is 32 bit; else 64 bit
+    const bool Ri_is_32,        // if true, R->i is 32 bit; else 64 bit
     const GrB_Matrix M,
     const bool Mask_struct,
     const bool Mask_comp,
@@ -47,7 +50,8 @@ uint64_t GB_encodify_masker     // encode a masker problem
     //--------------------------------------------------------------------------
 
     encoding->kcode = kcode ;
-    GB_enumify_masker (&encoding->code, R, M, Mask_struct, Mask_comp, C, Z) ;
+    GB_enumify_masker (&encoding->code, R, Rp_is_32, Rj_is_32, Ri_is_32,
+        M, Mask_struct, Mask_comp, C, Z) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

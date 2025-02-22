@@ -2,7 +2,7 @@
 // GB_printf.h: definitions for printing from GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,26 +19,26 @@
 
 // all other cases use GB_Global_*
 #undef  GBDUMP
-#define GBDUMP(...)                                                 \
-{                                                                   \
-    GB_printf_function_t printf_func = GB_Global_printf_get ( ) ;   \
-    if (printf_func != NULL)                                        \
-    {                                                               \
-        printf_func (__VA_ARGS__) ;                                 \
-    }                                                               \
-    else                                                            \
-    {                                                               \
-        printf (__VA_ARGS__) ;                                      \
-    }                                                               \
-    GB_flush_function_t flush_func = GB_Global_flush_get ( ) ;      \
-    if (flush_func != NULL)                                         \
-    {                                                               \
-        flush_func ( ) ;                                            \
-    }                                                               \
-    else                                                            \
-    {                                                               \
-        fflush (stdout) ;                                           \
-    }                                                               \
+#define GBDUMP(...)                                                     \
+{                                                                       \
+    GB_printf_function_t printf_func = GB_Global_printf_get ( ) ;       \
+    if (printf_func != NULL)                                            \
+    {                                                                   \
+        printf_func (__VA_ARGS__) ;                                     \
+    }                                                                   \
+    else                                                                \
+    {                                                                   \
+        printf (__VA_ARGS__) ;  /* printf_func is NULL; use libc */     \
+    }                                                                   \
+    GB_flush_function_t flush_func = GB_Global_flush_get ( ) ;          \
+    if (flush_func != NULL)                                             \
+    {                                                                   \
+        flush_func ( ) ;                                                \
+    }                                                                   \
+    else                                                                \
+    {                                                                   \
+        fflush (stdout) ; /* flush_func is NULL; use libc */            \
+    }                                                                   \
 }
 
 //------------------------------------------------------------------------------
@@ -62,7 +62,8 @@
         }                                                               \
         else                                                            \
         {                                                               \
-            printf_result = printf (__VA_ARGS__) ;                      \
+            printf_result =                                             \
+            printf (__VA_ARGS__) ;  /* printf_func NULL; use libc */    \
         }                                                               \
         GB_flush_function_t flush_func = GB_Global_flush_get ( ) ;      \
         if (flush_func != NULL)                                         \
@@ -71,13 +72,13 @@
         }                                                               \
         else                                                            \
         {                                                               \
-            fflush (stdout) ;                                           \
+            fflush (stdout) ; /* flush_func is NULL; use libc */        \
         }                                                               \
     }                                                                   \
     else                                                                \
     {                                                                   \
         printf_result = fprintf (f, __VA_ARGS__)  ;                     \
-        fflush (f) ;                                                    \
+        fflush (f) ; /* flush_func is NULL; use libc */                 \
     }                                                                   \
     if (printf_result < 0)                                              \
     {                                                                   \
@@ -153,13 +154,11 @@ void GB_assign_describe
     const bool C_replace,       // descriptor for C
     const int Ikind,
     const int Jkind,
-//  const GrB_Matrix M,
     const bool M_is_null,
     const int M_sparsity,
     const bool Mask_comp,       // true for !M, false for M
     const bool Mask_struct,     // true if M is structural, false if valued
     const GrB_BinaryOp accum,   // present here
-//  const GrB_Matrix A,         // input matrix, not transposed
     const bool A_is_null,
     const int assign_kind       // row assign, col assign, assign, or subassign
 ) ;
@@ -208,36 +207,32 @@ void GB_assign_describe
 #if defined ( _OPENMP )
 
     // burble with timing
-    #define GB_BURBLE_START(func)                       \
-    double t_burble = 0 ;                               \
-    {                                                   \
-        GB_NVTX                                         \
-        if (GB_Global_burble_get ( ))                   \
-        {                                               \
-            GBURBLE (" [ " func " ") ;                  \
-            t_burble = GB_OPENMP_GET_WTIME ;            \
-        }                                               \
+    #define GB_BURBLE_START(func)                           \
+    double t_burble = 0 ;                                   \
+    {                                                       \
+        GB_NVTX                                             \
+        if (GB_Global_burble_get ( ))                       \
+        {                                                   \
+            GBURBLE (" [ " func " ") ;                      \
+            t_burble = GB_omp_get_wtime ( ) ;               \
+        }                                                   \
     }
 
-    #define GB_BURBLE_END                               \
-    {                                                   \
-        GB_NVTX                                         \
-        if (GB_Global_burble_get ( ))                   \
-        {                                               \
-            t_burble = GB_OPENMP_GET_WTIME - t_burble ; \
-            GBURBLE ("\n   %.3g sec ]\n", t_burble) ;   \
-        }                                               \
+    #define GB_BURBLE_END                                   \
+    {                                                       \
+        GB_NVTX                                             \
+        if (GB_Global_burble_get ( ))                       \
+        {                                                   \
+            t_burble = GB_omp_get_wtime ( ) - t_burble ;    \
+            GBURBLE ("\n   %.3g sec ]\n", t_burble) ;       \
+        }                                                   \
     }
 
 #else
 
     // burble with no timing
-
-    #define GB_BURBLE_START(func)                       \
-        GBURBLE (" [ " func " ")
-
-    #define GB_BURBLE_END                               \
-        GBURBLE ("]\n")
+    #define GB_BURBLE_START(func) GBURBLE (" [ " func " ")
+    #define GB_BURBLE_END         GBURBLE ("]\n")
 
 #endif
 

@@ -1,0 +1,124 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Interfaces to MATLAB, Octave, Python, Julia, Go, Java, ...} %%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+The MATLAB/Octave interface to SuiteSparse:GraphBLAS is included with this
+distribution, described in Section~\ref{octave}.
+Python, Julia, Go, and Java interfaces are available.
+These are not part of the SuiteSparse:GraphBLAS distribution.
+See the links below.
+
+%===============================================================================
+\subsection{MATLAB/Octave Interface}
+%===============================================================================
+\label{octave}
+
+An easy-to-use MATLAB/Octave interface for SuiteSparse:GraphBLAS is available;
+see the documentation in the \verb'GraphBLAS/GraphBLAS' folder for details.
+Start with the \verb'README.md' file in that directory.  An easy-to-read output
+of the MATLAB demos can be found in \verb'GraphBLAS/GraphBLAS/demo/html'.
+
+The MATLAB/Octave interface adds the \verb'@GrB' class, which is an opaque
+MATLAB/Octave object that contains a GraphBLAS matrix, either double or single
+precision (real or complex), boolean, or any of the built-in integer types.
+MATLAB/Octave sparse and full matrices can be arbitrarily mixed with GraphBLAS
+matrices.  The following overloaded operators and methods all work as you would
+expect for any matrix.  The matrix multiplication \verb'A*B' uses the
+conventional \verb'PLUS_TIMES' semiring.
+
+{\footnotesize
+\begin{verbatim}
+    A+B    A-B   A*B    A.*B   A./B   A.\B   A.^b    A/b    C=A(I,J)
+    -A     +A    ~A     A'     A.'    A&B    A|B     b\A    C(I,J)=A
+    A~=B   A>B   A==B   A<=B   A>=B   A<B    [A,B]   [A;B]  A(1:end,1:end) \end{verbatim}}
+
+For a list of overloaded operations and static methods, type
+\verb'methods GrB' in MATLAB/Octave, or \verb'help GrB' for more details.
+
+{\bf Limitations:}
+Some features for MATLAB/Octave sparse matrices are not yet available for
+GraphBLAS matrices.  Some of these may be added in future releases.
+
+\begin{packed_itemize}
+    \item \verb'GrB' matrices with dimension larger than \verb'2^53' do not
+        display properly in the \verb'whos' command.  The size is displayed
+        correctly with \verb'disp' or \verb'display'.
+    \item Non-blocking mode is not exploited.
+        % ; this would require
+        % a MATLAB/Octave mexFunction to modify its inputs, which is
+        % technically possible but not permitted by the MATLAB/Octave API.
+        % This can have significant impact on performance, if an
+        % m-file makes many repeated tiny changes to a matrix.  This
+        % can be done in the C API but not MATLAB/Octave.
+    \item Linear indexing: \verb'A(:)' for a 2D matrix, and \verb'I=find(A)'.
+    \item Singleton expansion.
+    \item Dynamically growing arrays, where \verb'C(i)=x' can increase
+        the size of \verb'C'.
+    \item Saturating element-wise binary and unary operators for integers.
+        For \verb'C=A+B' with MATLAB \verb'uint8' matrices, results
+        saturate if they exceed 255.  This is not compatible with
+        a monoid for \verb'C=A*B', and thus MATLAB does not support
+        matrix-matrix multiplication with \verb'uint8' matrices.
+        In GraphBLAS, \verb'uint8' addition acts in a modulo fashion.
+    \item Solvers, so that \verb'x=A\b' could return a GF(2) solution,
+        for example.
+    \item Sparse matrices with dimension higher than 2.
+\end{packed_itemize}
+
+\input{UserGuide/GrB_matlab_performance.tex}
+
+%===============================================================================
+\subsection{Python Interface}
+%===============================================================================
+\label{python}
+
+See Michel Pelletier's Python interface at
+\url{https://github.com/michelp/pygraphblas};
+it also appears at
+\url{https://anaconda.org/conda-forge/pygraphblas}.
+
+See Jim Kitchen and Erik Welch's (both from Anaconda, Inc.) Python interface at
+\url{https://github.com/python-graphblas/python-graphblas} (formerly known as grblas).
+See also \url{https://anaconda.org/conda-forge/graphblas}.
+
+%===============================================================================
+\subsection{Julia Interface}
+%===============================================================================
+\label{julia}
+
+The Julia interface is at
+\url{https://github.com/JuliaSparse/SuiteSparseGraphBLAS.jl}, developed by Will
+Kimmerer, Abhinav Mehndiratta, Miha Zgubic, and Viral Shah.
+Unlike the MATLAB/Octave interface (and like the Python interfaces) the Julia
+interface can keep pending work (zombies, pending tuples, jumbled state) in
+a \verb'GrB_Matrix'. This makes Python and Julia the best high-level interfaces
+for SuiteSparse:GraphBLAS.  MATLAB is not as well suited, since it does not
+allow inputs to a function or mexFunction to be modified, so any pending
+work must be finished before a matrix can be used as input.
+
+%===============================================================================
+\subsection{Go Interface}
+%===============================================================================
+\label{go}
+
+Pascal Costanza (Intel) has a Go interface to GraphBLAS and LAGraph:
+\begin{itemize}
+\item forGraphBLASGo: \url{https://github.com/intel/forGraphBLASGo}, which
+is almost a complete wrapper for SuiteSparse:GraphBLAS.
+Documentation is at \url{https://pkg.go.dev/github.com/intel/forGraphBLASGo}.
+\item forLAGraphGo: \url{https://github.com/intel/forLAGraphGo}, which is in
+progress.  Documentation is at
+\url{https://pkg.go.dev/github.com/intel/forLAGraphGo}.
+\end{itemize}
+
+%===============================================================================
+\subsection{Java Interface}
+%===============================================================================
+\label{java}
+
+Fabian Murariu is working on a Java interface.
+See \newline
+\url{https://github.com/fabianmurariu/graphblas-java-native}.
+

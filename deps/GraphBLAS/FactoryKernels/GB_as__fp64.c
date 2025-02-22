@@ -2,7 +2,7 @@
 // GB_as:  assign/subassign kernels with no accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,6 @@
 
 #if GB_TYPE_ENABLED
 #include "GB.h"
-#include "slice/GB_ek_slice.h"
 #include "FactoryKernels/GB_as__include.h"
 
 // A and C matrices
@@ -115,5 +114,7 @@ GrB_Info GB (_subassign_25__fp64)
     #endif
 }
 
+#else
+GB_EMPTY_PLACEHOLDER
 #endif
 

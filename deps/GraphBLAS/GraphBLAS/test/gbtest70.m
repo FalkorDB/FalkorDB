@@ -1,7 +1,7 @@
 function gbtest70
 %GBTEST70 test GrB.random
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ; A = sprand (4, 5, 0.5) ;

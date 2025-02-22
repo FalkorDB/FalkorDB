@@ -2,7 +2,7 @@
 // GrB_Descriptor_wait: wait for a user-defined GrB_Descriptor to complete
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@
 GrB_Info GrB_Descriptor_wait // no work, just check if GrB_Descriptor is valid
 (
     GrB_Descriptor desc,
-    GrB_WaitMode waitmode
+    int waitmode
 )
 { 
 
@@ -26,7 +26,7 @@ GrB_Info GrB_Descriptor_wait // no work, just check if GrB_Descriptor is valid
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Descriptor_wait (desc, waitmode)") ;
+    GB_CHECK_INIT ;
     if (desc != NULL) GB_RETURN_IF_FAULTY (desc) ;
 
     //--------------------------------------------------------------------------

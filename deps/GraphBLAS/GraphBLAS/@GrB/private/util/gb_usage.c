@@ -2,10 +2,12 @@
 // gb_usage: check usage and make sure GrB.init has been called
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// This function accesses GB_methods inside GraphBLAS.
 
 #include "gb_interface.h"
 
@@ -47,6 +49,12 @@ void gb_usage       // check usage and make sure GrB.init has been called
 
         OK (GxB_init (GrB_NONBLOCKING, mxMalloc, mxCalloc, mxRealloc, mxFree)) ;
         gb_defaults ( ) ;
+
+        //----------------------------------------------------------------------
+        // allocate a Container for loading/unloading matrices to/from MATLAB
+        //----------------------------------------------------------------------
+
+        GB_helper_container_new ( ) ;
     }
 
     //--------------------------------------------------------------------------

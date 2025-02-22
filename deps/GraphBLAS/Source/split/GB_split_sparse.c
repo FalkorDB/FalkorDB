@@ -1,15 +1,18 @@
 //------------------------------------------------------------------------------
-// GB_split_sparse: split a sparse/hypersparse matrix into tiles 
+// GB_split_sparse: split a sparse/hypersparse matrix into tiles
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
+// Each output tile is first created in sparse/hyper form, matching the input
+// matrix, and then conformed to its desired sparsity format.
+
 #define GB_FREE_WORKSPACE                   \
     GB_WERK_POP (C_ek_slicing, int64_t) ;   \
-    GB_FREE_WORK (&Wp, Wp_size) ;
+    GB_FREE_MEMORY (&Wp, Wp_size) ;
 
 #define GB_FREE_ALL                         \
     GB_FREE_WORKSPACE ;                     \
@@ -22,8 +25,8 @@
 GrB_Info GB_split_sparse            // split a sparse matrix
 (
     GrB_Matrix *Tiles,              // 2D row-major array of size m-by-n
-    const GrB_Index m,
-    const GrB_Index n,
+    const int64_t m,
+    const int64_t n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     const GrB_Matrix A,             // input matrix
@@ -42,13 +45,14 @@ GrB_Info GB_split_sparse            // split a sparse matrix
     GrB_Matrix C = NULL ;
     GB_WERK_DECLARE (C_ek_slicing, int64_t) ;
     ASSERT_MATRIX_OK (A, "A sparse for split", GB0) ;
+    ASSERT (!GB_JUMBLED (A)) ;
+    ASSERT (!GB_ZOMBIES (A)) ;
+    ASSERT (!GB_PENDING (A)) ;
 
     int sparsity_control = A->sparsity_control ;
     float hyper_switch = A->hyper_switch ;
     bool csc = A->is_csc ;
     GrB_Type atype = A->type ;
-//  int64_t avlen = A->vlen ;
-//  int64_t avdim = A->vdim ;
     size_t asize = atype->size ;
 
     int nthreads_max = GB_Context_nthreads_max ( ) ;
@@ -61,25 +65,36 @@ GrB_Info GB_split_sparse            // split a sparse matrix
     const int64_t *Tile_vlen = csc ? Tile_rows : Tile_cols ;
 
     int64_t anvec = A->nvec ;
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
+    int64_t anz = GB_nnz (A) ;
+
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+
     const bool A_iso = A->iso ;
+
+    const bool Ap_is_32 = A->p_is_32 ;
+    const bool Aj_is_32 = A->j_is_32 ;
+    const bool Ai_is_32 = A->i_is_32 ;
 
     //--------------------------------------------------------------------------
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    size_t Wp_size = 0 ;
-    int64_t *restrict Wp = NULL ;
-    Wp = GB_MALLOC_WORK (anvec, int64_t, &Wp_size) ;
+    // FUTURE: Wp is allocated with the same integers as Ap, but it could be
+    // chosen based on anz instead.
+
+    GB_MDECL (Wp, , u) ; size_t Wp_size = 0 ;
+    size_t apsize = (Ap_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    Wp = GB_MALLOC_MEMORY (anvec, apsize, &Wp_size) ;
     if (Wp == NULL)
     { 
         // out of memory
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    GB_memcpy (Wp, Ap, anvec * sizeof (int64_t), nthreads_max) ;
+    GB_memcpy (Wp, Ap, anvec * apsize, nthreads_max) ;
+    GB_IPTR (Wp, Ap_is_32) ;
 
     //--------------------------------------------------------------------------
     // split A into tiles
@@ -108,9 +123,9 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             // Ah [akstart:akend-1].
             akend = akstart ;
             int64_t pright = anvec - 1 ;
-            bool found ;
-            GB_SPLIT_BINARY_SEARCH (avend, Ah, akend, pright, found) ;
-            ASSERT (GB_IMPLIES (akstart <= akend-1, Ah [akend-1] < avend)) ;
+            GB_split_binary_search (avend, Ah, Aj_is_32, &akend, &pright) ;
+            ASSERT (GB_IMPLIES (akstart <= akend-1,
+                GB_IGET (Ah, akend-1) < avend)) ;
         }
         else
         { 
@@ -138,15 +153,22 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             const int64_t cvdim = avend - avstart ;
             const int64_t cvlen = aiend - aistart ;
 
+            // Assume this tile C can acquire all the entries of A to determine
+            // the p_is_32, j_is_32, and i_is_32 settings for the new Tile.
+            bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+            GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+                A_sparsity, anz, cvlen, cvdim, Werk) ;
+
             C = NULL ;
             GB_OK (GB_new (&C, // new header
-                atype, cvlen, cvdim, GB_Ap_malloc, csc, A_sparsity,
-                hyper_switch, cnvec)) ;
+                atype, cvlen, cvdim, GB_ph_malloc, csc, A_sparsity,
+                hyper_switch, cnvec, Cp_is_32, Cj_is_32, Ci_is_32)) ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;
             C->nvec = cnvec ;
-            int64_t *restrict Cp = C->p ;
-            int64_t *restrict Ch = C->h ;
+
+            GB_Cp_DECLARE (Cp, ) ; GB_Ap_PTR (Cp, C) ;
+            GB_Ch_DECLARE (Ch, ) ; GB_Ah_PTR (Ch, C) ;
 
             //------------------------------------------------------------------
             // determine the boundaries of this tile
@@ -156,25 +178,25 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             #pragma omp parallel for num_threads(nth) schedule(static)
             for (k = akstart ; k < akend ; k++)
             {
-                int64_t pA = Wp [k] ;
-                const int64_t pA_end = Ap [k+1] ;
+                const int64_t pC_start = GB_IGET (Wp, k) ;
+                int64_t pA = pC_start ;
+                const int64_t pA_end = GB_IGET (Ap, k+1) ;
                 const int64_t aknz = pA_end - pA ;
-                if (aknz == 0 || Ai [pA] >= aiend)
+                if (aknz == 0 || GB_IGET (Ai, pA) >= aiend)
                 { 
                     // this vector of C is empty
                 }
                 else if (aknz > 256)
                 { 
                     // use binary search to find aiend
-                    bool found ;
                     int64_t pright = pA_end - 1 ;
-                    GB_SPLIT_BINARY_SEARCH (aiend, Ai, pA, pright, found) ;
+                    GB_split_binary_search (aiend, Ai, Ai_is_32, &pA, &pright) ;
                     #ifdef GB_DEBUG
                     // check the results with a linear search
-                    int64_t p2 = Wp [k] ;
-                    for ( ; p2 < Ap [k+1] ; p2++)
+                    int64_t p2 = pC_start ;
+                    for ( ; p2 < pA_end ; p2++)
                     {
-                        if (Ai [p2] >= aiend) break ;
+                        if (GB_IGET (Ai, p2) >= aiend) break ;
                     }
                     ASSERT (pA == p2) ;
                     #endif
@@ -184,34 +206,37 @@ GrB_Info GB_split_sparse            // split a sparse matrix
                     // use a linear-time search to find aiend
                     for ( ; pA < pA_end ; pA++)
                     {
-                        if (Ai [pA] >= aiend) break ;
+                        if (GB_IGET (Ai, pA) >= aiend) break ;
                     }
                     #ifdef GB_DEBUG
                     // check the results with a binary search
-                    bool found ;
-                    int64_t p2 = Wp [k] ;
-                    int64_t p2_end = Ap [k+1] - 1 ;
-                    GB_SPLIT_BINARY_SEARCH (aiend, Ai, p2, p2_end, found) ;
+                    int64_t p2 = pC_start ;
+                    int64_t p2_end = pA_end - 1 ;
+                    GB_split_binary_search (aiend, Ai, Ai_is_32, &p2, &p2_end) ;
                     ASSERT (pA == p2) ;
                     #endif
                 }
-                Cp [k-akstart] = (pA - Wp [k]) ; // # of entries in this vector
+                int64_t kC = k - akstart ;
+                int64_t cknz = pA - pC_start ;      // # entries in C(:,kC)
+                GB_ISET (Cp, kC, cknz) ;            // Cp [kC] = cknz ;
                 if (A_is_hyper)
                 { 
-                    Ch [k-akstart] = Ah [k] - avstart ;
+                    int64_t jC = GB_IGET (Ah, k) - avstart ;
+                    GB_ISET (Ch, kC, jC) ;          // Ch [kC] = jC ;
                 }
             }
 
-            GB_cumsum (Cp, cnvec, &(C->nvec_nonempty), nth, Werk) ;
-            int64_t cnz = Cp [cnvec] ;
+            int64_t nvec_nonempty ;
+            GB_cumsum (Cp, Cp_is_32, cnvec, &nvec_nonempty, nth, Werk) ;
+            GB_nvec_nonempty_set (C, nvec_nonempty) ;
+            int64_t cnz = GB_IGET (Cp, cnvec) ;
 
             //------------------------------------------------------------------
             // allocate C->i and C->x for this tile
             //------------------------------------------------------------------
 
-            // set C->iso = A_iso       OK
             GB_OK (GB_bix_alloc (C, cnz, GxB_SPARSE, false, true, A_iso)) ;
-            int64_t *restrict Ci = C->i ;
+            GB_Ci_DECLARE (Ci, ) ; GB_Ci_PTR (Ci, C) ;
             C->nvals = cnz ;
             C->magic = GB_MAGIC ;       // for GB_nnz_held(C), to slice C
 
@@ -332,13 +357,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             //------------------------------------------------------------------
 
             GB_WERK_POP (C_ek_slicing, int64_t) ;
-
-            if (info != GrB_SUCCESS)
-            { 
-                // out of memory, or other error
-                GB_FREE_ALL ;
-                return (info) ;
-            }
+            GB_OK (info) ;
 
             //------------------------------------------------------------------
             // advance to the next tile
@@ -351,8 +370,8 @@ GrB_Info GB_split_sparse            // split a sparse matrix
                 for (k = akstart ; k < akend ; k++)
                 { 
                     int64_t ck = k - akstart ;
-                    int64_t cknz = Cp [ck+1] - Cp [ck] ;
-                    Wp [k] += cknz ;
+                    int64_t cknz = GB_IGET (Cp, ck+1) - GB_IGET (Cp, ck) ;
+                    GB_IINC (Wp, k, cknz) ;     // Wp [k] += cknz ;
                 }
             }
 
@@ -361,7 +380,7 @@ GrB_Info GB_split_sparse            // split a sparse matrix
             //------------------------------------------------------------------
 
             ASSERT_MATRIX_OK (C, "C for GB_split", GB0) ;
-            GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+            GB_OK (GB_hyper_prune (C, Werk)) ;
             GB_OK (GB_conform (C, Werk)) ;
             if (csc)
             { 

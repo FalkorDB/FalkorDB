@@ -50,7 +50,7 @@ function [x,p] = argmin (A, dim)
 %
 % See also min, max, GrB/min, GrB/max, GrB.argmax, GrB.argsort.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (A))

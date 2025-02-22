@@ -2,7 +2,7 @@
 // GB_emult_02: C = A.*B where A is sparse/hyper and B is bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -56,7 +56,6 @@
 #include "ewise/GB_ewise.h"
 #include "emult/GB_emult.h"
 #include "binaryop/GB_binop.h"
-#include "include/GB_unused.h"
 #include "jitifyer/GB_stringify.h"
 #ifndef GBCOMPACT
 #include "GB_control.h"
@@ -65,7 +64,7 @@
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_WERK_POP (Work, int64_t) ;           \
+    GB_WERK_POP (Work, uint64_t) ;          \
     GB_WERK_POP (A_ek_slicing, int64_t) ;   \
 }
 
@@ -96,7 +95,7 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for emult_02", GB0) ;
     ASSERT_MATRIX_OK (A, "A for emult_02", GB0) ;
@@ -135,7 +134,7 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Work, int64_t) ;
+    GB_WERK_DECLARE (Work, uint64_t) ;
     GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
 
     //--------------------------------------------------------------------------
@@ -147,9 +146,6 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
         (const GB_M_TYPE *) M->x ;
     const size_t msize = (M == NULL) ? 0 : M->type->size ;
 
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
     const int64_t vlen = A->vlen ;
     const int64_t vdim = A->vdim ;
     const int64_t nvec = A->nvec ;
@@ -171,9 +167,13 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     //--------------------------------------------------------------------------
 
     GB_OK (GB_new (&C, // sparse or hyper (same as A), existing header
-        ctype, vlen, vdim, GB_Ap_calloc, C_is_csc,
-        C_sparsity, A->hyper_switch, nvec)) ;
-    int64_t *restrict Cp = C->p ;
+        ctype, vlen, vdim, GB_ph_calloc, C_is_csc,
+        C_sparsity, A->hyper_switch, nvec,
+        A->p_is_32, A->j_is_32, A->i_is_32)) ;
+
+    ASSERT (C->p_is_32 == A->p_is_32) ;
+    ASSERT (C->j_is_32 == A->j_is_32) ;
+    ASSERT (C->i_is_32 == A->i_is_32) ;
 
     //--------------------------------------------------------------------------
     // slice the input matrix A
@@ -188,16 +188,16 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_PUSH (Work, 3*A_ntasks, int64_t) ;
+    GB_WERK_PUSH (Work, 3*A_ntasks, uint64_t) ;
     if (Work == NULL)
     { 
         // out of memory
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    int64_t *restrict Wfirst    = Work ;
-    int64_t *restrict Wlast     = Work + A_ntasks ;
-    int64_t *restrict Cp_kfirst = Work + A_ntasks * 2 ;
+    uint64_t *restrict Wfirst    = Work ;
+    uint64_t *restrict Wlast     = Work + A_ntasks ;
+    uint64_t *restrict Cp_kfirst = Work + A_ntasks * 2 ;
 
     //--------------------------------------------------------------------------
     // phase1: count entries in C and allocate C->i and C->x
@@ -333,7 +333,7 @@ GrB_Info GB_emult_02        // C=A.*B when A is sparse/hyper, B bitmap/full
         return (info) ;
     }
 
-    GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+    GB_OK (GB_hyper_prune (C, Werk)) ;
 
     //--------------------------------------------------------------------------
     // free workspace and return result

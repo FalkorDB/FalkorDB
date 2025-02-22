@@ -2,12 +2,10 @@
 // GxB_Vector_select: select entries from a vector (deprecated; do not use)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
-
-// DEPRECATED: use GrB_Vector_select instead.
 
 #define GB_FREE_ALL             \
 {                               \
@@ -33,11 +31,12 @@ GrB_Info GxB_Vector_select          // w<M> = accum (w, select(u,k))
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (w, "GxB_Vector_select (w, M, accum, op, u, Thunk, desc)") ;
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (u) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (w) ;
+    GB_WHERE4 (w, M_in, u, Thunk_in,
+        "GxB_Vector_select (w, M, accum, op, u, Thunk, desc)") ;
     GB_BURBLE_START ("GxB_select:DEPRECATED") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;
 
     // get the descriptor
     GB_GET_DESCRIPTOR (info, desc, C_replace, Mask_comp, Mask_struct,

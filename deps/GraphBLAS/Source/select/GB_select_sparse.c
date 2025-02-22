@@ -2,28 +2,24 @@
 // GB_select_sparse:  select entries from a matrix (C is sparse/hypersparse)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "select/GB_select.h"
-#include "slice/GB_ek_slice.h"
 #ifndef GBCOMPACT
 #include "FactoryKernels/GB_sel__include.h"
 #endif
 #include "scalar/GB_Scalar_wrap.h"
 #include "jitifyer/GB_stringify.h"
+#include "slice/factory/GB_ek_slice_merge.h"
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_FREE_WORK (&Zp, Zp_size) ;           \
-    GB_WERK_POP (Work, int64_t) ;           \
+    GB_FREE_MEMORY (&Zp, Zp_size) ;           \
+    GB_WERK_POP (Work, uint64_t) ;          \
     GB_WERK_POP (A_ek_slicing, int64_t) ;   \
-    GB_FREE (&Cp, Cp_size) ;                \
-    GB_FREE (&Ch, Ch_size) ;                \
-    GB_FREE (&Ci, Ci_size) ;                \
-    GB_FREE (&Cx, Cx_size) ;                \
 }
 
 #define GB_FREE_ALL                         \
@@ -34,39 +30,45 @@
 
 GrB_Info GB_select_sparse
 (
-    GrB_Matrix C,
-    const bool C_iso,
+    GrB_Matrix C,                   // output matrix; empty header on input
+    const bool C_iso,               // if true, construct C as iso
     const GrB_IndexUnaryOp op,
-    const bool flipij,
-    const GrB_Matrix A,
-    const int64_t ithunk,
-    const GB_void *restrict athunk,
-    const GB_void *restrict ythunk,
+    const bool flipij,              // if true, flip i and j for the op
+    const GrB_Matrix A,             // input matrix
+    const int64_t ithunk,           // input scalar, cast to int64_t
+    const GB_void *restrict athunk, // same input scalar, but cast to A->type
+    const GB_void *restrict ythunk, // same input scalar, but cast to op->ytype
     GB_Werk Werk
 )
 {
+
+    //--------------------------------------------------------------------------
+    // check inputs
+    //--------------------------------------------------------------------------
+
+    // C is always an empty header on input.  A is never bitmap.  It is
+    // sparse/hypersparse, with one exception: for the DIAG operator, A may be
+    // sparse, hypersparse, or full.
+
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
+    ASSERT_MATRIX_OK (A, "A input for GB_select_sparse", GB0) ;
+    ASSERT_INDEXUNARYOP_OK (op, "op for GB_select_sparse", GB0) ;
+    ASSERT (!GB_IS_BITMAP (A)) ;
+    ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A) || GB_IS_FULL (A)) ;
+    ASSERT (GB_IMPLIES (op->opcode != GB_DIAG_idxunop_code,
+        GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A))) ;
 
     //--------------------------------------------------------------------------
     // declare workspace
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    int64_t *restrict Zp = NULL ; size_t Zp_size = 0 ;
-    GB_WERK_DECLARE (Work, int64_t) ;
-    int64_t *restrict Wfirst = NULL ;
-    int64_t *restrict Wlast = NULL ;
-    int64_t *restrict Cp_kfirst = NULL ;
+    void *Zp = NULL ; size_t Zp_size = 0 ;
+    GB_WERK_DECLARE (Work, uint64_t) ;
     GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
 
-    int64_t *restrict Cp = NULL ; size_t Cp_size = 0 ;
-    int64_t *restrict Ch = NULL ; size_t Ch_size = 0 ;
-    int64_t *restrict Ci = NULL ; size_t Ci_size = 0 ;
-    GB_void *restrict Cx = NULL ; size_t Cx_size = 0 ;
-
     GB_Opcode opcode = op->opcode ;
-    bool in_place_A = (C == NULL) ; // GrB_wait and GB_resize only
     const bool A_iso = A->iso ;
-    const size_t asize = A->type->size ;
     const GB_Type_code acode = A->type->code ;
 
     //--------------------------------------------------------------------------
@@ -80,56 +82,81 @@ GrB_Info GB_select_sparse
     // get A: sparse, hypersparse, or full
     //--------------------------------------------------------------------------
 
-    // the case when A is bitmap is always handled above by GB_select_bitmap
-    ASSERT (!GB_IS_BITMAP (A)) ;
-
-    int64_t *restrict Ap = A->p ; size_t Ap_size = A->p_size ;
-    int64_t *restrict Ah = A->h ;
-    int64_t *restrict Ai = A->i ; size_t Ai_size = A->i_size ;
-    GB_void *restrict Ax = (GB_void *) A->x ; size_t Ax_size = A->x_size ;
     int64_t anvec = A->nvec ;
-    bool A_jumbled = A->jumbled ;
-    bool A_is_hyper = (Ah != NULL) ;
-    int64_t avlen = A->vlen ;
-    int64_t avdim = A->vdim ;
+    bool A_is_hyper = GB_IS_HYPERSPARSE (A) ;
 
     //--------------------------------------------------------------------------
-    // allocate the new vector pointers of C
+    // create the C matrix
     //--------------------------------------------------------------------------
 
-    int64_t cnz = 0 ;
-    int64_t cplen = (avdim == 1) ? 1 : anvec ;
+    int csparsity = (A_is_hyper) ? GxB_HYPERSPARSE : GxB_SPARSE ;
+    int64_t anz = GB_nnz (A) ;
 
-    Cp = GB_CALLOC (cplen+1, int64_t, &Cp_size) ;
-    if (Cp == NULL)
+    // determine the p_is_32, j_is_32, and i_is_32 settings for the new matrix
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        csparsity, anz, A->vlen, A->vdim, Werk) ;
+
+    GB_OK (GB_new (&C, // sparse or hyper (from A), existing header
+        A->type, A->vlen, A->vdim, GB_ph_calloc, A->is_csc,
+        csparsity, A->hyper_switch, A->plen, Cp_is_32, Cj_is_32, Ci_is_32)) ;
+
+    ASSERT (csparsity == GB_sparsity (C)) ;
+    ASSERT (Cp_is_32 == C->p_is_32) ;
+    ASSERT (Cj_is_32 == C->j_is_32) ;
+    ASSERT (Ci_is_32 == C->i_is_32) ;
+
+    Cp_is_32 = C->p_is_32 ;
+    Cj_is_32 = C->j_is_32 ;
+    Ci_is_32 = C->i_is_32 ;
+
+    bool Aj_is_32 = A->j_is_32 ;
+
+    GB_Type_code ajcode = Aj_is_32 ? GB_UINT32_code : GB_UINT64_code ;
+    GB_Type_code cjcode = Cj_is_32 ? GB_UINT32_code : GB_UINT64_code ;
+
+    size_t cpsize = Cp_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    if (A_is_hyper)
     { 
-        // out of memory
-        return (GrB_OUT_OF_MEMORY) ;
+        // C->h is a deep copy of A->h
+        GB_cast_int (C->h, cjcode, A->h, ajcode, A->nvec, nthreads_max) ;
     }
+
+    C->nvec = A->nvec ;
+    C->nvals = 0 ;
+    C->magic = GB_MAGIC ;
+
+    // C->Y is not yet constructed
+    ASSERT (C->Y == NULL) ;
+    ASSERT_MATRIX_OK (C, "C initialized as empty for GB_selector", GB0) ;
+    ASSERT (C->i == NULL) ;
+    ASSERT (C->x == NULL) ;
+
+    C->iso = C_iso ;
 
     //--------------------------------------------------------------------------
     // slice the entries for each task
     //--------------------------------------------------------------------------
 
     int A_ntasks, A_nthreads ;
-    int64_t anz_held = GB_nnz_held (A) ;
-    double work = 8*anvec + ((opcode == GB_DIAG_idxunop_code) ? 0 : anz_held) ;
-    GB_SLICE_MATRIX_WORK (A, 8, work, anz_held) ;
+    double work = 8*anvec + ((opcode == GB_DIAG_idxunop_code) ? 0 : anz) ;
+    GB_SLICE_MATRIX_WORK2 (A, 8, work, anz) ;
 
     //--------------------------------------------------------------------------
     // allocate workspace for each task
     //--------------------------------------------------------------------------
 
-    GB_WERK_PUSH (Work, 3*A_ntasks, int64_t) ;
+    GB_WERK_PUSH (Work, 3*A_ntasks, uint64_t) ;
     if (Work == NULL)
     { 
         // out of memory
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    Wfirst    = Work ;
-    Wlast     = Work + A_ntasks ;
-    Cp_kfirst = Work + A_ntasks * 2 ;
+    uint64_t *restrict Wfirst    = Work ;
+    uint64_t *restrict Wlast     = Work + A_ntasks ;
+    uint64_t *restrict Cp_kfirst = Work + A_ntasks * 2 ;
 
     //--------------------------------------------------------------------------
     // allocate workspace for phase1
@@ -144,7 +171,7 @@ GrB_Info GB_select_sparse
     if (op_is_positional)
     {
         // allocate Zp
-        Zp = GB_MALLOC_WORK (cplen, int64_t, &Zp_size) ;
+        Zp = GB_MALLOC_MEMORY (C->plen + 1, cpsize, &Zp_size) ;
         if (Zp == NULL)
         { 
             // out of memory
@@ -166,8 +193,8 @@ GrB_Info GB_select_sparse
         //----------------------------------------------------------------------
 
         // no JIT worker needed for these operators
-        info = GB_select_positional_phase1 (Zp, Cp, Wfirst, Wlast, A, ithunk,
-            op, A_ek_slicing, A_ntasks, A_nthreads) ;
+        GB_OK (GB_select_positional_phase1 (C, Zp, Wfirst, Wlast, A, ithunk,
+            op, A_ek_slicing, A_ntasks, A_nthreads)) ;
 
     }
     else
@@ -194,7 +221,7 @@ GrB_Info GB_select_sparse
             #define GB_sel1(opname,aname) GB (_sel_phase1_ ## opname ## aname)
             #define GB_SEL_WORKER(opname,aname)                             \
             {                                                               \
-                info = GB_sel1 (opname, aname) (Cp, Wfirst, Wlast, A,       \
+                info = GB_sel1 (opname, aname) (C, Wfirst, Wlast, A,        \
                     ythunk, A_ek_slicing, A_ntasks, A_nthreads) ;           \
             }                                                               \
             break ;
@@ -211,8 +238,8 @@ GrB_Info GB_select_sparse
 
         if (info == GrB_NO_VALUE)
         { 
-            info = GB_select_phase1_jit (Cp, Wfirst, Wlast, C_iso, in_place_A,
-                A, ythunk, op, flipij, A_ek_slicing, A_ntasks, A_nthreads) ;
+            info = GB_select_phase1_jit (C, Wfirst, Wlast, A, ythunk, op,
+                flipij, A_ek_slicing, A_ntasks, A_nthreads) ;
         }
 
         //----------------------------------------------------------------------
@@ -223,45 +250,48 @@ GrB_Info GB_select_sparse
         { 
             // generic entry selector, phase1
             GBURBLE ("(generic select) ") ;
-            info = GB_select_generic_phase1 (Cp, Wfirst, Wlast,
-                A, flipij, ythunk, op, A_ek_slicing, A_ntasks, A_nthreads) ;
+            info = GB_select_generic_phase1 (C, Wfirst, Wlast, A, flipij,
+                ythunk, op, A_ek_slicing, A_ntasks, A_nthreads) ;
         }
     }
 
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory, or other error
-        GB_FREE_ALL ;
-        return (info) ;
-    }
+    GB_OK (info) ;  // check for out-of-memory or other failures in phase1
 
     //==========================================================================
     // phase1b: cumulative sum and allocate C
     //==========================================================================
 
     //--------------------------------------------------------------------------
-    // cumulative sum of Cp and compute Cp_kfirst
+    // finalize Cp, cumulative sum of Cp, and compute Cp_kfirst
     //--------------------------------------------------------------------------
 
-    int64_t C_nvec_nonempty ;
-    GB_ek_slice_merge2 (&C_nvec_nonempty, Cp_kfirst, Cp, anvec,
-        Wfirst, Wlast, A_ek_slicing, A_ntasks, A_nthreads, Werk) ;
+    GB_Cp_DECLARE (Cp, ) ; GB_Cp_PTR (Cp, C) ;
 
-    //--------------------------------------------------------------------------
-    // allocate new space for the compacted Ci and Cx
-    //--------------------------------------------------------------------------
-
-    cnz = Cp [anvec] ;
-    cnz = GB_IMAX (cnz, 1) ;
-    Ci = GB_MALLOC (cnz, int64_t, &Ci_size) ;
-    // use calloc since C is sparse, not bitmap
-    Cx = (GB_void *) GB_XALLOC (false, C_iso, cnz, asize, &Cx_size) ; // x:OK
-    if (Ci == NULL || Cx == NULL)
+    if (!op_is_positional)
     { 
-        // out of memory
-        GB_FREE_ALL ;
-        return (GrB_OUT_OF_MEMORY) ;
+        // GB_select_positional_phase1 finalizes Cp in the
+        // select/factory/GB_select_positional_phase1_template.c.  This phase
+        // is only needed for entry-style selectors, done by
+        // select/template/GB_select_entry_phase1_template.c:
+        GB_ek_slice_merge1 (Cp, Cp_is_32, Wfirst, Wlast, A_ek_slicing,
+            A_ntasks) ;
     }
+
+    int64_t nvec_nonempty ;
+    GB_cumsum (Cp, Cp_is_32, anvec, &nvec_nonempty, A_nthreads, Werk) ;
+    GB_nvec_nonempty_set (C, nvec_nonempty) ;
+    GB_ek_slice_merge2 (Cp_kfirst, Cp, Cp_is_32, Wfirst, Wlast, A_ek_slicing,
+        A_ntasks) ;
+
+    //--------------------------------------------------------------------------
+    // allocate new space for the compacted C->i and C->x
+    //--------------------------------------------------------------------------
+
+    uint64_t cnz = GB_IGET (Cp, anvec) ;
+    GB_OK (GB_bix_alloc (C, cnz, csparsity, false, true, C_iso)) ;
+    C->jumbled = A->jumbled ;
+    C->nvals = cnz ;
+    ASSERT (C->iso == C_iso) ;
 
     //--------------------------------------------------------------------------
     // set the iso value of C
@@ -270,7 +300,7 @@ GrB_Info GB_select_sparse
     if (C_iso)
     { 
         // The pattern of C is computed by the worker below.
-        GB_select_iso (Cx, opcode, athunk, Ax, asize) ;
+        GB_select_iso (C->x, opcode, athunk, A->x, A->type->size) ;
     }
 
     //==========================================================================
@@ -286,8 +316,8 @@ GrB_Info GB_select_sparse
         //----------------------------------------------------------------------
 
         // no JIT worker needed for these operators
-        info = GB_select_positional_phase2 (Ci, Cx, Zp, Cp, Cp_kfirst, A,
-            flipij, ithunk, op, A_ek_slicing, A_ntasks, A_nthreads) ;
+        info = GB_select_positional_phase2 (C, Zp, Cp_kfirst, A, flipij,
+            ithunk, op, A_ek_slicing, A_ntasks, A_nthreads) ;
 
     }
     else
@@ -316,8 +346,8 @@ GrB_Info GB_select_sparse
             #define GB_sel2(opname,aname) GB (_sel_phase2_ ## opname ## aname)
             #define GB_SEL_WORKER(opname,aname)                             \
             {                                                               \
-                info = GB_sel2 (opname, aname) (Ci, Cx, Cp, Cp_kfirst, A,   \
-                    ythunk, A_ek_slicing, A_ntasks, A_nthreads) ;           \
+                info = GB_sel2 (opname, aname) (C, Cp_kfirst, A, ythunk,    \
+                    A_ek_slicing, A_ntasks, A_nthreads) ;                   \
             }                                                               \
             break ;
 
@@ -332,9 +362,8 @@ GrB_Info GB_select_sparse
 
         if (info == GrB_NO_VALUE)
         { 
-            info = GB_select_phase2_jit (Ci, C_iso ? NULL : Cx, Cp, C_iso,
-                in_place_A, Cp_kfirst, A, flipij, ythunk, op, A_ek_slicing,
-                A_ntasks, A_nthreads) ;
+            info = GB_select_phase2_jit (C, Cp_kfirst, A, flipij, ythunk, op,
+                A_ek_slicing, A_ntasks, A_nthreads) ;
         }
 
         //----------------------------------------------------------------------
@@ -344,141 +373,21 @@ GrB_Info GB_select_sparse
         if (info == GrB_NO_VALUE)
         { 
             // generic entry selector, phase2
-            info = GB_select_generic_phase2 (Ci, C_iso ? NULL : Cx, Cp,
-                Cp_kfirst, A, flipij, ythunk, op, A_ek_slicing, A_ntasks,
-                A_nthreads) ;
+            info = GB_select_generic_phase2 (C, Cp_kfirst, A, flipij, ythunk,
+                op, A_ek_slicing, A_ntasks, A_nthreads) ;
         }
     }
 
-    if (info != GrB_SUCCESS)
-    {
-        // sparse select phase 2 cannot fail but this is here in case it does
-        // in the future; this block of code thus cannot be tested.
-        GB_FREE_ALL ;
-        return (info) ;
-    }
+    GB_OK (info) ;  // phase2 cannot fail, but check just in case
 
     //==========================================================================
-    // finalize the result
+    // finalize the result, free workspace, and return result
     //==========================================================================
-
-    if (in_place_A)
-    {
-
-        //----------------------------------------------------------------------
-        // transplant Cp, Ci, Cx back into A
-        //----------------------------------------------------------------------
-
-        // TODO: this is not parallel: use GB_hyper_prune
-        if (A->h != NULL && C_nvec_nonempty < anvec)
-        {
-            // prune empty vectors from Ah and Ap
-            int64_t cnvec = 0 ;
-            for (int64_t k = 0 ; k < anvec ; k++)
-            {
-                if (Cp [k] < Cp [k+1])
-                { 
-                    Ah [cnvec] = Ah [k] ;
-                    Ap [cnvec] = Cp [k] ;
-                    cnvec++ ;
-                }
-            }
-            Ap [cnvec] = Cp [anvec] ;
-            A->nvec = cnvec ;
-            ASSERT (A->nvec == C_nvec_nonempty) ;
-            GB_FREE (&Cp, Cp_size) ;
-            // the A->Y hyper_hash is now invalid
-            GB_hyper_hash_free (A) ;
-        }
-        else
-        { 
-            // free the old A->p and transplant in Cp as the new A->p
-            GB_FREE (&Ap, Ap_size) ;
-            A->p = Cp ; Cp = NULL ; A->p_size = Cp_size ;
-            A->plen = cplen ;
-        }
-
-        ASSERT (Cp == NULL) ;
-
-        GB_FREE (&Ai, Ai_size) ;
-        GB_FREE (&Ax, Ax_size) ;
-        A->i = Ci ; Ci = NULL ; A->i_size = Ci_size ;
-        A->x = Cx ; Cx = NULL ; A->x_size = Cx_size ;
-        A->nvec_nonempty = C_nvec_nonempty ;
-        A->jumbled = A_jumbled ;        // A remains jumbled (in-place select)
-        A->iso = C_iso ;                // OK: burble already done above
-        A->nvals = A->p [A->nvec] ;
-
-        // the NONZOMBIE opcode may have removed all zombies, but A->nzombie
-        // is still nonzero.  It is set to zero in GB_wait.
-        ASSERT_MATRIX_OK (A, "A output for GB_selector", GB_ZOMBIE (GB0)) ;
-
-    }
-    else
-    {
-
-        //----------------------------------------------------------------------
-        // create C and transplant Cp, Ch, Ci, Cx into C
-        //----------------------------------------------------------------------
-
-        int csparsity = (A_is_hyper) ? GxB_HYPERSPARSE : GxB_SPARSE ;
-        ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
-        info = GB_new (&C, // sparse or hyper (from A), existing header
-            A->type, avlen, avdim, GB_Ap_null, true,
-            csparsity, A->hyper_switch, anvec) ;
-        ASSERT (info == GrB_SUCCESS) ;
-
-        if (A->h != NULL)
-        {
-
-            //------------------------------------------------------------------
-            // A and C are hypersparse: copy non-empty vectors from Ah to Ch
-            //------------------------------------------------------------------
-
-            Ch = GB_MALLOC (anvec, int64_t, &Ch_size) ;
-            if (Ch == NULL)
-            { 
-                // out of memory
-                GB_FREE_ALL ;
-                return (GrB_OUT_OF_MEMORY) ;
-            }
-
-            // TODO: do in parallel: use GB_hyper_prune
-            int64_t cnvec = 0 ;
-            for (int64_t k = 0 ; k < anvec ; k++)
-            {
-                if (Cp [k] < Cp [k+1])
-                { 
-                    Ch [cnvec] = Ah [k] ;
-                    Cp [cnvec] = Cp [k] ;
-                    cnvec++ ;
-                }
-            }
-            Cp [cnvec] = Cp [anvec] ;
-            C->nvec = cnvec ;
-            ASSERT (C->nvec == C_nvec_nonempty) ;
-        }
-
-        // note that C->Y is not yet constructed
-        C->p = Cp ; Cp = NULL ; C->p_size = Cp_size ;
-        C->h = Ch ; Ch = NULL ; C->h_size = Ch_size ;
-        C->i = Ci ; Ci = NULL ; C->i_size = Ci_size ;
-        C->x = Cx ; Cx = NULL ; C->x_size = Cx_size ;
-        C->plen = cplen ;
-        C->magic = GB_MAGIC ;
-        C->nvec_nonempty = C_nvec_nonempty ;
-        C->jumbled = A_jumbled ;    // C is jumbled if A is jumbled
-        C->iso = C_iso ;            // OK: burble already done above
-        C->nvals = C->p [C->nvec] ;
-
-        ASSERT_MATRIX_OK (C, "C output for GB_selector", GB0) ;
-    }
-
-    //--------------------------------------------------------------------------
-    // free workspace and return result
-    //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
+    ASSERT_MATRIX_OK (C, "C before hyper_prune for GB_selector", GB0) ;
+    GB_OK (GB_hyper_prune (C, Werk)) ;
+    ASSERT_MATRIX_OK (C, "C output for GB_selector", GB0) ;
     return (GrB_SUCCESS) ;
 }
 

@@ -1,4 +1,4 @@
-function C = build (varargin)
+function C = build (I,J,X,varargin)
 %GRB.BUILD construct a sparse matrix from a list of entries.
 %
 %   C = GrB.build (I, J, X, m, n, dup, type, desc)
@@ -68,10 +68,22 @@ function C = build (varargin)
 %
 % See also sparse, GrB/sparse, GrB/find, GrB.extracttuples.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-[C, k] = gbbuild (varargin {:}) ;
+if (isobject (I))
+    I = I.opaque ;
+end
+
+if (isobject (J))
+    J = J.opaque ;
+end
+
+if (isobject (X))
+    X = X.opaque ;
+end
+
+[C, k] = gbbuild (I, J, X, varargin {:}) ;
 if (k == 0)
     C = GrB (C) ;
 end

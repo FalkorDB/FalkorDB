@@ -2,7 +2,7 @@
 // GB_positional.h: positional functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,7 +29,7 @@ GrB_IndexUnaryOp GB_positional_idxunop_ijflip   // return flipped operator
 int64_t GB_positional_offset        // return the positional thunk
 (
     GB_Opcode opcode,               // opcode of positional operator
-    GrB_Scalar Thunk,               // thunk for idxunops, or NULL
+    GrB_Scalar scalar,              // scalar for idxunops, or NULL
     bool *depends_on_j              // if true, the op depends on j
 ) ;
 

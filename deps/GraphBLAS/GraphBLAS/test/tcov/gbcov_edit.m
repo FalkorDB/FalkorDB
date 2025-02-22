@@ -13,7 +13,7 @@ function count = gbcov_edit (infiles, count, outdir)
 %
 %   { gbcov [count]++ ;
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % infiles can be a struct from dir, or a single string with one filename

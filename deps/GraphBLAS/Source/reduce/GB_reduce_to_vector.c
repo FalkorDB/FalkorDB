@@ -2,7 +2,7 @@
 // GB_reduce_to_vector: reduce a matrix to a vector using a monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,18 +38,13 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     // check inputs
     //--------------------------------------------------------------------------
 
+    GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
+    GB_RETURN_IF_FAULTY (desc) ;
+
     struct GB_Matrix_opaque B_header ;
     GrB_Matrix B = NULL ;
     struct GB_Semiring_opaque semiring_header ;
     GrB_Semiring semiring = NULL ;
-
-    // C may be aliased with M and/or A
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
-    GB_RETURN_IF_FAULTY (desc) ;
 
     ASSERT_MATRIX_OK (C, "C input for reduce-to-vector", GB0) ;
     ASSERT_MATRIX_OK_OR_NULL (M_in, "M_in for reduce-to-vector", GB0) ;
@@ -61,6 +56,7 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     ASSERT (GB_IMPLIES (M_in != NULL, GB_VECTOR_OK (M_in))) ;
 
     // get the descriptor
+    GrB_Info info ;
     GB_GET_DESCRIPTOR (info, desc, C_replace, Mask_comp, Mask_struct,
         A_transpose, xx1, xx2, do_sort) ;
 
@@ -115,12 +111,13 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
     // though it is m-by-1.  It contains no dynamically-allocated content and
     // does not need to be freed.
     int64_t m = A_transpose ? GB_NROWS (A) : GB_NCOLS (A) ;
-    GB_CLEAR_STATIC_HEADER (B, &B_header) ;
+    GB_CLEAR_MATRIX_HEADER (B, &B_header) ;
     info = GB_new (&B, // full, existing header
-        ztype, m, 1, GB_Ap_null, true, GxB_FULL, GB_NEVER_HYPER, 1) ;
+        ztype, m, 1, GB_ph_null, true, GxB_FULL, GB_NEVER_HYPER, 1,
+        /* OK: */ false, false, false) ;
     ASSERT (info == GrB_SUCCESS) ;
     B->magic = GB_MAGIC ;
-    B->iso = true ;             // OK: B is a temporary matrix; no burble
+    B->iso = true ;
     size_t zsize = ztype->size ;
     GB_void bscalar [GB_VLA(zsize)] ;
     memset (bscalar, 0, zsize) ;
@@ -166,12 +163,12 @@ GrB_Info GB_reduce_to_vector        // C<M> = accum (C,reduce(A))
             // user-defined type and this "reduce_1st" will be a unique name
             // for the constructed semiring (if "reduce" is the name of the
             // monoid).  In addition, it is not possible for the user to create
-            // a jitfyable operator with the name "1st", because of the leading
-            // "1" character in its name.  So "reduce_1st" must be unique.
+            // a jitifyable operator with the name "1st", because of the
+            // leading "1" character in its name.  So "reduce_1st" must be
+            // unique.
             op = &op_header ;
             op->header_size = 0 ;
-            info = GB_binop_new (op,
-                NULL,   // op->binop_function is NULL for FIRST_UDT
+            info = GB_binop_new (op, NULL, // op->binop_func. NULL for FIRST_UDT
                 ztype, ztype, ztype,    // ztype is user-defined
                 "1st",                  // a simple name for FIRST_UDT
                 NULL,   // no op->defn for the FIRST_UDT operator

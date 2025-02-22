@@ -2,7 +2,7 @@
 // GB_encodify_select: encode a select problem, including types and op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,8 +18,7 @@ uint64_t GB_encodify_select     // encode an select problem
     char **suffix,              // suffix for user-defined kernel
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
-    const bool C_iso,
-    const bool in_place_A,
+    const GrB_Matrix C,
     const GrB_IndexUnaryOp op,
     const bool flipij,
     const GrB_Matrix A
@@ -43,7 +42,7 @@ uint64_t GB_encodify_select     // encode an select problem
     //--------------------------------------------------------------------------
 
     encoding->kcode = kcode ;
-    GB_enumify_select (&encoding->code, C_iso, in_place_A, op, flipij, A) ;
+    GB_enumify_select (&encoding->code, C, op, flipij, A) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

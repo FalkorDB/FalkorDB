@@ -2,7 +2,7 @@
 // GB_subassign_25: C(:,:)<M,s> = A; C empty, A full, M structural
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -101,7 +101,6 @@ GrB_Info GB_subassign_25
 
     bool C_is_csc = C->is_csc ;
     GB_phybix_free (C) ;
-    // set C->iso = C_iso   OK
     GB_OK (GB_dup_worker (&C, C_iso, M, false, C->type)) ;
     C->is_csc = C_is_csc ;
 
@@ -166,8 +165,8 @@ GrB_Info GB_subassign_25
         { 
             info = GB_subassign_jit (C,
                 /* C_replace: */ false,
-                /* I, ni, nI, Ikind, Icolon: */ NULL, 0, 0, GB_ALL, NULL,
-                /* J, nj, nJ, Jkind, Jcolon: */ NULL, 0, 0, GB_ALL, NULL,
+                /* I, ni, nI, Ikind, Icolon: */ NULL, false, 0, 0, GB_ALL, NULL,
+                /* J, nj, nJ, Jkind, Jcolon: */ NULL, false, 0, 0, GB_ALL, NULL,
                 M,
                 /* Mask_comp: */ false,
                 /* Mask_struct: */ true,

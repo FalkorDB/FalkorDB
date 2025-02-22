@@ -1,0 +1,127 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GxB\_eWiseUnion:} element-wise operations, set union} %========
+%===============================================================================
+\label{eWiseUnion}
+
+\verb'GxB_eWiseUnion' computes a result with the same pattern
+\verb'GrB_eWiseAdd', namely, a set union of its two inputs.  It differs in how
+the binary operator is applied.
+
+Let $\oplus$ denote the binary operator to be used.  The operator is applied to
+every entry in $\bf A$ and $\bf B$.  A pair of scalars, $\alpha$ and $\beta$
+(\verb'alpha' and \verb'beta' in the API, respectively) define the
+inputs to the operator when entries are present in one matrix but not the
+other.
+
+    \vspace{-0.2in}
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \> for all entries $(i,j)$ in ${\bf A \cap B}$ \\
+    \> \> $t_{ij} = a_{ij} \oplus b_{ij}$ \\
+    \> for all entries $(i,j)$ in ${\bf A \setminus B}$ \\
+    \> \> $t_{ij} = a_{ij} \oplus \beta $ \\
+    \> for all entries $(i,j)$ in ${\bf B \setminus A}$ \\
+    \> \> $t_{ij} = \alpha \oplus b_{ij}$
+    \end{tabbing}
+    }
+
+\verb'GxB_eWiseUnion' is useful in contexts where \verb'GrB_eWiseAdd' cannot be
+used because of the typecasting rules of GraphBLAS.  In particular, suppose
+\verb'A' and \verb'B' are matrices with a user-defined type, and suppose
+\verb'<' is a user-defined operator that compares two entries of this type and
+returns a Boolean value.  Then \verb'C=A<B' can be computed with
+\verb'GxB_eWiseUnion' but not with \verb'GrB_eWiseAdd'.  In the latter, if
+\verb'A(i,j)' is present but \verb'B(i,j)' is not, then \verb'A(i,j)' must
+typecasted to the type of \verb'C' (\verb'GrB_BOOL' in this case), and the
+assigment \verb'C(i,j) = (bool) A(i,j)' would be performed.  This is not
+possible because user-defined types cannot be typecasted to any other type.
+
+Another advantage of \verb'GxB_eWiseUnion' is its performance.  For example,
+the MATLAB/Octave expression \verb'C=A-B' computes \verb'C(i,j)=-B(i,j)' when
+\verb'A(i,j)' is not present.  This cannot be done with a single call
+\verb'GrB_eWiseAdd', but it can be done with a single call to
+\verb'GxB_eWiseUnion', with the \verb'GrB_MINUS_FP64' operator, and with both
+\verb'alpha' and \verb'beta' scalars equal to zero.  It is possible to
+compute this result with a temporary matrix, \verb'E=-B', computed with
+\verb'GrB_apply' and \verb'GrB_AINV_FP64', followed by a call to
+\verb'GrB_eWiseAdd' to compute \verb'C=A+E', but this is slower than a single
+call to \verb'GxB_eWiseUnion', and uses more memory.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_eWiseUnion:} element-wise vector addition}
+%-------------------------------------------------------------------------------
+\label{eWiseUnion_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_eWiseUnion             // w<mask> = accum (w, u+v)
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_BinaryOp add,         // defines '+' for t=u+v
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Scalar alpha,
+    const GrB_Vector v,             // second input: vector v
+    const GrB_Scalar beta,
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+Identical to \verb'GrB_Vector_eWiseAdd' except that two scalars are used
+to define how to compute the result when entries are present in one of
+the two input vectors (\verb'u' and \verb'v'), but not the other.
+Each of the two input scalars, \verb'alpha' and \verb'beta'
+must contain an entry.
+When computing the result \verb't=u+v',
+if \verb'u(i)' is present but \verb'v(i)' is not, then \verb't(i)=u(i)+beta'.
+Likewise,
+if \verb'v(i)' is present but \verb'u(i)' is not, then \verb't(i)=alpha+v(i)',
+where \verb'+' denotes the binary operator, \verb'add'.
+%
+The \verb'add' operator may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_eWiseUnion:} element-wise matrix addition}
+%-------------------------------------------------------------------------------
+\label{eWiseUnion_matrix}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_eWiseUnion             // C<M> = accum (C, A+B)
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_BinaryOp add,         // defines '+' for T=A+B
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Scalar alpha,
+    const GrB_Matrix B,             // second input: matrix B
+    const GrB_Scalar beta,
+    const GrB_Descriptor desc       // descriptor for C, M, A, and B
+) ;
+\end{verbatim} } \end{mdframed}
+
+Identical to \verb'GrB_Matrix_eWiseAdd' except that two scalars are used
+to define how to compute the result when entries are present in one of
+the two input matrices (\verb'A' and \verb'B'), but not the other.
+Each of the two input scalars, \verb'alpha' and \verb'beta'
+must contain an entry.
+When computing the result \verb'T=A+B',
+if \verb'A(i,j)' is present but \verb'B(i,j))' is not, then \verb'T(i,j)=A(i,j)+beta'.
+Likewise,
+if \verb'B(i,j)' is present but \verb'A(i,j)' is not, then \verb'T(i,j)=alpha+B(i,j)',
+where \verb'+' denotes the binary operator, \verb'add'.
+%
+The \verb'add' operator may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+

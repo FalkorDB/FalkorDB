@@ -2,7 +2,7 @@
 // GB_emult_bitmap: C = A.*B, C<M>=A.*B, or C<!M>=A.*B when C is bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -59,8 +59,6 @@
 #include "ewise/GB_ewise.h"
 #include "emult/GB_emult.h"
 #include "binaryop/GB_binop.h"
-#include "include/GB_unused.h"
-#include "slice/GB_ek_slice.h"
 #include "jitifyer/GB_stringify.h"
 #ifndef GBCOMPACT
 #include "GB_control.h"
@@ -101,7 +99,7 @@ GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK (A, "A for bitmap emult ", GB0) ;
     ASSERT_MATRIX_OK (B, "B for bitmap emult ", GB0) ;
@@ -173,10 +171,10 @@ GrB_Info GB_emult_bitmap    // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     //--------------------------------------------------------------------------
 
     // allocate the result C (but do not allocate C->p or C->h)
-    // set C->iso = C_iso   OK
     GB_OK (GB_new_bix (&C, // bitmap, existing header
-        ctype, A->vlen, A->vdim, GB_Ap_null, C_is_csc,
-        GxB_BITMAP, true, A->hyper_switch, -1, cnz, true, C_iso)) ;
+        ctype, A->vlen, A->vdim, GB_ph_null, C_is_csc,
+        GxB_BITMAP, true, A->hyper_switch, -1, cnz, true, C_iso,
+        /* OK: */ false, false, false)) ;
 
     C->magic = GB_MAGIC ;
     GB_Type_code ccode = ctype->code ;

@@ -2,7 +2,7 @@
 // GB_matvec_enum_get: get an enum field from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,6 +33,16 @@ GrB_Info GB_matvec_enum_get (GrB_Matrix A, int32_t *value, int field)
             (*value) = GB_sparsity (A) ;
             break ;
 
+        case GxB_IS_READONLY : 
+
+            (*value) = GB_is_shallow (A) ;
+            break ;
+
+        case GxB_ISO : 
+
+            (*value) = A->iso ;
+            break ;
+
         case GxB_HYPER_HASH : 
 
             (*value) = !(A->no_hyper_hash) ;
@@ -41,6 +51,41 @@ GrB_Info GB_matvec_enum_get (GrB_Matrix A, int32_t *value, int field)
         case GxB_FORMAT : 
 
             (*value) = (A->is_csc) ? GxB_BY_COL : GxB_BY_ROW ;
+            break ;
+
+        case GxB_OFFSET_INTEGER_HINT : 
+
+            (*value) = A->p_control ;
+            break ;
+
+        case GxB_OFFSET_INTEGER_BITS : 
+
+            (*value) = (A->p_is_32) ? 32 : 64 ;
+            break ;
+
+        case GxB_COLINDEX_INTEGER_HINT : 
+
+            (*value) = (A->is_csc) ? A->j_control : A->i_control ;
+            break ;
+
+        case GxB_COLINDEX_INTEGER_BITS : 
+
+            (*value) = ((A->is_csc) ? A->j_is_32 : A->i_is_32) ? 32 : 64 ;
+            break ;
+
+        case GxB_ROWINDEX_INTEGER_HINT : 
+
+            (*value) = (A->is_csc) ? A->i_control : A->j_control ;
+            break ;
+
+        case GxB_ROWINDEX_INTEGER_BITS : 
+
+            (*value) = ((A->is_csc) ? A->i_is_32 : A->j_is_32) ? 32 : 64 ;
+            break ;
+
+        case GxB_WILL_WAIT : 
+
+            (*value) = GB_ANY_PENDING_WORK (A) || GB_hyper_hash_need (A) ;
             break ;
 
         default : 

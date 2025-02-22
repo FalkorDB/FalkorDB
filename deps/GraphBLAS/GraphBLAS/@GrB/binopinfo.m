@@ -59,9 +59,9 @@ function binopinfo (op, optype)
 % Most of the logical operators have aliases: ('lor', 'or', '|') are the
 % same, as are ('lxnor', 'xnor', 'eq', '==') for logical types.
 %
-% Positional operators return int32 or int64, and depend only on the position
-% of the entry in the matrix.  They do not depend on the values of their
-% inputs, but on their position in the matrix instead:
+% Index binary operators return int32 or int64, and depend only on the
+% indices of the entry in the matrix, not their values.  In the function
+% names, "first" refers to the first input A, and "second" to B:
 %
 %   1-based postional ops:          in a semiring:     in ewise operators:
 %   operator name(s)                f(A(i,k)*B(k,j))   f(A(i,j),B(i,j))
@@ -79,6 +79,10 @@ function binopinfo (op, optype)
 %   secondi0 2ndi0                  k-1                i-1
 %   secondj0 2ndj0                  j-1                j-1
 %
+% For C=GrB.kron(op,A,B), the 1-based operators return ia, ja, ib, or jb
+% where C(i,j) = op(A(ia,ja),B(ib,jb)), and the 0-based ops return the
+% same result minus one.  For example, firsti(A(ia,ja),B(ib,jb)) = ia.
+%
 % Comparators (*lt, *gt, *le, *ge) and min/max are not available for
 % complex types.
 %
@@ -86,32 +90,40 @@ function binopinfo (op, optype)
 % real types.  z = lor.double (x,y) tests the condition (x~=0) || (y~=0),
 % and returns the double value 1.0 if true, or 0.0 if false.
 %
-% The following operators are avaiable for single and double (real); their
+% The following operators are available for single and double (real); their
 % definitions are identical to the C11 versions of these functions:
 % atan2, hypot, fmod, remainder, copysign, ldxep (also called 'pow2').
 % All produce the same type as the input, on output.
 %
-% z = cmplx(x,y) can be computed for x and y as single and double; z is
-% single complex or double complex, respectively.
+%   atan2(x,y)     arctan(x/y); arc tangent; see 'help atan2'
+%   hypot(x,y)     sqrt(x^2+y^0); see 'help hypot'
+%   fmod(x,y)      floating-point remainder of x/y
+%   remainder(x,y) remainder of x/y, rounded to nearest integer
+%   copysign(x,y)  abs(x)*sign(y)
+%   ldexp(x,y)     x*2^y, same as pow2(x,y) in MATLAB; see 'help pow2'
+%
+% z = cmplx(x,y) = x+sqrt(-1)*y can be computed for x and y as single and
+% double; z is single complex or double complex, respectively.
 %
 % The bitwise ops bitor, bitand, bitxor, bitxnor, bitget, bitset, bitclr,
 % and bitshift are available for any signed or unsigned integer type.
+% These functions match the MATLAB functions of the same name.
 %
-% The following index_unary operators can be applied to a matrix A with
-% GrB.apply2 only, where the 2nd input is the thunk scalar.  When applied
-% to an entry A(i,j):
+% The following index operators can be applied to a matrix A with
+% GrB.apply2 only, where the 2nd input is a scalar y.  When applied
+% to an entry A(i,j) via GrB.apply2 (op, A, y):
 %
-%   tril            j <= (i + thunk)
-%   triu            j >= (i + thunk)
-%   diag            j == (i + thunk)
-%   offdiag         j != (i + thunk)
-%   diagindex       j - (i + thunk)
-%   rowindex        i + thunk
-%   rowle           i <= thunk
-%   rowgt           i > thunk
-%   colindex        j + thunk
-%   colle           j <= thunk
-%   colgt           j > thunk
+%   tril            j <= (i + y)
+%   triu            j >= (i + y)
+%   diag            j == (i + y)
+%   offdiag         j != (i + y)
+%   diagindex       j - (i + y)
+%   rowindex        i + y
+%   rowle           i <= y
+%   rowgt           i > y
+%   colindex        j + y
+%   colle           j <= y
+%   colgt           j > y
 %
 % Typecasting:  If the optype is omitted from the string (for example,
 % GrB.eadd (A, '+', B) or simply C = A+B), then the optype is inferred
@@ -129,10 +141,10 @@ function binopinfo (op, optype)
 %   % invalid binary operator (an error; this is a unary op):
 %   GrB.binopinfo ('abs.double') ;
 %
-% See also GrB.descriptorinfo, GrB.monoidinfo, GrB.selectopinfo,
-% GrB.semiringinfo, GrB.unopinfo, GrB.optype.
+% See also GrB.binops, GrB.descriptorinfo, GrB.monoidinfo,
+% GrB.selectopinfo, GrB.semiringinfo, GrB.unopinfo, GrB.optype.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargin == 0)

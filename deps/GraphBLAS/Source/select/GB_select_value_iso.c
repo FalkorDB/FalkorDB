@@ -2,7 +2,7 @@
 // GB_select_value_iso:  select when A is iso and the op is VALUE*
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,6 +15,8 @@
 // empty matrix.  The select factory is not needed, except to check the iso
 // value via GB_select_bitmap.
 
+// This method takes O(1) time and space.
+
 #define GB_FREE_ALL                         \
 {                                           \
     GB_phybix_free (C) ;                    \
@@ -22,7 +24,6 @@
 
 #include "select/GB_select.h"
 #include "scalar/GB_Scalar_wrap.h"
-#include "transpose/GB_transpose.h"
 
 GrB_Info GB_select_value_iso
 (
@@ -43,7 +44,7 @@ GrB_Info GB_select_value_iso
     ASSERT (A->iso) ;
     ASSERT (op->opcode >= GB_VALUENE_idxunop_code
          && op->opcode <= GB_VALUELE_idxunop_code)
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     //--------------------------------------------------------------------------
     // determine if C is empty or a copy of A
@@ -77,13 +78,19 @@ GrB_Info GB_select_value_iso
     // construct C: either an empty matrix, or a copy of A
     //--------------------------------------------------------------------------
 
-    // check if C has 0 or 1 entry
     if (C_empty)
     { 
-        // C is an empty matrix
+        // C is an empty: create a new empty matrix (not a shallow copy of A)
+
+        // determine the p_is_32, j_is_32, and i_is_32 settings for C
+        bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+        GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+            GxB_AUTO_SPARSITY, 0, A->vlen, A->vdim, Werk) ;
+
         return (GB_new (&C, // existing header
-            A->type, A->vlen, A->vdim, GB_Ap_calloc, true,
-            GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 1)) ;
+            A->type, A->vlen, A->vdim, GB_ph_calloc, true,
+            GxB_AUTO_SPARSITY, GB_Global_hyper_switch_get ( ), 1,
+            Cp_is_32, Cj_is_32, Ci_is_32)) ;
     }
     else
     { 

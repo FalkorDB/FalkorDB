@@ -2,7 +2,7 @@
 // gbbuild: build a GraphBLAS matrix or a built-in sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,6 +43,42 @@
 
 #include "gb_interface.h"
 
+//------------------------------------------------------------------------------
+// gb_get_scalar: x = find (V, 'first')
+//------------------------------------------------------------------------------
+
+static GrB_Scalar gb_get_scalar (GrB_Vector V, GrB_Type type)
+{
+    // get the first entry from a vector V
+    GrB_Scalar x ;
+    GrB_Vector T ;
+    OK (GrB_Scalar_new (&x, type)) ;
+    OK (GrB_Vector_new (&T, type, 0)) ;
+    OK (GxB_Vector_extractTuples_Vector (NULL, T, V, NULL)) ;
+    OK (GrB_Vector_extractElement_Scalar (x, T, 0)) ;
+    OK (GrB_Vector_free (&T)) ;
+    return (x) ;
+}
+
+//------------------------------------------------------------------------------
+// gb_expand: V (1:nvals) = V (1)
+//------------------------------------------------------------------------------
+
+static void gb_expand (GrB_Vector *V, GrB_Type type, uint64_t nvals)
+{
+    // get the single entry from the input vector V, and then free it
+    GrB_Scalar x = gb_get_scalar (*V, type) ;
+    OK (GrB_Vector_free (V)) ;
+    // expand the scalar back into V, expanding V to length nvals
+    OK (GrB_Vector_new (V, type, nvals)) ;
+    OK (GxB_Vector_assign_Scalar_Vector (*V, NULL, NULL, x, NULL, NULL)) ;
+    OK (GrB_Scalar_free (&x)) ;
+}
+
+//------------------------------------------------------------------------------
+// gbbuild mexFunction
+//------------------------------------------------------------------------------
+
 #define USAGE "usage: A = GrB.build (I, J, X, m, n, dup, type, desc)"
 
 void mexFunction
@@ -66,7 +102,7 @@ void mexFunction
 
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int sparsity ;
     GrB_Descriptor desc = NULL ;
     desc = gb_mxarray_to_descriptor (pargin [nargin-1], &kind, &fmt,
@@ -77,88 +113,78 @@ void mexFunction
 
     OK (GrB_Descriptor_free (&desc)) ;
 
-    //--------------------------------------------------------------------------
-    // get I and J
-    //--------------------------------------------------------------------------
-
-    GrB_Index ni, nj ;
-    bool I_allocated, J_allocated ;
-    int64_t Imax = -1, Jmax = -1 ;
-
-    GrB_Index *I = (GrB_Index *) gb_mxarray_to_list (pargin [0], base,
-        &I_allocated, (int64_t *) &ni, &Imax) ;
-
-    GrB_Index *J = (GrB_Index *) gb_mxarray_to_list (pargin [1], base,
-        &J_allocated, (int64_t *) &nj, &Jmax) ;
+    int base_offset = (base == BASE_0_INT) ? 0 : 1 ;
 
     //--------------------------------------------------------------------------
-    // get X
+    // get I, J, and X and their properties
     //--------------------------------------------------------------------------
 
-    const mxArray *Xm = pargin [2] ;
-    GrB_Type xtype = gb_mxarray_type (Xm) ;
-    GrB_Index nx = mxGetNumberOfElements (Xm) ;
+    GrB_Vector I = gb_mxarray_to_list (pargin [0], base_offset) ;
+    GrB_Vector J = gb_mxarray_to_list (pargin [1], base_offset) ;
+    GrB_Vector X = gb_mxarray_to_list (pargin [2], 0) ;
+
+    uint64_t ni, nj, nx ;
+    OK (GrB_Vector_nvals (&ni, I)) ;
+    OK (GrB_Vector_nvals (&nj, J)) ;
+    OK (GrB_Vector_nvals (&nx, X)) ;
+
+    GrB_Type xtype ;
+    OK (GxB_Vector_type (&xtype, X)) ;
+
+    uint64_t Imax = UINT64_MAX, Jmax = UINT64_MAX ;
 
     //--------------------------------------------------------------------------
     // check the sizes of I, J, and X, and the type of X
     //--------------------------------------------------------------------------
 
-    GrB_Index nvals = MAX (ni, nj) ;
+    uint64_t nvals = MAX (ni, nj) ;
     nvals = MAX (nvals, nx) ;
 
     if (!(ni == 1 || ni == nvals) ||
         !(nj == 1 || nj == nvals) ||
         !(nx == 1 || nx == nvals))
     { 
-        ERROR ("I, J, and X must have the same length") ;
+        ERROR ("I, J, and X must have the same # of entries") ;
     }
 
-    CHECK_ERROR (!(mxIsNumeric (Xm) || mxIsLogical (Xm)),
-        "X must be a numeric or logical array") ;
-    CHECK_ERROR (mxIsSparse (Xm), "X cannot be sparse") ;
+    //--------------------------------------------------------------------------
+    // expand any scalars in I and J (but not yet X)
+    //--------------------------------------------------------------------------
 
-    //--------------------------------------------------------------------------
-    // expand any scalars in I and J (but not X)
-    //--------------------------------------------------------------------------
+    GrB_Monoid max = GrB_MAX_MONOID_UINT64 ;
 
     if (ni == 1 && ni < nvals)
     { 
-        GrB_Index *I2 = (GrB_Index *) mxMalloc (nvals * sizeof (GrB_Index)) ;
-        GB_helper8 ((GB_void *) I2, (GB_void *) I, nvals, sizeof (GrB_Index)) ;
-        if (I_allocated) gb_mxfree ((void **) (&I)) ;
-        I_allocated = true ;
-        I = I2 ;
+        if (Imax == UINT64_MAX)
+        {
+            OK (GrB_Vector_reduce_UINT64 (&Imax, NULL, max, I, NULL)) ;
+        }
+        gb_expand (&I, (Imax < UINT32_MAX) ? GrB_UINT32 : GrB_UINT64, nvals) ;
     }
 
     if (nj == 1 && nj < nvals)
     { 
-        GrB_Index *J2 = (GrB_Index *) mxMalloc (nvals * sizeof (GrB_Index)) ;
-        GB_helper8 ((GB_void *) J2, (GB_void *) J, nvals, sizeof (GrB_Index)) ;
-        if (J_allocated) gb_mxfree ((void **) (&J)) ;
-        J_allocated = true ;
-        J = J2 ;
+        if (Jmax == UINT64_MAX)
+        {
+            OK (GrB_Vector_reduce_UINT64 (&Jmax, NULL, max, J, NULL)) ;
+        }
+        gb_expand (&J, (Jmax < UINT32_MAX) ? GrB_UINT32 : GrB_UINT64, nvals) ;
     }
 
     //--------------------------------------------------------------------------
     // get m and n if present
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows = 0, ncols = 0 ;
+    uint64_t nrows = 0, ncols = 0 ;
 
     if (nargin < 4)
     {
         // nrows = max entry in I + 1
-        if (Imax > -1)
-        { 
-            // Imax already computed
-            nrows = Imax ;
+        if (Imax == UINT64_MAX)
+        {
+            OK (GrB_Vector_reduce_UINT64 (&Imax, NULL, max, I, NULL)) ;
         }
-        else
-        { 
-            // nrows = max entry in I+1
-            bool ok = GB_helper4 (I, ni, &nrows) ;
-            CHECK_ERROR (!ok, "out of memory") ;
-        }
+        nrows = Imax + 1 ;
     }
     else
     { 
@@ -168,17 +194,12 @@ void mexFunction
 
     if (nargin < 5)
     {
-        if (Jmax > -1)
-        { 
-            // Jmax already computed
-            ncols = Jmax ;
+        // ncols = max entry in J + 1
+        if (Jmax == UINT64_MAX)
+        {
+            OK (GrB_Vector_reduce_UINT64 (&Jmax, NULL, max, J, NULL)) ;
         }
-        else
-        { 
-            // ncols = max entry in J+1
-            bool ok = GB_helper4 (J, nj, &ncols) ;
-            CHECK_ERROR (!ok, "out of memory") ;
-        }
+        ncols = Jmax + 1 ;
     }
     else
     { 
@@ -198,14 +219,69 @@ void mexFunction
         dup = gb_mxstring_to_binop (pargin [5], xtype, xtype) ;
     }
 
-    // if dup defaults to plus.xtype, below, or GrB_LOR for boolean
-
-    bool nice_iso_dup ;
+    bool nice_iso_dup = false ;
     if (default_dup)
     {
-        // dup will be GrB_LOR which is nice for an iso build.  For all other
-        // types, the dup is plus, which is not nice.
-        nice_iso_dup = (xtype == GrB_BOOL) ;
+        // dup defaults to plus.xtype or GrB_LOR for boolean
+        if (xtype == GrB_BOOL)
+        { 
+            // dup is GrB_LOR which is nice for an iso build.  For all other
+            // types, the dup is plus, which is not nice.
+            dup = GrB_LOR ;
+            nice_iso_dup = true ;
+        }
+        else if (xtype == GrB_INT8)
+        { 
+            dup = GrB_PLUS_INT8 ;
+        }
+        else if (xtype == GrB_INT16)
+        { 
+            dup = GrB_PLUS_INT16 ;
+        }
+        else if (xtype == GrB_INT32)
+        { 
+            dup = GrB_PLUS_INT32 ;
+        }
+        else if (xtype == GrB_INT64)
+        { 
+            dup = GrB_PLUS_INT64 ;
+        }
+        else if (xtype == GrB_UINT8)
+        { 
+            dup = GrB_PLUS_UINT8 ;
+        }
+        else if (xtype == GrB_UINT16)
+        { 
+            dup = GrB_PLUS_UINT16 ;
+        }
+        else if (xtype == GrB_UINT32)
+        { 
+            dup = GrB_PLUS_UINT32 ;
+        }
+        else if (xtype == GrB_UINT64)
+        { 
+            dup = GrB_PLUS_UINT64 ;
+        }
+        else if (xtype == GrB_FP32)
+        { 
+            dup = GrB_PLUS_FP32 ;
+        }
+        else if (xtype == GrB_FP64)
+        { 
+            dup = GrB_PLUS_FP64 ;
+        }
+        else if (xtype == GxB_FC32)
+        { 
+            dup = GxB_PLUS_FC32 ;
+        }
+        else if (xtype == GxB_FC64)
+        { 
+            dup = GxB_PLUS_FC64 ;
+        }
+        else
+        {
+            ERROR ("unsupported type") ;
+        }
     }
     else if (dup == NULL || dup == GxB_IGNORE_DUP)
     {
@@ -257,206 +333,36 @@ void mexFunction
     sparsity = gb_get_sparsity (NULL, NULL, sparsity) ;
     GrB_Matrix A = gb_new (type, nrows, ncols, fmt, sparsity) ;
 
-    void *X2 = NULL ;
-    bool X_is_scalar = (nx == 1 && nx < nvals) ;
-    bool iso_build = X_is_scalar && nice_iso_dup ;
-
-    // mxGetData is used instead of the MATLAB-recommended mxGetDoubles, etc,
-    // because mxGetData works best for Octave, and it works fine for MATLAB
-    // since GraphBLAS requires R2018a with the interleaved complex data type.
-
-    if (iso_build)
+    if (nvals > 0)
     {
-        // build an iso matrix, with no dup operator (dup is GxB_IGNORE_DUP)
-        GrB_Scalar x_scalar = (GrB_Scalar) gb_get_shallow (Xm) ;
-        OK1 (A, GxB_Matrix_build_Scalar (A, I, J, x_scalar, nvals)) ;
-        OK (GrB_Scalar_free (&x_scalar)) ;
-    }
-    else if (xtype == GrB_BOOL)
-    { 
-        bool empty = 0 ;
-        bool *X = (nvals == 0) ? &empty : ((bool *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_LOR ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (bool)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (bool)) ;
-            X = (bool *) X2 ;
+        bool X_is_scalar = (nx == 1 && nx < nvals) ;
+        bool iso_build = X_is_scalar && nice_iso_dup ;
+        if (iso_build)
+        {
+            // build an iso matrix, with no dup operator
+            GrB_Scalar x = gb_get_scalar (X, xtype) ;
+            OK1 (A, GxB_Matrix_build_Scalar_Vector (A, I, J, x, NULL)) ;
+            OK (GrB_Scalar_free (&x)) ;
         }
-        OK1 (A, GrB_Matrix_build_BOOL (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_INT8)
-    { 
-        int8_t empty = 0 ;
-        int8_t *X = (nvals == 0) ? &empty : ((int8_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_INT8 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (int8_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (int8_t)) ;
-            X = (int8_t *) X2 ;
+        else
+        {
+            // build a standard matrix from the three vectors I,J,X
+            if (X_is_scalar)
+            {
+                // expand X from a scalar to a vector of length nvals
+                gb_expand (&X, xtype, nvals) ;
+            }
+            OK1 (A, GxB_Matrix_build_Vector (A, I, J, X, dup, NULL)) ;
         }
-        OK1 (A, GrB_Matrix_build_INT8 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_INT16)
-    { 
-        int16_t empty = 0 ;
-        int16_t *X = (nvals == 0) ? &empty : ((int16_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_INT16 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (int16_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (int16_t));
-            X = (int16_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_INT16 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_INT32)
-    { 
-        int32_t empty = 0 ;
-        int32_t *X = (nvals == 0) ? &empty : ((int32_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_INT32 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (int32_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (int32_t));
-            X = (int32_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_INT32 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_INT64)
-    { 
-        int64_t empty = 0 ;
-        int64_t *X = (nvals == 0) ? &empty : ((int64_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_INT64 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (int64_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (int64_t));
-            X = (int64_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_INT64 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_UINT8)
-    { 
-        uint8_t empty = 0 ;
-        uint8_t *X = (nvals == 0) ? &empty : ((uint8_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_UINT8 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (uint8_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (uint8_t));
-            X = (uint8_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_UINT8 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_UINT16)
-    { 
-        uint16_t empty = 0 ;
-        uint16_t *X = (nvals == 0) ? &empty : ((uint16_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_UINT16 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (uint16_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof(uint16_t));
-            X = (uint16_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_UINT16 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_UINT32)
-    { 
-        uint32_t empty = 0 ;
-        uint32_t *X = (nvals == 0) ? &empty : ((uint32_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_UINT32 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (uint32_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof(uint32_t));
-            X = (uint32_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_UINT32 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_UINT64)
-    { 
-        uint64_t empty = 0 ;
-        uint64_t *X = (nvals == 0) ? &empty : ((uint64_t *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_UINT64 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (uint64_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof(uint64_t));
-            X = (uint64_t *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_UINT64 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_FP32)
-    { 
-        float empty = 0 ;
-        float *X = (nvals == 0) ? &empty : ((float *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_FP32 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (float)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (float)) ;
-            X = (float *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_FP32 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GrB_FP64)
-    { 
-        double empty = 0 ;
-        double *X = (nvals == 0) ? &empty : ((double *) mxGetData (Xm)) ;
-        if (default_dup) dup = GrB_PLUS_FP64 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (double)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals, sizeof (double)) ;
-            X = (double *) X2 ;
-        }
-        OK1 (A, GrB_Matrix_build_FP64 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GxB_FC32)
-    { 
-        GxB_FC32_t empty = GxB_CMPLXF (0,0) ;
-        GxB_FC32_t *X = &empty ;
-        if (nvals > 0) X = (GxB_FC32_t *) mxGetData (Xm) ;
-        if (default_dup) dup = GxB_PLUS_FC32 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (GxB_FC32_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals,
-                sizeof (GxB_FC32_t)) ;
-            X = (GxB_FC32_t *) X2 ;
-        }
-        OK1 (A, GxB_Matrix_build_FC32 (A, I, J, X, nvals, dup)) ;
-    }
-    else if (xtype == GxB_FC64)
-    { 
-        GxB_FC64_t empty = GxB_CMPLX (0,0) ;
-        GxB_FC64_t *X = &empty ;
-        if (nvals > 0) X = (GxB_FC64_t *) mxGetData (Xm) ;
-        if (default_dup) dup = GxB_PLUS_FC64 ;
-        if (X_is_scalar)
-        { 
-            X2 = mxMalloc (nvals * sizeof (GxB_FC64_t)) ;
-            GB_helper8 ((GB_void *) X2, (GB_void *) X, nvals,
-                sizeof (GxB_FC64_t)) ;
-            X = (GxB_FC64_t *) X2 ;
-        }
-        OK1 (A, GxB_Matrix_build_FC64 (A, I, J, X, nvals, dup)) ;
-    }
-    else
-    {
-        ERROR ("unsupported type") ;
     }
 
     //--------------------------------------------------------------------------
     // free workspace
     //--------------------------------------------------------------------------
 
-    if (X2 != NULL ) gb_mxfree ((void **) (&X2)) ;
-    if (I_allocated) gb_mxfree ((void **) (&I)) ;
-    if (J_allocated) gb_mxfree ((void **) (&J)) ;
+    OK (GrB_Vector_free (&I)) ;
+    OK (GrB_Vector_free (&J)) ;
+    OK (GrB_Vector_free (&X)) ;
 
     //--------------------------------------------------------------------------
     // export the output matrix A
@@ -464,6 +370,6 @@ void mexFunction
 
     pargout [0] = gb_export (&A, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

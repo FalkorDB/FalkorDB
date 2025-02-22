@@ -5,7 +5,7 @@ function [ok, err, anorm] = isequal_roundoff (A,B,tol)
 % tol = 64*eps if not present.  NaNs and Infs are ignored in the
 % tol, but the NaN and +/-Inf pattern must be the same.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % if (~isequal (GB_spec_type (A), GB_spec_type (B)))

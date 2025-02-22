@@ -1,7 +1,7 @@
 function gbtest1
 %GBTEST1 test GrB
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -35,6 +35,8 @@ for k = 1:length (types)
     Z = sparse (m, n)
     assert (isequal (A, Z)) ;
     A = GrB (m, n, 'by row') ;
+    Z
+    A
     assert (isequal (A, Z)) ;
 
     fprintf ('\n---- A = GrB (%d, %d, ''%s'') :\n', m, n, type) ;

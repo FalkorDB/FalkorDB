@@ -1,22 +1,26 @@
 function test29
-%TEST29 GrB_reduce with zombies
+%TEST29 test GrB_reduce
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+% In past versions of GraphBLAS, this method caused the reduction to be done
+% on a matrix with zombies.  It no longer does so, but still is important
+% for test coverage of a reduction to scalar.
 
 [~, ~, add_ops, types, ~, ~] = GB_spec_opsall ;
 types = types.all ;
 
-fprintf ('\ntest29: ----------------- GrB_reduce with zombies\n') ;
+fprintf ('\ntest29: ----------------- GrB_reduce\n') ;
 
 for m = [1 5 10]
     for n = [1 5 10]
 
-        fprintf ('.') ;
         rng ('default') ;
 
         for k3 = 1:length (types)
             atype = types {k3}  ;
+            fprintf ('.') ;
 
             for builtin = 0:1
             GB_builtin_complex_set (builtin) ;

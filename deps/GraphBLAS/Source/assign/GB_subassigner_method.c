@@ -2,7 +2,7 @@
 // GB_subassigner_method: determine method for GB_subassign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -50,7 +50,6 @@ int GB_subassigner_method           // return method to use in GB_subassigner
 
     bool A_is_bitmap = GB_IS_BITMAP (A) ;
     bool A_is_full = GB_IS_FULL (A) ;
-    bool A_is_sparse = GB_IS_SPARSE (A) ;
     int64_t anz = GB_nnz (A) ;
 
     // these properties of C are not affected by wait(C):
@@ -465,10 +464,11 @@ int GB_subassigner_method           // return method to use in GB_subassigner
         {
             if (accum == NULL)
             {
+                GB_Ch_DECLARE (Ch, const) ; GB_Ch_PTR (Ch, C) ;
                 if (Ikind == GB_ALL && GB_IS_HYPERSPARSE (C) && GB_IS_SPARSE (A)
                     && (Jkind == GB_RANGE) && (nJ >= 1)
                     && (Jcolon [0] ==
-                        ((C->nvec == 0) ? 0 : (C->h [C->nvec-1] + 1)))
+                        ((C->nvec == 0) ? 0 : (GB_IGET (Ch, C->nvec-1) + 1)))
                     && (C->type == A->type)
                     && !(A->iso)        // FUTURE: allow A to be iso
                     && !(C->iso))       // FUTURE: allow C to be iso

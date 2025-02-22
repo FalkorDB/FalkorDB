@@ -2,7 +2,7 @@
 // GraphBLAS/Test/GB_mx_random_matrix.c: create a random matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -48,7 +48,7 @@ GrB_Info GB_mx_random_matrix      // create a random double-precision matrix
 
     GrB_Matrix Areal = NULL, Aimag = NULL, A = NULL ;
     *A_output = NULL ;
-    GrB_Index *I = NULL, *J = NULL ;
+    uint64_t *I = NULL, *J = NULL ;     // OK
     double *X = NULL ;
     GrB_Info info ;
 
@@ -119,8 +119,8 @@ GrB_Info GB_mx_random_matrix      // create a random double-precision matrix
 
         for (int64_t k = 0 ; k < nedges ; k++)
         {
-            GrB_Index i = simple_rand_i ( ) % nrows ;
-            GrB_Index j = simple_rand_i ( ) % ncols ;
+            uint64_t i = simple_rand_i ( ) % nrows ;
+            uint64_t j = simple_rand_i ( ) % ncols ;
             if (no_self_edges && (i == j)) continue ;
             double x = simple_rand_x ( ) ;
             // A (i,j) = x
@@ -144,8 +144,8 @@ GrB_Info GB_mx_random_matrix      // create a random double-precision matrix
         // by the mode (blocking or non-blocking).
 
         int64_t s = ((make_symmetric) ? 2 : 1) * nedges + 1 ;
-        I = (GrB_Index *) mxMalloc (s * sizeof (GrB_Index)) ;
-        J = (GrB_Index *) mxMalloc (s * sizeof (GrB_Index)) ;
+        I = (uint64_t *) mxMalloc (s * sizeof (uint64_t)) ; // OK
+        J = (uint64_t *) mxMalloc (s * sizeof (uint64_t)) ; // OK
         X = (double *) mxMalloc (s * sizeof (double   )) ;
         if (I == NULL || J == NULL || X == NULL)
         {   // out of memory
@@ -160,8 +160,8 @@ GrB_Info GB_mx_random_matrix      // create a random double-precision matrix
         int64_t ntuples = 0 ;
         for (int64_t k = 0 ; k < nedges ; k++)
         {
-            GrB_Index i = simple_rand_i ( ) % nrows ;
-            GrB_Index j = simple_rand_i ( ) % ncols ;
+            uint64_t i = simple_rand_i ( ) % nrows ;
+            uint64_t j = simple_rand_i ( ) % ncols ;
             if (no_self_edges && (i == j)) continue ;
             double x = simple_rand_x ( ) ;
             // A (i,j) = x

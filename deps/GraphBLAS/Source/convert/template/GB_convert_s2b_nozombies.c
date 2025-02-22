@@ -2,7 +2,7 @@
 // GB_convert_s2b_nozombies: convert A from sparse to bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,9 +28,9 @@
             // find the part of A(:,j) to be operated on by this task
             //------------------------------------------------------------------
 
-            int64_t j = GBH_A (Ah, k) ;
-            GB_GET_PA (pA_start, pA_end, tid, k,
-                kfirst, klast, pstart_Aslice, Ap [k], Ap [k+1]) ;
+            int64_t j = GBh_A (Ah, k) ;
+            GB_GET_PA (pA_start, pA_end, tid, k, kfirst, klast, pstart_Aslice,
+                GB_IGET (Ap, k), GB_IGET (Ap, k+1)) ;
 
             // the start of A(:,j) in the new bitmap
             int64_t pC_start = j * avlen ;
@@ -42,7 +42,7 @@
             for (int64_t pA = pA_start ; pA < pA_end ; pA++)
             { 
                 // A(i,j) has index i, value Ax [pA]
-                int64_t i = Ai [pA] ;
+                int64_t i = GB_IGET (Ai, pA) ;
                 int64_t pC = i + pC_start ;
                 // move A(i,j) to its new place in the bitmap
                 // Cx [pC] = Ax [pA]

@@ -1,0 +1,72 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GrB\_Type} Options}
+\label{get_set_type}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_Type t, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_Type t, char *     value, int f) ;
+GrB_Info GrB_get (GrB_Type t, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_Type t, size_t *   value, int f) ;
+
+GrB_Info GrB_set (GrB_Type t, char *     value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.85in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_EL_TYPE_CODE'             & R    & \verb'int32_t'& type code (see \verb'GrB_Type_Code') \\
+\verb'GrB_SIZE'                     & R    & \verb'size_t' & \verb'sizeof' the type \\
+\hline
+\verb'GrB_NAME'                     & R/W1 & \verb'char *' &    % GrB_ALREADY_SET (type)
+    name of the type.  For built-in types, this returns the GraphBLAS
+    name (\verb'"GrB_FP32"' for \verb'GrB_FP32', for example).
+    For user-defined types, the name can be any string of any length.  It is
+    not used by the JIT.  It can be set at most once. \\
+\verb'GxB_JIT_C_NAME'               & R/W1 & \verb'char *' & 
+    This must be a valid name of a C type to enable its use in the JIT.  For
+    built-in types, this returns the C name of the type (\verb'"float"' for
+    \verb'GrB_FP32', for example). The length of the name can be at most
+    \verb'GxB_MAX_NAME_LEN', including the \verb'nul' terminating byte.  It can
+    be set at most once. \\
+\verb'GxB_JIT_C_DEFINITION'               & R/W1 & \verb'char *' &
+    type definition, as a C \verb'typedef';
+    built-in types return an empty string. 
+    It can be set at most once. \\
+\hline
+\end{tabular}
+}
+
+Built-in types cannot be modified by \verb'GrB_set'.  User-defined types can be
+used without setting their name or definition, but they can be used in JIT
+kernels only when both the JIT C name and the definition are set.
+
+To use the JIT, all operators, monoids, and semirings that access this type
+must be defined after the user-defined type has been given both a name and a
+definition.  GraphBLAS can use an operator that uses a type without a name,
+but it cannot use the JIT, even if the type is given a name later on after
+the operator is created.
+
+The size of the type can be returned as a \verb'size_t' C scalar, or as a
+\verb'GrB_Scalar', normally of type \verb'GrB_UINT64', with the examples below.
+
+{\footnotesize
+\begin{verbatim}
+    size_t size ;
+    GrB_get (GrB_FP32, &size, GrB_SIZE) ;
+    assert (size == sizeof (float)) ;
+
+    GrB_Scalar s ;
+    GrB_Scalar_new (&s, GrB_UINT64) ;
+    GrB_get (GrB_FP32, s, GrB_SIZE) ;
+    GrB_Scalar_extractElement (&size, s) ;
+    assert (size == sizeof (float)) ; \end{verbatim}}
+

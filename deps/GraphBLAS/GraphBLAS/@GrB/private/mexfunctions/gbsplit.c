@@ -2,7 +2,7 @@
 // gbsplit: matrix split
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,12 +23,12 @@
 // gb_get_tilesizes:  get a list of integers
 //------------------------------------------------------------------------------
 
-static inline GrB_Index *gb_get_tilesizes (mxArray *mxList, GrB_Index *len)
+static inline uint64_t *gb_get_tilesizes (mxArray *mxList, uint64_t *len)
 {
     int64_t n = mxGetNumberOfElements (mxList) ;
-    (*len) = (GrB_Index) n ;
+    (*len) = (uint64_t) n ;
     mxClassID class = mxGetClassID (mxList) ;
-    GrB_Index *List = mxMalloc (n * sizeof (GrB_Index)) ;
+    uint64_t *List = mxMalloc (n * sizeof (uint64_t)) ;
     // use mxGetData (best for Octave, fine for MATLAB)
     if (class == mxINT64_CLASS)
     {
@@ -45,7 +45,7 @@ static inline GrB_Index *gb_get_tilesizes (mxArray *mxList, GrB_Index *len)
         double *p = (double *) mxGetData (mxList) ;
         for (int64_t k = 0 ; k < n ; k++)
         {
-            List [k] = (GrB_Index) p [k] ;
+            List [k] = (uint64_t) p [k] ;
             CHECK_ERROR ((double) List [k] != p [k],
                 "dimensions must be integer") ;
         }
@@ -83,7 +83,7 @@ void mexFunction
     mxArray *Matrix [6], *String [2], *Cell [2] ;
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int nmatrices, nstrings, ncells, sparsity ;
     GrB_Descriptor desc ;
     gb_get_mxargs (nargin, pargin, USAGE, Matrix, &nmatrices, String, &nstrings,
@@ -96,9 +96,9 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Matrix A = gb_get_shallow (Matrix [0]) ;
-    GrB_Index m, n ;
-    GrB_Index *Tile_nrows = gb_get_tilesizes (Matrix [1], &m) ;
-    GrB_Index *Tile_ncols = gb_get_tilesizes (Matrix [2], &n) ;
+    uint64_t m, n ;
+    uint64_t *Tile_nrows = gb_get_tilesizes (Matrix [1], &m) ;
+    uint64_t *Tile_ncols = gb_get_tilesizes (Matrix [2], &n) ;
     GrB_Matrix *Tiles = mxMalloc (m * n * sizeof (GrB_Matrix)) ;
 
     //--------------------------------------------------------------------------
@@ -137,6 +137,6 @@ void mexFunction
 
     pargout [0] = C ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

@@ -2,7 +2,7 @@
 // GxB_Context_engage: engage a Context for this user thread
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,17 +36,7 @@ GrB_Info GxB_Context_engage         // engage a Context
     GxB_Context Context             // Context to engage
 )
 { 
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
-
-    //--------------------------------------------------------------------------
-    // engage the Context
-    //--------------------------------------------------------------------------
-
     return (GB_Context_engage (Context)) ;
 }
 

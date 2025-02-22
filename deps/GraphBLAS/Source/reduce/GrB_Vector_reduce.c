@@ -2,7 +2,7 @@
 // GrB_Vector_reduce: reduce a vector to a scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,12 +33,13 @@ GrB_Info GB_EVAL3 (prefix, _Vector_reduce_, T) /* c = accum (c, reduce (u)) */  
     const GrB_Descriptor desc                                                  \
 )                                                                              \
 {                                                                              \
-    GB_WHERE1 ("GrB_Vector_reduce_" GB_STR(T) " (&c, accum, monoid, u, desc)");\
+    GB_RETURN_IF_NULL (u) ;                                                    \
+    GB_WHERE_1 (u, "GrB_Vector_reduce_" GB_STR(T)                              \
+        " (&c, accum, monoid, u, desc)") ;                                     \
     GB_BURBLE_START ("GrB_reduce") ;                                           \
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;                                          \
     ASSERT (GB_VECTOR_OK (u)) ;                                                \
-    GrB_Info info = GB_reduce_to_scalar (c, GB_EVAL3 (prefix, _, T), accum,    \
-        monoid, (GrB_Matrix) u, Werk) ;                                     \
+    info = GB_reduce_to_scalar (c, GB_EVAL3 (prefix, _, T), accum, monoid,     \
+        (GrB_Matrix) u, Werk) ;                                                \
     GB_BURBLE_END ;                                                            \
     return (info) ;                                                            \
 }
@@ -66,13 +67,14 @@ GrB_Info GrB_Vector_reduce_UDT      // c = accum (c, reduce_to_scalar (u))
     const GrB_Descriptor desc
 )
 { 
-    GB_WHERE1 ("GrB_Vector_reduce_UDT (&c, accum, monoid, u, desc)") ;
-    GB_BURBLE_START ("GrB_reduce") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;
+    GB_RETURN_IF_NULL (u) ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
+    GB_WHERE_1 (u, "GrB_Vector_reduce_UDT (&c, accum, monoid, u, desc)") ;
+    GB_BURBLE_START ("GrB_reduce") ;
+
     ASSERT (GB_VECTOR_OK (u)) ;
-    GrB_Info info = GB_reduce_to_scalar (c, monoid->op->ztype,
-        accum, monoid, (GrB_Matrix) u, Werk) ;
+    info = GB_reduce_to_scalar (c, monoid->op->ztype, accum, monoid,
+        (GrB_Matrix) u, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }
@@ -90,10 +92,12 @@ GrB_Info GrB_Vector_reduce_Monoid_Scalar
     const GrB_Descriptor desc
 )
 { 
-    GB_WHERE (S, "GrB_Vector_reduce_Monoid_Scalar (s, accum, monoid, u, desc)") ;
+    GB_RETURN_IF_NULL (S) ;
+    GB_WHERE2 (S, u,
+        "GrB_Vector_reduce_Monoid_Scalar (s, accum, monoid, u, desc)") ;
     GB_BURBLE_START ("GrB_reduce") ;
-    GrB_Info info = GB_Scalar_reduce (S, accum, monoid, (GrB_Matrix) u, 
-        Werk) ;
+
+    info = GB_Scalar_reduce (S, accum, monoid, (GrB_Matrix) u, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }
@@ -101,6 +105,9 @@ GrB_Info GrB_Vector_reduce_Monoid_Scalar
 //------------------------------------------------------------------------------
 // GrB_Vector_reduce_BinaryOp_Scalar: reduce vector to GrB_Scalar via binary op
 //------------------------------------------------------------------------------
+
+// Only binary ops that correspond to a known monoid are supported.
+// This method is not recommended.
 
 GrB_Info GrB_Vector_reduce_BinaryOp_Scalar
 (
@@ -111,25 +118,24 @@ GrB_Info GrB_Vector_reduce_BinaryOp_Scalar
     const GrB_Descriptor desc
 )
 { 
-    GB_WHERE (S, "GrB_Vector_reduce_BinaryOp_Scalar (s, accum, binaryop, u, "
-        "desc)") ;
-    GB_BURBLE_START ("GrB_reduce") ;
+    GB_RETURN_IF_NULL (S) ;
     GB_RETURN_IF_NULL_OR_FAULTY (op) ;
+    GB_WHERE2 (S, u, "GrB_Vector_reduce_BinaryOp_Scalar : DEPRECATED!") ;
+    GB_BURBLE_START ("GrB_reduce with binary op : DEPRECATED!") ;
+
+    // convert the binary op to its corresponding monoid
     if (op->ztype != op->xtype || op->ztype != op->ytype)
     { 
-        GB_ERROR (GrB_DOMAIN_MISMATCH, "Invalid binary operator:"
-            " z=%s(x,y); all types of x,y,z must be the same\n", op->name) ;
+        return (GrB_DOMAIN_MISMATCH) ;
     }
-    // convert the binary op to its corresponding monoid
     GrB_Monoid monoid = GB_binop_to_monoid (op) ;
     if (monoid == NULL)
     { 
-        GB_ERROR (GrB_NOT_IMPLEMENTED, "Invalid binary operator:"
-            " z=%s(x,y) has no equivalent monoid\n", op->name) ;
+        return (GrB_NOT_IMPLEMENTED) ;
     }
+
     // S = reduce (A) via the monoid
-    GrB_Info info = GB_Scalar_reduce (S, accum, monoid, (GrB_Matrix) u,
-        Werk) ;
+    info = GB_Scalar_reduce (S, accum, monoid, (GrB_Matrix) u, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

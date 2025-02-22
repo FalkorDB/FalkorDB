@@ -2,7 +2,7 @@
 // GB_serialize: compress and serialize a GrB_Matrix into a blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,11 +19,11 @@
 
 #define GB_FREE_WORKSPACE                       \
 {                                               \
-    GB_FREE (&Ap_Sblocks, Ap_Sblocks_size) ;    \
-    GB_FREE (&Ah_Sblocks, Ah_Sblocks_size) ;    \
-    GB_FREE (&Ab_Sblocks, Ab_Sblocks_size) ;    \
-    GB_FREE (&Ai_Sblocks, Ai_Sblocks_size) ;    \
-    GB_FREE (&Ax_Sblocks, Ax_Sblocks_size) ;    \
+    GB_FREE_MEMORY (&Ap_Sblocks, Ap_Sblocks_size) ;    \
+    GB_FREE_MEMORY (&Ah_Sblocks, Ah_Sblocks_size) ;    \
+    GB_FREE_MEMORY (&Ab_Sblocks, Ab_Sblocks_size) ;    \
+    GB_FREE_MEMORY (&Ai_Sblocks, Ai_Sblocks_size) ;    \
+    GB_FREE_MEMORY (&Ax_Sblocks, Ax_Sblocks_size) ;    \
     GB_serialize_free_blocks (&Ap_Blocks, Ap_Blocks_size, Ap_nblocks) ; \
     GB_serialize_free_blocks (&Ah_Blocks, Ah_Blocks_size, Ah_nblocks) ; \
     GB_serialize_free_blocks (&Ab_Blocks, Ab_Blocks_size, Ab_nblocks) ; \
@@ -36,7 +36,7 @@
     GB_FREE_WORKSPACE ;                         \
     if (!preallocated_blob)                     \
     {                                           \
-        GB_FREE (&blob, blob_size_allocated) ;  \
+        GB_FREE_MEMORY (&blob, blob_size_allocated) ;  \
     }                                           \
 }
 
@@ -62,6 +62,10 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     GrB_Info info ;
     ASSERT (blob_size_handle != NULL) ;
     ASSERT_MATRIX_OK (A, "A for serialize", GB0) ;
+
+    int Ap_is_32 = (A->p_is_32) ? 1 : 0 ;
+    int Aj_is_32 = (A->j_is_32) ? 1 : 0 ;
+    int Ai_is_32 = (A->i_is_32) ? 1 : 0 ;
 
     //--------------------------------------------------------------------------
     // determine what serialization to do
@@ -99,11 +103,11 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     GB_blocks *Ab_Blocks = NULL ; size_t Ab_Blocks_size = 0 ;
     GB_blocks *Ai_Blocks = NULL ; size_t Ai_Blocks_size = 0 ;
     GB_blocks *Ax_Blocks = NULL ; size_t Ax_Blocks_size = 0 ;
-    int64_t *Ap_Sblocks = NULL  ; size_t Ap_Sblocks_size = 0 ;
-    int64_t *Ah_Sblocks = NULL  ; size_t Ah_Sblocks_size = 0 ;
-    int64_t *Ab_Sblocks = NULL  ; size_t Ab_Sblocks_size = 0 ;
-    int64_t *Ai_Sblocks = NULL  ; size_t Ai_Sblocks_size = 0 ;
-    int64_t *Ax_Sblocks = NULL  ; size_t Ax_Sblocks_size = 0 ;
+    uint64_t *Ap_Sblocks = NULL ; size_t Ap_Sblocks_size = 0 ;
+    uint64_t *Ah_Sblocks = NULL ; size_t Ah_Sblocks_size = 0 ;
+    uint64_t *Ab_Sblocks = NULL ; size_t Ab_Sblocks_size = 0 ;
+    uint64_t *Ai_Sblocks = NULL ; size_t Ai_Sblocks_size = 0 ;
+    uint64_t *Ax_Sblocks = NULL ; size_t Ax_Sblocks_size = 0 ;
     int32_t Ap_nblocks = 0      ; size_t Ap_compressed_size = 0 ;
     int32_t Ah_nblocks = 0      ; size_t Ah_compressed_size = 0 ;
     int32_t Ab_nblocks = 0      ; size_t Ab_compressed_size = 0 ;
@@ -115,7 +119,11 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     //--------------------------------------------------------------------------
 
     GB_OK (GB_wait (A, "A to serialize", Werk)) ;
-    ASSERT (A->nvec_nonempty >= 0) ;
+
+    // the matrix has no pending work
+    ASSERT (!GB_PENDING (A)) ;
+    ASSERT (!GB_ZOMBIES (A)) ;
+    ASSERT (!GB_JUMBLED (A)) ;
 
     //--------------------------------------------------------------------------
     // determine maximum # of threads
@@ -146,36 +154,41 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     int64_t vdim = A->vdim ;
     int64_t nvec = A->nvec ;
     int64_t nvals = A->nvals ;
-    int64_t nvec_nonempty = A->nvec_nonempty ;
+    int64_t nvec_nonempty = GB_nvec_nonempty_get (A) ;
+    ASSERT (nvec_nonempty >= 0) ;
     int32_t sparsity = GB_sparsity (A) ;
     bool iso = A->iso ;
     float hyper_switch = A->hyper_switch ;
     float bitmap_switch = A->bitmap_switch ;
     int32_t sparsity_control = A->sparsity_control ;
-    // the matrix has no pending work
-    ASSERT (A->Pending == NULL) ;
-    ASSERT (A->nzombies == 0) ;
-    ASSERT (!A->jumbled) ;
     GrB_Type atype = A->type ;
     int64_t typesize = atype->size ;
     int32_t typecode = (int32_t) (atype->code) ;
     int64_t anz = GB_nnz (A) ;
     int64_t anz_held = GB_nnz_held (A) ;
 
+    //--------------------------------------------------------------------------
     // determine the uncompressed sizes of Ap, Ah, Ab, Ai, and Ax
+    //--------------------------------------------------------------------------
+
+    size_t apsize = Ap_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t ajsize = Aj_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t aisize = Ai_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
     int64_t Ap_len = 0 ;
     int64_t Ah_len = 0 ;
     int64_t Ab_len = 0 ;
     int64_t Ai_len = 0 ;
     int64_t Ax_len = 0 ;
+
     switch (sparsity)
     {
         case GxB_HYPERSPARSE : 
-            Ah_len = sizeof (GrB_Index) * nvec ;
+            Ah_len = ajsize * nvec ;
             // fall through to the sparse case
         case GxB_SPARSE :
-            Ap_len = sizeof (GrB_Index) * (nvec+1) ;
-            Ai_len = sizeof (GrB_Index) * anz ;
+            Ap_len = apsize * (nvec+1) ;
+            Ai_len = aisize * anz ;
             Ax_len = typesize * (iso ? 1 : anz) ;
             break ;
         case GxB_BITMAP : 
@@ -229,11 +242,11 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
         // header information
         GB_BLOB_HEADER_SIZE
         // Sblocks for each array
-        + Ap_nblocks * sizeof (int64_t)     // Ap_Sblocks [1:Ap_nblocks]
-        + Ah_nblocks * sizeof (int64_t)     // Ah_Sblocks [1:Ah_nblocks]
-        + Ab_nblocks * sizeof (int64_t)     // Ab_Sblocks [1:Ab_nblocks]
-        + Ai_nblocks * sizeof (int64_t)     // Ai_Sblocks [1:Ai_nblocks]
-        + Ax_nblocks * sizeof (int64_t)     // Ax_Sblocks [1:Ax_nblocks]
+        + Ap_nblocks * sizeof (uint64_t)    // Ap_Sblocks [1:Ap_nblocks]
+        + Ah_nblocks * sizeof (uint64_t)    // Ah_Sblocks [1:Ah_nblocks]
+        + Ab_nblocks * sizeof (uint64_t)    // Ab_Sblocks [1:Ab_nblocks]
+        + Ai_nblocks * sizeof (uint64_t)    // Ai_Sblocks [1:Ai_nblocks]
+        + Ax_nblocks * sizeof (uint64_t)    // Ax_Sblocks [1:Ax_nblocks]
         // type_name for user-defined types
         + ((typecode == GB_UDT_code) ? GxB_MAX_NAME_LEN : 0) ;
 
@@ -284,10 +297,11 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     }
     else
     {
-        // GxB_Matrix_serialize: allocate the block.  The memory pool may
+        // GxB_Matrix_serialize: allocate the block.  The memory allocator may
         // increase the blob from size blob_size_required bytes to
         // blob_size_allocated.
-        blob = GB_MALLOC (blob_size_required, GB_void, &blob_size_allocated) ;
+        blob = GB_MALLOC_MEMORY (blob_size_required, sizeof (GB_void),
+            &blob_size_allocated) ;
         if (blob == NULL)
         { 
             // out of memory
@@ -312,7 +326,39 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     uint64_t blob_size_required64 = (uint64_t) blob_size_required ;
     GB_BLOB_WRITE (blob_size_required64, uint64_t) ;
 
-    GB_BLOB_WRITE (typecode, int32_t) ;
+    // The typecode in GraphBLAS is in range 0 to 14 and requires just 4 bits.
+    // In GrB v9.4.2 and earlier, an entire int32_t was written to the blob
+    // holding the typecode.  GrB v10.0.0 adds 32/64 bit integers for A->p,
+    // A->h, and A->i, requiring three bits: A->p_is_32, A->j_is_32, and
+    // A->i_is_32.  These are held as two nibbles (a nibble is 4 bits) to
+    // handle future extensions.
+
+    // These 2 nibbles are implicitly zero in GrB v9.4.2 and earlier, since
+    // only 64-bit integers are supported in that version.
+
+    // If GrB v10.0.0 writes a 0 to both nibbles, then GrB v9.4.2 and earlier
+    // can safely read the blob, since both versions support all-64-bit integer
+    // matrices.  GrB v10.0.0 can also read any blob written by earlier
+    // versions; they will have zeros in those 2 nibbles, which will be
+    // interpretted correctly that the blob contains 64-bit integers for A->p,
+    // A->h, and A->i.
+
+    // If GrB v10.0.0 writes a nonzero value to either nibble, and then GrB
+    // v9.4.2 attempts to deserialize the blob, it will safely report an
+    // invalid blob, because it will not recognize the typecode as valid (it
+    // will be > GB_UDT_code == 14).
+
+//  was the following in GrB v5.2 to v9.4.2:
+//  GB_BLOB_WRITE (typecode, int32_t) ;
+//  now in GrB v10.0.0:
+    typecode &= 0xF ;
+    uint32_t encoding =
+        GB_LSHIFT (Ap_is_32, 12) |  // bits 12 to 15: Ap_is_32 (3 bits unused)
+        GB_LSHIFT (Aj_is_32,  8) |  // bits 8 to 11:  Aj_is_32 (3 bits unused)
+        GB_LSHIFT (Ai_is_32,  4) |  // bits 4 to 7:   Ai_is_32 (3 bits unused)
+        GB_LSHIFT (typecode,  0) ;  // bits 0 to 3:   typecode
+    GB_BLOB_WRITE (encoding, uint32_t) ;
+
     GB_BLOB_WRITE (version, int32_t) ;
     GB_BLOB_WRITE (vlen, int64_t) ;
     GB_BLOB_WRITE (vdim, int64_t) ;
@@ -327,7 +373,23 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     GB_BLOB_WRITE (Ax_len, int64_t) ;
     GB_BLOB_WRITE (hyper_switch, float) ;
     GB_BLOB_WRITE (bitmap_switch, float) ;
-    GB_BLOB_WRITE (sparsity_control, int32_t) ;
+
+// was the following in GrB v5.2 to v9.4.2:
+//  GB_BLOB_WRITE (sparsity_control, int32_t) ;
+// now in GrB v10.0.0, with 8 bits reserved for sparsity_control, in case new
+// sparsity formats are added in the future:
+
+    uint32_t p_encoding = GB_pji_control_encoding (A->p_control) ;
+    uint32_t j_encoding = GB_pji_control_encoding (A->j_control) ;
+    uint32_t i_encoding = GB_pji_control_encoding (A->i_control) ;
+    sparsity_control &= 0xFF ;
+    uint32_t control_encoding =
+        GB_LSHIFT (p_encoding      , 16) | // 4 bits
+        GB_LSHIFT (j_encoding      , 12) | // 4 bits
+        GB_LSHIFT (i_encoding      ,  8) | // 4 bits
+        GB_LSHIFT (sparsity_control,  0) ; // 8 bits (only 4 needed for now)
+    GB_BLOB_WRITE (control_encoding, uint32_t) ;
+
     GB_BLOB_WRITE (sparsity_iso_csc, int32_t);
     GB_BLOB_WRITE (Ap_nblocks, int32_t) ; GB_BLOB_WRITE (Ap_method, int32_t) ;
     GB_BLOB_WRITE (Ah_nblocks, int32_t) ; GB_BLOB_WRITE (Ah_method, int32_t) ;
@@ -375,6 +437,12 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     // append the GrB_NAME and GrB_EL_TYPE_STRING to the blob
     //--------------------------------------------------------------------------
 
+    // GrB v8.1.0 added two optional uncompressed nul-terminated strings: the
+    // user name and the element-type name.  GrB v8.1.0 and later detects if
+    // the strings are present, and thus it (and the currently GrB version) can
+    // safely read serialized blobs written by GrB v5.2 and later (the first
+    // version that included the serialization methods).
+
     if (user_name != NULL)
     { 
         // write the GrB_NAME of the matrix (including the nul byte)
@@ -401,17 +469,15 @@ GrB_Info GB_serialize               // serialize a matrix into a blob
     { 
         // GxB_Matrix_serialize: giving the blob to the user; remove it from
         // the list of malloc'd blocks
-        #ifdef GB_MEMDUMP
-        printf ("removing blob %p size %ld from memtable\n", blob,  // MEMDUMP
+        GBMDUMP ("removing blob %p size %ld from memtable\n", blob,
             blob_size_allocated) ;
-        #endif
         GB_Global_memtable_remove (blob) ;
         (*blob_handle) = blob ;
     }
 
     // Return the required size of the blob to the user, not the actual
     // allocated space of the blob.  The latter may be larger because of the
-    // memory pool.
+    // memory allocator.
 
     (*blob_size_handle) = blob_size_required ;
     GB_FREE_WORKSPACE ;

@@ -2,7 +2,7 @@
 // GrB_Monoid_set_*: set a field in a monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GrB_Monoid_set_Scalar
 (
     GrB_Monoid monoid,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 { 
     return (GrB_INVALID_VALUE) ;
@@ -31,7 +31,7 @@ GrB_Info GrB_Monoid_set_String
 ( 
     GrB_Monoid monoid,
     char * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -39,7 +39,7 @@ GrB_Info GrB_Monoid_set_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_set_String (monoid, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;
@@ -66,7 +66,7 @@ GrB_Info GrB_Monoid_set_INT32
 (
     GrB_Monoid monoid,
     int32_t value,
-    GrB_Field field
+    int field
 )
 { 
     return (GrB_INVALID_VALUE) ;
@@ -80,7 +80,7 @@ GrB_Info GrB_Monoid_set_VOID
 (
     GrB_Monoid monoid,
     void * value,
-    GrB_Field field,
+    int field,
     size_t size
 )
 { 

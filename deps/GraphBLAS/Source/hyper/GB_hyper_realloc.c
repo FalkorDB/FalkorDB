@@ -2,7 +2,7 @@
 // GB_hyper_realloc: reallocate a matrix hyperlist
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,9 +10,9 @@
 // Change the size of the A->h and A->p hyperlist.
 // No change is made if A is not hypersparse.
 // No change is made to A->Y.
+// A->p_is_32, A->j_is_32, and A->i_is_32 are unchanged.
 
 #include "GB.h"
-#include "include/GB_unused.h"
 
 GrB_Info GB_hyper_realloc
 (
@@ -40,14 +40,17 @@ GrB_Info GB_hyper_realloc
         ASSERT (!A->p_shallow) ;
         ASSERT (!A->h_shallow) ;
 
-        // old size of A->p and A->h
-        int64_t plen_old = A->plen ;
-        plen_new = GB_IMAX (1, plen_new) ;
+        #ifdef GB_DEBUG
+        int64_t plen_old = A->plen ;            // old size of A->p and A->h
+        #endif
+        plen_new = GB_IMAX (1, plen_new) ;      // new size of A->p and A->h
+        size_t psize = (A->p_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+        size_t jsize = (A->j_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
 
         // change the size of A->h and A->p
         bool ok1 = true, ok2 = true ;
-        GB_REALLOC (A->p, plen_new+1, int64_t, &(A->p_size), &ok1) ;
-        GB_REALLOC (A->h, plen_new,   int64_t, &(A->h_size), &ok2) ;
+        GB_REALLOC_MEMORY (A->p, plen_new+1, psize, &(A->p_size), &ok1) ;
+        GB_REALLOC_MEMORY (A->h, plen_new  , jsize, &(A->h_size), &ok2) ;
         bool ok = ok1 && ok2 ;
 
         // always succeeds if the space shrinks

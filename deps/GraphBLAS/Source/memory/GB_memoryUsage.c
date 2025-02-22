@@ -2,7 +2,7 @@
 // GB_memoryUsage: # of bytes used for a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,7 @@ void GB_memoryUsage         // count # allocated blocks and their sizes
 
     GB_Pending Pending = A->Pending ;
 
-    if (!A->static_header)
+    if (!(A->header_size == 0))
     { 
         (*nallocs)++ ;
         (*mem_deep) += A->header_size ;

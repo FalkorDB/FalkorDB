@@ -2,7 +2,7 @@
 // GB_mex_Matrix_subref: C=A(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -27,12 +27,12 @@ void mexFunction
 )
 {
     struct GB_Matrix_opaque C_header ;
-    GrB_Matrix C = GB_clear_static_header (&C_header) ;
+    GrB_Matrix C = GB_clear_matrix_header (&C_header) ;
 
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Matrix A = NULL ;
-    GrB_Index *I = NULL, ni = 0, I_range [3] ;
-    GrB_Index *J = NULL, nj = 0, J_range [3] ;
+    uint64_t *I = NULL, ni = 0, I_range [3] ;
+    uint64_t *J = NULL, nj = 0, J_range [3] ;
     bool ignore ;
 
     // check inputs
@@ -54,21 +54,25 @@ void mexFunction
     }
 
     // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [1], &ni, I_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [1], &I, &ni, I_range, &ignore, NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("I failed") ;
     }
 
     // get J
-    if (!GB_mx_mxArray_to_indices (&J, pargin [2], &nj, J_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [2], &J, &nj, J_range, &ignore, NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("J failed") ;
     }
 
+    bool I_is_32 = false ;
+    bool J_is_32 = false ;
+
     // C = A(I,J), numeric not symbolic
-    METHOD (GB_subref (C, C->iso, true, A, I, ni, J, nj, false, Werk)) ;
+    METHOD (GB_subref (C, C->iso, true, A, I, I_is_32, ni, J, J_is_32, nj,
+        false, Werk)) ;
 
     // return C
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C subref result", false) ;

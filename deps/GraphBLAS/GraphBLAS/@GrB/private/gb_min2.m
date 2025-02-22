@@ -2,7 +2,7 @@ function C = gb_min2 (op, A, B)
 %GB_MIN2 2-input min
 % Implements C = min (A,B)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [am, an, atype] = gbsize (A) ;

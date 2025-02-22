@@ -1,0 +1,57 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GxB\_Context} Options}
+\label{get_set_context}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GxB_Context Context, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GxB_Context Context, char *     value, int f) ;
+GrB_Info GrB_get (GxB_Context Context, int32_t *  value, int f) ;
+GrB_Info GrB_get (GxB_Context Context, size_t *   value, int f) ;
+
+GrB_Info GrB_set (GxB_Context Context, GrB_Scalar value, int f) ;
+GrB_Info GrB_set (GxB_Context Context, char *     value, int f) ;
+GrB_Info GrB_set (GxB_Context Context, int32_t    value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{3.5in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GxB_NTHREADS' & R/W & \verb'int32_t' & number of OpenMP threads to use;
+    See Section~\ref{omp_parallelism} \\
+\verb'GxB_CHUNK'    & R/W & \verb'double' & chunk factor for task creation;
+    See Section~\ref{omp_parallelism} \\
+\hline
+\verb'GrB_NAME'         & R/W  & \verb'char *' & name of the context.
+    This can be set any number of times for user-defined contexts.  Built-in
+    contexts have the same name as the variable name (\verb'"GxB_CONTEXT_WORLD"'
+    for the \verb'GxB_CONTEXT_WORLD' context, for example) \\
+\hline
+\end{tabular}
+}
+
+NOTE: the non-polymorphic names for this method are
+\verb'GxB_Context_get_[KIND]' and \verb'GxB_Context_set_[KIND]', where
+\verb'KIND' can be:
+    \verb'Scalar' (for \verb'GrB_Scalar'),
+    \verb'String' (for \verb'char *'),
+    \verb'INT' (for \verb'int32_t'), and
+    \verb'SIZE' (for \verb'size_t *' for \verb'GrB_get' only), and
+    \verb'VOID' (for \verb'void *').
+The non-polymorphic suffix of \verb'INT' is used here instead of
+\verb'INT32' because \verb'GxB_Context_*_INT32' appear as historical methods
+in version v8.0 and earlier, which are now deprecated.
+
+For the \verb'int32_t' type, the use of the polymorphic \verb'GrB_set' and
+\verb'GrB_get' accesses the correct version of this method.  When using
+non-polymorphic methods, the use of \verb'GxB_Context_get_INT' and
+\verb'GxB_Context_set_INT' is recommended.
+

@@ -2,7 +2,7 @@
 // GB_nnz_max.c: max number of entries that can be held in a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,8 @@ int64_t GB_nnz_max
     if (A->p != NULL)
     {
         // A is sparse (p,i,x) or hypersparse (p,h,i,x):
-        nnz_max = (A->i == NULL) ? 0 : (A->i_size / sizeof (int64_t)) ;
+        size_t isize = (A->i_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+        nnz_max = (A->i == NULL) ? 0 : (A->i_size / isize) ;
         if (!A->iso)
         { 
             nnz_max = GB_IMIN (nnz_max, xmax) ;

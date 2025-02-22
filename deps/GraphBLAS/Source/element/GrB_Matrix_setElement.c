@@ -2,7 +2,7 @@
 // GrB_Matrix_setElement: set an entry in a matrix, C(row,col) = x
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,17 +16,17 @@
 #define GB_SET(prefix,type,T,ampersand)                                     \
 GrB_Info GB_EVAL3 (prefix, _Matrix_setElement_, T) /* C (row,col) = x */    \
 (                                                                           \
-    GrB_Matrix C,                       /* matrix to modify               */\
-    type x,                             /* scalar to assign to C(row,col) */\
-    GrB_Index row,                      /* row index                      */\
-    GrB_Index col                       /* column index                   */\
+    GrB_Matrix C,       /* matrix to modify               */                \
+    type x,             /* scalar to assign to C(row,col) */                \
+    uint64_t row,       /* row index                      */                \
+    uint64_t col        /* column index                   */                \
 )                                                                           \
 {                                                                           \
-    GB_WHERE (C, GB_STR(prefix) "_Matrix_setElement_" GB_STR(T)             \
-        " (C, row, col, x)") ;                                              \
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;                                       \
+    GB_RETURN_IF_NULL (C) ;                                                 \
+    GB_WHERE1 (C, GB_STR(prefix) "_Matrix_setElement_" GB_STR(T)            \
+        " (C, row, col, x)");                                               \
     return (GB_setElement (C, NULL, ampersand x, row, col,                  \
-        GB_ ## T ## _code, Werk)) ;                                      \
+        GB_ ## T ## _code, Werk)) ;                                         \
 }
 
 GB_SET (GrB, bool      , BOOL   , &)
@@ -54,10 +54,10 @@ GB_SET (GrB, void *    , UDT    ,  )
 
 GrB_Info GrB_Matrix_setElement_Scalar
 (
-    GrB_Matrix C,                       // matrix to modify
-    GrB_Scalar scalar,                  // scalar to assign to C(row,col)
-    GrB_Index row,                      // row index
-    GrB_Index col                       // column index
+    GrB_Matrix C,           // matrix to modify
+    GrB_Scalar scalar,      // scalar to assign to C(row,col)
+    uint64_t row,           // row index
+    uint64_t col            // column index
 )
 {
 
@@ -65,9 +65,9 @@ GrB_Info GrB_Matrix_setElement_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (C, "GrB_Matrix_setElement_Scalar (C, x, row, col)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (scalar) ;
+    GB_WHERE2 (C, scalar, "GrB_Matrix_setElement_Scalar (C, x, row, col)") ;
+    GB_RETURN_IF_NULL (C) ;
+    GB_RETURN_IF_NULL (scalar) ;
 
     //--------------------------------------------------------------------------
     // set or remove the element

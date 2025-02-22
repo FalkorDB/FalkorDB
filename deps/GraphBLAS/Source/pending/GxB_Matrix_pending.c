@@ -11,14 +11,18 @@ GrB_Info GxB_Matrix_Pending     // does matrix has pending operations
 	GrB_Matrix A,           // matrix to query
 	bool *pending           // are there any pending operations
 ) {
-	GB_WHERE1 ("GxB_Matrix_Pending (A)") ;
+	GB_WHERE1 (A, "GxB_Matrix_Pending (A)") ;
+
 	//--------------------------------------------------------------------------
 	// check inputs
 	//--------------------------------------------------------------------------
 	GB_RETURN_IF_NULL_OR_FAULTY(A) ;
 	GB_RETURN_IF_NULL(pending) ;
 
-	(*pending) = (GB_ANY_PENDING_WORK (A) || GB_hyper_hash_need (A));
+	int will_wait ;
+	GrB_Matrix_get_INT32 (A, &will_wait, GxB_WILL_WAIT) ;
+
+	(*pending) = (will_wait == true) ;
 
 	return (GrB_SUCCESS) ;
 }

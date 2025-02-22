@@ -2,7 +2,7 @@
 // gbextracttuples: extract all entries from a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,11 +14,12 @@
 
 // The desciptor is optional.  If present, it must be a struct.
 
-// desc.base = 'zero-based':    I and J are returned as 0-based int64 indices
-// desc.base = 'one-based int': I and J are returned as 1-based int64 indices
+// desc.base = 'zero-based':    I and J are returned as 0-based integer indices
+// desc.base = 'one-based int': I and J are returned as 1-based integer indices
 // desc.base = 'one-based':     I and J are returned as 1-based double indices
-// desc.base = 'default':       'one-based', unless max(size(A)) > flintmax,
-//                              in which case 'one-based int' is used.
+// desc.base = 'one-based double' one-based double unless max(size(A)) >
+//                              flintmax, in which case 'one-based int' is used.
+// desc.base = 'default':       'one-based int'
 
 #include "gb_interface.h"
 
@@ -45,7 +46,7 @@ void mexFunction
 
     base_enum_t base = BASE_DEFAULT ;
     kind_enum_t kind = KIND_FULL ;              // ignored
-    GxB_Format_Value fmt = GxB_NO_FORMAT ;      // ignored
+    int fmt = GxB_NO_FORMAT ;                   // ignored
     int sparsity = 0 ;                          // ignored
     GrB_Descriptor desc = NULL ;
     if (nargin > 1)
@@ -56,11 +57,20 @@ void mexFunction
     OK (GrB_Descriptor_free (&desc)) ;
 
     //--------------------------------------------------------------------------
-    // get the matrix
+    // get the matrix; disable burble for scalars
     //--------------------------------------------------------------------------
 
     GrB_Matrix A = gb_get_shallow (pargin [0]) ;
-    GrB_Index nvals ;
+    uint64_t nrows, ncols, nvals ;
+    OK (GrB_Matrix_nrows (&nrows, A)) ;
+    OK (GrB_Matrix_ncols (&ncols, A)) ;
+    int burble ;
+    bool disable_burble = (nrows <= 1 && ncols <= 1) ;
+    if (disable_burble)
+    { 
+        OK (GrB_Global_get_INT32 (GrB_GLOBAL, &burble, GxB_BURBLE)) ;
+        OK (GrB_Global_set_INT32 (GrB_GLOBAL, false, GxB_BURBLE)) ;
+    }
     OK (GrB_Matrix_nvals (&nvals, A)) ;
     GrB_Type xtype ;
     OK (GxB_Matrix_type (&xtype, A)) ;
@@ -74,251 +84,108 @@ void mexFunction
     bool extract_X = (nargout > 2) ;
 
     //--------------------------------------------------------------------------
-    // allocate I and J
+    // create empty GrB_Vectors for I, J, and X
     //--------------------------------------------------------------------------
 
-    GrB_Index s = MAX (nvals, 1) ;
-    GrB_Index *I = extract_I ? mxMalloc (s * sizeof (GrB_Index)) : NULL ;
-    GrB_Index *J = extract_J ? mxMalloc (s * sizeof (GrB_Index)) : NULL ;
+    GrB_Vector I = NULL, J = NULL, X = NULL ;
+    if (extract_I) OK (GrB_Vector_new (&I, GrB_UINT64, 0)) ;
+    if (extract_J) OK (GrB_Vector_new (&J, GrB_UINT64, 0)) ;
+    if (extract_X) OK (GrB_Vector_new (&X, xtype, 0)) ;
 
     //--------------------------------------------------------------------------
-    // extract the tuples and export X
+    // extract the tuples from A into I, J, and X
     //--------------------------------------------------------------------------
 
-    if (xtype == GrB_BOOL)
-    {
-        bool *X = extract_X ? mxMalloc (s * sizeof (bool)) : NULL ;
-        OK (GrB_Matrix_extractTuples_BOOL (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_BOOL) ;
-        }
-    }
-    else if (xtype == GrB_INT8)
-    {
-        int8_t *X = extract_X ? mxMalloc (s * sizeof (int8_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_INT8 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_INT8) ;
-        }
-    }
-    else if (xtype == GrB_INT16)
-    {
-        int16_t *X = extract_X ? mxMalloc (s * sizeof (int16_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_INT16 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_INT16) ;
-        }
-    }
-    else if (xtype == GrB_INT32)
-    {
-        int32_t *X = extract_X ? mxMalloc (s * sizeof (int32_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_INT32 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_INT32) ;
-        }
-    }
-    else if (xtype == GrB_INT64)
-    {
-        int64_t *X = extract_X ? mxMalloc (s * sizeof (int64_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_INT64 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_INT64) ;
-        }
-    }
-    else if (xtype == GrB_UINT8)
-    {
-        uint8_t *X = extract_X ? mxMalloc (s * sizeof (uint8_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_UINT8 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_UINT8) ;
-        }
-    }
-    else if (xtype == GrB_UINT16)
-    {
-        uint16_t *X = extract_X ? mxMalloc (s * sizeof (uint16_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_UINT16 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_UINT16) ;
-        }
-    }
-    else if (xtype == GrB_UINT32)
-    {
-        uint32_t *X = extract_X ? mxMalloc (s * sizeof (uint32_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_UINT32 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_UINT32) ;
-        }
-    }
-    else if (xtype == GrB_UINT64)
-    {
-        uint64_t *X = extract_X ? mxMalloc (s * sizeof (uint64_t)) : NULL ;
-        OK (GrB_Matrix_extractTuples_UINT64 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_UINT64) ;
-        }
-    }
-    else if (xtype == GrB_FP32)
-    {
-        float *X = extract_X ? mxMalloc (s * sizeof (float)) : NULL ;
-        OK (GrB_Matrix_extractTuples_FP32 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_FP32) ;
-        }
-    }
-    else if (xtype == GrB_FP64)
-    {
-        double *X = extract_X ? mxMalloc (s * sizeof (double)) : NULL ;
-        OK (GrB_Matrix_extractTuples_FP64 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GrB_FP64) ;
-        }
-    }
-    else if (xtype == GxB_FC32)
-    {
-        GxB_FC32_t *X = extract_X ? mxMalloc (s * sizeof (GxB_FC32_t)) : NULL ;
-        OK (GxB_Matrix_extractTuples_FC32 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GxB_FC32) ;
-        }
-    }
-    else if (xtype == GxB_FC64)
-    {
-        GxB_FC64_t *X = extract_X ? mxMalloc (s * sizeof (GxB_FC64_t)) : NULL ;
-        OK (GxB_Matrix_extractTuples_FC64 (I, J, X, &nvals, A)) ;
-        if (extract_X)
-        { 
-            pargout [2] = gb_export_to_mxfull ((void **) (&X), nvals, 1,
-                GxB_FC64) ;
-        }
-    }
-    else
-    {
-        ERROR ("unsupported type") ;
-    }
+    OK (GxB_Matrix_extractTuples_Vector (I, J, X, A, NULL)) ;
 
     //--------------------------------------------------------------------------
-    // determine if zero-based or one-based
+    // determine if 1 must be added to the indices
     //--------------------------------------------------------------------------
 
-    if (base == BASE_DEFAULT)
-    {
-        GrB_Index nrows, ncols ;
-        OK (GrB_Matrix_nrows (&nrows, A)) ;
-        OK (GrB_Matrix_ncols (&ncols, A)) ;
-        if (MAX (nrows, ncols) > FLINTMAX)
-        { 
-            // the matrix is too large for I and J to be returned as double
-            base = BASE_1_INT64 ;
-        }
-        else
-        { 
-            // this is the typical case
-            base = BASE_1_DOUBLE ;
-        }
-    }
+    int base_offset = (base == BASE_0_INT) ? 0 : 1 ;
 
     //--------------------------------------------------------------------------
-    // free workspace
+    // return I to MATLAB
     //--------------------------------------------------------------------------
 
-    OK (GrB_Matrix_free (&A)) ;
+    void *x = NULL ;
+    uint64_t size = 0 ;
+    int ignore = 0 ;
+    GrB_Type type = NULL ;
+    GrB_Vector T = NULL ;
 
-    //--------------------------------------------------------------------------
-    // export I and J
-    //--------------------------------------------------------------------------
-
-    if (base == BASE_0_INT64)
+    if (extract_I)
     { 
-
-        //----------------------------------------------------------------------
-        // export I and J in their native zero-based integer format
-        //----------------------------------------------------------------------
-
-        if (extract_I)
+        if (base == BASE_1_DOUBLE && nrows <= FLINTMAX)
         { 
-            pargout [0] = gb_export_to_mxfull ((void **) (&I), nvals, 1,
-                GrB_INT64) ;
+            // I = (double) (I + 1)
+            OK (GrB_Vector_new (&T, GrB_FP64, nvals)) ;
+            OK (GrB_Vector_apply_BinaryOp2nd_FP64 (T, NULL, NULL,
+                GrB_PLUS_FP64, I, base_offset, NULL)) ;
+            OK (GrB_Vector_free (&I)) ;
+            I = T ;
         }
-
-        if (extract_J)
+        else if (base_offset != 0)
         { 
-            pargout [1] = gb_export_to_mxfull ((void **) (&J), nvals, 1,
-                GrB_INT64) ;
+            // I = I+1, as a int64 or int32 vector
+            OK (GrB_Vector_apply_BinaryOp2nd_UINT64 (I, NULL, NULL,
+                GrB_PLUS_UINT64, I, 1, NULL)) ;
         }
-
+        OK (GxB_Vector_unload (I, &x, &type, &nvals, &size, &ignore, NULL)) ;
+        if (type == GrB_UINT32) type = GrB_INT32 ;
+        if (type == GrB_UINT64) type = GrB_INT64 ;
+        pargout [0] = gb_export_to_mxfull (&x, nvals, 1, type) ;
+        OK (GrB_Vector_free (&I)) ;
     }
-    else if (base == BASE_1_DOUBLE)
+
+    //--------------------------------------------------------------------------
+    // return J to MATLAB
+    //--------------------------------------------------------------------------
+
+    if (extract_J)
     { 
-
-        //----------------------------------------------------------------------
-        // export I and J as double one-based integers
-        //----------------------------------------------------------------------
-
-        if (extract_I)
+        if (base == BASE_1_DOUBLE && ncols <= FLINTMAX)
         { 
-            double *I_double = mxMalloc (s * sizeof (double)) ;
-            GB_helper1 (I_double, I, (int64_t) nvals) ;
-            gb_mxfree ((void **) (&I)) ;
-            pargout [0] = gb_export_to_mxfull ((void **) (&I_double), nvals, 1,
-                GrB_FP64) ;
+            // J = (double) (J + 1)
+            OK (GrB_Vector_new (&T, GrB_FP64, nvals)) ;
+            OK (GrB_Vector_apply_BinaryOp2nd_FP64 (T, NULL, NULL,
+                GrB_PLUS_FP64, J, base_offset, NULL)) ;
+            OK (GrB_Vector_free (&J)) ;
+            J = T ;
         }
-
-        if (extract_J)
+        else if (base_offset != 0)
         { 
-            double *J_double = mxMalloc (s * sizeof (double)) ;
-            GB_helper1 (J_double, J, (int64_t) nvals) ;
-            gb_mxfree ((void **) (&J)) ;
-            pargout [1] = gb_export_to_mxfull ((void **) (&J_double), nvals, 1,
-                GrB_FP64) ;
+            // J = J+1, as a int64 or int32 vector
+            OK (GrB_Vector_apply_BinaryOp2nd_UINT64 (J, NULL, NULL,
+                GrB_PLUS_UINT64, J, 1, NULL)) ;
         }
-
+        OK (GxB_Vector_unload (J, &x, &type, &nvals, &size, &ignore, NULL)) ;
+        if (type == GrB_UINT32) type = GrB_INT32 ;
+        if (type == GrB_UINT64) type = GrB_INT64 ;
+        pargout [1] = gb_export_to_mxfull (&x, nvals, 1, type) ;
+        OK (GrB_Vector_free (&J)) ;
     }
-    else if (base == BASE_1_INT64)
+
+    //--------------------------------------------------------------------------
+    // return X to MATLAB
+    //--------------------------------------------------------------------------
+
+    if (extract_X)
     { 
-
-        //----------------------------------------------------------------------
-        // export I and J as int64 one-based integers
-        //----------------------------------------------------------------------
-
-        if (extract_I)
-        { 
-            GB_helper1i ((int64_t *) I, (int64_t) nvals) ;
-            pargout [0] = gb_export_to_mxfull ((void **) (&I), nvals, 1,
-                GrB_INT64) ;
-        }
-
-        if (extract_J)
-        { 
-            GB_helper1i ((int64_t *) J, (int64_t) nvals) ;
-            pargout [1] = gb_export_to_mxfull ((void **) (&J), nvals, 1,
-                GrB_INT64) ;
-        }
+        OK (GxB_Vector_unload (X, &x, &xtype, &nvals, &size, &ignore, NULL)) ;
+        pargout [2] = gb_export_to_mxfull (&x, nvals, 1, xtype) ;
+        OK (GrB_Vector_free (&X)) ;
     }
 
-    GB_WRAPUP ;
+    //--------------------------------------------------------------------------
+    // restore burble and return result
+    //--------------------------------------------------------------------------
+
+    if (disable_burble)
+    { 
+        OK (GrB_Global_set_INT32 (GrB_GLOBAL, burble, GxB_BURBLE)) ;
+    }
+    GrB_Matrix_free (&A) ;
+    gb_wrapup ( ) ;
 }
 

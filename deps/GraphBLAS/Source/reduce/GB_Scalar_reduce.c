@@ -2,7 +2,7 @@
 // GB_Scalar_reduce: reduce a matrix to a GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,7 @@ GrB_Info GB_Scalar_reduce
     // check if A is empty
     //--------------------------------------------------------------------------
 
-    GrB_Index nvals ;
+    uint64_t nvals ;
     GB_OK (GB_nvals (&nvals, A, Werk)) ;
     if (nvals == 0)
     {

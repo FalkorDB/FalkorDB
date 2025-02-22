@@ -2,7 +2,7 @@
 // GB_assign_describe: construct a string that describes GrB_assign / subassign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,13 +18,11 @@ void GB_assign_describe
     const bool C_replace,       // descriptor for C
     const int Ikind,
     const int Jkind,
-//  const GrB_Matrix M,
     const bool M_is_null,
     const int M_sparsity,
     const bool Mask_comp,       // true for !M, false for M
     const bool Mask_struct,     // true if M is structural, false if valued
     const GrB_BinaryOp accum,   // present here
-//  const GrB_Matrix A,         // input matrix, not transposed
     const bool A_is_null,
     const int assign_kind       // row assign, col assign, assign, or subassign
 )
@@ -35,24 +33,24 @@ void GB_assign_describe
     //--------------------------------------------------------------------------
 
     str [0] = '\0' ;
-    char *Op ;
+    char *op_str ;
     if (accum == NULL)
     { 
         // no accum operator is present
-        Op = "" ;
+        op_str = "" ;
     }
     else
     { 
         // use a simpler version of accum->name
-        if (accum->opcode == GB_USER_binop_code) Op = "op" ;
-        else if (GB_STRING_MATCH (accum->name, "plus")) Op = "+" ;
-        else if (GB_STRING_MATCH (accum->name, "minus")) Op = "-" ;
-        else if (GB_STRING_MATCH (accum->name, "times")) Op = "*" ;
-        else if (GB_STRING_MATCH (accum->name, "div")) Op = "/" ;
-        else if (GB_STRING_MATCH (accum->name, "or")) Op = "|" ;
-        else if (GB_STRING_MATCH (accum->name, "and")) Op = "&" ;
-        else if (GB_STRING_MATCH (accum->name, "xor")) Op = "^" ;
-        else Op = accum->name ;
+        if (accum->opcode == GB_USER_binop_code) op_str = "op" ;
+        else if (GB_STRING_MATCH (accum->name, "plus")) op_str = "+" ;
+        else if (GB_STRING_MATCH (accum->name, "minus")) op_str = "-" ;
+        else if (GB_STRING_MATCH (accum->name, "times")) op_str = "*" ;
+        else if (GB_STRING_MATCH (accum->name, "div")) op_str = "/" ;
+        else if (GB_STRING_MATCH (accum->name, "or")) op_str = "|" ;
+        else if (GB_STRING_MATCH (accum->name, "and")) op_str = "&" ;
+        else if (GB_STRING_MATCH (accum->name, "xor")) op_str = "^" ;
+        else op_str = accum->name ;
     }
 
     //--------------------------------------------------------------------------
@@ -107,12 +105,12 @@ void GB_assign_describe
     {
         case GB_ROW_ASSIGN : 
             // C(i,J) = A
-            snprintf (str, slen, "C%s(i,%s) %s= A ", Mask, Jstr, Op) ;
+            snprintf (str, slen, "C%s(i,%s) %s= A ", Mask, Jstr, op_str) ;
             break ;
 
         case GB_COL_ASSIGN : 
             // C(I,j) = A
-            snprintf (str, slen, "C%s(%s,j) %s= A ", Mask, Istr, Op) ;
+            snprintf (str, slen, "C%s(%s,j) %s= A ", Mask, Istr, op_str) ;
             break ;
 
         case GB_ASSIGN : 
@@ -120,13 +118,13 @@ void GB_assign_describe
             if (Ikind == GB_ALL && Jkind == GB_ALL)
             { 
                 // C<M> += A
-                snprintf (str, slen, "C%s %s= %s ", Mask, Op, S) ;
+                snprintf (str, slen, "C%s %s= %s ", Mask, op_str, S) ;
             }
             else
             { 
                 // C<M>(I,J) = A
                 snprintf (str, slen, "C%s(%s,%s) %s= %s ", Mask, Istr, Jstr,
-                    Op, S) ;
+                    op_str, S) ;
             }
             break ;
 
@@ -135,13 +133,13 @@ void GB_assign_describe
             if (Ikind == GB_ALL && Jkind == GB_ALL)
             { 
                 // C<M> += A
-                snprintf (str, slen, "C%s %s= %s ", Mask, Op, S) ;
+                snprintf (str, slen, "C%s %s= %s ", Mask, op_str, S) ;
             }
             else
             { 
                 // C(I,J)<M> = A
                 snprintf (str, slen, "C(%s,%s)%s %s= %s ", Istr, Jstr, Mask,
-                    Op, S) ;
+                    op_str, S) ;
             }
             break ;
 

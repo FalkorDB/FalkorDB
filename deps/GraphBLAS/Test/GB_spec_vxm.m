@@ -6,7 +6,7 @@ function w = GB_spec_vxm (w, mask, accum, semiring, u, A, descriptor)
 %
 % w, mask, and u are column vectors.  Computes w'=u'*A or w'=u'*A'
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargout > 1 || nargin ~= 7)
