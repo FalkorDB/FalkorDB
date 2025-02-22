@@ -2,25 +2,12 @@
 // GB_select_entry_phase1_template: count entries for C=select(A,thunk)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 {
-    //--------------------------------------------------------------------------
-    // get A and its slicing
-    //--------------------------------------------------------------------------
-
-    const int64_t *restrict kfirst_Aslice = A_ek_slicing ;
-    const int64_t *restrict klast_Aslice  = A_ek_slicing + A_ntasks ;
-    const int64_t *restrict pstart_Aslice = A_ek_slicing + A_ntasks * 2 ;
-
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
-    int64_t avlen = A->vlen ;
-    int64_t anvec = A->nvec ;
 
     //==========================================================================
     // entry selector
@@ -37,9 +24,25 @@
     // Thread tid+1, and following threads, may also do some of the reduces for
     // A(:,klast).
 
+    // The work to compute Cp for the first and last vector of each phase is
+    // done by GB_ek_slice_merge1 and GB_ek_slice_merge2, in GB_select_sparse.
+
     //--------------------------------------------------------------------------
-    // get A
+    // get C, A, and its slicing
     //--------------------------------------------------------------------------
+
+    GB_Cp_DECLARE (Cp, ) ; GB_Cp_PTR (Cp, C) ;
+
+    const int64_t *restrict kfirst_Aslice = A_ek_slicing ;
+    const int64_t *restrict klast_Aslice  = A_ek_slicing + A_ntasks ;
+    const int64_t *restrict pstart_Aslice = A_ek_slicing + A_ntasks * 2 ;
+
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+
+    int64_t avlen = A->vlen ;
+    int64_t anvec = A->nvec ;
 
     const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
     size_t  asize = A->type->size ;
@@ -75,9 +78,9 @@
             // find the part of A(:,k) to be reduced by this thread
             //------------------------------------------------------------------
 
-            int64_t j = GBH_A (Ah, k) ;
+            int64_t j = GBh_A (Ah, k) ;
             GB_GET_PA (pA, pA_end, tid, k, kfirst, klast, pstart_Aslice,
-                Ap [k], Ap [k+1]) ;
+                GB_IGET (Ap, k), GB_IGET (Ap, k+1)) ;
 
             //------------------------------------------------------------------
             // count entries in Ax [pA ... pA_end-1]
@@ -86,7 +89,7 @@
             int64_t cjnz = 0 ;
             for ( ; pA < pA_end ; pA++)
             { 
-                int64_t i = Ai [pA] ;
+                int64_t i = GB_IGET (Ai, pA) ;
                 GB_TEST_VALUE_OF_ENTRY (keep, pA) ;
                 if (keep) cjnz++ ;
             }
@@ -100,15 +103,9 @@
             }
             else
             { 
-                Cp [k] = cjnz ; 
+                GB_ISET (Cp, k, cjnz) ;     // Cp [k] = cjnz ;
             }
         }
     }
-
-    //--------------------------------------------------------------------------
-    // reduce the first and last vector of each slice using a single thread
-    //--------------------------------------------------------------------------
-
-    GB_ek_slice_merge1 (Cp, Wfirst, Wlast, A_ek_slicing, A_ntasks) ;
 }
 

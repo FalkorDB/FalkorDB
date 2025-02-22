@@ -4,7 +4,7 @@ function gbtest27
 % of them if all default FactoryKernels are enabled) or uses many generic
 % methods if the JIT is disabled.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = gbtest_types ;

@@ -330,11 +330,17 @@ int rmm_wrap_initialize_all_same
         devices.clear();
 
         const char* cuda_visible_devices = std::getenv("CUDA_VISIBLE_DEVICES");
+        if (cuda_visible_devices != nullptr)
+        {
+            std::cout << "CUDA_VISIBLE_DEVICES = " << cuda_visible_devices
+                << std::endl;
+        }
 
         /**
          * Start with "CUDA_VISIBLE_DEVICES" var if it's defined.
          */
         if(cuda_visible_devices != nullptr) {
+            std::cout << "getting cuda visible devices" << std::endl;
             std::stringstream check1;
             check1 << cuda_visible_devices;
             std::string intermediate;
@@ -343,7 +349,7 @@ int rmm_wrap_initialize_all_same
 
                 intermediate.erase(std::remove_if(intermediate.begin(), intermediate.end(), ::isspace), intermediate.end());
                 uint32_t device_id = static_cast<uint32_t>(stoi(intermediate));
-                // std::cout << "Found device_id " << device_id << std::endl;
+                std::cout << "Found device_id " << device_id << std::endl;
                 devices.push_back(device_id);
             }
         /**
@@ -351,11 +357,18 @@ int rmm_wrap_initialize_all_same
          * default to device 0.
          */
         } else {
-            devices.push_back(0);
-            // std::cout << "Using default device_id 0" << std::endl;
+            int ngpus = 0 ;
+            cudaGetDeviceCount (&ngpus) ;
+            std::cout << "Using all devices: " << ngpus << std::endl;
+            for (int i = 0 ; i < ngpus ; i++)
+            {
+                devices.push_back(i);
+            }
         }
 
         // Allocate rmm_wrap_contexts
+//      printf ("\ndevices.size %ld\n", devices.size()) ;
+        std::cout << "devices.size is " << devices.size() << std::endl ;
         rmm_wrap_context = (RMM_Wrap_Handle**)malloc(devices.size() * sizeof(RMM_Wrap_Handle*));
         for(int i = 0; i < devices.size(); ++i) {
             rmm_wrap_context[i] = NULL;

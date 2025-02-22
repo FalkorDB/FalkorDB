@@ -19,14 +19,16 @@ function C = reduce (arg1, arg2, arg3, arg4, arg5)
 % op is applied to all entries of the matrix A to reduce them to a single
 % scalar result.
 %
-% accum: an optional binary operator (see 'help GrB.binopinfo').
+% accum: an optional binary operator.
+%       See 'help GrB.binopinfo' for available binary operators.
 %
 % cin: an optional input scalar into which the result can be accumulated
 % with c = accum (cin, result).
 %
-% See also GrB.vreduce, GrB/sum, GrB/prod, GrB/max, GrB/min.
+% See also GrB.vreduce, GrB/sum, GrB/prod, GrB/max, GrB/min, GrB.monoidinfo,
+% GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

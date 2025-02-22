@@ -10,7 +10,7 @@ function S = struct (G)
 %
 % See also load, save, properties, GrB.version, GrB.ver, GrB.load, GrB.save.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 S = G.opaque ;

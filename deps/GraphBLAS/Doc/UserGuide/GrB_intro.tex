@@ -1,0 +1,54 @@
+% UserGuide/GrB_intro.tex: introduction
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SPDX-License-Identifier: Apache-2.0
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{intro}
+
+The GraphBLAS standard defines sparse matrix and vector operations on an
+extended algebra of semirings.  The operations are useful for creating a wide
+range of graph algorithms.
+
+For example, consider the matrix-matrix multiplication, ${\bf C=AB}$.  Suppose
+${\bf A}$ and ${\bf B}$ are sparse $n$-by-$n$ Boolean adjacency matrices of two
+undirected graphs.  If the matrix multiplication is redefined to use logical
+AND instead of scalar multiply, and if it uses the logical OR instead of add,
+then the matrix ${\bf C}$ is the sparse Boolean adjacency matrix of a graph
+that has an edge $(i,j)$ if node $i$ in ${\bf A}$ and node $j$ in ${\bf B}$
+share any neighbor in common.  The OR-AND pair forms an algebraic semiring, and
+many graph operations like this one can be succinctly represented by matrix
+operations with different semirings and different numerical types.  GraphBLAS
+provides a wide range of built-in types and operators, and allows the user
+application to create new types and operators without needing to recompile the
+GraphBLAS library.
+
+For more details on SuiteSparse:GraphBLAS, and its use in LAGraph, see
+\cite{Davis19,Davis23,Davis18b,DavisAznavehKolodziej19,Davis20,Mattson19}.
+
+A full and precise definition of the GraphBLAS specification is provided in
+{\em The GraphBLAS C API Specification} by {Ayd\i n Bulu\c{c}, Timothy Mattson,
+Scott McMillan, Jos\'e Moreira, Carl Yang, and Benjamin Brock}
+\cite{BulucMattsonMcMillanMoreiraYang17,spec,spec2}, based on {\em GraphBLAS
+Mathematics} by Jeremy Kepner \cite{Kepner2017}.  The GraphBLAS C API
+Specification is available at \url{http://graphblas.org}.
+This version of SuiteSparse:GraphBLAS conforms to Version
+\input{GraphBLAS_API_version.tex} of {\em The GraphBLAS C API specification}.
+
+In this User Guide, aspects of the GraphBLAS specification that would be true
+for any GraphBLAS implementation are simply called ``GraphBLAS.'' Details
+unique to this particular implementation are referred to as
+SuiteSparse:GraphBLAS.
+
+All functions, objects, and macros with a name of the form \verb'GxB_*' are
+SuiteSparse-specific extensions to the specification.
+
+\begin{alert}
+{\bf SPEC:} Non-obvious deviations or additions to the GraphBLAS C API
+Specification are highlighted in a box like this one, except for \verb'GxB*'
+methods.  They are not highlighted since their name makes it clear that they
+are extensions to the GraphBLAS C API.
+\end{alert}
+

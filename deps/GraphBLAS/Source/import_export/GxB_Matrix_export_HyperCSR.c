@@ -2,7 +2,7 @@
 // GxB_Matrix_export_HyperCSR: export a matrix in hypersparse CSR format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,20 +15,20 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
 (
     GrB_Matrix *A,      // handle of matrix to export and free
     GrB_Type *type,     // type of matrix exported
-    GrB_Index *nrows,   // number of rows of the matrix
-    GrB_Index *ncols,   // number of columns of the matrix
+    uint64_t *nrows,    // number of rows of the matrix
+    uint64_t *ncols,    // number of columns of the matrix
 
-    GrB_Index **Ap,     // row "pointers"
-    GrB_Index **Ah,     // row indices
-    GrB_Index **Aj,     // column indices
+    uint64_t **Ap,      // row "pointers"
+    uint64_t **Ah,      // row indices
+    uint64_t **Aj,      // column indices
     void **Ax,          // values
-    GrB_Index *Ap_size, // size of Ap in bytes
-    GrB_Index *Ah_size, // size of Ah in bytes
-    GrB_Index *Aj_size, // size of Aj in bytes
-    GrB_Index *Ax_size, // size of Ax in bytes
+    uint64_t *Ap_size,  // size of Ap in bytes
+    uint64_t *Ah_size,  // size of Ah in bytes
+    uint64_t *Aj_size,  // size of Aj in bytes
+    uint64_t *Ax_size,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
-    GrB_Index *nvec,    // number of rows that appear in Ah
+    uint64_t *nvec,     // number of rows that appear in Ah
     bool *jumbled,      // if true, indices in each row may be unsorted
     const GrB_Descriptor desc
 )
@@ -38,12 +38,12 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_export_HyperCSR (&A, &type, &nrows, &ncols, "
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_NULL (*A) ;
+    GB_WHERE_1 (*A, "GxB_Matrix_export_HyperCSR (&A, &type, &nrows, &ncols, "
         "&Ap, &Ah, &Aj, &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, "
         "&iso, &nvec, &jumbled, desc)") ;
-    // GB_BURBLE_START ("GxB_Matrix_export_HyperCSR") ;
-    GB_RETURN_IF_NULL (A) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (*A) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
@@ -53,7 +53,6 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
     if ((*A)->is_csc)
     { 
         // A = A', done in-place, to put A in by-row format
-        GBURBLE ("(export transpose) ") ;
         GB_OK (GB_transpose_in_place (*A, false, Werk)) ;
     }
 
@@ -106,7 +105,6 @@ GrB_Info GxB_Matrix_export_HyperCSR  // export and free a hypersparse CSR matrix
         ASSERT (sparsity == GxB_HYPERSPARSE) ;
         ASSERT (!is_csc) ;
     }
-    // GB_BURBLE_END ;
     return (info) ;
 }
 

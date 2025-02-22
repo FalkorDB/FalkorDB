@@ -2,7 +2,7 @@
 # GraphBLAS/JITpackage/CMakeLists.txt:  package source for the GraphBLAS JIT
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------
@@ -42,7 +42,7 @@ if ( CMAKE_CROSSCOMPILING )
 
     if ( NOT TARGET grb_jitpackage )
         # target to rerun cmake after jitpackage_generator_native was built
-        # FIXME: This likely won't work with the Ninja generator or other
+        # fixme: This likely won't work with the Ninja generator or other
         #        generators that lock their own files. But it should work
         #        with a "* Makefiles" generator (which is the default on
         #        most platforms apart from Windows).

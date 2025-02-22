@@ -1,0 +1,251 @@
+
+\newpage
+%===============================================================================
+\section{{\sf GxB\_Context:} controlling computational resources} %=============
+%===============================================================================
+\label{context}
+
+SuiteSparse:GraphBLAS v8.0.0 adds a new object, the \verb'GxB_Context', which
+controls the number of threads used by OpenMP.  In the future, this same object
+will control the number of GPUs used.
+
+The \verb'GxB_Context' object is not needed if the user application is itself
+single threaded, with all parallelism is inside GraphBLAS itself.  The object
+is also not needed if the user application is multi-threaded, but all user
+threads create the same number of threads inside GraphBLAS (say each using a
+single thread).  In that case, \verb'GrB_set(GrB_GLOBAL,1,GxB_NTHREADS)'
+can be used (for example).
+
+However, suppose the user application creates 5 threads of its own, on a
+machine with 16 cores, and each thread wants to use a different number of
+threads inside GraphBLAS (one user thread uses 8 OpenMP threads and the
+the other four use 2 each, for example).  This is where the \verb'GxB_Context'
+object becomes essential.
+
+The default context is \verb'GxB_CONTEXT_WORLD', which is not created by the
+user application but it can be modified.  If a user thread does not create its
+own context, then its computational resources are determine by this
+\verb'GxB_CONTEXT_WORLD' object.  The following \verb'GrB_set/get' methods
+access this global object without naming it directly (where \verb'chunk'
+is a \verb'GrB_Scalar' of type \verb'GrB_FP64' or \verb'GrB_FP32'):
+
+    \begin{itemize}
+    \item \verb'GrB_set (GrB_GLOBAL, nthreads, GxB_NTHREADS)'
+    \item \verb'GrB_get (GrB_GLOBAL, &nthreads, GxB_NTHREADS)'
+    \item \verb'GrB_set (GrB_GLOBAL, chunk, GxB_CHUNK)'
+    \item \verb'GrB_get (GrB_GLOBAL, chunk, GxB_CHUNK)'
+    \end{itemize}
+
+The above methods control the OpenMP threads used by all user threads in the
+user application.  To allow each user thread to control its own OpenMP
+threading, each user thread needs to create its own Context object via
+\verb'GxB_Context_new'.  Next, the user thread must {\em engage} this context
+via \verb'GxB_Context_engage'; all subsequent calls to GraphBLAS from this
+particular user thread will then use the number of OpenMP threads dictated by
+this particular context.
+
+{\em Engaging} a \verb'GxB_Context' object assigns to a \verb'threadprivate'
+space accessible only by this particular user thread, so that any calls to
+GraphBLAS can access the settings in this object.
+
+The opposite operation is to {\em disengage} a context.  This removes a
+particular object from the \verb'threadprivate' space of the user thread
+that is disengaging its context.
+
+After a context object is created, the user thread that owns it can modify
+its settings in this object.  An example appears in the \verb'GraphBLAS/Demo'
+folder, part of which is listed below.
+
+{\footnotesize
+\begin{verbatim}
+
+    #pragma omp parallel for num_threads (nouter) schedule (dynamic, 1)
+    for (int k = 0 ; k < nmat ; k++)
+    {
+        // each user thread constructs its own context
+        GxB_Context Context = NULL ;
+        GxB_Context_new (&Context) ;
+        GrB_set (Context, ninner, GxB_NTHREADS) ;
+        GxB_Context_engage (Context) ;
+
+        // kth user thread builds kth matrix with ninner threads
+        GrB_Matrix A = NULL ;
+        GrB_Matrix_new (&A, GrB_FP64, n, n) ;
+        GrB_Matrix_build (A, I, J, X, nvals, GrB_PLUS_FP64) ;
+
+        // free the matrix just built
+        GrB_Matrix_free (&A) ;
+
+        // each user thread frees its own context
+        GxB_Context_disengage (Context) ;
+        GxB_Context_free (&Context) ;
+    }
+\end{verbatim}
+}
+
+In this example, \verb'nouter' user threads are created.  Inside the parallel
+loop, each user thread creates and engages its own context object.  In this
+simple example, each user thread then uses \verb'ninner' threads to do some
+work, although in principle each user thread to request a different number of
+threads for each of its calls to GraphBLAS.  This leads to nested parallelism,
+so to use this context object effectively, the nested parallelism feature of
+OpenMP must be enabled.
+
+The next sections describe the methods for a \verb'GxB_Context':
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GxB_Context_new'           & create a context                     & \ref{context_new} \\
+\verb'GxB_Context_engage'        & engage a context                     & \ref{context_engage} \\
+\verb'GxB_Context_disengage'     & disengage a context                  & \ref{context_disengage} \\
+\verb'GxB_Context_free'          & free a context                       & \ref{context_free} \\
+\verb'GxB_Context_wait'          & wait for a context                   & \ref{context_wait} \\
+\hline
+\hline
+\verb'GrB_get'                   & get a value from a context           & \ref{get_set_context} \\
+\verb'GrB_set'                   & set a value in a context             & \ref{get_set_context} \\
+\hline
+\hline
+\verb'GxB_Context_fprint'        & check/print a context                & \ref{context_print} \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+\subsection{{\sf GxB\_Context\_new:}  create a new context}
+%-------------------------------------------------------------------------------
+\label{context_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Context_new        // create a new context
+(
+    GxB_Context *Context        // handle of context to create
+) ;
+\end{verbatim} } \end{mdframed}
+
+A new context is created and initialized with the current global settings for
+\verb'GxB_NTHREADS' and \verb'GxB_CHUNK'.  See \verb'GrB_get'.
+The context object will not have an effect on any calls to GraphBLAS until it
+is {\em engaged} by a user thread.
+
+%-------------------------------------------------------------------------------
+\subsection{{\sf GxB\_Context\_engage:}  engaging context}
+%-------------------------------------------------------------------------------
+\label{context_engage}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Context_engage         // engage a Context
+(
+    GxB_Context Context             // Context to engage
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Context_engage' sets the provided Context object as the Context for
+this user thread.  Multiple user threads can share a single Context.  Any prior
+Context for this user thread is superseded by the new Context (the prior one is
+not freed).  \verb'GrB_SUCCESS' is returned, and future calls to GraphBLAS by
+this user thread will use the provided Context.
+
+If the Context on input is the \verb'GxB_CONTEXT_WORLD' object, then the
+current Context is disengaged.  That is, the following calls have the same
+effect, setting the Context of this user thread to \verb'GxB_CONTEXT_WORLD':
+
+{\footnotesize
+\begin{verbatim}
+      GxB_Context_engage (GxB_CONTEXT_WORLD) ;
+      GxB_Context_disengage (NULL) ;
+\end{verbatim} }
+
+The result for both cases above is \verb'GrB_SUCCESS'.
+
+Error cases: If \verb'Context' is NULL on input, \verb'GrB_NULL_POINTER' is
+returned.  If a non-NULL Context is provided but it is faulty in some way, then
+an error code is returned (\verb'GrB_INVALID_OBJECT' or
+\verb'GrB_UNINITIALIZED_OBJECT').  If an error code is returned, the current
+Context for this user thread is unmodified.
+
+%-------------------------------------------------------------------------------
+\subsection{{\sf GxB\_Context\_disengage:}  disengaging context}
+%-------------------------------------------------------------------------------
+\label{context_disengage}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Context_disengage      // disengage a Context
+(
+    GxB_Context Context             // Context to disengage
+) ;
+\end{verbatim} } \end{mdframed}
+
+If a NULL Context is provided or if the Context input parameter is
+\verb'GxB_CONTEXT_WORLD', then any current Context for this user thread is
+disengaged.  If a valid non-NULL Context is provided and it matches the
+current Context for this user thread, it is disengaged.  In all of these
+cases, \verb'GrB_SUCCESS' is returned.  The user thread has no Context object and
+any subsequent calls to GraphBLAS functions will use the world Context,
+\verb'GxB_CONTEXT_WORLD'.
+
+Error cases: If a non-NULL Context is provided but it is faulty in some way,
+then an error code is returned (\verb'GrB_INVALID_OBJECT' or
+\verb'GrB_UNINITIALIZED_OBJECT').  If a non-NULL Context is provided on input
+that doesn't match the current Context for this thread, then
+\verb'GrB_INVALID_VALUE' is returned.  If an error code is returned, the
+current Context for this user thread is unmodified.
+
+%-------------------------------------------------------------------------------
+\subsection{{\sf GxB\_Context\_free:} free a context}
+%-------------------------------------------------------------------------------
+\label{context_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free           // free a context
+(
+    GxB_Context *Context    // handle of Context to free
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Context_free' frees a descriptor.
+Either usage:
+
+    {\small
+    \begin{verbatim}
+    GxB_Context_free (&Context) ;
+    GrB_free (&Context) ; \end{verbatim}}
+
+\noindent
+frees the \verb'Context' and sets \verb'Context' to \verb'NULL'.  It
+safely does nothing if passed a \verb'NULL' handle, or if
+\verb'Context == NULL' on input.
+
+%-------------------------------------------------------------------------------
+\subsection{{\sf GxB\_Context\_wait:} wait for a context}
+%-------------------------------------------------------------------------------
+\label{context_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a context
+(
+    GxB_Context Context,        // context to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating or modifying a context, a GraphBLAS library may choose to
+exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS currently does nothing except to ensure that
+\verb'Context' is valid.
+

@@ -2,7 +2,7 @@
 // GB_mx_xsame64: check if two FP64 arrays are equal (ignoring zombies)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,8 +32,8 @@ bool GB_mx_xsame64  // true if arrays X and Y are the same (ignoring zombies)
         // check X [i] and Y [i], but ignore zombies
         if (I == NULL || I [i] >= 0)
         {
-            double xi = GBX (X, i, X_iso) ;
-            double yi = GBX (Y, i, Y_iso) ;
+            double xi = X [X_iso ? 0 : i] ;
+            double yi = Y [Y_iso ? 0 : i] ;
             int c = fpclassify (xi) ;
             if (c != fpclassify (yi)) return (false) ;
             if (c == FP_ZERO)

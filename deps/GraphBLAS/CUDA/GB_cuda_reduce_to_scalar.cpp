@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/GB_cuda_reduce_to_scalar: reduce on the GPU with semiring 
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,12 +15,22 @@
 // threadblock.  Then GB_reduce_to_scalar on the CPU sees this V as the result,
 // and calls itself recursively to continue the reduction.
 
+#undef  GB_FREE_WORKSPACE
+#define GB_FREE_WORKSPACE                                   \
+{                                                           \
+    GB_FREE_MEMORY (&zscalar, zscalar_size) ;               \
+    if (stream != nullptr)                                  \
+    {                                                       \
+        cudaStreamSynchronize (stream) ;                    \
+        cudaStreamDestroy (stream) ;                        \
+    }                                                       \
+    stream = nullptr ;                                      \
+}
+
 #define GB_FREE_ALL                                         \
 {                                                           \
-    GB_FREE_WORK (&zscalar, zscalar_size) ;                 \
+    GB_FREE_WORKSPACE ;                                     \
     GB_Matrix_free (&V) ;                                   \
-    if (stream != nullptr) cudaStreamDestroy (stream) ;     \
-    stream = nullptr ;                                      \
 }
 
 #include "GB_cuda_reduce.hpp"
@@ -47,13 +57,13 @@ GrB_Info GB_cuda_reduce_to_scalar
     GrB_Matrix V = NULL ;
     (*V_handle) = NULL ;
     GrB_Info info = GrB_SUCCESS ;
-    cudaStream_t stream = nullptr ;
 
     //--------------------------------------------------------------------------
     // create the stream
     //--------------------------------------------------------------------------
 
     // FIXME: use the stream pool
+    cudaStream_t stream = nullptr ;
     CUDA_OK (cudaStreamCreate (&stream)) ;
 
     //--------------------------------------------------------------------------
@@ -90,7 +100,8 @@ GrB_Info GB_cuda_reduce_to_scalar
         // the kernel launch can reduce A to zscalar all by itself
         // allocate and initialize zscalar (upscaling it to at least 32 bits)
         size_t zscalar_space = GB_IMAX (zsize, sizeof (uint32_t)) ;
-        zscalar = GB_MALLOC (zscalar_space, GB_void, &zscalar_size) ;
+        zscalar = (GB_void *) GB_MALLOC_MEMORY (1, zscalar_space,
+            &zscalar_size) ;
         if (zscalar == NULL)
         {
             // out of memory
@@ -104,8 +115,11 @@ GrB_Info GB_cuda_reduce_to_scalar
         // allocate a full GrB_Matrix V for the partial result, of size
         // gridsz-by-1, and of type ztype.  V is allocated but not
         // initialized.
-        GB_OK (GB_new_bix (&V, ztype, gridsz, 1, GB_Ap_null,
-            true, GxB_FULL, false, 0, -1, gridsz, true, false)) ;
+        GB_OK (GB_new_bix (&V, ztype, gridsz, 1, GB_ph_null,
+            /* is_csc: */ true, /* sparsity: */ GxB_FULL,
+            /* bitmap_calloc: */ false, /* hyper_switch: */ 0,
+            /* plen: */ -1, /* nzmax: */ gridsz, /* numeric: */ true,
+            /* iso: */ false, /* pji_is_32: */ false, false, false)) ;
     }
 
     GBURBLE ("(cuda reduce launch %d threads in %d blocks)",
@@ -115,15 +129,8 @@ GrB_Info GB_cuda_reduce_to_scalar
     // reduce C to a scalar via the CUDA JIT
     //--------------------------------------------------------------------------
 
-//  final call looks like this:
-//  GB_OK (GB_cuda_reduce_to_scalar_jit (zscalar, V, monoid, A,
-//      stream, gridsz, blocksz)) ;
-
-//  debugging for now, to die early if the CUDA fails to compile, load, or run:
-    info = (GB_cuda_reduce_to_scalar_jit (zscalar, V, monoid, A,
+    GB_OK (GB_cuda_reduce_to_scalar_jit (zscalar, V, monoid, A,
         stream, gridsz, blocksz)) ;
-    if (info == GrB_NO_VALUE) info = GrB_PANIC ;
-    GB_OK (info) ;
 
     //--------------------------------------------------------------------------
     // return result and destroy the stream
@@ -136,7 +143,6 @@ GrB_Info GB_cuda_reduce_to_scalar
         // return the scalar result
         // s = zscalar (but only the first zsize bytes of it)
         memcpy (s, zscalar, zsize) ;
-        GB_FREE_WORK (&zscalar, zscalar_size) ;
     }
     else
     {
@@ -144,7 +150,7 @@ GrB_Info GB_cuda_reduce_to_scalar
         (*V_handle) = V ;
     }
 
-    CUDA_OK (cudaStreamDestroy (stream)) ;
+    GB_FREE_WORKSPACE ;
     return (GrB_SUCCESS) ;
 }
 

@@ -1,7 +1,7 @@
 function test19b(fulltest)
 %TEST19B test GrB_assign and GrB_*_setElement with many pending operations
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest19b: GrB_assign and setElement, many pending computations\n') ;

@@ -2,10 +2,13 @@
 // GB_split_bitmap: split a bitmap matrix into an array of matrices
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// Each output tile is first created in bitmap form, and then conformed to its
+// desired sparsity format.
 
 #define GB_FREE_ALL         \
     GB_Matrix_free (&C) ;
@@ -17,8 +20,8 @@
 GrB_Info GB_split_bitmap            // split a bitmap matrix
 (
     GrB_Matrix *Tiles,              // 2D row-major array of size m-by-n
-    const GrB_Index m,
-    const GrB_Index n,
+    const int64_t m,
+    const int64_t n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     const GrB_Matrix A,             // input matrix
@@ -39,11 +42,9 @@ GrB_Info GB_split_bitmap            // split a bitmap matrix
     bool csc = A->is_csc ;
     GrB_Type atype = A->type ;
     int64_t avlen = A->vlen ;
-//  int64_t avdim = A->vdim ;
     size_t asize = atype->size ;
     const int8_t *restrict Ab = A->b ;
     const bool A_iso = A->iso ;
-//  int64_t anz = GB_nnz (A) ;
 
     int nthreads_max = GB_Context_nthreads_max ( ) ;
     double chunk = GB_Context_chunk ( ) ;
@@ -81,10 +82,10 @@ GrB_Info GB_split_bitmap            // split a bitmap matrix
             int64_t cnzmax = cvdim * cvlen ;
 
             C = NULL ;
-            // set C->iso = A_iso       OK
             GB_OK (GB_new_bix (&C, // new header
-                atype, cvlen, cvdim, GB_Ap_null, csc, GxB_BITMAP, false,
-                hyper_switch, 0, cnzmax, true, A_iso)) ;
+                atype, cvlen, cvdim, GB_ph_null, csc, GxB_BITMAP, false,
+                hyper_switch, 0, cnzmax, true, A_iso,
+                /* OK: */ false, false, false)) ;
             int8_t *restrict Cb = C->b ;
             C->sparsity_control = sparsity_control ;
             C->hyper_switch = hyper_switch ;
@@ -198,12 +199,7 @@ GrB_Info GB_split_bitmap            // split a bitmap matrix
                 info = GrB_SUCCESS ;
             }
 
-            if (info != GrB_SUCCESS)
-            { 
-                // out of memory, or other error
-                GB_FREE_ALL ;
-                return (info) ;
-            }
+            GB_OK (info) ;
 
             //------------------------------------------------------------------
             // conform the tile and save it in the Tiles array

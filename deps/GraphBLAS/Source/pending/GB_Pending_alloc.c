@@ -2,7 +2,7 @@
 // GB_Pending_alloc: allocate a list of pending tuples
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,11 +11,10 @@
 
 bool GB_Pending_alloc       // create a list of pending tuples
 (
-    GB_Pending *PHandle,    // output
+    GrB_Matrix C,           // matrix to create C->Pending for
     bool iso,               // if true, do not allocate Pending->x
     GrB_Type type,          // type of pending tuples
     GrB_BinaryOp op,        // operator for assembling pending tuples
-    bool is_matrix,         // true if Pending->j must be allocated
     int64_t nmax            // # of pending tuples to hold
 )
 {
@@ -24,15 +23,16 @@ bool GB_Pending_alloc       // create a list of pending tuples
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (PHandle != NULL) ;
-    (*PHandle) = NULL ;
+    ASSERT (C != NULL) ;
+    ASSERT (C->Pending == NULL) ;
 
     //--------------------------------------------------------------------------
     // allocate the Pending header
     //--------------------------------------------------------------------------
 
     size_t header_size ;
-    GB_Pending Pending = GB_MALLOC (1, struct GB_Pending_struct, &header_size) ;
+    GB_Pending Pending = GB_MALLOC_MEMORY (1, sizeof (struct GB_Pending_struct),
+        &header_size) ;
     if (Pending == NULL)
     { 
         // out of memory
@@ -55,16 +55,20 @@ bool GB_Pending_alloc       // create a list of pending tuples
     Pending->j_size = 0 ;
     Pending->x_size = 0 ;
 
-    Pending->i = GB_MALLOC (nmax, int64_t, &(Pending->i_size)) ;
+    bool is_matrix = (C->vdim > 1) ;
+    size_t jsize = (C->j_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t isize = (C->i_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    Pending->i = GB_MALLOC_MEMORY (nmax, isize, &(Pending->i_size)) ;
     Pending->j = NULL ;
     if (is_matrix)
     { 
-        Pending->j = GB_MALLOC (nmax, int64_t, &(Pending->j_size)) ;
+        Pending->j = GB_MALLOC_MEMORY (nmax, jsize, &(Pending->j_size)) ;
     }
     Pending->x = NULL ;
     if (!iso)
     { 
-        Pending->x = GB_MALLOC (nmax * Pending->size, GB_void,  // x:OK
+        Pending->x = GB_MALLOC_MEMORY (nmax, Pending->size,
             &(Pending->x_size)) ;
     }
 
@@ -81,7 +85,7 @@ bool GB_Pending_alloc       // create a list of pending tuples
     // return result
     //--------------------------------------------------------------------------
 
-    (*PHandle) = Pending ;
+    C->Pending = Pending ;
     return (true) ;
 }
 

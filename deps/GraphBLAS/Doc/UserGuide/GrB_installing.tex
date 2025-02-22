@@ -1,0 +1,472 @@
+
+\newpage
+%-------------------------------------------------------------------------------
+\section{Compiling and Installing SuiteSparse:GraphBLAS}
+%-------------------------------------------------------------------------------
+\label{sec:install}
+
+%----------------------------------------
+\subsection{Quick Start}
+%----------------------------------------
+
+GraphBLAS requires \verb'cmake' version 3.20 or later.
+It optionally can use OpenMP for best performance.
+For OpenMP on the Mac, see Section~\ref{mac_openmp}.
+Without OpenMP, GraphBLAS will be significantly slower since it is a highly
+parallel package.
+
+A \verb'cmake' build system is available for Linux, Mac, and Windows.
+For Linux or Mac, a simple Makefile wrapper is available that accesses this
+cmake build system.  Simply do:
+
+    {\small
+    \begin{verbatim}
+    make
+    sudo make install \end{verbatim} }
+
+For Windows, open CMake and use the provided \verb'CMakeLists.txt' file
+to build GraphBLAS in the \verb'GraphBLAS/build' folder.
+
+Next, try the demos with \verb'make demos'.
+The output of the demos will be compared with expected
+output files in \verb'Demo/Output'.\footnote{
+NOTE:
+DO NOT publish benchmarks of these demos, and do not link against the
+demo library in any user application.  These codes are sometimes slow,
+and are meant as simple illustrations only, not for performance.  The fastest
+methods are in LAGraph, not in GraphBLAS/Demo.  Benchmark LAGraph
+instead.  Eventually, all GraphBLAS/Demos methods will be removed, and LAGraph
+will serve all uses: for illustration, benchmarking, and production uses.}
+
+%----------------------------------------
+\subsection{Requirements}
+%----------------------------------------
+
+GraphBLAS requires \verb'cmake' version 3.20 or later.
+It optionally can use OpenMP for best performance.
+It requires the lz4 and zstd compression packages, but they are bundled
+with the GraphBLAS distribution and compiled into the GraphBLAS library
+by the cmake script.
+
+Using the GraphBLAS JIT has many requirements, but it greatly increases
+performance, particularly with user-defined types and operators, and when
+typecasting is done with built-in types and operators.
+
+The cmake build script sets up the JIT to use the compiler and compiler
+flags used to build GraphBLAS itself.  If the target environment does not
+have a compiler (the Apple iPad for example), then the JIT will not work.
+
+The JIT requires access to a cache folder, which should be preserved
+even after a program that uses GraphBLAS finishes, so that JIT kernels do not
+have to continually be recompiled.  By default the folder is
+\verb'~/.SuiteSparse/GrBX.Y.Z' on Linux/Mac, where \verb'X.Y.Z' is the version
+of GraphBLAS you have.  On Windows, the location is determined by your
+\verb'LOCALAPPDATA' environment variable, where the folder is
+\verb'SuiteSparse/GrBX.Y.Z' inside that location.  File locking is required,
+so if the file system does not support file locking, the JIT will not work and
+performance will suffer (the \verb'make demos' will fail since it tests this
+condition).  If this occurs, try making your \verb'SuiteSparse' cache folder
+a link to another a location on another file system that supports file locking,
+or set an environment variable, \verb'GRAPHBLAS_CACHE_PATH', to point to your
+a cache folder location on a file system that supports file locking.
+
+%----------------------------------------
+\subsection{Quick Start for MATLAB/Octave}
+%----------------------------------------
+
+As of GraphBLAS 9.2.0, a new and simpler method for compiling GraphBLAS and its
+MATLAB interface has been added.  In the MATLAB/Octave Command Window, simply
+type:
+
+    {\small
+    \begin{verbatim}
+    cd GraphBLAS/GraphBLAS
+    graphblas_install \end{verbatim} }
+
+This will use \verb'cmake' to compile the GraphBLAS library.  You can skip the
+details in the remainder of this section.  Next, add your
+\verb'GraphBLAS/GraphBLAS' folder to your path, by editting your
+\verb'startup.m' script (usually in your \verb'Documents/MATLAB' folder).
+Add this line:
+
+    {\small
+    \begin{verbatim}
+    addpath ('/home/me/GraphBLAS/GraphBLAS') ; \end{verbatim} }
+
+\noindent
+where \verb'/home/me/GraphBLAS' is the top-level folder containing your
+copy of GraphBLAS.
+
+The \verb'graphblas_install' MATLAB script may fail to run \verb'cmake'.
+If it does, it will print the following workaround, where the commands it
+tells you to use will differ depending on the platform:
+
+    {\small
+    \begin{verbatim}
+    Building GraphBLAS with cmake failed.  Try this outside of MATLAB:
+
+       cd /home/me/GraphBLAS/GraphBLAS/build
+       cmake  ..
+       cmake --build . --config Release -j40
+
+    Then do this inside MATLAB:
+
+        cd /home/me/GraphBLAS/GraphBLAS/@GrB/private
+        gbmake \end{verbatim} }
+
+\noindent
+where \verb'/home/me/GraphBLAS' is your copy of GraphBLAS.
+
+%----------------------------------------
+\subsection{More details}
+%----------------------------------------
+
+%----------------------------------------
+\subsubsection{On Linux and Mac}
+%----------------------------------------
+
+GraphBLAS makes extensive use of features in the C11 standard, and thus a
+C compiler supporting this version of the C standard is required to use
+all features of GraphBLAS.
+
+{\bf Any version of the Intel \verb'icx' compiler is highly recommended.} In
+most cases, the Intel \verb'icx' and the Intel OpenMP library (\verb'libiomp')
+result in the best performance.  The \verb'gcc' and the GNU OpenMP library
+(\verb'libgomp') generally gives good performance: typically on par with icx
+but in a few special cases significantly slower.  The Intel \verb'icc' compiler
+is not recommended; it results in poor performance for
+\verb'#pragma omp atomic'.
+
+If you are using a C compiler that does not support the C11 standard, such as
+\verb'cl' in Microsoft Visual Studio, then the \verb'_Generic' keyword is not
+available.  SuiteSparse:GraphBLAS will still compile, but you will not have
+access to polymorphic functions such as \verb'GrB_assign'.  You will need to
+use the non-polymorphic functions instead.
+
+To compile SuiteSparse:GraphBLAS, simply type \verb'make' in the main GraphBLAS
+folder, which compiles the library with your default system compiler.  This
+compile GraphBLAS using 8 threads, which will take a long time.  To compile with
+more threads (40, for this example), use:
+
+    {\small
+    \begin{verbatim}
+    make JOBS=40 \end{verbatim} }
+
+To use a non-default compiler with 4 threads:
+
+    {\small
+    \begin{verbatim}
+    make CC=icx CXX=icpx JOBS=4 \end{verbatim} }
+
+GraphBLAS v6.1.3 and later use the \verb'cpu_features' package by Google to
+determine if the target architecture supports AVX2 and/or AVX512F (on Intel
+x86\_64 architectures only).  In case you have build issues with this package,
+you can compile without it (and then AVX2 and AVX512F acceleration will not
+be used):
+
+    {\small
+    \begin{verbatim}
+    make CMAKE_OPTIONS='-DGBNCPUFEAT=1'  \end{verbatim} }
+
+Without \verb'cpu_features', it is still possible to enable AVX2 and AVX512F.
+Rather than relying on run-time tests, you can use these flags to enable
+both AVX2 and AVX512F, without relying on \verb'cpu_features':
+
+    {\small
+    \begin{verbatim}
+    make CMAKE_OPTIONS='-DGBNCPUFEAT=1 -DGBAVX2=1 -DGBAVX512F=1' \end{verbatim} }
+
+To use multiple options, separate them by a space.  For example, to build
+just the library but not \verb'cpu_features', and to enable
+AVX2 but not AVX512F, and use 40 threads to compile:
+
+    {\small
+    \begin{verbatim}
+    make CMAKE_OPTIONS='-DGBNCPUFEAT=1 -DGBAVX2=1' JOBS=40 \end{verbatim} }
+
+After compiling the library, you can compile the demos with
+\verb'make all' and then \verb'make demos' while in the top-level
+GraphBLAS folder.
+
+If \verb'cmake' or \verb'make' fail, it might be that your default compiler
+does not support C11.  Try another compiler.  For example, try one of
+these options.  Go into the \verb'build' directory and type one of these:
+
+    {\small
+    \begin{verbatim}
+    CC=gcc cmake ..
+    CC=gcc-11 cmake ..
+    CC=xlc cmake ..
+    CC=icx cmake ..  \end{verbatim} }
+
+You can also do the following in the top-level GraphBLAS folder instead:
+
+    {\small
+    \begin{verbatim}
+    CC=gcc make
+    CC=gcc-11 make
+    CC=xlc make
+    CC=icx make \end{verbatim} }
+
+For faster compilation, you can specify a parallel make.  For example,
+to use 32 parallel jobs and the \verb'gcc' compiler, do the following:
+
+    {\small
+    \begin{verbatim}
+    JOBS=32 CC=gcc make \end{verbatim} }
+
+%----------------------------------------
+\subsubsection{On the Mac (Intel or ARM)}
+%----------------------------------------
+
+GraphBLAS requires \verb'cmake' v3.20 or later, and it optionally uses
+\verb'make' to simplify the use of the cmake build system.  It also needs
+other Apple Command Line Tools from Xcode.
+First install Xcode (see \url{https://developer.apple.com/xcode}),
+and then install the command line tools for Xcode:
+
+    {\small
+    \begin{verbatim}
+    xcode-select --install \end{verbatim} }
+
+Next, install brew, at \url{https://brew.sh}, or \verb'spack'.
+Use brew or spack to install cmake version 3.20 or later.
+
+%----------------------------------------
+\subsubsection{On the Intel-based Mac}
+%----------------------------------------
+
+If you have the Intel compiler and its OpenMP library, then use the following
+in the top-level \verb'GraphBLAS' folder.  The Intel OpenMP library
+will be found automatically:
+
+    {\small
+    \begin{verbatim}
+    make CC=icc CXX=icpc \end{verbatim} }
+
+%----------------------------------------
+\subsubsection{MATLAB on the Mac (Apple Silicon based)}
+%----------------------------------------
+
+MATLAB on the Apple-Silicon-based Mac is now a native ARM64 application (as of
+R2023b).  GraphBLAS is not supported for earlier versions of MATLAB on Apple
+Silicon.
+
+Note that GraphBLAS must use the same OpenMP library as MATLAB.  This is
+handled by the \verb'graphblas_install.m' script.
+
+%----------------------------------------
+\subsubsection{On Microsoft Windows}
+\label{sec:windows}
+%----------------------------------------
+
+SuiteSparse:GraphBLAS can be compiled by the Microsoft C compiler (\verb'cl')
+using Microsoft Visual Studio.  However, that compiler is not C11 compliant. As
+a result, GraphBLAS on Windows will have a few minor limitations.
+
+\begin{itemize}
+\item The MS Visual Studio compiler does not support the \verb'_Generic'
+keyword, required for the polymorphic GraphBLAS functions.  So for example, you
+will need to use \verb'GrB_Matrix_free' instead of just \verb'GrB_free'.
+
+\item Variable-length arrays are not supported, so user-defined
+types are limited to 1024 bytes in size.  This can be changed by editing
+\verb'GB_VLA_MAXSIZE' in \verb'Source/GB_compiler.h', and recompiling
+SuiteSparse:GraphBLAS.
+
+\item AVX acceleration is not enabled.
+
+\item You must compile with 64-bit computing enabled (x64).  Otherwise, a
+compiler error will occur (\verb'InterlockedExchange64', \verb'InterlockdOr64'
+and other methods will not be found).
+
+\end{itemize}
+
+If you use a recent \verb'gcc' or \verb'icx' compiler on Windows other than the
+Microsoft Compiler (\verb'cl'), these limitations can be avoided.
+
+The following instructions apply to Windows 10, CMake 3.16, and
+Visual Studio 2019, but may work for earlier versions.
+
+\begin{enumerate}
+
+\item Install CMake 3.16 or later, if not already installed.
+    See \url{https://cmake.org/} for details.
+
+\item Install Microsoft Visual Studio, if not already installed.
+    See \url{https://visualstudio.microsoft.com/} for details.
+    Version 2019 is preferred, but earlier versions may also work.
+
+\item Open a terminal window and type this in the
+    \verb'GraphBLAS/build' folder:
+
+    \vspace{-0.1in}
+    {\small
+    \begin{verbatim}
+    cmake ..  \end{verbatim} }
+    \vspace{-0.1in}
+
+    Alternatively, use the \verb'cmake' gui program to configure
+    the cmake build system for GraphBLAS.
+
+\item The \verb'cmake' command generates many files in
+    \verb'GraphBLAS/build', and the file \verb'graphblas.sln' in
+    particular.  Open the generated \verb'graphblas.sln' file in Visual Studio.
+
+\item Optionally: right-click \verb'graphblas' in the left panel (Solution
+    Explorer) and select properties; then navigate to \verb'Configuration'
+    \verb'Properties', \verb'C/C++', \verb'General' and change the parameter
+    \verb'Multiprocessor Compilation' to \verb'Yes (/MP)'.  Click \verb'OK'.
+    This will significantly speed up the compilation of GraphBLAS.
+
+\item Select the \verb'Build' menu item at the top of the window and
+    select \verb'Build Solution'.  This should create a folder called
+    \verb'Release' and place the compiled \verb'graphblas.dll',
+    \verb'graphblas.lib', and \verb'graphblas.exp' files there.  Please be
+    patient; some files may take a while to compile and sometimes may appear to
+    be stalled.  Just wait.
+
+\item Alternatively, instead of opening Visual Studio,
+    type this command in the terminal window while in the \verb'build' folder:
+    {\small
+    \begin{verbatim}
+    cmake --build . --config Release
+    \end{verbatim}}
+
+\item Add the \verb'GraphBLAS/build/Release' folder to the Windows System path:
+
+    \begin{itemize}
+    \item Open the \verb'Start Menu' and type \verb'Control Panel'.
+    \item Select the \verb'Control Panel' app.
+    \item When the app opens, select \verb'System and Security'.
+    \item Under \verb'System and Security', select \verb'System'.
+    \item From the top left side of the \verb'System' window, select
+        \verb'Advanced System Settings'.  You may have to authenticate
+        at this step.
+        If you cannot authenticate, try setting the User Environment Variables
+        instead.
+    \item The \verb'Systems Properties' window should appear with the
+        \verb'Advanced' tab selected;
+        select \verb'Environment Variables'.
+    \item The \verb'Environment Variables' window displays 2 sections, one for
+        \verb'User' variables and the other for \verb'System' variables.  Under
+        the \verb'Systems' variable section, scroll to and select \verb'Path',
+        then select \verb'Edit'.   A editor window appears allowing to add,
+        modify, delete or re-order the parts of the \verb'Path'.
+    \item Add the full path of the \verb'GraphBLAS\build\Release' folder
+        (typically starting with \verb'C:\Users\you\'..., where \verb'you' is
+        your Windows username) to the \verb'Path'.
+        To use the MATLAB interface, add
+        the full path of the \verb'GraphBLAS\GraphBLAS\build\Release' folder
+        as well.
+    \item If the above steps do not work, you can instead copy the
+        \verb'graphblas.*' files from \verb'GraphBLAS\build\Release' into any
+        existing folder listed in your \verb'Path'.
+    \end{itemize}
+
+\item The \verb'GraphBLAS/Include/GraphBLAS.h' file must be included in user
+    applications via \verb'#include "GraphBLAS.h"'.  This is already done for
+    you in the MATLAB/Octave interface discussed in the next section.
+
+\end{enumerate}
+
+%----------------------------------------
+\subsubsection{Mac using clang}
+\label{mac_openmp}
+%----------------------------------------
+
+To use OpenMP with clang on the Mac, try installing it from the
+    \url{https://mac.r-project.org/openmp/} project.
+Be sure to check that page for the OpenMP version
+that matches your version of Apple Xcode.
+For example, if using Xcode 13.3 to 13.4.1, use:
+
+    {\scriptsize
+    \begin{verbatim}
+    curl -O https://mac.r-project.org/openmp/openmp-13.0.0-darwin21-Release.tar.gz
+    sudo tar fvxz openmp-13.0.0-darwin21-Release.tar.gz -C /
+    \end{verbatim} }
+
+These commands will install universal binaries (ARM and x86) for
+\verb'libomp.dylib', and the following files:
+
+    {\scriptsize
+    \begin{verbatim}
+    /usr/local/lib/libomp.dylib
+    /usr/local/include/ompt.h
+    /usr/local/include/omp.h
+    /usr/local/include/omp-tools.h
+    \end{verbatim} }
+
+Once you do this, the GraphBLAS cmake build system should find this copy of
+OpenMP for clang.
+
+%----------------------------------------
+\subsubsection{Linking issues after installation}
+%----------------------------------------
+
+My Linux distro (Ubuntu 18.04) includes a copy of \verb'libgraphblas.so.1',
+which is SuiteSparse:GraphBLAS v1.1.2.  After installing SuiteSparse:GraphBLAS
+in \verb'/usr/local/lib' (with \verb'sudo make install'), compiling a simple
+stand-alone program links against \verb'libgraphblas.so.1' instead of the
+latest version, while at the same time accessing the latest version of the
+include file as \verb'/usr/local/include/GraphBLAS.h'.  This command fails:
+
+    {\small
+    \begin{verbatim}
+    gcc prog.c -lgraphblas \end{verbatim} }
+
+Revising my \verb'LD_LIBRARY_PATH' to put \verb'/usr/local/lib' first in the
+library directory order didn't help.  If you encounter this problem, try one of
+the following options (all four work for me, and link against the proper
+version, \verb'/usr/local/lib/libgraphblas.so.9.2.0' for example):
+
+    {\small
+    \begin{verbatim}
+    gcc prog.c -l:libgraphblas.so.9
+    gcc prog.c -l:libgraphblas.so.9.2.0
+    gcc prog.c /usr/local/lib/libgraphblas.so
+    gcc prog.c -Wl,-v -L/usr/local/lib -lgraphblas \end{verbatim} }
+
+This \verb'prog.c' test program is a trivial one, which works in v1.0 and
+later:
+
+    {\small
+    \begin{verbatim}
+    #include <GraphBLAS.h>
+    int main (void)
+    {
+        GrB_init (GrB_NONBLOCKING) ;
+        GrB_finalize ( ) ;
+    } \end{verbatim} }
+
+Compile the program above, then use this command to ensure
+\verb'libgraphblas.so.9' appears:
+
+    {\small
+    \begin{verbatim}
+    ldd a.out \end{verbatim} }
+
+%----------------------------------------
+\subsubsection{Running the tests}
+%----------------------------------------
+
+To run a short test, type \verb'make demo' at the top-level \verb'GraphBLAS'
+folder.  This will run all the demos in \verb'GraphBLAS/Demos'.  MATLAB is not
+required.
+
+To perform the extensive tests in the \verb'Test' folder, and the statement
+coverage tests in \verb'Tcov', MATLAB R2018a or later is required.  See the
+\verb'README.txt' files in those two folders for instructions on how to run the
+tests.  The tests in the \verb'Test' folder have been ported to MATLAB on
+Linux, MacOS, and Windows.  The \verb'Tcov' tests do not work on Windows.  The
+MATLAB interface test (\verb'gbtest') works on all platforms; see the
+\verb'GraphBLAS/GraphBLAS' folder for more details.
+
+%----------------------------------------
+\subsubsection{Cleaning up}
+%----------------------------------------
+
+To remove all compiled files, type \verb'make' \verb'distclean' in the top-level
+GraphBLAS folder.
+

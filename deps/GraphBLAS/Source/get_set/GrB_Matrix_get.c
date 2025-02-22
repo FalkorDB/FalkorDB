@@ -2,7 +2,7 @@
 // GrB_Matrix_get_*: get a field in a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GrB_Matrix_get_Scalar
 (
     GrB_Matrix A,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 {
 
@@ -25,9 +25,10 @@ GrB_Info GrB_Matrix_get_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_get_Scalar (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (value) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_WHERE_2 (A, scalar, "GrB_Matrix_get_Scalar (A, scalar, field)") ;
+
     ASSERT_MATRIX_OK (A, "A to get option", GB0) ;
 
     //--------------------------------------------------------------------------
@@ -35,11 +36,11 @@ GrB_Info GrB_Matrix_get_Scalar
     //--------------------------------------------------------------------------
 
     int32_t i ;
-    GrB_Info info = GB_matvec_enum_get (A, &i, field) ;
+    info = GB_matvec_enum_get (A, &i, field) ;
     if (info == GrB_SUCCESS)
     { 
         // field specifies an int: assign it to the scalar
-        info = GB_setElement ((GrB_Matrix) value, NULL, &i, 0, 0,
+        info = GB_setElement ((GrB_Matrix) scalar, NULL, &i, 0, 0,
             GB_INT32_code, Werk) ;
     }
     else
@@ -59,7 +60,7 @@ GrB_Info GrB_Matrix_get_Scalar
                 return (GrB_INVALID_VALUE) ;
         }
         // field specifies a double: assign it to the scalar
-        info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
+        info = GB_setElement ((GrB_Matrix) scalar, NULL, &x, 0, 0,
             GB_FP64_code, Werk) ;
     }
 
@@ -74,7 +75,7 @@ GrB_Info GrB_Matrix_get_String
 (
     GrB_Matrix A,
     char * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -82,8 +83,9 @@ GrB_Info GrB_Matrix_get_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_get_String (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MATRIX_OK (A, "A to get option", GB0) ;
 
@@ -102,7 +104,7 @@ GrB_Info GrB_Matrix_get_INT32
 (
     GrB_Matrix A,
     int32_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -110,8 +112,9 @@ GrB_Info GrB_Matrix_get_INT32
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_get_INT32 (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MATRIX_OK (A, "A to get option", GB0) ;
 
@@ -130,7 +133,7 @@ GrB_Info GrB_Matrix_get_SIZE
 (
     GrB_Matrix A,
     size_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -138,8 +141,9 @@ GrB_Info GrB_Matrix_get_SIZE
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_get_SIZE (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MATRIX_OK (A, "A to get option", GB0) ;
 
@@ -158,7 +162,7 @@ GrB_Info GrB_Matrix_get_VOID
 (
     GrB_Matrix A,
     void * value,
-    GrB_Field field
+    int field
 )
 { 
     return (GrB_INVALID_VALUE) ;

@@ -36,7 +36,7 @@ function C = incidence (A, varargin)
 %
 % See also graph/incidence, digraph/incidence.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (A))
@@ -93,7 +93,13 @@ desc.base = 'zero-based' ;
 [I, J] = gbextracttuples (A, desc) ;
 e = length (I) ;
 I = [I ; J] ;
-J = (int64 (0) : int64 (e-1))' ;
+if (e > intmax ('uint32'))
+    % this line of code is not tested by gbtest since it requires
+    % a huge test problem:
+    J = (uint64 (0) : uint64 (e-1))' ;
+else
+    J = (uint32 (0) : uint32 (e-1))' ;
+end
 J = [J ; J] ;
 X = ones (e, 1, type) ;
 X = [-X ; X] ;

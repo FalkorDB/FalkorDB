@@ -2,7 +2,7 @@
 // GB_enumify_mxm: enumerate a GrB_mxm problem
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,6 +30,9 @@ void GB_enumify_mxm         // enumerate a GrB_mxm problem
     bool C_in_iso,          // C input iso status
     int C_sparsity,         // sparse, hyper, bitmap, or full
     GrB_Type ctype,         // C=((ctype) T) is the final typecast
+    bool Cp_is_32,          // if true, C->p is 32-bit; else 64
+    bool Cj_is_32,          // if true, C->h is 32-bit; else 64
+    bool Ci_is_32,          // if true, C->i is 32-bit; else 64
     // M matrix:
     GrB_Matrix M,           // may be NULL
     bool Mask_struct,       // mask is structural
@@ -168,14 +171,47 @@ void GB_enumify_mxm         // enumerate a GrB_mxm problem
     GB_enumify_sparsity (&asparsity, A_sparsity) ;
     GB_enumify_sparsity (&bsparsity, B_sparsity) ;
 
+    int cp_is_32 = (Cp_is_32) ? 1 : 0 ;
+    int cj_is_32 = (Cj_is_32) ? 1 : 0 ;
+    int ci_is_32 = (Ci_is_32) ? 1 : 0 ;
+
+    int mp_is_32 = (M == NULL) ? 0 : (M->p_is_32) ? 1 : 0 ;
+    int mj_is_32 = (M == NULL) ? 0 : (M->j_is_32) ? 1 : 0 ;
+    int mi_is_32 = (M == NULL) ? 0 : (M->i_is_32) ? 1 : 0 ;
+
+    int ap_is_32 = (A->p_is_32) ? 1 : 0 ;
+    int aj_is_32 = (A->j_is_32) ? 1 : 0 ;
+    int ai_is_32 = (A->i_is_32) ? 1 : 0 ;
+
+    int bp_is_32 = (B->p_is_32) ? 1 : 0 ;
+    int bj_is_32 = (B->j_is_32) ? 1 : 0 ;
+    int bi_is_32 = (B->i_is_32) ? 1 : 0 ;
+
     //--------------------------------------------------------------------------
     // construct the semiring method_code
     //--------------------------------------------------------------------------
 
-    // total method_code bits: 50 (13 hex digits): 14 bits to spare.
+    // total method_code bits: 62 (16 hex digits): 2 bits to spare.
 
     (*method_code) =
                                                // range        bits
+                // C, M, A, B: 32/64 (12 bits) (3 hex digits)
+                GB_LSHIFT (cp_is_32   , 63) |  // 0 or 1       1
+                GB_LSHIFT (cj_is_32   , 62) |  // 0 or 1       1
+                GB_LSHIFT (ci_is_32   , 61) |  // 0 or 1       1
+
+                GB_LSHIFT (mp_is_32   , 60) |  // 0 or 1       1
+                GB_LSHIFT (mj_is_32   , 59) |  // 0 or 1       1
+                GB_LSHIFT (mi_is_32   , 58) |  // 0 or 1       1
+
+                GB_LSHIFT (ap_is_32   , 57) |  // 0 or 1       1
+                GB_LSHIFT (aj_is_32   , 56) |  // 0 or 1       1
+                GB_LSHIFT (ai_is_32   , 55) |  // 0 or 1       1
+
+                GB_LSHIFT (bp_is_32   , 54) |  // 0 or 1       1
+                GB_LSHIFT (bj_is_32   , 53) |  // 0 or 1       1
+                GB_LSHIFT (bi_is_32   , 52) |  // 0 or 1       1
+
                 // monoid (4 bits, 1 hex digit)
                 GB_LSHIFT (add_code   , 48) |  // 0 to 13      4
 

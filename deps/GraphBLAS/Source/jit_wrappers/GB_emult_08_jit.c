@@ -2,7 +2,7 @@
 // GB_emult_08_jit: C<#M>=A.*B emult_08 method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -42,8 +42,8 @@ GrB_Info GB_emult_08_jit      // C<#M>=A.*B, emult_08, via the JIT
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_KERNEL_EMULT8, true,
-        false, false, C_sparsity, C->type, M, Mask_struct, Mask_comp,
-        binaryop, flipij, false, A, B) ;
+        false, false, C_sparsity, C->type, C->p_is_32, C->j_is_32, C->i_is_32,
+        M, Mask_struct, Mask_comp, binaryop, flipij, false, A, B) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -60,8 +60,10 @@ GrB_Info GB_emult_08_jit      // C<#M>=A.*B, emult_08, via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, M, Mask_struct, Mask_comp, A, B, C_to_M, C_to_A,
-        C_to_B, TaskList, C_ntasks, C_nthreads, binaryop->theta)) ;
+        C_to_B, TaskList, C_ntasks, C_nthreads, binaryop->theta,
+        &GB_callback)) ;
 }
 

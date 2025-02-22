@@ -12,7 +12,7 @@ bool GB_cuda_apply_binop_branch
         return false ;
     }
     
-    if (A->static_header)
+    if (A->header_size == 0)
     {
         return false ;
     }

@@ -2,7 +2,7 @@
 // GB_mex_AxB: compute C=A*B, A'*B, A*B', or A'*B'
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,7 +44,7 @@ int64_t bnrows = 0 ;
 int64_t bncols = 0 ;
 struct GB_Matrix_opaque C_header ;
 
-GrB_Desc_Value AxB_method = GxB_DEFAULT ;
+int AxB_method = GxB_DEFAULT ;
 
 GrB_Info axb (GB_Werk Werk) ;
 GrB_Info axb_complex (GB_Werk Werk) ;
@@ -66,7 +66,7 @@ GrB_Info axb (GB_Werk Werk)
     }
 
     struct GB_Matrix_opaque MT_header ;
-    GrB_Matrix MT = GB_clear_static_header (&MT_header) ;
+    GrB_Matrix MT = GB_clear_matrix_header (&MT_header) ;
 
     // C = A*B, A'*B, A*B', or A'*B'
     info = GB_AxB_meta (C, NULL,
@@ -92,7 +92,6 @@ GrB_Info axb (GB_Werk Werk)
 
     GrB_Monoid_free_(&add) ;
     GrB_Semiring_free_(&semiring) ;
-
     return (info) ;
 }
 
@@ -163,7 +162,7 @@ GrB_Info axb_complex (GB_Werk Werk)
     }
 
     struct GB_Matrix_opaque MT_header ;
-    GrB_Matrix MT = GB_clear_static_header (&MT_header) ;
+    GrB_Matrix MT = GB_clear_matrix_header (&MT_header) ;
 
     info = GB_AxB_meta (C, NULL,
         false,      // C_replace
@@ -188,7 +187,6 @@ GrB_Info axb_complex (GB_Werk Werk)
 
     GrB_Matrix_free_(&Bconj) ;
     GrB_Matrix_free_(&Aconj) ;
-
     return (info) ;
 }
 
@@ -254,7 +252,7 @@ void mexFunction
     // 7083: dot
     // 7084: hash
     // 7085: saxpy
-    GET_SCALAR (4, GrB_Desc_Value, AxB_method, GxB_DEFAULT) ;
+    GET_SCALAR (4, int, AxB_method, GxB_DEFAULT) ;
 
     if (! ((AxB_method == GxB_DEFAULT) ||
         (AxB_method == GxB_AxB_GUSTAVSON) ||
@@ -275,7 +273,7 @@ void mexFunction
         mexErrMsgTxt ("invalid dimensions") ;
     }
 
-    C = GB_clear_static_header (&C_header) ;
+    C = GB_clear_matrix_header (&C_header) ;
 
     if (A->type == Complex)
     {

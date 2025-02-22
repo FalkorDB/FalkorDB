@@ -2,7 +2,7 @@
 // GB_mex_kron_idx: C = kron(A,B) with a user-defined index binary op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,13 +13,13 @@
 #define USAGE "C = GB_mex_kron_idx (A, B, atrans, btrans, C_is_csc)"
 
 void mykronidx (double *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta) ;
 
 void mykronidx (double *z,
-    const void *x, GrB_Index ix, GrB_Index jx,
-    const void *y, GrB_Index iy, GrB_Index jy,
+    const void *x, uint64_t ix, uint64_t jx,
+    const void *y, uint64_t iy, uint64_t jy,
     const int64_t *theta)
 {
     (*z) = (double) (
@@ -31,8 +31,8 @@ void mykronidx (double *z,
 
 #define MYKRONIDX_DEFN                              \
 "void mykronidx (double *z,                     \n" \
-"   const void *x, GrB_Index ix, GrB_Index jx,  \n" \
-"   const void *y, GrB_Index iy, GrB_Index jy,  \n" \
+"   const void *x, uint64_t ix, uint64_t jx,    \n" \
+"   const void *y, uint64_t iy, uint64_t jy,    \n" \
 "   const int64_t *theta)                       \n" \
 "{                                              \n" \
 "   (*z) = (double) (                           \n" \
@@ -72,7 +72,7 @@ void mexFunction
     GrB_BinaryOp mult = NULL ;
     GxB_IndexBinaryOp Iop = NULL ;
     GrB_Descriptor desc = NULL ;
-    GrB_Index anrows = 0, ancols = 0, bnrows = 0, bncols = 0 ;
+    uint64_t anrows = 0, ancols = 0, bnrows = 0, bncols = 0 ;
 
     // check inputs
     if (nargout > 1 || nargin < 2 || nargin > 5)
@@ -118,10 +118,10 @@ void mexFunction
     OK (GrB_Matrix_ncols (&ancols, A)) ;
     OK (GrB_Matrix_nrows (&bnrows, B)) ;
     OK (GrB_Matrix_ncols (&bncols, B)) ;
-    GrB_Index cnrows = ((atrans) ? ancols : anrows)
-                     * ((btrans) ? bncols : bnrows) ;
-    GrB_Index cncols = ((atrans) ? anrows : ancols)
-                     * ((btrans) ? bnrows : bncols) ;
+    uint64_t cnrows = ((atrans) ? ancols : anrows)
+                    * ((btrans) ? bncols : bnrows) ;
+    uint64_t cncols = ((atrans) ? anrows : ancols)
+                    * ((btrans) ? bnrows : bncols) ;
 
     // create the output matrix C
     OK (GrB_Matrix_new (&C, GrB_FP64, cnrows, cncols)) ;

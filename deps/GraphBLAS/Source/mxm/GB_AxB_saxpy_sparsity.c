@@ -2,7 +2,7 @@
 // GB_AxB_saxpy_sparsity: determine the sparsity structure for C<M or !M>=A*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,12 +35,8 @@ void GB_AxB_saxpy_sparsity          // determine C_sparsity and method to use
     // determine the sparsity of C
     //--------------------------------------------------------------------------
 
-    if (B->nvec_nonempty < 0)
-    { 
-        // B->nvec_nonempty is used to select the method
-        B->nvec_nonempty = GB_nvec_nonempty (B) ;
-    }
-    double bnvec = B->nvec_nonempty ;
+    // B->nvec_nonempty is used to select the method
+    double bnvec = GB_nvec_nonempty_update (B) ;
 
     double m = (double) A->vlen ;
     double n = (double) B->vdim ;

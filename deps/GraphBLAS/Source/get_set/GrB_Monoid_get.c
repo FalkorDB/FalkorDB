@@ -2,7 +2,7 @@
 // GrB_Monoid_get_*: get a field in a monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GrB_Monoid_get_Scalar
 (
     GrB_Monoid monoid,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 { 
 
@@ -25,16 +25,17 @@ GrB_Info GrB_Monoid_get_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_get_Scalar (monoid, value, field)") ;
+    GB_RETURN_IF_NULL (scalar) ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (value) ;
+    GB_WHERE_1 (scalar, "GrB_Monoid_get_Scalar (monoid, scalar, field)") ;
+
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;
 
     //--------------------------------------------------------------------------
     // get the field
     //--------------------------------------------------------------------------
 
-    return (GB_monoid_get (monoid, value, field, Werk)) ;
+    return (GB_monoid_get (monoid, scalar, field, Werk)) ;
 }
 
 //------------------------------------------------------------------------------
@@ -45,7 +46,7 @@ GrB_Info GrB_Monoid_get_String
 (
     GrB_Monoid monoid,
     char * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -53,7 +54,7 @@ GrB_Info GrB_Monoid_get_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_get_String (monoid, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;
@@ -97,7 +98,7 @@ GrB_Info GrB_Monoid_get_INT32
 (
     GrB_Monoid monoid,
     int32_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -105,7 +106,7 @@ GrB_Info GrB_Monoid_get_INT32
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_get_INT32 (monoid, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;
@@ -125,7 +126,7 @@ GrB_Info GrB_Monoid_get_SIZE
 (
     GrB_Monoid monoid,
     size_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -133,7 +134,7 @@ GrB_Info GrB_Monoid_get_SIZE
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_get_SIZE (monoid, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;
@@ -180,7 +181,7 @@ GrB_Info GrB_Monoid_get_VOID
 (
     GrB_Monoid monoid,
     void * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -188,7 +189,7 @@ GrB_Info GrB_Monoid_get_VOID
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_get_VOID (monoid, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MONOID_OK (monoid, "monoid to get option", GB0) ;

@@ -1,0 +1,83 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_mxm:} matrix-matrix multiply} %===========================
+%===============================================================================
+\label{mxm}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_mxm                    // C<Mask> = accum (C, A*B)
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_Semiring semiring,    // defines '+' and '*' for A*B
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Matrix B,             // second input: matrix B
+    const GrB_Descriptor desc       // descriptor for C, Mask, A, and B
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_mxm' multiplies two sparse matrices \verb'A' and \verb'B' using the
+\verb'semiring'.  The input matrices \verb'A' and \verb'B' may be transposed
+according to the descriptor, \verb'desc' (which may be \verb'NULL') and then
+typecasted to match the multiply operator of the \verb'semiring'.  Next,
+\verb'T=A*B' is computed on the \verb'semiring', precisely defined in the
+\verb'GB_spec_mxm.m' script in \verb'GraphBLAS/Test'.  The actual algorithm
+exploits sparsity and does not take $O(n^3)$ time, but it computes the
+following:
+
+{\footnotesize
+\begin{verbatim}
+[m s] = size (A.matrix) ;
+[s n] = size (B.matrix) ;
+T.matrix  = zeros (m, n, multiply.ztype) ;
+T.pattern = zeros (m, n, 'logical') ;
+T.matrix (:,:) = identity ;             % the identity of the semiring's monoid
+T.class = multiply.ztype ;              % the ztype of the semiring's multiply op
+A = cast (A.matrix, multiply.xtype) ;   % the xtype of the semiring's multiply op
+B = cast (B.matrix, multiply.ytype) ;   % the ytype of the semiring's multiply op
+for j = 1:n
+    for i = 1:m
+        for k = 1:s
+            % T (i,j) += A (i,k) * B (k,j), using the semiring
+            if (A.pattern (i,k) && B.pattern (k,j))
+                z = multiply (A (i,k), B (k,j)) ;
+                T.matrix  (i,j) = add (T.matrix (i,j),  z) ;
+                T.pattern (i,j) = true ;
+            end
+        end
+    end
+end \end{verbatim}}
+
+Finally, \verb'T' is typecasted into the type of \verb'C', and the results are
+written back into \verb'C' via the \verb'accum' and \verb'Mask', ${\bf C
+\langle M \rangle  = C \odot T}$.  The latter step is reflected in the MATLAB
+function \verb'GB_spec_accum_mask.m', discussed in Section~\ref{accummask}.
+
+\paragraph{\bf Performance considerations:}
+Suppose all matrices are in \verb'GrB_COLMAJOR' format, and \verb'B' is extremely
+sparse but \verb'A' is not as sparse.  Then computing \verb'C=A*B' is very
+fast, and much faster than when \verb'A' is extremely sparse.  For example, if
+\verb'A' is square and \verb'B' is a column vector that is all nonzero except
+for one entry \verb'B(j,0)=1', then \verb'C=A*B' is the same as extracting
+column \verb'A(:,j)'.  This is very fast if \verb'A' is stored by column but
+slow if \verb'A' is stored by row.  If \verb'A' is a sparse row with a single
+entry \verb'A(0,i)=1', then \verb'C=A*B' is the same as extracting row
+\verb'B(i,:)'.  This is fast if \verb'B' is stored by row but slow if \verb'B'
+is stored by column.
+
+If the user application needs to repeatedly extract rows and columns from a
+matrix, whether by matrix multiplication or by \verb'GrB_extract', then keep
+two copies: one stored by row, and other by column, and use the copy that
+results in the fastest computation.
+
+By default, \verb'GrB_mxm', \verb'GrB_mxv', \verb'GrB_vxm', and
+\verb'GrB_reduce' (to vector) can return their result in a jumbled state, with
+the sort left pending.  It can sometimes be faster for these methods to do the
+sort as they compute their result.  Use the \verb'GxB_SORT' descriptor setting
+to select this option.  Refer to Section~\ref{descriptor} for details.
+
+

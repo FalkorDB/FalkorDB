@@ -2,7 +2,7 @@
 // GB_transpose_ix: transpose the values and pattern of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ GrB_Info GB_transpose_ix        // transpose the pattern and values of a matrix
     GrB_Matrix C,                       // output matrix
     const GrB_Matrix A,                 // input matrix
     // for sparse case:
-    int64_t *restrict *Workspaces,      // Workspaces, size nworkspaces
+    void **Workspaces,                  // Workspaces, size nworkspaces
     const int64_t *restrict A_slice,    // how A is sliced, size nthreads+1
     int nworkspaces,                    // # of workspaces to use
     // for all cases:
@@ -58,6 +58,9 @@ GrB_Info GB_transpose_ix        // transpose the pattern and values of a matrix
     GB_Type_code code1 = ctype->code ;          // defines ztype
     GB_Type_code code2 = A->type->code ;        // defines atype
     size_t asize = A->type->size ;
+
+    bool Cp_is_32 = C->p_is_32 ;
+    #define GB_Cp_IS_32 Cp_is_32
 
     //--------------------------------------------------------------------------
     // built-in worker: transpose and typecast

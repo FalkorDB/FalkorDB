@@ -2,7 +2,7 @@
 // GB_jit_kernel_reduce.c: JIT kernel for reduction to scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,7 +31,7 @@
     //--------------------------------------------------------------------------
     // GB_jit__reduce__14bb2.c
     //--------------------------------------------------------------------------
-    // SuiteSparse:GraphBLAS v9.4.1, Timothy A. Davis, (c) 2017-2024,
+    // SuiteSparse:GraphBLAS v10.0.0, Timothy A. Davis, (c) 2017-2025,
     // All Rights Reserved.
     // SPDX-License-Identifier: Apache-2.0
     // The above copyright and license do not apply to any
@@ -67,10 +67,10 @@
     #define GB_A_IS_SPARSE 0
     #define GB_A_IS_BITMAP 1
     #define GB_A_IS_FULL   0
-    #define GBP_A(Ap,k,vlen) ((k) * (vlen))
-    #define GBH_A(Ah,k)      (k)
-    #define GBI_A(Ai,p,vlen) ((p) % (vlen))
-    #define GBB_A(Ab,p)      Ab [p]
+    #define GBp_A(Ap,k,vlen) ((k) * (vlen))
+    #define GBh_A(Ah,k)      (k)
+    #define GBi_A(Ai,p,vlen) ((p) % (vlen))
+    #define GBb_A(Ab,p)      Ab [p]
     #define GB_A_NVALS(e) int64_t e = A->nvals
     #define GB_A_NHELD(e) int64_t e = (A->vlen * A->vdim)
     #define GB_A_HAS_ZOMBIES 0
@@ -79,6 +79,8 @@
     #define GB_A2TYPE double
     #define GB_DECLAREA(a) double a
     #define GB_GETA(a,Ax,p,iso) a = Ax [p]
+    #define GB_Ap_BITS 64
+    #define GB_Ai_BITS 64
 
     // panel size for reduction:
     #define GB_PANEL 32
@@ -93,7 +95,7 @@
     GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
     {
         (*hash) = 0x753d2d93e48ef09e ;
-        v [0] = 9 ; v [1] = 4 ; v [2] = 1 ;
+        v [0] = 10 ; v [1] = 0 ; v [2] = 0 ;
         defn [0] = NULL ;
         defn [1] = NULL ;
         defn [2] = NULL ;
@@ -117,18 +119,19 @@
 // GB_JIT_KERNEL_REDUCE_PROTO, defined in
 // Source/jit_kernels/include/GB_jit_kernel_proto.h:
 
-/*
-    #define GB_JIT_KERNEL_REDUCE_PROTO(GB_jit_kernel_reduce)                \
-    GrB_Info GB_jit_kernel_reduce                                           \
-    (                                                                       \
-        GB_void *result,                                                    \
-        const GrB_Matrix A,                                                 \
-        GB_void *restrict Workspace,                                        \
-        bool *restrict F,                                                   \
-        const int ntasks,                                                   \
-        const int nthreads                                                  \
-    )
-*/
+#if 0
+#define GB_JIT_KERNEL_REDUCE_PROTO(GB_jit_kernel_reduce)                \
+GrB_Info GB_jit_kernel_reduce                                           \
+(                                                                       \
+    GB_void *result,                                                    \
+    const GrB_Matrix A,                                                 \
+    GB_void *restrict Workspace,                                        \
+    bool *restrict F,                                                   \
+    const int ntasks,                                                   \
+    const int nthreads,                                                 \
+    const GB_callback_struct *restrict my_callback                      \
+)
+#endif
 
 // This macro is used because the identical prototype must appear in many
 // places, but with different function names.  For example, if this kernel is
@@ -139,6 +142,8 @@
 GB_JIT_GLOBAL GB_JIT_KERNEL_REDUCE_PROTO (GB_jit_kernel) ;
 GB_JIT_GLOBAL GB_JIT_KERNEL_REDUCE_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
+
     GB_Z_TYPE z = (* ((GB_Z_TYPE *) result)) ;
     GB_Z_TYPE *W = (GB_Z_TYPE *) Workspace ;
     // The two templates below use the F and Workspace arrays to reduce A to

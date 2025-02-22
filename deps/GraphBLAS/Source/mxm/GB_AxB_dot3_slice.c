@@ -2,7 +2,7 @@
 // GB_AxB_dot3_slice: slice the entries and vectors for C<M>=A'*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,7 +31,7 @@
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_WORK (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
 }
 
 #include "mxm/GB_mxm.h"
@@ -49,7 +49,9 @@ GrB_Info GB_AxB_dot3_slice
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:
-    const GrB_Matrix C,             // matrix to slice
+    const GrB_Matrix C,             // matrix to slice (only C->p, C->h present)
+    float *Cwork,                   // workspace of size cnz+1
+    int64_t cnz,                    // # entries that will appear in C
     GB_Werk Werk
 )
 {
@@ -62,13 +64,6 @@ GrB_Info GB_AxB_dot3_slice
     ASSERT (p_TaskList_size != NULL) ;
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
-    // ASSERT_MATRIX_OK (C, ...) cannot be done since C->i is the work need to
-    // compute the entry, not the row index itself.
-
-    // C is always constructed as sparse or hypersparse, not full, since it
-    // must accomodate zombies
-    ASSERT (!GB_IS_FULL (C)) ;
-    ASSERT (!GB_IS_BITMAP (C)) ;
 
     (*p_TaskList  ) = NULL ;
     (*p_TaskList_size) = 0 ;
@@ -86,20 +81,18 @@ GrB_Info GB_AxB_dot3_slice
     // get C
     //--------------------------------------------------------------------------
 
-    const int64_t *restrict Cp = C->p ;
-    int64_t *restrict Cwork = C->i ;
+    const void *Cp = C->p ;
+    bool Cp_is_32 = C->p_is_32 ;
+
     const int64_t cnvec = C->nvec ;
     const int64_t cvlen = C->vlen ;
-    const int64_t cnz = GB_nnz_held (C) ;
 
     //--------------------------------------------------------------------------
     // compute the cumulative sum of the work
     //--------------------------------------------------------------------------
 
-    // FUTURE:: handle possible int64_t overflow
-
     int nthreads = GB_nthreads (cnz, chunk, nthreads_max) ;
-    GB_cumsum (Cwork, cnz, NULL, nthreads, Werk) ;
+    GB_cumsum_float (Cwork, cnz, nthreads, Werk) ;
     double total_work = (double) Cwork [cnz] ;
 
     //--------------------------------------------------------------------------
@@ -154,7 +147,7 @@ GrB_Info GB_AxB_dot3_slice
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    GB_p_slice (Coarse, Cwork, cnz, ntasks1, false) ;
+    GB_p_slice_float (Coarse, Cwork, cnz, ntasks1) ;
 
     //--------------------------------------------------------------------------
     // construct all tasks, both coarse and fine
@@ -174,13 +167,13 @@ GrB_Info GB_AxB_dot3_slice
         { 
             // find the first vector of the slice for task taskid: the
             // vector that owns the entry Ci [pfirst] and Cx [pfirst].
-            int64_t kfirst = GB_search_for_vector (pfirst, Cp, 0, cnvec,
-                cvlen) ;
+            int64_t kfirst = GB_search_for_vector (Cp, Cp_is_32, pfirst, 0,
+                cnvec, cvlen) ;
 
             // find the last vector of the slice for task taskid: the
             // vector that owns the entry Ci [plast] and Cx [plast].
-            int64_t klast = GB_search_for_vector (plast, Cp, kfirst, cnvec,
-                cvlen) ;
+            int64_t klast  = GB_search_for_vector (Cp, Cp_is_32, plast,
+                kfirst, cnvec, cvlen) ;
 
             // construct a coarse task that computes Ci,Cx [pfirst:plast].
             // These entries appear in C(:,kfirst:klast), but this task does

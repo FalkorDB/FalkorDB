@@ -2,7 +2,7 @@
 // GB_concat_bitmap_template: concatenate a tile into a bitmap matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,22 +10,26 @@
 {
 
     //--------------------------------------------------------------------------
-    // get C and the tile A
+    // get C (bitmap) and the tile A (any sparsity)
     //--------------------------------------------------------------------------
 
+    ASSERT (GB_IS_BITMAP (C)) ;
+
     #ifdef GB_JIT_KERNEL
-    #define A_iso GB_A_ISO
     const int64_t avdim = A->vdim ;
     const int64_t avlen = A->vlen ;
     const int64_t cvlen = C->vlen ;
     const int64_t anz = avlen * avdim ;
-    #else
-    const bool A_iso = A->iso ;
     #endif
 
     #ifndef GB_ISO_CONCAT
     const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
           GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
+    #ifdef GB_JIT_KERNEL
+    #define A_iso GB_A_ISO
+    #else
+    const bool A_iso = A->iso ;
+    #endif
     #endif
 
     int8_t *restrict Cb = C->b ;

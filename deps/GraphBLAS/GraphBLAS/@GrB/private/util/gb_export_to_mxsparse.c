@@ -1,20 +1,22 @@
 //------------------------------------------------------------------------------
-// gb_export_to_mxsparse: export a GrB_Matrix to a built-in sparse matrix
+// gb_export_to_mxsparse: export a GrB_Matrix to a MATLAB sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// The input GrB_Matrix A is exported to a built-in sparse mxArray S, and freed.
+// The input GrB_Matrix A is exported to a MATLAB sparse mxArray S, and freed.
 
 // The input GrB_Matrix A may be shallow or deep.  The output is a standard
-// built-in sparse matrix as an mxArray.
+// MATLAB sparse matrix as an mxArray.
+
+// This function accesses GB_methods inside GraphBLAS.
 
 #include "gb_interface.h"
 
-mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
+mxArray *gb_export_to_mxsparse  // return exported MATLAB sparse matrix S
 (
     GrB_Matrix *A_handle        // matrix to export; freed on output
 )
@@ -27,14 +29,14 @@ mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
     CHECK_ERROR (A_handle == NULL || (*A_handle) == NULL, "internal error 2") ;
 
     //--------------------------------------------------------------------------
-    // typecast to a native built-in sparse type and free A
+    // typecast to a native MATLAB sparse type and free A
     //--------------------------------------------------------------------------
 
     GrB_Matrix T ;              // T will always be deep
     GrB_Type type ;
     OK (GxB_Matrix_type (&type, *A_handle)) ;
-    GxB_Format_Value fmt ;
-    OK (GxB_Matrix_Option_get (*A_handle, GxB_FORMAT, &fmt)) ;
+    int fmt ;
+    OK (GrB_Matrix_get_INT32 (*A_handle, &fmt, GxB_FORMAT)) ;
 
     if (fmt == GxB_BY_COL &&
         (type == GrB_BOOL || type == GrB_FP64 || type == GxB_FC64))
@@ -44,7 +46,7 @@ mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
         // A is already in a native built-in sparse matrix type, by column
         //----------------------------------------------------------------------
 
-        if (GB_is_shallow (*A_handle))
+        if (gb_is_readonly (*A_handle))
         { 
             // A is shallow so make a deep copy
             OK (GrB_Matrix_dup (&T, *A_handle)) ;
@@ -92,19 +94,36 @@ mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
     }
 
     // ensure T is deep
-    CHECK_ERROR (GB_is_shallow (T), "internal error 7") ;
+    CHECK_ERROR (gb_is_readonly (T), "internal error 7") ;
 
     //--------------------------------------------------------------------------
     // drop zeros from T
     //--------------------------------------------------------------------------
 
-    OK1 (T, GxB_Matrix_select (T, NULL, NULL, GxB_NONZERO, T, NULL, NULL)) ;
+    GrB_IndexUnaryOp op ;
+    if (type == GrB_BOOL)
+    { 
+        op = GrB_VALUENE_BOOL ;
+    }
+    else if (type == GrB_FP64)
+    { 
+        op = GrB_VALUENE_FP64 ;
+    }
+    else if (type == GxB_FC64)
+    { 
+        op = GxB_VALUENE_FC64 ;
+    }
+    GrB_Scalar zero ;
+    OK (GrB_Scalar_new (&zero, type)) ;
+    OK (GrB_Scalar_setElement_FP64 (zero, 0)) ;
+    OK1 (T, GrB_Matrix_select_Scalar (T, NULL, NULL, op, T, zero, NULL)) ;
+    OK (GrB_Scalar_free (&zero)) ;
 
     //--------------------------------------------------------------------------
     // create the new built-in sparse matrix
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows, ncols, nvals ;
+    uint64_t nrows, ncols, nvals ;
     OK (GrB_Matrix_nvals (&nvals, T)) ;
     OK (GrB_Matrix_nrows (&nrows, T)) ;
     OK (GrB_Matrix_ncols (&ncols, T)) ;
@@ -137,21 +156,54 @@ mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
     {
 
         //----------------------------------------------------------------------
-        // export the content of T as a sparse CSC matrix
+        // export the content of T as a sparse CSC matrix (all-64-bit)
         //----------------------------------------------------------------------
 
-        GrB_Index Tp_size, Ti_size, Tx_size, type_size ;
+        uint64_t Tp_size, Ti_size, Tx_size, type_size, plen, ilen, xlen ;
         uint64_t *Tp, *Ti ;
         void *Tx ;
 
-        // pass jumbled as NULL to indicate the matrix must be sorted
-        // pass iso as NULL to indicate it cannot be uniform valued
-        OK (GxB_Matrix_export_CSC (&T, &type, &nrows, &ncols,
-            &Tp, &Ti, &Tx, &Tp_size, &Ti_size, &Tx_size, NULL, NULL, NULL)) ;
+        // ensure the matrix is in sparse CSC format
+        OK (GrB_Matrix_set_INT32 (T, GxB_SPARSE, GxB_SPARSITY_CONTROL)) ;
+        OK (GrB_Matrix_set_INT32 (T, GxB_BY_COL, GxB_FORMAT)) ;
 
-        CHECK_ERROR (Ti_size == 0, "internal error 8") ;
-        CHECK_ERROR (Tp == NULL || Ti == NULL || Tx == NULL,
-            "internal error 9") ;
+        // ensure the matrix uses all 64-bit integers
+        OK (GrB_Matrix_set_INT32 (T, 64, GxB_ROWINDEX_INTEGER_HINT)) ;
+        OK (GrB_Matrix_set_INT32 (T, 64, GxB_COLINDEX_INTEGER_HINT)) ;
+        OK (GrB_Matrix_set_INT32 (T, 64, GxB_OFFSET_INTEGER_HINT)) ;
+
+        // ensure the matrix is not iso-valued
+        OK (GrB_Matrix_set_INT32 (T, 0, GxB_ISO)) ;
+
+        // unload T into a Container and free T
+        GxB_Container Container = GB_helper_container ( ) ;
+        CHECK_ERROR (Container == NULL, "internal error 911") ;
+        OK (GxB_unload_Matrix_into_Container (T, Container, NULL)) ;
+        OK (GrB_Matrix_free (&T)) ;
+
+        // ensure the container holds content that is not jumbled or iso,
+        // and is in sparse CSC format; this 'cannot' fail but check just
+        // in case.
+        CHECK_ERROR (Container->iso, "internal error 904") ;
+        CHECK_ERROR (Container->jumbled, "internal error 905") ;
+        CHECK_ERROR (Container->format != GxB_SPARSE, "internal error 906") ;
+        CHECK_ERROR (Container->orientation != GrB_COLMAJOR,
+            "internal error 907") ;
+
+        // unload the Container GrB_Vectors into raw C arrays Tp, Ti, and Tx
+        GrB_Type Tp_type, Ti_type, Tx_type ;
+        int ignore = 0 ;
+        OK (GxB_Vector_unload (Container->p, (void **) &Tp, &Tp_type, &plen,
+            &Tp_size, &ignore, NULL)) ;
+        OK (GxB_Vector_unload (Container->i, (void **) &Ti, &Ti_type, &ilen,
+            &Ti_size, &ignore, NULL)) ;
+        OK (GxB_Vector_unload (Container->x, (void **) &Tx, &Tx_type, &xlen,
+            &Tx_size, &ignore, NULL)) ;
+
+        // ensure the types are correct; this 'cannot' fail but check anyway
+        CHECK_ERROR (Tp_type != GrB_UINT64, "internal error 901") ;
+        CHECK_ERROR (Ti_type != GrB_UINT64, "internal error 902") ;
+        CHECK_ERROR (Tx_type != type, "internal error 903") ;
 
         //----------------------------------------------------------------------
         // allocate an empty sparse matrix of the right type, then set content
@@ -176,8 +228,7 @@ mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
         // set the size
         mxSetM (S, nrows) ;
         mxSetN (S, ncols) ;
-        int64_t nzmax = GB_IMIN (Ti_size / sizeof (int64_t),
-                                 Tx_size / type_size) ;
+        int64_t nzmax = MIN (Ti_size / sizeof (int64_t), Tx_size / type_size) ;
         mxSetNzmax (S, nzmax) ;
 
         // set the column pointers
@@ -195,7 +246,7 @@ mxArray *gb_export_to_mxsparse  // return exported built-in sparse matrix S
     }
 
     //--------------------------------------------------------------------------
-    // return the new built-in sparse matrix
+    // return the new built-in MATLAB sparse matrix
     //--------------------------------------------------------------------------
 
     return (S) ;

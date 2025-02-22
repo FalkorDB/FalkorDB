@@ -2,12 +2,15 @@
 // GB_concat_bitmap_full: concatenate a full tile into a bitmap matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 {
+    ASSERT (GB_IS_FULL (A))
+    ASSERT (GB_IS_BITMAP (C)) ;
+
     const int A_nthreads = GB_nthreads (anz, chunk, nthreads_max) ;
     int64_t pA ;
     #pragma omp parallel for num_threads(A_nthreads) schedule(static)

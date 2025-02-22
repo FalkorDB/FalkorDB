@@ -2,7 +2,7 @@
 // GB_subassign_06d: C(:,:)<A> = A; C is full/bitmap, M and A are aliased
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -153,8 +153,8 @@ GrB_Info GB_subassign_06d
         { 
             info = GB_subassign_jit (C,
                 /* C_replace: */ false,
-                /* I, ni, nI, Ikind, Icolon: */ NULL, 0, 0, GB_ALL, NULL,
-                /* J, nj, nJ, Jkind, Jcolon: */ NULL, 0, 0, GB_ALL, NULL,
+                /* I, ni, nI, Ikind, Icolon: */ NULL, false, 0, 0, GB_ALL, NULL,
+                /* J, nj, nJ, Jkind, Jcolon: */ NULL, false, 0, 0, GB_ALL, NULL,
                 /* M and A are aliased: */ A,
                 /* Mask_comp: */ false,
                 Mask_struct,

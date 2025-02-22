@@ -2,7 +2,7 @@
 // GB_jitifyer.c: CPU / CUDA jitifyer
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -96,7 +96,7 @@ static size_t   GB_jit_temp_allocated = 0 ;
 #define GB_JIT_C_CONTROL_INIT GxB_JIT_ON
 #endif
 
-static GxB_JIT_Control GB_jit_control = GB_JIT_C_CONTROL_INIT ;
+static int GB_jit_control = GB_JIT_C_CONTROL_INIT ;
 
 //------------------------------------------------------------------------------
 // check_table: check if the hash table is OK
@@ -113,8 +113,6 @@ static void check_table (void)
             GB_jit_entry *e = &(GB_jit_table [k]) ;
             if (e->dl_function != NULL)
             {
-                uint64_t hash = e->hash ;
-                uint64_t k2 = (hash & GB_jit_table_bits) ;
                 populated++ ;
             }
         }
@@ -151,16 +149,16 @@ static void check_table (void)
     #define GB_MALLOC_PERSISTENT(X,siz)                     \
     {                                                       \
         X = GB_Global_persistent_malloc (siz) ;             \
-        printf ("persistent malloc (%4d): %p size %g\n",   /* MEMDUMP */ \
-            __LINE__, X, (double) siz) ;                    \
+        GBMDUMP ("persistent malloc (%4d): %p size %g\n",   \
+            __LINE__, (void *) X, (double) siz) ;           \
     }
 
     #define GB_FREE_PERSISTENT(X)                           \
     {                                                       \
         if (X != NULL)                                      \
         {                                                   \
-            printf ("persistent free   (%4d): %p\n",        /* MEMDUMP */ \
-            __LINE__, X) ;                                  \
+            GBMDUMP ("persistent free   (%4d): %p\n",       \
+            __LINE__, (void *) X) ;                         \
         }                                                   \
         GB_Global_persistent_free ((void **) &(X)) ;        \
     }
@@ -174,7 +172,7 @@ static void check_table (void)
 
     #define GB_FREE_PERSISTENT(X)                           \
     {                                                       \
-        GB_Global_persistent_free ((void **) &X) ;          \
+        GB_Global_persistent_free ((void **) &(X)) ;        \
     }
 
 #endif
@@ -297,7 +295,7 @@ GrB_Info GB_jitifyer_init (void)
     // can be used.
     control = GB_IMIN (control, (int) GxB_JIT_RUN) ;
     #endif
-    GB_jit_control = (GxB_JIT_Control) control ;
+    GB_jit_control = control ;
 
     GB_jitifyer_finalize ( ) ;
 
@@ -417,7 +415,9 @@ GrB_Info GB_jitifyer_init (void)
         //----------------------------------------------------------------------
 
         void *dl_function = Kernels [k] ;
-        GB_jit_query_func dl_query = (GB_jit_query_func) Queries [k] ;
+
+//      GB_jit_query_func dl_query = (GB_jit_query_func) Queries [k] ;
+        GB_jit_query_func dl_query = GB_jitifyer_get_query (Queries [k]) ;
         ASSERT (dl_function != NULL && dl_query != NULL && Names [k] != NULL) ;
         char kernel_name [GB_KLEN+1] ;
         strncpy (kernel_name, Names [k], GB_KLEN) ;
@@ -841,9 +841,9 @@ GrB_Info GB_jitifyer_extract_JITpackage (GrB_Info error_condition)
 // GB_jitifyer_get_control: get the JIT control
 //------------------------------------------------------------------------------
 
-GxB_JIT_Control GB_jitifyer_get_control (void)
+int GB_jitifyer_get_control (void)
 {
-    GxB_JIT_Control control ;
+    int control ;
     #pragma omp critical (GB_jitifyer_worker)
     { 
         control = GB_jit_control ;
@@ -868,7 +868,7 @@ void GB_jitifyer_set_control (int control)
         // used.  No JIT kernels can be loaded or compiled.
         control = GB_IMIN (control, (int) GxB_JIT_RUN) ;
         #endif
-        GB_jit_control = (GxB_JIT_Control) control ;
+        GB_jit_control = control ;
         if (GB_jit_control == GxB_JIT_OFF)
         { 
             // free all loaded JIT kernels but do not free the JIT hash table,
@@ -1563,8 +1563,10 @@ bool GB_jitifyer_query
 // Returns GrB_SUCCESS if kernel is found (already loaded, or just now loaded,
 // or just now compiled and loaded).
 
-// Returns GrB_NO_VALUE if the kernel is not found and cannot be loaded or
-// compiled.  This tells the caller that a generic method must be used.
+// Returns GrB_NO_VALUE only if the kernel intentionally cannot be loaded, run,
+// or compiled.  This tells the caller that a generic method must be used.
+
+// Returns GxB_JIT_ERROR if the JIT should succeed, but fails.
 
 GrB_Info GB_jitifyer_load
 (
@@ -1595,7 +1597,7 @@ GrB_Info GB_jitifyer_load
     {
         // the JIT can be disabled for testing, to test error handling
         GBURBLE ("(jit: test error handling) ") ;
-        return (GrB_NOT_IMPLEMENTED) ;
+        return (GrB_NOT_IMPLEMENTED) ; // only to test error handling in MATLAB
     }
     #endif
 
@@ -1606,14 +1608,14 @@ GrB_Info GB_jitifyer_load
         // This is not a JIT failure.  It is an expected error if the strings
         // (name & defn) are NULL, so always fallback to the generic case.
         GBURBLE ("(jit: undefined) ") ;
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // no hash code (no strings given)
     }
 
     if ((GB_jit_control == GxB_JIT_OFF) || (GB_jit_control == GxB_JIT_PAUSE))
     { 
         // The JIT control has disabled all JIT kernels.  Punt to generic.
         // This is not a JIT failure.
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // JIT is off or paused
     }
 
     //--------------------------------------------------------------------------
@@ -1648,7 +1650,7 @@ GrB_Info GB_jitifyer_load
             // This is not a JIT failure since the JIT control is already
             // set to 'run', and the kernel is not already loaded.  So always
             // fallback to the generic kernel.
-            return (GrB_NO_VALUE) ;
+            return (GrB_NO_VALUE) ; // JIT set to 'run'; but kernel not loaded
         }
     }
 
@@ -1712,7 +1714,8 @@ GrB_Info GB_jitifyer_load2_worker
             char **Names = NULL ;
             int32_t nkernels = 0 ;
             GB_prejit (&nkernels, &Kernels, &Queries, &Names) ;
-            GB_jit_query_func dl_query = (GB_jit_query_func) Queries [k1] ;
+//          GB_jit_query_func dl_query = (GB_jit_query_func) Queries [k1] ;
+            GB_jit_query_func dl_query = GB_jitifyer_get_query (Queries [k1]) ;
             bool builtin = (encoding->suffix_len == 0) ;
             bool ok = GB_jitifyer_query (dl_query, builtin, hash, semiring,
                 monoid, op, type1, type2, type3) ;
@@ -1735,7 +1738,9 @@ GrB_Info GB_jitifyer_load2_worker
         else if (family == GB_jit_user_op_family)
         {
             // user-defined operator; check it now
-            GB_user_op_f GB_user_op = (GB_user_op_f) (*dl_function) ;
+//          GB_user_op_f GB_user_op = (GB_user_op_f) (*dl_function) ;
+            GB_user_op_f GB_user_op = GB_jitifyer_get_user_op (*dl_function) ;
+
             void *ignore ;
             char *defn ;
             GB_user_op (&ignore, &defn) ;
@@ -1754,7 +1759,10 @@ GrB_Info GB_jitifyer_load2_worker
         else if (family == GB_jit_user_type_family)
         {
             // user-defined type; check it now
-            GB_user_type_f GB_user_type = (GB_user_type_f) (*dl_function) ;
+//          GB_user_type_f GB_user_type = (GB_user_type_f) (*dl_function) ;
+            GB_user_type_f GB_user_type =
+                GB_jitifyer_get_user_type (*dl_function) ;
+    
             size_t ignore ;
             char *defn ;
             GB_user_type (&ignore, &defn) ;
@@ -1791,7 +1799,7 @@ GrB_Info GB_jitifyer_load2_worker
         // This is not a JIT failure since the JIT control is already
         // set to 'run', and the kernel is not already loaded.  So always
         // fallback to the generic kernel.
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // JIT set to 'run'; but kernel not loaded
     }
 
     //--------------------------------------------------------------------------
@@ -1807,29 +1815,29 @@ GrB_Info GB_jitifyer_load2_worker
     {
         case GB_jit_apply_family  : 
             op1 = op ;
-            method_code_digits = 10 ;
+            method_code_digits = 12 ;
             break ;
 
         case GB_jit_assign_family : 
             op1 = op ;
-            method_code_digits = 12 ;
+            method_code_digits = 16 ;
             break ;
 
         case GB_jit_build_family  : 
             op1 = op ;
-            method_code_digits = 7 ;
+            method_code_digits = 8 ;
             break ;
 
         case GB_jit_ewise_family  : 
             op1 = op ;
-            method_code_digits = 12 ;
+            method_code_digits = 15 ;
             break ;
 
         case GB_jit_mxm_family    : 
             monoid = semiring->add ;
             op1 = (GB_Operator) semiring->add->op ;
             op2 = (GB_Operator) semiring->multiply ;
-            method_code_digits = 13 ;
+            method_code_digits = 16 ;
             break ;
 
         case GB_jit_reduce_family : 
@@ -1839,7 +1847,7 @@ GrB_Info GB_jitifyer_load2_worker
 
         case GB_jit_select_family : 
             op1 = op ;
-            method_code_digits = 10 ;
+            method_code_digits = 9 ;
             break ;
 
         case GB_jit_user_type_family : 
@@ -1852,15 +1860,15 @@ GrB_Info GB_jitifyer_load2_worker
             break ;
 
         case GB_jit_masker_family  : 
-            method_code_digits = 5 ;
+            method_code_digits = 8 ;
             break ;
 
         case GB_jit_subref_family  : 
-            method_code_digits = 4 ;
+            method_code_digits = 6 ;
             break ;
 
         case GB_jit_sort_family  : 
-            method_code_digits = 4 ;
+            method_code_digits = 5 ;
             break ;
 
         default: ;
@@ -1960,8 +1968,10 @@ GrB_Info GB_jitifyer_load_worker
     if (dl_handle != NULL)
     { 
         // library is loaded but make sure the defn match
-        GB_jit_query_func dl_query = (GB_jit_query_func)
-            GB_file_dlsym (dl_handle, "GB_jit_query") ;
+//      GB_jit_query_func dl_query = (GB_jit_query_func)
+//          GB_file_dlsym (dl_handle, "GB_jit_query") ;
+        GB_jit_query_func dl_query = GB_jitifyer_get_query (
+            GB_file_dlsym (dl_handle, "GB_jit_query")) ;
         bool ok = (dl_query != NULL) ;
         if (ok)
         { 
@@ -1996,7 +2006,7 @@ GrB_Info GB_jitifyer_load_worker
             // a JIT failure.  It is an expected condition because of the JIT
             // control, so always allow a fallback to the generic kernel.
             GBURBLE ("(jit: not compiled) ") ;
-            return (GrB_NO_VALUE) ;
+            return (GrB_NO_VALUE) ; // JIT not on; compiler disabled
         }
 
         //----------------------------------------------------------------------
@@ -2413,6 +2423,9 @@ void GB_jitifyer_table_free (bool freeall)
 // if fast user-defined kernels are required, they can be used with the PreJIT
 // mechanism; see the GraphBLAS User Guide for details.
 
+// The return result is unused.
+#include "include/GB_unused.h"
+
 static void GB_jitifyer_command (char *command)
 { 
     #ifndef NJIT
@@ -2439,7 +2452,7 @@ void GB_jitifyer_cmake_compile (char *kernel_name, uint64_t hash)
 #ifndef NJIT
 
     uint32_t bucket = hash & 0xFF ;
-    GBURBLE ("(jit: %s)\n", "cmake") ;
+    GBURBLE ("(jit compile with cmake)\n") ;
     char *burble_stdout = GB_Global_burble_get ( ) ? "" : GB_DEV_NULL ;
     bool have_log = (GB_STRLEN (GB_jit_error_log) > 0) ;
     char *err_redirect = have_log ?  " 2>> " : " 2>&1 " ;
@@ -2576,7 +2589,7 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
     char *err_redirect = have_log ?  " 2>> " : " 2>&1 " ;
     char *log_quote = have_log ? "'" : "" ;
 
-    GBURBLE ("(jit compiling cuda with nvcc: %s/c/%02x/%s.cu) ",
+    GBURBLE ("(jit compiling cuda kernel: %s/c/%02x/%s.cu) ",
         GB_jit_cache_path, bucket, kernel_name) ;
 
     snprintf (GB_jit_temp, GB_jit_temp_allocated,
@@ -2632,7 +2645,7 @@ void GB_jitifyer_nvcc_compile (char *kernel_name, uint32_t bucket)
     err_redirect, log_quote, GB_jit_error_log, log_quote) ; // error log file
 
     // compile the library and return result
-    GBURBLE ("\n(jit: %s) ", GB_jit_temp) ;
+    GBURBLE ("(jit compile cuda:)\n%s\n", GB_jit_temp) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // remove the *.o file
@@ -2715,7 +2728,7 @@ void GB_jitifyer_direct_compile (char *kernel_name, uint32_t bucket)
     err_redirect, log_quote, GB_jit_error_log, log_quote) ; // error log file
 
     // compile the library and return result
-    GBURBLE ("(jit: %s) ", GB_jit_temp) ;
+    GBURBLE ("(jit compile:)\n%s\n", GB_jit_temp) ;
     GB_jitifyer_command (GB_jit_temp) ; // OK: see security comment above
 
     // remove the *.o file

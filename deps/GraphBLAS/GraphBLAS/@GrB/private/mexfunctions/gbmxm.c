@@ -2,7 +2,7 @@
 // gbmxm: sparse matrix-matrix multiplication
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -46,7 +46,7 @@ void mexFunction
     mxArray *Matrix [6], *String [2], *Cell [2] ;
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int nmatrices, nstrings, ncells, sparsity ;
     GrB_Descriptor desc ;
     gb_get_mxargs (nargin, pargin, USAGE, Matrix, &nmatrices, String, &nstrings,
@@ -60,7 +60,7 @@ void mexFunction
     { 
         OK (GrB_Descriptor_new (&desc)) ;
     }
-    OK (GxB_Desc_set (desc, GxB_SORT, true)) ;
+    OK (GrB_Descriptor_set_INT32 (desc, true, GxB_SORT)) ;
 
     //--------------------------------------------------------------------------
     // get the matrices
@@ -124,29 +124,27 @@ void mexFunction
     if (C == NULL)
     { 
         // get the descriptor contents to determine if A and B are transposed
-        GrB_Desc_Value in0, in1 ;
-        OK (GxB_Desc_get (desc, GrB_INP0, &in0)) ;
-        OK (GxB_Desc_get (desc, GrB_INP1, &in1)) ;
+        int in0, in1 ;
+        OK (GrB_Descriptor_get_INT32 (desc, &in0, GrB_INP0)) ;
+        OK (GrB_Descriptor_get_INT32 (desc, &in1, GrB_INP1)) ;
         bool A_transpose = (in0 == GrB_TRAN) ;
         bool B_transpose = (in1 == GrB_TRAN) ;
 
         // get the size of A and B
-        GrB_Index anrows, ancols, bnrows, bncols ;
+        uint64_t anrows, ancols, bnrows, bncols ;
         OK (GrB_Matrix_nrows (&anrows, A)) ;
         OK (GrB_Matrix_ncols (&ancols, A)) ;
         OK (GrB_Matrix_nrows (&bnrows, B)) ;
         OK (GrB_Matrix_ncols (&bncols, B)) ;
 
         // determine the size of C
-        GrB_Index cnrows = (A_transpose) ? ancols : anrows ;
-        GrB_Index cncols = (B_transpose) ? bnrows : bncols ;
+        uint64_t cnrows = (A_transpose) ? ancols : anrows ;
+        uint64_t cncols = (B_transpose) ? bnrows : bncols ;
 
-        // use the semiring's additive monoid as the type of C
-        GrB_Monoid add_monoid ;
-        GrB_BinaryOp add ;
-        OK (GxB_Semiring_add (&add_monoid, semiring)) ;
-        OK (GxB_Monoid_operator (&add, add_monoid)) ;
-        OK (GxB_BinaryOp_ztype (&ctype, add)) ;
+        // use the semiring's ztype as the type of C
+        int code ;
+        OK (GrB_Semiring_get_INT32 (semiring, &code, GrB_OUTP_TYPE_CODE)) ;
+        ctype = gb_code_to_type (code) ;
 
         // create the matrix C and set its format and sparsity
         fmt = gb_get_format (cnrows, cncols, A, B, fmt) ;
@@ -175,6 +173,6 @@ void mexFunction
 
     pargout [0] = gb_export (&C, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

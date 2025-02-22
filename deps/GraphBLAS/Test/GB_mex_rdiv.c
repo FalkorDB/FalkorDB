@@ -2,7 +2,7 @@
 // GB_mex_rdiv: compute C=A*B with the rdiv operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ int64_t anrows = 0 ;
 int64_t ancols = 0 ;
 int64_t bnrows = 0 ;
 int64_t bncols = 0 ;
-GrB_Desc_Value AxB_method = GxB_DEFAULT ;
+int AxB_method = GxB_DEFAULT ;
 struct GB_Matrix_opaque MT_header, C_header ;
 
 GrB_Info axb (GB_Werk Werk, bool cprint) ;
@@ -56,7 +56,7 @@ GrB_BinaryOp My_rdiv = NULL ;
 "{\n"                                                           \
 "    // escape this quote: \"\n"                                \
 "    /* escape this backslash \\ */\n"                          \
-"    /* revised for GrB 9.4.1 */\n"                             \
+"    /* revised for GrB 10.0.0 */\n"                            \
 "    (*z) = (*y) / (*x) ;\n"                                    \
 "}"
 
@@ -86,8 +86,8 @@ GrB_Info axb (GB_Werk Werk, bool cprint)
         return (info) ;
     }
 
-    MT = GB_clear_static_header (&MT_header) ;
-    C  = GB_clear_static_header (&C_header) ;
+    MT = GB_clear_matrix_header (&MT_header) ;
+    C  = GB_clear_matrix_header (&C_header) ;
 
     // C = A*B
     info = GB_AxB_meta (C, NULL,       // C cannot be computed in place
@@ -110,7 +110,7 @@ GrB_Info axb (GB_Werk Werk, bool cprint)
         true,       // do the sort
         Werk) ;
 
-    if (C != NULL)
+    if (info == GrB_SUCCESS && C != NULL)
     {
         if (cprint) GxB_Matrix_fprint_(C, GxB_COMPLETE, NULL) ;
     }
@@ -175,7 +175,7 @@ void mexFunction
     // 7083: dot
     // 7084: hash
     // 7085: saxpy
-    GET_SCALAR (2, GrB_Desc_Value, AxB_method, GxB_DEFAULT) ;
+    GET_SCALAR (2, int, AxB_method, GxB_DEFAULT) ;
 
     // get the cprint flag
     GET_SCALAR (3, bool, cprint, false) ;

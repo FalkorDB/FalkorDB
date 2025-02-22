@@ -2,7 +2,7 @@
 // GrB_Scalar_set_*: set a field in a scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GrB_Scalar_set_Scalar
 (
     GrB_Scalar s,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 { 
     // all settings are ignored
@@ -33,7 +33,7 @@ GrB_Info GrB_Scalar_set_String
 (
     GrB_Scalar s,
     char * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -41,8 +41,9 @@ GrB_Info GrB_Scalar_set_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Scalar_set_String (s, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (s) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (s) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_SCALAR_OK (s, "s to set option", GB0) ;
 
@@ -61,7 +62,7 @@ GrB_Info GrB_Scalar_set_INT32
 (
     GrB_Scalar s,
     int32_t value,
-    GrB_Field field
+    int field
 )
 { 
     // all settings are ignored
@@ -77,7 +78,7 @@ GrB_Info GrB_Scalar_set_VOID
 (
     GrB_Scalar s,
     void * value,
-    GrB_Field field,
+    int field,
     size_t size
 )
 { 

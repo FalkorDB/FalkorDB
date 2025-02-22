@@ -2,7 +2,7 @@ function C = gb_maxbyrow (op, A)
 %GB_MAXBYROW max, by row
 % Implements C = max (A, [ ], 2)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % C = max (A, [ ], 2) reduces each row to a scalar; C is m-by-1

@@ -2,7 +2,7 @@
 // GrB_vxm: vector-matrix multiply
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,12 +32,13 @@ GrB_Info GrB_vxm                    // w'<M> = accum (w', u'*A)
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (w, "GrB_vxm (w, M, accum, semiring, u, A, desc)") ;
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (u) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (w) ;
+    GB_WHERE4 (w, M_in, u, A, "GrB_vxm (w, M, accum, semiring, u, A, desc)") ;
     GB_BURBLE_START ("GrB_vxm") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+
     ASSERT (GB_VECTOR_OK (w)) ;
     ASSERT (M_in == NULL || GB_VECTOR_OK (M_in)) ;
     ASSERT (GB_VECTOR_OK (u)) ;

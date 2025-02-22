@@ -2,7 +2,7 @@
 // GxB_Matrix_unpack_HyperCSR: unpack a matrix in hypersparse CSR format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,16 +14,16 @@
 GrB_Info GxB_Matrix_unpack_HyperCSR  // unpack a hypersparse CSR matrix
 (
     GrB_Matrix A,       // matrix to unpack (type, nrows, ncols unchanged)
-    GrB_Index **Ap,     // row "pointers"
-    GrB_Index **Ah,     // row indices
-    GrB_Index **Aj,     // column indices
+    uint64_t **Ap,      // row "pointers"
+    uint64_t **Ah,      // row indices
+    uint64_t **Aj,      // column indices
     void **Ax,          // values
-    GrB_Index *Ap_size, // size of Ap in bytes
-    GrB_Index *Ah_size, // size of Ah in bytes
-    GrB_Index *Aj_size, // size of Aj in bytes
-    GrB_Index *Ax_size, // size of Ax in bytes
+    uint64_t *Ap_size,  // size of Ap in bytes
+    uint64_t *Ah_size,  // size of Ah in bytes
+    uint64_t *Aj_size,  // size of Aj in bytes
+    uint64_t *Ax_size,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
-    GrB_Index *nvec,    // number of rows that appear in Ah
+    uint64_t *nvec,     // number of rows that appear in Ah
     bool *jumbled,      // if true, indices in each row may be unsorted
     const GrB_Descriptor desc
 )
@@ -33,11 +33,13 @@ GrB_Info GxB_Matrix_unpack_HyperCSR  // unpack a hypersparse CSR matrix
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_unpack_HyperCSR (A, "
-        "&Ap, &Ah, &Aj, &Ax, &Ap_size, &Ah_size, &Aj_size, &Ax_size, "
-        "&iso, &nvec, &jumbled, desc)") ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
+    GB_WHERE_1 (A, "GxB_Matrix_unpack_HyperCSR (A, &Ap, &Ah, &Aj, &Ax,"
+        " &Ap_size, &Ah_size, &Aj_size, &Ax_size, &iso, &nvec, &jumbled,"
+        " desc)") ;
     GB_BURBLE_START ("GxB_Matrix_unpack_HyperCSR") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
@@ -47,7 +49,6 @@ GrB_Info GxB_Matrix_unpack_HyperCSR  // unpack a hypersparse CSR matrix
     if (A->is_csc)
     { 
         // A = A', done in-place, to put A in by-row format
-        GBURBLE ("(transpose) ") ;
         GB_OK (GB_transpose_in_place (A, false, Werk)) ;
     }
 
@@ -85,7 +86,7 @@ GrB_Info GxB_Matrix_unpack_HyperCSR  // unpack a hypersparse CSR matrix
     int sparsity ;
     bool is_csc ;
     GrB_Type type ;
-    GrB_Index vlen, vdim ;
+    uint64_t vlen, vdim ;
 
     info = GB_export (true, &A, &type, &vlen, &vdim, false,
         Ap,   Ap_size,  // Ap

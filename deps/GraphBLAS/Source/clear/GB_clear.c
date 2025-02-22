@@ -2,7 +2,7 @@
 // GB_clear: clears the content of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,11 +20,14 @@
 // the matrix A is left in an invalid state (A->magic == GB_MAGIC2).  Only the
 // header is left.
 
+// Depending on the sparsity control, A may be left in bitmap form.  Otherwise,
 // A is first converted to sparse or hypersparse, and then conformed via
 // GB_conform.  If A->sparsity_control disables the sparse and hypersparse
 // structures, A is converted bitmap instead.
 
 #include "GB.h"
+
+#define GB_FREE_ALL GB_phybix_free (A) ;
 
 GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
 (
@@ -74,6 +77,17 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
     ASSERT (!GB_PENDING (A)) ;
 
     //--------------------------------------------------------------------------
+    // determine the integer sizes to use
+    //--------------------------------------------------------------------------
+
+    // determine the p_is_32 and i_is_32 settings for the cleared matrix
+    GB_determine_pji_is_32 (&(A->p_is_32), &(A->j_is_32), &(A->i_is_32),
+        GxB_AUTO_SPARSITY, 1, A->vlen, A->vdim, Werk) ;
+
+    size_t apsize = (A->p_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t ajsize = (A->j_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    //--------------------------------------------------------------------------
     // allocate new A->p and A->h components
     //--------------------------------------------------------------------------
 
@@ -92,7 +106,7 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
         int64_t plen = A->vdim ;
         A->nvec = plen ;
         A->plen = plen ;
-        A->p = GB_MALLOC (plen+1, int64_t, &(A->p_size)) ;
+        A->p = GB_MALLOC_MEMORY (plen+1, apsize, &(A->p_size)) ;
         ASSERT (A->h == NULL) ;
         if (A->p == NULL)
         { 
@@ -100,7 +114,7 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
             GB_phybix_free (A) ;
             return (GrB_OUT_OF_MEMORY) ;
         }
-        GB_memset (A->p, 0, (plen+1) * sizeof (int64_t), nthreads_max) ;
+        GB_memset (A->p, 0, (plen+1) * apsize, nthreads_max) ;
 
     }
     else
@@ -113,19 +127,13 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
         int64_t plen = GB_IMIN (1, A->vdim) ;
         A->nvec = 0 ;
         A->plen = plen ;
-        A->p = GB_MALLOC (plen+1, int64_t, &(A->p_size)) ;
-        A->h = GB_MALLOC (plen  , int64_t, &(A->h_size)) ;
+        A->p = GB_CALLOC_MEMORY (plen+1, apsize, &(A->p_size)) ;
+        A->h = GB_CALLOC_MEMORY (plen  , ajsize, &(A->h_size)) ;
         if (A->p == NULL || A->h == NULL)
         { 
             // out of memory
             GB_phybix_free (A) ;
             return (GrB_OUT_OF_MEMORY) ;
-        }
-        A->p [0] = 0 ;
-        if (plen > 0)
-        { 
-            A->p [1] = 0 ;
-            A->h [0] = 0 ;
         }
     }
 
@@ -135,6 +143,7 @@ GrB_Info GB_clear           // clear a matrix, type and dimensions unchanged
     // conform A to its desired sparsity 
     //--------------------------------------------------------------------------
 
+    ASSERT_MATRIX_OK (A, "cleared", GB0) ;
     return (GB_conform (A, Werk)) ;
 }
 

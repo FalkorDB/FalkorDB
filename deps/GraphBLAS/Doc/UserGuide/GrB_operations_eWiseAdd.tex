@@ -1,0 +1,171 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_eWiseAdd:} element-wise operations, set union} %==========
+%===============================================================================
+\label{eWiseAdd}
+
+Element-wise ``addition'' is shorthand for applying a binary operator
+element-wise on two matrices or vectors \verb'A' and \verb'B', for all entries
+that appear in the set intersection of the patterns of \verb'A' and \verb'B'.
+This is like \verb'A+B' for two sparse matrices in MATLAB, except that in
+GraphBLAS any binary operator can be used, not just addition.  The pattern of
+the result of the element-wise ``addition'' is the set union of the pattern of
+\verb'A' and \verb'B'.  Entries in neither in \verb'A' nor in \verb'B' do
+not appear in the result.
+
+Let $\oplus$ denote the binary operator to be used.  The computation ${\bf T =
+A \oplus B}$ is exactly the same as the computation with accumulator operator
+as described in Section~\ref{accummask}.  It acts like a sparse matrix
+addition, except that any operator can be used.  The pattern of ${\bf A \oplus
+B}$ is the set union of the patterns of ${\bf A}$ and ${\bf B}$, and the
+operator is applied only on the set intersection of ${\bf A}$ and ${\bf B}$.
+Entries not in either the pattern of ${\bf A}$ or ${\bf B}$ do not appear in
+the pattern of ${\bf T}$.  That is:
+    \vspace{-0.2in}
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \> for all entries $(i,j)$ in ${\bf A \cap B}$ \\
+    \> \> $t_{ij} = a_{ij} \oplus b_{ij}$ \\
+    \> for all entries $(i,j)$ in ${\bf A \setminus B}$ \\
+    \> \> $t_{ij} = a_{ij}$ \\
+    \> for all entries $(i,j)$ in ${\bf B \setminus A}$ \\
+    \> \> $t_{ij} = b_{ij}$
+    \end{tabbing}
+    }
+
+The only difference between element-wise ``multiplication'' (${\bf T =A \otimes
+B}$) and ``addition'' (${\bf T = A \oplus B}$) is the pattern of the result,
+and what happens to entries outside the intersection.  With $\otimes$ the
+pattern of ${\bf T}$ is the intersection; with $\oplus$ it is the set union.
+Entries outside the set intersection are dropped for $\otimes$, and kept for
+$\oplus$; in both cases the operator is only applied to those (and only those)
+entries in the intersection.  Any binary operator can be used interchangeably
+for either operation.
+
+Element-wise operations do not operate on the implicit values, even implicitly,
+since the operations make no assumption about the semiring.  As a result, the
+results can be different from MATLAB, which can always assume the implicit
+value is zero.  For example, \verb'C=A-B' is the conventional matrix
+subtraction in MATLAB.  Computing \verb'A-B' in GraphBLAS with \verb'eWiseAdd'
+will apply the \verb'MINUS' operator to the intersection, entries in \verb'A'
+but not \verb'B' will be unchanged and appear in \verb'C', and entries in
+neither \verb'A' nor \verb'B' do not appear in \verb'C'.  For these cases, the
+results matches the MATLAB \verb'C=A-B'.  Entries in \verb'B' but not \verb'A'
+do appear in \verb'C' but they are not negated; they cannot be subtracted from
+an implicit value in \verb'A'.  This is by design.  If conventional matrix
+subtraction of two sparse matrices is required, and the implicit value is known
+to be zero, use \verb'GrB_apply' to negate the values in \verb'B', and then
+use \verb'eWiseAdd' with the \verb'PLUS' operator, to compute \verb'A+(-B)'.
+
+The generic name for this operation is \verb'GrB_eWiseAdd', which can be used
+for both matrices and vectors.
+
+There is another minor difference in two variants of the element-wise
+functions.  If given a \verb'semiring', the \verb'eWiseAdd' functions use the
+binary operator of the semiring's monoid, while the \verb'eWiseMult' functions
+use the multiplicative operator of the semiring.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_eWiseAdd:} element-wise vector addition}
+%-------------------------------------------------------------------------------
+\label{eWiseAdd_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_eWiseAdd               // w<mask> = accum (w, u+v)
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const <operator> add,           // defines '+' for t=u+v
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Vector v,             // second input: vector v
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_eWiseAdd' computes the element-wise ``addition'' of two
+vectors \verb'u' and \verb'v', element-wise using any binary operator (not just
+plus).  The vectors are not transposed via the descriptor.  Entries in the
+intersection of \verb'u' and \verb'v' are first typecasted into the first and
+second inputs of the \verb'add' operator.  Next, a column vector \verb't' is
+computed, denoted ${\bf t = u \oplus v}$.  The pattern of \verb't' is the set
+union of \verb'u' and \verb'v'.  The result \verb't' has the type of the output
+\verb'ztype' of the \verb'add' operator.
+
+The \verb'add' operator is typically a \verb'GrB_BinaryOp', but the method is
+type-generic for this parameter.  If given a monoid (\verb'GrB_Monoid'), the
+additive operator of the monoid is used as the \verb'add' binary operator.  If
+given a semiring (\verb'GrB_Semiring'), the additive operator of the monoid of
+the semiring is used as the \verb'add' binary operator.
+%
+The \verb'add' operator may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+The final step is ${\bf w \langle m \rangle  = w \odot t}$, as described in
+Section~\ref{accummask}, except that all the terms are column vectors instead
+of matrices.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_eWiseAdd:} element-wise matrix addition}
+%-------------------------------------------------------------------------------
+\label{eWiseAdd_matrix}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_eWiseAdd               // C<Mask> = accum (C, A+B)
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const <operator> add,           // defines '+' for T=A+B
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Matrix B,             // second input: matrix B
+    const GrB_Descriptor desc       // descriptor for C, Mask, A, and B
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_eWiseAdd' computes the element-wise ``addition'' of two
+matrices \verb'A' and \verb'B', element-wise using any binary operator (not
+just plus).  The input matrices may be transposed first, according to the
+descriptor \verb'desc'.  Entries in the intersection then typecasted into the
+first and second inputs of the \verb'add' operator.  Next, a matrix \verb'T' is
+computed, denoted ${\bf T = A \oplus B}$.  The pattern of \verb'T' is the set
+union of \verb'A' and \verb'B'.  The result \verb'T' has the type of the output
+\verb'ztype' of the \verb'add' operator.
+
+The \verb'add' operator is typically a \verb'GrB_BinaryOp', but the method is
+type-generic for this parameter.  If given a monoid (\verb'GrB_Monoid'), the
+additive operator of the monoid is used as the \verb'add' binary operator.  If
+given a semiring (\verb'GrB_Semiring'), the additive operator of the monoid of
+the semiring is used as the \verb'add' binary operator.
+%
+The \verb'add' operator may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+\vspace{0.05in}
+The operation can be expressed in MATLAB notation as:
+    {\footnotesize
+    \begin{verbatim}
+    [nrows, ncols] = size (A.matrix) ;
+    T.matrix = zeros (nrows, ncols, add.ztype) ;
+    p = A.pattern & B.pattern ;
+    A = GB_mex_cast (A.matrix (p), add.xtype) ;
+    B = GB_mex_cast (B.matrix (p), add.ytype) ;
+    T.matrix (p) = add (A, B) ;
+    p =  A.pattern & ~B.pattern ; T.matrix (p) = cast (A.matrix (p), add.ztype) ;
+    p = ~A.pattern &  B.pattern ; T.matrix (p) = cast (B.matrix (p), add.ztype) ;
+    T.pattern = A.pattern | B.pattern ;
+    T.class = add.ztype ; \end{verbatim} }
+Except for when typecasting is performed, this is identical to how the
+\verb'accum' operator is applied in Figure~\ref{fig_accummask}.
+
+The final step is ${\bf C \langle M \rangle  = C \odot T}$, as described in
+Section~\ref{accummask}.
+

@@ -2,19 +2,19 @@
 // gbburble: get/set the burble setting for diagnostic output
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // Usage
 
-// b = gbburble ;
-// b = gbburble (b) ;
+// burble = gbburble ;
+// burble = gbburble (burble) ;
 
 #include "gb_interface.h"
 
-#define USAGE "usage: b = GrB.burble ; or GrB.burble (b)"
+#define USAGE "usage: burble = GrB.burble ; or GrB.burble (burble)"
 
 void mexFunction
 (
@@ -35,7 +35,7 @@ void mexFunction
     // set the burble, if requested
     //--------------------------------------------------------------------------
 
-    bool b ;
+    int32_t burble = false ;
 
     if (nargin > 0)
     { 
@@ -43,26 +43,26 @@ void mexFunction
         if (gb_mxarray_is_scalar (pargin [0]))
         { 
             // argument is a numeric scalar
-            b = (bool) mxGetScalar (pargin [0]) ;
+            burble = (int32_t) mxGetScalar (pargin [0]) ;
         }
         else if (mxIsLogicalScalar (pargin [0]))
         { 
             // argument is a logical scalar
-            b = (bool) mxIsLogicalScalarTrue (pargin [0]) ;
+            burble = (int32_t) mxIsLogicalScalarTrue (pargin [0]) ;
         }
         else
         { 
             ERROR ("input must be a scalar") ;
         }
-        OK (GxB_Global_Option_set (GxB_BURBLE, b)) ;
+        OK (GrB_Global_set_INT32 (GrB_GLOBAL, burble, GxB_BURBLE)) ;
     }
 
     //--------------------------------------------------------------------------
     // return the burble
     //--------------------------------------------------------------------------
 
-    OK (GxB_Global_Option_get (GxB_BURBLE, &b)) ;
-    pargout [0] = mxCreateDoubleScalar (b) ;
-    GB_WRAPUP ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &burble, GxB_BURBLE)) ;
+    pargout [0] = mxCreateDoubleScalar (burble) ;
+    gb_wrapup ( ) ;
 }
 

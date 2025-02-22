@@ -2,7 +2,7 @@
 // GB_dev.h: definitions for code development
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,7 +15,7 @@
 //------------------------------------------------------------------------------
 
 // to turn on Debug for a single file of GraphBLAS, add '#define GB_DEBUG'
-// just before the statement '#include "GB.h"'
+// at the top of the file, before any other #include statements.
 
 // to turn on Debug for all of GraphBLAS, uncomment this line:
 // (GraphBLAS will be exceedingly slow; this is for development only)

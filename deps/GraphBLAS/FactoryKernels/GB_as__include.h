@@ -2,7 +2,7 @@
 // GB_as__include.h: definitions for GB_as__*.c
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 // This file has been automatically generated from Generator/GB_as.h

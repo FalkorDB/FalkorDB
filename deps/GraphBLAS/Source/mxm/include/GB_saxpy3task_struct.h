@@ -2,7 +2,7 @@
 // GB_saxpy3task_struct.h: definitions for C=A*B saxpy3 method
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,9 +17,9 @@ typedef struct
     int64_t start ;     // starting vector for coarse task, p for fine task
     int64_t end ;       // ending vector for coarse task, p for fine task
     int64_t vector ;    // -1 for coarse task, vector j for fine task
-    int64_t hsize ;     // size of hash table
-    int64_t *Hi ;       // Hi array for hash table (coarse hash tasks only)
-    GB_void *Hf ;       // Hf array for hash table (int8_t or int64_t)
+    uint64_t hsize ;    // size of hash table
+    uint64_t *Hi ;      // Hi array for hash table (coarse hash tasks only)
+    GB_void *Hf ;       // Hf array for hash table (int8_t or uint64_t)
     GB_void *Hx ;       // Hx array for hash table
     int64_t my_cjnz ;   // # entries in C(:,j) found by this fine task
     int leader ;        // leader fine task for the vector C(:,j)

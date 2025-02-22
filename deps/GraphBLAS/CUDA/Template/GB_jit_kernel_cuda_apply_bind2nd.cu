@@ -22,7 +22,7 @@ __global__ void GB_cuda_apply_bind2nd_kernel
 
     for (int64_t p = tid ; p < nvals ; p += nthreads)
     {
-        if (!GBB_A (Ab, p)) { continue ; }
+        if (!GBb_A (Ab, p)) { continue ; }
         GB_DECLAREA (aij) ;
         GB_GETA (aij, Ax, p, false) ;
         GB_EWISEOP (Cx, p, aij, x, /* i */, /* j */) ;
@@ -35,6 +35,7 @@ extern "C" {
 
 GB_JIT_CUDA_KERNEL_APPLY_BIND2ND_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
     ASSERT (Cx != NULL) ;
 
     dim3 grid (gridsz) ;

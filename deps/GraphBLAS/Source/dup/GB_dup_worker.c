@@ -2,7 +2,7 @@
 // GB_dup_worker: make a deep copy of a sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,12 +12,12 @@
 // if numeric is false, C->x is allocated but not initialized.
 
 // If *Chandle is not NULL on input, the header is reused.  It may be a static
-// or dynamic header, depending on C->static_header.
+// or dynamic header, depending on C->header_size.
 
 #include "GB.h"
 #include "get_set/GB_get_set.h"
 #define GB_FREE_ALL \
-    GB_FREE (&C_user_name, C_user_name_size) ;
+    GB_FREE_MEMORY (&C_user_name, C_user_name_size) ;
 
 GrB_Info GB_dup_worker      // make an exact copy of a matrix
 (
@@ -53,14 +53,9 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     //--------------------------------------------------------------------------
 
     int64_t anz = GB_nnz_held (A) ;
-    int64_t *Ap = A->p ;
-    int64_t *Ah = A->h ;
-    int64_t *Ai = A->i ;
-    int8_t  *Ab = A->b ;
-    GB_void *Ax = (GB_void *) A->x ;
     int64_t anvec = A->nvec ;
     int64_t anvals = A->nvals ;
-    int64_t anvec_nonempty = A->nvec_nonempty ;
+    int64_t anvec_nonempty = GB_nvec_nonempty_update (A) ;
     int64_t A_nzombies = A->nzombies ;
     bool A_jumbled = A->jumbled ;
     int sparsity_control = A->sparsity_control ;
@@ -88,15 +83,15 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     //--------------------------------------------------------------------------
 
     // create C; allocate C->p and do not initialize it.
-    // C has the exact same sparsity structure as A.
+    // C has the exact same sparsity structure and integer sizes as A.
 
     // allocate a new user header for C if (*Chandle) is NULL, or reuse the
     // existing static or dynamic header if (*Chandle) is not NULL.
     GrB_Matrix C = (*Chandle) ;
-    // set C->iso = C_iso   OK: burble in the caller
     GB_OK (GB_new_bix (Chandle, // can be new or existing header
-        numeric ? atype : ctype, A->vlen, A->vdim, GB_Ap_malloc, A->is_csc,
-        GB_sparsity (A), false, A->hyper_switch, A->plen, anz, true, C_iso)) ;
+        numeric ? atype : ctype, A->vlen, A->vdim, GB_ph_malloc, A->is_csc,
+        GB_sparsity (A), false, A->hyper_switch, A->plen, anz, true, C_iso,
+        A->p_is_32, A->j_is_32, A->i_is_32)) ;
     C = (*Chandle) ;
 
     //--------------------------------------------------------------------------
@@ -104,33 +99,38 @@ GrB_Info GB_dup_worker      // make an exact copy of a matrix
     //--------------------------------------------------------------------------
 
     C->nvec = anvec ;
-    C->nvec_nonempty = anvec_nonempty ;
+//  C->nvec_nonempty = anvec_nonempty ;
+    GB_nvec_nonempty_set (C, anvec_nonempty) ;
     C->nvals = anvals ;
     C->jumbled = A_jumbled ;        // C is jumbled if A is jumbled
     C->nzombies = A_nzombies ;      // zombies can be duplicated
     C->sparsity_control = sparsity_control ;
 
-    if (Ap != NULL)
+    size_t psize = A->p_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t jsize = A->j_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t isize = A->i_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    if (A->p != NULL)
     { 
-        GB_memcpy (C->p, Ap, (anvec+1) * sizeof (int64_t), nthreads_max) ;
+        GB_memcpy (C->p, A->p, (anvec+1) * psize, nthreads_max) ;
     }
-    if (Ah != NULL)
+    if (A->h != NULL)
     { 
-        GB_memcpy (C->h, Ah, anvec * sizeof (int64_t), nthreads_max) ;
+        GB_memcpy (C->h, A->h, anvec * jsize, nthreads_max) ;
     }
-    if (Ab != NULL)
+    if (A->b != NULL)
     { 
-        GB_memcpy (C->b, Ab, anz * sizeof (int8_t), nthreads_max) ;
+        GB_memcpy (C->b, A->b, anz * sizeof (int8_t), nthreads_max) ;
     }
-    if (Ai != NULL)
+    if (A->i != NULL)
     { 
-        GB_memcpy (C->i, Ai, anz * sizeof (int64_t), nthreads_max) ;
+        GB_memcpy (C->i, A->i, anz * isize, nthreads_max) ;
     }
     if (numeric)
     { 
         ASSERT (C_iso == A->iso) ;
         ASSERT (C->type == A->type) ;
-        GB_memcpy (C->x, Ax, (A->iso ? 1:anz) * atype->size, nthreads_max) ;
+        GB_memcpy (C->x, A->x, (A->iso ? 1:anz) * atype->size, nthreads_max) ;
     }
 
     C->magic = GB_MAGIC ;      // C->p and C->h are now initialized

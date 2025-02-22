@@ -2,7 +2,7 @@
 // GB_AxB_saxpy4: compute C+=A*B: C full, A sparse/hyper, B bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,8 +29,8 @@
 {                                           \
     GB_WERK_POP (A_slice, int64_t) ;        \
     GB_WERK_POP (H_slice, int64_t) ;        \
-    GB_FREE_WORK (&Wf, Wf_size) ;           \
-    GB_FREE_WORK (&Wcx, Wcx_size) ;         \
+    GB_FREE_MEMORY (&Wf, Wf_size) ;           \
+    GB_FREE_MEMORY (&Wcx, Wcx_size) ;         \
 }
 
 #define GB_FREE_ALL                         \
@@ -188,7 +188,8 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
             GB_FREE_ALL ;
             return (GrB_OUT_OF_MEMORY) ;
         }
-        GB_p_slice (A_slice, A->p, A->nvec, nfine_tasks_per_vector, true) ;
+        GB_p_slice (A_slice, A->p, A->p_is_32, A->nvec, nfine_tasks_per_vector,
+            /* perfectly_balanced: */ true) ;
 
         if (!use_atomics)
         { 
@@ -207,7 +208,8 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
             // complex types (FC32 and FC64) requires a critical section for
             // each C(i,j) scalar. User-defined monoids for JIT kernels also
             // require this mutex.
-            Wf = GB_CALLOC_WORK (C->vlen * C->vdim, int8_t, &Wf_size) ;
+            Wf = GB_CALLOC_MEMORY (C->vlen * C->vdim, sizeof (int8_t),
+                &Wf_size) ;
             if (Wf == NULL)
             { 
                 // out of memory
@@ -219,7 +221,7 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
 
     if (wspace > 0)
     {
-        Wcx = GB_MALLOC_WORK (wspace, GB_void, &Wcx_size) ;
+        Wcx = GB_MALLOC_MEMORY (wspace, sizeof (GB_void), &Wcx_size) ;
         if (Wcx == NULL)
         { 
             // out of memory

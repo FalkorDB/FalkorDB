@@ -2,7 +2,7 @@ function C = gb_trig (op, G)
 %GB_TRIG inverse sine, cosine, log, sqrt, ... etc
 % Implements C = asin (G), C = acos (G), C = atanh (G), ... etc
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 type = gbtype (G) ;

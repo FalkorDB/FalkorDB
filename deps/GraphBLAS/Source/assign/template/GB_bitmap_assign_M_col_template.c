@@ -2,7 +2,7 @@
 // GB_bitmap_assign_M_col_template:  traverse M for GB_COL_ASSIGN
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,7 +21,7 @@
     const int64_t *restrict klast_Mslice  = M_ek_slicing + M_ntasks ;
     const int64_t *restrict pstart_Mslice = M_ek_slicing + M_ntasks * 2 ;
 
-    int64_t jC = J [0] ;
+    int64_t jC = GB_IGET (J, 0) ;
     int tid ;
     #pragma omp parallel for num_threads(M_nthreads) schedule(dynamic,1) \
         reduction(+:cnvals)
@@ -43,9 +43,9 @@
             //------------------------------------------------------------------
 
             ASSERT (k == 0) ;
-            ASSERT (GBH_M (Mh, k) == 0) ;
+            ASSERT (GBh_M (Mh, k) == 0) ;
             GB_GET_PA (pM_start, pM_end, tid, k, kfirst, klast, pstart_Mslice,
-                Mp [k], Mp [k+1]) ;
+                GB_IGET (Mp, k), GB_IGET (Mp, k+1)) ;
 
             //------------------------------------------------------------------
             // traverse over M(:,0), the kth vector of M
@@ -57,7 +57,7 @@
                 bool mij = GB_MCAST (Mx, pM, msize) ;
                 if (mij)
                 { 
-                    int64_t iC = Mi [pM] ;
+                    int64_t iC = GB_IGET (Mi, pM) ;
                     int64_t pC = iC + jC * Cvlen ;
                     GB_MASK_WORK (pC) ;
                 }

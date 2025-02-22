@@ -2,7 +2,7 @@
 // GrB_transpose: transpose a sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,17 +29,17 @@ GrB_Info GrB_transpose              // C<M> = accum(C,A') or accum(C,A)
     // check inputs
     //--------------------------------------------------------------------------
 
+    GB_RETURN_IF_NULL (C) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
+    GB_WHERE3 (C, M_in, A, "GrB_transpose (C, M, accum, A, desc)") ;
+    GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
+    GB_BURBLE_START ("GrB_transpose") ;
+
     struct GB_Matrix_opaque T_header ;
     GrB_Matrix T = NULL ;
 
     // C may be aliased with M and/or A
-
-    GB_WHERE (C, "GrB_transpose (C, M, accum, A, desc)") ;
-    GB_BURBLE_START ("GrB_transpose") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
 
     ASSERT_MATRIX_OK (C, "C input for GrB_transpose", GB0) ;
     ASSERT_MATRIX_OK_OR_NULL (M_in, "M for GrB_transpose", GB0) ;
@@ -76,7 +76,7 @@ GrB_Info GrB_transpose              // C<M> = accum(C,A') or accum(C,A)
     // T = A or A', where T can have the type of C or the type of A
     //--------------------------------------------------------------------------
 
-    GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+    GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
     bool C_is_csc = C->is_csc ;
     if (C_is_csc != A->is_csc)
     { 
@@ -123,7 +123,6 @@ GrB_Info GrB_transpose              // C<M> = accum(C,A') or accum(C,A)
         // differ.  That can be postponed at no cost since the following step
         // is free.
         GBURBLE ("(cheap) ") ;
-        // set T->iso = A->iso  OK
         GB_OK (GB_shallow_copy (T, C_is_csc, A, Werk)) ;
     }
 

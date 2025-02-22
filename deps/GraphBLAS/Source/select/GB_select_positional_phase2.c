@@ -2,7 +2,7 @@
 // GB_select_positional_phase2.c: count entries for C=select(A,thunk)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,15 +12,15 @@
 // JIT: not need: use factory; 3 variants (A sparse, hyper, or full for DIAG)
 
 #include "select/GB_select.h"
-#include "slice/GB_ek_slice.h"
+#include "include/GB_unused.h"
 
 GrB_Info GB_select_positional_phase2
 (
-    int64_t *restrict Ci,
-    GB_void *restrict Cx,
-    const int64_t *restrict Zp,
-    const int64_t *restrict Cp,
-    const int64_t *restrict Cp_kfirst,
+    // input/output:
+    GrB_Matrix C,
+    // input:
+    const void *Zp,                 // if C->p_is_32: 32 bit, else 64-bit
+    const uint64_t *restrict Cp_kfirst,
     const GrB_Matrix A,
     const bool flipij,
     const int64_t ithunk,
@@ -40,10 +40,13 @@ GrB_Info GB_select_positional_phase2
         (opcode == GB_DIAG_idxunop_code)) ;
     ASSERT (GB_IS_INDEXUNARYOP_CODE_POSITIONAL (opcode)
         || (opcode == GB_NONZOMBIE_idxunop_code && A->iso)) ;
+    ASSERT (!GB_IS_BITMAP (A)) ;
 
     //--------------------------------------------------------------------------
     // phase1: positional operators and nonzombie iso selector
     //--------------------------------------------------------------------------
+
+    GB_IDECL (Zp, const, u) ; GB_IPTR (Zp, C->p_is_32) ;
 
     #define GB_A_TYPE GB_void
     #include "select/include/GB_select_shared_definitions.h"

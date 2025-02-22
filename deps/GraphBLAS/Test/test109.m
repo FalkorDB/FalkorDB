@@ -1,7 +1,7 @@
 function test109
 %TEST109 terminal monoid with user-defined type
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest109: terminal monoid with user-defined type\n') ;

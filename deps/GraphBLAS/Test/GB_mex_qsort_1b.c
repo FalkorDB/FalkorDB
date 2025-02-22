@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_mex_qsort_1b: sort using GB_qsort_1b
+// GB_mex_qsort_1b: sort using GB_qsort_1b_generic
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,32 +25,34 @@ void mexFunction
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
-    if (!mxIsClass (pargin [0], "int64"))
+    if (!mxIsClass (pargin [0], "uint64"))
     {
-        mexErrMsgTxt ("I must be a int64 array") ;
+        mexErrMsgTxt ("I must be a uint64 array") ;
     }
-    if (!mxIsClass (pargin [1], "int64"))
+    if (!mxIsClass (pargin [1], "uint64"))
     {
-        mexErrMsgTxt ("J must be a int64 array") ;
+        mexErrMsgTxt ("J must be a uint64 array") ;
     }
 
-    int64_t *I = mxGetData (pargin [0]) ;
+    uint64_t *I = mxGetData (pargin [0]) ;
     int64_t n = (uint64_t) mxGetNumberOfElements (pargin [0]) ;
 
-    int64_t *J = mxGetData (pargin [1]) ;
+    uint64_t *J = mxGetData (pargin [1]) ;
     if (n != (uint64_t) mxGetNumberOfElements (pargin [1])) 
     {
         mexErrMsgTxt ("I and J must be the same length") ;
     }
 
-    pargout [0] = GB_mx_create_full (n, 1, GrB_INT64) ;
-    int64_t *Iout = mxGetData (pargout [0]) ;
-    memcpy (Iout, I, n * sizeof (int64_t)) ;
+    pargout [0] = GB_mx_create_full (n, 1, GrB_UINT64) ;
+    uint64_t *Iout = mxGetData (pargout [0]) ;
+    memcpy (Iout, I, n * sizeof (uint64_t)) ;
 
-    pargout [1] = GB_mx_create_full (n, 1, GrB_INT64) ;
-    int64_t *Jout = mxGetData (pargout [1]) ;
-    memcpy (Jout, J, n * sizeof (int64_t)) ;
+    pargout [1] = GB_mx_create_full (n, 1, GrB_UINT64) ;
+    uint64_t *Jout = mxGetData (pargout [1]) ;
+    memcpy (Jout, J, n * sizeof (uint64_t)) ;
 
-    GB_qsort_1b (Iout, (GB_void *) Jout, sizeof (int64_t), n) ;
+//  double t = GB_omp_get_wtime ( ) ;
+    GB_qsort_1b_64_generic (Iout, (GB_void *) Jout, sizeof (int64_t), n) ;
+//  printf ("1b_64_generic time %g\n", GB_omp_get_wtime ( ) - t) ;
 }
 

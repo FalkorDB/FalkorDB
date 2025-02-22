@@ -2,7 +2,7 @@
 // GB_mex_generic.h: testing _Generic methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -246,6 +246,9 @@
 #define GrB_Scalar_extractElement_UDT_(...)         GrB_Scalar_extractElement (__VA_ARGS__)
 
 // GrB_Vector_build:
+#define GxB_Vector_build_Scalar_(...)               GrB_Vector_build (__VA_ARGS__)
+#define GxB_Vector_build_Vector_(...)               GrB_Vector_build (__VA_ARGS__)
+#define GxB_Vector_build_Scalar_Vector_(...)        GrB_Vector_build (__VA_ARGS__)
 #define GrB_Vector_build_BOOL_(...)                 GrB_Vector_build (__VA_ARGS__)
 #define GrB_Vector_build_INT8_(...)                 GrB_Vector_build (__VA_ARGS__)
 #define GrB_Vector_build_INT16_(...)                GrB_Vector_build (__VA_ARGS__)
@@ -296,6 +299,7 @@
 #define GrB_Vector_extractElement_Scalar_(...)      GrB_Vector_extractElement (__VA_ARGS__)
 
 // GrB_Vector_extractTuples:
+#define GxB_Vector_extractTuples_Vector_(...)       GrB_Vector_extractTuples (__VA_ARGS__)
 #define GrB_Vector_extractTuples_BOOL_(...)         GrB_Vector_extractTuples (__VA_ARGS__)
 #define GrB_Vector_extractTuples_INT8_(...)         GrB_Vector_extractTuples (__VA_ARGS__)
 #define GrB_Vector_extractTuples_INT16_(...)        GrB_Vector_extractTuples (__VA_ARGS__)
@@ -312,6 +316,9 @@
 #define GrB_Vector_extractTuples_UDT_(...)          GrB_Vector_extractTuples (__VA_ARGS__)
 
 // GrB_Matrix_build:
+#define GxB_Matrix_build_Scalar_(...)               GrB_Matrix_build (__VA_ARGS__)
+#define GxB_Matrix_build_Vector_(...)               GrB_Matrix_build (__VA_ARGS__)
+#define GxB_Matrix_build_Scalar_Vector_(...)        GrB_Matrix_build (__VA_ARGS__)
 #define GrB_Matrix_build_BOOL_(...)                 GrB_Matrix_build (__VA_ARGS__)
 #define GrB_Matrix_build_INT8_(...)                 GrB_Matrix_build (__VA_ARGS__)
 #define GrB_Matrix_build_INT16_(...)                GrB_Matrix_build (__VA_ARGS__)
@@ -394,6 +401,7 @@
 #define GrB_Matrix_extractElement_Scalar_(...)      GrB_Matrix_extractElement (__VA_ARGS__)
 
 // GrB_Matrix_extractTuples:
+#define GxB_Matrix_extractTuples_Vector_(...)       GrB_Matrix_extractTuples (__VA_ARGS__)
 #define GrB_Matrix_extractTuples_BOOL_(...)         GrB_Matrix_extractTuples (__VA_ARGS__)
 #define GrB_Matrix_extractTuples_INT8_(...)         GrB_Matrix_extractTuples (__VA_ARGS__)
 #define GrB_Matrix_extractTuples_INT16_(...)        GrB_Matrix_extractTuples (__VA_ARGS__)
@@ -455,12 +463,25 @@
 #define GrB_Vector_extract_(...)                    GrB_extract (__VA_ARGS__)
 #define GrB_Matrix_extract_(...)                    GrB_extract (__VA_ARGS__)
 #define GrB_Col_extract_(...)                       GrB_extract (__VA_ARGS__)
+#define GxB_Vector_extract_Vector_(...)             GrB_extract (__VA_ARGS__)
+#define GxB_Matrix_extract_Vector_(...)             GrB_extract (__VA_ARGS__)
+#define GxB_Col_extract_Vector_(...)                GrB_extract (__VA_ARGS__)
 
 // GxB_subassign:
 #define GxB_Vector_subassign_(...)                  GxB_subassign (__VA_ARGS__)
+#define GxB_Vector_subassign_Scalar_(...)           GxB_subassign (__VA_ARGS__)
 #define GxB_Matrix_subassign_(...)                  GxB_subassign (__VA_ARGS__)
+#define GxB_Matrix_subassign_Scalar_(...)           GxB_subassign (__VA_ARGS__)
 #define GxB_Col_subassign_(...)                     GxB_subassign (__VA_ARGS__)
 #define GxB_Row_subassign_(...)                     GxB_subassign (__VA_ARGS__)
+//
+#define GxB_Vector_subassign_Vector_(...)           GxB_subassign (__VA_ARGS__)
+#define GxB_Vector_subassign_Scalar_Vector_(...)    GxB_subassign (__VA_ARGS__)
+#define GxB_Matrix_subassign_Vector_(...)           GxB_subassign (__VA_ARGS__)
+#define GxB_Matrix_subassign_Scalar_Vector_(...)    GxB_subassign (__VA_ARGS__)
+#define GxB_Col_subassign_Vector_(...)              GxB_subassign (__VA_ARGS__)
+#define GxB_Row_subassign_Vector_(...)              GxB_subassign (__VA_ARGS__)
+//
 #define GxB_Vector_subassign_BOOL_(...)             GxB_subassign (__VA_ARGS__)
 #define GxB_Vector_subassign_INT8_(...)             GxB_subassign (__VA_ARGS__)
 #define GxB_Vector_subassign_INT16_(...)            GxB_subassign (__VA_ARGS__)
@@ -492,9 +513,19 @@
 
 // GrB_assign:
 #define GrB_Vector_assign_(...)                     GrB_assign (__VA_ARGS__)
+#define GrB_Vector_assign_Scalar_(...)              GrB_assign (__VA_ARGS__)
 #define GrB_Matrix_assign_(...)                     GrB_assign (__VA_ARGS__)
+#define GrB_Matrix_assign_Scalar_(...)              GrB_assign (__VA_ARGS__)
 #define GrB_Col_assign_(...)                        GrB_assign (__VA_ARGS__)
 #define GrB_Row_assign_(...)                        GrB_assign (__VA_ARGS__)
+//
+#define GxB_Vector_assign_Vector_(...)              GrB_assign (__VA_ARGS__)
+#define GxB_Vector_assign_Scalar_Vector_(...)       GrB_assign (__VA_ARGS__)
+#define GxB_Matrix_assign_Vector_(...)              GrB_assign (__VA_ARGS__)
+#define GxB_Matrix_assign_Scalar_Vector_(...)       GrB_assign (__VA_ARGS__)
+#define GxB_Col_assign_Vector_(...)                 GrB_assign (__VA_ARGS__)
+#define GxB_Row_assign_Vector_(...)                 GrB_assign (__VA_ARGS__)
+//
 #define GrB_Vector_assign_BOOL_(...)                GrB_assign (__VA_ARGS__)
 #define GrB_Vector_assign_INT8_(...)                GrB_assign (__VA_ARGS__)
 #define GrB_Vector_assign_INT16_(...)               GrB_assign (__VA_ARGS__)
@@ -963,6 +994,9 @@
 #define GrB_Scalar_extractElement_UDT_(...)         GrB_Scalar_extractElement_UDT (__VA_ARGS__)
 
 // GrB_Vector_build:
+#define GxB_Vector_build_Scalar_(...)               GxB_Vector_build_Scalar (__VA_ARGS__)
+#define GxB_Vector_build_Vector_(...)               GrB_Vector_build_Vector (__VA_ARGS__)
+#define GxB_Vector_build_Scalar_Vector_(...)        GrB_Vector_build_Scalar_Vector (__VA_ARGS__)
 #define GrB_Vector_build_BOOL_(...)                 GrB_Vector_build_BOOL (__VA_ARGS__)
 #define GrB_Vector_build_INT8_(...)                 GrB_Vector_build_INT8 (__VA_ARGS__)
 #define GrB_Vector_build_INT16_(...)                GrB_Vector_build_INT16 (__VA_ARGS__)
@@ -1013,6 +1047,7 @@
 #define GrB_Vector_extractElement_Scalar_(...)      GrB_Vector_extractElement_Scalar (__VA_ARGS__)
 
 // GrB_Vector_extractTuples:
+#define GxB_Vector_extractTuples_Vector_(...)       GxB_Vector_extractTuples_Vector (__VA_ARGS__)
 #define GrB_Vector_extractTuples_BOOL_(...)         GrB_Vector_extractTuples_BOOL (__VA_ARGS__)
 #define GrB_Vector_extractTuples_INT8_(...)         GrB_Vector_extractTuples_INT8 (__VA_ARGS__)
 #define GrB_Vector_extractTuples_INT16_(...)        GrB_Vector_extractTuples_INT16 (__VA_ARGS__)
@@ -1029,6 +1064,9 @@
 #define GrB_Vector_extractTuples_UDT_(...)          GrB_Vector_extractTuples_UDT (__VA_ARGS__)
 
 // GrB_Matrix_build:
+#define GxB_Matrix_build_Scalar_(...)               GxB_Matrix_build_Scalar (__VA_ARGS__)
+#define GxB_Matrix_build_Vector_(...)               GrB_Matrix_build_Vector (__VA_ARGS__)
+#define GxB_Matrix_build_Scalar_Vector_(...)        GrB_Matrix_build_Scalar_Vector (__VA_ARGS__)
 #define GrB_Matrix_build_BOOL_(...)                 GrB_Matrix_build_BOOL (__VA_ARGS__)
 #define GrB_Matrix_build_INT8_(...)                 GrB_Matrix_build_INT8 (__VA_ARGS__)
 #define GrB_Matrix_build_INT16_(...)                GrB_Matrix_build_INT16 (__VA_ARGS__)
@@ -1111,6 +1149,7 @@
 #define GrB_Matrix_extractElement_Scalar_(...)      GrB_Matrix_extractElement_Scalar (__VA_ARGS__)
 
 // GrB_Matrix_extractTuples:
+#define GxB_Matrix_extractTuples_Vector_(...)       GxB_Matrix_extractTuples_Vector (__VA_ARGS__)
 #define GrB_Matrix_extractTuples_BOOL_(...)         GrB_Matrix_extractTuples_BOOL (__VA_ARGS__)
 #define GrB_Matrix_extractTuples_INT8_(...)         GrB_Matrix_extractTuples_INT8 (__VA_ARGS__)
 #define GrB_Matrix_extractTuples_INT16_(...)        GrB_Matrix_extractTuples_INT16 (__VA_ARGS__)
@@ -1170,12 +1209,25 @@
 #define GrB_Vector_extract_(...)                    GrB_Vector_extract (__VA_ARGS__)
 #define GrB_Matrix_extract_(...)                    GrB_Matrix_extract (__VA_ARGS__)
 #define GrB_Col_extract_(...)                       GrB_Col_extract (__VA_ARGS__)
+#define GxB_Vector_extract_Vector_(...)             GxB_Vector_extract_Vector (__VA_ARGS__)
+#define GxB_Matrix_extract_Vector_(...)             GxB_Matrix_extract_Vector (__VA_ARGS__)
+#define GxB_Col_extract_Vector_(...)                GxB_Col_extract_Vector (__VA_ARGS__)
 
 // GxB_subassign:
 #define GxB_Vector_subassign_(...)                  GxB_Vector_subassign (__VA_ARGS__)
+#define GxB_Vector_subassign_Scalar_(...)           GxB_Vector_subassign_Scalar (__VA_ARGS__)
 #define GxB_Matrix_subassign_(...)                  GxB_Matrix_subassign (__VA_ARGS__)
+#define GxB_Matrix_subassign_Scalar_(...)           GxB_Matrix_subassign_Scalar (__VA_ARGS__)
 #define GxB_Col_subassign_(...)                     GxB_Col_subassign (__VA_ARGS__)
 #define GxB_Row_subassign_(...)                     GxB_Row_subassign (__VA_ARGS__)
+//
+#define GxB_Vector_subassign_Vector_(...)           GxB_Vector_subassign_Vector (__VA_ARGS__)
+#define GxB_Vector_subassign_Scalar_Vector_(...)    GxB_Vector_subassign_Scalar_Vector (__VA_ARGS__)
+#define GxB_Matrix_subassign_Vector_(...)           GxB_Matrix_subassign_Vector (__VA_ARGS__)
+#define GxB_Matrix_subassign_Scalar_Vector_(...)    GxB_Matrix_subassign_Scalar_Vector (__VA_ARGS__)
+#define GxB_Col_subassign_Vector_(...)              GxB_Col_subassign_Vector (__VA_ARGS__)
+#define GxB_Row_subassign_Vector_(...)              GxB_Row_subassign_Vector (__VA_ARGS__)
+//
 #define GxB_Vector_subassign_BOOL_(...)             GxB_Vector_subassign_BOOL (__VA_ARGS__)
 #define GxB_Vector_subassign_INT8_(...)             GxB_Vector_subassign_INT8 (__VA_ARGS__)
 #define GxB_Vector_subassign_INT16_(...)            GxB_Vector_subassign_INT16 (__VA_ARGS__)
@@ -1207,9 +1259,20 @@
 
 // GrB_assign:
 #define GrB_Vector_assign_(...)                     GrB_Vector_assign (__VA_ARGS__)
+#define GrB_Vector_assign_Scalar_(...)              GrB_Vector_assign_Scalar (__VA_ARGS__)
 #define GrB_Matrix_assign_(...)                     GrB_Matrix_assign (__VA_ARGS__)
+#define GrB_Matrix_assign_Scalar_(...)              GrB_Matrix_assign_Scalar (__VA_ARGS__)
 #define GrB_Col_assign_(...)                        GrB_Col_assign (__VA_ARGS__)
 #define GrB_Row_assign_(...)                        GrB_Row_assign (__VA_ARGS__)
+//
+#define GxB_Vector_assign_Vector_(...)              GxB_Vector_assign_Vector (__VA_ARGS__)
+#define GxB_Vector_assign_Scalar_Vector_(...)       GxB_Vector_assign_Scalar_Vector (__VA_ARGS__)
+#define GxB_Matrix_assign_Vector_(...)              GxB_Matrix_assign_Vector (__VA_ARGS__)
+#define GxB_Matrix_assign_Scalar_Vector_(...)       GxB_Matrix_assign_Scalar_Vector (__VA_ARGS__)
+#define GxB_Col_assign_Vector_(...)                 GxB_Col_assign_Vector (__VA_ARGS__)
+#define GxB_Row_assign_Vector_(...)                 GxB_Row_assign_Vector (__VA_ARGS__)
+//
+
 #define GrB_Vector_assign_BOOL_(...)                GrB_Vector_assign_BOOL (__VA_ARGS__)
 #define GrB_Vector_assign_INT8_(...)                GrB_Vector_assign_INT8 (__VA_ARGS__)
 #define GrB_Vector_assign_INT16_(...)               GrB_Vector_assign_INT16 (__VA_ARGS__)

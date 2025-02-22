@@ -2,7 +2,7 @@
 // GB_colscale_jit: C=A*D colscale method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,9 @@ GrB_Info GB_colscale_jit      // C=A*D, colscale, via the JIT
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_KERNEL_COLSCALE, false,
-        false, false, GB_sparsity (C), C->type, NULL, false, false,
+        /* C_iso: */ false, /* C_in_iso: */ false, GB_sparsity (C), C->type,
+        C->p_is_32, C->j_is_32, C->i_is_32,
+        /* M: */ NULL, /* Mask_struct: */ false, /* Mask_comp: */ false,
         binaryop, false, flipxy, A, D) ;
 
     //--------------------------------------------------------------------------
@@ -53,7 +55,9 @@ GrB_Info GB_colscale_jit      // C=A*D, colscale, via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, A, D, A_ek_slicing, A_ntasks, A_nthreads)) ;
+    return (GB_jit_kernel (C, A, D, A_ek_slicing, A_ntasks, A_nthreads,
+        &GB_callback)) ;
 }
 

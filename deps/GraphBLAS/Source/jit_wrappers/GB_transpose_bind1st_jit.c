@@ -2,7 +2,7 @@
 // GB_transpose_bind1st_jit: C=op(x,A') via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ GrB_Info GB_transpose_bind1st_jit
     const GrB_BinaryOp binaryop,
     const GB_void *xscalar,
     const GrB_Matrix A,
-    int64_t *restrict *Workspaces,
+    void **Workspaces,
     const int64_t *restrict A_slice,
     int nworkspaces,
     int nthreads
@@ -35,8 +35,9 @@ GrB_Info GB_transpose_bind1st_jit
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_KERNEL_TRANSBIND1, false,
-        false, false, GB_sparsity (C), C->type, NULL, false, false,
-        binaryop, false, false, NULL, A) ;
+        false, false, GB_sparsity (C), C->type,
+        C->p_is_32, C->j_is_32, C->i_is_32,
+        NULL, false, false, binaryop, false, false, NULL, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -53,8 +54,9 @@ GrB_Info GB_transpose_bind1st_jit
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, xscalar, A, Workspaces, A_slice, nworkspaces,
-        nthreads)) ;
+        nthreads, &GB_callback)) ;
 }
 

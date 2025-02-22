@@ -1,19 +1,23 @@
 //------------------------------------------------------------------------------
-// gb_interface.h: definitions the SuiteSparse:GraphBLAS interface
+// gb_interface.h: the SuiteSparse:GraphBLAS MATLAB/Octave interface
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // This interface depends heavily on internal details of the
-// SuiteSparse:GraphBLAS library.  Thus, GB.h is #include'd, not just
-// GraphBLAS.h.
+// SuiteSparse:GraphBLAS library.  Thus, GB.h is #include'd (via GB_helper.h),
+// not just GraphBLAS.h.
+
+// The gb_wrapup function accesses GB_methods inside GraphBLAS.
 
 #ifndef GB_INTERFACE_H
 #define GB_INTERFACE_H
 
+#define NHISTORICAL
+#include "GraphBLAS.h"
 #include "GB_helper.h"
 #include "mex.h"
 #include <ctype.h>
@@ -28,31 +32,31 @@ extern int64_t gbcov [GBCOV_MAX] ;
 extern int gbcov_max ;
 void gbcov_get (void) ;
 void gbcov_put (void) ;
-#define GB_COV_PUT gbcov_put ( )
+#define GBCOV_PUT gbcov_put ( )
 #else
-#define GB_COV_PUT
+#define GBCOV_PUT
 #endif
 
-#define GB_WRAPUP                                           \
-{                                                           \
-    GB_COV_PUT ;                                            \
-    if (GB_Global_memtable_n ( ) != 0)                      \
-    {                                                       \
-        printf ("GrB memory leak!\n") ;                     \
-        GB_Global_memtable_dump ( ) ;                       \
-        mexErrMsgIdAndTxt ("GrB:error", "memory leak") ;    \
-    }                                                       \
+static inline void gb_wrapup (void)
+{
+    GBCOV_PUT ;
+    if (GB_Global_memtable_n ( ) != 0)
+    { 
+        printf ("GrB memory leak!\n") ;
+        GB_Global_memtable_dump ( ) ;
+        mexErrMsgIdAndTxt ("GrB:error", "memory leak") ;
+    }
 }
 
 #define ERROR2(message, arg)                                \
 {                                                           \
-    GB_COV_PUT ;                                            \
+    GBCOV_PUT ;                                             \
     mexErrMsgIdAndTxt ("GrB:error", message, arg) ;         \
 }
 
 #define ERROR(message)                                      \
 {                                                           \
-    GB_COV_PUT ;                                            \
+    GBCOV_PUT ;                                             \
     mexErrMsgIdAndTxt ("GrB:error", message) ;              \
 }
 
@@ -60,25 +64,26 @@ void gbcov_put (void) ;
 
 #define OK(method)                                          \
 {                                                           \
-    GrB_Info info = method ;                                \
-    if (info != GrB_SUCCESS)                                \
+    GrB_Info this_info = method ;                           \
+    if (this_info != GrB_SUCCESS)                           \
     {                                                       \
-        ERROR (gb_error (info)) ;                           \
+        ERROR (gb_error_string (this_info)) ;               \
     }                                                       \
 }
 
-#define OK0(method)                                         \
-{                                                           \
-    GrB_Info info = method ;                                \
-    if (!(info == GrB_SUCCESS || info == GrB_NO_VALUE))     \
-    {                                                       \
-        ERROR (gb_error (info)) ;                           \
-    }                                                       \
+#define OK0(method)                                                 \
+{                                                                   \
+    GrB_Info this_info = method ;                                   \
+    if (!(this_info == GrB_SUCCESS || this_info == GrB_NO_VALUE))   \
+    {                                                               \
+        ERROR (gb_error_string (this_info)) ;                       \
+    }                                                               \
 }
 
 #define OK1(C,method)                                       \
 {                                                           \
-    if ((method) != GrB_SUCCESS)                            \
+    GrB_Info this_info = method ;                           \
+    if (this_info != GrB_SUCCESS)                           \
     {                                                       \
         const char *message ;                               \
         GrB_Matrix_error (&message, C) ;                    \
@@ -94,6 +99,8 @@ void gbcov_put (void) ;
 #define MATCH(s,t) (strcmp(s,t) == 0)
 
 #define MAX(a,b) (((a) > (b)) ? (a) : (b))
+#define MIN(a,b) (((a) < (b)) ? (a) : (b))
+#define ABS(x)   (((x) >= 0) ? (x) : (-(x)))
 
 // largest integer representable as a double
 #define FLINTMAX (((int64_t) 1) << 53)
@@ -126,23 +133,24 @@ kind_enum_t ;
 //
 // desc.base can be one of several strings:
 //
-//      'default'           the default is used
-//      'zero-based'        the type is always int64
-//      'one-based'         the type is inferred from the inputs I and J
-//      'one-based int'     the type is int64, and one-based
+//      'default'           the default is used (one-based int)
+//      'zero-based'        zero-based uint32/uint64
+//      'zero-based int'    zero-based uint32/uint64
+//      'one-based'         one-based uint32/uint64
+//      'one-based int'     one-based uint32/uint64
 //      'one-based double'  the type is double, and one-based
+//      'double'            the type is double, and one-based
 //
 // Note that there is no option for zero-based double.
 
 typedef enum            // type of indices
 {
-    BASE_DEFAULT = 0,   // The type is determined automatically.  It is
-                        // BASE_1_DOUBLE, unless the dimensions are
-                        // too big for a flint (max(size(A)) > flintmax).  In
-                        // that case, BASE_1_INT64 is used.
-    BASE_0_INT64 = 1,   // indices are returned as zero-based int64 values
-    BASE_1_INT64 = 2,   // indices are returned as one-based int64
-    BASE_1_DOUBLE = 3   // this is the typical default: one-based double
+    BASE_DEFAULT = 0,   // one-based integers (int32/int64)
+    BASE_0_INT = 1,     // indices are returned as zero-based int32/int64
+    BASE_1_INT = 2,     // indices are returned as one-based int32/int64
+    BASE_1_DOUBLE = 3   // one-based double, unless the dimensions are too big
+                        // for a flint (max(size(A)) > flintmax).  In that
+                        // case, BASE_1_INT is used.
 }
 base_enum_t ;
 
@@ -171,6 +179,21 @@ GrB_Type gb_mxstring_to_type    // return the GrB_Type from a built-in string
     const mxArray *S        // built-in mxArray containing a string
 ) ;
 
+GrB_Type gb_code_to_type    // return the GrB_Type from a GrB_Type_Code
+(
+    GrB_Type_Code code
+) ;
+
+GrB_Type gb_binaryop_ztype  // return the GrB_Type of the output of a binary op
+(
+    GrB_BinaryOp op
+) ;
+
+GrB_Type gb_monoid_type     // return the GrB_Type of a monoid
+(
+    GrB_Monoid op
+) ;
+
 void gb_mxstring_to_string  // copy a built-in string into a C string
 (
     char *string,           // size at least maxlen+1
@@ -194,21 +217,21 @@ mxArray * gb_type_to_mxstring    // return the built-in string from a GrB_Type
     const GrB_Type type
 ) ;
 
-GrB_Matrix gb_typecast          // C = (type) A, where C is deep
+GrB_Matrix gb_typecast  // C = (type) A, where C is deep
 (
-    GrB_Matrix A,               // may be shallow
-    GrB_Type type,              // if NULL, copy but do not typecast
-    GxB_Format_Value fmt,       // format of C
-    int sparsity                // sparsity control for C, if 0 use A
+    GrB_Matrix A,       // may be shallow
+    GrB_Type type,      // if NULL, copy but do not typecast
+    int fmt,            // format of C
+    int sparsity        // sparsity control for C, if 0 use A
 ) ;
 
-GrB_Matrix gb_new               // create and empty matrix C
+GrB_Matrix gb_new       // create and empty matrix C
 (
-    GrB_Type type,              // type of C
-    GrB_Index nrows,            // # of rows
-    GrB_Index ncols,            // # of rows
-    GxB_Format_Value fmt,       // requested format
-    int sparsity                // sparsity control for C, 0 for default
+    GrB_Type type,      // type of C
+    GrB_Index nrows,    // # of rows
+    GrB_Index ncols,    // # of rows
+    int fmt,            // requested format
+    int sparsity        // sparsity control for C, 0 for default
 ) ;
 
 void gb_abort ( void ) ;    // failure
@@ -221,7 +244,7 @@ void gb_usage       // check usage and make sure GxB_init has been called
     const char *message     // error message if usage is not correct
 ) ;
 
-const char *gb_error        // return an error string from a GrB_Info value
+const char *gb_error_string     // return an error string from a GrB_Info value
 (
     GrB_Info info
 ) ;
@@ -316,7 +339,7 @@ GrB_Descriptor gb_mxarray_to_descriptor // new descriptor, or NULL if none
 (
     const mxArray *desc_builtin,// built-in struct with possible descriptor
     kind_enum_t *kind,          // GrB, sparse, or full
-    GxB_Format_Value *fmt,      // by row or by col
+    int *fmt,                   // by row or by col
     int *sparsity,              // hypersparse/sparse/bitmap/full
     base_enum_t *base           // 0-based int, 1-based int, or 1-based double
 ) ;
@@ -325,7 +348,7 @@ GrB_Matrix gb_expand_to_full    // C = full (A), and typecast
 (
     const GrB_Matrix A,         // input matrix to expand to full
     GrB_Type type,              // type of C, if NULL use the type of A
-    GxB_Format_Value fmt,       // format of C
+    int fmt,                    // format of C
     GrB_Matrix id               // identity value, use zero if NULL
 ) ;
 
@@ -400,23 +423,21 @@ void gb_mxfree              // mxFree wrapper
     void **p_handle         // handle to pointer to be freed
 ) ;
 
-int64_t *gb_mxarray_to_list     // return List of integers
+GrB_Vector gb_mxarray_to_list   // list of indices or values
 (
-    const mxArray *mxList,      // list to extract
-    base_enum_t base,           // input is zero-based or one-based
-    bool *allocated,            // true if output list was allocated
-    int64_t *len,               // length of list
-    int64_t *List_max           // max entry in the list, if computed
+    const mxArray *X,       // MATLAB input matrix or struct with GrB content
+    const int base_offset   // 1 or 0
 ) ;
 
-GrB_Index *gb_mxcell_to_index   // return index list I
+GrB_Vector gb_mxcell_to_list    // return index list I
 (
-    const mxArray *I_cell,      // built-in cell array
-    base_enum_t base,           // I is one-based or zero-based
-    const GrB_Index n,          // dimension of matrix being indexed
-    bool *I_allocated,          // true if output array I is allocated
-    GrB_Index *ni,              // length (I)
-    int64_t *I_max              // max (I) is computed if I_max is not NULL
+    // input
+    const mxArray *Cell,        // built-in MATLAB cell array
+    const int base_offset,      // 1 or 0
+    const uint64_t n,           // dimension of the matrix
+    // output
+    uint64_t *nI,               // # of items in the list
+    int64_t *I_max              // largest item in the list
 ) ;
 
 GrB_BinaryOp gb_first_binop         // return GrB_FIRST_[type] operator
@@ -446,7 +467,7 @@ bool gb_mxstring_to_format      // true if a valid format is found
     // input
     const mxArray *mxformat,    // built-in string, 'by row' or 'by col'
     // output
-    GxB_Format_Value *fmt,
+    int *fmt,
     int *sparsity
 ) ;
 
@@ -466,7 +487,7 @@ GrB_Matrix gb_by_col            // return the matrix by column
     GrB_Matrix A_input          // input matrix, by row or column
 ) ;
 
-GxB_Format_Value gb_default_format      // GxB_BY_ROW or GxB_BY_COL
+int gb_default_format       // GxB_BY_ROW or GxB_BY_COL
 (
     GrB_Index nrows,        // row vectors are stored by row
     GrB_Index ncols         // column vectors are stored by column
@@ -477,16 +498,21 @@ bool gb_is_vector               // true if A is a row or column vector
     GrB_Matrix A                // GrB_Matrix to query
 ) ;
 
-GxB_Format_Value gb_get_format          // GxB_BY_ROW or GxB_BY_COL
+bool gb_is_column_vector        // true if A is a column vector
 (
-    GrB_Index cnrows,                   // C is cnrows-by-cncols
-    GrB_Index cncols,
-    GrB_Matrix A,                       // may be NULL
-    GrB_Matrix B,                       // may be NULL
-    GxB_Format_Value fmt_descriptor     // may be GxB_NO_FORMAT
+    GrB_Matrix A                // GrB_matrix to query
 ) ;
 
-GxB_Format_Value gb_get_sparsity        // 1 to 15
+int gb_get_format           // GxB_BY_ROW or GxB_BY_COL
+(
+    GrB_Index cnrows,       // C is cnrows-by-cncols
+    GrB_Index cncols,
+    GrB_Matrix A,           // may be NULL
+    GrB_Matrix B,           // may be NULL
+    int fmt_descriptor      // may be GxB_NO_FORMAT
+) ;
+
+int gb_get_sparsity         // 1 to 15
 (
     GrB_Matrix A,                       // may be NULL
     GrB_Matrix B,                       // may be NULL
@@ -539,7 +565,7 @@ void gb_get_mxargs
     GrB_Descriptor *desc,       // last argument is always the descriptor
     base_enum_t *base,          // desc.base
     kind_enum_t *kind,          // desc.kind
-    GxB_Format_Value *fmt,      // desc.format : by row or by col
+    int *fmt,                   // desc.format : by row or by col
     int *sparsity               // desc.format : hypersparse/sparse/bitmap/full
 ) ;
 
@@ -561,6 +587,16 @@ bool gb_is_integer (const GrB_Type type) ;
 
 bool gb_is_float (const GrB_Type type) ;
 
+bool gb_is_dense                // true if A is dense
+(
+    GrB_Matrix A                // GrB_Matrix to query
+) ;
+
+bool gb_is_readonly             // true if A has any readonly components
+(
+    GrB_Matrix A                // GrB_matrix to query
+) ;
+
 GrB_UnaryOp gb_round_op (const GrB_Type type) ;
 
 mxArray *gb_mxclass_to_mxstring (mxClassID class, bool is_complex) ;
@@ -568,6 +604,52 @@ mxArray *gb_mxclass_to_mxstring (mxClassID class, bool is_complex) ;
 void gb_defaults (void) ;   // set global GraphBLAS defaults for MATLAB
 
 void gb_at_exit ( void ) ;  // call GrB_finalize
+
+//------------------------------------------------------------------------------
+// GraphBLAS polymorphic methods
+//------------------------------------------------------------------------------
+
+// The @GrB MATLAB interface does not use these macros since they require a
+// C11, and thus they cannot be used for MATLAB on Windows.
+
+#undef GrB_Monoid_new
+#undef GxB_Monoid_terminal_new
+#undef GrB_Scalar_setElement
+#undef GrB_Scalar_extractElement
+#undef GrB_Vector_build
+#undef GrB_Vector_setElement
+#undef GrB_Vector_extractElement
+#undef GrB_Vector_extractTuples
+#undef GrB_Matrix_build
+#undef GrB_Matrix_setElement
+#undef GrB_Matrix_extractElement
+#undef GrB_Matrix_extractTuples
+#undef GrB_get
+#undef GrB_set
+#undef GrB_wait
+#undef GrB_error
+#undef GrB_eWiseMult
+#undef GrB_eWiseAdd
+#undef GxB_eWiseUnion
+#undef GrB_extract
+#undef GxB_subassign
+#undef GrB_assign
+#undef GrB_apply
+#undef GrB_select
+#undef GrB_reduce
+#undef GrB_kronecker
+#undef GxB_resize
+#undef GxB_fprint
+#undef GxB_print
+#undef GrB_Matrix_import
+#undef GrB_Matrix_export
+#undef GxB_sort
+#undef GrB_free
+#undef GxB_Scalar_setElement
+#undef GxB_Scalar_extractElement
+#undef GxB_set
+#undef GxB_get
+#undef GxB_select
 
 #endif
 

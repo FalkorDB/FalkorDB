@@ -42,6 +42,9 @@ FUTURE plans for GraphBLAS:
         GrB_set (op, GxB_DEFN, "string")
     also for all ops
 
+    monoids with terminal conditions (as a function), not just a terminal
+        value
+
     candidates for kernel fusion:
         * triangle counting: mxm then reduce to scalar
         * lcc: mxm then reduce to vector
@@ -53,86 +56,40 @@ FUTURE plans for GraphBLAS:
         * check if vectorization of GrB_mxm is effective when using clang
         * see how HNSW vector search could be implemented in GraphBLAS
 
-integer sizes:
-        use 32-bit or 64-bit integers in A->i, A->h, and perhaps A->p.
-        >>> requires generic pack/unpack method for O(1) move constructors.
-        could use new build methods (int32 indices), or GrB_Vectors for I and J.
-        does not require new extracTuples method (simply typecast the copy).
-        could use new GrB_*import/export methods, with int32 indices, or just
-            typecast on copy.
+    printing user-defined types
 
-first step:
-    A->i and A->h have the same size (both 32, or both 64),
-    determined by max(nrows,ncols) <= 2^30.  A->p always 64-bit.
-    In the GrB_Matrix, A->i and A->h become void *, not int64_t *.
-    This gives 2 types of matrices.
+    Support for COO / Tuple formats:
 
-        Ai = A->i ;
-        Ah = A->h ;
-        Ai [p] = i
-        Ah [k] = j
-        i = Ai [p] ;
-        j = Ah [k] ;
+        The Container method could be extended to the COO / Tuples format.  It
+        would be like GrB_Matrix_build when moving the tuples to a matrix, but
+        the method would be faster than GrB_Matrix_build /
+        GrB_Matrix_extractTuples.  The row indices, column indices, and values
+        in the Container could be moved into the matrix, saving time and space.
+        I already have this capability in my internal methods but there is no
+        user interface for it.
 
-    replaced with
+        The Container could include a binary operator, which would be used to
+        combine duplicate entries.
 
-        GBI_GET_PTR (A) ;               // new macro
-        GBH_GET_PTR (A) ;               // new macro
-        GBI_SET (Ai, p, k)              // new macro
-        GBH_SET (Ah, k, j)              // new macro
-        i = GHI_A (Ai, pA, avlen) ;     // no change to use of macro
-        j = GHH_A (Ah, pA, avlen) ;     // no change to use of macro
+        The COO -> Container -> GrB_Matrix construction would not take O(1)
+        time and space, but it would be faster and take less memory than
+        the existing GrB_Matrix_build.
 
-    where
+        I think this option would be important for the SparseBLAS, to allow for
+        fast load/unload of COO matrices into/from a GrB_Matrix or GrB_Vector.
+        They anticipate supportng a COO matrix format, with the option of
+        creating a corresponding matrix_handle for the data (for GraphBLAS,
+        the matrix_handle would be the GrB_Matrix).
 
-        #define GPI_GET_PTR(A) \
-            A ## i32 = (A->is_32) ? (int32_t *) A->i : NULL ;
-            A ## i64 = (A->is_32) ? NULL : (int64_t *) A->i ;
+        Alternatively, I could create new GrB_build variants (or variant
+        behavior via the descriptor) that "ingest" the input GrB_Vectors I,J,
+        and X, and I could create a GrB_extractTuples variant that moves its
+        data into GrB_Vectors I,J, and X, returning the GrB_Matrix as empty
+        with no content.  This could be done via the descriptor, using the new
+        GxB_*_build*_Vector methods described above.
 
-        #define GPH_GET_PTR(A) \
-            A ## h32 = (A->is_32) ? (int32_t *) A->h : NULL ;
-            A ## h64 = (A->is_32) ? NULL : (int64_t *) A->h ;
-
-        #define GBI_SET (Ai, p, i) \
-            if (Ai ## 32 == NULL)
-            {   
-                Ai ## 64 [p] = (i) ;
-            }
-            else 
-            {
-                Ai ## 32 [p] = (i) ;
-            }
-
-        #define GBH_SET (Ah, k, j) \
-            if (Ah ## 32 == NULL)
-            {   
-                Ah ## 64 [k] = (j) ;
-            }
-            else 
-            {
-                Ah ## 32 [k] = (j) ;
-            }
-
-// handles the case where Ai is 32 bit, 64 bit, or NULL for full matrix:
-#define GBI (Ai, p, vlen)
-    (Ai ## 32 == NULL) ? ((Ai ## 64 == NULL) ? ((p) % vlen) : Ai ## 64 [p])
-        : (Ai ## 32 [p]) ;
-
-// use the same for GBH
-
-All JIT kernels can be specialized to the int types of its matrices.
-FactoryKernels and generic kernels cannot; they would need to use the above
-macros.  Or, current single-integer codes with no specializations would use:
-
-    if (all matrices are 32 bit)
-        use all 32 bit Ai and Ah for all matrices
-    else if all 64
-        use all 64 bit Ai and Ah for all matrices
-    else
-        use generic macros as above
-
-The code inside each of the 3 cases above would be templatized methods.
-
-memcpy (Ai, Ci, ...) would be replaced with a function that did all 4
-variants:  both 32, 32 to 64, 64 to 32, and both 64.
+        Lots to work out for this, and it's unrelated to the 32/64 bit issue
+        (except that the introduction of GrB_Vectors I,J,X to GrB_build and
+        extractTuples makes this feature more feasible).  Thus, I don't expect
+        to add it to GraphBLAS v10.0.0.
 

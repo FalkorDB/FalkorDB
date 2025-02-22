@@ -2,7 +2,7 @@
 // GB_mex_serialize: copy a matrix, using serialize/deserialize
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ void mexFunction
     GrB_Matrix A = NULL, C = NULL ;
     GrB_Descriptor desc = NULL ;
     void *blob = NULL ;
-    GrB_Index blob_size = 0 ;
+    uint64_t blob_size = 0 ;
 
     // check inputs
     if (nargout > 1 || nargin < 1 || nargin > 3)
@@ -133,6 +133,7 @@ void mexFunction
     GxB_Matrix_type_name (type_name1, C) ;
     GxB_Matrix_type_name (type_name2, A) ;
     GxB_deserialize_type_name (type_name3, blob, blob_size) ;
+//  printf ("\n[%s]\n[%s]\n[%s]\n", type_name1, type_name2, type_name3) ;
     CHECK (MATCH (type_name1, type_name2)) ;
     CHECK (MATCH (type_name1, type_name3)) ;
 

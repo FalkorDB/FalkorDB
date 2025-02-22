@@ -2,7 +2,7 @@
 // GB_bitmap_expand_to_hyper:  expand a compact bitmap C to hypersparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,9 +10,9 @@
 #define GB_FREE_ALL                 \
 {                                   \
     GB_phybix_free (C) ;            \
-    GB_FREE (&Cp, Cp_size) ;        \
-    GB_FREE (&Ch, Ch_size) ;        \
-    GB_FREE (&Ci, Ci_size) ;        \
+    GB_FREE_MEMORY (&Cp, Cp_size) ;        \
+    GB_FREE_MEMORY (&Ch, Ch_size) ;        \
+    GB_FREE_MEMORY (&Ci, Ci_size) ;        \
 }
 
 #include "mxm/GB_mxm.h"
@@ -41,6 +41,8 @@ GrB_Info GB_bitmap_expand_to_hyper
     ASSERT_MATRIX_OK (A, "A for expand C from bitmap/full to hyper", GB0) ;
     ASSERT_MATRIX_OK (B, "B for expand C from bitmap/full to hyper", GB0) ;
 
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+
     int64_t cvlen = C->vlen ;
     int64_t cvdim = C->vdim ;
     int64_t cnz = cvlen * cvdim ;
@@ -52,21 +54,32 @@ GrB_Info GB_bitmap_expand_to_hyper
     // bitmap, and expanded in size to be cvlen_final by cvdim_final (A->vdim
     // by B->vdim for C=A'*B, or A->vlen by B->vdim for C=A*B).
 
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
     // allocate the sparse/hypersparse structure of the final C
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
 
-    int64_t *restrict Cp = NULL ; size_t Cp_size = 0 ;
-    int64_t *restrict Ch = NULL ; size_t Ch_size = 0 ;
-    int64_t *restrict Ci = NULL ; size_t Ci_size = 0 ;
+    // determine the p_is_32, j_is_32, and i_is_32 settings for the new matrix
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GxB_HYPERSPARSE, cnz, cvlen_final, cvdim_final, Werk) ;
 
-    Cp = GB_MALLOC (cvdim+1, int64_t, &Cp_size) ;
-    Ch = NULL ;
+    size_t cpsize = (Cp_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t cjsize = (Cj_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t cisize = (Ci_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    GB_Type_code cjcode = (Cj_is_32  ) ? GB_UINT32_code : GB_UINT64_code ;
+    GB_Type_code bjcode = (B->j_is_32) ? GB_UINT32_code : GB_UINT64_code ;
+
+    GB_MDECL (Cp, , u) ; size_t Cp_size = 0 ;
+    GB_MDECL (Ci, , u) ; size_t Ci_size = 0 ;
+    void *Ch = NULL ; size_t Ch_size = 0 ;
+
+    Cp = GB_MALLOC_MEMORY (cvdim+1, cpsize, &Cp_size) ;
     if (B_is_hyper)
     { 
-        Ch = GB_MALLOC (cvdim, int64_t, &Ch_size) ;
+        Ch = GB_MALLOC_MEMORY (cvdim, cjsize, &Ch_size) ;
     }
-    Ci = GB_MALLOC (cnz, int64_t, &Ci_size) ;
+    Ci = GB_MALLOC_MEMORY (cnz, cisize, &Ci_size) ;
     if (Cp == NULL || (B_is_hyper && Ch == NULL) || Ci == NULL)
     { 
         // out of memory
@@ -74,9 +87,12 @@ GrB_Info GB_bitmap_expand_to_hyper
         return (GrB_OUT_OF_MEMORY) ;
     }
 
-    //----------------------------------------------------------------------
+    GB_IPTR (Cp, Cp_is_32) ;
+    GB_IPTR (Ci, Ci_is_32) ;
+
+    //--------------------------------------------------------------------------
     // construct the hyperlist of C, if B is hypersparse
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
 
     int nthreads_max = GB_Context_nthreads_max ( ) ;
     double chunk = GB_Context_chunk ( ) ;
@@ -85,23 +101,25 @@ GrB_Info GB_bitmap_expand_to_hyper
     { 
         // C becomes hypersparse
         ASSERT (cvdim == B->nvec) ;
-        GB_memcpy (Ch, B->h, cvdim * sizeof (int64_t), nthreads) ;
+//      GB_memcpy (Ch, B->h, cvdim * sizeof (int64_t), nthreads) ;
+        GB_cast_int (Ch, cjcode, B->h, bjcode, cvdim, nthreads) ;
     }
 
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
     // construct the vector pointers of C
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
 
     int64_t pC ;
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (pC = 0 ; pC < cvdim+1 ; pC++)
     { 
-        Cp [pC] = pC * cvlen ;
+        int64_t p = pC * cvlen ;
+        GB_ISET (Cp, pC, p) ;   // Cp [pC] = p
     }
 
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
     // construct the pattern of C from its bitmap
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
 
     // C(i,j) becomes a zombie if not present in the bitmap
     nthreads = GB_nthreads (cnz, chunk, nthreads_max) ;
@@ -114,13 +132,13 @@ GrB_Info GB_bitmap_expand_to_hyper
         if (A_is_hyper)
         { 
             // only for C=A'*B
-            GrB_Index *restrict Ah = (GrB_Index *) A->h ;
             ASSERT (cvlen == A->nvec) ;
             #pragma omp parallel for num_threads(nthreads) schedule(static)
             for (pC = 0 ; pC < cnz ; pC++)
             {
-                int64_t i = Ah [pC % cvlen] ;
-                Ci [pC] = (Cb [pC]) ? i : GB_ZOMBIE (i) ;
+                int64_t i = GB_IGET (Ah, pC % cvlen) ;
+                i = (Cb [pC]) ? i : GB_ZOMBIE (i) ;
+                GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
             }
         }
         else
@@ -131,7 +149,8 @@ GrB_Info GB_bitmap_expand_to_hyper
             for (pC = 0 ; pC < cnz ; pC++)
             {
                 int64_t i = pC % cvlen ;
-                Ci [pC] = (Cb [pC]) ? i : GB_ZOMBIE (i) ;
+                i = (Cb [pC]) ? i : GB_ZOMBIE (i) ;
+                GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
             }
         }
     }
@@ -141,13 +160,12 @@ GrB_Info GB_bitmap_expand_to_hyper
         if (A_is_hyper)
         { 
             // only for C=A'*B
-            GrB_Index *restrict Ah = (GrB_Index *) A->h ;
             ASSERT (cvlen == A->nvec) ;
             #pragma omp parallel for num_threads(nthreads) schedule(static)
             for (pC = 0 ; pC < cnz ; pC++)
             {
-                int64_t i = Ah [pC % cvlen] ;
-                Ci [pC] = i ;
+                int64_t i = GB_IGET (Ah, pC % cvlen) ;
+                GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
             }
         }
         else
@@ -158,14 +176,14 @@ GrB_Info GB_bitmap_expand_to_hyper
             for (pC = 0 ; pC < cnz ; pC++)
             {
                 int64_t i = pC % cvlen ;
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
             }
         }
     }
 
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
     // transplant the new content and finalize C
-    //----------------------------------------------------------------------
+    //--------------------------------------------------------------------------
 
     C->p = Cp ; Cp = NULL ; C->p_size = Cp_size ;
     C->h = Ch ; Ch = NULL ; C->h_size = Ch_size ;
@@ -176,10 +194,14 @@ GrB_Info GB_bitmap_expand_to_hyper
     C->nvals = cnz ;
     C->nvec = cvdim ;
     C->plen = cvdim ;
-    C->nvec_nonempty = (cvlen == 0) ? 0 : cvdim ;
+//  C->nvec_nonempty = (cvlen == 0) ? 0 : cvdim ;
+    GB_nvec_nonempty_set (C, (cvlen == 0) ? 0 : cvdim) ;
+    C->p_is_32 = Cp_is_32 ;
+    C->j_is_32 = Cj_is_32 ;
+    C->i_is_32 = Ci_is_32 ;
 
     // free the bitmap, if present
-    GB_FREE ((&C->b), C->b_size) ;
+    GB_FREE_MEMORY ((&C->b), C->b_size) ;
 
     // C is now sparse or hypersparse
     ASSERT_MATRIX_OK (C, "C expanded from bitmap/full to hyper", GB0) ;

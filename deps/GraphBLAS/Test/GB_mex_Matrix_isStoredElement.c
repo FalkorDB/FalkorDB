@@ -2,7 +2,7 @@
 // GB_mex_Matrix_isStoredElement: interface for x = A(i,j)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,8 +33,8 @@ void mexFunction
 
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Matrix A = NULL ;
-    GrB_Index *I = NULL, ni = 0, I_range [3] ;
-    GrB_Index *J = NULL, nj = 0, J_range [3] ;
+    uint64_t *I = NULL, ni = 0, I_range [3] ;       // OK
+    uint64_t *J = NULL, nj = 0, J_range [3] ;       // OK
     bool is_list ;
 
     // check inputs
@@ -55,24 +55,28 @@ void mexFunction
     }
 
     // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [1], &ni, I_range, &is_list))
+    if (!GB_mx_mxArray_to_indices (pargin [1], &I, &ni, I_range, &is_list,
+        NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("I failed") ;
     }
     if (!is_list)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("I is invalid; must be a list") ;
     }
 
     // get J
-    if (!GB_mx_mxArray_to_indices (&J, pargin [2], &nj, J_range, &is_list))
+    if (!GB_mx_mxArray_to_indices (pargin [2], &J, &nj, J_range, &is_list,
+        NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("J failed") ;
     }
     if (!is_list)
     {
+        FREE_ALL ;
         mexErrMsgTxt ("J is invalid; must be a list") ;
     }
 

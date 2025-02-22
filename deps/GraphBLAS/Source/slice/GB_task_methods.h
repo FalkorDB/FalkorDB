@@ -2,7 +2,7 @@
 // GB_task_methods.h: parallel task descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,7 +41,8 @@
         bool ok ;                                                           \
         int nold = (max_ntasks == 0) ? 0 : (max_ntasks + 1) ;               \
         int nnew = 2 * (ntasks) + 1 ;                                       \
-        GB_REALLOC_WORK (TaskList, nnew, GB_task_struct, &TaskList_size, &ok) ;\
+        GB_REALLOC_MEMORY (TaskList, nnew, sizeof (GB_task_struct),         \
+            &TaskList_size, &ok) ;                                          \
         if (!ok)                                                            \
         {                                                                   \
             /* out of memory */                                             \
@@ -77,26 +78,62 @@ void GB_slice_vector
     // input:
     const int64_t pM_start,         // M(:,kM) starts at pM_start in Mi,Mx
     const int64_t pM_end,           // M(:,kM) ends at pM_end-1 in Mi,Mx
-    const int64_t *restrict Mi,     // indices of M (or NULL)
+    const void *Mi,                 // indices of M (or NULL)
+    const bool Mi_is_32,            // if true, Mi is 32-bit; else 64 bit
     const int64_t pA_start,         // A(:,kA) starts at pA_start in Ai,Ax
     const int64_t pA_end,           // A(:,kA) ends at pA_end-1 in Ai,Ax
-    const int64_t *restrict Ai,     // indices of A
+    const void *Ai,                 // indices of A (or NULL)
+    const bool Ai_is_32,            // if true, Ai is 32-bit; else 64 bit
     const int64_t pB_start,         // B(:,kB) starts at pB_start in Bi,Bx
     const int64_t pB_end,           // B(:,kB) ends at pB_end-1 in Bi,Bx
-    const int64_t *restrict Bi,     // indices of B
+    const void *Bi,                 // indices of B (or NULL)
+    const bool Bi_is_32,            // if true, Bi is 32-bit; else 64 bit
     const int64_t vlen,             // A->vlen and B->vlen
     const double target_work        // target work
 ) ;
 
 void GB_task_cumsum
 (
-    int64_t *Cp,                        // size Cnvec+1
+    void *Cp,                           // size Cnvec+1
+    const bool Cp_is_32,                // if true, Cp is 32-bit, else 64-bit
     const int64_t Cnvec,
     int64_t *Cnvec_nonempty,            // # of non-empty vectors in C
     GB_task_struct *restrict TaskList,  // array of structs
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads
     GB_Werk Werk
+) ;
+
+void GB_p_slice_32       // slice Work, 32-bit
+(
+    // output:
+    int64_t *restrict Slice,    // size ntasks+1
+    // input:
+    const uint32_t *Work,       // array size n+1
+    const int64_t n,
+    const int ntasks,           // # of tasks
+    const bool perfectly_balanced
+) ;
+
+void GB_p_slice_64       // slice Work, 64-bit
+(
+    // output:
+    int64_t *restrict Slice,    // size ntasks+1
+    // input:
+    const uint64_t *Work,       // array size n+1
+    const int64_t n,
+    const int ntasks,           // # of tasks
+    const bool perfectly_balanced
+) ;
+
+void GB_p_slice_float       // slice Work, float
+(
+    // output:
+    int64_t *restrict Slice,    // size ntasks+1
+    // input:
+    const float *Work,          // array size n+1
+    const int64_t n,
+    const int ntasks            // # of tasks
 ) ;
 
 #endif

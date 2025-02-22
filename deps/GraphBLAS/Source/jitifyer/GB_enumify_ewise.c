@@ -2,14 +2,14 @@
 // GB_enumify_ewise: enumerate a GrB_eWise* problem
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Enumify an ewise operation: eWiseAdd, eWiseMult, eWiseUnion,
-// rowscale, colscale, apply with bind 1st and 2nd, transpose apply with
-// bind 1st and 2nd, etc.
+// Enumify an ewise operation: eWiseAdd, eWiseMult, eWiseUnion, rowscale,
+// colscale, apply with bind 1st and 2nd, transpose apply with bind 1st and
+// 2nd, etc.
 
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
@@ -31,6 +31,9 @@ void GB_enumify_ewise       // enumerate a GrB_eWise problem
     bool C_in_iso,          // if true, C is iso on input
     int C_sparsity,         // sparse, hyper, bitmap, or full
     GrB_Type ctype,         // C=((ctype) T) is the final typecast
+    bool Cp_is_32,          // if true, Cp is 32-bit; else 64-bit
+    bool Cj_is_32,          // if true, Cj is 32-bit; else 64-bit
+    bool Ci_is_32,          // if true, Ci is 32-bit; else 64-bit
     // M matrix:
     GrB_Matrix M,           // may be NULL
     bool Mask_struct,       // mask is structural
@@ -166,15 +169,49 @@ void GB_enumify_ewise       // enumerate a GrB_eWise problem
     GB_enumify_sparsity (&asparsity, A_sparsity) ;
     GB_enumify_sparsity (&bsparsity, B_sparsity) ;
 
+    int cp_is_32 = (Cp_is_32) ? 1 : 0 ;
+    int cj_is_32 = (Cj_is_32) ? 1 : 0 ;
+    int ci_is_32 = (Ci_is_32) ? 1 : 0 ;
+
+    int mp_is_32 = (M == NULL) ? 0 : (M->p_is_32) ? 1 : 0 ;
+    int mj_is_32 = (M == NULL) ? 0 : (M->j_is_32) ? 1 : 0 ;
+    int mi_is_32 = (M == NULL) ? 0 : (M->i_is_32) ? 1 : 0 ;
+
+    int ap_is_32 = (A == NULL) ? 0 : (A->p_is_32) ? 1 : 0 ;
+    int aj_is_32 = (A == NULL) ? 0 : (A->j_is_32) ? 1 : 0 ;
+    int ai_is_32 = (A == NULL) ? 0 : (A->i_is_32) ? 1 : 0 ;
+
+    int bp_is_32 = (B == NULL) ? 0 : (B->p_is_32) ? 1 : 0 ;
+    int bj_is_32 = (B == NULL) ? 0 : (B->j_is_32) ? 1 : 0 ;
+    int bi_is_32 = (B == NULL) ? 0 : (B->i_is_32) ? 1 : 0 ;
+
     //--------------------------------------------------------------------------
     // construct the ewise method_code
     //--------------------------------------------------------------------------
 
-    // total method_code bits: 47 (12 hex digits); 17 bits to spare.
+    // total method_code bits: 59 (15 hex digits); 5 bits to spare.
 
     (*method_code) =
                                                // range        bits
+                // C, M, A, B: 32/64 (12 bits) (3 hex digits)
+                GB_LSHIFT (cp_is_32   , 59) |  // 0 or 1       1
+                GB_LSHIFT (cj_is_32   , 58) |  // 0 or 1       1
+                GB_LSHIFT (ci_is_32   , 57) |  // 0 or 1       1
+
+                GB_LSHIFT (mp_is_32   , 56) |  // 0 or 1       1
+                GB_LSHIFT (mj_is_32   , 55) |  // 0 or 1       1
+                GB_LSHIFT (mi_is_32   , 54) |  // 0 or 1       1
+
+                GB_LSHIFT (ap_is_32   , 53) |  // 0 or 1       1
+                GB_LSHIFT (aj_is_32   , 52) |  // 0 or 1       1
+                GB_LSHIFT (ai_is_32   , 51) |  // 0 or 1       1
+
+                GB_LSHIFT (bp_is_32   , 50) |  // 0 or 1       1
+                GB_LSHIFT (bj_is_32   , 49) |  // 0 or 1       1
+                GB_LSHIFT (bi_is_32   , 48) |  // 0 or 1       1
+
                 // C in, A and B iso properites (3 bits) (1 hex digit)
+                // one bit unused here
                 GB_LSHIFT (C_in_iso_cd, 46) |  // 0 or 1       1
                 GB_LSHIFT (A_iso_code , 45) |  // 0 or 1       1
                 GB_LSHIFT (B_iso_code , 44) |  // 0 or 1       1
@@ -200,6 +237,5 @@ void GB_enumify_ewise       // enumerate a GrB_eWise problem
                 GB_LSHIFT (msparsity  ,  4) |  // 0 to 3       2
                 GB_LSHIFT (asparsity  ,  2) |  // 0 to 3       2
                 GB_LSHIFT (bsparsity  ,  0) ;  // 0 to 3       2
-
 }
 

@@ -1,7 +1,7 @@
 function x = gb_get_scalar (A)
 %GB_GET_SCALAR get a scalar from a matrix
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (A))

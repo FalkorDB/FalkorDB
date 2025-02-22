@@ -1,0 +1,422 @@
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Printing GraphBLAS objects} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{fprint}
+
+The ten different objects handled by SuiteSparse:GraphBLAS are all opaque,
+although nearly all of their contents can be extracted via methods such as
+\verb'GrB_Matrix_extractTuples', \verb'GrB_Matrix_extractElement',
+\verb'GrB_get', and so on.  The GraphBLAS C API has no mechanism for
+printing all the contents of GraphBLAS objects, but this is helpful for
+debugging.  Ten type-specific methods and two type-generic methods are
+provided:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{ll}
+\hline
+\verb'GxB_Type_fprint'         & print and check a \verb'GrB_Type' \\
+\verb'GxB_UnaryOp_fprint'      & print and check a \verb'GrB_UnaryOp' \\
+\verb'GxB_BinaryOp_fprint'     & print and check a \verb'GrB_BinaryOp' \\
+\verb'GxB_IndexUnaryOp_fprint' & print and check a \verb'GrB_IndexUnaryOp' \\
+\verb'GxB_IndexBinaryOp_fprint'& print and check a \verb'GxB_IndexBinaryOp' \\
+\verb'GxB_Monoid_fprint'       & print and check a \verb'GrB_Monoid' \\
+\verb'GxB_Semiring_fprint'     & print and check a \verb'GrB_Semiring' \\
+\verb'GxB_Descriptor_fprint'   & print and check a \verb'GrB_Descriptor' \\
+\verb'GxB_Context_fprint'      & print and check a \verb'GxB_Context' \\
+\verb'GxB_Matrix_fprint'       & print and check a \verb'GrB_Matrix' \\
+\verb'GxB_Vector_fprint'       & print and check a \verb'GrB_Vector' \\
+\verb'GxB_Scalar_fprint'       & print and check a \verb'GrB_Scalar' \\
+\hline
+\verb'GxB_fprint'             & print/check any object to a file \\
+\verb'GxB_print'              & print/check any object to \verb'stdout' \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+These methods do not modify the status of any object, and thus they
+cannot return an error string for use by \verb'GrB_error'.
+
+If a matrix or vector
+has not been completed, the pending computations are guaranteed to {\em not} be
+performed. The reason is simple.  It is possible for a bug in the user
+application (such as accessing memory outside the bounds of an array) to mangle
+the internal content of a GraphBLAS object, and the \verb'GxB_*print' methods
+can be helpful tools to track down this bug.  If \verb'GxB_*print' attempted to
+complete any computations prior to printing or checking the contents of the
+matrix or vector, then further errors could occur, including a segfault.
+
+By contrast, GraphBLAS methods and operations that return values into
+user-provided arrays or variables might finish pending operations before the
+return these values, and this would change their state.  Since they do not
+change the state of any object, the \verb'GxB_*print' methods provide a useful
+method for debugging, and for a quick understanding of what GraphBLAS is
+computing while developing a user application.
+
+Each of the methods has a parameter of type \verb'GxB_Print_Level' that
+specifies the amount to print:
+
+{\footnotesize
+\begin{verbatim}
+typedef enum
+{
+    GxB_SILENT = 0,     // nothing is printed, just check the object
+    GxB_SUMMARY = 1,    // print a terse summary
+    GxB_SHORT = 2,      // short description, about 30 entries of a matrix
+    GxB_COMPLETE = 3,   // print the entire contents of the object
+    GxB_SHORT_VERBOSE = 4,    // GxB_SHORT but with "%.15g" for doubles
+    GxB_COMPLETE_VERBOSE = 5  // GxB_COMPLETE but with "%.15g" for doubles
+}
+GxB_Print_Level ; \end{verbatim}}
+
+The ten type-specific functions include an additional argument, the
+\verb'name' string.  The \verb'name' is printed at the beginning of the display
+(assuming the print level is not \verb'GxB_SILENT') so that the object can be
+more easily identified in the output.  For the type-generic methods
+\verb'GxB_fprint' and \verb'GxB_print', the \verb'name' string is the variable
+name of the object itself.
+
+If the file \verb'f' is \verb'NULL', \verb'stdout' is used.
+If \verb'name' is \verb'NULL', it is treated
+as the empty string.  These are not error conditions.
+
+The methods check their input objects carefully and extensively, even when
+\verb'pr' is equal to \verb'GxB_SILENT'.  The following error codes can be
+returned:
+
+\begin{packed_itemize}
+\item \verb'GrB_SUCCESS':               object is valid
+\item \verb'GrB_UNINITIALIZED_OBJECT':  object is not initialized
+\item \verb'GrB_INVALID_OBJECT':        object is not valid
+\item \verb'GrB_NULL_POINTER':          object is a NULL pointer
+\item \verb'GrB_INVALID_VALUE':         \verb'fprintf' returned an I/O error.
+\end{packed_itemize}
+
+The content of any GraphBLAS object is opaque, and subject to change.  As a
+result, the exact content and format of what is printed is
+implementation-dependent, and will change from version to version of
+SuiteSparse:GraphBLAS.  Do not attempt to rely on the exact content or format
+by trying to parse the resulting output via another program.  The intent of
+these functions is to produce a report of an object for visual inspection.  If
+the user application needs to extract content from a GraphBLAS matrix or
+vector, use \verb'GrB_*_extractTuples' or the import/export methods instead.
+
+GraphBLAS matrices and vectors are zero-based, where indices of an $n$-by-$n$
+matrix are in the range 0 to $n-1$.  However, MATLAB, Octave, and Julia prefer
+to print their matrices and vectors as one-based.  To enable 1-based printing,
+use \verb'GrB_set (GrB_GLOBAL, true, GxB_PRINT_1BASED)'.  Printing is done as zero-based by
+default.
+
+% \newpage
+%===============================================================================
+\subsection{{\sf GxB\_fprint:} Print a GraphBLAS object to a file} %============
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_fprint                 // print and check a GraphBLAS object
+(
+    GrB_<objecttype> object,        // object to print and check
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+The \verb'GxB_fprint' function prints the contents of any of the ten GraphBLAS
+objects to the file \verb'f'.  If \verb'f' is \verb'NULL', the results are
+printed to \verb'stdout'.  For example, to print the entire contents of a
+matrix \verb'A' to the file \verb'f', use
+\verb'GxB_fprint (A, GxB_COMPLETE, f)'.
+
+%===============================================================================
+\subsection{{\sf GxB\_print:} Print a GraphBLAS object to {\sf stdout}} %=======
+%===============================================================================
+\label{gxb_print}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_print                  // print and check a GrB_Vector
+(
+    GrB_<objecttype> object,        // object to print and check
+    int pr,                         // print level (GxB_Print_Level)
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_print' is the same as \verb'GxB_fprint', except that it prints the
+contents of the object to \verb'stdout' instead of a file \verb'f'.  For
+example, to print the entire contents of a matrix \verb'A',  use
+\verb'GxB_print (A, GxB_COMPLETE)'.
+
+%===============================================================================
+\subsection{{\sf GxB\_Type\_fprint:} Print a {\sf GrB\_Type}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Type_fprint            // print and check a GrB_Type
+(
+    GrB_Type type,                  // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example, \verb'GxB_Type_fprint (GrB_BOOL, "boolean type", GxB_COMPLETE, f)'
+prints the contents of the \verb'GrB_BOOL' object to the file \verb'f'.
+
+\newpage
+%===============================================================================
+\subsection{{\sf GxB\_UnaryOp\_fprint:} Print a {\sf GrB\_UnaryOp}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_UnaryOp_fprint         // print and check a GrB_UnaryOp
+(
+    GrB_UnaryOp unaryop,            // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example,
+\verb'GxB_UnaryOp_fprint (GrB_LNOT, "not", GxB_COMPLETE, f)'
+prints the \verb'GrB_LNOT' unary operator to the file \verb'f'.
+
+
+%===============================================================================
+\subsection{{\sf GxB\_BinaryOp\_fprint:} Print a {\sf GrB\_BinaryOp}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_BinaryOp_fprint        // print and check a GrB_BinaryOp
+(
+    GrB_BinaryOp binaryop,          // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example,
+\verb'GxB_BinaryOp_fprint (GrB_PLUS_FP64, "plus", GxB_COMPLETE, f)' prints the
+\verb'GrB_PLUS_FP64' binary operator to the file \verb'f'.
+
+
+%===============================================================================
+\subsection{{\sf GxB\_IndexUnaryOp\_fprint:} Print a {\sf GrB\_IndexUnaryOp}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_IndexUnaryOp_fprint    // print and check a GrB_IndexUnaryOp
+(
+    GrB_IndexUnaryOp op,            // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example,
+\verb'GrB_IndexUnaryOp_fprint (GrB_TRIL, "tril", GxB_COMPLETE, f)' prints
+the \verb'GrB_TRIL' index-unary operator to the file \verb'f'.
+
+\newpage
+%===============================================================================
+\subsection{{\sf GxB\_IndexBinaryOp\_fprint:} Print a {\sf GxB\_IndexBinaryOp}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_IndexBinaryOp_fprint   // print and check a GxB_IndexBinaryOp
+(
+    GxB_IndexBinaryOp op,           // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+%===============================================================================
+\subsection{{\sf GxB\_Monoid\_fprint:} Print a {\sf GrB\_Monoid}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Monoid_fprint          // print and check a GrB_Monoid
+(
+    GrB_Monoid monoid,              // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example,
+\verb'GxB_Monoid_fprint (GxB_PLUS_FP64_MONOID, "plus monoid",'
+\verb'GxB_COMPLETE, f)'
+prints the predefined \verb'GxB_PLUS_FP64_MONOID' (based on the binary
+operator \verb'GrB_PLUS_FP64') to the file \verb'f'.
+
+%===============================================================================
+\subsection{{\sf GxB\_Semiring\_fprint:} Print a {\sf GrB\_Semiring}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Semiring_fprint        // print and check a GrB_Semiring
+(
+    GrB_Semiring semiring,          // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example,
+\verb'GxB_Semiring_fprint (GxB_PLUS_TIMES_FP64, "standard",'
+\verb'GxB_COMPLETE, f)'
+prints the predefined \verb'GxB_PLUS_TIMES_FP64' semiring to the file \verb'f'.
+
+\newpage
+%===============================================================================
+\subsection{{\sf GxB\_Descriptor\_fprint:} Print a {\sf GrB\_Descriptor}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Descriptor_fprint      // print and check a GrB_Descriptor
+(
+    GrB_Descriptor descriptor,      // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example,
+\verb'GxB_Descriptor_fprint (d, "descriptor", GxB_COMPLETE, f)'
+prints the descriptor \verb'd' to the file \verb'f'.
+
+%===============================================================================
+\subsection{{\sf GxB\_Context\_fprint:} Print a {\sf GxB\_Context}}
+%===============================================================================
+\label{context_print}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Context_fprint         // print and check a GxB_Context
+(
+    GxB_Context Context,            // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+This method can be used to print the context created for a user thread,
+or the contents of the \verb'GxB_CONTEXT_WORLD' object.
+
+%===============================================================================
+\subsection{{\sf GxB\_Matrix\_fprint:} Print a {\sf GrB\_Matrix}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_fprint          // print and check a GrB_Matrix
+(
+    GrB_Matrix A,                   // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example, \verb'GxB_Matrix_fprint (A, "my matrix", GxB_SHORT, f)'
+prints about 30 entries from the matrix \verb'A' to the file \verb'f'.
+
+
+\newpage
+%===============================================================================
+\subsection{{\sf GxB\_Vector\_fprint:} Print a {\sf GrB\_Vector}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_fprint          // print and check a GrB_Vector
+(
+    GrB_Vector v,                   // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example, \verb'GxB_Vector_fprint (v, "my vector", GxB_SHORT, f)'
+prints about 30 entries from the vector \verb'v' to the file \verb'f'.
+
+%===============================================================================
+\subsection{{\sf GxB\_Scalar\_fprint:} Print a {\sf GrB\_Scalar}}
+%===============================================================================
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Scalar_fprint          // print and check a GrB_Scalar
+(
+    GrB_Scalar s,                   // object to print and check
+    const char *name,               // name of the object
+    int pr,                         // print level (GxB_Print_Level)
+    FILE *f                         // file for output
+) ;
+\end{verbatim} } \end{mdframed}
+
+For example, \verb'GxB_Scalar_fprint (s, "my scalar", GxB_SHORT, f)'
+prints a short description of the scalar \verb's' to the file \verb'f'.
+
+%===============================================================================
+\subsection{Performance and portability considerations}
+%===============================================================================
+
+Even when the print level is \verb'GxB_SILENT', these methods extensively check
+the contents of the objects passed to them, which can take some time.  They
+should be considered debugging tools only, not for final use in production.
+
+The return value of the \verb'GxB_*print' methods can be relied upon, but the
+output to the file (or \verb'stdout') can change from version to version.  If
+these methods are eventually added to the GraphBLAS C API Specification, a
+conforming implementation might never print anything at all, regardless of the
+\verb'pr' value.  This may be essential if the GraphBLAS library is installed
+in a dedicated device, with no file output, for example.
+
+Some implementations may wish to print nothing at all if the matrix is not yet
+completed, or just an indication that the matrix has pending operations and
+cannot be printed, when non-blocking mode is employed.  In this case, use
+\verb'GrB_Matrix_wait', \verb'GrB_Vector_wait', or \verb'GxB_Scalar_wait' to
+finish all pending computations first.  If a matrix or vector has pending
+operations, SuiteSparse:GraphBLAS prints a list of the {\em pending tuples},
+which are the entries not yet inserted into the primary data structure.  It can
+also print out entries that remain in the data structure but are awaiting
+deletion; these are called {\em zombies} in the output report.
+
+Most of the rest of the report is self-explanatory.
+

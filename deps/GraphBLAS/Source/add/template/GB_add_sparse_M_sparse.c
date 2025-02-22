@@ -2,7 +2,7 @@
 // GB_add_sparse_M_sparse: C(:,j)<M>=A(:,j)+B(:,j), C and M sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -34,7 +34,10 @@
             // Ch is the same as Mh (a deep copy)
             ASSERT (Ch != NULL) ;
             ASSERT (M_is_hyper) ;
-            ASSERT (Ch [k] == M->h [k]) ;
+            #ifdef GB_DEBUG
+            GB_Mh_DECLARE (Mh, const) ; GB_Mh_PTR (Mh, M) ;
+            ASSERT (GB_IGET (Ch, k) == GB_IGET (Mh, k)) ;
+            #endif
             kM = k ;
         }
         else
@@ -43,8 +46,8 @@
         }
         if (kM >= 0)
         { 
-            pM     = GBP_M (Mp, kM  , vlen) ;
-            pM_end = GBP_M (Mp, kM+1, vlen) ;
+            pM     = GB_IGET (Mp, kM  ) ;
+            pM_end = GB_IGET (Mp, kM+1) ;
         }
     }
 
@@ -93,9 +96,10 @@
         // copy the pattern into C (:,j)
         int64_t pC_start = pC ;
         int64_t pM_start = pM ;
-        memcpy (Ci + pC, Mi + pM, mjnz * sizeof (int64_t)) ;
+        #if defined ( GB_DEBUG ) || !defined ( GB_ISO_ADD )
         int64_t pA_offset = pA_start - iA_first ;
         int64_t pB_offset = pB_start - iB_first ;
+        #endif
 
         if (adense && M_is_B)
         { 
@@ -109,10 +113,11 @@
             {
                 int64_t pM = p + pM_start ;
                 int64_t pC = p + pC_start ;
-                int64_t i = Mi [pM] ;
+                int64_t i = GB_IGET (Mi, pM) ;
+                GB_ISET (Ci, pC, i) ;           // Ci [pC] = i
                 ASSERT (GB_MCAST (Mx, pM, msize)) ;
-                ASSERT (GBI_A (Ai, pA_offset + i, vlen) == i) ;
-                ASSERT (GBI_B (Bi, pM, vlen) == i) ;
+                ASSERT (GBi_A (Ai, pA_offset + i, vlen) == i) ;
+                ASSERT (GBi_B (Bi, pM, vlen) == i) ;
                 #ifndef GB_ISO_ADD
                 GB_LOAD_A (aij, Ax, pA_offset + i, A_iso) ;
                 GB_LOAD_B (bij, Bx, pM, B_iso) ;
@@ -133,10 +138,11 @@
             {
                 int64_t pM = p + pM_start ;
                 int64_t pC = p + pC_start ;
-                int64_t i = Mi [pM] ;
+                int64_t i = GB_IGET (Mi, pM) ;
+                GB_ISET (Ci, pC, i) ;           // Ci [pC] = i
                 ASSERT (GB_MCAST (Mx, pM, msize)) ;
-                ASSERT (GBI_A (Ai, pM, vlen) == i) ;
-                ASSERT (GBI_B (Bi, pB_offset + i, vlen) == i) ;
+                ASSERT (GBi_A (Ai, pM, vlen) == i) ;
+                ASSERT (GBi_B (Bi, pB_offset + i, vlen) == i) ;
                 #ifndef GB_ISO_ADD
                 GB_LOAD_A (aij, Ax, pM, A_iso) ;
                 GB_LOAD_B (bij, Bx, pB_offset + i, B_iso) ;
@@ -152,20 +158,22 @@
             // Method13: M == A == B: all three matrices the same
             //------------------------------------------------------------------
 
-            #ifndef GB_ISO_ADD
             GB_PRAGMA_SIMD_VECTORIZE
             for (int64_t p = 0 ; p < mjnz ; p++)
             {
                 int64_t pM = p + pM_start ;
                 int64_t pC = p + pC_start ;
+                int64_t i = GB_IGET (Mi, pM) ;
+                GB_ISET (Ci, pC, i) ;           // Ci [pC] = i
+                #ifndef GB_ISO_ADD
                 #if GB_OP_IS_SECOND
                 GB_LOAD_B (t, Bx, pM, B_iso) ;
                 #else
                 GB_LOAD_A (t, Ax, pM, A_iso) ;
                 #endif
-                GB_EWISEOP (Cx, pC, t, t, Mi [pM], j) ;
+                GB_EWISEOP (Cx, pC, t, t, i, j) ;
+                #endif
             }
-            #endif
 
         }
         #endif
@@ -220,7 +228,7 @@
             // get M(i,j) for A(i,j) + B (i,j)
             //------------------------------------------------------------------
 
-            int64_t i = Mi [pM] ;
+            int64_t i = GB_IGET (Mi, pM) ;
             bool mij = GB_MCAST (Mx, pM, msize) ;
             if (!mij) continue ;
 
@@ -233,17 +241,17 @@
             { 
                 // A is dense, bitmap, or full; use quick lookup
                 pA = pA_start + (i - iA_first) ;
-                afound = GBB_A (Ab, pA) ;
+                afound = GBb_A (Ab, pA) ;
             }
             else
             { 
                 // A is sparse; use binary search.  This is slow unless
                 // M is very sparse compared with A.
                 int64_t apright = pA_end - 1 ;
-                GB_BINARY_SEARCH (i, Ai, pA, apright, afound) ;
+                afound = GB_binary_search (i, Ai, GB_Ai_IS_32, &pA, &apright) ;
             }
 
-            ASSERT (GB_IMPLIES (afound, GBI_A (Ai, pA, vlen) == i)) ;
+            ASSERT (GB_IMPLIES (afound, GBi_A (Ai, pA, vlen) == i)) ;
 
             //------------------------------------------------------------------
             // get B(i,j)
@@ -254,17 +262,17 @@
             { 
                 // B is dense; use quick lookup
                 pB = pB_start + (i - iB_first) ;
-                bfound = GBB_B (Bb, pB) ;
+                bfound = GBb_B (Bb, pB) ;
             }
             else
             { 
                 // B is sparse; use binary search.  This is slow unless
                 // M is very sparse compared with B.
                 int64_t bpright = pB_end - 1 ;
-                GB_BINARY_SEARCH (i, Bi, pB, bpright, bfound) ;
+                bfound = GB_binary_search (i, Bi, GB_Bi_IS_32, &pB, &bpright) ;
             }
 
-            ASSERT (GB_IMPLIES (bfound, GBI_B (Bi, pB, vlen) == i)) ;
+            ASSERT (GB_IMPLIES (bfound, GBi_B (Bi, pB, vlen) == i)) ;
 
             //------------------------------------------------------------------
             // C(i,j) = A(i,j) + B(i,j)
@@ -276,7 +284,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 GB_LOAD_A (aij, Ax, pA, A_iso) ;
                 GB_LOAD_B (bij, Bx, pB, B_iso) ;
@@ -290,7 +298,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -313,7 +321,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 

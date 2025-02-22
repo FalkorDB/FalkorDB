@@ -1,7 +1,7 @@
 function test241
 %TEST241 test GrB_mxm: swap_rule
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test241 -------- GrB_mxm swap_rule\n') ;

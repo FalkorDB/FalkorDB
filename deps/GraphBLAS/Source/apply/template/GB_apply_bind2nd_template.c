@@ -2,7 +2,7 @@
 // GB_apply_bind2nd_template: Cx = op (A,y)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,7 +15,7 @@
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (p = 0 ; p < anz ; p++)
     { 
-        if (!GBB_A (Ab, p)) continue ;
+        if (!GBb_A (Ab, p)) continue ;
         GB_DECLAREA (aij) ;
         GB_GETA (aij, Ax, p, false) ;
         GB_EWISEOP (Cx, p, aij, y, 0, 0) ;
