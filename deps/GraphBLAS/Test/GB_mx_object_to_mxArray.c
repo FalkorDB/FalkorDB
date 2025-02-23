@@ -1,21 +1,21 @@
 //------------------------------------------------------------------------------
-// GB_mx_object_to_mxArray
+// GB_mx_object_to_mxArray: convert a GrB_Matrix to MATLAB struct
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Convert a GraphBLAS sparse or full matrix to a built-in struct C containing
+// Convert a GraphBLAS GrB_Matrix to a MATLAB struct C containing
 // C.matrix and a string C.class.  The GraphBLAS matrix is destroyed.
 
 // This could be done using only user-callable GraphBLAS functions, by
-// extracting the tuples and converting them into a built-in sparse matrix.  But
+// extracting the tuples and converting them into a MATLAB sparse matrix.  But
 // that would be much slower and take more memory.  Instead, most of the work
 // can be done by pointers, and directly accessing the internal contents of C.
 // If C has type GB_BOOL_code or GB_FP64_code, then C can be converted to a
-// built-in matrix in constant time with essentially no extra memory allocated.
+// MATLAB matrix in constant time with essentially no extra memory allocated.
 // This is faster, but it means that this Test interface will only work with
 // this specific implementation of GraphBLAS.
 
@@ -30,13 +30,22 @@
 
 #define GB_AS_IF_FREE(p)                \
 {                                       \
+    GBMDUMP ("test, as-if-free removing %p\n", (void *) p) ; \
     GB_Global_memtable_remove (p) ;     \
     (p) = NULL ;                        \
 }
 
-static const char *MatrixFields [ ] = { "matrix", "class", "iso", "values" } ;
+static const char *MatrixFields [ ] = {
+    "matrix",       // 0
+    "class",        // 1
+    "iso",          // 2
+    "is_csc",       // 3
+    "p_is_32",      // 4
+    "j_is_32",      // 5
+    "i_is_32",      // 6
+    "values" } ;    // 7
 
-mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
+mxArray *GB_mx_object_to_mxArray    // returns the MATLAB mxArray
 (
     GrB_Matrix *handle,             // handle of GraphBLAS matrix to convert
     const char *name,
@@ -44,10 +53,27 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
 )
 {
 
+    //--------------------------------------------------------------------------
     // get the inputs
+    //--------------------------------------------------------------------------
+
     mxArray *A, *Astruct, *X = NULL ;
     GrB_Matrix C = *handle ;
     GrB_Type ctype = C->type ;
+    ASSERT_MATRIX_OK (C, "C for conversion to MATLAB matrix or struct", GB0) ;
+
+    //--------------------------------------------------------------------------
+    // save the integer status of the matrix
+    //--------------------------------------------------------------------------
+
+    bool is_csc = C->is_csc ;
+    bool Cp_is_32 = C->p_is_32 ;
+    bool Cj_is_32 = C->j_is_32 ;
+    bool Ci_is_32 = C->i_is_32 ;
+
+    //--------------------------------------------------------------------------
+    // check matrix
+    //--------------------------------------------------------------------------
 
     // may have pending tuples
     ASSERT_MATRIX_OK (C, name, GB0) ;
@@ -59,7 +85,10 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
     ASSERT (!C->i_shallow) ;
     ASSERT (!C->x_shallow) ;
 
+    //--------------------------------------------------------------------------
     // make sure there are no pending computations
+    //--------------------------------------------------------------------------
+
     if (GB_IS_FULL (C) || GB_IS_BITMAP (C))
     {
         ASSERT (!GB_JUMBLED (C)) ;
@@ -116,7 +145,14 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
         ASSERT_MATRIX_OK (C, "TO mxArray, non-iso non-hyper CSC", GB0) ;
     }
 
-    // empty built-in matrices don't want NULL pointers
+    // convert to all-64-bit
+    GB_convert_int (C, false, false, false, false) ; // OK: for MATLAB mxArray
+    ASSERT_MATRIX_OK (C, "C converted to all-64", GB0) ;
+    ASSERT (!C->p_is_32) ;
+    ASSERT (!C->j_is_32) ;
+    ASSERT (!C->i_is_32) ;
+
+    // empty MATLAB matrices don't want NULL pointers
     if (C->x == NULL)
     {
         ASSERT (cnz == 0) ;
@@ -129,27 +165,28 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
     bool C_is_full = (sparsity == GxB_FULL) ;
     if (!C_is_full)
     {
-        // empty built-in sparse matrices don't want NULL pointers
+        // empty MATLAB sparse matrices don't want NULL pointers
         if (C->i == NULL)
         {
             ASSERT (cnz == 0) ;
-            C->i = (int64_t *) GB_malloc_memory (1, sizeof (int64_t),
+            C->i = (int64_t *) GB_malloc_memory (1, sizeof (uint64_t),
                 &(C->i_size)) ;
-            C->i [0] = 0 ;
+            uint64_t *Ci = C->i ;
+            Ci [0] = 0 ;
             C->i_shallow = false ;
         }
         if (C->p == NULL)
         {
             ASSERT (cnz == 0) ;
-            C->p = (int64_t *) GB_malloc_memory (C->vdim + 1, 
-                sizeof (int64_t), &(C->p_size)) ;
+            C->p = (int64_t *) GB_malloc_memory (C->vdim + 1, sizeof (uint64_t),
+                &(C->p_size)) ;
             memset (C->p, 0, (C->vdim + 1) * sizeof (int64_t)) ;
             C->p_shallow = false ;
         }
     }
 
     //--------------------------------------------------------------------------
-    // create the built-in matrix A and link in the numerical values of C
+    // create the MATLAB matrix A and link in the numerical values of C
     //--------------------------------------------------------------------------
 
     if (C_is_full)
@@ -231,31 +268,31 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
 
         mexMakeMemoryPersistent (C->x) ;
         C->x_shallow = false ;
-        GB_AS_IF_FREE (C->x) ;   // unlink C->x from C; now in built-in C
+        GB_AS_IF_FREE (C->x) ;   // unlink C->x from C; now in MATLAB C
 
     }
     else if (C->type == GrB_BOOL)
     {
-        // C is boolean, which is the same as a built-in logical sparse matrix
+        // C is boolean, which is the same as a MATLAB logical sparse matrix
         A = mxCreateSparseLogicalMatrix (0, 0, 0) ;
         mexMakeMemoryPersistent (C->x) ;
         mxSetData (A, (bool *) C->x) ;
         C->x_shallow = false ;
 
         // C->x is treated as if it was freed
-        GB_AS_IF_FREE (C->x) ;   // unlink C->x from C; now in built-in C
+        GB_AS_IF_FREE (C->x) ;   // unlink C->x from C; now in MATLAB C
 
     }
     else if (C->type == GrB_FP64)
     {
-        // C is double, which is the same as a built-in double sparse matrix
+        // C is double, which is the same as a MATLAB double sparse matrix
         A = mxCreateSparse (0, 0, 0, mxREAL) ;
         mexMakeMemoryPersistent (C->x) ;
         mxSetData (A, C->x) ;
         C->x_shallow = false ;
 
         // C->x is treated as if it was freed
-        GB_AS_IF_FREE (C->x) ;   // unlink C->x from C; in built-in C
+        GB_AS_IF_FREE (C->x) ;   // unlink C->x from C; in MATLAB C
 
     }
     else if (C->type == Complex || C->type == GxB_FC64)
@@ -279,7 +316,7 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
     else
     {
 
-        // otherwise C is cast into a built-in double sparse matrix
+        // otherwise C is cast into a MATLAB double sparse matrix
         A = mxCreateSparse (0, 0, 0, mxREAL) ;
         size_t Sx_size ;
         double *Sx = (double *) GB_malloc_memory (cnz+1, sizeof (double),
@@ -314,6 +351,9 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
 
     if (!C_is_full)
     {
+        ASSERT (!C->p_is_32) ;
+        ASSERT (!C->j_is_32) ;
+        ASSERT (!C->i_is_32) ;
         mxFree (mxGetJc (A)) ;
         mxFree (mxGetIr (A)) ;
         mexMakeMemoryPersistent (C->p) ;
@@ -329,9 +369,17 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
         GB_AS_IF_FREE (C->i) ;
     }
 
+    //--------------------------------------------------------------------------
+    // free C
+    //--------------------------------------------------------------------------
+
     // free C, but leave any shallow components untouched
-    // since these have been transplanted into the built-in matrix.
+    // since these have been transplanted into the MATLAB matrix.
     GrB_Matrix_free_(handle) ;
+
+    //--------------------------------------------------------------------------
+    // return result as a MATLAB struct or a MATLAB matrix
+    //--------------------------------------------------------------------------
 
     if (create_struct)
     {
@@ -339,15 +387,25 @@ mxArray *GB_mx_object_to_mxArray   // returns the built-in mxArray
         mxArray *atype = GB_mx_Type_to_mxstring (ctype) ;
         // create the iso flag
         mxArray *c_iso = mxCreateLogicalScalar (C_iso) ;
+        // create the csc flag
+        mxArray *c_csc = mxCreateLogicalScalar (is_csc) ;
+        // create the *is_32 flags
+        mxArray *p_32 = mxCreateLogicalScalar (Cp_is_32) ;
+        mxArray *j_32 = mxCreateLogicalScalar (Cj_is_32) ;
+        mxArray *i_32 = mxCreateLogicalScalar (Ci_is_32) ;
         // create the output struct
         Astruct = mxCreateStructMatrix (1, 1,
-           (X == NULL) ? 3 : 4, MatrixFields) ;
-        mxSetFieldByNumber (Astruct, 0, 0, A) ;
-        mxSetFieldByNumber (Astruct, 0, 1, atype) ;
-        mxSetFieldByNumber (Astruct, 0, 2, c_iso) ;
+           (X == NULL) ? 7 : 8, MatrixFields) ;
+        mxSetFieldByNumber (Astruct, 0, 0, A) ;             // matrix
+        mxSetFieldByNumber (Astruct, 0, 1, atype) ;         // class
+        mxSetFieldByNumber (Astruct, 0, 2, c_iso) ;         // iso
+        mxSetFieldByNumber (Astruct, 0, 3, c_csc) ;         // is_csc
+        mxSetFieldByNumber (Astruct, 0, 4, p_32) ;          // p_is_32
+        mxSetFieldByNumber (Astruct, 0, 5, j_32) ;          // j_is_32
+        mxSetFieldByNumber (Astruct, 0, 6, i_32) ;          // i_is_32
         if (X != NULL)
         {
-            mxSetFieldByNumber (Astruct, 0, 3, X) ;
+            mxSetFieldByNumber (Astruct, 0, 7, X) ;         // values
         }
         return (Astruct) ;
     }

@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Include/wathen.c: a finite-element matrix on a regular mesh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,8 +10,6 @@
 // Create a finite-element matrix on an nx-by-ny 2D mesh, as computed by
 // wathen.m.
 
-#include "GraphBLAS.h"
-#undef I
 #include "graphblas_demos.h"
 
 //------------------------------------------------------------------------------
@@ -35,7 +33,8 @@ GrB_Info wathen             // construct a random Wathen matrix
     int64_t ny,             // grid dimension ny
     bool scale,             // if true, scale the rows
     int method,             // 0 to 3
-    double *rho_given       // nx-by-ny dense matrix, if NULL use random rho
+    double *rho_given,      // nx-by-ny dense matrix, if NULL use random rho
+    uint64_t *state         // random state, revised on output
 )
 {
 
@@ -65,7 +64,7 @@ GrB_Info wathen             // construct a random Wathen matrix
     GrB_Matrix A = NULL, F = NULL, E = NULL, D = NULL ;
     GrB_UnaryOp rho_op = NULL ;
     double *rho_rand = NULL, *X = NULL, *rho ;
-    GrB_Index *I = NULL, *J = NULL ;
+    uint64_t *I = NULL, *J = NULL ;
 
     //--------------------------------------------------------------------------
     // construct the coefficients
@@ -111,7 +110,7 @@ GrB_Info wathen             // construct a random Wathen matrix
         {
             for (int i = 1 ; i <= nx ; i++)
             {
-                RHO (i,j) = 100 * simple_rand_x ( ) ;
+                RHO (i,j) = 100 * simple_rand_x (state) ;
             }
         }
     }
@@ -151,8 +150,8 @@ GrB_Info wathen             // construct a random Wathen matrix
 
             // allocate the tuples
             int64_t ntriplets = nx*ny*64 ;
-            I = (GrB_Index *) malloc (ntriplets * sizeof (GrB_Index)) ;
-            J = (GrB_Index *) malloc (ntriplets * sizeof (GrB_Index)) ;
+            I = (uint64_t *) malloc (ntriplets * sizeof (uint64_t)) ;
+            J = (uint64_t *) malloc (ntriplets * sizeof (uint64_t)) ;
             X = (double *) malloc (ntriplets * sizeof (double )) ;
             if (I == NULL || J == NULL || X == NULL)
             {   // out of memory
@@ -191,7 +190,6 @@ GrB_Info wathen             // construct a random Wathen matrix
 
             // A = sparse (I,J,X,n,n) ;
             OK (GrB_Matrix_build_FP64 (A, I, J, X, ntriplets, GrB_PLUS_FP64)) ;
-
         }
         break ;
 
@@ -362,7 +360,7 @@ GrB_Info wathen             // construct a random Wathen matrix
             OK (GrB_Matrix_setElement_FP64 (D, 1/di, i, i)) ;
         }
         // A = D*A
-        OK (GrB_mxm (A, NULL, NULL, GxB_PLUS_TIMES_FP64, D, A, NULL)) ;
+        OK (GrB_mxm (A, NULL, NULL, GrB_PLUS_TIMES_SEMIRING_FP64, D, A, NULL)) ;
     }
 
     // force completion

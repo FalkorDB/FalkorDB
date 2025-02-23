@@ -2,7 +2,7 @@ function s = gb_issymmetric (G, option, herm)
 %GB_ISSYMMETRIC check if symmetric or Hermitian
 % Implements issymmetric (G,option) and ishermitian (G,option).
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % FUTURE: this can be much faster; see spsym in CHOLMOD.

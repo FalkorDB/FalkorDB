@@ -2,7 +2,7 @@
 // GB_shallow_copy: create a shallow copy of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,8 +21,7 @@
 
 // Compare this function with GB_shallow_op.c.
 
-#include "transpose/GB_transpose.h"
-#include "include/GB_unused.h"
+#include "GB.h"
 
 #define GB_FREE_ALL ;
 
@@ -39,7 +38,7 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
     ASSERT_MATRIX_OK (A, "A for shallow copy", GB0) ;
     GB_MATRIX_WAIT_IF_PENDING_OR_ZOMBIES (A) ;
     ASSERT (!GB_PENDING (A)) ;
@@ -52,10 +51,13 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
 
     // allocate the struct for C, but do not allocate C->[p,h,b,i,x].
     // C has the exact same sparsity structure as A.
-    GrB_Info info ;
-    info = GB_new (&C, // sparse or hyper, existing header
-        A->type, A->vlen, A->vdim, GB_Ap_null, C_is_csc,
-        GB_sparsity (A), A->hyper_switch, 0) ;
+    #ifdef GB_DEBUG
+    GrB_Info info =
+    #endif
+    GB_new (&C, // sparse or hyper, existing header
+        A->type, A->vlen, A->vdim, GB_ph_null, C_is_csc,
+        GB_sparsity (A), A->hyper_switch, 0,
+        A->p_is_32, A->j_is_32, A->i_is_32) ;
     ASSERT (info == GrB_SUCCESS) ;
 
     //--------------------------------------------------------------------------
@@ -67,15 +69,19 @@ GrB_Info GB_shallow_copy    // create a purely shallow matrix
     C->h_shallow = (A->h != NULL) ;     // C->h not freed when freeing C
     C->p = A->p ;                       // C->p is of size A->plen + 1
     C->h = A->h ;                       // C->h is of size A->plen
+    C->p_is_32 = A->p_is_32 ;
+    C->j_is_32 = A->j_is_32 ;
+    C->i_is_32 = A->i_is_32 ;
     C->p_size = A->p_size ;
     C->h_size = A->h_size ;
     C->plen = A->plen ;                 // C and A have the same hyperlist size
     C->nvec = A->nvec ;
-    C->nvec_nonempty = A->nvec_nonempty ;
+//  C->nvec_nonempty = A->nvec_nonempty ;
+    GB_nvec_nonempty_set (C, GB_nvec_nonempty_get (A)) ;
     C->jumbled = A->jumbled ;           // C is jumbled if A is jumbled
     C->nvals = A->nvals ;
     C->magic = GB_MAGIC ;
-    C->iso = A->iso ;                   // OK: C has the same iso property as A
+    C->iso = A->iso ;                   // C has the same iso property as A
     if (A->iso)
     { 
         GB_BURBLE_MATRIX (A, "(iso copy) ") ;

@@ -1,3 +1,58 @@
+Mar 1, 2025: version 10.0.0
+
+    * 32/64 bit matrices and vectors: the GrB_Matrix and GrB_Vector
+        now exploit 32-bit integers when possible.  New methods added to pass
+        32-bit integer arrays to/from GrB_build, extract, assign, subassign,
+        and extractTuples.  New object, the GxB_Container added for fast
+        import/export of matrices/vectors with arbitrary integer content.
+    * GrB_Field: this enum is strongly deprecated, and replaced with
+        'typedef int GrB_Field'.  This is an upward-compatible change to the
+        API, and will allow the creation of a future mathematical field object
+        in GraphBLAS.  This type should not be used; use an int instead.
+        It will be removed or replaced in a future version of GraphBLAS.
+    * enum parameters: replaced all enum parameters with int, to simplify
+        future updates to enum parameters, including the GrB_Field.
+    * GxB_JIT_ERROR: added in 9.4.x, changed value to avoid conflict with
+        LAGraph error codes.
+    * pack/unpack: these are declared historical; they still work but use
+        64-bit integers only.  Use the new GxB_Container methods instead.
+    * GxB_Matrix_iso and GxB_Vector_iso: declared historical; use GrB_get
+        with the new GxB_ISO enum.
+    * GxB_Matrix_type, GxB_Vector_type, GxB_Scalar_type: no longer historical;
+        added back to the user guide.
+    * Summary: the API is upward-compatible with 9.4.x, but only after
+        the user application is recompiled with GraphBLAS v10.0.0.
+        As a result, the SO version must increase from 9 to 10.
+
+Feb 20, 2025: version 9.4.5
+
+    * (59) bug fix: the GxB_NO_INT32 and GxB_NOT_INT64 flags in GB_control.h
+        did not completely remove some of the INT32 and INT64 factory kernels.
+        Caught by Erik Welch, NVIDIA.
+    * AppleClang compiler bug:  On the Mac, the Source/mask/GB_masker.c file
+        triggers a bug in AppleClang 16.0.0 with -O3 in (MacOS 14.6.1 (23G93),
+        Xcode 16.2, Apple clang version 16.0.0, clang-1600.0.26.6).  It also
+        fails in MacOS 15.2 (Target: arm64-apple-darwin23.6.0).  The bug is
+        triggered by these tests in LAGraph (v1.2 branch, unreleased, Jan 4,
+        2025):
+	 39 - LAGraphX_BF (SIGTRAP)
+	 40 - LAGraphX_Coarsen_Matching (Failed)
+	 41 - LAGraphX_FastGraphletTransform (SIGTRAP)
+	 49 - LAGraphX_PageRankGX (SIGTRAP)
+	 54 - LAGraphX_SquareClustering (SIGTRAP)
+	 61 - LAGraphX_msf (Failed)
+        When using clang, optimization is turned off for this file.  This has
+        no impact on performance since GB_masker.c is very simple, consisting
+        of a single sequence of calls to other methods.
+
+Feb 17, 2025: version 9.4.4
+
+    * (58) bug fix: semirings with user-defined monoids and the GrB_ONEB or
+        GxB_PAIR operators caused a JIT compiler error.  Caught by Gabe Gomez.
+    * (57) bug fix: GraphBLAS.h header: remove duplicate definitions of
+        GxB_MAX_FIRST_* semirings (incompletely moved to 'historical' section
+        in 9.4.2).
+
 Nov 18, 2024: version 9.4.2
 
     * clarified User Guide: regarding when the hyper-hash is built
@@ -102,7 +157,7 @@ Jan 10, 2024: version 9.0.0
 Dec 30, 2023: version 8.3.1
 
     * major change to build system: by Markus Mützel
-    * GraphBLAS.h: remove "undef I" 
+    * GraphBLAS.h: remove "undef I"
 
 Oct 7, 2023: version 8.2.1
 
@@ -227,7 +282,7 @@ Version 7.3.3, Dec 9, 2022
 
 Version 7.3.2, Nov 12, 2022
 
-    * cmake_modules: minor revision to build system, to sync 
+    * cmake_modules: minor revision to build system, to sync
         with SuiteSparse v6.0.0
     * Added option -DNOPENMP=1 to disable OpenMP parallelism
 

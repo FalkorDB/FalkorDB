@@ -2,7 +2,7 @@
 // GB_emult_03_jit: C<#M>=A.*B emult_03 method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ GrB_Info GB_emult_03_jit      // C<#M>=A.*B, emult_03, via the JIT
     const bool flipij,
     const GrB_Matrix A,
     const GrB_Matrix B,
-    const int64_t *restrict Cp_kfirst,
+    const uint64_t *restrict Cp_kfirst,
     const int64_t *B_ek_slicing,
     const int B_ntasks,
     const int B_nthreads
@@ -40,8 +40,8 @@ GrB_Info GB_emult_03_jit      // C<#M>=A.*B, emult_03, via the JIT
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_KERNEL_EMULT3, true,
-        false, false, C_sparsity, C->type, M, Mask_struct, Mask_comp,
-        binaryop, flipij, false, A, B) ;
+        false, false, C_sparsity, C->type, C->p_is_32, C->j_is_32, C->i_is_32,
+        M, Mask_struct, Mask_comp, binaryop, flipij, false, A, B) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -58,8 +58,9 @@ GrB_Info GB_emult_03_jit      // C<#M>=A.*B, emult_03, via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, M, Mask_struct, Mask_comp, A, B, Cp_kfirst,
-        B_ek_slicing, B_ntasks, B_nthreads, binaryop->theta)) ;
+        B_ek_slicing, B_ntasks, B_nthreads, binaryop->theta, &GB_callback)) ;
 }
 

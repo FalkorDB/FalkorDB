@@ -1,0 +1,146 @@
+
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_select:} select entries based on an index-unary operator}
+%===============================================================================
+\label{select}
+
+The \verb'GrB_select' function is the generic name for 30 specific functions,
+depending on whether it operates on a matrix or vector, and depending on the
+type of the scalar \verb'y': (matrix or vector) x (13 built-in types,
+\verb'void *' for user-defined types, and a \verb'GrB_Scalar').  The generic
+name appears in the function prototypes, but the specific function name is used
+when describing each variation.  When discussing features that apply to both
+versions, the simple name \verb'GrB_select' is used.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_select:} select entries from a vector}
+%-------------------------------------------------------------------------------
+\label{select_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_select                 // w<mask> = accum (w, op(u))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_IndexUnaryOp op,      // operator to apply to the entries
+    const GrB_Vector u,             // first input:  vector u
+    const <type> y,                 // second input: scalar y
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_select_*' applies a \verb'GrB_IndexUnaryOp' operator to the
+entries of a vector.  If the operator evaluates as \verb'true' for the entry
+\verb'u(i)', it is copied to the vector \verb't', or not copied if the operator
+evaluates to \verb'false'.   The vector \verb't' is then written to the result
+\verb'w' via the mask/accumulator step.  This operation operates on vectors
+just as if they were \verb'm'-by-1 matrices, except that GraphBLAS never
+transposes a vector via the descriptor.  Refer to the next section
+(\ref{select_matrix}) on \verb'GrB_Matrix_select' for more details.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_select:} apply a select operator to a matrix}
+%-------------------------------------------------------------------------------
+\label{select_matrix}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_select                 // C<M>=accum(C,op(A))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_IndexUnaryOp op,      // operator to apply to the entries
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Scalar y,             // second input: scalar y
+    const GrB_Descriptor desc       // descriptor for C, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_select_*' applies a \verb'GrB_IndexUnaryOp' operator to the
+entries of a matrix.  If the operator evaluates as \verb'true' for the entry
+\verb'A(i,j)', it is copied to the matrix \verb'T', or not copied if the
+operator evaluates to \verb'false'.  The input matrix \verb'A' may be
+transposed first.  The entries in \verb'A' are typecasted into the \verb'xtype'
+of the select operator.  The final step is ${\bf C \langle M \rangle  = C \odot
+T}$, as described in Section~\ref{accummask}.
+
+The matrix \verb'T' has the same size and type as \verb'A' (or the transpose of
+\verb'A' if the input is transposed via the descriptor).  The entries of
+\verb'T' are a subset of those of \verb'A'.  Each entry \verb'A(i,j)' of
+\verb'A' is passed to the \verb'op', as $z=f(a_{ij},i,j,y)$.  If
+\verb'A' is transposed first then the operator is applied to entries in the
+transposed matrix, \verb"A'".  If $z$ is returned as true, then the entry is
+copied into \verb'T', unchanged.  If it returns false, the entry does not
+appear in \verb'T'.
+
+The action of \verb'GrB_select' with the built-in index-unary operators is
+described in the table below.  The MATLAB analogs are precise for \verb'tril'
+and \verb'triu', but shorthand for the other operations.  The MATLAB
+\verb'diag' function returns a column with the diagonal, if \verb'A' is a
+matrix, whereas the matrix \verb'T' in \verb'GrB_select' always has the same
+size as \verb'A' (or its transpose if the \verb'GrB_INP0' is set to
+\verb'GrB_TRAN').  In the MATLAB analog column, \verb'diag' is as if it
+operates like \verb'GrB_select', where \verb'T' is a matrix.
+
+The following operators may be used on matrices with a user-defined type:
+\verb'GrB_ROWINDEX_*',
+\verb'GrB_COLINDEX_*',
+\verb'GrB_DIAGINDEX_*',
+\verb'GrB_TRIL', \newline
+\verb'GrB_TRIU',
+\verb'GrB_DIAG',
+\verb'GrB_OFFIAG',
+\verb'GrB_COLLE',
+\verb'GrB_COLGT',
+\verb'GrB_ROWLE',
+and
+\verb'GrB_ROWGT'.
+
+For floating-point values, comparisons with \verb'NaN' always return false.
+The \verb'GrB_VALUE*' operators should not be used with a scalar \verb'y' that is
+equal to \verb'NaN'.  For this case, create a user-defined index-unary operator that
+performs the test with the ANSI C \verb'isnan' function instead.
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS name          & MATLAB/Octave     & description \\
+                        & analog            & \\
+\hline
+\verb'GrB_ROWINDEX_*'    & \verb'z=i+y'         & select \verb'A(i,j)' if \verb'i != -y' \\
+\verb'GrB_COLINDEX_*'    & \verb'z=j+y'         & select \verb'A(i,j)' if \verb'j != -y' \\
+\verb'GrB_DIAGINDEX_*'   & \verb'z=j-(i+y)'     & select \verb'A(i,j)' if \verb'j != i+y' \\
+\hline
+\verb'GrB_TRIL'    & \verb'z=(j<=(i+y))'  & select entries on or below the \verb'y'th diagonal \\
+\verb'GrB_TRIU'    & \verb'z=(j>=(i+y))'  & select entries on or above the \verb'y'th diagonal \\
+\verb'GrB_DIAG'    & \verb'z=(j==(i+y))'  & select entries on the \verb'y'th diagonal \\
+\verb'GrB_OFFDIAG' & \verb'z=(j!=(i+y))'  & select entries not on the \verb'y'th diagonal \\
+\verb'GrB_COLLE'   & \verb'z=(j<=y)'      & select entries in columns 0 to \verb'y' \\
+\verb'GrB_COLGT'   & \verb'z=(j>y)'       & select entries in columns \verb'y+1' and above \\
+\verb'GrB_ROWLE'   & \verb'z=(i<=y)'      & select entries in rows 0 to \verb'y' \\
+\verb'GrB_ROWGT'   & \verb'z=(i>y)'       & select entries in rows \verb'y+1' and above \\
+\hline
+\verb'GrB_VALUENE_T'     & \verb'z=(aij!=y)'    & select \verb'A(i,j)' if it is not equal to \verb'y'\\
+\verb'GrB_VALUEEQ_T'     & \verb'z=(aij==y)'    & select \verb'A(i,j)' is it equal to \verb'y'\\
+\verb'GrB_VALUEGT_T'     & \verb'z=(aij>y)'     & select \verb'A(i,j)' is it greater than \verb'y' \\
+\verb'GrB_VALUEGE_T'     & \verb'z=(aij>=y)'    & select \verb'A(i,j)' is it greater than or equal to \verb'y' \\
+\verb'GrB_VALUELT_T'     & \verb'z=(aij<y)'     & select \verb'A(i,j)' is it less than \verb'y' \\
+\verb'GrB_VALUELE_T'     & \verb'z=(aij<=y)'    & select \verb'A(i,j)' is it less than or equal to \verb'y' \\
+%
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+

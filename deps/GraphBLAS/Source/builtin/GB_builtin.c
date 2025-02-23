@@ -2,7 +2,7 @@
 // GB_builtin.c: built-in types, functions, operators, and other externs
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -79,7 +79,8 @@ GB_TYPEDEF (GxB, FC64  , GxB_FC64_t, "GxB_FC64_t") ;
         o,                          /* default: axb */                      \
         0,                          /* default compression */               \
         0,                          /* no sort */                           \
-        0                           /* import */                            \
+        0,                          /* import */                            \
+        0, 0, 0                     /* row_list, col_list, val_list */      \
     } ;                                                                     \
     GrB_Descriptor GRB (DESC_ ## name) = & GB_OPAQUE (desc_ ## name) ;
 
@@ -252,8 +253,8 @@ GXB_OP1_POS (POSITIONJ1, "positionj1", INT64) ;
 // helper macros to define binary operators based on an index-binary op
 #define GXB_OP2_POS(op,name)                                                \
     extern void GB_FUNC_T(op,GB_XTYPE) (GB_TYPE *z,                         \
-        const void *x, GrB_Index ix, GrB_Index jx,                          \
-        const void *y, GrB_Index iy, GrB_Index jy,                          \
+        const void *x, uint64_t ix, uint64_t jx,                            \
+        const void *y, uint64_t iy, uint64_t jy,                            \
         const void *theta_parameter) ;                                      \
     GB_TYPE GB_OPAQUE (GB_EVAL3 (op, GB_XTYPE, _theta)) = 0 ;               \
     struct GB_BinaryOp_opaque GB_OPAQUE (GB_OP_NAME (op)) =                 \
@@ -282,7 +283,7 @@ GXB_OP1_POS (POSITIONJ1, "positionj1", INT64) ;
 // the same type as the scalar y: ROWINDEX, COLINDEX, DIAGINDEX
 #define GRB_IDXOP_POSITIONAL(op,name)                                       \
     extern void GB_FUNC_T(op,GB_XTYPE) (GB_TYPE *z, const void *unused,     \
-        GrB_Index i, GrB_Index j, const GB_TYPE *y) ;                       \
+        uint64_t i, uint64_t j, const GB_TYPE *y) ;                         \
     struct GB_IndexUnaryOp_opaque GB_OPAQUE (GB_OP_NAME (op)) =             \
     {                                                                       \
         GB_MAGIC, 0,                /* magic and header_size */             \
@@ -302,7 +303,7 @@ GXB_OP1_POS (POSITIONJ1, "positionj1", INT64) ;
 // the same type as the scalar y: FLIPDIAGINDEX
 #define GXB_IDXOP_POSITIONAL(op,name)                                       \
     extern void GB_FUNC_T(op,GB_XTYPE) (GB_TYPE *z, const void *unused,     \
-        GrB_Index i, GrB_Index j, const GB_TYPE *y) ;                       \
+        uint64_t i, uint64_t j, const GB_TYPE *y) ;                         \
     struct GB_IndexUnaryOp_opaque GB_OPAQUE (GB_OP_NAME (op)) =             \
     {                                                                       \
         GB_MAGIC, 0,                /* magic and header_size */             \
@@ -323,7 +324,7 @@ GXB_OP1_POS (POSITIONJ1, "positionj1", INT64) ;
 // No suffix on the GrB name.
 #define GRB_IDXOP_POSITIONAL_BOOL(op,name)                                  \
     extern void GB_FUNC_T(op,GB_XTYPE) (bool *z, const void *unused,        \
-        GrB_Index i, GrB_Index j, const GB_TYPE *y) ;                       \
+        uint64_t i, uint64_t j, const GB_TYPE *y) ;                         \
     struct GB_IndexUnaryOp_opaque GB_OPAQUE (GB_OP_NAME (op)) =             \
     {                                                                       \
         GB_MAGIC, 0,                /* magic and header_size */             \
@@ -342,7 +343,7 @@ GXB_OP1_POS (POSITIONJ1, "positionj1", INT64) ;
 // GrB_IndexUnaryOps that depend on A(i,j), and result is bool: VALUE* ops
 #define GRB_IDXOP_VALUE(op,name)                                            \
     extern void GB_FUNC_T(op,GB_XTYPE) (bool *z, const GB_TYPE *x,          \
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y) ;         \
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y) ;           \
     struct GB_IndexUnaryOp_opaque GB_OPAQUE (GB_OP_NAME (op)) =             \
     {                                                                       \
         GB_MAGIC, 0,                /* magic and header_size */             \
@@ -361,7 +362,7 @@ GXB_OP1_POS (POSITIONJ1, "positionj1", INT64) ;
 // GxB* IndexUnaryOps that depend on A(i,j), result is bool: VALUE* complex ops
 #define GXB_IDXOP_VALUE(op,name)                                            \
     extern void GB_FUNC_T(op,GB_XTYPE) (bool *z, const GB_TYPE *x,          \
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y) ;         \
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y) ;           \
     struct GB_IndexUnaryOp_opaque GB_OPAQUE (GB_OP_NAME (op)) =             \
     {                                                                       \
         GB_MAGIC, 0,                /* magic and header_size */             \
@@ -540,7 +541,7 @@ GrB_BinaryOp GxB_ONEB_FC64   = & GB_OPAQUE (PAIR_FC64) ;
 
 // nonzombie function for generic case
 extern void GB_nonzombie_func (bool *z, const void *x,
-    int64_t i, GrB_Index j, const void *y) ;
+    int64_t i, uint64_t j, const void *y) ;
 
 // GxB_NONZOMBIE: internal use only
 struct GB_IndexUnaryOp_opaque GB_OPAQUE (NONZOMBIE) =
@@ -562,11 +563,11 @@ GrB_IndexUnaryOp GxB_NONZOMBIE = & GB_OPAQUE (NONZOMBIE) ;
 // GrB_ALL
 //------------------------------------------------------------------------------
 
-// The GrB_ALL pointer is never dereferenced.  It is passed in as an argument to
-// indicate that all indices are to be used, as in the colon in C = A(:,j).
+// The GrB_ALL pointer is never dereferenced.  It is passed in as an argument
+// to indicate that all indices are to be used, as in the colon in C = A(:,j).
 
-GrB_Index GB_OPAQUE (ALL) = 0 ;
-const GrB_Index *GrB_ALL = & GB_OPAQUE (ALL) ;
+uint64_t GB_OPAQUE (ALL) = 0 ;
+const uint64_t *GrB_ALL = & GB_OPAQUE (ALL) ;
 
 // the default hyper_switch is defined in GB_defaults.h
 const double GxB_HYPER_DEFAULT = GB_HYPER_SWITCH_DEFAULT ;
@@ -575,7 +576,7 @@ const double GxB_HYPER_DEFAULT = GB_HYPER_SWITCH_DEFAULT ;
 // stored in hypersparse format, respectively.
 const double GxB_ALWAYS_HYPER = GB_ALWAYS_HYPER ;
 const double GxB_NEVER_HYPER  = GB_NEVER_HYPER ;
-const GxB_Format_Value GxB_FORMAT_DEFAULT = GxB_BY_ROW ;
+const int GxB_FORMAT_DEFAULT = GxB_BY_ROW ;
 
 //------------------------------------------------------------------------------
 // predefined built-in monoids

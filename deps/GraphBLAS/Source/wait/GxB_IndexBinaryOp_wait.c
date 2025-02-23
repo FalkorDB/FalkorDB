@@ -2,7 +2,7 @@
 // GxB_IndexBinaryOp_wait: wait for a user-defined GxB_IndexBinaryOp to complete
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 GrB_Info GxB_IndexBinaryOp_wait   // no work, just check if valid
 (
     GxB_IndexBinaryOp op,
-    GrB_WaitMode waitmode
+    int waitmode
 )
 { 
 
@@ -24,7 +24,7 @@ GrB_Info GxB_IndexBinaryOp_wait   // no work, just check if valid
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_IndexBinaryOp_wait (op, waitmode)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (op) ;
 
     //--------------------------------------------------------------------------

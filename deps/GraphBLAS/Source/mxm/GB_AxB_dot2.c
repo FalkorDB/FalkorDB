@@ -2,7 +2,7 @@
 // GB_AxB_dot2: compute C<#M>=A'*B or C<#M>=A*B, where C is bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,7 +40,6 @@
 
 #include "mxm/GB_mxm.h"
 #include "extract/GB_subref.h"
-#include "slice/GB_ek_slice.h"
 #include "assign/GB_bitmap_assign_methods.h"
 #include "jitifyer/GB_stringify.h"
 #include "mxm/GB_AxB__include1.h"
@@ -72,7 +71,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
 
     GrB_Info info ;
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
     ASSERT_MATRIX_OK_OR_NULL (M_in, "M for dot A'*B", GB0) ;
     ASSERT_MATRIX_OK (A_in, "A for dot A'*B", GB0) ;
     ASSERT_MATRIX_OK (B_in, "B for dot A'*B", GB0) ;
@@ -125,13 +124,13 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     bool A_is_hyper = GB_IS_HYPERSPARSE (A_in) ;
     bool B_is_hyper = GB_IS_HYPERSPARSE (B_in) ;
     bool A_or_B_hyper = A_is_hyper || B_is_hyper ;
-    GrB_Index *restrict Ah = (GrB_Index *) A_in->h ;
-    GrB_Index *restrict Bh = (GrB_Index *) B_in->h ;
+    void *Ah = A_in->h ;
+    void *Bh = B_in->h ;
 
     if (A_is_hyper)
     { 
         // A = hypershallow version of A_in
-        GB_CLEAR_STATIC_HEADER (Awork, &Awork_header) ;
+        GB_CLEAR_MATRIX_HEADER (Awork, &Awork_header) ;
         A = GB_hyper_shallow (Awork, A_in) ;
     }
     else
@@ -143,7 +142,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     if (B_is_hyper)
     { 
         // B = hypershallow version of B_in
-        GB_CLEAR_STATIC_HEADER (Bwork, &Bwork_header) ;
+        GB_CLEAR_MATRIX_HEADER (Bwork, &Bwork_header) ;
         B = GB_hyper_shallow (Bwork, B_in) ;
     }
     else
@@ -167,7 +166,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     int64_t cvdim = B->vdim ;
 
     int64_t cnz ;
-    bool ok = GB_int64_multiply ((GrB_Index *) (&cnz), cvlen, cvdim) ;
+    bool ok = GB_int64_multiply ((uint64_t *) (&cnz), cvlen, cvdim) ;
 
     //--------------------------------------------------------------------------
     // extract the submask if A or B are hypersparse 
@@ -177,10 +176,11 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     { 
         // Mwork = M_in (Ah, Bh), where Mwork has a static header
         // if Mask_struct then Mwork is extracted as iso
-        GB_CLEAR_STATIC_HEADER (Mwork, &Mwork_header) ;
+        GB_CLEAR_MATRIX_HEADER (Mwork, &Mwork_header) ;
         GB_OK (GB_subref (Mwork, Mask_struct, M_in->is_csc, M_in,
-            (A_is_hyper) ? Ah : GrB_ALL, cvlen,
-            (B_is_hyper) ? Bh : GrB_ALL, cvdim, false, Werk)) ;
+            (A_is_hyper) ? Ah : GrB_ALL, A->j_is_32, cvlen,
+            (B_is_hyper) ? Bh : GrB_ALL, B->j_is_32, cvdim,
+            false, Werk)) ;
         M = Mwork ;
         ASSERT_MATRIX_OK_OR_NULL (M, "M submask dot A'*B", GB0) ;
     }
@@ -296,8 +296,8 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    GB_p_slice (A_slice, A->p, anvec, naslice, false) ;
-    GB_p_slice (B_slice, B->p, bnvec, nbslice, false) ;
+    GB_p_slice (A_slice, A->p, A->p_is_32, anvec, naslice, false) ;
+    GB_p_slice (B_slice, B->p, B->p_is_32, bnvec, nbslice, false) ;
 
     //--------------------------------------------------------------------------
     // allocate C
@@ -322,24 +322,17 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
         else if (A_is_full && B_is_sparse)
         {
             // C = A*B or A'*B, where A is full and B sparse
-            if (B->nvec_nonempty < 0)
-            { 
-                B->nvec_nonempty = GB_nvec_nonempty (B) ;
-            }
+            int64_t B_nvec_nonempty = GB_nvec_nonempty_update (B) ;
             // C is full if all vectors of B are present
-            C_sparsity = (B->nvec_nonempty == B->vdim) ?
+            C_sparsity = (B_nvec_nonempty == B->vdim) ?
                 GxB_FULL : GxB_BITMAP ;
         }
         else if (A_is_sparse && B_is_full)
         {
             // C = A'*B, where A is sparse and B is full
-            if (A->nvec_nonempty < 0)
-            { 
-                // A->nvec_nonempty is used to select the method 
-                A->nvec_nonempty = GB_nvec_nonempty (A) ;
-            }
+            int64_t A_nvec_nonempty = GB_nvec_nonempty_update (A) ;
             // C is full if all vectors of A are present
-            C_sparsity = (A->nvec_nonempty == A->vdim) ?
+            C_sparsity = (A_nvec_nonempty == A->vdim) ?
                 GxB_FULL : GxB_BITMAP ;
         }
     }
@@ -365,10 +358,15 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
             GB_sparsity_char_matrix (B_in)) ;
     }
 
-    // set C->iso = C_iso
+    // determine the p_is_32, j_is_32, and i_is_32 settings for the new matrix
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        C_sparsity, cnz, cvlen, cvdim, Werk) ;
+
     GB_OK (GB_new_bix (&C, // bitmap/full, existing header
-        ctype, cvlen, cvdim, GB_Ap_malloc, true, C_sparsity,
-        M_is_sparse_or_hyper, B->hyper_switch, cnvec, cnz, true, C_iso)) ;
+        ctype, cvlen, cvdim, GB_ph_malloc, true, C_sparsity,
+        M_is_sparse_or_hyper, B->hyper_switch, cnvec, cnz, true, C_iso,
+        Cp_is_32, Cj_is_32, Ci_is_32)) ;
 
     //--------------------------------------------------------------------------
     // if M is sparse/hyper, scatter it into the C bitmap
@@ -495,12 +493,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
         }
     }
 
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory, or other error
-        GB_FREE_ALL ;
-        return (info) ;
-    }
+    GB_OK (info) ;
 
     //--------------------------------------------------------------------------
     // free workspace
@@ -529,7 +522,7 @@ GrB_Info GB_AxB_dot2                // C=A'*B or C<#M>=A'*B, dot product method
     ASSERT (GB_ZOMBIES_OK (C)) ;
     ASSERT (!GB_JUMBLED (C)) ;
     ASSERT (!GB_PENDING (C)) ;
-    ASSERT (C->nvec_nonempty >= 0) ;
+    ASSERT (GB_nvec_nonempty_get (C) >= 0) ;
     return (GrB_SUCCESS) ;
 }
 

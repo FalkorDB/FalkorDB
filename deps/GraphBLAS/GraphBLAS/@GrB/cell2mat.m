@@ -55,7 +55,7 @@ function C = cell2mat (A)
 %
 % See also GrB/horzcat, GrB/vertcat, GrB/cat, GrB/mat2cell, GrB/num2cell.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (~iscell (A))

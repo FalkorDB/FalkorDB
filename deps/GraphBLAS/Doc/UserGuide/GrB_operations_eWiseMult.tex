@@ -1,0 +1,150 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_eWiseMult:} element-wise operations, set intersection} %==
+%===============================================================================
+\label{eWiseMult}
+
+Element-wise ``multiplication'' is shorthand for applying a binary operator
+element-wise on two matrices or vectors \verb'A' and \verb'B', for all entries
+that appear in the set intersection of the patterns of \verb'A' and \verb'B'.
+This is like \verb'A.*B' for two sparse matrices in MATLAB, except that in
+GraphBLAS any binary operator can be used, not just multiplication.
+
+The pattern of the result of the element-wise ``multiplication'' is exactly
+this set intersection.  Entries in \verb'A' but not \verb'B', or visa versa, do
+not appear in the result.
+
+Let $\otimes$ denote the binary operator to be used.  The computation ${\bf T =
+A \otimes B}$ is given below.  Entries not in the intersection of ${\bf A}$ and
+${\bf B}$ do not appear in the pattern of ${\bf T}$.  That is:
+    \vspace{-0.2in}
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \> for all entries $(i,j)$ in ${\bf A \cap B}$ \\
+    \> \> $t_{ij} = a_{ij} \otimes b_{ij}$ \\
+    \end{tabbing} }
+    \vspace{-0.2in}
+
+Depending on what kind of operator is used and what the implicit value is
+assumed to be, this can give the Hadamard product.  This is the case for
+\verb'A.*B' in MATLAB since the implicit value is zero.  However, computing a
+Hadamard product is not necessarily the goal of the \verb'eWiseMult' operation.
+It simply applies any binary operator, built-in or user-defined, to the set
+intersection of \verb'A' and \verb'B', and discards any entry outside this
+intersection.  Its usefulness in a user's application does not depend upon it
+computing a Hadamard product in all cases.  The operator need not be
+associative, commutative, nor have any particular property except for type
+compatibility with \verb'A' and \verb'B', and the output matrix \verb'C'.
+
+The generic name for this operation is \verb'GrB_eWiseMult', which can be used
+for both matrices and vectors.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_eWiseMult:} element-wise vector multiply}
+%-------------------------------------------------------------------------------
+\label{eWiseMult_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_eWiseMult              // w<mask> = accum (w, u.*v)
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const <operator> multiply,      // defines '.*' for t=u.*v
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Vector v,             // second input: vector v
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_eWiseMult' computes the element-wise ``multiplication'' of two
+vectors \verb'u' and \verb'v', element-wise using any binary operator (not just
+times).  The vectors are not transposed via the descriptor.  The vectors
+\verb'u' and \verb'v' are first typecasted into the first and second inputs of
+the \verb'multiply' operator.  Next, a column vector \verb't' is computed,
+denoted ${\bf t = u \otimes v}$.  The pattern of \verb't' is the set
+intersection of \verb'u' and \verb'v'.  The result \verb't' has the type of the
+output \verb'ztype' of the \verb'multiply' operator.
+
+The \verb'operator' is typically a \verb'GrB_BinaryOp', but the method is
+type-generic for this parameter.  If given a monoid (\verb'GrB_Monoid'), the
+additive operator of the monoid is used as the \verb'multiply' binary operator.
+If given a semiring (\verb'GrB_Semiring'), the multiply operator of the
+semiring is used as the \verb'multiply' binary operator.
+%
+The \verb'multiply' operator may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+The next and final step is ${\bf w \langle m \rangle  = w \odot t}$, as
+described in Section~\ref{accummask}, except that all the terms are column
+vectors instead of matrices.  Note for all GraphBLAS operations, including this
+one, the accumulator ${\bf w \odot t}$ is always applied in a set union manner,
+even though ${\bf t = u \otimes v}$ for this operation is applied in a set
+intersection manner.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_eWiseMult:} element-wise matrix multiply}
+%-------------------------------------------------------------------------------
+\label{eWiseMult_matrix}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_eWiseMult              // C<Mask> = accum (C, A.*B)
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const <operator> multiply,      // defines '.*' for T=A.*B
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Matrix B,             // second input: matrix B
+    const GrB_Descriptor desc       // descriptor for C, Mask, A, and B
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Matrix_eWiseMult' computes the element-wise ``multiplication'' of two
+matrices \verb'A' and \verb'B', element-wise using any binary operator (not
+just times).  The input matrices may be transposed first, according to the
+descriptor \verb'desc'.  They are then typecasted into the first and second
+inputs of the \verb'multiply' operator.  Next, a matrix \verb'T' is computed,
+denoted ${\bf T = A \otimes B}$.  The pattern of \verb'T' is the set
+intersection of \verb'A' and \verb'B'.  The result \verb'T' has the type of the
+output \verb'ztype' of the \verb'multiply' operator.
+
+The \verb'multiply' operator is typically a \verb'GrB_BinaryOp', but the method
+is type-generic for this parameter.  If given a monoid (\verb'GrB_Monoid'), the
+additive operator of the monoid is used as the \verb'multiply' binary operator.
+If given a semiring (\verb'GrB_Semiring'), the multiply operator of the
+semiring is used as the \verb'multiply' binary operator.
+%
+The \verb'multiply' operator may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+\vspace{0.05in}
+The operation can be expressed in MATLAB notation as:
+    {\footnotesize
+    \begin{verbatim}
+    [nrows, ncols] = size (A.matrix) ;
+    T.matrix = zeros (nrows, ncols, multiply.ztype) ;
+    T.class = multiply.ztype ;
+    p = A.pattern & B.pattern ;
+    A = cast (A.matrix (p), multiply.xtype) ;
+    B = cast (B.matrix (p), multiply.ytype) ;
+    T.matrix (p) = multiply (A, B) ;
+    T.pattern = p ; \end{verbatim} }
+
+The final step is ${\bf C \langle M \rangle  = C \odot T}$, as described in
+Section~\ref{accummask}.  Note for all GraphBLAS operations, including this
+one, the accumulator ${\bf C \odot T}$ is always applied in a set union manner,
+even though ${\bf T = A \otimes B}$ for this operation is applied in a set
+intersection manner.
+
+

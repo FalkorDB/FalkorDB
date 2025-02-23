@@ -2,7 +2,7 @@
 // GB_transpose.h:  definitions for GB_transpose
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,10 +33,10 @@ GrB_Info GB_transpose           // C=A', C=(ctype)A' or C=op(A')
     GB_Werk Werk
 ) ;
 
-GrB_Info GB_transpose_in_place   // C=A', no change of type, no operators
+GrB_Info GB_transpose_in_place  // A=A', to change A->is_csc
 (
-    GrB_Matrix C,               // output matrix C, possibly modified in-place
-    const bool C_is_csc,        // desired CSR/CSC format of C
+    GrB_Matrix A,           // input/output matrix
+    const bool new_csc,     // desired format, by row (false) or by col (true)
     GB_Werk Werk
 ) ;
 
@@ -71,7 +71,7 @@ GrB_Info GB_transpose_ix        // transpose the pattern and values of a matrix
     GrB_Matrix C,                       // output matrix
     const GrB_Matrix A,                 // input matrix
     // for sparse case:
-    int64_t *restrict *Workspaces,      // Workspaces, size nworkspaces
+    void **Workspaces,                  // Workspaces, size nworkspaces
     const int64_t *restrict A_slice,    // how A is sliced, size nthreads+1
     int nworkspaces,                    // # of workspaces to use
     // for all cases:
@@ -88,19 +88,11 @@ GrB_Info GB_transpose_op // transpose, typecast, and apply operator to a matrix
         bool binop_bind1st,             // if true, binop(x,A) else binop(A,y)
     const GrB_Matrix A,                 // input matrix
     // for sparse or hypersparse case:
-    int64_t *restrict *Workspaces,      // Workspaces, size nworkspaces
+    void **Workspaces,                  // Workspaces, size nworkspaces
     const int64_t *restrict A_slice,    // how A is sliced, size nthreads+1
     int nworkspaces,                    // # of workspaces to use
     // for all cases:
     int nthreads                        // # of threads to use
-) ;
-
-GrB_Info GB_shallow_copy    // create a purely shallow matrix
-(
-    GrB_Matrix C,           // output matrix C, with a static header
-    const bool C_is_csc,    // desired CSR/CSC format of C
-    const GrB_Matrix A,     // input matrix
-    GB_Werk Werk
 ) ;
 
 #endif

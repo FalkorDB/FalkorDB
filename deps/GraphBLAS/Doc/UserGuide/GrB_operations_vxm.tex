@@ -1,0 +1,52 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_vxm:} vector-matrix multiply} %===========================
+%===============================================================================
+\label{vxm}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_vxm                    // w'<mask> = accum (w, u'*A)
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Semiring semiring,    // defines '+' and '*' for u'*A
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Matrix A,             // second input: matrix A
+    const GrB_Descriptor desc       // descriptor for w, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_vxm' multiplies a row vector \verb"u'" times a matrix \verb'A'.  The
+matrix \verb'A' may be first transposed according to \verb'desc' (as the second
+input, \verb'GrB_INP1'); the column vector \verb'u' is never transposed via the
+descriptor.  The inputs \verb'u' and \verb'A' are typecasted to match the
+\verb'xtype' and \verb'ytype' inputs, respectively, of the multiply operator of
+the \verb'semiring'.  Next, an intermediate column vector \verb"t=A'*u" is
+computed on the \verb'semiring' using the same method as \verb'GrB_mxm'.
+Finally, the column vector \verb't' is typecasted from the \verb'ztype' of the
+multiply operator of the \verb'semiring' into the type of \verb'w', and the
+results are written back into \verb'w' using the optional accumulator
+\verb'accum' and \verb'mask'.
+
+The last step is ${\bf w \langle m \rangle  = w \odot t}$, as described
+in Section~\ref{accummask}, except that all the
+terms are column vectors instead of matrices.
+
+\paragraph{\bf Performance considerations:} % u'=u'*A
+If the \verb'GrB_STORAGE_ORIENTATION_HINT' of \verb'A' is \verb'GrB_ROWMAJOR', and the default
+descriptor is used (\verb'A' is not transposed), then \verb'GrB_vxm' is faster
+than than \verb'GrB_mxv' with its default descriptor, when the vector \verb'u'
+is very sparse.
+However, if the \verb'GrB_STORAGE_ORIENTATION_HINT' of \verb'A' is \verb'GrB_COLMAJOR', then
+\verb'GrB_mxv' with its default descriptor is faster than \verb'GrB_vxm' with
+its default descriptor, when the vector \verb'u' is very sparse.
+Using the non-default \verb'GrB_TRAN' descriptor for \verb'A' makes the
+\verb'GrB_vxm' operation equivalent to \verb'GrB_mxv' with its default
+descriptor (with the operands reversed in the multiplier, as well).  The
+reverse is true as well; \verb'GrB_mxv' with \verb'GrB_TRAN' is the same as
+\verb'GrB_vxm' with a default descriptor.
+

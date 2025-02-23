@@ -2,7 +2,7 @@
 // GB_qsort_template: quicksort of a K-by-n array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,12 +36,12 @@ static inline int64_t GB_partition
     uint64_t pivot = GB_rand (seed) % ((uint64_t) n) ;
 
     // get the Pivot
-    int64_t Pivot_0 [1] ; Pivot_0 [0] = A_0 [pivot] ;
+    GB_A0_t Pivot_0 [1] ; Pivot_0 [0] = A_0 [pivot] ;
     #if GB_K > 1
-    int64_t Pivot_1 [1] ; Pivot_1 [0] = A_1 [pivot] ;
+    GB_A1_t Pivot_1 [1] ; Pivot_1 [0] = A_1 [pivot] ;
     #endif
     #if GB_K > 2
-    int64_t Pivot_2 [1] ; Pivot_2 [0] = A_2 [pivot] ;
+    GB_A2_t Pivot_2 [1] ; Pivot_2 [0] = A_2 [pivot] ;
     #endif
 
     // At the top of the while loop, A [left+1...right-1] is considered, and
@@ -95,7 +95,7 @@ static void GB_quicksort    // sort A [0:n-1]
 )
 {
 
-    if (n < 20)
+    if (n < 8)
     {
         // in-place insertion sort on A [0:n-1], where n is small
         for (int64_t k = 1 ; k < n ; k++)

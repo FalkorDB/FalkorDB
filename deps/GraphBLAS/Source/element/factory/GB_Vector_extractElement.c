@@ -2,7 +2,7 @@
 // GB_Vector_extractElement: x = V(i)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
     GB_XTYPE *x,                // scalar to extract, not modified if not found
     #endif
     const GrB_Vector V,         // vector to extract a scalar from
-    GrB_Index i                 // index
+    uint64_t i                  // index
 )
 {
 
@@ -33,7 +33,8 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_RETURN_IF_NULL_OR_FAULTY (V) ;
+    GrB_Info info ;
+    GB_RETURN_IF_NULL_OR_INVALID (V) ;
     #ifdef GB_XTYPE
     GB_RETURN_IF_NULL (x) ;
     #endif
@@ -41,8 +42,7 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
     // delete any lingering zombies, assemble any pending tuples, and unjumble
     if (GB_ANY_PENDING_WORK (V))
     { 
-        GrB_Info info ;
-        GB_WHERE1 (GB_WHERE_STRING) ;
+        GB_WHERE_1 (V, GB_WHERE_STRING) ;
         GB_BURBLE_START ("GrB_Vector_extractElement") ;
         GB_OK (GB_wait ((GrB_Matrix) V, "v", Werk)) ;
         GB_BURBLE_END ;
@@ -62,16 +62,15 @@ GrB_Info GB_EXTRACT_ELEMENT     // extract a single entry, x = V(i)
 
     int64_t pleft ;
     bool found ;
-    const int64_t *restrict Vp = V->p ;
+    GB_Ap_DECLARE (Vp, const) ; GB_Ap_PTR (Vp, V) ;
 
     if (Vp != NULL)
     { 
         // V is sparse
         pleft = 0 ;
-        int64_t pright = Vp [1] - 1 ;
+        int64_t pright = GB_IGET (Vp, 1) - 1 ;
         // Time taken for this step is at most O(log(nnz(V))).
-        const int64_t *restrict Vi = V->i ;
-        GB_BINARY_SEARCH (i, Vi, pleft, pright, found) ;
+        found = GB_binary_search (i, V->i, V->i_is_32, &pleft, &pright) ;
     }
     else
     {

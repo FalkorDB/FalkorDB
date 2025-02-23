@@ -2,7 +2,7 @@
 // GB_mex_test8: still more basic tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -67,7 +67,7 @@ void mexFunction
     // reshape error handling
     //--------------------------------------------------------------------------
 
-    GrB_Index n =  (1L << 40) ;
+    uint64_t n = (1L << 40) ;
     OK (GrB_Matrix_new (&C, GrB_BOOL, n, n)) ;
     expected = GrB_OUT_OF_MEMORY ;
     ERR (GxB_Matrix_reshape (C, true, n/2, 2*n, NULL)) ;

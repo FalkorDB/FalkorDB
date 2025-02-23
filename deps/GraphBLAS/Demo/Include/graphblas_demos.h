@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Include/graphblas_demos.h: include file for all demo programs
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -53,10 +53,18 @@
 #endif
 #endif
 
+// do not use any historical methods in GraphBLAS.h
+#define NHISTORICAL
+
 #include "GraphBLAS.h"
-#undef I
 #include "simple_rand.h"
-// #include "usercomplex.h"
+#undef I
+#ifdef _OPENMP
+    #include "omp.h"
+    #define WALLCLOCK omp_get_wtime ()
+#else
+    #define WALLCLOCK 0
+#endif
 
 #undef MIN
 #undef MAX
@@ -83,7 +91,8 @@ GrB_Info random_matrix      // create a random double-precision matrix
     int64_t ncols,          // number of columns
     int64_t ntuples,        // number of entries (x2 if made symmetric)
     int method,             // method to use: 0:setElement, 1:build
-    bool A_complex          // if true, create a Complex matrix
+    bool A_complex,         // if true, create a Complex matrix
+    uint64_t *state         // random number state (revised on output)
 ) ;
 
 GrB_Info get_matrix         // get a matrix from stdin, or create random one
@@ -93,7 +102,8 @@ GrB_Info get_matrix         // get a matrix from stdin, or create random one
     char **argv,
     bool no_self_edges,     // if true, ensure the matrix has no self-edges
     bool boolean,           // if true, file is read as GrB_BOOL, else GrB_FP64
-    bool spones             // if true, return all entries equal to 1
+    bool spones,            // if true, return all entries equal to 1
+    uint64_t *state         // random state, revised on output
 ) ;
 
 GrB_Info wathen             // construct a random Wathen matrix
@@ -103,13 +113,8 @@ GrB_Info wathen             // construct a random Wathen matrix
     int64_t ny,             // grid dimension ny
     bool scale,             // if true, scale the rows
     int method,             // 0 to 3
-    double *rho_given       // nx-by-ny dense matrix, if NULL use random rho
-) ;
-
-GrB_Info triu               // C = triu (A,1)
-(
-    GrB_Matrix *C_output,   // output matrix
-    const GrB_Matrix A      // input matrix, boolean or double
+    double *rho_given,      // nx-by-ny dense matrix, if NULL use random rho
+    uint64_t *state         // random state, revised on output
 ) ;
 
 GrB_Info isequal_type       // return GrB_SUCCESS if successful
@@ -130,12 +135,6 @@ GrB_Info isequal            // return GrB_SUCCESS if successful
 ) ;
 
 //------------------------------------------------------------------------------
-// import/export test
-//------------------------------------------------------------------------------
-
-GrB_Info import_test (GrB_Matrix *C_handle, int format, bool dump) ;
-
-//------------------------------------------------------------------------------
 // CHECK: expr must be true; if not, return an error condition
 //------------------------------------------------------------------------------
 
@@ -147,7 +146,8 @@ GrB_Info import_test (GrB_Matrix *C_handle, int format, bool dump) ;
     {                                                                   \
         /* free the result and all workspace, and return NULL */        \
         FREE_ALL ;                                                      \
-        printf ("Failure: line %d file %s\n", __LINE__, __FILE__) ;     \
+        printf ("Failure: %d, line %d file %s\n", info,                 \
+            __LINE__, __FILE__) ;                                       \
         return (info) ;                                                 \
     }                                                                   \
 }
@@ -166,6 +166,7 @@ GrB_Info import_test (GrB_Matrix *C_handle, int format, bool dump) ;
     if (!(info == GrB_SUCCESS || info == GrB_NO_VALUE))                 \
     {                                                                   \
         printf ("GraphBLAS error: %d\n", info) ;                        \
+        fprintf (stderr, "GraphBLAS error: %d\n", info) ;               \
         CHECK (false, info) ;                                           \
     }                                                                   \
 }

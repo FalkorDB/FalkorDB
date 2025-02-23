@@ -2,7 +2,7 @@
 // GxB_Matrix_diag: build a diagonal matrix from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,10 +22,11 @@ GrB_Info GxB_Matrix_diag        // build a diagonal matrix from a vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (C, "GxB_Matrix_diag (C, v, k, desc)") ;
+    GB_RETURN_IF_NULL (C) ;
+    GB_RETURN_IF_NULL (v) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
+    GB_WHERE2 (C, v, "GxB_Matrix_diag (C, v, k, desc)") ;
     GB_BURBLE_START ("GxB_Matrix_diag") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
 
     GrB_Type ctype = C->type ;
     GrB_Type vtype = v->type ;

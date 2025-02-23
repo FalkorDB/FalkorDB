@@ -2,7 +2,7 @@
 // GB_masker_phase1: find # of entries in R = masker (C,M,Z)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,16 +20,15 @@
 // Rp is either freed by phase2, or transplanted into R.
 
 #include "mask/GB_mask.h"
-#include "include/GB_unused.h"
 #include "jitifyer/GB_stringify.h"
 #include "include/GB_masker_shared_definitions.h"
 
-#define GB_FREE_ALL GB_FREE (&Rp, Rp_size) ;
+#define GB_FREE_ALL GB_FREE_MEMORY (&Rp, Rp_size) ;
 
 GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
 (
     // computed by phase1:
-    int64_t **Rp_handle,            // output of size Rnvec+1
+    void **Rp_handle,               // vector pointers for R
     size_t *Rp_size_handle,
     int64_t *Rnvec_nonempty,        // # of non-empty vectors in R
     // tasks from phase1a:
@@ -38,10 +37,12 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     const int R_nthreads,             // # of threads to use
     // analysis from phase0:
     const int64_t Rnvec,
-    const int64_t *restrict Rh,
+    const void *Rh,
     const int64_t *restrict R_to_M,
     const int64_t *restrict R_to_C,
     const int64_t *restrict R_to_Z,
+    const bool Rp_is_32,
+    const bool Rj_is_32,
     // original input:
     const GrB_Matrix M,             // required mask
     const bool Mask_comp,           // if true, then M is complemented
@@ -55,8 +56,6 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     //--------------------------------------------------------------------------
     // check inputs
     //--------------------------------------------------------------------------
-
-    int64_t *restrict Rp = NULL ; size_t Rp_size = 0 ;
 
     ASSERT (Rp_handle != NULL) ;
     ASSERT (Rp_size_handle != NULL) ;
@@ -82,13 +81,14 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     ASSERT (C->vdim == Z->vdim && C->vlen == Z->vlen) ;
     ASSERT (C->vdim == M->vdim && C->vlen == M->vlen) ;
 
-    (*Rp_handle) = NULL ;
-
     //--------------------------------------------------------------------------
     // allocate the result
     //--------------------------------------------------------------------------
 
-    Rp = GB_CALLOC (GB_IMAX (2, Rnvec+1), int64_t, &Rp_size) ;
+    (*Rp_handle) = NULL ;
+    void *Rp = NULL ; size_t Rp_size = 0 ;
+    size_t rpsize = (Rp_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    Rp = GB_CALLOC_MEMORY (GB_IMAX (2, Rnvec+1), rpsize, &Rp_size) ;
     if (Rp == NULL)
     { 
         // out of memory
@@ -109,18 +109,9 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
         R_ntasks,                   // # of tasks
         R_nthreads,                 // # of threads to use
         // analysis from phase0:
-        Rnvec,
-        Rh,
-        R_to_M,
-        R_to_C,
-        R_to_Z,
+        Rnvec, Rh, R_to_M, R_to_C, R_to_Z, Rp_is_32, Rj_is_32,
         // original input:
-        M,                  // required mask
-        Mask_comp,          // if true, then M is complemented
-        Mask_struct,        // if true, use the only structure of M
-        C,
-        Z
-    ) ;
+        M, Mask_comp, Mask_struct, C, Z) ;
 
     if (info == GrB_NO_VALUE)
     { 
@@ -137,8 +128,8 @@ GrB_Info GB_masker_phase1           // count nnz in each R(:,j)
     // cumulative sum of Rp and fine tasks in TaskList
     //--------------------------------------------------------------------------
 
-    GB_task_cumsum (Rp, Rnvec, Rnvec_nonempty, TaskList, R_ntasks, R_nthreads,
-        Werk) ;
+    GB_task_cumsum (Rp, Rp_is_32, Rnvec, Rnvec_nonempty, TaskList, R_ntasks,
+        R_nthreads, Werk) ;
 
     //--------------------------------------------------------------------------
     // return the result

@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_coarseGus_noM_phase5: numeric coarse Gustavson, no mask
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,8 +15,14 @@
         // get C(:,j) and B(:,j)
         //----------------------------------------------------------------------
 
-        int64_t pC = Cp [kk] ;
-        int64_t cjnz = Cp [kk+1] - pC ;
+        int64_t pC_start = GB_Cp_IGET (kk) ;
+        int64_t pC_end = GB_Cp_IGET (kk+1) ;
+        int64_t pC = pC_start ;
+        int64_t cjnz = pC_end - pC ;
+        ASSERT (pC_start >= 0) ;
+        ASSERT (pC_start <= pC_end) ;
+        ASSERT (pC_end <= cnz) ;
+
         if (cjnz == 0) continue ;           // no work to do if C(:,j) empty
         GB_GET_B_j ;
 
@@ -105,7 +111,8 @@
                         // C(i,j) = A(i,k) * B(k,j)
                         Hf [i] = mark ;
                         GB_HX_WRITE (i, t) ;    // Hx [i] = t
-                        Ci [pC++] = i ;
+                        GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
+                        pC++ ;
                     }
                     else
                     { 

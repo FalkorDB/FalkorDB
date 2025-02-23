@@ -6,7 +6,7 @@ function test246 (dohack)
 % it the test coverage might vary, or even be zero.  See also test247.m.
 % It is thus run for many trials below.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test246: testing of GB_AxB_saxpy3_fineHash_phase2.c\n') ;
@@ -26,8 +26,7 @@ hack = save ;
 if (nargin < 1)
     dohack = 2 ;        % use 0 for default, 2 for prior setting in v7.2.0
 end
-hack (1) = dohack ;     % modify "very_costly" in GxB_AxB_saxpy3_slice_balanced
-GB_mex_hack (hack) ;
+hack (1) = dohack ; GB_mex_hack (hack) ; % "very_costly" in saxpy3
 
 semiring.multiply = 'times' ;
 semiring.add = 'plus' ;

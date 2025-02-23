@@ -36,37 +36,35 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
     const GB_B_TYPE *__restrict__ Bx = (GB_B_TYPE *)B->x  ;
     #endif
           GB_C_TYPE *__restrict__ Cx = (GB_C_TYPE *)C->x  ;
-          int64_t *__restrict__ Ci = C->i ;
-    const int64_t *__restrict__ Mi = M->i ;
+          GB_Ci_SIGNED_TYPE *__restrict__ Ci = (GB_Ci_SIGNED_TYPE *) C->i ;
+    const GB_Mi_TYPE *__restrict__ Mi = (GB_Mi_TYPE *) M->i ;
     #if GB_M_IS_HYPER
-    const int64_t *__restrict__ Mh = M->h ;
+    const GB_Mj_TYPE *__restrict__ Mh = (GB_Mj_TYPE *) M->h ;
     #endif
 
     ASSERT (GB_A_IS_HYPER || GB_A_IS_SPARSE) ;
-    const int64_t *__restrict__ Ai = A->i ;
-    const int64_t *__restrict__ Ap = A->p ;
+    const GB_Ai_TYPE *__restrict__ Ai = (GB_Ai_TYPE *) A->i ;
+    const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
 
     ASSERT (GB_B_IS_HYPER || GB_B_IS_SPARSE) ;
-    const int64_t *__restrict__ Bi = B->i ;
-    const int64_t *__restrict__ Bp = B->p ;
+    const GB_Bi_TYPE *__restrict__ Bi = (GB_Bi_TYPE *) B->i ;
+    const GB_Bp_TYPE *__restrict__ Bp = (GB_Bp_TYPE *) B->p ;
 
     #if GB_A_IS_HYPER
     const int64_t anvec = A->nvec ;
-    const int64_t *__restrict__ Ah = A->h ;
-    const int64_t *__restrict__ A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-    const int64_t *__restrict__ A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-    const int64_t *__restrict__ A_Yx = (int64_t *)
-        ((A->Y == NULL) ? NULL : A->Y->x) ;
+    const GB_Aj_TYPE *__restrict__ Ah = (GB_Aj_TYPE *) A->h ;
+    const void *A_Yp = (void *) ((A->Y == NULL) ? NULL : A->Y->p) ;
+    const void *A_Yi = (void *) ((A->Y == NULL) ? NULL : A->Y->i) ;
+    const void *A_Yx = (void *) ((A->Y == NULL) ? NULL : A->Y->x) ;
     const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
     #endif
 
     #if GB_B_IS_HYPER
     const int64_t bnvec = B->nvec ;
-    const int64_t *__restrict__ Bh = B->h ;
-    const int64_t *__restrict__ B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
-    const int64_t *__restrict__ B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
-    const int64_t *__restrict__ B_Yx = (int64_t *)
-        ((B->Y == NULL) ? NULL : B->Y->x) ;
+    const GB_Bj_TYPE *__restrict__ Bh = (GB_Bj_TYPE *) B->h ;
+    const void *B_Yp = (void *) ((B->Y == NULL) ? NULL : B->Y->p) ;
+    const void *B_Yi = (void *) ((B->Y == NULL) ? NULL : B->Y->i) ;
+    const void *B_Yx = (void *) ((B->Y == NULL) ? NULL : B->Y->x) ;
     const int64_t B_hash_bits = (B->Y == NULL) ? 0 : (B->Y->vdim - 1) ;
     #endif
 
@@ -91,13 +89,13 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
         // assert: Ci [pair_id] & 0xF == GB_BUCKET_VSSP
 
         // j = k or j = Mh [k] if C and M are hypersparse
-        int64_t j = GBH_M (Mh, k) ;
+        int64_t j = GBh_M (Mh, k) ;
 
         // find A(:,i):  A is always sparse or hypersparse
         int64_t pA, pA_end ;
         #if GB_A_IS_HYPER
-        GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
-           i, &pA, &pA_end) ;
+        GB_hyper_hash_lookup (GB_Ap_IS_32, GB_Aj_IS_32,
+            Ah, anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits, i, &pA, &pA_end) ;
         #else
         pA     = Ap [i] ;
         pA_end = Ap [i+1] ;
@@ -106,8 +104,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
         // find B(:,j):  B is always sparse or hypersparse
         int64_t pB, pB_end ;
         #if GB_B_IS_HYPER
-        GB_hyper_hash_lookup (Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits,
-           j, &pB, &pB_end) ;
+        GB_hyper_hash_lookup (GB_Bp_IS_32, GB_Bj_IS_32,
+            Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits, j, &pB, &pB_end) ;
         #else
         pB     = Bp [j] ;
         pB_end = Bp [j+1] ;
@@ -148,7 +146,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
                     // discard all entries B(ib:ia-1,j)
                     int64_t pleft = pB + 1 ;
                     int64_t pright = pB_end - 1 ;
-                    GB_TRIM_BINARY_SEARCH (ia, Bi, pleft, pright) ;
+                    GB_trim_binary_search (ia, Bi, GB_Bi_IS_32,
+                        &pleft, &pright) ;
                     //ASSERT (pleft > pB) ;
                     pB = pleft ;
                 }
@@ -181,7 +180,8 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
                     // discard all entries A(ia:ib-1,i)
                     int64_t pleft = pA + 1 ;
                     int64_t pright = pA_end - 1 ;
-                    GB_TRIM_BINARY_SEARCH (ib, Ai, pleft, pright) ;
+                    GB_trim_binary_search (ib, Ai, GB_Ai_IS_32,
+                        &pleft, &pright) ;
                     //ASSERT (pleft > pA) ;
                     pA = pleft ;
                 }
@@ -227,7 +227,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_vssp_kernel
 	    {
 		zc++; 
 		//printf(" %lld, %lld is zombie %d!\n",i,j,zc);
-		Ci[pair_id] = GB_ZOMBIE( i ) ;
+		Ci[pair_id] = GB_ZOMBIE ( i ) ;
             }
 	}
     }

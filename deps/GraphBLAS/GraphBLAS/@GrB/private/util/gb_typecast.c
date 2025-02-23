@@ -2,19 +2,19 @@
 // gb_typecast: typecast a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "gb_interface.h"
 
-GrB_Matrix gb_typecast          // C = (type) A, where C is deep
+GrB_Matrix gb_typecast  // C = (type) A, where C is deep
 (
-    GrB_Matrix A,               // may be shallow
-    GrB_Type type,              // if NULL, use the type of A
-    GxB_Format_Value fmt,       // format of C
-    int sparsity                // sparsity control for C, if 0 use A
+    GrB_Matrix A,       // may be shallow
+    GrB_Type type,      // if NULL, use the type of A
+    int fmt,            // format of C
+    int sparsity        // sparsity control for C, if 0 use A
 )
 {
 
@@ -40,7 +40,7 @@ GrB_Matrix gb_typecast          // C = (type) A, where C is deep
     // create the empty C matrix and set its format and sparsity
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
     GrB_Matrix C = gb_new (type, nrows, ncols, fmt, sparsity) ;

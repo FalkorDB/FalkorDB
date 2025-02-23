@@ -16,7 +16,7 @@ __global__ void GB_cuda_rowscale_kernel
     #define B_iso GB_B_ISO
 
     #if ( GB_B_IS_SPARSE || GB_B_IS_HYPER )
-    const int64_t *__restrict__ Bi = B->i ;
+    const GB_Bi_TYPE *__restrict__ Bi = (GB_Bi_TYPE *) B->i ;
     #endif
 
     #if ( GB_B_IS_BITMAP )
@@ -34,9 +34,9 @@ __global__ void GB_cuda_rowscale_kernel
 
     for (int64_t p = tid ; p < bnz ; p += ntasks)
     {
-        if (!GBB_B (Bb, p)) { continue ; }
+        if (!GBb_B (Bb, p)) { continue ; }
 
-        int64_t i = GBI_B (Bi, p, bvlen) ;      // get row index of B(i,j)
+        int64_t i = GBi_B (Bi, p, bvlen) ;      // get row index of B(i,j)
         GB_DECLAREA (dii) ;
         GB_GETA (dii, Dx, i, D_iso) ;           // dii = D(i,i)
         GB_DECLAREB (bij) ;
@@ -51,6 +51,7 @@ extern "C" {
 
 GB_JIT_CUDA_KERNEL_ROWSCALE_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
     ASSERT (GB_JUMBLED_OK (C)) ;
     ASSERT (!GB_JUMBLED (D)) ;
     ASSERT (!GB_IS_BITMAP (D)) ;

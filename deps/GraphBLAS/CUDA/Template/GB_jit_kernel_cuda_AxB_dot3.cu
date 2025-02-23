@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/jit_kernels/GB_jit_kernel_cuda_AxB_dot3.cu
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -154,13 +154,13 @@ GB_bucket_code ;    // FIXME: rename GB_dot3_bucket_code
     // sparse-sparse, sparse-dense, or dense-sparse
 
     #undef  GB_FREE_ALL
-    #define GB_FREE_ALL                         \
-    {                                           \
-        GB_FREE_WORK (&Nanobuckets, Nb_size) ;  \
-        GB_FREE_WORK (&Blockbucket, Bb_size) ;  \
-        GB_FREE_WORK (&Bucketp, Bup_size) ;     \
-        GB_FREE_WORK (&offset, O_size) ;        \
-        GB_FREE_WORK (&Bucket, Bu_size) ;       \
+    #define GB_FREE_ALL                     \
+    {                                       \
+        GB_FREE_MEMORY (&Nanobuckets, Nb_size) ;   \
+        GB_FREE_MEMORY (&Blockbucket, Bb_size) ;   \
+        GB_FREE_MEMORY (&Bucketp, Bup_size) ;      \
+        GB_FREE_MEMORY (&offset, O_size) ;         \
+        GB_FREE_MEMORY (&Bucket, Bu_size) ;        \
     }
 
     #include "GB_cuda_jit_AxB_dot3_phase1.cuh"
@@ -201,6 +201,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
     #ifdef GB_JIT_RUNTIME
     // get callback functions
+    GB_GET_CALLBACKS ;
     GB_free_memory_f GB_free_memory = my_callback->GB_free_memory_func ;
     GB_malloc_memory_f GB_malloc_memory = my_callback->GB_malloc_memory_func ;
     #endif
@@ -310,11 +311,11 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         int64_t blockbuckets_size = NBUCKETS * number_of_blocks_1 ;
         int64_t nanobuckets_size = blockbuckets_size * threads_per_block ;
 
-        Nanobuckets = GB_MALLOC_WORK (nanobuckets_size, int64_t, &Nb_size) ;
-        Blockbucket = GB_MALLOC_WORK (blockbuckets_size, int64_t, &Bb_size) ;
-        Bucketp = GB_MALLOC_WORK (NBUCKETS+1, int64_t, &Bup_size) ;
-        offset = GB_MALLOC_WORK (NBUCKETS+1, int64_t, &O_size) ;
-        Bucket = GB_MALLOC_WORK (mnz, int64_t, &Bu_size) ;
+        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size, sizeof (int64_t), &Nb_size) ;
+        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (blockbuckets_size, sizeof (int64_t), &Bb_size) ;
+        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &Bup_size) ;
+        offset = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &O_size) ;
+        Bucket = (int64_t *) GB_MALLOC_MEMORY (mnz, sizeof (int64_t), &Bu_size) ;
 
         memset (offset, 0, (NBUCKETS+1) * sizeof (int64_t)) ;
         memset (Bucketp, 0, (NBUCKETS+1) * sizeof (int64_t)) ;
@@ -400,6 +401,14 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
             {
                 all_in_one = true ;
             }
+        }
+        printf ("mnz: %ld in buckets : %ld\n", mnz, s) ;
+        if (mnz != s)
+        {
+            printf ("Abort! Missing %ld entries\n", mnz-s) ;
+            fflush (stdout) ;
+            fflush (stderr) ;
+            abort ( ) ;
         }
 
         // kernel_timer.Stop();

@@ -3,8 +3,8 @@
 
 % Primary functiuns
 
-%   testmake                      - compiles the test interface to GraphBLAS
-%   testall                       - run all GraphBLAS tests
+%   testmake - compiles the test interface to GraphBLAS
+%   testall  - run all GraphBLAS tests
 
 % mimics of GraphBLAS operations:
 %
@@ -37,6 +37,7 @@
 %   GB_spec_operator              - get the contents of an operator
 %   GB_spec_opsall                - return a list of all operators, types, and semirings
 %   GB_spec_random                - generate random matrix
+%   GB_spec_random_32             - select 32/64 bit format at random
 %   GB_spec_reduce_to_scalar      - a mimic of GrB_reduce (to scalar)
 %   GB_spec_reduce_to_vector      - a mimic of GrB_reduce (to vector)
 %   GB_spec_resize                - a mimic of GxB_resize
@@ -93,7 +94,9 @@
 
 %   test21b  - test GrB_assign
 %   test23   - test GrB_*_build
-%   test29   - GrB_reduce with zombies
+%   test29   - test GrB_reduce
+
+%   test43   - test subref
 
 %   test53   - test GrB_Matrix_extract
 %   test54   - test GB_subref: numeric case with I=lo:hi, J=lo:hi
@@ -119,7 +122,6 @@
 %   test125  - test GrB_mxm: row and column scaling
 %   test127  - test GrB_eWiseAdd and GrB_eWiseMult (all types and operators)
 %   test128  - test eWiseMult, eWiseAdd, eWiseUnion, special cases
-
 %   test129  - test GxB_select (tril and nonzero, hypersparse)
 
 %   test130  - test GrB_apply (hypersparse cases)
@@ -129,7 +131,7 @@
 %   test136  - GxB_subassign, method 08, 09, 11
 %   test137  - GrB_eWiseMult with FIRST and SECOND operators
 %   test138  - test assign, with coarse-only tasks in IxJ slice
-%   test139  - merge sort, special cases
+
 
 %   test141  - test GrB_eWiseAdd (all types and operators) for dense matrices
 %   test142  - test GrB_assign for dense matrices
@@ -139,13 +141,11 @@
 %   test148  - eWiseAdd with aliases
 
 %   test150  - test GrB_mxm with typecasting and zombies (dot3 and saxpy)
-
 %   test151b - test bitshift operators
 %   test152  - test C = A+B for dense A, B, and C
 %   test154  - test GrB_apply with scalar binding
 %   test154b - test GrB_apply with scalar binding
 %   test155  - test GrB_*_setElement and GrB_*_removeElement
-
 %   test157  - test sparsity formats
 %   test159  - test dot and saxpy with positional ops
 
@@ -176,7 +176,6 @@
 %   test187  - test dup/assign for all sparsity formats
 %   test188  - test concat
 %   test188b - test concat
-%   test189  - test large assignment
 
 %   test191  - test split
 %   test192  - test GrB_assign C<C,struct>=scalar
@@ -278,29 +277,41 @@
 %   test284  - test GrB_mxm using indexop-based semirings
 %   test285  - test GrB_assign (bitmap case, C<!M>+=A, whole matrix)
 %   test286  - test kron with idxop
+%   test287  - misc tests
+%   test288  - load/unload tests
+%   test289  - test the Container for all sparsity formats
+
+%   test290  - test bitmap_subref on a large matrix
+%   test291  - test GB_ix_realloc
+%   test292  - test GxB_Vector_build_Scalar_Vector with a very large vector
+%   test293  - merge sort, different integer sizes
+%   test294  - reduce with zombies
 
 % Helper functions
 
-%   nthreads_get       - get # of threads and chunk to use in GraphBLAS
-%   nthreads_set       - set # of threads and chunk to use in GraphBLAS
-%   test10_compare     - check results for test10
-%   test_cast          - z = cast (x,type) but handle complex types
-%   test_contains      - same as contains (text, pattern)
-%   debug_off          - turn off malloc debugging
-%   debug_on           - turn on malloc debugging
-%   grbinfo            - print info about the GraphBLAS version
-%   irand              - construct a random integer matrix 
-%   logstat            - run a GraphBLAS test and log the results to log.txt 
-%   runtest            - run a single GraphBLAS test
-%   stat               - report status of statement coverage and malloc debugging
-%   isequal_roundoff   - compare two matrices, allowing for roundoff errors
-%   grb_clear_coverage - clear current statement coverage
-%   grb_get_coverage   - return current statement coverage
-%   feature_numcores   - determine # of cores the system has
-%   jit_reset          - turn off the JIT and then set it back to its original state
-%   grblines           - total # of lines in the test coverage
-%   set_malloc_debug   - Turn on/off malloc debugging and mark the log.txt 
+%   nthreads_get         - get # of threads and chunk to use in GraphBLAS
+%   nthreads_set         - set # of threads and chunk to use in GraphBLAS
+%   test10_compare       - check results for test10
+%   test_cast            - z = cast (x,type) but handle complex types
+%   test_contains        - same as contains (text, pattern)
+%   debug_off            - turn off malloc debugging
+%   debug_on             - turn on malloc debugging
+%   grbinfo              - print info about the GraphBLAS version
+%   irand                - construct a random integer matrix 
+%   logstat              - run a GraphBLAS test and log the results to log.txt 
+%   runtest              - run a single GraphBLAS test
+%   stat                 - report status of statement coverage and malloc debugging
+%   isequal_roundoff     - compare two matrices, allowing for roundoff errors
+%   grb_clear_coverage   - clear current statement coverage
+%   grb_get_coverage     - return current statement coverage
+%   feature_numcores     - determine # of cores the system has
+%   jit_reset            - turn off the JIT and then set it back to its original state
+%   grblines             - total # of lines in the test coverage
+%   set_malloc_debug     - Turn on/off malloc debugging and mark the log.txt 
+%   bench3               - test and benchmark qsort and msort
+%   GB_isequal_ignore_32 - compare two structs but ignore [phi]_is_32 fields
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
 

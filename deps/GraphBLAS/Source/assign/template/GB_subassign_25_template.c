@@ -2,7 +2,7 @@
 // GB_subassign_25_template: C<M> = A where C is empty and A is dense
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -58,16 +58,15 @@
     // get C, M, and A
     //--------------------------------------------------------------------------
 
-    int64_t *restrict Ci = C->i ;
+    GB_Ci_DECLARE (Ci, ) ; GB_Ci_PTR (Ci, C) ;
 
     ASSERT (GB_IS_SPARSE (M) || GB_IS_HYPERSPARSE (M)) ;
     ASSERT (GB_JUMBLED_OK (M)) ;
-    const int64_t *restrict Mp = M->p ;
-    const int64_t *restrict Mh = M->h ;
-    const int64_t *restrict Mi = M->i ;
+    GB_Mp_DECLARE (Mp, const) ; GB_Mp_PTR (Mp, M) ;
+    GB_Mh_DECLARE (Mh, const) ; GB_Mh_PTR (Mh, M) ;
+    GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
     const int64_t Mvlen = M->vlen ;
-
-    const int8_t   *restrict Ab = A->b ;
+    const int8_t *restrict Ab = A->b ;
     const int64_t avlen = A->vlen ;
 
     bool C_iso = C->iso ;
@@ -126,9 +125,9 @@
                 // find the part of M(:,k) to be operated on by this task
                 //--------------------------------------------------------------
 
-                int64_t j = GBH_M (Mh, k) ;
+                int64_t j = GBh_M (Mh, k) ;
                 GB_GET_PA (pM_start, pM_end, tid, k, kfirst, klast,
-                    pstart_Mslice, Mp [k], Mp [k+1]) ;
+                    pstart_Mslice, GB_IGET (Mp, k), GB_IGET (Mp, k+1)) ;
 
                 //--------------------------------------------------------------
                 // C<M(:,j)> = A(:,j)
@@ -139,7 +138,7 @@
                 int64_t pA = j * avlen ;
                 for (int64_t pM = pM_start ; pM < pM_end ; pM++)
                 {
-                    int64_t i = Mi [pM] ;
+                    int64_t i = GB_IGET (Mi, pM) ;
                     int64_t p = pA + i ;
                     if (Ab [p])
                     { 
@@ -153,7 +152,8 @@
                     { 
                         // C(i,j) becomes a zombie
                         task_nzombies++ ;
-                        Ci [pM] = GB_ZOMBIE (i) ;
+                        i = GB_ZOMBIE (i) ;
+                        GB_ISET (Ci, pM, i) ;   // Ci [pM] = i
                     }
                 }
             }
@@ -192,9 +192,9 @@
                     // find the part of M(:,k) to be operated on by this task
                     //----------------------------------------------------------
 
-                    int64_t j = GBH_M (Mh, k) ;
+                    int64_t j = GBh_M (Mh, k) ;
                     GB_GET_PA (pM_start, pM_end, tid, k, kfirst, klast,
-                        pstart_Mslice, Mp [k], Mp [k+1]) ;
+                        pstart_Mslice, GB_IGET (Mp, k), GB_IGET (Mp, k+1)) ;
 
                     //----------------------------------------------------------
                     // C<M(:,j)> = A(:,j)
@@ -207,7 +207,7 @@
                     for (int64_t pM = pM_start ; pM < pM_end ; pM++)
                     { 
                         // C(i,j) = A(i,j)
-                        int64_t p = pA + GBI_M (Mi, pM, Mvlen) ;
+                        int64_t p = pA + GB_IGET (Mi, pM) ;
                         GB_COPY_aij_to_C (Cx, pM, Ax, p,
                             GB_A_ISO, cwork, GB_C_ISO) ;
                     }

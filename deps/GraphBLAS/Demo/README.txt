@@ -1,62 +1,58 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 This is the GraphBLAS/Demo folder.  It contains a set of simple demo programs
 that illustrate the use of GraphBLAS.  To compile and run the demos, see
-../README.txt.
-
-vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
->>> DO NOT BENCHMARK ANY OF THESE PROGRAMS <<<
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-    These methods are simple ones, meant for illustration only.  They can be
-    slow.  Use LAGraph for benchmarking and use in production.  Do not use any
-    of these methods in user applications.  Eventually, this Demo folder will
-    be removed, and its purpose will be achieved in LAGraph instead.
+../README.txt.  These methods are not meant as benchmarks; use LAGraph for
+that.
 
 --------------------------------------------------------------------------------
 Files in this folder:
 
     README.txt              this file
     demo                    run all demos
+    vdemo                   run all demos with valgrind
+    wdemo                   run the wathen_demo with larger matrices
 
 --------------------------------------------------------------------------------
 in Demo/Program:
 --------------------------------------------------------------------------------
 
-    complex_demo.c          demo program to test complex type
-    import_demo.c           demo program to test import/export
-    kron_demo.c             demo program to test GrB_kronecker
-    simple_demo.c           demo program to test simple_rand
-    wildtype_demo.c         demo program, arbitrary struct as user-defined type
-    openmp_demo.c           demo program using OpenMP
+    complex_demo.c          a user-defined complex number type
+    context_demo.c          how to use the GxB_Context for nested parallelism
+    gauss_demo.c            the Gaussian integer: an int with real/imag parts
+    gauss.m                 the same as gauss_demo.c, but in MATLAB
+    grow_demo.c             growing a matrix, one or many rows at a time
+    simple_demo.c           a test for simple_rand
+    wathen_demo.c           creating a finite element matrix
+    wildtype_demo.c         an arbitrary user-defined type
 
 --------------------------------------------------------------------------------
 in Demo/Output:
 --------------------------------------------------------------------------------
 
-    complex_demo_out.m  output of complex_demo
-    simple_test.out     output of simple_demo
-    tri_demo.out        output of tri_demo
-    wildtype_demo.out   output of wildtype_demo
-    import_demo.out     output of import_demo
+    complex_demo_out2.m     output of complex_demo
+    complex_demo_out.m      output of complex_demo
+    context_demo.out        output of context_demo
+    gauss_demo1.out         output of gauss_demo
+    gauss_demo.out          output of gauss_demo
+    simple_demo.out         output of simple_demo
+    wathen_demo.out         output of wathen_demo
+    wildtype_demo.out       output of wildtype_demo
 
 --------------------------------------------------------------------------------
 in Demo/Include:
 --------------------------------------------------------------------------------
 
-    graphblas_demos.h       include file for all demos
-    simple_rand.h           include file for simple_rand.c
-    usercomplex.h           include file for usercomplex.h
-
     get_matrix.c            get a matrix (file, Wathen, or random)
+    graphblas_demos.h       include file for all demos
+    isequal.c               test if 2 matrices are equal
     random_matrix.c         create a random matrix
     read_matrix.c           read a matrix from a file (Matrix/*)
-    simple_rand.c           a very simple random number generator
+    simple_rand.h           simple random number generator
     usercomplex.c           user-defined double complex type
+    usercomplex.h           include file for usercomplex.h
     wathen.c                GraphBLAS version of wathen.m
-    import_test.c           test import/export
-    isequal.c               test if 2 matrices are equal
 
 --------------------------------------------------------------------------------
 in Demo/Matrix:
@@ -68,6 +64,7 @@ the Harwell/Boeing matrix collection.  Contains:
     2blocks
     ash219
     bcsstk01
+    cover.mtx
     eye3
     fs_183_1
     huge

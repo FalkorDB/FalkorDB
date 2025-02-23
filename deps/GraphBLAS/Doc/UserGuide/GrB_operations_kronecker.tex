@@ -1,0 +1,52 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_kronecker:} Kronecker product} %==========================
+%===============================================================================
+\label{kron}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_kronecker              // C<Mask> = accum (C, kron(A,B))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const <operator> op,            // defines '*' for T=kron(A,B)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Matrix B,             // second input: matrix B
+    const GrB_Descriptor desc       // descriptor for C, Mask, A, and B
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_kronecker' computes the Kronecker product,
+${\bf C \langle M \rangle = C \odot \mbox{kron}(A,B)}$ where
+\[
+\mbox{kron}{\bf (A,B)} =
+\left[
+    \begin{array}{ccc}
+    a_{00} \otimes {\bf B} & \ldots & a_{0,n-1} \otimes {\bf B} \\
+    \vdots & \ddots & \vdots \\
+    a_{m-1,0} \otimes {\bf B} & \ldots & a_{m-1,n-1} \otimes {\bf B} \\
+    \end{array}
+\right]
+\]
+The $\otimes$ operator is defined by the \verb'op' parameter.  It is applied in
+an element-wise fashion (like \verb'GrB_eWiseMult'), where the pattern of the
+submatrix $a_{ij} \otimes {\bf B}$ is the same as the pattern of ${\bf B}$ if
+$a_{ij}$ is an entry in the matrix ${\bf A}$, or empty otherwise.  The input
+matrices \verb'A' and \verb'B' can be of any dimension, and both matrices may
+be transposed first via the descriptor, \verb'desc'.  Entries in \verb'A' and
+\verb'B' are typecast into the input types of the \verb'op'.  The matrix
+\verb'T=kron(A,B)' has the same type as the \verb'ztype' of the binary
+operator, \verb'op'.  The final step is ${\bf C \langle M \rangle  = C \odot
+T}$, as described in Section~\ref{accummask}.
+
+The operator \verb'op' may be a \verb'GrB_BinaryOp', a \verb'GrB_Monoid', or a
+\verb'GrB_Semiring'.  In the latter case, the multiplicative operator of
+the semiring is used.
+%
+The \verb'op' may be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+

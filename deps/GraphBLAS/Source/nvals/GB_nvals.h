@@ -2,7 +2,7 @@
 // GB_nvals.h: definitions for nrows, ncols, and nvals
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 
 GrB_Info GB_nvals           // get the number of entries in a matrix
 (
-    GrB_Index *nvals,       // matrix has nvals entries
+    uint64_t *nvals,        // matrix has nvals entries
     const GrB_Matrix A,     // matrix to query
     GB_Werk Werk
 ) ;

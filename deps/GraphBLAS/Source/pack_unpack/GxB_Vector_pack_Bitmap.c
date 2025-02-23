@@ -2,7 +2,7 @@
 // GxB_Vector_pack_Bitmap: pack a vector in bitmap format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,10 +15,10 @@ GrB_Info GxB_Vector_pack_Bitmap // pack a bitmap vector
     int8_t **vb,        // bitmap, vb_size >= n
     void **vx,          // values, vx_size >= n * (type size)
                         // or vx_size >= (type size), if iso is true
-    GrB_Index vb_size,  // size of vb in bytes
-    GrB_Index vx_size,  // size of vx in bytes
+    uint64_t vb_size,   // size of vb in bytes
+    uint64_t vx_size,   // size of vx in bytes
     bool iso,           // if true, v is iso
-    GrB_Index nvals,    // # of entries in bitmap
+    uint64_t nvals,     // # of entries in bitmap
     const GrB_Descriptor desc
 )
 { 
@@ -27,10 +27,12 @@ GrB_Info GxB_Vector_pack_Bitmap // pack a bitmap vector
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Vector_pack_Bitmap (v, "
-        "&vb, &vx, vb_size, vx_size, iso, nvals, desc)") ;
+    GB_RETURN_IF_NULL (v) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
+    GB_WHERE_1 (v, "GxB_Vector_pack_Bitmap (v, &vb, &vx, vb_size, vx_size,"
+        " iso, nvals, desc)") ;
     GB_BURBLE_START ("GxB_Vector_pack_Bitmap") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
 

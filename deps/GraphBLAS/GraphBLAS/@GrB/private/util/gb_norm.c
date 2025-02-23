@@ -2,7 +2,7 @@
 // gb_norm: compute the norm of a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@ double gb_norm              // compute norm (A,kind)
     // get input matrix, select types and operators, and allocate X
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows, ncols, nvals ;
+    uint64_t nrows, ncols, nvals ;
     OK (GrB_Matrix_nvals (&nvals, A)) ;
     if (nvals == 0) return ((double) 0) ;
 
@@ -141,7 +141,7 @@ double gb_norm              // compute norm (A,kind)
 
             case INT64_MIN :    // (-inf)-norm
 
-                if (GB_is_dense (A))
+                if (gb_is_dense (A))
                 { 
                     // X = abs (A)
                     OK1 (X, GrB_Matrix_apply (X, NULL, NULL, absop, A, NULL)) ;

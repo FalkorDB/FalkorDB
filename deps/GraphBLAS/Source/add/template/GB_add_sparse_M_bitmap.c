@@ -2,7 +2,7 @@
 // GB_add_sparse_M_bitmap: C(:,j)<M>=A(:,j)+B(:,j), C sparse/hyper, M bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,16 +35,16 @@
 
     // GB_GET_MIJ: get M(i,j) where M is bitmap or full
     #undef  GB_GET_MIJ
-    #define GB_GET_MIJ(i)                                     \
-        int64_t pM = pM_start + i ;                           \
-        bool mij = GBB_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ; \
+    #define GB_GET_MIJ(i)                                       \
+        int64_t pM = pM_start + i ;                             \
+        bool mij = GBb_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ; \
         if (Mask_comp) mij = !mij ;
 
     // A and B are sparse or hypersparse, not bitmap or full, but individual
     // vectors of A and B might have all entries present (adense and/or
     // bdense).
-    ASSERT (A_is_sparse || A_is_hyper) ;
-    ASSERT (B_is_sparse || B_is_hyper) ;
+    ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A)) ;
+    ASSERT (GB_IS_SPARSE (B) || GB_IS_HYPERSPARSE (B)) ;
 
     int64_t pM_start = j * vlen ;
 
@@ -61,8 +61,8 @@
         for (int64_t p = 0 ; p < ajnz ; p++)
         {
             int64_t i = p + iA_first ;
-            ASSERT (Ai [pA + p] == i) ;
-            ASSERT (Bi [pB + p] == i) ;
+            ASSERT (GB_IGET (Ai, pA + p) == i) ;
+            ASSERT (GB_IGET (Bi, pB + p) == i) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
@@ -70,7 +70,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 GB_LOAD_A (aij, Ax, pA + p, A_iso) ;
                 GB_LOAD_B (bij, Bx, pB + p, B_iso) ;
@@ -91,7 +91,7 @@
 
         for ( ; pB < pB_end ; pB++)
         {
-            int64_t i = Bi [pB] ;
+            int64_t i = GB_IGET (Bi, pB) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
@@ -99,7 +99,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -129,14 +129,14 @@
 
         for ( ; pA < pA_end ; pA++)
         {
-            int64_t i = Ai [pA] ;
+            int64_t i = GB_IGET (Ai, pA) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -166,14 +166,14 @@
 
         for ( ; pA < pA_end ; pA++)
         {
-            int64_t i = Ai [pA] ;
+            int64_t i = GB_IGET (Ai, pA) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -195,14 +195,14 @@
 
         for ( ; pB < pB_end ; pB++)
         {
-            int64_t i = Bi [pB] ;
+            int64_t i = GB_IGET (Bi, pB) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -232,7 +232,7 @@
 
         for ( ; pB < pB_end ; pB++)
         {
-            int64_t i = Bi [pB] ;
+            int64_t i = GB_IGET (Bi, pB) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
@@ -240,7 +240,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -262,14 +262,14 @@
 
         for ( ; pA < pA_end ; pA++)
         {
-            int64_t i = Ai [pA] ;
+            int64_t i = GB_IGET (Ai, pA) ;
             GB_GET_MIJ (i) ;
             if (mij)
             { 
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -299,8 +299,8 @@
 
         while (pA < pA_end && pB < pB_end)
         {
-            int64_t iA = Ai [pA] ;
-            int64_t iB = Bi [pB] ;
+            int64_t iA = GB_IGET (Ai, pA) ;
+            int64_t iB = GB_IGET (Bi, pB) ;
             if (iA < iB)
             {
                 GB_GET_MIJ (iA) ;
@@ -309,7 +309,7 @@
                     #if ( GB_ADD_PHASE == 1 )
                     cjnz++ ;
                     #else
-                    Ci [pC] = iA ;
+                    GB_ISET (Ci, pC, iA) ;      // Ci [pC] = iA ;
                     #ifndef GB_ISO_ADD
                     #if GB_IS_EWISEUNION
                     { 
@@ -338,7 +338,7 @@
                     #if ( GB_ADD_PHASE == 1 )
                     cjnz++ ;
                     #else
-                    Ci [pC] = iB ;
+                    GB_ISET (Ci, pC, iB) ;      // Ci [pC] = iB ;
                     #ifndef GB_ISO_ADD
                     #if GB_IS_EWISEUNION
                     { 
@@ -367,7 +367,7 @@
                     #if ( GB_ADD_PHASE == 1 )
                     cjnz++ ;
                     #else
-                    Ci [pC] = iB ;
+                    GB_ISET (Ci, pC, iB) ;      // Ci [pC] = iB ;
                     #ifndef GB_ISO_ADD
                     GB_LOAD_A (aij, Ax, pA, A_iso) ;
                     GB_LOAD_B (bij, Bx, pB, B_iso) ;
@@ -387,14 +387,14 @@
 
         for ( ; pA < pA_end ; pA++)
         {
-            int64_t iA = Ai [pA] ;
+            int64_t iA = GB_IGET (Ai, pA) ;
             GB_GET_MIJ (iA) ;
             if (mij)
             { 
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = iA ;
+                GB_ISET (Ci, pC, iA) ;      // Ci [pC] = iA ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 
@@ -416,7 +416,7 @@
 
         for ( ; pB < pB_end ; pB++)
         {
-            int64_t iB = Bi [pB] ;
+            int64_t iB = GB_IGET (Bi, pB) ;
             GB_GET_MIJ (iB) ;
             if (mij)
             { 
@@ -424,7 +424,7 @@
                 #if ( GB_ADD_PHASE == 1 )
                 cjnz++ ;
                 #else
-                Ci [pC] = iB ;
+                GB_ISET (Ci, pC, iB) ;      // Ci [pC] = iB ;
                 #ifndef GB_ISO_ADD
                 #if GB_IS_EWISEUNION
                 { 

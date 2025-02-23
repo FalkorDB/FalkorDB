@@ -2,7 +2,7 @@
 // GB_mex_argmax: compute [x,p]=argmax(A,dim,pr,jit)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,22 +17,22 @@
 "typedef struct { int64_t k ; double v ; } tuple_kv ;"
 
 void make_tuple_kv (tuple_kv *z,
-    const double *x, GrB_Index ix, GrB_Index jx,
-    const void   *y, GrB_Index iy, GrB_Index jy,
+    const double *x, uint64_t ix, uint64_t jx,
+    const void   *y, uint64_t iy, uint64_t jy,
     const void *theta) ;
 void make_tuple_kv (tuple_kv *z,
-    const double *x, GrB_Index ix, GrB_Index jx,
-    const void   *y, GrB_Index iy, GrB_Index jy,
+    const double *x, uint64_t ix, uint64_t jx,
+    const void   *y, uint64_t iy, uint64_t jy,
     const void *theta)
 {
     z->k = (int64_t) jx + 1 ;
     z->v = (*x) ;
 }
 
-#define MAKE_TUPLE_KV \
+#define MAKE_TUPLE_KV_DEFN \
 "void make_tuple_kv (tuple_kv *z,                    \n" \
-"    const double *x, GrB_Index ix, GrB_Index jx,    \n" \
-"    const void   *y, GrB_Index iy, GrB_Index jy,    \n" \
+"    const double *x, uint64_t ix, uint64_t jx,      \n" \
+"    const void   *y, uint64_t iy, uint64_t jy,      \n" \
 "    const void *theta)                              \n" \
 "{                                                   \n" \
 "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -145,7 +145,7 @@ void mexFunction
         FREE_ALL ;
         mexErrMsgTxt ("failed") ;
     }
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
 
@@ -180,7 +180,7 @@ void mexFunction
         METHOD (GxB_IndexBinaryOp_new (&Iop,
             (GxB_index_binary_function) make_tuple_kv,
             Tuple, GrB_FP64, GrB_BOOL, GrB_BOOL,
-            "make_tuple_kv", MAKE_TUPLE_KV)) ;
+            "make_tuple_kv", MAKE_TUPLE_KV_DEFN)) ;
     }
     else
     {
@@ -191,7 +191,7 @@ void mexFunction
             NULL, NULL)) ;
     }
     OK (GxB_IndexBinaryOp_wait (Iop, GrB_MATERIALIZE)) ;
-    char *error ;
+    const char *error ;
     OK (GxB_IndexBinaryOp_error (&error, Iop)) ;
     if (error == NULL || strlen (error) > 0)
     {
@@ -273,10 +273,10 @@ void mexFunction
     OK (GxB_IndexBinaryOp_get_SIZE (Iop, &name_size, GxB_JIT_C_NAME)) ;
     // printf ("name size %d\n", (int) name_size) ;
     char name [256] ;
-    OK (GxB_IndexBinaryOp_get_String (Iop, &name, GxB_JIT_C_NAME)) ;
+    OK (GxB_IndexBinaryOp_get_String (Iop, name, GxB_JIT_C_NAME)) ;
     // printf ("name [%s]\n", name) ;
     int expected = GrB_INVALID_VALUE ;
-    ERR (GxB_IndexBinaryOp_get_VOID (Iop, &name, GxB_JIT_C_NAME)) ;
+    ERR (GxB_IndexBinaryOp_get_VOID (Iop, name, GxB_JIT_C_NAME)) ;
 
     OK (GxB_IndexBinaryOp_set_String (Iop, "my index binop", GrB_NAME)) ;
     name [0] = '\0' ;

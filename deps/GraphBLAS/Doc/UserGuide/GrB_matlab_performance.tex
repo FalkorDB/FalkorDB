@@ -1,0 +1,93 @@
+
+%===============================================================================
+\subsection{Performance of MATLAB versus GraphBLAS}
+%===============================================================================
+\label{matlab_performance}
+
+MATLAB R2021a uses SuiteSparse:GraphBLAS as a built-in library, but
+uses it only for \verb'C=A*B' when both \verb'A' and \verb'B' are sparse.  In
+prior versions of MATLAB, \verb'C=A*B' relied on the \verb'SFMULT' and
+\verb'SSMULT' packages in SuiteSparse, which are single-threaded (also written
+by this author).  The GraphBLAS \verb'GrB_mxm' is up to 30x faster on a 20-core
+Intel Xeon, compared with \verb'C=A*B' in MATLAB R2020b and earlier.  With
+MATLAB R2021a and later, the performance of \verb'C=A*B' when using MATLAB
+sparse matrices is identical to the performance for GraphBLAS matrices, since
+the same code is being used by both (\verb'GrB_mxm').
+
+Other methods in GraphBLAS are also faster, some {\em extremely} so, but are
+not yet exploited as built-in operations MATLAB.  In particular, the statement
+\verb'C(M)=A' (where \verb'M' is a logical matrix) takes under a second for a
+large sparse problem when using GraphBLAS via its \verb'@GrB' interface.  By
+stark contrast, MATLAB would take about 4 or 5 days, a speedup of about
+500,000x.  For a smaller problem, GraphBLAS takes 0.4 seconds while MATLAB
+takes 28 hours (a speedup of about 250,000x).  Both cases use the same
+statement with the same syntax (\verb'C(M)=A') and compute exactly the same
+result.  Below are the results for \verb'n'-by-\verb'n' matrices in GraphBLAS
+v5.0.6 and MATLAB R2020a, on a Dell XPS13 laptop (16GB RAM, Intel(R) Core(TM)
+i7-8565U CPU @ 1.80GHz with 4 hardware cores).  GraphBLAS is using 4 threads.
+
+\vspace{0.10in}
+{\scriptsize
+\begin{tabular}{rrr|rrr}
+\hline
+\verb'n'    & \verb'nnz(C)' & \verb'nnz(M)' & GraphBLAS (sec) & MATLAB (sec) & speedup \\
+\hline
+2,048        & 20,432         & 2,048          & 0.005     & 0.024     & 4.7 \\
+4,096        & 40,908         & 4,096          & 0.003     & 0.115     & 39 \\
+8,192        & 81,876         & 8,191          & 0.009     & 0.594     & 68 \\
+16,384       & 163,789        & 16,384         & 0.009     & 2.53      & 273 \\
+32,768       & 327,633        & 32,767         & 0.014     & 12.4      & 864 \\
+65,536       & 655,309        & 65,536         & 0.025     & 65.9      & 2,617 \\
+131,072      & 1,310,677      & 131,070        & 0.055     & 276.2     & 4,986 \\
+262,144      & 2,621,396      & 262,142        & 0.071     & 1,077     & 15,172 \\
+524,288      & 5,242,830      & 524,288        & 0.114     & 5,855     & 51,274 \\
+1,048,576    & 10,485,713     & 1,048,576      & 0.197     & 27,196    & 137,776 \\
+2,097,152    & 20,971,475     & 2,097,152      & 0.406     & 100,799   & 248,200 \\
+4,194,304    & 41,942,995     & 4,194,304      & 0.855  & 4 to 5 days? & 500,000?\\
+\hline
+\end{tabular}}
+\vspace{0.10in}
+
+The assignment \verb'C(I,J)=A' in MATLAB, when using \verb'@GrB' objects, is up
+to 1000x faster than the same statement with the same syntax, when using MATLAB
+sparse matrices instead.  Matrix concatenation \verb'C = [A B]' is about 17
+times faster in GraphBLAS, on a 20-core Intel Xeon.  For more details, see the
+\verb'GraphBLAS/GraphBLAS/demo' folder and its contents.
+
+Below is a comparison of other methods in SuiteSparse:GraphBLAS, compared with
+MATLAB 2021a.  SuiteSparse:GraphBLAS: v6.1.4 (Jan 12, 2022), was used, compiled
+with gcc 11.2.0.  The system is an Intel(R) Xeon(R) CPU E5-2698 v4 @ 2.20GHz
+(20 hardware cores, 40 threads), Ubuntu 20.04, 256GB RAM.  Full details appear
+in the \verb'GraphBLAS/GraphBLAS/demo/benchmark' folder.  For this matrix,
+SuiteSparse:GraphBLAS is anywhere from 3x to 17x faster than the built-in
+methods in MATLAB.  This matrix is not special, but is typical of the relative
+performance of many large matrices.  Note that two of these (\verb'C=L*S' and
+\verb'C=S*R') rely on an older version of SuiteSparse:GraphBLAS (v3.3.3) built
+into MATLAB R2021a.
+
+{\footnotesize
+\begin{verbatim}
+    Legend:
+    S: large input sparse matrix (n-by-n), the GAP-twitter matrix
+    x: dense vector (1-by-n or n-by-1)
+    F: dense matrix (4-by-n or n-by-4)
+    L: 8-by-n sparse matrix, about 1000 entries
+    R: n-by-8 sparse matrix, about 1000 entries
+    B: n-by-n sparse matrix, about nnz(S)/10 entries
+    p,q: random permutation vectors
+
+    GAP/GAP-twitter: n: 61.5784 million nnz: 1468.36 million
+    (run time in seconds):
+    y=S*x:   MATLAB:  22.8012 GrB:   2.4018 speedup:     9.49
+    y=x*S:   MATLAB:  16.1618 GrB:   1.1610 speedup:    13.92
+    C=S*F:   MATLAB:  30.6121 GrB:   9.7052 speedup:     3.15
+    C=F*S:   MATLAB:  26.4044 GrB:   1.5245 speedup:    17.32
+    C=L*S:   MATLAB:  19.1228 GrB:   2.4301 speedup:     7.87
+    C=S*R:   MATLAB:   0.0087 GrB:   0.0020 speedup:     4.40
+    C=S'     MATLAB: 224.7268 GrB:  22.6855 speedup:     9.91
+    C=S+S:   MATLAB:  14.3368 GrB:   1.5539 speedup:     9.23
+    C=S+B:   MATLAB:  15.5600 GrB:   1.5098 speedup:    10.31
+    C=S(p,q) MATLAB:  95.6219 GrB:  15.9468 speedup:     6.00    \end{verbatim}
+}
+
+

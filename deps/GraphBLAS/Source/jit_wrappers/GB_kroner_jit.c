@@ -2,7 +2,7 @@
 // GB_kroner_jit: kronecker product
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,8 +39,9 @@ GrB_Info GB_kroner_jit
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_KERNEL_KRONER, /* is_ewisemult: */ false, /* C_iso: */ C->iso,
-        /* C_in_iso: */ false, C_sparsity, C->type, /* M: */ NULL, true, false,
-        binaryop, flipij, false, A, B) ;
+        /* C_in_iso: */ false, C_sparsity, C->type,
+        C->p_is_32, C->j_is_32, C->i_is_32,
+        /* M: */ NULL, true, false, binaryop, flipij, false, A, B) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -57,7 +58,8 @@ GrB_Info GB_kroner_jit
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, A, B, nthreads, binaryop->theta)) ;
+    return (GB_jit_kernel (C, A, B, nthreads, binaryop->theta, &GB_callback)) ;
 }
 

@@ -2,7 +2,7 @@
 // GB_convert_to_nonfull: ensure a matrix is not full (hyper, sparse, or bitmap)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,7 +40,7 @@ GrB_Info GB_convert_to_nonfull      // ensure a matrix is not full
     else if (sparsity_control & GxB_SPARSE)
     { 
         // C can become sparse
-        return (GB_convert_full_to_sparse (A)) ;
+        return (GB_convert_full_to_sparse (A, Werk)) ;
     }
     else if (sparsity_control & GxB_HYPERSPARSE)
     { 

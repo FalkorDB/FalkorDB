@@ -2,7 +2,7 @@
 // GB_assign_zombie1: delete all entries in C(:,j) for GB_assign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,27 +37,28 @@ GrB_Info GB_assign_zombie1
     // get C(:,j)
     //--------------------------------------------------------------------------
 
-    int64_t *restrict Ci = C->i ;
-    const int64_t *restrict Ch = C->h ;
-    const int64_t *restrict Cp = C->p ;
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
+    const void *Ch = C->h ;
     int64_t pC_start, pC_end ;
     const int64_t Cnvec = C->nvec ;
 
     if (Ch != NULL)
     { 
         // C is hypersparse
-        const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
-        const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
-        const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+        const void *C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+        const void *C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+        const void *C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
         const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
-        GB_hyper_hash_lookup (Ch, Cnvec, Cp, C_Yp, C_Yi, C_Yx, C_hash_bits,
+        GB_hyper_hash_lookup (C->p_is_32, C->j_is_32,
+            Ch, Cnvec, Cp, C_Yp, C_Yi, C_Yx, C_hash_bits,
             j, &pC_start, &pC_end) ;
     }
     else
     { 
         // C is sparse
-        pC_start = Cp [j] ;
-        pC_end   = Cp [j+1] ;
+        pC_start = GB_IGET (Cp, j) ;
+        pC_end   = GB_IGET (Cp, j+1) ;
     }
 
     int64_t cjnz = pC_end - pC_start ;
@@ -80,12 +81,13 @@ GrB_Info GB_assign_zombie1
         reduction(+:nzombies)
     for (pC = pC_start ; pC < pC_end ; pC++)
     {
-        int64_t i = Ci [pC] ;
+        int64_t i = GB_IGET (Ci, pC) ;
         if (!GB_IS_ZOMBIE (i))
         { 
             // delete C(i,j) by marking it as a zombie
             nzombies++ ;
-            Ci [pC] = GB_ZOMBIE (i) ;
+            i = GB_ZOMBIE (i) ;
+            GB_ISET (Ci, pC, i) ;       // Ci [pC] = i ;
         }
     }
 

@@ -1,0 +1,231 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{SuiteSparse:GraphBLAS Colon and Index Notation} %%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{colon}
+
+MATLAB/Octave uses a colon notation to index into matrices, such as
+\verb'C=A(2:4,3:8)', which extracts \verb'C' as 3-by-6 submatrix from \verb'A',
+from rows 2 through 4 and columns 3 to 8 of the matrix \verb'A'.  A single
+colon is used to denote all rows, \verb'C=A(:,9)', or all columns,
+\verb'C=A(12,:)', which refers to the 9th column and 12th row of \verb'A',
+respectively.  An arbitrary integer list can be given as well, such as the
+MATLAB/Octave statements:
+
+    {\footnotesize
+    \begin{verbatim}
+    I = [2 1 4] ;
+    J = [3 5] ;
+    C = A (I,J) ; \end{verbatim} }
+\noindent
+which creates the 3-by-2 matrix \verb'C' as follows:
+\[
+C =
+\left[
+\begin{array}{cc}
+a_{2,3} & a_{2,5} \\
+a_{1,3} & a_{1,5} \\
+a_{4,3} & a_{4,5} \\
+\end{array}
+\right]
+\]
+
+The GraphBLAS API can do the equivalent of \verb'C=A(I,J)',
+\verb'C=A(:,J)', \verb'C=A(I,:)', and \verb'C=A(:,:)', by passing a parameter
+\verb'const GrB_Index *I' as either an array of size \verb'ni', or as the
+special value \verb'GrB_ALL', which corresponds to the stand-alone colon
+\verb'C=A(:,J)', and the same can be done for \verb'J'..  To compute
+\verb'C=A(2:4,3:8)' in GraphBLAS requires the user application to create two
+explicit integer arrays \verb'I' and \verb'J' of size 3 and 5, respectively,
+and then fill them with the explicit values \verb'[2,3,4]' and
+\verb'[3,4,5,6,7,8]'.  This works well if the lists are small, or if the matrix
+has more entries than rows or columns.
+
+However, particularly with hypersparse matrices, the size of the explicit
+arrays \verb'I' and \verb'J' can vastly exceed the number of entries in the
+matrix.  When using its hypersparse format, SuiteSparse:GraphBLAS allows the
+user application to create a \verb'GrB_Matrix' with dimensions up to $2^{60}$,
+with no memory constraints.  The only constraint on memory usage in a
+hypersparse matrix is the number of entries in the matrix.
+
+For example, creating a $n$-by-$n$ matrix \verb'A' of type \verb'GrB_FP64' with
+$n=2^{60}$ and one million entries is trivial to do in Version 2.1 (and later)
+of SuiteSparse:GraphBLAS, taking at most 24MB of space.  SuiteSparse:GraphBLAS
+Version 2.1 (or later) could do this on an old smartphone.  However, using just
+the pure GraphBLAS API, constructing \verb'C=A(0:(n/2),0:(n/2))'
+in SuiteSparse Version 2.0 would require the creation of an integer array
+\verb'I' of size $2^{59}$, containing the sequence 0, 1, 2, 3, ...., requiring
+about 4 ExaBytes of memory (4 million terabytes).  This is roughly 1000 times
+larger than the memory size of the world's largest computer in 2018.
+
+SuiteSparse:GraphBLAS Version 2.1 and later extends the GraphBLAS API with a
+full implementation of the MATLAB colon notation for integers,
+\verb'I=begin:inc:end'.  This extension allows the construction of the matrix
+\verb'C=A(0:(n/2),0:(n/2))' in this example, with dimension $2^{59}$, probably
+taking just milliseconds on an old smartphone.
+
+The \verb'GrB_extract', \verb'GrB_assign', and \verb'GxB_subassign' operations
+(described in the Section~\ref{operations}) each have parameters that define a
+list of integer indices, using two parameters:
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    const GrB_Index *I ;    // an array, or a special value GrB_ALL
+    GrB_Index ni ;          // the size of I, or a special value \end{verbatim}}
+
+\vspace{-0.05in}
+These two parameters define five kinds of index lists, which can be used to
+specify either an explicit or implicit list of row indices and/or column
+indices.  The length of the list of indices is denoted \verb'|I|'.  This
+discussion applies equally to the row indices \verb'I' and the column indices
+\verb'J'.  The five kinds are listed below.
+
+\begin{enumerate}
+\item
+    An explicit list of indices, such as \verb'I = [2 1 4 7 2]' in MATLAB
+    notation, is handled by passing in \verb'I' as a pointer to an array of
+    size 5, and passing \verb'ni=5' as the size of the list.
+    The length of the explicit list is \verb'ni=|I|'.
+    Duplicates may appear, except that for some uses of \verb'GrB_assign'
+    and \verb'GxB_subassign', duplicates lead to undefined behavior
+    according to the GraphBLAS C API Specification.
+    SuiteSparse:GraphBLAS specifies how duplicates are handled in all cases,
+    as an addition to the specification.
+    See Section~\ref{duplicates} for details.
+
+\item To specify all rows of a matrix, use \verb'I = GrB_ALL'.  The
+    parameter \verb'ni' is ignored.  This is equivalent to \verb'C=A(:,J)'
+    in MATLAB.  In GraphBLAS, this is the sequence \verb'0:(m-1)' if \verb'A'
+    has \verb'm' rows, with length \verb'|I|=m'.  If \verb'J' is used the
+    columns of an \verb'm'-by-\verb'n' matrix, then \verb'J=GrB_ALL' refers to
+    all columns, and is the sequence \verb'0:(n-1)', of length \verb'|J|=n'.
+
+    \begin{alert}
+    {\bf SPEC:} If \verb'I' or \verb'J' are \verb'GrB_ALL', the specification
+    requires that \verb'ni' be passed in as \verb'm' (the number of rows)
+    and \verb'nj' be passed in as \verb'n'.  Any other value is an error.
+    SuiteSparse:GraphBLAS ignores these scalar inputs and treats them as if
+    they are equal to their only possible correct value.
+    \end{alert}
+
+\item To specify a contiguous range of indices, such as \verb'I=10:20'
+    in MATLAB, the array \verb'I' has size 2, and \verb'ni' is passed to
+    SuiteSparse:GraphBLAS as the special value \verb'ni = GxB_RANGE'.  The
+    beginning index is \verb'I[GxB_BEGIN]' and the ending index is
+    \verb'I[GxB_END]'.   Both values must be non-negative since
+    \verb'GrB_Index' is an unsigned integer (\verb'uint64_t').  The value of
+    \verb'I[GxB_INC]' is ignored.
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    // to specify I = 10:20
+    GrB_Index I [2], ni = GxB_RANGE ;
+    I [GxB_BEGIN] = 10 ;      // the start of the sequence
+    I [GxB_END  ] = 20 ;      // the end of the sequence \end{verbatim}}
+
+    \vspace{-0.05in}
+    Let $b$ = \verb'I[GxB_BEGIN]', let $e$ = \verb'I[GxB_END]',
+    The sequence has length zero if $b > e$; otherwise the length is
+    $|I| = (e-b) + 1$.
+
+\item To specify a strided range of indices with a non-negative stride,
+    such as \verb'I=3:2:10', the array \verb'I' has size 3, and \verb'ni' has
+    the special value \verb'GxB_STRIDE'.  This is the sequence 3, 5, 7, 9, of
+    length 4.  Note that 10 does not appear in the list.  The end point need
+    not appear if the increment goes past it.
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    // to specify I = 3:2:10
+    GrB_Index I [3], ni = GxB_STRIDE ;
+    I [GxB_BEGIN ] = 3 ;      // the start of the sequence
+    I [GxB_INC   ] = 2 ;      // the increment
+    I [GxB_END   ] = 10 ;     // the end of the sequence \end{verbatim}}
+
+    \vspace{-0.05in}
+    The \verb'GxB_STRIDE' sequence is the same as the \verb'List' generated by
+    the following for loop:
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    int64_t k = 0 ;
+    GrB_Index *List = (a pointer to an array of large enough size)
+    for (int64_t i = I [GxB_BEGIN] ; i <= I [GxB_END] ; i += I [GxB_INC])
+    {
+        // i is the kth entry in the sequence
+        List [k++] = i ;
+    } \end{verbatim}}
+
+    \vspace{-0.05in}
+    Then passing the explicit array \verb'List' and its length \verb'ni=k' has
+    the same effect as passing in the array \verb'I' of size 3, with
+    \verb'ni=GxB_STRIDE'.  The latter is simply much faster to produce, and
+    much more efficient for SuiteSparse:GraphBLAS to process.
+
+    Let $b$ = \verb'I[GxB_BEGIN]', let $e$ = \verb'I[GxB_END]', and let
+    $\Delta$ = \verb'I[GxB_INC]'.  The sequence has length zero if $b > e$ or
+    $\Delta=0$.  Otherwise, the length of the sequence is
+    \[
+    |I| = \Bigl\lfloor\dfrac{e-b}{\Delta}\Bigr\rfloor + 1
+    \]
+
+\item
+    In MATLAB notation, if the stride is negative, the sequence is decreasing.
+    For example, \verb'10:-2:1' is the sequence 10, 8, 6, 4, 2, in that order.
+    In SuiteSparse:GraphBLAS, use \verb'ni = GxB_BACKWARDS', with an array
+    \verb'I' of size 3.  The following example specifies defines the equivalent
+    of the MATLAB expression \verb'10:-2:1' in SuiteSparse:GraphBLAS:
+
+    \vspace{-0.1in}
+    {\footnotesize
+    \begin{verbatim}
+    // to specify I = 10:-2:1
+    GrB_Index I [3], ni = GxB_BACKWARDS ;
+    I [GxB_BEGIN ] = 10 ;     // the start of the sequence
+    I [GxB_INC   ] = 2 ;      // the magnitude of the increment
+    I [GxB_END   ] = 1 ;      // the end of the sequence \end{verbatim}}
+
+    \vspace{-0.1in}
+    The value -2 cannot be assigned to the \verb'GrB_Index' array \verb'I',
+    since that is an unsigned type.  The signed increment is represented
+    instead with the special value \verb'ni = GxB_BACKWARDS'.
+    The \verb'GxB_BACKWARDS' sequence is the same as generated by the following
+    for loop:
+
+    \vspace{-0.1in}
+    {\footnotesize
+    \begin{verbatim}
+    int64_t k = 0 ;
+    GrB_Index *List = (a pointer to an array of large enough size)
+    for (int64_t i = I [GxB_BEGIN] ; i >= I [GxB_END] ; i -= I [GxB_INC])
+    {
+        // i is the kth entry in the sequence
+        List [k++] = i ;
+    } \end{verbatim}}
+
+    \vspace{-0.1in}
+    Let $b$ = \verb'I[GxB_BEGIN]', let $e$ = \verb'I[GxB_END]', and let
+    $\Delta$ = \verb'I[GxB_INC]' (note that $\Delta$ is not negative).  The
+    sequence has length zero if $b < e$ or $\Delta=0$.  Otherwise, the length
+    of the sequence is
+    \[
+    |I| = \Bigl\lfloor\dfrac{b-e}{\Delta}\Bigr\rfloor + 1
+    \]
+
+\end{enumerate}
+
+Since \verb'GrB_Index' is an unsigned integer, all three values
+\verb'I[GxB_BEGIN]', \verb'I[GxB_INC]', and \verb'I[GxB_END]' must
+be non-negative.
+
+Just as in MATLAB, it is valid to specify an empty sequence of length zero.
+For example, \verb'I = 5:3' has length zero in MATLAB and the same is
+true for a \verb'GxB_RANGE' sequence in SuiteSparse:GraphBLAS, with
+\verb'I[GxB_BEGIN]=5' and \verb'I[GxB_END]=3'.  This has the same
+effect as array \verb'I' with \verb'ni=0'.
+

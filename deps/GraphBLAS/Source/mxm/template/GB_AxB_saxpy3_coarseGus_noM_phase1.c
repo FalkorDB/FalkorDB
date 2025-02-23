@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_coarseGus_noM_phase1: symbolic coarse Gustavson, no mask
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,7 +22,8 @@
         #if ( GB_B_IS_SPARSE || GB_B_IS_HYPER )
         if (bjnz == 0)
         { 
-            Cp [kk] = 0 ;               // C(:,j) is empty
+            // C(:,j) is empty
+            GB_ISET (Cp, kk, 0) ;   // Cp [kk] = 0
             continue ;
         }
         #if ( GB_A_IS_SPARSE )
@@ -30,7 +31,8 @@
         { 
             GB_GET_B_kj_INDEX ;         // get index k of entry B(k,j)
             GB_GET_A_k ;                // get A(:,k)
-            Cp [kk] = aknz ;            // nnz (C (:,j)) = nnz (A (:,k))
+            GB_ISET (Cp, kk, aknz) ;    // Cp [kk] = aknz ;
+                                        // nnz (C (:,j)) = nnz (A (:,k))
             continue ;
         }
         #endif
@@ -40,7 +42,7 @@
         // count nnz in C(:,j), terminating early if C(:,j) becomes dense
         //----------------------------------------------------------------------
 
-        const int64_t f = (++mark) ;
+        const uint64_t f = (++mark) ;
         int64_t cjnz = 0 ;
         for ( ; pB < pB_end && cjnz < cvlen ; pB++)     // scan B(:,j)
         {
@@ -57,7 +59,8 @@
                 }
             }
         }
-        Cp [kk] = cjnz ;                // save count of entries in C(:,j)
+        // save count of entries in C(:,j):
+        GB_ISET (Cp, kk, cjnz) ;    // Cp [kk] = cjnz ;
     }
 }
 

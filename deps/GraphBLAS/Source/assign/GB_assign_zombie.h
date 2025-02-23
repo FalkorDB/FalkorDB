@@ -2,7 +2,7 @@
 // GB_assign_zombie.h: definitions for GB_assign_zombie* functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,12 +25,13 @@ GrB_Info GB_assign_zombie2
 
 GrB_Info GB_assign_zombie3
 (
-    GrB_Matrix C,
+    GrB_Matrix C,                   // the matrix C, or a copy
     const GrB_Matrix M,
     const bool Mask_comp,
-    const bool Mask_struct,         // if true, use the only structure of M
-    const int64_t j,
-    const GrB_Index *I,
+    const bool Mask_struct,
+    const int64_t j,                // vector index with entries to delete
+    const void *I,
+    const bool I_is_32,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3]
@@ -43,7 +44,8 @@ GrB_Info GB_assign_zombie4
     const bool Mask_comp,
     const bool Mask_struct,         // if true, use the only structure of M
     const int64_t i,
-    const GrB_Index *J,
+    const void *J,
+    const bool J_is_32,
     const int64_t nJ,
     const int Jkind,
     const int64_t Jcolon [3]
@@ -51,15 +53,17 @@ GrB_Info GB_assign_zombie4
 
 GrB_Info GB_assign_zombie5
 (
-    GrB_Matrix C,
+    GrB_Matrix C,                   // the matrix C, or a copy
     const GrB_Matrix M,
     const bool Mask_comp,
-    const bool Mask_struct,         // if true, use the only structure of M
-    const GrB_Index *I,
+    const bool Mask_struct,
+    const void *I,
+    const bool I_is_32,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,
+    const bool J_is_32,
     const int64_t nJ,
     const int Jkind,
     const int64_t Jcolon [3],

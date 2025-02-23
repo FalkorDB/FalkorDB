@@ -2,7 +2,7 @@
 // isequal: check two matrices for exact equality
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,22 +19,9 @@
 // NaN equality, use isequal_type with a user-defined operator f(x,y) that
 // returns true if x and y are both NaN.
 
-#include "GraphBLAS.h"
-#undef I
 #include "graphblas_demos.h"
 
-// call a GraphBLAS method and return if an error occurs
-#undef  OK
-#define OK(method)                                          \
-{                                                           \
-    GrB_Info info = method ;                                \
-    if (! (info == GrB_SUCCESS || info == GrB_NO_VALUE))    \
-    {                                                       \
-        /* error occured: free workspace and return */      \
-        GrB_Matrix_free (&C) ;                              \
-        return (info) ;                                     \
-    }                                                       \
-}
+#define FREE_ALL GrB_Matrix_free (&C) ;
 
 //------------------------------------------------------------------------------
 // isequal_type: check two matrices, works in any GraphBLAS

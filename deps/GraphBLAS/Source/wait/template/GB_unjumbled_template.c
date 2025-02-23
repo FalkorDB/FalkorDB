@@ -2,7 +2,7 @@
 // GB_unjumbled_template.c: unjumble the vectors of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,12 +32,12 @@
             //------------------------------------------------------------------
 
             bool jumbled = false ;
-            const int64_t pA_start = Ap [k] ;
-            const int64_t pA_end   = Ap [k+1] ;
+            const int64_t pA_start = GB_IGET (Ap, k  ) ;
+            const int64_t pA_end   = GB_IGET (Ap, k+1) ;
             int64_t ilast = -1 ;
             for (int64_t pA = pA_start ; pA < pA_end ; pA++)
             {
-                int64_t i = Ai [pA] ;
+                int64_t i = GB_IGET (Ai, pA) ;
                 if (i < ilast)
                 { 
                     jumbled = true ;
@@ -52,7 +52,8 @@
 
             if (jumbled)
             { 
-                const int64_t aknz = pA_end - pA_start ;
+                const int64_t n = pA_end - pA_start ;
+                const int64_t p = pA_start ;
                 GB_QSORT ;
             }
         }

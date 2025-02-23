@@ -2,31 +2,19 @@
 // GraphBLAS/Demo/Program/wildtype_demo: an arbitrary user-defined type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Each "scalar" entry of this type consists of a 4x4 matrix and a string of
-// length 64.
-
 #include "graphblas_demos.h"
-#undef I
-
-#if defined __INTEL_COMPILER
-#pragma warning (disable: 58 167 144 177 181 186 188 589 593 869 981 1418 1419 1572 1599 2259 2282 2557 2547 3280 )
-#elif defined __GNUC__
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#if defined ( __cplusplus )
-#pragma GCC diagnostic ignored "-Wwrite-strings"
-#else
-#pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
-#endif
-#endif
 
 //------------------------------------------------------------------------------
 // the wildtype
 //------------------------------------------------------------------------------
+
+// Each "scalar" entry of this type consists of a 4x4 matrix and a string of
+// length 64.
 
 typedef struct
 {
@@ -76,9 +64,16 @@ void wildtype_print_matrix (GrB_Matrix A, char *name)
 {
     printf ("\nPrinting the matrix with GxB_Matrix_fprint:\n") ;
     GxB_Matrix_fprint (A, name, GxB_COMPLETE, stdout) ;
-    GrB_Type type ;
-    GxB_Matrix_type (&type, A) ;
-    if (type != WildType)
+    char typename [256] ;
+    size_t len = 0 ;
+    GrB_Matrix_get_SIZE (A, &len, GrB_EL_TYPE_STRING) ;
+    typename [0] = '\0' ;
+    if (len < 256)
+    {
+        GrB_Matrix_get_String (A, typename, GrB_EL_TYPE_STRING) ;
+    }
+    printf ("matrix type given name: [%s]\n", typename) ;
+    if (strcmp (typename, "WildType") != 0)
     {
         printf ("\nThe matrix %s is not wild enough to print.\n", name) ;
         return ;
@@ -186,6 +181,26 @@ void wildmult (wildtype *z, const wildtype *x, const wildtype *y)
 "}"
 
 //------------------------------------------------------------------------------
+// get_global_string:  safely get a string from GraphBLAS
+//------------------------------------------------------------------------------
+
+// If the string is too long to fit in str [0:maxlen-1], then it is not
+// retrieved from GraphBLAS.  In this case, str is returned as empty.  An
+// alternative is to reallocate str as length len, which is enough for the
+// call got GrB_Global_get_String.
+
+void get_global_string (char *str, size_t maxlen, int option)
+{
+    str [0] = '\0' ;
+    size_t len = 0 ;
+    GrB_Global_get_SIZE (GrB_GLOBAL, &len, option) ;
+    if (len <= maxlen)
+    {
+        GrB_Global_get_String (GrB_GLOBAL, str, option) ;
+    }
+}
+
+//------------------------------------------------------------------------------
 // wildtype main program
 //------------------------------------------------------------------------------
 
@@ -197,57 +212,81 @@ int main (void)
 
     // start GraphBLAS
     GrB_init (GrB_NONBLOCKING) ;
+    GrB_Global_set_INT32 (GrB_GLOBAL, true, GxB_BURBLE) ;
 
-    GxB_Global_Option_set (GxB_BURBLE, true) ;
     int nthreads ;
-    GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &nthreads, GxB_GLOBAL_NTHREADS) ;
     fprintf (stderr, "\n" LINE "wildtype_demo: nthreads: %d\n", nthreads ) ;
 
-    char *library ;   GxB_Global_Option_get (GxB_LIBRARY_NAME,     &library) ;
-    int version [3] ; GxB_Global_Option_get (GxB_LIBRARY_VERSION,  version) ;
-    char *date ;      GxB_Global_Option_get (GxB_LIBRARY_DATE,     &date) ;
-    char *about ;     GxB_Global_Option_get (GxB_LIBRARY_ABOUT,    &about) ;
-    char *url ;       GxB_Global_Option_get (GxB_LIBRARY_URL,      &url) ;
-    char *license ;   GxB_Global_Option_get (GxB_LIBRARY_LICENSE,  &license) ;
-    char *cdate ;     GxB_Global_Option_get (GxB_LIBRARY_COMPILE_DATE, &cdate) ;
-    char *ctime ;     GxB_Global_Option_get (GxB_LIBRARY_COMPILE_TIME, &ctime) ;
-    int api_ver [3] ; GxB_Global_Option_get (GxB_API_VERSION,      api_ver) ;
-    char *api_date ;  GxB_Global_Option_get (GxB_API_DATE,         &api_date) ;
-    char *api_about ; GxB_Global_Option_get (GxB_API_ABOUT,        &api_about) ;
-    char *api_url ;   GxB_Global_Option_get (GxB_API_URL,          &api_url) ;
+    #define STRLEN 5000
+    char str [STRLEN+1] ;
+    get_global_string (str, STRLEN, GxB_LIBRARY_NAME) ;
+    fprintf (stderr, LINE "%s ", str) ;
 
-    fprintf (stderr, LINE "%s Version %d.%d.%d, %s\n" LINE "%s"
-        "(%s)\n" LINE "License:\n%s" LINE "GraphBLAS API Version %d.%d.%d, %s"
-        " (%s)\n%s" LINE,
-        library, version [0], version [1], version [2], date, about, url,
-        license, api_ver [0], api_ver [1], api_ver [2], api_date, api_url,
-        api_about) ;
-    fprintf (stderr, "compiled: %s %s\n", cdate, ctime) ;
+    int vmajor, vminor, vpatch ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &vmajor, GrB_LIBRARY_VER_MAJOR) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &vminor, GrB_LIBRARY_VER_MINOR) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &vpatch, GrB_LIBRARY_VER_PATCH) ;
+    fprintf (stderr, "Version %d.%d.%d, ", vmajor, vminor, vpatch) ;
 
+    get_global_string (str, STRLEN, GxB_LIBRARY_DATE) ;
+    fprintf (stderr, "%s\n" LINE, str) ;
+
+    get_global_string (str, STRLEN, GxB_LIBRARY_ABOUT) ;
+    fprintf (stderr, "%s", str) ;
+
+    get_global_string (str, STRLEN, GxB_LIBRARY_URL) ;
+    fprintf (stderr, "(%s)\n" LINE, str) ;
+
+    get_global_string (str, STRLEN, GxB_LIBRARY_LICENSE) ;
+    fprintf (stderr, "License:\n%s" LINE, str) ;
+
+    GrB_Global_get_INT32 (GrB_GLOBAL, &vmajor, GrB_API_VER_MAJOR) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &vminor, GrB_API_VER_MINOR) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &vpatch, GrB_API_VER_PATCH) ;
+    fprintf (stderr, "GraphBLAS API Version %d.%d.%d", vmajor, vminor, vpatch) ;
+
+    get_global_string (str, STRLEN, GxB_API_DATE) ;
+    fprintf (stderr, ", %s ", str) ;
+    get_global_string (str, STRLEN, GxB_API_URL) ;
+    fprintf (stderr, "(%s)\n", str) ;
+    get_global_string (str, STRLEN, GxB_API_ABOUT) ;
+    fprintf (stderr, "%s" LINE, str) ;
+
+    get_global_string (str, STRLEN, GxB_LIBRARY_COMPILE_DATE) ;
+    fprintf (stderr, "compiled: %s", str) ;
+
+    get_global_string (str, STRLEN, GxB_LIBRARY_COMPILE_TIME) ;
+    fprintf (stderr, " %s\n", str) ;
+
+    GrB_Scalar Hyper ;
+    GrB_Scalar_new (&Hyper, GrB_FP64) ;
+    GrB_Global_get_Scalar (GrB_GLOBAL, Hyper, GxB_HYPER_SWITCH) ;
     double hyper_switch ;
-    GxB_Global_Option_get (GxB_HYPER_SWITCH, &hyper_switch) ;
+    GrB_Scalar_extractElement (&hyper_switch, Hyper) ;
     fprintf (stderr, "hyper switch: %g\n", hyper_switch) ;
 
-    GxB_Format_Value format ;
-    GxB_Global_Option_get (GxB_FORMAT, &format) ;
-    fprintf (stderr, "format: %s\n", (format == GxB_BY_ROW) ? "CSR" : "CSC") ;
+    int format ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &format, GrB_STORAGE_ORIENTATION_HINT) ;
+    fprintf (stderr, "format: %s\n", (format == GrB_ROWMAJOR) ? "CSR" : "CSC") ;
 
-    GrB_Mode mode ;
-    GxB_Global_Option_get (GxB_MODE, &mode) ;
+    int mode ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &mode, GrB_BLOCKING_MODE) ;
     fprintf (stderr, "mode: %s\n", (mode == GrB_BLOCKING) ?
         "blocking" : "non-blocking") ;
 
     int nthreads_max ;
-    GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads_max) ;
+    GrB_Global_get_INT32 (GrB_GLOBAL, &nthreads_max, GxB_GLOBAL_NTHREADS) ;
     fprintf (stderr, "max # of threads used internally: %d\n", nthreads_max) ;
 
     // create the WildType
     GxB_Type_new (&WildType, sizeof (wildtype), "wildtype", WILDTYPE_DEFN) ;
     GxB_Type_fprint (WildType, "WildType", GxB_COMPLETE, stdout) ;
+    GrB_Type_set_String (WildType, "WildType", GrB_NAME) ;
 
     // get its properties
     size_t s ;
-    GxB_Type_size (&s, WildType) ;
+    GrB_Type_get_SIZE (WildType, &s, GrB_SIZE) ;
     printf ("WildType size: %d\n", (int) s) ;
     GxB_Type_fprint (WildType, "WildType", GxB_COMPLETE, stdout) ;
 
@@ -377,7 +416,7 @@ int main (void)
     printf ("\nThe mask matrix M:\n") ;
     GxB_Matrix_fprint (M, "M", GxB_COMPLETE, stdout) ;
 
-//  GxB_Global_Option_set (GxB_BURBLE, true) ;
+//  GrB_Global_set_INT32 (GrB_GLOBAL, true, GxB_BURBLE) ;
     GrB_mxm (C, M, NULL, InTheWild, C, C, GrB_DESC_RST1) ;
     wildtype_print_matrix (C, "output C") ;
 
@@ -391,15 +430,10 @@ int main (void)
     memset (&sum, 0, sizeof (wildtype)) ;
     GrB_Matrix_reduce_UDT (&sum, NULL, WildAdder, C, NULL) ;
     wildtype_print (&sum, "sum (again)") ;
-//  GxB_Global_Option_set (GxB_BURBLE, false) ;
-
-//  for (int k = 0 ; k < 100 ; k++)
-//  {
-//      GrB_Matrix_reduce_UDT (&sum, NULL, WildAdder, C, NULL) ;
-//  }
+//  GrB_Global_set_INT32 (GrB_GLOBAL, false, GxB_BURBLE) ;
 
     // set C to column-oriented format
-    GxB_Matrix_Option_set (C, GxB_FORMAT, GxB_BY_COL) ;
+    GrB_Matrix_set_INT32 (C, GrB_COLMAJOR, GrB_STORAGE_ORIENTATION_HINT) ;
     printf ("\nC is now stored by column, but it looks just the same to the\n"
             "GraphBLAS user application.  The difference is opaque, in the\n"
             "internal data structure.\n") ;

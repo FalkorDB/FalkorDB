@@ -2,7 +2,7 @@
 // GB_concat_bitmap: concatenate an array of matrices into a bitmap matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,6 @@
     GB_phybix_free (C) ;
 
 #include "concat/GB_concat.h"
-#include "include/GB_unused.h"
 #include "apply/GB_apply.h"
 #include "jitifyer/GB_stringify.h"
 
@@ -24,11 +23,11 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
 (
     GrB_Matrix C,                   // input/output matrix for results
     const bool C_iso,               // if true, construct C as iso
-    const GB_void *cscalar,         // iso value of C, if C is io 
+    const GB_void *cscalar,         // iso value of C, if C is iso
     const int64_t cnz,              // # of entries in C
     const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n,
-    const GrB_Index m,
-    const GrB_Index n,
+    const uint64_t m,
+    const uint64_t n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     GB_Werk Werk
@@ -53,13 +52,16 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
     GB_Type_code ccode = ctype->code ;
     if (!GB_IS_BITMAP (C) || C->iso != C_iso)
     { 
-        // set C->iso = C_iso   OK
         GB_phybix_free (C) ;
+        C->p_is_32 = false ;    // OK: bitmap always has p_is_32 = false
+        C->j_is_32 = false ;    // OK: bitmap always has j_is_32 = false
+        C->i_is_32 = false ;    // OK: bitmap always has i_is_32 = false
         GB_OK (GB_bix_alloc (C, GB_nnz_full (C), GxB_BITMAP, true, true,
             C_iso)) ;
         C->plen = -1 ;
         C->nvec = cvdim ;
-        C->nvec_nonempty = (cvlen > 0) ? cvdim : 0 ;
+//      C->nvec_nonempty = (cvlen > 0) ? cvdim : 0 ;
+        GB_nvec_nonempty_set (C, (cvlen > 0) ? cvdim : 0) ;
     }
     ASSERT (GB_IS_BITMAP (C)) ;
     ASSERT (C->iso == C_iso) ;
@@ -92,7 +94,7 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
             if (csc != A->is_csc)
             { 
                 // T = (ctype) A'
-                GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+                GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
                 GB_OK (GB_transpose_cast (T, ctype, csc, A, false, Werk)) ;
                 A = T ;
                 GB_MATRIX_WAIT (A) ;
@@ -108,13 +110,18 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
             // The tile A appears in vectors cvstart:cvend-1 of C, and indices
             // cistart:ciend-1.
 
-            int64_t cvstart, cvend, cistart, ciend ;
+            #ifdef GB_DEBUG
+            int64_t cvend ;
+            #endif
+            int64_t cvstart, cistart, ciend ;
             if (csc)
             { 
                 // C and A are held by column
                 // Tiles is row-major and accessed in column order
                 cvstart = Tile_cols [outer] ;
+                #ifdef GB_DEBUG
                 cvend   = Tile_cols [outer+1] ;
+                #endif
                 cistart = Tile_rows [inner] ;
                 ciend   = Tile_rows [inner+1] ;
             }
@@ -123,12 +130,16 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
                 // C and A are held by row
                 // Tiles is row-major and accessed in row order
                 cvstart = Tile_rows [outer] ;
+                #ifdef GB_DEBUG
                 cvend   = Tile_rows [outer+1] ;
+                #endif
                 cistart = Tile_cols [inner] ;
                 ciend   = Tile_cols [inner+1] ;
             }
 
+            #ifdef GB_DEBUG
             int64_t avdim = cvend - cvstart ;
+            #endif
             int64_t avlen = ciend - cistart ;
             ASSERT (avdim == A->vdim) ;
             ASSERT (avlen == A->vlen) ;
@@ -170,7 +181,7 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
                         {
                             #undef  GB_COPY
                             #define GB_COPY(pC,pA,A_iso)            \
-                                Cx [pC] = GBX (Ax, pA, A_iso) ;
+                                Cx [pC] = Ax [A_iso ? 0 : pA] ;
 
                             case GB_1BYTE : // uint8, int8, bool, or 1-byte user
                                 #define GB_C_TYPE uint8_t
@@ -248,13 +259,7 @@ GrB_Info GB_concat_bitmap           // concatenate into a bitmap matrix
             }
 
             GB_FREE_WORKSPACE ;
-
-            if (info != GrB_SUCCESS)
-            { 
-                // out of memory, or other error
-                GB_FREE_ALL ;
-                return (info) ;
-            }
+            GB_OK (info) ;
         }
     }
 

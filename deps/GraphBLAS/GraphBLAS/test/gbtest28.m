@@ -1,7 +1,7 @@
 function gbtest28
 %GBTEST28 test GrB.build
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ngbtest28: testing GrB.build and compare with A=sparse(i,j,x)\n') ;
@@ -63,8 +63,17 @@ assert (gbtest_eq (A1, A4)) ;
 tic
 A2 = GrB.build (i0, j0, x, m, n, desc0) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (i0, j0, ...), with i0 and j0 uint64\n',t);
+fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint64\n',t);
 assert (gbtest_eq (A1, A2)) ;
+
+i32 = uint32 (i0) ;
+j32 = uint32 (j0) ;
+tic
+A5 = GrB.build (i32, j32, x, m, n, desc0) ;
+t = toc ;
+fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint32\n',t);
+assert (gbtest_eq (A1, A5)) ;
+clear A5
 
 fprintf ('\nwith [I J] reversed/jumbled so that a sort is required:\n') ;
 i = i (end:-1:1) ;
@@ -94,8 +103,17 @@ assert (gbtest_eq (A1, A4)) ;
 tic
 A2 = GrB.build (i0, j0, x, m, n, desc0) ;
 t = toc ;
-fprintf ('%12.4f sec : A = GrB.build (i0,j0,...), with i0 and j0 uint64\n', t) ;
+fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint64\n', t);
 assert (gbtest_eq (A1, A2)) ;
+
+i32 = uint32 (i0) ;
+j32 = uint32 (j0) ;
+tic
+A5 = GrB.build (i32, j32, x, m, n, desc0) ;
+t = toc ;
+fprintf ('%12.4f sec : A = GrB.build (i0,j0, ...), with i0 and j0 uint32\n',t);
+assert (gbtest_eq (A1, A5)) ;
+clear A5
 
 fprintf ('\ngbtest28: all tests passed\n') ;
 

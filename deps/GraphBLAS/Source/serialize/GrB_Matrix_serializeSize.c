@@ -2,7 +2,7 @@
 // GrB_Matrix_serializeSize: return an upper bound on the blob size
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@
 GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
 (
     // output:
-    GrB_Index *blob_size_handle,    // upper bound on the required size of the
+    uint64_t *blob_size_handle,     // upper bound on the required size of the
                                     // blob on output.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -29,10 +29,10 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_serializeSize (&blob_size, A)") ;
-    GB_BURBLE_START ("GrB_Matrix_serialize") ;
     GB_RETURN_IF_NULL (blob_size_handle) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_WHERE_1 (A, "GrB_Matrix_serializeSize (&blob_size, A)") ;
+    GB_BURBLE_START ("GrB_Matrix_serialize") ;
 
     // no descriptor, so assume the default method
     int method = GxB_DEFAULT ;
@@ -45,8 +45,8 @@ GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
     //--------------------------------------------------------------------------
 
     size_t blob_size ;
-    GrB_Info info = GB_serialize (NULL, &blob_size, A, method, Werk) ;
-    (*blob_size_handle) = (GrB_Index) blob_size ;
+    info = GB_serialize (NULL, &blob_size, A, method, Werk) ;
+    (*blob_size_handle) = (uint64_t) blob_size ;
     GB_BURBLE_END ;
     #pragma omp flush
     return (info) ;

@@ -2,7 +2,7 @@
 // GB_mex_test12: more simple tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -51,21 +51,21 @@ void mexFunction
     GrB_Info expected = GrB_DOMAIN_MISMATCH ;
     const char *error ;
 
-    ERR (GrB_Matrix_assign_Scalar (A, NULL, NULL, scalar,
+    ERR (GrB_Matrix_assign_Scalar_(A, NULL, NULL, scalar,
         GrB_ALL, 3, GrB_ALL, 3, NULL)) ;
     OK (GrB_Matrix_error (&error, A)) ;
     printf ("expected: %s\n", error) ;
 
-    ERR (GxB_Matrix_subassign_Scalar (A, NULL, NULL, scalar,
+    ERR (GxB_Matrix_subassign_Scalar_(A, NULL, NULL, scalar,
         GrB_ALL, 3, GrB_ALL, 3, NULL)) ;
     OK (GrB_Matrix_error (&error, A)) ;
     printf ("expected: %s\n", error) ;
 
-    ERR (GrB_Vector_assign_Scalar (v, NULL, NULL, scalar, GrB_ALL, 3, NULL)) ;
+    ERR (GrB_Vector_assign_Scalar_(v, NULL, NULL, scalar, GrB_ALL, 3, NULL)) ;
     OK (GrB_Vector_error (&error, v)) ;
     printf ("expected: %s\n", error) ;
 
-    ERR (GxB_Vector_subassign_Scalar (v, NULL, NULL, scalar, GrB_ALL, 3, NULL));
+    ERR (GxB_Vector_subassign_Scalar_(v, NULL, NULL, scalar, GrB_ALL, 3, NULL));
     OK (GrB_Vector_error (&error, v)) ;
     printf ("expected: %s\n", error) ;
 

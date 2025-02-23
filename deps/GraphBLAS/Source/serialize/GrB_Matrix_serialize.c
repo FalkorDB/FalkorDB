@@ -2,7 +2,7 @@
 // GrB_Matrix_serialize: copy a matrix into a serialized array of bytes
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 
 /*
     void *blob = NULL ;
-    GrB_Index blob_size = 0 ;
+    uint64_t blob_size = 0 ;
     GrB_Matrix A, B = NULL ;
     // construct a matrix A, then serialized it:
     GrB_Matrix_serializeSize (&blob_size, A) ;      // loose upper bound
@@ -35,7 +35,7 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // output:
     void *blob,                     // the blob, already allocated in input
     // input/output:
-    GrB_Index *blob_size_handle,    // size of the blob on input.  On output,
+    uint64_t *blob_size_handle,     // size of the blob on input.  On output,
                                     // the # of bytes used in the blob.
     // input:
     GrB_Matrix A                    // matrix to serialize
@@ -46,11 +46,11 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_serialize (blob, &blob_size, A)") ;
-    GB_BURBLE_START ("GrB_Matrix_serialize") ;
     GB_RETURN_IF_NULL (blob) ;
     GB_RETURN_IF_NULL (blob_size_handle) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_WHERE_1 (A, "GrB_Matrix_serialize (blob, &blob_size, A)") ;
+    GB_BURBLE_START ("GrB_Matrix_serialize") ;
 
     // no descriptor, so assume the default method
     int method = GxB_DEFAULT ;
@@ -63,11 +63,10 @@ GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
     //--------------------------------------------------------------------------
 
     size_t blob_size = (size_t) (*blob_size_handle) ;
-    GrB_Info info = GB_serialize ((GB_void **) &blob, &blob_size, A, method,
-        Werk) ;
+    info = GB_serialize ((GB_void **) &blob, &blob_size, A, method, Werk) ;
     if (info == GrB_SUCCESS)
     { 
-        (*blob_size_handle) = (GrB_Index) blob_size ;
+        (*blob_size_handle) = (uint64_t) blob_size ;
     }
     GB_BURBLE_END ;
     #pragma omp flush

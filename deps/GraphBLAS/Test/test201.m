@@ -1,7 +1,7 @@
 function test201
 %TEST201 test iso reduce to vector and reduce to scalar
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 n = 10 ;
@@ -24,7 +24,6 @@ assert (abs (c2-c3) < 1e-12) ;
 % reduce a huge iso full matrix to a scalar
 m = 2^40 ;
 n = 2^48 ;
-% s = sum (pi * GrB.ones (m, n), 'all')
 s = GB_mex_test36 ;
 % expected result:
 t = pi * m * n ;

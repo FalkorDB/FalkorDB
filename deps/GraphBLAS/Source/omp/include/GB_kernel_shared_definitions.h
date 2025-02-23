@@ -2,7 +2,7 @@
 // GB_kernel_shared_definitions.h: definitions for all methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,7 +10,6 @@
 // This header is #include'd just before using any templates for any method:
 // pre-generated kernel, CPU or GPU JIT, or generic.
 
-#include "include/GB_unused.h"
 #include "include/GB_complex.h"
 
 #ifndef GB_KERNEL_SHARED_DEFINITIONS_H

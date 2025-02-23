@@ -2,7 +2,7 @@
 // GB_add_bitmap_M_bitmap: C<#M>=A+B, C bitmap, M bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -68,12 +68,12 @@
     //      bitmap  full        full            full  
 
 
-    ASSERT (M_is_bitmap || M_is_full) ;
+    ASSERT (GB_IS_BITMAP (M) || GB_IS_FULL (M)) ;
     ASSERT (A_is_bitmap || A_is_full || B_is_bitmap || B_is_full) ;
 
     #undef  GB_GET_MIJ     
     #define GB_GET_MIJ(p)                                       \
-        bool mij = GBB_M (Mb, p) && GB_MCAST (Mx, p, msize) ;   \
+        bool mij = GBb_M (Mb, p) && GB_MCAST (Mx, p, msize) ;   \
         if (Mask_comp) mij = !mij ;
 
     #ifdef GB_JIT_KERNEL

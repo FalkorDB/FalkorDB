@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Include/read_matrix.c: read a matrix from stdin
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,8 +15,7 @@
 // where i and j are the row and column indices, and x is the value.
 // The matrix is read in double precision.
 
-#include "GraphBLAS.h"
-#undef I
+#include "graphblas_demos.h"
 
 // free all workspace; this used by the OK(...) macro if an error occurs
 #undef  FREE_ALL
@@ -33,8 +32,6 @@
     GrB_Matrix_free (&A) ;          \
     GrB_Matrix_free (&B) ;          \
     GrB_Matrix_free (&C) ;
-
-#include "graphblas_demos.h"
 
 //------------------------------------------------------------------------------
 // unary operator to divide by 2
@@ -109,8 +106,11 @@ GrB_Info read_matrix        // read a double-precision or boolean matrix
         if (ntuples >= len)
         {
             I2 = (GrB_Index *) realloc (I, 2 * len * sizeof (GrB_Index)) ;
+            if (I2 != NULL) I = NULL ;
             J2 = (GrB_Index *) realloc (J, 2 * len * sizeof (GrB_Index)) ;
+            if (J2 != NULL) J = NULL ;
             X2 = realloc (X, 2 * len * xsize) ;
+            if (X2 != NULL) X = NULL ;
             if (I2 == NULL || J2 == NULL || X2 == NULL)
             {
                 if (pr) printf ("out of memory for tuples\n") ;
@@ -128,6 +128,13 @@ GrB_Info read_matrix        // read a double-precision or boolean matrix
         {
             i-- ;
             j-- ;
+        }
+        if (i < 0 || j < 0)
+        {
+            if (pr) printf ("invalid matrix entry (row %g, col %g)\n",
+                (double) i, (double) j) ;
+            FREE_ALL ;
+            return (GrB_INVALID_INDEX) ;
         }
         I [ntuples] = i ;
         J [ntuples] = j ;
@@ -230,11 +237,11 @@ GrB_Info read_matrix        // read a double-precision or boolean matrix
 
     // descriptor dt2: transpose the 2nd input
     OK (GrB_Descriptor_new (&dt2)) ;
-    OK (GrB_Descriptor_set (dt2, GrB_INP1, GrB_TRAN)) ;
+    OK (GrB_Descriptor_set_INT32 (dt2, GrB_TRAN, GrB_INP1)) ;
 
     // descriptor dt1: transpose the 1st input
     OK (GrB_Descriptor_new (&dt1)) ;
-    OK (GrB_Descriptor_set (dt1, GrB_INP0, GrB_TRAN)) ;
+    OK (GrB_Descriptor_set_INT32 (dt1, GrB_TRAN, GrB_INP0)) ;
 
     //--------------------------------------------------------------------------
     // create the output matrix

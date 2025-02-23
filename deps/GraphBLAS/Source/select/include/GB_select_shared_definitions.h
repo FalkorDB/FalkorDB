@@ -2,7 +2,7 @@
 // GB_select_shared_definitions.h: common macros for select kernels
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,6 +13,7 @@
 // CUDA JIT kernels.
 
 #include "include/GB_kernel_shared_definitions.h"
+#include "include/GB_unused.h"
 
 #ifndef GB_SELECT_SHARED_DEFINITIONS_H
 #define GB_SELECT_SHARED_DEFINITIONS_H

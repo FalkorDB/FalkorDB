@@ -2,7 +2,7 @@
 // GB_mex_dup: copy a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -50,6 +50,8 @@ void mexFunction
     // get ctype of output matrix
     GrB_Type ctype = GB_mx_string_to_Type (PARGIN (1), A->type) ;
 
+    bool is_csc = A->is_csc ;
+
     // get method
     int GET_SCALAR (2, int, method, 0) ;
 
@@ -75,7 +77,7 @@ void mexFunction
 
             // C = create an exact copy of A, just like GrB_Matrix_dup
             GrB_Type type ;
-            GrB_Index nrows, ncols ;
+            uint64_t nrows, ncols ;
 
             #undef GET_DEEP_COPY
             #undef FREE_DEEP_COPY
@@ -127,7 +129,7 @@ void mexFunction
         }
 
         // C = (ctype) A
-        GrB_Index nrows, ncols ;
+        uint64_t nrows, ncols ;
 
         #define GET_DEEP_COPY                               \
         {                                                   \
@@ -164,6 +166,10 @@ void mexFunction
         #undef GET_DEEP_COPY
         #undef FREE_DEEP_COPY
     }
+
+    // ensure C has the same csc property as A
+    GrB_Matrix_set_INT32 (C, is_csc ? GrB_COLMAJOR : GrB_ROWMAJOR,
+        GrB_STORAGE_ORIENTATION_HINT) ;
 
     // return C as a struct and free the GraphBLAS C
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C output", true) ;
