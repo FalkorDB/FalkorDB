@@ -71,7 +71,7 @@ jobs:
         chmod +x llvm.sh
         ./llvm.sh 17
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv python3-setuptools
+        apt-get install -y libomp-17-dev libc6-dbg python3-venv
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
