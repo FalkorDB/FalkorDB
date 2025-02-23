@@ -66,12 +66,12 @@ jobs:
       run: |
         rustup default nightly
         apt-get update
-        apt-get install -y lsb-release wget software-properties-common gnupg python3-setuptools
+        apt-get install -y lsb-release wget software-properties-common gnupg
         wget https://apt.llvm.org/llvm.sh
         chmod +x llvm.sh
         ./llvm.sh 17
         apt-get update
-        apt-get install -y libomp-17-dev libc6-dbg python3-venv
+        apt-get install -y libomp-17-dev libc6-dbg python3-venv python3-setuptools
         python3 -m venv venv
         . venv/bin/activate
         pip install -r tests/requirements.txt
