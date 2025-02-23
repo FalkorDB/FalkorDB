@@ -2,7 +2,7 @@
 // GB_mx_mxArray_to_Descriptor: get the contents of a GraphBLAS Descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,7 +18,7 @@ static bool get_descriptor
     GrB_Descriptor D,               // GraphBLAS descriptor to modify
     const mxArray *D_builtin,       // built-in struct with D.output, etc
     const char *fieldname,          // fieldname to extract from D_builtin
-    const GrB_Desc_Field field      // field to set in D
+    const int field                 // field to set in D
 )
 {
 
@@ -98,9 +98,21 @@ static bool get_descriptor
         {
             info = GxB_Desc_set (D, field, GxB_AxB_HASH) ;
         }
+        else if (MATCH (s, "use_values"))
+        {
+            info = GrB_Descriptor_set_INT32 (D, GxB_USE_VALUES, field) ;
+        }
+        else if (MATCH (s, "use_indices"))
+        {
+            info = GrB_Descriptor_set_INT32 (D, GxB_USE_INDICES, field) ;
+        }
+        else if (MATCH (s, "is_stride"))
+        {
+            info = GrB_Descriptor_set_INT32 (D, GxB_IS_STRIDE, field) ;
+        }
         else
         {
-            // the string must be one of the four strings listed above
+            // the string must be one of the strings listed above
             mexWarnMsgIdAndTxt ("GB:warn","unrecognized descriptor value") ;
             return (false) ;
         }
@@ -146,7 +158,10 @@ bool GB_mx_mxArray_to_Descriptor   // true if successful, false otherwise
         !get_descriptor (D, D_builtin, "inp0", GrB_INP0) ||
         !get_descriptor (D, D_builtin, "inp1", GrB_INP1) ||
         !get_descriptor (D, D_builtin, "mask", GrB_MASK) ||
-        !get_descriptor (D, D_builtin, "axb",  GxB_AxB_METHOD))
+        !get_descriptor (D, D_builtin, "axb",  GxB_AxB_METHOD) ||
+        !get_descriptor (D, D_builtin, "rowindex_list", GxB_ROWINDEX_LIST) ||
+        !get_descriptor (D, D_builtin, "colindex_list", GxB_COLINDEX_LIST) ||
+        !get_descriptor (D, D_builtin, "value_list", GxB_VALUE_LIST))
     {
         GrB_Matrix_free_(&D) ;
         mexWarnMsgIdAndTxt ("GB:warn", "descriptor failed") ;

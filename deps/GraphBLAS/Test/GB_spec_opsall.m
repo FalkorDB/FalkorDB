@@ -3,7 +3,7 @@ function [binops unary_ops add_ops types semirings selops idxunop] = GB_spec_ops
 %
 % [binops unary_ops add_ops types semirings select_ops idxunop] = GB_spec_opsall
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------

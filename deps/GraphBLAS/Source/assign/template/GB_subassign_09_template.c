@@ -2,7 +2,7 @@
 // GB_subassign_09_template: C(I,J)<M,repl> = scalar ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -105,7 +105,7 @@
                 {
 
                     int64_t pM = pM_start + iM ;
-                    bool Sfound = (pS < pS_end) && (GBI_S (Si,pS,Svlen) == iM) ;
+                    bool Sfound = (pS < pS_end) && (GBi_S (Si,pS,Svlen) == iM) ;
                     bool mij = Mb [pM] && GB_MCAST (Mx, pM, msize) ;
 
                     if (Sfound && !mij)
@@ -170,22 +170,58 @@
                 // get S(:,j) and M(:,j)
                 //--------------------------------------------------------------
 
-                int64_t j = GBH (Zh, k) ;
-                GB_GET_MAPPED (pM, pM_end, pA, pA_end, Mp, j, k, Z_to_X, Mvlen);
-                GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t j = GBh (Zh, k) ;
+
+//              GB_GET_MAPPED (pM, pM_end, pA, pA_end, Mp, j, k, Z_to_X, Mvlen);
+                int64_t pM = -1, pM_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of M(:,k)
+                    pM     = TaskList [taskid].pA ;
+                    pM_end = TaskList [taskid].pA_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kM = (Z_to_X == NULL) ? j : Z_to_X [k] ;
+                    if (kM >= 0)
+                    { 
+                        pM     = GBp_M (Mp, kM, Mvlen) ;
+                        pM_end = GBp_M (Mp, kM+1, Mvlen) ;
+                    }
+                }
+
+//              GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t pS = -1, pS_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of X(:,k)
+                    pS     = TaskList [taskid].pB ;
+                    pS_end = TaskList [taskid].pB_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kS = (Z_to_S == NULL) ? j : Z_to_S [k] ;
+                    if (kS >= 0)
+                    { 
+                        pS     = GBp_S (Sp, kS, Svlen) ;
+                        pS_end = GBp_S (Sp, kS+1, Svlen) ;
+                    }
+                }
 
                 //--------------------------------------------------------------
                 // do a 2-way merge of S(:,j) and M(:,j)
                 //--------------------------------------------------------------
 
                 // jC = J [j] ; or J is a colon expression
-                // int64_t jC = GB_ijlist (J, j, GB_J_KIND, Jcolon) ;
+                // int64_t jC = GB_IJLIST (J, j, GB_J_KIND, Jcolon) ;
 
                 // while both list S (:,j) and M (:,j) have entries
                 while (pS < pS_end && pM < pM_end)
                 {
-                    int64_t iS = GBI_S (Si, pS, Svlen) ;
-                    int64_t iM = GBI_M (Mi, pM, Mvlen) ;
+                    int64_t iS = GBi_S (Si, pS, Svlen) ;
+                    int64_t iM = GBi_M (Mi, pM, Mvlen) ;
 
                     if (iS < iM)
                     { 
@@ -304,12 +340,12 @@
                 //--------------------------------------------------------------
 
                 // jC = J [j] ; or J is a colon expression
-                int64_t jC = GB_ijlist (J, j, GB_J_KIND, Jcolon) ;
+                int64_t jC = GB_IJLIST (J, j, GB_J_KIND, Jcolon) ;
 
                 for (int64_t iM = iM_start ; iM < iM_end ; iM++)
                 {
                     int64_t pM = pM_start + iM ;
-                    bool Sfound = (pS < pS_end) && (GBI_S (Si,pS,Svlen) == iM) ;
+                    bool Sfound = (pS < pS_end) && (GBi_S (Si,pS,Svlen) == iM) ;
                     bool mij = Mb [pM] && GB_MCAST (Mx, pM, msize) ;
 
                     if (!Sfound && mij)
@@ -317,7 +353,7 @@
                         // S (i,j) is not present, M (i,j) is true
                         // ----[. A 1]------------------------------------------
                         // [. A 1]: action: ( insert )
-                        int64_t iC = GB_ijlist (I, iM, GB_I_KIND, Icolon) ;
+                        int64_t iC = GB_IJLIST (I, iM, GB_I_KIND, Icolon) ;
                         GB_PENDING_INSERT_scalar ;
                     }
                     else if (Sfound)
@@ -360,22 +396,58 @@
                 // get S(:,j) and M(:,j)
                 //--------------------------------------------------------------
 
-                int64_t j = GBH (Zh, k) ;
-                GB_GET_MAPPED (pM, pM_end, pA, pA_end, Mp, j, k, Z_to_X, Mvlen);
-                GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t j = GBh (Zh, k) ;
+
+//              GB_GET_MAPPED (pM, pM_end, pA, pA_end, Mp, j, k, Z_to_X, Mvlen);
+                int64_t pM = -1, pM_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of M(:,k)
+                    pM     = TaskList [taskid].pA ;
+                    pM_end = TaskList [taskid].pA_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kM = (Z_to_X == NULL) ? j : Z_to_X [k] ;
+                    if (kM >= 0)
+                    { 
+                        pM     = GBp_M (Mp, kM, Mvlen) ;
+                        pM_end = GBp_M (Mp, kM+1, Mvlen) ;
+                    }
+                }
+
+//              GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t pS = -1, pS_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of X(:,k)
+                    pS     = TaskList [taskid].pB ;
+                    pS_end = TaskList [taskid].pB_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kS = (Z_to_S == NULL) ? j : Z_to_S [k] ;
+                    if (kS >= 0)
+                    { 
+                        pS     = GBp_S (Sp, kS, Svlen) ;
+                        pS_end = GBp_S (Sp, kS+1, Svlen) ;
+                    }
+                }
 
                 //--------------------------------------------------------------
                 // do a 2-way merge of S(:,j) and M(:,j)
                 //--------------------------------------------------------------
 
                 // jC = J [j] ; or J is a colon expression
-                int64_t jC = GB_ijlist (J, j, GB_J_KIND, Jcolon) ;
+                int64_t jC = GB_IJLIST (J, j, GB_J_KIND, Jcolon) ;
 
                 // while both list S (:,j) and M (:,j) have entries
                 while (pS < pS_end && pM < pM_end)
                 {
-                    int64_t iS = GBI_S (Si, pS, Svlen) ;
-                    int64_t iM = GBI_M (Mi, pM, Mvlen) ;
+                    int64_t iS = GBi_S (Si, pS, Svlen) ;
+                    int64_t iM = GBi_M (Mi, pM, Mvlen) ;
 
                     if (iS < iM)
                     { 
@@ -389,7 +461,7 @@
                         { 
                             // ----[. A 1]--------------------------------------
                             // [. A 1]: action: ( insert )
-                            int64_t iC = GB_ijlist (I, iM, GB_I_KIND, Icolon) ;
+                            int64_t iC = GB_IJLIST (I, iM, GB_I_KIND, Icolon) ;
                             GB_PENDING_INSERT_scalar ;
                         }
                         pM++ ;  // go to the next entry in M(:,j)
@@ -410,8 +482,8 @@
                     { 
                         // ----[. A 1]------------------------------------------
                         // [. A 1]: action: ( insert )
-                        int64_t iM = GBI_M (Mi, pM, Mvlen) ;
-                        int64_t iC = GB_ijlist (I, iM, GB_I_KIND, Icolon) ;
+                        int64_t iM = GBi_M (Mi, pM, Mvlen) ;
+                        int64_t iC = GB_IJLIST (I, iM, GB_I_KIND, Icolon) ;
                         GB_PENDING_INSERT_scalar ;
                     }
                     pM++ ;  // go to the next entry in M(:,j)

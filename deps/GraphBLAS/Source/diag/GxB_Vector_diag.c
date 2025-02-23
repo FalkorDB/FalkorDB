@@ -2,7 +2,7 @@
 // GxB_Vector_diag: extract a diagonal (as a vector) from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,10 +22,11 @@ GrB_Info GxB_Vector_diag    // extract a diagonal from a matrix, as a vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (v, "GxB_Vector_diag (v, A, k, desc)") ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_NULL (v) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
+    GB_WHERE2 (v, A, "GxB_Vector_diag (v, A, k, desc)") ;
     GB_BURBLE_START ("GxB_Vector_diag") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
 
     // get the descriptor
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;

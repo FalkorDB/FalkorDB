@@ -2,7 +2,7 @@
 // GB_AxB_dot_generic: generic template for all dot-product methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,13 +29,15 @@
     GxB_index_binary_function fmult_idx = mult->idxbinop_function ;
     GxB_binary_function fadd  = add->op->binop_function ;
     GB_Opcode opcode = mult->opcode ;
-    bool op_is_builtin_positional =
-        GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (opcode) ;
+//  bool op_is_builtin_positional =
+//      GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (opcode) ;
 
+    ASSERT (C->type == add->op->ztype) ;
     size_t csize = C->type->size ;
     size_t asize = A_is_pattern ? 0 : A->type->size ;
     size_t bsize = B_is_pattern ? 0 : B->type->size ;
 
+    size_t zsize = csize ;      // C->type always matches add->op->ztype
     size_t xsize = mult->xtype->size ;
     size_t ysize = mult->ytype->size ;
 
@@ -90,32 +92,35 @@
     #define GB_GETB(bkj,Bx,pB,B_iso)                                \
         if (!B_is_pattern) cast_B (bkj, Bx +((B_iso) ? 0:(pB)*bsize), bsize)
 
-    // define cij for each task
-    #undef  GB_CIJ_DECLARE
-    #define GB_CIJ_DECLARE(cij) GB_void cij [GB_VLA(csize)]
-
-    // Cx [p] = cij
-    #undef  GB_PUTC
-    #define GB_PUTC(cij,Cx,p) memcpy (Cx +((p)*csize), cij, csize)
-
     // instead of GB_DECLARE_TERMINAL_CONST (zterminal):
     GB_void *restrict zterminal = (GB_void *) add->terminal ;
+    GB_void *restrict zidentity = (GB_void *) add->identity ;
+
+    // define cij for each task
+    #undef  GB_DECLARE_IDENTITY
+    #define GB_DECLARE_IDENTITY(cij)            \
+        GB_void cij [GB_VLA(zsize)] ;           \
+        memcpy (cij, zidentity, zsize)
+
+    // Cx [p] = cij (note csize == zsize)
+    #undef  GB_PUTC
+    #define GB_PUTC(cij,Cx,p) memcpy (Cx +((p)*csize), cij, csize)
 
     // break if cij reaches the terminal value
     #undef  GB_IF_TERMINAL_BREAK
     #define GB_IF_TERMINAL_BREAK(z,zterminal)                       \
-        if (is_terminal && memcmp (z, zterminal, csize) == 0)       \
+        if (is_terminal && memcmp (z, zterminal, zsize) == 0)       \
         {                                                           \
             break ;                                                 \
         }
     #undef  GB_TERMINAL_CONDITION
     #define GB_TERMINAL_CONDITION(z,zterminal)                      \
-        (is_terminal && memcmp (z, zterminal, csize) == 0)
+        (is_terminal && memcmp (z, zterminal, zsize) == 0)
 
     // C(i,j) += (A')(i,k) * B(k,j)
     #undef  GB_MULTADD
     #define GB_MULTADD(cij, aki, bkj, i, k, j)                      \
-        GB_void zwork [GB_VLA(csize)] ;                             \
+        GB_void zwork [GB_VLA(zsize)] ;                             \
         GB_MULT (zwork, aki, bkj, i, k, j) ;                        \
         fadd (cij, cij, zwork)
 
@@ -133,7 +138,7 @@
         ASSERT (!flipxy) ;
         ASSERT (B_is_pattern) ;
         #undef  GB_MULT
-        #define GB_MULT(t, aik, bkj, i, k, j) memcpy (t, aik, csize)
+        #define GB_MULT(t, aik, bkj, i, k, j) memcpy (t, aik, zsize)
         #if defined ( GB_DOT2_GENERIC )
         #include "mxm/template/GB_AxB_dot2_meta.c"
         #elif defined ( GB_DOT3_GENERIC )
@@ -147,7 +152,7 @@
         ASSERT (!flipxy) ;
         ASSERT (A_is_pattern) ;
         #undef  GB_MULT
-        #define GB_MULT(t, aik, bkj, i, k, j) memcpy (t, bkj, csize)
+        #define GB_MULT(t, aik, bkj, i, k, j) memcpy (t, bkj, zsize)
         #if defined ( GB_DOT2_GENERIC )
         #include "mxm/template/GB_AxB_dot2_meta.c"
         #elif defined ( GB_DOT3_GENERIC )

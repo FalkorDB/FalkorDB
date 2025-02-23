@@ -2,7 +2,7 @@
 // GB_mex_reduce_to_GrB_Scalar: S = accum(S,reduce_to_scalar(A))
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -56,7 +56,7 @@ void mexFunction
         FREE_ALL ;
         mexErrMsgTxt ("S failed") ;
     }
-    int64_t Snrows, Sncols ;
+    uint64_t Snrows, Sncols ;
     GrB_Matrix_nrows (&Snrows, S) ;
     GrB_Matrix_ncols (&Sncols, S) ;
     if (Snrows != 1 || Sncols != 1)

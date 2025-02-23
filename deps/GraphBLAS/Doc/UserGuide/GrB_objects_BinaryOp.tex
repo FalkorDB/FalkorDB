@@ -1,0 +1,529 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS binary operators: {\sf GrB\_BinaryOp}, $z=f(x,y)$} %======
+%===============================================================================
+\label{binaryop}
+
+A binary operator is a scalar function of the form $z=f(x,y)$.  The types of
+$z$, $x$, and $y$ need not be the same.  The built-in binary operators are
+listed in the tables below.  The notation $T$ refers to any of the 13
+built-in types, but two of those types are SuiteSparse extensions
+(\verb'GxB_FC32' and \verb'GxB_FC64').  For those types, the operator name
+always starts with \verb'GxB', not \verb'GrB').
+The notation $R$ refers to any real type (all but \verb'FC32' and \verb'FC64').
+
+The six \verb'GxB_IS*' comparators and the \verb'GxB_*' logical
+operators all return a result one for true and zero for false, in the same
+domain $T$ or $R$ as their inputs.  These six comparators are useful
+as ``multiply'' operators for creating semirings with non-Boolean monoids.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Binary operators for all 13 types} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+% numeric TxT->T
+\verb'GrB_FIRST_'$T$  & $T \times T \rightarrow T$ & $z = x$         & first argument \\
+\verb'GrB_SECOND_'$T$ & $T \times T \rightarrow T$ & $z = y$         & second argument \\
+\verb'GxB_ANY_'$T$    & $T \times T \rightarrow T$ & $z = x$ or $y$  & pick $x$ or $y$ arbitrarily \\
+\verb'GrB_ONEB_'$T$   & $T \times T \rightarrow T$ & $z = 1$         & one \\
+\verb'GxB_PAIR_'$T$   & $T \times T \rightarrow T$ & $z = 1$         & one (historical) \\
+\verb'GrB_PLUS_'$T$   & $T \times T \rightarrow T$ & $z = x+y$       & addition \\
+\verb'GrB_MINUS_'$T$  & $T \times T \rightarrow T$ & $z = x-y$       & subtraction \\
+\verb'GxB_RMINUS_'$T$ & $T \times T \rightarrow T$ & $z = y-x$       & reverse subtraction \\
+\verb'GrB_TIMES_'$T$  & $T \times T \rightarrow T$ & $z = xy$        & multiplication \\
+\verb'GrB_DIV_'$T$    & $T \times T \rightarrow T$ & $z = x/y$       & division \\
+\verb'GxB_RDIV_'$T$   & $T \times T \rightarrow T$ & $z = y/x$       & reverse division \\
+\verb'GxB_POW_'$T$    & $T \times T \rightarrow T$ & $z = x^y$       & power \\
+\hline
+% TxT->T comparators
+\verb'GxB_ISEQ_'$T$   & $T \times T \rightarrow T$ & $z = (x == y)$  & equal \\
+\verb'GxB_ISNE_'$T$   & $T \times T \rightarrow T$ & $z = (x \ne y)$ & not equal \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+The \verb'GxB_POW_*' operators for real types do not return a complex result,
+and thus $z = f(x,y) = x^y$ is undefined if $x$ is negative and $y$ is not an
+integer.  To compute a complex result, use \verb'GxB_POW_FC32' or
+\verb'GxB_POW_FC64'.
+
+Operators that require the domain to be ordered (\verb'MIN', \verb'MAX',
+less-than, greater-than, and so on) are not defined for
+complex types.  These are listed in the following table:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Binary operators for all non-complex types} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+% numeric RxR->R
+\verb'GrB_MIN_'$R$    & $R \times R \rightarrow R$ & $z = \min(x,y)$ & minimum \\
+\verb'GrB_MAX_'$R$    & $R \times R \rightarrow R$ & $z = \max(x,y)$ & maximum \\
+\hline
+% RxR->R comparators
+\verb'GxB_ISGT_'$R$   & $R \times R \rightarrow R$ & $z = (x >   y)$ & greater than \\
+\verb'GxB_ISLT_'$R$   & $R \times R \rightarrow R$ & $z = (x <   y)$ & less than  \\
+\verb'GxB_ISGE_'$R$   & $R \times R \rightarrow R$ & $z = (x \ge y)$ & greater than or equal \\
+\verb'GxB_ISLE_'$R$   & $R \times R \rightarrow R$ & $z = (x \le y)$ & less than or equal  \\
+\hline
+% RxR->R logical
+\verb'GxB_LOR_'$R$    & $R \times R \rightarrow R$ & $z = (x \ne 0) \vee    (y \ne 0) $ & logical OR \\
+\verb'GxB_LAND_'$R$   & $R \times R \rightarrow R$ & $z = (x \ne 0) \wedge  (y \ne 0) $ & logical AND \\
+\verb'GxB_LXOR_'$R$   & $R \times R \rightarrow R$ & $z = (x \ne 0) \veebar (y \ne 0) $ & logical XOR \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+Another set of six kinds of built-in comparators have the form $T
+\times T \rightarrow $\verb'bool'.  Note that when $T$ is \verb'bool', the six
+operators give the same results as the six \verb'GxB_IS*_BOOL' operators in the
+table above.  These six comparators are useful as ``multiply''
+operators for creating semirings with Boolean monoids.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Binary comparators for all 13 types} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+% 6 TxT -> bool comparators
+\verb'GrB_EQ_'$T$     & $T \times T \rightarrow $\verb'bool' & $z = (x == y)$  & equal \\
+\verb'GrB_NE_'$T$     & $T \times T \rightarrow $\verb'bool' & $z = (x \ne y)$ & not equal \\
+\hline
+\multicolumn{4}{ }{\mbox{ }} \\
+\hline
+\multicolumn{4}{|c|}{Binary comparators for non-complex types} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+\verb'GrB_GT_'$R$     & $R \times R \rightarrow $\verb'bool' & $z = (x >   y)$ & greater than \\
+\verb'GrB_LT_'$R$     & $R \times R \rightarrow $\verb'bool' & $z = (x <   y)$ & less than  \\
+\verb'GrB_GE_'$R$     & $R \times R \rightarrow $\verb'bool' & $z = (x \ge y)$ & greater than or equal \\
+\verb'GrB_LE_'$R$     & $R \times R \rightarrow $\verb'bool' & $z = (x \le y)$ & less than or equal  \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+GraphBLAS has four built-in binary operators that operate purely in
+the Boolean domain.  The first three are identical to the \verb'GxB_L*_BOOL'
+operators described above, just with a shorter name.  The \verb'GrB_LXNOR'
+operator is the same as \verb'GrB_EQ_BOOL'.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Binary operators for the boolean type only} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+% 3 bool x bool -> bool
+\verb'GrB_LOR'        & \verb'bool'
+                        $\times$ \verb'bool'
+                        $\rightarrow$ \verb'bool'  & $z = x \vee    y $ & logical OR \\
+\verb'GrB_LAND'       & \verb'bool'
+                        $\times$ \verb'bool'
+                        $\rightarrow$ \verb'bool'  & $z = x \wedge  y $ & logical AND \\
+\verb'GrB_LXOR'       & \verb'bool'
+                        $\times$ \verb'bool'
+                        $\rightarrow$ \verb'bool'  & $z = x \veebar y $ & logical XOR \\
+\verb'GrB_LXNOR'      & \verb'bool'
+                        $\times$ \verb'bool'
+                        $\rightarrow$ \verb'bool'  & $z = \lnot (x \veebar y) $ & logical XNOR \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+The following operators are defined for real floating-point types only (\verb'GrB_FP32' and  \verb'GrB_FP64').
+They are identical to the C11 functions of the same name.  The last one in the table constructs
+the corresponding complex type.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Binary operators for the real floating-point types only} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+\verb'GxB_ATAN2_'$F$     & $F \times F \rightarrow F$ & $z = \tan^{-1}(y/x)$ & 4-quadrant arc tangent  \\
+\verb'GxB_HYPOT_'$F$     & $F \times F \rightarrow F$ & $z = \sqrt{x^2+y^2}$ & hypotenuse \\
+\verb'GxB_FMOD_'$F$      & $F \times F \rightarrow F$ &                      & C11 \verb'fmod' \\
+\verb'GxB_REMAINDER_'$F$ & $F \times F \rightarrow F$ &                      & C11 \verb'remainder' \\
+\verb'GxB_LDEXP_'$F$     & $F \times F \rightarrow F$ &                      & C11 \verb'ldexp' \\
+\verb'GxB_COPYSIGN_'$F$  & $F \times F \rightarrow F$ &                      & C11 \verb'copysign' \\
+\hline
+\verb'GxB_CMPLX_'$F$     & $F \times F \rightarrow Z$ & $z = x + y \times i$ & complex from real \& imag \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+Eight bitwise operators are predefined for signed and unsigned integers.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Binary operators for signed and unsigned integers} \\
+\hline
+GraphBLAS name        & types (domains)            & $z=f(x,y)$      & description \\
+\hline
+\verb'GrB_BOR_'$I$    & $I \times I \rightarrow I$ & \verb'z=x|y'    & bitwise logical OR \\
+\verb'GrB_BAND_'$I$   & $I \times I \rightarrow I$ & \verb'z=x&y'    & bitwise logical AND \\
+\verb'GrB_BXOR_'$I$   & $I \times I \rightarrow I$ & \verb'z=x^y'    & bitwise logical XOR \\
+\verb'GrB_BXNOR_'$I$  & $I \times I \rightarrow I$ & \verb'z=~(x^y)' & bitwise logical XNOR \\
+\hline
+\verb'GxB_BGET_'$I$    & $I \times I \rightarrow I$  & & get bit y of x \\
+\verb'GxB_BSET_'$I$    & $I \times I \rightarrow I$  & & set bit y of x \\
+\verb'GxB_BCLR_'$I$    & $I \times I \rightarrow I$  & & clear bit y of x \\
+\verb'GxB_BSHIFT_'$I$  & $I \times $\verb'int8'$  \rightarrow I$ & & bit shift \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+There are two sets of built-in comparators in SuiteSparse:Graph\-BLAS,
+but they are not redundant.  They are identical except for the type (domain) of
+their output, $z$.  The \verb'GrB_EQ_'$T$ and related operators compare their
+inputs of type $T$ and produce a Boolean result of true or false.  The
+\verb'GxB_ISEQ_'$T$ and related operators compute the same thing and produce a
+result with same type $T$ as their input operands, returning one for true or
+zero for false.  The \verb'IS*' comparators are useful when combining
+comparators with other non-Boolean operators.  For example, a \verb'PLUS-ISEQ'
+semiring counts how many terms are true.  With this semiring,
+matrix multiplication ${\bf C=AB}$ for two weighted undirected graphs ${\bf A}$
+and ${\bf B}$ computes $c_{ij}$ as the number of edges node $i$ and $j$ have in
+common that have identical edge weights.  Since the output type of the
+``multiplier'' operator in a semiring must match the type of its monoid, the
+Boolean \verb'EQ' cannot be combined with a non-Boolean \verb'PLUS' monoid to
+perform this operation.
+
+Likewise, SuiteSparse:GraphBLAS has two sets of logical OR, AND, and XOR
+operators.  Without the \verb'_'$T$ suffix, the three operators \verb'GrB_LOR',
+\verb'GrB_LAND', and \verb'GrB_LXOR' operate purely in the Boolean domain,
+where all input and output types are \verb'GrB_BOOL'.  The second set
+(\verb'GxB_LOR_'$T$ \verb'GxB_LAND_'$T$ and \verb'GxB_LXOR_'$T$) provides
+Boolean operators to all 11 real domains, implicitly typecasting their inputs from
+type $T$ to Boolean and returning a value of type $T$ that is 1 for true or
+zero for false.  The set of \verb'GxB_L*_'$T$ operators are useful since they
+can be combined with non-Boolean monoids in a semiring.
+
+Floating-point operations follow the IEEE 754 standard.  Thus, computing $x/0$
+for a floating-point $x$ results in \verb'+Inf' if $x$ is positive, \verb'-Inf'
+if $x$ is negative, and \verb'NaN' if $x$ is zero.  The application is not
+terminated.  However, integer division by zero normally terminates an
+application.  SuiteSparse:GraphBLAS avoids this by adopting the same rules as
+MATLAB, which are analogous to how the IEEE standard handles floating-point
+division by zero.  For integers, when $x$ is positive, $x/0$ is the largest
+positive integer, for negative $x$ it is the minimum integer, and 0/0 results
+in zero.  For example, for an integer $x$ of type \verb'GrB_INT32', 1/0 is
+$2^{31}-1$ and (-1)/0 is $-2^{31}$.  Refer to Section~\ref{type} for a list of
+integer ranges.
+
+%===============================================================================
+\subsubsection{GraphBLAS binary operators based on index binary operators}
+%===============================================================================
+
+Eight binary operators based on underlying index binary operators are
+predefined.  They differ when used in a semiring and when used in
+\verb'GrB_eWise*' and \verb'GrB_apply'.  These index-based binary operators
+cannot be used in \verb'GrB_build', nor can they be used as the \verb'accum'
+operator for any operation.
+
+The built-in index-based binary operators do not depend on the type or numerical value
+of their inputs, just their position in a matrix or vector.  For a vector, $j$
+is always 0, and $i$ is the index into the vector.  There are two types $N$
+available: \verb'INT32' and \verb'INT64', which is the type of the output $z$.
+User-defined index-based operators are not defined by \verb'GrB_BinaryOp_new',
+but by \verb'GxB_BinaryOp_new_IndexOp' instead.  See Section~\ref{idxbinaryop}
+for details.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Index-based binary operators for any type (including user-defined)} \\
+\multicolumn{4}{|c|}{when used as a multiplicative operator in a semiring} \\
+\hline
+GraphBLAS name            & types (domains)   & $z=f(a_{ik},b_{kj})$      & description \\
+\hline
+\verb'GxB_FIRSTI_'$N$    & $ \rightarrow N$  & $z = i$       & row index of $a_{ik}$ (0-based) \\
+\verb'GxB_FIRSTI1_'$N$   & $ \rightarrow N$  & $z = i+1$     & row index of $a_{ik}$ (1-based) \\
+\verb'GxB_FIRSTJ_'$N$    & $ \rightarrow N$  & $z = k$       & column index of $a_{ik}$ (0-based) \\
+\verb'GxB_FIRSTJ1_'$N$   & $ \rightarrow N$  & $z = k+1$     & column index of $a_{ik}$ (1-based) \\
+\verb'GxB_SECONDI_'$N$   & $ \rightarrow N$  & $z = k$       & row index of $b_{kj}$ (0-based) \\
+\verb'GxB_SECONDI1_'$N$  & $ \rightarrow N$  & $z = k+1$     & row index of $b_{kj}$ (1-based) \\
+\verb'GxB_SECONDJ_'$N$   & $ \rightarrow N$  & $z = j$       & column index of $b_{kj}$ (0-based) \\
+\verb'GxB_SECONDJ1_'$N$  & $ \rightarrow N$  & $z = j+1$     & column index of $b_{kj}$ (1-based) \\
+\hline
+\end{tabular}
+}
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Index-based binary operators for any type (including user-defined)} \\
+\multicolumn{4}{|c|}{when used in all other methods} \\
+\hline
+GraphBLAS name            & types (domains)   & $z=f(a_{ij},b_{ij})$      & description \\
+\hline
+\verb'GxB_FIRSTI_'$N$    & $ \rightarrow N$  & $z = i$       & row index of $a_{ij}$ (0-based) \\
+\verb'GxB_FIRSTI1_'$N$   & $ \rightarrow N$  & $z = i+1$     & row index of $a_{ij}$ (1-based) \\
+\verb'GxB_FIRSTJ_'$N$    & $ \rightarrow N$  & $z = j$       & column index of $a_{ij}$ (0-based) \\
+\verb'GxB_FIRSTJ1_'$N$   & $ \rightarrow N$  & $z = j+1$     & column index of $a_{ij}$ (1-based) \\
+\verb'GxB_SECONDI_'$N$   & $ \rightarrow N$  & $z = i$       & row index of $b_{ij}$ (0-based) \\
+\verb'GxB_SECONDI1_'$N$  & $ \rightarrow N$  & $z = i+1$     & row index of $b_{ij}$ (1-based) \\
+\verb'GxB_SECONDJ_'$N$   & $ \rightarrow N$  & $z = j$       & column index of $b_{ij}$ (0-based) \\
+\verb'GxB_SECONDJ1_'$N$  & $ \rightarrow N$  & $z = j+1$     & column index of $b_{ij}$ (1-based) \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+Finally, one special binary operator can only be used as input to
+\verb'GrB_Matrix_build' or \verb'GrB_Vector_build': the \verb'GxB_IGNORE_DUP'
+operator.  If \verb'dup' is \verb'NULL', any duplicates in the \verb'GrB*build'
+methods result in an error.  If \verb'dup' is the special binary operator
+\verb'GxB_IGNORE_DUP', then any duplicates are ignored.  If duplicates appear,
+the last one in the list of tuples is taken and the prior ones ignored.  This
+is not an error.
+
+The next sections define the following methods for the \verb'GrB_BinaryOp'
+object:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_BinaryOp_new'   & create a user-defined binary operator   & \ref{binaryop_new} \\
+\verb'GxB_BinaryOp_new'   & create a named user-defined binary operator   & \ref{binaryop_new_named} \\
+\verb'GrB_BinaryOp_wait'  & wait for a user-defined binary operator & \ref{binaryop_wait} \\
+\verb'GrB_BinaryOp_free'  & free a user-defined binary operator     & \ref{binaryop_free} \\
+\verb'GrB_get'           & get properties of an operator    & \ref{get_set_binop} \\
+\verb'GrB_set'           & set the operator name/definition & \ref{get_set_binop} \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_BinaryOp\_new:} create a user-defined binary operator}
+%-------------------------------------------------------------------------------
+\label{binaryop_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_BinaryOp_new
+(
+    GrB_BinaryOp *binaryop,         // handle for the new binary operator
+    void *function,                 // pointer to the binary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    GrB_Type ytype                  // type of input y
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GrB_BinaryOp_new' creates a new binary operator.  The new operator is
+returned in the \verb'binaryop' handle, which must not be \verb'NULL' on input.
+On output, its contents contains a pointer to the new binary operator.
+
+The three types \verb'xtype', \verb'ytype', and \verb'ztype' are the GraphBLAS
+types of the inputs $x$ and $y$, and output $z$ of the user-defined function
+$z=f(x,y)$.  These types may be built-in types or user-defined types, in any
+combination.  The three types need not be the same, but they must be previously
+defined before passing them to \verb'GrB_BinaryOp_new'.
+
+The final argument to \verb'GrB_BinaryOp_new' is a pointer to a user-defined
+function with the following signature:
+
+    {\footnotesize
+    \begin{verbatim}
+    void (*f) (void *z, const void *x, const void *y) ; \end{verbatim} }
+
+When the function \verb'f' is called, the arguments \verb'z', \verb'x', and
+\verb'y' are passed as \verb'(void *)' pointers, but they will be pointers to
+values of the correct type, defined by \verb'ztype', \verb'xtype', and
+\verb'ytype', respectively, when the operator was created.
+
+{\bf NOTE:} SuiteSparse:GraphBLAS may call the function with the pointers
+\verb'z' and \verb'x' equal to one another, in which case \verb'z=f(z,y)'
+should be computed.  Future versions may use additional pointer aliasing.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_BinaryOp\_new:} create a named user-defined binary operator}
+%-------------------------------------------------------------------------------
+\label{binaryop_new_named}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_BinaryOp_new
+(
+    GrB_BinaryOp *op,               // handle for the new binary operator
+    GxB_binary_function function,   // pointer to the binary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    GrB_Type ytype,                 // type of input y
+    const char *binop_name,         // name of the user function
+    const char *binop_defn          // definition of the user function
+) ;
+\end{verbatim} }\end{mdframed}
+
+Creates a named \verb'GrB_BinaryOp'.  Only the first 127 characters of
+\verb'binop_name' are used.  The \verb'binop_defn' is a string containing the
+entire function itself.  For example:
+
+{\footnotesize
+\begin{verbatim}
+void absdiff (double *z, double *x, double *y) { (*z) = fabs ((*x) - (*y)) ; } ;
+...
+GrB_Type AbsDiff ;
+GxB_BinaryOp_new (&AbsDiff, absdiff, GrB_FP64, GrB_FP64, GrB_FP64, "absdiff",
+  "void absdiff (double *z, double *x, double *y) { (*z) = fabs ((*x) - (*y)) ; }") ; \end{verbatim}}
+
+The two strings \verb'binop_name' and \verb'binop_defn' are optional, but are
+required to enable the JIT compilation of kernels that use this operator.
+
+If the JIT is enabled, or if the corresponding JIT kernel has been copied
+into the \verb'PreJIT' folder, the \verb'function' may be \verb'NULL'.  In this
+case, a JIT kernel is compiled that contains just the user-defined function.
+If the JIT is disabled and the \verb'function' is \verb'NULL', this method
+returns \verb'GrB_NULL_POINTER'.
+
+The above example is identical to the following usage, except that
+\verb'GrB_BinaryOp_new' requires a non-NULL function pointer.
+
+{\footnotesize
+\begin{verbatim}
+void absdiff (double *z, double *x, double *y) { (*z) = fabs ((*x) - (*y)) ; } ;
+...
+GrB_Type AbsDiff ;
+GrB_BinaryOp_new (&AbsDiff, absdiff, GrB_FP64, GrB_FP64, GrB_FP64) ;
+GrB_set (AbsDiff, "absdiff", GxB_JIT_C_NAME) ;
+GrB_set (AbsDiff,
+  "void absdiff (double *z, double *x, double *y) { (*z) = fabs ((*x) - (*y)) ; }",
+  GxB_JIT_C_DEFINITION) ;\end{verbatim}}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_BinaryOp\_wait:} wait for a binary operator}
+%-------------------------------------------------------------------------------
+\label{binaryop_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a user-defined binary operator
+(
+    GrB_BinaryOp binaryop,      // binary operator to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined binary operator, a GraphBLAS library may choose
+to exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS currently does nothing for except to ensure that the
+\verb'binaryop' is valid.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_BinaryOp\_free:} free a user-defined binary operator}
+%-------------------------------------------------------------------------------
+\label{binaryop_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free                   // free a user-created binary operator
+(
+    GrB_BinaryOp *binaryop          // handle of binary operator to free
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_BinaryOp_free' frees a user-defined binary operator.
+Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_BinaryOp_free (&op) ;
+    GrB_free (&op) ; \end{verbatim}}
+
+\noindent
+frees the \verb'op' and sets \verb'op' to \verb'NULL'.
+It safely does nothing if passed a \verb'NULL'
+handle, or if \verb'op == NULL' on input.
+It does nothing at all if passed a built-in binary operator.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf ANY} and {\sf PAIR} ({\sf ONEB}) operators}
+%-------------------------------------------------------------------------------
+\label{any_pair}
+
+The \verb'GxB_PAIR' operator (also called \verb'GrB_ONEB') is simple to describe:
+just $f(x,y)=1$.  It is called
+the \verb'PAIR' operator since it returns $1$ in a semiring when a pair of
+entries $a_{ik}$ and $b_{kj}$ is found in the matrix multiply.  This operator
+is simple yet very useful.  It allows purely structural computations to be
+performed on matrices of any type, without having to typecast them to Boolean
+with all values being true.  Typecasting need not be performed on the inputs to
+the \verb'PAIR' operator, and the \verb'PAIR' operator does not need to access
+the values of the matrix.  This cuts memory accesses, so it is a very fast
+operator to use.
+
+The \verb'GxB_PAIR_T' operator is a SuiteSparse:GraphBLAS extension.
+It has since been added to the v2.0 C API Specification as \verb'GrB_ONEB_T'.
+They are identical, but the latter name should be used for compatibility
+with other GraphBLAS libraries.
+
+The \verb'ANY' operator is very unusual, but very powerful.  It is the function
+$f_{\mbox{any}}(x,y)=x$, or $y$, where GraphBLAS has to freedom to select
+either $x$, or $y$, at its own discretion.  Do not confuse the \verb'ANY'
+operator with the \verb'any' function in MATLAB/Octave, which computes a reduction
+using the logical OR operator.
+
+The \verb'ANY' function is associative and commutative, and can thus serve as
+an operator for a monoid.  The selection of $x$ are $y$ is not randomized.
+Instead, SuiteSparse:GraphBLAS uses this freedom to compute as fast a result as
+possible.  When used as the monoid in a dot product, \[ c_{ij} = \sum_k a_{ik}
+b_{kj} \] for example, the computation can terminate as soon as any matching
+pair of entries is found.  When used in a parallel saxpy-style computation, the
+\verb'ANY' operator allows for a relaxed form of synchronization to be used,
+resulting in a fast benign race condition.
+
+Because of this benign race condition, the result of the \verb'ANY' monoid can
+be non-deterministic, unless it is coupled with the \verb'PAIR' multiplicative
+operator.  In this case, the \verb'ANY_PAIR' semiring will return a
+deterministic result, since $f_{\mbox{any}}(1,1)$ is always 1.
+
+When paired with a different operator, the results are non-deterministic.  This
+gives a powerful method when computing results for which any value selected by
+the \verb'ANY' operator is valid.  One such example is the breadth-first-search
+tree.  Suppose node $j$ is at level $v$, and there are multiple nodes $i$ at
+level $v-1$ for which the edge $(i,j)$ exists in the graph.  Any of these nodes
+$i$ can serve as a valid parent in the BFS tree.  Using the \verb'ANY'
+operator, GraphBLAS can quickly compute a valid BFS tree; if it used again on
+the same inputs, it might return a different, yet still valid, BFS tree, due to
+the non-deterministic nature of intra-thread synchronization.
+

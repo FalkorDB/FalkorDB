@@ -2,13 +2,14 @@
 // GrB_Scalar_free: free a sparse GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // free all the content of a GrB_Scalar.  After GrB_Scalar_free (&s), s is set
-// to NULL
+// to NULL.  The scalar may have readonly content; it is simply removed from s
+// and not modified.
 
 #include "GB.h"
 

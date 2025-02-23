@@ -2,7 +2,7 @@
 // GxB_BinaryOp_new_IndexOp: create a new user-defined binary op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,17 +22,16 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_BinaryOp_new_IndexOp (&binop, idxbinop, theta)") ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (binop_handle) ;
     (*binop_handle) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (idxbinop) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (theta) ;
+    GB_RETURN_IF_NULL_OR_INVALID (theta) ;
 
     if (!GB_Type_compatible (idxbinop->theta_type, theta->type))
     { 
-        GB_ERROR (GrB_DOMAIN_MISMATCH,
-            "Scalar of type [%s] cannot be typecast to type [%s]\n",
-                theta->type->name, idxbinop->theta_type->name) ;
+        return (GrB_DOMAIN_MISMATCH) ;
     }
 
     //--------------------------------------------------------------------------
@@ -40,7 +39,9 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     //--------------------------------------------------------------------------
 
     size_t header_size ;
-    GrB_BinaryOp binop = GB_CALLOC (1, struct GB_BinaryOp_opaque, &header_size);
+    GrB_BinaryOp
+        binop = GB_CALLOC_MEMORY (1, sizeof (struct GB_BinaryOp_opaque),
+            &header_size) ;
     if (binop == NULL)
     { 
         // out of memory
@@ -63,7 +64,7 @@ GrB_Info GxB_BinaryOp_new_IndexOp
 
     bool jitable = (idxbinop->hash != UINT64_MAX) ;
 
-    GrB_Info info = GB_op_name_and_defn (
+    info = GB_op_name_and_defn (
         // output:
         binop->name, &(binop->name_len), &(binop->hash),
         &(binop->defn), &(binop->defn_size),
@@ -72,7 +73,7 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     if (info != GrB_SUCCESS)
     { 
         // out of memory
-        GB_FREE (&binop, header_size) ;
+        GB_FREE_MEMORY (&binop, header_size) ;
         return (info) ;
     }
 
@@ -80,7 +81,7 @@ GrB_Info GxB_BinaryOp_new_IndexOp
     // copy theta into the new binary op
     //--------------------------------------------------------------------------
 
-    binop->theta = GB_MALLOC (binop->theta_type->size, GB_void,
+    binop->theta = GB_MALLOC_MEMORY (1, binop->theta_type->size,
         &(binop->theta_size)) ;
     if (binop->theta == NULL)
     { 

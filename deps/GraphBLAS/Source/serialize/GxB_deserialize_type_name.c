@@ -2,7 +2,7 @@
 // GxB_deserialize_type_name: return the JIT C name of the type of a blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,7 +28,7 @@ GrB_Info GxB_deserialize_type_name  // return the type name of a blob
                             // GxB_MAX_NAME_LEN, owned by the user application).
     // input, not modified:
     const void *blob,       // the blob
-    GrB_Index blob_size     // size of the blob
+    uint64_t blob_size      // size of the blob
 )
 {
 
@@ -36,7 +36,7 @@ GrB_Info GxB_deserialize_type_name  // return the type name of a blob
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_deserialize_type_name (type_name, blob, blob_size)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (type_name) ;
     GB_RETURN_IF_NULL (blob) ;
 
@@ -52,7 +52,8 @@ GrB_Info GxB_deserialize_type_name  // return the type name of a blob
 
     size_t s = 0 ;
     GB_BLOB_READ (blob_size2, uint64_t) ;
-    GB_BLOB_READ (typecode, int32_t) ;
+    GB_BLOB_READ (encoding, int32_t) ;
+    int typecode = encoding & 0xF ;
 
     if (blob_size2 != blob_size)
     { 

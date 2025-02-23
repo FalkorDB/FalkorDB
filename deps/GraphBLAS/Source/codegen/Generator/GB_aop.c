@@ -2,7 +2,7 @@
 // GB_aop:  assign/subassign kernels with accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,6 @@
 GB_type_enabled
 #if GB_TYPE_ENABLED
 #include "GB.h"
-#include "slice/GB_ek_slice.h"
 #include "FactoryKernels/GB_aop__include.h"
 
 // accum operator
@@ -105,5 +104,7 @@ GrB_Info GB (_subassign_22)
     #endif
 }
 
+#else
+GB_EMPTY_PLACEHOLDER
 #endif
 

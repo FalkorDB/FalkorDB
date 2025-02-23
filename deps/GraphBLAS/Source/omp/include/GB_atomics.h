@@ -2,7 +2,7 @@
 // GB_atomics.h: definitions for atomic operations
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -200,15 +200,15 @@
 
     #if GB_COMPILER_MSC
 
-        #define GB_ATOMIC_CAPTURE_INT64(result, target, value)          \
+        #define GB_ATOMIC_CAPTURE_UINT64(result, target, value)         \
         {                                                               \
             result = _InterlockedExchange64                             \
-                ((int64_t volatile *) (&(target)), value) ;             \
+                ((uint64_t volatile *) (&(target)), value) ;            \
         }
 
     #else
 
-        #define GB_ATOMIC_CAPTURE_INT64(result, target, value)          \
+        #define GB_ATOMIC_CAPTURE_UINT64(result, target, value)         \
         {                                                               \
             GB_ATOMIC_CAPTURE                                           \
             {                                                           \
@@ -256,15 +256,15 @@
 
     #if GB_COMPILER_MSC
 
-        #define GB_ATOMIC_CAPTURE_INT64_OR(result, target, value)       \
+        #define GB_ATOMIC_CAPTURE_UINT64_OR(result, target, value)      \
         {                                                               \
             result = _InterlockedOr64                                   \
-                ((int64_t volatile *) (&(target)), value) ;             \
+                ((uint64_t volatile *) (&(target)), value) ;            \
         }
 
     #else
 
-        #define GB_ATOMIC_CAPTURE_INT64_OR(result, target, value)       \
+        #define GB_ATOMIC_CAPTURE_UINT64_OR(result, target, value)      \
         {                                                               \
             GB_ATOMIC_CAPTURE                                           \
             {                                                           \
@@ -279,9 +279,10 @@
     // atomic post-increment
     //--------------------------------------------------------------------------
 
-    // Increment an int64_t value and return the value prior to being
-    // incremented:
+    // Increment an int64_t or int32_t value and return the value prior to
+    // being incremented:
     //
+    //      int32_t result = target++ ;
     //      int64_t result = target++ ;
     //
     // See
@@ -291,10 +292,28 @@
 
     #if GB_COMPILER_MSC
 
+        #define GB_ATOMIC_CAPTURE_INC32(result,target)                  \
+        {                                                               \
+            result = _InterlockedIncrement ((int32_t volatile *) (&(target))) ;\
+            result-- ;                                                  \
+        }
+
+    #else
+
+        #define GB_ATOMIC_CAPTURE_INC32(result,target)                  \
+        {                                                               \
+            GB_ATOMIC_CAPTURE                                           \
+            result = (target)++ ;                                       \
+        }
+
+    #endif
+
+    #if GB_COMPILER_MSC
+
         #define GB_ATOMIC_CAPTURE_INC64(result,target)                  \
         {                                                               \
-            result = _InterlockedIncrement64                            \
-                ((int64_t volatile *) (&(target))) - 1 ;                \
+            result = _InterlockedIncrement64 ((int64_t volatile *)(&(target)));\
+            result-- ;                                                  \
         }
 
     #else

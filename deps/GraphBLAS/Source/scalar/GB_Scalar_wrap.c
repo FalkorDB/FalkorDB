@@ -2,7 +2,7 @@
 // GB_Scalar_wrap: wrap a C scalar inside a GraphBLAS scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -47,7 +47,8 @@ GrB_Scalar GB_Scalar_wrap   // create a new GrB_Scalar with one entry
     s->vdim = 1 ;
     s->nvec = 1 ;
 
-    s->nvec_nonempty = 1 ;
+//  s->nvec_nonempty = 1 ;
+    GB_nvec_nonempty_set ((GrB_Matrix) s, 1) ;
 
     s->p = NULL ; s->p_size = 0 ; s->p_shallow = false ;
     s->h = NULL ; s->h_size = 0 ; s->h_shallow = false ;
@@ -68,11 +69,13 @@ GrB_Scalar GB_Scalar_wrap   // create a new GrB_Scalar with one entry
     s->bitmap_switch = 0.5 ;
     s->sparsity_control = GxB_FULL ;
 
-    s->static_header = true ;
-
     s->is_csc = true ;
     s->jumbled = false ;
-    s->iso = true ;         // OK: scalar wrap with a single entry
+    s->iso = true ;
+
+    s->p_is_32 = false ;
+    s->j_is_32 = false ;
+    s->i_is_32 = false ;
 
     //--------------------------------------------------------------------------
     // return result

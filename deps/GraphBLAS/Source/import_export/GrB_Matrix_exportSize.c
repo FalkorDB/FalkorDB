@@ -2,7 +2,7 @@
 // GrB_Matrix_exportSize: determine sizes of arrays for GrB_Matrix_export
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,10 +12,10 @@
 
 GrB_Info GrB_Matrix_exportSize  // determine sizes of user arrays for export
 (
-    GrB_Index *Ap_len,      // # of entries required for Ap (not # of bytes)
-    GrB_Index *Ai_len,      // # of entries required for Ai (not # of bytes)
-    GrB_Index *Ax_len,      // # of entries required for Ax (not # of bytes)
-    GrB_Format format,      // export format
+    uint64_t *Ap_len,       // # of entries required for Ap (not # of bytes)
+    uint64_t *Ai_len,       // # of entries required for Ai (not # of bytes)
+    uint64_t *Ax_len,       // # of entries required for Ax (not # of bytes)
+    int format,             // export format                   
     GrB_Matrix A            // matrix to export
 )
 { 
@@ -24,14 +24,14 @@ GrB_Info GrB_Matrix_exportSize  // determine sizes of user arrays for export
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_exportSize (&Ap_len, &Ai_len, &Ax_len, format, A)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GB_WHERE_1 (A, "GrB_Matrix_exportSize "
+        "(&Ap_len, &Ai_len, &Ax_len, format, A)") ;
+    GB_RETURN_IF_NULL (A) ;
     GB_RETURN_IF_NULL (Ap_len) ;
     GB_RETURN_IF_NULL (Ai_len) ;
     GB_RETURN_IF_NULL (Ax_len) ;
 
-    GrB_Info info ;
-    GrB_Index nvals ;
+    uint64_t nvals ;
     GB_OK (GB_nvals (&nvals, A, Werk)) ;
     (*Ax_len) = nvals ;
 

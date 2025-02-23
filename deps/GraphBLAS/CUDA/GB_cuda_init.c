@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/GB_cuda_init: initialize the GPUs for use by GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,6 +12,8 @@
 // sizes, SM counts, and other capabilities.  Unified Memory support is
 // assumed.  Then each GPU is "warmed up" by allocating a small amount of
 // memory.
+
+// FIXME: remove printfs
 
 #include "GB.h"
 
@@ -22,16 +24,17 @@ GrB_Info GB_cuda_init (void)
     if (!GB_Global_gpu_count_set (true))
     {
         printf ("GB_cuda_init line %d\n", __LINE__) ;
-        return (GrB_PANIC) ;
+        return (GxB_GPU_ERROR) ;
     }
     int gpu_count = GB_Global_gpu_count_get ( ) ;
-    for (int device = 0 ; device < 1 ; device++) // TODO for GPU: gpu_count
+    printf ("GB_cuda_init: ngpus: %d\n", gpu_count) ;
+    for (int device = 0 ; device < gpu_count ; device++)
     {
         // query the GPU and then warm it up
         if (!GB_Global_gpu_device_properties_get (device))
         {
             printf ("GB_cuda_init line %d\n", __LINE__) ;
-            return (GrB_PANIC) ;
+            return (GxB_GPU_ERROR) ;
         }
     }
 
@@ -50,17 +53,18 @@ GrB_Info GB_cuda_init (void)
     }
 
     // warm up the GPUs
-    for (int device = 0 ; device < 1 ; device++) // TODO for GPU: gpu_count
+    for (int device = 0 ; device < gpu_count ; device++)
     {
         if (!GB_cuda_warmup (device))
         {
             printf ("GB_cuda_init line %d\n", __LINE__) ;
-            return (GrB_PANIC) ;
+            return (GxB_GPU_ERROR) ;
         }
     }
 
-    GB_cuda_set_device (0) ;            // make GPU 0 the default device
-    GB_Context_gpu_id_set (NULL, 0) ;   // set GxB_CONTEXT_WORLD->gpu_id to 0
+    // FIXME: default device set to 1 to avoid hardware failure ...
+    GB_cuda_set_device (0) ;            // make GPU 1 the default device
+    GB_Context_gpu_id_set (NULL, 0) ;   // set GxB_CONTEXT_WORLD->gpu_id to 1
 
     // also check for jit cache, pre-load library of common kernels ...
     return (GrB_SUCCESS) ;

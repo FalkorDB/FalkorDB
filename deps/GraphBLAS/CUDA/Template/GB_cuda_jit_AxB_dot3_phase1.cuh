@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase1.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -56,10 +56,10 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     //--------------------------------------------------------------------------
 
     #if GB_M_IS_HYPER
-    const int64_t *__restrict__ Mh = M->h ;
+    const GB_Mj_TYPE *__restrict__ Mh = (GB_Mj_TYPE *) M->h ;
     #endif
-    const int64_t *__restrict__ Mp = M->p ;
-    const int64_t *__restrict__ Mi = M->i ;
+    const GB_Mp_TYPE *__restrict__ Mp = (GB_Mp_TYPE *) M->p ;
+    const GB_Mi_TYPE *__restrict__ Mi = (GB_Mi_TYPE *) M->i ;
     #if !GB_MASK_STRUCT
     const GB_M_TYPE *__restrict__ Mx = (GB_M_TYPE *) M->x ;
     #endif
@@ -69,40 +69,37 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
     ASSERT (GB_M_IS_SPARSE || GB_M_IS_HYPER) ;
 
     #if GB_A_IS_SPARSE || GB_A_IS_HYPER
-    const int64_t *__restrict__ Ap = A->p ;
+    const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
     #endif
 
     #if GB_B_IS_SPARSE || GB_B_IS_HYPER
-    const int64_t *__restrict__ Bp = B->p ;
+    const GB_Bp_TYPE *__restrict__ Bp = (GB_Bp_TYPE *) B->p ;
     #endif
 
     #if GB_A_IS_HYPER
     const int64_t anvec = A->nvec ;
-    const int64_t *__restrict__ Ah = A->h ;
-    const int64_t *__restrict__ A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-    const int64_t *__restrict__ A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-    const int64_t *__restrict__ A_Yx = (int64_t *)
-        ((A->Y == NULL) ? NULL : A->Y->x) ;
+    const GB_Aj_TYPE *__restrict__ Ah = (GB_Aj_TYPE *) A->h ;
+    const void *A_Yp = (void *) ((A->Y == NULL) ? NULL : A->Y->p) ;
+    const void *A_Yi = (void *) ((A->Y == NULL) ? NULL : A->Y->i) ;
+    const void *A_Yx = (void *) ((A->Y == NULL) ? NULL : A->Y->x) ;
     const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
     #endif
 
     #if GB_B_IS_HYPER
     const int64_t bnvec = B->nvec ;
-    const int64_t *__restrict__ Bh = B->h ;
-    const int64_t *__restrict__ B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
-    const int64_t *__restrict__ B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
-    const int64_t *__restrict__ B_Yx = (int64_t *)
-        ((B->Y == NULL) ? NULL : B->Y->x) ;
+    const GB_Bj_TYPE *__restrict__ Bh = (GB_Bj_TYPE *) B->h ;
+    const void *B_Yp = (void *) ((B->Y == NULL) ? NULL : B->Y->p) ;
+    const void *B_Yi = (void *) ((B->Y == NULL) ? NULL : B->Y->i) ;
+    const void *B_Yx = (void *) ((B->Y == NULL) ? NULL : B->Y->x) ;
     const int64_t B_hash_bits = (B->Y == NULL) ? 0 : (B->Y->vdim - 1) ;
     #endif
 
-    // int64_t *restrict Cp = C->p ;    // copy of Mp
-    // int64_t *restrict Ch = C->h ;    // copy of Mh
-    int64_t *__restrict__ Ci = C->i ;   // for zombies, or bucket assignment
+    // for zombies, or bucket assignment:
+    GB_Ci_SIGNED_TYPE *__restrict__ Ci = (GB_Ci_SIGNED_TYPE *) C->i ;
 
     // FIXME: use (k << 2) not (k << 4)
 
-    // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE(i) if C(i,j) is a
+    // Ci [p] for an entry C(i,j) contains either GB_ZOMBIE (i) if C(i,j) is a
     // zombie, or (k << 4) + bucket otherwise, where C(:,j) is the kth vector
     // of C (j = Ch [k] if hypersparse or j = k if standard sparse), and
     // where bucket is the bucket assignment for C(i,j).
@@ -182,13 +179,14 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
                 //--------------------------------------------------------------
 
                 #if GB_B_IS_SPARSE || GB_B_IS_HYPER
-                int64_t j = GBH_M (Mh, k) ; // that Ch and Mh are the same
+                int64_t j = GBh_M (Mh, k) ; // that Ch and Mh are the same
                 int64_t pB, pB_end, bjnz ;
                 #endif
 
                 #if GB_B_IS_HYPER
-                GB_hyper_hash_lookup (Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx,
-                    B_hash_bits, j, &pB, &pB_end) ;
+                GB_hyper_hash_lookup (GB_Bp_IS_32, GB_Bj_IS_32,
+                    Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits,
+                    j, &pB, &pB_end) ;
                 bjnz = pB_end - pB ;
                 if (bjnz > 0)
                 #elif GB_B_IS_SPARSE
@@ -210,8 +208,9 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
                     #endif
 
                     #if GB_A_IS_HYPER
-                    GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx,
-                        A_hash_bits, i, &pA, &pA_end) ;
+                    GB_hyper_hash_lookup (GB_Ap_IS_32, GB_Aj_IS_32,
+                        Ah, anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
+                        i, &pA, &pA_end) ;
                     ainz = pA_end - pA ;
                     if (ainz > 0)
                     #elif GB_A_IS_SPARSE
@@ -304,7 +303,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
             //------------------------------------------------------------------
 
             // encode the bucket or zombie status in the row index of C(i,j)
-            Ci [pM] = (bucket == GB_BUCKET_ZOMBIE) * ( GB_ZOMBIE(i) << 4)
+            Ci [pM] = (bucket == GB_BUCKET_ZOMBIE) * ( GB_ZOMBIE (i) << 4)
                     + (bucket != GB_BUCKET_ZOMBIE) * ((k << 4) + bucket) ;
 
             // each thread counts its own bucket sizes

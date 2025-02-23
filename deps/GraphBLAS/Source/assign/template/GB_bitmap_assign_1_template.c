@@ -2,7 +2,7 @@
 // GB_bitmap_assign_1_template: C bitmap, M bitmap/full, with accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -48,7 +48,7 @@
     //--------------------------------------------------------------------------
 
     #define GB_GET_MIJ(mij,pM)                                  \
-        bool mij = (GBB_M (Mb, pM) && GB_MCAST (Mx, pM, msize)) ^ GB_MASK_COMP ;
+        bool mij = (GBb_M (Mb, pM) && GB_MCAST (Mx, pM, msize)) ^ GB_MASK_COMP ;
 
     //--------------------------------------------------------------------------
     // assignment phase
@@ -78,26 +78,26 @@
         // FUTURE: if C FULL: Cb is effectively all 1's and stays that way
 
         #undef  GB_IXJ_WORK
-        #define GB_IXJ_WORK(pC,pA)                          \
-        {                                                   \
-            int64_t pM = GB_GET_pM ;                        \
-            GB_GET_MIJ (mij, pM) ;                          \
-            if (mij)                                        \
-            {                                               \
-                int8_t cb = Cb [pC] ;                       \
-                if (cb == 0)                                \
-                {                                           \
-                    /* Cx [pC] = scalar */                  \
-                    GB_COPY_cwork_to_C (Cx, pC, cwork, C_iso) ;   \
-                    Cb [pC] = 1 ;                           \
-                    task_cnvals++ ;                         \
-                }                                           \
-                else /* (cb == 1) */                        \
-                {                                           \
-                    /* Cx [pC] += scalar */                 \
-                    GB_ACCUMULATE_scalar (Cx, pC, ywork, C_iso) ;  \
-                }                                           \
-            }                                               \
+        #define GB_IXJ_WORK(pC,pA)                                  \
+        {                                                           \
+            int64_t pM = GB_GET_pM ;                                \
+            GB_GET_MIJ (mij, pM) ;                                  \
+            if (mij)                                                \
+            {                                                       \
+                int8_t cb = Cb [pC] ;                               \
+                if (cb == 0)                                        \
+                {                                                   \
+                    /* Cx [pC] = scalar */                          \
+                    GB_COPY_cwork_to_C (Cx, pC, cwork, C_iso) ;     \
+                    Cb [pC] = 1 ;                                   \
+                    task_cnvals++ ;                                 \
+                }                                                   \
+                else /* (cb == 1) */                                \
+                {                                                   \
+                    /* Cx [pC] += scalar */                         \
+                    GB_ACCUMULATE_scalar (Cx, pC, ywork, C_iso) ;   \
+                }                                                   \
+            }                                                       \
         }
 
         ASSERT (GB_ASSIGN_KIND == GB_ASSIGN || GB_ASSIGN_KIND == GB_SUBASSIGN) ;
@@ -144,26 +144,26 @@
 
         // FUTURE: if C FULL: Cb is effectively all 1's and stays that way
 
-        #define GB_AIJ_WORK(pC,pA)                                      \
-        {                                                               \
-            int64_t pM = GB_GET_pM ;                                    \
-            GB_GET_MIJ (mij, pM) ;                                      \
-            if (mij)                                                    \
-            {                                                           \
-                int8_t cb = Cb [pC] ;                                   \
-                if (cb == 0)                                            \
-                {                                                       \
-                    /* Cx [pC] = Ax [pA] */                             \
+        #define GB_AIJ_WORK(pC,pA)                                           \
+        {                                                                    \
+            int64_t pM = GB_GET_pM ;                                         \
+            GB_GET_MIJ (mij, pM) ;                                           \
+            if (mij)                                                         \
+            {                                                                \
+                int8_t cb = Cb [pC] ;                                        \
+                if (cb == 0)                                                 \
+                {                                                            \
+                    /* Cx [pC] = Ax [pA] */                                  \
                     GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork, C_iso) ; \
-                    Cb [pC] = 1 ;                                       \
-                    task_cnvals++ ;                                     \
-                }                                                       \
-                else /* (cb == 1) */                                    \
-                {                                                       \
-                    /* Cx [pC] += Ax [pA] */                            \
-                    GB_ACCUMULATE_aij (Cx, pC, Ax, pA, A_iso, ywork, C_iso) ;  \
-                }                                                       \
-            }                                                           \
+                    Cb [pC] = 1 ;                                            \
+                    task_cnvals++ ;                                          \
+                }                                                            \
+                else /* (cb == 1) */                                         \
+                {                                                            \
+                    /* Cx [pC] += Ax [pA] */                                 \
+                    GB_ACCUMULATE_aij (Cx, pC, Ax, pA, A_iso, ywork, C_iso) ;\
+                }                                                            \
+            }                                                                \
         }
 
         switch (GB_ASSIGN_KIND)

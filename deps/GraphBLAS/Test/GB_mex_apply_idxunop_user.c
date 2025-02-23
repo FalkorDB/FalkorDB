@@ -2,7 +2,7 @@
 // GB_mex_apply_idxunop_user: C = idxunop (A)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,8 +25,8 @@ GrB_Matrix C = NULL ;
 GrB_Matrix A = NULL ;
 GrB_IndexUnaryOp op = NULL ;
 
-void idx2 (int64_t *z, const void *x, GrB_Index i, GrB_Index j, const void *y);
-void idx2 (int64_t *z, const void *x, GrB_Index i, GrB_Index j, const void *y)
+void idx2 (int64_t *z, const void *x, uint64_t i, uint64_t j, const void *y) ;
+void idx2 (int64_t *z, const void *x, uint64_t i, uint64_t j, const void *y)
 {
     uint64_t thunk = *((uint64_t *) y) ;
     (*z) = i + j + thunk ;
@@ -69,7 +69,7 @@ void mexFunction
     }
 
     // C = op (A), where thunk = 1
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, A) ;
     GrB_Matrix_ncols (&ncols, A) ;
     GrB_Matrix_new (&C, GrB_FP64, nrows, ncols) ;

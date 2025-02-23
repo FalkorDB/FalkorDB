@@ -7,11 +7,9 @@ extern "C"
 
 GrB_Info GB_cuda_select_bitmap_jit
 (
-    // output:
-    int8_t *Cb,
-    uint64_t *cnvals,
+    // input/output:
+    GrB_Matrix C,
     // input:
-    const bool C_iso,
     const GrB_Matrix A,
     const bool flipij,
     const GB_void *ythunk,
@@ -30,7 +28,7 @@ GrB_Info GB_cuda_select_bitmap_jit
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_select (&encoding, &suffix,
-        GB_JIT_CUDA_KERNEL_SELECT_BITMAP, C_iso, false, op, flipij, A) ;
+        GB_JIT_CUDA_KERNEL_SELECT_BITMAP, C, op, flipij, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -48,5 +46,6 @@ GrB_Info GB_cuda_select_bitmap_jit
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (Cb, cnvals, A, ythunk, stream, gridsz, blocksz)) ;
+    return (GB_jit_kernel (C, A, ythunk, stream, gridsz, blocksz,
+        &GB_callback)) ;
 }

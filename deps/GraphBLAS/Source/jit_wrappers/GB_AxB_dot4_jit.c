@@ -2,7 +2,7 @@
 // GB_AxB_dot4_jit: C+=A'*B dot4 method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,6 +40,7 @@ GrB_Info GB_AxB_dot4_jit            // C+=A'*B, dot4 method, via the JIT
     uint64_t hash = GB_encodify_mxm (&encoding, &suffix,
         GB_JIT_KERNEL_AXB_DOT4,
         false, C_in_iso, GxB_FULL, C->type,
+        /* OK, C is full: */ false, false, false,
         NULL, true, false, semiring, flipxy, A, B) ;
 
     //--------------------------------------------------------------------------
@@ -57,8 +58,9 @@ GrB_Info GB_AxB_dot4_jit            // C+=A'*B, dot4 method, via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, A, B, A_slice, B_slice, naslice, nbslice,
-        nthreads, Werk, &GB_callback, semiring->multiply->theta)) ;
+        nthreads, Werk, semiring->multiply->theta, &GB_callback)) ;
 }
 

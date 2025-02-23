@@ -2,39 +2,32 @@
 // GB_transpose_template: C=op(cast(A')), transpose, typecast, and apply op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 {
 
-    // Ax unused for some uses of this template
-    #include "include/GB_unused.h"
-
     //--------------------------------------------------------------------------
     // get A and C
     //--------------------------------------------------------------------------
 
-    #undef GBH_AB
     #undef GB_AB_TYPE
-
     #ifdef GB_BIND_1ST
         // A is the name of the matrix passed in to this kernel, but it takes
         // the place of the B matrix for C=op(x,A').  As a result, the B macros
         // must be used to access its contents.
-        #define GBH_AB(Ah,k) GBH_B(Ah,k)
         #define GB_AB_TYPE GB_B_TYPE
     #else
         // for bind2nd, unary ops, and mere typecasting, use the A macros to
         // access the A matrix.
-        #define GBH_AB(Ah,k) GBH_A(Ah,k)
         #define GB_AB_TYPE GB_A_TYPE
     #endif
 
     #ifndef GB_ISO_TRANSPOSE
     const GB_AB_TYPE *restrict Ax = (GB_AB_TYPE *) A->x ;
-          GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
+          GB_C_TYPE  *restrict Cx = (GB_C_TYPE  *) C->x ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -86,6 +79,5 @@
 }
 
 #undef GB_ISO_TRANSPOSE
-#undef GBH_AB
 #undef GB_AB_TYPE
 

@@ -2,7 +2,7 @@
 // GB_conform_hyper: conform a sparse matrix to its desired hypersparse format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,20 +40,17 @@ GrB_Info GB_conform_hyper       // conform a matrix to sparse/hypersparse
     // convert to sparse or hypersparse
     //--------------------------------------------------------------------------
 
-    if (A->nvec_nonempty < 0)
-    { 
-        // A->nvec_nonempty is used to select sparse vs hypersparse
-        A->nvec_nonempty = GB_nvec_nonempty (A) ;
-    }
+    // A->nvec_nonempty is used to select sparse vs hypersparse
+    int64_t nvec_nonempty = GB_nvec_nonempty_update (A) ;
 
     if (A->h == NULL && GB_convert_sparse_to_hyper_test (A->hyper_switch,
-        A->nvec_nonempty, A->vdim)) // A->nvec_nonempty used here
+        nvec_nonempty, A->vdim))
     { 
         // A is sparse but should be converted to hypersparse
         GB_OK (GB_convert_sparse_to_hyper (A, Werk)) ;
     }
     else if (A->h != NULL && GB_convert_hyper_to_sparse_test (A->hyper_switch,
-        A->nvec_nonempty, A->vdim)) // A->nvec_nonempty used here
+        nvec_nonempty, A->vdim))
     { 
         // A is hypersparse but should be converted to sparse
         GB_OK (GB_convert_hyper_to_sparse (A, true)) ;

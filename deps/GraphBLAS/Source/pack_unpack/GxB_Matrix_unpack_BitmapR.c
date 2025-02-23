@@ -2,7 +2,7 @@
 // GxB_Matrix_unpack_BitmapR: unpack a bitmap matrix, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,10 +16,10 @@ GrB_Info GxB_Matrix_unpack_BitmapR  // unpack a bitmap matrix, by row
     GrB_Matrix A,       // matrix to unpack (type, nrows, ncols unchanged)
     int8_t **Ab,        // bitmap
     void **Ax,          // values
-    GrB_Index *Ab_size, // size of Ab in bytes
-    GrB_Index *Ax_size, // size of Ax in bytes
+    uint64_t *Ab_size,  // size of Ab in bytes
+    uint64_t *Ax_size,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
-    GrB_Index *nvals,   // # of entries in bitmap
+    uint64_t *nvals,    // # of entries in bitmap
     const GrB_Descriptor desc
 )
 {
@@ -28,10 +28,12 @@ GrB_Info GxB_Matrix_unpack_BitmapR  // unpack a bitmap matrix, by row
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_unpack_BitmapR (A, "
-        "&Ab, &Ax, &Ab_size, &Ax_size, &iso, &nvals, desc)") ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
+    GB_WHERE_1 (A, "GxB_Matrix_unpack_BitmapR (A, &Ab, &Ax, &Ab_size, &Ax_size,"
+        " &iso, &nvals, desc)") ;
     GB_BURBLE_START ("GxB_Matrix_unpack_BitmapR") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
@@ -42,7 +44,6 @@ GrB_Info GxB_Matrix_unpack_BitmapR  // unpack a bitmap matrix, by row
     if (A->is_csc)
     { 
         // A = A', done in-place, to put A in by-row format
-        GBURBLE ("(transpose) ") ;
         GB_OK (GB_transpose_in_place (A, false, Werk)) ;
     }
 
@@ -61,7 +62,7 @@ GrB_Info GxB_Matrix_unpack_BitmapR  // unpack a bitmap matrix, by row
     int sparsity ;
     bool is_csc ;
     GrB_Type type ;
-    GrB_Index vlen, vdim ;
+    uint64_t vlen, vdim ;
 
     info = GB_export (true, &A, &type, &vlen, &vdim, false,
         NULL, NULL,     // Ap

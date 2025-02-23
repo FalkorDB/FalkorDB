@@ -2,7 +2,7 @@
 // GB_extractTuples: extract all the tuples from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,21 +18,24 @@
 
 // If A is iso and X is not NULL, the iso scalar Ax [0] is expanded into X.
 
+// FUTURE: pass in parameters I_offset and J_offset to add to I and J
+
 #include "GB.h"
 #include "extractTuples/GB_extractTuples.h"
 
 #define GB_FREE_ALL                             \
 {                                               \
-    GB_Matrix_free (&T) ;                       \
-    GB_FREE_WORK (&Cp, Cp_size) ;               \
+    GB_FREE_MEMORY (&Cp, Cp_size) ;               \
 }
 
 GrB_Info GB_extractTuples       // extract all tuples from a matrix
 (
-    GrB_Index *I_out,           // array for returning row indices of tuples
-    GrB_Index *J_out,           // array for returning col indices of tuples
+    void *I_out,                // array for returning row indices of tuples
+    bool I_is_32_out,           // if true, I is 32-bit; else 64 bit
+    void *J_out,                // array for returning col indices of tuples
+    bool J_is_32_out,           // if true, J is 32-bit; else 64 bit
     void *X,                    // array for returning values of tuples
-    GrB_Index *p_nvals,         // I,J,X size on input; # tuples on output
+    uint64_t *p_nvals,          // I,J,X size on input; # tuples on output
     const GrB_Type xtype,       // type of array X
     const GrB_Matrix A,         // matrix to extract tuples from
     GB_Werk Werk
@@ -44,10 +47,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    struct GB_Matrix_opaque T_header ;
-    GrB_Matrix T = NULL ;
-    int64_t *restrict Cp = NULL ; size_t Cp_size = 0 ;
-
+    void *Cp = NULL ; size_t Cp_size = 0 ;
     ASSERT_MATRIX_OK (A, "A to extract", GB0) ;
     ASSERT_TYPE_OK (xtype, "xtype to extract", GB0) ;
     ASSERT (p_nvals != NULL) ;
@@ -89,16 +89,21 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     // handle the CSR/CSC format
     //--------------------------------------------------------------------------
 
-    GrB_Index *I, *J ;
+    void *I, *J ;
+    bool I_is_32, J_is_32 ;
     if (A->is_csc)
     { 
         I = I_out ;
         J = J_out ;
+        I_is_32 = I_is_32_out ;
+        J_is_32 = J_is_32_out ;
     }
     else
     { 
         I = J_out ;
         J = I_out ;
+        I_is_32 = J_is_32_out ;
+        J_is_32 = I_is_32_out ;
     }
 
     //--------------------------------------------------------------------------
@@ -112,7 +117,9 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
         // allocate workspace
         //----------------------------------------------------------------------
 
-        Cp = GB_MALLOC_WORK (A->vdim+1, int64_t, &Cp_size) ;
+        bool Cp_is_32 = GB_determine_p_is_32 (true, anz) ;   // OK
+        size_t cpsize = (Cp_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+        Cp = GB_MALLOC_MEMORY (A->vdim+1, cpsize, &Cp_size) ;
         if (Cp == NULL)
         { 
             // out of memory
@@ -127,8 +134,12 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
         // Extract the pattern and the values, typecasting if needed.  If A is
         // iso or X is NULL, GB_convert_b2s only does the symbolic work.
 
-        GB_OK (GB_convert_b2s (Cp, (int64_t *) I, (int64_t *) J,
-            (GB_void *) X, NULL, xtype, A, Werk)) ;
+        // FUTURE: either extract the tuples directly from the bitmap, without
+        // the need for Cp, or revise GB_convert_b2s to take in offsets
+        // to add to I and J.
+
+        GB_OK (GB_convert_b2s (Cp, I, J, (GB_void *) X, NULL,
+            Cp_is_32, I_is_32, J_is_32, xtype, A, Werk)) ;
 
         if (A->iso && X != NULL)
         { 
@@ -154,6 +165,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
 
         if (I != NULL)
         {
+            GB_IDECL (I, , u) ; GB_IPTR (I, I_is_32) ;
             if (A->i == NULL)
             {
                 // A is full; construct the row indices
@@ -162,12 +174,18 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
                 #pragma omp parallel for num_threads(nthreads) schedule(static)
                 for (p = 0 ; p < anz ; p++)
                 { 
-                    I [p] = (p % avlen) ;
+                    int64_t i = (p % avlen) ;
+                    // I [p] = i ;
+                    GB_ISET (I, p, i) ;
                 }
             }
             else
             { 
-                GB_memcpy (I, A->i, anz * sizeof (int64_t), nthreads) ;
+                // A is sparse or hypersparse; copy/cast A->i into I
+                GB_cast_int (
+                    I,       I_is_32 ? GB_UINT32_code : GB_UINT64_code,
+                    A->i, A->i_is_32 ? GB_UINT32_code : GB_UINT64_code,
+                    anz, nthreads_max) ;
             }
         }
 
@@ -176,8 +194,8 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
         //----------------------------------------------------------------------
 
         if (J != NULL)
-        {
-            GB_OK (GB_extract_vector_list ((int64_t *) J, A, Werk)) ;
+        { 
+            GB_OK (GB_extract_vector_list (J, J_is_32, A, Werk)) ;
         }
 
         //----------------------------------------------------------------------
@@ -211,7 +229,7 @@ GrB_Info GB_extractTuples       // extract all tuples from a matrix
     }
 
     //--------------------------------------------------------------------------
-    // free workspace and return result 
+    // free workspace and return result
     //--------------------------------------------------------------------------
 
     *p_nvals = anz ;            // number of tuples extracted

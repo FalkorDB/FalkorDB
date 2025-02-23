@@ -2,7 +2,7 @@
 // GB_emult_generic: generic methods for eWiseMult
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,8 +17,6 @@
 #include "ewise/GB_ewise.h"
 #include "emult/GB_emult.h"
 #include "binaryop/GB_binop.h"
-#include "include/GB_unused.h"
-#include "slice/GB_ek_slice.h"
 #include "generic/GB_generic.h"
 
 GrB_Info GB_emult_generic       // generic emult
@@ -40,7 +38,7 @@ GrB_Info GB_emult_generic       // generic emult
     // from GB_emult_sparsity
     const int ewise_method,
     // from GB_emult_04, GB_emult_03, GB_emult_02:
-    const int64_t *restrict Cp_kfirst,
+    const uint64_t *restrict Cp_kfirst,
     // to slice M, A, and/or B,
     const int64_t *M_ek_slicing, const int M_ntasks, const int M_nthreads,
     const int64_t *A_ek_slicing, const int A_ntasks, const int A_nthreads,
@@ -58,7 +56,7 @@ GrB_Info GB_emult_generic       // generic emult
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
     ASSERT_MATRIX_OK_OR_NULL (M, "M for ewise generic", GB0) ;
     ASSERT_MATRIX_OK (A, "A for ewise generic", GB0) ;
     ASSERT_MATRIX_OK (B, "B for ewise generic", GB0) ;
@@ -104,12 +102,12 @@ GrB_Info GB_emult_generic       // generic emult
     const GB_cast_function cast_A_to_X =
         (A_is_pattern) ? NULL : GB_cast_factory (xtype->code, A->type->code) ;
 
-    const GB_cast_function cast_B_to_Y = 
+    const GB_cast_function cast_B_to_Y =
         (B_is_pattern) ? NULL : GB_cast_factory (ytype->code, B->type->code) ;
 
     const GB_cast_function cast_Z_to_C =
         GB_cast_factory (ccode, op->ztype->code) ;
-    
+
     // declare aij as xtype
     #define GB_DECLAREA(aij)                                            \
         GB_void aij [GB_VLA(xsize)] ;
@@ -195,7 +193,7 @@ GrB_Info GB_emult_generic       // generic emult
             else
             { 
                 // C is sparse: emult method 8 (abcdefgh)
-                #include "emult/template/GB_emult_08_meta.c"
+                #include "emult/template/GB_emult_08_template.c"
             }
         }
         else
@@ -232,7 +230,7 @@ GrB_Info GB_emult_generic       // generic emult
             else
             { 
                 // C is sparse: emult method 8 (abcdefgh)
-                #include "emult/template/GB_emult_08_meta.c"
+                #include "emult/template/GB_emult_08_template.c"
             }
         }
 
@@ -279,7 +277,7 @@ GrB_Info GB_emult_generic       // generic emult
         else
         { 
             // C is sparse: emult method 8 (abcdefgh)
-            #include "emult/template/GB_emult_08_meta.c"
+            #include "emult/template/GB_emult_08_template.c"
         }
     }
 

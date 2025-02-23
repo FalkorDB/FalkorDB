@@ -1,7 +1,7 @@
 function test207
 %TEST207 test iso subref
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -18,6 +18,11 @@ J0 = uint64 (0) ;
 Cin = sparse (m, 1) ;
 C1 = A.matrix (I, 1) ;
 C2 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, J0, [ ]) ;
+assert (isequal (C2.matrix, C1)) ;
+
+I0 = I0 (:) ;
+J0 = J0 (:) ;
+C2 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, J0, [ ],1) ;
 assert (isequal (C2.matrix, C1)) ;
 
 GB_mex_burble (0) ;

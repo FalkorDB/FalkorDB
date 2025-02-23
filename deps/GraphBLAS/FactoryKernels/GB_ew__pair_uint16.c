@@ -2,7 +2,7 @@
 // GB_ew: ewise kernels for each built-in binary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,6 @@
 #if GB_TYPE_ENABLED
 #include "GB.h"
 #include "emult/GB_emult.h"
-#include "slice/GB_ek_slice.h"
 #include "assign/GB_bitmap_assign_methods.h"
 #include "FactoryKernels/GB_ew__include.h"
 
@@ -41,6 +40,8 @@
 
 // C matrix:
 #define GB_C_TYPE uint16_t
+
+#define GB_Cp_IS_32 Cp_is_32
 
 // disable this operator and use the generic case if these conditions hold
 #if (defined(GxB_NO_PAIR) || defined(GxB_NO_UINT16) || defined(GxB_NO_PAIR_UINT16))
@@ -114,5 +115,7 @@ GrB_Info GB (_AaddB__pair_uint16)
 // eWiseUnion: C=A+B, C<M>=A+B, C<!M>=A+B
 //------------------------------------------------------------------------------
 
+#else
+GB_EMPTY_PLACEHOLDER
 #endif
 

@@ -2,7 +2,7 @@
 // GB_helper.c: helper functions for @GrB interface
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,7 +29,8 @@ bool GB_factory_kernels_enabled = true ;
 
 #define GB_ALLOCATE_WORK(work_type)                                         \
     size_t Work_size ;                                                      \
-    work_type *Work = GB_MALLOC_WORK (nthreads, work_type, &Work_size) ;    \
+    work_type *Work = GB_MALLOC_MEMORY (nthreads, sizeof (work_type),       \
+        &Work_size) ;                                                       \
     if (Work == NULL) return (false) ;
 
 //------------------------------------------------------------------------------
@@ -37,224 +38,26 @@ bool GB_factory_kernels_enabled = true ;
 //------------------------------------------------------------------------------
 
 #define GB_FREE_WORKSPACE                                                   \
-    GB_FREE_WORK (&Work, Work_size) ;
-
-//------------------------------------------------------------------------------
-// GB_helper0: get the current wall-clock time from OpenMP
-//------------------------------------------------------------------------------
-
-double GB_helper0 (void)
-{
-    return (GB_OPENMP_GET_WTIME) ;
-}
-
-//------------------------------------------------------------------------------
-// GB_helper1: convert 0-based indices to 1-based for gbextracttuples
-//------------------------------------------------------------------------------
-
-void GB_helper1              // convert zero-based indices to one-based
-(
-    double *restrict I_double,      // output array
-    const GrB_Index *restrict I,    // input array
-    int64_t nvals                   // size of input and output arrays
-)
-{
-
-    GB_NTHREADS_HELPER (nvals) ;
-
-    int64_t k ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (k = 0 ; k < nvals ; k++)
-    {
-        I_double [k] = (double) (I [k] + 1) ;
-    }
-}
-
-//------------------------------------------------------------------------------
-// GB_helper1i: convert 0-based indices to 1-based for gbextracttuples
-//------------------------------------------------------------------------------
-
-void GB_helper1i             // convert zero-based indices to one-based
-(
-    int64_t *restrict I,            // input/output array
-    int64_t nvals                   // size of input/output array
-)
-{
-
-    GB_NTHREADS_HELPER (nvals) ;
-
-    int64_t k ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (k = 0 ; k < nvals ; k++)
-    {
-        I [k] ++ ;
-    }
-}
-
-//------------------------------------------------------------------------------
-// GB_helper3: convert 1-based indices to 0-based for gb_mxarray_to_list
-//------------------------------------------------------------------------------
-
-bool GB_helper3             // return true if OK, false on error
-(
-    int64_t *restrict List,             // size len, output array
-    const double *restrict List_double, // size len, input array
-    int64_t len,
-    int64_t *List_max       // also compute the max entry in the list (1-based)
-)
-{
-
-    GB_NTHREADS_HELPER (len) ;
-
-    ASSERT (List != NULL) ;
-    ASSERT (List_double != NULL) ;
-    ASSERT (List_max != NULL) ;
-
-    bool ok = true ;
-    int64_t listmax = -1 ;
-
-    GB_ALLOCATE_WORK (int64_t) ;
-
-    int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (tid = 0 ; tid < nthreads ; tid++)
-    {
-        bool my_ok = true ;
-        int64_t k1, k2, my_listmax = -1 ;
-        GB_PARTITION (k1, k2, len, tid, nthreads) ;
-        for (int64_t k = k1 ; k < k2 ; k++)
-        {
-            double x = List_double [k] ;
-            int64_t i = (int64_t) x ;
-            my_ok = my_ok && (x == (double) i) ;
-            my_listmax = GB_IMAX (my_listmax, i) ;
-            List [k] = i - 1 ;
-        }
-        // rather than create a separate per-thread boolean workspace, just
-        // use a sentinal value of INT64_MIN if non-integer indices appear
-        // in List_double.
-        Work [tid] = my_ok ? my_listmax : INT64_MIN ;
-    }
-
-    // wrapup
-    for (tid = 0 ; tid < nthreads ; tid++)
-    {
-        listmax = GB_IMAX (listmax, Work [tid]) ;
-        ok = ok && (Work [tid] != INT64_MIN) ;
-    }
-
-    GB_FREE_WORKSPACE ;
-
-    (*List_max) = listmax ;
-    return (ok) ;
-}
-
-//------------------------------------------------------------------------------
-// GB_helper3i: convert 1-based indices to 0-based for gb_mxarray_to_list
-//------------------------------------------------------------------------------
-
-bool GB_helper3i        // return true if OK, false on error
-(
-    int64_t *restrict List,             // size len, output array
-    const int64_t *restrict List_int64, // size len, input array
-    int64_t len,
-    int64_t *List_max   // also compute the max entry in the list (1-based)
-)
-{
-
-    GB_NTHREADS_HELPER (len) ;
-
-    int64_t listmax = -1 ;
-
-    GB_ALLOCATE_WORK (int64_t) ;
-
-    int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (tid = 0 ; tid < nthreads ; tid++)
-    {
-        int64_t k1, k2, my_listmax = -1 ;
-        GB_PARTITION (k1, k2, len, tid, nthreads) ;
-        for (int64_t k = k1 ; k < k2 ; k++)
-        {
-            int64_t i = List_int64 [k] ;
-            my_listmax = GB_IMAX (my_listmax, i) ;
-            List [k] = i - 1 ;
-        }
-        Work [tid] = my_listmax ;
-    }
-
-    // wrapup
-    for (tid = 0 ; tid < nthreads ; tid++)
-    {
-        listmax = GB_IMAX (listmax, Work [tid]) ;
-    }
-
-    GB_FREE_WORKSPACE ;
-
-    (*List_max) = listmax ;
-    return (true) ;
-}
-
-//------------------------------------------------------------------------------
-// GB_helper4: find the max entry in a list of type GrB_Index
-//------------------------------------------------------------------------------
-
-bool GB_helper4             // return true if OK, false on error
-(
-    const GrB_Index *restrict I,    // array of size len
-    const int64_t len,
-    GrB_Index *List_max     // also compute the max entry in the list (1-based,
-                            // which is max(I)+1)
-)
-{
-
-    GB_NTHREADS_HELPER (len) ;
-
-    GrB_Index listmax = 0 ;
-
-    GB_ALLOCATE_WORK (GrB_Index) ;
-
-    int tid ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (tid = 0 ; tid < nthreads ; tid++)
-    {
-        int64_t k1, k2 ;
-        GrB_Index my_listmax = 0 ;
-        GB_PARTITION (k1, k2, len, tid, nthreads) ;
-        for (int64_t k = k1 ; k < k2 ; k++)
-        {
-            my_listmax = GB_IMAX (my_listmax, I [k]) ;
-        }
-        Work [tid] = my_listmax ;
-    }
-
-    // wrapup
-    for (tid = 0 ; tid < nthreads ; tid++)
-    {
-        listmax = GB_IMAX (listmax, Work [tid]) ;
-    }
-
-    GB_FREE_WORKSPACE ;
-
-    if (len > 0) listmax++ ;
-    (*List_max) = listmax ;
-    return (true) ;
-}
+    GB_FREE_MEMORY (&Work, Work_size) ;
 
 //------------------------------------------------------------------------------
 // GB_helper5: construct pattern of S for gblogassign
 //------------------------------------------------------------------------------
 
-void GB_helper5              // construct pattern of S
+void GB_helper5             // construct pattern of S
 (
-    GrB_Index *restrict Si,         // array of size anz
-    GrB_Index *restrict Sj,         // array of size anz
-    const GrB_Index *restrict Mi,   // array of size mnz, M->i, may be NULL
-    const GrB_Index *restrict Mj,   // array of size mnz,
+    // output:
+    uint64_t *restrict Si,          // array of size anz
+    uint64_t *restrict Sj,          // array of size anz
+    // input:
+    const void *Mi,                 // array of size mnz, M->i, may be NULL
+    const bool Mi_is_32,            // if true, M->i is 32-bit; else 64-bit
+    const uint64_t *restrict Mj,    // array of size mnz
     const int64_t mvlen,            // M->vlen
-    GrB_Index *restrict Ai,         // array of size anz, A->i, may be NULL
-    const int64_t avlen,            // M->vlen
-    const GrB_Index anz
+    const void *Ai,                 // array of size anz, A->i, may be NULL
+    const bool Ai_is_32,            // if true, A->i is 32-bit; else 64-bit
+    const int64_t avlen,            // A->vlen
+    const uint64_t anz
 )
 {
 
@@ -263,12 +66,15 @@ void GB_helper5              // construct pattern of S
     ASSERT (Si != NULL) ;
     ASSERT (Sj != NULL) ;
 
+    GB_IDECL (Ai, const, u) ; GB_IPTR (Ai, Ai_is_32) ;
+    GB_IDECL (Mi, const, u) ; GB_IPTR (Mi, Mi_is_32) ;
+
     int64_t k ;
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (k = 0 ; k < anz ; k++)
     {
-        int64_t i = GBI (Ai, k, avlen) ;
-        Si [k] = GBI (Mi, i, mvlen) ;
+        int64_t i = GBi_A (Ai, k, avlen) ;
+        Si [k] = GBi_M (Mi, i, mvlen) ;
         Sj [k] = Mj [i] ;
     }
 }
@@ -281,8 +87,8 @@ void GB_helper5              // construct pattern of S
 
 void GB_helper7              // Kx = uint64 (0:mnz-1)
 (
-    uint64_t *restrict Kx,          // array of size mnz
-    const GrB_Index mnz
+    uint64_t *restrict Kx,           // array of size mnz
+    const uint64_t mnz
 )
 {
 
@@ -293,32 +99,6 @@ void GB_helper7              // Kx = uint64 (0:mnz-1)
     for (k = 0 ; k < mnz ; k++)
     {
         Kx [k] = k ;
-    }
-}
-
-//------------------------------------------------------------------------------
-// GB_helper8: expand a scalar into an array for gbbuild
-//------------------------------------------------------------------------------
-
-// TODO: use GrB_assign instead
-
-void GB_helper8
-(
-    GB_void *C,         // output array of size nvals * s
-    GB_void *A,         // input scalar of size s
-    GrB_Index nvals,    // size of C
-    size_t s            // size of each scalar
-)
-{
-
-    GB_NTHREADS_HELPER (nvals) ;
-
-    int64_t k ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static)
-    for (k = 0 ; k < nvals ; k++)
-    {
-        // C [k] = A [0]
-        memcpy (C + k * s, A, s) ;
     }
 }
 
@@ -342,7 +122,7 @@ double GB_helper10       // norm (x-y,p), or -1 on error
     bool y_iso,                 // true if x is iso
     GrB_Type type,              // GrB_FP32 or GrB_FP64
     int64_t p,                  // 0, 1, 2, INT64_MIN, or INT64_MAX
-    GrB_Index n
+    uint64_t n
 )
 {
 
@@ -637,26 +417,69 @@ double GB_helper10       // norm (x-y,p), or -1 on error
 }
 
 //------------------------------------------------------------------------------
-// GB_make_shallow.c: force a matrix to have purely shallow components
+// persistent Container
 //------------------------------------------------------------------------------
 
-void GB_make_shallow (GrB_Matrix A)
+static GxB_Container Container = NULL ;
+
+static GrB_Vector GB_helper_component (void)
 {
-    if (A == NULL) return ;
-    A->p_shallow = (A->p != NULL) ;
-    A->h_shallow = (A->h != NULL) ;
-    A->b_shallow = (A->b != NULL) ;
-    A->i_shallow = (A->i != NULL) ;
-    A->x_shallow = (A->x != NULL) ;
-    #ifdef GB_MEMDUMP
-    printf ("remove from memtable: Ap:%p Ah:%p Ab:%p Ai:%p Ax:%p\n", // MEMDUMP
-        A->p, A->h, A->b, A->i, A->x) ;
-    #endif
-    if (A->p != NULL) GB_Global_memtable_remove (A->p) ;
-    if (A->h != NULL) GB_Global_memtable_remove (A->h) ;
-    if (A->b != NULL) GB_Global_memtable_remove (A->b) ;
-    if (A->i != NULL) GB_Global_memtable_remove (A->i) ;
-    if (A->x != NULL) GB_Global_memtable_remove (A->x) ;
-    GB_make_shallow (A->Y) ;
+    size_t s = sizeof (struct GB_Vector_opaque) ;
+    GrB_Vector p = GB_Global_persistent_malloc (s) ;
+    if (p != NULL)
+    {
+        memset (p, 0, s) ;
+        p->header_size = s ;
+        p->type = GrB_BOOL ;
+        p->is_csc = true ;
+        p->plen = -1 ;
+        p->vdim = 1 ;
+        p->nvec = 1 ;
+        p->sparsity_control = GxB_FULL ;
+        p->magic = GB_MAGIC ;
+    }
+    ASSERT_VECTOR_OK (p, "container component", GB0) ;
+    return (p) ;
+}
+
+GxB_Container GB_helper_container (void)    // return the global Container
+{
+    return (Container) ;
+}
+
+void GB_helper_container_new (void)         // allocate the global Container
+{
+    // free any existing Container
+    GB_helper_container_free ( ) ;
+
+    // allocate a new Container
+    size_t s = sizeof (struct GxB_Container_struct) ;
+    Container = GB_Global_persistent_malloc (s) ;
+    if (Container != NULL)
+    {
+        memset (Container, 0, s) ;
+        Container->p = GB_helper_component ( ) ;
+        Container->h = GB_helper_component ( ) ;
+        Container->b = GB_helper_component ( ) ;
+        Container->i = GB_helper_component ( ) ;
+        Container->x = GB_helper_component ( ) ;
+
+        // clear the Container scalars
+        Container->nrows_nonempty = -1 ;
+        Container->ncols_nonempty = -1 ;
+        Container->format = GxB_FULL ;
+        Container->orientation = GrB_ROWMAJOR ;
+    }
+}
+
+void GB_helper_container_free (void)        // free the global Container
+{
+    if (Container == NULL) return ;
+    GB_Global_persistent_free ((void **) &(Container->p)) ;
+    GB_Global_persistent_free ((void **) &(Container->h)) ;
+    GB_Global_persistent_free ((void **) &(Container->b)) ;
+    GB_Global_persistent_free ((void **) &(Container->i)) ;
+    GB_Global_persistent_free ((void **) &(Container->x)) ;
+    GB_Global_persistent_free ((void **) &(Container)) ;
 }
 

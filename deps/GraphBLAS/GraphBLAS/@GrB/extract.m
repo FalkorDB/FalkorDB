@@ -51,6 +51,7 @@ function C = extract (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %       example.  This allows for C = Cin + A(I,J) to be computed.  If
 %       not present, no accumulator is used and C=A(I,J) is computed.
 %       If accum is present then Cin is a required input.
+%       See 'help GrB.binopinfo' for available binary operators.
 %
 % M: an optional mask matrix, the same size as C.
 %
@@ -63,9 +64,9 @@ function C = extract (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %   C2 = A (I,J)
 %   C2 - C
 %
-% See also GrB/subsref.
+% See also GrB/subsref, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

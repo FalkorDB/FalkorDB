@@ -1,0 +1,55 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GrB\_Vector} Options}
+\label{get_set_vector}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_Vector v, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_Vector v, char *     value, int f) ;
+GrB_Info GrB_get (GrB_Vector v, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_Vector v, size_t *   value, int f) ;
+
+GrB_Info GrB_set (GrB_Vector v, GrB_Scalar value, int f) ;
+GrB_Info GrB_set (GrB_Vector v, char *     value, int f) ;
+GrB_Info GrB_set (GrB_Vector v, int32_t    value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{3in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_EL_TYPE_CODE'             & R    & \verb'int32_t'& vector type \\
+\verb'GxB_SPARSITY_CONTROL'         & R/W  & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_SPARSITY_STATUS'          & R    & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_IS_READONLY'              & R    & \verb'int32_t'& true if it has any read-only components \\
+\verb'GxB_WILL_WAIT'                & R    & \verb'int32_t'& will \verb'GrB_wait' do anything (Section~\ref{wait_status}) \\ 
+\verb'GxB_ISO'                      & R/W  & \verb'int32_t'& iso status (Section~\ref{iso_status}) \\
+\verb'GxB_ROWINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for row indices (32 or 64) \\
+\verb'GxB_COLINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for column indices (32 or 64) \\
+\verb'GxB_OFFSET_INTEGER_BITS'      & R    & \verb'int32_t'& number of bits for offsets (32 or 64) \\
+\verb'GxB_ROWINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for row indices (0, 32, 64) \\
+\verb'GxB_COLINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for column indices (0, 32, 64) \\
+\verb'GxB_OFFSET_INTEGER_HINT'      & R/W  & \verb'int32_t'& hint for offsets (0, 32, 64) \\
+\hline
+\verb'GrB_NAME'                     & R/W  & \verb'char *' & name of the vector. \\
+%                                       This can be set any number of times. \\
+\verb'GrB_EL_TYPE_STRING'           & R    & \verb'char *' & name of the type of the vector. \\
+\verb'GxB_JIT_C_NAME'               & R    & \verb'char *' & JIT C name of the type of the vector. \\
+\hline
+\verb'GxB_BITMAP_SWITCH'            & R/W  & \verb'double' & See Section~\ref{bitmap_switch} \\
+\hline
+\end{tabular}
+}
+
+See Section~\ref{get_set_matrix}; a \verb'GrB_Vector' is treated as if it were
+an $n$-by-1 matrix, and is always in column major form.  It is never
+hypersparse.
+
+

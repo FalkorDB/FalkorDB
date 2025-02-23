@@ -14,15 +14,16 @@ function C = apply (arg1, arg2, arg3, arg4, arg5, arg6)
 % The op and A arguments are required.
 %
 % accum: a binary operator to accumulate the results.
+%       See 'help GrB.binopinfo' for available binary operators.
 %
 % Cin, the mask matrix M, the accum operator, and desc are optional.  If
 % either accum or M is present, then Cin is a required input. If desc.in0
 % is 'transpose' then A is transposed before applying the operator, as
 % C<M> = accum (C, f(A')) where f(...) is the unary operator.
 %
-% See also GrB/apply2, GrB/spfun.
+% See also GrB/apply2, GrB/spfun, GrB.unopinfo, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

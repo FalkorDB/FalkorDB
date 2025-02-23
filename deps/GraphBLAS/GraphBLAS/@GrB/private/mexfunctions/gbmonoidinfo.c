@@ -2,7 +2,7 @@
 // gbmonoidinfo : print a GraphBLAS monoid (for illustration only)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,7 @@
 
 // gbmonoidinfo (monoid)
 // gbmonoidinfo (monoid, type)
+// ok = gbmonoidinfo (monoid)
 
 #include "gb_interface.h"
 
@@ -29,7 +30,7 @@ void mexFunction
     // check inputs
     //--------------------------------------------------------------------------
 
-    gb_usage (nargin >= 1 && nargin <= 2 && nargout == 0, USAGE) ;
+    gb_usage (nargin >= 1 && nargin <= 2 && nargout <= 1, USAGE) ;
 
     //--------------------------------------------------------------------------
     // construct the GraphBLAS monoid and print it
@@ -47,7 +48,12 @@ void mexFunction
     }
 
     GrB_Monoid op = gb_mxstring_to_monoid (pargin [0], type) ;
-    OK (GxB_Monoid_fprint (op, opstring, GxB_COMPLETE, NULL)) ;
-    GB_WRAPUP ;
+    int pr = (nargout < 1) ? GxB_COMPLETE : GxB_SILENT ;
+    OK (GxB_Monoid_fprint (op, opstring, pr, NULL)) ;
+    if (nargout == 1)
+    {
+        pargout [0] = mxCreateLogicalScalar (true) ;
+    }
+    gb_wrapup ( ) ;
 }
 

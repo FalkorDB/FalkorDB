@@ -2,7 +2,7 @@
 // GB_bitmap_subref_template: C = A(I,J) where A is bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,11 +11,12 @@
 
 {
 
-    int64_t cnvals = 0 ;
 
     //--------------------------------------------------------------------------
     // C = A(I,J)
     //--------------------------------------------------------------------------
+
+    int64_t cnvals = 0 ;
 
     if (GB_C_IS_BITMAP)
     { 

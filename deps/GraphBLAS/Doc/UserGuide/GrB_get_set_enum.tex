@@ -1,0 +1,164 @@
+
+%-------------------------------------------------------------------------------
+\subsection{Enum types for get/set}
+\label{get_set_enums}
+%-------------------------------------------------------------------------------
+
+The get/set methods share a \verb'int' (enum) type to specify which component
+of the object is to be set or retrieved.
+
+{\footnotesize
+\begin{verbatim}
+typedef enum
+{
+    // GrB_Descriptor only:
+    GrB_OUTP_FIELD = 0,     // descriptor for output of a method
+    GrB_MASK_FIELD = 1,     // descriptor for the mask input of a method
+    GrB_INP0_FIELD = 2,     // descriptor for the first input of a method
+    GrB_INP1_FIELD = 3,     // descriptor for the second input of a method
+
+    // all objects, including GrB_GLOBAL:
+    GrB_NAME = 10,          // name of the object, as a string
+
+    // GrB_GLOBAL only:
+    GrB_LIBRARY_VER_MAJOR = 11,     // SuiteSparse:GraphBLAS version
+    GrB_LIBRARY_VER_MINOR = 12,
+    GrB_LIBRARY_VER_PATCH = 13,
+    GrB_API_VER_MAJOR = 14,         // C API version
+    GrB_API_VER_MINOR = 15,
+    GrB_API_VER_PATCH = 16,
+    GrB_BLOCKING_MODE = 17,         // GrB_Mode
+
+    // GrB_GLOBAL, GrB_Matrix, GrB_Vector, GrB_Scalar (and void * serialize?):
+    GrB_STORAGE_ORIENTATION_HINT = 100, // GrB_Orientation
+
+    // GrB_Matrix, GrB_Vector, GrB_Scalar (and void * serialize):
+    GrB_EL_TYPE_CODE = 102,         // a GrB_Type_code (see below)
+    GrB_EL_TYPE_STRING = 106,       // name of the type
+
+    // GrB_*Op, GrB_Monoid, and GrB_Semiring:
+    GrB_INP1_TYPE_CODE = 103,       // GrB_Type_code
+    GrB_INP2_TYPE_CODE = 104,
+    GrB_OUTP_TYPE_CODE = 105,
+    GrB_INP1_TYPE_STRING = 107,     // name of the type, as a string
+    GrB_INP2_TYPE_STRING = 108,
+    GrB_OUTP_TYPE_STRING = 109,
+
+    // GrB_Type (readable only):
+    GrB_SIZE = 110,                 // size of the type
+
+    // GrB_Type, GrB_UnaryOp, GrB_BinaryOp, GrB_IndexUnaryOp,
+    // and GxB_IndexBinaryOp
+    GxB_JIT_C_NAME = 7041,          // C type or function name
+    GxB_JIT_C_DEFINITION = 7042,    // C typedef or function definition
+
+    // GrB_Monoid and GrB_Semiring:
+    GxB_MONOID_IDENTITY = 7043,     // monoid identity value
+    GxB_MONOID_TERMINAL = 7044,     // monoid terminal value
+    GxB_MONOID_OPERATOR = 7045,     // monoid binary operator
+
+    // GrB_Semiring only:
+    GxB_SEMIRING_MONOID = 7046,     // semiring monoid
+    GxB_SEMIRING_MULTIPLY = 7047,   // semiring multiplicative op
+
+    // GrB_BinaryOp and GxB_IndexBinaryOp:
+    GxB_THETA_TYPE_CODE = 7050,     // for binary and index binary ops
+    GxB_THETA_TYPE_STRING = 7051,
+
+    // GrB_BinaryOp or GrB_Semiring:
+    GxB_THETA = 7052,               // to get the value of theta
+
+    // GrB_get/GrB_set for GrB_Matrix, GrB_Vector, GrB_Scalr and GrB_GLOBAL:
+    GxB_ROWINDEX_INTEGER_HINT = 7053,   // hint for row indices
+    GxB_COLINDEX_INTEGER_HINT = 7054,   // hint for column indices
+    GxB_OFFSET_INTEGER_HINT = 7056,     // hint for offsets
+    GxB_HYPER_SWITCH = 7000,    // switch to hypersparse (double value)
+    GxB_HYPER_HASH = 7048,      // hyper_hash control (global int64 value,
+                                // or bool per matrix)
+    GxB_BITMAP_SWITCH = 7001,   // switch to bitmap (double value)
+
+    // GrB_get/GrB_set for GrB_Matrix, GrB_Vector, GrB_Scalar:
+    GxB_ISO = 7079,     // get: returns the current iso status
+                        // set true: make the matrix iso-valued, if possible.
+                        // set false: make the matrix non-iso-valued.
+    GxB_SPARSITY_CONTROL = 7036,    // sparsity control: 0 to 15; see below
+
+    // GrB_get for GrB_Matrix, GrB_Vector, GrB_Scalar:
+    GxB_ROWINDEX_INTEGER_BITS = 7057,   // # bits for row indices
+    GxB_COLINDEX_INTEGER_BITS = 7058,   // # bits for column indices
+    GxB_OFFSET_INTEGER_BITS = 7059,     // # bits for offsets
+    GxB_SPARSITY_STATUS = 7034,     // hyper, sparse, bitmap or full (1,2,4,8)
+    GxB_IS_READONLY = 7078,         // true if it has any read-only components
+    GxB_WILL_WAIT = 7076,           // true if GrB_wait(A) will do anything
+
+    // GrB_get for GrB_GLOBAL:
+    GxB_LIBRARY_DATE = 7006,         // date of the library (char *)
+    GxB_LIBRARY_ABOUT = 7007,        // about the library (char *)
+    GxB_LIBRARY_URL = 7008,          // URL for the library (char *)
+    GxB_LIBRARY_LICENSE = 7009,      // license of the library (char *)
+    GxB_LIBRARY_COMPILE_DATE = 7010, // date library was compiled (char *)
+    GxB_LIBRARY_COMPILE_TIME = 7011, // time library was compiled (char *)
+    GxB_API_DATE = 7013,             // date of the API (char *)
+    GxB_API_ABOUT = 7014,            // about the API (char *)
+    GxB_API_URL = 7015,              // URL for the API (char *)
+    GxB_COMPILER_VERSION = 7016,     // compiler version (3 int's)
+    GxB_COMPILER_NAME = 7017,        // compiler name (char *)
+    GxB_LIBRARY_OPENMP = 7018,       // library compiled with OpenMP
+    GxB_MALLOC_FUNCTION = 7037,      // malloc function pointer
+    GxB_CALLOC_FUNCTION = 7038,      // calloc function pointer
+    GxB_REALLOC_FUNCTION = 7039,     // realloc function pointer
+    GxB_FREE_FUNCTION = 7040,        // free function pointer
+
+    // GrB_get/GrB_set for GrB_GLOBAL:
+    #define GxB_NTHREADS 7086
+    #define GxB_CHUNK 7087
+    GxB_GLOBAL_NTHREADS = GxB_NTHREADS,  // max number of threads to use
+    GxB_GLOBAL_CHUNK = GxB_CHUNK,        // chunk size for small problems.
+    GxB_BURBLE = 7019,               // diagnostic output (bool *)
+    GxB_PRINTF = 7020,               // printf function diagnostic output
+    GxB_FLUSH = 7021,                // flush function diagnostic output
+    GxB_PRINT_1BASED = 7023,         // print matrices as 0-based or 1-based
+    GxB_INCLUDE_READONLY_STATISTICS = 7077, // include read-only memory in
+                                     // memory usage statistics
+    GxB_JIT_C_COMPILER_NAME = 7024,  // CPU JIT C compiler name
+    GxB_JIT_C_COMPILER_FLAGS = 7025, // CPU JIT C compiler flags
+    GxB_JIT_C_LINKER_FLAGS = 7026,   // CPU JIT C linker flags
+    GxB_JIT_C_LIBRARIES = 7027,      // CPU JIT C libraries
+    GxB_JIT_C_PREFACE = 7028,        // CPU JIT C preface
+    GxB_JIT_C_CONTROL = 7029,        // CPU JIT C control
+    GxB_JIT_CACHE_PATH = 7030,       // CPU/CUDA JIT path for compiled kernels
+    GxB_JIT_C_CMAKE_LIBS = 7031,     // CPU JIT C libraries when using cmake
+    GxB_JIT_USE_CMAKE = 7032,        // CPU JIT: use cmake or direct compile
+    GxB_JIT_ERROR_LOG = 7033,        // CPU JIT: error log file
+
+} GxB_Option_Field ;
+
+typedef enum
+{
+    GrB_ROWMAJOR = 0,
+    GrB_COLMAJOR = 1,
+    GrB_BOTH     = 2,
+    GrB_UNKNOWN  = 3,
+}
+GrB_Orientation ;
+
+typedef enum
+{
+    GrB_UDT_CODE    = 0,        // user-defined type
+    GrB_BOOL_CODE   = 1,        // GraphBLAS: GrB_BOOL      C: bool
+    GrB_INT8_CODE   = 2,        // GraphBLAS: GrB_INT8      C: int8_t
+    GrB_UINT8_CODE  = 3,        // GraphBLAS: GrB_UINT8     C: uint8_t
+    GrB_INT16_CODE  = 4,        // GraphBLAS: GrB_INT16     C: int16_t
+    GrB_UINT16_CODE = 5,        // GraphBLAS: GrB_UINT16    C: uint16_t
+    GrB_INT32_CODE  = 6,        // GraphBLAS: GrB_INT32     C: int32_t
+    GrB_UINT32_CODE = 7,        // GraphBLAS: GrB_UINT32    C: uint32_t
+    GrB_INT64_CODE  = 8,        // GraphBLAS: GrB_INT64     C: int64_t
+    GrB_UINT64_CODE = 9,        // GraphBLAS: GrB_UINT64    C: uint64_t
+    GrB_FP32_CODE   = 10,       // GraphBLAS: GrB_FP32      C: float
+    GrB_FP64_CODE   = 11,       // GraphBLAS: GrB_FP64      C: double
+    GxB_FC32_CODE   = 7070,     // GraphBLAS: GxB_FC32      C: float complex
+    GxB_FC64_CODE   = 7071,     // GraphBLAS: GxB_FC64      C: double complex
+}
+GrB_Type_Code ; \end{verbatim}}
+
+

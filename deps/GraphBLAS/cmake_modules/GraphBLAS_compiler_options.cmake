@@ -2,7 +2,7 @@
 # GraphBLAS/cmake_modules/GraphBLAS_compiler_options.cmake
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------
@@ -16,8 +16,7 @@ if ( "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" )
     # cmake 2.8 workaround: gcc needs to be told to do C11.
     # cmake 3.0 doesn't have this problem.
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wundef " )
-#   uncomment this to check for all warnings:
-#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -Werror -Wno-strict-aliasing " )
+    set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wno-strict-aliasing " )
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -std=c11 -lm -Wno-pragmas " )
     # operations may be carried out in higher precision
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fexcess-precision=fast " )
@@ -27,8 +26,9 @@ if ( "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" )
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fno-math-errno " )
     # integer operations wrap
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fwrapv " )
-    # check all warnings (uncomment for development only)
-#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic " )
+    # check all warnings (uncomment for development only):
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -Werror" )
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic" )
     if ( CMAKE_C_COMPILER_VERSION VERSION_LESS 4.9 )
         message ( FATAL_ERROR "gcc version must be at least 4.9" )
     endif ( )
@@ -54,9 +54,16 @@ elseif ( "${CMAKE_C_COMPILER_ID}" STREQUAL "IntelLLVM" )
 elseif ( "${CMAKE_C_COMPILER_ID}" STREQUAL "Clang" )
     # options for clang
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wno-pointer-sign " )
+    # check all warnings (uncomment for development only):
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall " )
     if ( CMAKE_C_COMPILER_VERSION VERSION_LESS 3.3 )
         message ( FATAL_ERROR "clang version must be at least 3.3" )
     endif ( )
+elseif ( "${CMAKE_C_COMPILER_ID}" STREQUAL "AppleClang" )
+    # options for Apple Clang
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -g" )
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fsanitize=address" )
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fsanitize=thread" )
 elseif ( MSVC )
     # options for MicroSoft Visual Studio
     set ( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /O2 -wd\"4244\" -wd\"4146\" -wd\"4018\" -wd\"4996\" -wd\"4047\" -wd\"4554\"" )

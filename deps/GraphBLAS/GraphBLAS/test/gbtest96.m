@@ -1,7 +1,7 @@
 function gbtest96
 %GBTEST96 test GrB.optype
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('Table of types of binary operators when inputs types are\n') ;

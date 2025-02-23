@@ -2,7 +2,7 @@
 // GB_select_positional_bitmap: C=select(A,thunk) when C is bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,12 +10,13 @@
 // A is bitmap or as-if-full.  C is bitmap
 
 #include "select/GB_select.h"
-#include "slice/GB_ek_slice.h"
+#include "include/GB_unused.h"
 
 GrB_Info GB_select_positional_bitmap
 (
-    int8_t *Cb,
-    int64_t *cnvals_handle,
+    // input/output:
+    GrB_Matrix C,                   // C->b and C->nvals are computed
+    // input:
     GrB_Matrix A,
     const int64_t ithunk,
     const GrB_IndexUnaryOp op,
@@ -30,6 +31,7 @@ GrB_Info GB_select_positional_bitmap
     GB_Opcode opcode = op->opcode ;
     ASSERT (GB_IS_BITMAP (A) || GB_IS_FULL (A)) ;
     ASSERT (GB_IS_INDEXUNARYOP_CODE_POSITIONAL (opcode)) ;
+    ASSERT (GB_IS_BITMAP (C)) ;
 
     //--------------------------------------------------------------------------
     // positional operators when C is bitmap

@@ -2,7 +2,7 @@
 // GB_mx_get_global: get variables from the global workspace
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -55,7 +55,7 @@ bool GB_mx_get_global       // true if doing malloc_debug
     bool burble = GB_Global_burble_get ( ) ;
 
     // save JIT control
-    GxB_JIT_Control control = GB_jitifyer_get_control ( ) ;
+    int control = GB_jitifyer_get_control ( ) ;
 
     if (!GB_Global_GrB_init_called_get ( ))
     {
@@ -169,7 +169,7 @@ bool GB_mx_get_global       // true if doing malloc_debug
     GrB_Scalar s ;
     GrB_Scalar_new (&s, GrB_INT64) ;
     GrB_Scalar_setElement_INT64 (s, 8) ;
-    GrB_Global_set_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH) ;
+    GrB_Global_set_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH) ;
     GrB_Scalar_free (&s) ;
 
     //--------------------------------------------------------------------------

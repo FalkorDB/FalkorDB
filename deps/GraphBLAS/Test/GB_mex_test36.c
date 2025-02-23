@@ -2,7 +2,7 @@
 // GB_mex_test36: reduce a huge iso full matrix to a scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,8 +45,8 @@ void mexFunction
     // create and reduce a huge iso full matrix
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows = 1UL << 40 ;
-    GrB_Index ncols = 1UL << 48 ;
+    uint64_t nrows = 1UL << 40 ;
+    uint64_t ncols = 1UL << 48 ;
     double pi = 3.141592653589793 ;
     double sum = 0 ;
     mexPrintf (

@@ -1,0 +1,435 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{GraphBLAS Initialization/Finalization} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{init_and_fini}
+
+A user application that directly relies on GraphBLAS must include the
+\verb'GraphBLAS.h' header file:
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+    #include "GraphBLAS.h"
+\end{verbatim}
+} \end{mdframed}
+
+The \verb'GraphBLAS.h' file defines functions, types, and macros prefixed with
+\verb'GrB_' and \verb'GxB_' that may be used in user applications.  The prefix
+\verb'GrB_' denotes items that appear in the official {\em GraphBLAS C API
+Specification}.  The prefix \verb'GxB_' refers to SuiteSparse-specific
+extensions to the GraphBLAS API.
+
+The \verb'GraphBLAS.h' file includes all the definitions required to use
+GraphBLAS, including the following macros that can assist a user application in
+compiling and using GraphBLAS.
+
+There are two version numbers associated with SuiteSparse:GraphBLAS:
+the version of the {\em GraphBLAS C API Specification} it
+conforms to, and the version of the implementation itself.  These can
+be used in the following manner in a user application:
+
+{\footnotesize
+\begin{verbatim}
+    #if GxB_SPEC_VERSION >= GxB_VERSION (2,0,3)
+    ... use features in GraphBLAS specification 2.0.3 ...
+    #else
+    ... only use features in early specifications
+    #endif
+
+    #if GxB_IMPLEMENTATION >= GxB_VERSION (5,2,0)
+    ... use features from version 5.2.0 (or later)
+    of a specific GraphBLAS implementation
+    #endif \end{verbatim}}
+
+SuiteSparse:GraphBLAS also defines the following strings with \verb'#define'.
+Refer to the \verb'GraphBLAS.h' file for details.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{ll}
+\hline
+Macro                & purpose                                      \\
+\hline
+\verb'GxB_IMPLEMENTATION_ABOUT'
+    & this particular implementation, copyright, and URL \\
+\verb'GxB_IMPLEMENTATION_DATE'
+    & the date of this implementation \\
+\verb'GxB_SPEC_ABOUT'
+    & the GraphBLAS specification for this implementation \\
+\verb'GxB_SPEC_DATE'
+    & the date of the GraphBLAS specification \\
+\verb'GxB_IMPLEMENTATION_LICENSE'
+    & the license for this particular implementation \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+Finally, SuiteSparse:GraphBLAS gives itself a unique name of the form
+\verb'GxB_SUITESPARSE_GRAPHBLAS' that the user application can use in
+\verb'#ifdef' tests. This is helpful in case a particular implementation
+provides non-standard features that extend the GraphBLAS specification, such as
+additional predefined built-in operators, or if a GraphBLAS implementation does
+not yet fully implement all of the GraphBLAS specification.
+
+For example, SuiteSparse:GraphBLAS predefines additional built-in operators not
+in the specification.  If the user application wishes to use these in any
+GraphBLAS implementation, an \verb'#ifdef' can control when they are used.
+Refer to the examples in the \verb'GraphBLAS/Demo' folder.
+
+As another example, the GraphBLAS API states that an
+implementation need not define the order in which \verb'GrB_Matrix_build'
+assembles duplicate tuples in its \verb'[I,J,X]' input arrays.  As a result, no
+particular ordering should be relied upon in general.  However,
+SuiteSparse:GraphBLAS does guarantee an ordering, and this guarantee will be
+kept in future versions of SuiteSparse:GraphBLAS as well.  Since not all
+implementations will ensure a particular ordering, the following can be used to
+exploit the ordering returned by SuiteSparse:GraphBLAS.
+
+    {\footnotesize
+    \begin{verbatim}
+    #ifdef GxB_SUITESPARSE_GRAPHBLAS
+    // duplicates in I, J, X assembled in a specific order;
+    // results are well-defined even if op is not associative.
+    GrB_Matrix_build (C, I, J, X, nvals, op) ;
+    #else
+    // duplicates in I, J, X assembled in no particular order;
+    // results are undefined if op is not associative.
+    GrB_Matrix_build (C, I, J, X, nvals, op) ;
+    #endif \end{verbatim}}
+
+The remainder of this section describes GraphBLAS functions that start or finalize GraphBLAS,
+error handling, and the GraphBLAS integer.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function/type   & purpose                                 & Section \\
+\hline
+\verb'GrB_Index'     & the GraphBLAS integer                        & \ref{grbindex} \\
+\verb'GrB_init'      & start up GraphBLAS                           & \ref{init} \\
+\verb'GrB_getVersion'& C API supported by the library               & \ref{getVersion} \\
+\verb'GxB_init'      & start up GraphBLAS with different \verb'malloc' & \ref{xinit} \\
+\verb'GrB_Info'      & status code returned by GraphBLAS functions  & \ref{info} \\
+\verb'GrB_error'     & get more details on the last error           & \ref{error} \\
+\verb'GrB_finalize'  & finish GraphBLAS                             & \ref{finalize} \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+%===============================================================================
+\subsection{{\sf GrB\_Index:} the GraphBLAS integer} %==========================
+%===============================================================================
+\label{grbindex}
+
+Matrix and vector dimensions and indexing rely on a specific integer,
+\verb'GrB_Index', which is defined in \verb'GraphBLAS.h' as
+
+    {\footnotesize
+    \begin{verbatim}
+    typedef uint64_t GrB_Index ; \end{verbatim}}
+
+Row and column indices of an \verb'nrows'-by-\verb'ncols' matrix range from
+zero to the \verb'nrows-1' for the rows, and zero to \verb'ncols-1' for the
+columns.  Indices are zero-based, like C, and not one-based, like
+MATLAB/Octave.  In SuiteSparse:GraphBLAS, the largest permitted index value
+is \verb'GrB_INDEX_MAX', defined as $2^{60}-1$.  The largest permitted
+matrix or vector dimension is $2^{60}$ (that is, \verb'GrB_INDEX_MAX+1').
+The largest \verb'GrB_Matrix' that
+SuiteSparse: GraphBLAS can construct is thus $2^{60}$-by-$2^{60}$.  An
+$n$-by-$n$ matrix $\bf A$ that size can easily be constructed in practice with
+$O(|{\bf A}|)$ memory requirements, where $|{\bf A}|$ denotes the number of
+entries that explicitly appear in the pattern of ${\bf A}$.  The time and
+memory required to construct a matrix that large does not depend on $n$, since
+SuiteSparse:GraphBLAS can represent ${\bf A}$ in hypersparse form (see
+Section~\ref{hypersparse}).  The largest \verb'GrB_Vector' that can be
+constructed is $2^{60}$-by-1.
+
+Internally, GraphBLAS may store its integer indices using 32-bit integers
+(as of GraphBLAS v10.0.0).  See Section~\ref{integer_bits} for details.
+
+%===============================================================================
+\subsection{{\sf GrB\_init:} initialize GraphBLAS} %============================
+%===============================================================================
+\label{init}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+typedef enum
+{
+    GrB_NONBLOCKING = 0,    // methods may return with pending computations
+    GrB_BLOCKING = 1        // no computations are ever left pending
+}
+GrB_Mode ;
+\end{verbatim}
+}\end{mdframed}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_init           // start up GraphBLAS
+(
+    int mode                // blocking or non-blocking mode (GrB_Mode)
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\hypertarget{link:init}{\mbox{ }}%
+\verb'GrB_init' must be called before any other GraphBLAS operation.  It
+defines the mode that GraphBLAS will use:  blocking or non-blocking.  With
+blocking mode, all operations finish before returning to the user application.
+With non-blocking mode, operations can be left pending, and are computed only
+when needed.  Non-blocking mode can be much faster than blocking mode, by many
+orders of magnitude in extreme cases.  Blocking mode should be used only when
+debugging a user application.  The mode cannot be changed once it is set by
+\verb'GrB_init'.
+
+GraphBLAS objects are opaque.  This allows GraphBLAS to
+postpone operations and then do them later in a more efficient manner by
+rearranging them and grouping them together.  In non-blocking mode, the
+computations required to construct an opaque GraphBLAS object might not be
+finished when the GraphBLAS method or operation returns to the user.  However,
+user-provided arrays are not opaque, and GraphBLAS methods and operations that
+read them (such as \verb'GrB_Matrix_build') or write to them (such as
+\verb'GrB_Matrix_extractTuples') always finish reading them, or creating them,
+when the method or operation returns to the user application.
+
+All methods and operations that extract values from a GraphBLAS object and
+return them into non-opaque user arrays always ensure that the user-visible
+arrays are fully populated when they return: \verb'GrB_*_reduce' (to scalar),
+\verb'GrB_*_nvals', \verb'GrB_*_extractElement', and
+\verb'GrB_*_extractTuples'.  These functions do {\em not} guarantee that the
+opaque objects they depend on are finalized.  To do that, use
+\verb'GrB_wait' instead.
+
+SuiteSparse:GraphBLAS is multithreaded internally, via OpenMP, and it is also
+safe to use in a multithreaded user application.  See Section~\ref{sec:install}
+for details.
+User threads must not operate on the same matrices at the same time, with one
+exception.  Multiple user threads can use the same matrices or vectors as
+inputs to GraphBLAS operations or methods, but only if they have no
+pending operations (use \verb'GrB_wait'
+first).  User threads cannot simultaneously modify a matrix or vector via any
+GraphBLAS operation or method.
+
+It is safe to use the internal parallelism in SuiteSparse:GraphBLAS on
+matrices, vectors, and scalars that are not yet completed.  The library
+handles this on its own.  The \verb'GrB_wait' function is only
+needed when a user application makes multiple calls to GraphBLAS in parallel,
+from multiple user threads.
+
+With multiple user threads, exactly one user thread must call \verb'GrB_init'
+before any user thread may call any \verb'GrB_*' or \verb'GxB_*' function.
+When the user application is finished, exactly one user thread must call
+\verb'GrB_finalize', after which no user thread may call any \verb'GrB_*' or
+\verb'GxB_*' function.
+The mode of a GraphBLAS session can be queried with \verb'GrB_get';
+see Section~\ref{options} for details.
+
+%===============================================================================
+\subsection{{\sf GrB\_getVersion:} determine the C API Version} %===============
+%===============================================================================
+\label{getVersion}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_getVersion         // run-time access to C API version number
+(
+    unsigned int *version,      // returns GRB_VERSION
+    unsigned int *subversion    // returns GRB_SUBVERSION
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+GraphBLAS defines two compile-time constants that
+define the version of the C API Specification
+that is implemented by the library:
+\verb'GRB_VERSION' and \verb'GRB_SUBVERSION'.
+If the user program was compiled with one
+version of the library but linked with a different one later on, the
+compile-time version check with \verb'GRB_VERSION' would be stale.
+\verb'GrB_getVersion' thus provides a run-time access of the version of the C
+API Specification supported by the library.
+
+%===============================================================================
+\subsection{{\sf GxB\_init:} initialize with alternate malloc} %================
+%===============================================================================
+\label{xinit}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_init           // start up GraphBLAS and also define malloc
+(
+    int mode,               // blocking or non-blocking mode (GrB_Mode)
+    // pointers to memory management functions.
+    void * (* user_malloc_func  ) (size_t),
+    void * (* user_calloc_func  ) (size_t, size_t),
+    void * (* user_realloc_func ) (void *, size_t),
+    void   (* user_free_func    ) (void *)
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GxB_init' is identical to \verb'GrB_init', except that it also redefines
+the memory management functions that SuiteSparse:GraphBLAS will use.  Giving
+the user application control over this is particularly important when using the
+\verb'GxB_*serialize' and \verb'GxB_Container' methods described in Section
+\ref{serialize_deserialize} and \ref{container}, since they require the user
+application and GraphBLAS to use the same memory manager.
+\verb'user_calloc_func' and \verb'user_realloc_func' are optional, and
+may be \verb'NULL'.  If \verb'NULL', then the \verb'user_malloc_func' is
+relied on instead, for all memory allocations.
+These functions can only be set once, when GraphBLAS starts.
+They can be queried using \verb'GrB_get' (see
+Section~\ref{get_set_global}).
+Either
+\verb'GrB_init' or \verb'GxB_init' must be called before any other GraphBLAS
+operation, but not both.  The functions passed to \verb'GxB_init' must be
+thread-safe.
+The following usage is identical to \verb'GrB_init(mode)':
+
+    {\footnotesize
+    \begin{verbatim}
+    GxB_init (mode, malloc, calloc, realloc, free) ; \end{verbatim}}
+
+%===============================================================================
+\subsection{{\sf GrB\_Info:} status code returned by GraphBLAS} %===============
+%===============================================================================
+\label{info}
+
+Each GraphBLAS method and operation returns its status to the caller as its
+return value, an enumerated type (an \verb'enum') called \verb'GrB_Info'.  The
+first two values in the following table denote a successful status, the rest
+are error codes.
+
+\vspace{0.2in}
+\noindent
+{\small
+\begin{tabular}{lrp{2.8in}}
+\hline
+Error                         & value & description \\
+\hline
+\verb'GrB_SUCCESS'              & 0   & the method or operation was successful \\
+\verb'GrB_NO_VALUE'             & 1   & the method was successful, but the entry \\
+                                &     & does not appear in the matrix or vector. \\
+\verb'GxB_EXHAUSTED'            & 2   & the iterator is exhausted \\
+\hline
+\hline
+\verb'GrB_UNINITIALIZED_OBJECT' & -1   & object has not been initialized \\
+\verb'GrB_NULL_POINTER'         & -2   & input pointer is \verb'NULL' \\
+\verb'GrB_INVALID_VALUE'        & -3   & generic error code; some value is bad \\
+\verb'GrB_INVALID_INDEX'        & -4   & a row or column index is out of bounds \\
+\verb'GrB_DOMAIN_MISMATCH'      & -5   & object domains are not compatible \\
+\verb'GrB_DIMENSION_MISMATCH'   & -6   & matrix dimensions do not match \\
+\verb'GrB_OUTPUT_NOT_EMPTY'     & -7   & output matrix already has values in it \\
+\verb'GrB_NOT_IMPLEMENTED'      & -8   & not implemented in SS:GrB \\
+\verb'GrB_ALREADY_SET'          & -9   & field already written to \\
+\verb'GrB_PANIC'                & -101 & unrecoverable error \\
+\verb'GrB_OUT_OF_MEMORY'        & -102 & out of memory \\
+\verb'GrB_INSUFFICIENT_SPACE'   & -103 & output array not large enough \\
+\verb'GrB_INVALID_OBJECT'       & -104 & object is corrupted \\
+\verb'GrB_INDEX_OUT_OF_BOUNDS'  & -105 & a row or column index is out of bounds \\
+\verb'GrB_EMPTY_OBJECT'         & -106 & a input scalar has no entry \\
+\verb'GxB_JIT_ERROR'            &-7001 & JIT compiler error \\
+\verb'GxB_OUTPUT_IS_READONLY'   &-7003 & output has read-only components \\
+\hline
+\end{tabular}
+\vspace{0.2in}
+}
+
+Not all GraphBLAS methods or operations can return all status codes.
+In the discussions of each method and operation in this User Guide, most of the
+obvious error code returns are not discussed.  For example, if a required input
+is a \verb'NULL' pointer, then \verb'GrB_NULL_POINTER' is returned.  Only error
+codes specific to the method or that require elaboration are discussed here.
+For a full list of the status codes that each GraphBLAS function can return,
+refer to {\em The GraphBLAS C API Specification} \cite{spec,spec2}.
+
+%===============================================================================
+\subsection{{\sf GrB\_error:} get more details on the last error} %=============
+%===============================================================================
+\label{error}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_error      // return a string describing the last error
+(
+    const char **error, // error string
+    <type> object       // a GrB_matrix, GrB_Vector, etc.
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+Each GraphBLAS method and operation returns a \verb'GrB_Info' error code.  The
+\verb'GrB_error' function returns additional information on the error for a
+particular object in a null-terminated string.  The string returned by
+\verb'GrB_error' is never a \verb'NULL' string, but it may have length zero
+(with the first entry being the \verb"'\0'" string-termination value).  The
+string must not be freed or modified.
+
+    {\footnotesize
+    \begin{verbatim}
+    info = GrB_some_method_here (C, ...) ;
+    if (! (info == GrB_SUCCESS || info == GrB_NO_VALUE))
+    {
+        char *err ;
+        GrB_error (&err, C) ;
+        printf ("info: %d error: %s\n", info, err) ;
+    } \end{verbatim}}
+
+If the matrix \verb'C' has no error status, or if the error is not recorded in
+the string, an empty non-null string is returned.  In particular, out-of-memory
+conditions result in an empty string from \verb'GrB_error'.
+
+SuiteSparse:GraphBLAS reports many helpful details via \verb'GrB_error'.  For
+example, if a row or column index is out of bounds, the report will state what
+those bounds are.  If a matrix dimension is incorrect, the mismatching
+dimensions will be provided.  Refer to
+the output of the example programs in the \verb'Demo' and \verb'Test' folder,
+which intentionally generate errors to illustrate the use of \verb'GrB_error'.
+
+The only functions in GraphBLAS that return an error string are functions that
+have a single input/output argument \verb'C', as a \verb'GrB_Matrix',
+\verb'GrB_Vector', \verb'GrB_Scalar', or \verb'GrB_Descriptor'. Methods that
+create these objects (such as \verb'GrB_Matrix_new') return a \verb'NULL'
+object on failure, so these methods cannot also return an error string in
+their output argument.
+
+Any subsequent GraphBLAS method that modifies the object \verb'C' clears the
+error string.
+
+Note that \verb'GrB_NO_VALUE' is an not error, but an informational status.
+\verb'GrB_*_extractElment(&x,A,i,j)', which does \verb'x=A(i,j)', returns this
+value to indicate that \verb'A(i,j)' is not present in the matrix.  That
+method does not have an input/output object so it cannot return an error
+string.
+
+%===============================================================================
+\subsection{{\sf GrB\_finalize:} finish GraphBLAS} %============================
+%===============================================================================
+\label{finalize}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_finalize ( ) ;     // finish GraphBLAS
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GrB_finalize' must be called as the last GraphBLAS operation, even after
+all calls to \verb'GrB_free'.  All GraphBLAS objects created by the user
+application should be freed first, before calling \verb'GrB_finalize' since
+\verb'GrB_finalize' will not free those objects.  In non-blocking mode,
+GraphBLAS may leave some computations as pending.  These computations can be
+safely abandoned if the user application frees all GraphBLAS objects it has
+created and then calls \verb'GrB_finalize'.  When the user application is
+finished, exactly one user thread must call \verb'GrB_finalize'.
+

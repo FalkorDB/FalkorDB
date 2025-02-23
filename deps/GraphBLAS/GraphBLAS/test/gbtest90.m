@@ -6,7 +6,7 @@ function gbtest90
 % c = GrB.reduce (c, accum, monoid, A)
 % c = GrB.reduce (c, accum, monoid, A, desc)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default')

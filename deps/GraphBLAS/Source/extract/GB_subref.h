@@ -2,7 +2,7 @@
 // GB_subref.h: definitions for GB_subref_* functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,9 +20,11 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
     bool C_iso,                 // if true, return C as iso, regardless of A
     const bool C_is_csc,        // requested format of C
     const GrB_Matrix A,
-    const GrB_Index *I,         // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *I,              // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool I_is_32,         // if true, I is 32-bit; else 64-bit
     const int64_t ni,           // length of I, or special
-    const GrB_Index *J,         // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *J,              // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool J_is_32,         // if true, I is 32-bit; else 64-bit
     const int64_t nj,           // length of J, or special
     const bool symbolic,        // if true, construct C as symbolic
     GB_Werk Werk
@@ -31,11 +33,13 @@ GrB_Info GB_subref              // C = A(I,J): either symbolic or numeric
 GrB_Info GB_subref_phase0
 (
     // output
-    int64_t *restrict *p_Ch,         // Ch = C->h hyperlist, or NULL standard
+    void **p_Ch,            // Ch = C->h hyperlist, or NULL
+    bool *p_Cj_is_32,       // if true, C->h is 32-bit; else 64-bit
+    bool *p_Ci_is_32,       // if true, C->i is 32-bit; else 64-bit
     size_t *p_Ch_size,
-    int64_t *restrict *p_Ap_start,   // A(:,kA) starts at Ap_start [kC]
+    void **p_Ap_start,      // A(:,kA) starts at Ap_start [kC]
     size_t *p_Ap_start_size,
-    int64_t *restrict *p_Ap_end,     // ... and ends at Ap_end [kC] - 1
+    void **p_Ap_end,        // ... and ends at Ap_end [kC] - 1
     size_t *p_Ap_end_size,
     int64_t *p_Cnvec,       // # of vectors in C
     bool *p_need_qsort,     // true if C must be sorted
@@ -45,11 +49,28 @@ GrB_Info GB_subref_phase0
     int64_t *p_nJ,          // length of J
     // input, not modified
     const GrB_Matrix A,
-    const GrB_Index *I,     // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *I,          // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool I_is_32,     // if true, I is 32-bit; else 64-bit
     const int64_t ni,       // length of I, or special
-    const GrB_Index *J,     // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *J,          // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool J_is_32,     // if true, I is 32-bit; else 64-bit
     const int64_t nj,       // length of J, or special
-//  const bool must_sort,   // true if C must be returned sorted
+    GB_Werk Werk
+) ;
+
+GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
+(
+    const void *I,              // list of indices, duplicates OK
+    const bool I_is_32,         // if true, I is 32-bit; else 64 bit
+    int64_t nI,                 // length of I
+    int64_t avlen,              // length of the vectors of A
+    // outputs:
+    void **p_Ihead,             // head pointers for buckets, size avlen
+    size_t *p_Ihead_size,
+    void **p_Inext,             // next pointers for buckets, size nI
+    size_t *p_Inext_size,
+    bool *p_Ihead_is_32,        // if true, Ihead and Inext are 32-bit; else 64
+    int64_t *p_nduplicates,     // number of duplicate entries in I
     GB_Werk Werk
 ) ;
 
@@ -58,53 +79,64 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     // output:
     GB_task_struct **p_TaskList,    // array of structs
     size_t *p_TaskList_size,        // size of TaskList
-    int *p_ntasks,                  // # of tasks constructed
-    int *p_nthreads,                // # of threads for subref operation
-    bool *p_post_sort,              // true if a final post-sort is needed
-    int64_t *restrict *p_Mark,      // for I inverse, if needed; size avlen
-    size_t *p_Mark_size,
-    int64_t *restrict *p_Inext,     // for I inverse, if needed; size nI
+    int *p_ntasks,              // # of tasks constructed
+    int *p_nthreads,            // # of threads for subref operation
+    bool *p_post_sort,          // true if a final post-sort is needed
+    void **p_Ihead,             // for I inverse, if needed; size avlen
+    size_t *p_Ihead_size,
+    void **p_Inext,             // for I inverse, if needed; size nI
     size_t *p_Inext_size,
-    int64_t *p_nduplicates,         // # of duplicates, if I inverse computed
+    bool *p_Ihead_is_32,        // if true, Ihead and Inext are 32-bit; else 64
+    int64_t *p_nduplicates,     // # of duplicates, if I inverse computed
+    uint64_t **p_Cwork,         // workspace of size max(2,C->nvec+1)
+    size_t *p_Cwork_size,
     // from phase0:
-    const int64_t *restrict Ap_start,   // location of A(imin:imax,kA)
-    const int64_t *restrict Ap_end,
-    const int64_t Cnvec,            // # of vectors of C
-    const bool need_qsort,          // true if C must be sorted
-    const int Ikind,                // GB_ALL, GB_RANGE, GB_STRIDE or GB_LIST
-    const int64_t nI,               // length of I
-    const int64_t Icolon [3],       // for GB_RANGE and GB_STRIDE
+    const void *Ap_start,       // location of A(imin:imax,kA)
+    const void *Ap_end,
+    const int64_t Cnvec,        // # of vectors of C
+    const bool need_qsort,      // true if C must be sorted
+    const int Ikind,            // GB_ALL, GB_RANGE, GB_STRIDE or GB_LIST
+    const int64_t nI,           // length of I
+    const int64_t Icolon [3],   // for GB_RANGE and GB_STRIDE
     // original input:
-    const int64_t avlen,            // A->vlen
-    const int64_t anz,              // nnz (A)
-    const GrB_Index *I,
+    const int64_t avlen,        // A->vlen
+    const int64_t anz,          // nnz (A)
+    const bool Ap_is_32,        // if true, Ap_start/end are 32-bit; else 64
+    const void *I,
+    const bool I_is_32,         // if true, I is 32-bit; else 64 bit
     GB_Werk Werk
 ) ;
 
 GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
 (
-    // computed by phase1:
-    int64_t **Cp_handle,                // output of size Cnvec+1
+    // computed by phase2:
+    void **Cp_handle,                   // output of size Cnvec+1
+    bool *p_Cp_is_32,                   // if true, Cp is 32-bit; else 64 bit
     size_t *Cp_size_handle,
     int64_t *Cnvec_nonempty,            // # of non-empty vectors in C
-    // tasks from phase0b:
+    // tasks from phase1:
     GB_task_struct *restrict TaskList,  // array of structs
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads to use
-    const int64_t *Mark,                // for I inverse buckets, size A->vlen
-    const int64_t *Inext,               // for I inverse buckets, size nI
+    const void *Ihead,                  // for I inverse buckets, size A->vlen
+    const void *Inext,                  // for I inverse buckets, size nI
+    const bool Ihead_is_32,             // if true, Ihead,Inext 32-bit; else 64
     const bool I_has_duplicates,        // true if I has duplicates
+    uint64_t **p_Cwork,                 // workspace of size max(2,C->nvec+1)
+    size_t Cwork_size,
     // analysis from phase0:
-    const int64_t *restrict Ap_start,
-    const int64_t *restrict Ap_end,
+    const void *Ap_start,
+    const void *Ap_end,
     const int64_t Cnvec,
     const bool need_qsort,
     const int Ikind,
     const int64_t nI,
     const int64_t Icolon [3],
+    const int64_t nJ,
     // original input:
     const GrB_Matrix A,
-    const GrB_Index *I,         // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *I,              // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool I_is_32,         // if true, I is 32-bit; else 64-bit
     const bool symbolic,
     GB_Werk Werk
 ) ;
@@ -112,23 +144,27 @@ GrB_Info GB_subref_phase2               // count nnz in each C(:,j)
 GrB_Info GB_subref_phase3   // C=A(I,J)
 (
     GrB_Matrix C,               // output matrix, static header
-    // from phase1:
-    int64_t **Cp_handle,        // vector pointers for C
+    // from phase2:
+    void **Cp_handle,           // vector pointers for C
+    const bool Cp_is_32,        // if true, Cp is 32-bit; else 64-bit
     size_t Cp_size,
     const int64_t Cnvec_nonempty,       // # of non-empty vectors in C
-    // from phase0b:
+    // from phase1:
     const GB_task_struct *restrict TaskList,    // array of structs
     const int ntasks,                           // # of tasks
     const int nthreads,                         // # of threads to use
     const bool post_sort,               // true if post-sort needed
-    const int64_t *Mark,                // for I inverse buckets, size A->vlen
-    const int64_t *Inext,               // for I inverse buckets, size nI
+    const void *Ihead,                  // for I inverse buckets, size A->vlen
+    const void *Inext,                  // for I inverse buckets, size nI
+    const bool Ihead_is_32,             // if true, Ihead,Inext 32-bit; else 64
     const bool I_has_duplicates,        // true if I has duplicates
     // from phase0:
-    int64_t **Ch_handle,
+    void **Ch_handle,
+    const bool Cj_is_32,        // if true, C->h is 32-bit; else 64-bit
+    const bool Ci_is_32,        // if true, C->i is 32-bit; else 64-bit
     size_t Ch_size,
-    const int64_t *restrict Ap_start,
-    const int64_t *restrict Ap_end,
+    const void *Ap_start,
+    const void *Ap_end,
     const int64_t Cnvec,
     const bool need_qsort,
     const int Ikind,
@@ -136,42 +172,33 @@ GrB_Info GB_subref_phase3   // C=A(I,J)
     const int64_t Icolon [3],
     const int64_t nJ,
     // from GB_subref:
+    const GrB_Type ctype,       // type of C to create
     const bool C_iso,           // if true, C is iso
     const GB_void *cscalar,     // iso value of C
     // original input:
     const bool C_is_csc,        // format of output matrix C
     const GrB_Matrix A,
-    const GrB_Index *I,
+    const void *I,
+    const bool I_is_32,         // if true, I is 32-bit; else 64-bit
     const bool symbolic,
-    GB_Werk Werk
-) ;
-
-GrB_Info GB_I_inverse           // invert the I list for C=A(I,:)
-(
-    const GrB_Index *I,         // list of indices, duplicates OK
-    int64_t nI,                 // length of I
-    int64_t avlen,              // length of the vectors of A
-    // outputs:
-    int64_t *restrict *p_Mark,  // head pointers for buckets, size avlen
-    size_t *p_Mark_size,
-    int64_t *restrict *p_Inext, // next pointers for buckets, size nI
-    size_t *p_Inext_size,
-    int64_t *p_nduplicates,     // number of duplicate entries in I
     GB_Werk Werk
 ) ;
 
 GrB_Info GB_bitmap_subref       // C = A(I,J): either symbolic or numeric
 (
-    // output
+    // output:
     GrB_Matrix C,               // output matrix, static header
-    // input, not modified
+    // inputs, not modified:
+    const GrB_Type ctype,       // type of C to create
     const bool C_iso,           // if true, C is iso
     const GB_void *cscalar,     // scalar value of C, if iso
     const bool C_is_csc,        // requested format of C
     const GrB_Matrix A,
-    const GrB_Index *I,         // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *I,              // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool I_is_32,         // if true, I is 32-bit; else 64-bit
     const int64_t ni,           // length of I, or special
-    const GrB_Index *J,         // index list for C = A(I,J), or GrB_ALL, etc.
+    const void *J,              // index list for C = A(I,J), or GrB_ALL, etc.
+    const bool J_is_32,         // if true, J is 32-bit; else 64-bit
     const int64_t nj,           // length of J, or special
     const bool symbolic,        // if true, construct C as symbolic
     GB_Werk Werk

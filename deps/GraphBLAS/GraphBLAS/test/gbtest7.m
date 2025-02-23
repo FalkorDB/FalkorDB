@@ -1,7 +1,7 @@
 function gbtest7
 %GBTEST7 test GrB.build
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -50,6 +50,12 @@ assert (gbtest_eq (S, G)) ;
 
 d.kind = 'sparse' ;
 G = GrB.build (i, j, x, m, n, d) ;
+assert (gbtest_eq (S, G))
+
+I = GrB (i', 'by row') ;
+J = GrB (j', 'by row') ;
+X = GrB (x) ;
+G = GrB.build (I, J, X, m, n, d) ;
 assert (gbtest_eq (S, G))
 
 i0 = int64 (i) - 1 ;

@@ -2,7 +2,7 @@
 // GB_emult_bitmap_7: C<#M>=A.*B; C bitmap; M, A, and B are bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -59,12 +59,12 @@
         for (int64_t p = pstart ; p < pend ; p++)
         {
             // get M(i,j)
-            bool mij = GBB_M (Mb, p) && GB_MCAST (Mx, p, msize) ;
-            if (Mask_comp) mij = !mij ; /* TODO: use ^ */
+            bool mij = GBb_M (Mb, p) && GB_MCAST (Mx, p, msize) ;
+            if (Mask_comp) mij = !mij ;
             if (mij)
             {
                 // M(i,j) is true, so C(i,j) can be computed
-                if (GBB_A (Ab, p) && GBB_B (Bb, p))
+                if (GBb_A (Ab, p) && GBb_B (Bb, p))
                 { 
                     // C (i,j) = A (i,j) + B (i,j)
                     #ifndef GB_ISO_EMULT

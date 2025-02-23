@@ -2,7 +2,7 @@
 // GB_AxB.c: matrix multiply for a single semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,7 +12,6 @@ GB_type_enabled
 #if GB_TYPE_ENABLED
 #include "GB.h"
 #include "mxm/GB_AxB_saxpy.h"
-#include "include/GB_unused.h"
 #include "assign/GB_bitmap_assign_methods.h"
 GB_axb__include_h
 
@@ -557,5 +556,7 @@ GrB_Info GB (_Asaxpy3B)
 
 #endif
 
+#else
+GB_EMPTY_PLACEHOLDER
 #endif
 

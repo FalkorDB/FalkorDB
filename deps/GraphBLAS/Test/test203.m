@@ -1,7 +1,7 @@
 function test203
 %TEST203 test iso subref
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default') ;
@@ -12,7 +12,7 @@ A.class = 'double' ;
 A.iso = true ;
 
 m = 5 ;
-I = 1:m ;
+I = (1:m)' ;
 I0 = uint64 (I) - 1 ;
 
 Cin = sparse (m,m) ;
@@ -20,15 +20,24 @@ C1 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, I0, [ ]) ;
 C2 = A.matrix (I,I) ;
 assert (isequal (C1.matrix, C2)) ;
 
+C1 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, I0, [ ], 1) ;
+assert (isequal (C1.matrix, C2)) ;
+
 A.sparsity = 4 ;
 C1 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, I0, [ ]) ;
 C2 = A.matrix (I,I) ;
+assert (isequal (C1.matrix, C2)) ;
+
+C1 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, I0, [ ], 1) ;
 assert (isequal (C1.matrix, C2)) ;
 
 A.matrix = pi * sparse (ones (n,n)) ;
 A.sparsity = 8 ;
 C1 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, I0, [ ]) ;
 C2 = A.matrix (I,I) ;
+assert (isequal (C1.matrix, C2)) ;
+
+C1 = GB_mex_Matrix_extract (Cin, [ ], [ ], A, I0, I0, [ ], 1) ;
 assert (isequal (C1.matrix, C2)) ;
 
 GB_mex_burble (0) ;

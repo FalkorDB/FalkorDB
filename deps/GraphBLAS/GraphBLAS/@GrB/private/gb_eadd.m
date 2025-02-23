@@ -1,7 +1,7 @@
 function C = gb_eadd (A, op, B)
 %GB_EADD C = A+B, sparse matrix 'addition' using the given op.
 % The pattern of C is the set union of A and B.  This method assumes the
-% identity value of the op is zero.  That is, x+0 = x+0 = x.  The binary
+% identity value of the op is zero.  That is, x+0 = 0+x = x.  The binary
 % operator op is only applied to entries in the intersection of the
 % pattern of A and B.
 %
@@ -10,7 +10,7 @@ function C = gb_eadd (A, op, B)
 %
 % See also GrB/plus, GrB/minus, GrB/bitxor, GrB/bitor, GrB/hypot.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [am, an, atype] = gbsize (A) ;

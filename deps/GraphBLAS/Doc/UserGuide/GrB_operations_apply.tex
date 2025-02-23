@@ -1,0 +1,312 @@
+
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_apply:} apply a unary, binary, or index-unary operator}
+%===============================================================================
+\label{apply}
+
+\verb'GrB_apply' is the generic name for 92 specific functions:
+
+\begin{packed_itemize}
+\item
+\verb'GrB_Vector_apply' and \verb'GrB_Matrix_apply' apply a unary operator to
+the entries of a matrix (two variants).
+
+\item \verb'GrB_*_apply_BinaryOp1st_*' applies a binary
+operator where a single scalar is provided as the $x$ input to the binary
+operator.
+There are 30 variants, depending on the type of the scalar: (matrix or vector)
+x (13 built-in types, one for user-defined types, and a version for
+\verb'GrB_Scalar').
+
+\item \verb'GrB_*_apply_BinaryOp2nd_*' applies a binary operator where a
+single scalar is provided as the $y$ input to the binary operator.
+There are 30 variants, depending on the type of the scalar: (matrix or vector)
+x (13 built-in types, one for user-defined types, and a version for
+\verb'GrB_Scalar').
+
+\item \verb'GrB_*_apply_IndexOp_*' applies a \verb'GrB_IndexUnaryOp',
+single scalar is provided as the scalar $y$ input to the index-unary operator.
+There are 30 variants, depending on the type of the scalar: (matrix or vector)
+x (13 built-in types, one for user-defined types, and a version for
+\verb'GrB_Scalar').
+
+\end{packed_itemize}
+
+The generic
+name appears in the function prototypes, but the specific function name is used
+when describing each variation.  When discussing features that apply to all
+versions, the simple name \verb'GrB_apply' is used.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_apply:} apply a unary operator to a vector}
+%-------------------------------------------------------------------------------
+\label{apply_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // w<mask> = accum (w, op(u))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_UnaryOp op,           // operator to apply to the entries
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_apply' applies a unary operator to the entries of a vector,
+analogous to \verb't = op(u)'  in MATLAB except the operator \verb'op' is only
+applied to entries in the pattern of \verb'u'.  Implicit values outside the
+pattern of \verb'u' are not affected.  The entries in \verb'u' are typecasted
+into the \verb'xtype' of the unary operator.  The vector \verb't' has the same
+type as the \verb'ztype' of the unary operator.  The final step is ${\bf w
+\langle m \rangle  = w \odot t}$, as described in Section~\ref{accummask},
+except that all the terms are column vectors instead of matrices.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_apply:} apply a unary operator to a matrix}
+%-------------------------------------------------------------------------------
+\label{apply_matrix}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // C<Mask> = accum (C, op(A)) or op(A')
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_UnaryOp op,           // operator to apply to the entries
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Descriptor desc       // descriptor for C, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_apply'
+applies a unary operator to the entries of a matrix, analogous to
+\verb'T = op(A)'  in MATLAB except the operator \verb'op' is only applied to
+entries in the pattern of \verb'A'.  Implicit values outside the pattern of
+\verb'A' are not affected.  The input matrix \verb'A' may be transposed first.
+The entries in \verb'A' are typecasted into the \verb'xtype' of the unary
+operator.  The matrix \verb'T' has the same type as the \verb'ztype' of the
+unary operator.  The final step is ${\bf C \langle M \rangle  = C \odot T}$, as
+described in Section~\ref{accummask}.
+
+The built-in \verb'GrB_IDENTITY_'$T$ operators (one for each built-in type $T$)
+are very useful when combined with this function, enabling it to compute ${\bf
+C \langle M \rangle  = C \odot A}$.  This makes \verb'GrB_apply' a direct
+interface to the accumulator/mask function for both matrices and vectors.
+The \verb'GrB_IDENTITY_'$T$ operators also provide the fastest stand-alone
+typecasting methods in SuiteSparse:GraphBLAS, with all $13 \times 13=169$
+methods appearing as individual functions, to typecast between any of the 13
+built-in types.
+
+To compute ${\bf C \langle M \rangle = A}$ or ${\bf C \langle M \rangle = C
+\odot A}$ for user-defined types, the user application would need to define an
+identity operator for the type.  Since GraphBLAS cannot detect that it is an
+identity operator, it must call the operator to make the full copy \verb'T=A'
+and apply the operator to each entry of the matrix or vector.
+
+The other GraphBLAS operation that provides a direct interface to the
+accumulator/mask function is \verb'GrB_transpose', which does not require an
+operator to perform this task.  As a result, \verb'GrB_transpose' can be used
+as an efficient and direct interface to the accumulator/mask function for
+both built-in and user-defined types.  However, it is only available for
+matrices, not vectors.
+
+% \newpage
+%===============================================================================
+\subsubsection{{\sf GrB\_Vector\_apply\_BinaryOp1st:} apply a binary operator to a vector; 1st scalar binding}
+%===============================================================================
+\label{vector_apply1st}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // w<mask> = accum (w, op(x,u))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_BinaryOp op,          // operator to apply to the entries
+    <type> x,                       // first input:  scalar x
+    const GrB_Vector u,             // second input: vector u
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_apply_BinaryOp1st_<type>'  applies a binary operator
+$z=f(x,y)$ to a vector, where a scalar $x$ is bound to the first input of the
+operator.
+The scalar \verb'x' can be a non-opaque C scalar corresponding to a built-in
+type, a \verb'void *' for user-defined types, or a \verb'GrB_Scalar'.
+It is otherwise identical to \verb'GrB_Vector_apply'.
+
+The \verb'op' can be any binary operator except that it cannot be a
+user-defined \verb'GrB_BinaryOp' created by \verb'GxB_BinaryOp_new_IndexOp'.
+For backward compatibility with prior versions of SuiteSparse:GraphBLAS,
+built-in index-based binary operators such as \verb'GxB_FIRSTI_INT32' may be
+used, however.  The equivalent index-unary operators are used in their place.
+
+\newpage
+%===============================================================================
+\subsubsection{{\sf GrB\_Vector\_apply\_BinaryOp2nd:} apply a binary operator to a vector; 2nd scalar binding}
+%===============================================================================
+\label{vector_apply2nd}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // w<mask> = accum (w, op(u,y))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_BinaryOp op,          // operator to apply to the entries
+    const GrB_Vector u,             // first input:  vector u
+    <type> y,                       // second input: scalar y
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_apply_BinaryOp2nd_<type>'  applies a binary operator
+$z=f(x,y)$ to a vector, where a scalar $y$ is bound to the second input of the
+operator.
+The scalar \verb'x' can be a non-opaque C scalar corresponding to a built-in
+type, a \verb'void *' for user-defined types, or a \verb'GrB_Scalar'.
+It is otherwise identical to \verb'GrB_Vector_apply'.
+
+The \verb'op' can be any binary operator except that it cannot be a
+user-defined \verb'GrB_BinaryOp' created by \verb'GxB_BinaryOp_new_IndexOp'.
+For backward compatibility with prior versions of SuiteSparse:GraphBLAS,
+built-in index-based binary operators such as \verb'GxB_FIRSTI_INT32' may be
+used, however.  The equivalent index-unary operators are used in their place.
+
+% \newpage
+%===============================================================================
+\subsubsection{{\sf GrB\_Vector\_apply\_IndexOp:} apply an index-unary operator to a vector}
+%===============================================================================
+\label{vector_apply_idxunop}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // w<mask> = accum (w, op(u,y))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_IndexUnaryOp op,      // operator to apply to the entries
+    const GrB_Vector u,             // first input:  vector u
+    const <type> y,                 // second input: scalar y
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_apply_IndexOp_<type>'  applies an index-unary operator
+$z=f(x,i,0,y)$ to a vector.
+The scalar \verb'y' can be a non-opaque C scalar corresponding to a built-in
+type, a \verb'void *' for user-defined types, or a \verb'GrB_Scalar'.
+It is otherwise identical to \verb'GrB_Vector_apply'.
+
+% \newpage
+%===============================================================================
+\subsubsection{{\sf GrB\_Matrix\_apply\_BinaryOp1st:} apply a binary operator to a matrix; 1st scalar binding}
+%===============================================================================
+\label{matrix_apply1st}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // C<M>=accum(C,op(x,A))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_BinaryOp op,          // operator to apply to the entries
+    <type> x,                       // first input:  scalar x
+    const GrB_Matrix A,             // second input: matrix A
+    const GrB_Descriptor desc       // descriptor for C, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_apply_BinaryOp1st_<type>'  applies a binary operator
+$z=f(x,y)$ to a matrix, where a scalar $x$ is bound to the first input of the
+operator.
+The scalar \verb'x' can be a non-opaque C scalar corresponding to a built-in
+type, a \verb'void *' for user-defined types, or a \verb'GrB_Scalar'.
+It is otherwise identical to \verb'GrB_Matrix_apply'.
+
+The \verb'op' can be any binary operator except that it cannot be a
+user-defined \verb'GrB_BinaryOp' created by \verb'GxB_BinaryOp_new_IndexOp'.
+For backward compatibility with prior versions of SuiteSparse:GraphBLAS,
+built-in index-based binary operators such as \verb'GxB_FIRSTI_INT32' may be
+used, however.  The equivalent index-unary operators are used in their place.
+
+% \newpage
+%===============================================================================
+\subsubsection{{\sf GrB\_Matrix\_apply\_BinaryOp2nd:} apply a binary operator to a matrix; 2nd scalar binding}
+%===============================================================================
+\label{matrix_apply2nd}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // C<M>=accum(C,op(A,y))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_BinaryOp op,          // operator to apply to the entries
+    const GrB_Matrix A,             // first input:  matrix A
+    <type> y,                       // second input: scalar y
+    const GrB_Descriptor desc       // descriptor for C, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_apply_BinaryOp2nd_<type>'  applies a binary operator
+$z=f(x,y)$ to a matrix, where a scalar $x$ is bound to the second input of the
+operator.
+The scalar \verb'y' can be a non-opaque C scalar corresponding to a built-in
+type, a \verb'void *' for user-defined types, or a \verb'GrB_Scalar'.
+It is otherwise identical to \verb'GrB_Matrix_apply'.
+
+The \verb'op' can be any binary operator except that it cannot be a
+user-defined \verb'GrB_BinaryOp' created by \verb'GxB_BinaryOp_new_IndexOp'.
+For backward compatibility with prior versions of SuiteSparse:GraphBLAS,
+built-in index-based binary operators such as \verb'GxB_FIRSTI_INT32' may be
+used, however.  The equivalent index-unary operators are used in their place.
+
+%===============================================================================
+\subsubsection{{\sf GrB\_Matrix\_apply\_IndexOp:} apply an index-unary operator to a matrix}
+%===============================================================================
+\label{matrix_apply_idxunop}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_apply                  // C<M>=accum(C,op(A,y))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_IndexUnaryOp op,      // operator to apply to the entries
+    const GrB_Matrix A,             // first input:  matrix A
+    const <type> y,                 // second input: scalar y
+    const GrB_Descriptor desc       // descriptor for C, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_apply_IndexOp_<type>'  applies an index-unary operator
+$z=f(x,i,j,y)$ to a matrix.
+The scalar \verb'y' can be a non-opaque C scalar corresponding to a built-in
+type, a \verb'void *' for user-defined types, or a \verb'GrB_Scalar'.
+It is otherwise identical to \verb'GrB_Matrix_apply'.
+
+

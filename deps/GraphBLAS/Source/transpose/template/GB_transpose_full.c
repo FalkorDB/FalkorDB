@@ -2,7 +2,7 @@
 // GB_transpose_full: C=op(cast(A')), transpose, typecast, and apply op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,6 +17,7 @@
     ASSERT (GB_IS_FULL (A)) ;
     ASSERT (GB_IS_FULL (C)) ;
 
+    #ifndef GB_ISO_TRANSPOSE
     // A is avlen-by-avdim; C is avdim-by-avlen
     int64_t avlen = A->vlen ;
     int64_t avdim = A->vdim ;
@@ -26,7 +27,6 @@
     // for large matrices, but in most of the cases in GraphBLAS, A and
     // C will be tall-and-thin or short-and-fat.
 
-    #ifndef GB_ISO_TRANSPOSE
     int tid ;
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (tid = 0 ; tid < nthreads ; tid++)

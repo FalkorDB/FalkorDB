@@ -1,0 +1,228 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS import/export: using copy semantics} %====================
+%===============================================================================
+\label{GrB_import_export}
+
+The v2.0 C API includes import/export methods for matrices (not vectors) using
+a different strategy as compared to the \verb'GxB_Container' methods.  The
+\verb'GxB_Container' methods are based on {\em move semantics}, in which
+ownership of arrays is passed between SuiteSparse:GraphBLAS and the user
+application.  This allows the \verb'GxB_Container' methods to work in $O(1)$
+time, and require no additional memory, but it requires that GraphBLAS and the
+user application agree on which memory manager to use.  This is done via
+\verb'GxB_init'.  This allows GraphBLAS to \verb'malloc' an array that can be
+later \verb'free'd by the user application, and visa versa.
+
+The \verb'GrB' import/export methods take a different approach.  The data
+is always copied in and out between the opaque GraphBLAS matrix and the
+user arrays.  This takes $\Omega(e)$ time, if the matrix has $e$ entries,
+and requires more memory.  It has the advantage that it does not require
+GraphBLAS and the user application to agree on what memory manager to use,
+since no ownership of allocated arrays is changed.
+
+The format for \verb'GrB_Matrix_import' and \verb'GrB_Matrix_export' is
+controlled by the following enum:
+
+{\footnotesize
+\begin{verbatim}
+typedef enum
+{
+    GrB_CSR_FORMAT = 0,     // CSR format (equiv to GxB_SPARSE with GrB_ROWMAJOR)
+    GrB_CSC_FORMAT = 1,     // CSC format (equiv to GxB_SPARSE with GrB_COLMAJOR)
+    GrB_COO_FORMAT = 2      // triplet format (like input to GrB*build)
+}
+GrB_Format ; \end{verbatim}}
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_import:}  import a matrix}
+%-------------------------------------------------------------------------------
+\label{GrB_matrix_import}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_import  // import a matrix
+(
+    GrB_Matrix *A,          // handle of matrix to create
+    GrB_Type type,          // type of matrix to create
+    GrB_Index nrows,        // number of rows of the matrix
+    GrB_Index ncols,        // number of columns of the matrix
+    const GrB_Index *Ap,    // pointers for CSR, CSC, column indices for COO
+    const GrB_Index *Ai,    // row indices for CSR, CSC
+    const <type> *Ax,       // values
+    GrB_Index Ap_len,       // number of entries in Ap (not # of bytes)
+    GrB_Index Ai_len,       // number of entries in Ai (not # of bytes)
+    GrB_Index Ax_len,       // number of entries in Ax (not # of bytes)
+    int format              // import format (GrB_Format)
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+The \verb'GrB_Matrix_import' method copies from user-provided arrays into an
+opaque \verb'GrB_Matrix' and \verb'GrB_Matrix_export' copies data out, from an
+opaque \verb'GrB_Matrix' into user-provided arrays.
+
+The suffix \verb'TYPE' in the prototype above is one of \verb'BOOL',
+\verb'INT8', \verb'INT16', etc, for built-n types, or \verb'UDT' for
+user-defined types.  The type of the \verb'Ax' array must match this type.  No
+typecasting is performed.
+
+Unlike the \verb'GxB_Container' methods, memory is not handed off between the
+user application and GraphBLAS.   The three arrays \verb'Ap', \verb'Ai'.  and
+\verb'Ax' are not modified, and are still owned by the user application when
+the method finishes.
+
+\verb'GrB_Matrix_import' does not support the creation of matrices with 32-bit
+integer indices.
+
+The matrix can be imported in one of three different formats:
+
+\begin{packed_itemize}
+    \item \verb'GrB_CSR_FORMAT': % CSR format (equiv to GxB_SPARSE with GrB_ROWMAJOR)
+        Compressed-row format.  \verb'Ap' is an array of size \verb'nrows+1'.
+        The arrays \verb'Ai' and \verb'Ax' are of size \verb'nvals = Ap [nrows]',
+        and \verb'Ap[0]' must be zero.
+        The column indices of entries in the \verb'i'th row appear in
+        \verb'Ai[Ap[i]...Ap[i+1]-1]', and the values of those entries appear in
+        the same locations in \verb'Ax'.
+        The column indices need not be in any particular order.
+        See Section~\ref{format_sparse_by_row} for details of the sparse-by-row (CSR) format.
+
+    \item \verb'GrB_CSC_FORMAT': % CSC format (equiv to GxB_SPARSE with GrB_COLMAJOR)
+        Compressed-column format.  \verb'Ap' is an array of size \verb'ncols+1'.
+        The arrays \verb'Ai' and \verb'Ax' are of size \verb'nvals = Ap [ncols]',
+        and \verb'Ap[0]' must be zero.
+        The row indices of entries in the \verb'j'th column appear in
+        \verb'Ai[Ap[j]...Ap[j+1]-1]', and the values of those entries appear in
+        the same locations in \verb'Ax'.
+        The row indices need not be in any particular order.
+        See Section~\ref{format_sparse_by_col} for details of the sparse-by-column (CSC) format.
+
+    \item \verb'GrB_COO_FORMAT': % triplet format (like input to GrB*build)
+        Coordinate format.  This is the same format as the \verb'I', \verb'J',
+        \verb'X' inputs to \verb'GrB_Matrix_build'.  The three arrays
+        \verb'Ap', \verb'Ai', and \verb'Ax' have the same size.  The \verb'k'th
+        tuple has row index \verb'Ai[k]', column index \verb'Ap[k]', and value
+        \verb'Ax[k]'.  The tuples can appear any order, but no duplicates are
+        permitted.
+
+%   \item \verb'GrB_DENSE_ROW_FORMAT': % FullR format (GxB_FULL with GrB_ROWMAJOR)
+%       Dense matrix format, held by row.  Only the \verb'Ax' array is used, of
+%       size \verb'nrows*ncols'.
+%       It holds the matrix in dense format, in row major order.
+%
+%   \item \verb'GrB_DENSE_COL_FORMAT': % FullC format (GxB_FULL with GrB_ROWMAJOR)
+%       Dense matrix format, held by column.  Only the \verb'Ax' array is used, of
+%       size \verb'nrows*ncols'.
+%       It holds the matrix in dense format, in column major order.
+
+\end{packed_itemize}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_export:}  export a matrix}
+%-------------------------------------------------------------------------------
+\label{GrB_matrix_export}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_export  // export a matrix
+(
+    GrB_Index *Ap,          // pointers for CSR, CSC, column indices for COO
+    GrB_Index *Ai,          // col indices for CSR/COO, row indices for CSC
+    <type> *Ax,             // values (must match the type of A_input)
+    GrB_Index *Ap_len,      // number of entries in Ap (not # of bytes)
+    GrB_Index *Ai_len,      // number of entries in Ai (not # of bytes)
+    GrB_Index *Ax_len,      // number of entries in Ax (not # of bytes)
+    int format,             // export format (GrB_Format)
+    GrB_Matrix A            // matrix to export
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Matrix_export' copies the contents of a matrix into three
+user-provided arrays, using any one of the three different formats
+described in Section~\ref{GrB_matrix_import}.  The size of the arrays must be
+at least as large as the lengths returned by \verb'GrB_Matrix_exportSize'.  The
+matrix \verb'A' is not modified.
+
+On input, the size of the three arrays \verb'Ap', \verb'Ai', and \verb'Ax' is
+given by \verb'Ap_len', \verb'Ai_len', and \verb'Ax_len', respectively.  These
+values are in terms of the number of entries in these arrays, not the number of
+bytes.  On output, these three value are adjusted to report the number of
+entries written to the three arrays.
+
+The suffix \verb'TYPE' in the prototype above is one of \verb'BOOL',
+\verb'INT8', \verb'INT16', etc, for built-n types, or \verb'UDT' for
+user-defined types.  The type of the \verb'Ax' array must match this type.  No
+typecasting is performed.
+
+\verb'GrB_Matrix_export' always exports the indices and offsets of the matrix
+using 64-bit integer indices, even if they are held internally using 32-bit
+integers.
+
+% The \verb'GrB_DENSE_ROW_FORMAT' and \verb'GrB_DENSE_COL_FORMAT' formats can
+% only be used if all entries are present in the matrix.  That is,
+% \verb'GrB_Matrix_nvals (&nvals,A)' must return \verb'nvals' equal to
+% \verb'nrows*ncols'.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_exportSize:} determine size of export}
+%-------------------------------------------------------------------------------
+\label{export_size}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_exportSize  // determine sizes of user arrays for export
+(
+    GrB_Index *Ap_len,      // # of entries required for Ap (not # of bytes)
+    GrB_Index *Ai_len,      // # of entries required for Ai (not # of bytes)
+    GrB_Index *Ax_len,      // # of entries required for Ax (not # of bytes)
+    int format,             // export format (GrB_Format)
+    GrB_Matrix A            // matrix to export
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+Returns the required sizes of the arrays \verb'Ap', \verb'Ai', and \verb'Ax'
+for exporting a matrix using \verb'GrB_Matrix_export', using the same
+\verb'format'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_exportHint:} determine best export format}
+%-------------------------------------------------------------------------------
+\label{export_hint}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_exportHint  // suggest the best export format
+(
+    int *format,            // export format (GrB_Format)
+    GrB_Matrix A            // matrix to export
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+This method suggests the most efficient format for the export of a given
+matrix.  For SuiteSparse:GraphBLAS, the hint depends on the current
+format of the \verb'GrB_Matrix':
+
+\begin{packed_itemize}
+\item \verb'GxB_SPARSE', \verb'GrB_ROWMAJOR': export as \verb'GrB_CSR_FORMAT'
+\item \verb'GxB_SPARSE', \verb'GrB_COLMAJOR': export as \verb'GrB_CSC_FORMAT'
+\item \verb'GxB_HYPERSPARSE': export as \verb'GrB_COO_FORMAT'
+\item \verb'GxB_BITMAP', \verb'GrB_ROWMAJOR': export as \verb'GrB_CSR_FORMAT'
+\item \verb'GxB_BITMAP', \verb'GrB_COLMAJOR': export as \verb'GrB_CSC_FORMAT'
+%\item \verb'GxB_FULL', \verb'GrB_ROWMAJOR': export as \verb'GrB_DENSE_ROW_FORMAT'
+%\item \verb'GxB_FULL', \verb'GrB_COLMAJOR': export as \verb'GrB_DENSE_COL_FORMAT'
+\item \verb'GxB_FULL', \verb'GrB_ROWMAJOR': export as \verb'GrB_CSR_FORMAT'
+\item \verb'GxB_FULL', \verb'GrB_COLMAJOR': export as \verb'GrB_CSC_FORMAT'
+\end{packed_itemize}
+
+

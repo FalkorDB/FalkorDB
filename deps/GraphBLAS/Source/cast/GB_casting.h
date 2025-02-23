@@ -2,7 +2,7 @@
 // GB_casting.h: define the unary typecasting functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -537,8 +537,12 @@ GB_CAST_FUNCTION (GxB_FC64_t, GxB_FC64_t)
 // a specific matrix type for M, and they #undef these definitions and replace
 // them with specific types and a simpler test of the M(i,j) value.
 
+#ifndef GB_JIT_KERNEL
+// JIT kernels (including PreJIT) #define their own GB_M_TYPE and
+// GB_MCAST macros.
 #define GB_M_TYPE GB_void
 #define GB_MCAST(Mx,pM,msize) GB_mcast ((GB_void *) Mx, pM, msize)
+#endif
 
 static inline bool GB_mcast         // return the value of M(i,j)
 (

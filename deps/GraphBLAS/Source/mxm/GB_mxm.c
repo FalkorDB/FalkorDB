@@ -2,7 +2,7 @@
 // GB_mxm: matrix-matrix multiply for GrB_mxm, GrB_mxv, and GrB_vxm
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,7 @@ GrB_Info GB_mxm                     // C<M> = A*B
     const GrB_Matrix B,             // input matrix
     const bool B_transpose,         // if true, use B' instead of B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    const GrB_Desc_Value AxB_method,// for auto vs user selection of methods
+    const int AxB_method,           // for auto vs user selection of methods
     const int do_sort,              // if nonzero, try to return C unjumbled
     GB_Werk Werk
 )
@@ -135,8 +135,8 @@ GrB_Info GB_mxm                     // C<M> = A*B
     // semiring->add->ztype if accum is not present.  To compute in-place,
     // C must also not be transposed, and it cannot be aliased with M, A, or B.
 
-    GB_CLEAR_STATIC_HEADER (MT, &MT_header) ;
-    GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+    GB_CLEAR_MATRIX_HEADER (MT, &MT_header) ;
+    GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
 
     bool mask_applied = false ;
     bool done_in_place = false ;
@@ -151,7 +151,8 @@ GrB_Info GB_mxm                     // C<M> = A*B
         // C has been computed in-place; no more work to do
         GB_FREE_ALL ;
         GB_OK (GB_conform (C, Werk)) ;
-        ASSERT_MATRIX_OK (C, "C from GB_mxm (in-place)", GB0) ;
+        ASSERT_MATRIX_OK (C, "C from GB_mxm (in-place), final", GB0) ;
+        GB_OK (GB_valid_matrix (C)) ;
         return (info) ;
     }
 

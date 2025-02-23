@@ -2,7 +2,7 @@
 // gbdeserialize: deserialize a blob into a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,9 +39,9 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     void *blob = mxGetData (pargin [0]) ;
-    GrB_Index m = (GrB_Index) mxGetM (pargin [0]) ;
-    GrB_Index n = (GrB_Index) mxGetN (pargin [0]) ;
-    GrB_Index blob_size = m*n ;
+    uint64_t m = (uint64_t) mxGetM (pargin [0]) ;
+    uint64_t n = (uint64_t) mxGetN (pargin [0]) ;
+    uint64_t blob_size = m*n ;
 
     //--------------------------------------------------------------------------
     // deserialize the blob into a matrix
@@ -55,6 +55,6 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     pargout [0] = gb_export (&C, KIND_GRB) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

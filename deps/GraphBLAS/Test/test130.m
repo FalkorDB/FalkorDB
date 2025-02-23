@@ -1,7 +1,7 @@
 function test130
 %TEST130 test GrB_apply (hypersparse cases)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest130: quick GrB_apply tests\n') ;

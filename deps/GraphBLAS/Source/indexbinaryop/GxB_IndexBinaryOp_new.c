@@ -2,7 +2,7 @@
 // GxB_IndexBinaryOp_new: create a new user-defined index_binary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,8 +40,7 @@ GrB_Info GxB_IndexBinaryOp_new
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_IndexBinaryOp_new (op, function, ztype, xtype, ytype"
-        ", theta_type, name, defn)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (op_handle) ;
     (*op_handle) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
@@ -54,8 +53,9 @@ GrB_Info GxB_IndexBinaryOp_new
     //--------------------------------------------------------------------------
 
     size_t header_size ;
-    GxB_IndexBinaryOp op = GB_CALLOC (1, struct GB_IndexBinaryOp_opaque,
-        &header_size) ;
+    GxB_IndexBinaryOp
+        op = GB_CALLOC_MEMORY (1, sizeof (struct GB_IndexBinaryOp_opaque),
+            &header_size) ;
     if (op == NULL)
     { 
         // out of memory
@@ -79,6 +79,8 @@ GrB_Info GxB_IndexBinaryOp_new
     op->idxunop_function = NULL ;
     op->binop_function = NULL ;
     op->idxbinop_function = function ;
+    op->theta = NULL ;
+    op->theta_size = 0 ;
 
     op->opcode = GB_USER_idxbinop_code ;
 
@@ -101,7 +103,7 @@ GrB_Info GxB_IndexBinaryOp_new
     if (info != GrB_SUCCESS)
     { 
         // out of memory
-        GB_FREE (&op, header_size) ;
+        GB_FREE_MEMORY (&op, header_size) ;
         return (info) ;
     }
 
@@ -123,6 +125,7 @@ GrB_Info GxB_IndexBinaryOp_new
             // and cannot be compiled by the JIT).
             return (info == GrB_NO_VALUE ? GrB_NULL_POINTER : info) ;
         }
+        #include "include/GB_pedantic_disable.h"
         op->idxbinop_function = (GxB_index_binary_function) user_function ;
         GB_BURBLE_END ;
     }

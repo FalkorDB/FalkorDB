@@ -1,16 +1,16 @@
 //------------------------------------------------------------------------------
-// gb_export_to_mxfull: export a full array to a built-in full matrix
+// gb_export_to_mxfull: export a full array to a MATLAB full matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// The input (void *) X is exported to a built-in full mxArray S.
+// The input (void *) X is exported to a MATLAB full mxArray S.
 
 // The input array must be deep, but this cannot be checked here.  The caller
-// must ensure that the input X is deep.  The output is a standard built-in full
+// must ensure that the input X is deep.  The output is a standard MATLAB full
 // matrix as an mxArray.  No typecasting is done.
 
 // mxSetData is used instead of the MATLAB-recommended mxSetDoubles, etc,
@@ -19,7 +19,7 @@
 
 #include "gb_interface.h"
 
-mxArray *gb_export_to_mxfull    // return exported built-in full matrix F
+mxArray *gb_export_to_mxfull    // return exported MATLAB full matrix F
 (
     void **X_handle,            // pointer to array to export
     const GrB_Index nrows,      // dimensions of F
@@ -43,8 +43,8 @@ mxArray *gb_export_to_mxfull    // return exported built-in full matrix F
     void *X = (*X_handle) ;
     if (X == NULL)
     {
-        // A GrB_Matrix C has a null C->x array, if C has no entries.  Since
-        // C has already been expanded to a full matrix, C->x can be NULL
+        // A GrB_Matrix C has a null Cx array, if C has no entries.  Since
+        // C has already been expanded to a full matrix, Cx can be NULL
         // only if nrows or ncols is zero.
         CHECK_ERROR (nrows > 0 && ncols > 0, "internal error 12") ;
         X = mxMalloc (2 * sizeof (double)) ;
@@ -118,7 +118,7 @@ mxArray *gb_export_to_mxfull    // return exported built-in full matrix F
     (*X_handle) = NULL ;
 
     //--------------------------------------------------------------------------
-    // return the new built-in full matrix
+    // return the new MATLAB full matrix
     //--------------------------------------------------------------------------
 
     return (F) ;

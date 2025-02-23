@@ -2,7 +2,7 @@
 // GB_iso_expand_jit: JIT kernel to expand an iso scalar into an array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,8 +30,11 @@ GrB_Info GB_iso_expand_jit  // expand an iso scalar into an entire array
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
-        GB_JIT_KERNEL_ISO_EXPAND, GxB_FULL, false, xtype, op, false,
-        GxB_FULL, false, xtype, true, 0) ;
+        GB_JIT_KERNEL_ISO_EXPAND, /* C sparsity: */ GxB_FULL, false, xtype,
+        /* C is_32: */ false, false, false,
+        op, /* flipij: */ false, /* A sparsity: */ GxB_FULL, false, xtype,
+        /* A is_32: */ false, false, false, /* A_iso: */ true,
+        /* nzombies: */ 0) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -48,7 +51,8 @@ GrB_Info GB_iso_expand_jit  // expand an iso scalar into an entire array
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (X, n, scalar, nthreads)) ;
+    return (GB_jit_kernel (X, n, scalar, nthreads, &GB_callback)) ;
 }
 

@@ -2,7 +2,7 @@
 // GB_convert_s2b_jit: JIT kernel to convert sparse to bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,8 +36,9 @@ GrB_Info GB_convert_s2b_jit    // convert sparse to bitmap
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
-        GB_JIT_KERNEL_CONVERT_S2B, GxB_FULL, false, A->type, op, false,
-        GB_sparsity (A), true, A->type, A->iso, A->nzombies) ;
+        GB_JIT_KERNEL_CONVERT_S2B, GxB_FULL, false, A->type, false, false,
+        false, op, false, GB_sparsity (A), true, A->type,
+        A->p_is_32, A->j_is_32, A->i_is_32, A->iso, A->nzombies) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -54,7 +55,9 @@ GrB_Info GB_convert_s2b_jit    // convert sparse to bitmap
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (Cx, Cb, A, A_ek_slicing, A_ntasks, A_nthreads)) ;
+    return (GB_jit_kernel (Cx, Cb, A, A_ek_slicing, A_ntasks, A_nthreads,
+        &GB_callback)) ;
 }
 

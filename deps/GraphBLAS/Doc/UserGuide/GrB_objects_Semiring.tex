@@ -1,0 +1,206 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS semirings: {\sf GrB\_Semiring}} %=========================
+%===============================================================================
+\label{semiring}
+
+A {\em semiring} defines all the operators required to define the
+multiplication of two sparse matrices in GraphBLAS, ${\bf C=AB}$.  The ``add''
+operator is a commutative and associative monoid, and the binary ``multiply''
+operator defines a function $z=fmult(x,y)$ where the type of $z$ matches the
+exactly with the monoid type.  SuiteSparse:GraphBLAS includes 1,473 predefined
+built-in semirings.  The next sections define the following methods for the
+\verb'GrB_Semiring' object:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_Semiring_new'       & create a user-defined semiring           & \ref{semiring_new} \\
+\verb'GrB_Semiring_wait'      & wait for a user-defined semiring         & \ref{semiring_wait} \\
+\verb'GrB_Semiring_free'      & free a semiring                          & \ref{semiring_free} \\
+\verb'GrB_get'  & get properties of a semiring       & \ref{get_set_semiring} \\
+\verb'GrB_set'  & set the semiring name              & \ref{get_set_semiring} \\
+\hline
+\end{tabular}
+}
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Semiring\_new:} create a semiring}
+%-------------------------------------------------------------------------------
+\label{semiring_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Semiring_new           // create a semiring
+(
+    GrB_Semiring *semiring,         // handle of semiring to create
+    GrB_Monoid add,                 // add monoid of the semiring
+    GrB_BinaryOp multiply           // multiply operator of the semiring
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Semiring_new' creates a new semiring, with \verb'add' being the
+additive monoid and \verb'multiply' being the binary ``multiply'' operator.  In
+addition to the standard error cases, the function returns
+\verb'GrB_DOMAIN_MISMATCH' if the output (\verb'ztype') domain of
+\verb'multiply' does not match the domain of the \verb'add' monoid.
+
+The v2.0 C API Specification for GraphBLAS includes 124 predefined semirings,
+with names of the form \verb'GrB_add_mult_SEMIRING_type', where \verb'add' is
+the operator of the additive monoid, \verb'mult' is the multiply operator, and
+\verb'type' is the type of the input $x$ to the multiply operator, $f(x,y)$.
+The name of the domain for the additive monoid does not appear in the name,
+since it always matches the type of the output of the \verb'mult' operator.
+Twelve kinds of \verb'GrB*' semirings are available for all 10 real, non-boolean types:
+    \verb'PLUS_TIMES', \verb'PLUS_MIN',
+    \verb'MIN_PLUS', \verb'MIN_TIMES', \verb'MIN_FIRST', \verb'MIN_SECOND', \verb'MIN_MAX',
+    \verb'MAX_PLUS', \verb'MAX_TIMES', \verb'MAX_FIRST', \verb'MAX_SECOND', and \verb'MAX_MIN'.
+Four semirings are for boolean types only:
+    \verb'LOR_LAND', \verb'LAND_LOR', \verb'LXOR_LAND', and \verb'LXNOR_LOR'.
+
+SuiteSparse:GraphBLAS pre-defines 1,553 semirings from built-in types and
+operators, listed below.  The naming convention is \verb'GxB_add_mult_type'.
+The 124 \verb'GrB*' semirings are a subset of the list below, included with two
+names: \verb'GrB*' and \verb'GxB*'.  If the \verb'GrB*' name is provided, its
+use is preferred, for portability to other GraphBLAS implementations.
+
+\vspace{-0.05in}
+\begin{itemize}
+\item 1000 semirings with a multiplier $T \times T \rightarrow T$ where $T$ is
+    any of the 10 non-Boolean, real types, from the complete cross product of:
+
+    \vspace{-0.05in}
+    \begin{itemize}
+    \item 5 monoids (\verb'MIN', \verb'MAX', \verb'PLUS', \verb'TIMES', \verb'ANY')
+    \item 20 multiply operators
+    (\verb'FIRST', \verb'SECOND', \verb'PAIR' (same as \verb'ONEB'),
+    \verb'MIN', \verb'MAX',
+    \verb'PLUS', \verb'MINUS', \verb'RMINUS', \verb'TIMES', \verb'DIV', \verb'RDIV',
+    \verb'ISEQ', \verb'ISNE', \verb'ISGT',
+    \verb'ISLT', \verb'ISGE', \verb'ISLE',
+    \verb'LOR', \verb'LAND', \verb'LXOR').
+    \item 10 non-Boolean types, $T$
+    \end{itemize}
+
+\item 300 semirings with a comparator $T \times T \rightarrow$
+    \verb'bool', where $T$ is non-Boolean and real, from the complete cross product of:
+
+    \vspace{-0.05in}
+    \begin{itemize}
+    \item 5 Boolean monoids
+    (\verb'LAND', \verb'LOR', \verb'LXOR', \verb'EQ', \verb'ANY')
+    \item 6 multiply operators
+    (\verb'EQ', \verb'NE', \verb'GT', \verb'LT', \verb'GE', \verb'LE')
+    \item 10 non-Boolean types, $T$
+    \end{itemize}
+
+\item 55 semirings with purely Boolean types, \verb'bool' $\times$ \verb'bool'
+    $\rightarrow$ \verb'bool', from the complete cross product of:
+
+    \vspace{-0.05in}
+    \begin{itemize}
+    \item 5 Boolean monoids
+    (\verb'LAND', \verb'LOR', \verb'LXOR', \verb'EQ', \verb'ANY')
+    \item 11 multiply operators
+    (\verb'FIRST', \verb'SECOND', \verb'PAIR' (same as \verb'ONEB'),
+    \verb'LOR', \verb'LAND', \verb'LXOR',
+    \verb'EQ', \verb'GT', \verb'LT', \verb'GE', \verb'LE')
+    \end{itemize}
+
+\item 54 complex semirings, $Z \times Z \rightarrow Z$ where $Z$ is
+    \verb'GxB_FC32' (single precision complex) or
+    \verb'GxB_FC64' (double precision complex):
+
+    \vspace{-0.05in}
+    \begin{itemize}
+    \item 3 complex monoids (\verb'PLUS', \verb'TIMES', \verb'ANY')
+    \item 9 complex multiply operators
+        (\verb'FIRST', \verb'SECOND', \verb'PAIR' (same as \verb'ONEB'),
+        \verb'PLUS', \verb'MINUS',
+            \verb'TIMES', \verb'DIV', \verb'RDIV', \verb'RMINUS')
+    \item 2 complex types, $Z$
+    \end{itemize}
+
+\item 64 bitwise semirings, $U \times U \rightarrow U$ where $U$ is
+    an unsigned integer.
+
+    \vspace{-0.05in}
+    \begin{itemize}
+    \item 4 bitwise monoids (\verb'BOR', \verb'BAND', \verb'BXOR', \verb'BXNOR')
+    \item 4 bitwise multiply operators (the same list)
+    \item 4 unsigned integer types
+    \end{itemize}
+
+\item 80 index-based semirings, $X \times X \rightarrow N$ where $N$ is
+    \verb'INT32' or \verb'INT64':
+
+    \vspace{-0.05in}
+    \begin{itemize}
+    \item 5 monoids (\verb'MIN', \verb'MAX', \verb'PLUS', \verb'TIMES', \verb'ANY')
+    \item 8 index-based operators
+        (\verb'FIRSTI', \verb'FIRSTI1', \verb'FIRSTJ', \verb'FIRSTJ1',
+        \verb'SECONDI', \verb'SECONDI1', \verb'SECONDJ', \verb'SECONDJ1')
+    \item 2 integer types (\verb'INT32', \verb'INT64')
+    \end{itemize}
+
+\end{itemize}
+%
+The \verb'multiply' operator can be any a binary operator, including one
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Semiring\_wait:} wait for a semiring}
+%-------------------------------------------------------------------------------
+\label{semiring_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a user-defined semiring
+(
+    GrB_Semiring semiring,      // semiring to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined semiring, a GraphBLAS library may choose to
+exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS currently does nothing except to ensure that the
+\verb'semiring' is valid.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Semiring\_free:} free a semiring}
+%-------------------------------------------------------------------------------
+\label{semiring_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free                   // free a user-created semiring
+(
+    GrB_Semiring *semiring          // handle of semiring to free
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Semiring_free' frees a semiring.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Semiring_free (&semiring) ;
+    GrB_free (&semiring) ; \end{verbatim}}
+
+\noindent
+frees the \verb'semiring' and sets \verb'semiring' to \verb'NULL'.  It safely
+does nothing if passed a \verb'NULL' handle, or if \verb'semiring == NULL' on
+input.  It does nothing at all if passed a built-in semiring.
+
+

@@ -2,7 +2,7 @@
 // GB_mx_isequal: check if two matrices are equal
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,36 +29,38 @@ bool GB_mx_isequal     // true if A and B are exactly the same
         return (false) ;
     }
 
-    GB_Pending AP = A->Pending ;
-    GB_Pending BP = B->Pending ;
-
     if (A->magic != B->magic) return (false) ;
     if (A->type  != B->type ) return (false) ;
     if (A->vlen  != B->vlen ) return (false) ;
     if (A->vdim  != B->vdim ) return (false) ;
     if (A->nvec  != B->nvec ) return (false) ;
 
-    if (GB_nnz (A)  != GB_nnz (B) ) return (false) ;
-
+    if (GB_nnz (A)     != GB_nnz (B)    ) return (false) ;
     if ((A->h != NULL) != (B->h != NULL)) return (false) ;
-    if (A->is_csc   != B->is_csc  ) return (false) ;
+    if (A->is_csc      != B->is_csc     ) return (false) ;
+    if (A->nzombies    != B->nzombies   ) return (false) ;
 
-    if (A->nzombies         != B->nzombies         ) return (false) ;
-
-    if ((AP != NULL) != (BP != NULL)) return (false) ;
-
-    if (AP != NULL)
+    GB_Pending A_Pending = A->Pending ;
+    GB_Pending B_Pending = B->Pending ;
+    if ((A_Pending != NULL) != (B_Pending != NULL)) return (false) ;
+    if (A_Pending != NULL)
     {
-        if (AP->n      != BP->n     ) return (false) ;
-        if (AP->sorted != BP->sorted) return (false) ;
-        if (AP->op     != BP->op    ) return (false) ;
-        if (AP->type   != BP->type  ) return (false) ;
-        if (AP->size   != BP->size  ) return (false) ;
+        if (A_Pending->n      != B_Pending->n     ) return (false) ;
+        if (A_Pending->sorted != B_Pending->sorted) return (false) ;
+        if (A_Pending->op     != B_Pending->op    ) return (false) ;
+        if (A_Pending->type   != B_Pending->type  ) return (false) ;
+        if (A_Pending->size   != B_Pending->size  ) return (false) ;
     }
+
+    if (A->p_is_32 != B->p_is_32) return (false) ;
+    if (A->j_is_32 != B->j_is_32) return (false) ;
+    if (A->i_is_32 != B->i_is_32) return (false) ;
+    size_t psize = (A->p_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t jsize = (A->j_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t isize = (A->i_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
 
     int64_t n = A->nvec ;
     int64_t nnz = GB_nnz (A) ;
-    size_t s = sizeof (int64_t) ;
     size_t asize = A->type->size ;
 
     ASSERT (n >= 0 && n <= A->vdim) ;
@@ -70,13 +72,13 @@ bool GB_mx_isequal     // true if A and B are exactly the same
 
     if (!A_is_dense)
     {
-        if (!GB_mx_same  ((char *) A->p, (char *) B->p, (n+1) * s))
+        if (!GB_mx_same  ((char *) A->p, (char *) B->p, (n+1) * psize))
         {
             return (false) ;
         }
         if (A->h != NULL)
         {
-            if (!GB_mx_same ((char *) A->h, (char *) B->h, n * s))
+            if (!GB_mx_same ((char *) A->h, (char *) B->h, n * jsize))
                 return (false) ;
         }
     }
@@ -93,7 +95,7 @@ bool GB_mx_isequal     // true if A and B are exactly the same
     {
         if (!A_is_dense)
         {
-            if (!GB_mx_same  ((char *) A->i, (char *) B->i, nnz * s))
+            if (!GB_mx_same  ((char *) A->i, (char *) B->i, nnz * isize))
             {
                 return (false) ;
             }
@@ -131,19 +133,28 @@ bool GB_mx_isequal     // true if A and B are exactly the same
         }
     }
 
-    if (AP != NULL)
+    if (A_Pending != NULL)
     {
-        size_t psize = AP->size ;
-        int64_t np = AP->n ;
-        if (!GB_mx_same ((char *) AP->i, (char *) BP->i, np*s)) return (false) ;
-        if (!GB_mx_same ((char *) AP->j, (char *) BP->j, np*s)) return (false) ;
-        if ((AP->x == NULL) != (BP->x == NULL)) // OK
+        size_t xsize = A_Pending->size ;
+        int64_t np = A_Pending->n ;
+        if (!GB_mx_same ((char *) A_Pending->i, (char *) B_Pending->i,
+            np*isize))
         {
             return (false) ;
         }
-        if (AP->x != NULL && BP->x != NULL)     // OK
+        if (!GB_mx_same ((char *) A_Pending->j, (char *) B_Pending->j,
+            np*jsize))
         {
-            if (!GB_mx_same ((char *) AP->x, (char *) BP->x, np*psize)) // OK
+            return (false) ;
+        }
+        if ((A_Pending->x == NULL) != (B_Pending->x == NULL)) // OK
+        {
+            return (false) ;
+        }
+        if (A_Pending->x != NULL && B_Pending->x != NULL)     // OK
+        {
+            if (!GB_mx_same ((char *) A_Pending->x, (char *) B_Pending->x,
+                np*xsize))
             {
                 return (false) ;
             }

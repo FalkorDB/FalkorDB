@@ -15,12 +15,11 @@ function [I, whole] = gb_index (I)
 %       the explicit list start:inc:fini.
 %
 % The input I can be a GraphBLAS matrix (as an object or its opaque
-% struct).  In this case, it is wrapped in a cell, I = {gb_index1(I)},
+% struct).  In this case, it is wrapped in a cell, I = { I },
 % but kept as 1-based indices (they are later translated to 0-based).
 %
 % If the input is already a cell array, then it is already in one of the
-% above forms.  Any member of the cell array that is a GraphBLAS matrix or
-% struct is converted into an index list, with gb_index1(I{k}).
+% above forms.
 %
 % The subsref and subsasgn methods are passed the string I = ':'.  This is
 % converted into I = { }.
@@ -28,7 +27,7 @@ function [I, whole] = gb_index (I)
 % If I is a built-in matrix or vector (not a cell array), then it is
 % wrapped in a cell array, { I }, to denote A(I).
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 whole = false ;
@@ -37,12 +36,12 @@ if (isobject (I))
 
     % C (I) where I is a GraphBLAS matrix/vector of integer indices
     I = I.opaque ;
-    I = { (gb_index1 (I)) } ;
+    I = { I } ;
 
 elseif (isstruct (I))
 
     % C (I) where I is the opaque struct of a GrB matrix/vector
-    I = { (gb_index1 (I)) } ;
+    I = { I } ;
 
 elseif (iscell (I))
 
@@ -64,7 +63,7 @@ elseif (iscell (I))
             end
             if (isstruct (K))
                 % C ({ ..., K, ... }) where I is a GraphBLAS struct
-                I {k} = gb_index1 (K) ;
+                I {k} = K ;
             end
         end
     end

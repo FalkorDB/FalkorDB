@@ -1,7 +1,7 @@
 function test132
 %TEST132 test GrB_*_setElement and GrB_*_*build
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % simplified from test45

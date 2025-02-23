@@ -2,7 +2,7 @@
 // GB_bitmap_assign.h: definitions for GB_bitmap_assign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,12 +18,14 @@ GrB_Info GB_bitmap_assign
     GrB_Matrix C,               // input/output matrix in bitmap format
     // inputs:
     const bool C_replace,       // descriptor for C
-    const GrB_Index *I,         // I index list
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,         // J index list
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,

@@ -2,7 +2,7 @@
 // GrB_Vector_size: dimension of a sparse vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,7 +11,7 @@
 
 GrB_Info GrB_Vector_size    // get the dimension of a vector
 (
-    GrB_Index *n,           // dimension is n-by-1
+    uint64_t *n,            // dimension is n-by-1
     const GrB_Vector v      // vector to query
 )
 { 
@@ -20,9 +20,10 @@ GrB_Info GrB_Vector_size    // get the dimension of a vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Vector_size (&n, v)") ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (n) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
+    GB_RETURN_IF_NULL_OR_INVALID (v) ;
     ASSERT (GB_VECTOR_OK (v)) ;
 
     //--------------------------------------------------------------------------
