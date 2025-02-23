@@ -28,10 +28,10 @@ GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
     const GrB_Matrix Mask,          // optional mask for C, unused if NULL
     const GrB_BinaryOp accum,       // optional accum for Z=accum(C(I,J),x)
     const GrB_Scalar scalar,        // scalar to assign to C(I,J)
-    const uint64_t *I,              // row indices
+    const void *I,                  // row indices
     const bool I_is_32,
     uint64_t ni,                    // number of row indices
-    const uint64_t *J,              // column indices
+    const void *J,                  // column indices
     const bool J_is_32,
     uint64_t nj,                    // number of column indices
     const GrB_Descriptor desc,      // descriptor for C and Mask
@@ -49,6 +49,7 @@ GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
     GB_RETURN_IF_NULL (scalar) ;
     GB_RETURN_IF_NULL (I) ;
     GB_RETURN_IF_NULL (J) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
 
     // if C has a user-defined type, its type must match the scalar type
     if (C->type->code == GB_UDT_code && C->type != scalar->type)
@@ -79,8 +80,28 @@ GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
         // scalar assignment
         //----------------------------------------------------------------------
 
-        const uint64_t row = I [0] ;
-        const uint64_t col = J [0] ;
+        uint64_t row, col ;
+        if (I_is_32)
+        { 
+            const uint32_t *I32 = (uint32_t *) I ;
+            row = I32 [0] ;
+        }
+        else
+        { 
+            const uint64_t *I64 = (uint64_t *) I ;
+            row = I64 [0] ;
+        }
+        if (J_is_32)
+        { 
+            const uint32_t *J32 = (uint32_t *) J ;
+            col = J32 [0] ;
+        }
+        else
+        { 
+            const uint64_t *J64 = (uint64_t *) J ;
+            col = J64 [0] ;
+        }
+
         if (nvals == 1)
         { 
             // set the element: C(row,col) += scalar or C(row,col) = scalar
@@ -145,8 +166,8 @@ GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
             false,                          // do not transpose the mask
             accum,                          // for accum (C(I,J),A)
             A, false,                       // A matrix and its descriptor
-            I, I_is_32, ni,                   // row indices
-            J, J_is_32, nj,                   // column indices
+            I, I_is_32, ni,                 // row indices
+            J, J_is_32, nj,                 // column indices
             false, NULL, GB_ignore_code,    // no scalar expansion
             Werk) ;
         GB_FREE_ALL ;

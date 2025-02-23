@@ -64,7 +64,7 @@ GrB_Info GxB_Row_assign_Vector      // C<mask'>(i,J) = accum(C(i,j),u')
 
     // construct the index list I = [ i ] of length ni = 1
     uint64_t I [1] ;
-    I [0] = i ;
+    I [0] = i ;         // OK: 64-bit only
 
     GB_OK (GB_assign (
         C, C_replace,                   // C matrix and its descriptor
@@ -72,7 +72,7 @@ GrB_Info GxB_Row_assign_Vector      // C<mask'>(i,J) = accum(C(i,j),u')
         true,                           // transpose the mask
         accum,                          // for accum (C(i,J),u)
         (GrB_Matrix) u, true,           // u as a matrix; always transposed
-        I, false, 1,                    // a single row index
+        I, false, 1,                    // a single row index (64-bit only)
         J, J_is_32, nj,                 // column indices
         false, NULL, GB_ignore_code,    // no scalar expansion
         GB_ROW_ASSIGN,

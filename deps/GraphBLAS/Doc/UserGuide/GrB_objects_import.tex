@@ -70,10 +70,13 @@ The suffix \verb'TYPE' in the prototype above is one of \verb'BOOL',
 user-defined types.  The type of the \verb'Ax' array must match this type.  No
 typecasting is performed.
 
-Unlike the \verb'GxB_Container'
-methods, memory is not handed off between the user application
-and GraphBLAS.   The three arrays \verb'Ap', \verb'Ai'.  and \verb'Ax' are not
-modified, and are still owned by the user application when the method finishes.
+Unlike the \verb'GxB_Container' methods, memory is not handed off between the
+user application and GraphBLAS.   The three arrays \verb'Ap', \verb'Ai'.  and
+\verb'Ax' are not modified, and are still owned by the user application when
+the method finishes.
+
+\verb'GrB_Matrix_import' does not support the creation of matrices with 32-bit
+integer indices.
 
 The matrix can be imported in one of three different formats:
 
@@ -99,12 +102,12 @@ The matrix can be imported in one of three different formats:
         See Section~\ref{format_sparse_by_col} for details of the sparse-by-column (CSC) format.
 
     \item \verb'GrB_COO_FORMAT': % triplet format (like input to GrB*build)
-        Coordinate format.  This is the same format as \newline
-        \verb'GrB_Matrix_build'.
-        The three arrays \verb'Ap', \verb'Ai', and \verb'Ax' have the same
-        size.  The \verb'k'th tuple has row index \verb'Ai[k]',
-        column index \verb'Ap[k]', and value \verb'Ax[k]'.  The tuples can
-        appear any order, but no duplicates are permitted.
+        Coordinate format.  This is the same format as the \verb'I', \verb'J',
+        \verb'X' inputs to \verb'GrB_Matrix_build'.  The three arrays
+        \verb'Ap', \verb'Ai', and \verb'Ax' have the same size.  The \verb'k'th
+        tuple has row index \verb'Ai[k]', column index \verb'Ap[k]', and value
+        \verb'Ax[k]'.  The tuples can appear any order, but no duplicates are
+        permitted.
 
 %   \item \verb'GrB_DENSE_ROW_FORMAT': % FullR format (GxB_FULL with GrB_ROWMAJOR)
 %       Dense matrix format, held by row.  Only the \verb'Ax' array is used, of
@@ -156,6 +159,10 @@ The suffix \verb'TYPE' in the prototype above is one of \verb'BOOL',
 \verb'INT8', \verb'INT16', etc, for built-n types, or \verb'UDT' for
 user-defined types.  The type of the \verb'Ax' array must match this type.  No
 typecasting is performed.
+
+\verb'GrB_Matrix_export' always exports the indices and offsets of the matrix
+using 64-bit integer indices, even if they are held internally using 32-bit
+integers.
 
 % The \verb'GrB_DENSE_ROW_FORMAT' and \verb'GrB_DENSE_COL_FORMAT' formats can
 % only be used if all entries are present in the matrix.  That is,

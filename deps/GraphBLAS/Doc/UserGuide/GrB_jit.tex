@@ -18,13 +18,9 @@ monoid, or semiring was disabled when GraphBLAS was compiled.
 
 \subsection{Using the JIT}
 
-Using the JIT in a user application is simple:  by default, there is nothing
-to do.  LAGraph v1.0.1 can use the JIT (and PreJIT) kernels without changing
-a single line of code.\footnote{LAGraph v1.0.1 does not work with GraphBLAS
-v8.0.0 but not because of the JIT.  LAGraph must be updated because it uses two
-deprecated {\sf GxB\_SelectOp} operators; these are replaced with {\sf
-GrB\_IndexUnaryOp} operators in the {\sf dev} branch of LAGraph, to appear
-in a future release of LAGraph.}
+Using the JIT in a user application is simple:  by default, there is nothing to
+do.  The current release, LAGraph v1.1.4, can use the JIT (and PreJIT) kernels
+without changing a single line of code.
 
 Currently, the JIT compiles kernels for the CPU only, but a CUDA JIT is in
 progress to exploit NVIDIA GPUs, in collaboration with Joe Eaton and
@@ -42,17 +38,15 @@ compiled, that variable defines the folder.  If the user's home directory
 cannot be determined and the \verb'GRAPHBLAS_CACHE_PATH' environment variable
 is not set, then JIT compilation is disabled and only PreJIT kernels can be
 used.  The optional environment variable, \verb'GRAPHBLAS_CACHE_PATH', is also
-read by \verb'GrB_init' when the user application runs.
-See Section~\ref{cache_path} for a description of the valid characters
-that can appear in the cache path.
+read by \verb'GrB_init' when the user application runs.  The filesystem holding
+the cache folder must support file locking.  See Section~\ref{cache_path} for a
+description of the valid characters that can appear in the cache path.
 
-When the user application starts, it can modify the location of the cache
-folder after calling \verb'GrB_init'.  It can also modify the C compiler and
-its flags, and can control when and how the JIT is used.
-These changes are
-made via \verb'GrB_set', and can be queried via
-\verb'GrB_get'; refer to Section~\ref{options} for details, and
-the \verb'GxB_JIT_*' settings:
+The user application can modify the location of the cache folder after calling
+\verb'GrB_init'.  It can also modify the C compiler and its flags, and can
+control when and how the JIT is used.  These changes are made via
+\verb'GrB_set', and can be queried via \verb'GrB_get'; refer to
+Section~\ref{options} for details, and the \verb'GxB_JIT_*' settings:
 
 \vspace{0.15in}
 {\footnotesize
@@ -68,7 +62,6 @@ field                       & value         & description \\
 \verb'GxB_JIT_C_PREFACE'      & \verb'char *' & C code as preface to JIT kernels \\
 \verb'GxB_JIT_C_CONTROL'      & see below     & CPU JIT control \\
 \verb'GxB_JIT_USE_CMAKE'      & see below     & CPU JIT control \\
-%\verb'GxB_JIT_ERROR_FALLBACK'& \verb'int32_t' & how to handle JIT compiler errors \\
 \verb'GxB_JIT_ERROR_LOG'      & \verb'char *' & error log file \\
 \verb'GxB_JIT_CACHE_PATH'     & \verb'char *' & folder with compiled kernels \\
 \hline
@@ -187,8 +180,8 @@ the kernel, or some kind of compiler error that allows the kernel to be
 compiled but not loaded.
 
 \item If an out-of-memory condition occurs in the JIT, the JIT control is
-set to \verb'GxB_JIT_PAUSE'.  To solve this, try freeing up memory, use a
-larger system, or solve smaller problems.
+set to \verb'GxB_JIT_PAUSE'.  This condition is not likely since the JIT does
+not use a lot of memory.
 
 \end{itemize}
 
@@ -200,7 +193,7 @@ subsequent calls to GraphBLAS, the user application must reset the
 
 In many use cases of GraphBLAS (such as LAGraph), a function will create a type
 or operator, use it, and then free it just before returning.  It would be far
-to costly to clear the loaded kernel and reload it each time the LAGraph
+too costly to clear the loaded kernel and reload it each time the LAGraph
 function is called, so any kernels that use this type or operator are kept
 loaded when the type or operator is freed.  The typical case is that when the
 LAGraph function is called again, it will recreate the type or operator with
@@ -410,9 +403,9 @@ applications that use GraphBLAS.  Do not copy the compiled libraries; they are
 not needed and will be ignored.  Just copy the \verb'*.c' files.
 
 If the resulting GraphBLAS library is installed for system-wide usage (say in a
-Linux distro, Python, RedisGraph, etc), the \verb'GraphBLAS/PreJIT' kernels
-will be available to all users of that library.  They are not disabled by the
-\verb'GRAPHBLAS_USE_JIT' option.
+Linux distro, Python, RedisGraph, FalkorDB, etc), the \verb'GraphBLAS/PreJIT'
+kernels will be available to all users of that library.  They are not disabled
+by the \verb'GRAPHBLAS_USE_JIT' option.
 
 Once these kernels are moved to \verb'GraphBLAS/PreJIT' and GraphBLAS is
 recompiled, they can be deleted from the cache folder.  However, even if they

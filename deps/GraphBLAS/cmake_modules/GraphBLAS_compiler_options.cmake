@@ -26,7 +26,7 @@ if ( "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" )
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fno-math-errno " )
     # integer operations wrap
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -fwrapv " )
-    # check all warnings (uncomment for development only)
+    # check all warnings (uncomment for development only):
 #   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic -Werror" )
 #   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall -Wextra -Wpedantic" )
     if ( CMAKE_C_COMPILER_VERSION VERSION_LESS 4.9 )
@@ -54,6 +54,8 @@ elseif ( "${CMAKE_C_COMPILER_ID}" STREQUAL "IntelLLVM" )
 elseif ( "${CMAKE_C_COMPILER_ID}" STREQUAL "Clang" )
     # options for clang
     set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wno-pointer-sign " )
+    # check all warnings (uncomment for development only):
+#   set ( CMAKE_C_FLAGS  "${CMAKE_C_FLAGS} -Wall " )
     if ( CMAKE_C_COMPILER_VERSION VERSION_LESS 3.3 )
         message ( FATAL_ERROR "clang version must be at least 3.3" )
     endif ( )

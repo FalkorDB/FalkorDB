@@ -12,14 +12,20 @@ z=f(x,i_x,j_x,y,i_y,j_y,\Theta),
 where the value $x$ appears at row $i_x$ and column $j_x$ in its matrix,
 and the value $y$ appears at row $i_y$ and column $j_y$ in its matrix.
 The value $\Theta$ is a scalar that is the same for all uses of the operator.
-See our IEEE HPEC'24 paper for more details (\cite{idxbinop}).
+See our IEEE HPEC'24 paper for more details (\cite{idxbinop}),
+in the \verb'GraphBLAS/Doc' folder.
 
 When used in an element-wise method for $\bf C = A \oplus B$ and related
-methods (\verb'GrB_eWiseAdd', \verb'GxB_eWiseUnion', \verb'GrB_eWiseMult', or
-\verb'GrB_Kronecker'), the operator is used for a pair of entries $a_{ij}$ and
-$b_{ij}$, as
+methods (\verb'GrB_eWiseAdd', \verb'GxB_eWiseUnion', or \verb'GrB_eWiseMult'),
+operator is used for a pair of entries
+$a_{ij}$ and $b_{ij}$, as
 \[
 z=f(a_{ij},i,j,b_{ij},i,j,\Theta).
+\]
+When used in \verb'GrB_kronecker', it is used on a pair of entries
+$a_{i_1,j_1}$ and $b_{i_2,j_2}$, as
+\[
+z=f(a_{ij},i_1,j_1,b_{ij},i_2,j_2,\Theta).
 \]
 When used as the multiplicative operator in a semiring, to compute
 $\bf C = A \oplus.\otimes B$, the operator is used as
@@ -87,10 +93,10 @@ GraphBLAS function   & purpose                                      & Section \\
 \hline
 \verb'GxB_IndexBinaryOp_new'   & create a named user-defined index-binary operator   & \ref{idxbinop_new_named} \\
 \verb'GxB_IndexBinaryOp_wait'  & wait for a user-defined index-binary operator  & \ref{idxbinop_wait} \\
-\verb'GrB_get'           & get properties of an operator    & \ref{get_set_idxbinop} \\
-\verb'GrB_set'           & set the operator name/definition & \ref{get_set_idxbinop} \\
 \verb'GxB_IndexBinaryOp_free'  & free a user-defined index-binary operator      & \ref{idxbinop_free} \\
 \verb'GxB_BinaryOp_new_IndexOp' & create a new index-based \verb'GrB_BinaryOp' & \ref{binop_new_idxop} \\
+\verb'GrB_get'           & get properties of an operator    & \ref{get_set_idxbinop} \\
+\verb'GrB_set'           & set the operator name/definition & \ref{get_set_idxbinop} \\
 \hline
 \end{tabular}
 }

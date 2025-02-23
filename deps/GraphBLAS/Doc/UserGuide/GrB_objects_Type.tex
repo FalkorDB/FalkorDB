@@ -72,10 +72,10 @@ GraphBLAS function       & purpose                          & Section \\
 \verb'GxB_Type_new'      & create a user-defined type,
                             with name and definition        & \ref{type_new_named} \\
 \verb'GrB_Type_wait'     & wait for a user-defined type     & \ref{type_wait} \\
-\verb'GrB_get'           & get properties of a type         & \ref{get_set_type} \\
-\verb'GrB_set'           & set the type name/definitition   & \ref{get_set_type} \\
 \verb'GxB_Type_from_name'& return the type from its name    & \ref{type_from_name} \\
 \verb'GrB_Type_free'     & free a user-defined type         & \ref{type_free} \\
+\verb'GrB_get'           & get properties of a type         & \ref{get_set_type} \\
+\verb'GrB_set'           & set the type name/definitition   & \ref{get_set_type} \\
 \hline
 \end{tabular}
 }
@@ -190,7 +190,7 @@ not contain any white-space characters.  For example, to create a type of size
 The \verb'type_name' and \verb'type_defn' are both null-terminated strings.
 The two strings are optional, but are
 required to enable the JIT compilation of kernels that use this type.
-At most \verb'GxB_MAX_NAME_LEN' characters are accessed in \verb'type_name';
+At most \verb'GxB_MAX_NAME_LEN' (128) characters are accessed in \verb'type_name';
 characters beyond that limit are silently ignored.
 
 If the \verb'sizeof_ctype' is zero, and the strings are valid, a

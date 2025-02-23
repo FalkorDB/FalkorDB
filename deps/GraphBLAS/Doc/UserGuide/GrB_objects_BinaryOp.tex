@@ -245,7 +245,7 @@ predefined.  They differ when used in a semiring and when used in
 cannot be used in \verb'GrB_build', nor can they be used as the \verb'accum'
 operator for any operation.
 
-The index-based binary operators do not depend on the type or numerical value
+The built-in index-based binary operators do not depend on the type or numerical value
 of their inputs, just their position in a matrix or vector.  For a vector, $j$
 is always 0, and $i$ is the index into the vector.  There are two types $N$
 available: \verb'INT32' and \verb'INT64', which is the type of the output $z$.
@@ -316,9 +316,9 @@ GraphBLAS function   & purpose                                      & Section \\
 \verb'GrB_BinaryOp_new'   & create a user-defined binary operator   & \ref{binaryop_new} \\
 \verb'GxB_BinaryOp_new'   & create a named user-defined binary operator   & \ref{binaryop_new_named} \\
 \verb'GrB_BinaryOp_wait'  & wait for a user-defined binary operator & \ref{binaryop_wait} \\
+\verb'GrB_BinaryOp_free'  & free a user-defined binary operator     & \ref{binaryop_free} \\
 \verb'GrB_get'           & get properties of an operator    & \ref{get_set_binop} \\
 \verb'GrB_set'           & set the operator name/definition & \ref{get_set_binop} \\
-\verb'GrB_BinaryOp_free'  & free a user-defined binary operator     & \ref{binaryop_free} \\
 \hline
 \end{tabular}
 }

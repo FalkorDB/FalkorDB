@@ -42,7 +42,7 @@ void mexFunction
     uint64_t blob_size = 0 ;
     char name [256] ;
     char defn [2048] ;
-    int32_t code, i ;
+    int32_t code, i, iso ;
     float fvalue ;
     double dvalue ;
     void *blob = NULL ;
@@ -52,11 +52,12 @@ void mexFunction
     OK (GrB_Scalar_new (&s_int32, GrB_INT32)) ;
 
     //--------------------------------------------------------------------------
-    // create a test matrix
+    // create a non-iso test matrix
     //--------------------------------------------------------------------------
 
     OK (GrB_Matrix_new (&A, GrB_FP32, 5, 5)) ;
     OK (GrB_Matrix_setElement (A, 0, 0, 1)) ;
+    OK (GrB_Matrix_setElement (A, 1, 0, 2)) ;
     OK (GrB_Matrix_wait (A, GrB_MATERIALIZE)) ;
     OK (GrB_set (A, GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL)) ;
     OK (GrB_set (A, 64, GxB_OFFSET_INTEGER_HINT)) ;
@@ -114,6 +115,10 @@ void mexFunction
         i = 911 ;
         OK (GrB_Matrix_get_INT32_(A, &i, GxB_COLINDEX_INTEGER_HINT)) ;
         CHECK (i == c_control) ;
+
+        iso = true ;
+        OK (GxB_Serialized_get_INT32_(blob, &iso, GxB_ISO, blob_size)) ;
+        CHECK (!iso) ;
 
         i = 911 ;
         OK (GxB_Serialized_get_INT32_(blob, &i, GxB_OFFSET_INTEGER_BITS, blob_size)) ;

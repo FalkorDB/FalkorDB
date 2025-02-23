@@ -30,7 +30,7 @@ GrB_Info GB_Vector_assign_scalar    // w<Mask>(I) = accum (w(I),s)
     const GrB_Vector mask,          // optional mask for w, unused if NULL
     const GrB_BinaryOp accum,       // optional accum for Z=accum(w(I),x)
     const GrB_Scalar scalar,        // scalar to assign to w(I)
-    const uint64_t *I,              // row indices
+    const void *I,                  // row indices
     const bool I_is_32,
     uint64_t ni,                    // number of row indices
     const GrB_Descriptor desc,      // descriptor for w and Mask
@@ -81,7 +81,18 @@ GrB_Info GB_Vector_assign_scalar    // w<Mask>(I) = accum (w(I),s)
         // scalar assignment
         //----------------------------------------------------------------------
 
-        const uint64_t row = I [0] ;
+        uint64_t row ;
+        if (I_is_32)
+        { 
+            const uint32_t *I32 = (uint32_t *) I ;
+            row = I32 [0] ;
+        }
+        else
+        { 
+            const uint64_t *I64 = (uint64_t *) I ;
+            row = I64 [0] ;
+        }
+
         if (nvals == 1)
         { 
             // set the element: w(row) += scalar or w(row) = scalar

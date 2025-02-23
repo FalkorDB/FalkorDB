@@ -134,7 +134,7 @@ void mexFunction
     if (GB_VECTOR_OK (A))
     {
         // test vector variant
-        METHOD (vector_method ((GrB_Vector) &C, (GrB_Vector) A)) ;
+        METHOD (vector_method ((GrB_Vector *) &C, (GrB_Vector) A)) ;
     }
     else
     {

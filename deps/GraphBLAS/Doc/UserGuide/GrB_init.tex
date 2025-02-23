@@ -309,14 +309,6 @@ return value, an enumerated type (an \verb'enum') called \verb'GrB_Info'.  The
 first two values in the following table denote a successful status, the rest
 are error codes.
 
-Not all GraphBLAS methods or operations can return all status codes.
-In the discussions of each method and operation in this User Guide, most of the
-obvious error code returns are not discussed.  For example, if a required input
-is a \verb'NULL' pointer, then \verb'GrB_NULL_POINTER' is returned.  Only error
-codes specific to the method or that require elaboration are discussed here.
-For a full list of the status codes that each GraphBLAS function can return,
-refer to {\em The GraphBLAS C API Specification} \cite{spec,spec2}.
-
 \vspace{0.2in}
 \noindent
 {\small
@@ -352,6 +344,14 @@ Error                         & value & description \\
 \vspace{0.2in}
 }
 
+Not all GraphBLAS methods or operations can return all status codes.
+In the discussions of each method and operation in this User Guide, most of the
+obvious error code returns are not discussed.  For example, if a required input
+is a \verb'NULL' pointer, then \verb'GrB_NULL_POINTER' is returned.  Only error
+codes specific to the method or that require elaboration are discussed here.
+For a full list of the status codes that each GraphBLAS function can return,
+refer to {\em The GraphBLAS C API Specification} \cite{spec,spec2}.
+
 %===============================================================================
 \subsection{{\sf GrB\_error:} get more details on the last error} %=============
 %===============================================================================
@@ -385,9 +385,9 @@ string must not be freed or modified.
         printf ("info: %d error: %s\n", info, err) ;
     } \end{verbatim}}
 
-If \verb'C' has no error status, or if the error is not recorded in
-the string, an empty non-null string is returned.  In particular,
-out-of-memory conditions result in an empty string from \verb'GrB_error'.
+If the matrix \verb'C' has no error status, or if the error is not recorded in
+the string, an empty non-null string is returned.  In particular, out-of-memory
+conditions result in an empty string from \verb'GrB_error'.
 
 SuiteSparse:GraphBLAS reports many helpful details via \verb'GrB_error'.  For
 example, if a row or column index is out of bounds, the report will state what
@@ -401,7 +401,7 @@ have a single input/output argument \verb'C', as a \verb'GrB_Matrix',
 \verb'GrB_Vector', \verb'GrB_Scalar', or \verb'GrB_Descriptor'. Methods that
 create these objects (such as \verb'GrB_Matrix_new') return a \verb'NULL'
 object on failure, so these methods cannot also return an error string in
-\verb'C'.
+their output argument.
 
 Any subsequent GraphBLAS method that modifies the object \verb'C' clears the
 error string.

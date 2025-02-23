@@ -15,10 +15,10 @@ where the indices within any given row (if the orientation is row-major)
 or column may be out of order.  If \verb'Container->jumbled' is false, then
 the indices appear in ascending order.
 
-The \verb'p' \verb'h', and \verb'i' vectors in the Container have an integer
+The \verb'p', \verb'h', and \verb'i' vectors in the Container have an integer
 type, either \verb'GrB_UINT32' or \verb'GrB_UINT64'.  These appear below as
 just \verb'integer', but the actual corresponding C type (\verb'uint32_t' or
-\verb'uint64_t') must be used.
+\verb'uint64_t') must be used for each component.
 
 %-------------------------------------------------------------------------------
 \subsubsection{Sparse, held by row}
@@ -55,8 +55,8 @@ same positions in \verb'Ax'.  Column indices must be in the range 0 to
 in ascending order within each row.  If \verb'jumbled' is \verb'true', column
 indices may appear in any order within each row.  No duplicate column indices
 may appear in any row.  \verb'Ap [0]' must equal zero, and \verb'Ap [nrows]'
-must equal nvals.  The \verb'Ap' array must be of size \verb'nrows'+1 (or
-larger), and the \verb'Aj' and \verb'Ax' arrays must have size at least
+must equal \verb'nvals'.  The \verb'Ap' array must be of size \verb'nrows'+1
+(or larger), and the \verb'Aj' and \verb'Ax' arrays must have size at least
 \verb'nvals'.
 
 An example of the CSR format is shown below.  Consider the following
@@ -279,7 +279,8 @@ matrix there if it has been computed.  If the matrix is subsequently loaded
 from the container, and \verb'Container->h' is unchanged, then leaving the
 hyper-hash unmodified will preserve this optional optimization data structure.
 If instead \verb'Container->h' is revised, the hyper-hash in
-\verb'Container->Y' should be freed.
+\verb'Container->Y' must be freed (or at least removed from the container) when
+the matrix is loaded from the container..
 
 A \verb'GrB_Vector' is never held in hypersparse format.
 
@@ -320,7 +321,7 @@ array must contain only 0s and 1s.  The \verb'nvals' input must exactly match
 the number of 1s in the \verb'Ab' array.
 \item \verb'type Ax [nrows*ncols] ;'  The \verb'Ax' array defines the values of
 entries in the matrix.  If \verb'Ab[p]' is zero, the value of \verb'Ax[p]' is
-ignored.
+ignored.  If the matrix is iso-valued, \verb'Ax' has size 1.
 \end{itemize}
 
 %-------------------------------------------------------------------------------
@@ -331,7 +332,8 @@ ignored.
 This is the transpose of the bitmap-by-row format.
 The \verb'Container->format' is \verb'GxB_BITMAP' and the
 \verb'Container->orientation' is \verb'GrB_COLMAJOR'.
-The value of the entry $A(i,j)$ is held in \verb'Ax [i+j*nrows]'.
+The value of the entry $A(i,j)$ is held in \verb'Ax [i+j*nrows]', or
+in \verb'Ax[0]' if the matrix is iso-valued.
 It is present if \verb'Ab [i+j*nrows]' is 1, and not present if zero.
 
 %-------------------------------------------------------------------------------
@@ -342,7 +344,8 @@ It is present if \verb'Ab [i+j*nrows]' is 1, and not present if zero.
 The \verb'Container->format' is \verb'GxB_FULL' and the
 \verb'Container->orientation' is \verb'GrB_ROWMAJOR'.  This format is held in a
 single \verb'GrB_Vector', \verb'Container->x'.  The $A(i,j)$ entry is in
-position \verb'i*ncols+j' in this array.  All entries are present.
+position \verb'i*ncols+j' in this array, or in position 0 if the matrix is
+iso-valued.  All entries are present.
 
 %-------------------------------------------------------------------------------
 \subsubsection{Full, held by column}
@@ -353,5 +356,6 @@ This is the transpose of the full-by-row format.
 The \verb'Container->format' is \verb'GxB_FULL' and the
 \verb'Container->orientation' is \verb'GrB_COLMAJOR'.  This format is held in a
 single \verb'GrB_Vector', \verb'Container->x'.  The $A(i,j)$ entry is in
-position \verb'i+j*nrows' in this array.  All entries are present.
+position \verb'i+j*nrows' in this array, or in position 0 if the matrix is
+iso-valued.  All entries are present.
 

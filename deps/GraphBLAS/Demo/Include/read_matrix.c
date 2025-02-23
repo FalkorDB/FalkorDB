@@ -106,8 +106,11 @@ GrB_Info read_matrix        // read a double-precision or boolean matrix
         if (ntuples >= len)
         {
             I2 = (GrB_Index *) realloc (I, 2 * len * sizeof (GrB_Index)) ;
+            if (I2 != NULL) I = NULL ;
             J2 = (GrB_Index *) realloc (J, 2 * len * sizeof (GrB_Index)) ;
+            if (J2 != NULL) J = NULL ;
             X2 = realloc (X, 2 * len * xsize) ;
+            if (X2 != NULL) X = NULL ;
             if (I2 == NULL || J2 == NULL || X2 == NULL)
             {
                 if (pr) printf ("out of memory for tuples\n") ;

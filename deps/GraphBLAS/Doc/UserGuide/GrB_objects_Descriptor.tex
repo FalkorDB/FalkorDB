@@ -219,9 +219,9 @@ GraphBLAS function          & purpose                              & Section \\
 \hline
 \verb'GrB_Descriptor_new'   & create a descriptor                  & \ref{descriptor_new} \\
 \verb'GrB_Descriptor_wait'  & wait for a descriptor                & \ref{descriptor_wait} \\
+\verb'GrB_Descriptor_free'  & free a descriptor                    & \ref{descriptor_free} \\
 \verb'GrB_get'              & get a parameter from a descriptor    & \ref{get_set_descriptor}  \\
 \verb'GrB_set'              & set a parameter in a descriptor      & \ref{get_set_descriptor}  \\
-\verb'GrB_Descriptor_free'  & free a descriptor                    & \ref{descriptor_free} \\
 \hline
 \end{tabular}
 }
@@ -350,7 +350,7 @@ array.  To use a negative stride, simply pass in the vector with a signed data
 type (\verb'GrB_INT32' or \verb'GrB_INT64' as appropriate; this corresponds to
 the \verb'GxB_BACKWARDS' option desribed in Section~\ref{colon}).
 These three values appear in this order to be consistent \verb'GxB_BEGIN' (0),
-\verb'GxB_END' (1), \verb'GxB_INC' (2).
+\verb'GxB_END' (1), and \verb'GxB_INC' (2).
 
 When using the \verb'_Vector' methods, the \verb'GrB_Vector' objects \verb'I',
 \verb'J', and \verb'X' may be sparse.  If the vectors are sparse,

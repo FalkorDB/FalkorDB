@@ -29,8 +29,8 @@
     GxB_index_binary_function fmult_idx = mult->idxbinop_function ;
     GxB_binary_function fadd  = add->op->binop_function ;
     GB_Opcode opcode = mult->opcode ;
-    bool op_is_builtin_positional =
-        GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (opcode) ;
+//  bool op_is_builtin_positional =
+//      GB_IS_BUILTIN_BINOP_CODE_POSITIONAL (opcode) ;
 
     ASSERT (C->type == add->op->ztype) ;
     size_t csize = C->type->size ;

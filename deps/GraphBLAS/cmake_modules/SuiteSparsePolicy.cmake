@@ -111,10 +111,10 @@ endif ( )
 # readability (such as "/* do nothing */ ;" in SuiteSparse_config.c).  Disable
 # the clang warning for these statements:
 if ( CMAKE_C_COMPILER_ID STREQUAL "Clang" )
-    set ( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-extra-semi-stmt" )
+    set ( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-extra-semi" )
 endif ( )
 if ( CMAKE_CXX_COMPILER_ID STREQUAL "Clang" )
-    set ( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-extra-semi-stmt" )
+    set ( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-extra-semi" )
 endif ( )
 
 if ( WIN32 )

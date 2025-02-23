@@ -26,6 +26,13 @@ GrB_Info GrB_get (const void *blob, size_t *   value, int f, size_t blobsize) ;
 \verb'GrB_EL_TYPE_CODE'             & R    & \verb'int32_t'& type of matrix in the blob \\
 \verb'GxB_SPARSITY_CONTROL'         & R    & \verb'int32_t'& See Section~\ref{sparsity_status} \\
 \verb'GxB_SPARSITY_STATUS'          & R    & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_ISO'                      & R    & \verb'int32_t'& iso status (Section~\ref{iso_status}) \\
+\verb'GxB_ROWINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for row indices (32 or 64) \\
+\verb'GxB_COLINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for column indices (32 or 64) \\
+\verb'GxB_OFFSET_INTEGER_BITS'      & R    & \verb'int32_t'& number of bits for offsets (32 or 64) \\
+\verb'GxB_ROWINDEX_INTEGER_HINT'    & R    & \verb'int32_t'& hint for row indices (0, 32, 64) \\
+\verb'GxB_COLINDEX_INTEGER_HINT'    & R    & \verb'int32_t'& hint for column indices (0, 32, 64) \\
+\verb'GxB_OFFSET_INTEGER_HINT'      & R    & \verb'int32_t'& hint for offsets (0, 32, 64) \\
 \hline
 \verb'GrB_NAME'                     & R    & \verb'char *' & name of the matrix in the blob. \\
 \verb'GrB_EL_TYPE_STRING'           & R    & \verb'char *' & name of the type of the matrix in the blob. \\

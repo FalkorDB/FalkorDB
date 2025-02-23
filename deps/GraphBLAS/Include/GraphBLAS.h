@@ -6074,7 +6074,7 @@ GrB_Info GrB_Matrix_exportHint  // suggest the best export format
 // below do a few basic checks so that no out-of-bounds access occurs during
 // deserialization, but the output matrix itself may still be corrupted.  If
 // the data is untrusted, use this to check the matrix:
-//      GxB_Matrix_fprint (A, "A deserialized", GrB_SILENT, NULL)
+//      GxB_Matrix_fprint (A, "A deserialized", GxB_SILENT, NULL)
 
 // Example usage:
 

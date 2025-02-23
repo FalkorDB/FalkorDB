@@ -17,8 +17,6 @@
 // Compare with GxB_Matrix_subassign_scalar,
 // which uses M and C_Replace differently.
 
-// The actual work is done in GB_assign_scalar.c.
-
 #include "assign/GB_assign.h"
 #include "ij/GB_ij.h"
 #include "mask/GB_get_mask.h"
@@ -30,10 +28,10 @@ GrB_Info GB_Matrix_assign_scalar    // C<Mask>(I,J) = accum (C(I,J),s)
     const GrB_Matrix Mask,          // optional mask for C, unused if NULL
     const GrB_BinaryOp accum,       // optional accum for Z=accum(C(I,J),x)
     const GrB_Scalar scalar,        // scalar to assign to C(I,J)
-    const uint64_t *I,              // row indices
+    const void *I,                  // row indices
     const bool I_is_32,
     uint64_t ni,                    // number of row indices
-    const uint64_t *J,              // column indices
+    const void *J,                  // column indices
     const bool J_is_32,
     uint64_t nj,                    // number of column indices
     const GrB_Descriptor desc,
@@ -82,8 +80,28 @@ GrB_Info GB_Matrix_assign_scalar    // C<Mask>(I,J) = accum (C(I,J),s)
         // scalar assignment
         //----------------------------------------------------------------------
 
-        const uint64_t row = I [0] ;
-        const uint64_t col = J [0] ;
+        uint64_t row, col ;
+        if (I_is_32)
+        { 
+            const uint32_t *I32 = (uint32_t *) I ;
+            row = I32 [0] ;
+        }
+        else
+        { 
+            const uint64_t *I64 = (uint64_t *) I ;
+            row = I64 [0] ;
+        }
+        if (J_is_32)
+        { 
+            const uint32_t *J32 = (uint32_t *) J ;
+            col = J32 [0] ;
+        }
+        else
+        { 
+            const uint64_t *J64 = (uint64_t *) J ;
+            col = J64 [0] ;
+        }
+
         if (nvals == 1)
         { 
             // set the element: C(row,col) += scalar or C(row,col) = scalar

@@ -8,7 +8,7 @@ GraphBLAS v10 adds a new feature that improves performance and reduces memory
 requirements for GraphBLAS matrices and vectors:  the use of any mix of 32-bit
 and 64-bit integers in the internal data structures for the \verb'GrB_Matrix',
 \verb'GrB_Vector', and \verb'GrB_Scalar' (the latter is nominally revised, but
-only because GraphBLAS stores its \verb'GrB_Scalar' as a 1-by-1 matrix).
+only because SuiteSparse:GraphBLAS stores its \verb'GrB_Scalar' as a 1-by-1 matrix).
 
 All prior methods work without any modification to the user application,
 so v10 is upward-compatible with prior versions of GraphBLAS.
@@ -204,7 +204,8 @@ present.
     Section~\ref{vector_load} for details.
 
 \item \verb'GxB_Vector_unload': this method moves data in O(1) time from a
-    \verb'GrB_Vector' into a user-visible C array.  The length of the
+    \verb'GrB_Vector' into a user-visible C array (assuming the vector has no
+    pending work; if so, that work is done first).  The length of the
     \verb'GrB_Vector' is reduced to zero, to denote that it no longer holds any
     content.  The vector must be dense; it must have the same number of entries
     as its size (that is \verb'GrB_Vector_nvals' and \verb'GrB_Vector_size'
@@ -220,6 +221,8 @@ non-opaque but contains opaque objects.  Its primary components are five dense
 \verb'GrB_Vectors' that hold the contents of the matrix/vector.  The data in
 these dense vectors can then be loaded/unloaded via \verb'GxB_Vector_load' and
 \verb'GxB_Vector_unload'.
+
+The following methods operate on the Container object:
 
 \begin{itemize}
 \item \verb'GxB_Container_new': creates a container.
@@ -256,15 +259,19 @@ GraphBLAS v5.1.0 (released in June 2021) added a suite of \verb'GxB_pack' and
 time unless the data format needed to be revised.
 
 These methods are now declared {\em historical}, which means they will be kept
-in working order but will no longer be documented.
+in working order but will no longer be documented.  Refer to the GraphBLAS
+v9.4.5 User Guide for documentaion for the pack/unpack methods.
 
 In GraphBLAS v10, these methods still pack/unpack their contents into
 \verb'uint64_t *' user arrays.  If the matrix has 32-bit integers, this
 requires a copy and typecast.  Thus, performance will be degraded for existing
 user codes that expect $O(1)$ time to pack/unpack their matrices/vectors.
 
-Rather than extend pack/unpack to handle a wide range of integer types, new
-methods using the \verb'GxB_Container' are introduced instead (see
-Section~\ref{container_v10}), to rapidly move data into/out of a
-\verb'GrB_Matrix' or \verb'GrB_Vector' in O(1) time and space.
+Extending the pack/unpack to handle arbitary C integer arrays would lead to an
+explosion in the number of methods in the API, and it would get worse if other
+integers are added (16-bit and 128-bit for example).  Rather than extend
+pack/unpack to handle a wide range of integer types, new methods using the
+\verb'GxB_Container' are introduced instead (see Section~\ref{container_v10}),
+to rapidly move data into/out of a \verb'GrB_Matrix' or \verb'GrB_Vector' in
+O(1) time and space.
 

@@ -32,6 +32,10 @@
     #pragma GCC diagnostic ignored "-Wunused-function"
     #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+#elif defined ( __clang__ )
+
+    #pragma clang diagnostic ignored "-Wunused-variable"
+
 #endif
 
 #endif

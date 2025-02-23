@@ -29,6 +29,7 @@ for k1 = 1:length (types)
             I1 = 3 ;
         end
         I0 = uint64 (I1) - 1 ;
+        I2 = uint32 (I0) ;
 
         for n = [1 9]
 
@@ -41,6 +42,7 @@ for k1 = 1:length (types)
             end
 
             J0 = uint64 (J1) - 1 ;
+            J2 = uint32 (J0) ;
             fprintf ('.') ;
 
             C = GB_spec_random (m, n, 0.8, 100, type) ;
@@ -59,6 +61,9 @@ for k1 = 1:length (types)
             % using GrB_Vector:
             C1 = GB_mex_assign_scalar (C, [ ], accum, S1, I0, J0, [ ], 1) ;
             GB_spec_compare (C1, C2) ;
+            % using GrB_Vector: 32-bit
+            C1 = GB_mex_assign_scalar (C, [ ], accum, S1, I2, J2, [ ], 1) ;
+            GB_spec_compare (C1, C2) ;
 
             C1 = GB_mex_assign_scalar (C, [ ], accum, S0, I0, J0, [ ]) ;
             C2 = GB_spec_assign (C, [ ], accum, S0, I1, J1, [ ], 1) ;
@@ -72,6 +77,9 @@ for k1 = 1:length (types)
             GB_spec_compare (C1, C2) ;
             % using GrB_Vector:
             C1 = GB_mex_subassign_scalar (C, [ ], accum, S1, I0, J0, [ ], 1) ;
+            GB_spec_compare (C1, C2) ;
+            % using GrB_Vector: 32-bit
+            C1 = GB_mex_subassign_scalar (C, [ ], accum, S1, I2, J2, [ ], 1) ;
             GB_spec_compare (C1, C2) ;
 
             C1 = GB_mex_subassign_scalar (C, [ ], accum, S0, I0, J0, [ ]) ;

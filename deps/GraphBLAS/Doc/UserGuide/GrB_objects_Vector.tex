@@ -21,12 +21,10 @@ GraphBLAS function   & purpose                                      & Section \\
 \verb'GrB_Vector_clear'          & clear a vector of all entries    & \ref{vector_clear} \\
 \verb'GrB_Vector_size'           & size of a vector                 & \ref{vector_size} \\
 \verb'GrB_Vector_nvals'          & number of entries in a vector    & \ref{vector_nvals} \\
-\verb'GrB_get'  & get properties of a vector       & \ref{get_set_vector} \\
-\verb'GrB_set'  & set properties of a vector       & \ref{get_set_vector} \\
 \verb'GrB_Vector_build'          & build a vector from tuples       & \ref{vector_build} \\
+\verb'GxB_Vector_build_Vector'   & build a vector from tuples       & \ref{vector_build_Vector} \\
 \verb'GxB_Vector_build_Scalar'   & build a vector from tuples       & \ref{vector_build_Scalar} \\
-\verb'GxB_Vector_build_Vector'          & build a vector from tuples       & \ref{vector_build_Vector} \\
-\verb'GxB_Vector_build_Scalar_Vector'   & build a vector from tuples       & \ref{vector_build_Scalar_Vector} \\
+\verb'GxB_Vector_build_Scalar_Vector' & build a vector from tuples  & \ref{vector_build_Scalar_Vector} \\
 \verb'GrB_Vector_setElement'     & add an entry to a vector         & \ref{vector_setElement} \\
 \verb'GrB_Vector_extractElement' & get an entry from a vector       & \ref{vector_extractElement} \\
 \verb'GxB_Vector_isStoredElement'& check if entry present in vector & \ref{vector_isStoredElement} \\
@@ -49,6 +47,10 @@ GraphBLAS function   & purpose                                      & Section \\
 \hline
 \hline
 \verb'GxB_Vector_sort'          & sort a vector & \ref{vector_sort} \\
+\hline
+\hline
+\verb'GrB_get'  & get properties of a vector       & \ref{get_set_vector} \\
+\verb'GrB_set'  & set properties of a vector       & \ref{get_set_vector} \\
 \end{tabular}
 }
 
@@ -104,10 +106,9 @@ GrB_Info GrB_wait               // wait for a vector
 In non-blocking mode, the computations for a \verb'GrB_Vector' may be delayed.
 In this case, the vector is not yet safe to use by multiple independent user
 threads.  A user application may force completion of a vector \verb'w' via
-\verb'GrB_Vector_wait(&w)' (in v5.2.0), or
-\verb'GrB_Vector_wait(w,mode)' (in v6.0.0).
+\verb'GrB_Vector_wait(w,mode)'.
 With a \verb'mode' of \verb'GrB_MATERIALIZE',
-all pending computations are finished, and different user threads may
+all pending computations are finished, and afterwards different user threads may
 simultaneously call GraphBLAS operations that use the vector \verb'w' as an
 input parameter.
 See Section~\ref{omp_parallelism}
@@ -558,7 +559,7 @@ GrB_Info GxB_Vector_memoryUsage  // return # of bytes used for a vector
 
 Returns the memory space required for a vector, in bytes.
 By default, any read-only components are not included in the total memory.
-This can be changed with via \verb'GrB_get'; see Section~\ref{get_set_global}.
+This can be changed with via \verb'GrB_set'; see Section~\ref{get_set_global}.
 
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_Vector\_type:} type of a vector}

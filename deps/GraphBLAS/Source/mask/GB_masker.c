@@ -117,7 +117,7 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     // initializations
     //--------------------------------------------------------------------------
 
-    int64_t Rnvec, Rnvec_nonempty ;
+    int64_t Rnvec, Rnvec_nonempty = 0 ;
     void *Rp = NULL ; size_t Rp_size = 0 ;
     void *Rh = NULL ; size_t Rh_size = 0 ;
 

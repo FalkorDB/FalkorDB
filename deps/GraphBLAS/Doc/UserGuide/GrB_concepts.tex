@@ -97,12 +97,14 @@ background on sparse matrix algorithms, see also \cite{Davis06book} and
 \label{overview}
 
 GraphBLAS provides a collection of {\em methods} to create, query, and free its
-of objects: sparse matrices, sparse vectors, scalars, types, operators,
-monoids, semirings, and a descriptor object used for parameter settings.
-Details are given in Section~\ref{objects}.  Once these objects are created
-they can be used in mathematical {\em operations} (not to be confused with the
-how the term {\em operator} is used in GraphBLAS).  A short summary of these
-operations and their nearest MATLAB/Octave analog is given in the table below.
+objects: matrices, vectors, scalars, types, operators, monoids, semirings, a
+descriptor object used for parameter settings, a context object (for
+controlling parallelism), and a container object (for moving data in and out of
+GraphBLAS), and an iterator object.  Details are given in
+Section~\ref{objects}.  Once these objects are created they can be used in
+mathematical {\em operations} (not to be confused with the how the term {\em
+operator} is used in GraphBLAS).  A short summary of these operations and their
+nearest MATLAB/Octave analog is given in the table below.
 
 % \vspace{0.1in}
 \begin{tabular}{ll}
@@ -145,7 +147,7 @@ use as a monoid: min (with an identity value of positive infinity), max (whose
 identity is negative infinity), add (identity is zero), multiply (with an
 identity of one), four logical operators: AND, OR, exclusive-OR, and
 Boolean equality (XNOR), four bitwise operators (AND, OR, XOR, and XNOR),
-and the ANY operator
+and the ANY operator.
 See Section~\ref{any_pair} for more details on the unusual ANY operator.
 User-created monoids can be defined with any associative and
 commutative operator that has an identity value.
@@ -199,30 +201,30 @@ assignment (\verb'C(I,J)=A' where \verb'I' and \verb'J' are integer vectors),
 or scalar assignment (\verb'C(i,j)=x' where \verb'i' and \verb'j' are scalar
 integers).  Because of how MATLAB stores its matrices, adding and deleting
 individual entries is very costly.  For example, this is very slow in MATLAB,
-taking $O(nz^2)$ time:
+taking $O(e^2)$ time (where $e$ is the number of entries added to the matrix):
 
     \begin{mdframed}
     {\footnotesize
     \begin{verbatim}
     A = sparse (m,n) ;   % an empty sparse matrix
-    for k = 1:nz
+    for k = 1:e
         compute a value x, row index i, and column index j
         A (i,j) = x ;
     end\end{verbatim}}\end{mdframed}
 
 The above code is very easy read and simple to write, but exceedingly slow.  In
 MATLAB, the method below is preferred and is far faster, taking at most
-$O(|{\bf A}| \log |{\bf A}| +n)$ time.  It can easily be a million times faster
+$O(e \log e +n)$ time.  It can easily be a million times faster
 than the method above.  Unfortunately the second method below is a little
 harder to read and a little less natural to write:
 
     \begin{mdframed}
     {\footnotesize
     \begin{verbatim}
-    I = zeros (nz,1) ;
-    J = zeros (nz,1) ;
-    X = zeros (nz,1) ;
-    for k = 1:nz
+    I = zeros (e,1) ;
+    J = zeros (e,1) ;
+    X = zeros (e,1) ;
+    for k = 1:e
         compute a value x, row index i, and column index j
         I (k) = i ;
         J (k) = j ;

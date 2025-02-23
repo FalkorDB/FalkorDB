@@ -18,24 +18,27 @@ All versions of SuiteSparse:GraphBLAS that implement
 serialization/deserialization use essentially the same format for the blob, so
 the library versions are compatible with each other.  Version v9.0.0 adds the
 \verb'GrB_NAME' and \verb'GrB_EL_TYPE_STRING' to the blob in an upward
-compatible manner, so that older versions of SS:GraphBLAS can read the blobs
-created by v9.0.0; they simply ignore those components.  SS:GraphBLAS v10 adds
+compatible manner, so that older versions of SuiteSparse:GraphBLAS can read the blobs
+created by v9.0.0; they simply ignore those components.
+
+SuiteSparse:GraphBLAS v10 adds
 32/64-bit integers, and can read the blobs created by any prior version of
-GraphBLAS (they be deserialized with all 64-bit integers however).  If an older
-version of SS:GraphBLAS (v9 or earlier) attempts to deserialize a blob
+GraphBLAS (they are deserialized with all 64-bit integers however).  If an older
+version of SuiteSparse:GraphBLAS (v9 or earlier) attempts to deserialize a blob
 containing a matrix with 32-bit integers, it will safely report that the blob
-is invalid and refuse to deserialize it.  If SS:GraphBLAS v10 creates a
+is invalid and refuse to deserialize it.  If SuiteSparse:GraphBLAS v10 creates a
 serialized blob with all-64-bit integers, then it can be read correctly by
-SS:GraphBLAS v9, and likely also be earlier versions.
+SuiteSparse:GraphBLAS v9, and likely also by earlier versions of the library.
 
 There are two forms of serialization: \verb'GrB*serialize' and
 \verb'GxB*serialize'.  For the \verb'GrB' form, the blob must first be
 allocated by the user application, and it must be large enough to hold the
-matrix or vector.
+serialized matrix or vector.  By contrast \verb'GxB*serialize' allocates
+the blob itself.
 
 By default, ZSTD (level 1) compression is used for serialization, but other
 options can be selected via the descriptor:
-\verb'GrB_set (desc, method, GxB_COMPRESSION)', where \verb'method' is an
+\verb'GrB_set (desc, method,' \verb'GxB_COMPRESSION)', where \verb'method' is an
 integer selected from the following options:
 
 \vspace{0.2in}
@@ -71,16 +74,17 @@ To compress with ZSTD at level 6, use:
 
 Deserialization of untrusted data is a common security problem; see
 \url{https://cwe.mitre.org/data/definitions/502.html}. The deserialization
-methods do a few basic checks so that no out-of-bounds access occurs during
-deserialization, but the output matrix or vector itself may still be corrupted.
-If the data is untrusted, use \verb'GxB_*_fprint' to
+methods in SuiteSparse:GraphBLAS do a few basic checks so that no out-of-bounds
+access occurs during deserialization, but the output matrix or vector itself
+may still be corrupted.  If the data is untrusted, use \verb'GxB_*_fprint' with
+the print level set to \verb'GxB_SILENT' to
 check the matrix or vector after deserializing it:
 
 {\footnotesize
 \begin{verbatim}
-    info = GxB_Vector_fprint (w, "w deserialized", GrB_SILENT, NULL) ;
+    info = GxB_Vector_fprint (w, "w deserialized", GxB_SILENT, NULL) ;
     if (info != GrB_SUCCESS) GrB_free (&w) ;
-    info = GxB_Matrix_fprint (A, "A deserialized", GrB_SILENT, NULL) ;
+    info = GxB_Matrix_fprint (A, "A deserialized", GxB_SILENT, NULL) ;
     if (info != GrB_SUCCESS) GrB_free (&A) ; \end{verbatim}}
 
 The following methods are described in this Section:

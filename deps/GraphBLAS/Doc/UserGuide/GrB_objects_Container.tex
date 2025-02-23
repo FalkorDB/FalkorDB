@@ -5,33 +5,33 @@
 \label{container}
 
 A new set of \verb'load/unload' methods are introduced in GraphBLAS v10 to move
-data between a \verb'GrB_Matrix' or \verb'GrB_Vector' and a a new
+data between a \verb'GrB_Matrix' or \verb'GrB_Vector' and a new
 \verb'GxB_Container' object.  This object is non-opaque but contains opaque
 objects.  Its primary components are five dense \verb'GrB_Vectors' that hold
 the contents of the matrix/vector.  The data in these dense vectors can then be
 loaded/unloaded via \verb'GxB_Vector_load' and \verb'GxB_Vector_unload'.
 
-Moving data from a \verb'GrB_Matrix' into user-visible C arrays is a two-
-step process.  The data is first moved into a \verb'GxB_Container' using \newline
-\verb'GxB_unload_Matrix_into_Container', and then from the Container
-into C arrays with \verb'GxB_Vector_unload'.  Moving data in the opposite
-direction is also a two-step process: first load the C array into a
-\verb'GrB_Vector' component of a \verb'GxB_Container' with \verb'GxB_Vector_load',
-and then from the \verb'GxB_Container' into a \verb'GrB_Matrix' using
-the \verb'GxB_load_Matrix_from_Container' method.
+Moving data from a \verb'GrB_Matrix' into user-visible C arrays is a two-step
+process.  The data is first moved into a \verb'GxB_Container' using \newline
+\verb'GxB_unload_Matrix_into_Container', and then from the Container into C
+arrays with \verb'GxB_Vector_unload'.  Moving data in the opposite direction is
+also a two-step process: first load the C array into a \verb'GrB_Vector'
+component of a \verb'GxB_Container' with \verb'GxB_Vector_load', and then from
+the \verb'GxB_Container' into a \verb'GrB_Matrix' using the
+\verb'GxB_load_Matrix_from_Container' method.
 
 The following methods are available.  The first two do not use the
 Container object, but instead move data to/from a dense \verb'GrB_Vector':
 
 \begin{itemize}
 
-\item \verb'GxB_Vector_load':  this method moves data in O(1) time from a user-visible
-    C array into a \verb'GrB_Vector'.  The vector length and type are revised
-    to match the new data from the C array.  Ownership is normally transferred
-    to the \verb'GrB_Vector', but this can be revised with a \verb'handling'
-    parameter.  The C array is passed in as a \verb'void *' pointer, and its
-    type is indicated by a \verb'GrB_Type' parameter.
-    See Section~\ref{vector_load} for details.
+\item \verb'GxB_Vector_load':  this method moves data in O(1) time from a
+    user-visible C array into a \verb'GrB_Vector'.  The vector length and type
+    are revised to match the new data from the C array.  Ownership is normally
+    transferred to the \verb'GrB_Vector', but this can be revised with a
+    \verb'handling' parameter.  The C array is passed in as a \verb'void *'
+    pointer, and its type is indicated by a \verb'GrB_Type' parameter.  See
+    Section~\ref{vector_load} for details.
 
 \item \verb'GxB_Vector_unload': this method moves data in O(1) time from a
     \verb'GrB_Vector' into a user-visible C array.  The length of the
@@ -47,26 +47,26 @@ Container object, but instead move data to/from a dense \verb'GrB_Vector':
 The next six methods rely on the \verb'GxB_Container' object:
 
 \begin{itemize}
-\item \verb'GxB_Container_new': creates a container.
+\item \verb'GxB_Container_new': creates a container
     (see Section~\ref{container_new}).
 
-\item \verb'GxB_Container_free': frees a container.
+\item \verb'GxB_Container_free': frees a container
     (see Section~\ref{container_free}).
 
 \item \verb'GxB_load_Matrix_from_Container': moves all of the data from a
-    \verb'GxB_Container' into a \verb'GrB_Matrix' in O(1) time.
+    \verb'GxB_Container' into a \verb'GrB_Matrix' in O(1) time
     (see Section~\ref{load_matrix_from_container}).
 
 \item \verb'GxB_load_Vector_from_Container': moves all of the data from a
-    \verb'GxB_Container' into a \verb'GrB_Vector' in O(1) time.
+    \verb'GxB_Container' into a \verb'GrB_Vector' in O(1) time
     (see Section~\ref{load_vector_from_container}).
 
 \item \verb'GxB_unload_Matrix_into_Container': moves all of the data from
-    a \verb'GrB_Matrix' into a \verb'GxB_Container' in O(1) time.
+    a \verb'GrB_Matrix' into a \verb'GxB_Container' in O(1) time
     (see Section~\ref{unload_matrix_into_container}).
 
 \item \verb'GxB_unload_Vector_into_Container': moves all of the data from
-    a \verb'GrB_Vector' into a \verb'GxB_Container' in O(1) time.
+    a \verb'GrB_Vector' into a \verb'GxB_Container' in O(1) time
     (see Section~\ref{unload_vector_into_container}).
 
 \end{itemize}
@@ -170,7 +170,7 @@ orientation.  If any entries are missing, the unload is not performed and
 \verb'GrB_INVALID_OBJECT' is returned.
 
 On output, the size of \verb'V' is reduced to zero, and it holds no entries but
-its type is unchanged.  The array \verb'X' is returned to the called with the
+its type is unchanged.  The array \verb'X' is returned to the caller with the
 entries from the vector.  The type of \verb'X' is given by the \verb'type'
 parameter.  The number of entries in \verb'V' is returned as \verb'n'.
 The size of \verb'X' in bytes is returned as \verb'X_size'.
@@ -180,7 +180,8 @@ the array \verb'X'.  If it was created by GraphBLAS, or passed into GraphBLAS
 via \verb'GxB_Vector_load' with \verb'handling' set to \verb'GrB_DEFAULT', then
 this is returned to the user as handling set to \verb'GrB_DEFAULT'.  This
 denotes that ownership of the array \verb'X' has been transfered from GraphBLAS
-The user application is now responsible for freeing the array \verb'X'.
+to the user application.  The user application is now responsible for freeing
+the array \verb'X'.
 
 If the \verb'handling' parameter is returned as \verb'GxB_IS_READONLY', then
 this array \verb'X' was originally passed to GraphBLAS via
@@ -235,18 +236,22 @@ below:
 \item \verb'nrows': the number of rows of a matrix, or the size of a vector.
 \item \verb'ncols': the number of columns of a matrix, or 1 for a vector. 
 \item \verb'nrows_nonempty':  if known, this value must give the exact number
-    of non-empty rows of a matrix or vector.  If not known, this value must be
+    of non-empty rows of a matrix or vector (that is, the number of
+    rows have at least one entry).  If not known, this value must be
     set to -1.
 \item \verb'ncols_nonempty':  if known, this value must give the exact number
-    of non-empty columns of a matrix or vector.  If not known, this value must be
+    of non-empty columns of a matrix or vector (that is, the number of
+    columns have at least one entry).  If not known, this value must be
     set to -1.
 \item \verb'nvals': the number of entries in the matrix or vector.
 \item \verb'format': this defines the data format of a matrix or vector.
     Currently, GraphBLAS supports four formats, described in
-    Section~\ref{formats}, each with two orientations.
+    Section~\ref{formats}, each with two orientations.  A \verb'GrB_Vector'
+    cannot be held in \verb'GxB_HYPERSPARSE' format.
 \item \verb'orientation':  whether the matrix is held by row or by column.
     This is always \verb'GrB_COLMAJOR' for a container holding data for a
-    \verb'GrB_Vector'.
+    \verb'GrB_Vector', and for data holding an $n$-by-1 \verb'GrB_Matrix'
+    with a single column.
 \item \verb'iso': if true, all of the entries in the matrix have the same
     value, and only a single value is stored in the \verb'x' component of
     the Container.
@@ -256,10 +261,10 @@ below:
     A jumbled matrix or vector must not have any read-only components. 
 \end{itemize}
 
-The Container holds five dense \verb'GrB_Vector' objects that hold
-the primary data for the matrix or vector, and a single \verb'GrB_Matrix'
-\verb'Y' that holds an optional optimization structure called the hyper-hash.
-These components are fully described in Section~\ref{formats}.
+The Container holds five dense \verb'GrB_Vector' objects that hold the primary
+data for the matrix or vector, and a single \verb'GrB_Matrix' \verb'Y' that
+holds an optional optimization structure called the hyper-hash.  These
+components are fully described in Section~\ref{formats}.
 
 \newpage
 %-------------------------------------------------------------------------------

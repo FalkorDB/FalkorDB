@@ -4,7 +4,7 @@
 %===============================================================================
 \label{matlab_performance}
 
-MATLAB R2021a SuiteSparse:GraphBLAS as a built-in library, but
+MATLAB R2021a uses SuiteSparse:GraphBLAS as a built-in library, but
 uses it only for \verb'C=A*B' when both \verb'A' and \verb'B' are sparse.  In
 prior versions of MATLAB, \verb'C=A*B' relied on the \verb'SFMULT' and
 \verb'SSMULT' packages in SuiteSparse, which are single-threaded (also written

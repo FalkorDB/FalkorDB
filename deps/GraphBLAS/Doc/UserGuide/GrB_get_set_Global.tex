@@ -40,9 +40,6 @@ GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
 \verb'GrB_BLOCKING_MODE'            & R    & \verb'int32_t'& blocking mode (\verb'GrB_BLOCKING' \newline
                                                                 or \verb'GrB_NONBLOCKING') \\
 \verb'GxB_LIBRARY_OPENMP'           & R    & \verb'int32_t'& if OpenMP is in use (true/false) \\
-\hline
-\verb'int field'                    & R/W  & C type        & description \\
-\hline
 \verb'GrB_STORAGE_ORIENTATION_HINT' & R/W  & \verb'int32_t'& see \verb'GrB_Orientation': default
                                                             format for matrices. \\
 %                                                           Matrices are held by row, unless this
@@ -56,6 +53,9 @@ GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
 \verb'GxB_INCLUDE_READONLY_STATISTICS' &R/W& \verb'int32_t'& include read-only memory in statistics \\
 \verb'GxB_JIT_C_CONTROL'            & R/W  & \verb'int32_t'& see Section~\ref{jit} \\
 \verb'GxB_JIT_USE_CMAKE'            & R/W  & \verb'int32_t'& " \\
+\verb'GxB_ROWINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for row indices (32 or 64) \\
+\verb'GxB_COLINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for column indices (32 or 64) \\
+\verb'GxB_OFFSET_INTEGER_HINT'      & R/W  & \verb'int32_t'& hint for offsets (32 or 64) \\
 \hline
 \verb'GxB_HYPER_SWITCH'             & R/W  & \verb'double' & global hypersparsity control. \newline
                                                                 See Section~\ref{hypersparse}. \\

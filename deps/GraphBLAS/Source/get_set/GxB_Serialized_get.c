@@ -35,6 +35,7 @@ static GrB_Info GB_blob_header_get
     int8_t *p_control,
     int8_t *j_control,
     int8_t *i_control,
+    bool *iso,
 
     // input, not modified:
     const GB_void *blob,        // the blob
@@ -121,7 +122,7 @@ static GrB_Info GB_blob_header_get
     GB_BLOB_READ (Cx_nblocks, int32_t) ; GB_BLOB_READ (Cx_method, int32_t) ;
 
     (*sparsity_status) = sparsity_iso_csc / 4 ;
-//  bool iso = ((sparsity_iso_csc & 2) == 2) ;
+    (*iso) = ((sparsity_iso_csc & 2) == 2) ;
     (*is_csc) = ((sparsity_iso_csc & 1) == 1) ;
 
     //--------------------------------------------------------------------------
@@ -274,13 +275,13 @@ static GrB_Info GB_Serialized_get
     char type_name [GxB_MAX_NAME_LEN], *user_name, *eltype_string ;
     int32_t sparsity_status, sparsity_ctrl, type_code, storage ;
     double hyper_sw, bitmap_sw ;
-    bool is_csc, p_is_32, j_is_32, i_is_32 ;
+    bool is_csc, p_is_32, j_is_32, i_is_32, iso ;
     int8_t p_control, j_control, i_control ;
 
     GB_OK (GB_blob_header_get (type_name, &type_code,
         &sparsity_status, &sparsity_ctrl, &hyper_sw, &bitmap_sw, &storage,
         &user_name, &eltype_string, &is_csc, &p_is_32, &j_is_32, &i_is_32,
-        &p_control, &j_control, &i_control, blob, blob_size)) ;
+        &p_control, &j_control, &i_control, &iso, blob, blob_size)) ;
 
     //--------------------------------------------------------------------------
     // get the field
@@ -306,6 +307,11 @@ static GrB_Info GB_Serialized_get
         case GxB_SPARSITY_STATUS : 
 
             (*ivalue) = sparsity_status ;
+            break ;
+
+        case GxB_ISO : 
+
+            (*ivalue) = iso ;
             break ;
 
         case GxB_FORMAT : 

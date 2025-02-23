@@ -19,13 +19,15 @@ GraphBLAS function   & purpose                                      & Section \\
 \verb'GrB_Scalar_dup'            & copy a scalar                        & \ref{scalar_dup} \\
 \verb'GrB_Scalar_clear'          & clear a scalar of its entry          & \ref{scalar_clear} \\
 \verb'GrB_Scalar_nvals'          & return number of entries in a scalar & \ref{scalar_nvals}  \\
-\verb'GrB_get'  & get properties of a scalar       & \ref{get_set_scalar} \\
-\verb'GrB_set'  & set properties of a scalar       & \ref{get_set_scalar} \\
 \verb'GrB_Scalar_setElement'     & set the single entry of a scalar     & \ref{scalar_setElement} \\
 \verb'GrB_Scalar_extractElement' & get the single entry from a scalar   & \ref{scalar_extractElement} \\
 \verb'GxB_Scalar_memoryUsage'    & memory used by a scalar              & \ref{scalar_memusage} \\
 \verb'GxB_Scalar_type'           & type of a scalar                     & \ref{scalar_type} \\
 \verb'GrB_Scalar_free'           & free a scalar                        & \ref{scalar_free} \\
+\hline
+\hline
+\verb'GrB_get'  & get properties of a scalar       & \ref{get_set_scalar} \\
+\verb'GrB_set'  & set properties of a scalar       & \ref{get_set_scalar} \\
 \hline
 \end{tabular}
 }
@@ -70,10 +72,9 @@ GrB_Info GrB_wait               // wait for a scalar
 In non-blocking mode, the computations for a \verb'GrB_Scalar' may be delayed.
 In this case, the scalar is not yet safe to use by multiple independent user
 threads.  A user application may force completion of a scalar \verb's' via
-\verb'GrB_Scalar_wait(&s)' (in v5.2.0), or
-\verb'GrB_Scalar_wait(s,mode)' (in v6.0.0).
+\verb'GrB_Scalar_wait(s,mode)'.
 With a \verb'mode' of \verb'GrB_MATERIALIZE',
-all pending computations are finished, and different user threads may
+all pending computations are finished, and afterwards different user threads may
 simultaneously call GraphBLAS operations that use the scalar \verb's' as an
 input parameter.
 See Section~\ref{omp_parallelism}
@@ -225,7 +226,7 @@ GrB_Info GxB_Scalar_memoryUsage  // return # of bytes used for a scalar
 
 Returns the memory space required for a scalar, in bytes.
 By default, any read-only components are not included in the total memory.
-This can be changed with via \verb'GrB_get'; see Section~\ref{get_set_global}.
+This can be changed with via \verb'GrB_set'; see Section~\ref{get_set_global}.
 
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_Scalar\_type:} type of a scalar}
@@ -245,6 +246,7 @@ GrB_Info GxB_Scalar_type    // get the type of a GrB_Scalar
 Returns the type of a scalar.  See \verb'GxB_Matrix_type' for details
 (Section~\ref{matrix_type}).
 
+\newpage
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GrB\_Scalar\_free:} free a scalar}
 %-------------------------------------------------------------------------------
