@@ -2,7 +2,7 @@
 // GB_cpu_features_impl.c: Google's cpu_features package for GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,6 +30,8 @@
 
 #include "include/GB_compiler.h"
 #include "cpu/GB_cpu_features.h"
+#include "include/GB_pedantic_disable.h"
+#include "include/GB_unused.h"
 
 #if !defined ( GBNCPUFEAT )
 

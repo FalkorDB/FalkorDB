@@ -2,7 +2,7 @@
 // GB_AxB_saxpy4_panel.c: H += A*G or H = A*G for one panel
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,7 +22,7 @@
             for (int64_t kA = 0 ; kA < anvec ; kA++)
             {
                 // get A(:,k)
-                const int64_t k = GBH_A (Ah, kA) ;
+                const int64_t k = GBh_A (Ah, kA) ;
                 // get B(k,j1:j2-1)
                 #if GB_B_IS_BITMAP
                 const int8_t gb0 = Gb [k          ] ;
@@ -40,10 +40,10 @@
                 GB_GETB (gk2, Gx, k + 2*bvlen, B_iso) ;
                 GB_GETB (gk3, Gx, k + 3*bvlen, B_iso) ;
                 // H += A(:,k)*B(k,j1:j2-1)
-                const int64_t pA_end = Ap [kA+1] ;
-                for (int64_t pA = Ap [kA] ; pA < pA_end ; pA++)
+                const int64_t pA_end = GB_IGET (Ap, kA+1) ;
+                for (int64_t pA = GB_IGET (Ap, kA) ; pA < pA_end ; pA++)
                 { 
-                    const int64_t i = Ai [pA] ;
+                    const int64_t i = GB_IGET (Ai, pA) ;
                     const int64_t pH = i * 4 ;
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
@@ -60,7 +60,7 @@
             for (int64_t kA = 0 ; kA < anvec ; kA++)
             {
                 // get A(:,k)
-                const int64_t k = GBH_A (Ah, kA) ;
+                const int64_t k = GBh_A (Ah, kA) ;
                 // get B(k,j1:j2-1)
                 #if GB_B_IS_BITMAP
                 const int8_t gb0 = Gb [k          ] ;
@@ -75,10 +75,10 @@
                 GB_GETB (gk1, Gx, k +   bvlen, B_iso) ;
                 GB_GETB (gk2, Gx, k + 2*bvlen, B_iso) ;
                 // H += A(:,k)*B(k,j1:j2-1)
-                const int64_t pA_end = Ap [kA+1] ;
-                for (int64_t pA = Ap [kA] ; pA < pA_end ; pA++)
+                const int64_t pA_end = GB_IGET (Ap, kA+1) ;
+                for (int64_t pA = GB_IGET (Ap, kA) ; pA < pA_end ; pA++)
                 { 
-                    const int64_t i = Ai [pA] ;
+                    const int64_t i = GB_IGET (Ai, pA) ;
                     const int64_t pH = i * 3 ;
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
@@ -94,7 +94,7 @@
             for (int64_t kA = 0 ; kA < anvec ; kA++)
             {
                 // get A(:,k)
-                const int64_t k = GBH_A (Ah, kA) ;
+                const int64_t k = GBh_A (Ah, kA) ;
                 // get B(k,j1:j2-1)
                 #if GB_B_IS_BITMAP
                 const int8_t gb0 = Gb [k          ] ;
@@ -106,10 +106,10 @@
                 GB_DECLAREB (gk1) ;
                 GB_GETB (gk0, Gx, k          , B_iso) ;
                 GB_GETB (gk1, Gx, k +   bvlen, B_iso) ;
-                const int64_t pA_end = Ap [kA+1] ;
-                for (int64_t pA = Ap [kA] ; pA < pA_end ; pA++)
+                const int64_t pA_end = GB_IGET (Ap, kA+1) ;
+                for (int64_t pA = GB_IGET (Ap, kA) ; pA < pA_end ; pA++)
                 { 
-                    const int64_t i = Ai [pA] ;
+                    const int64_t i = GB_IGET (Ai, pA) ;
                     const int64_t pH = i * 2 ;
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
@@ -124,7 +124,7 @@
             for (int64_t kA = 0 ; kA < anvec ; kA++)
             {
                 // get A(:,k)
-                const int64_t k = GBH_A (Ah, kA) ;
+                const int64_t k = GBh_A (Ah, kA) ;
                 // get B(k,j1)
                 #if GB_B_IS_BITMAP
                 const int8_t gb0 = Gb [k] ;
@@ -133,14 +133,15 @@
                 // H += A(:,k)*B(k,j1)
                 GB_DECLAREB (gk0) ;
                 GB_GETB (gk0, Gx, k, B_iso) ;
-                const int64_t pA_end = Ap [kA+1] ;
-                for (int64_t pA = Ap [kA] ; pA < pA_end ; pA++)
+                const int64_t pA_end = GB_IGET (Ap, kA+1) ;
+                for (int64_t pA = GB_IGET (Ap, kA) ; pA < pA_end ; pA++)
                 { 
                     // aik = A (i,j)
                     GB_DECLAREA (aik) ;
                     GB_GETA (aik, Ax, pA, A_iso) ;
                     // H (i) += aik * gk0
-                    GB_HX_COMPUTE (Ai [pA], Ai [pA], gk0, 1, 0) ;
+                    const int64_t i = GB_IGET (Ai, pA) ;
+                    GB_HX_COMPUTE (i, i, gk0, 1, 0) ;
                 }
             }
             break ;

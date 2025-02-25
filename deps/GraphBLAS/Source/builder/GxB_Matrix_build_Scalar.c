@@ -2,7 +2,7 @@
 // GxB_Matrix_build_Scalar: build a sparse GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,10 +19,10 @@
 GrB_Info GxB_Matrix_build_Scalar
 (
     GrB_Matrix C,                   // matrix to build
-    const GrB_Index *I,             // array of row indices of tuples
-    const GrB_Index *J,             // array of column indices of tuples
+    const uint64_t *I,              // array of row indices of tuples
+    const uint64_t *J,              // array of column indices of tuples
     GrB_Scalar scalar,              // value for all tuples
-    GrB_Index nvals                 // number of tuples
+    uint64_t nvals                  // number of tuples
 )
 { 
 
@@ -30,9 +30,12 @@ GrB_Info GxB_Matrix_build_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (C, "GxB_Matrix_build_Scalar (C, I, J, scalar, nvals)") ;
+    GB_RETURN_IF_NULL (C) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
+    GB_WHERE2 (C, scalar, "GxB_Matrix_build_Scalar (C, I, J, scalar, nvals)") ;
     GB_BURBLE_START ("GxB_Matrix_build_Scalar") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (scalar) ;
+
     GB_MATRIX_WAIT (scalar) ;
     if (GB_nnz ((GrB_Matrix) scalar) != 1)
     { 
@@ -43,8 +46,9 @@ GrB_Info GxB_Matrix_build_Scalar
     // build the matrix, ignoring duplicates
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GB_build (C, I, J, scalar->x, nvals, GxB_IGNORE_DUP,
-        scalar->type, true, true, Werk) ;
+    info = GB_build (C, I, J, scalar->x, nvals, GxB_IGNORE_DUP, scalar->type,
+        /* is_matrix: */ true, /* X_iso: */ true,
+        /* I,J is 32: */ false, false, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

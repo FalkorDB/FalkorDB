@@ -1,7 +1,7 @@
 function C = GB_spec_kron_idx (A, B, atrans, btrans)
 % C = kron(A,B), using the mykronidx operator
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargin < 3)

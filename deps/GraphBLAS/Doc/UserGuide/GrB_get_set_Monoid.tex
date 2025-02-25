@@ -1,0 +1,94 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GrB\_Monoid} Options}
+\label{get_set_monoid}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_Monoid monoid, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_Monoid monoid, char *     value, int f) ;
+GrB_Info GrB_get (GrB_Monoid monoid, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_Monoid monoid, size_t *   value, int f) ;
+GrB_Info GrB_get (GrB_Monoid monoid, void *     value, int f) ;
+
+GrB_Info GrB_set (GrB_Monoid monoid, char *     value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.5in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_INP0_TYPE_CODE'          & R    & \verb'int32_t'& 1st input type code \newline
+                                                             (see \verb'GrB_Type_code') \\
+\verb'GrB_INP1_TYPE_CODE'          & R    & \verb'int32_t'& 2nd input type code \\
+\verb'GrB_OUTP_TYPE_CODE'          & R    & \verb'int32_t'& output type code \\
+\verb'GrB_INP0_TYPE_STRING'        & R    & \verb'char *' & name of the 1st input type \\
+\verb'GrB_INP1_TYPE_STRING'        & R    & \verb'char *' & name of the 2nd input type \\
+\verb'GrB_OUTP_TYPE_STRING'        & R    & \verb'char *' & name of the output type \\
+\hline
+\verb'GrB_NAME'                     & R/W1 & \verb'char *' &    % GrB_ALREADY_SET (monoid)
+    name of the monoid.  For built-in monoids, this returns the GraphBLAS
+    name (\verb'"GrB_LOR_MONOID_BOOL"' for \verb'GrB_LOR_MONOID_BOOL', for example).
+    For user-defined monoids, the name can be any string of any length.  It is
+    not used by the JIT.  It can be set at most once. \\
+\hline
+\verb'GxB_MONOID_IDENTITY'          & R  & \verb'GrB_Scalar' &
+    identity value of the monoid.  The type of the \verb'GrB_Scalar'
+    must match the monoid type exactly. \\
+\verb'GxB_MONOID_TERMINAL'          & R  & \verb'GrB_Scalar' &
+    terminal value of a terminal monoid.  The type of the \verb'GrB_Scalar'
+    must match the monoid type exactly.  If the monoid is not terminal,
+    the \verb'GrB_Scalar' is returned with no entry. \\
+\hline
+\verb'GxB_MONOID_OPERATOR'          & R  & \verb'void *' &
+    binary operator of the monoid, as a \verb'GrB_BinaryOp' \\
+\hline
+\end{tabular}
+}
+
+Built-in monoids cannot be modified by \verb'GrB_set'.
+
+For \verb'GxB_MONOID_OPERATOR',
+the \verb'op' is returned as an alias, not as a new object.  For example,
+if a monoid is created with a user-defined binary operator, the following usage
+returns a shallow copy of the operator:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_BinaryOp binop ;
+    GrB_BinaryOp_new (&binop, func, GrB_BOOL, GrB_BOOL, GrB_BOOL) ;
+    GrB_Monoid monoid ;
+    GrB_Monoid_new (&monoid, binop, (bool) false) ; \end{verbatim} }
+
+With the above objects defined, the following two code snippets do the same thing:
+
+    {\footnotesize
+    \begin{verbatim}
+    // getting an alias to the binary operator directly:
+    GrB_BinaryOp op ;
+    op = binop ; \end{verbatim} }
+
+    {\footnotesize
+    \begin{verbatim}
+    // getting an alias to the binary operator using GrB_get:
+    GrB_BinaryOp op ;
+    GrB_get (monoid, (void *) &op, GxB_MONOID_OPERATOR) ;
+    assert (op == binop) ; \end{verbatim} }
+
+As a result, it is not valid to free both the \verb'op' and the \verb'binop',
+since they are the same object.  This usage returns the built-in \verb'GrB_LOR'
+operator of the corresponding built-in monoid:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_BinaryOp op ;
+    GrB_get (GrB_LOR_MONOID, (void *) &op, GxB_MONOID_OPERATOR) ;
+    assert (op == GrB_LOR) ; \end{verbatim} }
+

@@ -2,13 +2,13 @@
 // GB_include.h: internal definitions for GraphBLAS, including JIT kernels
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-#ifndef GB_TEMPLATE_H
-#define GB_TEMPLATE_H
+#ifndef GB_INCLUDE_H
+#define GB_INCLUDE_H
 
 //------------------------------------------------------------------------------
 // definitions that modify GraphBLAS.h
@@ -18,6 +18,14 @@
 #include "include/GB_compiler.h"
 #include "include/GB_warnings.h"
 #include "include/GB_coverage.h"
+
+#if defined ( GB_JIT_KERNEL ) || defined ( GBCOMPACT )
+// Because of the JIT code generation, the kernels often have unused variables,
+// parameters, and functions.  These warnings are disabled here.  They may also
+// generate warnings with -Wpedantic, so those are disabled as well.
+#include "include/GB_unused.h"
+#include "include/GB_pedantic_disable.h"
+#endif
 
 //------------------------------------------------------------------------------
 // user-visible GraphBLAS.h
@@ -50,6 +58,7 @@
 // internal #include files
 //------------------------------------------------------------------------------
 
+#include "include/GB_abort.h"
 #include "include/GB_prefix.h"
 #include "include/GB_defaults.h"
 #include "include/GB_rand.h"
@@ -63,30 +72,30 @@
     // Placed in the SuiteSparse/GrB(version)/src/include folder by GrB_init,
     // via the JITPackage.  These files are used by the CPU JIT kernels (via
     // this file) and the CUDA JIT kernels (CUDA/include/GB_cuda_kernel.cuh):
+    #include "include/GB_opaque.h"
+    #include "include/GB_math_macros.h"
     #include "include/GB_bytes.h"
     #include "include/GB_pun.h"
     #include "include/GB_partition.h"
-    #include "include/GB_binary_search.h"
     #include "include/GB_zombie.h"
+    #include "include/GB_binary_search.h"
     #include "include/GB_int64_mult.h"
     #include "include/GB_index.h"
     #include "include/GB_hash.h"
     #include "include/GB_complex.h"
     #include "include/GB_iceil.h"
-    #include "include/GB_math_macros.h"
     #include "include/GB_memory_macros.h"
     #include "include/GB_printf_kernels.h"
-    #include "include/GB_opaque.h"
-    #include "include/GB_static_header.h"
+    #include "include/GB_clear_matrix_header.h"
     #include "include/GB_werk.h"
     #include "include/GB_task_struct.h"
     #include "include/GB_callback_proto.h"
     #include "include/GB_saxpy3task_struct.h"
     #include "include/GB_callback.h"
     #include "include/GB_hyper_hash_lookup.h"
+    #include "include/GB_ok.h"
 
     // not used by CUDA
-    #include "include/GB_ok.h"
     #include "include/GB_ijlist.h"
     #include "include/GB_atomics.h"
     #include "include/GB_assert_kernels.h"
@@ -104,33 +113,32 @@
     // include files for the GraphBLAS libary
     //--------------------------------------------------------------------------
 
-
     // Original location in the GraphBLAS/Source folder, for compiling
     // the GraphBLAS library, including PreJIT kernels:
+    #include "builtin/include/GB_opaque.h"
+    #include "math/include/GB_math_macros.h"
     #include "type/include/GB_bytes.h"
     #include "type/include/GB_pun.h"
     #include "slice/include/GB_partition.h"
-    #include "math/include/GB_binary_search.h"
     #include "math/include/GB_zombie.h"
+    #include "math/include/GB_binary_search.h"
     #include "math/include/GB_int64_mult.h"
-    #include "assign/include/GB_index.h"
+    #include "matrix/include/GB_index.h"
     #include "math/include/GB_hash.h"
     #include "math/include/GB_complex.h"
     #include "math/include/GB_iceil.h"
-    #include "math/include/GB_math_macros.h"
     #include "memory/include/GB_memory_macros.h"
     #include "print/include/GB_printf_kernels.h"
-    #include "builtin/include/GB_opaque.h"
-    #include "matrix/include/GB_static_header.h"
+    #include "matrix/include/GB_clear_matrix_header.h"
     #include "werk/include/GB_werk.h"
     #include "slice/include/GB_task_struct.h"
     #include "callback/include/GB_callback_proto.h"
     #include "mxm/include/GB_saxpy3task_struct.h"
     #include "callback/include/GB_callback.h"
     #include "hyper/include/GB_hyper_hash_lookup.h"
+    #include "ok/include/GB_ok.h"
 
     // not used by CUDA
-    #include "ok/include/GB_ok.h"
     #include "ij/include/GB_ijlist.h"
     #include "omp/include/GB_atomics.h"
     #include "ok/include/GB_assert_kernels.h"

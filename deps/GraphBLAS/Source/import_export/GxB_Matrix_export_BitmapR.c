@@ -2,7 +2,7 @@
 // GxB_Matrix_export_BitmapR: export a bitmap matrix, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,16 +15,16 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
 (
     GrB_Matrix *A,      // handle of matrix to export and free
     GrB_Type *type,     // type of matrix exported
-    GrB_Index *nrows,   // number of rows of the matrix
-    GrB_Index *ncols,   // number of columns of the matrix
+    uint64_t *nrows,    // number of rows of the matrix
+    uint64_t *ncols,    // number of columns of the matrix
 
     int8_t **Ab,        // bitmap
     void **Ax,          // values
-    GrB_Index *Ab_size, // size of Ab in bytes
-    GrB_Index *Ax_size, // size of Ax in bytes
+    uint64_t *Ab_size,  // size of Ab in bytes
+    uint64_t *Ax_size,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
-    GrB_Index *nvals,   // # of entries in bitmap
+    uint64_t *nvals,    // # of entries in bitmap
     const GrB_Descriptor desc
 )
 {
@@ -33,11 +33,10 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_export_BitmapR (&A, &type, &nrows, &ncols, "
-        "&Ab, &Ax, &Ab_size, &Ax_size, &iso, &nvals, desc)") ;
-    // GB_BURBLE_START ("GxB_Matrix_export_BitmapR") ;
     GB_RETURN_IF_NULL (A) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (*A) ;
+    GB_WHERE_1 (*A, "GxB_Matrix_export_BitmapR (&A, &type, &nrows, &ncols, "
+        "&Ab, &Ax, &Ab_size, &Ax_size, &iso, &nvals, desc)") ;
+    GB_RETURN_IF_NULL (*A) ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
@@ -48,7 +47,6 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
     if ((*A)->is_csc)
     { 
         // A = A', done in-place, to put A in by-row format
-        GBURBLE ("(export transpose) ") ;
         GB_OK (GB_transpose_in_place (*A, false, Werk)) ;
     }
 
@@ -82,7 +80,6 @@ GrB_Info GxB_Matrix_export_BitmapR  // export and free a bitmap matrix, by row
         ASSERT (sparsity == GxB_BITMAP) ;
         ASSERT (!is_csc) ;
     }
-    // GB_BURBLE_END ;
     return (info) ;
 }
 

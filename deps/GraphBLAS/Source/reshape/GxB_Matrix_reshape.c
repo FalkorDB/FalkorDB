@@ -2,7 +2,7 @@
 // GxB_Matrix_reshape:  reshape a matrix in place
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,8 +39,8 @@ GrB_Info GxB_Matrix_reshape     // reshape a GrB_Matrix in place
     GrB_Matrix C,               // input/output matrix, reshaped in place
     // input:
     bool by_col,                // true if reshape by column, false if by row
-    GrB_Index nrows_new,        // new number of rows of C
-    GrB_Index ncols_new,        // new number of columns of C
+    uint64_t nrows_new,         // new number of rows of C
+    uint64_t ncols_new,         // new number of columns of C
     const GrB_Descriptor desc   // to control # of threads used
 )
 { 
@@ -49,9 +49,11 @@ GrB_Info GxB_Matrix_reshape     // reshape a GrB_Matrix in place
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_reshape (C, nrows_new, ncols_new, desc)") ;
+    GB_RETURN_IF_NULL (C) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
+    GB_WHERE1 (C, "GxB_Matrix_reshape (C, nrows_new, ncols_new, desc)") ;
     GB_BURBLE_START ("GxB_Matrix_reshape") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------

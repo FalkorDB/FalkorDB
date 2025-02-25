@@ -2,7 +2,7 @@
 // GB_macrofy_masker: construct all macros for masker methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,7 +24,25 @@ void GB_macrofy_masker          // construct all macros for GrB_eWise
     // extract the masker method_code
     //--------------------------------------------------------------------------
 
+    // R, C, M, Z: 32/64 bits (3 hex digits)
+    bool Rp_is_32   = GB_RSHIFT (method_code, 31, 1) ;
+    bool Rj_is_32   = GB_RSHIFT (method_code, 30, 1) ;
+    bool Ri_is_32   = GB_RSHIFT (method_code, 29, 1) ;
+
+    bool Cp_is_32   = GB_RSHIFT (method_code, 28, 1) ;
+    bool Cj_is_32   = GB_RSHIFT (method_code, 27, 1) ;
+    bool Ci_is_32   = GB_RSHIFT (method_code, 26, 1) ;
+
+    bool Mp_is_32   = GB_RSHIFT (method_code, 25, 1) ;
+    bool Mj_is_32   = GB_RSHIFT (method_code, 24, 1) ;
+    bool Mi_is_32   = GB_RSHIFT (method_code, 23, 1) ;
+
+    bool Zp_is_32   = GB_RSHIFT (method_code, 22, 1) ;
+    bool Zj_is_32   = GB_RSHIFT (method_code, 21, 1) ;
+    bool Zi_is_32   = GB_RSHIFT (method_code, 20, 1) ;
+
     // C and Z iso properties (1 hex digit)
+    // unused: 2 bits
     int C_iso       = GB_RSHIFT (method_code, 17, 1) ;
     int Z_iso       = GB_RSHIFT (method_code, 16, 1) ;
 
@@ -32,12 +50,12 @@ void GB_macrofy_masker          // construct all macros for GrB_eWise
     int mask_ecode  = GB_RSHIFT (method_code, 12, 4) ;
 
     // type of R (1 hex digit)
-    int rcode       = GB_RSHIFT (method_code,  8, 4) ;
+//  int rcode       = GB_RSHIFT (method_code,  8, 4) ;
 
     // formats of R, M, C, and Z (2 hex digits)
     int rsparsity   = GB_RSHIFT (method_code,  6, 2) ;
-    int msparsity   = GB_RSHIFT (method_code,  4, 2) ;
-    int csparsity   = GB_RSHIFT (method_code,  2, 2) ;
+    int csparsity   = GB_RSHIFT (method_code,  4, 2) ;
+    int msparsity   = GB_RSHIFT (method_code,  2, 2) ;
     int zsparsity   = GB_RSHIFT (method_code,  0, 2) ;
 
     //--------------------------------------------------------------------------
@@ -111,6 +129,7 @@ void GB_macrofy_masker          // construct all macros for GrB_eWise
     GB_macrofy_sparsity (fp, "R", rsparsity) ;
     GB_macrofy_nvals (fp, "R", rsparsity, false) ;
     fprintf (fp, "#define GB_R_ISO 0\n") ;
+    GB_macrofy_bits (fp, "R", Rp_is_32, Rj_is_32, Ri_is_32) ;
 
     //--------------------------------------------------------------------------
     // construct the macros for C, M, and Z
@@ -119,12 +138,15 @@ void GB_macrofy_masker          // construct all macros for GrB_eWise
     GB_macrofy_sparsity (fp, "C", csparsity) ;
     GB_macrofy_nvals (fp, "C", csparsity, C_iso) ;
     fprintf (fp, "#define GB_C_ISO %d\n", C_iso) ;
+    GB_macrofy_bits (fp, "C", Cp_is_32, Cj_is_32, Ci_is_32) ;
 
-    GB_macrofy_mask (fp, mask_ecode, "M", msparsity) ;
+    GB_macrofy_mask (fp, mask_ecode, "M", msparsity,
+        Mp_is_32, Mj_is_32, Mi_is_32) ;
 
     GB_macrofy_sparsity (fp, "Z", zsparsity) ;
     GB_macrofy_nvals (fp, "Z", zsparsity, Z_iso) ;
     fprintf (fp, "#define GB_Z_ISO %d\n", Z_iso) ;
+    GB_macrofy_bits (fp, "Z", Zp_is_32, Zj_is_32, Zi_is_32) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

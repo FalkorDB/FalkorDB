@@ -2,7 +2,7 @@
 // GxB_Matrix_deserialize: create a matrix from a serialized array of bytes
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,8 +24,8 @@ GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
                         // matrix of user-defined type.  May be NULL if blob
                         // holds a built-in type; otherwise must match the
                         // type of C.
-    const void *blob,       // the blob
-    GrB_Index blob_size,    // size of the blob
+    const void *blob,   // the blob
+    uint64_t blob_size, // size of the blob
     const GrB_Descriptor desc       // to control # of threads used
 )
 { 
@@ -34,10 +34,12 @@ GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_deserialize (&C, type, blob, blob_size, desc)") ;
-    GB_BURBLE_START ("GxB_Matrix_deserialize") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (blob) ;
     GB_RETURN_IF_NULL (C) ;
+    GB_BURBLE_START ("GxB_Matrix_deserialize") ;
+
+    GrB_Info info ;
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------

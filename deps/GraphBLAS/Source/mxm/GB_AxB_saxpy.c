@@ -2,7 +2,7 @@
 // GB_AxB_saxpy: compute C=A*B, C<M>=A*B, or C<!M>=A*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,6 +12,8 @@
 #include "jitifyer/GB_stringify.h"
 
 // TODO: allow bitmap multiply to work in-place as well
+
+#define GB_FREE_ALL ;
 
 GrB_Info GB_AxB_saxpy               // C = A*B using Gustavson/Hash/Bitmap
 (
@@ -27,7 +29,7 @@ GrB_Info GB_AxB_saxpy               // C = A*B using Gustavson/Hash/Bitmap
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *mask_applied,             // if true, then mask was applied
     bool *done_in_place,            // if true, C was computed in-place 
-    const GrB_Desc_Value AxB_method,
+    const int AxB_method,
     const int do_sort,              // if nonzero, try to sort in saxpy3
     GB_Werk Werk
 )
@@ -39,7 +41,7 @@ GrB_Info GB_AxB_saxpy               // C = A*B using Gustavson/Hash/Bitmap
 
     GrB_Info info ;
     (*mask_applied) = false ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for saxpy A*B", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -180,8 +182,9 @@ GrB_Info GB_AxB_saxpy               // C = A*B using Gustavson/Hash/Bitmap
         ASSERT (C_sparsity == GxB_FULL) ;
         // set C->iso = true    OK
         info = GB_new_bix (&C, // existing header
-            ztype, A->vlen, B->vdim, GB_Ap_null, true, GxB_FULL, false,
-            GB_HYPER_SWITCH_DEFAULT, -1, 1, true, true) ;
+            ztype, A->vlen, B->vdim, GB_ph_null, true, GxB_FULL, false,
+            GB_HYPER_SWITCH_DEFAULT, -1, 1, true, true,
+            /* OK: */ false, false, false) ;
         if (info == GrB_SUCCESS)
         { 
             C->magic = GB_MAGIC ;
@@ -239,13 +242,14 @@ GrB_Info GB_AxB_saxpy               // C = A*B using Gustavson/Hash/Bitmap
         { 
             // C<#M> = A*B via dot products, where A is bitmap or full and B is
             // sparse or hypersparse, using the dot2 method with A not
-            // explicitly transposed.
+            // explicitly transposed.  A and B must not be jumbled.
+            GB_MATRIX_WAIT (A) ;
+            GB_MATRIX_WAIT (B) ;
             info = GB_AxB_dot2 (C, C_iso, cscalar, M, Mask_comp, Mask_struct,
                 true, A, B, semiring, flipxy, Werk) ;
         }
         else
         { 
-
             // C<#M> = A*B via bitmap saxpy method
             info = GB_AxB_saxbit (C, C_iso, cscalar, M,
                 Mask_comp, Mask_struct, A, B, semiring, flipxy, Werk) ;

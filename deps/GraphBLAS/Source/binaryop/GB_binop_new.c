@@ -2,7 +2,7 @@
 // GB_binop_new: create a new operator (user-defined or internal)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -53,6 +53,10 @@ GrB_Info GB_binop_new
     op->unop_function = NULL ;
     op->idxunop_function = NULL ;
     op->binop_function = function ;       // NULL for GB_reduce_to_vector
+    op->idxbinop_function = NULL ;
+    op->theta_type = NULL ;
+    op->theta = NULL ;
+    op->theta_size = 0 ;
     op->opcode = opcode ;
 
     //--------------------------------------------------------------------------

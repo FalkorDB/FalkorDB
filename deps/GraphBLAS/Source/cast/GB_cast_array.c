@@ -2,7 +2,7 @@
 // GB_cast_array: typecast an array
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -110,9 +110,10 @@ GrB_Info GB_cast_array              // typecast an array
         int64_t csize = GB_code_size (ccode, 0) ;
         int64_t asize = GB_code_size (acode, 0) ;
         GB_cast_function cast_A_to_C = GB_cast_factory (ccode, acode) ;
+        #define GB_A_IS_BITMAP (Ab != NULL)
         #define GB_APPLY_OP(pC,pA) \
             cast_A_to_C (Cx +((pC)*csize), Ax +((pA)*asize), asize)
-        #include "apply/template/GB_apply_unop_ip.c"
+        #include "apply/template/GB_apply_unop_ip_template.c"
         info = GrB_SUCCESS ;
     }
 

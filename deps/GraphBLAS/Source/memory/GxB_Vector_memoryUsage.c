@@ -2,7 +2,7 @@
 // GxB_Vector_memoryUsage: # of bytes used for a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,9 +20,10 @@ GrB_Info GxB_Vector_memoryUsage  // return # of bytes used for a vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Vector_memoryUsage (&size, v)") ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (size) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
+    GB_RETURN_IF_NULL_OR_INVALID (v) ;
     ASSERT (GB_VECTOR_OK (v)) ;
 
     //--------------------------------------------------------------------------
@@ -32,6 +33,10 @@ GrB_Info GxB_Vector_memoryUsage  // return # of bytes used for a vector
     int64_t nallocs ;
     size_t mem_shallow ;
     GB_memoryUsage (&nallocs, size, &mem_shallow, (GrB_Matrix) v, false) ;
+    if (GB_Global_stats_mem_shallow_get ( ))
+    { 
+        (*size) += mem_shallow ;
+    }
     return (GrB_SUCCESS) ;
 }
 

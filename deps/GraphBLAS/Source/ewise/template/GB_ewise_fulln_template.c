@@ -2,14 +2,12 @@
 // GB_ewise_fulln_template: C = A+B where all 3 matrices are full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 //  This template is not used for any generic kernels.
-
-#include "include/GB_unused.h"
 
 {
 

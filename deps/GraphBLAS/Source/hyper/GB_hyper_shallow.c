@@ -2,15 +2,14 @@
 // GB_hyper_shallow: create a sparse shallow version of a hypersparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // On input C must exist but the content of the C header is uninitialized
-// except for C->static_header and C->header_size.  No memory is allocated to
-// construct C as the hyper_shallow version of A.  C is purely shallow.  If A
-// is iso then so is C.
+// except for C->header_size.  No memory is allocated to construct C as the
+// hyper_shallow version of A.  C is purely shallow.  If A is iso then so is C.
 
 #include "GB.h"
 #include "convert/GB_convert.h"
@@ -27,7 +26,7 @@ GrB_Matrix GB_hyper_shallow         // return C
     //--------------------------------------------------------------------------
 
     ASSERT_MATRIX_OK (A, "hyper_shallow input", GB0) ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
     ASSERT (GB_IS_HYPERSPARSE (A)) ;
 
     //--------------------------------------------------------------------------
@@ -35,14 +34,12 @@ GrB_Matrix GB_hyper_shallow         // return C
     //--------------------------------------------------------------------------
 
     // save the C header status
-    bool C_static_header = C->static_header ;
     bool C_header_size = C->header_size ;
 
     // copy the header
     memcpy (C, A, sizeof (struct GB_Matrix_opaque)) ;
 
     // restore the C header status
-    C->static_header = C_static_header  ;
     C->header_size = C_header_size ;
 
     // remove the user_name
@@ -64,7 +61,8 @@ GrB_Matrix GB_hyper_shallow         // return C
     // C reduces in dimension to the # of vectors in A
     C->vdim = C->nvec ;
     C->plen = C->nvec ;
-    C->nvec_nonempty = C->nvec ;
+//  C->nvec_nonempty = C->nvec ;
+    GB_nvec_nonempty_set (C, C->nvec) ;
 
     //--------------------------------------------------------------------------
     // return result

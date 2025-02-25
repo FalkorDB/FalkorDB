@@ -2,7 +2,7 @@
 // GB_select_bitmap_full_template: C=select(A,thunk) if A is full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,12 +10,6 @@
 // C is bitmap.  A is full.
 
 {
-    const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
-    const int64_t avlen = A->vlen ;
-    const int64_t avdim = A->vdim ;
-    const size_t asize = A->type->size ;
-    const int64_t anz = avlen * avdim ;
-    int64_t p, cnvals = 0 ;
     #pragma omp parallel for num_threads(nthreads) schedule(static) \
         reduction(+:cnvals)
     for (p = 0 ; p < anz ; p++)
@@ -50,6 +44,5 @@
         Cb [p] = cb ;
         cnvals += cb ;
     }
-    (*cnvals_handle) = cnvals ;
 }
 

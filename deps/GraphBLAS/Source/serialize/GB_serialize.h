@@ -2,7 +2,7 @@
 // GB_serialize.h: definitions for GB_serialize_* and deserialize methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -52,7 +52,7 @@ GrB_Info GB_serialize_array
     // output:
     GB_blocks **Blocks_handle,          // Blocks: array of size nblocks+1
     size_t *Blocks_size_handle,         // size of Blocks
-    int64_t **Sblocks_handle,           // Sblocks: array of size nblocks+1
+    uint64_t **Sblocks_handle,          // Sblocks: array of size nblocks+1
     size_t *Sblocks_size_handle,        // size of Sblocks
     int32_t *nblocks_handle,            // # of blocks
     int32_t *method_used,               // method used
@@ -82,7 +82,7 @@ void GB_serialize_to_blob
     size_t *s_handle,       // location to append into the blob
     // input:
     GB_blocks *Blocks,      // Blocks: array of size nblocks+1
-    int64_t *Sblocks,       // array of size nblocks
+    uint64_t *Sblocks,      // array of size nblocks
     int32_t nblocks,        // # of blocks
     int nthreads_max        // # of threads to use
 ) ;
@@ -96,7 +96,7 @@ GrB_Info GB_deserialize_from_blob
     int64_t X_len,              // size of X in bytes
     const GB_void *blob,        // serialized blob of size blob_size
     size_t blob_size,
-    int64_t *Sblocks,           // array of size nblocks
+    uint64_t *Sblocks,          // array of size nblocks
     int32_t nblocks,            // # of compressed blocks for this array
     int32_t method_used,        // compression method used for each block
     // input/output:
@@ -117,12 +117,13 @@ GrB_Info GB_deserialize_from_blob
     memcpy (blob + s, &(x), sizeof (type)) ;                                \
     s += sizeof (type) ;
 
-// write an int64_t array to the blob
+// write a uint64_t array Sblocks[1:n] to the blob, of size n+1, but do not
+// write the first entry (so only n words are written)
 #define GB_BLOB_WRITES(S,n) \
     if (n > 0)                                                              \
     {                                                                       \
-        memcpy (((GB_void *) blob) + s, S + 1, n * sizeof (int64_t)) ;      \
-        s += n * sizeof (int64_t) ;                                         \
+        memcpy (((GB_void *) blob) + s, S + 1, n * sizeof (uint64_t)) ;     \
+        s += n * sizeof (uint64_t) ;                                        \
     }
 
 // read a scalar from the blob
@@ -131,10 +132,32 @@ GrB_Info GB_deserialize_from_blob
     memcpy (&x, ((GB_void *) blob) + s, sizeof (type)) ;                    \
     s += sizeof (type) ;
 
-// get an int64_t pointer to an array in the blob
+// get a uint64_t pointer to an array in the blob, of size n
 #define GB_BLOB_READS(S,n)                                                  \
-    int64_t *S = (int64_t *) (blob + s) ;                                   \
-    s += n * sizeof (int64_t) ;
+    uint64_t *S = (uint64_t *) (blob + s) ;                                 \
+    s += n * sizeof (uint64_t) ;
+
+static inline uint32_t GB_pji_control_encoding (int8_t control)
+{
+    switch (control)
+    {
+        default:
+        case 0  : return (0) ;
+        case 32 : return (1) ;
+        case 64 : return (2) ;
+    }
+}
+
+static inline int8_t GB_pji_control_decoding (uint32_t encoding)
+{
+    switch (encoding)
+    {
+        default:
+        case 0  : return (0) ;
+        case 1  : return (32) ;
+        case 2  : return (64) ;
+    }
+}
 
 #endif
 

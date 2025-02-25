@@ -2,7 +2,7 @@
 // GB_AxB_saxpy5_jit: C+=A*B saxpy5 method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,6 +38,7 @@ GrB_Info GB_AxB_saxpy5_jit          // C+=A*B, saxpy5 method, via the JIT
     uint64_t hash = GB_encodify_mxm (&encoding, &suffix,
         GB_JIT_KERNEL_AXB_SAXPY5,
         false, false, GxB_FULL, C->type,
+        /* OK, C is full: */ false, false, false,
         NULL, true, false, semiring, flipxy, A, B) ;
 
     //--------------------------------------------------------------------------
@@ -57,8 +58,10 @@ GrB_Info GB_AxB_saxpy5_jit          // C+=A*B, saxpy5 method, via the JIT
 
     bool cpu_has_avx2 = GB_Global_cpu_features_avx2 ( ) ;
     bool cpu_has_avx512f = GB_Global_cpu_features_avx512f ( ) ;
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, A, B, ntasks, nthreads, B_slice,
-        cpu_has_avx2, cpu_has_avx512f, semiring->multiply->theta)) ;
+        cpu_has_avx2, cpu_has_avx512f, semiring->multiply->theta,
+        &GB_callback)) ;
 }
 

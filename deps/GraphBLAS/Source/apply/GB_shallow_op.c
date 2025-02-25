@@ -2,7 +2,7 @@
 // GB_shallow_op:  create a shallow copy and apply a unary operator to a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,9 +18,8 @@
 // The values are typically not a shallow copy, unless no typecasting is needed
 // and the operator is an identity operator.
 
-// The pattern is always a shallow copy.  No errors are checked except for
-// out-of-memory conditions.  This function is not user-callable.  Shallow
-// matrices are never passed back to the user.
+// The pattern is always a shallow copy; C and A have the same integer sizes.
+// Shallow matrices are never passed back to the user.
 
 // Compare this function with GB_shallow_copy.c.
 
@@ -45,7 +44,7 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
     ASSERT_MATRIX_OK (A, "A for shallow_op", GB0) ;
     ASSERT_OP_OK (op, "unop/binop for shallow_op", GB0) ;
     ASSERT (!GB_ZOMBIES (A)) ;
@@ -93,8 +92,9 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     // C has the exact same sparsity structure as A.
     GrB_Info info ;
     info = GB_new (&C, // any sparsity, existing header
-        ztype, A->vlen, A->vdim, GB_Ap_null, C_is_csc,
-        GB_sparsity (A), A->hyper_switch, 0) ;
+        ztype, A->vlen, A->vdim, GB_ph_null, C_is_csc,
+        GB_sparsity (A), A->hyper_switch, 0,
+        A->p_is_32, A->j_is_32, A->i_is_32) ;
     ASSERT (info == GrB_SUCCESS) ;
 
     //--------------------------------------------------------------------------
@@ -107,9 +107,13 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     C->h = A->h ;                       // C->h is of size A->plen
     C->p_size = A->p_size ;
     C->h_size = A->h_size ;
+    C->p_is_32 = A->p_is_32 ;
+    C->j_is_32 = A->j_is_32 ;
+    C->i_is_32 = A->i_is_32 ;
     C->plen = A->plen ;                 // C and A have the same hyperlist sizes
     C->nvec = A->nvec ;
-    C->nvec_nonempty = A->nvec_nonempty ;
+//  C->nvec_nonempty = A->nvec_nonempty ;
+    GB_nvec_nonempty_set (C, GB_nvec_nonempty_get (A)) ;
     C->jumbled = A->jumbled ;           // C is jumbled if A is jumbled
     C->nvals = A->nvals ;
     C->magic = GB_MAGIC ;
@@ -182,7 +186,7 @@ GrB_Info GB_shallow_op      // create shallow matrix and apply operator
     //--------------------------------------------------------------------------
 
     // allocate new space for the numerical values of C; use calloc if bitmap
-    C->x = GB_XALLOC (GB_IS_BITMAP (C), C_iso, anz,     // x:OK
+    C->x = GB_XALLOC_MEMORY (GB_IS_BITMAP (C), C_iso, anz,
         C->type->size, &(C->x_size)) ;
     C->x_shallow = false ;          // free C->x when freeing C
     if (C->x == NULL)

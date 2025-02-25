@@ -2,7 +2,7 @@
 // GB_subassign_02_template: C(I,J) += A ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -106,7 +106,7 @@
                 for (int64_t iA = iA_start ; iA < iA_end ; iA++)
                 {
                     int64_t pA = pA_start + iA ;
-                    bool Sfound = (pS < pS_end) && (GBI_S (Si,pS,Svlen) == iA) ;
+                    bool Sfound = (pS < pS_end) && (GBi_S (Si,pS,Svlen) == iA) ;
                     bool Afound = Ab [pA] ;
                     if (Sfound && !Afound)
                     { 
@@ -167,22 +167,58 @@
                 // get A(:,j) and S(:,j)
                 //--------------------------------------------------------------
 
-                int64_t j = GBH (Zh, k) ;
-                GB_GET_MAPPED (pA, pA_end, pA, pA_end, Ap, j, k, Z_to_X, Avlen);
-                GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t j = GBh (Zh, k) ;
+
+//              GB_GET_MAPPED (pA, pA_end, pA, pA_end, Ap, j, k, Z_to_X, Avlen);
+                int64_t pA = -1, pA_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of A(:,k)
+                    pA     = TaskList [taskid].pA ;
+                    pA_end = TaskList [taskid].pA_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kA = (Z_to_X == NULL) ? j : Z_to_X [k] ;
+                    if (kA >= 0)
+                    { 
+                        pA     = GBp_A (Ap, kA, Avlen) ;
+                        pA_end = GBp_A (Ap, kA+1, Avlen) ;
+                    }
+                }
+
+//              GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t pS = -1, pS_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of X(:,k)
+                    pS     = TaskList [taskid].pB ;
+                    pS_end = TaskList [taskid].pB_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kS = (Z_to_S == NULL) ? j : Z_to_S [k] ;
+                    if (kS >= 0)
+                    { 
+                        pS     = GBp_S (Sp, kS, Svlen) ;
+                        pS_end = GBp_S (Sp, kS+1, Svlen) ;
+                    }
+                }
 
                 //--------------------------------------------------------------
                 // do a 2-way merge of S(:,j) and A(:,j)
                 //--------------------------------------------------------------
 
                 // jC = J [j] ; or J is a colon expression
-                // int64_t jC = GB_ijlist (J, j, GB_J_KIND, Jcolon) ;
+                // int64_t jC = GB_IJLIST (J, j, GB_J_KIND, Jcolon) ;
 
                 // while both list S (:,j) and A (:,j) have entries
                 while (pS < pS_end && pA < pA_end)
                 {
-                    int64_t iS = GBI_S (Si, pS, Svlen) ;
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
+                    int64_t iS = GBi_S (Si, pS, Svlen) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
 
                     if (iS < iA)
                     { 
@@ -266,19 +302,19 @@
                 //--------------------------------------------------------------
 
                 // jC = J [j] ; or J is a colon expression
-                int64_t jC = GB_ijlist (J, j, GB_J_KIND, Jcolon) ;
+                int64_t jC = GB_IJLIST (J, j, GB_J_KIND, Jcolon) ;
 
                 for (int64_t iA = iA_start ; iA < iA_end ; iA++)
                 {
                     int64_t pA = pA_start + iA ;
-                    bool Sfound = (pS < pS_end) && (GBI_S (Si,pS,Svlen) == iA) ;
+                    bool Sfound = (pS < pS_end) && (GBi_S (Si,pS,Svlen) == iA) ;
                     bool Afound = Ab [pA] ;
                     if (!Sfound && Afound)
                     { 
                         // ----[. A 1]------------------------------------------
                         // S (i,j) is not present, A (i,j) is present
                         // [. A 1]: action: ( insert )
-                        int64_t iC = GB_ijlist (I, iA, GB_I_KIND, Icolon) ;
+                        int64_t iC = GB_IJLIST (I, iA, GB_I_KIND, Icolon) ;
                         GB_PENDING_INSERT_aij ;
                         pA++ ;  // go to the next entry in A(:,j)
                     }
@@ -322,22 +358,58 @@
                 // get A(:,j) and S(:,j)
                 //--------------------------------------------------------------
 
-                int64_t j = GBH (Zh, k) ;
-                GB_GET_MAPPED (pA, pA_end, pA, pA_end, Ap, j, k, Z_to_X, Avlen);
-                GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t j = GBh (Zh, k) ;
+
+//              GB_GET_MAPPED (pA, pA_end, pA, pA_end, Ap, j, k, Z_to_X, Avlen);
+                int64_t pA = -1, pA_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of A(:,k)
+                    pA     = TaskList [taskid].pA ;
+                    pA_end = TaskList [taskid].pA_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kA = (Z_to_X == NULL) ? j : Z_to_X [k] ;
+                    if (kA >= 0)
+                    { 
+                        pA     = GBp_A (Ap, kA, Avlen) ;
+                        pA_end = GBp_A (Ap, kA+1, Avlen) ;
+                    }
+                }
+
+//              GB_GET_MAPPED (pS, pS_end, pB, pB_end, Sp, j, k, Z_to_S, Svlen);
+                int64_t pS = -1, pS_end = -1 ;
+                if (fine_task)
+                { 
+                    // A fine task operates on a slice of X(:,k)
+                    pS     = TaskList [taskid].pB ;
+                    pS_end = TaskList [taskid].pB_end ;
+                }
+                else
+                { 
+                    // vectors are never sliced for a coarse task
+                    int64_t kS = (Z_to_S == NULL) ? j : Z_to_S [k] ;
+                    if (kS >= 0)
+                    { 
+                        pS     = GBp_S (Sp, kS, Svlen) ;
+                        pS_end = GBp_S (Sp, kS+1, Svlen) ;
+                    }
+                }
 
                 //--------------------------------------------------------------
                 // do a 2-way merge of S(:,j) and A(:,j)
                 //--------------------------------------------------------------
 
                 // jC = J [j] ; or J is a colon expression
-                int64_t jC = GB_ijlist (J, j, GB_J_KIND, Jcolon) ;
+                int64_t jC = GB_IJLIST (J, j, GB_J_KIND, Jcolon) ;
 
                 // while both list S (:,j) and A (:,j) have entries
                 while (pS < pS_end && pA < pA_end)
                 {
-                    int64_t iS = GBI_S (Si, pS, Svlen) ;
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
+                    int64_t iS = GBi_S (Si, pS, Svlen) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
 
                     if (iS < iA)
                     { 
@@ -348,7 +420,7 @@
                         // ----[. A 1]------------------------------------------
                         // S (i,j) is not present, A (i,j) is present
                         // [. A 1]: action: ( insert )
-                        int64_t iC = GB_ijlist (I, iA, GB_I_KIND, Icolon) ;
+                        int64_t iC = GB_IJLIST (I, iA, GB_I_KIND, Icolon) ;
                         GB_PENDING_INSERT_aij ;
                         pA++ ;  // go to the next entry in A(:,j)
                     }
@@ -367,8 +439,8 @@
                     // ----[. A 1]----------------------------------------------
                     // S (i,j) is not present, A (i,j) is present
                     // [. A 1]: action: ( insert )
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
-                    int64_t iC = GB_ijlist (I, iA, GB_I_KIND, Icolon) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
+                    int64_t iC = GB_IJLIST (I, iA, GB_I_KIND, Icolon) ;
                     GB_PENDING_INSERT_aij ;
                     pA++ ;  // go to the next entry in A(:,j)
                 }

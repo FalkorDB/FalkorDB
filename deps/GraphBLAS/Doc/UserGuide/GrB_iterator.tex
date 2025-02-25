@@ -1,0 +1,707 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Matrix and Vector iterators} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{iter}
+
+The \verb'GxB_Iterator' is an object that allows user applications to iterate
+over the entries of a matrix or vector, one entry at a time.  Iteration can
+be done in a linear manner (analogous to reading a file one entry at a time,
+from start to finish), or in a random-access pattern (analogous to
+the \verb'fseek' method for repositioning the access to file to a different
+position).
+
+Multiple iterators can be used on a single matrix or vector, even in parallel
+by multiple user threads.  While a matrix or vector is being used with an
+iterator, the matrix or vector must not be modified.  Doing so will lead to
+undefined results.
+
+Since accessing a matrix or vector via an iterator requires many calls to
+the iterator methods, they must be very fast.  Error checking is skipped,
+except for the methods that create, attach, or free an iterator.  Methods
+that advance an iterator or that access values or indices from a matrix or
+vector do not return error conditions.  Instead, they have well-defined
+preconditions that must be met (and which should be checked by the user
+application).  If those preconditions are not met, results are undefined.
+
+The iterator methods are implemented in SuiteSparse:GraphBLAS as both macros
+(via \verb'#define') and as functions of the same name that appear in the
+compiled \verb'libgraphblas.so' library.  This requires that the opaque
+contents of the iterator object be defined in \verb'GraphBLAS.h' itself.  The
+user application must not access these contents directly, but can only do so
+safely via the iterator methods provided by SuiteSparse:GraphBLAS.
+
+The iterator object can be used in one of four sets of methods,
+for four different access patterns:
+
+    \begin{enumerate}
+    \item {\em row iterator}:  iterates across the rows of a matrix, and then
+        within each row to access the entries in a given row.  Accessing all
+        the entries of a matrix using a row iterator requires an outer loop
+        (for the rows) and an inner loop (for the entries in each row).
+        A matrix can be accessed via a row iterator only if its format
+        (determined by \verb'GrB_get (A, &fmt,' \verb'GrB_STORAGE_ORIENTATION_HINT)') is by-row
+        (that is, \verb'GrB_ROWMAJOR').
+        See Section~\ref{options}.
+    \item {\em column iterator}:  iterates across the columns of a matrix, and
+        then within each column to access the entries in a given column.
+        Accessing all the entries of a matrix using a column iterator requires
+        an outer loop (for the columns) and an inner loop (for the entries in
+        each column).  A matrix can be accessed via a column iterator only if
+        its format (determined by \verb'GrB_get (A, &fmt, GrB_STORAGE_ORIENTATION_HINT)') is
+        by-column (that is, \verb'GrB_COLMAJOR').
+        See Section~\ref{options}.
+    \item {\em entry iterator}:  iterates across the entries of a matrix.
+        Accessing all the entries of a matrix using an entry iterator requires
+        just a single loop.  Any matrix can be accessed with an entry iterator.
+    \item {\em vector iterator}:  iterates across the entries of a vector.
+        Accessing all the entries of a vector using a vector iterator requires
+        just a single loop.  Any vector can be accessed with a vector iterator.
+    \end{enumerate}
+
+%===============================================================================
+\subsection{Creating and destroying an iterator}
+%===============================================================================
+
+The process for using an iterator starts with the creation of an iterator, with
+\verb'GxB_Iterator_new'.  This method creates an \verb'iterator' object but
+does not {\em attach} it to any specific matrix or vector:
+
+    {\footnotesize
+    \begin{verbatim}
+    GxB_Iterator iterator ;
+    GxB_Iterator_new (&iterator) ; \end{verbatim}}
+
+When finished, the \verb'iterator' is freed with either of these methods:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_free (&iterator) ;
+    GxB_Iterator_free (&iterator) ; \end{verbatim}}
+
+%===============================================================================
+\subsection{Attaching an iterator to a matrix or vector}
+%===============================================================================
+
+This new \verb'iterator' object can be {\em attached} to any matrix or vector,
+and used as a row, column, or entry iterator for any matrix, or as an iterator
+for any vector.  The \verb'iterator' can be used in any of these methods before
+it is freed, but with just one access method at a time.
+
+Once it is created, the \verb'iterator' must be attached to a matrix or
+vector.  This process also selects the method by which the \verb'iterator'
+will be used for a matrix.  Each of the four \verb'GxB_*Iterator_attach'
+methods returns a \verb'GrB_Info' result.
+
+    \begin{enumerate}
+    \item {\em row iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_rowIterator_attach (iterator, A, desc) ; \end{verbatim}}
+    \item {\em column iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_colIterator_attach (iterator, A, desc) ; \end{verbatim}}
+    \item {\em entry iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_Matrix_Iterator_attach (iterator, A, desc) ; \end{verbatim}}
+    \item {\em vector iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_Vector_Iterator_attach (iterator, v, desc) ; \end{verbatim}}
+    \end{enumerate}
+
+On input to \verb'GxB_*Iterator_attach', the \verb'iterator' must already
+exist, having been created by \verb'GxB_Iterator_new'.  If the \verb'iterator'
+is already attached to a matrix or vector, it is detached and then attached to
+the given matrix \verb'A' or vector \verb'v'.
+
+The return values for row/column methods are:
+
+    \begin{itemize}
+    \item
+    \verb'GrB_SUCCESS':         if the \verb'iterator' is successfully
+        attached to the matrix \verb'A'.
+    \item
+    \verb'GrB_NULL_POINTER':    if the \verb'iterator' or \verb'A' are NULL.
+    \item
+    \verb'GrB_INVALID_OBJECT':  if the matrix \verb'A' is invalid.
+    \item
+    \verb'GrB_NOT_IMPLEMENTED': if the matrix \verb'A' cannot be iterated
+        in the requested access method (row iterators require the matrix to
+        be held by-row, and column iterators require the matrix to be held
+        by-column).
+    \item
+    \verb'GrB_OUT_OF_MEMORY':   if the method runs out of memory.
+    \end{itemize}
+
+The other two methods (entry iterator for matrices, or the vector iterator)
+return the same error codes, except that they
+do not return \verb'GrB_NOT_IMPLEMENTED'.
+
+%===============================================================================
+\subsection{Seeking to an arbitrary position}
+%===============================================================================
+
+Attaching the \verb'iterator' to a matrix or vector does not define a specific
+position for the \verb'iterator'.  To use the \verb'iterator', a single call to
+the corresponding {\em seek} method is required.  These
+\verb'GxB*_Iterator_*seek*' methods may also be used later on to change the
+position of the iterator arbitrarily.
+
+    \begin{enumerate}
+    \item {\em row iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_rowIterator_seekRow (iterator, row) ;
+    GrB_Index kount = GxB_rowIterator_kount (iterator) ;
+    GrB_Info info = GxB_rowIterator_kseek (iterator, k) ; \end{verbatim}}
+
+        These methods move a row iterator to a specific row, defined in one of
+        two ways: (1) the row index itself (in range 0 to \verb'nrows'-1), or
+        (2) by specifying \verb'k', which moves the iterator to the \verb'k'th
+        {\em explicit} row (in the range 0 to \verb'kount'-1). For sparse,
+        bitmap, or full matrices, these two methods are identical.  For
+        hypersparse matrices, not all rows are present in the data structure;
+        these {\em implicit} rows are skipped and not included in the
+        \verb'kount'.  Implicit rows contain no entries.  The
+        \verb'GxB_rowIterator_kount' method returns the \verb'kount' of the
+        matrix, where \verb'kount' is equal to \verb'nrows' for sparse, bitmap,
+        and matrices, and \verb'kount' $\le$ \verb'nrows' for hypersparse
+        matrices.  All three methods listed above can be used for any row
+        iterator.
+
+        The \verb'GxB_rowIterator_*seek*' methods return \verb'GrB_SUCCESS' if
+        the iterator has been moved to a row that contains at least one entry,
+        \verb'GrB_NO_VALUE' if the row has no entries, or \verb'GxB_EXHAUSTED'
+        if the row is out of bounds (\verb'row' $\ge$ \verb'nrows' or
+        if \verb'k' $\ge$ \verb'kount').
+        None of these return conditions are
+        errors; they are all informational.
+
+        For sparse, bitmap, and full matrices, \verb'GxB_rowIterator_seekRow'
+        always moves to the given row.  For hypersparse matrices, if the
+        requested row is implicit, the iterator is moved to the first
+        explicit row following it.  If no such row exists, the iterator
+        is exhausted and \verb'GxB_EXHAUSTED' is returned.
+        The \verb'GxB_rowIterator_kseek' method always moves to the \verb'k'th
+        explicit row, for any matrix.
+        Use \verb'GxB_rowIterator_getRowIndex', described below, to determine
+        the row index of the current position.
+
+        Precondition: on input, the \verb'iterator' must have been successfully
+        attached to a matrix via a prior call to \verb'GxB_rowIterator_attach'.
+        Results are undefined if this precondition is not met.
+
+    \item {\em column iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_colIterator_seekCol (iterator, col) ;
+    GrB_Index kount = GxB_colIterator_kount (iterator) ;
+    GrB_Info info = GxB_colIterator_kseek (iterator, k) ; \end{verbatim}}
+
+        These methods move a column iterator to a specific column, defined in
+        one of two ways: (1) the column index itself (in range 0 to
+        \verb'ncols'-1), or (2) by specifying \verb'k', which moves the
+        iterator to the \verb'k'th {\em explicit} column (in the range 0 to
+        \verb'kount'-1). For sparse, bitmap, or full matrices, these two
+        methods are identical.  For hypersparse matrices, not all columns are
+        present in the data structure; these {\em implicit} columns are skipped
+        and not included in the \verb'kount'.  Implicit columns contain no
+        entries.  The \verb'GxB_colIterator_kount' method returns the
+        \verb'kount' of the matrix, where \verb'kount' is equal to \verb'ncols'
+        for sparse, bitmap, and matrices, and \verb'kount' $\le$ \verb'ncols'
+        for hypersparse matrices.  All three methods listed above can be used
+        for any column iterator.
+
+        The \verb'GxB_colIterator_*seek*' methods return \verb'GrB_SUCCESS' if
+        the iterator has been moved to a column that contains at least one
+        entry, \verb'GrB_NO_VALUE' if the column has no entries, or
+        \verb'GxB_EXHAUSTED' if the column is out of bounds (\verb'col' $\ge$
+        \verb'ncols' or \verb'k' $\ge$ \verb'kount').
+        None of these return conditions are
+        errors; they are all informational.
+
+        For sparse, bitmap, and full matrices, \verb'GxB_colIterator_seekCol'
+        always moves to the given column.  For hypersparse matrices, if the
+        requested column is implicit, the iterator is moved to the first
+        explicit column following it.  If no such column exists, the iterator
+        is exhausted and \verb'GxB_EXHAUSTED' is returned.
+        The \verb'GxB_colIterator_kseek' method always moves to the \verb'k'th
+        explicit column, for any matrix.
+        Use \newline
+        \verb'GxB_colIterator_getColIndex', described below, to determine
+        the column index of the current position.
+
+        Precondition: on input, the \verb'iterator' must have been successfully
+        attached to a matrix via a prior call to \verb'GxB_colIterator_attach'.
+        Results are undefined if this precondition is not met.
+
+    \item {\em entry iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_Matrix_Iterator_seek (iterator, p) ;
+    GrB_Index pmax = GxB_Matrix_Iterator_getpmax (iterator) ;
+    GrB_Index p = GxB_Matrix_Iterator_getp (iterator); \end{verbatim}}
+
+        The \verb'GxB_Matrix_Iterator_seek' method moves the \verb'iterator' to
+        the given position \verb'p', which is in the range 0 to \verb'pmax'-1,
+        where the value of \verb'pmax' is obtained from
+        \verb'GxB_Matrix_Iterator_getpmax'.
+        For sparse, hypersparse, and full matrices, \verb'pmax' is the same as
+        \verb'nvals' returned by \verb'GrB_Matrix_nvals'.  For bitmap matrices,
+        \verb'pmax' is equal to \verb'nrows*ncols'.  If \verb'p' $\ge$
+        \verb'pmax', the iterator is exhausted and \verb'GxB_EXHAUSTED' is
+        returned.  Otherwise, \verb'GrB_SUCCESS' is returned.
+
+        All entries in the matrix are given an ordinal position, \verb'p'.
+        Seeking to position \verb'p' will either move the \verb'iterator' to
+        that particular position, or to the next higher position containing an
+        entry if there is entry at position \verb'p'.  The latter case only
+        occurs for bitmap matrices.
+        Use \verb'GxB_Matrix_Iterator_getp' to determine the current
+        position of the iterator.
+
+        Precondition: on input, the \verb'iterator' must have been successfully
+        attached to a matrix via a prior call to
+        \verb'GxB_Matrix_Iterator_attach'.  Results are undefined if this
+        precondition is not met.
+
+    \item {\em vector iterator}:
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_Vector_Iterator_seek (iterator, p) ;
+    GrB_Index pmax = GxB_Vector_Iterator_getpmax (iterator) ;
+    GrB_Index p = GxB_Vector_Iterator_getp (iterator); \end{verbatim}}
+
+        The \verb'GxB_Vector_Iterator_seek' method is identical to the
+        entry iterator of a matrix, but applied to a \verb'GrB_Vector' instead.
+
+        Precondition: on input, the \verb'iterator' must have been successfully
+        attached to a vector via a prior call to
+        \verb'GxB_Vector_Iterator_attach'.  Results are undefined if this
+        precondition is not met.
+
+    \end{enumerate}
+
+%===============================================================================
+\subsection{Advancing to the next position}
+%===============================================================================
+
+For best performance, the {\em seek} methods described above should be used
+with care, since some of them require $O(\log n)$ time.  The fastest method
+for changing the position of the iterator is the corresponding {\em next}
+method, described below for each iterator:
+
+    \begin{enumerate}
+    \item {\em row iterator}:  To move to the next row.
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_rowIterator_nextRow (iterator) ; \end{verbatim}}
+
+    The row iterator is a 2-dimensional iterator, requiring an outer loop and
+    an inner loop.  The outer loop iterates over the rows of the matrix, using
+    \verb'GxB_rowIterator_nextRow' to move to the next row.  If the matrix is
+    hypersparse, the next row is always an explicit row; implicit rows are
+    skipped.  The return conditions are identical to
+    \verb'GxB_rowIterator_seekRow'.
+
+    Preconditions: on input, the row iterator must already be attached to a
+    matrix via a prior call to \verb'GxB_rowIterator_attach', and the
+    \verb'iterator' must be at a specific row, via a prior call to
+    \verb'GxB_rowIterator_*seek*' or \verb'GxB_rowIterator_nextRow'.
+    Results are undefined if these conditions are not met.
+
+    \item {\em row iterator}:  To move to the next entry within a row.
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_rowIterator_nextCol (iterator) ; \end{verbatim}}
+
+    The row iterator is moved to the next entry in the current row.
+    The method returns \verb'GrB_NO_VALUE' if the end of the row is reached.
+    The iterator does not move to the next row in this case.
+    The method returns \verb'GrB_SUCCESS' if the iterator has been moved
+    to a specific entry in the current row.
+
+    Preconditions: the same as \verb'GxB_rowIterator_nextRow'.
+
+    \item {\em column iterator}:  To move to the next column
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_colIterator_nextCol (iterator) ; \end{verbatim}}
+
+    The column iterator is a 2-dimensional iterator, requiring an outer loop
+    and an inner loop.  The outer loop iterates over the columns of the matrix,
+    using \verb'GxB_colIterator_nextCol' to move to the next column.  If the
+    matrix is hypersparse, the next column is always an explicit column;
+    implicit columns are skipped.  The return conditions are identical to
+    \verb'GxB_colIterator_seekCol'.
+
+    Preconditions: on input, the column iterator must already be attached to a
+    matrix via a prior call to \verb'GxB_colIterator_attach', and the
+    \verb'iterator' must be at a specific column, via a prior call to
+    \verb'GxB_colIterator_*seek*' or \verb'GxB_colIterator_nextCol'.
+    Results are undefined if these conditions are not met.
+
+    {\footnotesize
+    \item {\em column iterator}:  To move to the next entry within a column.
+
+    \begin{verbatim}
+    GrB_Info info = GxB_colIterator_nextRow (iterator) ; \end{verbatim}}
+
+    The column iterator is moved to the next entry in the current column.
+    The method returns \verb'GrB_NO_VALUE' if the end of the column is reached.
+    The iterator does not move to the next column in this case.
+    The method returns \verb'GrB_SUCCESS' if the iterator has been moved
+    to a specific entry in the current column.
+
+    Preconditions: the same as \verb'GxB_colIterator_nextCol'.
+
+    \item {\em entry iterator}: To move to the next entry.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_Matrix_Iterator_next (iterator) ; \end{verbatim}}
+
+    This method moves an iterator to the next entry of a matrix.
+    It returns \verb'GrB_SUCCESS' if the iterator is at an entry that
+    exists in the matrix, or \verb'GrB_EXHAUSTED' otherwise.
+
+    Preconditions: on input, the entry iterator must be already attached to a
+    matrix via \verb'GxB_Matrix_Iterator_attach', and the position of the
+    iterator must also have been defined by a prior call to
+    \verb'GxB_Matrix_Iterator_seek' or \verb'GxB_Matrix_Iterator_next'.
+    Results are undefined if these conditions are not met.
+
+    \item {\em vector iterator}: To move to the next entry.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Info info = GxB_Vector_Iterator_next (iterator) ; \end{verbatim}}
+
+    This method moves an iterator to the next entry of a vector.
+    It returns \verb'GrB_SUCCESS' if the iterator is at an entry that
+    exists in the vector, or \verb'GrB_EXHAUSTED' otherwise.
+
+    Preconditions: on input, the iterator must be already attached to a
+    vector via \verb'GxB_Vector_Iterator_attach', and the position of the
+    iterator must also have been defined by a prior call to
+    \verb'GxB_Vector_Iterator_seek' or \verb'GxB_Vector_Iterator_next'.
+    Results are undefined if these conditions are not met.
+
+    \end{enumerate}
+
+%===============================================================================
+\subsection{Accessing the indices of the current entry}
+%===============================================================================
+
+Once the iterator is attached to a matrix or vector, and is placed in position
+at an entry in the matrix or vector, the indices and value of this entry can be
+obtained.  The methods for accessing the value of the entry are described in
+Section~\ref{getvalu}.  Accessing the indices is performed with four different
+sets of methods, depending on which access pattern is in use, described below:
+
+    \begin{enumerate}
+    \item {\em row iterator}:  To get the current row index.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index i = GxB_rowIterator_getRowIndex (iterator) ; \end{verbatim}}
+
+    The method returns \verb'nrows(A)' if the iterator is exhausted, or the
+    current row index \verb'i' otherwise.  There need not be any entry in the
+    current row.  Zero is returned if the iterator is attached to the matrix
+    but \verb'GxB_rowIterator_*seek*' has not been called, but this does not
+    mean the iterator is positioned at row zero.
+
+    Preconditions: on input, the iterator must be already successfully attached
+    to matrix as a row iterator via \verb'GxB_rowIterator_attach'.
+    Results are undefined if this condition is not met.
+
+    \item {\em row iterator}:  To get the current column index.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index j = GxB_rowIterator_getColIndex (iterator) ; \end{verbatim}}
+
+    Preconditions: on input, the iterator must be already successfully attached
+    to matrix as a row iterator via \verb'GxB_rowIterator_attach', and in
+    addition, the row iterator must be positioned at a valid entry present in
+    the matrix.  That is, the last call to \verb'GxB_rowIterator_*seek*' or
+    \verb'GxB_rowIterator_*next*', must have returned \verb'GrB_SUCCESS'.
+    Results are undefined if these conditions are not met.
+
+    \item {\em column iterator}:  To get the current column index.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index j = GxB_colIterator_getColIndex (iterator) ; \end{verbatim}}
+
+    The method returns \verb'ncols(A)' if the iterator is exhausted, or the
+    current column index \verb'j' otherwise.  There need not be any entry in the
+    current column.  Zero is returned if the iterator is attached to the matrix
+    but \verb'GxB_colIterator_*seek*' has not been called, but this does not
+    mean the iterator is positioned at column zero.
+
+    Precondition: on input, the iterator must be already successfully attached
+    to matrix as a column iterator via \verb'GxB_colIterator_attach'.
+    Results are undefined if this condition is not met.
+
+    \item {\em column iterator}:  To get the current row index.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index i = GxB_colIterator_getRowIndex (iterator) ; \end{verbatim}}
+
+    Preconditions: on input, the iterator must be already successfully attached
+    to matrix as a column iterator via \verb'GxB_colIterator_attach', and in
+    addition, the column iterator must be positioned at a valid entry present in
+    the matrix.  That is, the last call to \verb'GxB_colIterator_*seek*' or
+    \verb'GxB_colIterator_*next*', must have returned \verb'GrB_SUCCESS'.
+    Results are undefined if these conditions are not met.
+
+    \item {\em entry iterator}: To get the current row and column index.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index i, j ;
+    GxB_Matrix_Iterator_getIndex (iterator, &i, &j) ; \end{verbatim}}
+
+    Returns the row and column index of the current entry.
+
+    Preconditions: on input, the entry iterator must be already attached to a
+    matrix via \verb'GxB_Matrix_Iterator_attach', and the position of the
+    iterator must also have been defined by a prior call to
+    \verb'GxB_Matrix_Iterator_seek' or \verb'GxB_Matrix_Iterator_next', with a
+    return value of \verb'GrB_SUCCESS'.
+    Results are undefined if these conditions are not met.
+
+    \item {\em vector iterator}: To get the current index.
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index i = GxB_Vector_Iterator_getIndex (iterator) ; \end{verbatim}}
+
+    Returns the index of the current entry.
+
+    Preconditions: on input, the entry iterator must be already attached to a
+    matrix via \verb'GxB_Vector_Iterator_attach', and the position of the
+    iterator must also have been defined by a prior call to
+    \verb'GxB_Vector_Iterator_seek' or \verb'GxB_Vector_Iterator_next', with a
+    return value of \verb'GrB_SUCCESS'.
+    Results are undefined if these conditions are not met.
+
+    \end{enumerate}
+
+%===============================================================================
+\subsection{Accessing the value of the current entry}
+\label{getvalu}
+%===============================================================================
+
+So far, all methods that create or use an iterator have been split into four
+sets of methods, for the row, column, or entry iterators attached to a matrix,
+or for a vector iterator.  Accessing the value is different.  All four
+iterators use the same set of methods to access the value of their current
+entry.  These methods return the value of the current entry at the position
+determined by the iterator.  The return value can of course be typecasted
+using standard C syntax once the value is returned to the caller.
+
+Preconditions: on input, the prior call to \verb'GxB_*Iterator_*seek*', or
+\verb'GxB_*Iterator_*next*' must have returned \verb'GrB_SUCCESS', indicating
+that the iterator is at a valid current entry for either a matrix or vector.
+No typecasting is permitted, in the sense that the method name must match the
+type of the matrix or vector.
+Results are undefined if these conditions are not met.
+
+    {\footnotesize
+    \begin{verbatim}
+    // for built-in types:
+    bool       value = GxB_Iterator_get_BOOL (iterator) ;
+    int8_t     value = GxB_Iterator_get_INT8 (iterator) ;
+    int16_t    value = GxB_Iterator_get_INT16 (iterator) ;
+    int32_t    value = GxB_Iterator_get_INT32 (iterator) ;
+    int64_t    value = GxB_Iterator_get_INT64 (iterator) ;
+    uint8_t    value = GxB_Iterator_get_UINT8 (iterator) ;
+    uint16_t   value = GxB_Iterator_get_UINT16 (iterator) ;
+    uint32_t   value = GxB_Iterator_get_UINT32 (iterator) ;
+    uint64_t   value = GxB_Iterator_get_UINT64 (iterator) ;
+    float      value = GxB_Iterator_get_FP32 (iterator) ;
+    double     value = GxB_Iterator_get_FP64 (iterator) ;
+    GxB_FC32_t value = GxB_Iterator_get_FC32 (iterator) ;
+    GxB_FC64_t value = GxB_Iterator_get_FC64 (iterator) ;
+
+    // for user-defined types:
+    <type> value ;
+    GxB_Iterator_get_UDT (iterator, (void *) &value) ; \end{verbatim}}
+
+%===============================================================================
+\newpage
+\subsection{Example: row iterator for a matrix}
+%===============================================================================
+
+The following example uses a row iterator to access all of the entries
+in a matrix \verb'A' of type \verb'GrB_FP64'.  Note the inner and outer loops.
+The outer loop iterates over all rows of the matrix.  The inner loop iterates
+over all entries in the row \verb'i'.  This access pattern requires the matrix
+to be held by-row, but otherwise it works for any matrix.  If the matrix is
+held by-column, then use the column iterator methods instead.
+
+    {\footnotesize
+    \begin{verbatim}
+    // create an iterator
+    GxB_Iterator iterator ;
+    GxB_Iterator_new (&iterator) ;
+    // attach it to the matrix A, known to be type GrB_FP64
+    GrB_Info info = GxB_rowIterator_attach (iterator, A, NULL) ;
+    if (info < 0) { handle the failure ... }
+    // seek to A(0,:)
+    info = GxB_rowIterator_seekRow (iterator, 0) ;
+    while (info != GxB_EXHAUSTED)
+    {
+        // iterate over entries in A(i,:)
+        GrB_Index i = GxB_rowIterator_getRowIndex (iterator) ;
+        while (info == GrB_SUCCESS)
+        {
+            // get the entry A(i,j)
+            GrB_Index j = GxB_rowIterator_getColIndex (iterator) ;
+            double  aij = GxB_Iterator_get_FP64 (iterator) ;
+            // move to the next entry in A(i,:)
+            info = GxB_rowIterator_nextCol (iterator) ;
+        }
+        // move to the next row, A(i+1,:), or a subsequent one if i+1 is implicit
+        info = GxB_rowIterator_nextRow (iterator) ;
+    }
+    GrB_free (&iterator) ; \end{verbatim}}
+
+%===============================================================================
+\newpage
+\subsection{Example: column iterator for a matrix}
+%===============================================================================
+
+The column iterator is analgous to the row iterator.
+
+The following example uses a column iterator to access all of the entries in a
+matrix \verb'A' of type \verb'GrB_FP64'.  The outer loop iterates over all
+columns of the matrix.  The inner loop iterates over all entries in the column
+\verb'j'.  This access pattern requires the matrix to be held by-column, but
+otherwise it works for any matrix.  If the matrix is held by-row, then use
+the row iterator methods instead.
+
+    {\footnotesize
+    \begin{verbatim}
+    // create an iterator
+    GxB_Iterator iterator ;
+    GxB_Iterator_new (&iterator) ;
+    // attach it to the matrix A, known to be type GrB_FP64
+    GrB_Info info = GxB_colIterator_attach (iterator, A, NULL) ;
+    // seek to A(:,0)
+    info = GxB_colIterator_seekCol (iterator, 0) ;
+    while (info != GxB_EXHAUSTED)
+    {
+        // iterate over entries in A(:,j)
+        GrB_Index j = GxB_colIterator_getColIndex (iterator) ;
+        while (info == GrB_SUCCESS)
+        {
+            // get the entry A(i,j)
+            GrB_Index i = GxB_colIterator_getRowIndex (iterator) ;
+            double  aij = GxB_Iterator_get_FP64 (iterator) ;
+            // move to the next entry in A(:,j)
+            info = GxB_colIterator_nextRow (iterator) ;
+        }
+        // move to the next column, A(:,j+1), or a subsequent one if j+1 is implicit
+        info = GxB_colIterator_nextCol (iterator) ;
+    }
+    GrB_free (&iterator) ; \end{verbatim}}
+
+%===============================================================================
+\newpage
+\subsection{Example: entry iterator for a matrix}
+%===============================================================================
+
+The entry iterator allows for a simpler access pattern, with a single loop, but
+using a row or column iterator is faster.  The method works for any matrix.
+
+    {\footnotesize
+    \begin{verbatim}
+    // create an iterator
+    GxB_Iterator iterator ;
+    GxB_Iterator_new (&iterator) ;
+    // attach it to the matrix A, known to be type GrB_FP64
+    GrB_Info info = GxB_Matrix_Iterator_attach (iterator, A, NULL) ;
+    if (info < 0) { handle the failure ... }
+    // seek to the first entry
+    info = GxB_Matrix_Iterator_seek (iterator, 0) ;
+    while (info != GxB_EXHAUSTED)
+    {
+        // get the entry A(i,j)
+        GrB_Index i, j ;
+        GxB_Matrix_Iterator_getIndex (iterator, &i, &j) ;
+        double aij = GxB_Iterator_get_FP64 (iterator) ;
+        // move to the next entry in A
+        info = GxB_Matrix_Iterator_next (iterator) ;
+    }
+    GrB_free (&iterator) ; \end{verbatim}}
+
+%===============================================================================
+\subsection{Example: vector iterator}
+%===============================================================================
+
+A vector iterator is used much like an entry iterator for a matrix.
+
+    {\footnotesize
+    \begin{verbatim}
+    // create an iterator
+    GxB_Iterator iterator ;
+    GxB_Iterator_new (&iterator) ;
+    // attach it to the vector v, known to be type GrB_FP64
+    GrB_Info info = GxB_Vector_Iterator_attach (iterator, v, NULL) ;
+    if (info < 0) { handle the failure ... }
+    // seek to the first entry
+    info = GxB_Vector_Iterator_seek (iterator, 0) ;
+    while (info != GxB_EXHAUSTED)
+    {
+        // get the entry v(i)
+        GrB_Index i = GxB_Vector_Iterator_getIndex (iterator) ;
+        double vi = GxB_Iterator_get_FP64 (iterator) ;
+        // move to the next entry in v
+        info = GxB_Vector_Iterator_next (iterator) ;
+    }
+    GrB_free (&iterator) ; \end{verbatim}}
+
+%===============================================================================
+\newpage
+\subsection{Performance}
+%===============================================================================
+
+I have benchmarked the performance of the row and column iterators to compute
+\verb'y=0' and then \verb'y+=A*x' where \verb'y' is a dense vector and \verb'A'
+is a sparse matrix, using a single thread.  The row and column iterators are
+very fast, sometimes only 1\% slower than calling \verb'GrB_mxv' to compute the
+same thing (also assuming a single thread), for large problems.  For sparse
+matrices that average just 1 or 2 entries per row, the row iterator can be
+about 30\% slower than \verb'GrB_mxv', likely because of the slightly higher
+complexity of moving from one row to the next using these methods.
+
+It is possible to split up the problem for multiple user threads, each with its
+own iterator.  Given the low overhead of the row and column iterator for a
+single thread, this should be very fast.  Care must be taken to ensure a good
+load balance.  Simply spliting up the rows of a matrix and giving the same
+number of rows to each user thread can result in imbalanced work.  This is
+handled internally in \verb'GrB_*' methods, but enabling parallelism when using
+iterators is the responsibility of the user application.
+
+The entry iterators are easier to use but harder to implement.  The methods
+must internally fuse both inner and outer loops so that the user application can
+use a single loop.  As a result, the computation \verb'y+=A*x' can be up to
+4x slower (about 2x typical) than when using \verb'GrB_mxv' with a single
+thread.
+
+To obtain the best performace possible, many of the iterator methods are
+implemented as macros in \verb'GraphBLAS.h'.  Using macros is the default,
+giving typical C and C++ applications access to the fastest methods possible.
+
+To ensure access to these methods when not using the macros, these methods are
+also defined as regular functions that appear in the compiled
+\verb'libgraphblas.so' library with the same name as the macros.  Applications
+that cannot use the macro versions can \verb'#undef' the macros after the
+\verb'#include <GraphBLAS.h>' statement, and then they would access the regular
+compiled functions in \verb'libgraphblas.so'.  This non-macro approach is not
+the default, and the iterator methods may be slightly slower.
+

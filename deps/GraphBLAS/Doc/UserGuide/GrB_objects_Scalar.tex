@@ -1,0 +1,277 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS scalars: {\sf GrB\_Scalar}} %=============================
+%===============================================================================
+\label{scalar}
+
+This section describes a set of methods that create, modify, query,
+and destroy a GraphBLAS scalar, \verb'GrB_Scalar':
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_Scalar_new'            & create a scalar                      & \ref{scalar_new} \\
+\verb'GrB_Scalar_wait'           & wait for a scalar                    & \ref{scalar_wait} \\
+\verb'GrB_Scalar_dup'            & copy a scalar                        & \ref{scalar_dup} \\
+\verb'GrB_Scalar_clear'          & clear a scalar of its entry          & \ref{scalar_clear} \\
+\verb'GrB_Scalar_nvals'          & return number of entries in a scalar & \ref{scalar_nvals}  \\
+\verb'GrB_Scalar_setElement'     & set the single entry of a scalar     & \ref{scalar_setElement} \\
+\verb'GrB_Scalar_extractElement' & get the single entry from a scalar   & \ref{scalar_extractElement} \\
+\verb'GxB_Scalar_memoryUsage'    & memory used by a scalar              & \ref{scalar_memusage} \\
+\verb'GxB_Scalar_type'           & type of a scalar                     & \ref{scalar_type} \\
+\verb'GrB_Scalar_free'           & free a scalar                        & \ref{scalar_free} \\
+\hline
+\hline
+\verb'GrB_get'  & get properties of a scalar       & \ref{get_set_scalar} \\
+\verb'GrB_set'  & set properties of a scalar       & \ref{get_set_scalar} \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_new:} create a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Scalar_new     // create a new GrB_Scalar with no entry
+(
+    GrB_Scalar *s,          // handle of GrB_Scalar to create
+    GrB_Type type           // type of GrB_Scalar to create
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Scalar_new' creates a new scalar with no
+entry in it, of the given type.  This is analogous to MATLAB/Octave statement
+\verb's = sparse(0)', except that GraphBLAS can create scalars any
+type.  The pattern of the new scalar is empty.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_wait:} wait for a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a scalar
+(
+    GrB_Scalar s,               // scalar to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+In non-blocking mode, the computations for a \verb'GrB_Scalar' may be delayed.
+In this case, the scalar is not yet safe to use by multiple independent user
+threads.  A user application may force completion of a scalar \verb's' via
+\verb'GrB_Scalar_wait(s,mode)'.
+With a \verb'mode' of \verb'GrB_MATERIALIZE',
+all pending computations are finished, and afterwards different user threads may
+simultaneously call GraphBLAS operations that use the scalar \verb's' as an
+input parameter.
+See Section~\ref{omp_parallelism}
+if GraphBLAS is compiled without OpenMP.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_dup:} copy a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_dup}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Scalar_dup     // make an exact copy of a GrB_Scalar
+(
+    GrB_Scalar *s,          // handle of output GrB_Scalar to create
+    const GrB_Scalar t      // input GrB_Scalar to copy
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Scalar_dup' makes a deep copy of a scalar.
+In GraphBLAS, it is possible, and valid, to write the following:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Scalar t, s ;
+    GrB_Scalar_new (&t, GrB_FP64) ;
+    s = t ;                         // s is a shallow copy of t  \end{verbatim}}
+
+Then \verb's' and \verb't' can be used interchangeably.  However, only a pointer
+reference is made, and modifying one of them modifies both, and freeing one of
+them leaves the other as a dangling handle that should not be used.
+If two different scalars are needed, then this should be used instead:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Scalar t, s ;
+    GrB_Scalar_new (&t, GrB_FP64) ;
+    GrB_Scalar_dup (&s, t) ;        // like s = t, but making a deep copy \end{verbatim}}
+
+Then \verb's' and \verb't' are two different scalars that currently have
+the same value, but they do not depend on each other.  Modifying one has no
+effect on the other.
+The \verb'GrB_NAME' is copied into the new scalar.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_clear:} clear a scalar of its entry}
+%-------------------------------------------------------------------------------
+\label{scalar_clear}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Scalar_clear   // clear a GrB_Scalar of its entry
+(                           // type remains unchanged.
+    GrB_Scalar s            // GrB_Scalar to clear
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Scalar_clear' clears the entry from a scalar.  The pattern of
+\verb's' is empty, just as if it were created fresh with \verb'GrB_Scalar_new'.
+Analogous with \verb's = sparse (0)' in MATLAB/Octave.  The type of \verb's' does not
+change.  Any pending updates to the scalar are discarded.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_nvals:} return the number of entries in a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_nvals}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Scalar_nvals   // get the number of entries in a GrB_Scalar
+(
+    GrB_Index *nvals,       // GrB_Scalar has nvals entries (0 or 1)
+    const GrB_Scalar s      // GrB_Scalar to query
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Scalar_nvals' returns the number of entries in a scalar, which
+is either 0 or 1.  Roughly analogous to \verb'nvals = nnz(s)' in MATLAB/Octave,
+except that the implicit value in GraphBLAS need not be zero and \verb'nnz'
+(short for ``number of nonzeros'') in MATLAB is better described as ``number of
+entries'' in GraphBLAS.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_setElement:} set the single entry of a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_setElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Scalar_setElement          // s = x
+(
+    GrB_Scalar s,                       // GrB_Scalar to modify
+    <type> x                            // user scalar to assign to s
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Scalar_setElement' sets the single entry in a scalar, like
+\verb's = sparse(x)' in MATLAB notation.  For further details of this function,
+see \verb'GrB_Matrix_setElement' in Section~\ref{matrix_setElement}.
+If an error occurs, \verb'GrB_error(&err,s)' returns details about the error.
+The scalar \verb'x' can be any non-opaque C scalar corresponding to
+a built-in type, or \verb'void *' for a user-defined type.  It cannot be
+a \verb'GrB_Scalar'.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_extractElement:} get the single entry from a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_extractElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Scalar_extractElement  // x = s
+(
+    <type> *x,                      // user scalar extracted
+    const GrB_Scalar s              // GrB_Sclar to extract an entry from
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Scalar_extractElement' extracts the single entry from a sparse
+scalar, like \verb'x = full(s)' in MATLAB.  Further details of this method are
+discussed in Section~\ref{matrix_extractElement}, which discusses
+\verb'GrB_Matrix_extractElement'.  {\bf NOTE: }  if no entry is present in the
+scalar \verb's', then \verb'x' is not modified, and the return value of
+\verb'GrB_Scalar_extractElement' is \verb'GrB_NO_VALUE'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Scalar\_memoryUsage:} memory used by a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_memusage}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Scalar_memoryUsage  // return # of bytes used for a scalar
+(
+    size_t *size,           // # of bytes used by the scalar s
+    const GrB_Scalar s      // GrB_Scalar to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+Returns the memory space required for a scalar, in bytes.
+By default, any read-only components are not included in the total memory.
+This can be changed with via \verb'GrB_set'; see Section~\ref{get_set_global}.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Scalar\_type:} type of a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_type}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Scalar_type    // get the type of a GrB_Scalar
+(
+    GrB_Type *type,         // returns the type of the GrB_Scalar
+    const GrB_Scalar s      // GrB_Scalar to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+Returns the type of a scalar.  See \verb'GxB_Matrix_type' for details
+(Section~\ref{matrix_type}).
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Scalar\_free:} free a scalar}
+%-------------------------------------------------------------------------------
+\label{scalar_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free           // free a GrB_Scalar
+(
+    GrB_Scalar *s           // handle of GrB_Scalar to free
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Scalar_free' frees a scalar.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Scalar_free (&s) ;
+    GrB_free (&s) ; \end{verbatim}}
+
+\noindent
+frees the scalar \verb's' and sets \verb's' to \verb'NULL'.  It safely
+does nothing if passed a \verb'NULL' handle, or if \verb's == NULL' on input.
+Any pending updates to the scalar are abandoned.
+
+

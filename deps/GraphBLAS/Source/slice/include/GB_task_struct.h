@@ -2,7 +2,7 @@
 // GB_task_struct.h: parallel task descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,44 +43,6 @@ typedef struct          // task descriptor
     int64_t len ;       // fine task handles a subvector of this length
 }
 GB_task_struct ;
-
-//------------------------------------------------------------------------------
-// GB_GET_VECTOR: get the content of a vector for a coarse/fine task
-//------------------------------------------------------------------------------
-
-#if 0
-// General case, but is not optimized for the JIT, and no longer used:
-#define GB_GET_VECTOR(pX_start, pX_fini, pX, pX_end, Xp, kX, Xvlen)         \
-    int64_t pX_start, pX_fini ;                                             \
-    if (fine_task)                                                          \
-    {                                                                       \
-        /* A fine task operates on a slice of X(:,k) */                     \
-        pX_start = TaskList [taskid].pX ;                                   \
-        pX_fini  = TaskList [taskid].pX_end ;                               \
-    }                                                                       \
-    else                                                                    \
-    {                                                                       \
-        /* vectors are never sliced for a coarse task */                    \
-        pX_start = GBP (Xp, kX, Xvlen) ;                                    \
-        pX_fini  = GBP (Xp, kX+1, Xvlen) ;                                  \
-    }
-#endif
-
-// GB_GET_VECTOR_M: optimized for the M matrix
-#define GB_GET_VECTOR_M(pM_start, pM_fini, pX, pX_end, Mp, k, Mvlen)        \
-    int64_t pM_start, pM_fini ;                                             \
-    if (fine_task)                                                          \
-    {                                                                       \
-        /* A fine task operates on a slice of X(:,k) */                     \
-        pM_start = TaskList [taskid].pX ;                                   \
-        pM_fini  = TaskList [taskid].pX_end ;                               \
-    }                                                                       \
-    else                                                                    \
-    {                                                                       \
-        /* vectors are never sliced for a coarse task */                    \
-        pM_start = GBP_M (Mp, k, Mvlen) ;                                   \
-        pM_fini  = GBP_M (Mp, k+1, Mvlen) ;                                 \
-    }
 
 #endif
 

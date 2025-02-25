@@ -2,7 +2,7 @@
 // GB_add: C = A+B, C<M>=A+B, and C<!M>=A+B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,16 +15,17 @@
 
 // Let the op be z=f(x,y) where x, y, and z have type xtype, ytype, and ztype.
 // If both A(i,j) and B(i,j) are present, then:
-
 //      C(i,j) = (ctype) op ((xtype) A(i,j), (ytype) B(i,j))
-
 // If just A(i,j) is present but not B(i,j), then:
-
 //      C(i,j) = (ctype) A (i,j)
-
 // If just B(i,j) is present but not A(i,j), then:
-
 //      C(i,j) = (ctype) B (i,j)
+
+// For eWiseUnion, the above is revised to:
+// If just A(i,j) is present but not B(i,j), then:
+//      C(i,j) = (ctype) op ((xtype) A(i,j), (ytype) beta)
+// If just B(i,j) is present but not A(i,j), then:
+//      C(i,j) = (ctype) op ((xtype) alpha, (ytype) B(i,j))
 
 // ctype is the type of matrix C.  The pattern of C is the union of A and B.
 
@@ -48,7 +49,21 @@
 
 #include "add/GB_add.h"
 
-#define GB_FREE_ALL ;
+#define GB_FREE_WORKSPACE                       \
+{                                               \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&C_to_M, C_to_M_size) ;       \
+    GB_FREE_MEMORY (&C_to_A, C_to_A_size) ;       \
+    GB_FREE_MEMORY (&C_to_B, C_to_B_size) ;       \
+}
+
+#define GB_FREE_ALL                             \
+{                                               \
+    GB_FREE_WORKSPACE ;                         \
+    GB_FREE_MEMORY (&Ch, Ch_size) ;                    \
+    GB_FREE_MEMORY (&Cp, Cp_size) ;                    \
+    GB_phybix_free (C) ;                        \
+}
 
 GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
 (
@@ -77,7 +92,7 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
 
     GrB_Info info ;
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT (mask_applied != NULL) ;
     (*mask_applied) = false ;
@@ -90,10 +105,25 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
     ASSERT (GB_IMPLIES (M != NULL, A->vdim == M->vdim && A->vlen == M->vlen)) ;
 
     //--------------------------------------------------------------------------
+    // declare workspace
+    //--------------------------------------------------------------------------
+
+    int64_t Cnvec = 0, Cnvec_nonempty = 0  ;
+    void *Cp = NULL ; size_t Cp_size = 0 ;
+    void *Ch = NULL ; size_t Ch_size = 0 ;
+    int64_t *C_to_M = NULL ; size_t C_to_M_size = 0 ;
+    int64_t *C_to_A = NULL ; size_t C_to_A_size = 0 ;
+    int64_t *C_to_B = NULL ; size_t C_to_B_size = 0 ;
+    bool Ch_is_Mh ;
+    int C_ntasks = 0, C_nthreads ;
+    GB_task_struct *TaskList = NULL ; size_t TaskList_size = 0 ;
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+
+    //--------------------------------------------------------------------------
     // delete any lingering zombies and assemble any pending tuples
     //--------------------------------------------------------------------------
 
-    // TODO: some cases can allow M, A, and/or B to be jumbled
+    // FUTURE: some cases can allow M, A, and/or B to be jumbled
     GB_MATRIX_WAIT (M) ;        // cannot be jumbled
     GB_MATRIX_WAIT (A) ;        // cannot be jumbled
     GB_MATRIX_WAIT (B) ;        // cannot be jumbled
@@ -107,36 +137,20 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
         A, B) ;
 
     //--------------------------------------------------------------------------
-    // initializations
-    //--------------------------------------------------------------------------
-
-    int64_t Cnvec = 0 , Cnvec_nonempty = 0  ;
-    int64_t *Cp     = NULL ; size_t Cp_size = 0 ;
-    int64_t *Ch     = NULL ; size_t Ch_size = 0 ; 
-    int64_t *C_to_M = NULL ; size_t C_to_M_size = 0 ;
-    int64_t *C_to_A = NULL ; size_t C_to_A_size = 0 ;
-    int64_t *C_to_B = NULL ; size_t C_to_B_size = 0 ;
-    bool Ch_is_Mh ;
-    int C_ntasks = 0, C_nthreads ;
-    GB_task_struct *TaskList = NULL ; size_t TaskList_size = 0 ;
-
-    //--------------------------------------------------------------------------
     // phase0: finalize the sparsity C and find the vectors in C
     //--------------------------------------------------------------------------
 
-    info = GB_add_phase0 (
-        // computed by by phase0:
-        &Cnvec, &Ch, &Ch_size, &C_to_M, &C_to_M_size, &C_to_A, &C_to_A_size,
+    GB_OK (GB_add_phase0 (
+        // computed by phase0:
+        &Cnvec, &Ch, &Ch_size,
+        &C_to_M, &C_to_M_size,
+        &C_to_A, &C_to_A_size,
         &C_to_B, &C_to_B_size, &Ch_is_Mh,
+        &Cp_is_32, &Cj_is_32, &Ci_is_32,
         // input/output to phase0:
         &C_sparsity,
         // original input:
-        (apply_mask) ? M : NULL, A, B, Werk) ;
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        return (info) ;
-    }
+        (apply_mask) ? M : NULL, A, B, Werk)) ;
 
     GBURBLE ("add:(%s<%s%s>=%s+%s) ",
         GB_sparsity_char (C_sparsity),
@@ -157,43 +171,24 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
         //----------------------------------------------------------------------
 
         // phase1a: split C into tasks
-        info = GB_ewise_slice (
+        GB_OK (GB_ewise_slice (
             // computed by phase1a
             &TaskList, &TaskList_size, &C_ntasks, &C_nthreads,
             // computed by phase0:
-            Cnvec, Ch, C_to_M, C_to_A, C_to_B, Ch_is_Mh,
+            Cnvec, Ch, Cj_is_32, C_to_M, C_to_A, C_to_B, Ch_is_Mh,
             // original input:
-            (apply_mask) ? M : NULL, A, B, Werk) ;
-        if (info != GrB_SUCCESS)
-        { 
-            // out of memory; free everything allocated by GB_add_phase0
-            GB_FREE (&Ch, Ch_size) ;
-            GB_FREE_WORK (&C_to_M, C_to_M_size) ;
-            GB_FREE_WORK (&C_to_A, C_to_A_size) ;
-            GB_FREE_WORK (&C_to_B, C_to_B_size) ;
-            return (info) ;
-        }
+            (apply_mask) ? M : NULL, A, B, Werk)) ;
 
         // count the number of entries in each vector of C
-        info = GB_add_phase1 (
+        GB_OK (GB_add_phase1 (
             // computed or used by phase1:
             &Cp, &Cp_size, &Cnvec_nonempty, A_and_B_are_disjoint,
             // from phase1a:
             TaskList, C_ntasks, C_nthreads,
             // from phase0:
-            Cnvec, Ch, C_to_M, C_to_A, C_to_B, Ch_is_Mh,
+            Cnvec, Ch, C_to_M, C_to_A, C_to_B, Ch_is_Mh, Cp_is_32, Cj_is_32,
             // original input:
-            (apply_mask) ? M : NULL, Mask_struct, Mask_comp, A, B, Werk) ;
-        if (info != GrB_SUCCESS)
-        { 
-            // out of memory; free everything allocated by GB_add_phase0
-            GB_FREE_WORK (&TaskList, TaskList_size) ;
-            GB_FREE (&Ch, Ch_size) ;
-            GB_FREE_WORK (&C_to_M, C_to_M_size) ;
-            GB_FREE_WORK (&C_to_A, C_to_A_size) ;
-            GB_FREE_WORK (&C_to_B, C_to_B_size) ;
-            return (info) ;
-        }
+            (apply_mask) ? M : NULL, Mask_struct, Mask_comp, A, B, Werk)) ;
 
     }
     else
@@ -215,7 +210,7 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
     // Cp and Ch are either freed by phase2, or transplanted into C.
     // Either way, they are not freed here.
 
-    info = GB_add_phase2 (
+    GB_OK (GB_add_phase2 (
         // computed or used by phase2:
         C, ctype, C_is_csc, op, flipij, A_and_B_are_disjoint,
         // from phase1
@@ -223,30 +218,21 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
         // from phase1a:
         TaskList, C_ntasks, C_nthreads,
         // from phase0:
-        Cnvec, &Ch, Ch_size, C_to_M, C_to_A, C_to_B, Ch_is_Mh, C_sparsity,
+        Cnvec, &Ch, Ch_size, C_to_M, C_to_A, C_to_B, Ch_is_Mh,
+        Cp_is_32, Cj_is_32, Ci_is_32, C_sparsity,
         // original input:
         (apply_mask) ? M : NULL, Mask_struct, Mask_comp, A, B,
-        is_eWiseUnion, alpha, beta, Werk) ;
+        is_eWiseUnion, alpha, beta, Werk)) ;
 
-    // Ch and Cp must not be freed; they are now C->h and C->p.
+    // Ch and Cp have been set to NULL and now appear as C->h and C->p.
     // If the method failed, Cp and Ch have already been freed.
 
-    // free workspace
-    GB_FREE_WORK (&TaskList, TaskList_size) ;
-    GB_FREE_WORK (&C_to_M, C_to_M_size) ;
-    GB_FREE_WORK (&C_to_A, C_to_A_size) ;
-    GB_FREE_WORK (&C_to_B, C_to_B_size) ;
-
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        return (info) ;
-    }
-
     //--------------------------------------------------------------------------
-    // return result
+    // free workspace and return result
     //--------------------------------------------------------------------------
 
+    GB_FREE_WORKSPACE ;
+    GB_OK (info) ;
     ASSERT_MATRIX_OK (C, "C output for add", GB0) ;
     (*mask_applied) = apply_mask ;
     return (GrB_SUCCESS) ;

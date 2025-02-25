@@ -2,7 +2,7 @@
 // gb_get_format: determine the format of a matrix result 
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,17 +31,17 @@
 
 #include "gb_interface.h"
 
-GxB_Format_Value gb_get_format          // GxB_BY_ROW or GxB_BY_COL
+int gb_get_format           // GxB_BY_ROW or GxB_BY_COL
 (
-    GrB_Index cnrows,                   // C is cnrows-by-cncols
+    GrB_Index cnrows,       // C is cnrows-by-cncols
     GrB_Index cncols,
-    GrB_Matrix A,                       // may be NULL
-    GrB_Matrix B,                       // may be NULL
-    GxB_Format_Value fmt_descriptor     // may be GxB_NO_FORMAT
+    GrB_Matrix A,           // may be NULL
+    GrB_Matrix B,           // may be NULL
+    int fmt_descriptor      // may be GxB_NO_FORMAT
 )
 {
 
-    GxB_Format_Value fmt ;
+    int fmt ;
 
     if (fmt_descriptor != GxB_NO_FORMAT)
     { 
@@ -61,17 +61,17 @@ GxB_Format_Value gb_get_format          // GxB_BY_ROW or GxB_BY_COL
     else if (A != NULL && !gb_is_vector (A))
     { 
         // (4) get the format of A
-        OK (GxB_Matrix_Option_get (A, GxB_FORMAT, &fmt)) ;
+        OK (GrB_Matrix_get_INT32 (A, &fmt, GxB_FORMAT)) ;
     }
     else if (B != NULL && !gb_is_vector (B))
     { 
         // (5) get the format of B
-        OK (GxB_Matrix_Option_get (B, GxB_FORMAT, &fmt)) ;
+        OK (GrB_Matrix_get_INT32 (B, &fmt, GxB_FORMAT)) ;
     }
     else
     { 
         // (6) get the global default format
-        OK (GxB_Global_Option_get (GxB_FORMAT, &fmt)) ;
+        OK (GrB_Global_get_INT32 (GrB_GLOBAL, &fmt, GxB_FORMAT)) ;
     }
     return (fmt) ;
 }

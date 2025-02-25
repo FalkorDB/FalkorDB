@@ -2,7 +2,7 @@
 // GrB_Matrix_removeElement: remove a single entry from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,8 +20,8 @@
 static inline bool GB_removeElement     // return true if found
 (
     GrB_Matrix C,
-    GrB_Index i,
-    GrB_Index j
+    uint64_t i,
+    uint64_t j
 )
 {
 
@@ -63,33 +63,37 @@ static inline bool GB_removeElement     // return true if found
         // C is sparse or hypersparse
         //----------------------------------------------------------------------
 
-        const int64_t *restrict Cp = C->p ;
-        const int64_t *restrict Ci = C->i ;
-        const int64_t *restrict Ch = C->h ;
+        GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+        GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
+
         bool found ;
         int64_t pC_start, pC_end ;
 
-        if (Ch != NULL)
+        if (C->h != NULL)
         {
 
             //------------------------------------------------------------------
             // C is hypersparse: look for j in hyperlist C->h [0 ... C->nvec-1]
             //------------------------------------------------------------------
 
-            const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
-            const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
-            const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+            void *C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+            void *C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+            void *C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
             const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
             const int64_t cnvec = C->nvec ;
-            int64_t k = GB_hyper_hash_lookup (Ch, cnvec, Cp, C_Yp, C_Yi, C_Yx,
-                C_hash_bits, j, &pC_start, &pC_end) ;
+            int64_t k = GB_hyper_hash_lookup (C->p_is_32, C->j_is_32,
+                C->h, cnvec, Cp, C_Yp, C_Yi, C_Yx, C_hash_bits,
+                j, &pC_start, &pC_end) ;
             found = (k >= 0) ;
             if (!found)
             { 
                 // vector j is empty
                 return (false) ;
             }
-            ASSERT (j == Ch [k]) ;
+            #ifdef GB_DEBUG
+            GB_Ch_DECLARE (Ch, const) ; GB_Ch_PTR (Ch, C) ;
+            ASSERT (j == GB_IGET (Ch, k)) ;
+            #endif
 
         }
         else
@@ -99,8 +103,8 @@ static inline bool GB_removeElement     // return true if found
             // C is sparse, C(:,j) is the jth vector of C
             //------------------------------------------------------------------
 
-            pC_start = Cp [j] ;
-            pC_end   = Cp [j+1] ;
+            pC_start = GB_IGET (Cp, j) ;
+            pC_end   = GB_IGET (Cp, j+1) ;
         }
 
         // look in C(:,k), the kth vector of C
@@ -113,23 +117,29 @@ static inline bool GB_removeElement     // return true if found
         { 
             // C(:,k) is as-if-full so no binary search needed to find C(i,k)
             pleft = pleft + i ;
-            ASSERT (GB_UNZOMBIE (Ci [pleft]) == i) ;
+            int64_t iC = GB_IGET (Ci, pleft) ;
+            ASSERT (i == GB_UNZOMBIE (iC)) ;
             found = true ;
-            is_zombie = GB_IS_ZOMBIE (Ci [pleft]) ;
+            is_zombie = GB_IS_ZOMBIE (iC) ;
         }
         else
         { 
             // binary search for C(i,k): time is O(log(cknz))
-            int64_t nzombies = C->nzombies ;
-            GB_BINARY_SEARCH_ZOMBIE (i, Ci, pleft, pright, found,
-                nzombies, is_zombie) ;
+            const bool may_see_zombies = (C->nzombies > 0) ;
+            found = GB_binary_search_zombie (i, Ci, C->i_is_32,
+                &pleft, &pright, may_see_zombies, &is_zombie) ;
         }
 
-        // remove the entry
+        // remove the entry if found (unless it is already a zombie)
         if (found && !is_zombie)
         { 
             // C(i,j) becomes a zombie
-            C->i [pleft] = GB_ZOMBIE (i) ;
+            #ifdef GB_DEBUG
+            int64_t iC = GB_IGET (Ci, pleft) ;
+            ASSERT (i == iC) ;
+            #endif
+            i = GB_ZOMBIE (i) ;
+            GB_ISET (Ci, pleft, i) ;    // Ci [pleft] = i ;
             C->nzombies++ ;
         }
         return (found) ;
@@ -143,8 +153,8 @@ static inline bool GB_removeElement     // return true if found
 GrB_Info GB_Matrix_removeElement
 (
     GrB_Matrix C,               // matrix to remove entry from
-    GrB_Index row,              // row index
-    GrB_Index col,              // column index
+    uint64_t row,               // row index
+    uint64_t col,               // column index
     GB_Werk Werk
 )
 {
@@ -153,9 +163,9 @@ GrB_Info GB_Matrix_removeElement
     // if C is jumbled, wait on the matrix first.  If full, convert to nonfull
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     if (C->jumbled || GB_IS_FULL (C))
     {
-        GrB_Info info ;
         if (GB_IS_FULL (C))
         { 
             // convert C from full to sparse
@@ -232,7 +242,6 @@ GrB_Info GB_Matrix_removeElement
     // assemble any pending tuples; zombies are OK
     if (C_is_pending)
     { 
-        GrB_Info info ;
         GB_OK (GB_wait (C, "C (removeElement:pending tuples)", Werk)) ;
         ASSERT (!GB_ZOMBIES (C)) ;
         ASSERT (!GB_JUMBLED (C)) ;
@@ -251,12 +260,14 @@ GrB_Info GB_Matrix_removeElement
 GrB_Info GrB_Matrix_removeElement
 (
     GrB_Matrix C,               // matrix to remove entry from
-    GrB_Index row,              // row index
-    GrB_Index col               // column index
+    uint64_t row,               // row index
+    uint64_t col                // column index
 )
 { 
-    GB_WHERE (C, "GrB_Matrix_removeElement (C, row, col)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
+    GB_RETURN_IF_NULL (C) ;
+    GB_WHERE1 (C, "GrB_Matrix_removeElement (C, row, col)") ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
+
     return (GB_Matrix_removeElement (C, row, col, Werk)) ;
 }
 

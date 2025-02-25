@@ -14,7 +14,7 @@ function testmake (what)
 %
 % See also graphblas_install.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 here = pwd ;
@@ -52,29 +52,7 @@ make_all = (isequal (what, 'all')) ;
 
 flags = '-g -R2018a -DGBNCPUFEAT' ;
 
-if (~have_octave)
-    try
-        if (strncmp (computer, 'GLNX', 4))
-            % remove -ansi from CFLAGS and replace it with -std=c11
-            cc = mex.getCompilerConfigurations ('C', 'Selected') ;
-            env = cc.Details.SetEnv ;
-            c1 = strfind (env, 'CFLAGS=') ;
-            q = strfind (env, '"') ;
-            q = q (q > c1) ;
-            if (~isempty (c1) && length (q) > 1)
-                c2 = q (2) ;
-                cflags = env (c1:c2) ;  % the CFLAGS="..." string
-                ansi = strfind (cflags, '-ansi') ;
-                if (~isempty (ansi))
-                    cflags = [cflags(1:ansi-1) '-std=c11' cflags(ansi+5:end)] ;
-                    flags = [flags ' ' cflags] ;
-                    fprintf ('compiling with -std=c11 instead of default -ansi\n') ;
-                end
-            end
-        end
-    catch
-    end
-end
+cflags = '' ;
 
 mexfunctions = dir ('GB_mex_*.c') ;
 cfiles = [ dir('../Demo/Include/usercomplex.c') ; dir('GB_mx_*.c') ] ;
@@ -84,6 +62,7 @@ inc = '-ITemplate -I../Include -I../Source -I../lz4 -I../rmm_wrap' ;
 inc = [inc ' -I../zstd -I../zstd/zstd_subset -I.'] ;
 inc = [inc ' -I../Config '] ;
 inc = [inc ' -I../Source/builtin '] ;
+inc = [inc ' -I../Source/hyper '] ;
 
 if (ismac)
     % Mac (do 'make install' for GraphBLAS first)
@@ -92,9 +71,6 @@ if (ismac)
     else
         libraries = '-L/usr/local/lib -lgraphblas' ; % -lomp' ;
     end
-%   flags = [ flags   ' CFLAGS="$CXXFLAGS -Xpreprocessor -fopenmp" ' ] ;
-%   flags = [ flags ' CXXFLAGS="$CXXFLAGS -Xpreprocessor -fopenmp" ' ] ;
-%   flags = [ flags  ' LDFLAGS="$LDFLAGS  -fopenmp"' ] ;
 elseif (ispc)
     % Windows
     if (need_rename)
@@ -110,9 +86,36 @@ else
     else
         libraries = '-L../build -L. -lgraphblas' ;
     end
-    flags = [ flags   ' CFLAGS="$CXXFLAGS -fopenmp -fPIC -Wno-pragmas" '] ;
-    flags = [ flags ' CXXFLAGS="$CXXFLAGS -fopenmp -fPIC -Wno-pragmas" '] ;
-    flags = [ flags  ' LDFLAGS="$LDFLAGS  -fopenmp -fPIC" '] ;
+end
+
+if ispc
+    if (need_rename)
+        library_path = sprintf ('%s/../GraphBLAS/build/Release', pwd) ;
+    else
+        library_path = sprintf ('%s/../build/Release', pwd) ;
+    end
+else
+    if (need_rename)
+        library_path = sprintf ('%s/../GraphBLAS/build', pwd) ;
+    else
+        library_path = sprintf ('%s/../build', pwd) ;
+    end
+end
+
+% revise compiler flags for MATLAB
+if (ismac)
+    ldflags = '-fPIC' ;
+    rpath = '-rpath ' ;
+elseif (isunix)
+    cflags = [cflags ' -fopenmp'] ;
+    ldflags = '-fopenmp -fPIC' ;
+    rpath = '-rpath=' ;
+end
+if (ismac || isunix)
+    rpath = sprintf (' -Wl,%s''''%s'''' ', rpath, library_path) ;
+    flags = [ flags ' CFLAGS=''$CFLAGS ' cflags ' -Wno-pragmas'' '] ;
+    flags = [ flags ' CXXFLAGS=''$CXXFLAGS ' cflags ' -Wno-pragmas'' '] ;
+    flags = [ flags ' LDFLAGS=''$LDFLAGS ' ldflags rpath ' '' '] ;
 end
 
 if (need_rename)
@@ -123,6 +126,13 @@ if (need_rename)
 else
     libgraphblas = '-lgraphblas' ;
 end
+
+Lflags = sprintf ('-L''%s''', library_path) ;
+
+fprintf ('compiler flags: %s\n', flags) ;
+fprintf ('compiler incs:  %s\n', inc) ;
+fprintf ('linking flags:  %s\n', Lflags) ;
+fprintf ('library:        %s\n', libgraphblas) ;
 
 %-------------------------------------------------------------------------------
 
@@ -172,6 +182,7 @@ for k = 1:length (cfiles)
         fprintf ('.') ;
         % fprintf ('%s\n', cfile) ;
         mexcmd = sprintf ('mex -c %s -silent %s %s', flags, inc, cfile) ;
+        % fprintf ('\n%s\n', mexcmd) ;
         if (dryrun)
             fprintf ('%s\n', mexcmd) ;
         else
@@ -203,8 +214,8 @@ for k = 1:length (mexfunctions)
     % compile if it is newer than its object file, or if any cfile was compiled
     if (make_all || tc > tobj || any_c_compiled)
         % compile the mexFunction
-        mexcmd = sprintf ('mex -silent %s %s %s %s %s', ...
-            flags, inc, mexfunction, objlist, libraries) ;
+        mexcmd = sprintf ('mex %s -silent %s %s ''%s'' %s %s', ...
+            Lflags, flags, inc, mexfunction, objlist, libraries) ;
         fprintf (':') ;
         % fprintf ('%s\n', mexfunction) ;
         if (dryrun)
@@ -220,12 +231,5 @@ end
 mex -g -R2018a GB_spones_mex.c
 
 % load the library
-if (ispc)
-    cd ../build/Release
-    GrB (1)
-    cd ../../Test
-    pwd
-end
-
-
+GB_mex_init ;
 

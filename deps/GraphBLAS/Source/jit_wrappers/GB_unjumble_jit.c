@@ -2,7 +2,7 @@
 // GB_unjumble_jit: JIT kernel to sort the vectors of a sparse/hyper matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,8 +30,9 @@ GrB_Info GB_unjumble_jit
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
-        GB_JIT_KERNEL_UNJUMBLE, GxB_FULL, false, A->type, op, false,
-        GxB_SPARSE, true, A->type, false, 0) ;
+        GB_JIT_KERNEL_UNJUMBLE, GxB_FULL, false, A->type, false, false, false,
+        op, false, GxB_SPARSE, true, A->type,
+        A->p_is_32, A->j_is_32, A->i_is_32, false, 0) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -48,7 +49,8 @@ GrB_Info GB_unjumble_jit
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (A, A_slice, ntasks, nthreads)) ;
+    return (GB_jit_kernel (A, A_slice, ntasks, nthreads, &GB_callback)) ;
 }
 

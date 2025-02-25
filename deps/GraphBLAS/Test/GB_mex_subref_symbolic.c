@@ -2,7 +2,7 @@
 // GB_mex_subref_symbolic: S=A(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -27,12 +27,12 @@ void mexFunction
 )
 {
     struct GB_Matrix_opaque C_header ;
-    GrB_Matrix C = GB_clear_static_header (&C_header) ;
+    GrB_Matrix C = GB_clear_matrix_header (&C_header) ;
 
     bool malloc_debug = GB_mx_get_global (true) ;
     GrB_Matrix A = NULL ;
-    GrB_Index *I = NULL, ni = 0, I_range [3] ;
-    GrB_Index *J = NULL, nj = 0, J_range [3] ;
+    uint64_t *I = NULL, ni = 0, I_range [3] ;
+    uint64_t *J = NULL, nj = 0, J_range [3] ;
     bool ignore ;
 
     // check inputs
@@ -54,14 +54,14 @@ void mexFunction
     }
 
     // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [1], &ni, I_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [1], &I, &ni, I_range, &ignore, NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("I failed") ;
     }
 
     // get J
-    if (!GB_mx_mxArray_to_indices (&J, pargin [2], &nj, J_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [2], &J, &nj, J_range, &ignore, NULL))
     {
         FREE_ALL ;
         mexErrMsgTxt ("J failed") ;
@@ -75,8 +75,12 @@ void mexFunction
         mexErrMsgTxt ("A failed: cannot be bitmap") ;
     }
 
+    bool I_is_32 = false ;
+    bool J_is_32 = false ;
+
     // C = A(I,J) or A(J,I)', no need to check dimensions of C; symbolic
-    METHOD (GB_subref (C, false, true, A, I, ni, J, nj, true, Werk)) ;
+    METHOD (GB_subref (C, false, true, A, I, I_is_32, ni, J, J_is_32, nj,
+        true, Werk)) ;
 
     // return C as a struct
     pargout [0] = GB_mx_Matrix_to_mxArray (&C, "C subref symbolic", true) ;

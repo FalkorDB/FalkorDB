@@ -1,30 +1,24 @@
 //------------------------------------------------------------------------------
-// GB_hyper_prune: remove empty vectors from a hypersparse Ap, Ah list
+// GB_hyper_prune: prune empty vectors from a hypersparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Removes empty vectors from a hypersparse list.  On input, *Ap and *Ah are
-// assumed to be NULL.  The input arrays Ap_old and Ah_old are not modified,
-// and thus can be shallow content from another matrix.  New hyperlists Ap and
-// Ah are allocated, for nvec vectors, all nonempty.
+// On input, A->p and A->h may be shallow.  If modified, new arrays A->p and
+// A->h are created, which are not shallow, and any existing hyper hash is
+// freed.  If these arrays are not modified, and are shallow on input, then
+// they remain shallow on output.  If new A->p and A->h arrays are constructed,
+// the existing A->Y hyper_hash is freed.  A->p_is_32, A->j_is_32, and
+// A->i_is_32 are unchanged in all cases.
 
 #include "GB.h"
 
 GrB_Info GB_hyper_prune
 (
-    // output, not allocated on input:
-    int64_t *restrict *p_Ap, size_t *p_Ap_size,      // size plen+1
-    int64_t *restrict *p_Ah, size_t *p_Ah_size,      // size plen
-    int64_t *p_nvec,                // # of vectors, all nonempty
-    int64_t *p_plen,                // size of Ap and Ah
-    // input, not modified
-    const int64_t *Ap_old,          // size nvec_old+1
-    const int64_t *Ah_old,          // size nvec_old
-    const int64_t nvec_old,         // original number of vectors
+    GrB_Matrix A,               // matrix to prune
     GB_Werk Werk
 )
 {
@@ -33,19 +27,48 @@ GrB_Info GB_hyper_prune
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (p_Ap != NULL) ;
-    ASSERT (p_Ah != NULL) ;
-    ASSERT (p_nvec != NULL) ;
-    ASSERT (Ap_old != NULL) ;
-    ASSERT (Ah_old != NULL) ;
-    ASSERT (nvec_old >= 0) ;
-    (*p_Ap) = NULL ;    (*p_Ap_size) = 0 ;
-    (*p_Ah) = NULL ;    (*p_Ah_size) = 0 ;
-    (*p_nvec) = -1 ;
+    ASSERT (A != NULL) ;
+    ASSERT (GB_ZOMBIES_OK (A)) ;        // pattern not accessed
+    ASSERT (GB_JUMBLED_OK (A)) ;
+    ASSERT_MATRIX_OK (A, "A before hyper_prune", GB0) ;
 
-    int64_t *restrict W  = NULL ; size_t W_size  = 0 ;
-    int64_t *restrict Ap = NULL ; size_t Ap_size = 0 ;
-    int64_t *restrict Ah = NULL ; size_t Ah_size = 0 ;
+    if (!GB_IS_HYPERSPARSE (A))
+    { 
+        // nothing to do
+        return (GrB_SUCCESS) ;
+    }
+
+    //--------------------------------------------------------------------------
+    // count # of empty vectors and check if pruning is needed
+    //--------------------------------------------------------------------------
+
+    // A->nvec_nonempty is needed to prune the hyperlist
+    int64_t nvec_nonempty = GB_nvec_nonempty_update (A) ;
+    if (nvec_nonempty == A->nvec)
+    { 
+        // nothing to prune
+        return (GrB_SUCCESS) ;
+    }
+    #ifdef GB_DEBUG
+    int64_t nvec_save = nvec_nonempty ;
+    #endif
+
+    //--------------------------------------------------------------------------
+    // prune empty vectors
+    //--------------------------------------------------------------------------
+
+    GB_Ap_DECLARE (Ap_old, const) ; GB_Ap_PTR (Ap_old, A) ;
+    GB_Ah_DECLARE (Ah_old, const) ; GB_Ah_PTR (Ah_old, A) ;
+
+    GB_Ap_DECLARE (Ap_new, ) ; size_t Ap_new_size = 0 ;
+    GB_Ah_DECLARE (Ah_new, ) ; size_t Ah_new_size = 0 ;
+
+    GB_MDECL (W, , u) ; size_t W_size = 0 ;
+
+    int64_t nvec_old = A->nvec ;
+
+    size_t psize = (A->p_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t jsize = (A->j_is_32) ? sizeof (uint32_t) : sizeof (uint64_t) ;
 
     //--------------------------------------------------------------------------
     // determine the # of threads to use
@@ -59,15 +82,16 @@ GrB_Info GB_hyper_prune
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    W = GB_MALLOC_WORK (nvec_old+1, int64_t, &W_size) ;
+    W = GB_MALLOC_MEMORY (nvec_old+1, jsize, &W_size) ;
     if (W == NULL)
     { 
         // out of memory
         return (GrB_OUT_OF_MEMORY) ;
     }
+    GB_IPTR (W, A->j_is_32) ;
 
     //--------------------------------------------------------------------------
-    // count the # of nonempty vectors
+    // count the # of nonempty vectors and mark their locations in W
     //--------------------------------------------------------------------------
 
     int64_t k ;
@@ -75,54 +99,77 @@ GrB_Info GB_hyper_prune
     for (k = 0 ; k < nvec_old ; k++)
     { 
         // W [k] = 1 if the kth vector is nonempty; 0 if empty
-        W [k] = (Ap_old [k] < Ap_old [k+1]) ;
+        int nonempty = (GB_IGET (Ap_old, k) < GB_IGET (Ap_old, k+1)) ;
+        // W [k] = nonempty ;
+        GB_ISET (W, k, nonempty) ;
     }
 
-    int64_t nvec ;
-    GB_cumsum (W, nvec_old, &nvec, nthreads, Werk) ;
+    int64_t nvec_new ;
+    GB_cumsum (W, A->j_is_32, nvec_old, &nvec_new, nthreads, Werk) ;
 
     //--------------------------------------------------------------------------
     // allocate the result
     //--------------------------------------------------------------------------
 
-    int64_t plen = GB_IMAX (1, nvec) ;
-    Ap = GB_MALLOC (plen+1, int64_t, &Ap_size) ;
-    Ah = GB_MALLOC (plen  , int64_t, &Ah_size) ;
-    if (Ap == NULL || Ah == NULL)
+    int64_t plen_new = GB_IMAX (1, nvec_new) ;
+    Ap_new = GB_MALLOC_MEMORY (plen_new+1, psize, &Ap_new_size) ;
+    Ah_new = GB_MALLOC_MEMORY (plen_new  , jsize, &Ah_new_size) ;
+    if (Ap_new == NULL || Ah_new == NULL)
     { 
         // out of memory
-        GB_FREE_WORK (&W, W_size) ;
-        GB_FREE (&Ap, Ap_size) ;
-        GB_FREE (&Ah, Ah_size) ;
+        GB_FREE_MEMORY (&W, W_size) ;
+        GB_FREE_MEMORY (&Ap_new, Ap_new_size) ;
+        GB_FREE_MEMORY (&Ah_new, Ah_new_size) ;
         return (GrB_OUT_OF_MEMORY) ;
     }
+    GB_IPTR (Ap_new, A->p_is_32) ;
+    GB_IPTR (Ah_new, A->j_is_32) ;
 
     //--------------------------------------------------------------------------
-    // create the Ap and Ah result
+    // create the Ap_new and Ah_new result
     //--------------------------------------------------------------------------
 
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (k = 0 ; k < nvec_old ; k++)
     {
-        if (Ap_old [k] < Ap_old [k+1])
+        uint64_t p = GB_IGET (Ap_old, k) ;
+        if (p < GB_IGET (Ap_old, k+1))
         { 
-            int64_t knew = W [k] ;
-            Ap [knew] = Ap_old [k] ;
-            Ah [knew] = Ah_old [k] ;
+            uint64_t j = GB_IGET (Ah_old, k) ;
+            uint64_t knew = GB_IGET (W, k) ;
+            // Ap_new [knew] = p ;
+            GB_ISET (Ap_new, knew, p) ;
+            // Ah_new [knew] = j ;
+            GB_ISET (Ah_new, knew, j) ;
         }
     }
 
-    Ap [nvec] = Ap_old [nvec_old] ;
+    // Ap_new [nvec_new] = Ap_old [nvec_old] ;
+    uint64_t nvals = A->nvals ;
+    ASSERT (nvals == GB_IGET (Ap_old, nvec_old)) ;
+    GB_ISET (Ap_new, nvec_new, nvals) ;
 
     //--------------------------------------------------------------------------
-    // free workspace and return result
+    // free workspace and old matrix components, including the A->Y hyper_hash
     //--------------------------------------------------------------------------
 
-    GB_FREE_WORK (&W, W_size) ;
-    (*p_Ap) = Ap ; (*p_Ap_size) = Ap_size ;
-    (*p_Ah) = Ah ; (*p_Ah_size) = Ah_size ;
-    (*p_nvec) = nvec ;
-    (*p_plen) = plen ;
+    GB_FREE_MEMORY (&W, W_size) ;
+    GB_phy_free (A) ;
+
+    //--------------------------------------------------------------------------
+    // transplant the new hyperlist into A
+    //--------------------------------------------------------------------------
+
+    A->p = Ap_new ; A->p_size = Ap_new_size ;
+    A->h = Ah_new ; A->h_size = Ah_new_size ;
+    A->nvec = nvec_new ;
+    A->plen = plen_new ;
+    ASSERT (nvec_new == nvec_save) ;
+    GB_nvec_nonempty_set (A, nvec_new) ;
+    A->nvals = nvals ;
+    A->magic = GB_MAGIC ;
+
+    ASSERT_MATRIX_OK (A, "A after hyper_prune", GB0) ;
     return (GrB_SUCCESS) ;
 }
 

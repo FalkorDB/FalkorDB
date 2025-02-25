@@ -678,6 +678,24 @@ void AR_EXP_Aggregate(AR_ExpNode *root, const Record r) {
 	}
 }
 
+// finalize an aggregation node
+// returns the node's aggregated value
+static SIValue _AR_EXP_FinalizeAggregation
+(
+	AR_ExpNode *root  // aggregation node
+) {
+	ASSERT(AGGREGATION_NODE(root));
+
+	AggregateCtx *ctx = root->op.private_data;
+
+	Aggregate_Finalize(root->op.f, ctx);
+
+	SIValue v = Aggregate_GetResult(ctx);
+	ASSERT(SI_TYPE(v) & AR_FuncDesc_RetType(root->op.f));
+
+	return v;
+}
+
 void _AR_EXP_FinalizeAggregations
 (
 	AR_ExpNode *root
@@ -687,10 +705,7 @@ void _AR_EXP_FinalizeAggregations
 	//--------------------------------------------------------------------------
 
 	if(AGGREGATION_NODE(root)) {
-		AggregateCtx *ctx = root->op.private_data;
-		Aggregate_Finalize(root->op.f, ctx);
-		SIValue v = Aggregate_GetResult(ctx);
-		ASSERT(SI_TYPE(v) & AR_FuncDesc_RetType(root->op.f));
+		SIValue v = _AR_EXP_FinalizeAggregation(root);
 
 		// free node internals
 		_AR_EXP_FreeOpInternals(root);
@@ -723,8 +738,24 @@ SIValue AR_EXP_FinalizeAggregations
 ) {
 	ASSERT(root != NULL);
 
-	_AR_EXP_FinalizeAggregations(root);
-	return AR_EXP_Evaluate(root, r);
+	// incase root is an aggregation node
+	// e.g.
+	// RETURN a, SUM(a.value)
+	// simply return the aggregated value
+	//
+	// otherwise, root is not an aggregation node
+	// e.g.
+	// RETURN a, SUM(a.value) / 2
+	// finalize the aggregation and eveluate the entire expression
+
+	// note that an aggregation function can not be nested within
+	// another aggregation function
+	if(AGGREGATION_NODE(root)) {
+		return _AR_EXP_FinalizeAggregation(root);
+	} else {
+		_AR_EXP_FinalizeAggregations(root);
+		return AR_EXP_Evaluate(root, r);
+	}
 }
 
 void AR_EXP_CollectEntities

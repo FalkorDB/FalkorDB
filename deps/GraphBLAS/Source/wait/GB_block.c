@@ -2,7 +2,7 @@
 // GB_block: apply all pending computations if blocking mode enabled
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ GrB_Info GB_block   // apply all pending computations if blocking mode enabled
     double npending = (double) GB_Pending_n (A) ;
     double anzmax = ((double) A->vlen) * ((double) A->vdim) ;
     bool many_pending = (npending >= anzmax) ;
-    GrB_Mode mode = GB_Global_mode_get ( ) ;
+    int mode = GB_Global_mode_get ( ) ;
     bool blocking = (mode == GrB_BLOCKING || mode == GxB_BLOCKING_GPU) ;
 
     if (many_pending || blocking)
@@ -48,6 +48,7 @@ GrB_Info GB_block   // apply all pending computations if blocking mode enabled
         GB_OK (GB_wait (A, "matrix", Werk)) ;
         GB_OK (GB_hyper_hash_build (A, Werk)) ;
     }
+
     return (GrB_SUCCESS) ;
 }
 

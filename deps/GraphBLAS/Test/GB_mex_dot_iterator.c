@@ -2,7 +2,7 @@
 // GB_mex_dot_iterator: s = X'*Y, dot product of 2 vectors using iterators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,7 +24,7 @@
     GB_mx_put_global (true) ;                       \
 }
 
-#define Assert(x)                                   \
+#define my_assert(x)                                \
 {                                                   \
     if (!(x))                                       \
     {                                               \
@@ -54,12 +54,32 @@ void mexFunction
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
 
-    // get X (shallow copy)
-    X = GB_mx_mxArray_to_Vector (pargin [0], "X input", false, true) ;
+    // get kind:
+    // 0: merge, using macros
+    // 1: iterate through x and lookup y, using macros
+    // 2: merge, using functions
+    // 3: iterate through x and lookup y, using functions
+    bool deep_and_jumbled = false ;
+    int GET_SCALAR (2, int, kind, 0) ;
+    if (kind < 0)
+    {
+        deep_and_jumbled = true ;
+        kind = -kind ;
+    }
+    bool use_macros = (kind <= 1) ;
+    kind = kind % 2 ;
+
+    // get X (deep or shallow copy)
+    X = GB_mx_mxArray_to_Vector (pargin [0], "X input", deep_and_jumbled, true) ;
     if (X == NULL)
     {
         FREE_ALL ;
         mexErrMsgTxt ("X failed") ;
+    }
+    if (deep_and_jumbled)
+    {
+        // to test the wait in Iterator_attach
+        X->jumbled = true ;
     }
 
     // get Y (shallow copy)
@@ -70,16 +90,7 @@ void mexFunction
         mexErrMsgTxt ("Y failed") ;
     }
 
-    // get kind:
-    // 0: merge, using macros
-    // 1: iterate through x and lookup y, using macros
-    // 2: merge, using functions
-    // 3: iterate through x and lookup y, using functions
-    int GET_SCALAR (2, int, kind, 0) ;
-    bool use_macros = (kind <= 1) ;
-    kind = kind % 2 ;
-
-    GrB_Index n, ny ;
+    uint64_t n, ny ;
     OK (GrB_Vector_size (&n, X)) ;
     OK (GrB_Vector_size (&ny, Y)) ;
 
@@ -121,7 +132,7 @@ void mexFunction
     int x_sparsity, y_sparsity ;
     OK (GxB_Vector_Option_get (X, GxB_SPARSITY_STATUS, &x_sparsity)) ;
     OK (GxB_Vector_Option_get (Y, GxB_SPARSITY_STATUS, &y_sparsity)) ;
-    GrB_Index xnvals, ynvals ;
+    uint64_t xnvals, ynvals ;
     OK (GrB_Vector_nvals (&xnvals, X)) ;
     OK (GrB_Vector_nvals (&ynvals, Y)) ;
 

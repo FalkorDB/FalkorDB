@@ -2,7 +2,7 @@
 // GB_mex_test30: test GrB_get and GrB_set (index unary ops)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,8 +19,7 @@
     size_t siz1, siz2, siz3 ;                                               \
     OK (GrB_IndexUnaryOp_get_String (op, name, GrB_NAME)) ;                 \
     CHECK (MATCH (name, opname)) ;                                          \
-    OK (GrB_IndexUnaryOp_get_String (op, cname,                             \
-        (GrB_Field) GxB_JIT_C_NAME));                                       \
+    OK (GrB_IndexUnaryOp_get_String (op, cname, GxB_JIT_C_NAME));           \
     printf ("\n%s: %s\n", name, cname) ;                                    \
     OK (GxB_IndexUnaryOp_fprint (op, "idxunop", 5, stdout)) ;               \
     OK (GrB_IndexUnaryOp_get_SIZE (op, &size, GrB_NAME)) ;                  \
@@ -48,16 +47,16 @@
     GETOP (op, #op) ;                                       \
 }
 
-void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,
+void myfunc (bool *z, const float *x, uint64_t i, uint64_t j,
     const float *y) ;
-void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,
+void myfunc (bool *z, const float *x, uint64_t i, uint64_t j,
     const float *y)
 {
     (*z) = (*x) > 2 ;
 }
 
 #define MYFUNC_DEFN \
-"void myfunc (bool *z, const float *x, GrB_Index i, GrB_Index j,    \n" \
+"void myfunc (bool *z, const float *x, uint64_t i, uint64_t j,      \n" \
 "    const float *y)                                                \n" \
 "{                                                                  \n" \
 "    (*z) = (*x) > 2 ;                                              \n" \

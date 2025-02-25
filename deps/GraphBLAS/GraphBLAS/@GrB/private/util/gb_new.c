@@ -2,20 +2,20 @@
 // gb_new: create a GraphBLAS matrix with desired format and sparsity control
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "gb_interface.h"
 
-GrB_Matrix gb_new               // create and empty matrix C
+GrB_Matrix gb_new       // create and empty matrix C
 (
-    GrB_Type type,              // type of C
-    GrB_Index nrows,            // # of rows
-    GrB_Index ncols,            // # of rows
-    GxB_Format_Value fmt,       // requested format, if < 0 use default
-    int sparsity                // sparsity control for C, 0 for default
+    GrB_Type type,      // type of C
+    uint64_t nrows,     // # of rows
+    uint64_t ncols,     // # of rows
+    int fmt,            // requested format, if < 0 use default
+    int sparsity        // sparsity control for C, 0 for default
 )
 {
 
@@ -30,21 +30,21 @@ GrB_Matrix gb_new               // create and empty matrix C
     }
 
     // set the desired format
-    GxB_Format_Value fmt_current ;
-    OK (GxB_Matrix_Option_get (C, GxB_FORMAT, &fmt_current)) ;
+    int fmt_current ;
+    OK (GrB_Matrix_get_INT32 (C, &fmt_current, GxB_FORMAT)) ;
     if (fmt != fmt_current)
     { 
-        OK (GxB_Matrix_Option_set (C, GxB_FORMAT, fmt)) ;
+        OK (GrB_Matrix_set_INT32 (C, fmt, GxB_FORMAT)) ;
     }
 
     // set the desired sparsity structure
     if (sparsity != 0)
     { 
         int current ;
-        OK (GxB_Matrix_Option_get (C, GxB_SPARSITY_CONTROL, &current)) ;
+        OK (GrB_Matrix_get_INT32 (C, &current, GxB_SPARSITY_CONTROL)) ;
         if (current != sparsity)
         {
-            OK (GxB_Matrix_Option_set (C, GxB_SPARSITY_CONTROL, sparsity)) ;
+            OK (GrB_Matrix_set_INT32 (C, sparsity, GxB_SPARSITY_CONTROL)) ;
         }
     }
 

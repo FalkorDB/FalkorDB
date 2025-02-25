@@ -2,7 +2,7 @@
 // GB_macrofy_family: construct all macros for all methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,16 +35,18 @@ void GB_macrofy_family
             break ;
 
         case GB_jit_assign_family : 
-            GB_macrofy_assign (fp, method_code, (GrB_BinaryOp) op, type1, type2) ;
+            GB_macrofy_assign (fp, method_code, (GrB_BinaryOp) op,
+                type1, type2) ;
             break ;
 
         case GB_jit_build_family  : 
-            GB_macrofy_build (fp, method_code, (GrB_BinaryOp) op, type1, type2) ;
+            GB_macrofy_build (fp, method_code, (GrB_BinaryOp) op,
+                type1, type2) ;
             break ;
 
         case GB_jit_ewise_family  : 
-            GB_macrofy_ewise (fp, method_code, kcode, (GrB_BinaryOp) op, type1, type2,
-                type3) ;
+            GB_macrofy_ewise (fp, method_code, kcode, (GrB_BinaryOp) op,
+                type1, type2, type3) ;
             break ;
 
         case GB_jit_mxm_family    : 
@@ -76,7 +78,7 @@ void GB_macrofy_family
             break ;
 
         case GB_jit_sort_family : 
-            GB_macrofy_sort (fp, method_code, op, type1) ;
+            GB_macrofy_sort (fp, method_code, (GrB_BinaryOp) op, type1) ;
             break ;
 
         default: ;

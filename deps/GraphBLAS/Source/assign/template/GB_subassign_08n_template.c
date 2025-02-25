@@ -2,7 +2,7 @@
 // GB_subassign_08n_template: C(I,J)<M> += A ; no S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,7 +40,7 @@
     else                                                                    \
     {                                                                       \
         /* binary search for C(iC,jC) in C(:,jC) */                         \
-        GB_iC_BINARY_SEARCH ;                                               \
+        GB_iC_BINARY_SEARCH (may_see_zombies_phase1) ;                      \
         if (cij_found)                                                      \
         {                                                                   \
             /* ----[C A 1] or [X A 1]--------------------------- */         \
@@ -67,7 +67,7 @@
     ASSERT (!cjdense) ;                                                     \
     {                                                                       \
         /* binary search for C(iC,jC) in C(:,jC) */                         \
-        GB_iC_BINARY_SEARCH ;                                               \
+        GB_iC_BINARY_SEARCH (may_see_zombies_phase2) ;                      \
         if (!cij_found)                                                     \
         {                                                                   \
             /* ----[. A 1]-------------------------------------- */         \
@@ -85,15 +85,10 @@
 
     GB_EMPTY_TASKLIST ;
     GB_GET_C ;      // C must not be bitmap
-    int64_t zorig = C->nzombies ;
-    const int64_t Cnvec = C->nvec ;
-    const int64_t *restrict Ch = C->h ;
-    const int64_t *restrict Cp = C->p ;
-    const bool C_is_hyper = (Ch != NULL) ;
+    const bool may_see_zombies_phase1 = (C->nzombies > 0) ;
     GB_GET_C_HYPER_HASH ;
     GB_GET_MASK ;
     GB_GET_ACCUM_MATRIX ;
-    const int64_t *Ah = A->h ;
 
     //--------------------------------------------------------------------------
     // Method 08n: C(I,J)<M> += A ; no S
@@ -125,12 +120,16 @@
     // in any combination.
 
     int64_t Znvec ;
-    const int64_t *restrict Zh_shallow = NULL ;
+    GB_MDECL (Zh_shallow, const, u) ;
+    bool Zj_is_32 ;
     GB_OK (GB_subassign_08n_slice (
         &TaskList, &TaskList_size, &ntasks, &nthreads,
         &Znvec, &Zh_shallow, &Z_to_A, &Z_to_A_size, &Z_to_M, &Z_to_M_size,
-        C, I, nI, GB_I_KIND, Icolon, J, nJ, GB_J_KIND, Jcolon,
+        &Zj_is_32, C,
+        I, GB_I_IS_32, nI, GB_I_KIND, Icolon,
+        J, GB_J_IS_32, nJ, GB_J_KIND, Jcolon,
         A, M, Werk)) ;
+    GB_IPTR (Zh_shallow, Zj_is_32) ;
     GB_ALLOCATE_NPENDING_WERK ;
 
     //--------------------------------------------------------------------------
@@ -159,9 +158,45 @@
             // get A(:,j) and M(:,j)
             //------------------------------------------------------------------
 
-            int64_t j = GBH (Zh_shallow, k) ;
-            GB_GET_EVEC (pA, pA_end, pA, pA_end, Ap, Ah, j, k, Z_to_A, Avlen) ;
-            GB_GET_EVEC (pM, pM_end, pB, pB_end, Mp, Mh, j, k, Z_to_M, Mvlen) ;
+            int64_t j = GBh (Zh_shallow, k) ;
+
+            int64_t pA = -1, pA_end = -1 ;
+            if (fine_task)
+            { 
+                // A fine task operates on a slice of A(:,k)
+                pA     = TaskList [taskid].pA ;
+                pA_end = TaskList [taskid].pA_end ;
+            }
+            else
+            { 
+                // vectors are never sliced for a coarse task
+                int64_t kA = (Zh_shallow == Ah) ? k :
+                    ((Z_to_A == NULL) ? j : Z_to_A [k]) ;
+                if (kA >= 0)
+                { 
+                    pA     = GBp_A (Ap, kA, Avlen) ;
+                    pA_end = GBp_A (Ap, kA+1, Avlen) ;
+                }
+            }
+
+            int64_t pM = -1, pM_end = -1 ;
+            if (fine_task)
+            { 
+                // A fine task operates on a slice of M(:,k)
+                pM     = TaskList [taskid].pB ;
+                pM_end = TaskList [taskid].pB_end ;
+            }
+            else
+            { 
+                // vectors are never sliced for a coarse task
+                int64_t kM = (Zh_shallow == Mh) ? k :
+                    ((Z_to_M == NULL) ? j : Z_to_M [k]) ;
+                if (kM >= 0)
+                { 
+                    pM     = GBp_M (Mp, kM, Mvlen) ;
+                    pM_end = GBp_M (Mp, kM+1, Mvlen) ;
+                }
+            }
 
             //------------------------------------------------------------------
             // quick checks for empty intersection of A(:,j) and M(:,j)
@@ -170,10 +205,10 @@
             int64_t ajnz = pA_end - pA ;
             int64_t mjnz = pM_end - pM ;
             if (ajnz == 0 || mjnz == 0) continue ;
-            int64_t iA_first = GBI_A (Ai, pA, Avlen) ;
-            int64_t iA_last  = GBI_A (Ai, pA_end-1, Avlen) ;
-            int64_t iM_first = GBI_M (Mi, pM, Mvlen) ;
-            int64_t iM_last  = GBI_M (Mi, pM_end-1, Mvlen) ;
+            int64_t iA_first = GBi_A (Ai, pA, Avlen) ;
+            int64_t iA_last  = GBi_A (Ai, pA_end-1, Avlen) ;
+            int64_t iM_first = GBi_M (Mi, pM, Mvlen) ;
+            int64_t iM_last  = GBi_M (Mi, pM_end-1, Mvlen) ;
             if (iA_last < iM_first || iM_last < iA_first) continue ;
             int64_t pM_start = pM ;
 
@@ -199,12 +234,13 @@
                 {
                     if (GB_MCAST (Mx, pM, msize))
                     { 
-                        int64_t iA = GBI_M (Mi, pM, Mvlen) ;
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
                         // find iA in A(:,j)
                         int64_t pright = pA_end - 1 ;
                         bool found ;
                         // FUTURE::: exploit dense A(:,j)
-                        GB_BINARY_SEARCH (iA, Ai, pA, pright, found) ;
+                        found = GB_binary_search (iA, Ai, GB_Ai_IS_32,
+                            &pA, &pright) ;
                         if (found) GB_PHASE1_ACTION ;
                     }
                 }
@@ -222,7 +258,7 @@
 
                 for ( ; pA < pA_end ; pA++)
                 { 
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
                     GB_MIJ_BINARY_SEARCH_OR_DENSE_LOOKUP (iA) ;
                     if (mij) GB_PHASE1_ACTION ;
                 }
@@ -239,8 +275,8 @@
 
                 while (pA < pA_end && pM < pM_end)
                 {
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
-                    int64_t iM = GBI_M (Mi, pM, Mvlen) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
+                    int64_t iM = GBi_M (Mi, pM, Mvlen) ;
                     if (iA < iM)
                     { 
                         // A(i,j) exists but not M(i,j)
@@ -269,8 +305,11 @@
     // phase 2: insert pending tuples
     //--------------------------------------------------------------------------
 
+    // All zombies might have just been brought back to life, so recheck the
+    // may_see_zombies condition.
+
     GB_PENDING_CUMSUM ;
-    zorig = C->nzombies ;
+    const bool may_see_zombies_phase2 = (C->nzombies > 0) ;
 
     #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
         reduction(&&:pending_sorted)
@@ -294,9 +333,45 @@
             // get A(:,j) and M(:,j)
             //------------------------------------------------------------------
 
-            int64_t j = GBH (Zh_shallow, k) ;
-            GB_GET_EVEC (pA, pA_end, pA, pA_end, Ap, Ah, j, k, Z_to_A, Avlen) ;
-            GB_GET_EVEC (pM, pM_end, pB, pB_end, Mp, Mh, j, k, Z_to_M, Mvlen) ;
+            int64_t j = GBh (Zh_shallow, k) ;
+
+            int64_t pA = -1, pA_end = -1 ;
+            if (fine_task)
+            { 
+                // A fine task operates on a slice of A(:,k)
+                pA     = TaskList [taskid].pA ;
+                pA_end = TaskList [taskid].pA_end ;
+            }
+            else
+            { 
+                // vectors are never sliced for a coarse task
+                int64_t kA = (Zh_shallow == Ah) ? k :
+                    ((Z_to_A == NULL) ? j : Z_to_A [k]) ;
+                if (kA >= 0)
+                { 
+                    pA     = GBp_A (Ap, kA, Avlen) ;
+                    pA_end = GBp_A (Ap, kA+1, Avlen) ;
+                }
+            }
+
+            int64_t pM = -1, pM_end = -1 ;
+            if (fine_task)
+            { 
+                // A fine task operates on a slice of M(:,k)
+                pM     = TaskList [taskid].pB ;
+                pM_end = TaskList [taskid].pB_end ;
+            }
+            else
+            { 
+                // vectors are never sliced for a coarse task
+                int64_t kM = (Zh_shallow == Mh) ? k :
+                    ((Z_to_M == NULL) ? j : Z_to_M [k]) ;
+                if (kM >= 0)
+                { 
+                    pM     = GBp_M (Mp, kM, Mvlen) ;
+                    pM_end = GBp_M (Mp, kM+1, Mvlen) ;
+                }
+            }
 
             //------------------------------------------------------------------
             // quick checks for empty intersection of A(:,j) and M(:,j)
@@ -305,10 +380,10 @@
             int64_t ajnz = pA_end - pA ;
             int64_t mjnz = pM_end - pM ;
             if (ajnz == 0 || mjnz == 0) continue ;
-            int64_t iA_first = GBI_A (Ai, pA, Avlen) ;
-            int64_t iA_last  = GBI_A (Ai, pA_end-1, Avlen) ;
-            int64_t iM_first = GBI_M (Mi, pM, Mvlen) ;
-            int64_t iM_last  = GBI_M (Mi, pM_end-1, Mvlen) ;
+            int64_t iA_first = GBi_A (Ai, pA, Avlen) ;
+            int64_t iA_last  = GBi_A (Ai, pA_end-1, Avlen) ;
+            int64_t iM_first = GBi_M (Mi, pM, Mvlen) ;
+            int64_t iM_last  = GBi_M (Mi, pM_end-1, Mvlen) ;
             if (iA_last < iM_first || iM_last < iA_first) continue ;
             int64_t pM_start = pM ;
 
@@ -335,12 +410,13 @@
                 {
                     if (GB_MCAST (Mx, pM, msize))
                     { 
-                        int64_t iA = GBI_M (Mi, pM, Mvlen) ;
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
                         // find iA in A(:,j)
                         int64_t pright = pA_end - 1 ;
                         bool found ;
                         // FUTURE::: exploit dense A(:,j)
-                        GB_BINARY_SEARCH (iA, Ai, pA, pright, found) ;
+                        found = GB_binary_search (iA, Ai, GB_Ai_IS_32,
+                            &pA, &pright) ;
                         if (found) GB_PHASE2_ACTION ;
                     }
                 }
@@ -358,7 +434,7 @@
 
                 for ( ; pA < pA_end ; pA++)
                 { 
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
                     GB_MIJ_BINARY_SEARCH_OR_DENSE_LOOKUP (iA) ;
                     if (mij) GB_PHASE2_ACTION ;
                 }
@@ -375,8 +451,8 @@
 
                 while (pA < pA_end && pM < pM_end)
                 {
-                    int64_t iA = GBI_A (Ai, pA, Avlen) ;
-                    int64_t iM = GBI_M (Mi, pM, Mvlen) ;
+                    int64_t iA = GBi_A (Ai, pA, Avlen) ;
+                    int64_t iM = GBi_M (Mi, pM, Mvlen) ;
                     if (iA < iM)
                     { 
                         // A(i,j) exists but not M(i,j)

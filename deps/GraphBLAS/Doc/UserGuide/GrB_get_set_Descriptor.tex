@@ -1,0 +1,159 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GrB\_Descriptor} Options}
+\label{get_set_descriptor}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_Descriptor desc, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_Descriptor desc, char *     value, int f) ;
+GrB_Info GrB_get (GrB_Descriptor desc, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_Descriptor desc, size_t *   value, int f) ;
+
+GrB_Info GrB_set (GrB_Descriptor desc, GrB_Scalar value, int f) ;
+GrB_Info GrB_set (GrB_Descriptor desc, char *     value, int f) ;
+GrB_Info GrB_set (GrB_Descriptor desc, int32_t    value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{3.3in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_OUTP'         & R/W  & \verb'int32_t'& \verb'GrB_DEFAULT' or \verb'GrB_REPLACE' \\
+\verb'GrB_MASK'         & R/W  & \verb'int32_t'& \verb'GrB_DEFAULT', \verb'GrB_COMP', \verb'GrB_STRUCTURE', or
+                                                    \newline \verb'GrB_COMP_STRUCTURE' \\
+\verb'GrB_INP0'         & R/W  & \verb'int32_t'& \verb'GrB_DEFAULT' or \verb'GrB_TRAN' \\
+\verb'GrB_INP1'         & R/W  & \verb'int32_t'& \verb'GrB_DEFAULT' or \verb'GrB_TRAN' \\
+\verb'GxB_AxB_METHOD'   & R/W  & \verb'int32_t'& Method used by \verb'GrB_mxm' (\verb'GrB_DEFAULT', \newline
+                                                 \verb'GxB_AxB_GUSTAVSON'.  \verb'GxB_AxB_HASH', \newline
+                                                 \verb'GxB_AxB_SAXPY', or \verb'GxB_AxB_DOT'). \\
+\verb'GxB_SORT'         & R/W  & \verb'int32_t'& if true, \verb'GrB_mxm' returns its output in sorted form. \\
+\verb'GxB_COMPRESSION'  & R/W  & \verb'int32_t'& compression method for serialize methods. \\
+% \verb'GxB_IMPORT'       & R/W  & \verb'int32_t'& \verb'GxB_FAST_IMPORT' or \verb'GxB_SECURE_IMPORT' for \verb'GxB*_pack*' methods. \\
+\verb'GxB_ROWINDEX_LIST' & R/W & \verb'int32_t' & how the \verb'GrB_Vector I' is intrepretted. \\
+\verb'GxB_COLINDEX_LIST' & R/W & \verb'int32_t' & how the \verb'GrB_Vector J' is intrepretted. \\
+\verb'GxB_VALUE_LIST'    & R/W & \verb'int32_t' & how \verb'GrB_Vector X' is intrepretted (for \verb'GrB_build' only). \\
+\hline
+\verb'GrB_NAME'         & R/W  & \verb'char *' & name of the descriptor.
+    This can be set any number of times for user-defined descriptors.  Built-in
+    descriptors have the same name as the variable name (\verb'"GrB_DESC_T1"'
+    for the \verb'GrB_DESC_T1' descriptor, for example) \\
+\hline
+\end{tabular}
+}
+
+The following table describes each option.
+See Section~\ref{descriptor} for more details.
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{|l|p{2.4in}|p{2.2in}|}
+\hline
+Descriptor & Default   & Non-default \\
+field      & &  \\
+\hline
+
+\verb'GrB_OUTP'
+    & \verb'GrB_DEFAULT':
+    The output matrix is not cleared.  The operation computes
+    ${\bf C \langle M \rangle = C \odot T}$.
+    & \verb'GrB_REPLACE':
+    After computing ${\bf Z=C\odot T}$,
+    the output {\bf C} is cleared of all entries.
+    Then ${\bf C \langle M \rangle = Z}$ is performed. \\
+
+\hline
+
+\verb'GrB_MASK'
+    & \verb'GrB_DEFAULT':
+    The Mask is not complemented.  \verb'Mask(i,j)=1' means the value $C_{ij}$
+    can be modified by the operation, while \verb'Mask(i,j)=0' means the value
+    $C_{ij}$ shall not be modified by the operation.
+    & \verb'GrB_COMP':
+    The Mask is complemented.  \verb'Mask(i,j)=0' means the value $C_{ij}$
+    can be modified by the operation, while \verb'Mask(i,j)=1' means the value
+    $C_{ij}$ shall not be modified by the operation. \\
+    &
+    & \verb'GrB_STRUCTURE':
+    The values of the Mask are ignored.  If \verb'Mask(i,j)' is an entry
+    in the \verb'Mask' matrix, it is treated as if \verb'Mask(i,j)=1'.
+    The two options \verb'GrB_COMP' and \verb'GrB_STRUCTURE' can be
+    combined, with two subsequent calls, or with a single call with the setting
+    \verb'GrB_COMP+GrB_STRUCTURE'.  \\
+
+\hline
+
+\verb'GrB_INP0'
+    & \verb'GrB_DEFAULT':
+    The first input is not transposed prior to using it in the operation.
+    & \verb'GrB_TRAN':
+    The first input is transposed prior to using it in the operation.  Only
+    matrices are transposed, never vectors. \\
+
+\hline
+
+\verb'GrB_INP1'
+    & \verb'GrB_DEFAULT':
+    The second input is not transposed prior to using it in the operation.
+    & \verb'GrB_TRAN':
+    The second input is transposed prior to using it in the operation.  Only
+    matrices are transposed, never vectors. \\
+
+\hline
+
+\verb'GxB_AxB_METHOD'
+    & \verb'GrB_DEFAULT':
+    The method for \verb'C=A*B' is selected automatically.
+    & \verb'GxB_AxB_'{\em method}: The selected method is used to compute
+    \verb'C=A*B'.  \\
+
+\hline
+
+\verb'GxB_SORT'
+    & \verb'GrB_DEFAULT':
+    The computation of \verb'C=A*B' may leave \verb'C' in a jumbled state;
+    \verb'GrB_wait' will finalize the matrix.
+    & any nonzero value: \verb'C=A*B' always returns \verb'C' in final,
+    sorted form. \\
+
+\hline
+
+\verb'GxB_COMPRESSION'
+    & \verb'GrB_DEFAULT':
+    Serialize methods will use the default method, ZSTD (level 1)
+    & See Section~\ref{serialize_deserialize} \\
+
+% \hline
+% \verb'GxB_IMPORT'
+%     & \verb'GrB_DEFAULT': fast import
+%     & \verb'GxB_SECURE_IMPORT': secure import \\
+
+\hline
+\verb'GxB_ROWINDEX_LIST'
+    & \verb'GrB_DEFAULT' or \verb'GxB_USE_VALUES': use the values of \verb'I'
+    & \verb'GxB_USE_INDICES': use the indices of \verb'I';
+    \verb'GxB_IS_STRIDE': \verb'I' is a strided range (\verb'lo:inc:hi') \\
+
+\hline
+\verb'GxB_COLINDEX_LIST'
+    & \verb'GrB_DEFAULT' or \verb'GxB_USE_VALUES': use the values of \verb'J'
+    & \verb'GxB_USE_INDICES': use the indices of \verb'J';
+    \verb'GxB_IS_STRIDE': \verb'J' is a strided range (\verb'lo:inc:hi') \\
+
+\hline
+\verb'GxB_VALUE_LIST'
+    & \verb'GrB_DEFAULT' or \verb'GxB_USE_VALUES': use the values of \verb'X'
+    & \verb'GxB_USE_INDICES': use the indices \\
+
+\hline
+\end{tabular}
+}
+
+

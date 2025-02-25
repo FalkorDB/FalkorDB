@@ -2,7 +2,7 @@
 // GB_subassign: C(Rows,Cols)<M> = accum (C(Rows,Cols),A) or A'
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,8 +28,8 @@
     GB_Matrix_free (&Cwork) ;       \
     GB_Matrix_free (&Mwork) ;       \
     GB_Matrix_free (&Awork) ;       \
-    GB_FREE_WORK (&I2, I2_size) ;   \
-    GB_FREE_WORK (&J2, J2_size) ;   \
+    GB_FREE_MEMORY (&I2, I2_size) ;   \
+    GB_FREE_MEMORY (&J2, J2_size) ;   \
 }
 
 GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
@@ -43,10 +43,12 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     const GrB_BinaryOp accum,       // optional accum for accum(C,T)
     const GrB_Matrix A_in,          // input matrix
     const bool A_transpose,         // true if A is transposed
-    const GrB_Index *Rows,          // row indices
-    const GrB_Index nRows_in,       // number of row indices
-    const GrB_Index *Cols,          // column indices
-    const GrB_Index nCols_in,       // number of column indices
+    const void *Rows,               // row indices
+    const bool Rows_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nRows_in,        // number of row indices
+    const void *Cols,               // column indices
+    const bool Cols_is_32,          // if true, Cols is 32-bit; else 64-bit
+    const uint64_t nCols_in,        // number of column indices
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand
@@ -62,8 +64,9 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     GrB_Matrix C = NULL ;           // C_in or Cwork
     GrB_Matrix M = NULL ;           // M_in or Mwork
     GrB_Matrix A = NULL ;           // A_in or Awork
-    GrB_Index *I = NULL ;           // Rows, Cols, or I2
-    GrB_Index *J = NULL ;           // Rows, Cols, or J2
+    void *I = NULL ;                // Rows, Cols, or I2
+    void *J = NULL ;                // Rows, Cols, or J2
+    bool I_is_32, J_is_32 ;
 
     // temporary matrices and arrays
     GrB_Matrix Cwork = NULL ;
@@ -71,8 +74,8 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     GrB_Matrix Awork = NULL ;
     struct GB_Matrix_opaque
         Cwork_header, Mwork_header, Awork_header, MT_header, AT_header ;
-    GrB_Index *I2 = NULL ; size_t I2_size = 0 ;
-    GrB_Index *J2 = NULL ; size_t J2_size = 0 ;
+    void *I2 = NULL ; size_t I2_size = 0 ;
+    void *J2 = NULL ; size_t J2_size = 0 ;
 
     GrB_Type scalar_type = NULL ;
     int64_t ni, nj, nI, nJ, Icolon [3], Jcolon [3] ;
@@ -83,11 +86,13 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     GB_OK (GB_assign_prep (&C, &M, &A, &subassign_method,
         &Cwork, &Mwork, &Awork,
         &Cwork_header, &Mwork_header, &Awork_header, &MT_header, &AT_header,
-        &I, &I2, &I2_size, &ni, &nI, &Ikind, Icolon,
-        &J, &J2, &J2_size, &nj, &nJ, &Jkind, Jcolon,
+        &I, &I_is_32, &I2, &I2_size, &ni, &nI, &Ikind, Icolon,
+        &J, &J_is_32, &J2, &J2_size, &nj, &nJ, &Jkind, Jcolon,
         &scalar_type, C_in, &C_replace, &assign_kind,
         M_in, Mask_comp, Mask_struct, M_transpose, accum,
-        A_in, A_transpose, Rows, nRows_in, Cols, nCols_in,
+        A_in, A_transpose,
+        Rows, Rows_is_32, nRows_in,
+        Cols, Cols_is_32, nCols_in,
         scalar_expansion, scalar, scalar_code, Werk)) ;
 
     // GxB_Row_subassign, GxB_Col_subassign, GxB_Matrix_subassign and
@@ -108,7 +113,8 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
 
     GB_OK (GB_subassigner (C, subassign_method, C_replace,
         M, Mask_comp, Mask_struct, accum, A,
-        I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
+        I, I_is_32, ni, nI, Ikind, Icolon,
+        J, J_is_32, nj, nJ, Jkind, Jcolon,
         scalar_expansion, scalar, scalar_type, Werk)) ;
 
     //--------------------------------------------------------------------------
@@ -120,7 +126,7 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
         // Transplant the content of Cwork into C_in and free Cwork.  Zombies
         // and pending tuples can be transplanted from Cwork into C_in, and if
         // Cwork is jumbled, C_in becomes jumbled too.
-        ASSERT (Cwork->static_header || GBNSTATIC) ;
+        ASSERT (Cwork->header_size == 0 || GBNSTATIC) ;
         GB_OK (GB_transplant (C_in, C_in->type, &Cwork, Werk)) ;
     }
 
@@ -128,6 +134,7 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     // free workspace, finalize C, and return result
     //--------------------------------------------------------------------------
 
+    ASSERT_MATRIX_OK (C_in, "C for subassign before conform", GB0) ;
     GB_OK (GB_conform (C_in, Werk)) ;
     ASSERT_MATRIX_OK (C_in, "Final C for subassign", GB0) ;
     GB_FREE_ALL ;

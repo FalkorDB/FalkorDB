@@ -2,7 +2,7 @@
 // GB_check.h: check and optionally print an object
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,6 +17,14 @@
 #define GB3 GxB_COMPLETE
 #define GB4 GxB_SHORT_VERBOSE
 #define GB5 GxB_COMPLETE_VERBOSE
+
+// as above, but do not check zombie counts
+#define GB0_Z 6
+#define GB1_Z 7
+#define GB2_Z 8
+#define GB3_Z 9
+#define GB4_Z 10
+#define GB5_Z 11
 
 GrB_Info GB_entry_check     // print a single value
 (
@@ -129,8 +137,7 @@ GrB_Info GB_matvec_check    // check a GraphBLAS matrix or vector
 (
     const GrB_Matrix A,     // GraphBLAS matrix to print and check
     const char *name,       // name of the matrix, optional
-    int pr,                 // print level; if negative, ignore nzombie
-                            // conditions and use GB_ZOMBIE(pr) for diagnostics
+    int pr,                 // print level
     FILE *f,                // file for output
     const char *kind        // "matrix" or "vector"
 ) ;

@@ -1,0 +1,73 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{GraphBLAS Objects and their Methods} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{objects}
+
+SuiteSparse:GraphBLAS defines 14 different objects to represent matrices, vectors,
+scalars, data types, operators (binary, unary, and index-unary), monoids,
+semirings, a {\em descriptor} object used to specify optional parameters
+that modify the behavior of a GraphBLAS operation, a {\em context}
+object for controlling computational resources, a matrix/vector iterator,
+and a container object for moving data in and out of the GraphBLAS opaque
+matrix/vector objects.
+
+The GraphBLAS API makes a distinction between {\em methods} and {\em
+operations}.  A method is a function that works on a GraphBLAS object, creating
+it, destroying it, or querying its contents.  An operation (not to be confused
+with an operator) acts on matrices and/or vectors in a semiring.
+
+\vspace{0.1in}
+\noindent
+{\small
+\begin{tabular}{ll}
+\hline
+\verb'GrB_Type'      & a scalar data type \\
+\verb'GrB_UnaryOp'   & a unary operator $z=f(x)$, where $z$ and $x$ are scalars\\
+\verb'GrB_BinaryOp'  & a binary operator $z=f(x,y)$, where $z$, $x$, and $y$ are scalars\\
+\verb'GrB_IndexUnaryOp'  & an index-unary operator \\
+\verb'GxB_IndexBinaryOp'  & an index-binary operator \\
+\verb'GrB_Monoid'    & an associative and commutative binary operator  \\
+                     & and its identity value \\
+\verb'GrB_Semiring'  & a monoid that defines the ``plus'' and a binary operator\\
+                     & that defines the ``multiply'' for an algebraic semiring \\
+\verb'GrB_Matrix'    & a 2D sparse matrix of any type \\
+\verb'GrB_Vector'    & a 1D sparse column vector of any type \\
+\verb'GrB_Scalar'    & a scalar of any type \\
+\verb'GrB_Descriptor'& a collection of parameters that modify an operation \\
+\verb'GxB_Context'   & allocating computational resources \\
+\verb'GxB_Iterator'  & a matrix/vector iterator (See Section~\ref{iter}) \\
+\verb'GxB_Container' & for moving data between GraphBLAS and a user application \\
+\hline
+\end{tabular}
+}
+\vspace{0.1in}
+
+Most of these objects are implemented in C as an opaque handle, which is a
+pointer to a data structure held by GraphBLAS.  User applications may not
+examine the content of the object directly; instead, they can pass the handle
+back to GraphBLAS which will do the work.  Assigning one handle to another
+is valid but it does not make a copy of the underlying object.
+
+The \verb'GxB_Container' object is non-opaque but includes opaque objects
+as its contents.  All other objects are entirely opaque.
+
+\input{UserGuide/GrB_objects_Type.tex}
+\input{UserGuide/GrB_objects_UnaryOp.tex}
+\input{UserGuide/GrB_objects_BinaryOp.tex}
+\input{UserGuide/GrB_objects_IndexUnaryOp.tex}
+\input{UserGuide/GrB_objects_IndexBinaryOp.tex}
+\input{UserGuide/GrB_objects_Monoid.tex}
+\input{UserGuide/GrB_objects_Semiring.tex}
+\input{UserGuide/GrB_objects_Scalar.tex}
+\input{UserGuide/GrB_objects_Vector.tex}
+\input{UserGuide/GrB_objects_Matrix.tex}
+\input{UserGuide/GrB_objects_Serialize.tex}
+\input{UserGuide/GrB_objects_Container.tex}
+\input{UserGuide/GrB_objects_formats.tex}
+\input{UserGuide/GrB_objects_import.tex}
+\input{UserGuide/GrB_objects_sort.tex}
+\input{UserGuide/GrB_objects_Descriptor.tex}
+\input{UserGuide/GrB_objects_free.tex}
+

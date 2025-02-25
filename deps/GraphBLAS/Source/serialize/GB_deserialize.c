@@ -2,7 +2,7 @@
 // GB_deserialize: decompress and deserialize a blob into a GrB_Matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -52,13 +52,32 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     }
 
     GB_BLOB_READ (blob_size2, uint64_t) ;
-    GB_BLOB_READ (typecode, int32_t) ;
+
+// was in v9.4.2 and earlier::
+//  GB_BLOB_READ (typecode, int32_t) ;
+// now in GrB v10.0.0:
+    GB_BLOB_READ (encoding, uint32_t) ;
+    uint32_t Cp_is_32 = GB_RSHIFT (encoding, 12, 4) ; // C->p_is_32
+    uint32_t Cj_is_32 = GB_RSHIFT (encoding,  8, 4) ; // C->j_is_32
+    uint32_t Ci_is_32 = GB_RSHIFT (encoding,  4, 4) ; // C->i_is_32
+    uint32_t typecode = GB_RSHIFT (encoding,  0, 4) ; // 4 bit typecode
+
+    // GrB 10.0.0 reserves 4 bits each for Cp_is_32, Cj_is_32, and Ci_is_32,
+    // for future expansion.  This way, if a future GraphBLAS version needs
+    // more bits to create a serialized blob, then GrB 10.0.0 will gracefully
+    // fail if it attempts to deserialize the blob.
+
     uint64_t blob_size1 = (uint64_t) blob_size ;
 
+    // GrB v9.4.2 has the same test below, so it will safely declare the blob
+    // invalid if it sees any encoding with a 1 in bit position 4 or 5.
     if (blob_size1 != blob_size2
         || typecode < GB_BOOL_code || typecode > GB_UDT_code
         || (typecode == GB_UDT_code &&
-            blob_size < GB_BLOB_HEADER_SIZE + GxB_MAX_NAME_LEN))
+            blob_size < GB_BLOB_HEADER_SIZE + GxB_MAX_NAME_LEN)
+        // GrB v10.0.0 adds the following check, since it only supports the
+        // values of 0 and 1, denoting 64-bit and 32-bit integers respectively:
+        || (Cp_is_32 > 1) || (Cj_is_32 > 1) || (Ci_is_32 > 1))
     { 
         // blob is invalid
         return (GrB_INVALID_OBJECT)  ;
@@ -78,7 +97,20 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     GB_BLOB_READ (Cx_len, int64_t) ;
     GB_BLOB_READ (hyper_switch, float) ;
     GB_BLOB_READ (bitmap_switch, float) ;
-    GB_BLOB_READ (sparsity_control, int32_t) ;
+
+// was in v9.4.2 and earlier::
+//  GB_BLOB_READ (sparsity_control, int32_t) ;
+// now in GrB v10.0.0:
+    GB_BLOB_READ (control_encoding, uint32_t) ;
+
+    uint32_t p_encoding = GB_RSHIFT (control_encoding, 16, 4) ;
+    uint32_t j_encoding = GB_RSHIFT (control_encoding, 12, 4) ;
+    uint32_t i_encoding = GB_RSHIFT (control_encoding,  8, 4) ;
+    int8_t p_control = GB_pji_control_decoding (p_encoding) ;
+    int8_t j_control = GB_pji_control_decoding (j_encoding) ;
+    int8_t i_control = GB_pji_control_decoding (i_encoding) ;
+    uint32_t sparsity_control = GB_RSHIFT (control_encoding,  0, 8) ;
+
     GB_BLOB_READ (sparsity_iso_csc, int32_t) ;
     GB_BLOB_READ (Cp_nblocks, int32_t) ; GB_BLOB_READ (Cp_method, int32_t) ;
     GB_BLOB_READ (Ch_nblocks, int32_t) ; GB_BLOB_READ (Ch_method, int32_t) ;
@@ -140,20 +172,24 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
 
     // allocate the matrix with info from the header
     GB_OK (GB_new (&C,  // new header (C is NULL on input)
-        ctype, vlen, vdim, GB_Ap_null, is_csc,
-        sparsity, hyper_switch, nvec)) ;
+        ctype, vlen, vdim, GB_ph_null, is_csc,
+        sparsity, hyper_switch, nvec, Cp_is_32, Cj_is_32, Ci_is_32)) ;
 
     C->nvec = nvec ;
-    C->nvec_nonempty = nvec_nonempty ;
-    C->nvals = nvals ;      // revised below
+//  C->nvec_nonempty = nvec_nonempty ;
+    GB_nvec_nonempty_set (C, nvec_nonempty) ;
+    C->nvals = nvals ;      // revised below if version <= 7.2.0
     C->bitmap_switch = bitmap_switch ;
     C->sparsity_control = sparsity_control ;
     C->iso = iso ;
 
-    // the matrix has no pending work
-    ASSERT (C->Pending == NULL) ;
-    ASSERT (C->nzombies == 0) ;
-    ASSERT (!C->jumbled) ;
+    // added for GrB v10.0.0:
+    C->p_is_32 = Cp_is_32 ;
+    C->j_is_32 = Cj_is_32 ;
+    C->i_is_32 = Ci_is_32 ;
+    C->p_control = p_control ;
+    C->j_control = j_control ;
+    C->i_control = i_control ;
 
     //--------------------------------------------------------------------------
     // decompress each array (Cp, Ch, Cb, Ci, and Cx)
@@ -205,17 +241,18 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     GB_OK (GB_deserialize_from_blob ((GB_void **) &(C->x), &(C->x_size), Cx_len,
         blob, blob_size, Cx_Sblocks, Cx_nblocks, Cx_method, &s)) ;
 
-    if (C->p != NULL)
-    { 
+    if (C->p != NULL && version <= GxB_VERSION (7,2,0))
+    {
         // C is sparse or hypersparse.  v7.2.1 and later have the new C->nvals
         // value inside the blob already.  The blob prior to v7.2.1 had nvals
         // of zero for sparse and hypersparse matrices.  Set it here to the
         // correct value, so that blobs written by v7.2.0 and earlier can be
-        // read by v7.2.1 and later.  For both variants, ignore nvals in the
-        // blob and use Cp [nvec] when C is sparse or hypersparse.
-        ASSERT (GB_IMPLIES (version > GxB_VERSION (7,2,0),
-            C->nvals == C->p [C->nvec])) ;
-        C->nvals = C->p [C->nvec] ;
+        // read by v7.2.1 and later.  For blobs written by v7.2.0 and earlier,
+        // get C->nvals from Cp [nvec] when C is sparse or hypersparse.  For
+        // blobs written by v7.2.1 and later, use nvals as read in from the
+        // blob above.
+        const uint64_t *restrict Cp = C->p ; // OK; v7.2.0 only had 64-bit Cp
+        C->nvals = Cp [C->nvec] ;
     }
     C->magic = GB_MAGIC ;
 
@@ -224,7 +261,8 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
     //--------------------------------------------------------------------------
 
     // v8.1.0 adds two nul-terminated uncompressed strings to the end of the
-    // blob.  If the strings are empty, the nul terminators still appear.
+    // blob: the user name and the element type name.  If the strings are
+    // empty, the nul terminators still appear.
 
     if (version >= GxB_VERSION (8,1,0))
     { 
@@ -234,12 +272,13 @@ GrB_Info GB_deserialize             // deserialize a matrix from a blob
         //----------------------------------------------------------------------
 
         int nfound = 0 ;
-        size_t ss [2] ;
+//      size_t ss [2] ;
         for (size_t p = s ; p < blob_size && nfound < 2 ; p++)
         {
             if (blob [p] == 0)
-            { 
-                ss [nfound++] = p ;
+            {
+//              ss [nfound] = p ;
+                nfound++ ;
             }
         }
 

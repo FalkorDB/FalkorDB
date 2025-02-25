@@ -20,8 +20,8 @@ function C = mxm (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 % Cin is an optional input matrix.  If Cin is not present or is an empty
 % matrix (Cin = [ ]) then it is implicitly a matrix with no entries, of the
 % right size (which depends on A, B, and the descriptor).  Its type is the
-% output type of the accum operator, if it is present; otherwise, its type
-% is the type of the additive monoid of the semiring.
+% output type of the accum binary operator, if it is present; otherwise, its
+% type is the type of the additive monoid of the semiring.
 %
 % M is the optional mask matrix.  If not present, or if empty, then no mask
 % is used.  If present, M must have the same size as C.
@@ -55,9 +55,10 @@ function C = mxm (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %   C3 = E ; AB = A*B ; C3 (M) = C3 (M) + AB (M) ;
 %   norm (C2-C3,1)
 %
-% See also GrB.descriptorinfo, GrB.add, GrB/mtimes.
+% See also GrB.descriptorinfo, GrB.add, GrB/mtimes, GrB.semiringinfo,
+% GrB.moniodinfo, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

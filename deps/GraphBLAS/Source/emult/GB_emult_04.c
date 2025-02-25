@@ -2,12 +2,10 @@
 // GB_emult_04: C<M>= A.*B, M sparse/hyper, A and B bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
-
-// full) = 48.  Use the JIT for select phase1 instead?
 
 // C<M>= A.*B, M sparse/hyper, A and B bitmap/full.  C has the same sparsity
 // structure as M, and its pattern is a subset of M.  M is not complemented.
@@ -27,16 +25,16 @@
 #include "ewise/GB_ewise.h"
 #include "emult/GB_emult.h"
 #include "binaryop/GB_binop.h"
-#include "include/GB_unused.h"
 #include "jitifyer/GB_stringify.h"
 #ifndef GBCOMPACT
 #include "GB_control.h"
 #include "FactoryKernels/GB_ew__include.h"
 #endif
+#include "slice/factory/GB_ek_slice_merge.h"
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_WERK_POP (Work, int64_t) ;           \
+    GB_WERK_POP (Work, uint64_t) ;          \
     GB_WERK_POP (M_ek_slicing, int64_t) ;   \
 }
 
@@ -67,7 +65,7 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK (M, "M for emult_04", GB0) ;
     ASSERT_MATRIX_OK (A, "A for emult_04", GB0) ;
@@ -93,19 +91,17 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Work, int64_t) ;
-    int64_t *restrict Wfirst = NULL ;
-    int64_t *restrict Wlast = NULL ;
-    int64_t *restrict Cp_kfirst = NULL ;
+    GB_WERK_DECLARE (Work, uint64_t) ;
     GB_WERK_DECLARE (M_ek_slicing, int64_t) ;
 
     //--------------------------------------------------------------------------
     // get M, A, and B
     //--------------------------------------------------------------------------
 
-    const int64_t *restrict Mp = M->p ;
-    const int64_t *restrict Mh = M->h ;
-    const int64_t *restrict Mi = M->i ;
+    GB_Mp_DECLARE (Mp, const) ; GB_Mp_PTR (Mp, M) ;
+    GB_Mh_DECLARE (Mh, const) ; GB_Mh_PTR (Mh, M) ;
+    GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
+
     const GB_M_TYPE *restrict Mx = (Mask_struct) ? NULL : (GB_M_TYPE *) M->x ;
     const int64_t vlen = M->vlen ;
     const int64_t vdim = M->vdim ;
@@ -129,9 +125,17 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     //--------------------------------------------------------------------------
 
     GB_OK (GB_new (&C, // sparse or hyper (same as M), existing header
-        ctype, vlen, vdim, GB_Ap_calloc, C_is_csc,
-        C_sparsity, M->hyper_switch, nvec)) ;
-    int64_t *restrict Cp = C->p ;
+        ctype, vlen, vdim, GB_ph_calloc, C_is_csc,
+        C_sparsity, M->hyper_switch, nvec,
+        M->p_is_32, M->j_is_32, M->i_is_32)) ;
+
+    GB_Cp_DECLARE (Cp, ) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ci_DECLARE (Ci, ) ; GB_Ci_PTR (Ci, C) ;
+    bool Cp_is_32 = C->p_is_32 ;
+    bool Cj_is_32 = C->j_is_32 ;
+    ASSERT (Cp_is_32 == M->p_is_32) ;
+    ASSERT (Cj_is_32 == M->j_is_32) ;
+    ASSERT (C->i_is_32 == M->i_is_32) ;
 
     //--------------------------------------------------------------------------
     // slice the mask matrix M
@@ -146,16 +150,16 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_PUSH (Work, 3*M_ntasks, int64_t) ;
+    GB_WERK_PUSH (Work, 3*M_ntasks, uint64_t) ;
     if (Work == NULL)
     { 
         // out of memory
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    Wfirst    = Work ;
-    Wlast     = Work + M_ntasks ;
-    Cp_kfirst = Work + M_ntasks * 2 ;
+    uint64_t *restrict Wfirst    = Work ;
+    uint64_t *restrict Wlast     = Work + M_ntasks ;
+    uint64_t *restrict Cp_kfirst = Work + M_ntasks * 2 ;
 
     //--------------------------------------------------------------------------
     // count entries in C
@@ -177,21 +181,18 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
         for (int64_t k = kfirst ; k <= klast ; k++)
         {
             // count the entries in C(:,j)
-            int64_t j = GBH (Mh, k) ;
+            int64_t j = GBh_M (Mh, k) ;
             int64_t pstart = j * vlen ;     // start of A(:,j) and B(:,j)
             GB_GET_PA (pM, pM_end, tid, k, kfirst, klast, pstart_Mslice,
-                Mp [k], Mp [k+1]) ;
+                GB_IGET (Mp, k), GB_IGET (Mp, k+1)) ;
             int64_t cjnz = 0 ;
             for ( ; pM < pM_end ; pM++)
             { 
                 bool mij = GB_MCAST (Mx, pM, msize) ;
                 if (mij)
                 {
-                    int64_t i = Mi [pM] ;
-                    cjnz +=
-                        (GBB (Ab, pstart + i)
-                        &&      // TODO: for GB_add, use || instead
-                        GBB (Bb, pstart + i)) ;
+                    int64_t i = GB_IGET (Mi, pM) ;
+                    cjnz += (GBb_A (Ab, pstart + i) && GBb_B (Bb, pstart + i)) ;
                 }
             }
             if (k == kfirst)
@@ -204,7 +205,7 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
             }
             else
             { 
-                Cp [k] = cjnz ; 
+                GB_ISET (Cp, k, cjnz) ;     // Cp [k] = cjnz ; 
             }
         }
     }
@@ -213,28 +214,32 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
     // finalize Cp, cumulative sum of Cp and compute Cp_kfirst
     //--------------------------------------------------------------------------
 
-    GB_ek_slice_merge1 (Cp, Wfirst, Wlast, M_ek_slicing, M_ntasks) ;
-    GB_ek_slice_merge2 (&(C->nvec_nonempty), Cp_kfirst, Cp, nvec,
-        Wfirst, Wlast, M_ek_slicing, M_ntasks, M_nthreads, Werk) ;
+    GB_ek_slice_merge1 (Cp, Cp_is_32, Wfirst, Wlast, M_ek_slicing, M_ntasks) ;
+    int64_t nvec_nonempty ;
+    GB_cumsum (Cp, Cp_is_32, nvec, &nvec_nonempty, M_nthreads, Werk) ;
+    GB_nvec_nonempty_set (C, nvec_nonempty) ;
+    GB_ek_slice_merge2 (Cp_kfirst, Cp, Cp_is_32,
+        Wfirst, Wlast, M_ek_slicing, M_ntasks) ;
 
     //--------------------------------------------------------------------------
     // allocate C->i and C->x
     //--------------------------------------------------------------------------
 
-    int64_t cnz = Cp [nvec] ;
-    // set C->iso = C_iso   OK
+    int64_t cnz = GB_IGET (Cp, nvec) ;
     GB_OK (GB_bix_alloc (C, cnz, GxB_SPARSE, false, true, C_iso)) ;
 
     //--------------------------------------------------------------------------
     // copy pattern into C
     //--------------------------------------------------------------------------
 
-    // TODO: could make these components of C shallow instead
+    // FUTURE: could make this components of C shallow instead
+
+    size_t cjsize = Cj_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
 
     if (GB_IS_HYPERSPARSE (M))
     { 
         // copy M->h into C->h
-        GB_memcpy (C->h, Mh, nvec * sizeof (int64_t), M_nthreads) ;
+        GB_memcpy (C->h, Mh, nvec * cjsize, M_nthreads) ;
     }
 
     C->nvec = nvec ;
@@ -367,7 +372,7 @@ GrB_Info GB_emult_04        // C<M>=A.*B, M sparse/hyper, A and B bitmap/full
         return (info) ;
     }
 
-    GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+    GB_OK (GB_hyper_prune (C, Werk)) ;
 
     //--------------------------------------------------------------------------
     // free workspace and return result

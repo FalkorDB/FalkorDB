@@ -2,7 +2,7 @@
 // GB_BinaryOp_check: check and print a binary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,6 +23,7 @@ GrB_Info GB_BinaryOp_check  // check a GraphBLAS binary operator
     // check inputs
     //--------------------------------------------------------------------------
 
+    GB_CHECK_INIT ;
     GBPR0 ("\n    GraphBLAS BinaryOp: %s ", ((name != NULL) ? name : "")) ;
 
     if (op == NULL)
@@ -73,19 +74,25 @@ GrB_Info GB_BinaryOp_check  // check a GraphBLAS binary operator
         GBPR0 ("(user-defined): z=%s(x,y)\n", op_name) ;
     }
     else if (opcode == GB_USER_idxbinop_code)
-    {
+    { 
         GBPR0 ("(user-defined index):\n    z=%s(x,ix,iy,y,iy,yj,theta)\n",
             op_name) ;
     }
-    else if (opcode == GB_FIRST_binop_code && op->ztype->code == GB_UDT_code)
+    else if (op_is_first && op->ztype->code == GB_UDT_code)
     { 
         // FIRST_UDT binary operator created by GB_reduce_to_vector
-        GBPR0 ("(generated): z=%s(x,y)\n", op_name) ;
+        GBPR0 ("(generated 1st): z=%s(x,y)\n", op_name) ;
+    }
+    else if (op_is_second && op->ztype->code == GB_UDT_code)
+    { 
+        // SECOND_UDT binary operator created by GB_wait or GB_builder
+        GBPR0 ("(generated 2nd): z=%s(x,y)\n", op_name) ;
     }
     else if (op_is_from_idxbinop)
     { 
         // built-in index binary operator
-        GBPR0 ("(built-in index):\n    z=%s(x,ix,iy,y,iy,yj,theta)\n", op_name) ;
+        GBPR0 ("(built-in index):\n    z=%s(x,ix,iy,y,iy,yj,theta)\n",
+            op_name) ;
     }
     else
     { 

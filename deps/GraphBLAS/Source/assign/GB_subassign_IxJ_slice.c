@@ -2,7 +2,7 @@
 // GB_subassign_IxJ_slice: slice IxJ for subassign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -47,12 +47,27 @@
 #undef  GB_FREE_ALL
 #define GB_FREE_ALL                             \
 {                                               \
-    GB_FREE_WORK (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
 }
 
 //------------------------------------------------------------------------------
 // GB_subassign_IxJ_slice
 //------------------------------------------------------------------------------
+
+#if 0
+GrB_Info GB_subassign_IxJ_slice
+(
+    // output:
+    GB_task_struct **p_TaskList,    // array of structs
+    size_t *p_TaskList_size,        // size of TaskList
+    int *p_ntasks,                  // # of tasks constructed
+    int *p_nthreads,                // # of threads to use
+    // input:
+    const int64_t nI,
+    const int64_t nJ,
+    GB_Werk Werk
+)
+#endif
 
 GB_CALLBACK_SUBASSIGN_IXJ_SLICE_PROTO (GB_subassign_IxJ_slice)
 {

@@ -2,7 +2,7 @@
 // GB_macrofy_reduce: construct all macros for a reduction to scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,6 +33,9 @@ void GB_macrofy_reduce      // construct all macros for GrB_reduce to scalar
 
     // type of A
     int acode       = GB_RSHIFT (rcode, 4, 4) ;
+
+    // Ai: 32/64 bit
+    bool Ai_is_32   = GB_RSHIFT (rcode, 3, 1) ;
 
     // zombies
     int azombies    = GB_RSHIFT (rcode, 2, 1) ;
@@ -89,8 +92,12 @@ void GB_macrofy_reduce      // construct all macros for GrB_reduce to scalar
     // monoid operator.  No JIT kernel is ever required to reduce an iso matrix
     // to a scalar, even for user-defined types and monoids.
 
+    bool Ap_is_32 = false ; // OK: may be 32-bit but A->p is not accessed
+    bool Aj_is_32 = false ; // OK: may be 32-bit but A->h is not accessed
+
     GB_macrofy_input (fp, "a", "A", "A", true, monoid->op->ztype,
-        atype, asparsity, acode, false, azombies) ;
+        atype, asparsity, acode, /* A_iso: */ false, azombies,
+        Ap_is_32, Aj_is_32, Ai_is_32) ;
 
     //--------------------------------------------------------------------------
     // reduction method
@@ -102,9 +109,9 @@ void GB_macrofy_reduce      // construct all macros for GrB_reduce to scalar
 
     GB_Opcode opcode = monoid->op->opcode ;
 
-    if (opcode == GB_ANY_binop_code)
+    if (opcode == GB_ANY_binop_code || azombies)
     { 
-        // ANY monoid: do not use panel reduction method
+        // ANY monoid, or zombies: do not use panel reduction method
         panel = 1 ;
     }
     else if (zcode == GB_BOOL_code)

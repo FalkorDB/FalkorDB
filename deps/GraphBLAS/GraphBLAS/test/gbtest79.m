@@ -2,7 +2,7 @@ function gbtest79
 %GBTEST79 test real power
 % Tests all real, inf, and nan cases.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 list = [-2:0.5:2 inf -inf nan] ;

@@ -2,7 +2,7 @@
 // GxB_Context_get_*: get a field in a context
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GxB_Context_get_Scalar
 (
     GxB_Context Context,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 { 
 
@@ -25,9 +25,10 @@ GrB_Info GxB_Context_get_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get_Scalar (Context, value, field)") ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (value) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_WHERE_1 (scalar, "GxB_Context_get_Scalar (Context, scalar, field)") ;
+
     ASSERT_CONTEXT_OK (Context, "context for get", GB0) ;
 
     //--------------------------------------------------------------------------
@@ -36,7 +37,6 @@ GrB_Info GxB_Context_get_Scalar
 
     double dvalue = 0 ;
     int32_t ivalue = 0 ;
-    GrB_Info info ;
 
     switch ((int) field)
     {
@@ -66,12 +66,12 @@ GrB_Info GxB_Context_get_Scalar
 
         case GxB_CONTEXT_CHUNK :         // same as GxB_CHUNK
 
-            info = GB_setElement ((GrB_Matrix) value, NULL, &dvalue, 0, 0,
+            info = GB_setElement ((GrB_Matrix) scalar, NULL, &dvalue, 0, 0,
                 GB_FP64_code, Werk) ;
             break ;
 
         default : 
-            info = GB_setElement ((GrB_Matrix) value, NULL, &ivalue, 0, 0,
+            info = GB_setElement ((GrB_Matrix) scalar, NULL, &ivalue, 0, 0,
                 GB_INT32_code, Werk) ;
             break ;
     }
@@ -87,7 +87,7 @@ GrB_Info GxB_Context_get_String
 (
     GxB_Context Context,
     char * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -95,7 +95,7 @@ GrB_Info GxB_Context_get_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get_String (Context, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_CONTEXT_OK (Context, "context for get", GB0) ;
@@ -133,7 +133,7 @@ GrB_Info GxB_Context_get_INT
 (
     GxB_Context Context,
     int32_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -141,7 +141,7 @@ GrB_Info GxB_Context_get_INT
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get_INT (Context, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_CONTEXT_OK (Context, "context for get", GB0) ;
@@ -180,7 +180,7 @@ GrB_Info GxB_Context_get_SIZE
 (
     GxB_Context Context,
     size_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -188,7 +188,7 @@ GrB_Info GxB_Context_get_SIZE
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get_SIZE (Context, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_CONTEXT_OK (Context, "context for get", GB0) ;
@@ -221,7 +221,7 @@ GrB_Info GxB_Context_get_VOID
 (
     GxB_Context Context,
     void * value,
-    GrB_Field field
+    int field
 )
 { 
     return (GrB_INVALID_VALUE) ;

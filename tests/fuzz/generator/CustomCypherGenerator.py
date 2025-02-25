@@ -94,270 +94,239 @@ class CustomCypherGenerator(CypherGenerator):
         self.union_all = None
         clear_globals()
 
-    @depthcontrol
     def oC_Union(self, parent=None):
-        # UNION and UNION ALL cannot be combined in one query.
-        current = UnparserRule(name='oC_Union', parent=parent)
-        self.enter_rule(current)
-        choice = self.model.choice(
-            current, 0, [0 if [7, 7][i] > self.max_depth else w for i, w in enumerate([1, 1])])
-        if choice == 0 and (self.union_all is None or self.union_all is True):
-            self.union_all = True
-            self.UNION(parent=current)
-            self.SP(parent=current)
-            self.ALL(parent=current)
-            self.SP(parent=current)
-            self.oC_SingleQuery(parent=current)
-        elif choice == 1 and (self.union_all is None or self.union_all is False):
-            self.union_all = False
-            self.UNION(parent=current)
-            self.SP(parent=current)
-            self.oC_SingleQuery(parent=current)
-        self.exit_rule(current)
-        return current
+        with RuleContext(self, UnparserRule(name='oC_Union', parent=parent)) as current:
+            with AlternationContext(self, [7, 7], [1, 1]) as weights0:
+                choice0 = self._model.choice(current, 0, weights0)
+                if choice0 == 0 and (self.union_all is None or self.union_all is True):
+                    self.union_all = True
+                    self.UNION(parent=current)
+                    self.SP(parent=current)
+                    self.ALL(parent=current)
+                    self.SP(parent=current)
+                    self.oC_SingleQuery(parent=current)
+                elif choice0 == 1 and (self.union_all is None or self.union_all is False):
+                    self.union_all = False
+                    self.UNION(parent=current)
+                    self.SP(parent=current)
+                    self.oC_SingleQuery(parent=current)
+            return current
     oC_Union.min_depth = 7
 
-    @depthcontrol
     def oC_RelationshipPattern(self, parent=None):
-        current = UnparserRule(name='oC_RelationshipPattern', parent=parent)
-        self.enter_rule(current)
-
-        # If we're in an updating context, we must have exactly one reltype and one direction.
-        in_update = in_node_type(parent, 'oC_UpdatingClause') or in_node_type(parent, 'oC_UpdatingStartClause')
-        if in_update:
-            ltr = random.randint(0, 1)
-            if ltr:
-                self.oC_LeftArrowHead(parent=current)
-                self.oC_Dash(parent=current)
-                tmp = self.max_depth
-                if self.max_depth < 1:
-                    self.max_depth = 1
-                self.oC_RelationshipDetail(parent=current)
-                self.max_depth = tmp
-                self.oC_Dash(parent=current)
-            else:
-                self.oC_Dash(parent=current)
-                tmp = self.max_depth
-                if self.max_depth < 1:
-                    self.max_depth = 1
-                self.oC_RelationshipDetail(parent=current)
-                self.max_depth = tmp
-                self.oC_Dash(parent=current)
-                self.oC_RightArrowHead(parent=current)
-        else:
-            choice = self.model.choice(current, 0, [0 if [
-                                       1, 1, 1, 1][i] > self.max_depth else w for i, w in enumerate([1, 1, 1, 1])])
-            if choice == 0:
-                self.oC_LeftArrowHead(parent=current)
-                self.oC_Dash(parent=current)
-                if self.max_depth >= 1:
-                    for _ in self.model.quantify(current, 0, min=0, max=1):
+        with RuleContext(self, UnparserRule(name='oC_RelationshipPattern', parent=parent)) as current:
+            with AlternationContext(self, [1, 1, 1, 1], [1, 1, 1, 1]) as weights0:
+                # If we're in an updating context, we must have exactly one reltype and one direction.
+                in_update = in_node_type(parent, 'oC_UpdatingClause') or in_node_type(parent, 'oC_UpdatingStartClause')
+                if in_update:
+                    ltr = random.randint(0, 1)
+                    if ltr:
+                        self.oC_LeftArrowHead(parent=current)
+                        self.oC_Dash(parent=current)
+                        tmp = self._max_depth
+                        if self._max_depth < 1:
+                            self._max_depth = 1
                         self.oC_RelationshipDetail(parent=current)
-                self.oC_Dash(parent=current)
-                self.oC_RightArrowHead(parent=current)
-            elif choice == 1:
-                self.oC_LeftArrowHead(parent=current)
-                self.oC_Dash(parent=current)
-                if self.max_depth >= 1:
-                    for _ in self.model.quantify(current, 1, min=0, max=1):
+                        self._max_depth = tmp
+                        self.oC_Dash(parent=current)
+                    else:
+                        self.oC_Dash(parent=current)
+                        tmp = self._max_depth
+                        if self._max_depth < 1:
+                            self._max_depth = 1
                         self.oC_RelationshipDetail(parent=current)
-                self.oC_Dash(parent=current)
-            elif choice == 2:
-                self.oC_Dash(parent=current)
-                if self.max_depth >= 1:
-                    for _ in self.model.quantify(current, 2, min=0, max=1):
-                        self.oC_RelationshipDetail(parent=current)
-                self.oC_Dash(parent=current)
-                self.oC_RightArrowHead(parent=current)
-            elif choice == 3:
-                self.oC_Dash(parent=current)
-                if self.max_depth >= 1:
-                    for _ in self.model.quantify(current, 3, min=0, max=1):
-                        self.oC_RelationshipDetail(parent=current)
-                self.oC_Dash(parent=current)
-        self.exit_rule(current)
-        return current
+                        self._max_depth = tmp
+                        self.oC_Dash(parent=current)
+                        self.oC_RightArrowHead(parent=current)
+                else:
+                    choice0 = self._model.choice(current, 0, weights0)
+                    if choice0 == 0:
+                        self.oC_LeftArrowHead(parent=current)
+                        self.oC_Dash(parent=current)
+                        if self._max_depth >= 1:
+                            for _ in self._model.quantify(current, 0, min=0, max=1):
+                                self.oC_RelationshipDetail(parent=current)
+                        self.oC_Dash(parent=current)
+                        self.oC_RightArrowHead(parent=current)
+                    elif choice0 == 1:
+                        self.oC_LeftArrowHead(parent=current)
+                        self.oC_Dash(parent=current)
+                        if self._max_depth >= 1:
+                            for _ in self._model.quantify(current, 1, min=0, max=1):
+                                self.oC_RelationshipDetail(parent=current)
+                        self.oC_Dash(parent=current)
+                    elif choice0 == 2:
+                        self.oC_Dash(parent=current)
+                        if self._max_depth >= 1:
+                            for _ in self._model.quantify(current, 2, min=0, max=1):
+                                self.oC_RelationshipDetail(parent=current)
+                        self.oC_Dash(parent=current)
+                        self.oC_RightArrowHead(parent=current)
+                    elif choice0 == 3:
+                        self.oC_Dash(parent=current)
+                        if self._max_depth >= 1:
+                            for _ in self._model.quantify(current, 3, min=0, max=1):
+                                self.oC_RelationshipDetail(parent=current)
+                        self.oC_Dash(parent=current)
+            return current
     oC_RelationshipPattern.min_depth = 1
 
-    @depthcontrol
     def oC_RelationshipDetail(self, parent=None):
-        current = UnparserRule(name='oC_RelationshipDetail', parent=parent)
-        self.enter_rule(current)
-        UnlexerRule(src='[', parent=current)
-
-        variable_length_traversal = False
-        in_update = in_node_type(parent, 'oC_UpdatingClause') or in_node_type(parent, 'oC_UpdatingStartClause')
-        if in_update:
-            tmp = self.max_depth
-            self.max_depth = 3
-            self.oC_RelationshipTypes(parent=current)
-            self.max_depth = tmp
-        else:
-            if self.max_depth >= 4:
-                for _ in self.model.quantify(current, 0, min=0, max=1):
-                    self.oC_Variable(parent=current)
-            if self.max_depth >= 3:
-                for _ in self.model.quantify(current, 1, min=0, max=1):
-                    self.oC_RelationshipTypes(parent=current)
-            if self.max_depth >= 1:
-                for _ in self.model.quantify(current, 2, min=0, max=1):
-                    self.oC_RangeLiteral(parent=current)
-                    variable_length_traversal = True
-            if self.max_depth >= 2:
-                if not variable_length_traversal:
-                    for _ in self.model.quantify(current, 3, min=0, max=1):
-                        self.oC_Properties(parent=current)
-        UnlexerRule(src=']', parent=current)
-        self.exit_rule(current)
-        return current
+        with RuleContext(self, UnparserRule(name='oC_RelationshipDetail', parent=parent)) as current:
+            UnlexerRule(src='[', parent=current)
+            
+            variable_length_traversal = False
+            in_update = in_node_type(parent, 'oC_UpdatingClause') or in_node_type(parent, 'oC_UpdatingStartClause')
+            if in_update:
+                tmp = self._max_depth
+                self._max_depth = 3
+                self.oC_RelationshipTypes(parent=current)
+                self._max_depth = tmp
+            else:
+                if self._max_depth >= 4:
+                    for _ in self._model.quantify(current, 0, min=0, max=1):
+                        self.oC_Variable(parent=current)
+                if self._max_depth >= 3:
+                    for _ in self._model.quantify(current, 1, min=0, max=1):
+                        self.oC_RelationshipTypes(parent=current)
+                if self._max_depth >= 1:
+                    for _ in self._model.quantify(current, 2, min=0, max=1):
+                        self.oC_RangeLiteral(parent=current)
+                        variable_length_traversal = True
+                if self._max_depth >= 2:
+                    if not variable_length_traversal:
+                        for _ in self._model.quantify(current, 3, min=0, max=1):
+                            self.oC_Properties(parent=current)
+            UnlexerRule(src=']', parent=current)
+            return current
     oC_RelationshipDetail.min_depth = 0
 
-    @depthcontrol
     def oC_RelationshipTypes(self, parent=None):
-        current = UnparserRule(name='oC_RelationshipTypes', parent=parent)
-        self.enter_rule(current)
-        UnlexerRule(src=':', parent=current)
-        self.oC_RelTypeName(parent=current)
-        if not (in_node_type(parent, 'oC_UpdatingClause') or in_node_type(parent, 'oC_UpdatingStartClause')) and self.max_depth >= 2:
-            for _ in self.model.quantify(current, 0, min=0, max=3):
-                UnlexerRule(src='|', parent=current)
-                if self.max_depth >= 0:
-                    for _ in self.model.quantify(current, 1, min=0, max=1):
-                        UnlexerRule(src=':', parent=current)
-                self.oC_RelTypeName(parent=current)
-        self.exit_rule(current)
-        return current
+        with RuleContext(self, UnparserRule(name='oC_RelationshipTypes', parent=parent)) as current:
+            UnlexerRule(src=':', parent=current)
+            self.oC_RelTypeName(parent=current)
+            if not (in_node_type(parent, 'oC_UpdatingClause') or in_node_type(parent, 'oC_UpdatingStartClause')) and self._max_depth >= 2:
+                for _ in self._model.quantify(current, 0, min=0, max=inf):
+                    UnlexerRule(src='|', parent=current)
+                    if self._max_depth >= 0:
+                        for _ in self._model.quantify(current, 1, min=0, max=1):
+                            UnlexerRule(src=':', parent=current)
+                    self.oC_RelTypeName(parent=current)
+            return current
     oC_RelationshipTypes.min_depth = 2
 
-
-    @depthcontrol
     def EscapedSymbolicName_0(self, parent=None):
-        current = UnlexerRule(name='EscapedSymbolicName_0', parent=parent)
-        variable = "var"
-        if in_node_type(parent, 'oC_NodePattern'):
-            variable = variable_name("node")
-        elif in_node_type(parent, 'oC_RelationshipDetail'):
-            variable = variable_name("edge")
-        elif in_node_type(parent, 'oC_IdInColl'):
-            variable = "comprehension_var"
-        elif in_node_type(parent, 'oC_PatternComprehension'):
-            variable = "pattern_comprehension_var"
-        elif in_node_type(parent, 'oC_Atom'):
-            variable = random_variable()
-        elif in_node_type(parent, 'oC_PropertyExpression'):
-            variable = random_variable()
-        elif in_node_type(parent, 'oC_PatternPart'):
-            variable = variable_name("path")
-        elif in_node_type(parent, 'oC_Unwind'):
-            variable = "unwind_var"
-        elif in_node_type(parent, 'oC_SetItem'):
-            variable = random_variable()
-        elif in_node_type(parent, 'oC_Delete'):
-            variable = random_variable()
-        elif in_node_type(parent, 'oC_YieldItem'):
-            variable = "yield"
-        elif in_node_type(parent, 'oC_ProjectionItem'):
-            variable = variable_name("alias")
-        else:
-            variable = "UNREACHABLE?"
-        self.enter_rule(current)
-        # Pass the newly-set variable name to the unlexer.
-        UnlexerRule(src=variable, parent=current)
-        self.exit_rule(current)
-        return current
+        with RuleContext(self, UnlexerRule(name='EscapedSymbolicName_0', parent=parent)) as current:
+            UnlexerRule(src='var', parent=current)
+            variable = "var"
+            if in_node_type(parent, 'oC_NodePattern'):
+                variable = variable_name("node")
+            elif in_node_type(parent, 'oC_RelationshipDetail'):
+                variable = variable_name("edge")
+            elif in_node_type(parent, 'oC_IdInColl'):
+                variable = "comprehension_var"
+            elif in_node_type(parent, 'oC_PatternComprehension'):
+                variable = "pattern_comprehension_var"
+            elif in_node_type(parent, 'oC_Atom'):
+                variable = random_variable()
+            elif in_node_type(parent, 'oC_PropertyExpression'):
+                variable = random_variable()
+            elif in_node_type(parent, 'oC_PatternPart'):
+                variable = variable_name("path")
+            elif in_node_type(parent, 'oC_Unwind'):
+                variable = "unwind_var"
+            elif in_node_type(parent, 'oC_SetItem'):
+                variable = random_variable()
+            elif in_node_type(parent, 'oC_Delete'):
+                variable = random_variable()
+            elif in_node_type(parent, 'oC_YieldItem'):
+                variable = "yield"
+            elif in_node_type(parent, 'oC_ProjectionItem'):
+                variable = variable_name("alias")
+            else:
+                variable = "UNREACHABLE?"
+            # Pass the newly-set variable name to the unlexer.
+            UnlexerRule(src=variable, parent=current)
+            return current
     EscapedSymbolicName_0.min_depth = 0
 
-    @depthcontrol
     def oC_FunctionInvocation(self, parent=None):
-        current = UnparserRule(name='oC_FunctionInvocation', parent=parent)
-        self.enter_rule(current)
-        #  self.oC_FunctionName(parent=current)
-        function_name = "RAND" # TODO tmp
-        UnlexerRule(src=function_name, parent=current)
-        UnlexerRule(src='(', parent=current)
-        #  if self.max_depth >= 3:
-            #  for _ in self.model.quantify(current, 0, min=0, max=1):
-                #  self.DISTINCT(parent=current)
-                #  self.SP(parent=current)
-        #  if self.max_depth >= 4:
-            #  for _ in self.model.quantify(current, 1, min=0, max=1):
-                #  self.rG_Expression(parent=current)
-                #  self.SP(parent=current)
-                #  if self.max_depth >= 4:
-                    #  for _ in self.model.quantify(current, 2, min=0, max=inf):
-                        #  UnlexerRule(src=',', parent=current)
-                        #  self.SP(parent=current)
-                        #  self.rG_Expression(parent=current)
-                        #  self.SP(parent=current)
-        UnlexerRule(src=')', parent=current)
-        self.exit_rule(current)
-        return current
-    oC_FunctionInvocation.min_depth = 1
+        with RuleContext(self, UnparserRule(name='oC_FunctionInvocation', parent=parent)) as current:
+            function_name = "RAND" # TODO tmp
+            UnlexerRule(src=function_name, parent=current)
+            UnlexerRule(src='(', parent=current)
+            # if self._max_depth >= 3:
+            #     for _ in self._model.quantify(current, 0, min=0, max=1):
+            #         self.DISTINCT(parent=current)
+            #         self.SP(parent=current)
+            # if self._max_depth >= 4:
+            #     for _ in self._model.quantify(current, 1, min=0, max=1):
+            #         self.rG_Expression(parent=current)
+            #         self.SP(parent=current)
+            #         if self._max_depth >= 4:
+            #             for _ in self._model.quantify(current, 2, min=0, max=inf):
+            #                 UnlexerRule(src=',', parent=current)
+            #                 self.SP(parent=current)
+            #                 self.rG_Expression(parent=current)
+            #                 self.SP(parent=current)
+            UnlexerRule(src=')', parent=current)
+            return current
+    oC_FunctionInvocation.min_depth = 4
 
-    @depthcontrol
     def oC_With(self, parent=None):
-
-        current = UnparserRule(name='oC_With', parent=parent)
-        self.enter_rule(current)
-        self.SP(parent=current)
-        self.WITH(parent=current)
-        self.oC_ProjectionBody(parent=current)
-        if self.max_depth >= 6:
-            for _ in self.model.quantify(current, 0, min=0, max=1):
-                self.SP(parent=current)
-                self.oC_Where(parent=current)
-        self.exit_rule(current)
-
-        clear_non_alias_globals()
-
-        return current
+        with RuleContext(self, UnparserRule(name='oC_With', parent=parent)) as current:
+            self.WITH(parent=current)
+            self.oC_ProjectionBody(parent=current)
+            if self._max_depth >= 16:
+                for _ in self._model.quantify(current, 0, min=0, max=1):
+                    self.SP(parent=current)
+                    self.oC_Where(parent=current)
+            
+            clear_non_alias_globals()
+            
+            return current
     oC_With.min_depth = 4
 
-    @depthcontrol
     def oC_ProjectionItems(self, parent=None):
-        current = UnparserRule(name='oC_ProjectionItems', parent=parent)
-        self.enter_rule(current)
-        choice = self.model.choice(
-            current, 0, [0 if [0, 5][i] > self.max_depth else w for i, w in enumerate([1, 1])])
-        in_with = in_node_type(parent, 'oC_With') # Alias all WITH projections
-        if in_with:
-            choice = 1
-        if choice == 0:
-            UnlexerRule(src='*', parent=current)
-            if self.max_depth >= 5:
-                for _ in self.model.quantify(current, 0, min=0, max=inf):
-                    self.SP(parent=current)
-                    UnlexerRule(src=',', parent=current)
-                    self.SP(parent=current)
+        with RuleContext(self, UnparserRule(name='oC_ProjectionItems', parent=parent)) as current:
+            with AlternationContext(self, [0, 5], [1, 1]) as weights0:
+                choice0 = self._model.choice(current, 0, weights0)
+                in_with = in_node_type(parent, 'oC_With') # Alias all WITH projections
+                if in_with:
+                    choice0 = 1
+                if choice0 == 0:
+                    UnlexerRule(src='*', parent=current)
+                    if self._max_depth >= 5:
+                        for _ in self._model.quantify(current, 0, min=0, max=inf):
+                            self.SP(parent=current)
+                            UnlexerRule(src=',', parent=current)
+                            self.SP(parent=current)
+                            self.oC_ProjectionItem(parent=current)
+                elif choice0 == 1:
                     self.oC_ProjectionItem(parent=current)
-        elif choice == 1:
-            self.oC_ProjectionItem(parent=current)
-            if self.max_depth >= 5:
-                for _ in self.model.quantify(current, 1, min=0, max=inf):
-                    UnlexerRule(src=',', parent=current)
-                    self.SP(parent=current)
-                    self.oC_ProjectionItem(parent=current)
-        self.exit_rule(current)
-        return current
+                    if self._max_depth >= 5:
+                        for _ in self._model.quantify(current, 1, min=0, max=inf):
+                            self.SP(parent=current)
+                            UnlexerRule(src=',', parent=current)
+                            self.SP(parent=current)
+                            self.oC_ProjectionItem(parent=current)
+            return current
     oC_ProjectionItems.min_depth = 0
 
-    @depthcontrol
     def oC_ProjectionItem(self, parent=None):
-        current = UnparserRule(name='oC_ProjectionItem', parent=parent)
-        self.enter_rule(current)
-        choice = self.model.choice(
-            current, 0, [0 if [4, 4][i] > self.max_depth else w for i, w in enumerate([1, 1])])
-        in_with = in_node_type(parent, 'oC_With') # Alias all WITH projections
-        if in_with:
-            choice = 0
-        if choice == 0:
-            self.rG_Expression(parent=current)
-            self.SP(parent=current)
-            self.AS(parent=current)
-            self.SP(parent=current)
-            self.oC_Variable(parent=current)
-        elif choice == 1:
-            self.rG_Expression(parent=current)
-        self.exit_rule(current)
-        return current
+        with RuleContext(self, UnparserRule(name='oC_ProjectionItem', parent=parent)) as current:
+            with AlternationContext(self, [4, 4], [1, 1]) as weights0:
+                choice0 = self._model.choice(current, 0, weights0)
+                in_with = in_node_type(parent, 'oC_With') # Alias all WITH projections
+                if in_with:
+                    choice0 = 0
+                if choice0 == 0:
+                    self.rG_Expression(parent=current)
+                    self.SP(parent=current)
+                    self.AS(parent=current)
+                    self.SP(parent=current)
+                    self.oC_Variable(parent=current)
+                elif choice0 == 1:
+                    self.rG_Expression(parent=current)
+            return current
     oC_ProjectionItem.min_depth = 4

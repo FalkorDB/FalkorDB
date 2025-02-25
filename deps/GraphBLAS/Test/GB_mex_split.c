@@ -2,7 +2,7 @@
 // GB_mex_split: C = split (Tiles)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -62,11 +62,11 @@ void mexFunction
         mexErrMsgTxt ("ms must be double") ;
     }
     double *ms_double = mxGetDoubles (pargin [1]) ;
-    GrB_Index m = mxGetNumberOfElements (pargin [1]) ;
-    GrB_Index *Tile_nrows = mxMalloc (m * sizeof (GrB_Index)) ;
+    uint64_t m = mxGetNumberOfElements (pargin [1]) ;
+    uint64_t *Tile_nrows = mxMalloc (m * sizeof (uint64_t)) ;
     for (int64_t k = 0 ; k < m ; k++)
     {
-        Tile_nrows [k] = (GrB_Index) (ms_double [k]) ;
+        Tile_nrows [k] = (uint64_t) (ms_double [k]) ;
     }
 
     // get ns (deep copy)
@@ -75,11 +75,11 @@ void mexFunction
         mexErrMsgTxt ("ns must be double") ;
     }
     double *ns_double = mxGetDoubles (pargin [2]) ;
-    GrB_Index n = mxGetNumberOfElements (pargin [2]) ;
-    GrB_Index *Tile_ncols = mxMalloc (n * sizeof (GrB_Index)) ;
+    uint64_t n = mxGetNumberOfElements (pargin [2]) ;
+    uint64_t *Tile_ncols = mxMalloc (n * sizeof (uint64_t)) ;
     for (int64_t k = 0 ; k < n ; k++)
     {
-        Tile_ncols [k] = (GrB_Index) (ns_double [k]) ;
+        Tile_ncols [k] = (uint64_t) (ns_double [k]) ;
     }
 
     // create Tiles

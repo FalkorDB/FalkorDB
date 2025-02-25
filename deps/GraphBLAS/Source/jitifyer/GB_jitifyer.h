@@ -2,7 +2,7 @@
 // GB_jitifyer.h: definitions for the CPU and CUDA jitifyer
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,9 @@
 #define GB_JITIFYER_H
 
 #include "jit_kernels/include/GB_jit_kernel_proto.h"
+
+typedef GB_JIT_KERNEL_USER_OP_PROTO ((*GB_user_op_f)) ;
+typedef GB_JIT_KERNEL_USER_TYPE_PROTO ((*GB_user_type_f)) ;
 
 //------------------------------------------------------------------------------
 // get list of PreJIT kernels: function pointers and names
@@ -366,7 +369,7 @@ GrB_Info GB_jitifyer_alloc_space (void) ;
 GrB_Info GB_jitifyer_include (void) ;
 
 void GB_jitifyer_set_control (int control) ;
-GxB_JIT_Control GB_jitifyer_get_control (void) ;
+int GB_jitifyer_get_control (void) ;
 
 const char *GB_jitifyer_get_cache_path (void) ;
 GrB_Info GB_jitifyer_set_cache_path (const char *new_cache_path) ;
@@ -408,6 +411,10 @@ bool GB_jitifyer_get_use_cmake (void) ;
 void GB_jitifyer_set_use_cmake (bool use_cmake) ;
 
 void GB_jitifyer_sanitize (char *string, size_t len) ;
+
+GB_jit_query_func GB_jitifyer_get_query (void *p) ;
+GB_user_op_f GB_jitifyer_get_user_op (void *p) ;
+GB_user_type_f GB_jitifyer_get_user_type (void *p) ;
 
 #endif
 

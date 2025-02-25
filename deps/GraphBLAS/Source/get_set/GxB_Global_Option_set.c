@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GxB_Global_Option_set: set a global default option for all future matrices
+// GxB_Global_Option_set: set a global default option
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -27,7 +27,7 @@
 
 GrB_Info GxB_Global_Option_set_INT32      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     int32_t value                   // value to change it to
 )
 {
@@ -36,7 +36,7 @@ GrB_Info GxB_Global_Option_set_INT32      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set_INT32 (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -51,7 +51,7 @@ GrB_Info GxB_Global_Option_set_INT32      // set a global default option
             { 
                 return (GrB_INVALID_VALUE) ;
             }
-            GB_Global_is_csc_set (value != (int) GxB_BY_ROW) ; 
+            GB_Global_is_csc_set (value != (int) GxB_BY_ROW) ;
             break ;
 
         case GxB_GLOBAL_NTHREADS :          // same as GxB_NTHREADS
@@ -98,7 +98,7 @@ GrB_Info GxB_Global_Option_set_INT32      // set a global default option
 
 GrB_Info GxB_Global_Option_set_FP64      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     double value                    // value to change it to
 )
 {
@@ -107,7 +107,7 @@ GrB_Info GxB_Global_Option_set_FP64      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set_FP64 (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -140,7 +140,7 @@ GrB_Info GxB_Global_Option_set_FP64      // set a global default option
 
 GrB_Info GxB_Global_Option_set_FP64_ARRAY      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     double *value                   // value to change it to
 )
 {
@@ -149,7 +149,7 @@ GrB_Info GxB_Global_Option_set_FP64_ARRAY      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set_FP64_ARRAY (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -188,7 +188,7 @@ GrB_Info GxB_Global_Option_set_FP64_ARRAY      // set a global default option
 
 GrB_Info GxB_Global_Option_set_INT64_ARRAY      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     int64_t *value                  // value to change it to
 )
 {
@@ -197,7 +197,7 @@ GrB_Info GxB_Global_Option_set_INT64_ARRAY      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set_INT64_ARRAY (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -225,7 +225,7 @@ GrB_Info GxB_Global_Option_set_INT64_ARRAY      // set a global default option
 
 GrB_Info GxB_Global_Option_set_CHAR      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     const char *value               // value to change it to
 )
 {
@@ -234,7 +234,7 @@ GrB_Info GxB_Global_Option_set_CHAR      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set_CHAR (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -289,9 +289,11 @@ GrB_Info GxB_Global_Option_set_CHAR      // set a global default option
 // GxB_Global_Option_set_FUNCTION: set a global option (function pointer)
 //------------------------------------------------------------------------------
 
+#include "include/GB_pedantic_disable.h"
+
 GrB_Info GxB_Global_Option_set_FUNCTION      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     void *value                     // value to change it to
 )
 {
@@ -300,7 +302,7 @@ GrB_Info GxB_Global_Option_set_FUNCTION      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set_FUNCTION (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -333,7 +335,7 @@ GrB_Info GxB_Global_Option_set_FUNCTION      // set a global default option
 
 GrB_Info GxB_Global_Option_set      // set a global default option
 (
-    GxB_Option_Field field,         // option to change
+    int field,                      // option to change
     ...                             // value to change it to
 )
 {
@@ -342,7 +344,7 @@ GrB_Info GxB_Global_Option_set      // set a global default option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_set (field, value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // set the global option
@@ -399,7 +401,7 @@ GrB_Info GxB_Global_Option_set      // set a global default option
                 { 
                     return (GrB_INVALID_VALUE) ;
                 }
-                GB_Global_is_csc_set (format != (int) GxB_BY_ROW) ; 
+                GB_Global_is_csc_set (format != (int) GxB_BY_ROW) ;
             }
             break ;
 
@@ -438,10 +440,10 @@ GrB_Info GxB_Global_Option_set      // set a global default option
             break ;
 
         //----------------------------------------------------------------------
-        // memory pool control
+        // memory pool control: no longer used
         //----------------------------------------------------------------------
 
-        case GxB_MEMORY_POOL : 
+        case GxB_MEMORY_POOL :              // no longer used
 
             // nothing to do: no longer used
             break ;

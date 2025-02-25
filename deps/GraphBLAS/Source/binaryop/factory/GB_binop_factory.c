@@ -2,7 +2,7 @@
 // GB_binop_factory.c: switch factory for built-in methods for C=binop(A,B)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -369,65 +369,6 @@
             break ;
 #endif
 
-#if 0
-
-        //----------------------------------------------------------------------
-        // IS* operators fully disabled
-        //----------------------------------------------------------------------
-
-        //----------------------------------------------------------------------
-        case GB_ISEQ_binop_code:    // z = (x == y)
-        //----------------------------------------------------------------------
-
-            // ISEQ == EQ for boolean
-            switch (xcode)
-            {
-                GB_CASE_INT8   (_iseq)
-                GB_CASE_INT16  (_iseq)
-                GB_CASE_INT32  (_iseq)
-                GB_CASE_INT64  (_iseq)
-                GB_CASE_UINT8  (_iseq)
-                GB_CASE_UINT16 (_iseq)
-                GB_CASE_UINT32 (_iseq)
-                GB_CASE_UINT64 (_iseq)
-                GB_CASE_FP32   (_iseq)
-                GB_CASE_FP64   (_iseq)
-                #ifndef GB_BINOP_IS_SEMIRING_MULTIPLIER
-                // ISEQ does not appear in a builtin complex semiring
-                GB_CASE_FC32   (_iseq)
-                GB_CASE_FC64   (_iseq)
-                #endif
-                default: ;
-            }
-            break ;
-
-        //----------------------------------------------------------------------
-        case GB_ISNE_binop_code:    // z = (x != y)
-        //----------------------------------------------------------------------
-
-            // MINUS == RMINUS == NE == ISNE == XOR for boolean
-            switch (xcode)
-            {
-                GB_CASE_INT8   (_isne)
-                GB_CASE_INT16  (_isne)
-                GB_CASE_INT32  (_isne)
-                GB_CASE_INT64  (_isne)
-                GB_CASE_UINT8  (_isne)
-                GB_CASE_UINT16 (_isne)
-                GB_CASE_UINT32 (_isne)
-                GB_CASE_UINT64 (_isne)
-                GB_CASE_FP32   (_isne)
-                GB_CASE_FP64   (_isne)
-                #ifndef GB_BINOP_IS_SEMIRING_MULTIPLIER
-                // ISNE does not appear in a builtin complex semiring
-                GB_CASE_FC32   (_isne)
-                GB_CASE_FC64   (_isne)
-                #endif
-                default: ;
-            }
-            break ;
-#endif
-
         //----------------------------------------------------------------------
         case GB_EQ_binop_code      :    // z = (x == y)
         //----------------------------------------------------------------------
@@ -552,97 +493,6 @@
                 GB_CASE_UINT64 (_lxor)
                 GB_CASE_FP32   (_lxor)
                 GB_CASE_FP64   (_lxor)
-                default: ;
-            }
-            break ;
-
-#endif
-
-#if 0
-        //----------------------------------------------------------------------
-        // IS* operators fully disabled
-        //----------------------------------------------------------------------
-
-        //----------------------------------------------------------------------
-        case GB_ISGT_binop_code:    // z = (x >  y)
-        //----------------------------------------------------------------------
-
-            // ISGT == GT for boolean.  no complex case
-            switch (xcode)
-            {
-                GB_CASE_INT8   (_isgt)
-                GB_CASE_INT16  (_isgt)
-                GB_CASE_INT32  (_isgt)
-                GB_CASE_INT64  (_isgt)
-                GB_CASE_UINT8  (_isgt)
-                GB_CASE_UINT16 (_isgt)
-                GB_CASE_UINT32 (_isgt)
-                GB_CASE_UINT64 (_isgt)
-                GB_CASE_FP32   (_isgt)
-                GB_CASE_FP64   (_isgt)
-                default: ;
-            }
-            break ;
-
-        //----------------------------------------------------------------------
-        case GB_ISLT_binop_code:    // z = (x <  y)
-        //----------------------------------------------------------------------
-
-            // ISLT == LT for boolean.  no complex case
-            switch (xcode)
-            {
-                GB_CASE_INT8   (_islt)
-                GB_CASE_INT16  (_islt)
-                GB_CASE_INT32  (_islt)
-                GB_CASE_INT64  (_islt)
-                GB_CASE_UINT8  (_islt)
-                GB_CASE_UINT16 (_islt)
-                GB_CASE_UINT32 (_islt)
-                GB_CASE_UINT64 (_islt)
-                GB_CASE_FP32   (_islt)
-                GB_CASE_FP64   (_islt)
-                default: ;
-            }
-            break ;
-
-        //----------------------------------------------------------------------
-        case GB_ISGE_binop_code:    // z = (x >= y)
-        //----------------------------------------------------------------------
-
-            // POW == ISGE == GE for boolean. no complex case.
-            switch (xcode)
-            {
-                GB_CASE_INT8   (_isge)
-                GB_CASE_INT16  (_isge)
-                GB_CASE_INT32  (_isge)
-                GB_CASE_INT64  (_isge)
-                GB_CASE_UINT8  (_isge)
-                GB_CASE_UINT16 (_isge)
-                GB_CASE_UINT32 (_isge)
-                GB_CASE_UINT64 (_isge)
-                GB_CASE_FP32   (_isge)
-                GB_CASE_FP64   (_isge)
-                default: ;
-            }
-            break ;
-
-        //----------------------------------------------------------------------
-        case GB_ISLE_binop_code:    // z = (x <= y)
-        //----------------------------------------------------------------------
-
-            // ISLE == LE for boolean.  no complex case
-            switch (xcode)
-            {
-                GB_CASE_INT8   (_isle)
-                GB_CASE_INT16  (_isle)
-                GB_CASE_INT32  (_isle)
-                GB_CASE_INT64  (_isle)
-                GB_CASE_UINT8  (_isle)
-                GB_CASE_UINT16 (_isle)
-                GB_CASE_UINT32 (_isle)
-                GB_CASE_UINT64 (_isle)
-                GB_CASE_FP32   (_isle)
-                GB_CASE_FP64   (_isle)
                 default: ;
             }
             break ;

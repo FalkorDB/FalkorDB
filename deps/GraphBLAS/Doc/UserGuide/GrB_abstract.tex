@@ -1,0 +1,23 @@
+
+\begin{abstract}
+SuiteSparse:GraphBLAS is a full implementation of the GraphBLAS standard,
+which defines a set of sparse matrix operations on an extended algebra of
+semirings using an almost unlimited variety of operators and types.  When
+applied to sparse adjacency matrices, these algebraic operations are equivalent
+to computations on graphs.  GraphBLAS provides a powerful and expressive
+framework for creating high-performance graph algorithms based on the elegant
+mathematics of sparse matrix operations on a semiring.
+
+When compared with MATLAB R2021a, some methods in GraphBLAS are up to
+a million times faster than MATLAB, even when using the same syntax.
+Typical speedups are in the range 2x to 30x.
+The statement \verb'C(M)=A' when using MATLAB sparse matrices takes
+$O(e^2)$ time where $e$ is the number of entries in \verb'C'.  GraphBLAS
+can perform the same computation with the exact same syntax, but
+in $O(e \log e)$ time (or $O(e)$ in some cases), and in practice that
+means GraphBLAS can compute \verb'C(M)=A' for a large problem in under
+a second, while MATLAB takes about 4 to 5 days.
+
+SuiteSparse:GraphBLAS is under the Apache-2.0 license.
+\end{abstract}
+

@@ -2,7 +2,7 @@
 // GB_mex_mxv_iterator: Y = A*X using an iterator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,7 +24,7 @@
     GB_mx_put_global (true) ;                       \
 }
 
-#define Assert(x)                                   \
+#define my_assert(x)                                \
 {                                                   \
     if (!(x))                                       \
     {                                               \
@@ -61,7 +61,7 @@ void mexFunction
         FREE_ALL ;
         mexErrMsgTxt ("A failed") ;
     }
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
     GB_Global_print_one_based_set (0) ;
@@ -75,7 +75,7 @@ void mexFunction
     }
     // GxB_print (X, 3) ;
 
-    GrB_Index n ;
+    uint64_t n ;
     OK (GrB_Vector_size (&n, X)) ;
     if (n != ncols)
     {
@@ -100,6 +100,7 @@ void mexFunction
     OK (GxB_Vector_Option_get (X, GxB_SPARSITY_STATUS, &sparsity)) ;
     if (sparsity != GxB_FULL)
     {
+        GxB_print (X, 5) ;
         FREE_ALL ;
         mexErrMsgTxt ("X must be full") ;
     }
@@ -153,12 +154,12 @@ void mexFunction
     if (A->is_csc)
     {
         info = GxB_rowIterator_attach (iterator, A, NULL) ;
-        Assert (info == GrB_NOT_IMPLEMENTED) ;
+        my_assert (info == GrB_NOT_IMPLEMENTED) ;
     }
     else
     {
         info = GxB_colIterator_attach (iterator, A, NULL) ;
-        Assert (info == GrB_NOT_IMPLEMENTED) ;
+        my_assert (info == GrB_NOT_IMPLEMENTED) ;
     }
 
     //--------------------------------------------------------------------------

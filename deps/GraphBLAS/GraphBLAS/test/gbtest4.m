@@ -5,7 +5,7 @@ function gbtest4
 % names.  For example, the spec has many boolean operators with different
 % names but they compute the same thing.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 types = gbtest_types ;
@@ -29,10 +29,15 @@ for k1 = 1:length (ops)
                 GrB.semiringinfo (semiring) ;
                 GrB.semiringinfo (s, type) ;
                 nsemirings = nsemirings + 1 ;
+                ok = true ;
             catch
                 % this is an error, but it is expected since not all
                 % combinations operators and types can be used to construct
                 % a valid semiring.
+                ok = false ;
+            end
+            if (ok)
+                fprintf ('\nOK %s.%s\n', s, type) ;
             end
         end
     end

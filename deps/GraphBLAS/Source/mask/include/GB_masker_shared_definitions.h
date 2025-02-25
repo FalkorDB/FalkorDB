@@ -2,7 +2,7 @@
 // GB_masker_shared_definitions.h: common macros for masker kernels
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -99,33 +99,8 @@
 #define GB_R_IS_HYPER (R_sparsity == GxB_HYPERSPARSE)
 #endif
 
-#ifndef GB_C_IS_BITMAP
-#define GB_C_IS_BITMAP C_is_bitmap
-#endif
-#ifndef GB_C_IS_FULL
-#define GB_C_IS_FULL C_is_full
-#endif
-#ifndef GB_C_IS_SPARSE
-#define GB_C_IS_SPARSE C_is_sparse
-#endif
-#ifndef GB_C_IS_HYPER
-#define GB_C_IS_HYPER C_is_hyper
-#endif
 #ifndef GB_C_ISO
 #define GB_C_ISO C_iso
-#endif
-
-#ifndef GB_M_IS_BITMAP
-#define GB_M_IS_BITMAP M_is_bitmap
-#endif
-#ifndef GB_M_IS_FULL
-#define GB_M_IS_FULL M_is_full
-#endif
-#ifndef GB_M_IS_SPARSE
-#define GB_M_IS_SPARSE M_is_sparse
-#endif
-#ifndef GB_M_IS_HYPER
-#define GB_M_IS_HYPER M_is_hyper
 #endif
 
 #ifndef GB_Z_IS_BITMAP
@@ -133,12 +108,6 @@
 #endif
 #ifndef GB_Z_IS_FULL
 #define GB_Z_IS_FULL Z_is_full
-#endif
-#ifndef GB_Z_IS_SPARSE
-#define GB_Z_IS_SPARSE Z_is_sparse
-#endif
-#ifndef GB_Z_IS_HYPER
-#define GB_Z_IS_HYPER Z_is_hyper
 #endif
 #ifndef GB_Z_ISO
 #define GB_Z_ISO Z_iso

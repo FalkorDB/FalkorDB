@@ -2,7 +2,7 @@
 // GB_conform: conform any matrix to its desired sparsity structure
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -136,10 +136,7 @@ GrB_Info GB_conform     // conform a matrix to its desired sparsity structure
     bool is_full = GB_IS_FULL (A) ;
     bool is_bitmap = GB_IS_BITMAP (A) ;
     bool as_if_full = GB_as_if_full (A) ;
-    if (A->nvec_nonempty < 0)
-    { 
-        A->nvec_nonempty = GB_nvec_nonempty (A) ;
-    }
+    GB_nvec_nonempty_update (A) ;
     if (A->no_hyper_hash)
     { 
         // A does not want the hyper_hash, so free A->Y if present

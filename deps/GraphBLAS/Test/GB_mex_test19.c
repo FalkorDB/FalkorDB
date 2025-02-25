@@ -2,7 +2,7 @@
 // GB_mex_test19: serialize/deserialize tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ void mexFunction
     // OK (GxB_print (A, 2)) ;
 
     void *blob = NULL ;
-    GrB_Index blob_size ;
+    uint64_t blob_size ;
 
     // default compression
     OK (GxB_Matrix_serialize (&blob, &blob_size, A, NULL)) ;

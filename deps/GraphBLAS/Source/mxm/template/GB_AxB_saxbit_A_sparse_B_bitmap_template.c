@@ -2,7 +2,7 @@
 // GB_AxB_saxbit_A_sparse_B_bitmap: C<#M>=A*B, C bitmap, M anything
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,6 +22,10 @@
 
 #ifndef GB_C_SIZE
 #define GB_C_SIZE sizeof (GB_C_TYPE)
+#endif
+
+#ifndef GB_C_ISO
+#define GB_C_ISO 0
 #endif
 
 {
@@ -55,7 +59,7 @@
 
             // Hf and Hx workspace to compute the panel of C
             int8_t *restrict Hf = Wf + (H_slice [tid] * cvlen) ;
-            #if ( !GB_IS_ANY_PAIR_SEMIRING )
+            #if !GB_C_ISO
             GB_C_TYPE *restrict Hx = (GB_C_TYPE *)
                 (Wcx + H_slice [tid] * cvlen * GB_C_SIZE) ;
             #endif
@@ -85,7 +89,7 @@
                 //--------------------------------------------------------------
 
                 int8_t *restrict Gb = (int8_t *) (Bb + (j1 * bvlen)) ;
-                #if ( !GB_IS_ANY_PAIR_SEMIRING )
+                #if !GB_B_IS_PATTERN
                 GB_B_TYPE *restrict Gx = (GB_B_TYPE *)
                      (((GB_void *) (B->x)) +
                        (B_iso ? 0 : ((j1 * bvlen) * GB_B_SIZE))) ;
@@ -255,7 +259,7 @@
             int64_t task_cnvals = 0 ;
 
             // for Hx Gustavason workspace: use C(:,j) in-place:
-            #if ( !GB_IS_ANY_PAIR_SEMIRING )
+            #if !GB_C_ISO
             GB_C_TYPE *restrict Hx = (GB_C_TYPE *)
                 (((GB_void *) Cx) + (pC_start * GB_C_SIZE)) ;
             #endif
@@ -278,13 +282,13 @@
                 // C<#M>(:,j) += A(:,k) * B(k,j)
                 //--------------------------------------------------------------
 
-                int64_t k = GBH_A (Ah, kk) ;      // k in range k1:k2
+                int64_t k = GBh_A (Ah, kk) ;      // k in range k1:k2
                 int64_t pB = pB_start + k ;     // get pointer to B(k,j)
                 #if GB_B_IS_BITMAP
-                if (!GBB_B (Bb, pB)) continue ;   
+                if (!GBb_B (Bb, pB)) continue ;   
                 #endif
-                int64_t pA = Ap [kk] ;
-                int64_t pA_end = Ap [kk+1] ;
+                int64_t pA = GB_IGET (Ap, kk) ;
+                int64_t pA_end = GB_IGET (Ap, kk+1) ;
                 GB_GET_B_kj ;                   // bkj = B(k,j)
 
                 for ( ; pA < pA_end ; pA++)
@@ -294,7 +298,7 @@
                     // get A(i,k) and C(i,j)
                     //----------------------------------------------------------
 
-                    int64_t i = Ai [pA] ;       // get A(i,k) index
+                    int64_t i = GB_IGET (Ai, pA) ;       // get A(i,k) index
                     int64_t pC = pC_start + i ; // get C(i,j) pointer
 
                     //----------------------------------------------------------
@@ -480,7 +484,7 @@
 
             // for Hf and Hx Gustavason workspace: use W(:,tid):
             int8_t *restrict Hf = Wf + pW_start ;
-            #if ( !GB_IS_ANY_PAIR_SEMIRING )
+            #if !GB_C_ISO
             GB_C_TYPE *restrict Hx = (GB_C_TYPE *)
                 (Wcx + (pW_start * GB_C_SIZE)) ;
             #endif
@@ -509,13 +513,13 @@
                 // W<#M>(:,tid) += A(:,k) * B(k,j)
                 //--------------------------------------------------------------
 
-                int64_t k = GBH_A (Ah, kk) ;      // k in range k1:k2
+                int64_t k = GBh_A (Ah, kk) ;      // k in range k1:k2
                 int64_t pB = pB_start + k ;     // get pointer to B(k,j)
                 #if GB_B_IS_BITMAP
-                if (!GBB_B (Bb, pB)) continue ;   
+                if (!GBb_B (Bb, pB)) continue ;   
                 #endif
-                int64_t pA = Ap [kk] ;
-                int64_t pA_end = Ap [kk+1] ;
+                int64_t pA = GB_IGET (Ap, kk) ;
+                int64_t pA_end = GB_IGET (Ap, kk+1) ;
                 GB_GET_B_kj ;                   // bkj = B(k,j)
 
                 for ( ; pA < pA_end ; pA++)
@@ -525,7 +529,7 @@
                     // get A(i,k)
                     //----------------------------------------------------------
 
-                    int64_t i = Ai [pA] ;       // get A(i,k) index
+                    int64_t i = GB_IGET (Ai, pA) ;       // get A(i,k) index
 
                     //----------------------------------------------------------
                     // check M(i,j)

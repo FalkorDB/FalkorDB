@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/template/GB_cuda_ek_slice.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -69,7 +69,7 @@
 static __device__ __inline__ void GB_cuda_ek_slice_setup
 (
     // inputs, not modified:
-    const int64_t *Ap,          // array of size anvec+1
+    const GB_Ap_TYPE *Ap,       // array of size anvec+1
     const int64_t anvec,        // # of vectors in the matrix A
     const int64_t anz,          // # of entries in the sparse/hyper matrix A
     const int64_t pfirst,       // first entry in A to find k
@@ -107,7 +107,7 @@ static __device__ __inline__ void GB_cuda_ek_slice_setup
 
     (*kfirst) = 0 ;
     int64_t kright = anvec ;
-    GB_TRIM_BINARY_SEARCH (pfirst, Ap, (*kfirst), kright) ;
+    GB_trim_binary_search (pfirst, Ap, GB_Ap_IS_32, kfirst, &kright) ;
 
     // find klast, the last vector of the slice for this chunk.  klast is the
     // vector that owns the entry Ai [plast-1] and Ax [plast-1].  The search
@@ -115,7 +115,7 @@ static __device__ __inline__ void GB_cuda_ek_slice_setup
 
     (*klast) = (*kfirst) ;
     kright = anvec ;
-    GB_TRIM_BINARY_SEARCH (plast, Ap, (*klast), kright) ;
+    GB_trim_binary_search (plast, Ap, GB_Ap_IS_32, klast, &kright) ;
 
     //--------------------------------------------------------------------------
     // find slope of vectors in this chunk, and return result
@@ -156,7 +156,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
     const int64_t pdelta,       // find the k value of the pfirst+pdelta entry
     const int64_t pfirst,       // first entry in A to find k (for which
                                 // pdelta=0)
-    const int64_t *Ap,          // array of size anvec+1
+    const GB_Ap_TYPE *Ap,       // array of size anvec+1
     const int64_t anvec1,       // anvec-1
     const int64_t kfirst,       // estimate of first vector in the chunk
     const float slope           // estimate # vectors in chunk / my_chunk_size
@@ -202,7 +202,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
 static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
 (
     // inputs, not modified:
-    const int64_t *Ap,          // array of size anvec+1
+    const GB_Ap_TYPE *Ap,       // array of size anvec+1
     const int64_t anvec,        // # of vectors in the matrix A
     const int64_t anz,          // # of entries in the sparse/hyper matrix A
     const int64_t pfirst,       // first entry in A to find k

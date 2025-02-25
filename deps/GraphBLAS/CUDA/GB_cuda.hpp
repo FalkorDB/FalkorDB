@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/GB_cuda.hpp: include file for host CUDA methods (not for JIT)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ extern "C"
 //------------------------------------------------------------------------------
 
 // for the "which" parameter of GB_cuda_matrix_prefetch:
-// FIXME: rename this to GB_WHATEVER_P for GB_cuda_matrix_advise
+// FIXME: rename this to GB_WHATEVER_P for GB_cuda_matrix_memadvise
 
 #define GB_PREFETCH_P   1
 #define GB_PREFETCH_H   2
@@ -64,12 +64,10 @@ GrB_Info GB_cuda_matrix_prefetch
 ) ;
 
 #if 0
-// do we need this function too?
-GrB_Info GB_cuda_matrix_advise
+// we need this function too:
+GrB_Info GB_cuda_matrix_memadvise
 (
     GrB_Matrix A,
-
-    p, h, y, b, i, x?   6 bools
 
     what to do:  advise (prefer location? access by)?  prefetch? nothing?
         avdice: enum (1 to 6)

@@ -2,7 +2,7 @@
 // GB_bitmap_assign_to_full:  all entries present in C; set bitmap to all 1's
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,7 +28,7 @@ GB_CALLBACK_BITMAP_ASSIGN_TO_FULL_PROTO (GB_bitmap_assign_to_full)
     if (GB_sparsity_control (C->sparsity_control, C->vdim) & GxB_FULL)
     { 
         // C is bitmap but can become full; convert it to full
-        GB_FREE (&(C->b), C->b_size) ;
+        GB_FREE_MEMORY (&(C->b), C->b_size) ;
         C->nvals = -1 ;
     }
     else

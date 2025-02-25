@@ -2,7 +2,7 @@
 // gbcat: matrix concatenation
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ void mexFunction
     mxArray *Matrix [6], *String [2], *Cell [2] ;
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int nmatrices, nstrings, ncells, sparsity ;
     GrB_Descriptor desc ;
     gb_get_mxargs (nargin, pargin, USAGE, Matrix, &nmatrices, String, &nstrings,
@@ -71,10 +71,10 @@ void mexFunction
     // determine the # of rows of C from Tiles {:,0}
     //--------------------------------------------------------------------------
 
-    GrB_Index cnrows = 0 ;
+    uint64_t cnrows = 0 ;
     for (int64_t i = 0 ; i < m ; i++)
     {
-        GrB_Index anrows ;
+        uint64_t anrows ;
         OK (GrB_Matrix_nrows (&anrows, Tiles [i*n])) ;
         cnrows += anrows ;
     }
@@ -83,10 +83,10 @@ void mexFunction
     // determine the # of columms of C from Tiles {0,:}
     //--------------------------------------------------------------------------
 
-    GrB_Index cncols = 0 ;
+    uint64_t cncols = 0 ;
     for (int64_t j = 0 ; j < n ; j++)
     {
-        GrB_Index ancols ;
+        uint64_t ancols ;
         OK (GrB_Matrix_ncols (&ancols, Tiles [j])) ;
         cncols += ancols ;
     }
@@ -134,6 +134,6 @@ void mexFunction
 
     pargout [0] = gb_export (&C, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

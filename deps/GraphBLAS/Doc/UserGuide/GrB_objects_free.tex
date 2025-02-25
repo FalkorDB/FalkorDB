@@ -1,0 +1,41 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_free:} free any GraphBLAS object} %=======================
+%===============================================================================
+\label{free}
+
+Each of the ten objects has \verb'GrB_*_new' and \verb'GrB_*_free' methods
+that are specific to each object.  They can also be accessed by a generic
+function, \verb'GrB_free', that works for all ten objects.  If \verb'G' is any
+of the ten objects, the statement
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_free (&G) ; \end{verbatim} }
+
+\noindent
+frees the object and sets the variable \verb'G' to \verb'NULL'.  It is safe to
+pass in a \verb'NULL' handle, or to free an object twice:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_free (NULL) ;       // SuiteSparse:GraphBLAS safely does nothing
+    GrB_free (&G) ;         // the object G is freed and G set to NULL
+    GrB_free (&G) ;         // SuiteSparse:GraphBLAS safely does nothing \end{verbatim} }
+
+\noindent
+However, the following sequence of operations is not safe.  The first two are
+valid but the last statement will lead to undefined behavior.
+
+    {\footnotesize
+    \begin{verbatim}
+    H = G ;                // valid; creates a 2nd handle of the same object
+    GrB_free (&G) ;        // valid; G is freed and set to NULL; H now undefined
+    GrB_some_method (H) ;  // not valid; H is undefined \end{verbatim}}
+
+Some objects are predefined, such as the built-in types.  If a user application
+attempts to free a built-in object, SuiteSparse:GraphBLAS will safely do
+nothing.  The \verb'GrB_free' function in SuiteSparse:GraphBLAS always
+returns \verb'GrB_SUCCESS'.
+

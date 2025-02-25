@@ -19,7 +19,7 @@ function s = isa (G, type)
 % See also class, GrB.type, GrB/isnumeric, GrB/islogical, GrB/isfloat,
 % GrB/isinteger, isobject, GrB/issparse, GrB/isreal.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isequal (type, 'GrB') || isequal (type, 'numeric'))

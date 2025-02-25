@@ -2,7 +2,7 @@
 // GrB_Matrix_diag: construct a diagonal matrix from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,8 @@
 // as a new matrix, like GrB_Matrix_new.  C has the same type as v.
 
 #include "diag/GB_diag.h"
+
+#define GB_FREE_ALL ;
 
 GrB_Info GrB_Matrix_diag        // construct a diagonal matrix from a vector
 (
@@ -24,22 +26,19 @@ GrB_Info GrB_Matrix_diag        // construct a diagonal matrix from a vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_diag (&C, v, k)") ;
+    GB_WHERE_1 (v, "GrB_Matrix_diag (&C, v, k)") ;
+    GB_RETURN_IF_NULL (v) ;
     GB_BURBLE_START ("GrB_Matrix_diag") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
 
     //--------------------------------------------------------------------------
     // C = diag (v,k)
     //--------------------------------------------------------------------------
 
-    GrB_Index n = v->vlen + GB_IABS (k) ;
-    GrB_Info info = GB_Matrix_new (C, v->type, n, n) ;
-    if (info == GrB_SUCCESS)
-    { 
-        info = GB_Matrix_diag (*C, (GrB_Matrix) v, k, Werk) ;
-    }
+    uint64_t n = v->vlen + GB_IABS (k) ;
+    GB_OK (GB_Matrix_new (C, v->type, n, n)) ;
+    GB_OK (GB_Matrix_diag (*C, (GrB_Matrix) v, k, Werk)) ;
 
     GB_BURBLE_END ;
-    return (info) ;
+    return (GrB_SUCCESS) ;
 }
 
