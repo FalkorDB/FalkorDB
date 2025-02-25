@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "xxhash.h"
 #include "execution_plan_util.h"
 #include "../ops/op_skip.h"
 #include "../../util/dict.h"
@@ -179,25 +178,6 @@ static inline bool _aware
 	return true;
 }
 
-uint64_t _hashFunction
-(
-	const void *key
-) {
-	return XXH64(key, strlen(key), 0);
-}
-
-int _hashCompare
-(
-	dict *d,
-	const void *key1,
-	const void *key2
-) {
-	const char *a = (const char*)key1;
-	const char *b = (const char*)key2;
-
-	return (strcmp(a, b) == 0);
-}
-
 OpBase *ExecutionPlan_LocateReferencesExcludingOps
 (
 	OpBase *root,                   // start point
@@ -237,20 +217,6 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 
 	// compute variabels awareness
 	// op's awareness = op's modified variabels + children's awareness
-	// hashtable callbacks
-	dictType _dt = {
-		_hashFunction,  // key hash function
-		NULL,           // key dup
-		NULL,           // val dup
-		_hashCompare,   // key compare
-		NULL,           // key destructor
-		NULL,           // val destructor
-		NULL,           // expand allowed
-		NULL,           //
-		NULL,           // dict metadata
-		NULL            // entry reallocated
-	};
-
 	dictIterator it;
 	dict *awareness = HashTableCreate(&def_dt);
 	uint n = array_len(taps);
@@ -267,7 +233,7 @@ OpBase *ExecutionPlan_LocateReferencesExcludingOps
 			// create a new hashtable incase this is the first time
 			// we encounter op
 			if(ht == NULL) {
-				ht = HashTableCreate(&_dt);
+				ht = HashTableCreate(&string_dt);
 				HashTableAdd(awareness, (void*)op, ht);
 
 				// add each modifier to op's awareness table

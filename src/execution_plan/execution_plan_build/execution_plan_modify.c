@@ -10,31 +10,44 @@
 #include "../ops/ops.h"
 #include "../../query_ctx.h"
 #include "../../ast/ast_mock.h"
+#include "execution_plan_awareness.h"
 #include "../../util/rax_extensions.h"
 
-static void _OpBase_AddChild(OpBase *parent, OpBase *child) {
-	// Add child to parent
+static void _OpBase_AddChild
+(
+	OpBase *parent,
+	OpBase *child
+) {
+	// add child to parent
 	if(parent->children == NULL) {
 		parent->children = rm_malloc(sizeof(OpBase *));
 	} else {
-		parent->children = rm_realloc(parent->children, sizeof(OpBase *) * (parent->childCount + 1));
+		parent->children = rm_realloc(parent->children,
+				sizeof(OpBase *) * (parent->childCount + 1));
 	}
 	parent->children[parent->childCount++] = child;
 
-	// Add parent to child
+	// add parent to child
 	child->parent = parent;
+
+	ExecutionPlanAwareness_AddOp(child);
 }
 
-/* Remove the operation old_child from its parent and replace it
- * with the new child without reordering elements. */
-static void _ExecutionPlan_ParentReplaceChild(OpBase *parent, OpBase *old_child,
-											  OpBase *new_child) {
+// remove the operation old_child from its parent and replace it
+// with the new child without reordering elements
+static void _ExecutionPlan_ParentReplaceChild
+(
+	OpBase *parent,
+	OpBase *old_child,
+	OpBase *new_child
+) {
 	ASSERT(parent->childCount > 0);
 
 	for(int i = 0; i < parent->childCount; i ++) {
-		/* Scan the children array to find the op being replaced. */
+		// scan the children array to find the op being replaced
 		if(parent->children[i] != old_child) continue;
-		/* Replace the original child with the new one. */
+
+		// replace the original child with the new one
 		parent->children[i] = new_child;
 		new_child->parent = parent;
 		return;
@@ -43,10 +56,21 @@ static void _ExecutionPlan_ParentReplaceChild(OpBase *parent, OpBase *old_child,
 	ASSERT(false && "failed to locate the operation to be replaced");
 }
 
-/* Removes node b from a and update child parent lists
- * Assuming B is a child of A. */
-static void _OpBase_RemoveChild(OpBase *parent, OpBase *child) {
-	// Remove child from parent.
+// removes child from it's parent
+static void _OpBase_RemoveChild
+(
+	OpBase *parent,
+	OpBase *child
+) {
+	ASSERT(child  != NULL);
+	ASSERT(parent != NULL);
+	ASSERT(parent != child);
+
+	//--------------------------------------------------------------------------
+	// remove child from parent
+	//--------------------------------------------------------------------------
+
+	// locate child in parent's children array
 	int i = 0;
 	for(; i < parent->childCount; i++) {
 		if(parent->children[i] == child) break;
@@ -54,24 +78,34 @@ static void _OpBase_RemoveChild(OpBase *parent, OpBase *child) {
 
 	ASSERT(i != parent->childCount);
 
-	// Update child count.
+	// update child count
 	parent->childCount--;
+
 	if(parent->childCount == 0) {
 		rm_free(parent->children);
 		parent->children = NULL;
 	} else {
-		// Shift left children.
+		// shift left children
 		for(int j = i; j < parent->childCount; j++) {
 			parent->children[j] = parent->children[j + 1];
 		}
-		parent->children = rm_realloc(parent->children, sizeof(OpBase *) * parent->childCount);
+		parent->children = rm_realloc(parent->children,
+				sizeof(OpBase *) * parent->childCount);
 	}
 
-	// Remove parent from child.
+	// update parent awareness
+	ExecutionPlanAwareness_RemoveOp(child);
+
+	// remove parent from child
 	child->parent = NULL;
 }
 
-inline void ExecutionPlan_AddOp(OpBase *parent, OpBase *newOp) {
+// adds operation to execution plan as a child of parent
+inline void ExecutionPlan_AddOp
+(
+	OpBase *parent,
+	OpBase *newOp
+) {
 	_OpBase_AddChild(parent, newOp);
 }
 
@@ -80,13 +114,18 @@ void ExecutionPlan_AddOpInd
 (
 	OpBase *parent,  // parent op
 	OpBase *child,   // child op
-	uint ind         // index of child
+	uint idx         // index of child
 ) {
+	ASSERT(child  != NULL);
 	ASSERT(parent != NULL);
-	ASSERT(child != NULL);
+	ASSERT(OpBase_ChildCount(parent) > idx);
 
-	OpBase *to_replace = parent->children[ind];
-	_ExecutionPlan_ParentReplaceChild(parent, to_replace, child);
+	OpBase *to_replace = parent->children[idx];
+
+	// replace the original child with the new one
+	parent->children[idx] = child;
+	child->parent = parent;
+
 	_OpBase_AddChild(parent, to_replace);
 }
 
@@ -96,54 +135,82 @@ void ExecutionPlan_PushBelow
 	OpBase *a,
 	OpBase *b
 ) {
+	ASSERT(a != NULL);
+	ASSERT(b != NULL);
+	ASSERT(a != b);
+
 	// B belongs to A's plan
 	ExecutionPlan *plan = (ExecutionPlan *)a->plan;
 	b->plan = plan;
 
 	if(a->parent == NULL) {
-		// A is the root operation.
+		// A is the root operation
 		_OpBase_AddChild(b, a);
 		plan->root = b;
 		return;
 	}
 
-	/* Disconnect A from its parent and replace it with B. */
+	// disconnect A from its parent and replace it with B
 	_ExecutionPlan_ParentReplaceChild(a->parent, a, b);
 
-	/* Add A as a child of B. */
+	// add A as a child of B
 	_OpBase_AddChild(b, a);
 }
 
-void ExecutionPlan_NewRoot(OpBase *old_root, OpBase *new_root) {
-	/* The new root should have no parent, but may have children if we've constructed
-	 * a chain of traversals/scans. */
+void ExecutionPlan_NewRoot
+(
+	OpBase *old_root,
+	OpBase *new_root
+) {
+	ASSERT(old_root != NULL);
+	ASSERT(new_root != NULL);
+	ASSERT(new_root != old_root);
+
+	// the new root should have no parent
+	// but may have children if we've constructed
+	// a chain of traversals/scans
 	ASSERT(!old_root->parent && !new_root->parent);
 
-	/* Find the deepest child of the new root operation.
-	 * Currently, we can only follow the first child, since we don't call this function when
-	 * introducing Cartesian Products (the only multiple-stream operation at this stage.)
-	 * This may be inadequate later. */
+	// find the deepest child of the new root operation
+	// currently, we can only follow the first child
+	// since we don't call this function when
+	// introducing a multiple-stream operation at this stage
+	// this may be inadequate later
 	OpBase *tail = new_root;
 	ASSERT(tail->childCount <= 1);
 	while(tail->childCount > 0) tail = tail->children[0];
 
-	// Append the old root to the tail of the new root's chain.
+	// append the old root to the tail of the new root's chain
 	_OpBase_AddChild(tail, old_root);
 }
 
-inline void ExecutionPlan_UpdateRoot(ExecutionPlan *plan, OpBase *new_root) {
+inline void ExecutionPlan_UpdateRoot
+(
+	ExecutionPlan *plan,
+	OpBase *new_root
+) {
+	ASSERT(plan     != NULL);
+	ASSERT(new_root != NULL);
+
 	if(plan->root) {
 		ExecutionPlan_NewRoot(plan->root, new_root);
 	}
+
 	plan->root = new_root;
 }
 
+// replace a with b
 void ExecutionPlan_ReplaceOp
 (
-	ExecutionPlan *plan,
-	OpBase *a,  // operation being replaced
-	OpBase *b   // replacement operation
+	ExecutionPlan *plan,  // plan
+	OpBase *a,            // operation being replaced
+	OpBase *b             // replacement operation
 ) {
+	ASSERT(plan != NULL);
+	ASSERT(a    != NULL);
+	ASSERT(b    != NULL);
+	ASSERT(a    != b);
+
 	// insert the new operation between the original and its parent
 	ExecutionPlan_PushBelow(a, b);
 
@@ -151,11 +218,15 @@ void ExecutionPlan_ReplaceOp
 	ExecutionPlan_RemoveOp(plan, a);
 }
 
+// removes operation from execution plan
 void ExecutionPlan_RemoveOp
 (
 	ExecutionPlan *plan,
 	OpBase *op
 ) {
+	ASSERT(op   != NULL);
+	ASSERT(plan != NULL);
+
 	if(op->parent == NULL) {
 		// removing execution plan root
 		ASSERT(op->childCount == 1);
@@ -168,34 +239,46 @@ void ExecutionPlan_RemoveOp
 	} else {
 		OpBase *parent = op->parent;
 		if(op->childCount > 0) {
-			// In place replacement of the op first branch instead of op.
+			ExecutionPlanAwareness_RemoveOp(op);
+
+			// in place replacement of the op first branch instead of op
 			_ExecutionPlan_ParentReplaceChild(op->parent, op, op->children[0]);
-			// Add each of op's children as a child of op's parent.
-			for(int i = 1; i < op->childCount; i++) _OpBase_AddChild(parent, op->children[i]);
+
+			// add each of op's children as a child of op's parent
+			for(int i = 1; i < op->childCount; i++) {
+				_OpBase_AddChild(parent, op->children[i]);
+			}
 		} else {
-			// Remove op from its parent.
+			// remove op from its parent
 			_OpBase_RemoveChild(op->parent, op);
 		}
 	}
 
-	// Clear op.
+	// clear op
 	op->parent = NULL;
 	rm_free(op->children);
 	op->children = NULL;
 	op->childCount = 0;
 }
 
-void ExecutionPlan_DetachOp(OpBase *op) {
-	// Operation has no parent.
+// detaches operation from its parent
+void ExecutionPlan_DetachOp
+(
+	OpBase *op
+) {
+	// operation has no parent
 	if(op->parent == NULL) return;
 
-	// Remove op from its parent.
+	// remove op from its parent
 	_OpBase_RemoveChild(op->parent, op);
+
+	// update parent awareness
+	ExecutionPlanAwareness_RemoveBranch(op);
 
 	op->parent = NULL;
 }
 
-// For all ops in the given tree, associate the provided ExecutionPlan.
+// for all ops in the given tree, associate the provided ExecutionPlan
 // if qg is set, merge the query graphs of the temporary and main plans
 void ExecutionPlan_BindOpsToPlan
 (
@@ -206,8 +289,8 @@ void ExecutionPlan_BindOpsToPlan
 	if(!root) return;
 
 	if(qg) {
-		// If the temporary execution plan has added new QueryGraph entities,
-		// migrate them to the master plan's QueryGraph.
+		// if the temporary execution plan has added new QueryGraph entities,
+		// migrate them to the master plan's QueryGraph
 		QueryGraph_MergeGraphs(plan->query_graph, root->plan->query_graph);
 	}
 
@@ -231,3 +314,4 @@ void ExecutionPlan_MigrateOpsExcludeType
 		}
 	}
 }
+
