@@ -55,15 +55,18 @@ rax *raxCloneWithCallback(rax *orig, void *(*clone_callback)(void *)) {
 	return clone;
 }
 
-void **raxValues(rax *rax) {
-	// Instantiate an array to hold all of the values in the rax.
+void **raxValues
+(
+	rax *rax
+) {
+	// instantiate an array to hold all of the values in the rax
 	void **values = array_new(void *, raxSize(rax));
 	raxIterator it;
 	raxStart(&it, rax);
-	// Iterate over all keys in the rax.
+	// iterate over all keys in the rax
 	raxSeek(&it, "^", NULL, 0);
 	while(raxNext(&it)) {
-		// Copy the value associated with the key into the array.
+		// copy the value associated with the key into the array
 		array_append(values, it.data);
 	}
 	raxStop(&it);
@@ -71,18 +74,26 @@ void **raxValues(rax *rax) {
 	return values;
 }
 
-unsigned char **raxKeys(rax *rax) {
-	// Instantiate an array to hold all of the keys in the rax.
+unsigned char **raxKeys
+(
+	rax *rax
+) {
+	// instantiate an array to hold all of the keys in the rax
 	unsigned char **keys = array_new(unsigned char *, raxSize(rax));
+
 	raxIterator it;
 	raxStart(&it, rax);
-	// Iterate over all keys in the rax.
+
+	// iterate over all keys in the rax
 	raxSeek(&it, "^", NULL, 0);
 	while(raxNext(&it)) {
-		// Copy the key into the array.
-		array_append(keys, (unsigned char *)rm_strndup((const char *)it.key, (int)it.key_len));
+		// copy the key into the array
+		array_append(keys, (unsigned char *)rm_strndup((const char *)it.key,
+					(int)it.key_len));
 	}
+
 	raxStop(&it);
+
 	return keys;
 }
 

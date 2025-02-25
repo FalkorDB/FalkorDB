@@ -20,8 +20,12 @@ class testSlowLog():
 
             tasks = []
             for i in range(1, n):
-                q = f"UNWIND range(0, 100000) AS x WITH x WHERE x % {i} = 0 RETURN count(x)"
-                tasks.append(asyncio.create_task(g.query(q)))
+                #q = f"UNWIND range(0, 100000) AS x WITH x WHERE x % {i} = 0 RETURN count(x)"
+                q = """UNWIND range(0, 100000) AS x
+                       WITH x
+                       WHERE x % $i = 0
+                       RETURN count(x)"""
+                tasks.append(asyncio.create_task(g.query(q, {'i':i})))
 
             await asyncio.gather(*tasks)
 

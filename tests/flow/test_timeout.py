@@ -285,14 +285,17 @@ class testQueryTimeout():
         async def query():
             # connection pool with 16 connections
             # blocking when there's no connections available
-            pool = BlockingConnectionPool(max_connections=16, timeout=None, port=self.env.port, decode_responses=True)
+            pool = BlockingConnectionPool(max_connections=16, timeout=None,
+                                          port=self.env.port,
+                                          decode_responses=True)
+
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
             tasks = []
             for i in range(1, 10000):
-                q = f"MATCH (n:N) WHERE n.v > {i} RETURN count(1)"
-                tasks.append(asyncio.create_task(g.query(q, timeout=1000)))
+                q = f"MATCH (n:N) WHERE n.v > $i RETURN count(1)"
+                tasks.append(asyncio.create_task(g.query(q, {'i': i}, timeout=1000)))
 
             # wait for tasks to finish
             await asyncio.gather(*tasks)
@@ -301,3 +304,4 @@ class testQueryTimeout():
             await pool.aclose()
 
         asyncio.run(query())
+

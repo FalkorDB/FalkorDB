@@ -4,8 +4,10 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "RG.h"
 #include "execution_plan_util.h"
 #include "../ops/op_skip.h"
+#include "../../util/dict.h"
 #include "../ops/op_limit.h"
 
 // returns true if an operation in the op-tree rooted at `root` is eager
@@ -22,24 +24,35 @@ OpBase *ExecutionPlan_LocateOpResolvingAlias
     OpBase *root,
     const char *alias
 ) {
-	if(!root) return NULL;
+	ASSERT(root  != NULL);
+	ASSERT(alias != NULL);
 
-	uint count = array_len(root->modifies);
+	OpBase **queue = array_new(OpBase*, 1);
+	array_append(queue, root);
 
-	for(uint i = 0; i < count; i++) {
-		const char *resolved_alias = root->modifies[i];
-		// NOTE - if this function is later used to modify the returned
-		// operation, we should return the deepest operation that modifies the
-		// alias rather than the shallowest, as done here
-		if(strcmp(resolved_alias, alias) == 0) return root;
+	OpBase *ret = NULL;
+	while(array_len(queue) > 0) {
+		OpBase *op = array_pop(queue);
+		uint count = array_len(op->modifies);
+
+		for(uint i = 0; i < count; i++) {
+			const char *resolved_alias = op->modifies[i];
+			// NOTE - if this function is later used to modify the returned
+			// operation, we should return the deepest operation that modifies
+			// the alias rather than the shallowest, as done here
+			if(strcmp(resolved_alias, alias) == 0) {
+				ret = op;
+				break;
+			}
+		}
+
+		for(int i = 0; i < op->childCount; i++) {
+			array_append(queue, OpBase_GetChild(op, i));
+		}
 	}
 
-	for(int i = 0; i < root->childCount; i++) {
-		OpBase *op = ExecutionPlan_LocateOpResolvingAlias(root->children[i], alias);
-		if(op) return op;
-	}
-
-	return NULL;
+	array_free(queue);
+	return ret;
 }
 
 // locate the first operation matching one of the given types in the op tree by
@@ -123,74 +136,193 @@ void ExecutionPlan_LocateOps
 	}
 }
 
-OpBase *ExecutionPlan_LocateReferencesExcludingOps
+// checks if op is marked as blacklisted
+static inline bool _blacklisted
 (
-	OpBase *root,
-	const OpBase *recurse_limit,
-	const OPType *blacklisted_ops,
-	int nblacklisted_ops,
-	rax *refs_to_resolve
+	const OpBase* op,               // operation to inspect
+	const OPType *blacklisted_ops,  // list of blacklisted operation types
+	int n                           // length of blacklisted_ops
 ) {
-	int dependency_count = 0;
 	bool blacklisted = false;
-	OpBase *resolving_op = NULL;
-	bool all_refs_resolved = false;
 
-	// check if this op is blacklisted
-	for(int i = 0; i < nblacklisted_ops && !blacklisted; i++) {
-		blacklisted = (root->type == blacklisted_ops[i]);
+	for(int i = 0; i < n; i++) {
+		blacklisted |= (OpBase_Type(op) == blacklisted_ops[i]);
 	}
 
-	// we're not allowed to inspect child operations of blacklisted ops
-	// also we're not allowed to venture further than 'recurse_limit'
-	if(blacklisted == false && root != recurse_limit) {
-		for(int i = 0; i < root->childCount && !all_refs_resolved; i++) {
-			// Visit each child and try to resolve references, storing a pointer to the child if successful.
-			OpBase *tmp_op = ExecutionPlan_LocateReferencesExcludingOps(root->children[i],
-																		recurse_limit, blacklisted_ops, nblacklisted_ops, refs_to_resolve);
+	return blacklisted;
+}
 
-			// Count how many children resolved references
-			if(tmp_op) {
-				dependency_count ++;
-			}
-			// If there is more than one child resolving an op, set the root as the resolver.
-			resolving_op = resolving_op ? root : tmp_op;
-			all_refs_resolved = (raxSize(refs_to_resolve) == 0); // We're done when the rax is empty.
+// checks to see if op is aware of all references
+static inline bool _aware
+(
+	dict *awareness_tbl,  // awareness table
+	const OpBase *op,     // inspected operation
+	char **references,    // references to resolve
+	uint n                // number of refereces
+) {
+	// get op's awareness table
+	dictEntry *entry = HashTableFind(awareness_tbl, (void*)op);
+	ASSERT(entry != NULL);
+
+	dict *ht = HashTableGetVal(entry);
+	ASSERT(ht != NULL);
+
+	// make sure op resolves all references
+	for(uint i = 0; i < n; i++) {
+		const char *ref = references[i];
+		if(HashTableFind(ht, ref) == NULL) {
+			return false;
 		}
 	}
 
-	// If we've resolved all references, our work is done.
-	if(all_refs_resolved) return resolving_op;
+	return true;
+}
 
-	char **modifies = NULL;
-	if(blacklisted) {
-		// If we've reached a blacklisted op, all variables in its subtree are
-		// considered to be modified by it, as we can't recurse farther.
-		rax *bound_vars = raxNew();
-		ExecutionPlan_BoundVariables(root, bound_vars, root->plan);
-		modifies = (char **)raxKeys(bound_vars);
-		raxFree(bound_vars);
-	} else {
-		modifies = (char **)root->modifies;
+OpBase *ExecutionPlan_LocateReferencesExcludingOps
+(
+	OpBase *root,                   // start point
+	const OpBase *recurse_limit,    // boundry
+	const OPType *blacklisted_ops,  // blacklisted operations
+	int nblacklisted_ops,           // number of blacklisted operations
+	rax *refs_to_resolve            // references to resolve
+) {
+	// compute variabels awareness of each reachable operation from root
+	OpBase **taps  = array_new(OpBase*, 1);
+	OpBase **queue = array_new(OpBase*, 1);  // operation queue
+
+	// push root into queue and process queue in a BFS fasion
+	// head of queue will contain leafs while the tail will contain the root
+	uint idx = 0;
+	array_append(queue, root);
+	while(idx < array_len(queue)) {
+		OpBase *op = queue[idx++];
+		OPType t = OpBase_Type(op);
+
+		// make sure we're allowed to inspect current op
+		if(op != root && (t == OPType_PROJECT || t == OPType_AGGREGATE)) {
+			array_append(taps, op);
+			continue;
+		}
+
+		// add operation's children to queue
+		uint n = OpBase_ChildCount(op);
+		if(n == 0) {
+			array_append(taps, op);
+		}
+
+		for(uint i = 0; i < n; i++) {
+			array_append(queue, OpBase_GetChild(op, i));
+		}
 	}
 
-	// Try to resolve references in the current operation.
-	bool refs_resolved = false;
-	uint modifies_count = array_len(modifies);
-	for(uint i = 0; i < modifies_count; i++) {
-		const char *ref = modifies[i];
-		// Attempt to remove the current op's references, marking whether any removal was succesful.
-		refs_resolved |= raxRemove(refs_to_resolve, (unsigned char *)ref, strlen(ref), NULL);
+	// compute variabels awareness
+	// op's awareness = op's modified variabels + children's awareness
+	dictIterator it;
+	dict *awareness = HashTableCreate(&def_dt);
+	uint n = array_len(taps);
+
+	for(uint i = 0; i < n; i++) {
+		OpBase *op = taps[i];
+		OpBase *prev_op = NULL;
+
+		// traverse downward torwards root using the parent chain
+		while(true) {
+			// get hashtable for current op
+			dict *ht = HashTableFetchValue(awareness, (void*)op);
+
+			// create a new hashtable incase this is the first time
+			// we encounter op
+			if(ht == NULL) {
+				ht = HashTableCreate(&string_dt);
+				HashTableAdd(awareness, (void*)op, ht);
+
+				// add each modifier to op's awareness table
+				const char **modifiers = op->modifies;
+				uint nmod = array_len(modifiers);
+				for(uint j = 0; j < nmod; j++) {
+					HashTableAdd(ht, (void*)modifiers[j], NULL);
+				}
+			}
+
+			// union with previous op
+			if(prev_op != NULL) {
+				dict *prev_ht = HashTableFetchValue(awareness, (void*)prev_op);
+				ASSERT(prev_ht != NULL);
+
+				// add each child modifier to op's awareness table
+				HashTableInitIterator(&it, prev_ht);
+				dictEntry *e = NULL;
+				while((e = HashTableNext(&it)) != NULL) {
+					void *modifier = HashTableGetKey(e);
+					HashTableAdd(ht, (void*)modifier, NULL);
+				}
+			}
+
+			// processed root, stop here
+			if(op == root) {
+				break;
+			}
+
+			// add op's awareness hashtable to the global awareness hashtable
+			prev_op = op;
+			op = op->parent;
+		}
 	}
 
-	// Free the modified array and its contents if it was generated to represent a blacklisted op.
-	if(blacklisted) {
-		for(uint i = 0; i < modifies_count; i++) rm_free(modifies[i]);
-		array_free(modifies);
+	// locate earliest op under which all references are resolved
+	// TODO: optimization make sure root is aware of all references
+	//       before we compute the awareness mapping
+
+	OpBase *ret = NULL;
+	n = raxSize(refs_to_resolve);
+	char **references = (char**)raxKeys(refs_to_resolve);
+
+	//ASSERT(array_len(queue) == 0);
+	array_clear(queue);
+	array_append(queue, root);
+
+	while(array_len(queue) > 0) {
+		OpBase *op = array_pop(queue);
+
+		// check if current op is aware of all references
+		if(!_aware(awareness, op, references, n)) {
+			continue;
+		}
+
+		// op is aware of all references, see if one of its children
+		// is also aware of all of them
+
+		ret = op;  // set op as the returned operation
+
+		// inspect children
+		uint c;
+		if(_blacklisted(op, blacklisted_ops, nblacklisted_ops) ||
+				op == recurse_limit) {
+			c = 0;
+		} else {
+			c = OpBase_ChildCount(op);
+		}
+
+		for(uint i = 0; i < c; i++) {
+			array_append(queue, OpBase_GetChild(op, i));
+		}
 	}
 
-	if(refs_resolved) resolving_op = root;
-	return resolving_op;
+	// clean up
+	array_free(taps);
+	array_free(queue);
+	array_free_cb(references, rm_free);
+
+	// free each allocated hash-table
+	HashTableInitIterator(&it, awareness);
+	dictEntry *de = NULL;
+	while((de = HashTableNext(&it)) != NULL) {
+		dict *d = (dict*)HashTableGetVal(de);
+		HashTableRelease(d);
+	}
+	HashTableRelease(awareness);
+
+	return ret;
 }
 
 // scans plan from root via parent nodes until a limit operation is found
@@ -247,16 +379,6 @@ bool ExecutionPlan_ContainsSkip
 	}
 
 	return false;
-}
-
-OpBase *ExecutionPlan_LocateReferences
-(
-	OpBase *root,
-	const OpBase *recurse_limit,
-	rax *refs_to_resolve
-) {
-	return ExecutionPlan_LocateReferencesExcludingOps(
-			   root, recurse_limit, NULL, 0, refs_to_resolve);
 }
 
 // populates `ops` with all operations with a type in `types` in an
@@ -330,26 +452,53 @@ uint ExecutionPlan_CollectUpwards
 // collect all aliases that have been resolved by the given tree of operations
 void ExecutionPlan_BoundVariables
 (
-    const OpBase *op,
-    rax *modifiers,
-	const ExecutionPlan *plan
+	const OpBase *op,           // operation to start collection from
+	rax *modifiers,             // [output] collected modifiers
+	const ExecutionPlan *plan   // scoped plan
 ) {
-	ASSERT(op != NULL && modifiers != NULL);
-	if(op->modifies && op->plan == plan) {
-		uint modifies_count = array_len(op->modifies);
+	// validations
+	ASSERT(op        != NULL);
+	ASSERT(modifiers != NULL);
+
+	// operations queue
+	OpBase **queue = array_new(OpBase*, 1);
+	array_append(queue, (OpBase*)op);
+
+	// as long as queue isn't empty
+	while(array_len(queue) > 0) {
+		// collect modifiers from current op
+		OpBase *current = array_pop(queue);
+
+		// skip op if it's associated with a different plan
+		if(current->plan != plan) {
+			continue;
+		}
+
+		// collect modifiers
+		uint modifies_count = array_len(current->modifies);
 		for(uint i = 0; i < modifies_count; i++) {
-			const char *modified = op->modifies[i];
-			raxTryInsert(modifiers, (unsigned char *)modified, strlen(modified), (void *)modified, NULL);
+			const char *modified = current->modifies[i];
+			raxTryInsert(modifiers, (unsigned char *)modified,
+					strlen(modified), (void *)modified, NULL);
+		}
+
+		// Project and Aggregate operations demarcate variable scopes
+		// collect their projections but do not recurse into their children
+		// note that future optimizations which operate across scopes will require
+		// different logic than this for application
+		OPType t = OpBase_Type(current);
+		if(t == OPType_PROJECT || t == OPType_AGGREGATE) {
+			continue;
+		}
+
+		// add current op children to queue
+		int n = OpBase_ChildCount(current);
+		for(int i = 0; i < n; i++) {
+			OpBase *child = OpBase_GetChild(current, i);
+			array_append(queue, child);
 		}
 	}
 
-	// Project and Aggregate operations demarcate variable scopes,
-	// collect their projections but do not recurse into their children.
-	// Note that future optimizations which operate across scopes will require different logic
-	// than this for application
-	if(op->type == OPType_PROJECT || op->type == OPType_AGGREGATE) return;
-
-	for(int i = 0; i < op->childCount; i++) {
-		ExecutionPlan_BoundVariables(op->children[i], modifiers, plan);
-	}
+	array_free(queue);
 }
+

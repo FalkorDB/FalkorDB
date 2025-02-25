@@ -44,6 +44,7 @@
 #include <sys/time.h>
 
 #include "dict.h"
+#include "../deps/xxHash/xxhash.h"
 
 /* Using dictEnableResize() / dictDisableResize() we make possible to disable
  * resizing and rehashing of the hash table as needed. This is very important
@@ -91,6 +92,35 @@ static uint64_t _id_hash
 
 // hashtable callbacks
 dictType def_dt = {_id_hash, NULL, NULL, NULL, NULL, NULL, NULL,
+	NULL, NULL, NULL};
+
+//------------------------------------------------------------------------------
+// string key hashtable type
+//------------------------------------------------------------------------------
+
+// hash function
+// turning string into hash
+uint64_t _hashFunction
+(
+	const void *key  // string key
+) {
+	return XXH64(key, strlen(key), 0);
+}
+
+// hash compare function
+// checking if two keys are the same using the strcmp function
+static int _hashCompare
+(
+	dict *d,
+	const void *key1,
+	const void *key2
+) {
+	const char *a = (const char*)key1;
+	const char *b = (const char*)key2;
+	return (strcmp(a, b) == 0);
+}
+
+dictType string_dt = {_hashFunction, NULL, NULL, _hashCompare, NULL, NULL, NULL,
 	NULL, NULL, NULL};
 
 static uint8_t dict_hash_function_seed[16];
