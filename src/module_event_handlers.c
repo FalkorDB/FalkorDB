@@ -499,7 +499,8 @@ static void RG_AfterForkChild() {
 }
 
 static void _RegisterForkHooks() {
-	redis_main_thread_id = pthread_self();  // This function is being called on the main thread context.
+	// this function is being called on the main thread context
+	redis_main_thread_id = pthread_self();
 
 	// register handlers to control the behavior of fork calls
 	int res = pthread_atfork(RG_ForkPrepare, RG_AfterForkParent, RG_AfterForkChild);
