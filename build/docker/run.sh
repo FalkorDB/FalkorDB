@@ -1,32 +1,35 @@
-export MODULE_DIR=/FalkorDB/bin/src
+#!/bin/bash
 
-if [ ${BROWSER:-1} -eq 1 ]
+if [ "${BROWSER:-1}" -eq "1" ]
 then
-    if [ -d /FalkorDBBrowser ]
+    if [ -d "${FALKORDB_BROWSER_PATH}" ]
     then
-        cd /FalkorDBBrowser && HOSTNAME="0.0.0.0" node server.js &
+        cd "${FALKORDB_BROWSER_PATH}" && HOSTNAME="0.0.0.0" node server.js &
     fi
 fi
 
-# Create /data directory if it does not exist
-if [ ! -d /data ]
+# Create /var/lib/falkordb/data directory if it does not exist
+if [ ! -d "${FALKORDB_DATA_PATH}" ]
 then
-    mkdir /data
+    mkdir "${FALKORDB_DATA_PATH}"
 fi
 
-if [ ${TLS:-0} -eq 1 ]
+if [ "${TLS:-0}" -eq "1" ]
 then
-    /FalkorDB/build/docker/gen-certs.sh
+    # shellcheck disable=SC2086
+    ${FALKORDB_BIN_PATH}/gen-certs.sh
+    # shellcheck disable=SC2086
     redis-server ${REDIS_ARGS} --protected-mode no \
                  --tls-port 6379 --port 0 \
                  --tls-cert-file ./tls/redis.crt \
                  --tls-key-file ./tls/redis.key \
                  --tls-ca-cert-file ./tls/ca.crt \
                  --tls-auth-clients no \
-                 --dir /data \
-                 --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
+                 --dir "${FALKORDB_DATA_PATH}" \
+                 --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
 else
+    # shellcheck disable=SC2086
     redis-server ${REDIS_ARGS} --protected-mode no \
-                 --dir /data \
-                 --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
+                 --dir "${FALKORDB_DATA_PATH}" \
+                 --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
 fi
