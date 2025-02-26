@@ -1,0 +1,17 @@
+name: browser tests trigger on new tag release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  post-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Print Tag
+        run: |
+          echo "Release published!"
+          echo "Latest release tag: ${{ github.event.release.tag_name }}"
