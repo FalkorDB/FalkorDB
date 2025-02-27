@@ -7,12 +7,14 @@
 #include "globals.h"
 #include "util/arr.h"
 #include "util/thpool/pools.h"
+#include "string_pool/string_pool.h"
 
 struct Globals {
 	pthread_rwlock_t lock;              // READ/WRITE lock
 	bool process_is_child;              // running process is a child process
 	CommandCtx **command_ctxs;          // list of CommandCtxs
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
+	StringPool string_pool;             // pool of reusable strings
 };
 
 struct Globals _globals = {0};
@@ -23,13 +25,18 @@ void Globals_Init(void) {
 	ASSERT(_globals.graphs_in_keyspace == NULL);
 
 	// initialize
-	_globals.process_is_child = false;
+	_globals.string_pool        = StringPool_create();
+	_globals.process_is_child   = false;
 	_globals.graphs_in_keyspace = array_new(GraphContext*, 1);
-	_globals.command_ctxs = rm_calloc(ThreadPools_ThreadCount() + 1,
+	_globals.command_ctxs       = rm_calloc(ThreadPools_ThreadCount() + 1,
 			sizeof(CommandCtx *));
 
 	int res = pthread_rwlock_init(&_globals.lock, NULL);
 	ASSERT(res == 0);
+}
+
+StringPool Globals_Get_StringPool(void) {
+	return _globals.string_pool;
 }
 
 // read global variable 'process_is_child'

@@ -4,27 +4,36 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "value.h"
 #include "RG.h"
-#include "graph/entities/graph_entity.h"
+#include "value.h"
+#include "globals.h"
+#include "util/rmalloc.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
+#include "datatypes/datatypes.h"
+#include "string_pool/string_pool.h"
+#include "graph/entities/graph_entity.h"
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <sys/param.h>
-#include "util/rmalloc.h"
-#include "datatypes/datatypes.h"
 
-static inline void _SIString_ToString(SIValue str, char **buf, size_t *bufferLen,
-									  size_t *bytesWritten) {
+static inline void _SIString_ToString
+(
+	SIValue str,
+	char **buf,
+	size_t *bufferLen,
+	size_t *bytesWritten
+) {
 	size_t strLen = strlen(str.stringval);
 	if(*bufferLen - *bytesWritten < strLen) {
 		*bufferLen += strLen;
 		*buf = rm_realloc(*buf, *bufferLen);
 	}
-	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s", str.stringval);
+	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s",
+			str.stringval);
 }
 
 SIValue SI_LongVal(int64_t i) {
@@ -98,9 +107,17 @@ SIValue SI_Vectorf32
 }
 
 SIValue SI_DuplicateStringVal(const char *s) {
+	StringPool pool = Globals_Get_StringPool();
+	char *str = StringPool_add(pool, s);
+
 	return (SIValue) {
-		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
+		.stringval = str, .type = T_STRING, .allocation = M_SELF
 	};
+
+//	return (SIValue) {
+//		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
+//	};
+
 }
 
 SIValue SI_ConstStringVal(const char *s) {
@@ -110,9 +127,21 @@ SIValue SI_ConstStringVal(const char *s) {
 }
 
 SIValue SI_TransferStringVal(char *s) {
+	StringPool pool = Globals_Get_StringPool();
+	char *str = StringPoll_addNoClone(pool, s);
+
+	// free in case of duplication
+	if(str != s) {
+		rm_free(s);
+	}
+
 	return (SIValue) {
-		.stringval = s, .type = T_STRING, .allocation = M_SELF
+		.stringval = str, .type = T_STRING, .allocation = M_SELF
 	};
+
+//	return (SIValue) {
+//		.stringval = s, .type = T_STRING, .allocation = M_SELF
+//	};
 }
 
 SIValue SI_Point(float latitude, float longitude) {
@@ -876,9 +905,13 @@ void SIValue_Free(SIValue v) {
 	// The free routine only performs work if it owns a heap allocation.
 	if(v.allocation != M_SELF) return;
 
+	StringPool string_pool;
+
 	switch(v.type) {
 	case T_STRING:
-		rm_free(v.stringval);
+		string_pool = Globals_Get_StringPool();
+		StringPool_remove(string_pool, v.stringval);
+		//rm_free(v.stringval);
 		v.stringval = NULL;
 		return;
 	case T_NODE:
