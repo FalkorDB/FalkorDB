@@ -15,7 +15,7 @@ static uint64_t hashFunc
 	const void *key
 ) {
 	const char *str = (const char *)key;
-	return XXH64(key, strlen(key), 0);
+	return XXH3_64bits(key, strlen(key));
 }
 
 // key compare function
@@ -25,7 +25,7 @@ int keyCompare
 	const void *key1,
 	const void *key2
 ) {
-	return (strcmp(key1, key2) == 0);
+	return (strcmp((const char*)key1, (const char*)key2) == 0);
 }
 
 // key free function
@@ -100,7 +100,7 @@ char *StringPool_add
 
 // add string to pool in case it doesn't already exists
 // the string isn't cloned
-char *StringPoll_addNoClone
+char *StringPool_addNoClone
 (
 	StringPool pool,  // string pool
 	char *str         // string to add
@@ -138,7 +138,7 @@ void StringPool_remove
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
-	dictEntry *de = HashTableFind(pool, (void*)str);
+	dictEntry *de = HashTableFind(pool, str);
 	if(unlikely(de == NULL)) {
 		return;
 	}
@@ -151,6 +151,10 @@ void StringPool_remove
 			memory_order_acquire);
 
 	// free entry if reference count reached 0
+	// as long as we have a single writer this condition
+	// and its logic are safe to run
+	// if we allow multiple threads to make modifications
+	// this can lead to a race condition
 	if(unlikely(prev_count == 1)) {
 		int res = HashTableDelete(pool, (const void *)str);
 		ASSERT(res == DICT_OK);
@@ -162,7 +166,7 @@ void StringPool_free
 (
 	StringPool *pool  // string pool
 ) {
-	ASSERT(pool);
+	ASSERT(pool != NULL && *pool != NULL);
 
 	HashTableRelease(*pool);
 	*pool = NULL;

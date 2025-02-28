@@ -30,7 +30,7 @@ char *StringPool_add
 
 // add string to pool in case it doesn't already exists
 // the string isn't cloned
-char *StringPoll_addNoClone
+char *StringPool_addNoClone
 (
 	StringPool pool,  // string pool
 	char *str         // string to add
