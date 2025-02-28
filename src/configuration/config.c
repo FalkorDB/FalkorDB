@@ -75,6 +75,9 @@
 // import folder
 #define IMPORT_FOLDER "IMPORT_FOLDER"
 
+// deduplicate string
+#define DEDUPLICATE_STRINGS "DEDUPLICATE_STRINGS"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -87,6 +90,7 @@
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
 #define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
+#define DEDUPLICATE_STRINGS_DEFAULT        false
 
 // configuration object
 typedef struct {
@@ -109,6 +113,7 @@ typedef struct {
 	int16_t bolt_port;                 // bolt protocol port
 	bool delay_indexing;               // delay index construction when decoding
 	char *import_folder;               // path to import folder, used for CSV loading
+	bool deduplicate_strings;          // use string pool to deduplicate strings
 	Config_on_change cb;               // callback function which being called when config param changed
 } RG_Config;
 
@@ -504,6 +509,21 @@ static const char *Config_import_folder_get(void) {
 	return config.import_folder;
 }
 
+//------------------------------------------------------------------------------
+// deduplicate strings
+//------------------------------------------------------------------------------
+
+static void Config_deduplicate_strings_set
+(
+	bool enabled
+) {
+	config.deduplicate_strings = enabled;
+}
+
+static bool Config_deduplicate_strings_get(void) {
+	return config.deduplicate_strings;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -552,6 +572,8 @@ bool Config_Contains_field
 		f = Config_DELAY_INDEXING;
 	} else if (!(strcasecmp(field_str, IMPORT_FOLDER))) {
 		f = Config_IMPORT_FOLDER;
+	} else if (!(strcasecmp(field_str, DEDUPLICATE_STRINGS))) {
+		f = Config_DEDUPLICATE_STRINGS;
 	} else {
 		return false;
 	}
@@ -622,6 +644,9 @@ SIType Config_Field_type
 
 		case Config_IMPORT_FOLDER:
 			return T_STRING;
+
+		case Config_DEDUPLICATE_STRINGS:
+			return T_BOOL;
 
 		//----------------------------------------------------------------------
 		// invalid option
@@ -717,6 +742,10 @@ const char *Config_Field_name
 			name = IMPORT_FOLDER;
 			break;
 
+		case Config_DEDUPLICATE_STRINGS:
+			name = DEDUPLICATE_STRINGS;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -793,6 +822,9 @@ static void _Config_SetToDefaults(void) {
 
 	// set default import folder path
 	config.import_folder = rm_strdup(IMPORT_DIR_DEFAULT);
+
+	// set default deduplicate strings
+	config.deduplicate_strings = DEDUPLICATE_STRINGS_DEFAULT;
 }
 
 int Config_Init
@@ -1145,6 +1177,20 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
+		// deduplicate strings
+		//----------------------------------------------------------------------
+
+		case Config_DEDUPLICATE_STRINGS: {
+			va_start(ap, field);
+			bool *enabled = va_arg(ap, bool *);
+			va_end(ap);
+
+			ASSERT(enabled != NULL);
+			(*enabled) = Config_deduplicate_strings_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
@@ -1416,6 +1462,18 @@ bool Config_Option_set
 		case Config_IMPORT_FOLDER: {
 			ASSERT(val != NULL);
 			Config_import_folder_set(val);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// deduplicate strings
+		//----------------------------------------------------------------------
+
+		case Config_DEDUPLICATE_STRINGS: {
+			bool enabled;
+			if(!_Config_ParseYesNo(val, &enabled)) return false;
+
+			Config_deduplicate_strings_set(enabled);
 		}
 		break;
 
