@@ -8,8 +8,7 @@
 #include "../util/dict.h"
 
 // StringPool is a dict of strings
-// used primarly to reduce memory consumption by removing string duplication
-//
+// used primarily to reduce memory consumption by removing string duplication
 // the StringPool uses hash(s) for its keys
 // while the actual value is a referenced count string
 

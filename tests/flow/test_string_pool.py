@@ -10,7 +10,7 @@ GRAPH_ID = "STRING_POOL"
 # this reduces our overall memory consumption
 #
 # the tests validates that shared strings are managed as expected
-# and memory savings are visibale
+# and memory savings are visible
 
 def random_string(length=10):
     chars = string.ascii_letters + string.digits  # A-Z, a-z, 0-9
@@ -18,7 +18,7 @@ def random_string(length=10):
 
 class testStringPool():
     def __init__(self):
-        self.env, self.db = Env(moduleArgs=f"DEDUPLICATE_STRINGS yes")
+        self.env, self.db = Env(moduleArgs="DEDUPLICATE_STRINGS yes")
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
@@ -54,7 +54,8 @@ class testStringPool():
         
         # make sure memory consumption didn't increased by a meaningful amount
         memory_consumption = self.used_memory()
-        self.env.assertLess(memory_consumption, base_line * 4)
+        # we expect very little increase since strings are deduplicated
+        self.env.assertLess(memory_consumption, base_line * 1.2)
 
         self.graph.delete()
 
@@ -70,7 +71,7 @@ class testStringPool():
 
         # create multiple EMPTY graphs
         graphs = []
-        for i in range(0, 50):
+        for _ in range(0, 50):
             g = self.db.select_graph(random_string())
             graphs.append(g)
             res = g.query("RETURN 1")
@@ -80,7 +81,7 @@ class testStringPool():
         # create multiple nodes across multiple graphs
         # all sharing the same string value
         for g in graphs:
-            res = g.query(q, {'s': s})
+            g.query(q, {'s': s})
         
         # make sure memory consumption didn't increased by a meaningful amount
         memory_consumption = self.used_memory()
@@ -103,7 +104,7 @@ class testStringPool():
 
         # delete nodes one by one, make sure shared string isn't freed prematurely
         node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
-        for i in range(node_count):
+        for _ in range(node_count):
             res = self.graph.query("MATCH (n) WITH n LIMIT 1 DELETE n")
             self.env.assertEquals(res.nodes_deleted, 1)
 
@@ -125,7 +126,7 @@ class testStringPool():
 
         # create multiple EMPTY graphs
         graphs = [self.graph]
-        for i in range(0, 50):
+        for _ in range(0, 50):
             g = self.db.select_graph(random_string())
             graphs.append(g)
             res = g.query(q, p)

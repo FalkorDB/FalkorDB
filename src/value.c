@@ -106,7 +106,7 @@ SIValue SI_Vectorf32
 	return SIVectorf32_New(dim);
 }
 
-bool USE_STRING_POOL = false; // rather or not use string-pool
+bool USE_STRING_POOL = false; // global flag to enable/disable string pooling
 
 SIValue SI_DuplicateStringVal
 (
