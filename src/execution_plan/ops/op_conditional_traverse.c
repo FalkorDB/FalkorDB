@@ -9,6 +9,7 @@
 #include "shared/print_functions.h"
 #include "op_conditional_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
+#include "../../arithmetic/algebraic_expression/utils.h"
 
 // default number of records to accumulate before traversing
 #define BATCH_SIZE 16
@@ -238,6 +239,13 @@ static OpResult CondTraverseReset
 	ASSERT(info == GrB_SUCCESS);
 
 	if(op->F != NULL) Delta_Matrix_clear(op->F);
+
+	// in case algebraic expression has missing operands
+	// i.e. has an operand which is the zero matrix
+	// see if at this point in time the graph is aware of the missing operand
+	// and if so replace the zero matrix operand with the actual matrix
+	_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+
 	return OP_OK;
 }
 

@@ -663,3 +663,24 @@ class testGraphMergeFlow():
             self.env.assertEquals(row[1], True)
             self.env.assertEquals(row[2], True)
 
+    def test35_inquery_rel_intro(self):
+        # make sure relationship types introduced within a query
+        # are visible to the merge clause once it is done commiting
+
+        # in this query B is firstly created
+        # then on the second time MERGE ()-[:B]->()
+        # is called, the pattern is considered duplicated and as such
+        # need to be matched
+
+        # start with an empty graph
+        self.graph.delete()
+
+        q = """MERGE ()-[:A]->()
+               WITH * MATCH (x)
+               MERGE ()-[:B]->()
+               ON MATCH SET x = {}
+               RETURN count(1)"""
+
+        res = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(res, 2)
+
