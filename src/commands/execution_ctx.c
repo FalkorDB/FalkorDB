@@ -160,8 +160,6 @@ ExecutionCtx *ExecutionCtx_FromQuery
 
 	// parser failed
 	if(ast == NULL) {
-		parse_result_free(params_parse_result);  // free parsed params
-
 		// if no error has been set, emit one now
 		if(!ErrorCtx_EncounteredError()) {
 			ErrorCtx_SetError(EMSG_COULD_NOT_PARSE_QUERY);

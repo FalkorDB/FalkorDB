@@ -473,7 +473,7 @@ void QueryCtx_Free(void) {
 		ctx->query_data.params = NULL;
 	}
 
-	if(ctx->query_data.parsed_params == NULL) {
+	if(ctx->query_data.parsed_params != NULL) {
 		parse_result_free(ctx->query_data.parsed_params);
 		ctx->query_data.parsed_params = NULL;
 	}
