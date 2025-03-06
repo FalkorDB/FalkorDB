@@ -12,6 +12,7 @@
 // the StringPool uses hash(s) for its keys
 // while the actual value is a referenced count string
 
+// define StringPool as a dict pointer
 typedef dict* StringPool;
 
 // create a new StringPool

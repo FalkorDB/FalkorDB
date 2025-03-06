@@ -108,11 +108,37 @@ SIValue SI_Vectorf32
 
 bool USE_STRING_POOL = false; // global flag to enable/disable string pooling
 
+// check rather or not to use string pool
+inline static bool use_string_pool(void) {
+	if(unlikely(USE_STRING_POOL)) {
+		// string pool is avaialble
+		// use it only when running other either redis main thread
+		// or under a writer thread
+		pthread_t tid = pthread_self();
+		extern pthread_t MAIN_THREAD_ID;    // redis main thread ID
+		extern pthread_t WRITER_THREAD_ID;  // writer thread ID
+		return (unlikely(pthread_equal(tid, MAIN_THREAD_ID)   != 0 ||
+					     pthread_equal(tid, WRITER_THREAD_ID) != 0));
+	}
+
+	return false;
+}
+
+SIValue SI_ConstStringVal
+(
+	const char *s
+) {
+	return (SIValue) {
+		.stringval = (char*)s, .type = T_STRING, .allocation = M_CONST
+	};
+}
+
 SIValue SI_DuplicateStringVal
 (
 	const char *s
 ) {
-	if(unlikely(USE_STRING_POOL)) {
+	// try to reuse string if string-pool is enabled
+	if(unlikely(use_string_pool())) {
 		StringPool pool = Globals_Get_StringPool();
 		char *str = StringPool_add(pool, s);
 
@@ -126,20 +152,12 @@ SIValue SI_DuplicateStringVal
 	}
 }
 
-SIValue SI_ConstStringVal
-(
-	const char *s
-) {
-	return (SIValue) {
-		.stringval = (char*)s, .type = T_STRING, .allocation = M_CONST
-	};
-}
-
 SIValue SI_TransferStringVal
 (
 	char *s
 ) {
-	if(unlikely(USE_STRING_POOL)) {
+	// try to reuse string if string-pool is enabled
+	if(unlikely(use_string_pool())) {
 		StringPool pool = Globals_Get_StringPool();
 		char *str = StringPool_addNoClone(pool, s);
 
@@ -165,7 +183,7 @@ static void SI_StringValFree
 	ASSERT(s       != NULL);
 	ASSERT(s->type == T_STRING);
 
-	if(unlikely(USE_STRING_POOL)) {
+	if(unlikely(use_string_pool())) {
 		StringPool string_pool = Globals_Get_StringPool();
 		StringPool_remove(string_pool, s->stringval);
 	} else {
@@ -182,12 +200,13 @@ SIValue SI_Point(float latitude, float longitude) {
 	};
 }
 
-/* Make an SIValue that reuses the original's allocations, if any.
- * The returned value is not responsible for freeing any allocations,
- * and is not guaranteed that these allocations will remain in scope. */
+// make an SIValue that reuses the original's allocations, if any
+// the returned value is not responsible for freeing any allocations
+// and is not guaranteed that these allocations will remain in scope
 SIValue SI_ShareValue(const SIValue v) {
 	SIValue dup = v;
-	// If the original value owns an allocation, mark that the duplicate shares it.
+	// if the original value owns an allocation
+	// mark that the duplicate shares it
 	if(v.allocation == M_SELF) dup.allocation = M_VOLATILE;
 	return dup;
 }

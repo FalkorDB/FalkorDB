@@ -7,7 +7,7 @@
 #include "string_pool.h"
 #include "deps/xxHash/xxhash.h"
 
-#include <stdatomic.h>
+#include <string.h>
 
 // key hash function
 static uint64_t hashFunc
@@ -61,8 +61,7 @@ static const dictType _type = {
 
 // create a new StringPool
 StringPool StringPool_create(void) {
-	StringPool pool = HashTableCreate(&_type);
-	return pool;
+	return HashTableCreate(&_type);
 }
 
 // add a string to the pool
@@ -78,21 +77,20 @@ char *StringPool_add
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
-	char *ret;
-	dictEntry *existing;
-	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
+	char *ret;            // returned string
+	dictEntry *existing;  // existing dict entry
 
+	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
 	if(de != NULL) {
 		// new string
 		HashTableSetKey(pool, de, rm_strdup(str));
 	} else {
-		// string already in pool
 		de = existing;
 	}
 
-	// increase string reference count atomically
-	atomic_uint *count = (atomic_uint*) HashTableEntryMetadata(de);
-	atomic_fetch_add_explicit(count, 1, memory_order_relaxed);
+	// increase string reference count
+	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
+	*count = *count + 1;
 
 	ret = (char*)HashTableGetKey(de);
 	return ret;
@@ -109,18 +107,17 @@ char *StringPool_addNoClone
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
-	char *ret;
-	dictEntry *existing;
-	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
+	char *ret;            // returned string
+	dictEntry *existing;  // existing dict entry
 
+	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
 	if(de == NULL) {
-		// str already in pool
 		de = existing;
 	}
 
-	// increase string reference count atomically
-	atomic_uint *count = (atomic_uint*) HashTableEntryMetadata(de);
-	atomic_fetch_add_explicit(count, 1, memory_order_relaxed);
+	// increase string reference count
+	uint32_t *count = (uint32_t*) HashTableEntryMetadata(de);
+	*count = *count + 1;
 
 	ret = (char*)HashTableGetKey(de);
 	return ret;
@@ -139,23 +136,20 @@ void StringPool_remove
 	ASSERT(pool != NULL);
 
 	dictEntry *de = HashTableFind(pool, str);
+
 	if(unlikely(de == NULL)) {
+		// str is missing from pool
 		return;
 	}
 
-	// get reference count atomically
-	atomic_uint *count = (atomic_uint*)HashTableEntryMetadata(de);
+	// get reference count
+	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
 
-	// decrease reference count atomically
-	uint32_t prev_count = atomic_fetch_sub_explicit(count, 1,
-			memory_order_acquire);
+	// decrease reference count
+	*count = *count -1;
 
 	// free entry if reference count reached 0
-	// as long as we have a single writer this condition
-	// and its logic are safe to run
-	// if we allow multiple threads to make modifications
-	// this can lead to a race condition
-	if(unlikely(prev_count == 1)) {
+	if(unlikely(*count == 0)) {
 		int res = HashTableDelete(pool, (const void *)str);
 		ASSERT(res == DICT_OK);
 	}
@@ -168,7 +162,11 @@ void StringPool_free
 ) {
 	ASSERT(pool != NULL && *pool != NULL);
 
-	HashTableRelease(*pool);
+	StringPool p = *pool;
+
+	// free hashtable
+	HashTableRelease(p);
+
 	*pool = NULL;
 }
 

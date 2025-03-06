@@ -269,6 +269,25 @@ int thpool_get_thread_id(thpool_* thpool_p, pthread_t pthread) {
 	return -1;
 }
 
+// collect threads ids
+void thpool_collect_thread_ids
+(
+	threadpool thpool_p,  // thread pool
+	pthread_t *ids,       // thread ids
+	uint *n               // size of ids array
+) {
+	uint _n = (*n > thpool_p->num_threads_alive) ?
+		thpool_p->num_threads_alive :
+		*n;
+
+	for(int i = 0; i < _n; i++) {
+		thread *t = thpool_p->threads[i];
+		ids[i] = t->pthread;
+	}
+
+	*n = _n;
+}
+
 // return true if thread pool internal queue is full with pending work
 bool thpool_queue_full(thpool_* thpool_p) {
 	ASSERT(thpool_p != NULL);
