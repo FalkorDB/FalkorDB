@@ -684,3 +684,16 @@ class testGraphMergeFlow():
         res = self.graph.query(q).result_set[0][0]
         self.env.assertEquals(res, 2)
 
+        # clear the graph
+        self.graph.delete()
+
+        # this time the second merge pattern will use ExpandInto
+        q = """MERGE (a)-[:A]->(b)
+               WITH * MATCH (x)
+               MERGE (a)-[:B]->(b)
+               ON MATCH SET x = {}
+               RETURN count(1)"""
+
+        res = self.graph.query(q).result_set[0][0]
+        self.env.assertEquals(res, 2)
+

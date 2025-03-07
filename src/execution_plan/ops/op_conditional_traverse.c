@@ -70,6 +70,11 @@ void _traverse
 
 		// optimize the expression tree
 		AlgebraicExpression_Optimize(&op->ae);
+
+		// partial_ae is true when
+		// the algebraic expression contains the zero matrix
+		op->partial_ae = AlgebraicExpression_ContainsMatrix(op->ae,
+				Graph_GetZeroMatrix(QueryCtx_GetGraph()));
 	}
 
 	// populate filter matrix
@@ -244,7 +249,9 @@ static OpResult CondTraverseReset
 	// i.e. has an operand which is the zero matrix
 	// see if at this point in time the graph is aware of the missing operand
 	// and if so replace the zero matrix operand with the actual matrix
-	_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+	if(unlikely(op->partial_ae == true)) {
+		_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+	}
 
 	return OP_OK;
 }
