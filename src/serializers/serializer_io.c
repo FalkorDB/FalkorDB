@@ -30,7 +30,8 @@ struct SerializerIO_Opaque {
 	long double	(*ReadLongDouble)(void*);             // read long double
 	RedisModuleString* (*ReadString)(void*);          // read RedisModuleString
 
-	void *stream;  // RedisModuleIO* or a Stream descriptor
+	void *stream;     // RedisModuleIO* or a Stream descriptor
+	FILE *memstream;  // memory stream accumulating all read / write data
 };
 
 //------------------------------------------------------------------------------
@@ -42,6 +43,8 @@ struct SerializerIO_Opaque {
 void SerializerIO_Write##suffix(SerializerIO io, t value) {    \
 	ASSERT(io != NULL);                                        \
 	io->Write##suffix(io->stream, value);                      \
+	/* save read buffer to memory stream */                    \
+	fwrite(&value, 1, sizeof(t), io->memstream);               \
 }
 
 SERIALIZERIO_WRITE(Unsigned, uint64_t)
@@ -60,6 +63,9 @@ void SerializerIO_WriteBuffer
 ) {
 	ASSERT(io != NULL);
 	io->WriteBuffer(io->stream, buff, len);
+
+	// save read buffer to memory stream
+	fwrite(buff, sizeof(char), len, io->memstream);
 }
 
 // macro for creating stream serializer write functions
@@ -119,7 +125,7 @@ STREAM_READ(String, RedisModuleString*)  // Stream_ReadString
 static char *Stream_ReadBuffer
 (
 	void *stream,  // stream to read from
-	size_t *n      // [optional] number of bytes read
+	size_t *n      // number of bytes read
 ) {
 	ASSERT(stream != NULL);
 
@@ -136,7 +142,7 @@ static char *Stream_ReadBuffer
 	read = fread(data, len, 1, f);
 	ASSERT(read == 1);
 
-	if(n != NULL) *n = len;
+	*n = len;
 
 	return data;
 }
@@ -149,7 +155,10 @@ static char *Stream_ReadBuffer
 #define SERIALIZERIO_READ(suffix, t)              \
 t SerializerIO_Read##suffix(SerializerIO io) {    \
 	ASSERT(io != NULL);                           \
-	return io->Read##suffix(io->stream);          \
+	t v = io->Read##suffix(io->stream);           \
+	/* save read buffer to memory stream */       \
+	fwrite(&v, 1, sizeof(t), io->memstream);      \
+	return v;                                     \
 }
 
 SERIALIZERIO_READ(Unsigned, uint64_t)
@@ -165,7 +174,17 @@ char *SerializerIO_ReadBuffer
 	SerializerIO io,  // stream
 	size_t *lenptr    // number of bytes to read
 ) {
-	return io->ReadBuffer(io->stream, lenptr);
+	size_t l;
+	char *v = io->ReadBuffer(io->stream, &l);
+
+	// save read buffer to memory stream
+	fwrite(v, sizeof(char), l, io->memstream);
+
+	if(lenptr != NULL) {
+		*lenptr = l;
+	}
+
+	return v;
 }
 
 //------------------------------------------------------------------------------
@@ -181,7 +200,8 @@ SerializerIO SerializerIO_FromStream
 
 	SerializerIO serializer = rm_calloc(1, sizeof(struct SerializerIO_Opaque));
 
-	serializer->stream = (void*)f;
+	serializer->stream    = (void*)f;
+	serializer->memstream = fopen("/dev/null", "wb");  // dummy stream
 
 	// set serializer function pointers
 	serializer->WriteUnsigned   = Stream_WriteUnsigned;
@@ -212,7 +232,8 @@ SerializerIO SerializerIO_FromRedisModuleIO
 
 	SerializerIO serializer = rm_calloc(1, sizeof(struct SerializerIO_Opaque));
 
-	serializer->stream = io;
+	serializer->stream    = io;
+	serializer->memstream = fopen("/dev/null", "wb");  // dummy stream
 
 	// set serializer function pointers
 	serializer->WriteUnsigned   = (void (*)(void*, uint64_t))RedisModule_SaveUnsigned;
@@ -234,6 +255,24 @@ SerializerIO SerializerIO_FromRedisModuleIO
 	return serializer;
 }
 
+// saves all read / write data into buffer
+void SerializerIO_SaveDataToBuffer
+(
+	SerializerIO io,  // serializer
+	char **buffer,    // pointer to buffer, should be NULL
+	size_t *size      // holds the buffer size once SerializerIO_Free is called
+) {
+	ASSERT(io            != NULL);
+	ASSERT(buffer        != NULL);
+	ASSERT(*buffer       == NULL);
+
+	// close previous memory stream
+	fclose(io->memstream);
+
+	// create memory stream from buffer
+	io->memstream = open_memstream(buffer, size);
+}
+
 // free serializer
 void SerializerIO_Free
 (
@@ -241,6 +280,12 @@ void SerializerIO_Free
 ) {
 	ASSERT(io  != NULL);
 	ASSERT(*io != NULL);
+
+	SerializerIO _io = *io;
+
+	// close memory stream
+	fflush(_io->memstream);
+	fclose(_io->memstream);
 
 	rm_free(*io);
 	*io = NULL;
