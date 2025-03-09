@@ -266,11 +266,13 @@ static void _AlgebraicExpression_PopulateOperand
 	// do not update matrix if already set,
 	// as algebraic expression test depends on this behavior
 	// TODO: Redesign _AlgebraicExpression_FromString to remove this condition
-	if(operand->operand.matrix != NULL) return;
+	Graph *g = gc->g;
+	Delta_Matrix a = operand->operand.matrix;
+	Delta_Matrix z = Graph_GetZeroMatrix(g);
+	if(a != NULL && a != z) return;
 
-	Graph *g          = gc->g;
-	Schema *s         = NULL;
-	Delta_Matrix m    = NULL;
+	Schema *s      = NULL;
+	Delta_Matrix m = NULL;
 	const char *label = operand->operand.label;
 
 	if(label == NULL) {
@@ -287,7 +289,7 @@ static void _AlgebraicExpression_PopulateOperand
 	}
 
 	// m is unset, use zero matrix
-	if(m == NULL) m = Graph_GetZeroMatrix(g);
+	if(m == NULL) m = z;
 
 	// set operand matrix
 	operand->operand.matrix = m;
@@ -328,8 +330,6 @@ static void _AlgebraicExpression_PopulateTransposedOperand
 	operand->operand.matrix = m;
 }
 
-// TODO: this function is only used within AlgebraicExpression_Optimize
-// consider moving it
 // fetch all operands, replacing transpose operations with transposed operands
 // if they are available
 void _AlgebraicExpression_PopulateOperands
