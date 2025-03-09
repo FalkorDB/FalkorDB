@@ -2496,6 +2496,7 @@ AST_Validation AST_Validate_QueryParams
 	if(_ValidateParamsOnly(root) != AST_VALID) {
 		return AST_INVALID;
 	}
+
 	if(_ValidateDuplicateParameters(root) != AST_VALID) {
 		return AST_INVALID;
 	}
