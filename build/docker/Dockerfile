@@ -8,6 +8,7 @@ FROM $BASE_IMAGE AS compiler
 
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
 
+FROM quay.io/opstree/redis:v7.0.15 AS operator-entrypoint
 
 FROM redis:7.4.2
 
@@ -15,7 +16,8 @@ RUN apt-get update && apt-get install -y libgomp1 curl && \
     curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /node-conf
 
 WORKDIR /FalkorDB
 
@@ -25,6 +27,8 @@ COPY --from=compiler /FalkorDB/build/docker/gen-certs.sh /FalkorDB/build/docker/
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so /FalkorDB/bin/src/falkordb.so
 
 COPY --from=browser /app /FalkorDBBrowser
+COPY --from=operator-entrypoint /usr/bin/entrypoint.sh /usr/bin/entrypoint.sh
+COPY --from=operator-entrypoint /etc/redis/ /etc/redis/
 
 ENV ARCH=${TARGETPLATFORM}
 
