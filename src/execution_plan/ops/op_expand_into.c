@@ -8,6 +8,7 @@
 #include "../../query_ctx.h"
 #include "shared/print_functions.h"
 #include "../execution_plan_build/execution_plan_util.h"
+#include "../../arithmetic/algebraic_expression/utils.h"
 
 // default number of records to accumulate before traversing
 #define BATCH_SIZE 16
@@ -72,6 +73,11 @@ static void _traverse
 		// as the leftmost operand
 		AlgebraicExpression_MultiplyToTheLeft(&op->ae, op->F);
 		AlgebraicExpression_Optimize(&op->ae);
+
+		// partial_ae is true when
+		// the algebraic expression contains the zero matrix
+		op->partial_ae = AlgebraicExpression_ContainsMatrix(op->ae,
+				Graph_GetZeroMatrix(QueryCtx_GetGraph()));
 	}
 
 	// populate filter matrix
@@ -326,6 +332,14 @@ static OpResult ExpandIntoReset
 	op->record_count = 0;
 
 	if(op->edge_ctx != NULL) EdgeTraverseCtx_Reset(op->edge_ctx);
+
+	// in case algebraic expression has missing operands
+	// i.e. has an operand which is the zero matrix
+	// see if at this point in time the graph is aware of the missing operand
+	// and if so replace the zero matrix operand with the actual matrix
+	if(unlikely(op->partial_ae == true)) {
+		_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+	}
 
 	return OP_OK;
 }
