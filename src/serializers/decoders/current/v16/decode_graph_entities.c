@@ -18,6 +18,14 @@ static SIValue _RdbLoadSIValue
 	// SIType
 	// Value
 	SIType t = SerializerIO_ReadUnsigned(rdb);
+	uint64_t disk = SerializerIO_ReadUnsigned(rdb);
+	if(disk) {
+		SIValue v;
+		v.type = t;
+		v.allocation = M_DISK;
+		return v;
+	}
+
 	switch(t) {
 	case T_INT64:
 		return SI_LongVal(SerializerIO_ReadSigned(rdb));

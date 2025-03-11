@@ -31,6 +31,7 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "util/rocksdb.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 7
@@ -101,6 +102,7 @@ int RedisModule_OnLoad
 	RedisModuleString **argv,
 	int argc
 ) {
+	RocksDB_init();
 	if(RedisModule_Init(ctx, "graph", REDISGRAPH_MODULE_VERSION,
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;

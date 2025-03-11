@@ -9,6 +9,7 @@
 #include "../../query_ctx.h"
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
+#include "../../util/rocksdb.h"
 
 // Forward declarations.
 static void _ResultSet_VerboseReplyWithMap(RedisModuleCtx *ctx, SIValue map);
@@ -26,12 +27,25 @@ static void _ResultSet_VerboseReplyWithSIValue
 (
 	RedisModuleCtx *ctx,
 	GraphContext *gc,
+	NodeID node_id,
+	AttributeID attr_id,
 	const SIValue v
 ) {
 	switch(SI_TYPE(v)) {
-	case T_STRING:
-		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
+	case T_STRING: {
+		if(v.allocation == M_DISK) {
+			char node_key[11];
+			*(uint64_t *)node_key = node_id;
+			*(AttributeID *)(node_key + 8) = attr_id;
+			node_key[10] = '\0';
+			char *str = RocksDB_get(node_key);
+			RedisModule_ReplyWithStringBuffer(ctx, str, strlen(str));
+			rm_free(str);
+		} else {
+			RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
+		}
 		return;
+	}
 	case T_INT64:
 		RedisModule_ReplyWithLongLong(ctx, v.longval);
 		return;
@@ -89,7 +103,7 @@ static void _ResultSet_VerboseReplyWithProperties
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		RedisModule_ReplyWithStringBuffer(ctx, prop_str, strlen(prop_str));
 		// Emit the value
-		_ResultSet_VerboseReplyWithSIValue(ctx, gc, value);
+		_ResultSet_VerboseReplyWithSIValue(ctx, gc, e->id, attr_id, value);
 	}
 }
 
@@ -228,7 +242,7 @@ void ResultSet_EmitVerboseRow
 
 	for(int i = 0; i < set->column_count; i++) {
 		SIValue v = *row[i];
-		_ResultSet_VerboseReplyWithSIValue(ctx, set->gc, v);
+		_ResultSet_VerboseReplyWithSIValue(ctx, set->gc, -1, ATTRIBUTE_ID_NONE, v);
 	}
 }
 

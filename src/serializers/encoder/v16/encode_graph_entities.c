@@ -71,6 +71,13 @@ static void _RdbSaveSIValue
 
 	SerializerIO_WriteUnsigned(rdb, v->type);
 
+	if(v->allocation == M_DISK) {
+		SerializerIO_WriteUnsigned(rdb, 1);
+		return;
+	}
+
+	SerializerIO_WriteUnsigned(rdb, 0);
+
 	switch(v->type) {
 		case T_BOOL:
 		case T_INT64:

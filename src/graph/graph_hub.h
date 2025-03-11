@@ -7,6 +7,7 @@
 #pragma once
 
 #include "graphcontext.h"
+#include <rocksdb/c.h>
 
 // graph hub responsible for crud operations on a graph
 // while updating relevant components e.g. indexes and undo log
@@ -22,6 +23,7 @@ void CreateNode
 	LabelID *labels,   // node labels
 	uint label_count,  // labels count
 	AttributeSet set,  // node attributes
+	rocksdb_writebatch_t *writebatch,
 	bool log           // log operation in undo-log
 );
 

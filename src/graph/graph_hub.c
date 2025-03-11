@@ -6,6 +6,7 @@
 
 #include "graph_hub.h"
 #include "../query_ctx.h"
+#include "../util/rocksdb.h"
 
 void CreateNode
 (
@@ -14,6 +15,7 @@ void CreateNode
 	LabelID *labels,
 	uint label_count,
 	AttributeSet set,
+	rocksdb_writebatch_t *writebatch,
 	bool log
 ) {
 	ASSERT(n  != NULL);
@@ -21,6 +23,23 @@ void CreateNode
 
 	Graph_CreateNode(gc->g, n, labels, label_count);
 	*n->attributes = set;
+
+	char node_key[11];
+	*(uint64_t *)node_key = ENTITY_GET_ID(n);
+	node_key[10] = '\0';
+	// add attributes to node_value buffer
+	for(uint i = 0; i < AttributeSet_Count(set); i++) {
+		Attribute *attr = set->attributes + i;
+		if(SI_TYPE(attr->value) == T_STRING) {
+			if(strlen(attr->value.stringval) > 20) {
+				*(AttributeID *)(node_key + 8) = attr->id;
+				RocksDB_put(writebatch, node_key, attr->value.stringval);
+				attr->value.allocation = M_DISK;
+				rm_free(attr->value.stringval);
+				attr->value.stringval = NULL;
+			}
+		}
+	}
 
 	// add node labels
 	for(uint i = 0; i < label_count; i++) {

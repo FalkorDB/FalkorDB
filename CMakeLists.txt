@@ -29,6 +29,7 @@ include_directories(
 	${root}/deps/GraphBLAS/Include
 	${root}/deps/libcurl/include/curl
 	${root}/deps/libcypher-parser/lib/src
+	/opt/homebrew/Cellar/rocksdb/9.10.0/include
 	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
 
 add_compile_definitions(

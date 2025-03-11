@@ -45,7 +45,8 @@ typedef enum {
 	M_NONE = 0,             // SIValue is not heap-allocated
 	M_SELF = (1 << 0),      // SIValue is responsible for freeing its reference
 	M_VOLATILE = (1 << 1),  // SIValue does not own its reference and may go out of scope
-	M_CONST = (1 << 2)      // SIValue does not own its allocation, but its access is safe
+	M_CONST = (1 << 2),     // SIValue does not own its allocation, but its access is safe
+	M_DISK = (1 << 3)       // SIValue is stored on disk
 } SIAllocation;
 
 #define T_VECTOR (T_VECTOR_F32)

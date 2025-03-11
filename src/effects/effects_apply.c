@@ -101,7 +101,7 @@ static void ApplyCreateNode
 	//--------------------------------------------------------------------------
 
 	Node n = GE_NEW_NODE();
-	CreateNode(gc, &n, labels, lbl_count, attr_set, false);
+	CreateNode(gc, &n, labels, lbl_count, attr_set, NULL, false);
 }
 
 static void ApplyCreateEdge

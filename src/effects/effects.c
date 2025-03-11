@@ -155,6 +155,10 @@ static void EffectsBuffer_WriteSIValue
 	bool b;
 	size_t len = 0;
 
+	if(v->allocation == M_DISK) {
+		return;
+	}
+
 	SIType t = v->type;
 
 	// write type
