@@ -27,7 +27,6 @@ class testStringPool():
         memory_info = self.conn.info("memory")
         _used_memory = memory_info['used_memory']
 
-        print(f"used_memory: {_used_memory}")
         return _used_memory
 
     def test_01_single_graph_string_share(self):

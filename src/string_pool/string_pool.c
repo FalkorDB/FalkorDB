@@ -47,16 +47,16 @@ static size_t metadataBytes
 
 // StringPool hashtable callbacks
 static const dictType _type = {
-    hashFunc,
+	hashFunc,
 	NULL,
-    NULL,
-    keyCompare,
-    keyDestructor,
-    NULL,
-    NULL,
-    metadataBytes,
-    NULL,
-    NULL
+	NULL,
+	keyCompare,
+	keyDestructor,
+	NULL,
+	NULL,
+	metadataBytes,
+	NULL,
+	NULL
 };
 
 // create a new StringPool

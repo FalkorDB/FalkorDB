@@ -49,6 +49,7 @@ static void _SIValue_FromFloatNode
 	ASSERT(v    != NULL);
 	ASSERT(node != NULL);
 
+	errno = 0; // reset before strtod
 	char *endptr = NULL;
 	const char *value_str = cypher_ast_float_get_valuestr(node);
 	double d = strtod(value_str, &endptr);
