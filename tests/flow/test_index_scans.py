@@ -751,6 +751,12 @@ class testIndexScanFlow():
                       MATCH (p:person)
                       WHERE p.age = metadata.age
                       RETURN p.name""",
+                    
+                    # different property name
+                    """UNWIND [{my_age: 30}, {my_age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata.my_age
+                      RETURN p.name""",
 
                    # same as previous query only reversed filter operands
                    """UNWIND [{age: 30}, {age: 31}] AS metadata
@@ -789,7 +795,7 @@ class testIndexScanFlow():
                    """UNWIND [{age: 30}, {age: 31}] AS metadata
                       MATCH (p:person)
                       WHERE metadata.age + metadata.age = p.age
-                      RETURN p.name"""
+                      RETURN p.name"""]
 
         for q in queries:
             plan = self.graph.explain(q)

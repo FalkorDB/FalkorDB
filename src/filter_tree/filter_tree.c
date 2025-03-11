@@ -493,7 +493,7 @@ rax *FilterTree_CollectModified
 static void _FilterTree_CollectAttributes
 (
 	const FT_FilterNode *root,  // filter tree
-	const char *entity          // filtered entity
+	const char *entity,         // filtered entity
 	rax *attributes             // collected attributes
 ) {
 	ASSERT(entity     != NULL);
