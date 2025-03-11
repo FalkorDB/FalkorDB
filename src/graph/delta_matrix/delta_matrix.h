@@ -115,6 +115,12 @@ GrB_Matrix Delta_Matrix_M
 	const Delta_Matrix C
 );
 
+GrB_Info Delta_Matrix_setM
+(
+    Delta_Matrix C,
+    GrB_Matrix M
+);
+
 GrB_Info Delta_Matrix_nrows
 (
 	GrB_Index *nrows,
