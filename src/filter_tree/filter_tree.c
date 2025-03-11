@@ -489,25 +489,26 @@ rax *FilterTree_CollectModified
 void _FilterTree_CollectAttributes
 (
 	const FT_FilterNode *root,
+	const char* filtered_entity,
 	rax *attributes
 ) {
 	if(root == NULL) return;
 
 	switch(root->t) {
 		case FT_N_COND: {
-			_FilterTree_CollectAttributes(root->cond.left, attributes);
-			_FilterTree_CollectAttributes(root->cond.right, attributes);
+			_FilterTree_CollectAttributes(root->cond.left, filtered_entity, attributes);
+			_FilterTree_CollectAttributes(root->cond.right, filtered_entity, attributes);
 			break;
 		}
 		case FT_N_PRED: {
 			// traverse left and right-hand expressions,
 			// adding all encountered attributes to the triemap
-			AR_EXP_CollectAttributes(root->pred.lhs, attributes);
-			AR_EXP_CollectAttributes(root->pred.rhs, attributes);
+			AR_EXP_CollectAttributes(root->pred.lhs, filtered_entity, attributes);
+			AR_EXP_CollectAttributes(root->pred.rhs, filtered_entity, attributes);
 			break;
 		}
 		case FT_N_EXP: {
-			AR_EXP_CollectAttributes(root->exp.exp, attributes);
+			AR_EXP_CollectAttributes(root->exp.exp, filtered_entity, attributes);
 			break;
 		}
 		default: {
@@ -519,10 +520,11 @@ void _FilterTree_CollectAttributes
 
 rax *FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root
+	const FT_FilterNode *root,
+	const char* filtered_entity
 ) {
 	rax *attributes = raxNew();
-	_FilterTree_CollectAttributes(root, attributes);
+	_FilterTree_CollectAttributes(root, filtered_entity, attributes);
 	return attributes;
 }
 

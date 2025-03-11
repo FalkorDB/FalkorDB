@@ -127,7 +127,7 @@ void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases);
 
 // traverse an expression tree and add all mentioned attributes:
 // n.attr > 3 to a prefix tree
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes);
+void AR_EXP_CollectAttributes(AR_ExpNode *root, const char* filtered_entity, rax *attributes);
 
 // search for an aggregation node within the expression tree
 // return 1 if one exists

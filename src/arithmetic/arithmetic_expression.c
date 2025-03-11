@@ -771,9 +771,11 @@ void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases) {
 	}
 }
 
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes) {
+void AR_EXP_CollectAttributes(AR_ExpNode *root, const char* filtered_entity, rax *attributes) {
 	if(AR_EXP_IsOperation(root)) {
-		if(strcmp(AR_EXP_GetFuncName(root), "property") == 0) {
+		if(strcmp(AR_EXP_GetFuncName(root), "property") == 0
+		   && root->op.children[0]->operand.type == AR_EXP_VARIADIC
+		   && strcmp(root->op.children[0]->operand.variadic.entity_alias, filtered_entity) == 0) {
 			AR_ExpNode *arg = root->op.children[1];
 			ASSERT(AR_EXP_IsConstant(arg));
 			ASSERT(SI_TYPE(arg->operand.constant) == T_STRING);
@@ -784,7 +786,7 @@ void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes) {
 
 		// continue scanning expression
 		for(int i = 0; i < root->op.child_count; i ++) {
-			AR_EXP_CollectAttributes(root->op.children[i], attributes);
+			AR_EXP_CollectAttributes(root->op.children[i], filtered_entity, attributes);
 		}
 	}
 }

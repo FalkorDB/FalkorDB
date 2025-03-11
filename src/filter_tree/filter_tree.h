@@ -126,7 +126,8 @@ rax *FilterTree_CollectModified
 // without duplications
 rax *FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root
+	const FT_FilterNode *root,
+	const char* filtered_entity
 );
 
 // check if any filtered variable is an alias

@@ -209,7 +209,7 @@ bool _applicableFilter
 	const IndexField *idx_fields = Index_GetFields(idx);
 
 	// make sure all filtered attributes are indexed
-	attr = FilterTree_CollectAttributes(filter_tree);
+	attr = FilterTree_CollectAttributes(filter_tree, filtered_entity);
 	uint filter_attribute_count = raxSize(attr);
 	
 	// No attributes to filter on

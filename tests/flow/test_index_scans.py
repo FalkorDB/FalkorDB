@@ -742,3 +742,7 @@ class testIndexScanFlow():
         # make sure we're able to locate node using index scan
         res = self.graph.query("MATCH (p:Page {url: $url}) RETURN p.url", params)
         self.env.assertEqual(url, res.result_set[0][0])
+
+    def test_26_index_scan_with_other_filters(self):
+        plan = self.graph.explain("UNWIND [{my_age: 30}, {my_age: 31}] AS a MATCH (p:person) WHERE p.age = a.my_age RETURN p.name")
+        self.env.assertIn('Node By Index Scan', plan)
