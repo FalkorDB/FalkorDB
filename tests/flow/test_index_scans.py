@@ -744,5 +744,54 @@ class testIndexScanFlow():
         self.env.assertEqual(url, res.result_set[0][0])
 
     def test_26_index_scan_with_other_filters(self):
-        plan = self.graph.explain("UNWIND [{my_age: 30}, {my_age: 31}] AS a MATCH (p:person) WHERE p.age = a.my_age RETURN p.name")
-        self.env.assertIn('Node By Index Scan', plan)
+        # make sure index is utilized when the compared value is not a trivial
+        # expression e.g. p.name = metadata.age
+
+        queries = ["""UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata.age
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE metadata.age = p.age
+                      RETURN p.name""",
+
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata[1]
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE metadata[1] = p.age
+                      RETURN p.name""",
+
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata[0] + metadata[1]
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [ [-1, 30], [0, 31] ] AS metadata
+                      MATCH (p:person)
+                      WHERE  metadata[0] + metadata[1] = p.age
+                      RETURN p.name""",
+
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE p.age = metadata.age + metadata.age
+                      RETURN p.name""",
+
+                   # same as previous query only reversed filter operands
+                   """UNWIND [{age: 30}, {age: 31}] AS metadata
+                      MATCH (p:person)
+                      WHERE metadata.age + metadata.age = p.age
+                      RETURN p.name"""
+
+        for q in queries:
+            plan = self.graph.explain(q)
+            self.env.assertIn('Node By Index Scan', plan)
+
