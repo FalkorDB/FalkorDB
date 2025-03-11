@@ -27,9 +27,7 @@ static inline Pair Pair_New
 	SIValue val
 ) {
 	ASSERT(SI_TYPE(key) & T_STRING);
-	return (Pair) {
-		.key = SI_CloneValue(key), .val = SI_CloneValue(val)
-	};
+	return (Pair) { .key = key, .val = val };
 }
 
 static void Pair_Free
@@ -69,9 +67,11 @@ SIValue Map_New
 	uint capacity
 ) {
 	SIValue map;
-	map.map = array_new(Pair, capacity);
-	map.type = T_MAP;
+
+	map.map        = array_new(Pair, capacity);
+	map.type       = T_MAP;
 	map.allocation = M_SELF;
+
 	return map;
 }
 
@@ -89,7 +89,8 @@ SIValue Map_FromArrays
 	SIValue map = Map_New(n);
 
 	for(uint i = 0; i < n; i++) {
-		array_append(map.map, Pair_New(keys[i], values[i]));
+		array_append(map.map, Pair_New(SI_CloneValue(keys[i]),
+					SI_CloneValue(values[i])));
 	}
 
 	return map;
@@ -121,7 +122,30 @@ void Map_Add
 	SIValue value
 ) {
 	ASSERT(SI_TYPE(*map) & T_MAP);
-	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_TYPE(key)  & T_STRING);
+
+	// remove key if already existed
+	Map_Remove(*map, key);
+
+	// create a new pair
+	Pair pair = Pair_New(SI_CloneValue(key), SI_CloneValue(value));
+
+	// add pair to the end of map
+	array_append(map->map, pair);
+}
+
+// adds key/value to map
+// both key and value aren't cloned
+void Map_AddNoClone
+(
+	SIValue *map,  // map to add element to
+	SIValue key,   // key under which value is added
+	SIValue value  // value to add under key
+) {
+	ASSERT(SI_TYPE(*map) & T_MAP);
+	ASSERT(SI_TYPE(key)  & T_STRING);
+	ASSERT(SI_ALLOCATION(&key)   != M_VOLATILE);
+	ASSERT(SI_ALLOCATION(&value) != M_VOLATILE);
 
 	// remove key if already existed
 	Map_Remove(*map, key);
@@ -131,6 +155,7 @@ void Map_Add
 
 	// add pair to the end of map
 	array_append(map->map, pair);
+
 }
 
 // removes key from map

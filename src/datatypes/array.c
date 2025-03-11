@@ -68,7 +68,7 @@ void SIArray_AppendAsOwner
 ) {
 	ASSERT(value   != NULL);
 	ASSERT(siarray != NULL);
-	ASSERT(SI_ALLOCATION(value) == M_SELF);
+	ASSERT(SI_ALLOCATION(value) != M_VOLATILE);
 
 	// add value as is
 	array_append(siarray->array, *value);
