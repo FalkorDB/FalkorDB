@@ -8,5 +8,5 @@
 
 #include "../serializers_include.h"
 
-// Load RDB.
+// load RDB
 GraphContext *RdbLoadGraph(RedisModuleIO *rdb);

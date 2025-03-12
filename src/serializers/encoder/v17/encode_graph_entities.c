@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v16.h"
+#include "encode_v17.h"
 #include "../../../datatypes/datatypes.h"
 
 // forword decleration
@@ -157,7 +157,7 @@ static void _RdbSaveEdge
 }
 
 // encode a single node
-static void _RdbSaveNode_v16
+static void _RdbSaveNode_v17
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -165,8 +165,6 @@ static void _RdbSaveNode_v16
 ) {
 	// Format:
 	//     ID
-	//     #labels M
-	//     (labels) X M
 	//     #properties N
 	//     (name, value type, value) X N */
 
@@ -174,23 +172,13 @@ static void _RdbSaveNode_v16
 	EntityID id = ENTITY_GET_ID(n);
 	SerializerIO_WriteUnsigned(rdb, id);
 
-	// retrieve node labels
-	uint l_count;
-	NODE_GET_LABELS(gc->g, (Node *)n, l_count);
-	SerializerIO_WriteUnsigned(rdb, l_count);
-
-	// save labels
-	for(uint i = 0; i < l_count; i++) {
-		SerializerIO_WriteUnsigned(rdb, labels[i]);
-	}
-
 	// properties N
 	// (name, value type, value) X N
 	_RdbSaveEntity(rdb, (GraphEntity *)n);
 }
 
 // encode deleted entities IDs
-static void _RdbSaveDeletedEntities_v16
+static void _RdbSaveDeletedEntities_v17
 (
 	SerializerIO rdb,
 	GraphContext *gc,
@@ -207,7 +195,7 @@ static void _RdbSaveDeletedEntities_v16
 }
 
 // encode deleted node IDs
-void RdbSaveDeletedNodes_v16
+void RdbSaveDeletedNodes_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -221,11 +209,11 @@ void RdbSaveDeletedNodes_v16
 
 	// get deleted nodes list
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
-	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_nodes_list);
+	_RdbSaveDeletedEntities_v17(rdb, gc, n, offset, deleted_nodes_list);
 }
 
 // encode deleted edges IDs
-void RdbSaveDeletedEdges_v16
+void RdbSaveDeletedEdges_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -239,11 +227,11 @@ void RdbSaveDeletedEdges_v16
 
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
-	_RdbSaveDeletedEntities_v16(rdb, gc, n, offset, deleted_edges_list);
+	_RdbSaveDeletedEntities_v17(rdb, gc, n, offset, deleted_edges_list);
 }
 
 // encode nodes
-void RdbSaveNodes_v16
+void RdbSaveNodes_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -253,8 +241,6 @@ void RdbSaveNodes_v16
 	// Format:
 	// Node Format * nodes_to_encode:
 	//  ID
-	//  #labels M
-	//  (labels) X M
 	//  #properties N
 	//  (name, value type, value) X N
 
@@ -275,7 +261,7 @@ void RdbSaveNodes_v16
 	for(uint64_t i = 0; i < n; i++) {
 		GraphEntity e;
 		e.attributes = (AttributeSet *)DataBlockIterator_Next(iter, &e.id);
-		_RdbSaveNode_v16(rdb, gc, &e);
+		_RdbSaveNode_v17(rdb, gc, &e);
 	}
 
 	// check if done encodeing nodes
@@ -316,8 +302,6 @@ static void _EncodeEdges
 ) {
 	// Format:
 	//  edge ID
-	//  source node ID
-	//  destination node ID
 	//  edge properties
 
 	Edge   e;          // current edge
@@ -334,12 +318,6 @@ static void _EncodeEdges
 
 		// encode edge ID
 		SerializerIO_WriteUnsigned(rdb, edgeID);
-
-		// encode source node ID
-		SerializerIO_WriteUnsigned(rdb, e.src_id);
-
-		// encode destination node ID
-		SerializerIO_WriteUnsigned(rdb, e.dest_id);
 
 		// encode edge properties
 		_RdbSaveEntity(rdb, (GraphEntity *)&e);
@@ -363,10 +341,10 @@ static void _EncodeTensors
 	// format:
 	// edge format:
 	//     edge id
-	//     source node id
-	//     destination node id
-	//     multi-edge
 	//     edge properties
+	//     multi-edge
+	//     source node id       [optional]
+	//     destination node id  [optional]
 
 	Edge   e;            // current encoded edge
 	bool tensor;         // rather or not the edge is part of a tensor
@@ -384,17 +362,19 @@ static void _EncodeTensors
 		// encode edge ID
 		SerializerIO_WriteUnsigned(rdb, edgeID);
 
-		// encode source node ID
-		SerializerIO_WriteUnsigned(rdb, e.src_id);
-
-		// encode destination node ID
-		SerializerIO_WriteUnsigned(rdb, e.dest_id);
+		// encode edge properties
+		_RdbSaveEntity(rdb, (GraphEntity *)&e);
 
 		// encode tensor
 		SerializerIO_WriteUnsigned(rdb, tensor);
 
-		// encode edge properties
-		_RdbSaveEntity(rdb, (GraphEntity *)&e);
+		if(unlikely(tensor)) {
+			// encode source node ID
+			SerializerIO_WriteUnsigned(rdb, e.src_id);
+
+			// encode destination node ID
+			SerializerIO_WriteUnsigned(rdb, e.dest_id);
+		}
 
 		// reduce capacity
 		_n--;
@@ -405,7 +385,7 @@ static void _EncodeTensors
 }
 
 // encode edges
-void RdbSaveEdges_v16
+void RdbSaveEdges_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -420,12 +400,11 @@ void RdbSaveEdges_v16
 	//
 	// edge format:
 	//     edge id
+	//     edge properties
+	//     multi-edge [only if relation contains tensors]
 	//     source node id
 	//     destination node id
-	//     relation type
-	//     multi-edge [only if relation contains tensors]
-	//     edge properties
-	
+
 
 	// make sure there's capacity
 	ASSERT(n > 0);
@@ -486,6 +465,7 @@ void RdbSaveEdges_v16
 				// no more relations break
 				break;
 			}
+
 			// set iterator on new relation matrix
 			R = Graph_GetRelationMatrix(gc->g, r, false);
 			TensorIterator_ScanRange(it, R, 0, UINT64_MAX, false);

@@ -115,6 +115,15 @@ GrB_Matrix Delta_Matrix_M
 	const Delta_Matrix C
 );
 
+// replace C's internal M matrix with given M
+// the operation can only succeed if C's interal matrices:
+// M, DP, DM are all empty
+GrB_Info Delta_Matrix_setM
+(
+	Delta_Matrix C,  // delta matrix
+	GrB_Matrix M     // new M
+);
+
 GrB_Info Delta_Matrix_nrows
 (
 	GrB_Index *nrows,
