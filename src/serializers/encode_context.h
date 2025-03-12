@@ -18,15 +18,17 @@
 
 // Encoding states
 typedef enum {
-	ENCODE_STATE_INIT              = 0, // encoding initial state
-	ENCODE_STATE_NODES             = 1, // encoding nodes
-	ENCODE_STATE_DELETED_NODES     = 2, // encoding deleted nodes
-	ENCODE_STATE_EDGES             = 3, // encoding edges
-	ENCODE_STATE_DELETED_EDGES     = 4, // encoding deleted edges
-	ENCODE_STATE_GRAPH_SCHEMA      = 5, // encoding graph schemas
-	ENCODE_STATE_LABELS_MATRICES   = 6, // encoding graph label matrices
-	ENCODE_STATE_RELATION_MATRICES = 7, // encoding graph relation matrices
-	ENCODE_STATE_FINAL             = 8  // encoding final state [MUSTN'T BE SAVED TO RDB]
+	ENCODE_STATE_INIT              = 0,  // encoding initial state
+	ENCODE_STATE_NODES             = 1,  // encoding nodes
+	ENCODE_STATE_DELETED_NODES     = 2,  // encoding deleted nodes
+	ENCODE_STATE_EDGES             = 3,  // encoding edges
+	ENCODE_STATE_DELETED_EDGES     = 4,  // encoding deleted edges
+	ENCODE_STATE_GRAPH_SCHEMA      = 5,  // encoding graph schemas
+	ENCODE_STATE_LABELS_MATRICES   = 6,  // encoding graph label matrices
+	ENCODE_STATE_RELATION_MATRICES = 7,  // encoding graph relation matrices
+	ENCODE_STATE_ADJ_MATRIX        = 8,  // encode graph adjacency matrix
+	ENCODE_STATE_LBLS_MATRIX       = 9,  // encoding graph labels matrix
+	ENCODE_STATE_FINAL             = 10  // encoding final state [MUSTN'T BE SAVED TO RDB]
 } EncodeState;
 
 // Header information encoded for every payload

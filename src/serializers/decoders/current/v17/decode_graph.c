@@ -6,53 +6,47 @@
 #include "decode_v17.h"
 #include "../../../../index/indexer.h"
 
-static void _ComputeTransposeMatrices
+// compute transpose matrices
+static void _ComputeTransposeMatrix
 (
-	GraphContext *gc
+	Delta_Matrix A
 ) {
-	// apply relation matrix to pre-existing relation matrices
-	// a pre-existing relation matrix might be empty
-	// (probably the common case)
-	// or it might be semi populated with tensors in which case
-	// we want to keep the tensors but add the decoded matrix
+	ASSERT(A != NULL);
 
+	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
+	GrB_Matrix   AM  = Delta_Matrix_M(A);
+	GrB_Matrix   ATM = Delta_Matrix_M(AT);
+
+	// make sure transpose doesn't contains any entries
 	GrB_Info info;
-	Graph *g = gc->g;
-	int n = Graph_RelationTypeCount(g);
+	GrB_Index nvals;
+	info = GrB_Matrix_nvals(&nvals, ATM);
+	ASSERT(info  == GrB_SUCCESS);
+	ASSERT(nvals == 0);
 
-	for(RelationID i = 0; i < n; i++) {
-		Delta_Matrix R   = Graph_GetRelationMatrix(g, r, false);
-		GrB_Matrix   RM  = Delta_Matrix_M(R);
-		Delta_Matrix RT  = Delta_Matrix_getTranspose(R);
-		GrB_Matrix   RTM = Delta_Matrix_M(RT);
-
-		// make sure transpose doesn't contains any entries
-		GrB_Index nvals;
-		info = GrB_Matrix_nvals(&nvals, RTM);
-		ASSERT(info  == GrB_SUCCESS);
-		ASSERT(nvals == 0);
-
-		info = GrB_transpose(RTM, NULL, NULL, RM, NULL);
-		ASSERT(info  == GrB_SUCCESS);
-	}
-
-	// update adjacency matrix
-	// adj = adj + R
-	info = GrB_Matrix_apply(adj_m, NULL, NULL, GrB_IDENTITY_BOOL, R, NULL);
-	ASSERT(info == GrB_SUCCESS);
-
-	// update transposed adjacency matrix
-	// adjt = adjt + RT
-	info = GrB_Matrix_apply(DRTM, NULL, NULL, GrB_IDENTITY_BOOL, R,
-			GrB_DESC_T0);
-	ASSERT(info == GrB_SUCCESS);
+	// compute transpose
+	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
+	ASSERT(info  == GrB_SUCCESS);
 }
 
-static void _ComputeADJMatrix
+static void _ComputeTransposeMatrices
 (
-	GraphContext *gc
+	Graph *g  // graph
 ) {
+	ASSERT(g != NULL);
 
+	GrB_Info info;
+	int n = Graph_RelationTypeCount(g);
+
+	// compute transpose for each relation matrix
+	for(RelationID r = 0; r < n; r++) {
+		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
+		_ComputeTransposeMatrix(R);
+	}
+
+	// compute transpose for the adjacency matrix
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+	_ComputeTransposeMatrix(ADJ);
 }
 
 static GraphContext *_GetOrCreateGraphContext
@@ -293,6 +287,22 @@ GraphContext *RdbLoadGraphContext_latest
 				RdbLoadRelationMatrices_v17(rdb, gc);
 				break;
 
+			case ENCODE_STATE_ADJ_MATRIX:
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' loading Adjacency matrix",
+						GraphContext_GetName(gc));
+
+				RdbLoadAdjMatrix_v17(rdb, gc);
+				break;
+
+			case ENCODE_STATE_LBLS_MATRIX:
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' loading Labels matrix",
+						GraphContext_GetName(gc));
+
+				RdbLoadLblsMatrix_v17(rdb, gc);
+				break;
+
 			default:
 				ASSERT(false && "Unknown encoding");
 				break;
@@ -314,13 +324,9 @@ GraphContext *RdbLoadGraphContext_latest
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
 		// compute ADJ matrix & transposes
-		_ComputeTransposeMatrices(gc);
-		_ComputeADJMatrix(gc);
+		_ComputeTransposeMatrices(g);
 
 		Graph *g = gc->g;
-
-		// set the node label matrix
-		Serializer_Graph_SetNodeLabels(g);
 
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);

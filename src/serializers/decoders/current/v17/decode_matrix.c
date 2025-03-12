@@ -117,7 +117,7 @@ void RdbLoadRelationMatrices_v17
 		GrB_Matrix R = _DecodeMatrix(rdb);
 
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
-		ASSERT(rel != NULL);
+		ASSERT(DR != NULL);
 
 		// check if r contains tensors
 		GraphDecodeContext *decode_ctx = gc->decoding_context;
@@ -164,5 +164,49 @@ void RdbLoadRelationMatrices_v17
 			ASSERT(info == GrB_SUCCESS);
 		}
 	}
+}
+
+// decode adjacency matrix
+void RdbLoadAdjMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	GraphContext *gc   // graph context
+) {
+	// format:
+	//   adjacency matrix
+
+	ASSERT(gc  != NULL);
+	ASSERT(rdb != NULL);
+
+	GrB_Matrix A = _DecodeMatrix(rdb);
+
+	Delta_Matrix adj = Graph_GetAdjacencyMatrix(gc->g, false);
+	ASSERT(adj != NULL);
+
+	// replace adj's current M matrix with A
+	GrB_Info info = Delta_Matrix_setM(adj, A);
+	ASSERT(info == GrB_SUCCESS);
+}
+
+// decode labels matrix
+void RdbLoadLblsMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	GraphContext *gc   // graph context
+) {
+	// format:
+	//   lbls matrix
+
+	ASSERT(gc  != NULL);
+	ASSERT(rdb != NULL);
+
+	GrB_Matrix A = _DecodeMatrix(rdb);
+
+	Delta_Matrix lbl = Graph_GetNodeLabelMatrix(gc->g);
+	ASSERT(lbl != NULL);
+
+	// replace lbl's current M matrix with A
+	GrB_Info info = Delta_Matrix_setM(lbl, A);
+	ASSERT(info == GrB_SUCCESS);
 }
 

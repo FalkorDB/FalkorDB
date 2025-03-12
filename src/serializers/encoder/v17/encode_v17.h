@@ -69,3 +69,17 @@ void RdbSaveRelationMatrices_v17
 	Graph *g           // graph
 );
 
+// encode graph's adjacency matrix
+void RdbSaveAdjMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+);
+
+// encode graph's labels matrix
+void RdbSaveLblsMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+);
+

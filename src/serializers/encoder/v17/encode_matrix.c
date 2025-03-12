@@ -101,3 +101,35 @@ void RdbSaveRelationMatrices_v17
 	}
 }
 
+// encode graph's adjacency matrix
+void RdbSaveAdjMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+) {
+	// format:
+	//   lbls matrix
+
+	ASSERT(g   != NULL);
+	ASSERT(rdb != NULL);
+
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+	_EncodeMatrix(rdb, ADJ);
+}
+
+// encode graph's labels matrix
+void RdbSaveLblsMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+) {
+	// format:
+	//   lbls matrix
+
+	ASSERT(g   != NULL);
+	ASSERT(rdb != NULL);
+
+	Delta_Matrix lbls = Graph_GetNodeLabelMatrix(g);
+	_EncodeMatrix(rdb, lbls);
+}
+
