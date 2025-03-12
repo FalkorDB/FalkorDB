@@ -1,5 +1,6 @@
 /*
  * Copyright Redis Ltd. 2018 - present
+ * Copyright FalkorDB Ltd. 2024 - present
  * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
  * the Server Side Public License v1 (SSPLv1).
  */
@@ -18,6 +19,7 @@
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "redisearch_api.h"
+#include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
 #include "commands/commands.h"
 #include "util/thpool/pools.h"
@@ -36,6 +38,7 @@
 #define MIN_REDIS_VERSION_MAJOR 7
 #define MIN_REDIS_VERSION_MINOR 2
 #define MIN_REDIS_VERSION_PATCH 0
+
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
@@ -76,7 +79,7 @@ static void _Print_Config
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {
 		uint64_t info_max_query_count = 0;
 		Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &info_max_query_count);
-		RedisModule_Log(ctx, "notice", "Query backlog size: %u", info_max_query_count);
+		RedisModule_Log(ctx, "notice", "Query backlog size: %" PRIu64, info_max_query_count);
 	}
 }
 
@@ -244,6 +247,19 @@ int RedisModule_OnLoad
 
 	if(RedisModule_CreateCommand(ctx, "graph.RESTORE", Graph_Restore,
 				"write deny-oom", 1, 1, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+
+	if (init_cmd_acl(ctx) == REDISMODULE_OK) {
+		if(RedisModule_CreateCommand(ctx, "graph.ACL", graph_acl_cmd,
+					"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
+			return REDISMODULE_ERR;
+		}
+	}
+
+	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", graph_password_cmd,
+				"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

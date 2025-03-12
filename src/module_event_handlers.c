@@ -12,6 +12,7 @@
 #include "util/uuid.h"
 #include "cron/cron.h"
 #include "bolt/bolt_api.h"
+#include "commands/cmd_acl.h"
 #include "util/thpool/pools.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
@@ -358,6 +359,8 @@ static void _ShutdownEventHandler
 
 	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
 	RediSearch_CleanupModule();
+
+    free_cmd_acl();
 
 	BoltApi_Unregister();
 
