@@ -102,6 +102,12 @@ static PayloadInfo _StatePayloadInfo
 		case ENCODE_STATE_RELATION_MATRICES:
 			required_entities_count = Graph_RelationTypeCount(g);
 			break;
+		case ENCODE_STATE_ADJ_MATRIX:
+			required_entities_count = 1;
+			break;
+		case ENCODE_STATE_LBLS_MATRIX:
+			required_entities_count = 1;
+			break;
 		default:
 			ASSERT(false && "Unknown encoding state in _CurrentStatePayloadInfo");
 			break;
@@ -222,6 +228,7 @@ void RdbSaveGraph_latest
 	// each containing 100,000 nodes, encoded into two different RDB meta keys
 
 	GraphContext *gc = value;
+	Graph        *g = gc->g;
 
 	// TODO: remove, no need, as GIL is taken
 
@@ -234,8 +241,7 @@ void RdbSaveGraph_latest
 
 	if(current_state == ENCODE_STATE_INIT) {
 		// inital state, populate encoding context header
-		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name,
-				gc->g);
+		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name, g);
 	}
 
 	// save header
@@ -269,11 +275,19 @@ void RdbSaveGraph_latest
 				break;
 
 			case ENCODE_STATE_LABELS_MATRICES:
-				RdbSaveLabelMatrices_v17(rdb, gc->g);
+				RdbSaveLabelMatrices_v17(rdb, g);
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
-				RdbSaveRelationMatrices_v17(rdb, gc->g);
+				RdbSaveRelationMatrices_v17(rdb, g);
+				break;
+
+			case ENCODE_STATE_ADJ_MATRIX:
+				RdbSaveAdjMatrix_v17(rdb, g);
+				break;
+
+			case ENCODE_STATE_LBLS_MATRIX:
+				RdbSaveLblsMatrix_v17(rdb, g);
 				break;
 
 			default:
@@ -303,6 +317,6 @@ void RdbSaveGraph_latest
 	}
 
 	// if a lock was acquired, release it
-	if(_shouldAcquireLocks()) Graph_ReleaseLock(gc->g);
+	if(_shouldAcquireLocks()) Graph_ReleaseLock(g);
 }
 

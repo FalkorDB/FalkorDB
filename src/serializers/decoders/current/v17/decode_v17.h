@@ -64,3 +64,16 @@ void RdbLoadRelationMatrices_v17
 	GraphContext *gc   // graph context
 );
 
+// decode adjacency matrix
+void RdbLoadAdjMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	GraphContext *gc   // graph context
+);
+
+void RdbLoadLblsMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	GraphContext *gc   // graph context
+);
+
