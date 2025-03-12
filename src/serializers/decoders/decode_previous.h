@@ -8,5 +8,10 @@
 
 #include "../serializers_include.h"
 
-// Reconstruct a GraphContext from an older RDB encoding version.
-GraphContext *Decode_Previous(RedisModuleIO *rdb, int encver);
+// reconstruct a GraphContext from an older RDB encoding version
+GraphContext *Decode_Previous
+(
+	RedisModuleIO *rdb,
+	int encver
+);
+
