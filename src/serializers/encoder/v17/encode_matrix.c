@@ -12,8 +12,8 @@
 // encode matrix
 static void _EncodeMatrix
 (
-	SerializerIO rdb,     // RDB
-	const Delta_Matrix A  // matrix to encode
+	SerializerIO rdb,  // RDB
+	Delta_Matrix A     // matrix to encode
 ) {
 	// format:
 	//  blob size

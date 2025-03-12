@@ -214,7 +214,8 @@ static uint64_t _DecodeTensors
 	Edge e;                         // current decoded edge
 	uint64_t  decoded_edges = 0;    // number of decoded edges
 	int       tensor_idx    = 0;    // tensors batch index
-	const int BATCH_SIZE    = 256;  // batch size
+	//const int BATCH_SIZE    = 256;  // batch size
+	const int BATCH_SIZE    = 16384;  // batch size
 
 	// tensors batch
 	EdgeID tensors_ids  [BATCH_SIZE];
