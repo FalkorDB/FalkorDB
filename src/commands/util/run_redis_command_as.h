@@ -12,6 +12,12 @@ extern const char *ADMIN_USER;
 typedef int (*RedisCommandAsUserFunc)(RedisModuleCtx *ctx,
 	RedisModuleString **argv, int argc, const char *username, void *privdata);
 
-int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
-	int argc, RedisCommandAsUserFunc cmd, const char *username, void *privdata);
 
+int run_redis_command_as_graph_internal_admin
+(
+	RedisModuleCtx *ctx,
+	RedisModuleString **argv,
+	int argc,
+	RedisCommandAsUserFunc cmd,
+	void *privdata
+);

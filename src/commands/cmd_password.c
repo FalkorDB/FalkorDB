@@ -81,11 +81,11 @@ int graph_password_cmd
  	const char *command = RedisModule_StringPtrLen(argv[1], NULL);
 	
 	if (strcasecmp(command, "ADD") == 0) {
-		return run_redis_command_as(ctx, argv, argc, _add_password_fun,
-		ADMIN_USER, NULL);
+		return run_redis_command_as_graph_internal_admin(ctx, argv, argc,
+			_add_password_fun, NULL);
 	} else if (strcasecmp(command, "REMOVE") == 0) {
-		return run_redis_command_as(ctx, argv, argc, _remove_password_fun,
-		ADMIN_USER, NULL);
+		return run_redis_command_as_graph_internal_admin(ctx, argv, argc,
+			_remove_password_fun, NULL);
 	} else {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
 		"Unknown command: GRAPH.PASSWORD %s, passible commands are [ADD, REMOVE]",
