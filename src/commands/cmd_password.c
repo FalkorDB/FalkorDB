@@ -142,7 +142,7 @@ static int _set_password_with_prefix
 	const char *passwordStr = 
 		RedisModule_StringPtrLen(password, &passwordStrLen);
 	char *passwordBuff = RedisModule_Alloc(passwordStrLen + 2);
-	sprintf(passwordBuff, "%c%s", prefix, passwordStr);
+	snprintf(passwordBuff, passwordStrLen + 2, "%c%s", prefix, passwordStr);
 
 	int ret = _set_password_fun(ctx, argv, argc, username, passwordBuff);
 	

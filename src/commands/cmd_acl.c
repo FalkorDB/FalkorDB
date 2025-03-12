@@ -60,7 +60,6 @@ int init_cmd_acl
 	if ((graph_readonly_commands == NULL) || 
 		(strcasecmp(graph_readonly_commands, "false") == 0)
 		|| (strcmp(graph_readonly_commands, "") == 0)) {
-        printf("not set\n");
 		return REDISMODULE_ERR;
     
     } 
@@ -68,7 +67,6 @@ int init_cmd_acl
 	if ((graph_commands == NULL) || 
 		(strcasecmp(graph_commands, "false") == 0)
 		|| (strcmp(graph_readonly_commands, "") == 0)) {
-        printf("not set\n");
 		return REDISMODULE_ERR;
     
     } 
@@ -76,7 +74,6 @@ int init_cmd_acl
 	if ((graph_admin_commands == NULL) || 
 		(strcasecmp(graph_admin_commands, "false") == 0)
 		|| (strcmp(graph_readonly_commands, "") == 0)) {
-        printf("not set\n");
 		return REDISMODULE_ERR;
     
     } 
@@ -299,7 +296,7 @@ static int _senitaze_acl_setuser
 			acl_argc++;
 			continue;
 		}
-		// @todo if it is one of the pseudo categories 
+		// if it is one of the pseudo categories 
 		// (@graph-admin, @graph-user or @graph-readonly-user), expand it
 		// and add the commands to acl_args
 		if (_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i], GRAPH_ADMIN)) {
@@ -519,6 +516,7 @@ static CommandCategory* _create_command_category
 		return NULL;
 	}
 	category->name = name;
+
 	// Count the number of substrings
 	int substrings = 0;
 	const char* ptr = commands_str;
@@ -528,6 +526,7 @@ static CommandCategory* _create_command_category
 		}
 		ptr++;
 	}
+
 	substrings++; // Add one for the last substring
 
 	// Allocate memory for the array of pointers
@@ -568,7 +567,7 @@ static CommandCategory* _create_command_category
 		substr[length + 2] = '\0'; // Null-terminate the substring
 		category->commands[i] = substr;
 
-		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
+		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_DEBUG,
 			"adding substr %s to category", substr + 1);
 
 		// create 2 strings for each command, one with '+' and one with '-'
@@ -590,97 +589,7 @@ static CommandCategory* _create_command_category
 		start = end + 1; // Move to the next substring
 	}
 
-	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
-		"***substrings count is %d", substrings);
 	category->length = substrings;
 	return category;
 	
 }
-// Splits a string into an array of substrings separated by spaces.
-// This function allocates memory for the array of pointers and for each substring.
-// The caller is responsible for freeing this memory when it is no longer needed.
-// param str, the input string to be split.
-// param arr, a pointer to a pointer that will hold the array of substrings.
-// param redis_arr, a pointer to a pointer that will hold the 
-// array of RedisModuleString.
-// param count, a pointer to an integer that will hold the number of substrings. 
-// return REDISMODULE_OK on success, REDISMODULE_ERR on failure.
-static int _init_command_category
-(
-	RedisModuleCtx *ctx,
-	const char* str, 
-	char *** arr,
-	RedisModuleString ***redis_arr,
-	int* count
-) {
-	ASSERT(ctx   != NULL);
-	ASSERT(arr   != NULL);
-	ASSERT(str   != NULL);
-	ASSERT(count != NULL);
-
-    // Count the number of substrings
-    int substrings = 0;
-    const char* ptr = str;
-    while (*ptr != '\0') {
-        if (*ptr == ' ') {
-            substrings++;
-        }
-        ptr++;
-    }
-    substrings++; // Add one for the last substring
-
-    // Allocate memory for the array of pointers
-    char** result = (char**)rm_malloc(substrings * sizeof(const char*));
-	RedisModuleString **redis_module_result = (RedisModuleString**)rm_malloc(substrings * sizeof(RedisModuleString*));
-    if (result == NULL) {
-        *count = 0;
-        return REDISMODULE_ERR;
-    } 
-	if (redis_module_result == NULL) {
-		*count = 0;
-		rm_free(result);
-		return REDISMODULE_ERR;
-	}
-	
-    // Split the string into substrings
-    const char* start = str;
-    for (int i = 0; i < substrings; i++) {
-        const char* end = strchr(start, ' ');
-        if (end == NULL) {
-			// If no more spaces, end at the end of the string
-            end = strchr(start, '\0'); 
-        }
-        size_t length = end - start;
-		 // Allocate memory for the substring
-        char* substr = (char*)rm_malloc(length + 1);
-        if (substr == NULL) {
-            // Handle allocation failure
-            for (int j = 0; j < i; j++) {
-                rm_free((char*)result[j]);
-            }
-            rm_free(result);
-            *count = 0;
-            return REDISMODULE_ERR;
-        }
-        strncpy(substr, start, length);
-        substr[length] = '\0'; // Null-terminate the substring
-        result[i] = substr;
-		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
-			"adding substr %s to category", substr);
-		redis_module_result[i] = RedisModule_CreateString(ctx, substr, length);
-		if (redis_module_result[i] == NULL) {
-			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
-				"creation of redis module string %s failed", substr);
-			return REDISMODULE_OK;	
-		}
-        start = end + 1; // Move to the next substring
-    }
-	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
-		"***substrings count is %d", substrings);
-    *count = substrings;
-	*arr = result;
-	*redis_arr = redis_module_result;
-    return REDISMODULE_OK;
-}
-
-
