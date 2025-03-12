@@ -279,7 +279,7 @@ static int _senitaze_acl_setuser
 
 	RedisModuleString **argv = *argv_ptr;
 	RedisModuleString **acl_args = 
-	RedisModule_Alloc(sizeof(RedisModuleString*) * (*argc + expand_offset));
+		rm_malloc(sizeof(RedisModuleString*) * (*argc + expand_offset));
 
 	if (acl_args == NULL) {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
@@ -313,23 +313,23 @@ static int _senitaze_acl_setuser
 		bool allowed = false;
 		if (_command_in_category(arg_str + 1, GRAPH_ADMIN, &allowed) 
 			!= REDISMODULE_OK) {
-			RedisModule_Free(argv);
-			RedisModule_Free(acl_args);
-			return REDISMODULE_ERR;
+				rm_free(argv);
+				rm_free(acl_args);
+				return REDISMODULE_ERR;
 		}
 		// same for GRAPH_USER
 		if (!allowed && (_command_in_category(arg_str + 1, GRAPH_USER, &allowed) 
 			!= REDISMODULE_OK)) {
-			RedisModule_Free(argv);
-			RedisModule_Free(acl_args);
-			return REDISMODULE_ERR;
+				rm_free(argv);
+				rm_free(acl_args);
+				return REDISMODULE_ERR;
 		}
 		// same for GRAPH_READONLY_USER
 		if (!allowed && (_command_in_category(arg_str + 1, GRAPH_READONLY_USER, 
 			&allowed) != REDISMODULE_OK)) {
-			RedisModule_Free(argv);
-			RedisModule_Free(acl_args);
-			return REDISMODULE_ERR;
+				rm_free(argv);
+				rm_free(acl_args);
+				return REDISMODULE_ERR;
 		}
 		if (allowed) {
 			acl_args[i] = argv[i];
@@ -337,7 +337,7 @@ static int _senitaze_acl_setuser
 		}
 	}
 
-	RedisModule_Free(argv);
+	rm_free(argv);
 	*argc = acl_argc;
 	*argv_ptr = acl_args;
 	return REDISMODULE_OK;
@@ -426,7 +426,7 @@ static int _execute_acl_cmd_fn
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);
-    RedisModule_Free(acl_args); 
+    rm_free(acl_args); 
 	return REDISMODULE_OK;
 }
 
