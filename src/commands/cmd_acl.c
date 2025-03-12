@@ -66,14 +66,14 @@ int init_cmd_acl
 	const char *graph_commands = getenv("GRAPH_USER");
 	if ((graph_commands == NULL) || 
 		(strcasecmp(graph_commands, "false") == 0)
-		|| (strcmp(graph_readonly_commands, "") == 0)) {
+		|| (strcmp(graph_commands, "") == 0)) {
 		return REDISMODULE_ERR;
     
     } 
 	const char *graph_admin_commands = getenv("GRAPH_ADMIN");
 	if ((graph_admin_commands == NULL) || 
 		(strcasecmp(graph_admin_commands, "false") == 0)
-		|| (strcmp(graph_readonly_commands, "") == 0)) {
+		|| (strcmp(graph_admin_commands, "") == 0)) {
 		return REDISMODULE_ERR;
     
     } 
@@ -88,7 +88,8 @@ int init_cmd_acl
 		goto cleanup;
 	}
 	if ((GRAPH_ADMIN = 
-		_create_command_category(ctx, graph_admin_commands, "@graph-admin")) == NULL) {
+		_create_command_category(ctx, graph_admin_commands, "@graph-admin")) 
+			== NULL) {
 		goto cleanup;
 	}
 	
@@ -564,7 +565,7 @@ static CommandCategory* _create_command_category
 		}
 		substr[0] = '+';
 		strncpy(substr + 1, start , length);
-		substr[length + 2] = '\0'; // Null-terminate the substring
+		substr[length + 1] = '\0'; // Null-terminate the substring
 		category->commands[i] = substr;
 
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_DEBUG,
