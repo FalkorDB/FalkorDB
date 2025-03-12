@@ -25,7 +25,7 @@ void RdbLoadNodes_v17
 void RdbLoadDeletedNodes_v17
 (
 	SerializerIO rdb,                  // RDB
-	GraphContext *gc,                  // graph context
+	Graph *g,                          // graph context
 	const uint64_t deleted_node_count  // number of deleted nodes
 );
 
@@ -33,15 +33,15 @@ void RdbLoadDeletedNodes_v17
 void RdbLoadEdges_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc,  // graph context
-	const uint64_t n   // number of edges to decode
+	Graph *g,          // graph context
+	const uint64_t n   // virtual key capacity
 );
 
 // decode deleted edges
 void RdbLoadDeletedEdges_v17
 (
 	SerializerIO rdb,                  // RDB
-	GraphContext *gc,                  // graph context
+	Graph *g,                          // graph context
 	const uint64_t deleted_edge_count  // number of deleted edges
 );
 
