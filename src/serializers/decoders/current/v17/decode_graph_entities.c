@@ -155,22 +155,22 @@ void RdbLoadNodes_v17
 void RdbLoadDeletedNodes_v17
 (
 	SerializerIO rdb,                  // RDB
-	GraphContext *gc,                  // graph context
+	Graph *g,                          // graph context
 	const uint64_t deleted_node_count  // number of deleted nodes
 ) {
 	// Format:
 	// node id X N
 
-	uint64_t prev_deleted_node_count = Graph_DeletedNodeCount(gc->g);
+	uint64_t prev_deleted_node_count = Graph_DeletedNodeCount(g);
 
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
-		Serializer_Graph_MarkNodeDeleted(gc->g, id);
+		Serializer_Graph_MarkNodeDeleted(g, id);
 	}
 
 	// read encoded deleted node count and validate
 	ASSERT(deleted_node_count + prev_deleted_node_count ==
-			Graph_DeletedNodeCount(gc->g));
+			Graph_DeletedNodeCount(g));
 }
 
 // decode edge relationship header
@@ -200,7 +200,7 @@ static void _DecodeRelationHeader
 static uint64_t _DecodeTensors
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc,  // graph context
+	Graph *g,          // graph context
 	RelationID r       // relationship type
 ) {
 	// format:
@@ -218,9 +218,11 @@ static uint64_t _DecodeTensors
 	const int BATCH_SIZE    = 16384;  // batch size
 
 	// tensors batch
-	EdgeID tensors_ids  [BATCH_SIZE];
-	NodeID tensors_srcs [BATCH_SIZE];
-	NodeID tensors_dests[BATCH_SIZE];
+	EdgeID ids  [BATCH_SIZE];
+	NodeID srcs [BATCH_SIZE];
+	NodeID dests[BATCH_SIZE];
+
+	Tensor R = Graph_GetRelationMatrix(g, r, false);
 
 	// as long as we didn't hit our END MARKER
 	while(true) {
@@ -236,7 +238,7 @@ static uint64_t _DecodeTensors
 		decoded_edges++;
 
 		// load edge attributes
-		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		Serializer_Graph_AllocEdgeAttributes(g, e.id, &e);
 		_RdbLoadEntity(rdb, (GraphEntity *)&e);
 
 		// decode tensor flag
@@ -247,9 +249,9 @@ static uint64_t _DecodeTensors
 
 		// batch tensor
 		// decode edge source and destination node ids
-		tensors_ids  [tensor_idx] = e.id;
-		tensors_srcs [tensor_idx] = SerializerIO_ReadUnsigned(rdb);
-		tensors_dests[tensor_idx] = SerializerIO_ReadUnsigned(rdb);
+		ids  [tensor_idx] = e.id;
+		srcs [tensor_idx] = SerializerIO_ReadUnsigned(rdb);
+		dests[tensor_idx] = SerializerIO_ReadUnsigned(rdb);
 		tensor_idx++;  // advance batch index
 
 		//----------------------------------------------------------------------
@@ -257,8 +259,8 @@ static uint64_t _DecodeTensors
 		//----------------------------------------------------------------------
 
 		if(tensor_idx == BATCH_SIZE) {
-			Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
-					tensors_dests, tensors_ids, tensor_idx, true);
+			// create tensors
+			Tensor_SetElements(R, srcs, dests, ids, tensor_idx);
 
 			// reset batch count
 			tensor_idx = 0;
@@ -270,8 +272,8 @@ static uint64_t _DecodeTensors
 	//----------------------------------------------------------------------
 
 	if(tensor_idx > 0) {
-		Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
-				tensors_dests, tensors_ids, tensor_idx, true);
+		// create tensors
+		Tensor_SetElements(R, srcs, dests, ids, tensor_idx);
 	}
 
 	return decoded_edges;
@@ -315,7 +317,7 @@ static uint64_t _DecodeEdges
 void RdbLoadEdges_v17
 (
 	SerializerIO rdb,  // RDB
-	GraphContext *gc,  // graph context
+	Graph *g,          // graph context
 	const uint64_t n   // virtual key capacity
 ) {
 	// format:
@@ -331,46 +333,46 @@ void RdbLoadEdges_v17
 	bool tensor;
 	RelationID r;
 	uint64_t decoded_edges   = 0;
-	uint64_t prev_edge_count = Graph_EdgeCount(gc->g); // #edges in the graph
+	uint64_t prev_edge_count = Graph_EdgeCount(g); // #edges in the graph
 
 	for(uint64_t i = 0; i < n;) {
 		// decode relation header
 		_DecodeRelationHeader(rdb, &r, &tensor);
 
 		if(tensor) {
-			decoded_edges = _DecodeTensors(rdb, gc, r);
+			decoded_edges = _DecodeTensors(rdb, g, r);
 		} else {
-			decoded_edges = _DecodeEdges(rdb, gc->g);
+			decoded_edges = _DecodeEdges(rdb, g);
 		}
 
 		// update graph edge count statistics
-		GraphStatistics_IncEdgeCount(&gc->g->stats, r, decoded_edges);
+		GraphStatistics_IncEdgeCount(&g->stats, r, decoded_edges);
 		i += decoded_edges;
 	}
 
 	// read encoded deleted edge count and validate
-	ASSERT(n + prev_edge_count == Graph_EdgeCount(gc->g));
+	ASSERT(n + prev_edge_count == Graph_EdgeCount(g));
 }
 
 // decode deleted edges
 void RdbLoadDeletedEdges_v17
 (
 	SerializerIO rdb,                  // RDB
-	GraphContext *gc,                  // graph context
+	Graph *g,                          // graph context
 	const uint64_t deleted_edge_count  // number of deleted edges
 ) {
 	// Format:
 	// edge id X N
 
-	uint64_t prev_deleted_edge_count = Graph_DeletedEdgeCount(gc->g);
+	uint64_t prev_deleted_edge_count = Graph_DeletedEdgeCount(g);
 
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = SerializerIO_ReadUnsigned(rdb);
-		Serializer_Graph_MarkEdgeDeleted(gc->g, id);
+		Serializer_Graph_MarkEdgeDeleted(g, id);
 	}
 
 	// read encoded deleted edge count and validate
 	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
-			Graph_DeletedEdgeCount(gc->g));
+			Graph_DeletedEdgeCount(g));
 }
 

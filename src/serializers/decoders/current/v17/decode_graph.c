@@ -233,40 +233,42 @@ GraphContext *RdbLoadGraphContext_latest
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %zu/%llu nodes",
 						GraphContext_GetName(gc),
-						Graph_UncompactedNodeCount(gc->g),
+						Graph_UncompactedNodeCount(g),
 						gc->decoding_context->node_count);
 
 				break;
+
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v17(rdb, gc, payload.entities_count);
+				RdbLoadDeletedNodes_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %u/%lld deleted nodes",
 						GraphContext_GetName(gc),
-						Graph_DeletedNodeCount(gc->g),
+						Graph_DeletedNodeCount(g),
 						gc->decoding_context->deleted_node_count);
 
 				break;
+
 			case ENCODE_STATE_EDGES:
-				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v17(rdb, gc, payload.entities_count);
+				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+				RdbLoadEdges_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %lld/%lld edges",
-						GraphContext_GetName(gc), Graph_EdgeCount(gc->g),
+						GraphContext_GetName(gc), Graph_EdgeCount(g),
 						gc->decoding_context->edge_count);
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v17(rdb, gc, payload.entities_count);
+				RdbLoadDeletedEdges_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %u/%lld deleted edges",
 						GraphContext_GetName(gc),
-						Graph_DeletedEdgeCount(gc->g),
+						Graph_DeletedEdgeCount(g),
 						gc->decoding_context->deleted_edge_count);
 
 				break;
