@@ -91,7 +91,7 @@ static bool _should_replicate_effects(void)
 	Config_Option_get(Config_EFFECTS_THRESHOLD, &effects_threshold);
 
 	if(effects_threshold == 0) {
-		// allways use GRAPH.EFFECT
+		// Always use GRAPH.EFFECT when effects_threshold is explicitly disabled.
 		return true;
 	}
 
