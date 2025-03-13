@@ -7,63 +7,130 @@
 #include "op_argument.h"
 #include "RG.h"
 
-// Forward declarations
+// forward declarations
 static Record ArgumentConsume(OpBase *opBase);
 static OpResult ArgumentReset(OpBase *opBase);
 static OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void ArgumentFree(OpBase *opBase);
 
-OpBase *NewArgumentOp(const ExecutionPlan *plan, const char **variables) {
-	Argument *op = rm_malloc(sizeof(Argument));
-	op->r = NULL;
+// create a new OpArgument operation
+OpBase *NewArgumentOp
+(
+	const ExecutionPlan *plan,  // execution plan
+	const char **variables      // variables introduced by operation
+) {
+	ASSERT(plan != NULL);
 
-	// Set our Op operations
+	OpArgument *op = rm_calloc(1, sizeof(OpArgument));
+
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_ARGUMENT, "Argument", NULL,
-				ArgumentConsume, ArgumentReset, NULL, ArgumentClone, ArgumentFree, false, plan);
+				ArgumentConsume, ArgumentReset, NULL, ArgumentClone,
+				ArgumentFree, false, plan);
 
-	uint variable_count = array_len(variables);
-	for(uint i = 0; i < variable_count; i ++) {
+	// introduce modifies
+	uint n = array_len(variables);
+	for(uint i = 0; i < n; i++) {
 		OpBase_Modifies((OpBase *)op, variables[i]);
 	}
 
 	return (OpBase *)op;
 }
 
-static Record ArgumentConsume(OpBase *opBase) {
-	Argument *arg = (Argument *)opBase;
+// consume function
+// emit internal record once
+static Record ArgumentConsume
+(
+	OpBase *opBase
+) {
+	ASSERT(opBase != NULL);
 
-	// Emit the record only once.
-	// arg->r can already be NULL if the op is depleted.
+	OpArgument *arg = (OpArgument *)opBase;
+
+	// emit the record only once
+	// arg->r can already be NULL if the op is depleted
 	Record r = arg->r;
+
 	arg->r = NULL;
 	return r;
 }
 
-static OpResult ArgumentReset(OpBase *opBase) {
-	// Reset operation, freeing the Record if one is held.
-	Argument *arg = (Argument *)opBase;
+// reset function
+// restore 'r'
+static OpResult ArgumentReset
+(
+	OpBase *opBase
+) {
+	ASSERT(opBase != NULL);
 
-	if(arg->r) {
-		OpBase_DeleteRecord(&arg->r);
+	OpArgument *arg = (OpArgument *)opBase;
+
+	// restore original record if 'r' was emitted
+	// and '_r' is present
+	if(arg->r == NULL && arg->_r != NULL) {
+		// restore original record
+		arg->r = arg->_r;
+
+		// create a copy for later restoration
+		arg->_r = OpBase_CreateRecord(opBase);
+		Record_Clone(arg->r, arg->_r);
 	}
 
 	return OP_OK;
 }
 
-void Argument_AddRecord(Argument *arg, Record r) {
-	ASSERT(!arg->r && "tried to insert into a populated Argument op");
+
+// set's the operation record
+void Argument_AddRecord
+(
+	OpArgument *arg,  // argument operation
+	Record r          // record to set
+) {
+	ASSERT(r   != NULL);
+	ASSERT(arg != NULL);
+
+	// free current 'r' and '_r'
+	if(arg->r != NULL) {
+		OpBase_DeleteRecord(&arg->r);
+	}
+
+	if(arg->_r != NULL) {
+		OpBase_DeleteRecord(&arg->_r);
+	}
+
+	// set record
 	arg->r = r;
+
+	// backup record for later restoration upon reset
+	arg->_r = OpBase_CreateRecord((OpBase*)arg);
+	Record_Clone(r, arg->_r);
 }
 
-static inline OpBase *ArgumentClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *ArgumentClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_ARGUMENT);
 	return NewArgumentOp(plan, opBase->modifies);
 }
 
-static void ArgumentFree(OpBase *opBase) {
-	Argument *arg = (Argument *)opBase;
-	if(arg->r) {
+static void ArgumentFree
+(
+	OpBase *opBase
+) {
+	OpArgument *arg = (OpArgument *)opBase;
+
+	// free record and its backup
+
+	if(arg->r != NULL) {
 		OpBase_DeleteRecord(&arg->r);
+		arg->r = NULL;
+	}
+
+	if(arg->_r != NULL) {
+		OpBase_DeleteRecord(&arg->_r);
+		arg->_r = NULL;
 	}
 }
 

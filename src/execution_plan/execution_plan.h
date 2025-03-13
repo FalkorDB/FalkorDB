@@ -15,12 +15,12 @@
 typedef struct ExecutionPlan ExecutionPlan;
 
 struct ExecutionPlan {
-	OpBase *root;                       // Root operation of overall ExecutionPlan.
-	AST *ast_segment;                   // The segment which the current ExecutionPlan segment is built from.
-	rax *record_map;                    // Mapping between identifiers and record indices.
-	QueryGraph *query_graph;            // QueryGraph representing all graph entities in this segment.
+	OpBase *root;             // root operation of overall ExecutionPlan
+	AST *ast_segment;         // the segment which the current ExecutionPlan segment is built from
+	rax *record_map;          // mapping between identifiers and record indices
+	QueryGraph *query_graph;  // queryGraph representing all graph entities in this segment
 	ObjectPool *record_pool;
-	bool prepared;                      // Indicates if the execution plan is ready for execute.
+	bool prepared;            // indicates if the execution plan is ready for execute
 };
 
 // creates a new execution plan from AST
@@ -41,7 +41,7 @@ void ExecutionPlan_PopulateExecutionPlan
 	ExecutionPlan *plan
 );
 
-// re position filter op.
+// reposition filter op
 void ExecutionPlan_RePositionFilterOp
 (
 	ExecutionPlan *plan,
@@ -50,33 +50,33 @@ void ExecutionPlan_RePositionFilterOp
 	OpBase *filter
 );
 
-// retrieve the map of aliases to Record offsets in this ExecutionPlan segment.
+// retrieve the map of aliases to Record offsets in this ExecutionPlan segment
 rax *ExecutionPlan_GetMappings
 (
 	const ExecutionPlan *plan
 );
 
-// retrieves a Record from the ExecutionPlan's Record pool.
+// retrieves a Record from the ExecutionPlan's Record pool
 Record ExecutionPlan_BorrowRecord
 (
 	ExecutionPlan *plan
 );
 
-// free Record contents and return it to the Record pool.
+// free Record contents and return it to the Record pool
 void ExecutionPlan_ReturnRecord
 (
 	const ExecutionPlan *plan,
 	Record r
 );
 
-// prints execution plan.
+// prints execution plan
 void ExecutionPlan_Print
 (
 	const ExecutionPlan *plan,
 	RedisModuleCtx *ctx
 );
 
-// initialize all operations in an ExecutionPlan.
+// initialize all operations in an ExecutionPlan
 void ExecutionPlan_Init
 (
 	ExecutionPlan *plan

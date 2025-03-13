@@ -91,6 +91,7 @@ void OpBase_Init
 	op->consume  = _InitialConsume;  // initial consume wrapper function
 	op->_consume = consume;          // op's consume function
 	op->toString = toString;
+	op->awareness = HashTableCreate(&string_dt);
 
 	op->init  = (init)  ? init  : _OpBase_init_noop;
 	op->reset = (reset) ? reset : _OpBase_reset_noop;
@@ -105,6 +106,18 @@ inline Record OpBase_Consume
 	return op->consume(op);
 }
 
+// add alias to op's awareness table
+void OpBase_AwareOf
+(
+	OpBase *op,        // op to update
+	const char *alias  // alias to add
+) {
+	ASSERT(op    != NULL);
+	ASSERT(alias != NULL);
+
+	HashTableAdd(op->awareness, (void*)alias, NULL);
+}
+
 // mark alias as being modified by operation
 // returns the ID associated with alias
 int OpBase_Modifies
@@ -112,7 +125,10 @@ int OpBase_Modifies
 	OpBase *op,
 	const char *alias
 ) {
-	if(!op->modifies) op->modifies = array_new(const char *, 1);
+	if(!op->modifies) {
+		op->modifies = array_new(const char *, 1);
+	}
+
 	array_append(op->modifies, alias);
 
 	// make sure alias has an entry associated with it
@@ -124,6 +140,9 @@ int OpBase_Modifies
 		id = (void *)raxSize(mapping);
 		raxInsert(mapping, (unsigned char *)alias, strlen(alias), id, NULL);
 	}
+
+	// add alias to op's awareness table
+	OpBase_AwareOf(op, alias);
 
 	return (intptr_t)id;
 }
@@ -415,10 +434,12 @@ void OpBase_Free
 	OpBase *op
 ) {
 	// free internal operation
-	if(op->free) op->free(op);
+	if(op->free)     op->free(op);
 	if(op->children) rm_free(op->children);
 	if(op->modifies) array_free(op->modifies);
-	if(op->stats) rm_free(op->stats);
+	if(op->stats)    rm_free(op->stats);
+
+	HashTableRelease(op->awareness);
 	rm_free(op);
 }
 

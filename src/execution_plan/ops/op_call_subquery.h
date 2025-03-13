@@ -27,7 +27,7 @@ typedef enum {
 
 typedef struct Feeder{
 	union {
-		Argument **arguments;
+		OpArgument **arguments;
 		ArgumentList **argumentLists;
 	};
 	FeederType type;
