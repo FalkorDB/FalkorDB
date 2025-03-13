@@ -21,15 +21,16 @@ void RocksDB_init() {
 	// // Set # of online cores
 	// rocksdb_options_increase_parallelism(options, (int)(cpus));
 	rocksdb_options_increase_parallelism(options, 1);
-	rocksdb_options_optimize_level_style_compaction(options, 0);
-	rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
-	rocksdb_block_based_options_set_block_size(table_options, 4096);
-	rocksdb_options_set_block_based_table_factory(options, table_options);
-	// create the DB if it's not already present
+	rocksdb_options_set_optimize_filters_for_hits(options, 1);
+	rocksdb_block_based_options_set_no_block_cache(options, 1);
+	// rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
+	// rocksdb_block_based_options_set_block_size(table_options, 4096);
+	// rocksdb_options_set_block_based_table_factory(options, table_options);
+	// // create the DB if it's not already present
 	rocksdb_options_set_create_if_missing(options, 1);
 	rocksdb_options_set_max_open_files(options, 100);
 	rocksdb_options_set_write_buffer_size(options, 16 * 1024 * 1024);
-	rocksdb_options_set_max_write_buffer_number(options, 3);
+	// rocksdb_options_set_max_write_buffer_number(options, 2);
 
 	// open DB
 	char *err = NULL;
