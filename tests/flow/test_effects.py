@@ -783,13 +783,12 @@ class testEffects():
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(res.properties_set, 2)
 
-        if(expect_effect):
+        if expect_effect:
             self.wait_for_effect()
+            self.assert_graph_eq()
         else:
             self.wait_for_query()
-
-        if expect_effect:
-            self.assert_graph_eq()
+            # graphs will likely differ.
 
     def test16_rerun_disable_effects(self):
         # test replication works when effects are disabled
