@@ -439,8 +439,8 @@ static int _execute_acl_cmd_as_admin
 ) {
 	ASSERT(ctx != NULL);
 	ASSERT(argv != NULL);
-	return run_redis_command_as_graph_internal_admin(ctx, argv, argc,
-		 _execute_acl_cmd_fn, NULL);
+	return run_redis_command_as(ctx, argv, argc, _execute_acl_cmd_fn,ADMIN_USER, 
+	NULL);
 }
 
 
@@ -569,9 +569,10 @@ static CommandCategory* _create_command_category
 		category->commands[i] = substr;
 
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_DEBUG,
-			"adding substr '%s' to category %s", substr + 1, category->name);
+			"adding substr %s to category", substr + 1);
 
 		// create 2 strings for each command, one with '+' and one with '-'
+		
 		category->redis_module_commands_plus[i] = 
 			RedisModule_CreateString(ctx, substr, length + 1);
 
