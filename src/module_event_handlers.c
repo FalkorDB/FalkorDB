@@ -19,6 +19,7 @@
 #include "configuration/config.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
+#include "commands/util/run_redis_command_as.h"
 
 // indicates the possibility of half-baked graphs in the keyspace
 #define INTERMEDIATE_GRAPHS (aux_field_counter > 0)
@@ -361,6 +362,7 @@ static void _ShutdownEventHandler
 	RediSearch_CleanupModule();
 
     free_cmd_acl();
+	// free_run_cmd_as();
 
 	BoltApi_Unregister();
 

@@ -7,7 +7,7 @@
 
 #include "../../redismodule.h"
 
-extern const char *ADMIN_USER;
+extern char *ADMIN_USER;
 
 typedef int (*RedisCommandAsUserFunc)(RedisModuleCtx *ctx,
 	RedisModuleString **argv, int argc, const char *username, void *privdata);
@@ -15,3 +15,12 @@ typedef int (*RedisCommandAsUserFunc)(RedisModuleCtx *ctx,
 int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
 	int argc, RedisCommandAsUserFunc cmd, const char *username, void *privdata);
 
+
+void init_run_cmd_as
+(
+	RedisModuleCtx *ctx
+);
+
+void free_run_cmd_as
+(
+);

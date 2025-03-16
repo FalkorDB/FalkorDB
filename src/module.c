@@ -33,6 +33,7 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "commands/util/run_redis_command_as.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 7
@@ -250,6 +251,9 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
+	// let use ovveride the default admin user that use with the impersonate
+	// commands, default is 'default'
+	init_run_cmd_as(ctx);
 
 	if (init_cmd_acl(ctx) == REDISMODULE_OK) {
 		if(RedisModule_CreateCommand(ctx, "graph.ACL", graph_acl_cmd,

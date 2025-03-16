@@ -60,33 +60,35 @@ int init_cmd_acl
 	if ((graph_readonly_commands == NULL) || 
 		(strcasecmp(graph_readonly_commands, "false") == 0)
 		|| (strcmp(graph_readonly_commands, "") == 0)) {
-		return REDISMODULE_ERR;
+		goto cleanup;
     
-    } 
-	const char *graph_commands = getenv("GRAPH_USER");
-	if ((graph_commands == NULL) || 
-		(strcasecmp(graph_commands, "false") == 0)
-		|| (strcmp(graph_commands, "") == 0)) {
-		return REDISMODULE_ERR;
-    
-    } 
-	const char *graph_admin_commands = getenv("GRAPH_ADMIN");
-	if ((graph_admin_commands == NULL) || 
-		(strcasecmp(graph_admin_commands, "false") == 0)
-		|| (strcmp(graph_admin_commands, "") == 0)) {
-		return REDISMODULE_ERR;
-    
-    } 
-	// create the CommandCategory structures
+    }
+	// create the CommandCategory structures for readonly commands
 	if ((GRAPH_READONLY_USER = 
 		_create_command_category(ctx, graph_readonly_commands, 
 			"@graph-readonly-user")) == NULL) {
 		goto cleanup;
 	}
+	 
+	const char *graph_commands = getenv("GRAPH_USER");
+	if ((graph_commands == NULL) || 
+		(strcasecmp(graph_commands, "false") == 0)
+		|| (strcmp(graph_commands, "") == 0)) {
+		goto cleanup;
+    } 
+
 	if ((GRAPH_USER = 
 		_create_command_category(ctx, graph_commands, "@graph-user")) == NULL) {
 		goto cleanup;
 	}
+
+	const char *graph_admin_commands = getenv("GRAPH_ADMIN");
+	if ((graph_admin_commands == NULL) || 
+		(strcasecmp(graph_admin_commands, "false") == 0)
+		|| (strcmp(graph_admin_commands, "") == 0)) {
+		goto cleanup;
+    
+    } 
 	if ((GRAPH_ADMIN = 
 		_create_command_category(ctx, graph_admin_commands, "@graph-admin")) 
 			== NULL) {
@@ -439,7 +441,7 @@ static int _execute_acl_cmd_as_admin
 ) {
 	ASSERT(ctx != NULL);
 	ASSERT(argv != NULL);
-	return run_redis_command_as(ctx, argv, argc, _execute_acl_cmd_fn,ADMIN_USER, 
+	return run_redis_command_as(ctx, argv, argc, _execute_acl_cmd_fn, ADMIN_USER, 
 	NULL);
 }
 

@@ -5,10 +5,22 @@
 
 
 #include <string.h>
+#include <stdlib.h>
 #include "run_redis_command_as.h"
 
-const char *ADMIN_USER = "default";
-//todo maybe scan for a user with @admin or @all using redis acl
+
+char *ADMIN_USER = "default";
+
+// let user ovveride the default admin user
+void init_run_cmd_as
+(
+	RedisModuleCtx *ctx
+){
+	const char *admin_user = getenv("GRAPH_ADMIN_USER");
+	if (admin_user != NULL) {
+		ADMIN_USER = strdup(admin_user);
+	}
+}
 
 // authenticate as a 'username' user
 static int _switch_user
