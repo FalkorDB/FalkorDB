@@ -41,13 +41,13 @@ void ExecutionPlan_PopulateExecutionPlan
 	ExecutionPlan *plan
 );
 
-// reposition filter op
+// reposition a filter operation to the earliest position within the plan
+// at which the filter can be evaluate
 void ExecutionPlan_RePositionFilterOp
 (
-	ExecutionPlan *plan,
-	OpBase *lower_bound,
-	const OpBase *upper_bound,
-	OpBase *filter
+	ExecutionPlan *plan,  // plan
+	OpBase *root,         // root
+	OpBase *filter        // filter
 );
 
 // retrieve the map of aliases to Record offsets in this ExecutionPlan segment

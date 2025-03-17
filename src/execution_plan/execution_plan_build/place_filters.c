@@ -30,7 +30,10 @@ static inline void _PushDownPathFilters
 	}
 }
 
-static void _ExecutionPlan_PlaceApplyOps(ExecutionPlan *plan) {
+static void _ExecutionPlan_PlaceApplyOps
+(
+	ExecutionPlan *plan
+) {
 	OpBase **filter_ops = ExecutionPlan_CollectOps(plan->root, OPType_FILTER);
 	uint filter_ops_count = array_len(filter_ops);
 	for(uint i = 0; i < filter_ops_count; i++) {
@@ -51,10 +54,9 @@ static void _ExecutionPlan_PlaceApplyOps(ExecutionPlan *plan) {
 // at which the filter can be evaluate
 void ExecutionPlan_RePositionFilterOp
 (
-	ExecutionPlan *plan,        // plan
-	OpBase *lower_bound,        // lower boundry
-	const OpBase *upper_bound,  // upper boundry
-	OpBase *filter              // filter
+	ExecutionPlan *plan,  // plan
+	OpBase *root,         // root
+	OpBase *filter        // filter
 ) {
 	// validate inputs
 	ASSERT(plan != NULL);
@@ -86,9 +88,8 @@ void ExecutionPlan_RePositionFilterOp
 	if(references_count > 0) {
 		// scan execution plan, locate the earliest position where all
 		// references been resolved
-		op = ExecutionPlan_LocateReferencesExcludingOps(lower_bound,
-				upper_bound, FILTER_RECURSE_BLACKLIST, BLACKLIST_OP_COUNT,
-				references);
+		op = ExecutionPlan_LocateReferencesExcludingOps(root,
+				FILTER_RECURSE_BLACKLIST, BLACKLIST_OP_COUNT, references);
 		if(!op) {
 			// failed to resolve all filter references
 			Error_InvalidFilterPlacement(references);
@@ -106,6 +107,8 @@ void ExecutionPlan_RePositionFilterOp
 		op = (op == NULL) ? plan->root : op;
 	}
 
+	ASSERT(op != NULL);
+
 	// in case this is a pre-existing filter
 	// (this function is not called out from ExecutionPlan_PlaceFilterOps)
 	if(filter->childCount > 0) {
@@ -114,10 +117,6 @@ void ExecutionPlan_RePositionFilterOp
 			ExecutionPlan_RemoveOp(plan, (OpBase *)filter);
 			ExecutionPlan_PushBelow(op, (OpBase *)filter);
 		}
-	} else if(op == NULL) {
-		// no root was found, place filter at the root
-		ExecutionPlan_UpdateRoot(plan, (OpBase *)filter);
-		op = filter;
 	} else {
 		// this is a new filter
 		ExecutionPlan_PushBelow(op, (OpBase *)filter);
@@ -126,7 +125,7 @@ void ExecutionPlan_RePositionFilterOp
 	// filter may have migrated a segment, update the filter segment
 	// and check if the segment root needs to be updated
 	// the filter should be associated with the op's segment
-	filter->plan = op->plan;
+	ASSERT(filter->plan == op->plan);
 
 	// re-set the segment root if needed
 	if(op == op->plan->root) {
@@ -141,10 +140,9 @@ void ExecutionPlan_RePositionFilterOp
 // place filter ops at the appropriate positions within the op tree
 void ExecutionPlan_PlaceFilterOps
 (
-	ExecutionPlan *plan,           // plan 
-	OpBase *root,                  // root
-	const OpBase *recurse_limit,   // boundry
-	FT_FilterNode *ft              // filter-tree to position
+	ExecutionPlan *plan,  // plan
+	OpBase *root,         // root
+	FT_FilterNode *ft     // filter-tree to position
 ) {
 	ASSERT(plan != NULL);
 	ASSERT(root != NULL);
@@ -170,10 +168,10 @@ void ExecutionPlan_PlaceFilterOps
 		FT_FilterNode *tree = FilterTree_Clone(sub_trees[i]);
 
 		// create a filter operation
-		OpBase *op = NewFilterOp(plan, tree);
+		OpBase *filter = NewFilterOp(plan, tree);
 
 		// position filter op
-		ExecutionPlan_RePositionFilterOp(plan, root, recurse_limit, op);
+		ExecutionPlan_RePositionFilterOp(plan, root, filter);
 	}
 
 	// all trees been positioned, clean up

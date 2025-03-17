@@ -30,7 +30,7 @@ static void _OpBase_AddChild
 	// add parent to child
 	child->parent = parent;
 
-	ExecutionPlanAwareness_AddOp(child);
+	ExecutionPlanAwareness_PropagateAwareness(child);
 }
 
 // remove the operation old_child from its parent and replace it
@@ -43,13 +43,19 @@ static void _ExecutionPlan_ParentReplaceChild
 ) {
 	ASSERT(parent->childCount > 0);
 
-	for(int i = 0; i < parent->childCount; i ++) {
+	for(int i = 0; i < parent->childCount; i++) {
 		// scan the children array to find the op being replaced
 		if(parent->children[i] != old_child) continue;
+
+		ExecutionPlanAwareness_RemoveAwareness(new_child);
+		ExecutionPlanAwareness_RemoveAwareness(old_child);
 
 		// replace the original child with the new one
 		parent->children[i] = new_child;
 		new_child->parent = parent;
+		old_child->parent = NULL;
+
+		ExecutionPlanAwareness_PropagateAwareness(new_child);
 		return;
 	}
 
@@ -65,6 +71,7 @@ static void _OpBase_RemoveChild
 	ASSERT(child  != NULL);
 	ASSERT(parent != NULL);
 	ASSERT(parent != child);
+	ASSERT(child->parent == parent);
 
 	//--------------------------------------------------------------------------
 	// remove child from parent
@@ -75,8 +82,6 @@ static void _OpBase_RemoveChild
 	for(; i < parent->childCount; i++) {
 		if(parent->children[i] == child) break;
 	}
-
-	ASSERT(i != parent->childCount);
 
 	// update child count
 	parent->childCount--;
@@ -94,7 +99,7 @@ static void _OpBase_RemoveChild
 	}
 
 	// update parent awareness
-	ExecutionPlanAwareness_RemoveOp(child);
+	ExecutionPlanAwareness_RemoveAwareness(child);
 
 	// remove parent from child
 	child->parent = NULL;
@@ -109,7 +114,7 @@ inline void ExecutionPlan_AddOp
 	_OpBase_AddChild(parent, newOp);
 }
 
-// adds child to be the ind'th child of parent
+// adds child to be the i'th child of parent
 void ExecutionPlan_AddOpInd
 (
 	OpBase *parent,  // parent op
@@ -127,6 +132,7 @@ void ExecutionPlan_AddOpInd
 	child->parent = parent;
 
 	_OpBase_AddChild(parent, to_replace);
+	ExecutionPlanAwareness_PropagateAwareness(child);
 }
 
 // introduce the new operation B between A and A's parent op
@@ -135,9 +141,10 @@ void ExecutionPlan_PushBelow
 	OpBase *a,
 	OpBase *b
 ) {
-	ASSERT(a != NULL);
-	ASSERT(b != NULL);
-	ASSERT(a != b);
+	ASSERT(a         != b);
+	ASSERT(a         != NULL);
+	ASSERT(b         != NULL);
+	ASSERT(b->parent == NULL);
 
 	// B belongs to A's plan
 	ExecutionPlan *plan = (ExecutionPlan *)a->plan;
@@ -157,43 +164,31 @@ void ExecutionPlan_PushBelow
 	_OpBase_AddChild(b, a);
 }
 
-void ExecutionPlan_NewRoot
+// update the root op of the execution plan
+void ExecutionPlan_UpdateRoot
 (
-	OpBase *old_root,
-	OpBase *new_root
+	ExecutionPlan *plan,  // plan set root of
+	OpBase *new_root      // new root operation
 ) {
-	ASSERT(old_root != NULL);
-	ASSERT(new_root != NULL);
-	ASSERT(new_root != old_root);
-
-	// the new root should have no parent
-	// but may have children if we've constructed
-	// a chain of traversals/scans
-	ASSERT(!old_root->parent && !new_root->parent);
-
-	// find the deepest child of the new root operation
-	// currently, we can only follow the first child
-	// since we don't call this function when
-	// introducing a multiple-stream operation at this stage
-	// this may be inadequate later
-	OpBase *tail = new_root;
-	ASSERT(tail->childCount <= 1);
-	while(tail->childCount > 0) tail = tail->children[0];
-
-	// append the old root to the tail of the new root's chain
-	_OpBase_AddChild(tail, old_root);
-}
-
-inline void ExecutionPlan_UpdateRoot
-(
-	ExecutionPlan *plan,
-	OpBase *new_root
-) {
-	ASSERT(plan     != NULL);
-	ASSERT(new_root != NULL);
+	ASSERT(plan             != NULL);
+	ASSERT(new_root         != NULL);
+	ASSERT(new_root->parent == NULL);
 
 	if(plan->root) {
-		ExecutionPlan_NewRoot(plan->root, new_root);
+		ASSERT(new_root != plan->root);
+		ASSERT(plan->root->parent == NULL);
+
+		// find the deepest child of the new root operation
+		// currently, we can only follow the first child
+		// since we don't call this function when
+		// introducing a multiple-stream operation at this stage
+		// this may be inadequate later
+		OpBase *tail = new_root;
+		ASSERT(tail->childCount <= 1);
+		while(tail->childCount > 0) tail = tail->children[0];
+
+		// append the old root to the tail of the new root's chain
+		_OpBase_AddChild(tail, plan->root);
 	}
 
 	plan->root = new_root;
@@ -239,8 +234,6 @@ void ExecutionPlan_RemoveOp
 	} else {
 		OpBase *parent = op->parent;
 		if(op->childCount > 0) {
-			ExecutionPlanAwareness_RemoveOp(op);
-
 			// in place replacement of the op first branch instead of op
 			_ExecutionPlan_ParentReplaceChild(op->parent, op, op->children[0]);
 
@@ -259,6 +252,7 @@ void ExecutionPlan_RemoveOp
 	rm_free(op->children);
 	op->children = NULL;
 	op->childCount = 0;
+	ExecutionPlanAwareness_SelfAware(op);
 }
 
 // detaches operation from its parent
@@ -271,39 +265,50 @@ void ExecutionPlan_DetachOp
 
 	// remove op from its parent
 	_OpBase_RemoveChild(op->parent, op);
-
-	// update parent awareness
-	ExecutionPlanAwareness_RemoveBranch(op);
-
-	op->parent = NULL;
 }
 
-// for all ops in the given tree, associate the provided ExecutionPlan
-// if qg is set, merge the query graphs of the temporary and main plans
-void ExecutionPlan_BindOpsToPlan
+static void _ExecutionPlan_BindOpsToPlan
 (
 	ExecutionPlan *plan,  // plan to bind the operations to
-	OpBase *root,         // root operation
-	bool qg               // whether to merge QueryGraphs or not
+	OpBase *root          // root operation
 ) {
 	if(!root) return;
 
-	if(qg) {
-		// if the temporary execution plan has added new QueryGraph entities,
-		// migrate them to the master plan's QueryGraph
-		QueryGraph_MergeGraphs(plan->query_graph, root->plan->query_graph);
-	}
-
 	root->plan = plan;
-	for(int i = 0; i < root->childCount; i ++) {
-		ExecutionPlan_BindOpsToPlan(plan, root->children[i], qg);
+	for(int i = 0; i < root->childCount; i++) {
+		OpBase *child = OpBase_GetChild(root, i);
+		bool different_plans = (root->plan != child->plan);
+
+		_ExecutionPlan_BindOpsToPlan(plan, child);
+
+		if(different_plans) {
+			ExecutionPlanAwareness_PropagateAwareness(child);
+		}
 	}
+}
+
+// for all ops in the given tree, associate the provided ExecutionPlan
+// merge the query graphs of the temporary and main plans
+void ExecutionPlan_BindOpsToPlan
+(
+	ExecutionPlan *plan,  // plan to bind the operations to
+	OpBase *root          // root operation
+) {
+	ASSERT(plan         != NULL);
+	ASSERT(root         != NULL);
+	ASSERT(root->plan   != plan);
+	ASSERT(root->parent == NULL);
+
+	// migrate QueryGraph entities to the master plan's QueryGraph
+	QueryGraph_MergeGraphs(plan->query_graph, root->plan->query_graph);
+
+	_ExecutionPlan_BindOpsToPlan(plan, root);
 }
 
 // binds all ops in `ops` to `plan`, other than ops of type `exclude_type`
 void ExecutionPlan_MigrateOpsExcludeType
 (
-	OpBase * ops[],             // array of ops to bind
+	OpBase *ops[],              // array of ops to bind
 	OPType exclude_type,        // type of ops to exclude
 	uint op_count,              // number of ops in the array
 	const ExecutionPlan *plan   // plan to bind the ops to

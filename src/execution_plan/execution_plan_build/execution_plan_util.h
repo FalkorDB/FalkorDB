@@ -21,14 +21,6 @@ bool ExecutionPlan_isEager
 // For performing existence checks and looking up individual operations in tree.
 //------------------------------------------------------------------------------
 
-// traverse upwards until an operation that resolves the given alias is found
-// Returns NULL if alias is not resolved
-OpBase *ExecutionPlan_LocateOpResolvingAlias
-(
-    OpBase *root,
-    const char *alias
-);
-
 // locate the first operation matching one of the given types in the op tree by
 // performing DFS
 // returns NULL if no matching operation was found
@@ -57,24 +49,14 @@ OpBase *ExecutionPlan_LocateOpDepth
     uint depth
 );
 
-// returns all operations of a certain type in a execution plan
-void ExecutionPlan_LocateOps
-(
-	OpBase ***plans,  // array in which ops are stored
-	OpBase *root,     // root operation of the plan to traverse
-	OPType type       // operation type to search
-);
-
 // find the earliest operation at which all references are resolved, if any,
-// both above the provided recurse_limit and without recursing past a
-// blacklisted op
+// without recursing past a blacklisted op
 OpBase *ExecutionPlan_LocateReferencesExcludingOps
 (
-    OpBase *root,
-    const OpBase *recurse_limit,
-    const OPType *blacklisted_ops,
-	int nblacklisted_ops,
-    rax *refs_to_resolve
+	OpBase *root,                   // start point
+	const OPType *blacklisted_ops,  // blacklisted operations
+	int nblacklisted_ops,           // number of blacklisted operations
+	rax *refs_to_resolve            // references to resolve
 );
 
 // scans plan from root via parent nodes until a limit operation is found

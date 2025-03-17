@@ -218,6 +218,13 @@ OpBase *OpBase_GetChild
 	uint i             // child index
 );
 
+// returns true if operation is aware of alias
+bool OpBase_Aware
+(
+	const OpBase *op,  // op
+	const char *alias  // alias
+);
+
 // mark alias as being modified by operation
 // returns the ID associated with alias
 int OpBase_Modifies
@@ -243,14 +250,12 @@ bool OpBase_ChildrenAware
 	int *idx
 );
 
-// returns true if op is aware of alias
-// an operation is aware of all aliases it modifies and all aliases
-// modified by prior operation within its segment
-bool OpBase_Aware
+// returns true if alias is mapped
+bool OpBase_AliasMapping
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *op,   // op
+	const char *alias,  // alias
+	int *idx            // alias map id
 );
 
 // sends reset request to each operation up the chain

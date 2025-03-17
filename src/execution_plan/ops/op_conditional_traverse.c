@@ -104,7 +104,7 @@ OpBase *NewCondTraverseOp
 			CondTraverseReset, CondTraverseToString, CondTraverseClone,
 			CondTraverseFree, false, plan);
 
-	bool aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Src(ae),
+	bool aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae),
 			&op->srcNodeIdx);
 	UNUSED(aware);
 	ASSERT(aware == true);

@@ -226,7 +226,9 @@ class testOptimizationsPlan(FlowTestsBase):
 
     def test13_duplicate_filter_placement(self):
         # Issue a query that joins three streams and contains a redundant filter.
-        query = """MATCH (p0), (p1), (p2) where id(p2) = id(p0) AND id(p1) = id(p2) AND id(p1) = id(p2) return p2.name ORDER BY p2.name"""
+        query = """MATCH (p0), (p1), (p2)
+                   WHERE id(p2) = id(p0) AND id(p1) = id(p2) AND id(p1) = id(p2)
+                   RETURN p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
         self.env.assertIn("Value Hash Join", executionPlan)
         self.env.assertNotIn("Cartesian Product", executionPlan)

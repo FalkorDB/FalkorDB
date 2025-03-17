@@ -106,16 +106,13 @@ inline Record OpBase_Consume
 	return op->consume(op);
 }
 
-// add alias to op's awareness table
-void OpBase_AwareOf
+// returns true if operation is aware of alias
+bool OpBase_Aware
 (
-	OpBase *op,        // op to update
-	const char *alias  // alias to add
+	const OpBase *op,  // op
+	const char *alias  // alias
 ) {
-	ASSERT(op    != NULL);
-	ASSERT(alias != NULL);
-
-	HashTableAdd(op->awareness, (void*)alias, NULL);
+	return (HashTableFind(op->awareness, alias) != NULL);
 }
 
 // mark alias as being modified by operation
@@ -142,7 +139,7 @@ int OpBase_Modifies
 	}
 
 	// add alias to op's awareness table
-	OpBase_AwareOf(op, alias);
+	HashTableAdd(op->awareness, (void*)alias, NULL);
 
 	return (intptr_t)id;
 }
@@ -184,7 +181,7 @@ bool OpBase_ChildrenAware
 						void *rec_idx = raxFind(mapping, (unsigned char *)alias, strlen(alias));
 						*idx = (intptr_t)rec_idx;
 					}
-					return true;				
+					return true;
 				}
 			}
 		}
@@ -194,15 +191,23 @@ bool OpBase_ChildrenAware
 	return false;
 }
 
-bool OpBase_Aware
+// returns true if alias is mapped
+bool OpBase_AliasMapping
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *op,   // op
+	const char *alias,  // alias
+	int *idx            // alias map id
 ) {
-	rax *mapping = ExecutionPlan_GetMappings(op->plan);
+	ASSERT(op    != NULL);
+	ASSERT(alias != NULL);
+
+	rax *mapping  = ExecutionPlan_GetMappings(op->plan);
 	void *rec_idx = raxFind(mapping, (unsigned char *)alias, strlen(alias));
-	if(idx) *idx = (intptr_t)rec_idx;
+
+	if(idx != NULL) {
+		*idx = (intptr_t)rec_idx;
+	}
+
 	return (rec_idx != raxNotFound);
 }
 

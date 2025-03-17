@@ -39,18 +39,11 @@ void ExecutionPlan_PushBelow
 	OpBase *b
 );
 
-// introduce new_root as the parent of old_root
-void ExecutionPlan_NewRoot
-(
-	OpBase *old_root,
-	OpBase *new_root
-);
-
 // update the root op of the execution plan
 void ExecutionPlan_UpdateRoot
 (
-	ExecutionPlan *plan,
-	OpBase *new_root
+	ExecutionPlan *plan,  // plan set root of
+	OpBase *new_root      // new root operation
 );
 
 // replace a with b
@@ -83,8 +76,7 @@ void ExecutionPlan_DetachOp
 void ExecutionPlan_BindOpsToPlan
 (
 	ExecutionPlan *plan,  // plan to bind the operations to
-	OpBase *root,         // root operation
-	bool qg               // whether to merge QueryGraphs or not
+	OpBase *root          // root operation
 );
 
 // binds all ops in `ops` to `plan`, except for ops of type `exclude_type`

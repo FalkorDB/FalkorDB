@@ -238,7 +238,7 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 
 	// associate all new ops with the correct ExecutionPlan and QueryGraph
 	OpBase *match_stream_root = match_stream_plan->root;
-	ExecutionPlan_BindOpsToPlan(plan, match_stream_root, true);
+	ExecutionPlan_BindOpsToPlan(plan, match_stream_root);
 
 	// NULL-set variables shared between the match_stream_plan and the overall plan
 	match_stream_plan->root       = NULL;

@@ -268,7 +268,7 @@ void buildMatchOpTree
 	// and place ops appropriately
 	FT_FilterNode *sub_ft = AST_BuildFilterTreeFromClauses(ast, &clause, 1);
 	if(sub_ft != NULL) {
-		ExecutionPlan_PlaceFilterOps(plan, op, NULL, sub_ft);
+		ExecutionPlan_PlaceFilterOps(plan, op, sub_ft);
 	}
 
 	// clean up
