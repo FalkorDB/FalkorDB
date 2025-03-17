@@ -240,8 +240,7 @@ OpBase *ExecutionPlan_BuildOpsFromPath
 	OpBase *match_stream_root = match_stream_plan->root;
 	ExecutionPlan_BindOpsToPlan(plan, match_stream_root);
 
-	// NULL-set variables shared between the match_stream_plan and the overall plan
-	match_stream_plan->root       = NULL;
+	// NULL-set map shared between the match_stream_plan and the overall plan
 	match_stream_plan->record_map = NULL;
 
 	// free the temporary plan

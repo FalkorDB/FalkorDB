@@ -270,14 +270,23 @@ void ExecutionPlan_DetachOp
 static void _ExecutionPlan_BindOpsToPlan
 (
 	ExecutionPlan *plan,  // plan to bind the operations to
-	OpBase *root          // root operation
+	OpBase *op            // current operation
 ) {
-	if(!root) return;
+	if(!op) return;
 
-	root->plan = plan;
-	for(int i = 0; i < root->childCount; i++) {
-		OpBase *child = OpBase_GetChild(root, i);
-		bool different_plans = (root->plan != child->plan);
+	// no expecting op to migrate to its own plan
+	ASSERT(op->plan != plan);
+
+	// incase op is its own plan's root, nullify the plan's root
+	// as its root is about to be migrated to a different plan
+	if(op == op->plan->root) {
+		((ExecutionPlan*)op->plan)->root = NULL;
+	}
+
+	op->plan = plan;
+	for(int i = 0; i < op->childCount; i++) {
+		OpBase *child = OpBase_GetChild(op, i);
+		bool different_plans = (op->plan != child->plan);
 
 		_ExecutionPlan_BindOpsToPlan(plan, child);
 
