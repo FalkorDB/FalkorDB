@@ -8,42 +8,24 @@
 #include "redismodule.h"
 
 const char DBPath[] = "/tmp/rocksdb_falkordb";
-const char DBBackupPath[] = "/tmp/rocksdb_falkordb_backup";
 
 rocksdb_t *db;
-rocksdb_backup_engine_t *be;
 
 void RocksDB_init() {
 	rocksdb_options_t *options = rocksdb_options_create();
-	// Optimize RocksDB. This is the easiest way to
-	// get RocksDB to perform well.
-	// long cpus = sysconf(_SC_NPROCESSORS_ONLN);
-	// // Set # of online cores
-	// rocksdb_options_increase_parallelism(options, (int)(cpus));
-	rocksdb_options_increase_parallelism(options, 1);
 	rocksdb_options_set_optimize_filters_for_hits(options, 1);
-	rocksdb_block_based_options_set_no_block_cache(options, 1);
-	// rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
-	// rocksdb_block_based_options_set_block_size(table_options, 4096);
-	// rocksdb_options_set_block_based_table_factory(options, table_options);
-	// // create the DB if it's not already present
+	rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
+	rocksdb_block_based_options_set_no_block_cache(table_options, 1);
+	rocksdb_options_set_block_based_table_factory(options, table_options);
 	rocksdb_options_set_create_if_missing(options, 1);
 	rocksdb_options_set_max_open_files(options, 100);
-	rocksdb_options_set_write_buffer_size(options, 16 * 1024 * 1024);
-	// rocksdb_options_set_max_write_buffer_number(options, 2);
+	rocksdb_options_set_write_buffer_size(options, 1 * 1024 * 1024);
+	rocksdb_options_set_db_write_buffer_size(options, 1 * 1024 * 1024);
 
 	// open DB
 	char *err = NULL;
 	db = rocksdb_open(options, DBPath, &err);
 	ASSERT(!err);
-  
-	// // open Backup Engine that we will use for backing up our database
-	// be = rocksdb_backup_engine_open(options, DBBackupPath, &err);
-	// ASSERT(!err);
-  
-	// // create new backup in a directory specified by DBBackupPath
-	// rocksdb_backup_engine_create_new_backup(be, db, &err);
-	// ASSERT(!err);
 }
 
 rocksdb_writebatch_t *RocksDB_create_batch() {
@@ -83,18 +65,23 @@ char *RocksDB_get(const char *key) {
 	return returned_value;
 }
 
-void RocksDB_info() {
-	const char* property_name = "rocksdb.block-cache-usage";
-    char* value = rocksdb_property_value(db, property_name);
+void print_info(char *property) {
+	char* value = rocksdb_property_value(db, property);
     if (value != NULL) {
-        RedisModule_Log(NULL, "notice", "Block cache usage: %s bytes\n", value);
+        RedisModule_Log(NULL, "notice", "%s: %s\n", property, value);
         free(value); // Free the returned value
     } else {
-        RedisModule_Log(NULL, "notice", "Failed to retrieve block cache usage.\n");
+        RedisModule_Log(NULL, "notice", "Failed to retrieve %s", property);
     }
 }
 
+void RocksDB_info() {
+	print_info("rocksdb.block-cache-usage");
+	print_info("rocksdb.cur-size-all-mem-tables");
+	print_info("rocksdb.estimate-table-readers-mem");
+	print_info("rocksdb.block-cache-pinned-usage");
+}
+
 void RocksDB_cleanup() {
-	rocksdb_backup_engine_close(be);
 	rocksdb_close(db);
 }
