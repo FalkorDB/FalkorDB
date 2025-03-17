@@ -465,6 +465,7 @@ void test_add_op_idx() {
 		TEST_ASSERT(aware);
 	}
 
+	OpBase_Free(cp);
 	OpBase_Free(scan_0);
 	OpBase_Free(scan_1);
 	OpBase_Free(scan_2);
@@ -843,6 +844,8 @@ void test_bind_to_plan() {
 	}
 
 	ExecutionPlan_Free(p_a);
+	ExecutionPlan_Free(p_b);
+	ExecutionPlan_Free(p_c);
 }
 
 TEST_LIST = {
