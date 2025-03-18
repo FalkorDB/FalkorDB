@@ -486,30 +486,41 @@ rax *FilterTree_CollectModified
 	return modified;
 }
 
-void _FilterTree_CollectAttributes
+// collect filtered attribute for a given entity
+// e.g. person.first_name = 'a' OR person.last_name = 'b'
+// will collect both 'first_name' and 'last_name'
+// if entity is 'person'
+static void _FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root,
-	rax *attributes
+	const FT_FilterNode *root,  // filter tree
+	const char *entity,         // filtered entity
+	rax *attributes             // collected attributes
 ) {
+	ASSERT(entity     != NULL);
+	ASSERT(attributes != NULL);
+
 	if(root == NULL) return;
 
 	switch(root->t) {
 		case FT_N_COND: {
-			_FilterTree_CollectAttributes(root->cond.left, attributes);
-			_FilterTree_CollectAttributes(root->cond.right, attributes);
+			_FilterTree_CollectAttributes(root->cond.left,  entity, attributes);
+			_FilterTree_CollectAttributes(root->cond.right, entity, attributes);
 			break;
 		}
+
 		case FT_N_PRED: {
 			// traverse left and right-hand expressions,
 			// adding all encountered attributes to the triemap
-			AR_EXP_CollectAttributes(root->pred.lhs, attributes);
-			AR_EXP_CollectAttributes(root->pred.rhs, attributes);
+			AR_EXP_CollectAttributes(root->pred.lhs, entity, attributes);
+			AR_EXP_CollectAttributes(root->pred.rhs, entity, attributes);
 			break;
 		}
+
 		case FT_N_EXP: {
-			AR_EXP_CollectAttributes(root->exp.exp, attributes);
+			AR_EXP_CollectAttributes(root->exp.exp, entity, attributes);
 			break;
 		}
+
 		default: {
 			ASSERT(0);
 			break;
@@ -517,12 +528,22 @@ void _FilterTree_CollectAttributes
 	}
 }
 
+// collect filtered attribute for a given entity
+// e.g. person.first_name = 'a' OR person.last_name = 'b'
+// will collect both 'first_name' and 'last_name'
+// if entity is 'person'
 rax *FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root
+	const FT_FilterNode *root,  // filter tree
+	const char *entity          // filtered entity
 ) {
+	ASSERT(root   != NULL);
+	ASSERT(entity != NULL);
+
 	rax *attributes = raxNew();
-	_FilterTree_CollectAttributes(root, attributes);
+
+	_FilterTree_CollectAttributes(root, entity, attributes);
+
 	return attributes;
 }
 

@@ -90,6 +90,11 @@ static bool _should_replicate_effects(void)
 	uint64_t effects_threshold;
 	Config_Option_get(Config_EFFECTS_THRESHOLD, &effects_threshold);
 
+	if(effects_threshold == 0) {
+		// Always use GRAPH.EFFECT when effects_threshold is explicitly disabled.
+		return true;
+	}
+
 	// compute average change time:
 	// avg modification time = query execution time / #modifications
 	double exec_time = QueryCtx_GetRuntime();
