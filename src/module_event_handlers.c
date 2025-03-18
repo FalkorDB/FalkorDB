@@ -362,7 +362,7 @@ static void _ShutdownEventHandler
 	RediSearch_CleanupModule();
 
     free_cmd_acl();
-	// free_run_cmd_as();
+	free_run_cmd_as();
 
 	BoltApi_Unregister();
 
