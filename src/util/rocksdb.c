@@ -21,6 +21,7 @@ void RocksDB_init() {
 	rocksdb_options_set_max_open_files(options, 100);
 	rocksdb_options_set_write_buffer_size(options, 1 * 1024 * 1024);
 	rocksdb_options_set_db_write_buffer_size(options, 1 * 1024 * 1024);
+	rocksdb_options_set_max_bytes_for_level_base(options, 1 * 1024 * 1024);
 
 	// open DB
 	char *err = NULL;
