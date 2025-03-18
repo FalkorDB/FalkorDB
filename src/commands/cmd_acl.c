@@ -415,6 +415,8 @@ static int _execute_acl_cmd_fn
 	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_DEBUG,
 		"delegating to execute ACL command '%s'",log_msg);
 		
+	// printf("delegating to execute ACL command '%s'\n",log_msg);	
+		
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "v", acl_args, acl_argc);
 	
