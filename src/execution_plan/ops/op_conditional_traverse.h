@@ -22,6 +22,7 @@ typedef struct {
 	Delta_Matrix M;              // algebraic expression result
 	EdgeTraverseCtx *edge_ctx;   // edge collection data if the edge needs to be set
 	Delta_MatrixTupleIter iter;  // iterator over M
+	bool partial_ae;             // algebraic expression missing some operands
 	int srcNodeIdx;              // source node index into record
 	int destNodeIdx;             // destination node index into record
 	uint64_t record_count;       // number of held records

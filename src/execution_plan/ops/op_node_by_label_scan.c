@@ -270,7 +270,7 @@ static Record NodeByLabelScanConsumeFromChild
 		}
 
 		// got a new record
-		if(op->n->label_id == GRAPH_UNKNOWN_LABEL) {
+		if(unlikely(op->n->label_id == GRAPH_UNKNOWN_LABEL)) {
 			_update_label_id(op);
 		}
 

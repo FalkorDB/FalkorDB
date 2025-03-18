@@ -758,33 +758,67 @@ SIValue AR_EXP_FinalizeAggregations
 	}
 }
 
-void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases) {
+void AR_EXP_CollectEntities
+(
+	AR_ExpNode *root,
+	rax *aliases
+) {
 	if(AR_EXP_IsOperation(root)) {
-		for(int i = 0; i < root->op.child_count; i ++) {
+		for(int i = 0; i < root->op.child_count; i++) {
 			AR_EXP_CollectEntities(root->op.children[i], aliases);
 		}
 	} else { // type == AR_EXP_OPERAND
 		if(root->operand.type == AR_EXP_VARIADIC) {
 			const char *entity = root->operand.variadic.entity_alias;
-			raxInsert(aliases, (unsigned char *)entity, strlen(entity), NULL, NULL);
+			raxInsert(aliases, (unsigned char *)entity, strlen(entity), NULL,
+					NULL);
 		}
 	}
 }
 
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes) {
+// collect accessed attribute for a given entity
+// e.g. person.first_name + person.last_name
+// will populate attributes with both 'first_name' and 'last_name'
+// if entity is 'person'
+void AR_EXP_CollectAttributes
+(
+	AR_ExpNode *root,    // expression to collect attributes from
+	const char *entity,  // accessed entity
+	rax *attributes      // collected attributes
+) {
+	ASSERT(root       != NULL);
+	ASSERT(entity     != NULL);
+	ASSERT(attributes != NULL);
+
+	// search for the 'property' operation which indicates attribute access
+	// e.g. person.first_name
 	if(AR_EXP_IsOperation(root)) {
 		if(strcmp(AR_EXP_GetFuncName(root), "property") == 0) {
-			AR_ExpNode *arg = root->op.children[1];
-			ASSERT(AR_EXP_IsConstant(arg));
-			ASSERT(SI_TYPE(arg->operand.constant) == T_STRING);
+			// attribute access function
+			// property('person', 'first_name')
+			AR_ExpNode *child = NODE_CHILD(root, 0);
 
-			const char *attr = arg->operand.constant.stringval;
-			raxInsert(attributes, (unsigned char *)attr, strlen(attr), NULL, NULL);
+			// make sure the given entity is being accessed
+			if(AR_EXP_IsVariadic(child) &&
+			   strcmp(child->operand.variadic.entity_alias, entity) == 0) {
+
+				// get accessed attribute name
+				AR_ExpNode *arg = NODE_CHILD(root, 1);
+
+				// expecting arg to be a const string
+				ASSERT(AR_EXP_IsConstant(arg));
+				ASSERT(SI_TYPE(arg->operand.constant) == T_STRING);
+
+				// collect attribute
+				const char *attr = arg->operand.constant.stringval;
+				raxInsert(attributes, (unsigned char *)attr, strlen(attr), NULL,
+						NULL);
+			}
 		}
 
 		// continue scanning expression
 		for(int i = 0; i < root->op.child_count; i ++) {
-			AR_EXP_CollectAttributes(root->op.children[i], attributes);
+			AR_EXP_CollectAttributes(NODE_CHILD(root,i), entity, attributes);
 		}
 	}
 }
