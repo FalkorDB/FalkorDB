@@ -139,7 +139,7 @@ OpBase *NewCondVarLenTraverseOp
 				CondVarLenTraverseToString, CondVarLenTraverseClone,
 				CondVarLenTraverseFree, false, plan);
 
-	bool aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Src(ae),
+	bool aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae),
 			&op->srcNodeIdx);
 	ASSERT(aware);
 

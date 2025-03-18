@@ -115,9 +115,9 @@ OpBase *NewExpandIntoOp
 	bool aware;
 	UNUSED(aware);
  
-	aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Src(ae), &op->srcNodeIdx);
+	aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae), &op->srcNodeIdx);
 	ASSERT(aware);
-	aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Dest(ae), &op->destNodeIdx);
+	aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Dest(ae), &op->destNodeIdx);
 	ASSERT(aware);
 
 	const char *edge = AlgebraicExpression_Edge(ae);

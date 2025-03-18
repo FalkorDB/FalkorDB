@@ -243,12 +243,11 @@ static ExecutionPlan *_tie_segments
 	ExecutionPlan **segments,
 	uint segment_count
 ) {
-	FT_FilterNode  *ft                  =  NULL; // filters following WITH
-	OpBase         *connecting_op       =  NULL; // op connecting one segment to another
-	OpBase         *prev_connecting_op  =  NULL; // root of previous segment
-	ExecutionPlan  *prev_segment        =  NULL;
-	ExecutionPlan  *current_segment     =  NULL;
-	AST            *master_ast          =  QueryCtx_GetAST();  // top-level AST of plan
+	FT_FilterNode  *ft                 = NULL;  // filters following WITH
+	OpBase         *connecting_op      = NULL;  // op connecting one segment to another
+	ExecutionPlan  *prev_segment       = NULL;
+	ExecutionPlan  *current_segment    = NULL;
+	AST            *master_ast         = QueryCtx_GetAST();  // top-level AST of plan
 
 	//--------------------------------------------------------------------------
 	// merge segments
@@ -259,7 +258,6 @@ static ExecutionPlan *_tie_segments
 		AST *ast = segment->ast_segment;
 
 		// find the first non-argument op with no children in this segment
-		prev_connecting_op = connecting_op;
 		// in the case of a single segment with FOREACH as its root, there is no
 		// tap (of the current definition)
 		// for instance: FOREACH(i in [i] | CREATE (n:N))
@@ -289,25 +287,34 @@ static ExecutionPlan *_tie_segments
 
 		// WITH projections
 		if(prev_segment != NULL) {
-			const cypher_astnode_t *opening_clause = cypher_ast_query_get_clause(ast->root, 0);
+			const cypher_astnode_t *opening_clause =
+				cypher_ast_query_get_clause(ast->root, 0);
 			ASSERT(cypher_astnode_type(opening_clause) == CYPHER_AST_WITH);
+
 			uint projections = cypher_ast_with_nprojections(opening_clause);
 			for (uint j = 0; j < projections; j++) {
-				const cypher_astnode_t *projection = cypher_ast_with_get_projection(opening_clause, j);
+				const cypher_astnode_t *projection =
+					cypher_ast_with_get_projection(opening_clause, j);
 				buildPatternComprehensionOps(prev_segment, connecting_op, projection);
 				buildPatternPathOps(prev_segment, connecting_op, projection);
 			}
 		}
 
 		// RETURN projections
-		if (segment->root->type == OPType_RESULTS) {
+		if(segment->root->type == OPType_RESULTS) {
 			uint clause_count = cypher_ast_query_nclauses(ast->root);
-			const cypher_astnode_t *closing_clause = cypher_ast_query_get_clause(ast->root, clause_count - 1);
+			const cypher_astnode_t *closing_clause =
+				cypher_ast_query_get_clause(ast->root, clause_count - 1);
 			OpBase *op = segment->root;
-			while(op->type != OPType_PROJECT && op->type != OPType_AGGREGATE) op = op->children[0];
+
+			while(op->type != OPType_PROJECT && op->type != OPType_AGGREGATE) {
+				op = op->children[0];
+			}
+
 			uint projections = cypher_ast_return_nprojections(closing_clause);
 			for (uint j = 0; j < projections; j++) {
-				const cypher_astnode_t *projection = cypher_ast_return_get_projection(closing_clause, j);
+				const cypher_astnode_t *projection =
+					cypher_ast_return_get_projection(closing_clause, j);
 				buildPatternComprehensionOps(segment, op, projection);
 				buildPatternPathOps(segment, op, projection);
 			}
@@ -319,34 +326,42 @@ static ExecutionPlan *_tie_segments
 		// introduce projection filters
 		//----------------------------------------------------------------------
 
-		// Retrieve the current projection clause to build any necessary filters
-		const cypher_astnode_t *opening_clause = cypher_ast_query_get_clause(ast->root, 0);
+		// retrieve the current projection clause to build any necessary filters
+		const cypher_astnode_t *opening_clause =
+			cypher_ast_query_get_clause(ast->root, 0);
 		cypher_astnode_type_t type = cypher_astnode_type(opening_clause);
-		// Only WITH clauses introduce filters at this level;
-		// all other scopes will be fully built at this point.
+
+		// only WITH clauses introduce filters at this level
+		// all other scopes will be fully built at this point
 		if(type != CYPHER_AST_WITH) continue;
 
-		// Build filters required by current segment.
+		// build filters required by current segment
 		QueryCtx_SetAST(ast);
 		ft = AST_BuildFilterTreeFromClauses(ast, &opening_clause, 1);
 		if(ft == NULL) continue;
 
-		// If any of the filtered variables operate on a WITH alias,
-		// place the filter op above the projection.
-		if(FilterTree_FiltersAlias(ft, opening_clause)) {
+		// if any of the filtered variables operate on a WITH alias
+		// place the filter op below the projection
+		// or incase connecting_op is has no children we don't have a choice
+		// but to place the filter beneath it
+		if(FilterTree_FiltersAlias(ft, opening_clause) ||
+		   OpBase_ChildCount(connecting_op) == 0) {
 			OpBase *filter_op = NewFilterOp(current_segment, ft);
 			ExecutionPlan_PushBelow(connecting_op, filter_op);
 		} else {
-			// None of the filtered variables are aliases;
-			// filter ops may be placed anywhere in the scope.
-			ExecutionPlan_PlaceFilterOps(segment, connecting_op, prev_connecting_op, ft);
+			// none of the filtered variables are aliases;
+			// filter may be placed in the former scope
+			if(OpBase_ChildCount(connecting_op) > 0) {
+				ExecutionPlan_PlaceFilterOps(segment,
+						OpBase_GetChild(connecting_op, 0), ft);
+			}
 		}
 	}
 
-	// Restore the master AST.
+	// restore the master AST
 	QueryCtx_SetAST(master_ast);
 
-	// The last ExecutionPlan segment is the master ExecutionPlan.
+	// the last ExecutionPlan segment is the master ExecutionPlan
 	ExecutionPlan *plan = segments[segment_count - 1];
 
 	return plan;

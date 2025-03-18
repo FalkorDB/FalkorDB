@@ -73,10 +73,9 @@ void ExecutionPlan_ReduceFilterToApply
 // place filter ops at the appropriate positions within the op tree
 void ExecutionPlan_PlaceFilterOps
 (
-	ExecutionPlan *plan,
-	OpBase *root,
-	const OpBase *recurse_limit,
-	FT_FilterNode *ft
+	ExecutionPlan *plan,  // plan
+	OpBase *root,         // root
+	FT_FilterNode *ft     // filter-tree to position
 );
 
 // convert a clause into the appropriate sequence of ops
@@ -103,7 +102,7 @@ void buildPatternPathOps(
 );
 
 // given an AST path pattern, generate the tree of scan, traverse,
-// and filter operations required to represent it.
+// and filter operations required to represent it
 OpBase *ExecutionPlan_BuildOpsFromPath
 (
 	ExecutionPlan *plan,
