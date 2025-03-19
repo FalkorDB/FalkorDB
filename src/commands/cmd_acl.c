@@ -317,6 +317,8 @@ static int _senitaze_acl_setuser
 			!= REDISMODULE_OK) {
 				rm_free(argv);
 				rm_free(acl_args);
+				*argv_ptr = NULL;
+				*argc = 0;
 				return REDISMODULE_ERR;
 		}
 		// same for GRAPH_USER
@@ -324,6 +326,8 @@ static int _senitaze_acl_setuser
 			!= REDISMODULE_OK)) {
 				rm_free(argv);
 				rm_free(acl_args);
+				*argv_ptr = NULL;
+				*argc = 0;
 				return REDISMODULE_ERR;
 		}
 		// same for GRAPH_READONLY_USER
@@ -331,6 +335,8 @@ static int _senitaze_acl_setuser
 			&allowed) != REDISMODULE_OK)) {
 				rm_free(argv);
 				rm_free(acl_args);
+				*argv_ptr = NULL;
+				*argc = 0;
 				return REDISMODULE_ERR;
 		}
 		if (allowed) {

@@ -59,6 +59,7 @@ int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
 	if (_switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
         RedisModule_Log(ctx, "error", "Failed to authenticate as user %s", username);
 		RedisModule_ReplyWithError(ctx, "FAILED");
+		RedisModule_FreeString(ctx, _redis_current_user_name);
         return REDISMODULE_ERR;
     }
 	
@@ -67,6 +68,7 @@ int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
 	if (_switch_user(ctx, redis_current_user_name, NULL) != REDISMODULE_OK) {
 		RedisModule_Log(ctx, "error", "Failed to authenticate back as user %s", redis_current_user_name);
 		RedisModule_DeauthenticateAndCloseClient(ctx, client_id);
+		RedisModule_FreeString(ctx, _redis_current_user_name);
 		return REDISMODULE_ERR;
 	}
 	return res;

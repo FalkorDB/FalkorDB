@@ -179,8 +179,16 @@ static int _set_password_fun
 		
 		ret = REDISMODULE_ERR;
 	} else {
-		RedisModule_ReplyWithString(ctx, 
-			RedisModule_CreateStringFromCallReply(reply));
+		RedisModuleString *reply_str = RedisModule_CreateStringFromCallReply(reply);
+		if (reply_str == NULL) {
+			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
+				"Failed to set password for user %s.", username);
+			RedisModule_ReplyWithError(ctx, "FAILED");
+			ret = REDISMODULE_ERR;
+		} else {
+			RedisModule_ReplyWithString(ctx, reply_str);
+			RedisModule_FreeString(ctx, reply_str);
+		}
 	}
 
 	RedisModule_FreeCallReply(reply);
