@@ -340,12 +340,13 @@ GrB_Info GB_ijxvector
                 int nthreads_max = GB_Context_nthreads_max ( ) ;
                 double chunk = GB_Context_chunk ( ) ;
                 int nthreads = GB_nthreads (n, chunk, nthreads_max) ;
+                int64_t k ;
                 if (I_type == GrB_UINT32)
                 { 
                     uint32_t *I = (uint32_t *) (*I_handle) ;
                     #pragma omp parallel for num_threads(nthreads) \
                         schedule(static)
-                    for (int64_t k = 0 ; k < n ; k++)
+                    for (k = 0 ; k < n ; k++)
                     {
                         I [k] = k ;
                     }
@@ -355,7 +356,7 @@ GrB_Info GB_ijxvector
                     uint64_t *I = (uint64_t *) (*I_handle) ;
                     #pragma omp parallel for num_threads(nthreads) \
                         schedule(static)
-                    for (int64_t k = 0 ; k < n ; k++)
+                    for (k = 0 ; k < n ; k++)
                     {
                         I [k] = k ;
                     }

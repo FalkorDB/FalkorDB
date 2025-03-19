@@ -132,6 +132,7 @@ GrB_Info GB_wait                // finish all pending computations
         // jumbled, then it stays sparse or hypersparse.  A->Y is not modified
         // nor accessed, and remains NULL if it is NULL on input.  If it is
         // present, it remains valid.
+        GB_BURBLE_MATRIX (A, "%s", "(wait: unjumble only) ") ;
         GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
         GB_OK (GB_unjumble (A, Werk)) ;
         ASSERT (GB_nvec_nonempty_get (A) >= 0) ;
@@ -160,6 +161,7 @@ GrB_Info GB_wait                // finish all pending computations
         // z=accum(x,y) operator can have any types, and it does not have to be
         // associative.  T is constructed as iso if A is iso.
 
+        GB_BURBLE_MATRIX (A, "%s", "(wait: build pending tuples) ") ;
         GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
         GB_void *S_input = (A_iso) ? ((GB_void *) A->x) : NULL ;
         GrB_Type stype = (A_iso) ? A->type : A->Pending->type ;
@@ -246,6 +248,7 @@ GrB_Info GB_wait                // finish all pending computations
     if (nzombies > 0)
     { 
         // remove all zombies from A
+        GB_BURBLE_MATRIX (A, "%s", "(wait: remove zombies) ") ;
         GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
         struct GB_Scalar_opaque scalar_header ;
         int64_t k = 0 ;
@@ -280,6 +283,7 @@ GrB_Info GB_wait                // finish all pending computations
     if (npending == 0)
     { 
         // conform A to its desired sparsity structure and return result
+        GB_BURBLE_MATRIX (A, "%s", "(wait: no pending; conform and finish) ") ;
         GB_OK (GB_conform (A, Werk)) ;
         ASSERT (GB_nvec_nonempty_get (A) >= 0) ;
         #pragma omp flush
@@ -295,6 +299,7 @@ GrB_Info GB_wait                // finish all pending computations
     { 
         // A has no entries so just transplant T into A, then free T and
         // conform A to its desired hypersparsity.
+        GB_BURBLE_MATRIX (A, "%s", "(wait: no prior entries; transplant) ") ;
         GB_OK (GB_transplant_conform (A, A->type, &T, Werk)) ;
         ASSERT (GB_nvec_nonempty_get (A) >= 0) ;
         #pragma omp flush
@@ -306,6 +311,7 @@ GrB_Info GB_wait                // finish all pending computations
     //--------------------------------------------------------------------------
 
     // A single parallel add: S=A+T, free T, and then transplant S back into A.
+    GB_BURBLE_MATRIX (A, "%s", "(wait: add pending tuples into existing A) ") ;
 
     // FUTURE:: if GB_add could tolerate zombies in A, then the initial
     // prune of zombies can be skipped.

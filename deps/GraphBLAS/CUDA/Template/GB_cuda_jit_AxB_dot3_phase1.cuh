@@ -138,7 +138,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
         // pfirst + my_chunk_size - 1.
         int64_t my_chunk_size, mnvec1, kfirst, klast ;
         float slope ;
-        GB_cuda_ek_slice_setup (Mp, mnvec, mnz, pfirst, chunk_size,
+        GB_cuda_ek_slice_setup<GB_Mp_TYPE> (Mp, mnvec, mnz, pfirst, chunk_size,
             &kfirst, &klast, &my_chunk_size, &mnvec1, &slope) ;
 
         //----------------------------------------------------------------------
@@ -158,7 +158,7 @@ __global__ void GB_jit_AxB_dot3_phase1_kernel
 
             // get the pM and k value of Mi,Mx [pM]
             int64_t pM ;    // = pfirst + pdelta
-            int64_t k = GB_cuda_ek_slice_entry (&pM, pdelta, pfirst, Mp, mnvec1,
+            int64_t k = GB_cuda_ek_slice_entry<GB_Mp_TYPE> (&pM, pdelta, pfirst, Mp, mnvec1,
                 kfirst, slope) ;
 
             //------------------------------------------------------------------

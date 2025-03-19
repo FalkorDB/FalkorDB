@@ -210,7 +210,6 @@ GrB_Info GB_jit_kernel_AxB_saxpy4                                       \
     const int64_t *restrict A_slice,                                    \
     const int64_t *restrict H_slice,                                    \
     GB_void *restrict Wcx,                                              \
-    int8_t *restrict Wf,                                                \
     const void *theta,                                                  \
     const GB_callback_struct *restrict my_callback                      \
 )
