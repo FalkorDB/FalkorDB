@@ -204,6 +204,11 @@ static void _flush_buffer
 	buffer->count = 0;
 }
 
+// TODO: think about a better name, making it clear that this function might
+// flush
+// another options could be adding a boolean 'flush' that if true and needed
+// this function will flush the buffer
+
 // ensure buffer can accommodate n additional bytes
 // if there's no room the buffer is flushed
 static inline void _ensure_cap
@@ -214,100 +219,53 @@ static inline void _ensure_cap
 	ASSERT(n > 0);
 
 	// make sure there's enough room in buffer
-	if( (n > buffer->cap) || (buffer->cap - buffer->count < n) ) {
+	if( (buffer->cap - buffer->count) < n) {
 		_flush_buffer(buffer);
 	}
 }
 
+// TODO: in debug mode add value type e.g. INT64_T
+//     similarly in debug mode when reading validate that the right type is read
+
+// macro for creating buffered RDB serializer write functions
+#define BUFFERED_SERIALIZER_WRITE(suffix, t)                    \
+static void BufferSerializerIO_Write##suffix(void *io, t v) {   \
+	BufferedIO *buffer = (BufferedIO*)io;                       \
+																\
+	/* make sure buffer has enough room */                      \
+	_ensure_cap(buffer, sizeof(t));                             \
+																\
+	/* write value to buffer */                                 \
+	*((t*)(buffer->buffer + buffer->count)) = v;                \
+																\
+	/* update buffer offset */                                  \
+	buffer->count += sizeof(t);                                 \
+}
+
+// create buffer serializer write functions
+BUFFERED_SERIALIZER_WRITE(Float,      float)        // BufferSerializerIO_WriteFloat
+BUFFERED_SERIALIZER_WRITE(Double,     double)       // BufferSerializerIO_WriteDouble
+BUFFERED_SERIALIZER_WRITE(Signed,     int64_t)      // BufferSerializerIO_WriteSigned
+BUFFERED_SERIALIZER_WRITE(Unsigned,   uint64_t)     // BufferSerializerIO_WriteUnsigned
+BUFFERED_SERIALIZER_WRITE(LongDouble, long double)  // BufferSerializerIO_WriteLongDouble
+
 // write unsigned to buffer
-void BufferSerializerIO_WriteUnsigned
-(
-	void *io,       // serializer
-	uint64_t value  // value
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// make sure buffer has enough room
-	_ensure_cap(buffer, sizeof(uint64_t));
-
-	// write value to buffer
-	*((uint64_t*)(buffer->buffer + buffer->count)) = value;
-
-	// update buffer offset
-	buffer->count += sizeof(uint64_t);
-}
-
-// write signed to buffer
-void BufferSerializerIO_WriteSigned
-(
-	void *io,      // serializer
-	int64_t value  // value
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// make sure buffer has enough room
-	_ensure_cap(buffer, sizeof(int64_t));
-
-	// write value to buffer
-	*((int64_t*)(buffer->buffer + buffer->count)) = value;
-
-	// update buffer offset
-	buffer->count += sizeof(int64_t);
-}
-
-// write double to buffer
-void BufferSerializerIO_WriteDouble
-(
-	void *io,     // serializer
-	double value  // value
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// make sure buffer has enough room
-	_ensure_cap(buffer, sizeof(double));
-
-	// write value to buffer
-	*((double*)(buffer->buffer + buffer->count)) = value;
-
-	// update buffer offset
-	buffer->count += sizeof(double);
-}
-
-// write float to buffer
-void BufferSerializerIO_WriteFloat
-(
-	void *io,    // serializer
-	float value  // value
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// make sure buffer has enough room
-	_ensure_cap(buffer, sizeof(float));
-
-	// write value to buffer
-	*((float*)(buffer->buffer + buffer->count)) = value;
-
-	// update buffer offset
-	buffer->count += sizeof(float);
-}
-
-// write long double to buffer
-void BufferSerializerIO_WriteLongDouble
-(
-	void *io,          // serializer
-	long double value  // value
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// make sure buffer has enough room
-	_ensure_cap(buffer, sizeof(long double));
-
-	// write value to buffer
-	*((long double*)(buffer->buffer + buffer->count)) = value;
-
-	// update buffer offset
-	buffer->count += sizeof(long double);
-}
+//void BufferSerializerIO_WriteUnsigned
+//(
+//	void *io,       // serializer
+//	uint64_t value  // value
+//) {
+//	BufferedIO *buffer = (BufferedIO*)io;
+//
+//	// make sure buffer has enough room
+//	_ensure_cap(buffer, sizeof(uint64_t));
+//
+//	// write value to buffer
+//	*((uint64_t*)(buffer->buffer + buffer->count)) = value;
+//
+//	// update buffer offset
+//	buffer->count += sizeof(uint64_t);
+//}
 
 // write buffer to stream
 void BufferSerializerIO_WriteBuffer
@@ -324,6 +282,10 @@ void BufferSerializerIO_WriteBuffer
 
 	// make sure value has enough room
 	_ensure_cap(buffer, len + sizeof(size_t));
+
+	// TODO: _ensure_cap should return boolean letting us know if we can
+	// or can't write value to in memory buffer, this should simplify the
+	// following condition
 
 	// if value can't fit within io's buffer write directly to stream
 	// otherwise add it to buffer
@@ -355,7 +317,7 @@ static void _load_buffer
 	ASSERT(buffer->count == buffer->cap);
 
 	// free old buffer
-	if(unlikely(buffer->buffer != NULL)) {
+	if(buffer->buffer != NULL) {
 		rm_free(buffer->buffer);
 		buffer->buffer = NULL;
 	}
