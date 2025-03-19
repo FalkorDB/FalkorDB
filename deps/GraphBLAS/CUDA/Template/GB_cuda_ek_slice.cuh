@@ -66,10 +66,10 @@
 // GB_cuda_ek_slice_setup
 //------------------------------------------------------------------------------
 
-static __device__ __inline__ void GB_cuda_ek_slice_setup
+template <typename T> __device__ void GB_cuda_ek_slice_setup
 (
     // inputs, not modified:
-    const GB_Ap_TYPE *Ap,       // array of size anvec+1
+    const T *Ap,                // array of size anvec+1
     const int64_t anvec,        // # of vectors in the matrix A
     const int64_t anz,          // # of entries in the sparse/hyper matrix A
     const int64_t pfirst,       // first entry in A to find k
@@ -107,7 +107,14 @@ static __device__ __inline__ void GB_cuda_ek_slice_setup
 
     (*kfirst) = 0 ;
     int64_t kright = anvec ;
-    GB_trim_binary_search (pfirst, Ap, GB_Ap_IS_32, kfirst, &kright) ;
+    if (sizeof (T) == sizeof (uint32_t))
+    {
+        GB_trim_binary_search_32 (pfirst, (const uint32_t *) Ap, kfirst, &kright) ;
+    }
+    else
+    {
+        GB_trim_binary_search_64 (pfirst, (const uint64_t *) Ap, kfirst, &kright) ;
+    }
 
     // find klast, the last vector of the slice for this chunk.  klast is the
     // vector that owns the entry Ai [plast-1] and Ax [plast-1].  The search
@@ -115,8 +122,14 @@ static __device__ __inline__ void GB_cuda_ek_slice_setup
 
     (*klast) = (*kfirst) ;
     kright = anvec ;
-    GB_trim_binary_search (plast, Ap, GB_Ap_IS_32, klast, &kright) ;
-
+    if (sizeof (T) == sizeof (uint32_t))
+    {
+        GB_trim_binary_search_32 (plast, (const uint32_t *) Ap, klast, &kright) ;
+    }
+    else
+    {
+        GB_trim_binary_search_64 (plast, (const uint64_t *) Ap, klast, &kright) ;
+    }
     //--------------------------------------------------------------------------
     // find slope of vectors in this chunk, and return result
     //--------------------------------------------------------------------------
@@ -148,7 +161,7 @@ static __device__ __inline__ void GB_cuda_ek_slice_setup
 // The method returns the index k of the vector in A that contains the pth
 // entry in A, at position p = pfirst + pdelta.
 
-static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
+template <typename T> __device__ int64_t GB_cuda_ek_slice_entry
 (
     // output:
     int64_t *p_handle,          // p = pfirst + pdelta
@@ -156,7 +169,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
     const int64_t pdelta,       // find the k value of the pfirst+pdelta entry
     const int64_t pfirst,       // first entry in A to find k (for which
                                 // pdelta=0)
-    const GB_Ap_TYPE *Ap,       // array of size anvec+1
+    const T *Ap,                // array of size anvec+1
     const int64_t anvec1,       // anvec-1
     const int64_t kfirst,       // estimate of first vector in the chunk
     const float slope           // estimate # vectors in chunk / my_chunk_size
@@ -199,10 +212,10 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice_entry
 // CPU.  The latter is for OpenMP parallelism on the CPU only; it does not
 // need to compute ks.
 
-static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
+template <typename T>__device__ int64_t GB_cuda_ek_slice // returns my_chunk_size
 (
     // inputs, not modified:
-    const GB_Ap_TYPE *Ap,       // array of size anvec+1
+    const T *Ap,                // array of size anvec+1
     const int64_t anvec,        // # of vectors in the matrix A
     const int64_t anz,          // # of entries in the sparse/hyper matrix A
     const int64_t pfirst,       // first entry in A to find k
@@ -218,7 +231,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
 
     int64_t my_chunk_size, anvec1, kfirst, klast ;
     float slope ;
-    GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst, max_pchunk,
+    GB_cuda_ek_slice_setup<T> (Ap, anvec, anz, pfirst, max_pchunk,
         &kfirst, &klast, &my_chunk_size, &anvec1, &slope) ;
 
     //--------------------------------------------------------------------------
@@ -235,7 +248,7 @@ static __device__ __inline__ int64_t GB_cuda_ek_slice // returns my_chunk_size
         //----------------------------------------------------------------------
 
         int64_t p ;     // unused, p = pfirst + pdelta
-        int64_t k = GB_cuda_ek_slice_entry (&p, pdelta, pfirst, Ap, anvec1,
+        int64_t k = GB_cuda_ek_slice_entry<T> (&p, pdelta, pfirst, Ap, anvec1,
             kfirst, slope) ;
 
         //----------------------------------------------------------------------

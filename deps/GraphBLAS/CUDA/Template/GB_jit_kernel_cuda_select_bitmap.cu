@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 #define tile_sz 32
@@ -81,7 +83,12 @@ GB_JIT_CUDA_KERNEL_SELECT_BITMAP_PROTO (GB_jit_kernel)
     GB_GET_CALLBACKS ;
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_select_bitmap_kernel <<<grid, block, 0, stream>>> (C, A, ythunk) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     return (GrB_SUCCESS) ;
 }
 

@@ -68,6 +68,12 @@ GrB_Info GB_cuda_select_sparse
     C->jumbled = A->jumbled ;
     C->iso = C_iso ;
 
+    CUDA_OK (cudaGetLastError ( )) ;    //FIXME: remove
+    CUDA_OK (cudaStreamSynchronize (stream)) ;  //FIXME: remove
+    CUDA_OK (cudaGetLastError ( )) ;    //FIXME: remove
+    CUDA_OK (cudaStreamSynchronize (stream)) ;  //FIXME: remove
+    CUDA_OK (cudaGetLastError ( )) ;    //FIXME: remove
+
     GB_OK (GB_cuda_select_sparse_jit (C, A,
         flipij, ythunk, op, stream, gridsz, BLOCK_SIZE)) ;
 

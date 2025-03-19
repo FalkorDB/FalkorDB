@@ -92,7 +92,7 @@ GB_CALLBACK_HYPER_HASH_BUILD_PROTO (GB_hyper_hash_build)
     double chunk = GB_Context_chunk ( ) ;
     int nthreads = GB_nthreads (anvec, chunk, nthreads_max) ;
 
-    uint64_t k ;
+    int64_t k ;
     #pragma omp parallel for num_threads(nthreads) schedule(static)
     for (k = 0 ; k < anvec ; k++)
     {
