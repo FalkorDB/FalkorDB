@@ -71,6 +71,8 @@ int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
 		RedisModule_FreeString(ctx, _redis_current_user_name);
 		return REDISMODULE_ERR;
 	}
+	
+	RedisModule_FreeString(ctx, _redis_current_user_name);
 	return res;
 }
 
