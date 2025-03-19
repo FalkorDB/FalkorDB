@@ -53,7 +53,10 @@ void RocksDB_put_batch(rocksdb_writebatch_t *writebatch) {
 	ASSERT(!err);
 	rocksdb_writeoptions_destroy(writeoptions);
 	rocksdb_writebatch_destroy(writebatch);
-
+	rocksdb_flushoptions_t *flush_options = rocksdb_flushoptions_create();
+	rocksdb_flushoptions_set_wait(flush_options, 1);
+	rocksdb_flush(db, flush_options, &err);
+	ASSERT(!err);
 }
 
 char *RocksDB_get(const char *key) {
