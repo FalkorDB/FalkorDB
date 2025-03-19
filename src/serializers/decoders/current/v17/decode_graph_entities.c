@@ -173,112 +173,6 @@ void RdbLoadDeletedNodes_v17
 			Graph_DeletedNodeCount(g));
 }
 
-// decode edge relationship header
-static void _DecodeRelationHeader
-(
-	SerializerIO rdb,  // RDB
-	RelationID *r,     // [output] relation id
-	bool *tensor       // [output] tensor
-) {
-	// format:
-	//
-	// Header:
-	//     relationship ID
-	//     rather or not relationship contains tensors
-	//
-
-	ASSERT(r      != NULL);
-	ASSERT(tensor != NULL);
-
-	*r = SerializerIO_ReadUnsigned(rdb);
-	ASSERT(*r != GRAPH_NO_RELATION);
-
-	*tensor = SerializerIO_ReadUnsigned(rdb);
-}
-
-// decode tensors
-static uint64_t _DecodeTensors
-(
-	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
-	RelationID r       // relationship type
-) {
-	// format:
-	// edge format:
-	//     edge id
-	//     edge properties
-	//     multi-edge
-	//     source node id      [optional, if multi-edge is true]
-	//     destination node id [optional, if multi-edge is true]
-
-	Edge e;                         // current decoded edge
-	uint64_t  decoded_edges = 0;    // number of decoded edges
-	int       tensor_idx    = 0;    // tensors batch index
-	//const int BATCH_SIZE    = 256;  // batch size
-	const int BATCH_SIZE    = 16384;  // batch size
-
-	// tensors batch
-	EdgeID ids  [BATCH_SIZE];
-	NodeID srcs [BATCH_SIZE];
-	NodeID dests[BATCH_SIZE];
-
-	Tensor R = Graph_GetRelationMatrix(g, r, false);
-
-	// as long as we didn't hit our END MARKER
-	while(true) {
-		// decode edge ID
-		e.id = SerializerIO_ReadUnsigned(rdb);
-
-		// break on END MARKER
-		if(e.id == INVALID_ENTITY_ID) {
-			break;
-		}
-
-		// update number of decode edges
-		decoded_edges++;
-
-		// load edge attributes
-		Serializer_Graph_AllocEdgeAttributes(g, e.id, &e);
-		_RdbLoadEntity(rdb, (GraphEntity *)&e);
-
-		// decode tensor flag
-		bool tensor = SerializerIO_ReadUnsigned(rdb);
-		if(!tensor) {
-			continue;
-		}
-
-		// batch tensor
-		// decode edge source and destination node ids
-		ids  [tensor_idx] = e.id;
-		srcs [tensor_idx] = SerializerIO_ReadUnsigned(rdb);
-		dests[tensor_idx] = SerializerIO_ReadUnsigned(rdb);
-		tensor_idx++;  // advance batch index
-
-		//----------------------------------------------------------------------
-		// flush batch
-		//----------------------------------------------------------------------
-
-		if(tensor_idx == BATCH_SIZE) {
-			// create tensors
-			Tensor_SetElements(R, srcs, dests, ids, tensor_idx);
-
-			// reset batch count
-			tensor_idx = 0;
-		}
-	}
-
-	//----------------------------------------------------------------------
-	// flush batch
-	//----------------------------------------------------------------------
-
-	if(tensor_idx > 0) {
-		// create tensors
-		Tensor_SetElements(R, srcs, dests, ids, tensor_idx);
-	}
-
-	return decoded_edges;
-}
-
 // decode edges
 static uint64_t _DecodeEdges
 (
@@ -324,30 +218,12 @@ void RdbLoadEdges_v17
 	// {
 	//  edge ID
 	//  edge properties
-	//  multi-edge [only when relationship type has tensors]
-	//  source node ID
-	//  destination node ID
-	//  relation type
 	// } X N
 
-	bool tensor;
-	RelationID r;
-	uint64_t decoded_edges   = 0;
 	uint64_t prev_edge_count = Graph_EdgeCount(g); // #edges in the graph
 
 	for(uint64_t i = 0; i < n;) {
-		// decode relation header
-		_DecodeRelationHeader(rdb, &r, &tensor);
-
-		if(tensor) {
-			decoded_edges = _DecodeTensors(rdb, g, r);
-		} else {
-			decoded_edges = _DecodeEdges(rdb, g);
-		}
-
-		// update graph edge count statistics
-		GraphStatistics_IncEdgeCount(&g->stats, r, decoded_edges);
-		i += decoded_edges;
+		i += _DecodeEdges(rdb, g);
 	}
 
 	// read encoded deleted edge count and validate

@@ -283,13 +283,6 @@ static void _EncodeRelationHeader
 	//     relationship ID
 	//     rather or not relationship contains tensors
 
-	// encode relationship id
-	SerializerIO_WriteUnsigned(rdb, r);
-
-	bool tensor = Graph_RelationshipContainsMultiEdge(g, r);
-
-	// encode rather or not relation contains tensors
-	SerializerIO_WriteUnsigned(rdb, tensor);
 }
 
 // encode edges
@@ -330,60 +323,6 @@ static void _EncodeEdges
 	*n = _n;
 }
 
-// encode tensors
-static void _EncodeTensors
-(
-	SerializerIO rdb,    // RDB
-	const Graph *g,      // graph
-	TensorIterator *it,  // tensor iterator
-	uint64_t *n          // max number of edges to encode
-) {
-	// format:
-	// edge format:
-	//     edge id
-	//     edge properties
-	//     multi-edge
-	//     source node id       [optional]
-	//     destination node id  [optional]
-
-	Edge   e;            // current encoded edge
-	bool tensor;         // rather or not the edge is part of a tensor
-	EdgeID edgeID;       // edge ID
-	uint64_t _n = *n;    // virtual key capacity
-
-	// as long as there's room in the virtual key
-	// and iterator isn't depleted
-	while(_n > 0 &&
-		  (TensorIterator_next(it, &e.src_id, &e.dest_id, &edgeID, &tensor))) {
-		// get edge attribute set
-		bool edge_found = Graph_GetEdge(g, edgeID, &e);
-		ASSERT(edge_found == true);
-
-		// encode edge ID
-		SerializerIO_WriteUnsigned(rdb, edgeID);
-
-		// encode edge properties
-		_RdbSaveEntity(rdb, (GraphEntity *)&e);
-
-		// encode tensor
-		SerializerIO_WriteUnsigned(rdb, tensor);
-
-		if(unlikely(tensor)) {
-			// encode source node ID
-			SerializerIO_WriteUnsigned(rdb, e.src_id);
-
-			// encode destination node ID
-			SerializerIO_WriteUnsigned(rdb, e.dest_id);
-		}
-
-		// reduce capacity
-		_n--;
-	}
-
-	// update capacity
-	*n = _n;
-}
-
 // encode edges
 void RdbSaveEdges_v17
 (
@@ -393,18 +332,8 @@ void RdbSaveEdges_v17
 	const uint64_t n   // number of edges to encode
 ) {
 	// format:
-	//
-	// Header:
-	//     relationship ID
-	//     rather or not relationship contains tensors
-	//
-	// edge format:
-	//     edge id
-	//     edge properties
-	//     multi-edge [only if relation contains tensors]
-	//     source node id
-	//     destination node id
-
+	//  edge id
+	//  edge properties
 
 	// make sure there's capacity
 	ASSERT(n > 0);
@@ -441,19 +370,8 @@ void RdbSaveEdges_v17
 
 	// as long as there's capacity in this virtual key
 	while(_n > 0) {
-		// encode relation header
-		_EncodeRelationHeader(rdb, gc->g, r);
-
-		// check if current relationship matrix contains tensors
-		bool tensors = Graph_RelationshipContainsMultiEdge(gc->g, r);
-
-		if(tensors) {
-			// encode tensors
-			_EncodeTensors(rdb, gc->g, it, &_n);
-		} else {
-			// encode edges
-			_EncodeEdges(rdb, gc->g, it, &_n);
-		}
+		// encode edges
+		_EncodeEdges(rdb, gc->g, it, &_n);
 
 		// encode end marker
 		SerializerIO_WriteUnsigned(rdb, INVALID_ENTITY_ID);

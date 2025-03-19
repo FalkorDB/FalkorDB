@@ -7,7 +7,73 @@
 #include "GraphBLAS.h"
 #include "../../../serializer_io.h"
 #include "../../../../graph/graphcontext.h"
+#include "../../../../graph/tensor/tensor.h"
+#include "../../../../graph//graph_statistics.h"
 #include "../../../../graph/delta_matrix/delta_matrix.h"
+
+// decode tensors
+static void _DecodeTensors
+(
+	SerializerIO rdb,     // RDB
+	GrB_Matrix A,         // matrix to populate with tensors
+	uint64_t *n_tensors,  // number of tensors loaded
+	uint64_t *n_elem      // number of edges loaded
+) {
+	// format:
+	//  number of tensors
+	//  tensors:
+	//   tensor i index
+	//   tensor j index
+	//   tensor
+
+	ASSERT(A         != NULL);
+	ASSERT(n_elem    != NULL);
+	ASSERT(n_tensors != NULL);
+
+	*n_elem    = 0;
+	*n_tensors = 0;
+
+	// read number of tensors
+	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+
+	// no tensors, simply return
+	if(n == 0) {
+		return;
+	}
+
+	// decode and set tensors
+	for(uint64_t i = 0; i < n; i++) {
+
+		// read tensor i,j indicies
+		GrB_Index i = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index j = SerializerIO_ReadUnsigned(rdb);
+
+		// read tensor blob
+		GrB_Index blob_size = SerializerIO_ReadUnsigned(rdb);
+		void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
+		ASSERT(blob != NULL);
+
+		GrB_Vector u;
+		GrB_Info info = GxB_Vector_deserialize(&u, NULL, blob, blob_size, NULL);
+		ASSERT(info == GrB_SUCCESS);
+
+		// update number of elements loaded
+		GrB_Index nvals;
+		info = GrB_Vector_nvals(&nvals, u);
+		ASSERT(info == GrB_SUCCESS);
+		*n_elem += nvals;
+
+		// set tensor
+		uint64_t v = (uint64_t)(uintptr_t)SET_MSB(u);
+		info = GrB_Matrix_setElement_UINT64(A, v, i, j);
+		ASSERT(info == GrB_SUCCESS);
+
+		rm_free(blob);
+	}
+
+	// set number of loaded tensors
+	*n_tensors = n;
+}
 
 // decode matrix
 static GrB_Matrix _DecodeMatrix
@@ -103,11 +169,6 @@ void RdbLoadRelationMatrices_v17
 	// number of relation matricies
 	int n = Graph_RelationTypeCount(g);
 
-	// get graph's adjacency matrix and its transpose
-	Delta_Matrix adj    = Graph_GetAdjacencyMatrix(g, false);
-	GrB_Matrix   adj_m  = Delta_Matrix_M(adj);
-	GrB_Matrix   adj_tm = Delta_Matrix_M(Delta_Matrix_getTranspose(adj));
-
 	// decode relationship matrices
 	for(int i = 0; i < n; i++) {
 		// read relation ID
@@ -116,53 +177,26 @@ void RdbLoadRelationMatrices_v17
 		// decode matrix
 		GrB_Matrix R = _DecodeMatrix(rdb);
 
+		// decode tensors
+		uint64_t n_elem    = 0;
+		uint64_t n_tensors = 0;
+		_DecodeTensors(rdb, R, &n_tensors, &n_elem);
+
+		// plant M matrix
 		Delta_Matrix DR = Graph_GetRelationMatrix(g, r, false);
 		ASSERT(DR != NULL);
 
-		// check if r contains tensors
-		GraphDecodeContext *decode_ctx = gc->decoding_context;
-		if(decode_ctx->multi_edge[r] == false) {
-			// relationship matrix doesn't contains tensors
-			// we can simply replace its internal M matrix with R
-			info = Delta_Matrix_setM(DR, R);
-			ASSERT(info == GrB_SUCCESS);
-		} else {
-			// clear tensor entries, these will be created via edge load
-			GrB_Index nvals;
-			info = GrB_Matrix_nvals(&nvals, R);
-			ASSERT(info == GrB_SUCCESS);
+		info = Delta_Matrix_setM(DR, R);
+		ASSERT(info == GrB_SUCCESS);
 
-			GrB_Scalar s;
-			info = GrB_Scalar_new(&s, GrB_UINT64);
-			ASSERT(info == GrB_SUCCESS);
+		// update graph edge statistics
+		// number of edges of type 'r' equals to:
+		// |R| - n_tensors + n_elem
+		GrB_Index nvals;
+		info = GrB_Matrix_nvals(&nvals, R);
+		ASSERT(info == GrB_SUCCESS);
 
-			// 64bit number with its only MSB set
-			info = GrB_Scalar_setElement_UINT64(s, (uint64_t)1 << 63);
-			ASSERT(info == GrB_SUCCESS);
-
-			// keep entries R[i,j] with MSB off
-			info = GrB_select(R, NULL, NULL, GrB_VALUELT_UINT64, R, s, NULL);
-			ASSERT(info == GrB_SUCCESS);
-
-			// free scalar
-			info = GrB_free(&s);
-			ASSERT(info == GrB_SUCCESS);
-
-			info = GrB_wait(R, GrB_MATERIALIZE);
-			ASSERT(info == GrB_SUCCESS);
-
-			// validate number of entries decreased
-			GrB_Index new_nvals;
-			info = GrB_Matrix_nvals(&nvals, R);
-			ASSERT(info == GrB_SUCCESS);
-			ASSERT(new_nvals < nvals);
-
-			// update relation matrix
-			// DRM = R + DRM
-			GrB_Matrix DRM = Delta_Matrix_M(DR);
-			info = GrB_Matrix_apply(DRM, NULL, NULL, GrB_IDENTITY_UINT64, R, NULL);
-			ASSERT(info == GrB_SUCCESS);
-		}
+		GraphStatistics_IncEdgeCount(&g->stats, r, nvals - n_tensors + n_elem);
 	}
 }
 
