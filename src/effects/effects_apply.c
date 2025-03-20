@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "../graph/graph_hub.h"
+#include "util/rocksdb.h"
 
 #include <stdio.h>
 
@@ -64,7 +65,8 @@ static AttributeSet ReadAttributeSet
 static void ApplyCreateNode
 (
 	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	GraphContext *gc, // graph to operate on
+	rocksdb_writebatch_t *batch
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -101,7 +103,7 @@ static void ApplyCreateNode
 	//--------------------------------------------------------------------------
 
 	Node n = GE_NEW_NODE();
-	CreateNode(gc, &n, labels, lbl_count, attr_set, NULL, false);
+	CreateNode(gc, &n, labels, lbl_count, attr_set, batch, false);
 }
 
 static void ApplyCreateEdge
@@ -531,6 +533,7 @@ void Effects_Apply
 	// update graph sync policy
 	MATRIX_POLICY policy = Graph_SetMatrixPolicy(g, SYNC_POLICY_RESIZE);
 
+	rocksdb_writebatch_t *batch = RocksDB_create_batch();
 	// as long as there's data in stream
 	while(ftell(stream) < l) {
 		// read effect type
@@ -549,7 +552,7 @@ void Effects_Apply
 				ApplyUpdateEdge(stream, gc);
 				break;
 			case EFFECT_CREATE_NODE:    
-				ApplyCreateNode(stream, gc);
+				ApplyCreateNode(stream, gc, batch);
 				break;
 			case EFFECT_CREATE_EDGE:
 				ApplyCreateEdge(stream, gc);
@@ -571,6 +574,8 @@ void Effects_Apply
 				break;
 		}
 	}
+
+	RocksDB_put_batch(batch);
 
 	// restore graph sync policy
 	Graph_SetMatrixPolicy(g, policy);

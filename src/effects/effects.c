@@ -8,6 +8,7 @@
 #include "effects.h"
 #include "../query_ctx.h"
 #include "../datatypes/vector.h"
+#include "util/rocksdb.h"
 
 // determine block available space 
 #define BLOCK_AVAILABLE_SPACE(b) (b->cap - BLOCK_USED_SPACE(b))
@@ -144,6 +145,8 @@ static void EffectsBuffer_WriteString
 static void EffectsBuffer_WriteSIValue
 (
 	const SIValue *v,
+	NodeID node_id,
+	AttributeID attr_id,
 	EffectsBuffer *buff
 ) {
 	ASSERT(v != NULL);
@@ -154,10 +157,6 @@ static void EffectsBuffer_WriteSIValue
 	//    value
 	bool b;
 	size_t len = 0;
-
-	if(v->allocation == M_DISK) {
-		return;
-	}
 
 	SIType t = v->type;
 
@@ -174,9 +173,21 @@ static void EffectsBuffer_WriteSIValue
 			// write array to stream
 			EffectsBuffer_WriteSIArray(v, buff);
 			break;
-		case T_STRING:
+		case T_STRING: {
+			if(v->allocation == M_DISK) {
+				char node_key[11];
+				*(uint64_t *)node_key = node_id;
+				*(AttributeID *)(node_key + 8) = attr_id;
+				node_key[10] = '\0';
+				char *str = RocksDB_get(node_key);
+				EffectsBuffer_WriteString(str, buff);
+				rm_free(str);
+				return;
+
+			}
 			EffectsBuffer_WriteString(v->stringval, buff);
 			break;
+		}
 		case T_BOOL:
 			// write bool to stream
 			b = SIValue_IsTrue(*v);
@@ -219,7 +230,7 @@ static void EffectsBuffer_WriteSIArray
 
 	// write each element
 	for (uint32_t i = 0; i < len; i++) {
-		EffectsBuffer_WriteSIValue(elements + i, buff);
+		EffectsBuffer_WriteSIValue(elements + i, -1, ATTRIBUTE_ID_NONE, buff);
 	}
 }
 
@@ -251,6 +262,7 @@ static void EffectsBuffer_WriteSIVector
 static void EffectsBuffer_WriteAttributeSet
 (
 	const AttributeSet attrs,  // attribute set to write to stream
+	NodeID node_id,
 	EffectsBuffer *buff
 ) {
 	//--------------------------------------------------------------------------
@@ -273,7 +285,7 @@ static void EffectsBuffer_WriteAttributeSet
 		EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
 
 		// write attribute value
-		EffectsBuffer_WriteSIValue(&attr, buff);
+		EffectsBuffer_WriteSIValue(&attr, node_id, attr_id, buff);
 	}
 }
 
@@ -438,7 +450,7 @@ void EffectsBuffer_AddCreateNodeEffect
 	//--------------------------------------------------------------------------
 
 	const AttributeSet attrs = GraphEntity_GetAttributes((const GraphEntity*)n);
-	EffectsBuffer_WriteAttributeSet(attrs, buff);
+	EffectsBuffer_WriteAttributeSet(attrs, ENTITY_GET_ID(n), buff);
 
 	EffectsBuffer_IncEffectCount(buff);
 }
@@ -496,7 +508,7 @@ void EffectsBuffer_AddCreateEdgeEffect
 	//--------------------------------------------------------------------------
 
 	const AttributeSet attrs = GraphEntity_GetAttributes((GraphEntity*)edge);
-	EffectsBuffer_WriteAttributeSet(attrs, buff);
+	EffectsBuffer_WriteAttributeSet(attrs, -1, buff);
 
 	EffectsBuffer_IncEffectCount(buff);
 }
@@ -593,7 +605,7 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	// write attribute value
 	//--------------------------------------------------------------------------
 
-	EffectsBuffer_WriteSIValue(&value, buff);
+	EffectsBuffer_WriteSIValue(&value, ENTITY_GET_ID(node), attr_id, buff);
 
 	EffectsBuffer_IncEffectCount(buff);
 }
@@ -657,7 +669,7 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	// write attribute value
 	//--------------------------------------------------------------------------
 
-	EffectsBuffer_WriteSIValue(&value, buff);
+	EffectsBuffer_WriteSIValue(&value, -1, ATTRIBUTE_ID_NONE, buff);
 
 	EffectsBuffer_IncEffectCount(buff);
 }
