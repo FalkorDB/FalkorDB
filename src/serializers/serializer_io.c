@@ -420,20 +420,24 @@ char *BufferSerializerIO_ReadBuffer
 	}
 
 	// expecting at least the string length
-	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(uint64_t));
+	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(size_t));
 
 	// in DEBUG mode we validate the value type
 	DEBUG_VALIDATE_TYPE(char*);
 
 	// read buffer len
-	uint64_t l = *(uint64_t*)(buffer->buffer + buffer->count);
-	buffer->count += sizeof(uint64_t);
+	size_t l = *(size_t*)(buffer->buffer + buffer->count);
+	buffer->count += sizeof(size_t);
 
 	// copy buffer
 	char *v = rm_malloc(sizeof(char) * l);
 	memcpy(v, buffer->buffer + buffer->count, l);
 
 	buffer->count += l;
+
+	if(lenptr != NULL) {
+		*lenptr = l;
+	}
 
 	return v;
 }

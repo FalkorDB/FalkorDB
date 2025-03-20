@@ -88,17 +88,9 @@ static SIValue _RdbLoadVector
 	// .
 	// vector[vector length -1]
 
-	SIValue vector;
-
-	uint32_t dim = SerializerIO_ReadUnsigned(rdb);
-
-	vector = SI_Vectorf32(dim);
-	float *values = SIVector_Elements(vector);
-
-	for(uint32_t i = 0; i < dim; i++) {
-		values[i] = SerializerIO_ReadFloat(rdb);
-	}
-
+	SIValue vector = { .type       = T_VECTOR_F32,
+					   .ptrval     = SerializerIO_ReadBuffer(rdb, NULL),
+					   .allocation = M_SELF };
 	return vector;
 }
 

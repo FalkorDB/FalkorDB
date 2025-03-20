@@ -251,10 +251,12 @@ void DataBlock_MarkAsDeletedOutOfOrder
 	DataBlock *dataBlock,
 	uint64_t idx
 ) {
-	// Check if idx<=data block's current capacity. If needed, allocate additional blocks.
+	// check if idx<=data block's current capacity
+	// if needed, allocate additional blocks
 	DataBlock_Ensure(dataBlock, idx);
 	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
-	// Delete
+
+	// delete
 	MARK_HEADER_AS_DELETED(item_header);
 	array_append(dataBlock->deletedIdx, idx);
 }

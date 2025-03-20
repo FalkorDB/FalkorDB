@@ -47,17 +47,10 @@ static void _RdbSaveSIVector
 	// .
 	// vector[vector dimension -1]
 
-	uint32_t dim = SIVector_Dim(v);
-	SerializerIO_WriteUnsigned(rdb, dim);
+	void   *vec = v.ptrval;
+	size_t n    = SIVector_ByteSize(v);
 
-	// get vector elements
-	void *elements = SIVector_Elements(v);
-
-	// save individual elements
-	float *values = (float*)elements;
-	for(uint32_t i = 0; i < dim; i ++) {
-		SerializerIO_WriteFloat(rdb, values[i]);
-	}
+	SerializerIO_WriteBuffer(rdb, vec, n);
 }
 
 static void _RdbSaveSIValue
@@ -111,6 +104,7 @@ static inline void _RdbSaveDeletedEntities_v17
 	uint64_t *deleted_id_list
 ) {
 	ASSERT(n > 0);
+	ASSERT(deleted_id_list != NULL);
 
 	// iterated over the required range in the datablock deleted items
 	for(uint64_t i = offset; i < offset + n; i++) {
