@@ -106,9 +106,6 @@ static void _EncodeTensors
 			SerializerIO_WriteUnsigned(rdb, i);
 			SerializerIO_WriteUnsigned(rdb, j);
 
-			// write blob size
-			SerializerIO_WriteUnsigned(rdb, blob_size);
-
 			// write blob to rdb
 			SerializerIO_WriteBuffer(rdb, (const char*)blob, blob_size);
 
@@ -158,9 +155,6 @@ static void _EncodeMatrix
 	info = GxB_Matrix_serialize(&blob, &blob_size, M, NULL);
 	ASSERT(info == GrB_SUCCESS);
 
-	// write blob size
-	SerializerIO_WriteUnsigned(rdb, blob_size);
-	
 	// write blob to rdb
 	SerializerIO_WriteBuffer(rdb, (const char*)blob, blob_size);
 
@@ -214,6 +208,10 @@ void RdbSaveRelationMatrices_v17
 
 	int n = Graph_RelationTypeCount(g);
 
+	// TODO: should we write matrix count ?
+	// write number of matrices
+	// SerializerIO_WriteUnsigned(rdb, n);
+
 	for(RelationID i = 0; i < n; i++) {
 		// write relation ID
 		SerializerIO_WriteUnsigned(rdb, i);
@@ -241,7 +239,7 @@ void RdbSaveAdjMatrix_v17
 	_EncodeMatrix(rdb, ADJ);
 }
 
-// encode graph's labels matrix
+// encode graph's node labels matrix
 void RdbSaveLblsMatrix_v17
 (
 	SerializerIO rdb,  // RDB

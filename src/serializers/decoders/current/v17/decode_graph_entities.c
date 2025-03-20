@@ -4,6 +4,7 @@
  */
 
 #include "decode_v17.h"
+#include "util/datablock/oo_datablock.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
@@ -128,27 +129,32 @@ static void _RdbLoadEntity
 // decode nodes
 void RdbLoadNodes_v17
 (
-	SerializerIO rdb,          // RDB
-	Graph *g,                  // graph context
-	const uint64_t node_count  // number of nodes to decode
+	SerializerIO rdb, // RDB
+	Graph *g,         // graph context
+	const uint64_t n  // number of nodes to decode
 ) {
-	// node format:
-	//      ID
-	//      #properties N
-	//      (name, value type, value) X N
+	// format:
+	//  ID
+	//  #properties N
+	//  (name, value type, value) X N
 
 	uint64_t prev_graph_node_count = Graph_NodeCount(g);
 
-	for(uint64_t i = 0; i < node_count; i++) {
+	for(uint64_t i = 0; i < n; i++) {
 		Node n;
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
 
-		Serializer_Graph_SetNode(g, id, NULL, 0, &n);
+		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
+		*set = NULL;
+
+		n.id = id;
+		n.attributes = set;
 
 		_RdbLoadEntity(rdb, (GraphEntity *)&n);
 	}
 
-	ASSERT(prev_graph_node_count + node_count == Graph_NodeCount(g));
+	// read encoded node count and validate
+	ASSERT(n + prev_graph_node_count == Graph_NodeCount(g));
 }
 
 // decode deleted nodes
@@ -174,59 +180,34 @@ void RdbLoadDeletedNodes_v17
 }
 
 // decode edges
-static uint64_t _DecodeEdges
-(
-	SerializerIO rdb,  // RDB
-	Graph *g           // graph
-) {
-	// format:
-	//  edge ID
-	//  edge properties
-
-	Edge e;                      // current decoded edge
-	uint64_t decoded_edges = 0;  // number of decoded edges
-
-	// as long as we didn't hit our END MARKER
-	while(true) {
-		// decode edge ID
-		e.id = SerializerIO_ReadUnsigned(rdb);
-
-		// break on END MARKER
-		if(e.id == INVALID_ENTITY_ID) {
-			break;
-		}
-
-		// load edge attributes
-		Serializer_Graph_AllocEdgeAttributes(g, e.id, &e);
-		_RdbLoadEntity(rdb, (GraphEntity *)&e);
-
-		// update number of decode edges
-		decoded_edges++;
-	}
-
-	return decoded_edges;
-}
-
-// decode edges
 void RdbLoadEdges_v17
 (
 	SerializerIO rdb,  // RDB
 	Graph *g,          // graph context
-	const uint64_t n   // virtual key capacity
+	const uint64_t n   // number of edges to decode
 ) {
 	// format:
-	// {
-	//  edge ID
-	//  edge properties
-	// } X N
+	//  ID
+	//  #properties N
+	//  (name, value type, value) X N
 
 	uint64_t prev_edge_count = Graph_EdgeCount(g); // #edges in the graph
 
-	for(uint64_t i = 0; i < n;) {
-		i += _DecodeEdges(rdb, g);
+	for(uint64_t i = 0; i < n; i++) {
+		Edge e;
+
+		EdgeID id = SerializerIO_ReadUnsigned(rdb);
+
+		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, id);
+		*set = NULL;
+
+		e.id = id;
+		e.attributes = set;
+
+		_RdbLoadEntity(rdb, (GraphEntity *)&e);
 	}
 
-	// read encoded deleted edge count and validate
+	// read encoded edge count and validate
 	ASSERT(n + prev_edge_count == Graph_EdgeCount(g));
 }
 

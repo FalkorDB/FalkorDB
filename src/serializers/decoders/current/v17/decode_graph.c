@@ -6,6 +6,8 @@
 #include "decode_v17.h"
 #include "../../../../index/indexer.h"
 
+// TODO: have the delta matrix upon setting M, incase the matrix
+// contains a transpose, we should overwrite it with MT
 // compute transpose matrices
 static void _ComputeTransposeMatrix
 (
@@ -325,7 +327,7 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
-		// compute ADJ matrix & transposes
+		// compute transposes
 		_ComputeTransposeMatrices(g);
 
 		Graph *g = gc->g;

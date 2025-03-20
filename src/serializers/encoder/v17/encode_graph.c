@@ -261,14 +261,17 @@ void RdbSaveGraph_latest
 				RdbSaveNodes_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
 			case ENCODE_STATE_DELETED_NODES:
 				RdbSaveDeletedNodes_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
 			case ENCODE_STATE_EDGES:
 				RdbSaveEdges_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
 			case ENCODE_STATE_DELETED_EDGES:
 				RdbSaveDeletedEdges_v17(rdb, gc, payload->offset,
 						payload->entities_count);

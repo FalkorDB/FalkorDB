@@ -16,8 +16,8 @@ static void _DecodeTensors
 (
 	SerializerIO rdb,     // RDB
 	GrB_Matrix A,         // matrix to populate with tensors
-	uint64_t *n_tensors,  // number of tensors loaded
-	uint64_t *n_elem      // number of edges loaded
+	uint64_t *n_tensors,  // [output] number of tensors loaded
+	uint64_t *n_elem      // [output] number of edges loaded
 ) {
 	// format:
 	//  number of tensors
@@ -43,13 +43,12 @@ static void _DecodeTensors
 
 	// decode and set tensors
 	for(uint64_t i = 0; i < n; i++) {
-
 		// read tensor i,j indicies
 		GrB_Index i = SerializerIO_ReadUnsigned(rdb);
 		GrB_Index j = SerializerIO_ReadUnsigned(rdb);
 
 		// read tensor blob
-		GrB_Index blob_size = SerializerIO_ReadUnsigned(rdb);
+		GrB_Index blob_size;
 		void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
 		ASSERT(blob != NULL);
 
@@ -88,11 +87,8 @@ static GrB_Matrix _DecodeMatrix
 	// read blob
 	//--------------------------------------------------------------------------
 
-	// read blob size
-	GrB_Index blob_size = SerializerIO_ReadUnsigned(rdb);
-	ASSERT(blob_size > 0);
-
 	// read matrix blob
+	GrB_Index blob_size;
 	void *blob = SerializerIO_ReadBuffer(rdb, (size_t*)&blob_size);
 	ASSERT(blob != NULL);
 
@@ -178,8 +174,8 @@ void RdbLoadRelationMatrices_v17
 		GrB_Matrix R = _DecodeMatrix(rdb);
 
 		// decode tensors
-		uint64_t n_elem    = 0;
-		uint64_t n_tensors = 0;
+		uint64_t n_elem    = 0;  // number of tensor edges
+		uint64_t n_tensors = 0;  // number of tensors in matrix
 		_DecodeTensors(rdb, R, &n_tensors, &n_elem);
 
 		// plant M matrix
