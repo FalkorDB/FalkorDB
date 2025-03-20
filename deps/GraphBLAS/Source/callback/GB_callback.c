@@ -18,6 +18,7 @@ GB_callback_struct GB_callback =
     .GB_ek_slice_func               = GB_ek_slice,
     .GB_free_memory_func            = GB_free_memory,
     .GB_malloc_memory_func          = GB_malloc_memory,
+    .GB_calloc_memory_func          = GB_calloc_memory,
     .GB_memset_func                 = GB_memset,
     .GB_werk_pop_func               = GB_werk_pop,
     .GB_werk_push_func              = GB_werk_push,

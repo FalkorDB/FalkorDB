@@ -555,7 +555,7 @@
                     // discard all entries A(ia:ib-1,i)
                     int64_t pleft = pA + 1 ;
                     int64_t pright = pA_end - 1 ;
-                    GB_trim_binary_search (ib, Ai, A->i_is_32, // GB_Ai_IS_32,
+                    GB_trim_binary_search (ib, Ai, GB_Ai_IS_32,
                         &pleft, &pright) ;
                     ASSERT (pleft > pA) ;
                     pA = pleft ;
@@ -601,7 +601,7 @@
                     // discard all entries B(ib:ia-1,j)
                     int64_t pleft = pB + 1 ;
                     int64_t pright = pB_end - 1 ;
-                    GB_trim_binary_search (ia, Bi, B->i_is_32, // GB_Bi_IS_32,
+                    GB_trim_binary_search (ia, Bi, GB_Bi_IS_32,
                         &pleft, &pright) ;
                     ASSERT (pleft > pB) ;
                     pB = pleft ;

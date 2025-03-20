@@ -263,7 +263,7 @@ int main (void)
     GrB_Scalar_new (&Hyper, GrB_FP64) ;
     GrB_Global_get_Scalar (GrB_GLOBAL, Hyper, GxB_HYPER_SWITCH) ;
     double hyper_switch ;
-    GrB_Scalar_extractElement (&hyper_switch, Hyper) ;
+    GrB_Scalar_extractElement_FP64 (&hyper_switch, Hyper) ;
     fprintf (stderr, "hyper switch: %g\n", hyper_switch) ;
 
     int format ;

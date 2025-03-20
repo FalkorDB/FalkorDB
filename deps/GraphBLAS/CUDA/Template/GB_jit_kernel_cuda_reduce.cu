@@ -24,6 +24,8 @@
 
 // If the reduction is done on the GPU, A will never be iso-valued.
 
+#define GB_FREE_ALL ;
+
 #if GB_C_ISO || GB_A_ISO
 #error "kernel undefined for C or A iso"
 #endif
@@ -189,7 +191,12 @@ GB_JIT_CUDA_KERNEL_REDUCE_PROTO (GB_jit_kernel)
     dim3 grid (gridsz) ;    // gridsz: # of threadblocks
     dim3 block (blocksz) ;  // blocksz: # of threads in each threadblock
     GB_A_NHELD (anz) ;      // anz = # of entries held in A
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_reduce_kernel <<<grid, block, 0, stream>>> (zscalar, V, A, anz) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     return (GrB_SUCCESS) ;
 }
 

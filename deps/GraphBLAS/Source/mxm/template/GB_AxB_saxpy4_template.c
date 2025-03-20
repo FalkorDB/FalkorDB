@@ -185,6 +185,16 @@
         // C += A*B using fine tasks and atomics
         //----------------------------------------------------------------------
 
+        // allocate workspace to implement the atomic update
+        #if !GB_Z_HAS_ATOMIC_UPDATE
+        int8_t *restrict Wf = NULL ; size_t Wf_size = 0 ;
+        Wf = GB_CALLOC_MEMORY (C->vlen * C->vdim, sizeof (int8_t), &Wf_size) ;
+        if (Wf == NULL)
+        { 
+            return (GrB_OUT_OF_MEMORY) ;
+        }
+        #endif
+
         int tid ;
         #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1)
         for (tid = 0 ; tid < ntasks ; tid++)
@@ -281,6 +291,11 @@
                 }
             }
         }
+
+        // free workspace for atomic update
+        #if !GB_Z_HAS_ATOMIC_UPDATE
+        GB_FREE_MEMORY (&Wf, Wf_size) ;
+        #endif
 
     }
     else

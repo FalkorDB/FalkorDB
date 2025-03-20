@@ -230,7 +230,7 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
         mxSetFieldByNumber (G, 0, 3, Ap_mx) ;
 
         // export the indices
-        mxClassID Ai_class = (Ai_type == GrB_UINT32) ?
+        mxClassID Ai_class = (Ai_type == GrB_INT32 || Ai_type == GrB_UINT32) ?
             mxUINT32_CLASS : mxUINT64_CLASS ;
         mxArray *Ai_mx = mxCreateNumericMatrix (1, 0, Ai_class, mxREAL) ;
         if (Ai_size > 0)
@@ -252,7 +252,7 @@ mxArray *gb_export_to_mxstruct  // return exported MATLAB struct G
     }
     mxSetFieldByNumber (G, 0, 2, Ax_mx) ;
 
-    mxClassID Ah_class = (Ah_type == GrB_UINT32) ?
+    mxClassID Ah_class = (Ah_type == GrB_INT32 || Ah_type == GrB_UINT32) ?
         mxUINT32_CLASS : mxUINT64_CLASS ;
 
     if (sparsity_status == GxB_HYPERSPARSE)

@@ -1,3 +1,15 @@
+Mar 20, 2025: version 10.0.2
+
+    * performance:  improved the performance of GrB_setElement when many
+        entries are inserted into a matrix that is initially empty.
+    * (61) bug fix: GxB_Serialized_get_Scalar declared twice in GraphBLAS.h;
+        caught by Erik Welch.
+
+Mar 6, 2025: version 10.0.1
+
+    * (60) bug fix: one of the GrB_mxm kernels (saxpy4) can hit a segfault for
+        user-defined types, in the JIT kernels.  Caught by Gabe Gomez.
+
 Mar 1, 2025: version 10.0.0
 
     * 32/64 bit matrices and vectors: the GrB_Matrix and GrB_Vector
