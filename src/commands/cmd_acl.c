@@ -290,7 +290,8 @@ static int _senitaze_acl_setuser
 	}
 
 	int acl_argc = 0;
-    // iterate over the items in GRAPH_ADMIN and use _command_in_category
+    // iterate over the items in GRAPH_ADMIN, 
+	// GRAPH_USER and GRAPH_READONLY_USER and use _command_in_category
 	// to check if the command is allowed
 	for (int i = 0; i < *argc; i++) {
 		const char *arg_str = RedisModule_StringPtrLen(argv[i], NULL);
@@ -463,13 +464,13 @@ int graph_acl_cmd
 	ASSERT(ctx != NULL);
 	ASSERT(argv != NULL);
 
-	if(argc < 2){
+	if (argc < 2) {
 		return RedisModule_WrongArity(ctx);
 	}
 
  	const char *command = RedisModule_StringPtrLen(argv[1], NULL);
 	if (strcasecmp(command, "SETUSER") == 0) {
-		if(argc < 3 ){
+		if (argc < 3) {
 			return RedisModule_WrongArity(ctx);
 		}
 		RedisModuleString *subject = argv[2];
@@ -484,9 +485,12 @@ int graph_acl_cmd
 		// execute the command as admin using redis ACL
 		return _execute_acl_cmd_as_admin(ctx, argv, argc);
 	} else if (strcasecmp(command, "SAVE") == 0) {
+		if (argc != 2) {
+			return RedisModule_WrongArity(ctx);
+		}
 		return _execute_acl_cmd_as_admin(ctx, argv, argc);
 	} else if (strcasecmp(command, "GETUSER") == 0) {
-		if(argc < 3 ){
+		if (argc < 3) {
 			return RedisModule_WrongArity(ctx);
 		}
 	

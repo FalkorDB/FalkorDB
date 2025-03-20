@@ -90,7 +90,7 @@ int graph_password_cmd
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
 		"Unknown command: GRAPH.PASSWORD %s, passible commands are [ADD, REMOVE]",
 		command);
-		RedisModule_ReplyWithError(ctx, "Failed");
+		RedisModule_ReplyWithError(ctx, "Unknown command");
 		return REDISMODULE_ERR;
 	}
 		
@@ -172,7 +172,7 @@ static int _set_password_fun
 
     if (reply == NULL 
 		|| RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_STRING) {
-        RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
+		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 			"Failed to set passwordfor user %s.", username);
 
 		RedisModule_ReplyWithError(ctx, "FAILED");

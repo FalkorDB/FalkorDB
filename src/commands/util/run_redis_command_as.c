@@ -3,7 +3,7 @@
 * Licensed under the Server Side Public License v1 (SSPLv1).
 */
 
-
+#include "RG.h"
 #include <string.h>
 #include <stdlib.h>
 #include "run_redis_command_as.h"
@@ -27,9 +27,8 @@ void init_run_cmd_as
 void free_run_cmd_as
 (
 ) {
-	if (ADMIN_USER != NULL) {
-		free(ADMIN_USER);
-	}
+	ASSERT(ADMIN_USER != NULL);
+	free(ADMIN_USER);
 }
 
 // authenticate as a 'username' user
@@ -39,12 +38,12 @@ static int _switch_user
 	const char *username,
 	uint64_t *client_id
 ) {
-    size_t username_len = strlen(username);
+	size_t username_len = strlen(username);
 	if (RedisModule_AuthenticateClientWithACLUser(ctx, username, username_len,
 		NULL, ctx, client_id) != REDISMODULE_OK) {
-        RedisModule_Log(ctx, "error", "Failed to authenticate as %s", username);
-        return REDISMODULE_ERR;
-    }
+		RedisModule_Log(ctx, "error", "Failed to authenticate as %s", username);
+		return REDISMODULE_ERR;
+	}
 	return REDISMODULE_OK;
 }
 
@@ -57,10 +56,10 @@ int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
 	
 	uint64_t client_id = 0;
 	if (_switch_user(ctx, username, &client_id) != REDISMODULE_OK) {
-        RedisModule_Log(ctx, "error", "Failed to authenticate as user %s", username);
+		RedisModule_Log(ctx, "error", "Failed to authenticate as user %s", username);
 		RedisModule_ReplyWithError(ctx, "FAILED");
 		RedisModule_FreeString(ctx, _redis_current_user_name);
-        return REDISMODULE_ERR;
+		return REDISMODULE_ERR;
     }
 	
 	int res = cmd(ctx, argv, argc, redis_current_user_name, privdata);
@@ -71,7 +70,7 @@ int run_redis_command_as(RedisModuleCtx *ctx, RedisModuleString **argv,
 		RedisModule_FreeString(ctx, _redis_current_user_name);
 		return REDISMODULE_ERR;
 	}
-	
+
 	RedisModule_FreeString(ctx, _redis_current_user_name);
 	return res;
 }

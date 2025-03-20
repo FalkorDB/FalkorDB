@@ -361,7 +361,7 @@ static void _ShutdownEventHandler
 	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
 	RediSearch_CleanupModule();
 
-    free_cmd_acl();
+	free_cmd_acl();
 	free_run_cmd_as();
 
 	BoltApi_Unregister();
