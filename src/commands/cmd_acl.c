@@ -316,29 +316,17 @@ static int _senitaze_acl_setuser
 		bool allowed = false;
 		if (_command_in_category(arg_str + 1, GRAPH_ADMIN, &allowed) 
 			!= REDISMODULE_OK) {
-				rm_free(argv);
-				rm_free(acl_args);
-				*argv_ptr = NULL;
-				*argc = 0;
-				return REDISMODULE_ERR;
+				goto cleanup;
 		}
 		// same for GRAPH_USER
 		if (!allowed && (_command_in_category(arg_str + 1, GRAPH_USER, &allowed) 
 			!= REDISMODULE_OK)) {
-				rm_free(argv);
-				rm_free(acl_args);
-				*argv_ptr = NULL;
-				*argc = 0;
-				return REDISMODULE_ERR;
+				goto cleanup;
 		}
 		// same for GRAPH_READONLY_USER
 		if (!allowed && (_command_in_category(arg_str + 1, GRAPH_READONLY_USER, 
 			&allowed) != REDISMODULE_OK)) {
-				rm_free(argv);
-				rm_free(acl_args);
-				*argv_ptr = NULL;
-				*argc = 0;
-				return REDISMODULE_ERR;
+				goto cleanup;
 		}
 		if (allowed) {
 			acl_args[i] = argv[i];
@@ -350,6 +338,13 @@ static int _senitaze_acl_setuser
 	*argc = acl_argc;
 	*argv_ptr = acl_args;
 	return REDISMODULE_OK;
+
+	cleanup:
+		rm_free(argv);
+		rm_free(acl_args);
+		*argv_ptr = NULL;
+		*argc = 0;
+		return REDISMODULE_ERR;
 
 }
 
@@ -431,7 +426,7 @@ static int _execute_acl_cmd_fn
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 			"Failed to execute ACL command '%s'. Error: %d",log_msg, errno);
 		RedisModule_ReplyWithError(ctx, "FAILED");
-    	rm_free(acl_args); 
+		rm_free(acl_args); 
 		return REDISMODULE_ERR;
 	}
 
@@ -547,19 +542,16 @@ static CommandCategory* _create_command_category
 	// Allocate memory for the array of pointers
 	category->commands = (char**)rm_malloc(substrings * sizeof(const char*));
 	if (category->commands == NULL) {
-		free_command_category(category);
-		return NULL;
+		goto cleanup;
 	} 
 	category->redis_module_commands_plus = (RedisModuleString**)rm_malloc(substrings * sizeof(RedisModuleString*));
 	if (category->redis_module_commands_plus == NULL) {
-		free_command_category(category);
-		return NULL;
+		goto cleanup;
 	}
 
 	category->redis_module_commands_minus = (RedisModuleString**)rm_malloc(substrings * sizeof(RedisModuleString*));
 	if (category->redis_module_commands_minus == NULL) {
-		free_command_category(category);
-		return NULL;
+		goto cleanup;
 	}
 
 	// Split the string into substrings
@@ -574,8 +566,7 @@ static CommandCategory* _create_command_category
 		// Allocate memory for the substring, substr [0] is '+' or '-'
 		char* substr = (char*)rm_malloc(length + 2);
 		if (substr == NULL) {
-			free_command_category(category);
-			return NULL;
+			goto cleanup;
 		}
 		substr[0] = '+';
 		strncpy(substr + 1, start , length);
@@ -598,8 +589,7 @@ static CommandCategory* _create_command_category
 			category->redis_module_commands_minus[i] == NULL) {
 			RedisModule_Log(ctx, "error",
 				"creation of redis module string %s failed", substr);
-			free_command_category(category);
-			return NULL;	
+			goto cleanup;	
 		}
 		start = end + 1; // Move to the next substring
 	}
@@ -607,4 +597,7 @@ static CommandCategory* _create_command_category
 	category->length = substrings;
 	return category;
 	
+	cleanup:
+		free_command_category(category);
+		return NULL;
 }

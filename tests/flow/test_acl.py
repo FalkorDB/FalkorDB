@@ -11,6 +11,8 @@ class testACL():
         
         os.environ['GRAPH_READONLY_USER'] = '''INFO CLIENT DBSIZE PING HELLO AUTH RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK GRAPH.CONFIG CLUSTER COMMAND'''
         
+        os.environ['enableModuleCommand'] = "yes"
+        
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
         self.db.execute_command("ACL", "SETUSER", "default", "on", ">pass",
@@ -210,7 +212,4 @@ class testACL():
             v = self.db.execute_command("AUTH", "falkordb-user", "foo")
             self.env.assertTrue(False, "should not be able to authenticate")
         except redis.exceptions.AuthenticationError as e:
-            self.env.assertTrue(True)
-          
-            
-       
+            self.env.assertTrue(True)   
