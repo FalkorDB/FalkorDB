@@ -179,133 +179,7 @@ char *SerializerIO_ReadBuffer
 }
 
 //------------------------------------------------------------------------------
-// Buffered Serializer Write API
-//------------------------------------------------------------------------------
-
-// flush buffer to underline stream
-static void _flush_buffer
-(
-	BufferedIO *buffer  // buffer
-) {
-	// empty buffer
-	if(unlikely(buffer->count == 0)) {
-		return;
-	}
-
-	//--------------------------------------------------------------------------
-	// flush buffer to stream
-	//--------------------------------------------------------------------------
-
-	// write buffer
-	RedisModule_SaveStringBuffer(buffer->stream, (const char*)buffer->buffer,
-			buffer->count);
-
-	// reset buffer
-	buffer->count = 0;
-}
-
-// TODO: think about a better name, making it clear that this function might
-// flush
-// another options could be adding a boolean 'flush' that if true and needed
-// this function will flush the buffer
-
-// ensure buffer can accommodate n additional bytes
-// if there's no room the buffer is flushed
-static inline void _ensure_cap
-(
-	BufferedIO *buffer,  // buffer
-	size_t n             // number of bytes to write
-) {
-	ASSERT(n > 0);
-
-	// make sure there's enough room in buffer
-	if( (buffer->cap - buffer->count) < n) {
-		_flush_buffer(buffer);
-	}
-}
-
-// TODO: in debug mode add value type e.g. INT64_T
-//     similarly in debug mode when reading validate that the right type is read
-
-// macro for creating buffered RDB serializer write functions
-#define BUFFERED_SERIALIZER_WRITE(suffix, t)                    \
-static void BufferSerializerIO_Write##suffix(void *io, t v) {   \
-	BufferedIO *buffer = (BufferedIO*)io;                       \
-																\
-	/* make sure buffer has enough room */                      \
-	_ensure_cap(buffer, sizeof(t));                             \
-																\
-	/* write value to buffer */                                 \
-	*((t*)(buffer->buffer + buffer->count)) = v;                \
-																\
-	/* update buffer offset */                                  \
-	buffer->count += sizeof(t);                                 \
-}
-
-// create buffer serializer write functions
-BUFFERED_SERIALIZER_WRITE(Float,      float)        // BufferSerializerIO_WriteFloat
-BUFFERED_SERIALIZER_WRITE(Double,     double)       // BufferSerializerIO_WriteDouble
-BUFFERED_SERIALIZER_WRITE(Signed,     int64_t)      // BufferSerializerIO_WriteSigned
-BUFFERED_SERIALIZER_WRITE(Unsigned,   uint64_t)     // BufferSerializerIO_WriteUnsigned
-BUFFERED_SERIALIZER_WRITE(LongDouble, long double)  // BufferSerializerIO_WriteLongDouble
-
-// write unsigned to buffer
-//void BufferSerializerIO_WriteUnsigned
-//(
-//	void *io,       // serializer
-//	uint64_t value  // value
-//) {
-//	BufferedIO *buffer = (BufferedIO*)io;
-//
-//	// make sure buffer has enough room
-//	_ensure_cap(buffer, sizeof(uint64_t));
-//
-//	// write value to buffer
-//	*((uint64_t*)(buffer->buffer + buffer->count)) = value;
-//
-//	// update buffer offset
-//	buffer->count += sizeof(uint64_t);
-//}
-
-// write buffer to stream
-void BufferSerializerIO_WriteBuffer
-(
-	void *io,           // serializer
-	const char *value,  // value
-	size_t len          // value size
-) {
-	ASSERT(io    != NULL);
-	ASSERT(value != NULL);
-	ASSERT(len   > 0);
-
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// make sure value has enough room
-	_ensure_cap(buffer, len + sizeof(size_t));
-
-	// TODO: _ensure_cap should return boolean letting us know if we can
-	// or can't write value to in memory buffer, this should simplify the
-	// following condition
-
-	// if value can't fit within io's buffer write directly to stream
-	// otherwise add it to buffer
-	if((len + sizeof(size_t)) <= buffer->cap) {
-		// add to buffer
-		// write value length to stream
-		*((size_t*)(buffer->buffer + buffer->count)) = len;
-		buffer->count += sizeof(size_t);
-
-		// write value to buffer
-		memcpy(buffer->buffer + buffer->count, value, len);
-		buffer->count += len;
-	} else {
-		// value is too big, flush to stream
-		RedisModule_SaveStringBuffer(buffer->stream, value, len);
-	}
-}
-
-//------------------------------------------------------------------------------
-// Buffered Serializer Read API
+// Buffered Serializer Read & Write API
 //------------------------------------------------------------------------------
 
 // load buffer from stream to memory
@@ -334,124 +208,183 @@ static void _load_buffer
 	buffer->count = 0;
 }
 
-// read unsigned int from buffer
-uint64_t BufferSerializerIO_ReadUnsigned
+// flush buffer to underline stream
+static void _flush_buffer
 (
-	void *io  // serializer
+	BufferedIO *buffer  // buffer
 ) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
+	// empty buffer
+	if(unlikely(buffer->count == 0)) {
+		return;
 	}
 
-	// ensure there's at least sizeof(uint64_t) bytes in buffer
-	ASSERT((buffer->cap - buffer->count) >= sizeof(uint64_t));
+	//--------------------------------------------------------------------------
+	// flush buffer to stream
+	//--------------------------------------------------------------------------
 
-	// read value
-	uint64_t v = *(uint64_t*)(buffer->buffer + buffer->count);
+	// write buffer
+	RedisModule_SaveStringBuffer(buffer->stream, (const char*)buffer->buffer,
+			buffer->count);
 
-	// update offset
-	buffer->count += sizeof(uint64_t);
-
-	return v;
+	// reset buffer
+	buffer->count = 0;
 }
 
-// read signed int from buffer
-int64_t BufferSerializerIO_ReadSigned
+// try to accommodate n additional bytes
+// if there's no room the buffer is flushed
+static inline bool _accommodate
 (
-	void *io  // serializer
+	BufferedIO *buffer,  // buffer
+	size_t n             // number of bytes to write
 ) {
-	BufferedIO *buffer = (BufferedIO*)io;
+	ASSERT(n > 0);
 
-	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
+	// flush in case there's not enough room in buffer
+	if( (buffer->cap - buffer->count) < n) {
+		_flush_buffer(buffer);
+
+		// once flushed we can accommodate only if n <= buffer's capacity
+		return n <= buffer->cap;
 	}
 
-	// ensure there's at least sizeof(int64_t) bytes in buffer
-	ASSERT((buffer->cap - buffer->count) >= sizeof(int64_t));
-
-	// read value
-	int64_t v = *(int64_t*)(buffer->buffer + buffer->count);
-
-	// update offset
-	buffer->count += sizeof(int64_t);
-
-	return v;
+	// there's enough space in buffer to accommodate additional n bytes
+	return true;
 }
 
-// read double from buffer
-double BufferSerializerIO_ReadDouble
-(
-	void *io  // serializer
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
+#if RG_DEBUG
 
-	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
-	}
+	// encoded value types, used for debugging purposes
+	static char Bytes      = 0;
+	static char Float      = 1;
+	static char Double     = 2;
+	static char Signed     = 3;
+	static char Unsigned   = 4;
+	static char LongDouble = 5;
 
-	// ensure there's at least sizeof(double) bytes in buffer
-	ASSERT((buffer->cap - buffer->count) >= sizeof(double));
+	// macro to map types to encoded values
+	#define TYPE_ENCODE(t)                 \
+		_Generic((t)0,                     \
+				char*       : Bytes,       \
+				float       : Float,       \
+				double      : Double,      \
+				int64_t     : Signed,      \
+				uint64_t    : Unsigned,    \
+				long double : LongDouble,  \
+				default: Bytes)
 
-	// read value
-	double v = *(double*)(buffer->buffer + buffer->count);
+	#define DEBUG_WRITE_TYPE(t)                                       \
+		/* write type to buffer */                                    \
+		*((char*)(buffer->buffer + buffer->count)) = TYPE_ENCODE(t);  \
+                                                                      \
+		/* update buffer offset */                                    \
+		buffer->count++;
 
-	// update offset
-	buffer->count += sizeof(double);
+	#define DEBUG_VALIDATE_TYPE(t)                                    \
+		/* validate type */                                           \
+		char s = *(char*)(buffer->buffer + buffer->count);            \
+		buffer->count++;                                              \
+		ASSERT(s == TYPE_ENCODE(t));
 
-	return v;
+	#define REQUIRED_SIZE(t) (sizeof(t) + 1)
+#else
+	#define DEBUG_WRITE_TYPE(t)           /* nop */
+	#define DEBUG_VALIDATE_TYPE(t)        /* nop */
+	#define REQUIRED_SIZE(t) (sizeof(t))  /* nop */
+#endif
+
+// macro for creating both read and write buffered RDB serializer functions
+#define BUFFERED_SERIALIZER_READ_WRITE(suffix, t)               \
+/* buffer serializerio write function*/                         \
+static void BufferSerializerIO_Write##suffix(void *io, t v) {   \
+	BufferedIO *buffer = (BufferedIO*)io;                       \
+                                                                \
+	/* make sure buffer has enough room */                      \
+	_accommodate(buffer, REQUIRED_SIZE(t));                     \
+                                                                \
+	/* in DEBUG mode we write the value type */                 \
+	DEBUG_WRITE_TYPE(t)                                         \
+                                                                \
+	/* write value to buffer */                                 \
+	*((t*)(buffer->buffer + buffer->count)) = v;                \
+                                                                \
+	/* update buffer offset */                                  \
+	buffer->count += sizeof(t);                                 \
+}                                                               \
+                                                                \
+/* buffer serializerio read function*/                          \
+static t BufferSerializerIO_Read##suffix(void *io) {            \
+	BufferedIO *buffer = (BufferedIO*)io;                       \
+                                                                \
+	/* load buffer if depleted */                               \
+	if(unlikely(buffer->count == buffer->cap)) {                \
+		_load_buffer(buffer);                                   \
+	}                                                           \
+                                                                \
+	/* ensure there's at least sizeof(t) bytes in buffer */     \
+	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(t));  \
+                                                                \
+	/* validate type */                                         \
+	DEBUG_VALIDATE_TYPE(t)                                      \
+                                                                \
+	/* read value */                                            \
+	t v = *(t*)(buffer->buffer + buffer->count);                \
+                                                                \
+	/* update offset */                                         \
+	buffer->count += sizeof(t);                                 \
+                                                                \
+	return v;                                                   \
 }
 
-// read float from buffer
-float BufferSerializerIO_ReadFloat
+//------------------------------------------------------------------------------
+// create buffer serializer read & write functions
+//------------------------------------------------------------------------------
+
+// BufferSerializerIO_ReadFloat & BufferSerializerIO_WriteFloat
+BUFFERED_SERIALIZER_READ_WRITE(Float, float)
+
+// BufferSerializerIO_ReadDouble & BufferSerializerIO_WriteDouble
+BUFFERED_SERIALIZER_READ_WRITE(Double, double)
+
+// BufferSerializerIO_ReadSigned & BufferSerializerIO_WriteSigned
+BUFFERED_SERIALIZER_READ_WRITE(Signed, int64_t)
+
+// BufferSerializerIO_ReadUnsigned & BufferSerializerIO_WriteUnsigned
+BUFFERED_SERIALIZER_READ_WRITE(Unsigned, uint64_t)
+
+// BufferSerializerIO_ReadLongDouble & BufferSerializerIO_WriteLongDouble
+BUFFERED_SERIALIZER_READ_WRITE(LongDouble, long double)
+
+// write buffer to stream
+void BufferSerializerIO_WriteBuffer
 (
-	void *io  // serializer
+	void *io,           // serializer
+	const char *value,  // value
+	size_t len          // value size
 ) {
+	ASSERT(io    != NULL);
+	ASSERT(value != NULL);
+	ASSERT(len   > 0);
+
 	BufferedIO *buffer = (BufferedIO*)io;
 
-	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
+	// make sure value has enough room
+	if(_accommodate(buffer, len + REQUIRED_SIZE(size_t))) {
+		// in DEBUG mode we write the value type
+		DEBUG_WRITE_TYPE(char*)
+
+		// add to buffer
+		// write value length to stream
+		*((size_t*)(buffer->buffer + buffer->count)) = len;
+		buffer->count += sizeof(size_t);
+
+		// write value to buffer
+		memcpy(buffer->buffer + buffer->count, value, len);
+		buffer->count += len;
+	} else {
+		// value is too big
+		// buffer had been flushed by '_accommodate'
+		RedisModule_SaveStringBuffer(buffer->stream, value, len);
 	}
-
-	// ensure there's at least sizeof(float) bytes in buffer
-	ASSERT((buffer->cap - buffer->count) >= sizeof(float));
-
-	// read value
-	float v = *(float*)(buffer->buffer + buffer->count);
-
-	// update offset
-	buffer->count += sizeof(float);
-
-	return v;
-}
-
-// read long double from buffer
-long double BufferSerializerIO_ReadLongDouble
-(
-	void *io  // serializer
-) {
-	BufferedIO *buffer = (BufferedIO*)io;
-
-	// load buffer if depleted
-	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
-	}
-
-	// ensure there's at least sizeof(long double) bytes in buffer
-	ASSERT((buffer->cap - buffer->count) >= sizeof(long double));
-
-	// read value
-	long double v = *(long double*)(buffer->buffer + buffer->count);
-
-	// update offset
-	buffer->count += sizeof(long double);
-
-	return v;
 }
 
 // read buffer from stream
@@ -487,7 +420,10 @@ char *BufferSerializerIO_ReadBuffer
 	}
 
 	// expecting at least the string length
-	ASSERT((buffer->cap - buffer->count) >= sizeof(uint64_t));
+	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(uint64_t));
+
+	// in DEBUG mode we validate the value type
+	DEBUG_VALIDATE_TYPE(char*);
 
 	// read buffer len
 	uint64_t l = *(uint64_t*)(buffer->buffer + buffer->count);
