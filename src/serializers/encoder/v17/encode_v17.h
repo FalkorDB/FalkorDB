@@ -14,7 +14,7 @@ void RdbSaveGraph_latest
 );
 
 // encode nodes
-void RdbSaveNodes_v16
+void RdbSaveNodes_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -23,7 +23,7 @@ void RdbSaveNodes_v16
 );
 
 // encode deleted node IDs
-void RdbSaveDeletedNodes_v16
+void RdbSaveDeletedNodes_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -32,7 +32,7 @@ void RdbSaveDeletedNodes_v16
 );
 
 // encode edges
-void RdbSaveEdges_v16
+void RdbSaveEdges_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -41,7 +41,7 @@ void RdbSaveEdges_v16
 );
 
 // encode deleted edges IDs
-void RdbSaveDeletedEdges_v16
+void RdbSaveDeletedEdges_v17
 (
 	SerializerIO rdb,  // RDB
 	GraphContext *gc,  // graph context
@@ -49,8 +49,37 @@ void RdbSaveDeletedEdges_v16
 	const uint64_t n   // number of deleted edges to encode
 );
 
-void RdbSaveGraphSchema_v16
+void RdbSaveGraphSchema_v17
 (
 	SerializerIO rdb,
 	GraphContext *gc
 );
+
+// encode label matrices to rdb
+void RdbSaveLabelMatrices_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+);
+
+// encode relationship matrices to rdb
+void RdbSaveRelationMatrices_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+);
+
+// encode graph's adjacency matrix
+void RdbSaveAdjMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+);
+
+// encode graph's labels matrix
+void RdbSaveLblsMatrix_v17
+(
+	SerializerIO rdb,  // RDB
+	Graph *g           // graph
+);
+

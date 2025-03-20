@@ -5,12 +5,15 @@
  */
 
 #include "decode_graph.h"
-#include "current/v16/decode_v16.h"
+#include "current/v17/decode_v17.h"
 
-GraphContext *RdbLoadGraph(RedisModuleIO *rdb) {
+GraphContext *RdbLoadGraph
+(
+	RedisModuleIO *rdb
+) {
 	const RedisModuleString *rm_key_name = RedisModule_GetKeyNameFromIO(rdb);
 
-	SerializerIO io = SerializerIO_FromRedisModuleIO(rdb);
+	SerializerIO io = SerializerIO_FromBufferedRedisModuleIO(rdb, false);
 	GraphContext *gc = RdbLoadGraphContext_latest(io, rm_key_name);
 	SerializerIO_Free(&io);
 
