@@ -43,8 +43,8 @@ void GB_macrofy_unop
 
         ASSERT (op != NULL) ;
         GB_macrofy_defn (fp, 3, op->name, op->defn) ;
-        fprintf (fp, "#define %s(z,x,%s,y)  %s (&(z), &(x))\n", macro_name,
-            ij, op->name) ;
+        fprintf (fp, "#define %s(z,x,%s,y)  %s (&(z), &(x))\n",
+            macro_name, ij, op->name) ;
 
     }
     else if (ecode == 254)

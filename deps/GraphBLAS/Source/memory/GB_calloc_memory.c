@@ -48,6 +48,7 @@ static inline void *GB_calloc_helper
 // GB_calloc_memory
 //------------------------------------------------------------------------------
 
+#if 0
 void *GB_calloc_memory      // pointer to allocated block of memory
 (
     size_t nitems,          // number of items to allocate
@@ -55,6 +56,9 @@ void *GB_calloc_memory      // pointer to allocated block of memory
     // output
     size_t *size_allocated  // # of bytes actually allocated
 )
+#endif
+
+GB_CALLBACK_CALLOC_MEMORY_PROTO (GB_calloc_memory)
 {
 
     //--------------------------------------------------------------------------

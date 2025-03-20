@@ -80,7 +80,7 @@ static void _Print_Config
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {
 		uint64_t info_max_query_count = 0;
 		Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &info_max_query_count);
-		RedisModule_Log(ctx, "notice", "Query backlog size: %" PRIu64, info_max_query_count);
+		RedisModule_Log(ctx, "notice", "Query backlog size: %llu", info_max_query_count);
 	}
 }
 

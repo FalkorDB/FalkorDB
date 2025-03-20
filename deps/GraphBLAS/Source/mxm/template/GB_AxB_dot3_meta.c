@@ -88,8 +88,10 @@
     const bool B_iso = B->iso ;
     const bool Bp_is_32 = B->p_is_32 ;
     const bool Bj_is_32 = B->j_is_32 ;
+    const bool Bi_is_32 = B->i_is_32 ;
     #define GB_Bp_IS_32 Bp_is_32
     #define GB_Bj_IS_32 Bj_is_32
+    #define GB_Bi_IS_32 Bi_is_32
     #endif
 
     GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
@@ -111,8 +113,10 @@
     const bool A_iso = A->iso ;
     const bool Ap_is_32 = A->p_is_32 ;
     const bool Aj_is_32 = A->j_is_32 ;
+    const bool Ai_is_32 = A->i_is_32 ;
     #define GB_Ap_IS_32 Ap_is_32
     #define GB_Aj_IS_32 Aj_is_32
+    #define GB_Ai_IS_32 Ai_is_32
     #endif
 
     const void *A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;

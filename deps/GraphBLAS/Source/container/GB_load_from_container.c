@@ -14,6 +14,16 @@
 #include "GB_container.h"
 #define GB_FREE_ALL GB_phybix_free (A) ;
 
+static inline bool GB_type_ok (GrB_Type type)
+{
+    return (type == GrB_INT32 || type == GrB_UINT32 ||
+            type == GrB_INT64 || type == GrB_UINT64) ;
+}
+
+//------------------------------------------------------------------------------
+// GB_load_from_container
+//------------------------------------------------------------------------------
+
 GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
 (
     GrB_Matrix A,               // matrix to load from the Container
@@ -62,7 +72,8 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
     GrB_Type Ap_type = NULL, Ah_type = NULL, Ab_type = NULL, Ai_type = NULL ;
     uint64_t Ah_size = 0, Ap_size = 0, Ai_size = 0, Ab_size = 0, Ax_size = 0 ;
     uint64_t nrows_times_ncols = UINT64_MAX ;
-    bool ok = GB_uint64_multiply (&nrows_times_ncols, nrows, ncols) ;
+    bool okb = GB_uint64_multiply (&nrows_times_ncols, nrows, ncols) ;
+    bool ok = true ;
     bool jumbled = Container->jumbled ;
 
     // determine the A->j_is_32 condition when Container->h is empty
@@ -103,6 +114,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             GB_OK (GB_vector_unload (Container->p, &(A->p), &Ap_type,
                 &plen1, &Ap_size, &(A->p_shallow), Werk)) ;
             A->p_size = (size_t) Ap_size ;
+            ok = GB_type_ok (Ap_type) ;
 
             // load or create A->h
             if (h_empty)
@@ -127,6 +139,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
                     &plen, &Ah_size, &(A->h_shallow), Werk)) ;
             }
             A->h_size = (size_t) Ah_size ;
+            ok = ok && GB_type_ok (Ah_type) ;
 
             // load A->Y
             A->Y = Container->Y ;
@@ -139,6 +152,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             GB_OK (GB_vector_unload (Container->i, &(A->i), &Ai_type,
                 &Ai_len, &Ai_size, &(A->i_shallow), Werk)) ;
             A->i_size = (size_t) Ai_size ;
+            ok = ok && GB_type_ok (Ai_type) ;
 
             // define plen, nvec, and jumbled
             A->plen = plen ;
@@ -146,7 +160,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             A->jumbled = jumbled ;
 
             // basic sanity checks
-            if (plen1 != plen + 1 ||
+            if (!ok || plen1 != plen + 1 ||
                 !(A->nvec >= 0 && A->nvec <= A->plen && A->plen <= A->vdim))
             { 
                 GB_FREE_ALL ;
@@ -164,6 +178,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             GB_OK (GB_vector_unload (Container->p, &(A->p), &Ap_type,
                 &plen1, &Ap_size, &(A->p_shallow), Werk)) ;
             A->p_size = (size_t) Ap_size ;
+            ok = GB_type_ok (Ap_type) ;
 
             // clear Container->h, Y, and b
             GB_vector_reset (Container->h) ;
@@ -174,6 +189,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             GB_OK (GB_vector_unload (Container->i, &(A->i), &Ai_type,
                 &Ai_len, &Ai_size, &(A->i_shallow), Werk)) ;
             A->i_size = (size_t) Ai_size ;
+            ok = ok && GB_type_ok (Ai_type) ;
 
             // define plen, nvec, and jumbled
             A->plen = plen1 - 1 ;
@@ -181,7 +197,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             A->jumbled = jumbled ;
 
             // basic sanity checks
-            if (!(A->nvec == A->plen && A->plen == A->vdim))
+            if (!ok || !(A->nvec == A->plen && A->plen == A->vdim))
             { 
                 GB_FREE_ALL ;
                 return (GrB_INVALID_VALUE) ;
@@ -212,7 +228,7 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
             A->nvec = A->vdim ;
 
             // basic sanity checks
-            if (Ab_type != GrB_INT8 || !ok || Ab_len < nrows_times_ncols)
+            if (Ab_type != GrB_INT8 || !okb || Ab_len < nrows_times_ncols)
             { 
                 GB_FREE_ALL ;
                 return (GrB_INVALID_VALUE) ;
@@ -246,9 +262,9 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
     A->x_size = (size_t) Ax_size ;
 
     // define the integer types
-    A->p_is_32 = (Ap_type == GrB_UINT32) ;
-    A->j_is_32 = (Ah_type == GrB_UINT32) ;
-    A->i_is_32 = (Ai_type == GrB_UINT32) ;
+    A->p_is_32 = (Ap_type == GrB_UINT32 || Ap_type == GrB_INT32) ;
+    A->j_is_32 = (Ah_type == GrB_UINT32 || Ah_type == GrB_INT32) ;
+    A->i_is_32 = (Ai_type == GrB_UINT32 || Ai_type == GrB_INT32) ;
 
     //--------------------------------------------------------------------------
     // more basic sanity checks
@@ -270,14 +286,14 @@ GrB_Info GB_load_from_container // GxB_Container -> GrB_Matrix
         // A->x must have size >= A->nvals for non-iso sparse/hypersparse
         ok = (Ax_len >= A->nvals) ;
     }
-    else
+    else // A is full or bitmap
     { 
         // A->x must have size >= nrows*ncols for non-iso full/bitmap
-        ok = ok && (Ax_len >= nrows_times_ncols) ;
+        ok = okb && (Ax_len >= nrows_times_ncols) ;
     }
 
     // ensure Ai_len is the right size
-    if (format == GxB_HYPERSPARSE || format == GxB_SPARSE)
+    if (format == GxB_HYPERSPARSE || format == GxB_SPARSE && ok)
     { 
         // A->i must have size >= A->nvals for sparse/hypersparse
         ok = ok && (Ai_len >= A->nvals) ;

@@ -77,10 +77,10 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
                 A->p_is_32 ? GrB_UINT32 : GrB_UINT64,
                 A->nvec+1, A->p_size, A->p_shallow) ;
             GB_vector_load (Container->h, &(A->h),
-                A->j_is_32 ? GrB_UINT32 : GrB_UINT64,
+                A->j_is_32 ? GrB_INT32 : GrB_INT64,
                 A->nvec, A->h_size, A->h_shallow) ;
             GB_vector_load (Container->i, &(A->i),
-                A->i_is_32 ? GrB_UINT32 : GrB_UINT64,
+                A->i_is_32 ? GrB_INT32 : GrB_INT64,
                 nvals, A->i_size, A->i_shallow) ;
             break ;
 
@@ -91,7 +91,7 @@ GrB_Info GB_unload_into_container   // GrB_Matrix -> GxB_Container
                 A->p_is_32 ? GrB_UINT32 : GrB_UINT64,
                 A->plen+1, A->p_size, A->p_shallow) ;
             GB_vector_load (Container->i, &(A->i),
-                A->i_is_32 ? GrB_UINT32 : GrB_UINT64,
+                A->i_is_32 ? GrB_INT32 : GrB_INT64,
                 nvals, A->i_size, A->i_shallow) ;
             break ;
 

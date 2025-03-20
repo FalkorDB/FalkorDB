@@ -203,8 +203,7 @@ GrB_Info GB (_Asaxpy4B__times_rdiv_int64)
     const bool use_atomics,
     const int64_t *A_slice,
     const int64_t *H_slice,
-    GB_void *restrict Wcx,
-    int8_t *restrict Wf
+    GB_void *restrict Wcx
 )
 { 
     #if GB_DISABLE

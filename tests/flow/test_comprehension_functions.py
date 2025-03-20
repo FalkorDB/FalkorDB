@@ -451,3 +451,4 @@ class testComprehensionFunctions(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [[[1, 1]], [[2]], [[3]], [[]]]
         self.env.assertEquals(actual_result.result_set, expected_result)
+

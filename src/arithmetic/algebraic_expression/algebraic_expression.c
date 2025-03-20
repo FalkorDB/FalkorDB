@@ -364,13 +364,13 @@ bool AlgebraicExpression_Transposed
 	return transposed;
 }
 
-// Returns true if expression contains operation
+// returns true if expression contains operation
 bool AlgebraicExpression_ContainsOp
 (
 	const AlgebraicExpression *root,
 	AL_EXP_OP op
 ) {
-	// Empty expression.
+	// empty expression
 	if(!root) return false;
 
 	if(root->type == AL_OPERATION) {
@@ -380,6 +380,38 @@ bool AlgebraicExpression_ContainsOp
 			if(AlgebraicExpression_ContainsOp(CHILD_AT(root, i), op)) return true;
 		}
 	}
+	return false;
+}
+
+// returns true if expression contains matrix 'm'
+bool AlgebraicExpression_ContainsMatrix
+(
+	const AlgebraicExpression *root,  // root of expression
+	Delta_Matrix m                    // matrix to look for
+) {
+	// empty expression
+	if(!root) return false;
+
+	uint child_count = 0;
+	switch(root->type) {
+		case AL_OPERATION:
+			child_count = AlgebraicExpression_ChildCount(root);
+			for(uint i = 0; i < child_count; i++) {
+				if(AlgebraicExpression_ContainsMatrix(CHILD_AT(root, i), m)) {
+					return true;
+				}
+			}
+
+			break;
+
+		case AL_OPERAND:
+			return (root->operand.matrix == m);
+
+		default:
+			ASSERT("unknown node type" && false);
+			break;
+	}
+
 	return false;
 }
 

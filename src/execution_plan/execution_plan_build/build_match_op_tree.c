@@ -15,7 +15,7 @@
 #include "../optimizations/optimizations.h"
 #include "../../ast/ast_build_filter_tree.h"
 
-static void _ExecutionPlan_ProcessQueryGraph
+static OpBase *_ExecutionPlan_ProcessQueryGraph
 (
 	ExecutionPlan *plan,
 	QueryGraph *qg,
@@ -36,10 +36,21 @@ static void _ExecutionPlan_ProcessQueryGraph
 	// if we have multiple graph components
 	// the root operation is a cartesian product
 	// each chain of traversals will be a child of this op
+	OpBase *apply            = NULL;
 	OpBase *cartesianProduct = NULL;
 	if(connectedComponentsCount > 1) {
 		cartesianProduct = NewCartesianProductOp(plan);
-		ExecutionPlan_UpdateRoot(plan, cartesianProduct);
+		if(plan->root != NULL) {
+			// connect existing operations via an apply operation
+			// these will become the apply's left handside
+			// while the cartesian product will be its right handside
+			apply = NewApplyOp(plan);
+			ExecutionPlan_UpdateRoot(plan, apply);
+
+			ExecutionPlan_AddOp(apply, cartesianProduct);
+		} else {
+			ExecutionPlan_UpdateRoot(plan, cartesianProduct);
+		}
 	}
 
 	// keep track after all traversal operations along a pattern
@@ -105,7 +116,7 @@ static void _ExecutionPlan_ProcessQueryGraph
 		// for each expression, build the appropriate traversal operation
 		for(int j = 0; j < expCount; j++) {
 			AlgebraicExpression *exp = exps[j];
-			// Empty expression, already freed.
+			// empty expression, already freed
 			if(AlgebraicExpression_OperandCount(exp) == 0) continue;
 
 			QGEdge *edge = NULL;
@@ -138,32 +149,66 @@ static void _ExecutionPlan_ProcessQueryGraph
 			} else {
 				root = NewCondTraverseOp(plan, gc->g, exp);
 			}
-			// Insert the new traversal op at the root of the chain.
+			// insert the new traversal op at the root of the chain
 			ExecutionPlan_AddOp(root, tail);
 			tail = root;
 		}
 
-		// Free the expressions array, as its parts have been converted into operations
+		// free the expressions array
+		// as its parts have been converted into operations
 		array_free(exps);
 
 		if(cartesianProduct) {
-			// We have multiple disjoint traversal chains.
-			// Add each chain as a child under the Cartesian Product.
+			// we have multiple disjoint traversal chains
+			// add each chain as a child under the Cartesian Product
 			ExecutionPlan_AddOp(cartesianProduct, root);
 		} else {
-			// We've built the only necessary traversal chain, update the ExecutionPlan root.
+			// we've built the only necessary traversal chain
+			// update the ExecutionPlan root
 			ExecutionPlan_UpdateRoot(plan, root);
 		}
+	}
+
+	if(cartesianProduct != NULL && apply != NULL) {
+		rax *bound_args = raxNew();
+		ExecutionPlan_BoundVariables(OpBase_GetChild(apply, 0), bound_args,
+				plan);
+		const char **arguments = (const char**)raxValues(bound_args);
+
+		// add Argument op to each branch within the cartesian product
+		for(int i = 0; i < OpBase_ChildCount(cartesianProduct); i++) {
+			OpBase *child = OpBase_GetChild(cartesianProduct, i);
+
+			// get to the tap of the current branch
+			while(OpBase_ChildCount(child) > 0) {
+				child = OpBase_GetChild(child, 0);
+			}
+
+			// add argument to the tip of the branch
+			OpBase *arg = NewArgumentOp(plan, arguments);
+			ExecutionPlan_AddOp(child, arg);
+		}
+
+		raxFree(bound_args);
+		array_free(arguments);
 	}
 
 	for(uint i = 0; i < connectedComponentsCount; i++) {
 		QueryGraph_Free(connectedComponents[i]);
 	}
-	array_free(connectedComponents);
+
 	FilterTree_Free(ft);
+	array_free(connectedComponents);
+
+	return (cartesianProduct != NULL) ? cartesianProduct : plan->root;
 }
 
-static void _buildOptionalMatchOps(ExecutionPlan *plan, AST *ast, const cypher_astnode_t *clause) {
+static void _buildOptionalMatchOps
+(
+	ExecutionPlan *plan,
+	AST *ast,
+	const cypher_astnode_t *clause
+) {
 	const char **arguments = NULL;
 	OpBase *optional = NewOptionalOp(plan);
 	rax *bound_vars = NULL;
@@ -216,15 +261,17 @@ void buildMatchOpTree
 	QueryGraph *sub_qg =
 		QueryGraph_ExtractPatterns(plan->query_graph, &pattern, 1);
 
-	_ExecutionPlan_ProcessQueryGraph(plan, sub_qg, ast);
+	OpBase *op =_ExecutionPlan_ProcessQueryGraph(plan, sub_qg, ast);
 	if(ErrorCtx_EncounteredError()) goto cleanup;
 
 	// build the FilterTree to model any WHERE predicates on these clauses
 	// and place ops appropriately
 	FT_FilterNode *sub_ft = AST_BuildFilterTreeFromClauses(ast, &clause, 1);
-	ExecutionPlan_PlaceFilterOps(plan, plan->root, NULL, sub_ft);
+	if(sub_ft != NULL) {
+		ExecutionPlan_PlaceFilterOps(plan, op, sub_ft);
+	}
 
-	// Clean up
+	// clean up
 cleanup:
 	QueryGraph_Free(sub_qg);
 }
