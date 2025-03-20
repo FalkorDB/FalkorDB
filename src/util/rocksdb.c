@@ -15,6 +15,10 @@ rocksdb_readoptions_t *readoptions;
 rocksdb_flushoptions_t *flush_options;
 
 void RocksDB_init() {
+	// delete DBPath
+	char cmd[100];
+	sprintf(cmd, "rm -rf %s", DBPath);
+	system(cmd);
 	rocksdb_options_t *options = rocksdb_options_create();
 	rocksdb_options_set_optimize_filters_for_hits(options, 1);
 	rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
