@@ -36,6 +36,7 @@ rocksdb_writebatch_t *RocksDB_create_batch() {
 
 void RocksDB_put(rocksdb_writebatch_t *writebatch, const char *key, const char *value) {
 	rocksdb_writeoptions_t *writeoptions = rocksdb_writeoptions_create();
+	rocksdb_writeoptions_disable_WAL(writeoptions, 1);
 	char *err = NULL;
 	if(writebatch) {
 		rocksdb_writebatch_put(writebatch, key, strlen(key), value, strlen(value) + 1);
