@@ -31,7 +31,7 @@ void CreateNode
 	for(uint i = 0; i < AttributeSet_Count(set); i++) {
 		Attribute *attr = set->attributes + i;
 		if(SI_TYPE(attr->value) == T_STRING) {
-			if(strlen(attr->value.stringval) > 20) {
+			if(strnlen(attr->value.stringval, 20) == 20) {
 				*(AttributeID *)(node_key + 8) = attr->id;
 				RocksDB_put(writebatch, node_key, attr->value.stringval);
 				attr->value.allocation = M_DISK;

@@ -10,6 +10,9 @@
 const char DBPath[] = "/tmp/rocksdb_falkordb";
 
 rocksdb_t *db;
+rocksdb_writeoptions_t *writeoptions;
+rocksdb_readoptions_t *readoptions;
+rocksdb_flushoptions_t *flush_options;
 
 void RocksDB_init() {
 	rocksdb_options_t *options = rocksdb_options_create();
@@ -23,6 +26,14 @@ void RocksDB_init() {
 	rocksdb_options_set_db_write_buffer_size(options, 1 * 1024 * 1024);
 	rocksdb_options_set_max_bytes_for_level_base(options, 1 * 1024 * 1024);
 
+	writeoptions = rocksdb_writeoptions_create();
+	rocksdb_writeoptions_disable_WAL(writeoptions, 1);
+
+	readoptions = rocksdb_readoptions_create();
+
+	flush_options = rocksdb_flushoptions_create();
+	rocksdb_flushoptions_set_wait(flush_options, 1);
+
 	// open DB
 	char *err = NULL;
 	db = rocksdb_open(options, DBPath, &err);
@@ -35,8 +46,6 @@ rocksdb_writebatch_t *RocksDB_create_batch() {
 }
 
 void RocksDB_put(rocksdb_writebatch_t *writebatch, const char *key, const char *value) {
-	rocksdb_writeoptions_t *writeoptions = rocksdb_writeoptions_create();
-	rocksdb_writeoptions_disable_WAL(writeoptions, 1);
 	char *err = NULL;
 	if(writebatch) {
 		rocksdb_writebatch_put(writebatch, key, strlen(key), value, strlen(value) + 1);
@@ -44,29 +53,22 @@ void RocksDB_put(rocksdb_writebatch_t *writebatch, const char *key, const char *
 		rocksdb_put(db, writeoptions, key, strlen(key), value, strlen(value) + 1, &err);
 	}
 	ASSERT(!err);
-	rocksdb_writeoptions_destroy(writeoptions);
 }
 
 void RocksDB_put_batch(rocksdb_writebatch_t *writebatch) {
-	rocksdb_writeoptions_t *writeoptions = rocksdb_writeoptions_create();
 	char *err = NULL;
 	rocksdb_write(db, writeoptions, writebatch, &err);
 	ASSERT(!err);
-	rocksdb_writeoptions_destroy(writeoptions);
 	rocksdb_writebatch_destroy(writebatch);
-	rocksdb_flushoptions_t *flush_options = rocksdb_flushoptions_create();
-	rocksdb_flushoptions_set_wait(flush_options, 1);
 	rocksdb_flush(db, flush_options, &err);
 	ASSERT(!err);
 }
 
 char *RocksDB_get(const char *key) {
-	rocksdb_readoptions_t *readoptions = rocksdb_readoptions_create();
 	char *err = NULL;
 	size_t len;
 	char *returned_value = rocksdb_get(db, readoptions, key, strlen(key), &len, &err);
 	ASSERT(!err);
-	rocksdb_readoptions_destroy(readoptions);
 	return returned_value;
 }
 
@@ -88,5 +90,8 @@ void RocksDB_info() {
 }
 
 void RocksDB_cleanup() {
+	rocksdb_writeoptions_destroy(writeoptions);
+	rocksdb_readoptions_destroy(readoptions);
+	rocksdb_flushoptions_destroy(flush_options);
 	rocksdb_close(db);
 }
