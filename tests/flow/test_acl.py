@@ -166,6 +166,17 @@ class testACL():
             self.env.assertTrue("wrong number of arguments" in str(e))
         finally:
             self.db.execute_command("AUTH", "default", "pass")
+
+        try:
+            v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
+            self.env.assertTrue(v)
+            # try to use add ACL to myself using GRAPH.ACL
+            v = self.db.execute_command("GRAPH.ACL", "FOO")
+            self.env.assertTrue(False, "should throw Unknown command")
+        except redis.exceptions.ResponseError as e:
+            self.env.assertTrue("Unknown command" in str(e))
+        finally:
+            self.db.execute_command("AUTH", "default", "pass")
           
             
     def test100_wrong_password_call(self):
