@@ -32,7 +32,7 @@ static SIValue _RdbLoadSIValue
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
 		char *str = SerializerIO_ReadBuffer(rdb, NULL);
-		if(writebatch && strnlen(str, 20) == 20) {
+		if(writebatch && strnlen(str, ROCKSDB_MIN_STR_LEN) == ROCKSDB_MIN_STR_LEN) {
 			char node_key[11];
 			*(uint64_t *)node_key = node_id;
 			node_key[10] = '\0';
