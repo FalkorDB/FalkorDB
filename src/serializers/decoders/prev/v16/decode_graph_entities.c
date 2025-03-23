@@ -137,7 +137,7 @@ static void _RdbLoadEntity
 
 	for(uint64_t i = 0; i < n; i++) {
 		ids[i]  = SerializerIO_ReadUnsigned(rdb);
-		vals[i] = _RdbLoadSIValue(rdb, e->id, ids[i], writebatch);
+		vals[i] = _RdbLoadSIValue(rdb, ENTITY_GET_ID(e), ids[i], writebatch);
 	}
 
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);

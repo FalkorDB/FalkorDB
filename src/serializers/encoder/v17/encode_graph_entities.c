@@ -5,11 +5,14 @@
 
 #include "encode_v17.h"
 #include "../../../datatypes/datatypes.h"
+#include "util/rocksdb.h"
 
 // forword decleration
 static void _RdbSaveSIValue
 (
 	SerializerIO rdb,
+	NodeID node_id,
+	AttributeID attr_id,
 	const SIValue *v
 );
 
@@ -30,7 +33,7 @@ static void _RdbSaveSIArray
 	SerializerIO_WriteUnsigned(rdb, arrayLen);
 	for(uint i = 0; i < arrayLen; i ++) {
 		SIValue value = SIArray_Get(list, i);
-		_RdbSaveSIValue(rdb, &value);
+		_RdbSaveSIValue(rdb, -1, ATTRIBUTE_ID_NONE, &value);
 	}
 }
 
@@ -56,6 +59,8 @@ static void _RdbSaveSIVector
 static void _RdbSaveSIValue
 (
 	SerializerIO rdb,
+	NodeID node_id,
+	AttributeID attr_id,
 	const SIValue *v
 ) {
 	// Format:
@@ -72,10 +77,20 @@ static void _RdbSaveSIValue
 		case T_DOUBLE:
 			SerializerIO_WriteDouble(rdb, v->doubleval);
 			break;
-		case T_STRING:
-			SerializerIO_WriteBuffer(rdb, v->stringval,
-					strlen(v->stringval) + 1);
+		case T_STRING:{
+			if(v->allocation == M_DISK) {
+				char node_key[11];
+				*(uint64_t *)node_key = node_id;
+				node_key[10] = '\0';
+				*(AttributeID *)(node_key + 8) = attr_id;
+				char *str = RocksDB_get(node_key);
+				SerializerIO_WriteBuffer(rdb, str, strlen(str) + 1);
+				rm_free(str);
+				return;
+			}
+			SerializerIO_WriteBuffer(rdb, v->stringval, strlen(v->stringval) + 1);
 			break;
+		}
 		case T_ARRAY:
 			_RdbSaveSIArray(rdb, *v);
 			break;
@@ -180,7 +195,7 @@ static void _SaveEntities_v17
 			AttributeID attr_id;
 			SIValue value = AttributeSet_GetIdx(set, j, &attr_id);
 			SerializerIO_WriteUnsigned(rdb, attr_id);
-			_RdbSaveSIValue(rdb, &value);
+			_RdbSaveSIValue(rdb, id, attr_id, &value);
 		}
 	}
 }
