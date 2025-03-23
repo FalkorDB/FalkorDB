@@ -2,7 +2,7 @@
 // GB_mxm.h: definitions for C=A*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,7 +28,7 @@ GrB_Info GB_mxm                     // C<M> = A*B
     const GrB_Matrix B,             // input matrix
     const bool B_transpose,         // if true, use B' instead of B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
-    const GrB_Desc_Value AxB_method,// for auto vs user selection of methods
+    const int AxB_method,           // for auto vs user selection of methods
     const int do_sort,              // if nonzero, try to return C unjumbled
     GB_Werk Werk
 ) ;
@@ -70,7 +70,7 @@ GrB_Info GB_AxB_meta                // C<M>=A*B meta algorithm
     bool flipxy,                    // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *mask_applied,             // if true, mask was applied
     bool *done_in_place,            // if true, C was computed in-place
-    GrB_Desc_Value AxB_method,      // for auto vs user selection of methods
+    int AxB_method,                 // for auto vs user selection of methods
     const int do_sort,              // if nonzero, try to return C unjumbled
     GB_Werk Werk
 ) ;
@@ -152,12 +152,14 @@ GrB_Info GB_AxB_dot3                // C<M> = A'*B using dot product method
 GrB_Info GB_AxB_dot3_slice
 (
     // output:
-    GB_task_struct **p_TaskList,    // array of structs, of size max_ntasks
+    GB_task_struct **p_TaskList,    // array of structs
     size_t *p_TaskList_size,        // size of TaskList
     int *p_ntasks,                  // # of tasks constructed
     int *p_nthreads,                // # of threads to use
     // input:
-    const GrB_Matrix C,             // matrix to slice
+    const GrB_Matrix C,             // matrix to slice (only C->p, C->h present)
+    float *Cwork,                   // workspace of size cnz+1
+    int64_t cnz,                    // # entries that will appear in C
     GB_Werk Werk
 ) ;
 
@@ -290,7 +292,7 @@ void GB_AxB_meta_adotb_control
     bool can_do_in_place,
     bool allow_scale,
     bool B_is_diagonal,
-    GrB_Desc_Value AxB_method
+    int AxB_method
 ) ;
 
 // return value of axb_method from GB_AxB_meta_adotb_control

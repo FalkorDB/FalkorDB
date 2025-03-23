@@ -2,7 +2,7 @@
 // GB_phybix_free: free all content of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ void GB_phybix_free             // free all content of a matrix
     { 
         GB_phy_free (A) ;           // free A->p, A->h, and A->Y
         GB_bix_free (A) ;           // free A->b, A->i, and A->x
-        GB_FREE (&(A->logger), A->logger_size) ;        // free the error logger
+        GB_FREE_MEMORY (&(A->logger), A->logger_size) ; // free the error logger
     }
 }
 

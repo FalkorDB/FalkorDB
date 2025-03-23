@@ -2,7 +2,7 @@
 // gbthreads: get/set the maximum # of threads to use in GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,15 +43,16 @@ void mexFunction
         CHECK_ERROR (!gb_mxarray_is_scalar (pargin [0]),
             "input must be a scalar") ;
         nthreads_max = (int) mxGetScalar (pargin [0]) ;
-        OK (GxB_Global_Option_set (GxB_NTHREADS, nthreads_max)) ;
+        OK (GrB_Global_set_INT32 (GrB_GLOBAL, nthreads_max, GxB_NTHREADS)) ;
+
     }
 
     //--------------------------------------------------------------------------
     // return # of threads
     //--------------------------------------------------------------------------
 
-    OK (GxB_Global_Option_get (GxB_NTHREADS, &nthreads_max)) ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &nthreads_max, GxB_NTHREADS)) ;
     pargout [0] = mxCreateDoubleScalar (nthreads_max) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

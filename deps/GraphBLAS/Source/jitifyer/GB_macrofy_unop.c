@@ -2,7 +2,7 @@
 // GB_macrofy_unop: construct the macro and defn for a unary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,8 +43,8 @@ void GB_macrofy_unop
 
         ASSERT (op != NULL) ;
         GB_macrofy_defn (fp, 3, op->name, op->defn) ;
-        fprintf (fp, "#define %s(z,x,%s,y)  %s (&(z), &(x))\n", macro_name,
-            ij, op->name) ;
+        fprintf (fp, "#define %s(z,x,%s,y)  %s (&(z), &(x))\n",
+            macro_name, ij, op->name) ;
 
     }
     else if (ecode == 254)

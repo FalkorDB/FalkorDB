@@ -2,7 +2,7 @@
 // GB_demacrofy_name: parse a kernel name for its kname, method_code, and suffix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -67,7 +67,7 @@ GrB_Info GB_demacrofy_name
     if (len < 4 || len > GB_KLEN)
     { 
         // kernel_name is invalid; ignore this kernel
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // name invalid; ignore this PreJIT kernel
     }
 
     int ndouble = 0 ;
@@ -109,7 +109,7 @@ GrB_Info GB_demacrofy_name
     { 
         // didn't find 2 pairs of double underscores
         // kernel_name is invalid; ignore this kernel
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // name invald; ignore this PreJIT kernel
     }
 
     //--------------------------------------------------------------------------
@@ -120,7 +120,7 @@ GrB_Info GB_demacrofy_name
     if (sscanf (method_code_string, "%" SCNx64, &method_code_result) != 1)
     { 
         // didn't find method_code: kernel_name is invalid; ignore this kernel
-        return (GrB_NO_VALUE) ;
+        return (GrB_NO_VALUE) ;     // name invald; ignore this PreJIT kernel
     }
 
     (*method_code) = method_code_result ;

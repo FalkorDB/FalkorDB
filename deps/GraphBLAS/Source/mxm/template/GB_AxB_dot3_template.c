@@ -2,7 +2,7 @@
 // GB_AxB_dot3_template: C<M>=A'*B via dot products, where C is sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,11 +44,11 @@
             const int64_t j = k ;
             #else
             // M and C are either both sparse or both hypersparse
-            const int64_t j = GBH_C (Ch, k) ;
+            const int64_t j = GBh_C (Ch, k) ;
             #endif
 
-            int64_t pC_start = Cp [k] ;
-            int64_t pC_end   = Cp [k+1] ;
+            int64_t pC_start = GB_IGET (Cp, k) ;
+            int64_t pC_end   = GB_IGET (Cp, k+1) ;
             if (k == kfirst)
             { 
                 // First vector for task; may only be partially owned.
@@ -72,12 +72,13 @@
             #if GB_B_IS_HYPER
                 // B is hyper: find B(:,j) using the B->Y hyper hash
                 int64_t pB_start, pB_end ;
-                GB_hyper_hash_lookup (Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx,
-                    B_hash_bits, j, &pB_start, &pB_end) ;
+                GB_hyper_hash_lookup (GB_Bp_IS_32, GB_Bj_IS_32,
+                    Bh, bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits,
+                    j, &pB_start, &pB_end) ;
             #elif GB_B_IS_SPARSE
                 // B is sparse
-                const int64_t pB_start = Bp [j] ;
-                const int64_t pB_end = Bp [j+1] ;
+                const int64_t pB_start = GB_IGET (Bp, j) ;
+                const int64_t pB_end = GB_IGET (Bp, j+1) ;
             #else
                 // B is bitmap or full
                 const int64_t pB_start = j * vlen ;
@@ -92,15 +93,16 @@
                     for (int64_t pC = pC_start ; pC < pC_end ; pC++)
                     { 
                         // C(i,j) is a zombie
-                        int64_t i = Mi [pC] ;
-                        Ci [pC] = GB_ZOMBIE (i) ;
+                        int64_t i = GB_IGET (Mi, pC) ;
+                        i = GB_ZOMBIE (i) ;
+                        GB_ISET (Ci, pC, i) ;   // Ci [pC] = i
                     }
                     continue ;
                 }
                 #if (GB_A_IS_SPARSE || GB_A_IS_HYPER)
                     // Both A and B are sparse; get first and last in B(:,j)
-                    const int64_t ib_first = Bi [pB_start] ;
-                    const int64_t ib_last  = Bi [pB_end-1] ;
+                    const int64_t ib_first = GB_IGET (Bi, pB_start) ;
+                    const int64_t ib_last  = GB_IGET (Bi, pB_end-1) ;
                 #endif
             #endif
 
@@ -116,13 +118,10 @@
                 //--------------------------------------------------------------
 
                 bool cij_exists = false ;
-                GB_CIJ_DECLARE (cij) ;
-                #if GB_IS_PLUS_PAIR_REAL_SEMIRING
-                cij = 0 ;
-                #endif
+                GB_DECLARE_IDENTITY (cij) ;
 
                 // get the value of M(i,j)
-                int64_t i = Mi [pC] ;
+                int64_t i = GB_IGET (Mi, pC) ;
                 #if !defined ( GB_MASK_SPARSE_STRUCTURAL_AND_NOT_COMPLEMENTED )
                 // if M is structural, no need to check its values
                 if (GB_MCAST (Mx, pC, msize))
@@ -136,14 +135,15 @@
                     #if GB_A_IS_HYPER
                     // A is hyper: find A(:,i) using the A->Y hyper hash
                     int64_t pA, pA_end ;
-                    GB_hyper_hash_lookup (Ah, anvec, Ap, A_Yp, A_Yi, A_Yx,
-                        A_hash_bits, i, &pA, &pA_end) ;
+                    GB_hyper_hash_lookup (GB_Ap_IS_32, GB_Aj_IS_32,
+                        Ah, anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits,
+                        i, &pA, &pA_end) ;
                     const int64_t ainz = pA_end - pA ;
                     if (ainz > 0)
                     #elif GB_A_IS_SPARSE
                     // A is sparse
-                    int64_t pA = Ap [i] ;
-                    const int64_t pA_end = Ap [i+1] ;
+                    int64_t pA = GB_IGET (Ap, i) ;
+                    const int64_t pA_end = GB_IGET (Ap, i+1) ;
                     const int64_t ainz = pA_end - pA ;
                     if (ainz > 0)
                     #else
@@ -160,7 +160,8 @@
                 { 
                     // C(i,j) is a zombie
                     task_nzombies++ ;
-                    Ci [pC] = GB_ZOMBIE (i) ;
+                    i = GB_ZOMBIE (i) ;
+                    GB_ISET (Ci, pC, i) ;   // Ci [pC] = i
                 }
             }
         }

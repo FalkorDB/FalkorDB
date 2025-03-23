@@ -1,0 +1,152 @@
+
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_reduce:} reduce to a vector or scalar} %==================
+%===============================================================================
+\label{reduce}
+
+The generic function name \verb'GrB_reduce' may be used for all specific
+functions discussed in this section.  When the details of a specific function
+are discussed, the specific name is used for clarity.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_reduce\_Monoid} reduce a matrix to a vector}
+%-------------------------------------------------------------------------------
+\label{reduce_to_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_reduce                 // w<mask> = accum (w,reduce(A))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Monoid monoid,        // reduce monoid for t=reduce(A)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Descriptor desc       // descriptor for w, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_reduce_Monoid'
+reduces a matrix to a column vector using a monoid, roughly analogous
+to \verb"t = sum (A')" in MATLAB, in the default case, where \verb't' is a
+column vector.  By default, the method reduces across the rows to
+obtain a column vector; use \verb'GrB_TRAN' to reduce down the columns.
+
+The input matrix \verb'A' may be transposed first.  Its entries are then
+typecast into the type of the \verb'reduce' operator or monoid.  The reduction
+is applied to all entries in \verb'A (i,:)' to produce the scalar \verb't (i)'.
+This is done without the use of the identity value of the monoid.  If the
+\verb'i'th row \verb'A (i,:)' has no entries, then \verb'(i)' is not an entry
+in \verb't' and its value is implicit.  If \verb'A (i,:)' has a single entry,
+then that is the result \verb't (i)' and \verb'reduce' is not applied at all
+for the \verb'i'th row.  Otherwise, multiple entries in row \verb'A (i,:)' are
+reduced via the \verb'reduce' operator or monoid to obtain a single scalar,
+the result \verb't (i)'.
+
+The final step is ${\bf w \langle m \rangle  = w \odot t}$, as described
+in Section~\ref{accummask}, except that all the
+terms are column vectors instead of matrices.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_reduce\_$<$type$>$:} reduce a vector to a scalar}
+%-------------------------------------------------------------------------------
+\label{reduce_vector_to_scalar}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_reduce                 // c = accum (c, reduce_to_scalar (u))
+(
+    <type> *c,                      // result scalar
+    const GrB_BinaryOp accum,       // optional accum for c=accum(c,t)
+    const GrB_Monoid monoid,        // monoid to do the reduction
+    const GrB_Vector u,             // vector to reduce
+    const GrB_Descriptor desc       // descriptor (currently unused)
+) ;
+
+GrB_Info GrB_reduce                 // c = accum (c, reduce_to_scalar (u))
+(
+    GrB_Scalar c,                   // result scalar
+    const GrB_BinaryOp accum,       // optional accum for c=accum(c,t)
+    const GrB_Monoid monoid,        // monoid to do the reduction
+    const GrB_Vector u,             // vector to reduce
+    const GrB_Descriptor desc       // descriptor (currently unused)
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_reduce_<type>'
+reduces a vector to a scalar, analogous to \verb't = sum (u)' in MATLAB,
+except that in GraphBLAS any commutative and associative monoid can be used
+in the reduction.
+
+The scalar \verb'c' can be a pointer C type: \verb'bool', \verb'int8_t', ...
+\verb'float', \verb'double', or \verb'void *' for a user-defined type,
+or a \verb'GrB_Scalar'.
+If \verb'c' is a \verb'void *' pointer to a user-defined type,
+the type must be identical to the type of the vector \verb'u'.
+This cannot be checked by GraphBLAS and thus results are undefined if the
+types are not the same.
+
+If the vector \verb'u' has no entries, that identity value of the \verb'monoid'
+is copied into the scalar \verb't' (unless \verb'c' is a \verb'GrB_Scalar',
+in which case \verb't' is an empty \verb'GrB_Scalar', with no entry).
+Otherwise, all of the entries in the
+vector are reduced to a single scalar using the \verb'monoid'.
+
+The descriptor is unused, but it appears in case it is needed in future
+versions of the GraphBLAS API.
+This function has no mask so its accumulator/mask step differs from the other
+GraphBLAS operations.  It does not use the methods described in
+Section~\ref{accummask}, but uses the following method instead.
+
+If \verb'accum' is \verb'NULL', then the scalar \verb't' is typecast into the
+type of \verb'c', and \verb'c = t' is the final result.  Otherwise, the scalar
+\verb't' is typecast into the \verb'ytype' of the \verb'accum' operator, and
+the value of \verb'c' (on input) is typecast into the \verb'xtype' of the
+\verb'accum' operator.  Next, the scalar \verb'z = accum (c,t)' is computed, of
+the \verb'ztype' of the \verb'accum' operator.  Finally, \verb'z' is typecast
+into the final result, \verb'c'.
+
+If \verb'c' is a non-opaque scalar, no error message can be returned by
+\verb'GrB_error'.  If \verb'c' is a \verb'GrB_Scalar', then
+\verb'GrB_error(&err,c)' can be used to return an error string, if an error
+occurs.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_reduce\_$<$type$>$:} reduce a matrix to a scalar}
+%-------------------------------------------------------------------------------
+\label{reduce_matrix_to_scalar}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_reduce                 // c = accum (c, reduce_to_scalar (A))
+(
+    <type> *c,                      // result scalar
+    const GrB_BinaryOp accum,       // optional accum for c=accum(c,t)
+    const GrB_Monoid monoid,        // monoid to do the reduction
+    const GrB_Matrix A,             // matrix to reduce
+    const GrB_Descriptor desc       // descriptor (currently unused)
+) ;
+
+GrB_Info GrB_reduce                 // c = accum (c, reduce_to_scalar (A))
+(
+    GrB_Scalar c,                   // result scalar
+    const GrB_BinaryOp accum,       // optional accum for c=accum(c,t)
+    const GrB_Monoid monoid,        // monoid to do the reduction
+    const GrB_Matrix A,             // matrix to reduce
+    const GrB_Descriptor desc       // descriptor (currently unused)
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_reduce_<type>' reduces a matrix \verb'A' to a scalar, roughly
+analogous to \verb't = sum (A (:))' in MATLAB.  This function is identical to
+reducing a vector to a scalar, since the positions of the entries in a matrix
+or vector have no effect on the result.  Refer to the reduction to scalar
+described in the previous Section~\ref{reduce_vector_to_scalar}.
+
+

@@ -2,7 +2,7 @@
 // GB_Descriptor_get: get the status of a descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -79,7 +79,7 @@ GrB_Info GB_Descriptor_get      // get the contents of a descriptor
     bool *Mask_struct,          // if true use the structure of M
     bool *In0_transpose,        // if true transpose first input
     bool *In1_transpose,        // if true transpose second input
-    GrB_Desc_Value *AxB_method, // method for C=A*B
+    int *AxB_method,            // method for C=A*B
     int *do_sort                // if nonzero, sort in GrB_mxm
 )
 {
@@ -96,11 +96,11 @@ GrB_Info GB_Descriptor_get      // get the contents of a descriptor
     //--------------------------------------------------------------------------
 
     // default values if descriptor is NULL
-    GrB_Desc_Value C_desc    = GxB_DEFAULT ;
-    GrB_Desc_Value Mask_desc = GxB_DEFAULT ;
-    GrB_Desc_Value In0_desc  = GxB_DEFAULT ;
-    GrB_Desc_Value In1_desc  = GxB_DEFAULT ;
-    GrB_Desc_Value AxB_desc  = GxB_DEFAULT ;
+    int C_desc    = GxB_DEFAULT ;
+    int Mask_desc = GxB_DEFAULT ;
+    int In0_desc  = GxB_DEFAULT ;
+    int In1_desc  = GxB_DEFAULT ;
+    int AxB_desc  = GxB_DEFAULT ;
 
     int do_sort_desc         = GxB_DEFAULT ;
 

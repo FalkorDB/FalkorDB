@@ -2,7 +2,7 @@
 // GrB_Matrix_extractElement: extract a single entry from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,8 +23,8 @@ GrB_Info GrB_Matrix_extractElement_Scalar   // S = A(i,j)
 (
     GrB_Scalar S,                       // extracted scalar
     const GrB_Matrix A,                 // matrix to extract a scalar from
-    GrB_Index i,                        // row index
-    GrB_Index j                         // column index
+    uint64_t i,                         // row index
+    uint64_t j                          // column index
 )
 {
 
@@ -32,9 +32,9 @@ GrB_Info GrB_Matrix_extractElement_Scalar   // S = A(i,j)
     // check inputs (just the GrB_Scalar S)
     //--------------------------------------------------------------------------
 
-    GrB_Info info ;
-    GB_WHERE (S, "GrB_Matrix_extractElement_Scalar (s, A, row, col)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (S) ;
+    GB_WHERE2 (S, A, "GrB_Matrix_extractElement_Scalar (s, A, row, col)") ;
+    GB_RETURN_IF_NULL (S) ;
+    GB_RETURN_IF_NULL (A) ;
 
     //--------------------------------------------------------------------------
     // ensure S is bitmap

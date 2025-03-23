@@ -2,7 +2,7 @@
 // GB_Monoid_new: create a GrB_Monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -89,7 +89,8 @@ GrB_Info GB_Monoid_new          // create a monoid
 
     // allocate the monoid
     size_t header_size ;
-    (*monoid) = GB_MALLOC (1, struct GB_Monoid_opaque, &header_size) ;
+    (*monoid) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Monoid_opaque),
+        &header_size) ;
     if (*monoid == NULL)
     { 
         // out of memory
@@ -118,12 +119,12 @@ GrB_Info GB_Monoid_new          // create a monoid
     // allocate the identity value
     #define GB_ALLOC_IDENTITY                                               \
     {                                                                       \
-        mon->identity = GB_MALLOC (zsize, GB_void, &(mon->identity_size)) ; \
+        mon->identity = GB_MALLOC_MEMORY (1, zsize, &(mon->identity_size)) ; \
         if (mon->identity == NULL)                                          \
         {                                                                   \
             /* out of memory */                                             \
-            GB_FREE (&(mon->terminal), mon->terminal_size) ;                \
-            GB_FREE (monoid, header_size) ;                                 \
+            GB_FREE_MEMORY (&(mon->terminal), mon->terminal_size) ;                \
+            GB_FREE_MEMORY (monoid, header_size) ;                                 \
             return (GrB_OUT_OF_MEMORY) ;                                    \
         }                                                                   \
     }
@@ -131,12 +132,12 @@ GrB_Info GB_Monoid_new          // create a monoid
     // allocate the terminal value
     #define GB_ALLOC_TERMINAL                                               \
     {                                                                       \
-        mon->terminal = GB_MALLOC (zsize, GB_void, &(mon->terminal_size)) ; \
+        mon->terminal = GB_MALLOC_MEMORY (1, zsize, &(mon->terminal_size)) ; \
         if (mon->terminal == NULL)                                          \
         {                                                                   \
             /* out of memory */                                             \
-            GB_FREE (&(mon->identity), mon->identity_size) ;                \
-            GB_FREE (monoid, header_size) ;                                 \
+            GB_FREE_MEMORY (&(mon->identity), mon->identity_size) ;                \
+            GB_FREE_MEMORY (monoid, header_size) ;                                 \
             return (GrB_OUT_OF_MEMORY) ;                                    \
         }                                                                   \
     }

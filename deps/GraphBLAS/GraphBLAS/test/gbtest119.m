@@ -7,7 +7,7 @@ function gbtest119
 % C = GrB.eunion (C, M, op, A, alpha, B, beta, desc)
 % C = GrB.eunion (C, M, accum, op, A, alpha, B, beta, desc)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default')

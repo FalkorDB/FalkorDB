@@ -2,7 +2,7 @@
 // GB_selectop_to_idxunop: convert a GxB_SelectOp to a GrB_IndexUnaryOp
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -42,7 +42,6 @@ GrB_Info GB_selectop_to_idxunop
     GrB_Scalar NewThunk = NULL ;
     GrB_IndexUnaryOp idxunop = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (selectop) ;
-    GB_RETURN_IF_FAULTY (Thunk) ;
 
     ASSERT (idxunop_handle != NULL) ;
     ASSERT (NewThunk_handle != NULL) ;
@@ -209,8 +208,8 @@ GrB_Info GB_selectop_to_idxunop
 
     // allocate the NewThunk as a full scalar
     GB_OK (GB_new_bix ((GrB_Matrix *) &NewThunk, idxunop->ytype, 1, 1,
-        GB_Ap_calloc, true, GxB_FULL, false, GB_Global_hyper_switch_get ( ),
-        1, 1, true, false)) ;
+        GB_ph_calloc, true, GxB_FULL, false, GB_Global_hyper_switch_get ( ),
+        1, 1, true, false, false, false, false)) ;
 
     // NewThunk = 0
     memset (NewThunk->x, 0, idxunop->ytype->size) ;

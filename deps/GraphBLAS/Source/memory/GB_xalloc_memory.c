@@ -2,7 +2,7 @@
 // GB_xalloc_memory: allocate an array for n entries, or 1 if iso
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,18 +21,20 @@ void *GB_xalloc_memory      // return the newly-allocated space
 )
 {
     void *p ;
+    n = GB_IMAX (n, 1) ;
+    GBMDUMP ("xalloc : ") ;
     if (iso)
     { 
         // always calloc the iso entry
-        p = GB_CALLOC (type_size, GB_void, size) ;
+        p = GB_calloc_memory (1, type_size, size) ;
     }
     else if (use_calloc)
     { 
-        p = GB_CALLOC (n * type_size, GB_void, size) ;
+        p = GB_calloc_memory (n, type_size, size) ;
     }
     else
     { 
-        p = GB_MALLOC (n * type_size, GB_void, size) ;
+        p = GB_malloc_memory (n, type_size, size) ;
     }
     return (p) ;
 }

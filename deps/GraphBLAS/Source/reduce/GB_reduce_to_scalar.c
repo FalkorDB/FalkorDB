@@ -2,7 +2,7 @@
 // GB_reduce_to_scalar: reduce a matrix to a scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -279,11 +279,6 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
             #define GB_DECLARE_IDENTITY_CONST(z)                    \
                 const GB_void *z = monoid->identity ;
 
-            // const zterminal = terminal_value
-            #undef  GB_DECLARE_TERMINAL_CONST
-            #define GB_DECLARE_TERMINAL_CONST(zterminal)            \
-                const GB_void *zterminal = monoid->terminal ;
-
             #define GB_A_TYPE GB_void
 
             // no panel used
@@ -366,6 +361,8 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
                     #undef  GB_MONOID_IS_TERMINAL
                     #define GB_MONOID_IS_TERMINAL 0
                     #undef  GB_TERMINAL_CONDITION
+                    #undef  GB_DECLARE_TERMINAL_CONST
+                    #define GB_DECLARE_TERMINAL_CONST
                     #define GB_TERMINAL_CONDITION(z,zterminal) 0
                     #undef  GB_IF_TERMINAL_BREAK
                     #define GB_IF_TERMINAL_BREAK
@@ -377,6 +374,10 @@ GrB_Info GB_reduce_to_scalar    // z = reduce_to_scalar (A)
                     #undef  GB_MONOID_IS_TERMINAL
                     #define GB_MONOID_IS_TERMINAL 1
                     #undef  GB_TERMINAL_CONDITION
+                    // const zterminal = terminal_value
+                    #undef  GB_DECLARE_TERMINAL_CONST
+                    #define GB_DECLARE_TERMINAL_CONST(zterminal)            \
+                            const GB_void *zterminal = monoid->terminal ;
                     #define GB_TERMINAL_CONDITION(z,zterminal)  \
                             (memcmp (z, zterminal, zsize) == 0)
                     #undef  GB_IF_TERMINAL_BREAK

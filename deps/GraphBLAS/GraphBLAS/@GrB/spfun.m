@@ -38,7 +38,7 @@ function C = spfun (fun, G)
 %
 % See also GrB.apply, GrB.unopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (G))
@@ -57,7 +57,7 @@ end
 % 'fun' is not a string, or not a built-in GraphBLAS operator
 [m, n] = gbsize (G) ;
 desc.base = 'zero-based' ;
-[i, j, x] = gbextracttuples (G, desc) ;
+[i, j, x] = gbextracttuples (G, desc) ; % OK: zero-based integers
 x = feval (fun, x) ;
 C = GrB.build (i, j, x, m, n, '1st', desc) ;
 

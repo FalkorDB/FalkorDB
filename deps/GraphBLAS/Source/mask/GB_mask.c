@@ -2,7 +2,7 @@
 // GB_mask: apply a mask: C<M> = Z
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -137,7 +137,7 @@ GrB_Info GB_mask                // C<M> = Z
 
     // C_result may be aliased with M
     ASSERT_MATRIX_OK (C_result, "C_result for GB_mask", GB0) ;
-    ASSERT (!C_result->static_header) ;
+    ASSERT (!(C_result->header_size == 0)) ;
     // C may be cleared anyway, without the need for finishing it
     ASSERT (GB_ZOMBIES_OK (C_result)) ;
     ASSERT (GB_JUMBLED_OK (C_result)) ;
@@ -265,14 +265,16 @@ GrB_Info GB_mask                // C<M> = Z
                 // created, which is what C_result would look like if cleared.
                 // C_result is left unchanged since changing it would change M.
                 // The C0 matrix is created as hypersparse.
-                // set C0->iso = false  OK
-                GB_CLEAR_STATIC_HEADER (C0, &C0_header) ;
+                bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+                GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+                    GxB_HYPERSPARSE, 1, vlen, vdim, Werk) ;
+                GB_CLEAR_MATRIX_HEADER (C0, &C0_header) ;
                 GB_OK (GB_new_bix (&C0, // sparse or hyper, existing header
-                    C_result->type, vlen, vdim, GB_Ap_calloc, R_is_csc,
+                    C_result->type, vlen, vdim, GB_ph_calloc, R_is_csc,
                     GxB_HYPERSPARSE, true, C_result->hyper_switch, 0, 0,
-                    true, false)) ;
+                    true, false, Cp_is_32, Cj_is_32, Ci_is_32)) ;
                 C = C0 ;
-                ASSERT (C->static_header || GBNSTATIC) ;
+                ASSERT (C->header_size == 0 || GBNSTATIC) ;
             }
             else
             { 
@@ -283,7 +285,7 @@ GrB_Info GB_mask                // C<M> = Z
                 GB_OK (GB_clear (C_result, Werk)) ;
                 C_result->sparsity_control = save ;         // restore control
                 C = C_result ;  // C must have a dynamic header
-                ASSERT (!C->static_header) ;
+                ASSERT (!(C->header_size == 0)) ;
             }
             // C has been cleared, so it has no zombies or pending tuples
         }
@@ -292,7 +294,7 @@ GrB_Info GB_mask                // C<M> = Z
             // C has already been finished if C_replace is false, via the
             // GB_MATRIX_WAIT (C) in GB_accum_mask.
             C = C_result ;
-            ASSERT (!C->static_header) ;
+            ASSERT (!(C->header_size == 0)) ;
         }
 
         // C cannot be bitmap or full for GB_masker
@@ -314,9 +316,8 @@ GrB_Info GB_mask                // C<M> = Z
         // R = masker (C, M, Z):  compute C<M>=Z, placing results in R
         //----------------------------------------------------------------------
 
-        GB_CLEAR_STATIC_HEADER (R, &R_header) ;
-        GB_OK (GB_masker (R, R_is_csc, M, Mask_comp, Mask_struct, C, Z,
-            Werk)) ;
+        GB_CLEAR_MATRIX_HEADER (R, &R_header) ;
+        GB_OK (GB_masker (R, R_is_csc, M, Mask_comp, Mask_struct, C, Z, Werk)) ;
 
         //----------------------------------------------------------------------
         // free temporary matrices Z and C0

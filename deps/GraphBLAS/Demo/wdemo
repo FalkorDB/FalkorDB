@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 ../build/wathen_demo
@@ -31,8 +31,12 @@
 
 ../build/wathen_demo 400 400 0 1
 ../build/wathen_demo 400 400 0 8
+../build/wathen_demo 400 400 0 16
+../build/wathen_demo 400 400 0 32
 
 ../build/wathen_demo 400 400 1 1
 ../build/wathen_demo 400 400 1 8
+../build/wathen_demo 400 400 1 16
+../build/wathen_demo 400 400 1 32
 
 exit 0

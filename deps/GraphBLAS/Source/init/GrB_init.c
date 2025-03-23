@@ -2,7 +2,7 @@
 // GrB_init: initialize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,7 +19,7 @@
 
 GrB_Info GrB_init           // start up GraphBLAS
 (
-    GrB_Mode mode           // blocking or non-blocking mode
+    int mode                // blocking or non-blocking mode
 )
 { 
 

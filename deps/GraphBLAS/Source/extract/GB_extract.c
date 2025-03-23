@@ -2,7 +2,7 @@
 // GB_extract: C<M> = accum(C,A(I,J))
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,10 +33,12 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
     const GrB_Matrix A,             // input matrix
     const bool A_transpose,         // A matrix descriptor
-    const GrB_Index *Rows,          // row indices
-    const GrB_Index nRows_in,       // number of row indices
-    const GrB_Index *Cols,          // column indices
-    const GrB_Index nCols_in,       // number of column indices
+    const void *Rows,               // row indices
+    const bool Rows_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nRows_in,        // number of row indices
+    const void *Cols,               // column indices
+    const bool Cols_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nCols_in,        // number of column indices
     GB_Werk Werk
 )
 {
@@ -73,14 +75,18 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     if (!A_transpose)
     { 
         // T = A(Rows,Cols)
-        GB_ijlength (Rows, nRows_in, GB_NROWS (A), &nRows, &rkind, RowColon) ;
-        GB_ijlength (Cols, nCols_in, GB_NCOLS (A), &nCols, &ckind, ColColon) ;
+        GB_ijlength (Rows, Rows_is_32, nRows_in, GB_NROWS (A), &nRows, &rkind,
+            RowColon) ;
+        GB_ijlength (Cols, Cols_is_32, nCols_in, GB_NCOLS (A), &nCols, &ckind,
+            ColColon) ;
     }
     else
     { 
         // T = A(Cols,Rows)
-        GB_ijlength (Rows, nRows_in, GB_NCOLS (A), &nRows, &rkind, RowColon) ;
-        GB_ijlength (Cols, nCols_in, GB_NROWS (A), &nCols, &ckind, ColColon) ;
+        GB_ijlength (Rows, Rows_is_32, nRows_in, GB_NCOLS (A), &nRows, &rkind,
+            RowColon) ;
+        GB_ijlength (Cols, Cols_is_32, nCols_in, GB_NROWS (A), &nCols, &ckind,
+            ColColon) ;
     }
 
     if (cnrows != nRows || cncols != nCols)
@@ -107,9 +113,10 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
     // handle the CSR/CSC format and transpose; T = A (I,J) or T = A (J,I)
     //--------------------------------------------------------------------------
 
-    const GrB_Index *I, *J ;
+    const void *I, *J ;
     int64_t ni, nj ;
     bool T_is_csc ;
+    bool I_is_32, J_is_32 ;
 
     if (A->is_csc)
     {
@@ -119,6 +126,8 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
             I = Rows ; ni = nRows_in ;  // indices into the vectors
             J = Cols ; nj = nCols_in ;  // vectors
             T_is_csc = true ;           // return T in CSC format
+            I_is_32 = Rows_is_32 ;
+            J_is_32 = Cols_is_32 ;
         }
         else
         { 
@@ -126,6 +135,8 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
             I = Cols ; ni = nCols_in ;  // indices into the vectors
             J = Rows ; nj = nRows_in ;  // vectors
             T_is_csc = false ;          // return T in CSR format
+            I_is_32 = Cols_is_32 ;
+            J_is_32 = Rows_is_32 ;
         }
     }
     else
@@ -136,6 +147,8 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
             I = Cols ; ni = nCols_in ;  // indices into the vectors
             J = Rows ; nj = nRows_in ;  // vectors
             T_is_csc = false ;          // return T in CSR format
+            I_is_32 = Cols_is_32 ;
+            J_is_32 = Rows_is_32 ;
         }
         else
         { 
@@ -143,6 +156,8 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
             I = Rows ; ni = nRows_in ;  // indices into the vectors
             J = Cols ; nj = nCols_in ;  // vectors
             T_is_csc = true ;           // return T in CSC format
+            I_is_32 = Rows_is_32 ;
+            J_is_32 = Cols_is_32 ;
         }
     }
 
@@ -162,8 +177,9 @@ GrB_Info GB_extract                 // C<M> = accum (C, A(I,J))
 
     // TODO::: iso:  if accum is PAIR, extract T as iso
 
-    GB_CLEAR_STATIC_HEADER (T, &T_header) ;
-    GB_OK (GB_subref (T, false, T_is_csc, A, I, ni, J, nj, false, Werk)) ;
+    GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
+    GB_OK (GB_subref (T, false, T_is_csc, A,
+        I, I_is_32, ni, J, J_is_32, nj, false, Werk)) ;
     ASSERT_MATRIX_OK (T, "T extracted", GB0) ;
     ASSERT (GB_JUMBLED_OK (T)) ;
 

@@ -2,7 +2,7 @@
 // GB_AxB_dot2_meta: C=A'*B, C<M>=A'*B or C<!M>=A'*B via dot products
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,14 +29,14 @@
     int8_t *restrict Cb = C->b ;
     const int64_t cvlen = C->vlen ;
     #ifdef GB_JIT_KERNEL
-    #define C_is_full      GB_C_IS_FULL
+    #define C_is_full GB_C_IS_FULL
     #else
     const bool C_is_full = (Cb == NULL) ;
     #endif
 
-    const int64_t *restrict Bp = B->p ;
+    GB_Bp_DECLARE (Bp, const) ; GB_Bp_PTR (Bp, B) ;
+    GB_Bi_DECLARE (Bi, const) ; GB_Bi_PTR (Bi, B) ;
     const int8_t  *restrict Bb = B->b ;
-    const int64_t *restrict Bi = B->i ;
     #ifdef GB_JIT_KERNEL
     #define B_is_bitmap    GB_B_IS_BITMAP
     #define B_is_sparse    GB_B_IS_SPARSE
@@ -47,14 +47,15 @@
     const bool B_is_sparse = GB_IS_SPARSE (B) ;
     const bool B_is_full   = GB_IS_FULL (B) ;
     const bool B_iso       = B->iso ;
+    const bool Bi_is_32    = B->i_is_32 ;
+    #define GB_Bi_IS_32 Bi_is_32
     #endif
     ASSERT (!GB_IS_HYPERSPARSE (B)) ;
     #define B_is_hyper false
 
-    const int64_t *restrict Ap = A->p ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
     const int8_t  *restrict Ab = A->b ;
-    const int64_t *restrict Ai = A->i ;
-
     #ifdef GB_JIT_KERNEL
     #define A_is_bitmap    GB_A_IS_BITMAP
     #define A_is_sparse    GB_A_IS_SPARSE
@@ -65,6 +66,8 @@
     const bool A_is_sparse = GB_IS_SPARSE (A) ;
     const bool A_is_full   = GB_IS_FULL (A) ;
     const bool A_iso       = A->iso ;
+    const bool Ai_is_32    = A->i_is_32 ;
+    #define GB_Ai_IS_32 Ai_is_32
     #endif
     ASSERT (!GB_IS_HYPERSPARSE (A)) ;
     #define A_is_hyper false

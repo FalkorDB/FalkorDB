@@ -2,7 +2,7 @@
 // GxB_Matrix_split: split a matrix into an array of matrices
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,10 +15,10 @@
 GrB_Info GxB_Matrix_split           // split a matrix into 2D array of matrices
 (
     GrB_Matrix *Tiles,              // 2D row-major array of size m-by-n
-    const GrB_Index m,
-    const GrB_Index n,
-    const GrB_Index *Tile_nrows,    // array of size m
-    const GrB_Index *Tile_ncols,    // array of size n
+    const uint64_t m,
+    const uint64_t n,
+    const uint64_t *Tile_nrows,     // array of size m
+    const uint64_t *Tile_ncols,     // array of size n
     const GrB_Matrix A,             // input matrix to split
     const GrB_Descriptor desc       // unused, except threading control
 )
@@ -28,10 +28,11 @@ GrB_Info GxB_Matrix_split           // split a matrix into 2D array of matrices
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_split (Tiles, m, n, Tile_nrows, Tile_ncols, A, "
+    GB_RETURN_IF_NULL (A) ;
+    GB_WHERE_1 (A, "GxB_Matrix_split (Tiles, m, n, Tile_nrows, Tile_ncols, A, "
         "desc)") ;
     GB_BURBLE_START ("GxB_Matrix_split") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+
     if (m <= 0 || n <= 0)
     { 
         return (GrB_INVALID_VALUE) ;
@@ -47,7 +48,9 @@ GrB_Info GxB_Matrix_split           // split a matrix into 2D array of matrices
     // Tiles = split (A)
     //--------------------------------------------------------------------------
 
-    info = GB_split (Tiles, m, n, Tile_nrows, Tile_ncols, A, Werk) ;
+    info = GB_split (Tiles, (int64_t) m, (int64_t) n,
+        (const int64_t *) Tile_nrows,
+        (const int64_t *) Tile_ncols, A, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

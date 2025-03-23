@@ -2,7 +2,7 @@
 // GB_mex_AdotB: compute C=spones(Mask).*(A'*B)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ GrB_Monoid add = NULL ;
 GrB_Semiring semiring = NULL ;
 GrB_Info adotb_complex (GB_Werk Werk) ;
 GrB_Info adotb (GB_Werk Werk) ;
-GrB_Index anrows, ancols, bnrows, bncols, mnrows, mncols ;
+uint64_t anrows, ancols, bnrows, bncols, mnrows, mncols ;
 bool flipxy = false ;
 struct GB_Matrix_opaque C_header ;
 
@@ -216,7 +216,7 @@ void mexFunction
     GET_SCALAR (3, bool, flipxy, false) ;
 
     struct GB_Matrix_opaque C_header ;
-    C = GB_clear_static_header (&C_header) ;
+    C = GB_clear_matrix_header (&C_header) ;
 
     if (A->type == Complex)
     {

@@ -2,7 +2,7 @@
 // GB_task_cumsum: cumulative sum of Cp and fine tasks in TaskList
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,8 @@
 
 void GB_task_cumsum
 (
-    int64_t *Cp,                        // size Cnvec+1
+    void *Cp,                           // size Cnvec+1
+    const bool Cp_is_32,                // if true, Cp is 32-bit, else 64-bit
     const int64_t Cnvec,
     int64_t *Cnvec_nonempty,            // # of non-empty vectors in C
     GB_task_struct *restrict TaskList,  // array of structs
@@ -24,7 +25,7 @@ void GB_task_cumsum
 {
 
     //--------------------------------------------------------------------------
-    // check inputs
+    // get inputs
     //--------------------------------------------------------------------------
 
     ASSERT (Cp != NULL) ;
@@ -33,6 +34,8 @@ void GB_task_cumsum
     ASSERT (TaskList != NULL) ;
     ASSERT (ntasks >= 0) ;
     ASSERT (nthreads >= 1) ;
+
+    GB_IDECL (Cp, , u) ; GB_IPTR (Cp, Cp_is_32) ;
 
     //--------------------------------------------------------------------------
     // local cumulative sum of the fine tasks
@@ -52,8 +55,9 @@ void GB_task_cumsum
             // Cp [k] has not been cumsum'd across all of Cp.  It is just the
             // count of the entries in C(:,k).  The final Cp [k] is added to
             // each fine task below, after the GB_cumsum of Cp.
-            int64_t pC = Cp [k] ;
-            Cp [k] += TaskList [taskid].pC ;
+            int64_t pC = GB_IGET (Cp, k) ;
+            int64_t cpk = pC + TaskList [taskid].pC ;
+            GB_ISET (Cp, k, cpk) ;          // Cp [k] = cpk ;
             TaskList [taskid].pC = pC ;
         }
     }
@@ -62,7 +66,7 @@ void GB_task_cumsum
     // replace Cp with its cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Cp, Cnvec, Cnvec_nonempty, nthreads, Werk) ;
+    GB_cumsum (Cp, Cp_is_32, Cnvec, Cnvec_nonempty, nthreads, Werk) ;
 
     //--------------------------------------------------------------------------
     // shift the cumulative sum of the fine tasks
@@ -79,7 +83,7 @@ void GB_task_cumsum
             // computed by the first task, and so on.  Cp [k] needs to be added
             // to all offsets to get the final starting position for each fine
             // task in C.
-            TaskList [taskid].pC += Cp [k] ;
+            TaskList [taskid].pC += GB_IGET (Cp, k) ;
         }
         else
         { 
@@ -90,24 +94,24 @@ void GB_task_cumsum
             // also given TaskList [taskid].pC = Cp [k], then taskid-1 will
             // always know its pC_end, which is TaskList [taskid].pC,
             // regardless of whether taskid is a fine or coarse task.
-            TaskList [taskid].pC = Cp [k] ;
+            TaskList [taskid].pC = GB_IGET (Cp, k) ;
         }
     }
 
     // The last task is ntasks-1.  It may be a fine task, in which case it
     // computes the entries in C from TaskList [ntasks-1].pC to
     // TaskList [ntasks].pC-1, inclusive.
-    TaskList [ntasks].pC = Cp [Cnvec] ;
+    TaskList [ntasks].pC = GB_IGET (Cp, Cnvec) ;
 
     //--------------------------------------------------------------------------
     // check result
     //--------------------------------------------------------------------------
 
     #ifdef GB_DEBUG
-    // nthreads, ntasks, Cnvec) ;
     for (int t = 0 ; t < ntasks ; t++)
     {
         int64_t k = TaskList [t].kfirst ;
+        ASSERT (k >= 0 && k < Cnvec) ;
         int64_t klast = TaskList [t].klast ;
         if (klast < 0)
         {
@@ -120,7 +124,6 @@ void GB_task_cumsum
             int64_t pC_end = TaskList [t+1].pC ;
             int64_t pM     = TaskList [t].pM ;
             int64_t pM_end = TaskList [t].pM_end ;
-            ASSERT (k >= 0 && k < Cnvec) ;
             // pA:(pA_end-1) must reside inside A(:,j), and pB:(pB_end-1) must
             // reside inside B(:,j), but these cannot be checked here since A
             // and B are not available.  These basic checks can be done:
@@ -129,12 +132,13 @@ void GB_task_cumsum
             ASSERT (pM == -1 || (0 <= pM && pM <= pM_end)) ;
             // pC and pC_end can be checked exactly.  This task t computes
             // entries pC:(pC_end-1) of C, inclusive.
-            ASSERT (Cp [k] <= pC && pC <= pC_end && pC_end <= Cp [k+1]) ;
+            ASSERT (GB_IGET (Cp, k) <= pC) ;
+            ASSERT (pC <= pC_end) ;
+            ASSERT (pC_end <= GB_IGET (Cp, k+1)) ;
         }
         else
         {
             // this is a coarse task for vectors k:klast, inclusive
-            ASSERT (k >= 0 && k < Cnvec) ;
             ASSERT (klast >= 0 && klast <= Cnvec) ;
             ASSERT (k <= klast) ;
         }

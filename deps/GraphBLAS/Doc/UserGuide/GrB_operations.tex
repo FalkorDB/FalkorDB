@@ -1,0 +1,83 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{GraphBLAS Operations} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{operations}
+
+The next sections define each of the GraphBLAS operations, also listed in the
+table below.
+
+\vspace{0.2in}
+{\small
+\begin{tabular}{lll}
+\hline
+\verb'GrB_mxm'       & matrix-matrix multiply  & ${\bf C \langle M \rangle = C \odot AB}$ \\
+\verb'GrB_vxm'       & vector-matrix multiply  & ${\bf w^{\sf T}\langle m^{\sf T}\rangle = w^{\sf T}\odot u^{\sf T}A}$ \\
+\verb'GrB_mxv'       & matrix-vector multiply  & ${\bf w \langle m \rangle = w \odot Au}$ \\
+\hline
+\verb'GrB_eWiseMult' & element-wise,           & ${\bf C \langle M \rangle = C \odot (A \otimes B)}$ \\
+                     & set intersection        & ${\bf w \langle m \rangle = w \odot (u \otimes v)}$ \\
+\hline
+\verb'GrB_eWiseAdd'  & element-wise,           & ${\bf C \langle M \rangle = C \odot (A \oplus  B)}$ \\
+                     & set union               & ${\bf w \langle m \rangle = w \odot (u \oplus  v)}$ \\
+\hline
+\verb'GxB_eWiseUnion'& element-wise,           & ${\bf C \langle M \rangle = C \odot (A \oplus  B)}$ \\
+                     & set union               & ${\bf w \langle m \rangle = w \odot (u \oplus  v)}$ \\
+\hline
+\verb'GrB_extract'   & extract submatrix       & ${\bf C \langle M \rangle = C \odot A(I,J)}$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot u(i)}$ \\
+\hline
+\verb'GrB_assign'    & assign submatrix        & ${\bf C \langle M \rangle (I,J) = C(I,J) \odot A}$ \\
+                     & with submask for ${\bf C}$
+                                               & ${\bf w \langle m \rangle (i)   = w(i)   \odot u}$ \\
+\hline
+\verb'GxB_subassign' & assign submatrix,       & ${\bf C (I,J) \langle M \rangle = C(I,J) \odot A}$ \\
+                     & with submask for ${\bf C(I,J)}$
+                                               & ${\bf w (i)   \langle m \rangle = w(i)   \odot u}$ \\
+\hline
+\verb'GrB_apply'     & apply unary operator    & ${\bf C \langle M \rangle = C \odot} f{\bf (A)}$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f{\bf (u)}$ \\
+                     & apply binary operator   & ${\bf C \langle M \rangle = C \odot} f(x,{\bf A})$ \\
+                     &                         & ${\bf C \langle M \rangle = C \odot} f({\bf A},y)$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f(x,{\bf x})$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f({\bf u},y)$ \\
+                     & apply index-unary op    & ${\bf C \langle M \rangle = C \odot} f({\bf A},i,j,k)$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f({\bf u},i,0,k)$ \\
+\hline
+\verb'GrB_select'    & select entries          & ${\bf C \langle M \rangle = C \odot} \mbox{select}({\bf A},i,j,k)$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} \mbox{select}({\bf u},i,0,k)$ \\
+\hline
+\verb'GrB_reduce'    & reduce to vector        & ${\bf w \langle m \rangle = w \odot} [{\oplus}_j {\bf A}(:,j)]$ \\
+                     & reduce to scalar        & $s = s \odot [{\oplus}_{ij}  {\bf A}(I,J)]$ \\
+\hline
+\verb'GrB_transpose' & transpose               & ${\bf C \langle M \rangle = C \odot A^{\sf T}}$ \\
+\hline
+\verb'GrB_kronecker' & Kronecker product       & ${\bf C \langle M \rangle = C \odot \mbox{kron}(A, B)}$ \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+If an error occurs, \verb'GrB_error(&err,C)' or \verb'GrB_error(&err,w)'
+returns details about the error, for operations that return a modified matrix
+\verb'C' or vector \verb'w'.  The only operation that cannot return an error
+string is reduction to a C scalar with \verb'GrB_reduce'.
+
+\input{UserGuide/GrB_operations_mxm.tex}
+\input{UserGuide/GrB_operations_vxm.tex}
+\input{UserGuide/GrB_operations_mxv.tex}
+\input{UserGuide/GrB_operations_eWiseMult.tex}
+\input{UserGuide/GrB_operations_eWiseAdd.tex}
+\input{UserGuide/GrB_operations_eWiseUnion.tex}
+\input{UserGuide/GrB_operations_extract.tex}
+\input{UserGuide/GrB_operations_assign.tex}
+\input{UserGuide/GrB_operations_subassign.tex}
+\input{UserGuide/GrB_operations_assign_duplicates.tex}
+\input{UserGuide/GrB_operations_assign_vs_subassign.tex}
+\input{UserGuide/GrB_operations_apply.tex}
+\input{UserGuide/GrB_operations_select.tex}
+\input{UserGuide/GrB_operations_reduce.tex}
+\input{UserGuide/GrB_operations_transpose.tex}
+\input{UserGuide/GrB_operations_kronecker.tex}
+

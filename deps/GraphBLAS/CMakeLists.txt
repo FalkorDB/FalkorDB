@@ -2,7 +2,7 @@
 # GraphBLAS/CMakeLists.txt:  cmake script for GraphBLAS
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # See the User Guide for details on how to compile SuiteSparse:GraphBLAS.
@@ -41,7 +41,7 @@ if ( NOT BUILD_SHARED_LIBS )
 endif ( )
 
 # CUDA is under development for now, and not deployed in production:
-  set ( GRAPHBLAS_USE_CUDA OFF )
+  set ( GRAPHBLAS_USE_CUDA OFF )    # turn CUDA off in production
 # set ( GRAPHBLAS_USE_CUDA ON )     # use this for CUDA development only
 
 include ( SuiteSparsePolicy )
@@ -517,14 +517,9 @@ if ( SUITESPARSE_DEMOS )
     # Demo programs
     #---------------------------------------------------------------------------
 
-    add_executable ( openmp_demo   "Demo/Program/openmp_demo.c" )
-    add_executable ( openmp2_demo  "Demo/Program/openmp2_demo.c" )
     add_executable ( complex_demo  "Demo/Program/complex_demo.c" )
-    add_executable ( kron_demo     "Demo/Program/kron_demo.c" )
     add_executable ( simple_demo   "Demo/Program/simple_demo.c" )
     add_executable ( wildtype_demo "Demo/Program/wildtype_demo.c" )
-    add_executable ( reduce_demo   "Demo/Program/reduce_demo.c" )
-    add_executable ( import_demo   "Demo/Program/import_demo.c" )
     add_executable ( wathen_demo   "Demo/Program/wathen_demo.c" )
     add_executable ( context_demo  "Demo/Program/context_demo.c" )
     add_executable ( gauss_demo    "Demo/Program/gauss_demo.c" )
@@ -532,50 +527,32 @@ if ( SUITESPARSE_DEMOS )
 
     # Libraries required for Demo programs
     if ( BUILD_SHARED_LIBS )
-        target_link_libraries ( openmp_demo PUBLIC GraphBLAS )
-        target_link_libraries ( openmp2_demo PUBLIC GraphBLAS )
         target_link_libraries ( complex_demo PUBLIC GraphBLAS )
-        target_link_libraries ( kron_demo PUBLIC GraphBLAS )
         target_link_libraries ( simple_demo PUBLIC GraphBLAS )
         target_link_libraries ( wildtype_demo PUBLIC GraphBLAS )
-        target_link_libraries ( reduce_demo PUBLIC GraphBLAS )
-        target_link_libraries ( import_demo PUBLIC GraphBLAS )
         target_link_libraries ( wathen_demo PUBLIC GraphBLAS )
         target_link_libraries ( context_demo PUBLIC GraphBLAS )
         target_link_libraries ( gauss_demo PUBLIC GraphBLAS )
         target_link_libraries ( grow_demo PUBLIC GraphBLAS )
     else ( )
-        target_link_libraries ( openmp_demo PUBLIC GraphBLAS_static )
-        target_link_libraries ( openmp2_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( complex_demo PUBLIC GraphBLAS_static )
-        target_link_libraries ( kron_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( simple_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( wildtype_demo PUBLIC GraphBLAS_static )
-        target_link_libraries ( reduce_demo PUBLIC GraphBLAS_static )
-        target_link_libraries ( import_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( wathen_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( context_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( gauss_demo PUBLIC GraphBLAS_static )
         target_link_libraries ( grow_demo PUBLIC GraphBLAS_static )
     endif ( )
 
-    target_link_libraries ( openmp_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
-    target_link_libraries ( openmp2_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( complex_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
-    target_link_libraries ( kron_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( simple_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( wildtype_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
-    target_link_libraries ( reduce_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
-    target_link_libraries ( import_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( wathen_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( context_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( gauss_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
     target_link_libraries ( grow_demo PUBLIC ${GB_M} ${GB_CUDA} ${GB_RMM} )
 
     if ( GRAPHBLAS_HAS_OPENMP )
-        target_link_libraries ( openmp_demo PUBLIC OpenMP::OpenMP_C )
-        target_link_libraries ( openmp2_demo PUBLIC OpenMP::OpenMP_C )
-        target_link_libraries ( reduce_demo PUBLIC OpenMP::OpenMP_C )
         target_link_libraries ( wathen_demo PUBLIC OpenMP::OpenMP_C )
         target_link_libraries ( context_demo PUBLIC OpenMP::OpenMP_C )
         target_link_libraries ( grow_demo PUBLIC OpenMP::OpenMP_C )

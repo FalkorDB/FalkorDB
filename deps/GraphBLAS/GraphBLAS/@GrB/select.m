@@ -57,8 +57,9 @@ function C = select (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 % Cin is an optional input matrix.  If Cin is not present or is an empty
 % matrix (Cin = [ ]) then it is implicitly a matrix with no entries, of
 % the right size (which depends on A, and the descriptor).  Its type is
-% the output type of the accum operator, if it is present; otherwise, its
-% type is the type of the matrix A.
+% the output type of the accum binary operator, if it is present; otherwise,
+% its type is the type of the matrix A.  See 'help GrB.binopinfo' for a
+% list of available binary operators.
 %
 % M is the optional mask matrix.  If not present, or if empty, then no
 % mask is used.  If present, M must have the same size as C.
@@ -76,9 +77,9 @@ function C = select (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %
 % desc is optional. See 'help GrB.descriptorinfo' for more details.
 %
-% See also GrB/tril, GrB/triu, GrB/diag.
+% See also GrB/tril, GrB/triu, GrB/diag, GrB.selectopinfo, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

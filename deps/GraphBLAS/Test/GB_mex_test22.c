@@ -2,7 +2,7 @@
 // GB_mex_test22: reduce to scalar with user-data types
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -38,11 +38,11 @@ void myadd32 (my32 *z, const my32 *x, const my32 *y)
 
  typedef struct {
     double a ; double b ; double c ; double d ;
-    double e ; double f ; double g ; double h ; } my64 ;
+    double e ; double f ; double g ; double k ; } my64 ;
 #define MY64_DEFN \
 "typedef struct { \n"   \
 "   double a ; double b ; double c ; double d ; \n" \
-"   double e ; double f ; double g ; double h ; } my64 ; "
+"   double e ; double f ; double g ; double k ; } my64 ; "
 
 void myadd64 (my64 *z, const my64 *x, const my64 *y) ;
 void myadd64 (my64 *z, const my64 *x, const my64 *y)
@@ -54,7 +54,7 @@ void myadd64 (my64 *z, const my64 *x, const my64 *y)
     z->e = x->e + y->e ;
     z->f = x->f + y->f ;
     z->g = x->g + y->g ;
-    z->h = x->h + y->h ;
+    z->k = x->k + y->k ;
 }
 
 #define MYADD64_DEFN \
@@ -67,7 +67,7 @@ void myadd64 (my64 *z, const my64 *x, const my64 *y)
 "    z->e = x->e + y->e ;                               \n" \
 "    z->f = x->f + y->f ;                               \n" \
 "    z->g = x->g + y->g ;                               \n" \
-"    z->h = x->h + y->h ;                               \n" \
+"    z->k = x->k + y->k ;                               \n" \
 "}"
 
 void mexFunction
@@ -160,7 +160,7 @@ void mexFunction
     zero64.e = 0 ;
     zero64.f = 0 ;
     zero64.g = 0 ;
-    zero64.h = 0 ;
+    zero64.k = 0 ;
     GrB_Monoid Monoid64 = NULL ;
     OK (GrB_Monoid_new_UDT (&Monoid64, MyAdd64, (void *) &zero64)) ;
     OK (GxB_print (Monoid64, 3)) ;
@@ -183,11 +183,11 @@ void mexFunction
             z64.e = 1-k ;
             z64.f = 99 ;
             z64.g = i+j+k ;
-            z64.h = k-j ;
+            z64.k = k-j ;
             OK (GrB_Matrix_setElement_UDT (A, (void *) &z64, i, j)) ;
             printf ("A (%d, %d) = (%g, %g, %g, %g, %g, %g, %g, %g)\n", i, j,
                 z64.a, z64.b, z64.c, z64.d,
-                z64.e, z64.f, z64.g, z64.h) ;
+                z64.e, z64.f, z64.g, z64.k) ;
         }
     }
     OK (GrB_wait (A, GrB_MATERIALIZE)) ;
@@ -195,7 +195,7 @@ void mexFunction
 
     OK (GrB_Matrix_reduce_UDT ((void *) &z64, NULL, Monoid64, A, NULL)) ;
     printf ("sum: (%g, %g, %g, %g, %g, %g, %g, %g)\n",
-        z64.a, z64.b, z64.c, z64.d, z64.e, z64.f, z64.g, z64.h) ;
+        z64.a, z64.b, z64.c, z64.d, z64.e, z64.f, z64.g, z64.k) ;
     CHECK (z64.a == 55) ;
     CHECK (z64.b == 40) ;
     CHECK (z64.c == 0) ;
@@ -203,7 +203,7 @@ void mexFunction
     CHECK (z64.e == -55) ;
     CHECK (z64.f == 990) ;
     CHECK (z64.g == 95) ;
-    CHECK (z64.h == 45) ;
+    CHECK (z64.k == 45) ;
     GrB_free (&A) ;
 
     //--------------------------------------------------------------------------

@@ -1,0 +1,609 @@
+% UserGuide/GrB_concepts.tex: Basic Concepts
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SPDX-License-Identifier: Apache-2.0
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Basic Concepts} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{basic}
+
+Since the {\em GraphBLAS C API Specification} provides a precise definition of
+GraphBLAS, not every detail of every function is provided here.  For example,
+some error codes returned by GraphBLAS are self-explanatory, but since a
+specification must precisely define all possible error codes a function can
+return, these are listed in detail in the {\em GraphBLAS C API Specification}.
+However, including them here is not essential and the additional information on
+the page might detract from a clearer view of the essential features of the
+GraphBLAS functions.
+
+This User Guide also assumes the reader is familiar with MATLAB/Octave.
+MATLAB supports only the conventional plus-times semiring on sparse
+double and complex matrices, but a MATLAB-like notation easily extends to the
+arbitrary semirings used in GraphBLAS.  The matrix multiplication in the
+example in the Introduction can be written in MATLAB notation as
+\verb'C=A*B', if the Boolean \verb'OR-AND' semiring is understood.  Relying on
+a MATLAB-like notation allows the description in this User Guide to be
+expressive, easy to understand, and terse at the same time.  {\em The GraphBLAS
+C API Specification} also makes use of some MATLAB-like language, such
+as the colon notation.
+
+MATLAB notation will always appear here in fixed-width font, such as
+\verb'C=A*B(:,j)'.  In standard mathematical notation it would be written as
+the matrix-vector multiplication ${\bf C = A b}_j$ where ${\bf b}_j$ is the
+$j$th column of the matrix ${\bf B}$.  The GraphBLAS standard is a C API and
+SuiteSparse:GraphBLAS is written in C, and so a great deal of C syntax appears
+here as well, also in fixed-width font.  This User Guide alternates between all
+three styles as needed.
+
+%===============================================================================
+\subsection{Graphs and sparse matrices} %=======================================
+%===============================================================================
+\label{sparse}
+
+Graphs can be huge, with many nodes and edges.  A dense adjacency matrix ${\bf
+A}$ for a graph of $n$ nodes takes $O(n^2)$ memory, which is impossible if $n$
+is, say, a million.  Let $|{\bf A}|$ denote the number of entries in a matrix.
+Most graphs arising in practice are sparse, however, with only $|{\bf A}|=O(n)$
+edges, where $|{\bf A}|$ denotes the number of edges in the graph, or the
+number of explicit entries present in the data structure for the matrix ${\bf
+A}$.  Sparse graphs with millions of nodes and edges can easily be created by
+representing them as sparse matrices, where only explicit values need to be
+stored.  Some graphs are {\em hypersparse}, with ${|\bf A}| << n$.
+SuiteSparse:GraphBLAS supports three kinds of sparse matrix formats: a regular
+sparse format, taking $O(n+|{\bf A}|)$ space, a hypersparse format taking only
+$O(|{\bf A}|)$ space, and a bitmap form, taking $O(n^2)$ space.  Full matrices
+are also represented in $O(n^2)$ space.  Using its hypersparse format, creating
+a sparse matrix of size $n$-by-$n$ where $n=2^{60}$ (about $10^{18}$) can be
+done on quite easily on a commodity laptop, limited only by $|{\bf A}|$.
+To the GraphBLAS user application, all matrices look alike, since these formats
+are opaque, and SuiteSparse:GraphBLAS switches between them at will.
+
+A sparse matrix data structure only stores a subset of the possible $n^2$
+entries, and it assumes the values of entries not stored have some implicit
+value.  In conventional linear algebra, this implicit value is zero, but it
+differs with different semirings.  Explicit values are called {\em entries} and
+they appear in the data structure.  The {\em pattern} (also called the
+{\em structure}) of a matrix  defines where its explicit entries appear.  It
+will be referenced in one of two equivalent ways.  It can be viewed as a set of
+indices $(i,j)$, where $(i,j)$ is in the pattern of a matrix ${\bf A}$ if ${\bf
+A}(i,j)$ is an explicit value.  It can also be viewed as a Boolean matrix ${\bf
+S}$ where ${\bf S}(i,j)$ is true if $(i,j)$ is an explicit entry and false
+otherwise.  In MATLAB notation, \verb'S=spones(A)' or \verb'S=(A~=0)', if the
+implicit value is zero.  The \verb'(i,j)' pairs, and their values, can also be
+extracted from the matrix via the MATLAB expression \verb'[I,J,X]=find(A)',
+where the \verb'k'th tuple \verb'(I(k),J(k),X(k))' represents the explicit
+entry \verb'A(I(k),J(k))', with numerical value \verb'X(k)' equal to $a_{ij}$,
+with row index $i$=\verb'I(k)' and column index $j$=\verb'J(k)'.
+
+The entries in the pattern of ${\bf A}$ can take on any value, including the
+implicit value, whatever it happens to be.  This differs slightly from MATLAB,
+which always drops all explicit zeros from its sparse matrices.  This is a
+minor difference but GraphBLAS cannot drop explicit zeros.  For example, in the
+max-plus tropical algebra, the implicit value is negative infinity, and zero
+has a different meaning.  Here, the MATLAB notation used will assume that no
+explicit entries are ever dropped because their explicit value happens to match
+the implicit value.
+
+{\em Graph Algorithms in the Language on Linear Algebra}, Kepner and Gilbert,
+eds., provides a framework for understanding how graph algorithms can be
+expressed as matrix computations \cite{KepnerGilbert2011}.  For additional
+background on sparse matrix algorithms, see also \cite{Davis06book} and
+\cite{DavisRajamanickamSidLakhdar16}.
+
+%===============================================================================
+\subsection{Overview of GraphBLAS methods and operations} %=====================
+%===============================================================================
+\label{overview}
+
+GraphBLAS provides a collection of {\em methods} to create, query, and free its
+objects: matrices, vectors, scalars, types, operators, monoids, semirings, a
+descriptor object used for parameter settings, a context object (for
+controlling parallelism), and a container object (for moving data in and out of
+GraphBLAS), and an iterator object.  Details are given in
+Section~\ref{objects}.  Once these objects are created they can be used in
+mathematical {\em operations} (not to be confused with the how the term {\em
+operator} is used in GraphBLAS).  A short summary of these operations and their
+nearest MATLAB/Octave analog is given in the table below.
+
+% \vspace{0.1in}
+\begin{tabular}{ll}
+operation                           & approximate MATLAB/Octave analog \\
+\hline
+matrix multiplication               & \verb'C=A*B' \\
+element-wise operations             & \verb'C=A+B' and \verb'C=A.*B' \\
+reduction to a vector or scalar     & \verb's=sum(A)' \\
+apply unary operator                & \verb'C=-A' \\
+transpose                           & \verb"C=A'" \\
+submatrix extraction                & \verb'C=A(I,J)' \\
+submatrix assignment                & \verb'C(I,J)=A' \\
+select                              & \verb'C=tril(A)' \\
+\hline
+\end{tabular}
+\vspace{0.1in}
+
+GraphBLAS can do far more than what MATLAB/Octave can do in these rough
+analogs, but the list provides a first step in describing what GraphBLAS can
+do.  Details of each GraphBLAS operation are given in Section~\ref{operations}.
+With this brief overview, the full scope of GraphBLAS extensions of these
+operations can now be described.
+
+SuiteSparse:GraphBLAS has 13 built-in scalar types: Boolean, single and double
+precision floating-point (real and complex), and 8, 16, 32, and 64-bit signed
+and unsigned integers.  In addition, user-defined scalar types can be created
+from nearly any C \verb'typedef', as long as the entire type fits in a
+fixed-size contiguous block of memory (of arbitrary size).  All of these types
+can be used to create GraphBLAS sparse matrices, vectors, or scalars.
+
+The scalar addition of conventional matrix multiplication is replaced with a
+{\em monoid}.  A monoid is an associative and commutative binary operator
+\verb'z=f(x,y)' where all three domains are the same (the types of \verb'x',
+\verb'y', and \verb'z'), and where the operator has an identity value \verb'id'
+such that \verb'f(x,id)=f(id,x)=x'.  Performing matrix multiplication with a
+semiring uses a monoid in place of the ``add'' operator, scalar addition being
+just one of many possible monoids.  The identity value of addition is zero,
+since $x+0=0+x=x$.   GraphBLAS includes many built-in operators suitable for
+use as a monoid: min (with an identity value of positive infinity), max (whose
+identity is negative infinity), add (identity is zero), multiply (with an
+identity of one), four logical operators: AND, OR, exclusive-OR, and
+Boolean equality (XNOR), four bitwise operators (AND, OR, XOR, and XNOR),
+and the ANY operator.
+See Section~\ref{any_pair} for more details on the unusual ANY operator.
+User-created monoids can be defined with any associative and
+commutative operator that has an identity value.
+
+Finally, a semiring can use any built-in or user-defined binary operator
+\verb'z=f(x,y)' as its ``multiply'' operator, as long as the type of its
+output, \verb'z' matches the type of the semiring's monoid.
+The user application can create any semiring based on any types, monoids,
+and multiply operators, as long these few rules are followed.
+
+Just considering built-in types and operators, GraphBLAS can perform
+\verb'C=A*B' in thousands of unique semirings.  With typecasting, any of these
+semirings can be applied to matrices \verb'C', \verb'A', and \verb'B' of 13
+predefined types, in any combination.  This results in millions of possible
+kinds of sparse matrix multiplication supported by GraphBLAS, and this is
+counting just built-in types and operators.  By contrast, MATLAB provides just
+two semirings for its sparse matrix multiplication \verb'C=A*B':
+plus-times-double and plus-times-complex, not counting the typecasting that
+MATLAB does when multiplying a real matrix times a complex matrix.
+
+A monoid can also be used in a reduction operation, like \verb's=sum(A)' in
+MATLAB.  MATLAB provides the plus, times, min, and max reductions of a real or
+complex sparse matrix as \verb's=sum(A)',  \verb's=prod(A)', \verb's=min(A)',
+and \verb's=max(A)', respectively.  In GraphBLAS, any monoid can be used (min,
+max, plus, times, AND, OR, exclusive-OR, equality, bitwise operators,
+or any user-defined monoid on any user-defined type).
+
+Element-wise operations are also expanded from what can be done in MATLAB.
+Consider matrix addition, \verb'C=A+B' in MATLAB.  The pattern of the result is
+the set union of the pattern of \verb'A' and \verb'B'.  In GraphBLAS, any
+binary operator can be used in this set-union ``addition.''  The operator is
+applied to entries in the intersection.  Entries in \verb'A' but not \verb'B',
+or visa-versa, are copied directly into \verb'C', without any application of
+the binary operator.  The accumulator operation for ${\bf Z = C \odot T}$
+described in Section~\ref{accummask} is one example of this set-union
+application of an arbitrary binary operator.
+
+Consider element-wise multiplication, \verb'C=A.*B' in MATLAB.  The operator
+(multiply in this case) is applied to entries in the set intersection, and the
+pattern of \verb'C' just this set intersection.  Entries in \verb'A' but not
+\verb'B', or visa-versa, do not appear in \verb'C'.  In GraphBLAS, any binary
+operator can be used in this manner, not just scalar multiplication.  The
+difference between element-wise ``add'' and ``multiply'' is not the operators,
+but whether or not the pattern of the result is the set union or the set
+intersection.  In both cases, the operator is only applied to the set
+intersection.
+
+Finally, GraphBLAS includes a {\em non-blocking} mode where operations can be
+left pending, and saved for later.  This is very useful for submatrix
+assignment (\verb'C(I,J)=A' where \verb'I' and \verb'J' are integer vectors),
+or scalar assignment (\verb'C(i,j)=x' where \verb'i' and \verb'j' are scalar
+integers).  Because of how MATLAB stores its matrices, adding and deleting
+individual entries is very costly.  For example, this is very slow in MATLAB,
+taking $O(e^2)$ time (where $e$ is the number of entries added to the matrix):
+
+    \begin{mdframed}
+    {\footnotesize
+    \begin{verbatim}
+    A = sparse (m,n) ;   % an empty sparse matrix
+    for k = 1:e
+        compute a value x, row index i, and column index j
+        A (i,j) = x ;
+    end\end{verbatim}}\end{mdframed}
+
+The above code is very easy read and simple to write, but exceedingly slow.  In
+MATLAB, the method below is preferred and is far faster, taking at most
+$O(e \log e +n)$ time.  It can easily be a million times faster
+than the method above.  Unfortunately the second method below is a little
+harder to read and a little less natural to write:
+
+    \begin{mdframed}
+    {\footnotesize
+    \begin{verbatim}
+    I = zeros (e,1) ;
+    J = zeros (e,1) ;
+    X = zeros (e,1) ;
+    for k = 1:e
+        compute a value x, row index i, and column index j
+        I (k) = i ;
+        J (k) = j ;
+        X (k) = x ;
+    end
+    A = sparse (I,J,X,m,n) ;   \end{verbatim}} \end{mdframed}
+
+GraphBLAS can do both methods.  SuiteSparse:GraphBLAS stores its matrices in a
+format that allows for pending computations, which are done later in bulk, and
+as a result it can do both methods above equally as fast as the MATLAB
+\verb'sparse' function, allowing the user to write simpler code.
+
+%===============================================================================
+\subsection{The accumulator and the mask} %=====================================
+%===============================================================================
+\label{accummask}
+
+Most GraphBLAS operations can be modified via transposing input matrices, using
+an accumulator operator, applying a mask or its complement, and by clearing all
+entries the matrix \verb'C' after using it in the accumulator operator but
+before the final results are written back into it.  All of these steps are
+optional, and are controlled by a descriptor object that holds parameter
+settings (see Section~\ref{descriptor}) that control the following options:
+
+\begin{itemize}
+\item the input matrices \verb'A' and/or \verb'B' can be transposed first.
+
+\item an accumulator operator can be used, like the plus in the statement
+    \verb'C=C+A*B'.  The accumulator operator can be any binary operator, and
+    an element-wise ``add'' (set union) is performed using the operator.
+
+\item an optional {\em mask} can be used to selectively write the results to
+    the output.  The mask is a sparse Boolean matrix \verb'Mask' whose size is
+    the same size as the result.  If \verb'Mask(i,j)' is true, then the
+    corresponding entry in the output can be modified by the computation.  If
+    \verb'Mask(i,j)' is false, then the corresponding in the output is
+    protected and cannot be modified by the computation.  The \verb'Mask'
+    matrix acts exactly like logical matrix indexing in MATLAB, with one
+    minor difference: in GraphBLAS notation, the mask operation is $\bf C
+    \langle M \rangle = Z$, where the mask $\bf M$ appears only on the
+    left-hand side.  In MATLAB, it would appear on both sides as
+    \verb'C(Mask)=Z(Mask)'.  If no mask is provided, the \verb'Mask' matrix is
+    implicitly all true.  This is indicated by passing the value
+    \verb'GrB_NULL' in place of the \verb'Mask' argument in GraphBLAS
+    operations.
+
+\end{itemize}
+
+\noindent
+This process can be described in mathematical notation as:
+    \vspace{-0.2in}
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \> ${\bf A = A}^{\sf T}$, if requested via descriptor (first input option) \\
+    \> ${\bf B = B}^{\sf T}$, if requested via descriptor (second input option) \\
+    \> ${\bf T}$ is computed according to the specific operation  \\
+    \> ${\bf C \langle M \rangle = C \odot T}$,
+        accumulating and writing the results back via the mask
+    \end{tabbing} }
+\noindent
+The application of the mask and the accumulator operator is written as
+${\bf C \langle M \rangle = C \odot T}$ where ${\bf Z = C \odot T}$ denotes the
+application of the accumulator operator, and
+${\bf C \langle M \rangle = Z}$
+denotes the mask operator via the Boolean matrix ${\bf M}$.  The Accumulator
+Phase, ${\bf Z = C \odot T}$, is performed as follows:
+
+    % \vspace{-0.2in}
+    % accum: Z = C odot T
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \> {\bf Accumulator Phase}: compute ${\bf Z = C \odot T}$: \\
+    \> \> if \verb'accum' is \verb'NULL' \\
+    \> \>\>    ${\bf Z = T}$ \\
+    \> \> else \\
+    \> \>\>    ${\bf Z = C \odot T}$
+    \end{tabbing}}
+The accumulator operator is $\odot$ in GraphBLAS notation, or \verb'accum'
+in the code.  The pattern of ${\bf C \odot T}$ is the set union of the
+patterns of ${\bf C}$ and ${\bf T}$, and the operator is applied only on the
+set intersection of ${\bf C}$ and ${\bf T}$.  Entries in neither the pattern
+of ${\bf C}$ nor ${\bf T}$ do not appear in the pattern of ${\bf Z}$.  That is:
+    % \newpage
+    \vspace{-0.2in}
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \> for all entries $(i,j)$ in ${\bf C \cap T}$
+    (that is, entries in both ${\bf C}$ and ${\bf T}$) \\
+    \> \> $z_{ij} = c_{ij} \odot t_{ij}$ \\
+    \> for all entries $(i,j)$ in ${\bf C \setminus T}$
+    (that is, entries in ${\bf C}$ but not ${\bf T}$) \\
+    \> \> $z_{ij} = c_{ij}$ \\
+    \> for all entries $(i,j)$ in ${\bf T \setminus C}$
+    (that is, entries in ${\bf T}$ but not ${\bf C}$) \\
+    \> \> $z_{ij} = t_{ij}$
+    \end{tabbing} }
+The Accumulator Phase is followed by the Mask/Replace Phase,
+${\bf C \langle M \rangle = Z}$
+as controlled by the \verb'GrB_REPLACE' and \verb'GrB_COMP' descriptor options:
+    \vspace{-0.2in}
+    % mask/replace/scmp: C<M> = Z
+    {\small
+    \begin{tabbing}
+    \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \hspace{2em} \= \\
+    \>{\bf Mask/Replace Phase}: compute ${\bf C \langle M \rangle = Z}$: \\
+    \> \> if (\verb'GrB_REPLACE') delete all entries in ${\bf C}$ \\
+    \> \> if \verb'Mask' is \verb'NULL' \\
+    \> \>\>    if (\verb'GrB_COMP') \\
+    \> \>\>\>      ${\bf C}$ is not modified \\
+    \> \>\>    else \\
+    \> \>\>\>      ${\bf C = Z}$ \\
+    \> \> else \\
+    \> \>\>    if (\verb'GrB_COMP') \\
+    \> \>\>\>      ${\bf C \langle \neg M \rangle  = Z}$ \\
+    \> \>\>    else \\
+    \> \>\>\>      ${\bf C \langle M \rangle  = Z}$
+    \end{tabbing} }
+Both phases of the accum/mask process are illustrated in MATLAB notation in
+Figure~\ref{fig_accummask}.
+
+\begin{figure}
+\begin{mdframed}[leftmargin=-0.4in,userdefinedwidth=5.8in]
+{\footnotesize
+\begin{verbatim}
+function C = accum_mask (C, Mask, accum, T, C_replace, Mask_complement)
+[m n] = size (C.matrix) ;
+Z.matrix  = zeros (m, n) ;
+Z.pattern = false (m, n) ;
+
+if (isempty (accum))
+   Z = T ;     % no accum operator
+else
+   % Z = accum (C,T), like Z=C+T but with an binary operator, accum
+   p =  C.pattern &  T.pattern ; Z.matrix (p) = accum (C.matrix (p), T.matrix (p));
+   p =  C.pattern & ~T.pattern ; Z.matrix (p) = C.matrix (p) ;
+   p = ~C.pattern &  T.pattern ; Z.matrix (p) = T.matrix (p) ;
+   Z.pattern = C.pattern | T.pattern ;
+end
+
+% apply the mask to the values and pattern
+C.matrix  = mask (C.matrix,  Mask, Z.matrix,  C_replace, Mask_complement) ;
+C.pattern = mask (C.pattern, Mask, Z.pattern, C_replace, Mask_complement) ;
+end
+
+function C = mask (C, Mask, Z, C_replace, Mask_complement)
+% replace C if requested
+if (C_replace)
+   C (:,:) = 0 ;
+end
+if (isempty (Mask))             % if empty, Mask is implicit ones(m,n)
+   % implicitly, Mask = ones (size (C))
+   if (~Mask_complement)
+      C = Z ;                   % this is the default
+   else
+      C = C ;                   % Z need never have been computed
+   end
+else
+   % apply the mask
+   if (~Mask_complement)
+      C (Mask) = Z (Mask) ;
+   else
+      C (~Mask) = Z (~Mask) ;
+   end
+end
+end \end{verbatim} }
+\end{mdframed}
+\caption{Applying the mask and accumulator, ${\bf C \langle M \rangle = C \odot T}$\label{fig_accummask}}
+\end{figure}
+
+A GraphBLAS operation starts with its primary
+computation, producing a result \verb'T'; for matrix multiply, \verb'T=A*B', or
+if \verb'A' is transposed first, \verb"T=A'*B", for example.  Applying the
+accumulator, mask (or its complement) to obtain the final result matrix
+\verb'C' can be expressed in the MATLAB \verb'accum_mask' function shown in the
+figure.  This function is an exact, fully functional, and nearly-complete
+description of the GraphBLAS accumulator/mask operation.  The only aspects it
+does not consider are typecasting (see Section~\ref{typecasting}), and the
+value of the implicit identity (for those, see another version in the
+\verb'Test' folder).
+
+One aspect of GraphBLAS cannot be as easily expressed in a MATLAB sparse
+matrix: namely, what is the implicit value of entries not in the pattern?  To
+accommodate this difference in the \verb'accum_mask' MATLAB function, each
+sparse matrix \verb'A' is represented with its values \verb'A.matrix' and its
+pattern, \verb'A.pattern'.  The latter could be expressed as the sparse matrix
+\verb'A.pattern=spones(A)' or \verb'A.pattern=(A~=0)' in MATLAB, if the
+implicit value is zero.  With different semirings, entries not in the pattern
+can be \verb'1', \verb'+Inf', \verb'-Inf', or whatever is the identity value of
+the monoid.  As a result, Figure~\ref{fig_accummask} performs its computations
+on two MATLAB matrices: the values in \verb'A.matrix' and the pattern in the
+logical matrix \verb'A.pattern'.  Implicit values are untouched.
+
+The final computation in Figure~\ref{fig_accummask}  with a complemented
+\verb'Mask' is easily expressed in MATLAB as \verb'C(~Mask)=Z(~Mask)' but this
+is costly if \verb'Mask' is very sparse (the typical case).  It can be computed
+much faster in MATLAB without complementing the sparse \verb'Mask' via:
+
+        {\footnotesize
+        \begin{verbatim}
+        R = Z ; R (Mask) = C (Mask) ; C = R ; \end{verbatim} }
+
+A set of MATLAB functions that precisely compute the ${\bf C \langle M \rangle
+= C \odot T}$ operation according to the full GraphBLAS specification is
+provided in SuiteSparse:GraphBLAS as \verb'GB_spec_accum.m', which computes
+${\bf Z=C\odot T}$, and \verb'GB_spec_mask.m', which computes ${\bf C \langle M
+\rangle = Z}$.  SuiteSparse:GraphBLAS includes a complete list of
+\verb'GB_spec_*' functions that illustrate every GraphBLAS operation.
+
+The methods in Figure~\ref{fig_accummask} rely heavily on MATLAB's logical
+matrix indexing.  For those unfamiliar with logical indexing in MATLAB, here is
+short summary.  Logical matrix indexing in MATLAB is written as \verb'A(Mask)'
+where \verb'A' is any matrix and \verb'Mask' is a logical matrix the same size
+as \verb'A'.  The expression \verb'x=A(Mask)' produces a column vector \verb'x'
+consisting of the entries of \verb'A' where \verb'Mask' is true.  On the
+left-hand side, logical submatrix assignment \verb'A(Mask)=x' does the
+opposite, copying the components of the vector \verb'x' into the places in
+\verb'A' where \verb'Mask' is true.  For example, to negate all values greater
+than 10 using logical indexing in MATLAB:
+
+    \begin{mdframed}
+    {\footnotesize
+    \begin{verbatim}
+    >> A = magic (4)
+    A =
+        16     2     3    13
+         5    11    10     8
+         9     7     6    12
+         4    14    15     1
+    >> A (A>10) = - A (A>10)
+    A =
+       -16     2     3   -13
+         5   -11    10     8
+         9     7     6   -12
+         4   -14   -15     1 \end{verbatim} } \end{mdframed}
+
+In MATLAB, logical indexing with a sparse matrix \verb'A' and sparse logical
+matrix \verb'Mask' is a built-in method.  The Mask operator in GraphBLAS works
+identically as sparse logical indexing in MATLAB, but is typically far faster
+in SuiteSparse:GraphBLAS than the same operation using MATLAB sparse matrices.
+
+%===============================================================================
+\subsection{Typecasting} %======================================================
+%===============================================================================
+\label{typecasting}
+
+If an operator \verb'z=f(x)' or \verb'z=f(x,y)' is used with inputs that do not
+match its inputs \verb'x' or \verb'y', or if its result \verb'z' does not match
+the type of the matrix it is being stored into, then the values are typecasted.
+Typecasting in GraphBLAS extends beyond just operators.  Almost all GraphBLAS
+methods and operations are able to typecast their results, as needed.
+
+If one type can be typecasted into the other, they are said to be {\em
+compatible}.  All built-in types are compatible with each other.  GraphBLAS
+cannot typecast user-defined types thus any user-defined type is only
+compatible with itself.  When GraphBLAS requires inputs of a specific type, or
+when one type cannot be typecast to another, the GraphBLAS function returns an
+error code, \verb'GrB_DOMAIN_MISMATCH' (refer to Section~\ref{error} for a
+complete list of error codes).  Typecasting can only be done between built-in
+types, and it follows the rules of the ANSI C language (not MATLAB) wherever
+the rules of ANSI C are well-defined.
+
+However, unlike MATLAB, the C11 language specification states that the
+results of typecasting a \verb'float' or \verb'double' to an integer type is
+not always defined.  In SuiteSparse:GraphBLAS, whenever C leaves the result
+undefined the rules used in MATLAB are followed.  In particular \verb'+Inf'
+converts to the largest integer value, \verb'-Inf' converts to the smallest
+(zero for unsigned integers), and \verb'NaN' converts to zero.  Positive values
+outside the range of the integer are converted to the largest positive integer,
+and negative values less than the most negative integer are converted to that
+most negative integer.  Other than these special cases, SuiteSparse:GraphBLAS
+trusts the C compiler for the rest of its typecasting.
+
+Typecasting to \verb'bool' is fully defined in the C language specification,
+even for \verb'NaN'.  The result is \verb'false' if the value compares equal to
+zero, and true otherwise.  Thus \verb'NaN' converts to \verb'true'.  This is
+unlike MATLAB, which does not allow a typecast of a \verb'NaN' to the MATLAB
+logical type.
+
+\begin{alert}
+{\bf SPEC:} the GraphBLAS API C Specification states that typecasting follows
+the rules of ANSI C.  Yet C leaves some typecasting undefined.  All typecasting
+between built-in types in SuiteSparse:GraphBLAS is precisely defined, as an
+extension to the specification.
+\end{alert}
+
+\begin{alert}
+{\bf SPEC:} Some functions do not make use of all of their inputs; in
+particular the binary operators \verb'FIRST', \verb'SECOND', and \verb'ONEB',
+and many of the index unary operators.  The Specification requires that the
+inputs to these operators must be compatible with (that is, can be typecasted
+to) the inputs to the operators, even if those inputs are not used and no
+typecasting would ever occur.  As an extension to the specification,
+SuiteSparse:GraphBLAS does not perform this error check on unused inputs of
+built-in operators.  For example, the \verb'GrB_FIRST_INT64' operator can be
+used in \verb'GrB_eWiseMult(C,..,A,B,...)' on a matrix \verb'B' of any type,
+including user-defined types.  For this case, the matrix \verb'A' must be
+compatible with \verb'GrB_INT64'.
+\end{alert}
+
+%===============================================================================
+\subsection{Notation and list of GraphBLAS operations} %========================
+%===============================================================================
+\label{list}
+
+As a summary of what GraphBLAS can do, the following table lists all GraphBLAS
+operations.  Upper case letters denote a matrix, lower case letters are
+vectors, and ${\bf AB}$ denote the multiplication of two matrices over a
+semiring.
+
+Each operation takes an optional \verb'GrB_Descriptor' argument that modifies
+the operation.  The input matrices ${\bf A}$ and ${\bf B}$ can be optionally
+transposed, the mask ${\bf M}$ can be complemented, and ${\bf C}$ can be
+cleared of its entries after it is used in ${\bf Z = C \odot T}$ but before
+the ${\bf C \langle M \rangle = Z}$ assignment.
+Vectors are never transposed via the descriptor.
+
+Let ${\bf A \oplus B}$ denote the element-wise operator that produces a set
+union pattern (like \verb'A+B' in MATLAB).  Any binary operator can be used
+this way in GraphBLAS, not just plus.  Let ${\bf A \otimes B}$ denote the
+element-wise operator that produces a set intersection pattern (like
+\verb'A.*B' in MATLAB); any binary operator can be used this way, not just
+times.
+
+Reduction of a matrix ${\bf A}$ to a vector reduces the $i$th row of ${\bf A}$
+to a scalar $w_i$.  This is like \verb"w=sum(A')" since by default, MATLAB
+reduces down the columns, not across the rows.
+
+\vspace{0.05in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+\verb'GrB_mxm'       & matrix-matrix multiply  & ${\bf C \langle M \rangle = C \odot AB}$ \\
+\verb'GrB_vxm'       & vector-matrix multiply  & ${\bf w^{\sf T}\langle m^{\sf T}\rangle = w^{\sf T}\odot u^{\sf T}A}$ \\
+\verb'GrB_mxv'       & matrix-vector multiply  & ${\bf w \langle m \rangle = w \odot Au}$ \\
+\hline
+\verb'GrB_eWiseMult' & element-wise,           & ${\bf C \langle M \rangle = C \odot (A \otimes B)}$ \\
+                     & set intersection        & ${\bf w \langle m \rangle = w \odot (u \otimes v)}$ \\
+\hline
+\verb'GrB_eWiseAdd'  & element-wise,           & ${\bf C \langle M \rangle = C \odot (A \oplus  B)}$ \\
+                     & set union               & ${\bf w \langle m \rangle = w \odot (u \oplus  v)}$ \\
+\hline
+\verb'GxB_eWiseUnion'& element-wise,           & ${\bf C \langle M \rangle = C \odot (A \oplus  B)}$ \\
+                     & set union               & ${\bf w \langle m \rangle = w \odot (u \oplus  v)}$ \\
+\hline
+\verb'GrB_extract'   & extract submatrix       & ${\bf C \langle M \rangle = C \odot A(I,J)}$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot u(i)}$ \\
+\hline
+\verb'GxB_subassign' & assign submatrix        & ${\bf C (I,J) \langle M \rangle = C(I,J) \odot A}$ \\
+                     & (with submask for ${\bf C(I,J)}$)
+                                               & ${\bf w (i)   \langle m \rangle = w(i)   \odot u}$ \\
+\hline
+\verb'GrB_assign'    & assign submatrix        & ${\bf C \langle M \rangle (I,J) = C(I,J) \odot A}$ \\
+                     & (with mask for ${\bf C}$)
+                                               & ${\bf w \langle m \rangle (i)   = w(i)   \odot u}$ \\
+\hline
+\verb'GrB_apply'     & apply unary operator    & ${\bf C \langle M \rangle = C \odot} f{\bf (A)}$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f{\bf (u)}$ \\
+                     & apply binary operator   & ${\bf C \langle M \rangle = C \odot} f({\bf A},y)$ \\
+                     &                         & ${\bf C \langle M \rangle = C \odot} f(x,{\bf A})$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f({\bf u},y)$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f(x,{\bf u})$ \\
+                     & apply index-unary op    & ${\bf C \langle M \rangle = C \odot} f({\bf A},i,j,k)$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} f({\bf u},i,0,k)$ \\
+\hline
+\verb'GrB_select'    & select entries          & ${\bf C \langle M \rangle = C \odot} \mbox{select}({\bf A},i,j,k)$ \\
+                     &                         & ${\bf w \langle m \rangle = w \odot} \mbox{select}({\bf u},i,0,k)$ \\
+\hline
+\verb'GrB_reduce'    & reduce to vector        & ${\bf w \langle m \rangle = w \odot} [{\oplus}_j {\bf A}(:,j)]$ \\
+                     & reduce to scalar        & $s = s \odot [{\oplus}_{ij}  {\bf A}(i,j)]$ \\
+\hline
+\verb'GrB_transpose' & transpose               & ${\bf C \langle M \rangle = C \odot A^{\sf T}}$ \\
+\hline
+\verb'GrB_kronecker' & Kronecker product       & ${\bf C \langle M \rangle = C \odot \mbox{kron}(A, B)}$ \\
+\hline
+\end{tabular}
+}
+\vspace{0.15in}
+
+

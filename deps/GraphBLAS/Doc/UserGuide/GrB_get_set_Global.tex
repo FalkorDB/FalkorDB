@@ -1,0 +1,282 @@
+
+%-------------------------------------------------------------------------------
+\subsection{Global Options ({\sf GrB\_Global})}
+\label{get_set_global}
+%-------------------------------------------------------------------------------
+
+A single object \verb'GrB_GLOBAL' whose type is \verb'GrB_Global' is used to
+denote global settings to read or modify.  To use it with \verb'GrB_get' and
+\verb'GrB_set', pass in \verb'GrB_GLOBAL' as the first parameter.
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_Global g, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_Global g, char *     value, int f) ;
+GrB_Info GrB_get (GrB_Global g, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_Global g, size_t *   value, int f) ;
+GrB_Info GrB_get (GrB_Global g, void *     value, int f) ;
+
+GrB_Info GrB_set (GrB_Global g, GrB_Scalar value, int f) ;
+GrB_Info GrB_set (GrB_Global g, char *     value, int f) ;
+GrB_Info GrB_set (GrB_Global g, int32_t    value, int f) ;
+GrB_Info GrB_set (GrB_Global g, void *     value, int f, size_t s) ;
+\end{verbatim}
+}\end{mdframed}
+
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.5in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_LIBRARY_VER_MAJOR'        & R    & \verb'int32_t'& major version of the library \\
+\verb'GrB_LIBRARY_VER_MINOR'        & R    & \verb'int32_t'& minor version of the library \\
+\verb'GrB_LIBRARY_VER_PATCH'        & R    & \verb'int32_t'& patch version of the library \\
+\verb'GrB_API_VER_MAJOR'            & R    & \verb'int32_t'& major version of the API \\
+\verb'GrB_API_VER_MINOR'            & R    & \verb'int32_t'& major version of the API \\
+\verb'GrB_API_VER_PATCH'            & R    & \verb'int32_t'& major version of the API \\
+\verb'GrB_BLOCKING_MODE'            & R    & \verb'int32_t'& blocking mode (\verb'GrB_BLOCKING' \newline
+                                                                or \verb'GrB_NONBLOCKING') \\
+\verb'GxB_LIBRARY_OPENMP'           & R    & \verb'int32_t'& if OpenMP is in use (true/false) \\
+\verb'GrB_STORAGE_ORIENTATION_HINT' & R/W  & \verb'int32_t'& see \verb'GrB_Orientation': default
+                                                            format for matrices. \\
+%                                                           Matrices are held by row, unless this
+%                                                           value is set to \verb'GrB_COLMAJOR'. \\
+\verb'GxB_NTHREADS'                 & R/W  & \verb'int32_t'& number of OpenMP threads used. \newline
+                                                            See Section~\ref{omp_parallelism}. \\
+% \verb'GxB_GPU_ID'                 & R/W  & \verb'int32_t'& which GPU to use \\
+\verb'GxB_BURBLE'                   & R/W  & \verb'int32_t'& diagnostic output (true/false). \newline
+                                                                See Section~\ref{diag}. \\
+\verb'GxB_PRINT_1BASED'             & R/W  & \verb'int32_t'& matrices printed as 1-based or 0-based  \\
+\verb'GxB_INCLUDE_READONLY_STATISTICS' &R/W& \verb'int32_t'& include read-only memory in statistics \\
+\verb'GxB_JIT_C_CONTROL'            & R/W  & \verb'int32_t'& see Section~\ref{jit} \\
+\verb'GxB_JIT_USE_CMAKE'            & R/W  & \verb'int32_t'& " \\
+\verb'GxB_ROWINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for row indices (32 or 64) \\
+\verb'GxB_COLINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for column indices (32 or 64) \\
+\verb'GxB_OFFSET_INTEGER_HINT'      & R/W  & \verb'int32_t'& hint for offsets (32 or 64) \\
+\hline
+\verb'GxB_HYPER_SWITCH'             & R/W  & \verb'double' & global hypersparsity control. \newline
+                                                                See Section~\ref{hypersparse}. \\
+\verb'GxB_HYPER_HASH'               & R/W  & \verb'int64_t' & global hypersparsity (hyper-hash)
+                                                                control \\
+\verb'GxB_CHUNK'                    & R/W  & \verb'double' & global chunk size for parallel task creation.
+                                                                See Section~\ref{omp_parallelism}. \\
+\hline
+\verb'GrB_NAME'                     & R    & \verb'char *' & name of the library \newline
+                                                                (\verb'"SuiteSparse:GraphBLAS"') \\
+\verb'GxB_LIBRARY_DATE'             & R    & \verb'char *' & library release date \\
+\verb'GxB_LIBRARY_ABOUT'            & R    & \verb'char *' & details about the library \\
+\verb'GxB_LIBRARY_LICENSE'          & R    & \verb'char *' & license of the library \\
+\verb'GxB_LIBRARY_COMPILE_DATE'     & R    & \verb'char *' & date the library was compiled \\
+\verb'GxB_LIBRARY_COMPILE_TIME'     & R    & \verb'char *' & time the library was compiled \\
+\verb'GxB_LIBRARY_URL'              & R    & \verb'char *' & URL for the library \\
+\verb'GxB_API_DATE'                 & R    & \verb'char *' & C API release date \\
+\verb'GxB_API_ABOUT'                & R    & \verb'char *' & about the C API \\
+\verb'GxB_API_URL'                  & R    & \verb'char *' & URL for the C API \\
+\verb'GxB_COMPILER_NAME'            & R    & \verb'char *' & name of the compiler used to compile the library \\
+\hline
+\end{tabular}
+}
+\vspace{0.05in}
+
+\vspace{0.1in}
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.5in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GxB_JIT_C_COMPILER_NAME'      & R/W  & \verb'char *' & See Section~\ref{jit} \\
+\verb'GxB_JIT_C_COMPILER_FLAGS'     & R/W  & \verb'char *' & " \\
+\verb'GxB_JIT_C_LINKER_FLAGS'       & R/W  & \verb'char *' & " \\
+\verb'GxB_JIT_C_LIBRARIES'          & R/W  & \verb'char *' & " \\
+\verb'GxB_JIT_C_CMAKE_LIBS'         & R/W  & \verb'char *' & " \\
+\verb'GxB_JIT_C_PREFACE'            & R/W  & \verb'char *' & " \\
+\verb'GxB_JIT_ERROR_LOG'            & R/W  & \verb'char *' & " \\
+\verb'GxB_JIT_CACHE_PATH'           & R/W  & \verb'char *' & " \\
+\hline
+\verb'GxB_BITMAP_SWITCH'            & R/W  & \verb'void *' & \verb'double' array of size \newline
+                                                                \verb'GxB_NBITMAP_SWITCH'.  \newline
+                                                                See Section~\ref{bitmap_switch}. \\
+\verb'GxB_COMPILER_VERSION'         & R    & \verb'void *' & \verb'int32_t' array of size 3.
+                                        The version of the compiler used to
+                                        compile the library. \\
+\verb'GxB_PRINTF'                   & W    & \verb'void *' & pointer to \verb'printf' function for diagnostic output.
+                                                                See Section~\ref{diag}. \\
+\verb'GxB_FLUSH'                    & W    & \verb'void *' & pointer to \verb'flush' function for diagnostic output.
+                                                                See Section~\ref{diag}. \\
+\verb'GxB_MALLOC_FUNCTION'  & R    & \verb'void *' & malloc function \\
+\verb'GxB_CALLOC_FUNCTION'  & R    & \verb'void *' & calloc function \\
+\verb'GxB_REALLOC_FUNCTION' & R    & \verb'void *' & realloc function \\
+\verb'GxB_FREE_FUNCTION'    & R    & \verb'void *' & free function \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+\subsubsection{Global diagnostic settings}
+\label{diag}
+%-------------------------------------------------------------------------------
+
+\verb'GrB_set (GrB_GLOBAL, ..., GxB_BURBLE)' controls the burble setting.  It can also be
+controlled via \verb'GrB.burble(b)' in the MATLAB/Octave interface.
+
+{\footnotesize
+\begin{verbatim}
+     GrB_set (GrB_GLOBAL, true,  GxB_BURBLE) ;  // enable burble
+     GrB_set (GrB_GLOBAL, false, GxB_BURBLE) ;  // disable burble \end{verbatim}}
+
+If enabled, SuiteSparse:GraphBLAS reports which internal kernels it uses, and
+how much time is spent.  If you see the word \verb'generic', it means that
+SuiteSparse:GraphBLAS was unable to use its JIT kernels, or its faster kernels
+in \verb'Source/FactoryKernels', but used a generic kernel that relies on
+function pointers.  This is done for user-defined types and operators when they
+cannot be used in the JIT, and when typecasting is performed.  Generic kernels
+are typically slower than the JIT kernels or kernels in
+\verb'Source/FactoryKernels'.
+
+If you see a lot of \verb'wait' statements, it may mean that a lot of time is
+spent finishing a matrix or vector.  This may be the result of an inefficient
+use of the \verb'setElement' and \verb'assign' methods.  If this occurs you
+might try changing the sparsity format of a vector or matrix to
+\verb'GxB_BITMAP', assuming there's enough space for it.
+
+The following setting allows the user application to change the
+function used to print diagnostic output:
+
+{\small
+\begin{verbatim}
+    GrB_set (GrB_GLOBAL, (void *) printf, GxB_PRINTF, sizeof (void *)) ; \end{verbatim} }
+
+This also controls the output of the
+\verb'GxB_*print' functions.  By default this parameter is \verb'NULL', in
+which case the C11 \verb'printf' function is used.  The parameter is a
+function pointer with the same signature as the C11 \verb'printf'
+function.  The MATLAB/Octave interface to GraphBLAS sets it to \verb'mexPrintf'
+so that GraphBLAS can print to the MATLAB/Octave Command Window.
+
+After each call to the \verb'printf' function, an optional
+\verb'flush' function is called, which is \verb'NULL' by default.  If
+\verb'NULL', the function is not used.  This can be changed with:
+
+{\small
+\begin{verbatim}
+    GrB_set (GrB_GLOBAL, (void *) flush, GxB_FLUSH, sizeof (void *)) ; \end{verbatim} }
+
+The \verb'flush' function takes no
+arguments, and returns an \verb'int' which is 0 if successful, or any nonzero
+value on failure (the same output as the C11 \verb'fflush' function,
+except that \verb'flush' has no inputs).
+
+%-------------------------------------------------------------------------------
+\subsubsection{OpenMP parallelism}
+%-------------------------------------------------------------------------------
+\label{omp_parallelism}
+
+SuiteSparse:GraphBLAS is a parallel library, based on OpenMP.  By
+default, all GraphBLAS operations will use up to the maximum number of threads
+specified by the \verb'omp_get_max_threads' OpenMP function.  For small
+problems, GraphBLAS may choose to use fewer threads, using two parameters: the
+maximum number of threads to use (which may differ from the
+\verb'omp_get_max_threads' value), and a parameter called the \verb'chunk'.
+Suppose \verb'work' is a measure of the work an operation needs to perform (say
+the number of entries in the two input matrices for \verb'GrB_eWiseAdd').  No
+more than \verb'floor(work/chunk)' threads will be used (or one thread if the
+ratio is less than 1).
+
+\verb'GxB_NTHREADS' controls how many threads a method uses.
+    By default (if set to zero, or \verb'GrB_DEFAULT'), all available threads
+    are used.  The maximum available threads is controlled by the global
+    setting, which is \verb'omp_get_max_threads ( )' by default.  If set to
+    some positive integer \verb'nthreads' less than this maximum, at most
+    \verb'nthreads' threads will be used.
+
+\verb'GxB_CHUNK' is a \verb'double' value that controls how many threads
+    a method uses for small problems.
+The default \verb'chunk' value is 65,536, but this may change in future
+versions, or it may be modified when GraphBLAS is installed on a particular
+machine.
+
+Both parameters can be set in two ways:
+
+\begin{itemize}
+
+\item Globally:  If the following methods are used, then all subsequent
+GraphBLAS operations will use these settings.  Note the typecast,
+\verb'(double)' \verb'chunk'.  This is necessary if a literal constant such as
+\verb'20000' is passed as this argument.  The type of the constant must be
+\verb'double'.
+
+    {\footnotesize
+    \begin{verbatim}
+    int32_t nthreads_max = 40 ;
+    GrB_set (GrB_GLOBAL, nthreads_max, GxB_NTHREADS) ;
+    GrB_Scalar_new (&s, GrB_FP64) ;
+    GrB_Scalar_setElement (s, (double) 20000) ;
+    GrB_set (GrB_GLOBAL, s, GxB_CHUNK) ; \end{verbatim} }
+
+\item Context: this object can be used to choose a different number of
+threads used in calls to GraphBLAS from different user threads, exploiting
+nested parallelism.  Refer to Section~\ref{context}.  If a thread has engaged a
+context object, it ignores the global settings for \verb'GxB_NTHREADS' and
+\verb'GxB_CHUNK', and uses the settings in its own context instead.
+
+\end{itemize}
+
+The smaller of \verb'nthreads_max' and \verb'floor(work/chunk)' is used for any
+given GraphBLAS operation, except that a single thread is used if this value is
+zero or less.
+
+If either parameter is set to \verb'GrB_DEFAULT', then default values are used.
+The default for \verb'nthreads_max' is the return value from
+\verb'omp_get_max_threads', and the default chunk size is currently 65,536.
+
+If a descriptor value for either parameter is left at its default, or set to
+\verb'GrB_DEFAULT', then the global setting is used.  This global setting may
+have been modified from its default, and this modified value will be used.
+
+For example, suppose \verb'omp_get_max_threads' reports 8 threads.  If \newline
+\verb'GrB_set (GrB_GLOBAL, 4, GxB_NTHREADS)' is used, then the global setting is four
+threads, not eight.
+
+GraphBLAS may be compiled without OpenMP, by setting \verb'-DNOPENMP=1'.
+The library will be thread-safe, with one exception.  \verb'GrB_wait' is
+intended to provide thread-safety by flushing the cache of one user thread
+so the object can be safely read by another thread.  This is accomplished
+with \verb'pragma omp flush', but if OpenMP is not available, this does
+nothing.  If OpenMP is not available or \verb'-DNOPEMP=1' is used, then
+user applications need to ensure their own thread safety when one user thread
+computes a result that is then read by another thread.
+
+You can query GraphBLAS at run-time to ask if it was compiled with OpenMP:
+
+{\small
+\begin{verbatim}
+    bool have_openmp ;
+    GrB_get (GrB_GLOBAL, &have_openmp, GxB_LIBRARY_OPENMP) ;
+    if (!have_openmp) printf ("GraphBLAS not compiled with OpenMP\n") ; \end{verbatim}}
+
+Compiling GraphBLAS without OpenMP is not recommended for installation in a
+package manager (Linux, conda-forge, spack, brew, vcpkg, etc).
+
+%-------------------------------------------------------------------------------
+\subsubsection{Other global options}
+%-------------------------------------------------------------------------------
+
+\verb'GrB_BLOCKING_MODE' can only be queried by \verb'GrB_get'; it cannot be
+modified by \verb'GrB_set'.  The mode is the value passed to \verb'GrB_init'
+(blocking or non-blocking).
+
+All threads in the same user application share the same global options,
+including hypersparsity, bitmap options, and CSR/CSC format determined by
+\verb'GrB_set', and the blocking mode determined by \verb'GrB_init'.
+Specific format and hypersparsity parameters of each matrix are specific to
+that matrix and can be independently changed.
+
+The \verb'GrB_LIBRARY_*' and \verb'GxB_LIBRARY_*' options can be used to query
+the current implementation of SuiteSparse:GraphBLAS.  The \verb'GrB_API_*' and
+\verb'GxB_API_*' options can be used to query the current GraphBLAS C API
+Specification.
+

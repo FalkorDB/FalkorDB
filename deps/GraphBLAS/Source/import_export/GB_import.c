@@ -2,7 +2,7 @@
 // GB_import: import a matrix in any format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,35 +16,35 @@
 
 GrB_Info GB_import      // import/pack a matrix in any format
 (
-    bool packing,       // pack if true, create and import false
+    bool packing,       // pack if true; create and import if false.
 
     GrB_Matrix *A,      // handle of matrix to create, or pack
     GrB_Type type,      // type of matrix to create
-    GrB_Index vlen,     // vector length
-    GrB_Index vdim,     // vector dimension
+    uint64_t vlen,      // vector length
+    uint64_t vdim,      // vector dimension
     bool is_sparse_vector,      // true if A is a sparse GrB_Vector
 
     // the 5 arrays:
-    GrB_Index **Ap,     // pointers, for sparse and hypersparse formats.
-    GrB_Index Ap_size,  // size of Ap in bytes
+    uint64_t **Ap,      // pointers, for sparse and hypersparse formats.
+    uint64_t Ap_size,   // size of Ap in bytes
 
-    GrB_Index **Ah,     // vector indices for hypersparse matrices
-    GrB_Index Ah_size,  // size of Ah in bytes
+    uint64_t **Ah,      // vector indices for hypersparse matrices
+    uint64_t Ah_size,   // size of Ah in bytes
 
     int8_t **Ab,        // bitmap, for bitmap format only.
-    GrB_Index Ab_size,  // size of Ab in bytes
+    uint64_t Ab_size,   // size of Ab in bytes
 
-    GrB_Index **Ai,     // indices for hyper and sparse formats
-    GrB_Index Ai_size,  // size of Ai in bytes
+    uint64_t **Ai,      // indices for hyper and sparse formats
+    uint64_t Ai_size,   // size of Ai in bytes
 
     void **Ax,          // values
-    GrB_Index Ax_size,  // size of Ax in bytes
+    uint64_t Ax_size,   // size of Ax in bytes
 
     // additional information for specific formats:
-    GrB_Index nvals,    // # of entries for bitmap format, or for a vector
+    uint64_t nvals,     // # of entries for bitmap format, or for a vector
                         // in CSC format.
     bool jumbled,       // if true, sparse/hypersparse may be jumbled.
-    GrB_Index nvec,     // size of Ah for hypersparse format.
+    uint64_t nvec,      // size of Ah for hypersparse format.
 
     // information for all formats:
     int sparsity,       // hypersparse, sparse, bitmap, or full
@@ -67,11 +67,13 @@ GrB_Info GB_import      // import/pack a matrix in any format
 
     if (!packing)
     { 
+        // GxB*import and GrB*import: A is created by this method, including
+        // the header.  The GxB methods for packing == false are deprecated.
         (*A) = NULL ;
     }
 
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
-    if (vlen  > GB_NMAX || vdim > GB_NMAX || nvals > GB_NMAX || nvec > GB_NMAX
+    if (vlen > GB_NMAX || vdim > GB_NMAX || nvals > GB_NMAX || nvec > GB_NMAX
         || Ap_size > GB_NMAX || Ah_size > GB_NMAX || Ab_size > GB_NMAX
         || Ai_size > GB_NMAX || Ax_size > GB_NMAX)
     { 
@@ -89,7 +91,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
     int64_t full_size = 0, Ax_size_for_non_iso ;
     if (sparsity == GxB_BITMAP || sparsity == GxB_FULL)
     { 
-        ok = GB_int64_multiply ((GrB_Index *) (&full_size), vlen, vdim) ;
+        ok = GB_int64_multiply ((uint64_t *) (&full_size), vlen, vdim) ;
         if (!ok) full_size = INT64_MAX ;
     }
 
@@ -98,7 +100,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
         case GxB_HYPERSPARSE : 
             // check Ap and get nvals
             if (nvec > vdim) return (GrB_INVALID_VALUE) ;
-            if (Ap_size < (((vdim == 1) ? 1 : nvec)+1) * sizeof (int64_t))
+            if (Ap_size < (((vdim == 1) ? 1 : nvec)+1) * sizeof (uint64_t))
             { 
                 return (GrB_INVALID_VALUE) ;
             }
@@ -108,7 +110,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
             // check Ah
             GB_RETURN_IF_NULL (Ah) ;
             GB_RETURN_IF_NULL (*Ah) ;
-            if (Ah_size < nvec * sizeof (int64_t))
+            if (Ah_size < nvec * sizeof (uint64_t))
             { 
                 return (GrB_INVALID_VALUE) ;
             }
@@ -118,7 +120,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
                 GB_RETURN_IF_NULL (Ai) ;
                 GB_RETURN_IF_NULL (*Ai) ;
             }
-            if (Ai_size < nvals * sizeof (int64_t))
+            if (Ai_size < nvals * sizeof (uint64_t))
             { 
                 return (GrB_INVALID_VALUE) ;
             }
@@ -132,7 +134,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
                 // GxB_Vector_import_CSC passes in Ap as a NULL, and nvals as
                 // the # of entries in the vector.  All other uses of GB_import
                 // pass in Ap for the sparse case
-                if (Ap_size < (vdim+1) * sizeof (int64_t))
+                if (Ap_size < (vdim+1) * sizeof (uint64_t))
                 { 
                     return (GrB_INVALID_VALUE) ;
                 }
@@ -146,7 +148,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
                 GB_RETURN_IF_NULL (Ai) ;
                 GB_RETURN_IF_NULL (*Ai) ;
             }
-            if (Ai_size < nvals * sizeof (int64_t))
+            if (Ai_size < nvals * sizeof (uint64_t))
             { 
                 return (GrB_INVALID_VALUE) ;
             }
@@ -202,13 +204,14 @@ GrB_Info GB_import      // import/pack a matrix in any format
     { 
         // clear the content and reuse the header
         GB_phybix_free (*A) ;
-        ASSERT (!((*A)->static_header)) ;
+        ASSERT (!((*A)->header_size == 0)) ;
     }
 
     // also create A->p if this is a sparse GrB_Vector
     GrB_Info info = GB_new (A, // any sparsity, new or existing user header
-        type, vlen, vdim, is_sparse_vector ? GB_Ap_calloc : GB_Ap_null,
-        is_csc, sparsity, GB_Global_hyper_switch_get ( ), nvec) ;
+        type, vlen, vdim, is_sparse_vector ? GB_ph_calloc : GB_ph_null,
+        is_csc, sparsity, GB_Global_hyper_switch_get ( ), nvec,
+        /* OK, import as all-64-bit: */ false, false, false) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory
@@ -216,7 +219,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
     }
 
     // A never has a static header
-    ASSERT (!((*A)->static_header)) ;
+    ASSERT (!((*A)->header_size == 0)) ;
 
     //--------------------------------------------------------------------------
     // import the matrix
@@ -232,54 +235,49 @@ GrB_Info GB_import      // import/pack a matrix in any format
             (*A)->nvec = nvec ;
 
             // import A->h, then fall through to sparse case
-            (*A)->h = (int64_t *) (*Ah) ; (*Ah) = NULL ;
+            (*A)->h = (*Ah) ; (*Ah) = NULL ;
             (*A)->h_size = Ah_size ;
             if (add_to_memtable)
             { 
                 // for debugging only
-                #ifdef GB_MEMDUMP
-                printf ("import A->h to memtable: %p\n", (*A)->h) ; // MEMDUMP
-                #endif
+                GBMDUMP ("import A->h to memtable: %p\n", (*A)->h) ;
                 GB_Global_memtable_add ((*A)->h, (*A)->h_size) ;
             }
             // fall through to the sparse case
 
         case GxB_SPARSE : 
             (*A)->jumbled = jumbled ;   // import jumbled status
-            (*A)->nvec_nonempty = -1 ;  // not computed; delay until required
+//          (*A)->nvec_nonempty = -1 ;  // not computed; delay until required
+            GB_nvec_nonempty_set (*A, -1) ; // not computed until required
+
             (*A)->nvals = nvals ;
 
             if (is_sparse_vector)
             { 
                 // GxB_Vector_import_CSC passes in Ap as NULL
-                (*A)->p [1] = nvals ;
+                uint64_t *restrict Ap = (*A)->p ;       // OK; 64-bit only
+                Ap [1] = nvals ;
             }
             else
             { 
                 // import A->p, unless already created for a sparse CSC vector
-                (*A)->p = (int64_t *) (*Ap) ; (*Ap) = NULL ;
+                (*A)->p = (*Ap) ; (*Ap) = NULL ;        // OK; 64-bit only
                 (*A)->p_size = Ap_size ;
                 if (add_to_memtable)
                 { 
                     // for debugging only
-                    #ifdef GB_MEMDUMP
-                    printf ("import A->p to memtable: %p\n", // MEMDUMP
-                        (*A)->p) ;
-                    #endif
+                    GBMDUMP ("import A->p to memtable: %p\n", (*A)->p) ;
                     GB_Global_memtable_add ((*A)->p, (*A)->p_size) ;
                 }
             }
 
             // import A->i
-            (*A)->i = (int64_t *) (*Ai) ; (*Ai) = NULL ;
+            (*A)->i = (*Ai) ; (*Ai) = NULL ;    // OK; 64-bit only
             (*A)->i_size = Ai_size ;
             if (add_to_memtable)
             { 
                 // for debugging only
-                #ifdef GB_MEMDUMP
-                printf ("import A->i to memtable: %p\n", // MEMDUMP
-                    (*A)->i) ;
-                #endif
+                GBMDUMP ("import A->i to memtable: %p\n", (*A)->i) ;
                 GB_Global_memtable_add ((*A)->i, (*A)->i_size) ;
             }
             break ;
@@ -293,10 +291,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
             if (add_to_memtable)
             { 
                 // for debugging only
-                #ifdef GB_MEMDUMP
-                printf ("import A->b to memtable: %p\n", // MEMDUMP
-                    (*A)->b) ;
-                #endif
+                GBMDUMP ("import A->b to memtable: %p\n", (*A)->b) ;
                 GB_Global_memtable_add ((*A)->b, (*A)->b_size) ;
             }
             break ;
@@ -315,10 +310,7 @@ GrB_Info GB_import      // import/pack a matrix in any format
         if (add_to_memtable)
         { 
             // for debugging only
-            #ifdef GB_MEMDUMP
-            printf ("import A->x to memtable: %p size: %lu\n",  // MEMDUMP
-                (*A)->x, Ax_size) ;
-            #endif
+            GBMDUMP ("import A->x to memtable: %p\n", (*A)->x) ;
             GB_Global_memtable_add ((*A)->x, (*A)->x_size) ;
         }
     }

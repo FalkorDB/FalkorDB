@@ -2,7 +2,7 @@
 // GB_kroner_template: Kronecker product, C = kron (A,B)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,22 +20,25 @@
     //--------------------------------------------------------------------------
 
     #ifdef GB_JIT_KERNEL
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
     const int64_t avlen = A->vlen ;
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
-    const int64_t *restrict Bi = B->i ;
+
+    GB_Bp_DECLARE (Bp, const) ; GB_Bp_PTR (Bp, B) ;
+    GB_Bh_DECLARE (Bh, const) ; GB_Bh_PTR (Bh, B) ;
     const int64_t bvlen = B->vlen ;
     const int64_t bnvec = B->nvec ;
+
+    GB_Cp_DECLARE (Cp,      ) ; GB_Cp_PTR (Cp, C) ;
     GB_C_NVALS (cnz) ;
-    const int64_t *restrict Cp = C->p ;
     const int64_t cnvec = C->nvec ;
     const int64_t cvlen = C->vlen ;
     #endif
 
-    int64_t *restrict Ci = C->i ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+    GB_Bi_DECLARE (Bi, const) ; GB_Bi_PTR (Bi, B) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
+
     const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
     const GB_B_TYPE *restrict Bx = (GB_A_TYPE *) B->x ;
           GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
@@ -72,8 +75,9 @@
         GB_PARTITION (pC, pC_end, cnz, tid, nthreads) ;
 
         // find where this task starts in C
-        int64_t kC_task = GB_search_for_vector (pC, Cp, 0, cnvec, cvlen) ;
-        int64_t pC_delta = pC - GBP_C (Cp, kC_task, cvlen) ;
+        int64_t kC_task = GB_search_for_vector (Cp, GB_Cp_IS_32, pC, 0, cnvec,
+            cvlen) ;
+        int64_t pC_delta = pC - GBp_C (Cp, kC_task, cvlen) ;
 
         //----------------------------------------------------------------------
         // compute C(:,kC) for all vectors kC in this task
@@ -87,19 +91,19 @@
             //------------------------------------------------------------------
 
             // C(:,jC) = kron (A(:,jA), B(:,jB), the (kC)th vector of C,
-            // where jC = GBH_C (Ch, kC)
+            // where jC = GBh_C (Ch, kC)
             int64_t kA = kC / bnvec ;
             int64_t kB = kC % bnvec ;
 
             // get A(:,jA), the (kA)th vector of A
-            int64_t jA = GBH_A (Ah, kA) ;
-            int64_t pA_start = GBP_A (Ap, kA, avlen) ;
-            int64_t pA_end   = GBP_A (Ap, kA+1, avlen) ;
+            int64_t jA = GBh_A (Ah, kA) ;
+            int64_t pA_start = GBp_A (Ap, kA, avlen) ;
+            int64_t pA_end   = GBp_A (Ap, kA+1, avlen) ;
 
             // get B(:,jB), the (kB)th vector of B
-            int64_t jB = GBH_B (Bh, kB) ;
-            int64_t pB_start = GBP_B (Bp, kB, bvlen) ;
-            int64_t pB_end   = GBP_B (Bp, kB+1, bvlen) ;
+            int64_t jB = GBh_B (Bh, kB) ;
+            int64_t pB_start = GBp_B (Bp, kB, bvlen) ;
+            int64_t pB_end   = GBp_B (Bp, kB+1, bvlen) ;
             int64_t bknz = pB_end - pB_start ;
 
             // shift into the middle of A(:,jA) and B(:,jB) for the first
@@ -125,7 +129,7 @@
                 // a = A(iA,jA), typecasted to op->xtype
                 //--------------------------------------------------------------
 
-                int64_t iA = GBI_A (Ai, pA, avlen) ;
+                int64_t iA = GBi_A (Ai, pA, avlen) ;
                 int64_t iAblock = iA * bvlen ;
                 if (!GB_A_ISO)
                 { 
@@ -147,7 +151,7 @@
                     // b = B(iB,jB), typecasted to op->ytype
                     //----------------------------------------------------------
 
-                    int64_t iB = GBI_B (Bi, pB, bvlen) ;
+                    int64_t iB = GBi_B (Bi, pB, bvlen) ;
                     if (!GB_B_ISO)
                     { 
                         GB_GETB (b, Bx, pB, false) ;
@@ -160,7 +164,8 @@
                     if (!GB_C_IS_FULL)
                     { 
                         // save the row index iC
-                        Ci [pC] = iAblock + iB ;
+                        // Ci [pC] = iAblock + iB ;
+                        GB_ISET (Ci, pC, iAblock + iB) ;
                     }
                     // Cx [pC] = op (a, b)
                     if (!GB_C_ISO)

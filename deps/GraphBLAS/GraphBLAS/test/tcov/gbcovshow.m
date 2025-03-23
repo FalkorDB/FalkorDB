@@ -1,7 +1,7 @@
 function gbcovshow
 %GBCOVSHOW report GraphBLAS statement coverage
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % report the coverage summary
@@ -16,7 +16,7 @@ covered = sum (gbcov_global > 0) ;
 not_covered = find (gbcov_global == 0) - 1 ;
 n = length (gbcov_global) ;
 
-fprintf ('test coverage: %d of %d (%0.4f%%), not covered %d\n', ...
+fprintf ('test coverage: %d of %d (%0.1f%%), not covered: %d\n', ...
     covered, n, 100 * (covered / n), length (not_covered)) ;
 
 % create the coverage reports in tmp/cover

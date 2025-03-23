@@ -9,13 +9,25 @@
 #include "op.h"
 #include "../execution_plan.h"
 
-/* The Argument operation holds an internal Record that it will emit exactly once. */
+// the OpArgument operation holds a single Record that it will emit once
+// acting as the input/tap for a branch of operations
 typedef struct {
 	OpBase op;
-	Record r;
-} Argument;
+	Record r;   // record to emit
+	Record _r;  // copy of 'r' used to restore 'r' incase the operation resets
+} OpArgument;
 
-OpBase *NewArgumentOp(const ExecutionPlan *plan, const char **variables);
+// create a new OpArgument operation
+OpBase *NewArgumentOp
+(
+	const ExecutionPlan *plan,  // execution plan
+	const char **variables      // variables introduced by operation
+);
 
-void Argument_AddRecord(Argument *arg, Record r);
+// set's the operation record
+void Argument_AddRecord
+(
+	OpArgument *arg,  // argument operation
+	Record r          // record to set
+);
 

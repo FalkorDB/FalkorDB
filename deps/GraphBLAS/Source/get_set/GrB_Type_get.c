@@ -2,7 +2,7 @@
 // GrB_Type_get_*: get a field in a type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GrB_Type_get_Scalar
 (
     GrB_Type type,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 { 
 
@@ -25,9 +25,10 @@ GrB_Info GrB_Type_get_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Type_get_Scalar (type, value, field)") ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (value) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_WHERE_1 (scalar, "GrB_Type_get_Scalar (type, scalar, field)") ;
+
     ASSERT_TYPE_OK (type, "type for get", GB0) ;
 
     //--------------------------------------------------------------------------
@@ -41,13 +42,13 @@ GrB_Info GrB_Type_get_Scalar
     {
         case GrB_EL_TYPE_CODE : 
             i = (int32_t) GB_type_code_get (type->code) ;
-            return (GB_setElement ((GrB_Matrix) value, NULL, &i, 0, 0,
+            return (GB_setElement ((GrB_Matrix) scalar, NULL, &i, 0, 0,
                 GB_INT32_code, Werk)) ;
             break ;
 
         case GrB_SIZE : 
             u = (uint64_t) type->size ;
-            return (GB_setElement ((GrB_Matrix) value, NULL, &u, 0, 0,
+            return (GB_setElement ((GrB_Matrix) scalar, NULL, &u, 0, 0,
                 GB_UINT64_code, Werk)) ;
             break ;
 
@@ -64,7 +65,7 @@ GrB_Info GrB_Type_get_String
 (
     GrB_Type type,
     char * value,
-    GrB_Field field
+    int field
 )
 {
 
@@ -72,7 +73,7 @@ GrB_Info GrB_Type_get_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Type_get_String (type, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_TYPE_OK (type, "type for get", GB0) ;
@@ -126,7 +127,7 @@ GrB_Info GrB_Type_get_INT32
 (
     GrB_Type type,
     int32_t * value,
-    GrB_Field field
+    int field
 )
 {
 
@@ -134,7 +135,7 @@ GrB_Info GrB_Type_get_INT32
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Type_get_INT32 (type, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_TYPE_OK (type, "type for get", GB0) ;
@@ -167,7 +168,7 @@ GrB_Info GrB_Type_get_SIZE
 (
     GrB_Type type,
     size_t * value,
-    GrB_Field field
+    int field
 )
 {
 
@@ -175,7 +176,7 @@ GrB_Info GrB_Type_get_SIZE
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Type_get_SIZE (type, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_TYPE_OK (type, "type for get", GB0) ;
@@ -227,7 +228,7 @@ GrB_Info GrB_Type_get_VOID
 (
     GrB_Type type,
     void * value,
-    GrB_Field field
+    int field
 )
 { 
     return (GrB_INVALID_VALUE) ;

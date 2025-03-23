@@ -1,0 +1,283 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS monoids: {\sf GrB\_Monoid}} %=============================
+%===============================================================================
+\label{monoid}
+
+A {\em monoid} is defined on a single domain (that is, a single type), $T$.  It
+consists of an associative binary operator $z=f(x,y)$ whose three operands $x$,
+$y$, and $z$ are all in this same domain $T$ (that is $T \times T \rightarrow
+T$).  The operator must also have an identity element, or ``zero'' in this
+domain, such that $f(x,0)=f(0,x)=x$.  Recall that an associative operator
+$f(x,y)$ is one for which the condition $f(a, f(b,c)) = f(f (a,b),c)$ always
+holds.  That is, operator can be applied in any order and the results remain
+the same.  If used in a semiring, the operator must also be commutative.
+
+The 77 predefined monoids are listed in the table below, which
+includes nearly all monoids that can be constructed from built-in binary
+operators.  A few additional monoids can be defined with \verb'GrB_Monoid_new'
+using built-in operators, such as bitwise monoids for signed integers.
+Recall that $T$ denotes any built-in type (including boolean, integer, floating
+point real, and complex), $R$ denotes any non-complex type (including bool),
+$I$ denotes any integer type, and $Z$ denotes any complex type.  Let $S$ denote
+the 10 non-boolean real types.  Let $U$ denote all unsigned integer types.
+
+The table lists the GraphBLAS monoid, its type, expression, identity
+value, and {\em terminal} value (if any).  For these built-in monoids, the
+terminal values are the {\em annihilators} of the function, which is the value
+$z$ so that $z=f(z,y)$ regardless of the value of $y$.  For example
+$\min(-\infty,y) = -\infty$ for any $y$.  For integer domains, $+\infty$ and
+$-\infty$ are the largest and smallest integer in their range.  With unsigned
+integers, the smallest value is zero, and thus \verb'GrB_MIN_MONOID_UINT8' has an
+identity of 255 and a terminal value of 0.
+
+When computing with a monoid, the computation can terminate early if the
+terminal value arises.  No further work is needed since the result will not
+change.  This value is called the terminal value instead of the annihilator,
+since a user-defined operator can be created with a terminal value that is not
+an annihilator.  See Section~\ref{monoid_terminal_new} for an example.
+
+The \verb'GxB_ANY_*' monoid can terminate as soon as it finds any value at all.
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lllll}
+\hline
+GraphBLAS             & types (domains)            & expression      & identity  & terminal \\
+operator              &                            & $z=f(x,y)$      &           & \\
+\hline
+% numeric SxS -> S
+\verb'GrB_PLUS_MONOID_'$S$   & $S \times S \rightarrow S$ & $z = x+y$       & 0         & none \\
+\verb'GrB_TIMES_MONOID_'$S$  & $S \times S \rightarrow S$ & $z = xy$        & 1         & 0 or none (see note) \\
+\verb'GrB_MIN_MONOID_'$S$    & $S \times S \rightarrow S$ & $z = \min(x,y)$ & $+\infty$ & $-\infty$ \\
+\verb'GrB_MAX_MONOID_'$S$    & $S \times S \rightarrow S$ & $z = \max(x,y)$ & $-\infty$ & $+\infty$ \\
+\hline
+% complex ZxZ -> Z
+\verb'GxB_PLUS_'$Z$\verb'_MONOID'   & $Z \times Z \rightarrow Z$ & $z = x+y$       & 0         & none \\
+\verb'GxB_TIMES_'$Z$\verb'_MONOID'  & $Z \times Z \rightarrow Z$ & $z = xy$        & 1         & none \\
+\hline
+% any TxT -> T
+\verb'GxB_ANY_'$T$\verb'_MONOID'   & $T \times T \rightarrow T$ & $z = x$ or $y$  & any       & any        \\
+\hline
+% bool x bool -> bool
+\verb'GrB_LOR_MONOID'        & \verb'bool' $\times$ \verb'bool' $\rightarrow$ \verb'bool' & $z = x \vee    y $ & false & true  \\
+\verb'GrB_LAND_MONOID'       & \verb'bool' $\times$ \verb'bool' $\rightarrow$ \verb'bool' & $z = x \wedge  y $ & true  & false \\
+\verb'GrB_LXOR_MONOID'       & \verb'bool' $\times$ \verb'bool' $\rightarrow$ \verb'bool' & $z = x \veebar y $ & false & none \\
+\verb'GrB_LXNOR_MONOID'      & \verb'bool' $\times$ \verb'bool' $\rightarrow$ \verb'bool' & $z =(x ==      y)$ & true  & none \\
+\hline
+% bitwise: UxU -> U
+\verb'GxB_BOR_'$U$\verb'_MONOID'    & $U$ $\times$ $U$ $\rightarrow$ $U$ & \verb'z=x|y'    & all bits zero & all bits one  \\
+\verb'GxB_BAND_'$U$\verb'_MONOID'   & $U$ $\times$ $U$ $\rightarrow$ $U$ & \verb'z=x&y'    & all bits one  & all bits zero \\
+\verb'GxB_BXOR_'$U$\verb'_MONOID'   & $U$ $\times$ $U$ $\rightarrow$ $U$ & \verb'z=x^y'    & all bits zero & none \\
+\verb'GxB_BXNOR_'$U$\verb'_MONOID'  & $U$ $\times$ $U$ $\rightarrow$ $U$ & \verb'z=~(x^y)' & all bits one  & none \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+% 40: (min,max,+,*) x (int8,16,32,64, uint8,16,32,64, fp32, fp64)
+The C API Specification includes 44 predefined monoids, with the naming
+convention \verb'GrB_op_MONOID_type'.  Forty monoids are available for the four
+operators \verb'MIN', \verb'MAX', \verb'PLUS', and \verb'TIMES', each with the
+10 non-boolean real types.  Four boolean monoids are predefined:
+\verb'GrB_LOR_MONOID_BOOL', \verb'GrB_LAND_MONOID_BOOL',
+\verb'GrB_LXOR_MONOID_BOOL', and \verb'GrB_LXNOR_MONOID_BOOL'.
+
+% 13 ANY
+%  4 complex (PLUS, TIMES)
+% 16 bitwise
+% 33 total
+These all appear in SuiteSparse:GraphBLAS, which adds 33 additional predefined
+\verb'GxB*' monoids, with the naming convention \verb'GxB_op_type_MONOID'.  The
+\verb'ANY' operator can be used for all 13 types (including complex).  The
+\verb'PLUS' and \verb'TIMES' operators are provided for both complex types, for
+4 additional complex monoids.  Sixteen monoids are predefined for four bitwise
+operators (\verb'BOR', \verb'BAND', \verb'BXOR', and \verb'BNXOR'), each with
+four unsigned integer types (\verb'UINT8', \verb'UINT16', \verb'UINT32', and
+\verb'UINT64').
+
+{\bf NOTE:}
+The \verb'GrB_TIMES_FP*' operators do not have a terminal value of zero, since
+they comply with the IEEE 754 standard, and \verb'0*NaN' is not zero, but
+\verb'NaN'.  Technically, their terminal value is \verb'NaN', but this value is
+rare in practice and thus the terminal condition is not worth checking.
+
+The next sections define the following methods for the \verb'GrB_Monoid'
+object:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_Monoid_new'       & create a user-defined monoid                  & \ref{monoid_new} \\
+\verb'GrB_Monoid_wait'      & wait for a user-defined monoid                & \ref{monoid_wait} \\
+\verb'GxB_Monoid_terminal_new'  & create a monoid that has a terminal value & \ref{monoid_terminal_new} \\
+\verb'GrB_Monoid_free'      & free a monoid                                 & \ref{monoid_free} \\
+\verb'GrB_get'  & get properties of a monoid       & \ref{get_set_monoid} \\
+\verb'GrB_set'  & set the monoid name              & \ref{get_set_monoid} \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Monoid\_new:} create a monoid}
+%-------------------------------------------------------------------------------
+\label{monoid_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Monoid_new             // create a monoid
+(
+    GrB_Monoid *monoid,             // handle of monoid to create
+    GrB_BinaryOp op,                // binary operator of the monoid
+    <type> identity                 // identity value of the monoid
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Monoid_new' creates a monoid.  The operator, \verb'op', must be an
+associative binary operator, either built-in or user-defined.
+
+In the definition above, \verb'<type>' is a place-holder for the specific type
+of the monoid.  For built-in types, it is the C type corresponding to the
+built-in type (see Section~\ref{type}), such as \verb'bool', \verb'int32_t',
+\verb'float', or \verb'double'.  In this case, \verb'identity' is a
+scalar value of the particular type, not a pointer.  For
+user-defined types, \verb'<type>' is \verb'void *', and thus \verb'identity' is
+a not a scalar itself but a \verb'void *' pointer to a memory location
+containing the identity value of the user-defined operator, \verb'op'.
+
+If \verb'op' is a built-in operator with a known identity value, then the
+\verb'identity' parameter is ignored, and its known identity value is used
+instead.
+%
+The \verb'op' cannot be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Monoid\_wait:} wait for a monoid}
+%-------------------------------------------------------------------------------
+\label{monoid_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a user-defined monoid
+(
+    GrB_Monoid monoid,          // monoid to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined monoid, a GraphBLAS library may choose to exploit
+non-blocking mode to delay its creation.  Currently, SuiteSparse:GraphBLAS
+currently does nothing except to ensure that the \verb'monoid' is valid.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Monoid\_terminal\_new:} create a monoid with terminal}
+%-------------------------------------------------------------------------------
+\label{monoid_terminal_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Monoid_terminal_new    // create a monoid that has a terminal value
+(
+    GrB_Monoid *monoid,             // handle of monoid to create
+    GrB_BinaryOp op,                // binary operator of the monoid
+    <type> identity,                // identity value of the monoid
+    <type> terminal                 // terminal value of the monoid
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GxB_Monoid_terminal_new' is identical to \verb'GrB_Monoid_new', except
+that it allows for the specification of a {\em terminal value}.  The
+\verb'<type>' of the terminal value is the same as the \verb'identity'
+parameter; see Section~\ref{monoid_new} for details.
+
+The terminal value of a monoid is the value $z$ for which $z=f(z,y)$ for any
+$y$, where $z=f(x,y)$ is the binary operator of the monoid.  This is also
+called the {\em annihilator}, but the term {\em terminal value} is used here.
+This is because all annihilators are terminal values, but a terminal value need
+not be an annihilator, as described in the \verb'MIN' example below.
+
+If the terminal value is encountered during computation, the rest of the
+computations can be skipped.  This can greatly improve the performance of
+\verb'GrB_reduce', and matrix multiply in specific cases (when a dot product
+method is used).  For example, using \verb'GrB_reduce' to compute the sum of
+all entries in a \verb'GrB_FP32' matrix with $e$ entries takes $O(e)$ time,
+since a monoid based on \verb'GrB_PLUS_FP32' has no terminal value.  By
+contrast, a reduction using \verb'GrB_LOR' on a \verb'GrB_BOOL' matrix can take
+as little as $O(1)$ time, if a \verb'true' value is found in the matrix very
+early.
+
+Monoids based on the built-in \verb'GrB_MIN_*' and \verb'GrB_MAX_*' operators
+(for any type), the boolean \verb'GrB_LOR', and the boolean \verb'GrB_LAND'
+operators all have terminal values.  For example, the identity value of
+\verb'GrB_LOR' is \verb'false', and its terminal value is \verb'true'.  When
+computing a reduction of a set of boolean values to a single value, once a
+\verb'true' is seen, the computation can exit early since the result is now
+known.
+
+If \verb'op' is a built-in operator with known identity and terminal values,
+then the \verb'identity' and \verb'terminal' parameters are ignored, and its
+known identity and terminal values are used instead.
+
+There may be cases in which the user application needs to use a non-standard
+terminal value for a built-in operator.  For example, suppose the matrix has
+type \verb'GrB_FP32', but all values in the matrix are known to be
+non-negative.  The annihilator value of \verb'MIN' is \verb'-INFINITY', but
+this will never be seen.  However, the computation could terminate when
+finding the value zero.  This is an example of using a terminal value that is
+not actually an annihilator, but it functions like one since the monoid will
+operate strictly on non-negative values.
+
+In this case, a monoid created with \verb'GrB_MIN_FP32' will not terminate
+early, because the identity and terminal inputs are ignored when using
+\verb'GrB_Monoid_new' with a built-in operator as its input.
+To create a monoid that can terminate early, create a user-defined operator
+that computes the same thing as \verb'GrB_MIN_FP32', and then create a monoid
+based on this user-defined operator with a terminal value of zero and an
+identity of \verb'+INFINITY'.
+%
+The \verb'op' cannot be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Monoid\_free:} free a monoid}
+%-------------------------------------------------------------------------------
+\label{monoid_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free                   // free a user-created monoid
+(
+    GrB_Monoid *monoid              // handle of monoid to free
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Monoid_frees' frees a monoid.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Monoid_free (&monoid) ;
+    GrB_free (&monoid) ; \end{verbatim}}
+
+\noindent
+frees the \verb'monoid' and sets \verb'monoid' to \verb'NULL'.  It safely does
+nothing if passed a \verb'NULL' handle, or if \verb'monoid == NULL' on input.
+It does nothing at all if passed a built-in monoid.
+
+

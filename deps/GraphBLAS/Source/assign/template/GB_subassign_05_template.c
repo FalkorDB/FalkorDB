@@ -2,12 +2,15 @@
 // GB_subassign_05_template: C(I,J)<M> = scalar ; no S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 // Method 05: C(I,J)<M> = scalar ; no S
+
+// No entries can be deleted (no new zombies), but entries can be inserted.
+// Prior zombies may exist in C.
 
 // M:           present
 // Mask_comp:   false
@@ -27,11 +30,7 @@
 
     GB_EMPTY_TASKLIST ;
     GB_GET_C ;      // C must not be bitmap
-    int64_t zorig = C->nzombies ;
-    const int64_t *restrict Ch = C->h ;
-    const int64_t *restrict Cp = C->p ;
-    const bool C_is_hyper = (Ch != NULL) ;
-    const int64_t Cnvec = C->nvec ;
+    const bool may_see_zombies_phase1 = (C->nzombies > 0) ;
     GB_GET_C_HYPER_HASH ;
     GB_GET_MASK ;
     GB_GET_SCALAR ;
@@ -84,8 +83,8 @@
             // get j, the kth vector of M
             //------------------------------------------------------------------
 
-            int64_t j = GBH_M (Mh, k) ;
-            GB_GET_VECTOR_M (pM, pM_end, pA, pA_end, Mp, k, Mvlen) ;
+            int64_t j = GBh_M (Mh, k) ;
+            GB_GET_VECTOR_M ;
             int64_t mjnz = pM_end - pM ;
             if (mjnz == 0) continue ;
 
@@ -115,10 +114,10 @@
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    bool mij = GBB_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
+                    bool mij = GBb_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     if (mij)
                     { 
-                        int64_t iA = GBI_M (Mi, pM, Mvlen) ;
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
                         GB_iC_DENSE_LOOKUP ;
 
                         // ----[C A 1] or [X A 1]-------------------------------
@@ -143,13 +142,13 @@
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    bool mij = GBB_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
+                    bool mij = GBb_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     if (mij)
                     {
-                        int64_t iA = GBI_M (Mi, pM, Mvlen) ;
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
 
                         // find C(iC,jC) in C(:,jC)
-                        GB_iC_BINARY_SEARCH ;
+                        GB_iC_BINARY_SEARCH (may_see_zombies_phase1) ;
                         if (cij_found)
                         { 
                             // ----[C A 1] or [X A 1]---------------------------
@@ -175,8 +174,11 @@
     // phase 2: insert pending tuples
     //--------------------------------------------------------------------------
 
+    // All zombies might have just been brought back to life, so recheck the
+    // may_see_zombies condition.
+
     GB_PENDING_CUMSUM ;
-    zorig = C->nzombies ;
+    const bool may_see_zombies_phase2 = (C->nzombies > 0) ;
 
     #pragma omp parallel for num_threads(nthreads) schedule(dynamic,1) \
         reduction(&&:pending_sorted)
@@ -200,8 +202,8 @@
             // get j, the kth vector of M
             //------------------------------------------------------------------
 
-            int64_t j = GBH_M (Mh, k) ;
-            GB_GET_VECTOR_M (pM, pM_end, pA, pA_end, Mp, k, Mvlen) ;
+            int64_t j = GBh_M (Mh, k) ;
+            GB_GET_VECTOR_M ;
             int64_t mjnz = pM_end - pM ;
             if (mjnz == 0) continue ;
 
@@ -230,13 +232,13 @@
                     // update C(iC,jC), but only if M(iA,j) allows it
                     //----------------------------------------------------------
 
-                    bool mij = GBB_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
+                    bool mij = GBb_M (Mb, pM) && GB_MCAST (Mx, pM, msize) ;
                     if (mij)
                     {
-                        int64_t iA = GBI_M (Mi, pM, Mvlen) ;
+                        int64_t iA = GBi_M (Mi, pM, Mvlen) ;
 
                         // find C(iC,jC) in C(:,jC)
-                        GB_iC_BINARY_SEARCH ;
+                        GB_iC_BINARY_SEARCH (may_see_zombies_phase2) ;
                         if (!cij_found)
                         { 
                             // ----[. A 1]--------------------------------------

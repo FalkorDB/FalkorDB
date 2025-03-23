@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 ../build/grow_demo < Matrix/west0067
@@ -8,7 +8,6 @@
 ../build/simple_demo                   > ../build/simple_demo.out
 ../build/complex_demo                  > ../build/complex_demo_out.m
 ../build/complex_demo 1                > ../build/complex_demo_out2.m
-../build/openmp_demo                   > ../build/openmp_demo.out
 
 ../build/import_demo < Matrix/west0067 > ../build/import_demo.out
 ../build/wildtype_demo                 > ../build/wildtype_demo.out

@@ -2,7 +2,7 @@
 // GB_op_or_type_string_set: set the name or defn of a user-defined type or op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -83,7 +83,7 @@ GrB_Info GB_op_or_type_string_set
             }
 
             // allocate space for the definition
-            (*defn) = GB_MALLOC (len+1, char, defn_size) ;
+            (*defn) = GB_MALLOC_MEMORY (len+1, sizeof (char), defn_size) ;
             if ((*defn) == NULL)
             { 
                 // out of memory

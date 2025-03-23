@@ -2,27 +2,35 @@
 // GB_select_phase2: C=select(A,thunk)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// C is sparse or hypersparse, but it is present only as Cp, Ci, and Cx.
-// A is never bitmap.  It is sparse or hypersparse in most cases.  It can also
-// by full for DIAG.
+// C is sparse or hypersparse.  Cp is not modifed but Ci and Cx are.  A is
+// never bitmap.  It is sparse or hypersparse in most cases.  It can also be
+// full for DIAG.
 
 {
+
     //--------------------------------------------------------------------------
-    // get A
+    // get C, A and its slicing
     //--------------------------------------------------------------------------
 
-    const int64_t  *restrict Ap = A->p ;
-    const int64_t  *restrict Ah = A->h ;
-    const int64_t  *restrict Ai = A->i ;
+    const int64_t *restrict kfirst_Aslice = A_ek_slicing ;
+    const int64_t *restrict klast_Aslice  = A_ek_slicing + A_ntasks ;
+    const int64_t *restrict pstart_Aslice = A_ek_slicing + A_ntasks * 2 ;
+
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+
     const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
     size_t asize = A->type->size ;
+
     int64_t avlen = A->vlen ;
     int64_t avdim = A->vdim ;
+
     // if A is bitmap, the bitmap selector is always used instead
     ASSERT (!GB_IS_BITMAP (A)) ;
     #ifndef GB_DIAG_SELECTOR
@@ -30,9 +38,14 @@
     ASSERT (!GB_IS_FULL (A)) ;
     #endif
 
-    const int64_t *restrict kfirst_Aslice = A_ek_slicing ;
-    const int64_t *restrict klast_Aslice  = A_ek_slicing + A_ntasks ;
-    const int64_t *restrict pstart_Aslice = A_ek_slicing + A_ntasks * 2 ;
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
+
+    #ifndef GB_C_TYPE
+    #define GB_C_TYPE GB_A_TYPE
+    #endif
+
+    GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
 
     //--------------------------------------------------------------------------
     // C = select (A)
@@ -60,7 +73,7 @@
 
             GB_GET_PA_AND_PC (pA_start, pA_end, pC, tid, k, kfirst, klast,
                 pstart_Aslice, Cp_kfirst,
-                GBP_A (Ap, k, avlen), GBP_A (Ap, k+1, avlen), Cp [k]) ;
+                GBp_A (Ap, k, avlen), GBp_A (Ap, k+1, avlen), GB_IGET (Cp, k)) ;
 
             //------------------------------------------------------------------
             // compact Ai and Ax [pA_start ... pA_end-1] into Ci and Cx
@@ -68,19 +81,19 @@
 
             #if defined ( GB_ENTRY_SELECTOR )
 
-                int64_t j = GBH_A (Ah, k) ;
+                int64_t j = GBh_A (Ah, k) ;
                 for (int64_t pA = pA_start ; pA < pA_end ; pA++)
                 {
                     // A is sparse or hypersparse
                     ASSERT (Ai != NULL) ;
-                    int64_t i = Ai [pA] ;
+                    int64_t i = GB_IGET (Ai, pA) ;
                     GB_TEST_VALUE_OF_ENTRY (keep, pA) ;
                     if (keep)
                     { 
-                        ASSERT (pC >= Cp [k] && pC < Cp [k+1]) ;
-                        Ci [pC] = i ;
-                        // Cx [pC] = Ax [pA] ;
-                        GB_SELECT_ENTRY (Cx, pC, Ax, pA) ;
+                        ASSERT (pC >= GB_IGET (Cp, k)) ;
+                        ASSERT (pC < GB_IGET (Cp, k+1)) ;
+                        GB_ISET (Ci, pC, i) ;               // Ci [pC] = i
+                        GB_SELECT_ENTRY (Cx, pC, Ax, pA) ;  // Cx [pC] = Ax [pA]
                         pC++ ;
                     }
                 }
@@ -89,15 +102,21 @@
                   defined ( GB_ROWGT_SELECTOR )
 
                 // keep Zp [k] to pA_end-1
-                int64_t p = GB_IMAX (Zp [k], pA_start) ;
+                int64_t pz = GB_IGET (Zp, k) ;
+                int64_t p = GB_IMAX (pz, pA_start) ;
                 int64_t mynz = pA_end - p ;
                 if (mynz > 0)
                 { 
                     // A and C are both sparse or hypersparse
                     ASSERT (pA_start <= p && p + mynz <= pA_end) ;
-                    ASSERT (pC >= Cp [k] && pC + mynz <= Cp [k+1]) ;
+                    ASSERT (pC >= GB_IGET (Cp, k)) ;
+                    ASSERT (pC + mynz <= GB_IGET (Cp, k+1)) ;
                     ASSERT (Ai != NULL) ;
-                    memcpy (Ci +pC, Ai +p, mynz*sizeof (int64_t)) ;
+                    for (int64_t kk = 0 ; kk < mynz ; kk++)
+                    {
+                        int64_t i = GB_IGET (Ai, p+kk) ;    // i = Ai [p+kk]
+                        GB_ISET (Ci, pC+kk, i) ;            // Ci [pC+kk] = i
+                    }
                     #if !GB_ISO_SELECT
                     memcpy (Cx +pC*asize, Ax +p*asize, mynz*asize) ;
                     #endif
@@ -107,14 +126,20 @@
                   defined ( GB_ROWLE_SELECTOR )
 
                 // keep pA_start to Zp[k]-1
-                int64_t p = GB_IMIN (Zp [k], pA_end) ;
+                int64_t pz = GB_IGET (Zp, k) ;
+                int64_t p = GB_IMIN (pz, pA_end) ;
                 int64_t mynz = p - pA_start ;
                 if (mynz > 0)
                 { 
                     // A and C are both sparse or hypersparse
-                    ASSERT (pC >= Cp [k] && pC + mynz <= Cp [k+1]) ;
+                    ASSERT (pC >= GB_IGET (Cp, k)) ;
+                    ASSERT (pC + mynz <= GB_IGET (Cp, k+1)) ;
                     ASSERT (Ai != NULL) ;
-                    memcpy (Ci +pC, Ai +pA_start, mynz*sizeof (int64_t)) ;
+                    for (int64_t kk = 0 ; kk < mynz ; kk++)
+                    {
+                        int64_t i = GB_IGET (Ai, pA_start+kk) ;
+                        GB_ISET (Ci, pC+kk, i) ;            // Ci [pC+kk] = i
+                    }
                     #if !GB_ISO_SELECT
                     memcpy (Cx +pC*asize, Ax +pA_start*asize, mynz*asize) ;
                     #endif
@@ -124,11 +149,14 @@
 
                 // task that owns the diagonal entry does this work
                 // A can be sparse, hypersparse, or full, but not bitmap
-                int64_t p = Zp [k] ;
+                int64_t pz = GB_IGET (Zp, k) ;
+                int64_t p = pz ;
                 if (pA_start <= p && p < pA_end)
                 { 
-                    ASSERT (pC >= Cp [k] && pC + 1 <= Cp [k+1]) ;
-                    Ci [pC] = GBI_A (Ai, p, avlen) ;
+                    ASSERT (pC >= GB_IGET (Cp, k)) ;
+                    ASSERT (pC + 1 <= GB_IGET (Cp, k+1)) ;
+                    int64_t i = GBi_A (Ai, p, avlen) ;      // i = Ai [p]
+                    GB_ISET (Ci, pC, i) ;                   // Ci [pC] = i ;
                     #if !GB_ISO_SELECT
                     memcpy (Cx +pC*asize, Ax +p*asize, asize) ;
                     #endif
@@ -138,14 +166,20 @@
                   defined ( GB_ROWINDEX_SELECTOR )
 
                 // keep pA_start to Zp[k]-1
-                int64_t p = GB_IMIN (Zp [k], pA_end) ;
+                int64_t pz = GB_IGET (Zp, k) ;
+                int64_t p = GB_IMIN (pz, pA_end) ;
                 int64_t mynz = p - pA_start ;
                 if (mynz > 0)
                 { 
                     // A and C are both sparse or hypersparse
-                    ASSERT (pC >= Cp [k] && pC + mynz <= Cp [k+1]) ;
+                    ASSERT (pC >= GB_IGET (Cp, k)) ;
+                    ASSERT (pC + mynz <= GB_IGET (Cp, k+1)) ;
                     ASSERT (Ai != NULL) ;
-                    memcpy (Ci +pC, Ai +pA_start, mynz*sizeof (int64_t)) ;
+                    for (int64_t kk = 0 ; kk < mynz ; kk++)
+                    {
+                        int64_t i = GB_IGET (Ai, pA_start+kk) ;
+                        GB_ISET (Ci, pC+kk, i) ;            // Ci [pC+kk] = i
+                    }
                     #if !GB_ISO_SELECT
                     memcpy (Cx +pC*asize, Ax +pA_start*asize, mynz*asize) ;
                     #endif
@@ -153,15 +187,21 @@
                 }
 
                 // keep Zp[k]+1 to pA_end-1
-                p = GB_IMAX (Zp [k]+1, pA_start) ;
+                pz = GB_IGET (Zp, k) + 1 ;
+                p = GB_IMAX (pz, pA_start) ;
                 mynz = pA_end - p ;
                 if (mynz > 0)
                 { 
                     // A and C are both sparse or hypersparse
                     ASSERT (pA_start <= p && p < pA_end) ;
-                    ASSERT (pC >= Cp [k] && pC + mynz <= Cp [k+1]) ;
+                    ASSERT (pC >= GB_IGET (Cp, k)) ;
+                    ASSERT (pC + mynz <= GB_IGET (Cp, k+1)) ;
                     ASSERT (Ai != NULL) ;
-                    memcpy (Ci +pC, Ai +p, mynz*sizeof (int64_t)) ;
+                    for (int64_t kk = 0 ; kk < mynz ; kk++)
+                    {
+                        int64_t i = GB_IGET (Ai, p+kk) ;    // i = Ai [p+kk]
+                        GB_ISET (Ci, pC+kk, i) ;            // Ci [pC+kk] = i
+                    }
                     #if !GB_ISO_SELECT
                     memcpy (Cx +pC*asize, Ax +p*asize, mynz*asize) ;
                     #endif

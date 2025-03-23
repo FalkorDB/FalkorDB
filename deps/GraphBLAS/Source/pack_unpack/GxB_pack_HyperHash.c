@@ -2,7 +2,7 @@
 // GxB_pack_HyperHash: set the A->Y hyper_hash of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -70,11 +70,13 @@ GrB_Info GxB_pack_HyperHash         // move Y into A->Y
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_pack_HyperHash (A, &Y, desc)") ;
-    GB_BURBLE_START ("GxB_pack_HyperHash") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (Y) ;
-    GB_RETURN_IF_FAULTY (*Y) ;
+    GB_RETURN_IF_INVALID (*Y) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (*Y) ;
 
     //--------------------------------------------------------------------------
     // check for quick return
@@ -92,11 +94,19 @@ GrB_Info GxB_pack_HyperHash         // move Y into A->Y
 
     if ((*Y)->vlen != A->vdim || !GB_IS_POWER_OF_TWO ((*Y)->vdim) ||
         (*Y)->nvals != A->nvec || !GB_IS_SPARSE (*Y) || (*Y)->Y != NULL ||
-        (*Y)->type != GrB_UINT64 || !(*Y)->is_csc || GB_ANY_PENDING_WORK (*Y))
+        (!((*Y)->type == GrB_UINT64 || (*Y)->type == GrB_UINT32)) ||
+        !(*Y)->is_csc || GB_ANY_PENDING_WORK (*Y))
     { 
         // Y is invalid
         return (GrB_INVALID_OBJECT) ;
     }
+
+    //--------------------------------------------------------------------------
+    // ensure Y has the same integers as A->h
+    //--------------------------------------------------------------------------
+
+    bool Aj_is_32 = A->j_is_32 ;
+    GB_OK (GB_convert_int (*Y, Aj_is_32, Aj_is_32, Aj_is_32, false)) ;  // OK
 
     //--------------------------------------------------------------------------
     // pack the hyper_hash matrix Y into A
@@ -106,8 +116,7 @@ GrB_Info GxB_pack_HyperHash         // move Y into A->Y
     (*Y) = NULL ;
     A->Y_shallow = false ;
     A->no_hyper_hash = false ;  // A now has a hyper_hash matrix A->Y
-
-    GB_BURBLE_END ;
+    ASSERT_MATRIX_OK (A, "A with new hyperhash", GB0) ;
     return (GrB_SUCCESS) ;
 }
 

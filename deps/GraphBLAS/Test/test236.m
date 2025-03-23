@@ -1,7 +1,7 @@
 function test236
 %TEST236 test GxB_Matrix_sort and GxB_Vector_sort
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 [~, ~, ~, types, ~, ~] = GB_spec_opsall ;
@@ -46,6 +46,29 @@ for k = 1:length (types)
 
             P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1) ;
             [C2,P2] = GB_spec_Matrix_sort (lt, A, [ ]) ;
+            GB_spec_compare (P1, P2) ;
+
+            P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'int32') ;
+            assert (isequal (P1.class, 'int32')) ;
+            P1.class = 'int64' ;
+            GB_spec_compare (P1, P2) ;
+
+            P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'uint32') ;
+            assert (isequal (P1.class, 'uint32')) ;
+            P1.class = 'int64' ;
+            GB_spec_compare (P1, P2) ;
+
+            try
+                P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'double') ;
+                ok = 0 ;
+            catch me
+                ok = 1 ;
+            end
+            assert (ok) ;
+
+            P1 = GB_mex_Matrix_sort  (lt, A, [ ], 1, 'uint64') ;
+            assert (isequal (P1.class, 'uint64')) ;
+            P1.class = 'int64' ;
             GB_spec_compare (P1, P2) ;
 
             C1 = GB_mex_Matrix_sort  (gt, A) ;
@@ -151,6 +174,7 @@ GB_spec_compare (C1, C2) ;
 fprintf (' typecast') ;
 lt.optype = 'single' ;
 gt.optype = 'single' ;
+is_csc = 1 ;
 
     A = GB_spec_random (m, n, 0.3, 100, 'double', is_csc) ;
 

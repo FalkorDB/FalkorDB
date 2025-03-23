@@ -2,7 +2,7 @@
 // gblogextract: logical extraction: C = A(M)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,8 @@
 // matrices A and M must be the same size.  M is normally logical but it can be
 // of any type in this mexFunction.  M should not have any explicit zeros.  C
 // has the same type as A, and is a sparse vector of size nnz(M)-by-1.
+
+// This function accesses opaque content and GB_methods inside GraphBLAS.
 
 // Usage:
 
@@ -121,8 +123,6 @@ void mexFunction
     // make M boolean, stored by column, and drop explicit zeros
     GrB_Matrix M_input = gb_get_shallow (pargin [1]) ;
     GrB_Matrix M = gb_new (GrB_BOOL, nrows, ncols, GxB_BY_COL, not_bitmap) ;
-//  OK1 (M, GxB_Matrix_select (M, NULL, NULL, GxB_NONZERO, M_input,
-//      NULL, NULL)) ;
     OK1 (M, GrB_Matrix_select_BOOL (M, NULL, NULL, GrB_VALUENE_BOOL, M_input,
         0, NULL)) ;
     OK (GrB_Matrix_free (&M_input)) ;
@@ -130,7 +130,7 @@ void mexFunction
     GrB_Index mnz ;
     OK (GrB_Matrix_nvals (&mnz, M)) ;
     int sparsity ;
-    OK (GxB_Matrix_Option_get (M, GxB_SPARSITY_STATUS, &sparsity)) ;
+    OK (GrB_Matrix_get_INT32 (M, &sparsity, GxB_SPARSITY_STATUS)) ;
     CHECK_ERROR (sparsity == GxB_BITMAP, "internal error 5") ;
     CHECK_ERROR (!M->iso, "internal error 42")  ;            	
 
@@ -155,15 +155,13 @@ void mexFunction
     GrB_Index gnvals ;
     OK1 (G, GrB_Matrix_wait (G, GrB_MATERIALIZE)) ;
     OK (GrB_Matrix_nvals (&gnvals, G)) ;
-    OK (GxB_Matrix_Option_get (G, GxB_SPARSITY_STATUS, &sparsity)) ;
+    OK (GrB_Matrix_get_INT32 (G, &sparsity, GxB_SPARSITY_STATUS)) ;
     CHECK_ERROR (sparsity == GxB_BITMAP, "internal error 0") ;
 
     // Remove G->x from G
     void *Gx = G->x ;
     size_t Gx_size = G->x_size ;
-    #ifdef GB_MEMDUMP
-    printf ("remove G->x from memtable: %p\n", G->x) ;
-    #endif
+    GBMDUMP ("remove G->x from memtable: %p\n", G->x) ;
     GB_Global_memtable_remove (G->x) ;
     G->x = NULL ; G->x_size = 0 ;
     bool G_iso = G->iso  ;            	
@@ -172,7 +170,6 @@ void mexFunction
     // change G to boolean (all true and iso)
     //--------------------------------------------------------------------------
 
-    // Tim: use G as structural instead
     bool Gbool = true ;        							
     G->type = GrB_BOOL ;       	             	 	                 	
     G->x = &Gbool ;            		 	 	 	 	 	
@@ -186,10 +183,10 @@ void mexFunction
 
     // K is a shallow copy of M, except for its numerical values
     struct GB_Matrix_opaque K_header ;
-    GrB_Matrix K = GB_clear_static_header (&K_header) ;
+    GrB_Matrix K = GB_clear_matrix_header (&K_header) ;
 
     OK (GB_shallow_copy (K, GxB_BY_COL, M, NULL)) ;
-    OK (GxB_Matrix_Option_get (K, GxB_SPARSITY_STATUS, &sparsity)) ;
+    OK (GrB_Matrix_get_INT32 (K, &sparsity, GxB_SPARSITY_STATUS)) ;
     CHECK_ERROR (sparsity == GxB_BITMAP, "internal error 10") ;
 
     // Kx = uint64 (0:mnz-1)
@@ -202,9 +199,7 @@ void mexFunction
     K->x_shallow = false ;
     K->type = GrB_UINT64 ;
     K->x_size = Kx_size ;
-    #ifdef GB_MEMDUMP
-    printf ("add K->x to memtable: %p\n", K->x) ;
-    #endif
+    GBMDUMP ("add K->x to memtable: %p\n", K->x) ;
     GB_Global_memtable_add (K->x, K->x_size) ;
     K->iso = false  ;            	
 
@@ -225,9 +220,7 @@ void mexFunction
     OK (GrB_Matrix_nvals (&tnvals, T)) ;
     uint64_t *Tx = T->x ;
     size_t Tx_size = T->x_size ;
-    #ifdef GB_MEMDUMP
-    printf ("remove T->x from memtable: %p\n", T->x) ;
-    #endif
+    GBMDUMP ("remove T->x from memtable: %p\n", T->x) ;
     GB_Global_memtable_remove (T->x) ;
     T->x = NULL ; T->x_size = 0 ;
 
@@ -244,24 +237,21 @@ void mexFunction
 
     GrB_Vector V ;
     OK (GrB_Vector_new (&V, type, mnz)) ;
-    OK (GxB_Vector_Option_set (V, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
+    OK (GrB_Vector_set_INT32 (V, GxB_SPARSE, GxB_SPARSITY_CONTROL)) ;
 
-    #ifdef GB_MEMDUMP
-    printf ("remove V->i from memtable: %p\n", V->i) ;
-    printf ("remove V->x from memtable: %p\n", V->x) ;
-    #endif
+    GBMDUMP ("remove V->i from memtable: %p\n", V->i) ;
+    GBMDUMP ("remove V->x from memtable: %p\n", V->x) ;
     GB_Global_memtable_remove (V->i) ;
     gb_mxfree ((void **) (&V->i)) ;
     GB_Global_memtable_remove (V->x) ;
     gb_mxfree ((void **) (&V->x)) ;
 
     // transplant values of T as the row indices of V
-    V->i = (int64_t *) Tx ;
+    V->i = (void *) Tx ;
     V->i_size = Tx_size ;
     V->i_shallow = false ;
-    #ifdef GB_MEMDUMP
-    printf ("add V->i to memtable: %p\n", V->i) ;
-    #endif
+    V->i_is_32 = false ;
+    GBMDUMP ("add V->i to memtable: %p\n", V->i) ;
     GB_Global_memtable_add (V->i, V->i_size) ;  // this was the old T->x
 
     // transplant the values of G as the values of V
@@ -269,17 +259,17 @@ void mexFunction
     V->x_size = Gx_size ;
     V->x_shallow = false ;
     V->iso = G_iso  ;            	
-    #ifdef GB_MEMDUMP
-    printf ("add V->x to memtable: %p\n", V->x) ;
-    #endif
+    GBMDUMP ("add V->x to memtable: %p\n", V->x) ;
     GB_Global_memtable_add (V->x, V->x_size) ;  // this was the old G->x
 
-    int64_t *Vp = V->p ;
-    Vp [0] = 0 ;
-    Vp [1] = tnvals ;
+    GB_Ap_DECLARE (Vp, ) ; GB_Ap_PTR (Vp, V) ;
+    GB_ISET (Vp, 0, 0) ;        // Vp [0] = 0 ;
+    GB_ISET (Vp, 1, tnvals) ;   // Vp [1] = tnvals ;
+
     V->nvals = tnvals ;
     V->magic = GB_MAGIC ;
-    V->nvec_nonempty = (tnvals > 0) ? 1 : 0 ;
+//  V->nvec_nonempty = (tnvals > 0) ? 1 : 0 ;
+    GB_nvec_nonempty_set ((GrB_Matrix) V, (tnvals > 0) ? 1 : 0) ;
 
     // typecast V to a matrix C, for export
     GrB_Matrix C = (GrB_Matrix) V ;
@@ -299,6 +289,6 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     pargout [0] = gb_export (&C, KIND_GRB) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

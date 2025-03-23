@@ -2,7 +2,7 @@
 // GB_macrofy_build: construct all macros for GB_build methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -26,7 +26,14 @@ void GB_macrofy_build           // construct all macros for GB_build
     // extract the method_code
     //--------------------------------------------------------------------------
 
-    // dup, z = f(x,y) (5 hex digits)
+    // 32/64 bit (4 bits, 1 hex digit)
+    int Ti_is_32  = GB_RSHIFT (method_code, 31, 1) ;
+    int I_is_32   = GB_RSHIFT (method_code, 30, 1) ;
+    int K_is_32   = GB_RSHIFT (method_code, 29, 1) ;
+    int K_is_null = GB_RSHIFT (method_code, 28, 1) ;
+
+    // dup, z = f(x,y) (6 hex digits)
+    int no_dupl   = GB_RSHIFT (method_code, 27, 1) ;
 //  int dup_code  = GB_RSHIFT (method_code, 20, 6) ;
 //  int zcode     = GB_RSHIFT (method_code, 16, 4) ;
     int xcode     = GB_RSHIFT (method_code, 12, 4) ;
@@ -96,6 +103,11 @@ void GB_macrofy_build           // construct all macros for GB_build
     fprintf (fp, "\n// binary dup operator:\n") ;
     GB_macrofy_binop (fp, "GB_DUP", false, false, true, false, false,
         dup_ecode, false, dup, NULL, NULL, NULL) ;
+
+    if (dup_opcode == GB_FIRST_binop_code)
+    {
+        fprintf (fp, "#define GB_DUP_IS_FIRST\n") ;
+    }
 
     fprintf (fp, "\n// build copy/dup methods:\n") ;
 
@@ -213,6 +225,19 @@ void GB_macrofy_build           // construct all macros for GB_build
         }
         fprintf (fp, " ;\n") ;
     }
+
+    //--------------------------------------------------------------------------
+    // 32/64 integer arrays
+    //--------------------------------------------------------------------------
+
+    fprintf (fp, "\n// 32/64 integer types:\n") ;
+    fprintf (fp, "#define GB_Ti_TYPE %s\n", Ti_is_32 ? "int32_t" : "int64_t") ;
+    fprintf (fp, "#define GB_Ti_BITS %d\n", Ti_is_32 ? 32 : 64) ;
+    fprintf (fp, "#define GB_I_TYPE  %s\n", I_is_32  ? "uint32_t":"uint64_t") ;
+    fprintf (fp, "#define GB_K_TYPE  %s\n", K_is_32  ? "uint32_t":"uint64_t") ;
+    fprintf (fp, "#define GB_K_WORK(k) %s\n", K_is_null ? "k" : "K_work [k]") ;
+    fprintf (fp, "#define GB_K_IS_NULL %d\n", K_is_null) ;
+    fprintf (fp, "#define GB_NO_DUPLICATES %d\n", no_dupl) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

@@ -5,7 +5,7 @@ function Mask = GB_random_mask (m, n, d, M_is_csc, M_is_hyper)
 % With 3 arguments, Mask is a sparse logical matrix.
 % With 4, Mask is a struct.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 M = (sprand (m, n, d) ~= 0) ;

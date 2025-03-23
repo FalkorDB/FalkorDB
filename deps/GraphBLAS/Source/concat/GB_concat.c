@@ -2,7 +2,7 @@
 // GB_concat: concatenate an array of matrices into a single matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,8 +21,8 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
 (
     GrB_Matrix C,                   // input/output matrix for results
     const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n
-    const GrB_Index m,
-    const GrB_Index n,
+    const uint64_t m,
+    const uint64_t n,
     GB_Werk Werk
 )
 {
@@ -51,7 +51,8 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     for (int64_t k = 0 ; k < m*n ; k++)
     { 
         GrB_Matrix A = Tiles [k] ;
-        GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+        GB_RETURN_IF_NULL (A) ;
+        GB_OK (GB_valid_matrix (A)) ;
         ASSERT_MATRIX_OK (A, "Tile[k] input for GB_concat", GB0) ;
         GB_MATRIX_WAIT (A) ;
     }
@@ -197,8 +198,8 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     // replace Tile_rows and Tile_cols with their cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum1 (Tile_rows, m) ;
-    GB_cumsum1 (Tile_cols, n) ;
+    GB_cumsum1_64 ((uint64_t *) Tile_rows, m) ;
+    GB_cumsum1_64 ((uint64_t *) Tile_cols, n) ;
     int64_t cnrows = Tile_rows [m] ;
     int64_t cncols = Tile_cols [n] ;
     if (cnrows != GB_NROWS (C) || cncols != GB_NCOLS (C))
@@ -255,7 +256,6 @@ GrB_Info GB_concat                  // concatenate a 2D array of matrices
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    ASSERT_MATRIX_OK (C, "C before conform for GB_concat", GB0) ;
     GB_OK (GB_conform (C, Werk)) ;
     ASSERT_MATRIX_OK (C, "C output for GB_concat", GB0) ;
     return (GrB_SUCCESS) ;

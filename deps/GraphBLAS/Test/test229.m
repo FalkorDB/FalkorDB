@@ -1,7 +1,7 @@
 function test229
 %TEST229 set setElement
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest229: ---- test setElement_* for all types\n') ;
@@ -31,7 +31,7 @@ for k = 1:length (types)
                 C3 = GB_mex_setElement (A, I0, J0, X, true, true) ;
                 C4 = GB_mex_setElement (A, I0, J0, X, true, true) ;
 
-                assert (isequal (C1, C2)) ;
+                assert (GB_isequal_ignore_32 (C1, C2)) ;
                 assert (isequal (C1, C3)) ;
                 assert (isequal (C1, C4)) ;
 

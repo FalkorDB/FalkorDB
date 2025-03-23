@@ -2,7 +2,7 @@
 // GB_apply_bind2nd_jit: Cx=op(A,y) apply bind2nd method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,9 +32,11 @@ GrB_Info GB_apply_bind2nd_jit   // Cx = op (x,B), apply bind2nd via the JIT
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
-        GB_JIT_KERNEL_APPLYBIND2, false,
-        false, false, GxB_FULL, ctype, NULL, false, false,
-        binaryop, false, false, A, NULL) ;
+        GB_JIT_KERNEL_APPLYBIND2, /* is_eWiseMult: */ false,
+        /* C_iso: */ false, /* C_in_iso: */ false, GxB_FULL, ctype,
+        /* pji is_32: ignored; there is no C matrix: */ false, false, false,
+        /* M: */ NULL, /* Mask_struct: */ false, /* Mask_comp: */ false,
+        binaryop, /* flipij: */ false, /* flipxy: */ false, A, /* B: */ NULL) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -51,8 +53,9 @@ GrB_Info GB_apply_bind2nd_jit   // Cx = op (x,B), apply bind2nd via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (Cx, A->x, yscalar, A->b, GB_nnz_held (A),
-        nthreads)) ;
+        nthreads, &GB_callback)) ;
 }
 

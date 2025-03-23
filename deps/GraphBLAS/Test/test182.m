@@ -33,7 +33,7 @@ function test182
 %
 % This test case comes from Gabor Szarnyas and Marton Elekes.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 I  = [ 1, 2, 4, 5, 7, 11, 12, 13, 15, 18, 19, 20, 27, 32, 33, ...

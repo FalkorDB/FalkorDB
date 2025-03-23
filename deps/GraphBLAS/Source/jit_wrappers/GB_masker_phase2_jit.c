@@ -2,7 +2,7 @@
 // GB_masker_phase2_jit: construct R = masker (C,M,Z)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,8 @@ GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_masker (&encoding, &suffix,
-        GB_JIT_KERNEL_MASKER_PHASE2, R, M, Mask_struct, Mask_comp, C, Z) ;
+        GB_JIT_KERNEL_MASKER_PHASE2, R, R->p_is_32, R->j_is_32, R->i_is_32,
+        M, Mask_struct, Mask_comp, C, Z) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -61,10 +62,11 @@ GrB_Info GB_masker_phase2_jit       // phase2 for R = masker (C,M,Z)
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (R, TaskList, R_ntasks, R_nthreads,
         R_to_M, R_to_C, R_to_Z, M, Mask_comp, Mask_struct, C, Z,
         C_ek_slicing, C_ntasks, C_nthreads,
-        M_ek_slicing, M_ntasks, M_nthreads)) ;
+        M_ek_slicing, M_ntasks, M_nthreads, &GB_callback)) ;
 }
 

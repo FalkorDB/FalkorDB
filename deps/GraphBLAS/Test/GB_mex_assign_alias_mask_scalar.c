@@ -2,7 +2,7 @@
 // GB_mex_assign_alias_mask_scalar: C<C,struct> = scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -26,7 +26,7 @@ GrB_Info assign_mask_scalar (void) ;
 GrB_Info assign_mask_scalar (void)
 {
     GrB_Info info ;
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, C) ;
     GrB_Matrix_ncols (&ncols, C) ;
     GrB_Type stype ;
@@ -159,11 +159,11 @@ void mexFunction
         FREE_ALL ;
         mexErrMsgTxt ("scalar failed") ;
     }
-    GrB_Index snrows, sncols, snvals ;
+    uint64_t snrows, sncols, snvals ;
     GrB_Matrix_nrows (&snrows, S) ;
     GrB_Matrix_ncols (&sncols, S) ;
     GrB_Matrix_nvals (&snvals, S) ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     GxB_Matrix_Option_get_(S, GxB_FORMAT, &fmt) ;
     if (snrows != 1 || sncols != 1 || snvals != 1 || fmt != GxB_BY_COL)
     {

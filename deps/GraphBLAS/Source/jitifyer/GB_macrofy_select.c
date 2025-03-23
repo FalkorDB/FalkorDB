@@ -2,7 +2,7 @@
 // GB_macrofy_select: construct all macros for select methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,37 +18,58 @@ void GB_macrofy_select          // construct all macros for GrB_select
     uint64_t method_code,
     // operator:
     const GrB_IndexUnaryOp op,
-    GrB_Type atype
-)
+    GrB_Type atype              // also the type of C
+) 
 {
 
     //--------------------------------------------------------------------------
     // extract the select method_code
     //--------------------------------------------------------------------------
 
-    // iso of A and C (2 bits)
-    bool C_iso      = GB_RSHIFT (method_code, 37, 1) ;
-    bool A_iso      = GB_RSHIFT (method_code, 36, 1) ;
+    // C, A: 32/64 (2 hex digits)
+    bool Cp_is_32   = GB_RSHIFT (method_code, 33, 1) ;
+    bool Cj_is_32   = GB_RSHIFT (method_code, 32, 1) ;
+    bool Ci_is_32   = GB_RSHIFT (method_code, 31, 1) ;
 
-    // inplace, i/j dependency and flipij (4 bits)
-//  int inplace     = GB_RSHIFT (method_code, 35, 1) ;
-    int i_dep       = GB_RSHIFT (method_code, 34, 1) ;
-    int j_dep       = GB_RSHIFT (method_code, 33, 1) ;
-    bool flipij     = GB_RSHIFT (method_code, 32, 1) ;
+    bool Ap_is_32   = GB_RSHIFT (method_code, 30, 1) ;
+    bool Aj_is_32   = GB_RSHIFT (method_code, 29, 1) ;
+    bool Ai_is_32   = GB_RSHIFT (method_code, 28, 1) ;
 
-    // op, z = f(x,i,j,y) (5 hex digits)
-    int idxop_ecode = GB_RSHIFT (method_code, 24, 8) ;
-    int zcode       = GB_RSHIFT (method_code, 20, 4) ;
-    int xcode       = GB_RSHIFT (method_code, 16, 4) ;
-    int ycode       = GB_RSHIFT (method_code, 12, 4) ;
+    // op, z = f(x,i,j,y), flipij, and iso codes (5 hex digits)
+    bool C_iso      = GB_RSHIFT (method_code, 27, 1) ;
+    bool A_iso      = GB_RSHIFT (method_code, 26, 1) ;
+    bool flipij     = GB_RSHIFT (method_code, 25, 1) ;
+    #ifdef GB_DEBUG
+    int idxop_code  = GB_RSHIFT (method_code, 20, 5) ;
+    #endif
+    int zcode       = GB_RSHIFT (method_code, 16, 4) ;
+    int xcode       = GB_RSHIFT (method_code, 12, 4) ;
+    int ycode       = GB_RSHIFT (method_code,  8, 4) ;
 
-    // types of C and A (2 hex digits)
-//  int ccode       = GB_RSHIFT (method_code,  8, 4) ;
+    // type of A (1 hex digit)
     int acode       = GB_RSHIFT (method_code,  4, 4) ;
 
     // sparsity structures of C and A (1 hex digit)
-//  int csparsity   = GB_RSHIFT (method_code,  2, 2) ;
+    int csparsity   = GB_RSHIFT (method_code,  2, 2) ;
     int asparsity   = GB_RSHIFT (method_code,  0, 2) ;
+
+    //--------------------------------------------------------------------------
+    // enumify the operator
+    //--------------------------------------------------------------------------
+
+    int idxop_ecode ;
+    bool x_dep, i_dep, j_dep, y_dep ;
+
+    ASSERT (zcode == op->ztype->code) ;
+    ASSERT (xcode == ((op->xtype == NULL) ? 0 : op->xtype->code)) ;
+    ASSERT (ycode == op->ytype->code) ;
+
+    GB_enumify_unop (&idxop_ecode, &x_dep, &i_dep, &j_dep, &y_dep,
+        flipij, op->opcode, xcode) ;
+    if (!x_dep) xcode = 0 ;
+    if (!y_dep) ycode = 0 ;
+
+    ASSERT (idxop_code == op->opcode - GB_ROWINDEX_idxunop_code) ;
 
     //--------------------------------------------------------------------------
     // describe the operator
@@ -82,10 +103,7 @@ void GB_macrofy_select          // construct all macros for GrB_select
     // construct the typedefs
     //--------------------------------------------------------------------------
 
-    GrB_Type ctype = atype ;    // this may change in the future
-
-    GB_macrofy_typedefs (fp, ctype, atype, NULL,
-        xtype, ytype, ztype) ;
+    GB_macrofy_typedefs (fp, NULL, atype, NULL, xtype, ytype, ztype) ;
 
     fprintf (fp, "// unary operator types:\n") ;
     GB_macrofy_type (fp, "Z", "_", ztype_name) ;
@@ -100,10 +118,10 @@ void GB_macrofy_select          // construct all macros for GrB_select
         flipij ? " (flipped ij)" : "") ;
     GB_macrofy_unop (fp, "GB_IDXUNOP", flipij, idxop_ecode, (GB_Operator) op) ;
 
-    fprintf (fp, "#define GB_DEPENDS_ON_X %d\n", (xtype != NULL) ? 1 : 0) ;
-    fprintf (fp, "#define GB_DEPENDS_ON_I %d\n", i_dep) ;
-    fprintf (fp, "#define GB_DEPENDS_ON_J %d\n", j_dep) ;
-    fprintf (fp, "#define GB_DEPENDS_ON_Y %d\n", (ycode == 0) ? 0 : 1) ;
+    fprintf (fp, "#define GB_DEPENDS_ON_X %d\n", x_dep ? 1 : 0) ;
+    fprintf (fp, "#define GB_DEPENDS_ON_I %d\n", i_dep ? 1 : 0) ;
+    fprintf (fp, "#define GB_DEPENDS_ON_J %d\n", j_dep ? 1 : 0) ;
+    fprintf (fp, "#define GB_DEPENDS_ON_Y %d\n", y_dep ? 1 : 0) ;
 
     char *kind ;
     switch (op->opcode)
@@ -211,19 +229,19 @@ void GB_macrofy_select          // construct all macros for GrB_select
     }
 
     //--------------------------------------------------------------------------
-    // macros for the Cx array
+    // construct the macros for C
     //--------------------------------------------------------------------------
 
-    // Cx has the same type as A for now
-    fprintf (fp, "\n// C type:\n") ;
-    GB_macrofy_type (fp, "C", "_", ctype->name) ;
+    // C has the same type as A
+    GB_macrofy_output (fp, "c", "C", "C", atype, atype,
+        csparsity, C_iso, C_iso, Cp_is_32, Cj_is_32, Ci_is_32) ;
 
     //--------------------------------------------------------------------------
     // construct the macros for A
     //--------------------------------------------------------------------------
 
     GB_macrofy_input (fp, "a", "A", "A", true, xtype,
-        atype, asparsity, acode, 0, -1) ;
+        atype, asparsity, acode, A_iso, -1, Ap_is_32, Aj_is_32, Ai_is_32) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

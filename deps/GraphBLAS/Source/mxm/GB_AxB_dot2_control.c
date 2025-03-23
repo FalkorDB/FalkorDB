@@ -2,7 +2,7 @@
 // GB_AxB_dot2_control.c: determine when to use GB_AxB_dot2
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,19 +40,9 @@ bool GB_AxB_dot2_control  // true: use dot2, false: use saxpy
     double anz = GB_nnz (A) ;       // # of entries in A
     double bnz = GB_nnz (B) ;       // # of entries in B
 
-    if (A->nvec_nonempty < 0)
-    { 
-        // A->nvec_nonempty is used to select the method 
-        A->nvec_nonempty = GB_nvec_nonempty (A) ;
-    }
-    if (B->nvec_nonempty < 0)
-    { 
-        // B->nvec_nonempty is used to select the method 
-        B->nvec_nonempty = GB_nvec_nonempty (B) ;
-    }
-
-    double anvec = A->nvec_nonempty ;
-    double bnvec = B->nvec_nonempty ;
+    // A->nvec_nonempty and B->nvec_nonempty are used to select the method
+    double anvec = GB_nvec_nonempty_update (A) ;
+    double bnvec = GB_nvec_nonempty_update (B) ;
     double avlen = A->vlen ;
     ASSERT (avlen == B->vlen) ;
     double cnz = (anvec * bnvec) ;  // size of the C bitmap

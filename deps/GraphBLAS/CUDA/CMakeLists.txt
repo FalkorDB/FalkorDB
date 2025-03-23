@@ -2,7 +2,7 @@
 # GraphBLAS/CUDA/CMakeLists.txt:  cmake script for GraphBLAS/CUDA
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 
 # Some files in this folder are (c) NVIDIA or (c) Google.  Please refer
 # to their individual licenses (Apache, BSD, or others).
@@ -16,7 +16,10 @@ project ( GRAPHBLAS_CUDA
     VERSION "${GraphBLAS_VERSION_MAJOR}.${GraphBLAS_VERSION_MINOR}.${GraphBLAS_VERSION_SUB}"
     LANGUAGES CXX CUDA )
 
-cmake_policy ( SET CMP0135 NEW )    # URL download timestamp policy
+if ( CMAKE_VERSION VERSION_GREATER_EQUAL 3.24 )
+    # requires cmake 3.24:
+    cmake_policy ( SET CMP0135 NEW )    # URL download timestamp policy
+endif ( )
 
 set ( CMAKE_CXX_STANDARD 17 )
 
@@ -49,6 +52,7 @@ target_include_directories ( GraphBLAS_CUDA PRIVATE
         ../Include
         ../rmm_wrap
         ../Source
+        ../Source/hyper
         ../Source/builtin
         )
 

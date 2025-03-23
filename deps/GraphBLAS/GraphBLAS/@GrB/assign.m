@@ -60,6 +60,7 @@ function C = assign (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 % accum: an optional binary operator, defined by a string ('+.double') for
 %       example.  This allows for C(I,J) = C(I,J) + A to be computed.  If
 %       not present, no accumulator is used and C(I,J)=A is computed.
+%       See 'help GrB.binopinfo' for available binary operators.
 %
 % M: an optional mask matrix, the same size as C.
 %
@@ -92,9 +93,9 @@ function C = assign (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 %   C2 (I,J) = B
 %   C2 - sparse (C)
 %
-% See also GrB.subassign, GrB/subsasgn.
+% See also GrB.subassign, GrB/subsasgn, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

@@ -2,13 +2,12 @@
 // GB_sel:  hard-coded functions for selection operators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "select/GB_select.h"
-#include "slice/GB_ek_slice.h"
 #include "FactoryKernels/GB_sel__include.h"
 
 #define GB_ENTRY_SELECTOR
@@ -27,9 +26,9 @@ m4_divert(if_phase1)
 
 GrB_Info GB (_sel_phase1)
 (
-    int64_t *restrict Cp,
-    int64_t *restrict Wfirst,
-    int64_t *restrict Wlast,
+    GrB_Matrix C,
+    uint64_t *restrict Wfirst,
+    uint64_t *restrict Wlast,
     const GrB_Matrix A,
     const GB_void *restrict ythunk,
     const int64_t *A_ek_slicing,
@@ -49,10 +48,8 @@ m4_divert(if_phase2)
 
 GrB_Info GB (_sel_phase2)
 (
-    int64_t *restrict Ci,
-    GB_void *restrict Cx_out,
-    const int64_t *restrict Cp,
-    const int64_t *restrict Cp_kfirst,
+    GrB_Matrix C,
+    const uint64_t *restrict Cp_kfirst,
     const GrB_Matrix A,
     const GB_void *restrict ythunk,
     const int64_t *A_ek_slicing,
@@ -60,7 +57,6 @@ GrB_Info GB (_sel_phase2)
     const int A_nthreads
 )
 { 
-    GB_A_TYPE *restrict Cx = (GB_A_TYPE *) Cx_out ;
     GB_Y_TYPE y = *((GB_Y_TYPE *) ythunk) ;
     #include "select/template/GB_select_phase2_template.c"
     return (GrB_SUCCESS) ;
@@ -73,9 +69,8 @@ m4_divert(if_bitmap)
 
 GrB_Info GB (_sel_bitmap)
 (
-    int8_t *Cb,
-    int64_t *cnvals_handle,
-    GrB_Matrix A,
+    GrB_Matrix C,
+    const GrB_Matrix A,
     const GB_void *restrict ythunk,
     const int nthreads
 )

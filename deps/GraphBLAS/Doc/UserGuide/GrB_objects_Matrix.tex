@@ -1,0 +1,1041 @@
+
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS matrices: {\sf GrB\_Matrix}} %============================
+%===============================================================================
+\label{matrix}
+
+This section describes a set of methods that create, modify, query,
+and destroy a GraphBLAS sparse matrix, \verb'GrB_Matrix':
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_Matrix_new'           & create a matrix                       & \ref{matrix_new} \\
+\verb'GrB_Matrix_wait'          & wait for a matrix                     & \ref{matrix_wait} \\
+\verb'GrB_Matrix_dup'           & copy a matrix                         & \ref{matrix_dup} \\
+\verb'GrB_Matrix_clear'         & clear a matrix of all entries         & \ref{matrix_clear} \\
+\verb'GrB_Matrix_nrows'         & number of rows of a matrix            & \ref{matrix_nrows} \\
+\verb'GrB_Matrix_ncols'         & number of columns of a matrix         & \ref{matrix_ncols} \\
+\verb'GrB_Matrix_nvals'         & number of entries in a matrix         & \ref{matrix_nvals} \\
+\verb'GrB_Matrix_build'         & build a matrix from tuples            & \ref{matrix_build} \\
+\verb'GxB_Matrix_build_Vector'         & build a matrix from tuples     & \ref{matrix_build_Vector} \\
+\verb'GxB_Matrix_build_Scalar'  & build a matrix from tuples            & \ref{matrix_build_Scalar} \\
+\verb'GxB_Matrix_build_Scalar_Vector'  & build a matrix from tuples     & \ref{matrix_build_Scalar_Vector} \\
+\verb'GrB_Matrix_setElement'    & add an entry to a matrix              & \ref{matrix_setElement} \\
+\verb'GrB_Matrix_extractElement'& get an entry from a matrix            & \ref{matrix_extractElement} \\
+\verb'GxB_Matrix_isStoredElement'& check if entry present in matrix     & \ref{matrix_isStoredElement} \\
+\verb'GrB_Matrix_removeElement' & remove an entry from a matrix         & \ref{matrix_removeElement} \\
+\verb'GrB_Matrix_extractTuples' & get all entries from a matrix         & \ref{matrix_extractTuples} \\
+\verb'GxB_Matrix_extractTuples_Vector' & get all entries from a matrix  & \ref{matrix_extractTuples_Vector} \\
+\verb'GrB_Matrix_resize'        & resize a matrix                       & \ref{matrix_resize} \\
+\verb'GxB_Matrix_reshape'       & reshape a matrix                      & \ref{matrix_reshape} \\
+\verb'GxB_Matrix_reshapeDup'    & reshape a matrix                      & \ref{matrix_reshapedup} \\
+\verb'GxB_Matrix_concat'        & concatenate matrices                  & \ref{matrix_concat} \\
+\verb'GxB_Matrix_split'         & split a matrix into matrices          & \ref{matrix_split} \\
+\verb'GrB_Matrix_diag'          & diagonal matrix from vector           & \ref{matrix_diag} \\
+\verb'GxB_Matrix_diag'          & diagonal matrix from vector           & \ref{matrix_diag_GxB} \\
+\verb'GxB_Matrix_memoryUsage'   & memory used by a matrix               & \ref{matrix_memusage} \\
+\verb'GxB_Matrix_type'          & type of the matrix                    & \ref{matrix_type} \\
+\verb'GrB_Matrix_free'          & free a matrix                         & \ref{matrix_free} \\
+\hline
+\hline
+\verb'GrB_Matrix_serializeSize' & return size of serialized matrix & \ref{matrix_serialize_size} \\
+\verb'GrB_Matrix_serialize'     & serialize a matrix               & \ref{matrix_serialize} \\
+\verb'GxB_Matrix_serialize'     & serialize a matrix               & \ref{matrix_serialize_GxB} \\
+\verb'GrB_Matrix_deserialize'   & deserialize a matrix             & \ref{matrix_deserialize} \\
+\verb'GxB_Matrix_deserialize'   & deserialize a matrix             & \ref{matrix_deserialize_GxB} \\
+\hline
+\hline
+\verb'GrB_get'  & get properties of a matrix       & \ref{get_set_matrix} \\
+\verb'GrB_set'  & set properties of a matrix       & \ref{get_set_matrix} \\
+\hline
+\end{tabular}
+}
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_Matrix_import'        & import in various formats & \ref{GrB_matrix_import} \\
+\verb'GrB_Matrix_export'        & export in various formats & \ref{GrB_matrix_export} \\
+\verb'GrB_Matrix_exportSize'    & array sizes for export & \ref{export_size} \\
+\verb'GrB_Matrix_exportHint'    & hint best export format & \ref{export_hint} \\
+\hline
+\verb'GxB_Matrix_sort'          & sort a matrix & \ref{matrix_sort} \\
+\hline
+\end{tabular}
+}
+
+\vspace{0.2in}
+Refer to
+Section~\ref{serialize_deserialize} for serialization/deserialization methods,
+Section~\ref{GrB_import_export} for \verb'GrB' import/export methods,
+Section~\ref{sorting_methods} for sorting methods,
+and Section~\ref{get_set_matrix} for get/set methods.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_new:}          create a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_new     // create a new matrix with no entries
+(
+    GrB_Matrix *A,          // handle of matrix to create
+    GrB_Type type,          // type of matrix to create
+    GrB_Index nrows,        // matrix dimension is nrows-by-ncols
+    GrB_Index ncols
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_new' creates a new \verb'nrows'-by-\verb'ncols' sparse matrix
+with no entries in it, of the given type.  This is analogous to the MATLAB
+statement \verb'A = sparse (nrows, ncols)', except that GraphBLAS can create
+sparse matrices of any type.
+
+By default, matrices of size \verb'nrows-by-1' are held by column, regardless
+of the global setting controlled by \verb'GrB_set (GrB_GLOBAL, ...,' \newline
+\verb'GrB_STORAGE_ORIENTATION_HINT)', for any value of \verb'nrows'.  Matrices
+of size \verb'1-by-ncols' with \verb'ncols' not equal to 1 are held by row,
+regardless of this global setting.  The global setting only affects matrices
+with both \verb'm > 1' and \verb'n > 1'.  Empty matrices (\verb'0-by-0') are
+also controlled by the global setting.
+
+Once a matrix is created, its format (by-row or by-column) can be arbitrarily
+changed with \verb'GrB_set (A, fmt, GrB_STORAGE_ORIENTATION_HINT)'
+with \verb'fmt' equal to \verb'GrB_COLMAJOR' or \verb'GrB_ROWMAJOR'.
+
+\begin{alert}
+{\bf SPEC:} \verb'nrows' and/or \verb'ncols' may be zero.
+as an extension to the specification.
+\end{alert}
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_wait:} wait for a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a matrix
+(
+    GrB_Matrix C,               // matrix to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+In non-blocking mode, the computations for a \verb'GrB_Matrix' may be delayed.
+In this case, the matrix is not yet safe to use by multiple independent user
+threads.  A user application may force completion of a matrix \verb'C' via
+\verb'GrB_Matrix_wait(C,mode)'.
+With a \verb'mode' of \verb'GrB_MATERIALIZE',
+all pending computations are finished, and afterwards different user threads may
+simultaneously call GraphBLAS operations that use the matrix \verb'C' as an
+input parameter.
+See Section~\ref{omp_parallelism}
+if GraphBLAS is compiled without OpenMP.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_dup:}          copy a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_dup}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_dup     // make an exact copy of a matrix
+(
+    GrB_Matrix *C,          // handle of output matrix to create
+    const GrB_Matrix A      // input matrix to copy
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_dup' makes a deep copy of a sparse matrix.
+In GraphBLAS, it is possible, and valid, to write the following:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Matrix A, C ;
+    GrB_Matrix_new (&A, GrB_FP64, n) ;
+    C = A ;                         // C is a shallow copy of A  \end{verbatim}}
+
+Then \verb'C' and \verb'A' can be used interchangeably.  However, only a
+pointer reference is made, and modifying one of them modifies both, and freeing
+one of them leaves the other as a dangling handle that should not be used.  If
+two different matrices are needed, then this should be used instead:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Matrix A, C ;
+    GrB_Matrix_new (&A, GrB_FP64, n) ;
+    GrB_Matrix_dup (&C, A) ;        // like C = A, but making a deep copy \end{verbatim}}
+
+Then \verb'C' and \verb'A' are two different matrices that currently have the
+same set of values, but they do not depend on each other.  Modifying one has
+no effect on the other.
+The \verb'GrB_NAME' is copied into the new matrix.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_clear:}        clear a matrix of all entries}
+%-------------------------------------------------------------------------------
+\label{matrix_clear}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_clear   // clear a matrix of all entries;
+(                           // type and dimensions remain unchanged
+    GrB_Matrix A            // matrix to clear
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_clear' clears all entries from a matrix.  All values
+\verb'A(i,j)' are now equal to the implicit value, depending on what semiring
+ring is used to perform computations on the matrix.  The pattern of \verb'A' is
+empty, just as if it were created fresh with \verb'GrB_Matrix_new'.  Analogous
+with \verb'A (:,:) = 0' in MATLAB.  The type and dimensions of \verb'A' do not
+change.  Any pending updates to the matrix are discarded.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_nrows:}        return the number of rows of a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_nrows}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_nrows   // get the number of rows of a matrix
+(
+    GrB_Index *nrows,       // matrix has nrows rows
+    const GrB_Matrix A      // matrix to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_nrows' returns the number of rows of a matrix
+(\verb'nrows=size(A,1)' in MATLAB).
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_ncols:}        return the number of columns of a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_ncols}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_ncols   // get the number of columns of a matrix
+(
+    GrB_Index *ncols,       // matrix has ncols columns
+    const GrB_Matrix A      // matrix to query
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Matrix_ncols' returns the number of columns of a matrix
+(\verb'ncols=size(A,2)' in MATLAB).
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_nvals:}        return the number of entries in a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_nvals}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_nvals   // get the number of entries in a matrix
+(
+    GrB_Index *nvals,       // matrix has nvals entries
+    const GrB_Matrix A      // matrix to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_nvals' returns the number of entries in a matrix.  Roughly
+analogous to \verb'nvals = nnz(A)' in MATLAB, except that the implicit value in
+GraphBLAS need not be zero and \verb'nnz' (short for ``number of nonzeros'') in
+MATLAB is better described as ``number of entries'' in GraphBLAS.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_build:} build a matrix from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{matrix_build}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_build           // build a matrix from (I,J,X) tuples
+(
+    GrB_Matrix C,                   // matrix to build
+    const GrB_Index *I,             // array of row indices of tuples
+    const GrB_Index *J,             // array of column indices of tuples
+    const <type> *X,                // array of values of tuples
+    GrB_Index nvals,                // number of tuples
+    const GrB_BinaryOp dup          // binary function to assemble duplicates
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_build' constructs a sparse matrix \verb'C' from a set of
+tuples, \verb'I', \verb'J', and \verb'X', each of length \verb'nvals'.  The
+matrix \verb'C' must have already been initialized with \verb'GrB_Matrix_new',
+and it must have no entries in it before calling \verb'GrB_Matrix_build'.  Thus
+the dimensions and type of \verb'C' are not changed by this function, but are
+inherited from the prior call to \verb'GrB_Matrix_new' or
+\verb'GrB_matrix_dup'.
+
+An error is returned (\verb'GrB_INDEX_OUT_OF_BOUNDS') if any row index in
+\verb'I' is greater than or equal to the number of rows of \verb'C', or if any
+column index in \verb'J' is greater than or equal to the number of columns of
+\verb'C'
+
+Any duplicate entries with identical indices are assembled using the binary
+\verb'dup' operator provided on input.  All three types (\verb'x', \verb'y',
+\verb'z' for \verb'z=dup(x,y)') must be identical.  The types of \verb'dup',
+\verb'C' and \verb'X' must all be compatible.  See Section~\ref{typecasting}
+regarding typecasting and compatibility.  The values in \verb'X' are
+typecasted, if needed, into the type of \verb'dup'.  Duplicates are then
+assembled into a matrix \verb'T' of the same type as \verb'dup', using
+\verb'T(i,j) = dup (T (i,j), X (k))'.  After \verb'T' is constructed, it is
+typecasted into the result \verb'C'.  That is, typecasting does not occur at
+the same time as the assembly of duplicates.
+
+If \verb'dup' is \verb'NULL', any duplicates result in an error.
+If \verb'dup' is the special binary operator \verb'GxB_IGNORE_DUP', then
+any duplicates are ignored.  If duplicates appear, the last one in the
+list of tuples is taken and the prior ones ignored.  This is not an error.
+
+\begin{alert}
+{\bf SPEC:} As an extension to the specification, results are defined even if
+\verb'dup' is non-associative and/or non-commutative.
+\end{alert}
+
+The GraphBLAS API requires \verb'dup' to be associative so
+that entries can be assembled in any order, and states that the result is
+undefined if \verb'dup' is not associative.  However, SuiteSparse:GraphBLAS
+guarantees a well-defined order of assembly.  Entries in the tuples
+\verb'[I,J,X]' are first sorted in increasing order of row and column index,
+with ties broken by the position of the tuple in the \verb'[I,J,X]' list.  If
+duplicates appear, they are assembled in the order they appear in the
+\verb'[I,J,X]' input.  That is, if the same indices \verb'i' and \verb'j'
+appear in positions \verb'k1', \verb'k2', \verb'k3', and \verb'k4' in
+\verb'[I,J,X]', where \verb'k1 < k2 < k3 < k4', then the following operations
+will occur in order:
+
+    {\footnotesize
+    \begin{verbatim}
+    T (i,j) = X (k1) ;
+    T (i,j) = dup (T (i,j), X (k2)) ;
+    T (i,j) = dup (T (i,j), X (k3)) ;
+    T (i,j) = dup (T (i,j), X (k4)) ; \end{verbatim}}
+
+This is a well-defined order but the user should not depend upon it when using
+other GraphBLAS implementations since the GraphBLAS API does not
+require this ordering.
+
+However, SuiteSparse:GraphBLAS guarantees this ordering, even when it compute
+the result in parallel.  With this well-defined order, several operators become
+very useful.  In particular, the \verb'SECOND' operator results in the last
+tuple overwriting the earlier ones.  The \verb'FIRST' operator means the value
+of the first tuple is used and the others are discarded.
+
+The acronym \verb'dup' is used here for the name of binary function used for
+assembling duplicates, but this should not be confused with the \verb'_dup'
+suffix in the name of the function \verb'GrB_Matrix_dup'.  The latter function
+does not apply any operator at all, nor any typecasting, but simply makes a
+pure deep copy of a matrix.
+
+The parameter \verb'X' is a pointer to any C equivalent built-in type, or a
+\verb'void *' pointer.  The \verb'GrB_Matrix_build' function uses the
+\verb'_Generic' feature of C11 to detect the type of pointer passed as the
+parameter \verb'X'.  If \verb'X' is a pointer to a built-in type, then the
+function can do the right typecasting.  If \verb'X' is a \verb'void *' pointer,
+then it can only assume \verb'X' to be a pointer to a user-defined type that is
+the same user-defined type of \verb'C' and \verb'dup'.  This function has no
+way of checking this condition that the \verb'void * X' pointer points to an
+array of the correct user-defined type, so behavior is undefined if the user
+breaks this condition.
+
+The \verb'GrB_Matrix_build' method is analogous to \verb'C = sparse (I,J,X)' in
+MATLAB, with several important extensions that go beyond that which MATLAB can
+do.  In particular, the MATLAB \verb'sparse' function only provides one option
+for assembling duplicates (summation), and it can only build double, double
+complex, and logical sparse matrices.
+%
+The \verb'dup' operator cannot be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_build\_Vector:} build a matrix from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{matrix_build_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_build           // build a matrix from (I,J,X) tuples
+(
+    GrB_Matrix C,               // matrix to build
+    const GrB_Vector I_vector,  // row indices
+    const GrB_Vector J_vector,  // col indices
+    const GrB_Vector X_vector,  // values
+    const GrB_BinaryOp dup,     // binary function to assemble duplicates
+    const GrB_Descriptor desc
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_build_Vector' is identical to \verb'GrB_Matrix_build', except
+that the inputs \verb'I', \verb'J', and \verb'X' are \verb'GrB_Vector' objects,
+each with \verb'nvals' entries.  The interpretation of \verb'I_vector',
+\verb'J_vector', and \verb'X_vector' are controlled by descriptor settings
+\verb'GxB_ROWINDEX_LIST', \verb'GxB_COLINDEX_LIST', and \verb'GxB_VALUE_LIST',
+respectively.  The method can use either the indices or values of each of the
+input vectors; the default is to use the values.  See Section~\ref{ijxvector} for
+details.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_build\_Scalar:} build a matrix from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{matrix_build_Scalar}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_build           // build a matrix from (I,J,scalar) tuples
+(
+    GrB_Matrix C,                   // matrix to build
+    const GrB_Index *I,             // array of row indices of tuples
+    const GrB_Index *J,             // array of column indices of tuples
+    GrB_Scalar scalar,              // value for all tuples
+    GrB_Index nvals                 // number of tuples
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_build_Scalar' constructs a sparse matrix \verb'C' from a set
+of tuples defined the index arrays \verb'I' and \verb'J' of length
+\verb'nvals', and a scalar.  The scalar is the value of all of the tuples.
+Unlike \verb'GrB_Matrix_build', there is no \verb'dup' operator to handle
+duplicate entries.  Instead, any duplicates are silently ignored (if the number
+of duplicates is desired, simply compare the input \verb'nvals' with the value
+returned by \verb'GrB_Vector_nvals' after the matrix is constructed).  All
+entries in the sparsity pattern of \verb'C' are identical, and equal to the
+input scalar value.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_build\_Scalar\_Vector:} build a matrix from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{matrix_build_Scalar_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_build       // build a matrix from (I,J,scalar) tuples
+(
+    GrB_Matrix C,               // matrix to build
+    const GrB_Vector I_vector,  // row indices
+    const GrB_Vector J_vector,  // col indices
+    GrB_Scalar scalar,          // value for all tuples
+    const GrB_Descriptor desc
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_build_Scalar_Vector' is identical to
+\verb'GxB_Matrix_build_Scalar', except that the inputs \verb'I', \verb'J', and
+\verb'X' are \verb'GrB_Vector' objects, each with \verb'nvals' entries.  The
+interpretation of \verb'I_vector' and \verb'J_vector' are controlled by
+descriptor settings \verb'GxB_ROWINDEX_LIST' and \verb'GxB_VALUE_LIST',
+respectively.  The method can use either the indices or values of the
+\verb'I_input' and \verb'J_vector' vectors; the default is to use the values.
+See Section~\ref{ijxvector} for details.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_setElement:}   add an entry to a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_setElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_setElement          // C (i,j) = x
+(
+    GrB_Matrix C,                       // matrix to modify
+    <type> x,                           // scalar to assign to C(i,j)
+    GrB_Index i,                        // row index
+    GrB_Index j                         // column index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_setElement' sets a single entry in a matrix, \verb'C(i,j)=x'.
+If the entry is already present in the pattern of \verb'C', it is overwritten
+with the new value.  If the entry is not present, it is added to \verb'C'.  In
+either case, no entry is ever deleted by this function.  Passing in a value of
+\verb'x=0' simply creates an explicit entry at position \verb'(i,j)' whose
+value is zero, even if the implicit value is assumed to be zero.
+
+An error is returned (\verb'GrB_INVALID_INDEX') if the row index \verb'i' is
+greater than or equal to the number of rows of \verb'C', or if the column index
+\verb'j' is greater than or equal to the number of columns of \verb'C'.  Note
+that this error code differs from the same kind of condition in
+\verb'GrB_Matrix_build', which returns \verb'GrB_INDEX_OUT_OF_BOUNDS'.  This is
+because \verb'GrB_INVALID_INDEX' is an API error, and is caught immediately
+even in non-blocking mode, whereas \verb'GrB_INDEX_OUT_OF_BOUNDS' is an
+execution error whose detection may wait until the computation completes
+sometime later.
+
+The scalar \verb'x' is typecasted into the type of \verb'C'.  Any value can be
+passed to this function and its type will be detected, via the \verb'_Generic'
+feature of C11.  For a user-defined type, \verb'x' is a \verb'void *'
+pointer that points to a memory space holding a single entry of this
+user-defined type.  This user-defined type must exactly match the user-defined
+type of \verb'C' since no typecasting is done between user-defined types.
+%
+If \verb'x' is a \verb'GrB_Scalar' and contains no entry, then the
+entry \verb'C(i,j)' is removed (if it exists).  The action taken is
+identical to \verb'GrB_Matrix_removeElement(C,i,j)' in this case.
+
+{\bf Performance considerations:} % BLOCKING: setElement, *assign
+SuiteSparse:GraphBLAS exploits the non-blocking mode to greatly improve the
+performance of this method.  Refer to the example shown in
+Section~\ref{overview}.  If the entry exists in the pattern already, it is
+updated right away and the work is not left pending.  Otherwise, it is placed
+in a list of pending updates, and the later on the updates are done all at
+once, using the same algorithm used for \verb'GrB_Matrix_build'.  In other
+words, \verb'setElement' in SuiteSparse:GraphBLAS builds its own internal list
+of tuples \verb'[I,J,X]', and then calls \verb'GrB_Matrix_build' whenever the
+matrix is needed in another computation, or whenever \verb'GrB_Matrix_wait' is
+called.
+
+As a result, if calls to \verb'setElement' are mixed with calls to most other
+methods and operations (even \verb'extractElement') then the pending updates
+are assembled right away, which will be slow.  Performance will be good if many
+\verb'setElement' updates are left pending, and performance will be poor if the
+updates are assembled frequently.
+
+A few methods and operations can be intermixed with \verb'setElement', in
+particular, some forms of the \verb'GrB_assign' and \verb'GxB_subassign'
+operations are compatible with the pending updates from \verb'setElement'.
+Section~\ref{compare_assign} gives more details on which \verb'GxB_subassign'
+and \verb'GrB_assign' operations can be interleaved with calls to
+\verb'setElement' without forcing updates to be assembled.  Other methods that
+do not access the existing entries may also be done without forcing the updates
+to be assembled, namely \verb'GrB_Matrix_clear' (which erases all pending
+updates), \verb'GrB_Matrix_free', \verb'GrB_Matrix_ncols',
+\verb'GrB_Matrix_nrows', \verb'GrB_get', and of course
+\verb'GrB_Matrix_setElement' itself.  All other methods and operations cause
+the updates to be assembled.  Future versions of SuiteSparse:GraphBLAS may
+extend this list.
+
+See Section~\ref{random} for an example of how to use
+\verb'GrB_Matrix_setElement'.
+If an error occurs, \verb'GrB_error(&err,C)' returns details about the error.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_extractElement:} get an entry from a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_extractElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_extractElement      // x = A(i,j)
+(
+    <type> *x,                  // extracted scalar (non-opaque C scalar)
+    const GrB_Matrix A,         // matrix to extract a scalar from
+    GrB_Index i,                // row index
+    GrB_Index j                 // column index
+) ;
+GrB_Info GrB_Matrix_extractElement      // x = A(i,j)
+(
+    GrB_Scalar x,               // extracted GrB_Scalar
+    const GrB_Matrix A,         // matrix to extract a scalar from
+    GrB_Index i,                // row index
+    GrB_Index j                 // column index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_extractElement' extracts a single entry from a matrix
+\verb'x=A(i,j)'.
+An error is returned (\verb'GrB_INVALID_INDEX') if the row index \verb'i' is
+greater than or equal to the number of rows of \verb'C', or if column index
+\verb'j' is greater than or equal to the number of columns of \verb'C'.
+If the entry is present, \verb'x=A(i,j)' is performed and the scalar \verb'x'
+is returned with this value.  The method returns \verb'GrB_SUCCESS'.
+If no entry is present at \verb'A(i,j)', and \verb'x' is a non-opaque C scalar,
+then \verb'x' is not modified, and the return value of
+\verb'GrB_Matrix_extractElement' is \verb'GrB_NO_VALUE'.  If \verb'x' is a
+\verb'GrB_Scalar', then \verb'x' is returned as an empty scalar with no entry,
+and \verb'GrB_SUCCESS' is returned.
+
+The function knows the type of the pointer \verb'x', so it can do typecasting
+as needed, from the type of \verb'A' into the type of \verb'x'.  User-defined
+types cannot be typecasted, so if \verb'A' has a user-defined type then
+\verb'x' must be a \verb'void *' pointer that points to a memory space the same
+size as a single scalar of the type of \verb'A'.
+
+Currently, this method causes all pending updates from
+\verb'GrB_setElement', \verb'GrB_assign', or \verb'GxB_subassign' to be
+assembled, so its use can have performance implications.  Calls to this
+function should not be arbitrarily intermixed with calls to these other two
+functions.  Everything will work correctly and results will be predictable, it
+will just be slow.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_isStoredElement:} check if entry present in matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_isStoredElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_isStoredElement
+(
+    const GrB_Matrix A,         // check for A(i,j)
+    GrB_Index i,                // row index
+    GrB_Index j                 // column index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_isStoredElement' check if the single entry \verb'A(i,j)' is
+present in the matrix \verb'A'.  It returns \verb'GrB_SUCCESS' if the entry is
+present, or \verb'GrB_NO_VALUE' otherwise.  The value of \verb'A(i,j)' is not
+returned. It is otherwise identical to \verb'GrB_Matrix_extractElement'.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_removeElement:} remove an entry from a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_removeElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_removeElement
+(
+    GrB_Matrix C,                   // matrix to remove an entry from
+    GrB_Index i,                    // row index
+    GrB_Index j                     // column index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_removeElement' removes a single entry \verb'A(i,j)' from a
+matrix.  If no entry is present at \verb'A(i,j)', then the matrix is not
+modified.  If an error occurs, \verb'GrB_error(&err,A)' returns details about
+the error.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_extractTuples:} get all entries from a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_extractTuples}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_extractTuples           // [I,J,X] = find (A)
+(
+    GrB_Index *I,               // array for returning row indices of tuples
+    GrB_Index *J,               // array for returning col indices of tuples
+    <type> *X,                  // array for returning values of tuples
+    GrB_Index *nvals,           // I,J,X size on input; # tuples on output
+    const GrB_Matrix A          // matrix to extract tuples from
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_extractTuples' extracts all the entries from the matrix
+\verb'A', returning them as a list of tuples, analogous to
+\verb'[I,J,X]=find(A)' in MATLAB.  Entries in the tuples \verb'[I,J,X]' are
+unique.  No pair of row and column indices \verb'(i,j)' appears more than once.
+
+The GraphBLAS API states the tuples can be returned in any order.  If
+\verb'GrB_wait' is called first, then SuiteSparse:GraphBLAS chooses to
+always return them in sorted order, depending on whether the matrix is stored
+by row or by column.  Otherwise, the indices can be returned in any order.
+
+The number of tuples in the matrix \verb'A' is given by
+\verb'GrB_Matrix_nvals(&anvals,A)'.  If \verb'anvals' is larger than the size
+of the arrays (\verb'nvals' in the parameter list), an error
+\verb'GrB_INSUFFICIENT_SIZE' is returned, and no tuples are extracted.  If
+\verb'nvals' is larger than \verb'anvals', then only the first \verb'anvals'
+entries in the arrays \verb'I' \verb'J', and \verb'X' are modified, containing
+all the tuples of \verb'A', and the rest of \verb'I' \verb'J', and \verb'X' are
+left unchanged.  On output, \verb'nvals' contains the number of tuples
+extracted.
+
+\begin{alert}
+{\bf SPEC:} As an extension to the specification, the arrays \verb'I',
+\verb'J', and/or \verb'X' may be passed in as \verb'NULL' pointers.
+\verb'GrB_Matrix_extractTuples' does not return a component specified as
+\verb'NULL'.  This is not an error condition.
+\end{alert}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_extractTuples\_Vector:} get all entries from a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_extractTuples_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_extractTuples   // [I,J,X] = find (A)
+(
+    GrB_Vector I_vector,    // row indices
+    GrB_Vector J_vector,    // col indices
+    GrB_Vector X_vector,    // values
+    const GrB_Matrix A,     // matrix to extract tuples from
+    const GrB_Descriptor desc   // currently unused; for future expansion
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_extractTuples_Vector' is identical to
+\verb'GrB_Matrix_extractTuples' except that its three outputs are
+\verb'GrB_Vector' objects.  The vectors \verb'I_vector', \verb'J_vector', and
+\verb'X_vector' objects must exist on input.  On output, any prior content is
+erased and their type, dimensions, and values are revised to contain dense
+vectors of length \verb'nvals'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_resize:}          resize a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_resize}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_resize      // change the size of a matrix
+(
+    GrB_Matrix A,               // matrix to modify
+    const GrB_Index nrows_new,  // new number of rows in matrix
+    const GrB_Index ncols_new   // new number of columns in matrix
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_resize' changes the size of a matrix.  If the dimensions
+decrease, entries that fall outside the resized matrix are deleted.  Unlike
+\verb'GxB_Matrix_reshape*' (see Sections \ref{matrix_reshape} and
+\ref{matrix_reshapedup}), entries remain in their same position after resizing
+the matrix.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_reshape:} reshape a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_reshape}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_reshape     // reshape a GrB_Matrix in place
+(
+    // input/output:
+    GrB_Matrix C,               // input/output matrix, reshaped in place
+    // input:
+    bool by_col,                // true if reshape by column, false if by row
+    GrB_Index nrows_new,        // new number of rows of C
+    GrB_Index ncols_new,        // new number of columns of C
+    const GrB_Descriptor desc
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_reshape' changes the size of a matrix \verb'C', taking entries
+from the input matrix either column-wise or row-wise.  If matrix \verb'C' on
+input is \verb'nrows'-by-\verb'ncols', and the requested dimensions of
+\verb'C' on output are \verb'nrows_new'-by-\verb'nrows_cols', then
+the condition \verb'nrows*ncols == nrows_new*nrows_cols' must hold.
+The matrix \verb'C' is modified in-place, as both an input and output for
+this method.  To create a new matrix, use \verb'GxB_Matrix_reshapeDup'
+instead (Section \ref{matrix_reshapedup}).
+
+For example, if \verb'C' is 3-by-4 on input, and is reshaped column-wise to
+have dimensions 2-by-6:
+
+\begin{verbatim}
+        C on input      C on output (by_col true)
+        00 01 02 03     00 20 11 02 22 13
+        10 11 12 13     10 01 21 12 03 23
+        20 21 22 23
+\end{verbatim}
+
+If the same \verb'C' on input is reshaped row-wise to dimensions 2-by-6:
+
+\begin{verbatim}
+        C on input      C on output (by_col false)
+        00 01 02 03     00 01 02 03 10 11
+        10 11 12 13     12 13 20 21 22 23
+        20 21 22 23
+\end{verbatim}
+
+NOTE: because an intermediate linear index must be computed for each entry,
+\verb'GxB_Matrix_reshape' cannot be used on matrices for which
+\verb'nrows*ncols' exceeds $2^{60}$.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_reshapeDup:} reshape a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_reshapedup}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_reshapeDup // reshape a GrB_Matrix into another GrB_Matrix
+(
+    // output:
+    GrB_Matrix *C,              // newly created output matrix, not in place
+    // input:
+    GrB_Matrix A,               // input matrix, not modified
+    bool by_col,                // true if reshape by column, false if by row
+    GrB_Index nrows_new,        // number of rows of C
+    GrB_Index ncols_new,        // number of columns of C
+    const GrB_Descriptor desc
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_reshapeDup' is identical to \verb'GxB_Matrix_reshape' (see
+Section \ref{matrix_reshape}), except that creates a new output matrix
+\verb'C' that is reshaped from the input matrix \verb'A'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_concat:} concatenate matrices   }
+%-------------------------------------------------------------------------------
+\label{matrix_concat}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_concat          // concatenate a 2D array of matrices
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n
+    const GrB_Index m,
+    const GrB_Index n,
+    const GrB_Descriptor desc       // unused, except threading control
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_concat' concatenates an array of matrices (\verb'Tiles') into
+a single \verb'GrB_Matrix' \verb'C'.
+
+\verb'Tiles' is an \verb'm'-by-\verb'n' dense array of matrices held in
+row-major format, where \verb'Tiles [i*n+j]' is the $(i,j)$th tile, and where
+\verb'm' $> 0$ and \verb'n' $> 0$ must hold.  Let $A_{i,j}$ denote the
+$(i,j)$th tile.  The matrix \verb'C' is constructed by concatenating these
+tiles together, as:
+
+\[
+C =
+\left[
+\begin{array}{ccccc}
+          A_{0,0}   & A_{0,1}   & A_{0,2}   & \cdots & A_{0,n-1}   \\
+          A_{1,0}   & A_{1,1}   & A_{1,2}   & \cdots & A_{1,n-1}   \\
+          \cdots    &                                              \\
+          A_{m-1,0} & A_{m-1,1} & A_{m-1,2} & \cdots & A_{m-1,n-1}
+\end{array}
+\right]
+\]
+
+On input, the matrix \verb'C' must already exist.  Any existing entries in
+\verb'C' are discarded.  \verb'C' must have dimensions \verb'nrows' by
+\verb'ncols' where \verb'nrows' is the sum of the number of rows in the
+matrices $A_{i,0}$ for all $i$, and \verb'ncols' is the sum of the number of
+columns in the matrices $A_{0,j}$ for all $j$.  All matrices in any given tile
+row $i$ must have the same number of rows (that is, and all matrices in any
+given tile column $j$ must have the same number of columns).
+
+The type of \verb'C' is unchanged, and all matrices $A_{i,j}$ are typecasted
+into the type of \verb'C'.  Any settings made to \verb'C' by
+\verb'GrB_set' (format by row or by column, bitmap switch, hyper
+switch, and sparsity control) are unchanged.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_split:} split a matrix   }
+%-------------------------------------------------------------------------------
+\label{matrix_split}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_split           // split a matrix into 2D array of matrices
+(
+    GrB_Matrix *Tiles,              // 2D row-major array of size m-by-n
+    const GrB_Index m,
+    const GrB_Index n,
+    const GrB_Index *Tile_nrows,    // array of size m
+    const GrB_Index *Tile_ncols,    // array of size n
+    const GrB_Matrix A,             // input matrix to split
+    const GrB_Descriptor desc       // unused, except threading control
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_split' does the opposite of \verb'GxB_Matrix_concat'.  It
+splits a single input matrix \verb'A' into a 2D array of tiles.  On input, the
+\verb'Tiles' array must be a non-\verb'NULL' pointer to a previously allocated
+array of size at least \verb'm*n' where both \verb'm' and \verb'n' must be
+greater than zero.  The \verb'Tiles_nrows' array has size \verb'm', and
+\verb'Tiles_ncols' has size \verb'n'.  The $(i,j)$th tile has dimension
+\verb'Tiles_nrows[i]'-by-\verb'Tiles_ncols[j]'.  The sum of
+\verb'Tiles_nrows [0:m-1]' must equal the number of rows of \verb'A', and the
+sum of \verb'Tiles_ncols [0:n-1]' must equal the number of columns of \verb'A'.
+The type of each tile is the same as the type of \verb'A'; no typecasting is
+done.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_diag:} construct a diagonal matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_diag}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_diag    // construct a diagonal matrix from a vector
+(
+    GrB_Matrix *C,                  // output matrix
+    const GrB_Vector v,             // input vector
+    int64_t k
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_diag' constructs a matrix from a vector.  Let $n$ be the
+length of the \verb'v' vector, from \verb'GrB_Vector_size (&n, v)'.  If
+\verb'k' = 0, then \verb'C' is an $n$-by-$n$ diagonal matrix with the entries
+from \verb'v' along the main diagonal of \verb'C', with \verb'C(i,i)=v(i)'.  If
+\verb'k' is nonzero, \verb'C' is square with dimension $n+|k|$.  If \verb'k' is
+positive, it denotes diagonals above the main diagonal, with
+\verb'C(i,i+k)=v(i)'.
+If \verb'k' is negative, it denotes diagonals below the main diagonal of
+\verb'C', with \verb'C(i-k,i)=v(i)'.  This behavior is identical to the MATLAB
+statement \verb'C=diag(v,k)', where \verb'v' is a vector.
+
+The output matrix \verb'C' is a newly-constructed square matrix with the
+same type as the input vector \verb'v'.  No typecasting is performed.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_diag:} build a diagonal matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_diag_GxB}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_diag    // build a diagonal matrix from a vector
+(
+    GrB_Matrix C,                   // output matrix
+    const GrB_Vector v,             // input vector
+    int64_t k,
+    const GrB_Descriptor desc       // unused, except threading control
+) ;
+\end{verbatim} } \end{mdframed}
+
+Identical to \verb'GrB_Matrix_diag', except for the extra parameter
+(a \verb'descriptor' to provide control over the number of threads used),
+and this method is not a constructor.
+
+The matrix \verb'C' must already exist on input, of the correct size.  It must
+be square of dimension $n+|k|$ where the vector \verb'v' has length $n$.  Any
+existing entries in \verb'C' are discarded.  The type of \verb'C' is preserved,
+so that if the type of \verb'C' and \verb'v' differ, the entries are typecasted
+into the type of \verb'C'.  Any settings made to \verb'C' by
+\verb'GrB_set' (format by row or by column, bitmap switch, hyper
+switch, and sparsity control) are unchanged.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_memoryUsage:} memory used by a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_memusage}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_memoryUsage  // return # of bytes used for a matrix
+(
+    size_t *size,           // # of bytes used by the matrix A
+    const GrB_Matrix A      // matrix to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+Returns the memory space required for a matrix, in bytes.
+By default, any read-only components are not included in the total memory.
+This can be changed with via \verb'GrB_set'; see Section~\ref{get_set_global}.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_type:} type of a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_type}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_type    // get the type of a matrix
+(
+    GrB_Type *type,         // returns the type of the matrix
+    const GrB_Matrix A      // matrix to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+Returns the type of a matrix.  The \verb'type' parameter is not allocated.
+Calling \verb'GxB_Matrix_type' is identical to making a shallow pointer copy
+of the type used to create a matrix.  In particular, suppose a matrix is
+created, and a copy of its type is saved at the same time:
+
+{\footnotesize
+\begin{verbatim}
+    GrB_Matrix_new (&A, atype, m, n) ;
+    GrB_Type save_type = atype ;
+\end{verbatim}}
+
+Sometime later, while the matrix \verb'A' and its type \verb'atype' have not
+been freed, the following two code fragments are identical:
+
+{\footnotesize
+\begin{verbatim}
+    // using GxB_Matrix_type:
+    GrB_Type atype2 ;
+    GxB_Matrix_type (&atype2, A) ;
+    assert (atype2 == save_type) ;
+
+    // without GxB_Matrix_type:
+    GrB_Type atype2 = save_type ;
+\end{verbatim}}
+
+As a result, freeing \verb'atype2' would be the same as freeing the original
+\verb'atype'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_free:} free a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free           // free a matrix
+(
+    GrB_Matrix *A           // handle of matrix to free
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_free' frees a matrix.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Matrix_free (&A) ;
+    GrB_free (&A) ; \end{verbatim}}
+
+\noindent
+frees the matrix \verb'A' and sets \verb'A' to \verb'NULL'.  It safely does
+nothing if passed a \verb'NULL' handle, or if \verb'A == NULL' on input.  Any
+pending updates to the matrix are abandoned.
+
+

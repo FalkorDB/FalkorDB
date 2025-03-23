@@ -8,7 +8,7 @@ function codegen_uop_method (uop, op, ztype, xtype)
 %   ztype: the type of z for z=f(x)
 %   xtype: the type of x for z=f(x)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 f = fopen ('control.m4', 'w') ;

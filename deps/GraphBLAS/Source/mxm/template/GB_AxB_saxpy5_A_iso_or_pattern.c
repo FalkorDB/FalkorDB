@@ -2,7 +2,7 @@
 // GB_AxB_saxpy5_A_iso_or_pattern.c: C+=A*B; C full, A bitmap/full & iso/pattern
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,9 +32,9 @@
     #if GB_A_IS_BITMAP
     const int8_t  *restrict Ab = A->b ;
     #endif
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
-    const int64_t *restrict Bi = B->i ;
+    GB_Bp_DECLARE (Bp, const) ; GB_Bp_PTR (Bp, B) ;
+    GB_Bh_DECLARE (Bh, const) ; GB_Bh_PTR (Bh, B) ;
+    GB_Bi_DECLARE (Bi, const) ; GB_Bi_PTR (Bi, B) ;
     #ifdef GB_JIT_KERNEL
     #define B_iso GB_B_ISO
     #else
@@ -67,23 +67,20 @@
         for (int64_t jB = jB_start ; jB < jB_end ; jB++)
         {
             // get B(:,j) and C(:,j)
-            const int64_t j = GBH_B (Bh, jB) ;
+            const int64_t j = GBh_B (Bh, jB) ;
             const int64_t pC = j * m ;
-            const int64_t pB_start = Bp [jB] ;
-            const int64_t pB_end   = Bp [jB+1] ;
+            const int64_t pB_start = GB_IGET (Bp, jB) ;
+            const int64_t pB_end   = GB_IGET (Bp, jB+1) ;
             // C(:,j) += A*B(:,j)
             for (int64_t pB = pB_start ; pB < pB_end ; pB++)
             {
                 // get B(k,j)
-                const int64_t k = Bi [pB] ;
+                const int64_t k = GB_IGET (Bi, pB) ;
                 #if GB_A_IS_BITMAP
                 // get A(:,k)
                 const int64_t pA = k * m ;
                 #endif
-                #if GB_IS_FIRSTI_MULTIPLIER
-                    // s depends on i
-                    #define s (i + GB_OFFSET)
-                #else
+                #if !GB_IS_FIRSTI_MULTIPLIER
                     // s = a * bkj, not dependent on i
                     GB_C_TYPE s ;
                     GB_DECLAREB (bkj) ;
@@ -95,6 +92,10 @@
                 { 
                     #if GB_A_IS_BITMAP
                     if (!Ab [pA + i]) continue ;
+                    #endif
+                    #if GB_IS_FIRSTI_MULTIPLIER
+                    // s depends on i
+                    GB_C_TYPE s = (i + GB_OFFSET) ;
                     #endif
                     // C(i,j) += s ;
                     GB_CIJ_UPDATE (pC + i, s) ;

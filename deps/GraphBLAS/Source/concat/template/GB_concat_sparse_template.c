@@ -2,7 +2,7 @@
 // GB_concat_sparse_template: concatenate a tile into a sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,20 +16,27 @@
     // get C and the tile A
     //--------------------------------------------------------------------------
 
+    ASSERT (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A) || GB_IS_FULL (A)) ;
+
     #ifndef GB_ISO_CONCAT
     const GB_A_TYPE *restrict Ax = (GB_A_TYPE *) A->x ;
           GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
     #endif
 
     #ifdef GB_JIT_KERNEL
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
     int64_t avlen = A->vlen ;
-    int64_t *restrict Ci = C->i ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
     const int64_t *restrict kfirst_Aslice = A_ek_slicing ;
     const int64_t *restrict klast_Aslice  = A_ek_slicing + A_ntasks ;
     const int64_t *restrict pstart_Aslice = A_ek_slicing + A_ntasks * 2 ;
+    #if GB_Cp_IS_32
+    const uint32_t *restrict W = W_parameter ;
+    #else
+    const uint64_t *restrict W = W_parameter ;
+    #endif
     #endif
 
     //--------------------------------------------------------------------------
@@ -44,41 +51,16 @@
         int64_t klast  = klast_Aslice  [tid] ;
         for (int64_t k = kfirst ; k <= klast ; k++)
         {
-            int64_t j = GBH_A (Ah, k) ;
-            const int64_t pC_start = W [j] ;
+            int64_t j = GBh_A (Ah, k) ;
+            const int64_t pC_start = GB_IGET (W, j) ;
 
             //------------------------------------------------------------------
             // find the part of the kth vector A(:,j) for this task
             //------------------------------------------------------------------
 
-#if 0
-            int64_t pA_start, pA_end ;
-            // as done by GB_GET_PA, but also get p0 = Ap [k]
-            const int64_t p0 = GBP_A (Ap, k, avlen) ;
-            const int64_t p1 = GBP_A (Ap, k+1, avlen) ;
-            if (k == kfirst)
-            { 
-                // First vector for task tid; may only be partially owned.
-                pA_start = pstart_Aslice [tid] ;
-                pA_end   = GB_IMIN (p1, pstart_Aslice [tid+1]) ;
-            }
-            else if (k == klast)
-            { 
-                // Last vector for task tid; may only be partially owned.
-                pA_start = p0 ;
-                pA_end   = pstart_Aslice [tid+1] ;
-            }
-            else
-            { 
-                // task tid entirely owns this vector A(:,k).
-                pA_start = p0 ;
-                pA_end   = p1 ;
-            }
-#endif
-
-            const int64_t p0 = GBP_A (Ap, k, avlen) ;
+            const int64_t p0 = GBp_A (Ap, k, avlen) ;
             GB_GET_PA (pA_start, pA_end, tid, k, kfirst, klast, pstart_Aslice,
-                p0, GBP_A (Ap, k+1, avlen)) ;
+                p0, GBp_A (Ap, k+1, avlen)) ;
 
             //------------------------------------------------------------------
             // append A(:,j) onto C(:,j)
@@ -87,9 +69,10 @@
             GB_PRAGMA_SIMD
             for (int64_t pA = pA_start ; pA < pA_end ; pA++)
             { 
-                int64_t i = GBI_A (Ai, pA, avlen) ;       // i = Ai [pA]
+                int64_t i = GBi_A (Ai, pA, avlen) ;     // i = Ai [pA]
                 int64_t pC = pC_start + pA - p0 ;
-                Ci [pC] = cistart + i ;
+                int64_t ci = cistart + i ;
+                GB_ISET (Ci, pC, ci) ;                  // Ci [pC] = ci ; 
                 // Cx [pC] = Ax [pA] ;
                 GB_COPY (pC, pA, A_iso) ;
             }

@@ -212,7 +212,12 @@ SIValue AR_SUBSTRING(SIValue *argv, int argc, void *private_data) {
 // given a list of strings and an optional delimiter
 // return a concatenation of all the strings using the given delimiter
 // string.join(list, delimiter = '') -> string
-SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
+SIValue AR_JOIN
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	SIValue list = argv[0];
 	if(SI_TYPE(list) == T_NULL) {
 		return SI_NullVal();
@@ -226,6 +231,11 @@ SIValue AR_JOIN(SIValue *argv, int argc, void *private_data) {
 	int str_len = 0;                           // output string length
 	uint32_t n = SIArray_Length(list);         // number of strings to join
 	size_t delimeter_len = strlen(delimiter);  // length of the delimiter
+
+	// empty list
+	if(unlikely(n) == 0) {
+		return SI_ConstStringVal("");
+	}
 
 	//--------------------------------------------------------------------------
 	// compute required string length

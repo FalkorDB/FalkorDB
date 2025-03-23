@@ -2,7 +2,7 @@
 // GB_bld_template.c: Tx=build(Sx), and assemble any duplicate tuples
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,10 +18,15 @@
 
 {
 
-    // k unused for some uses of this template
-    #include "include/GB_unused.h"
+    #ifndef GB_NO_DUPLICATES
+    #define GB_NO_DUPLICATES (ndupl == 0)
+    #endif
 
-    if (ndupl == 0)
+    #ifndef GB_K_IS_NULL
+    #define GB_K_IS_NULL (K_work == NULL)
+    #endif
+
+    if (GB_NO_DUPLICATES)
     {
 
         //----------------------------------------------------------------------
@@ -35,7 +40,7 @@
 
         #ifndef GB_ISO_BUILD
 
-            if (K_work == NULL)
+            if (GB_K_IS_NULL)
             {
 
                 int tid ;
@@ -64,7 +69,8 @@
                     for (int64_t t = tstart ; t < tend ; t++)
                     { 
                         // Tx [t] = (ttype) Sx [K_work [t]] ;
-                        GB_BLD_COPY (Tx, t, Sx, K_work [t]) ;
+                        int64_t k = GB_IGET (K_work, t) ;
+                        GB_BLD_COPY (Tx, t, Sx, k) ;
                     }
                 }
             }
@@ -96,30 +102,32 @@
             for (t = tstart ; t < tend ; t++)
             { 
                 // get the tuple and break if it is not a duplicate
-                if (I_work [t] >= 0) break ;
+                int64_t i = GB_IGET (I_work, t) ;
+                if (i != duplicate_entry) break ;
             }
 
             // scan all tuples and assemble any duplicates
             for ( ; t < tend ; t++)
             {
                 // get the t-th tuple, a unique tuple
-                int64_t i = I_work [t] ;
-                ASSERT (i >= 0) ;
+                int64_t i = GB_IGET (I_work, t) ;
+                ASSERT (i != duplicate_entry) ;
                 #ifndef GB_ISO_BUILD
-                int64_t k = (K_work == NULL) ? t : K_work [t] ;
+                int64_t k = GB_K_WORK (t) ;
                 // Tx [my_tnz] = (ttype) Sx [k] ;
                 GB_BLD_COPY (Tx, my_tnz, Sx, k) ;
                 #endif
-                Ti [my_tnz] = i ;
+                GB_ISET (Ti, my_tnz, i) ;   // Ti [my_tnz] = i
 
                 // assemble all duplicates that follow it.  This may assemble
                 // the first duplicates in the next slice(s) (up to but not
                 // including the first unique tuple in the subsequent slice(s)).
-                for ( ; t+1 < nvals && I_work [t+1] < 0 ; t++)
+                for ( ; t+1 < nvals &&
+                    GB_IGET (I_work, t+1) == duplicate_entry ; t++)
                 { 
                     // assemble the duplicate tuple
-                    #ifndef GB_ISO_BUILD
-                    int64_t k = (K_work == NULL) ? (t+1) : K_work [t+1] ;
+                    #if !(defined (GB_ISO_BUILD) || defined (GB_DUP_IS_FIRST))
+                    int64_t k = GB_K_WORK (t+1) ;
                     // Tx [my_tnz] += Sx [k], typecasting as needed
                     GB_BLD_DUP (Tx, my_tnz, Sx, k) ;
                     #endif

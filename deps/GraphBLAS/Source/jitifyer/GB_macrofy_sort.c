@@ -2,7 +2,7 @@
 // GB_macrofy_sort: construct all macros for sort methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,9 +25,14 @@ void GB_macrofy_sort            // construct all macros for GxB_sort
     // extract the binaryop method_code
     //--------------------------------------------------------------------------
 
-    // binary operator (14 bits, 3 hex digits)
-//  int binop_code  = GB_RSHIFT (method_code, 12, 6) ;
-    int xcode       = GB_RSHIFT (method_code,  8, 4) ;
+    // integers of C
+    bool Cp_is_32   = GB_RSHIFT (method_code, 16, 1) ;
+    bool Cj_is_32   = GB_RSHIFT (method_code, 15, 1) ;
+    bool Ci_is_32   = GB_RSHIFT (method_code, 14, 1) ;
+
+    // binary operator
+//  int binop_code  = GB_RSHIFT (method_code,  8, 6) ;
+    int xcode       = GB_RSHIFT (method_code,  4, 4) ;
 
     // type of C (1 hex digit)
     int ccode       = GB_RSHIFT (method_code,  0, 4) ; // 1 to 14, C is not iso
@@ -73,7 +78,8 @@ void GB_macrofy_sort            // construct all macros for GxB_sort
     // macros for the C matrix
     //--------------------------------------------------------------------------
 
-    GB_macrofy_input (fp, "c", "C", "C", true, xtype, ctype, 1, ccode, 0, -1) ;
+    GB_macrofy_input (fp, "c", "C", "C", true, xtype, ctype, 1, ccode,
+        /* C_iso: */ false, -1, Cp_is_32, Cj_is_32, Ci_is_32) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

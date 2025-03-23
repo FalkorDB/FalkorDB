@@ -2,7 +2,7 @@
 // GB_emult_04_template: C<M>= A.*B, M sparse/hyper, A and B bitmap/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,15 +43,16 @@
     ASSERT (!Mask_comp) ;
     #endif
 
-    const int64_t *restrict Mp = M->p ;
-    const int64_t *restrict Mh = M->h ;
-    const int64_t *restrict Mi = M->i ;
+    GB_Mp_DECLARE (Mp, const) ; GB_Mp_PTR (Mp, M) ;
+    GB_Mh_DECLARE (Mh, const) ; GB_Mh_PTR (Mh, M) ;
+    GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
+
     const GB_M_TYPE *restrict Mx = (GB_M_TYPE *) ((Mask_struct) ? NULL : M->x) ;
     const int64_t vlen = M->vlen ;
     const size_t  msize = M->type->size ;
 
-    const int64_t  *restrict Cp = C->p ;
-          int64_t  *restrict Ci = C->i ;
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
 
     const int64_t *restrict kfirst_Mslice = M_ek_slicing ;
     const int64_t *restrict klast_Mslice  = M_ek_slicing + M_ntasks ;
@@ -69,23 +70,21 @@
         int64_t klast  = klast_Mslice  [tid] ;
         for (int64_t k = kfirst ; k <= klast ; k++)
         {
-            int64_t j = GBH_M (Mh, k) ;
+            int64_t j = GBh_M (Mh, k) ;
             int64_t pstart = j * vlen ;
             GB_GET_PA_AND_PC (pM, pM_end, pC, tid, k, kfirst, klast,
                 pstart_Mslice, Cp_kfirst,
-                GBP_M (Mp, k, vlen), GBP_M (Mp, k+1, vlen),
-                GBP_C (Cp, k, vlen)) ;
+                GB_IGET (Mp, k), GB_IGET (Mp, k+1), GB_IGET (Cp, k)) ;
             for ( ; pM < pM_end ; pM++)
             {
-                int64_t i = Mi [pM] ;
-                if (GB_MCAST (Mx, pM, msize) &&
-                    (GBB_A (Ab, pstart + i)
-                    &&  // TODO: for GB_add, use || instead
-                    GBB_B (Bb, pstart + i)))
+                int64_t i = GB_IGET (Mi, pM) ;
+                if (GB_MCAST (Mx, pM, msize)
+                    && GBb_A (Ab, pstart + i)
+                    && GBb_B (Bb, pstart + i))
                 { 
                     int64_t p = pstart + i ;
                     // C (i,j) = A (i,j) .* B (i,j)
-                    Ci [pC] = i ;
+                    GB_ISET (Ci, pC, i) ;   // Ci [pC] = i
                     #ifndef GB_ISO_EMULT
                     GB_DECLAREA (aij) ;
                     GB_GETA (aij, Ax, p, A_iso) ;

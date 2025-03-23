@@ -2,7 +2,7 @@
 // GrB_Scalar_nvals: number of entries in a sparse GrB_Scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,7 +11,7 @@
 
 GrB_Info GrB_Scalar_nvals   // get the number of entries in a GrB_Scalar
 (
-    GrB_Index *nvals,       // number of entries (1 or 0)
+    uint64_t *nvals,        // number of entries (1 or 0)
     const GrB_Scalar s      // GrB_Scalar to query
 )
 { 
@@ -20,15 +20,16 @@ GrB_Info GrB_Scalar_nvals   // get the number of entries in a GrB_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Scalar_nvals (&nvals, s)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (s) ;
+    GB_RETURN_IF_NULL (s) ;
+    GB_WHERE_1 (s, "GrB_Scalar_nvals (&nvals, s)") ;
+
     ASSERT (GB_SCALAR_OK (s)) ;
 
     //--------------------------------------------------------------------------
     // get the number of entries
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GB_nvals (nvals, (GrB_Matrix) s, Werk) ;
+    info = GB_nvals (nvals, (GrB_Matrix) s, Werk) ;
     #pragma omp flush
     return (info) ;
 }
@@ -39,7 +40,7 @@ GrB_Info GrB_Scalar_nvals   // get the number of entries in a GrB_Scalar
 
 GrB_Info GxB_Scalar_nvals   // get the number of entries in a GrB_Scalar
 (
-    GrB_Index *nvals,       // number of entries (1 or 0)
+    uint64_t *nvals,        // number of entries (1 or 0)
     const GrB_Scalar s      // GrB_Scalar to query
 )
 {

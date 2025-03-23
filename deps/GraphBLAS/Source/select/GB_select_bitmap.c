@@ -2,7 +2,7 @@
 // GB_select_bitmap:  select entries from a bitmap or full matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,7 +40,7 @@ GrB_Info GB_select_bitmap
     ASSERT (GB_IS_BITMAP (A) || GB_IS_FULL (A)) ;
     GB_Opcode opcode = op->opcode ;
     ASSERT (opcode != GB_NONZOMBIE_idxunop_code) ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     //--------------------------------------------------------------------------
     // get A
@@ -55,11 +55,12 @@ GrB_Info GB_select_bitmap
     //--------------------------------------------------------------------------
 
     // C->b and C->x are malloc'd, not calloc'd
-    // set C->iso = C_iso   OK
     GB_OK (GB_new_bix (&C, // always bitmap, existing header
-        A->type, A->vlen, A->vdim, GB_Ap_calloc, true,
-        GxB_BITMAP, false, A->hyper_switch, -1, anz, true, C_iso)) ;
-    int64_t cnvals ;
+        A->type, A->vlen, A->vdim, GB_ph_calloc, true,
+        GxB_BITMAP, false, A->hyper_switch, -1, anz, true, C_iso,
+        /* OK: */ false, false, false)) ;
+
+    ASSERT (GxB_BITMAP == GB_sparsity (C)) ;
 
     //--------------------------------------------------------------------------
     // determine the number of threads to use
@@ -98,8 +99,7 @@ GrB_Info GB_select_bitmap
     #if defined ( GRAPHBLAS_HAS_CUDA )
     if (GB_cuda_select_branch (A, op))
     {
-        info = GB_cuda_select_bitmap (C->b, &cnvals, C_iso, A, flipij, ythunk,
-            op) ;
+        info = GB_cuda_select_bitmap (C, A, flipij, ythunk, op) ;
     }
     #endif
 
@@ -112,8 +112,7 @@ GrB_Info GB_select_bitmap
             // bitmap selector for positional ops
             //------------------------------------------------------------------
 
-            info = GB_select_positional_bitmap (C->b, &cnvals, A, ithunk, op,
-                nthreads) ;
+            info = GB_select_positional_bitmap (C, A, ithunk, op, nthreads) ;
         }
         else
         { 
@@ -132,11 +131,10 @@ GrB_Info GB_select_bitmap
 
                 #define GB_selbit(opname,aname) \
                     GB (_sel_bitmap_ ## opname ## aname)
-                #define GB_SEL_WORKER(opname,aname)                         \
-                {                                                           \
-                    info = GB_selbit (opname, aname) (C->b, &cnvals, A,     \
-                        ythunk, nthreads) ;                                 \
-                }                                                           \
+                #define GB_SEL_WORKER(opname,aname)                            \
+                {                                                              \
+                    info = GB_selbit (opname, aname) (C, A, ythunk, nthreads) ;\
+                }                                                              \
                 break ;
 
                 #include "select/factory/GB_select_entry_factory.c"
@@ -149,8 +147,8 @@ GrB_Info GB_select_bitmap
 
             if (info == GrB_NO_VALUE)
             { 
-                info = GB_select_bitmap_jit (C->b, &cnvals, C_iso,
-                    A, flipij, ythunk, op, nthreads) ;
+                info = GB_select_bitmap_jit (C, A, flipij, ythunk, op,
+                    nthreads) ;
             }
 
             //------------------------------------------------------------------
@@ -160,8 +158,8 @@ GrB_Info GB_select_bitmap
             if (info == GrB_NO_VALUE)
             { 
                 GBURBLE ("(generic select) ") ;
-                info = GB_select_generic_bitmap (C->b, &cnvals, A, flipij,
-                    ythunk, op, nthreads) ;
+                info = GB_select_generic_bitmap (C, A, flipij, ythunk, op,
+                    nthreads) ;
             }
         }
     }
@@ -170,14 +168,7 @@ GrB_Info GB_select_bitmap
     // return result
     //--------------------------------------------------------------------------
 
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory, or other error
-        GB_FREE_ALL ;
-        return (info) ;
-    }
-
-    C->nvals = cnvals ;
+    GB_OK (info) ;  // check for out-of-memory, or other error
     C->magic = GB_MAGIC ;
     ASSERT_MATRIX_OK (C, "C from bitmap selector", GB0) ;
     return (GrB_SUCCESS) ;

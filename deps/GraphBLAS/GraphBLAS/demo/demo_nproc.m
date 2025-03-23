@@ -7,7 +7,7 @@ function ncores = demo_nproc (ncores_set)
 %
 % See also nproc (Octave), maxNumCompThreads (MATLAB)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (demo_octave)

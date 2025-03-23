@@ -2,7 +2,7 @@
 // GB_mx_xsame32: check if two FP32 arrays are equal (ignoring zombies)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,8 +33,8 @@ bool GB_mx_xsame32  // true if arrays X and Y are the same (ignoring zombies)
         // check X [i] and Y [i], but ignore zombies
         if (I == NULL || I [i] >= 0)
         {
-            float xi = GBX (X, i, X_iso) ;
-            float yi = GBX (Y, i, Y_iso) ;
+            float xi = X [X_iso ? 0 : i] ;
+            float yi = Y [Y_iso ? 0 : i] ;
             int c = fpclassify (xi) ;
             if (c != fpclassify (yi)) return (false) ;
             if (c == FP_ZERO)

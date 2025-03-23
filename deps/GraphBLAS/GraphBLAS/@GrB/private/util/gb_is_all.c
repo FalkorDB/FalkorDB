@@ -2,7 +2,7 @@
 // gb_is_all: check two matrices
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,7 +21,7 @@ bool gb_is_all              // true if op (A,B) is all true, false otherwise
 )
 {
 
-    GrB_Index nrows1, ncols1, nrows2, ncols2, nvals, nvals1, nvals2 ;
+    uint64_t nrows1, ncols1, nrows2, ncols2, nvals, nvals1, nvals2 ;
 
     //--------------------------------------------------------------------------
     // check the size of A and B
@@ -66,8 +66,8 @@ bool gb_is_all              // true if op (A,B) is all true, false otherwise
     // C = A .* B, where the pattern of C is the intersection of A and B
     //--------------------------------------------------------------------------
 
-    GxB_Format_Value fmt ;
-    OK (GxB_Matrix_Option_get (A, GxB_FORMAT, &fmt)) ;
+    int fmt ;
+    OK (GrB_Matrix_get_INT32 (A, &fmt, GxB_FORMAT)) ;
     int sparsity = gb_get_sparsity (A, B, 0) ;
     GrB_Matrix C = gb_new (GrB_BOOL, nrows1, ncols1, fmt, sparsity) ;
     OK1 (C, GrB_Matrix_eWiseMult_BinaryOp (C, NULL, NULL, op, A, B, NULL)) ;

@@ -183,7 +183,10 @@ class testOptimizationsPlan(FlowTestsBase):
 
     def test12_multiple_stream_value_hash_join(self):
         # Issue a query that joins three streams.
-        query = """MATCH (p1:person)-[:know]->({name: 'Roi'}), (p2)-[]->(:person {name: 'Alon'}), (p3) WHERE p1.name = p2.name AND ID(p2) = ID(p3) RETURN p2.name ORDER BY p2.name"""
+        query = """MATCH (p1:person)-[:know]->({name: 'Roi'}), (p2)-[]->(:person {name: 'Alon'}), (p3)
+                   WHERE p1.name = p2.name AND ID(p2) = ID(p3)
+                   RETURN p2.name
+                   ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
         self.env.assertIn("Value Hash Join", executionPlan)
         self.env.assertNotIn("Cartesian Product", executionPlan)
@@ -193,7 +196,9 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertEqual(resultset, expected)
 
         # Issue a query that joins four streams that all resolve the same entity.
-        query = """MATCH (p1 {name: 'Ailon'}), (p2), (p3), (p4) WHERE ID(p1) = ID(p2) AND ID(p2) = ID(p3) AND p3.name = p4.name RETURN p4.name"""
+        query = """MATCH (p1 {name: 'Ailon'}), (p2), (p3), (p4)
+                   WHERE ID(p1) = ID(p2) AND ID(p2) = ID(p3) AND p3.name = p4.name
+                   RETURN p4.name"""
         executionPlan = str(self.graph.explain(query))
         self.env.assertIn("Value Hash Join", executionPlan)
         self.env.assertNotIn("Cartesian Product", executionPlan)
@@ -203,7 +208,14 @@ class testOptimizationsPlan(FlowTestsBase):
         self.env.assertEqual(resultset, expected)
 
         # Issue a query that joins four streams that all resolve the same entity, with multiple reapeating filter (issue #869).
-        query = """MATCH (p1 {name: 'Ailon'}), (p2), (p3), (p4) WHERE ID(p1) = ID(p2) AND ID(p2) = ID(p3) AND ID(p3)=ID(p2) AND ID(p2)= ID(p1) AND p3.name = p4.name AND p4.name = p3.name RETURN p4.name"""
+        query = """MATCH (p1 {name: 'Ailon'}), (p2), (p3), (p4)
+                   WHERE ID(p1) = ID(p2)   AND
+                         ID(p2) = ID(p3)   AND
+                         ID(p3) = ID(p2)   AND
+                         ID(p2) = ID(p1)   AND
+                         p3.name = p4.name AND
+                         p4.name = p3.name
+                   RETURN p4.name"""
         executionPlan = str(self.graph.explain(query))
         self.env.assertIn("Value Hash Join", executionPlan)
         self.env.assertNotIn("Cartesian Product", executionPlan)
@@ -214,7 +226,9 @@ class testOptimizationsPlan(FlowTestsBase):
 
     def test13_duplicate_filter_placement(self):
         # Issue a query that joins three streams and contains a redundant filter.
-        query = """MATCH (p0), (p1), (p2) where id(p2) = id(p0) AND id(p1) = id(p2) AND id(p1) = id(p2) return p2.name ORDER BY p2.name"""
+        query = """MATCH (p0), (p1), (p2)
+                   WHERE id(p2) = id(p0) AND id(p1) = id(p2) AND id(p1) = id(p2)
+                   RETURN p2.name ORDER BY p2.name"""
         executionPlan = str(self.graph.explain(query))
         self.env.assertIn("Value Hash Join", executionPlan)
         self.env.assertNotIn("Cartesian Product", executionPlan)

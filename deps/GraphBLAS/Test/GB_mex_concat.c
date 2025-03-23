@@ -2,7 +2,7 @@
 // GB_mex_concat: C = concat (Tiles)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -81,19 +81,19 @@ void mexFunction
     GrB_Type ctype = GB_mx_string_to_Type (PARGIN (1), GrB_FP64) ;
 
     // determine the # of rows of C from Tiles {:,0}
-    GrB_Index cnrows = 0 ;
+    uint64_t cnrows = 0 ;
     for (int64_t i = 0 ; i < m ; i++)
     {
-        GrB_Index anrows ;
+        uint64_t anrows ;
         OK (GrB_Matrix_nrows (&anrows, Tiles [i*n])) ;
         cnrows += anrows ;
     }
 
     // determine the # of columms of C from Tiles {0,:}
-    GrB_Index cncols = 0 ;
+    uint64_t cncols = 0 ;
     for (int64_t j = 0 ; j < n ; j++)
     {
-        GrB_Index ancols ;
+        uint64_t ancols ;
         OK (GrB_Matrix_ncols (&ancols, Tiles [j])) ;
         cncols += ancols ;
     }

@@ -2,7 +2,7 @@
 # GraphBLAS/cmake_modules/SuiteSparse__thread.cmake
 #-------------------------------------------------------------------------------
 
-# Copyright (c) 2017-2023, Timothy A. Davis.  All Rights Reserved.
+# Copyright (c) 2017-2025, Timothy A. Davis.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------

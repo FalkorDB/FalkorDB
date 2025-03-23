@@ -2,7 +2,7 @@
 // GxB_Matrix_pack_FullR: pack a matrix in full format, held by row
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,7 +14,7 @@ GrB_Info GxB_Matrix_pack_FullR  // pack a full matrix, held by row
     GrB_Matrix A,       // matrix to create (type, nrows, ncols unchanged)
     void **Ax,          // values, Ax_size >= nrows*ncols * (type size)
                         // or Ax_size >= (type size), if iso is true
-    GrB_Index Ax_size,  // size of Ax in bytes
+    uint64_t Ax_size,   // size of Ax in bytes
     bool iso,           // if true, A is iso
     const GrB_Descriptor desc
 )
@@ -24,10 +24,11 @@ GrB_Info GxB_Matrix_pack_FullR  // pack a full matrix, held by row
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_pack_FullR (A, "
-        "&Ax, Ax_size, iso, desc)") ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
+    GB_WHERE_1 (A, "GxB_Matrix_pack_FullR (A, &Ax, Ax_size, iso, desc)") ;
     GB_BURBLE_START ("GxB_Matrix_pack_FullR") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
 
