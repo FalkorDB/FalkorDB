@@ -24,23 +24,6 @@ void CreateNode
 	Graph_CreateNode(gc->g, n, labels, label_count);
 	*n->attributes = set;
 
-	char node_key[11];
-	*(uint64_t *)node_key = ENTITY_GET_ID(n);
-	node_key[10] = '\0';
-	// add attributes to node_value buffer
-	for(uint i = 0; i < AttributeSet_Count(set); i++) {
-		Attribute *attr = set->attributes + i;
-		if(SI_TYPE(attr->value) == T_STRING) {
-			if(strnlen(attr->value.stringval, 20) == 20) {
-				*(AttributeID *)(node_key + 8) = attr->id;
-				RocksDB_put(writebatch, node_key, attr->value.stringval);
-				attr->value.allocation = M_DISK;
-				rm_free(attr->value.stringval);
-				attr->value.stringval = NULL;
-			}
-		}
-	}
-
 	// add node labels
 	for(uint i = 0; i < label_count; i++) {
 		Schema *s = GraphContext_GetSchemaByID(gc, labels[i], SCHEMA_NODE);
@@ -54,6 +37,23 @@ void CreateNode
 		UndoLog_CreateNode(undo_log, n);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateNodeEffect(eb, n, labels, label_count);
+	}
+
+	char node_key[11];
+	*(uint64_t *)node_key = ENTITY_GET_ID(n);
+	node_key[10] = '\0';
+	// add attributes to node_value buffer
+	for(uint i = 0; i < AttributeSet_Count(set); i++) {
+		Attribute *attr = set->attributes + i;
+		if(SI_TYPE(attr->value) == T_STRING) {
+			if(strnlen(attr->value.stringval, 33) == 33) {
+				*(AttributeID *)(node_key + 8) = attr->id;
+				RocksDB_put(writebatch, node_key, attr->value.stringval);
+				attr->value.allocation = M_DISK;
+				rm_free(attr->value.stringval);
+				attr->value.stringval = NULL;
+			}
+		}
 	}
 }
 

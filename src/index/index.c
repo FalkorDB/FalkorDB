@@ -287,6 +287,9 @@ RSDoc *Index_IndexGraphEntity
 		if(field->type & INDEX_FLD_RANGE) {
 			*doc_field_count += 1;
 			if(t == T_STRING) {
+				if(v->allocation == M_DISK) {
+					continue;
+				}
 				RediSearch_DocumentAddFieldString(doc, field->range_name,
 						v->stringval, strlen(v->stringval), RSFLDTYPE_TAG);
 			} else if(t & (SI_NUMERIC | T_BOOL)) {
