@@ -4,12 +4,10 @@ ARG OS=ubuntu
 
 FROM falkordb/falkordb-build:$OS AS builder
 
-RUN apt-get update && \
-    apt-get install -y -q --allow-unauthenticated \
-    git \
-    sudo
+RUN yum update -y && \
+    yum install -y -q git sudo
 RUN useradd -m -s /bin/zsh linuxbrew && \
-    usermod -aG sudo linuxbrew &&  \
+    usermod -aG root linuxbrew &&  \
     mkdir -p /home/linuxbrew/.linuxbrew && \
     chown -R linuxbrew: /home/linuxbrew/.linuxbrew
 USER linuxbrew
@@ -23,6 +21,8 @@ RUN brew update
 RUN brew doctor
 
 RUN brew install rocksdb
+
+USER root
 
 WORKDIR /FalkorDB
 
