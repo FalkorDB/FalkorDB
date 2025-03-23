@@ -58,9 +58,9 @@ GrB_Info GxB_Container_new
     //--------------------------------------------------------------------------
 
     GB_OK (GB_container_component_new (&((*Container)->p), GrB_UINT32)) ;
-    GB_OK (GB_container_component_new (&((*Container)->h), GrB_UINT32)) ;
+    GB_OK (GB_container_component_new (&((*Container)->h), GrB_INT32)) ;
     GB_OK (GB_container_component_new (&((*Container)->b), GrB_INT8)) ;
-    GB_OK (GB_container_component_new (&((*Container)->i), GrB_UINT32)) ;
+    GB_OK (GB_container_component_new (&((*Container)->i), GrB_INT32)) ;
     GB_OK (GB_container_component_new (&((*Container)->x), GrB_BOOL)) ;
 
     //--------------------------------------------------------------------------

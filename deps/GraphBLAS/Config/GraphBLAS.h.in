@@ -3950,7 +3950,6 @@ GB_DECLARE (GrB_Type         )
 GB_DECLARE (GrB_Global       )
 
 GrB_Info GxB_Serialized_get_Scalar (const void *, GrB_Scalar, int, size_t) ;
-GrB_Info GxB_Serialized_get_Scalar (const void *, GrB_Scalar, int, size_t) ;
 GrB_Info GxB_Serialized_get_String (const void *, char *    , int, size_t) ;
 GrB_Info GxB_Serialized_get_INT32  (const void *, int32_t * , int, size_t) ;
 GrB_Info GxB_Serialized_get_SIZE   (const void *, size_t *  , int, size_t) ;

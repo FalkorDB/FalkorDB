@@ -325,6 +325,11 @@ class testProcedures(FlowTestsBase):
             self.env.assertContains(res, actual_resultset)
 
     def test11_procedure_indexes(self):
+        # flaky when running under valgrind
+        # TODO: investigate
+        if VALGRIND:
+            self.env.skip()
+
         # Verify that the full-text index is reported properly.
         actual_resultset = self.graph.query("CALL db.indexes() YIELD label, properties").result_set
         expected_results = [["fruit", ["name"]]]

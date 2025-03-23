@@ -10,19 +10,37 @@
 #include <stdbool.h>
 #include "../../deps/rax/rax.h"
 
-// Returns true if 'b' is a subset of 'a'.
-bool raxIsSubset(rax *a, rax *b);
+// returns true if 'b' is a subset of 'a'
+bool raxIsSubset
+(
+	rax *a,
+	rax *b
+);
 
-// Duplicates a rax, performing a shallow copy of the original's values.
-rax *raxClone(rax *orig);
+// duplicates a rax, performing a shallow copy of the original's values
+rax *raxClone
+(
+	rax *orig
+);
 
-// Duplicates a rax, performing a deep copy of the original's values.
-rax *raxCloneWithCallback(rax *orig, void *(*clone_callback)(void *));
+// duplicates a rax, performing a deep copy of the original's values
+rax *raxCloneWithCallback
+(
+	rax *orig,
+	void *(*clone_callback)(void *)
+);
 
-// Collect all values in a rax into an array.
-// This function assumes that each value is a pointer (or at least an 8-byte payload).
-void **raxValues(rax *rax);
+// collect all values in a rax into an array
+// this function assumes that each value is a pointer
+// (or at least an 8-byte payload)
+void **raxValues
+(
+	rax *rax
+);
 
-// Collect all keys in a rax into an array.
-unsigned char **raxKeys(rax *rax);
+// collect all keys in a rax into an array
+unsigned char **raxKeys
+(
+	rax *rax
+);
 

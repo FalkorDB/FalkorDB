@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 #include "GB_cuda_ek_slice.cuh"
@@ -39,9 +41,6 @@ __global__ void GB_cuda_apply_unop_kernel
 
     #define A_iso GB_A_ISO
 
-    int tid = blockDim.x * blockIdx.x + threadIdx.x ;
-    int nthreads = blockDim.x * gridDim.x ;
-
     #if ( GB_DEPENDS_ON_Y )
         // get thunk value (of type GB_Y_TYPE)
         GB_Y_TYPE thunk_value = * ((GB_Y_TYPE *) thunk) ;
@@ -49,6 +48,8 @@ __global__ void GB_cuda_apply_unop_kernel
 
     #if ( GB_A_IS_BITMAP || GB_A_IS_FULL )
         // bitmap/full case
+        int tid = blockDim.x * blockIdx.x + threadIdx.x ;
+        int nthreads = blockDim.x * gridDim.x ;
         for (int64_t p = tid ; p < anz ; p += nthreads)
         {
             if (!GBb_A (Ab, p)) { continue ; }
@@ -74,13 +75,13 @@ __global__ void GB_cuda_apply_unop_kernel
                 {
                     int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
                     float slope ;
-                    GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst, chunk_size,
+                    GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, chunk_size,
                         &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
 
                     for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)
                     {
                         int64_t p_final ;
-                        int64_t k = GB_cuda_ek_slice_entry (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
+                        int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
                         int64_t col_idx = GBh_A (Ah, k) ;
                         
                         #if ( GB_DEPENDS_ON_I )
@@ -92,8 +93,10 @@ __global__ void GB_cuda_apply_unop_kernel
                     }
                 }
         #else
-            const int64_t avlen = A->vlen ;
             // can do normal method
+            const int64_t avlen = A->vlen ;
+            int tid = blockDim.x * blockIdx.x + threadIdx.x ;
+            int nthreads = blockDim.x * gridDim.x ;
             for (int64_t p = tid ; p < anz ; p += nthreads)
             {
                 #if ( GB_DEPENDS_ON_I )
@@ -116,7 +119,14 @@ GB_JIT_CUDA_KERNEL_APPLY_UNOP_PROTO (GB_jit_kernel)
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
 
+    GB_A_NHELD (anz) ;
+    if (anz == 0) return (GrB_SUCCESS) ;
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_apply_unop_kernel <<<grid, block, 0, stream>>> (Cx, ythunk, A) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }

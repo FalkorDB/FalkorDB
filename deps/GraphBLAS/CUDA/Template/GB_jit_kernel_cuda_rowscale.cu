@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 __global__ void GB_cuda_rowscale_kernel
@@ -62,7 +64,11 @@ GB_JIT_CUDA_KERNEL_ROWSCALE_PROTO (GB_jit_kernel)
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
     
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_rowscale_kernel <<<grid, block, 0, stream>>> (C, D, B) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }
