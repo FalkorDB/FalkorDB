@@ -31,6 +31,8 @@ include_directories(
 	${root}/deps/libcypher-parser/lib/src
 	/opt/homebrew/Cellar/rocksdb/9.11.1/include
 	/home/linuxbrew/.linuxbrew/Cellar/rocksdb/9.11.1/include
+	/home/avi/repos/rocksdb/include
+	/rocksdb/include
 	$ENV{LIBCYPHER_PARSER_BINDIR}/lib/src)
 
 add_compile_definitions(
