@@ -2,7 +2,7 @@
 // GB_malloc_memory: wrapper for malloc
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@ static inline void *GB_malloc_helper
     p = GB_Global_malloc_function (*size) ;
 
     #ifdef GB_MEMDUMP
-    printf ("hard malloc %p %ld\n", p, *size) ; // MEMDUMP
+    GBMDUMP ("malloc  %p %8ld: ", p, *size) ;
     GB_Global_memtable_dump ( ) ;
     #endif
 
@@ -40,6 +40,16 @@ static inline void *GB_malloc_helper
 //------------------------------------------------------------------------------
 // GB_malloc_memory
 //------------------------------------------------------------------------------
+
+#if 0
+void *GB_malloc_memory      // pointer to allocated block of memory
+(
+    size_t nitems,          // number of items to allocate
+    size_t size_of_item,    // sizeof each item
+    // output:
+    size_t *size_allocated  // # of bytes actually allocated
+)
+#endif
 
 GB_CALLBACK_MALLOC_MEMORY_PROTO (GB_malloc_memory)
 {

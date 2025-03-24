@@ -2,7 +2,7 @@
 // GB_bitmap_assign_6_template: C bitmap, no M, no accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -130,12 +130,12 @@
             //      Cx(p) = aij     // C(iC,jC) inserted or updated
             //      Cb(p) = 1
 
-            #define GB_AIJ_WORK(pC,pA)                              \
-            {                                                       \
-                int8_t cb = Cb [pC] ;                               \
-                /* Cx [pC] = Ax [pA] */                             \
-                GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork, C_iso) ;   \
-                Cb [pC] = 1 ;                                       \
+            #define GB_AIJ_WORK(pC,pA)                                      \
+            {                                                               \
+                int8_t cb = Cb [pC] ;                                       \
+                /* Cx [pC] = Ax [pA] */                                     \
+                GB_COPY_aij_to_C (Cx, pC, Ax, pA, A_iso, cwork, C_iso) ;    \
+                Cb [pC] = 1 ;                                               \
             }
             #include "template/GB_bitmap_assign_A_template.c"
 

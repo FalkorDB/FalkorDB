@@ -2,7 +2,7 @@
 // GB_bitmap_assign_6: C bitmap, no M, no accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -46,12 +46,14 @@ GrB_Info GB_bitmap_assign_6     // C bitmap, no M, no accum
     GrB_Matrix C,               // input/output matrix in bitmap format
     // inputs:
     const bool C_replace,       // descriptor for C
-    const GrB_Index *I,         // I index list
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,         // J index list
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -84,7 +86,7 @@ GrB_Info GB_bitmap_assign_6     // C bitmap, no M, no accum
     //--------------------------------------------------------------------------
 
     GrB_Info info = GB_subassign_jit (C, C_replace,
-        I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
+        I, I_is_32, ni, nI, Ikind, Icolon, J, J_is_32, nj, nJ, Jkind, Jcolon,
         M, Mask_comp, Mask_struct, accum, A, scalar, scalar_type,
         /* S: */ NULL, assign_kind,
         GB_JIT_KERNEL_BITMAP_ASSIGN_6, "bitmap_assign_6",
@@ -97,6 +99,9 @@ GrB_Info GB_bitmap_assign_6     // C bitmap, no M, no accum
     //--------------------------------------------------------------------------
     // via the generic kernel
     //--------------------------------------------------------------------------
+
+    GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
+    GB_IDECL (J, const, u) ; GB_IPTR (J, J_is_32) ;
 
     GBURBLE ("(generic assign) ") ;
     int nthreads_max = GB_Context_nthreads_max ( ) ;

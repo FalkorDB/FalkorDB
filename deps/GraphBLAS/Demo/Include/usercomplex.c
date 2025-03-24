@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Include/usercomplex.c:  complex numbers as a user-defined type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,21 +14,22 @@
 #ifdef MATLAB_MEX_FILE
 
     #include "GB_mex.h"
-
+    #undef OK
     #define OK(method)                                                      \
     {                                                                       \
         info = method ;                                                     \
         if (! (info == GrB_SUCCESS || info == GrB_NO_VALUE))                \
         {                                                                   \
-            return (info) ;                                                 \
+            printf ("%s, line %d, info %d\n", __FILE__, __LINE__, info) ;   \
+            mexErrMsgTxt ("GraphBLAS error!") ;                             \
         }                                                                   \
     }
 
 #else
 
-    #include "GraphBLAS.h"
-    #undef I
     #include "graphblas_demos.h"
+    #undef  FREE_ALL
+    #define FREE_ALL Complex_finalize ( ) ;
 
     #if defined __INTEL_COMPILER
     #pragma warning (disable: 58 167 144 161 177 181 186 188 589 593 869 981 \
@@ -39,17 +40,6 @@
     #pragma GCC diagnostic ignored "-Wincompatible-pointer-types"
     #endif
     #endif
-
-    #undef OK
-    #define OK(method)                                                      \
-    {                                                                       \
-        info = method ;                                                     \
-        if (! (info == GrB_SUCCESS || info == GrB_NO_VALUE))                \
-        {                                                                   \
-            Complex_finalize ( ) ;                                          \
-            return (info) ;                                                 \
-        }                                                                   \
-    }
 
 #endif
 
@@ -1406,4 +1396,6 @@ GrB_Info Complex_finalize ( )
 
 #undef U
 #undef B
+#undef FREE_ALL
+
 

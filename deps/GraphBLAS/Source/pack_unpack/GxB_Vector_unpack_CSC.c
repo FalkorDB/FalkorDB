@@ -2,7 +2,7 @@
 // GxB_Vector_unpack_CSC: unpack a vector in CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,12 +14,12 @@
 GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
 (
     GrB_Vector v,       // vector to unpack (type and length unchanged)
-    GrB_Index **vi,     // indices
+    uint64_t **vi,      // indices
     void **vx,          // values
-    GrB_Index *vi_size, // size of vi in bytes
-    GrB_Index *vx_size, // size of vx in bytes
+    uint64_t *vi_size,  // size of vi in bytes
+    uint64_t *vx_size,  // size of vx in bytes
     bool *iso,          // if true, v is iso
-    GrB_Index *nvals,   // # of entries in vector
+    uint64_t *nvals,    // # of entries in vector
     bool *jumbled,      // if true, indices may be unsorted
     const GrB_Descriptor desc
 )
@@ -29,12 +29,14 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Vector_unpack_CSC (v, "
-        "&vi, &vx, &vi_size, &vx_size, &iso, &nvals, &jumbled, desc)") ;
-    GB_BURBLE_START ("GxB_Vector_unpack_CSC") ;
-    GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
+    GB_RETURN_IF_NULL (v) ;
     GB_RETURN_IF_NULL (nvals) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
+    GB_WHERE_1 (v, "GxB_Vector_unpack_CSC (v, &vi, &vx, &vi_size, &vx_size,"
+        " &iso, &nvals, &jumbled, desc)") ;
+    GB_BURBLE_START ("GxB_Vector_unpack_CSC") ;
+
+    GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
     // finish any pending work
@@ -70,7 +72,7 @@ GrB_Info GxB_Vector_unpack_CSC  // unpack a CSC vector
     int sparsity ;
     bool is_csc ;
     GrB_Type type ;
-    GrB_Index vlen, vdim ;
+    uint64_t vlen, vdim ;
 
     info = GB_export (true, (GrB_Matrix *) (&v), &type, &vlen, &vdim, true,
         NULL, NULL,     // Ap

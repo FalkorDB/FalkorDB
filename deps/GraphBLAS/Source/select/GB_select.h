@@ -2,7 +2,7 @@
 // GB_select.h: definitions for GrB_select and related functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,6 +11,7 @@
 #define GB_SELECT_H
 #include "GB.h"
 #include "math/GB_math.h"
+#include "select/GB_select_iso.h"
 
 GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)
 (
@@ -39,14 +40,14 @@ GrB_Info GB_selector
 
 GrB_Info GB_select_sparse
 (
-    GrB_Matrix C,
-    const bool C_iso,
+    GrB_Matrix C,                   // output matrix; empty header on input
+    const bool C_iso,               // if true, construct C as iso
     const GrB_IndexUnaryOp op,
-    const bool flipij,
-    const GrB_Matrix A,
-    const int64_t ithunk,
-    const GB_void *restrict athunk,
-    const GB_void *restrict ythunk,
+    const bool flipij,              // if true, flip i and j for the op
+    const GrB_Matrix A,             // input matrix
+    const int64_t ithunk,           // input scalar, cast to int64_t
+    const GB_void *restrict athunk, // same input scalar, but cast to A->type
+    const GB_void *restrict ythunk, // same input scalar, but cast to op->ytype
     GB_Werk Werk
 ) ;
 
@@ -64,7 +65,6 @@ GrB_Info GB_select_value_iso
 GrB_Info GB_select_column
 (
     GrB_Matrix C,
-    const bool C_iso,
     const GrB_IndexUnaryOp op,
     GrB_Matrix A,
     int64_t ithunk,
@@ -98,9 +98,11 @@ GrB_Info GB_selectop_to_idxunop
 
 GrB_Info GB_select_generic_phase1
 (
-    int64_t *restrict Cp,
-    int64_t *restrict Wfirst,
-    int64_t *restrict Wlast,
+    // input/output:
+    GrB_Matrix C,
+    uint64_t *restrict Wfirst,
+    uint64_t *restrict Wlast,
+    // input:
     const GrB_Matrix A,
     const bool flipij,
     const GB_void *restrict ythunk,
@@ -112,10 +114,10 @@ GrB_Info GB_select_generic_phase1
 
 GrB_Info GB_select_generic_phase2
 (
-    int64_t *restrict Ci,
-    GB_void *restrict Cx,
-    const int64_t *restrict Cp,
-    const int64_t *restrict Cp_kfirst,
+    // input/output:
+    GrB_Matrix C,
+    // input:
+    const uint64_t *restrict Cp_kfirst,
     const GrB_Matrix A,
     const bool flipij,
     const GB_void *restrict ythunk,
@@ -127,10 +129,13 @@ GrB_Info GB_select_generic_phase2
 
 GrB_Info GB_select_positional_phase1
 (
-    int64_t *restrict Zp,
-    int64_t *restrict Cp,
-    int64_t *restrict Wfirst,
-    int64_t *restrict Wlast,
+    // input/output:
+    GrB_Matrix C,
+    // output:
+    void *Zp,                       // if C->p_is_32: 32 bit, else 64-bit
+    uint64_t *restrict Wfirst,
+    uint64_t *restrict Wlast,
+    // input:
     const GrB_Matrix A,
     const int64_t ithunk,
     const GrB_IndexUnaryOp op,
@@ -141,11 +146,11 @@ GrB_Info GB_select_positional_phase1
 
 GrB_Info GB_select_positional_phase2
 (
-    int64_t *restrict Ci,
-    GB_void *restrict Cx,
-    const int64_t *restrict Zp,
-    const int64_t *restrict Cp,
-    const int64_t *restrict Cp_kfirst,
+    // input/output:
+    GrB_Matrix C,
+    // input:
+    const void *Zp,                 // if C->p_is_32: 32 bit, else 64-bit
+    const uint64_t *restrict Cp_kfirst,
     const GrB_Matrix A,
     const bool flipij,
     const int64_t ithunk,
@@ -157,8 +162,9 @@ GrB_Info GB_select_positional_phase2
 
 GrB_Info GB_select_positional_bitmap
 (
-    int8_t *Cb,
-    int64_t *cnvals_handle,
+    // input/output:
+    GrB_Matrix C,                   // C->b and C->nvals are computed
+    // input:
     GrB_Matrix A,
     const int64_t ithunk,
     const GrB_IndexUnaryOp op,
@@ -167,47 +173,15 @@ GrB_Info GB_select_positional_bitmap
 
 GrB_Info GB_select_generic_bitmap
 (
-    int8_t *Cb,
-    int64_t *cnvals_handle,
+    // input/output:
+    GrB_Matrix C,                   // C->b and C->nvals are computed
+    // input:
     GrB_Matrix A,
     const bool flipij,
     const GB_void *restrict ythunk,
     const GrB_IndexUnaryOp op,
     const int nthreads
 ) ;
-
-//------------------------------------------------------------------------------
-// GB_select_iso: assign the iso value of C for GB_*selector
-//------------------------------------------------------------------------------
-
-static inline void GB_select_iso
-(
-    GB_void *Cx,                    // output iso value (same type as A)
-    const GB_Opcode opcode,         // selector opcode
-    const GB_void *athunk,          // thunk scalar, of size asize
-    const GB_void *Ax,              // Ax [0] scalar, of size asize
-    const size_t asize
-)
-{
-    if (opcode == GB_VALUEEQ_idxunop_code)
-    { 
-        // all entries in C are equal to thunk
-        memcpy (Cx, athunk, asize) ;
-    }
-    else
-    { 
-        // A and C are both iso
-        memcpy (Cx, Ax, asize) ;
-    }
-}
-
-//------------------------------------------------------------------------------
-// compiler diagnostics
-//------------------------------------------------------------------------------
-
-// Some parameters are unused for some uses of the FactoryKernels/GB_sel_*
-// functions
-#include "include/GB_unused.h"
 
 #endif
 

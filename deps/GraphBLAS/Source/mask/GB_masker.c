@@ -2,7 +2,7 @@
 // GB_masker: R = masker (C, M, Z) constructs R for C<M>=Z
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,9 +15,8 @@
 // GB_accum_mask.
 
 // Let R be the result of the mask.  In the caller, R is written back into the
-// final C matrix, but in GB_masker, C is a read-only matrix.  Consider the
-// following table, where "add" is the result of C+Z, an "emult" is the result
-// of C.*Z.
+// final C matrix, but C is not modified in GB_masker.  Consider the following
+// table, where "add" is the result of C+Z, an "emult" is the result of C.*Z.
 
 //                                      R = masker (C,M,Z)
 
@@ -49,6 +48,18 @@
 // R is iso if both C and Z are iso and zij == cij.  This is handled in
 // GB_masker_phase2.
 
+#if defined ( __clang__ )
+// On the Mac, this file triggers a bug in AppleClang 16.0.0 when -O3
+// optimization is used (MacOS 14.6.1 (23G93), Xcode 16.2):
+//      Apple clang version 16.0.0 (clang-1600.0.26.6)
+//      Target: arm64-apple-darwin23.6.0
+//      Thread model: posix
+//      InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+// See the test for R_sparsity below.  R_sparsity is 4 but the if test (for
+// R_sparsity 1 or 2) evaluates as true, and then the assertion fails.
+#pragma clang optimize off
+#endif
+
 #include "mask/GB_mask.h"
 #include "add/GB_add.h"
 #define GB_FREE_ALL ;
@@ -72,7 +83,7 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
 
     GrB_Info info ;
 
-    ASSERT (R != NULL && (R->static_header || GBNSTATIC)) ;
+    ASSERT (R != NULL && (R->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK (M, "M for masker", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -106,15 +117,17 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     // initializations
     //--------------------------------------------------------------------------
 
-    int64_t Rnvec, Rnvec_nonempty ;
-    int64_t *Rp     = NULL ; size_t Rp_size = 0 ;
-    int64_t *Rh     = NULL ; size_t Rh_size = 0 ;
+    int64_t Rnvec, Rnvec_nonempty = 0 ;
+    void *Rp = NULL ; size_t Rp_size = 0 ;
+    void *Rh = NULL ; size_t Rh_size = 0 ;
+
     int64_t *R_to_M = NULL ; size_t R_to_M_size = 0 ;
     int64_t *R_to_C = NULL ; size_t R_to_C_size = 0 ;
     int64_t *R_to_Z = NULL ; size_t R_to_Z_size = 0 ;
-    int R_ntasks = 0, R_nthreads ;
-    size_t TaskList_size = 0 ;
-    GB_task_struct *TaskList = NULL ;
+
+    int R_ntasks = 0 ;
+    size_t TaskList_size = 0 ; GB_task_struct *TaskList = NULL ;
+    bool Rp_is_32, Rj_is_32, Ri_is_32 ;
 
     //--------------------------------------------------------------------------
     // phase0: finalize the sparsity structure of R and the vectors of R
@@ -123,19 +136,17 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     // This phase is identical to phase0 of GB_add, except that Ch is never a
     // deep or shallow copy of Mh.  R_sparsity may change to hypersparse.
 
-    info = GB_add_phase0 (
-        // computed by by phase0:
+    GB_OK (GB_add_phase0 (
+        // computed by phase0:
         &Rnvec, &Rh, &Rh_size,
         &R_to_M, &R_to_M_size,
         &R_to_C, &R_to_C_size,
-        &R_to_Z, &R_to_Z_size, NULL, &R_sparsity,
+        &R_to_Z, &R_to_Z_size, /* Rh_is_Mh is false: */ NULL,
+        &Rp_is_32, &Rj_is_32, &Ri_is_32,
+        // input/output to phase0:
+        &R_sparsity,
         // original input:
-        M, C, Z, Werk) ;
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        return (info) ;
-    }
+        M, C, Z, Werk)) ;
 
     GBURBLE ("masker:(%s:%s%s%s%s%s=%s) ",
         GB_sparsity_char (R_sparsity),
@@ -150,11 +161,26 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
     // phase1: split R into tasks, and count entries in each vector of R
     //--------------------------------------------------------------------------
 
+    double work = M->vlen * M->vdim ;
+    int nthreads_max = GB_Context_nthreads_max ( ) ;
+    double chunk = GB_Context_chunk ( ) ;
+    int R_nthreads = GB_nthreads (work, chunk, nthreads_max) ;
+
     if (R_sparsity == GxB_SPARSE || R_sparsity == GxB_HYPERSPARSE)
     {
 
         //----------------------------------------------------------------------
-        // R is sparse or hypersparse: slice and analyze the R matrix
+        // R is sparse or hypersparse: but double-check
+        //----------------------------------------------------------------------
+
+        // This assertion fails on AppleClang 16.0.0 with -O3, even though the
+        // assertion exactly matches the enclosing if condition.  Optimization
+        // is not critical for this file, so it is turned off when using any
+        // clang compiler.
+        GB_assert (R_sparsity == GxB_SPARSE || R_sparsity == GxB_HYPERSPARSE) ;
+
+        //----------------------------------------------------------------------
+        // slice and analyze the R matrix
         //----------------------------------------------------------------------
 
         // phase1a: split R into tasks
@@ -162,16 +188,16 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
             // computed by phase1a
             &TaskList, &TaskList_size, &R_ntasks, &R_nthreads,
             // computed by phase0:
-            Rnvec, Rh, R_to_M, R_to_C, R_to_Z, false,
+            Rnvec, Rh, Rj_is_32, R_to_M, R_to_C, R_to_Z, /* Rh_is_Mh: */ false,
             // original input:
             M, C, Z, Werk) ;
         if (info != GrB_SUCCESS)
         { 
             // out of memory; free everything allocated by GB_add_phase0
-            GB_FREE (&Rh, Rh_size) ;
-            GB_FREE_WORK (&R_to_M, R_to_M_size) ;
-            GB_FREE_WORK (&R_to_C, R_to_C_size) ;
-            GB_FREE_WORK (&R_to_Z, R_to_Z_size) ;
+            GB_FREE_MEMORY (&Rh, Rh_size) ;
+            GB_FREE_MEMORY (&R_to_M, R_to_M_size) ;
+            GB_FREE_MEMORY (&R_to_C, R_to_C_size) ;
+            GB_FREE_MEMORY (&R_to_Z, R_to_Z_size) ;
             return (info) ;
         }
 
@@ -182,31 +208,20 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
             // from phase1a:
             TaskList, R_ntasks, R_nthreads,
             // from phase0:
-            Rnvec, Rh, R_to_M, R_to_C, R_to_Z,
+            Rnvec, Rh, R_to_M, R_to_C, R_to_Z, Rp_is_32, Rj_is_32,
             // original input:
             M, Mask_comp, Mask_struct, C, Z, Werk) ;
         if (info != GrB_SUCCESS)
         { 
             // out of memory; free everything allocated by GB_add_phase0
-            GB_FREE_WORK (&TaskList, TaskList_size) ;
-            GB_FREE (&Rh, Rh_size) ;
-            GB_FREE_WORK (&R_to_M, R_to_M_size) ;
-            GB_FREE_WORK (&R_to_C, R_to_C_size) ;
-            GB_FREE_WORK (&R_to_Z, R_to_Z_size) ;
+            GB_FREE_MEMORY (&TaskList, TaskList_size) ;
+            GB_FREE_MEMORY (&Rh, Rh_size) ;
+            GB_FREE_MEMORY (&R_to_M, R_to_M_size) ;
+            GB_FREE_MEMORY (&R_to_C, R_to_C_size) ;
+            GB_FREE_MEMORY (&R_to_Z, R_to_Z_size) ;
             return (info) ;
         }
 
-    }
-    else
-    { 
-
-        //----------------------------------------------------------------------
-        // R is bitmap or full: only determine how many threads to use
-        //----------------------------------------------------------------------
-
-        int nthreads_max = GB_Context_nthreads_max ( ) ;
-        double chunk = GB_Context_chunk ( ) ;
-        R_nthreads = GB_nthreads (M->vlen * M->vdim, chunk, nthreads_max) ;
     }
 
     //--------------------------------------------------------------------------
@@ -224,17 +239,18 @@ GrB_Info GB_masker          // R = masker (C, M, Z)
         // from phase1a:
         TaskList, R_ntasks, R_nthreads,
         // from phase0:
-        Rnvec, &Rh, Rh_size, R_to_M, R_to_C, R_to_Z, R_sparsity,
+        Rnvec, &Rh, Rh_size, R_to_M, R_to_C, R_to_Z,
+        Rp_is_32, Rj_is_32, Ri_is_32, R_sparsity,
         // original input:
         M, Mask_comp, Mask_struct, C, Z, Werk) ;
 
     // if successful, Rh and Rp must not be freed; they are now R->h and R->p
 
     // free workspace
-    GB_FREE_WORK (&TaskList, TaskList_size) ;
-    GB_FREE_WORK (&R_to_M, R_to_M_size) ;
-    GB_FREE_WORK (&R_to_C, R_to_C_size) ;
-    GB_FREE_WORK (&R_to_Z, R_to_Z_size) ;
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ;
+    GB_FREE_MEMORY (&R_to_M, R_to_M_size) ;
+    GB_FREE_MEMORY (&R_to_C, R_to_C_size) ;
+    GB_FREE_MEMORY (&R_to_Z, R_to_Z_size) ;
 
     if (info != GrB_SUCCESS)
     { 

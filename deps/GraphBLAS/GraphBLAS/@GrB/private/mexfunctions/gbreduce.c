@@ -2,7 +2,7 @@
 // gbreduce: reduce a sparse matrix to a scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ void mexFunction
     mxArray *Matrix [6], *String [2], *Cell [2] ;
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int nmatrices, nstrings, ncells, sparsity ;
     GrB_Descriptor desc ;
     gb_get_mxargs (nargin, pargin, USAGE, Matrix, &nmatrices, String, &nstrings,
@@ -104,10 +104,7 @@ void mexFunction
     if (C == NULL)
     { 
         // use the ztype of the monoid as the type of C
-        GrB_BinaryOp binop ;
-        OK (GxB_Monoid_operator (&binop, monoid)) ;
-        OK (GxB_BinaryOp_ztype (&ctype, binop)) ;
-
+        ctype = gb_monoid_type (monoid) ;
         fmt = gb_get_format (1, 1, A, NULL, fmt) ;
         sparsity = gb_get_sparsity (A, NULL, sparsity) ;
         C = gb_new (ctype, 1, 1, fmt, sparsity) ;
@@ -117,7 +114,7 @@ void mexFunction
     // ensure C is 1-by-1
     //--------------------------------------------------------------------------
 
-    GrB_Index cnrows, cncols ;
+    uint64_t cnrows, cncols ;
     OK (GrB_Matrix_nrows (&cnrows, C)) ;
     OK (GrB_Matrix_ncols (&cncols, C)) ;
     if (cnrows != 1 || cncols != 1)
@@ -144,6 +141,6 @@ void mexFunction
 
     pargout [0] = gb_export (&C, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

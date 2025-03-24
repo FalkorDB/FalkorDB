@@ -2,7 +2,7 @@
 // GrB_Vector_apply: apply a unary or binary operator to a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,11 +30,11 @@ GrB_Info GrB_Vector_apply           // w<M> = accum (w, op(u))
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (w, "GrB_Vector_apply (w, M, accum, op, u, desc)") ;
+    GB_WHERE3 (w, M_in, u, "GrB_Vector_apply (w, M, accum, op, u, desc)") ;
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (u) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (w) ;
     GB_BURBLE_START ("GrB_apply") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;
 
     ASSERT (GB_VECTOR_OK (w)) ;
     ASSERT (M_in == NULL || GB_VECTOR_OK (M_in)) ;
@@ -84,17 +84,18 @@ static inline GrB_Info GB_1st       // w<mask> = accum (w, op(x,u))
     // check inputs
     //--------------------------------------------------------------------------
 
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (x) ;
+    GB_RETURN_IF_NULL (u) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (w) ;
     GB_BURBLE_START ("GrB_apply") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (x) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;
 
     ASSERT (GB_VECTOR_OK (w)) ;
     ASSERT (M_in == NULL || GB_VECTOR_OK (M_in)) ;
     ASSERT (GB_VECTOR_OK (u)) ;
 
     // get the descriptor
+    GrB_Info info ;
     GB_GET_DESCRIPTOR (info, desc, C_replace, Mask_comp, Mask_struct,
         xx1, xx2, xx3, xx7) ;
 
@@ -138,17 +139,18 @@ static inline GrB_Info GB_2nd       // w<mask> = accum (w, op(u,y))
     // check inputs
     //--------------------------------------------------------------------------
 
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (u) ;
+    GB_RETURN_IF_NULL (y) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (w) ;
     GB_BURBLE_START ("GrB_apply") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (u) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (y) ;
 
     ASSERT (GB_VECTOR_OK (w)) ;
     ASSERT (M_in == NULL || GB_VECTOR_OK (M_in)) ;
     ASSERT (GB_VECTOR_OK (u)) ;
 
     // get the descriptor
+    GrB_Info info ;
     GB_GET_DESCRIPTOR (info, desc, C_replace, Mask_comp, Mask_struct,
         xx1, xx2, xx3, xx7) ;
 
@@ -186,8 +188,8 @@ GrB_Info GrB_Vector_apply_BinaryOp1st_Scalar    // w<mask> = accum (w, op(x,u))
     const GrB_Descriptor desc       // descriptor for w and M
 )
 { 
-    GB_WHERE (w, "GrB_Vector_apply_BinaryOp1st_Scalar"
-        " (w, M, accum, op, x, u, desc)") ;
+    GB_WHERE4 (w, M, x, u,
+        "GrB_Vector_apply_BinaryOp1st_Scalar (w, M, accum, op, x, u, desc)") ;
     return (GB_1st (w, M, accum, op, x, u, desc, Werk)) ;
 }
 
@@ -225,8 +227,8 @@ GrB_Info GrB_Vector_apply_BinaryOp2nd_Scalar    // w<mask> = accum (w, op(u,y))
     const GrB_Descriptor desc       // descriptor for w and M
 )
 { 
-    GB_WHERE (w, "GrB_Vector_apply_BinaryOp2nd_Scalar"
-        " (w, M, accum, op, u, y, desc)") ;
+    GB_WHERE4 (w, M, u, y,
+        "GrB_Vector_apply_BinaryOp2nd_Scalar (w, M, accum, op, u, y, desc)") ;
     return (GB_2nd (w, M, accum, (GB_Operator) op, u, y, desc, Werk)) ;
 }
 
@@ -265,8 +267,8 @@ GrB_Info GB_EVAL3 (prefix, _Vector_apply_BinaryOp1st_, T)                   \
     const GrB_Descriptor desc       /* descriptor for w and M */            \
 )                                                                           \
 {                                                                           \
-    GB_WHERE (w, GB_STR(prefix) "_Vector_apply_BinaryOp1st_" GB_STR(T)      \
-        " (w, M, accum, op, x, u, desc)") ;                                 \
+    GB_WHERE3 (w, M, u, GB_STR(prefix) "_Vector_apply_BinaryOp1st_"         \
+        GB_STR(T) " (w, M, accum, op, x, u, desc)") ;                       \
     GB_SCALAR_WRAP (scalar, x, GB_EVAL3 (prefix, _, T)) ;                   \
     return (GB_1st (w, M, accum, op, scalar, u, desc, Werk)) ;              \
 }
@@ -300,8 +302,8 @@ GrB_Info GrB_Vector_apply_BinaryOp1st_UDT
     const GrB_Descriptor desc       // descriptor for w and M
 )
 { 
-    GB_WHERE (w, "GrB_Vector_apply_BinaryOp1st_UDT"
-        " (w, M, accum, op, x, u, desc)") ;
+    GB_WHERE3 (w, M, u,
+        "GrB_Vector_apply_BinaryOp1st_UDT (w, M, accum, op, x, u, desc)") ;
     GB_SCALAR_WRAP_UDT (scalar, x, (op == NULL) ? NULL : op->xtype) ;
     return (GB_1st (w, M, accum, op, scalar, u, desc, Werk)) ;
 }
@@ -322,8 +324,8 @@ GrB_Info GB_EVAL3 (prefix, _Vector_apply_BinaryOp2nd_, T)                   \
     const GrB_Descriptor desc       /* descriptor for w and M */            \
 )                                                                           \
 {                                                                           \
-    GB_WHERE (w, GB_STR(prefix) "_Vector_apply_BinaryOp2nd_" GB_STR(T)      \
-        " (w, M, accum, op, u, y, desc)") ;                                 \
+    GB_WHERE3 (w, M, u, GB_STR(prefix) "_Vector_apply_BinaryOp2nd_"         \
+        GB_STR(T) " (w, M, accum, op, u, y, desc)") ;                       \
     GB_SCALAR_WRAP (scalar, y, GB_EVAL3 (prefix, _, T)) ;                   \
     return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;\
 }
@@ -357,8 +359,8 @@ GrB_Info GrB_Vector_apply_BinaryOp2nd_UDT
     const GrB_Descriptor desc       // descriptor for w and M
 )
 { 
-    GB_WHERE (w, "GrB_Vector_apply_BinaryOp2nd_UDT"
-        " (w, M, accum, op, u, y, desc)") ;
+    GB_WHERE3 (w, M, u,
+        "GrB_Vector_apply_BinaryOp2nd_UDT (w, M, accum, op, u, y, desc)") ;
     GB_SCALAR_WRAP_UDT (scalar, y, (op == NULL) ? NULL : op->ytype) ;
     return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;
 }
@@ -379,7 +381,7 @@ GrB_Info GB_EVAL3 (prefix, _Vector_apply_IndexOp_, T)                       \
     const GrB_Descriptor desc       /* descriptor for w and M */            \
 )                                                                           \
 {                                                                           \
-    GB_WHERE (w, GB_STR(prefix) "_Vector_apply_IndexOp_" GB_STR(T)          \
+    GB_WHERE3 (w, M, u, GB_STR(prefix) "_Vector_apply_IndexOp_" GB_STR(T)   \
         " (w, M, accum, op, u, thunk, desc)") ;                             \
     GB_SCALAR_WRAP (scalar, thunk, GB_EVAL3 (prefix, _, T)) ;               \
     return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;\
@@ -414,8 +416,8 @@ GrB_Info GrB_Vector_apply_IndexOp_UDT
     const GrB_Descriptor desc       // descriptor for w and M
 )
 { 
-    GB_WHERE (w, "GrB_Vector_apply_IndexOp_UDT"
-        " (w, M, accum, op, u, thunk, desc)") ;
+    GB_WHERE3 (w, M, u,
+        "GrB_Vector_apply_IndexOp_UDT (w, M, accum, op, u, thunk, desc)") ;
     GB_SCALAR_WRAP_UDT (scalar, thunk, (op == NULL) ? NULL : op->ytype) ;
     return (GB_2nd (w, M, accum, (GB_Operator) op, u, scalar, desc, Werk)) ;
 }
@@ -435,8 +437,8 @@ GrB_Info GrB_Vector_apply_IndexOp_Scalar
     const GrB_Descriptor desc       // descriptor for w and M
 )
 { 
-    GB_WHERE (w, "GrB_Vector_apply_IndexOp_Scalar"
-        " (w, M, accum, op, u, thunk, desc)") ;
+    GB_WHERE4 (w, M, u, thunk,
+        "GrB_Vector_apply_IndexOp_Scalar (w, M, accum, op, u, thunk, desc)") ;
     return (GB_2nd (w, M, accum, (GB_Operator) op, u, thunk, desc, Werk)) ;
 }
 

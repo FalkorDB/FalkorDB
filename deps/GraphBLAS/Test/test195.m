@@ -1,7 +1,7 @@
 function test195 (dohack)
 %TEST195 test all variants of saxpy3
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test195 -------------- saxpy3 variants\n') ;
@@ -50,8 +50,7 @@ hack = save_hack ;
 if (nargin < 1)
     dohack = 2 ;
 end
-hack (1) = dohack ;     % modify "very_costly" in GxB_AxB_saxpy3_slice_balanced
-GB_mex_hack (hack) ;
+hack (1) = dohack ; GB_mex_hack (hack) ; % "very_costly" in saxpy3
 
 k = 3 ;
 n = 4 ;

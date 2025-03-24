@@ -2,7 +2,7 @@
 // GB_mex_test34: test GrB_get and GrB_set (descriptor)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,39 +14,39 @@
 #define GET_DEEP_COPY ;
 #define FREE_DEEP_COPY ;
 
-#define DGET(desc,value,field)                                                \
-{                                                                             \
-    if (print)                                                                \
-    {                                                                         \
-        printf ("\ndescriptor: %s\n", #desc) ;                                \
-        OK (GxB_Descriptor_fprint (desc, "desc", 5, stdout)) ;                \
-    }                                                                         \
-    OK (GrB_Descriptor_get_INT32 (desc, &i, (GrB_Field) (field))) ;           \
-    CHECK (i == value) ;                                                      \
-    OK (GrB_Scalar_clear (s_int32)) ;                                         \
-    OK (GrB_Descriptor_get_Scalar (desc, s_int32, (GrB_Field) (field))) ;     \
-    int32_t iscalar = -1 ;                                                    \
-    OK (GrB_Scalar_extractElement_INT32 (&iscalar, s_int32)) ;                \
-    CHECK (iscalar == value) ;                                                \
-    OK (GrB_Descriptor_get_SIZE (desc, &size, GrB_NAME)) ;                    \
-    CHECK (size == GxB_MAX_NAME_LEN) ;                                        \
-    OK (GrB_Descriptor_get_String (desc, name, GrB_NAME)) ;                   \
-    CHECK (MATCH (name, #desc)) ;                                             \
+#define DGET(desc,value,field)                                      \
+{                                                                   \
+    if (print)                                                      \
+    {                                                               \
+        printf ("\ndescriptor: %s\n", #desc) ;                      \
+        OK (GxB_Descriptor_fprint (desc, "desc", 5, stdout)) ;      \
+    }                                                               \
+    OK (GrB_Descriptor_get_INT32 (desc, &i, (field))) ;             \
+    CHECK (i == value) ;                                            \
+    OK (GrB_Scalar_clear (s_int32)) ;                               \
+    OK (GrB_Descriptor_get_Scalar (desc, s_int32, (field))) ;       \
+    int32_t ii = -1 ;                                               \
+    OK (GrB_Scalar_extractElement_INT32 (&ii, s_int32)) ;           \
+    CHECK (ii == value) ;                                           \
+    OK (GrB_Descriptor_get_SIZE (desc, &size, GrB_NAME)) ;          \
+    CHECK (size == GxB_MAX_NAME_LEN) ;                              \
+    OK (GrB_Descriptor_get_String (desc, name, GrB_NAME)) ;         \
+    CHECK (MATCH (name, #desc)) ;                                   \
 }   
 
-#define DSET(desc,value,field)                                                \
-{                                                                             \
-    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (GrB_Field) (field))) ;  \
-    OK (GrB_Descriptor_set_INT32 (desc, value, (GrB_Field) (field))) ;        \
-    int32_t i2 ;                                                              \
-    OK (GrB_Descriptor_get_INT32 (desc, &i2, (GrB_Field) (field))) ;          \
-    CHECK (i2 == value) ;                                                     \
-    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (GrB_Field) (field))) ;  \
-    OK (GrB_Scalar_setElement_INT32 (s_int32, value)) ;                       \
-    OK (GrB_Descriptor_set_Scalar (desc, s_int32, (GrB_Field) (field))) ;     \
-    int32_t i3 ;                                                              \
-    OK (GrB_Descriptor_get_INT32 (desc, &i2, (GrB_Field) (field))) ;          \
-    CHECK (i2 == value) ;                                                     \
+#define DSET(desc,value,field)                                      \
+{                                                                   \
+    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (field))) ;    \
+    OK (GrB_Descriptor_set_INT32 (desc, value, (field))) ;          \
+    int32_t i2 ;                                                    \
+    OK (GrB_Descriptor_get_INT32 (desc, &i2, (field))) ;            \
+    CHECK (i2 == value) ;                                           \
+    OK (GrB_Descriptor_set_INT32 (desc, GrB_DEFAULT, (field))) ;    \
+    OK (GrB_Scalar_setElement_INT32 (s_int32, value)) ;             \
+    OK (GrB_Descriptor_set_Scalar (desc, s_int32, (field))) ;       \
+    int32_t i3 ;                                                    \
+    OK (GrB_Descriptor_get_INT32 (desc, &i2, (field))) ;            \
+    CHECK (i2 == value) ;                                           \
 }
 
 void mexFunction
@@ -394,6 +394,20 @@ GrB_DESC_RSCT0T1 ; // GrB_REPLACE  GrB_STRUCTURE  GrB_COMP   GrB_TRAN  GrB_TRAN
     DSET (desc, GxB_SECURE_IMPORT   , GxB_IMPORT) ;
     DSET (desc, GrB_DEFAULT         , GxB_IMPORT) ;
 
+    DSET (desc, GxB_DEFAULT         , GxB_ROWINDEX_LIST) ;
+    DSET (desc, GxB_USE_VALUES      , GxB_ROWINDEX_LIST) ;
+    DSET (desc, GxB_USE_INDICES     , GxB_ROWINDEX_LIST) ;
+    DSET (desc, GxB_IS_STRIDE       , GxB_ROWINDEX_LIST) ;
+
+    DSET (desc, GxB_DEFAULT         , GxB_COLINDEX_LIST) ;
+    DSET (desc, GxB_USE_VALUES      , GxB_COLINDEX_LIST) ;
+    DSET (desc, GxB_USE_INDICES     , GxB_COLINDEX_LIST) ;
+    DSET (desc, GxB_IS_STRIDE       , GxB_COLINDEX_LIST) ;
+
+    DSET (desc, GxB_DEFAULT         , GxB_VALUE_LIST) ;
+    DSET (desc, GxB_USE_VALUES      , GxB_VALUE_LIST) ;
+    DSET (desc, GxB_USE_INDICES     , GxB_VALUE_LIST) ;
+
     OK (GrB_Descriptor_get_String_ (desc, name, GrB_NAME)) ;
     CHECK (MATCH (name, "")) ;
     OK (GrB_Descriptor_set_String_ (desc, "user_name", GrB_NAME)) ;
@@ -422,38 +436,50 @@ GrB_DESC_RSCT0T1 ; // GrB_REPLACE  GrB_STRUCTURE  GrB_COMP   GrB_TRAN  GrB_TRAN
 
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_Descriptor_get_INT32_ (GrB_DESC_T1, &i, GrB_NAME)) ;
-    ERR (GrB_Descriptor_set_INT32_ (GrB_DESC_T1, GrB_REPLACE, (GrB_Field) GrB_OUTP)) ;
-    ERR (GrB_Descriptor_set_INT32 (NULL, GrB_REPLACE, (GrB_Field) GrB_OUTP)) ;
-    ERR (GrB_Descriptor_get_SIZE_ (GrB_DESC_T1, &size, (GrB_Field) GrB_OUTP)) ;
-    ERR (GrB_Descriptor_set_Scalar_ (GrB_DESC_T1, s_int32, (GrB_Field) GrB_MASK)) ;
-    ERR (GrB_Descriptor_set_Scalar (NULL, s_int32, (GrB_Field) GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_INT32_ (GrB_DESC_T1, GrB_REPLACE, GrB_OUTP)) ;
+    ERR (GrB_Descriptor_set_INT32 (NULL, GrB_REPLACE, GrB_OUTP)) ;
+    ERR (GrB_Descriptor_get_SIZE_ (GrB_DESC_T1, &size, GrB_OUTP)) ;
+    ERR (GrB_Descriptor_set_Scalar_ (GrB_DESC_T1, s_int32, GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_Scalar (NULL, s_int32, GrB_MASK)) ;
     ERR (GrB_Descriptor_set_INT32_ (desc, GrB_DEFAULT, GrB_NAME)) ;
     ERR (GrB_Descriptor_set_String_ (GrB_DESC_T1, "newname", GrB_NAME)) ;
 
     const char *err ;
-    ERR (GrB_Descriptor_set_INT32_ (desc, 999, (GrB_Field) GrB_OUTP)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 999, GrB_OUTP)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 998, (GrB_Field) GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 998, GrB_MASK)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 997, (GrB_Field) GrB_INP0)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 997, GrB_INP0)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 996, (GrB_Field) GrB_INP1)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 996, GrB_INP1)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
-    ERR (GrB_Descriptor_set_INT32_ (desc, 995, (GrB_Field) GxB_AxB_METHOD)) ;
+    ERR (GrB_Descriptor_set_INT32_ (desc, 995, GxB_AxB_METHOD)) ;
+    OK (GrB_Descriptor_error (&err, desc)) ;
+    printf ("error: %s\n\n", err) ;
+
+    ERR (GrB_Descriptor_set_INT32_ (desc, 995, GxB_ROWINDEX_LIST)) ;
+    OK (GrB_Descriptor_error (&err, desc)) ;
+    printf ("error: %s\n\n", err) ;
+
+    ERR (GrB_Descriptor_set_INT32_ (desc, 995, GxB_COLINDEX_LIST)) ;
+    OK (GrB_Descriptor_error (&err, desc)) ;
+    printf ("error: %s\n\n", err) ;
+
+    ERR (GrB_Descriptor_set_INT32_ (desc, 995, GxB_VALUE_LIST)) ;
     OK (GrB_Descriptor_error (&err, desc)) ;
     printf ("error: %s\n\n", err) ;
 
     expected = GrB_EMPTY_OBJECT ;
     OK (GrB_Scalar_clear (s_int32)) ;
-    ERR (GrB_Descriptor_set_Scalar_ (desc, s_int32, (GrB_Field) GrB_MASK)) ;
+    ERR (GrB_Descriptor_set_Scalar_ (desc, s_int32, GrB_MASK)) ;
 
     expected = GrB_INVALID_VALUE ;
     ERR (GrB_Descriptor_set_VOID_ (desc, nothing, 0, 0)) ;

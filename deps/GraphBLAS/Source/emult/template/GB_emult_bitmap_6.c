@@ -2,7 +2,7 @@
 // GB_emult_bitmap_6: C<!M>=A.*B, C bitmap, M sparse, A and B are bitmap/full.
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -58,7 +58,7 @@
             if (Cb [p] == 0)
             {
                 // M(i,j) is zero, so C(i,j) can be computed
-                if (GBB_A (Ab, p) && GBB_B (Bb, p))
+                if (GBb_A (Ab, p) && GBb_B (Bb, p))
                 { 
                     // C (i,j) = A (i,j) + B (i,j)
                     #ifndef GB_ISO_EMULT

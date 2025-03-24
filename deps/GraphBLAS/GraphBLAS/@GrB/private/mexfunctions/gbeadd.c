@@ -2,7 +2,7 @@
 // gbeadd: sparse matrix addition
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -47,7 +47,7 @@ void mexFunction
     mxArray *Matrix [6], *String [2], *Cell [2] ;
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int nmatrices, nstrings, ncells, sparsity ;
     GrB_Descriptor desc ;
     gb_get_mxargs (nargin, pargin, USAGE, Matrix, &nmatrices, String, &nstrings,
@@ -117,21 +117,21 @@ void mexFunction
     if (C == NULL)
     { 
         // get the descriptor contents to determine if A is transposed
-        GrB_Desc_Value in0 ;
-        OK (GxB_Desc_get (desc, GrB_INP0, &in0)) ;
+        int in0 ;
+        OK (GrB_Descriptor_get_INT32 (desc, &in0, GrB_INP0)) ;
         bool A_transpose = (in0 == GrB_TRAN) ;
 
         // get the size of A
-        GrB_Index anrows, ancols ;
+        uint64_t anrows, ancols ;
         OK (GrB_Matrix_nrows (&anrows, A)) ;
         OK (GrB_Matrix_ncols (&ancols, A)) ;
 
         // determine the size of C
-        GrB_Index cnrows = (A_transpose) ? ancols : anrows ;
-        GrB_Index cncols = (A_transpose) ? anrows : ancols ;
+        uint64_t cnrows = (A_transpose) ? ancols : anrows ;
+        uint64_t cncols = (A_transpose) ? anrows : ancols ;
 
         // use the ztype of the op as the type of C
-        OK (GxB_BinaryOp_ztype (&ctype, op)) ;
+        ctype = gb_binaryop_ztype (op) ;
 
         // create the matrix C and set its format and sparsity
         fmt = gb_get_format (cnrows, cncols, A, B, fmt) ;
@@ -160,6 +160,6 @@ void mexFunction
 
     pargout [0] = gb_export (&C, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

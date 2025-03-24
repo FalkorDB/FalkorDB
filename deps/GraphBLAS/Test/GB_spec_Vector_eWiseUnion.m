@@ -7,7 +7,7 @@ function w = GB_spec_Vector_eWiseUnion (w, mask, accum, add, u, alpha, v, beta, 
 % Computes w<mask> = accum(w,t), in GraphBLAS notation, where t =u+v,
 % The pattern of t is the union of u and v.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------

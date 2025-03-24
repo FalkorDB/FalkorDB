@@ -2,7 +2,7 @@
 // GB_AxB_saxpy4_jit: C+=A*B saxpy4 method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,8 +28,7 @@ GrB_Info GB_AxB_saxpy4_jit          // C+=A*B, saxpy4 method, via the JIT
     const bool use_atomics,
     const int64_t *A_slice,
     const int64_t *H_slice,
-    GB_void *restrict Wcx,
-    int8_t *restrict Wf
+    GB_void *restrict Wcx
 )
 { 
 
@@ -44,6 +43,7 @@ GrB_Info GB_AxB_saxpy4_jit          // C+=A*B, saxpy4 method, via the JIT
     uint64_t hash = GB_encodify_mxm (&encoding, &suffix,
         GB_JIT_KERNEL_AXB_SAXPY4,
         false, false, GxB_FULL, C->type,
+        /* OK, C is full: */ false, false, false,
         NULL, true, false, semiring, flipxy, A, B) ;
 
     //--------------------------------------------------------------------------
@@ -61,9 +61,10 @@ GrB_Info GB_AxB_saxpy4_jit          // C+=A*B, saxpy4 method, via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, A, B, ntasks, nthreads, nfine_tasks_per_vector,
-        use_coarse_tasks, use_atomics, A_slice, H_slice, Wcx, Wf,
-        semiring->multiply->theta)) ;
+        use_coarse_tasks, use_atomics, A_slice, H_slice, Wcx,
+        semiring->multiply->theta, &GB_callback)) ;
 }
 

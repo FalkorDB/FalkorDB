@@ -2,7 +2,7 @@
 // gb_string_to_idxunop: get a GrB_IndexUnaryOp from a string
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -68,7 +68,9 @@ void gb_string_to_idxunop
         // ignore the type.  But a placeholder type is needed for VALUE ops.
         type = GrB_FP64 ;
     }
-    GB_Type_code typecode = type->code ;
+
+    int typecode ;
+    OK (GrB_Type_get_INT32 (type, &typecode, GrB_EL_TYPE_CODE)) ;
 
     //--------------------------------------------------------------------------
     // convert the string to a GrB_IndexUnaryOp
@@ -146,112 +148,112 @@ void gb_string_to_idxunop
     { 
         switch (typecode)
         {
-            case GB_BOOL_code   : (*op) = GrB_VALUENE_BOOL    ; break ;
-            case GB_INT8_code   : (*op) = GrB_VALUENE_INT8    ; break ;
-            case GB_INT16_code  : (*op) = GrB_VALUENE_INT16   ; break ;
-            case GB_INT32_code  : (*op) = GrB_VALUENE_INT32   ; break ;
-            case GB_INT64_code  : (*op) = GrB_VALUENE_INT64   ; break ;
-            case GB_UINT8_code  : (*op) = GrB_VALUENE_UINT8   ; break ;
-            case GB_UINT16_code : (*op) = GrB_VALUENE_UINT16  ; break ;
-            case GB_UINT32_code : (*op) = GrB_VALUENE_UINT32  ; break ;
-            case GB_UINT64_code : (*op) = GrB_VALUENE_UINT64  ; break ;
-            case GB_FP32_code   : (*op) = GrB_VALUENE_FP32    ; break ;
-            case GB_FP64_code   : (*op) = GrB_VALUENE_FP64    ; break ;
-            case GB_FC32_code   : (*op) = GxB_VALUENE_FC32    ; break ;
-            case GB_FC64_code   : (*op) = GxB_VALUENE_FC64    ; break ;
-            default             : ;
+            case GrB_BOOL_CODE   : (*op) = GrB_VALUENE_BOOL    ; break ;
+            case GrB_INT8_CODE   : (*op) = GrB_VALUENE_INT8    ; break ;
+            case GrB_INT16_CODE  : (*op) = GrB_VALUENE_INT16   ; break ;
+            case GrB_INT32_CODE  : (*op) = GrB_VALUENE_INT32   ; break ;
+            case GrB_INT64_CODE  : (*op) = GrB_VALUENE_INT64   ; break ;
+            case GrB_UINT8_CODE  : (*op) = GrB_VALUENE_UINT8   ; break ;
+            case GrB_UINT16_CODE : (*op) = GrB_VALUENE_UINT16  ; break ;
+            case GrB_UINT32_CODE : (*op) = GrB_VALUENE_UINT32  ; break ;
+            case GrB_UINT64_CODE : (*op) = GrB_VALUENE_UINT64  ; break ;
+            case GrB_FP32_CODE   : (*op) = GrB_VALUENE_FP32    ; break ;
+            case GrB_FP64_CODE   : (*op) = GrB_VALUENE_FP64    ; break ;
+            case GxB_FC32_CODE   : (*op) = GxB_VALUENE_FC32    ; break ;
+            case GxB_FC64_CODE   : (*op) = GxB_VALUENE_FC64    ; break ;
+            default              : ;
         }
     }
     else if (MATCH (opstring, "==") || is_zero)
     { 
         switch (typecode)
         {
-            case GB_BOOL_code   : (*op) = GrB_VALUEEQ_BOOL    ; break ;
-            case GB_INT8_code   : (*op) = GrB_VALUEEQ_INT8    ; break ;
-            case GB_INT16_code  : (*op) = GrB_VALUEEQ_INT16   ; break ;
-            case GB_INT32_code  : (*op) = GrB_VALUEEQ_INT32   ; break ;
-            case GB_INT64_code  : (*op) = GrB_VALUEEQ_INT64   ; break ;
-            case GB_UINT8_code  : (*op) = GrB_VALUEEQ_UINT8   ; break ;
-            case GB_UINT16_code : (*op) = GrB_VALUEEQ_UINT16  ; break ;
-            case GB_UINT32_code : (*op) = GrB_VALUEEQ_UINT32  ; break ;
-            case GB_UINT64_code : (*op) = GrB_VALUEEQ_UINT64  ; break ;
-            case GB_FP32_code   : (*op) = GrB_VALUEEQ_FP32    ; break ;
-            case GB_FP64_code   : (*op) = GrB_VALUEEQ_FP64    ; break ;
-            case GB_FC32_code   : (*op) = GxB_VALUEEQ_FC32    ; break ;
-            case GB_FC64_code   : (*op) = GxB_VALUEEQ_FC64    ; break ;
-            default             : ;
+            case GrB_BOOL_CODE   : (*op) = GrB_VALUEEQ_BOOL    ; break ;
+            case GrB_INT8_CODE   : (*op) = GrB_VALUEEQ_INT8    ; break ;
+            case GrB_INT16_CODE  : (*op) = GrB_VALUEEQ_INT16   ; break ;
+            case GrB_INT32_CODE  : (*op) = GrB_VALUEEQ_INT32   ; break ;
+            case GrB_INT64_CODE  : (*op) = GrB_VALUEEQ_INT64   ; break ;
+            case GrB_UINT8_CODE  : (*op) = GrB_VALUEEQ_UINT8   ; break ;
+            case GrB_UINT16_CODE : (*op) = GrB_VALUEEQ_UINT16  ; break ;
+            case GrB_UINT32_CODE : (*op) = GrB_VALUEEQ_UINT32  ; break ;
+            case GrB_UINT64_CODE : (*op) = GrB_VALUEEQ_UINT64  ; break ;
+            case GrB_FP32_CODE   : (*op) = GrB_VALUEEQ_FP32    ; break ;
+            case GrB_FP64_CODE   : (*op) = GrB_VALUEEQ_FP64    ; break ;
+            case GxB_FC32_CODE   : (*op) = GxB_VALUEEQ_FC32    ; break ;
+            case GxB_FC64_CODE   : (*op) = GxB_VALUEEQ_FC64    ; break ;
+            default              : ;
         }
     }
     else if (MATCH (opstring, ">") || is_positive)
     { 
         switch (typecode)
         {
-            case GB_BOOL_code   : (*op) = GrB_VALUEGT_BOOL    ; break ;
-            case GB_INT8_code   : (*op) = GrB_VALUEGT_INT8    ; break ;
-            case GB_INT16_code  : (*op) = GrB_VALUEGT_INT16   ; break ;
-            case GB_INT32_code  : (*op) = GrB_VALUEGT_INT32   ; break ;
-            case GB_INT64_code  : (*op) = GrB_VALUEGT_INT64   ; break ;
-            case GB_UINT8_code  : (*op) = GrB_VALUEGT_UINT8   ; break ;
-            case GB_UINT16_code : (*op) = GrB_VALUEGT_UINT16  ; break ;
-            case GB_UINT32_code : (*op) = GrB_VALUEGT_UINT32  ; break ;
-            case GB_UINT64_code : (*op) = GrB_VALUEGT_UINT64  ; break ;
-            case GB_FP32_code   : (*op) = GrB_VALUEGT_FP32    ; break ;
-            case GB_FP64_code   : (*op) = GrB_VALUEGT_FP64    ; break ;
-            default             : ;
+            case GrB_BOOL_CODE   : (*op) = GrB_VALUEGT_BOOL    ; break ;
+            case GrB_INT8_CODE   : (*op) = GrB_VALUEGT_INT8    ; break ;
+            case GrB_INT16_CODE  : (*op) = GrB_VALUEGT_INT16   ; break ;
+            case GrB_INT32_CODE  : (*op) = GrB_VALUEGT_INT32   ; break ;
+            case GrB_INT64_CODE  : (*op) = GrB_VALUEGT_INT64   ; break ;
+            case GrB_UINT8_CODE  : (*op) = GrB_VALUEGT_UINT8   ; break ;
+            case GrB_UINT16_CODE : (*op) = GrB_VALUEGT_UINT16  ; break ;
+            case GrB_UINT32_CODE : (*op) = GrB_VALUEGT_UINT32  ; break ;
+            case GrB_UINT64_CODE : (*op) = GrB_VALUEGT_UINT64  ; break ;
+            case GrB_FP32_CODE   : (*op) = GrB_VALUEGT_FP32    ; break ;
+            case GrB_FP64_CODE   : (*op) = GrB_VALUEGT_FP64    ; break ;
+            default              : ;
         }
     }
     else if (MATCH (opstring, ">=") || is_nonneg)
     { 
         switch (typecode)
         {
-            case GB_BOOL_code   : (*op) = GrB_VALUEGE_BOOL    ; break ;
-            case GB_INT8_code   : (*op) = GrB_VALUEGE_INT8    ; break ;
-            case GB_INT16_code  : (*op) = GrB_VALUEGE_INT16   ; break ;
-            case GB_INT32_code  : (*op) = GrB_VALUEGE_INT32   ; break ;
-            case GB_INT64_code  : (*op) = GrB_VALUEGE_INT64   ; break ;
-            case GB_UINT8_code  : (*op) = GrB_VALUEGE_UINT8   ; break ;
-            case GB_UINT16_code : (*op) = GrB_VALUEGE_UINT16  ; break ;
-            case GB_UINT32_code : (*op) = GrB_VALUEGE_UINT32  ; break ;
-            case GB_UINT64_code : (*op) = GrB_VALUEGE_UINT64  ; break ;
-            case GB_FP32_code   : (*op) = GrB_VALUEGE_FP32    ; break ;
-            case GB_FP64_code   : (*op) = GrB_VALUEGE_FP64    ; break ;
-            default             : ;
+            case GrB_BOOL_CODE   : (*op) = GrB_VALUEGE_BOOL    ; break ;
+            case GrB_INT8_CODE   : (*op) = GrB_VALUEGE_INT8    ; break ;
+            case GrB_INT16_CODE  : (*op) = GrB_VALUEGE_INT16   ; break ;
+            case GrB_INT32_CODE  : (*op) = GrB_VALUEGE_INT32   ; break ;
+            case GrB_INT64_CODE  : (*op) = GrB_VALUEGE_INT64   ; break ;
+            case GrB_UINT8_CODE  : (*op) = GrB_VALUEGE_UINT8   ; break ;
+            case GrB_UINT16_CODE : (*op) = GrB_VALUEGE_UINT16  ; break ;
+            case GrB_UINT32_CODE : (*op) = GrB_VALUEGE_UINT32  ; break ;
+            case GrB_UINT64_CODE : (*op) = GrB_VALUEGE_UINT64  ; break ;
+            case GrB_FP32_CODE   : (*op) = GrB_VALUEGE_FP32    ; break ;
+            case GrB_FP64_CODE   : (*op) = GrB_VALUEGE_FP64    ; break ;
+            default              : ;
         }
     }
     else if (MATCH (opstring, "<") || is_negative)
     { 
         switch (typecode)
         {
-            case GB_BOOL_code   : (*op) = GrB_VALUELT_BOOL    ; break ;
-            case GB_INT8_code   : (*op) = GrB_VALUELT_INT8    ; break ;
-            case GB_INT16_code  : (*op) = GrB_VALUELT_INT16   ; break ;
-            case GB_INT32_code  : (*op) = GrB_VALUELT_INT32   ; break ;
-            case GB_INT64_code  : (*op) = GrB_VALUELT_INT64   ; break ;
-            case GB_UINT8_code  : (*op) = GrB_VALUELT_UINT8   ; break ;
-            case GB_UINT16_code : (*op) = GrB_VALUELT_UINT16  ; break ;
-            case GB_UINT32_code : (*op) = GrB_VALUELT_UINT32  ; break ;
-            case GB_UINT64_code : (*op) = GrB_VALUELT_UINT64  ; break ;
-            case GB_FP32_code   : (*op) = GrB_VALUELT_FP32    ; break ;
-            case GB_FP64_code   : (*op) = GrB_VALUELT_FP64    ; break ;
-            default             : ;
+            case GrB_BOOL_CODE   : (*op) = GrB_VALUELT_BOOL    ; break ;
+            case GrB_INT8_CODE   : (*op) = GrB_VALUELT_INT8    ; break ;
+            case GrB_INT16_CODE  : (*op) = GrB_VALUELT_INT16   ; break ;
+            case GrB_INT32_CODE  : (*op) = GrB_VALUELT_INT32   ; break ;
+            case GrB_INT64_CODE  : (*op) = GrB_VALUELT_INT64   ; break ;
+            case GrB_UINT8_CODE  : (*op) = GrB_VALUELT_UINT8   ; break ;
+            case GrB_UINT16_CODE : (*op) = GrB_VALUELT_UINT16  ; break ;
+            case GrB_UINT32_CODE : (*op) = GrB_VALUELT_UINT32  ; break ;
+            case GrB_UINT64_CODE : (*op) = GrB_VALUELT_UINT64  ; break ;
+            case GrB_FP32_CODE   : (*op) = GrB_VALUELT_FP32    ; break ;
+            case GrB_FP64_CODE   : (*op) = GrB_VALUELT_FP64    ; break ;
+            default              : ;
         }
     }
     else if (MATCH (opstring, "<=") || is_nonpos)
     { 
         switch (typecode)
         {
-            case GB_BOOL_code   : (*op) = GrB_VALUELE_BOOL    ; break ;
-            case GB_INT8_code   : (*op) = GrB_VALUELE_INT8    ; break ;
-            case GB_INT16_code  : (*op) = GrB_VALUELE_INT16   ; break ;
-            case GB_INT32_code  : (*op) = GrB_VALUELE_INT32   ; break ;
-            case GB_INT64_code  : (*op) = GrB_VALUELE_INT64   ; break ;
-            case GB_UINT8_code  : (*op) = GrB_VALUELE_UINT8   ; break ;
-            case GB_UINT16_code : (*op) = GrB_VALUELE_UINT16  ; break ;
-            case GB_UINT32_code : (*op) = GrB_VALUELE_UINT32  ; break ;
-            case GB_UINT64_code : (*op) = GrB_VALUELE_UINT64  ; break ;
-            case GB_FP32_code   : (*op) = GrB_VALUELE_FP32    ; break ;
-            case GB_FP64_code   : (*op) = GrB_VALUELE_FP64    ; break ;
-            default             : ;
+            case GrB_BOOL_CODE   : (*op) = GrB_VALUELE_BOOL    ; break ;
+            case GrB_INT8_CODE   : (*op) = GrB_VALUELE_INT8    ; break ;
+            case GrB_INT16_CODE  : (*op) = GrB_VALUELE_INT16   ; break ;
+            case GrB_INT32_CODE  : (*op) = GrB_VALUELE_INT32   ; break ;
+            case GrB_INT64_CODE  : (*op) = GrB_VALUELE_INT64   ; break ;
+            case GrB_UINT8_CODE  : (*op) = GrB_VALUELE_UINT8   ; break ;
+            case GrB_UINT16_CODE : (*op) = GrB_VALUELE_UINT16  ; break ;
+            case GrB_UINT32_CODE : (*op) = GrB_VALUELE_UINT32  ; break ;
+            case GrB_UINT64_CODE : (*op) = GrB_VALUELE_UINT64  ; break ;
+            case GrB_FP32_CODE   : (*op) = GrB_VALUELE_FP32    ; break ;
+            case GrB_FP64_CODE   : (*op) = GrB_VALUELE_FP64    ; break ;
+            default              : ;
         }
     }
 

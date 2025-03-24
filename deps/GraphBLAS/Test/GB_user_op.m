@@ -10,7 +10,7 @@ function [z tol] = GB_user_op (op, x, y)
 % No typecasting is done for user-defined operators.  x,y,z are either
 % double complex or double
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 tol = false ;

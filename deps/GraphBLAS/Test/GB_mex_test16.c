@@ -2,7 +2,7 @@
 // GB_mex_test16: JIT error handling
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,7 +41,7 @@ void mexFunction
     // create some valid matrices
     //--------------------------------------------------------------------------
 
-    GrB_Index n = 4 ;
+    uint64_t n = 4 ;
     GrB_Matrix A = NULL, B = NULL, C = NULL ;
     GrB_Vector v = NULL ;
     OK (GrB_Matrix_new (&A, GrB_FP32, n, n)) ;
@@ -115,20 +115,22 @@ void mexFunction
     GB_jit_encoding e ;
     char *suffix ;
     uint64_t code = GB_encodify_mxm (&e, &suffix, 0, false, false, GxB_SPARSE,
-        GrB_FP32, NULL, false, false, s, false, A, B) ;
+        GrB_FP32, false, false, false, NULL, false, false, s, false, A, B) ;
     CHECK (code == UINT64_MAX) ;
 
     code = GB_encodify_reduce (&e, &suffix, GB_JIT_KERNEL_REDUCE, mon, A) ;
     CHECK (code == UINT64_MAX) ;
 
     code = GB_encodify_assign (&e, &suffix, /* kcode: */ 0, C,
-        /* C_replace: */ false, /* Ikind: */ 0, /* Jkind: */ 0, /* M: */ NULL,
+        /* C_replace: */ false, /* I_is_32: */ false, /* J_is_32: */ false,
+        /* Ikind: */ 0, /* Jkind: */ 0, /* M: */ NULL,
         /* Mask_comp: */ false, /* Mask_struct: */ false,
         /* accum: */ mult, A, /* scalar_type: */ NULL, /* S: */ NULL,
         /* assign_kind: */ 0) ;
     CHECK (code == UINT64_MAX) ;
 
-    code = GB_encodify_build (&e, &suffix, 0, mult, GrB_FP32, GrB_FP32) ;
+    code = GB_encodify_build (&e, &suffix, 0, mult, GrB_FP32, GrB_FP32,
+        true, true, true, true, false) ;
     CHECK (code == UINT64_MAX) ;
 
     //--------------------------------------------------------------------------
@@ -156,9 +158,9 @@ void mexFunction
     OK (GrB_Matrix_new (&C, GrB_FP32, 2*n, 2*n)) ;
     OK (GxB_set (A, GxB_SPARSITY_CONTROL, GxB_BITMAP)) ;
     OK (GxB_set (C, GxB_SPARSITY_CONTROL, GxB_BITMAP)) ;
-    OK (GrB_Row_assign (A, NULL, NULL, v, 0, GrB_ALL, n, NULL)) ;
-    OK (GrB_Col_assign (A, NULL, NULL, v, GrB_ALL, n, 0, NULL)) ;
-    GrB_Index I [4] = {0,1,2,3} ;
+    OK (GrB_Row_assign_(A, NULL, NULL, v, 0, GrB_ALL, n, NULL)) ;
+    OK (GrB_Col_assign_(A, NULL, NULL, v, GrB_ALL, n, 0, NULL)) ;
+    uint64_t I [4] = {0,1,2,3} ;    // OK
     OK (GrB_assign (C, NULL, NULL, A, I, 4, I, 4, NULL)) ;
     OK (GxB_subassign (C, NULL, NULL, A, I, 4, I, 4, NULL)) ;
 

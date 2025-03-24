@@ -1,7 +1,7 @@
 function s = GB_spec_is_positional (op)
 %GB_SPEC_IS_POSITIONAL determine if an op is positional
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isstruct (op))

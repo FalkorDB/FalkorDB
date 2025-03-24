@@ -2,7 +2,7 @@
 // GB_mex_complex: convert a real matrix into a complex one
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,11 +45,12 @@ void mexFunction
         mexErrMsgTxt ("A must be double or double complex") ;
     }
 
-    int64_t *Ap, *Ai ;
+    uint64_t *Ap ;
+    int64_t *Ai ;
 
     if (A_is_sparse)
     {
-        Ap = (int64_t *) mxGetJc (A) ;
+        Ap = (uint64_t *) mxGetJc (A) ;
         Ai = (int64_t *) mxGetIr (A) ;
     }
     else
@@ -77,7 +78,7 @@ void mexFunction
     {
         // A and C are sparse
         pargout [0] = mxCreateSparse (m, n, anz+1, mxCOMPLEX) ;
-        int64_t *Cp = (int64_t *) mxGetJc (pargout [0]) ;
+        uint64_t *Cp = (uint64_t *) mxGetJc (pargout [0]) ;
         int64_t *Ci = (int64_t *) mxGetIr (pargout [0]) ;
         // copy the pattern of A into C
         memcpy (Cp, Ap, (n+1) * sizeof (int64_t)) ;

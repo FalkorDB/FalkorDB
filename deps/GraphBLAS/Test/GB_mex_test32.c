@@ -2,7 +2,7 @@
 // GB_mex_test32: test GrB_get and GrB_set (semirings)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -88,7 +88,7 @@ void mexFunction
     int32_t code, i ;
     float fvalue ;
     double dvalue ;
-    GrB_Index nvals = 999 ;
+    uint64_t nvals = 999 ;
 
     OK (GrB_Scalar_new (&s_fp64, GrB_FP64)) ;
     OK (GrB_Scalar_new (&s_fp32, GrB_FP32)) ;
@@ -2169,13 +2169,12 @@ void mexFunction
         (GxB_binary_function) mytimes, GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(times, "mytimes", GrB_NAME)) ;
     METHOD (GrB_BinaryOp_set_String (times, MYTIMES_DEFN,
-        (GrB_Field) GxB_JIT_C_DEFINITION)) ;
+        GxB_JIT_C_DEFINITION)) ;
 
     OK (GrB_BinaryOp_new (&add,
         (GxB_binary_function) myadd, GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(add, "myadd", GrB_NAME)) ;
-    METHOD (GrB_BinaryOp_set_String (add, MYADD_DEFN,
-        (GrB_Field) GxB_JIT_C_DEFINITION)) ;
+    METHOD (GrB_BinaryOp_set_String (add, MYADD_DEFN, GxB_JIT_C_DEFINITION)) ;
 
     OK (GrB_Monoid_new_FP32 (&monoid, add, (float) 0.0)) ;
     OK (GrB_Monoid_get_SIZE_(monoid, &size, GrB_NAME)) ;

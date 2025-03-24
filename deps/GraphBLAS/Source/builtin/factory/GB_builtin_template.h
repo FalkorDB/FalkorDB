@@ -2,7 +2,7 @@
 // GB_builtin_template.h: define the unary and binary functions and operators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -1072,25 +1072,25 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_IDXOP_STRUCT (ROWINDEX, GB_XTYPE) ;
     inline void GB_FUNC (ROWINDEX) (GB_TYPE *z, const void *unused,
-        GrB_Index i, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = (GB_TYPE) (((int64_t) i) + (*y)) ;
     }
     GB_IDXOP_STRUCT (COLINDEX, GB_XTYPE) ;
     inline void GB_FUNC (COLINDEX) (GB_TYPE *z, const void *unused,
-        GrB_Index i_unused, GrB_Index j, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (GB_TYPE) (((int64_t) j) + (*y)) ;
     }
     GB_IDXOP_STRUCT (DIAGINDEX, GB_XTYPE) ;
     inline void GB_FUNC (DIAGINDEX) (GB_TYPE *z, const void *unused,
-        GrB_Index i, GrB_Index j, const GB_TYPE *y)
+        uint64_t i, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (GB_TYPE) (((int64_t) j) - (((int64_t) i) + (*y))) ;
     }
     GB_IDXOP_STRUCT (FLIPDIAGINDEX, GB_XTYPE) ;
     inline void GB_FUNC (FLIPDIAGINDEX) (GB_TYPE *z, const void *unused,
-        GrB_Index i, GrB_Index j, const GB_TYPE *y)
+        uint64_t i, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (GB_TYPE) (((int64_t) i) - (((int64_t) j) + (*y))) ;
     }
@@ -1105,56 +1105,56 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_IDXOP_STRUCT (TRIL, GB_XTYPE) ;
     inline void GB_FUNC (TRIL) (bool *z, const void *unused,
-        GrB_Index i, GrB_Index j, const GB_TYPE *y)
+        uint64_t i, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (((int64_t) j) <= (((int64_t) i) + (*y))) ;
     }
 
     GB_IDXOP_STRUCT (TRIU, GB_XTYPE) ;
     inline void GB_FUNC (TRIU) (bool *z, const void *unused,
-        GrB_Index i, GrB_Index j, const GB_TYPE *y)
+        uint64_t i, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (((int64_t) j) >= (((int64_t) i) + (*y))) ;
     }
 
     GB_IDXOP_STRUCT (DIAG, GB_XTYPE) ;
     inline void GB_FUNC (DIAG) (bool *z, const void *unused,
-        GrB_Index i, GrB_Index j, const GB_TYPE *y)
+        uint64_t i, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (((int64_t) j) == (((int64_t) i) + (*y))) ;
     }
 
     GB_IDXOP_STRUCT (OFFDIAG, GB_XTYPE) ;
     inline void GB_FUNC (OFFDIAG) (bool *z, const void *unused,
-        GrB_Index i, GrB_Index j, const GB_TYPE *y)
+        uint64_t i, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (((int64_t) j) != (((int64_t) i) + (*y))) ;
     }
 
     GB_IDXOP_STRUCT (COLLE, GB_XTYPE) ;
     inline void GB_FUNC (COLLE) (bool *z, const void *unused,
-        GrB_Index i_unused, GrB_Index j, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (((int64_t) j) <= (*y)) ;
     }
 
     GB_IDXOP_STRUCT (COLGT, GB_XTYPE) ;
     inline void GB_FUNC (COLGT) (bool *z, const void *unused,
-        GrB_Index i_unused, GrB_Index j, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j, const GB_TYPE *y)
     {
         (*z) = (((int64_t) j) > (*y)) ;
     }
 
     GB_IDXOP_STRUCT (ROWLE, GB_XTYPE) ;
     inline void GB_FUNC (ROWLE) (bool *z, const void *unused,
-        GrB_Index i, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = (((int64_t) i) <= (*y)) ;
     }
 
     GB_IDXOP_STRUCT (ROWGT, GB_XTYPE) ;
     inline void GB_FUNC (ROWGT) (bool *z, const void *unused,
-        GrB_Index i, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = (((int64_t) i) > (*y)) ;
     }
@@ -1167,7 +1167,7 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_IDXOP_STRUCT (VALUEEQ, GB_XTYPE) ;
     inline void GB_FUNC (VALUEEQ) (bool *z, const GB_TYPE *x,
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y)
     {
         #if defined ( GB_FLOAT_COMPLEX )
         (*z) = GB_FC32_eq (*x, *y) ;
@@ -1180,7 +1180,7 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_IDXOP_STRUCT (VALUENE, GB_XTYPE) ;
     inline void GB_FUNC (VALUENE) (bool *z, const GB_TYPE *x,
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y)
     {
         #if defined ( GB_FLOAT_COMPLEX )
         (*z) = GB_FC32_ne (*x, *y) ;
@@ -1199,28 +1199,28 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_IDXOP_STRUCT (VALUELT, GB_XTYPE) ;
     inline void GB_FUNC (VALUELT) (bool *z, const GB_TYPE *x,
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = ((*x) < (*y)) ;
     }
 
     GB_IDXOP_STRUCT (VALUELE, GB_XTYPE) ;
     inline void GB_FUNC (VALUELE) (bool *z, const GB_TYPE *x,
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = ((*x) <= (*y)) ;
     }
 
     GB_IDXOP_STRUCT (VALUEGT, GB_XTYPE) ;
     inline void GB_FUNC (VALUEGT) (bool *z, const GB_TYPE *x,
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = ((*x) > (*y)) ;
     }
 
     GB_IDXOP_STRUCT (VALUEGE, GB_XTYPE) ;
     inline void GB_FUNC (VALUEGE) (bool *z, const GB_TYPE *x,
-        GrB_Index i_unused, GrB_Index j_unused, const GB_TYPE *y)
+        uint64_t i_unused, uint64_t j_unused, const GB_TYPE *y)
     {
         (*z) = ((*x) >= (*y)) ;
     }
@@ -1235,8 +1235,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (FIRSTI, GB_XTYPE) ;
     inline void GB_FUNC (FIRSTI) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = (GB_TYPE) ix ;
@@ -1244,8 +1244,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (FIRSTI1, GB_XTYPE) ;
     inline void GB_FUNC (FIRSTI1) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = ((GB_TYPE) ix) + 1 ;
@@ -1253,8 +1253,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (FIRSTJ, GB_XTYPE) ;
     inline void GB_FUNC (FIRSTJ) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = (GB_TYPE) jx ;
@@ -1262,8 +1262,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (FIRSTJ1, GB_XTYPE) ;
     inline void GB_FUNC (FIRSTJ1) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = ((GB_TYPE) jx) + 1 ;
@@ -1271,8 +1271,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (SECONDI, GB_XTYPE) ;
     inline void GB_FUNC (SECONDI) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = (GB_TYPE) iy ;
@@ -1280,8 +1280,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (SECONDI1, GB_XTYPE) ;
     inline void GB_FUNC (SECONDI1) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = ((GB_TYPE) iy) + 1 ;
@@ -1289,8 +1289,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (SECONDJ, GB_XTYPE) ;
     inline void GB_FUNC (SECONDJ) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = (GB_TYPE) jy ;
@@ -1298,8 +1298,8 @@ inline void GB_FUNC (NE) (GB_Zbool_X_Y_ARGS)
 
     GB_BINOP_STRUCT (SECONDJ1, GB_XTYPE) ;
     inline void GB_FUNC (SECONDJ1) (GB_TYPE *z,
-        const void *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const void *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         (*z) = ((GB_TYPE) jy) + 1 ;

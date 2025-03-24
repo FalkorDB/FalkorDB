@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Program/simple_demo.c: tests simple_rand
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,7 +29,6 @@
 */
 
 #include "simple_rand.h"
-#include "simple_rand.c"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -49,11 +48,13 @@ int main (void)
         fprintf (stderr, "simple_demo: out of memory\n") ;
         exit (1) ;
     }
+    
+    uint64_t state = 1 ;
 
     // generate random numbers
     for (i = 0 ; i < LEN ; i++)
     {
-        x [i] = simple_rand_x ( ) ;
+        x [i] = simple_rand_x (&state) ;
     }
 
     // these should be the same on any system and any compiler
@@ -66,7 +67,7 @@ int main (void)
     // generate random uint64_t numbers
     for (i = 0 ; i < LEN ; i++)
     {
-        simple_rand_i ( ) ;
+        simple_rand (&state) ;
     }
 
     free (x) ;

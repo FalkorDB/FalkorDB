@@ -109,10 +109,10 @@ OpBase *NewMergeCreateOp
 		bool aware;
 		UNUSED(aware);
 
-		aware = OpBase_Aware((OpBase *)op, e->src, &e->src_idx);
+		aware = OpBase_AliasMapping((OpBase *)op, e->src, &e->src_idx);
 		ASSERT(aware == true);
 
-		aware = OpBase_Aware((OpBase *)op, e->dest, &e->dest_idx);
+		aware = OpBase_AliasMapping((OpBase *)op, e->dest, &e->dest_idx);
 		ASSERT(aware == true);
 	}
 

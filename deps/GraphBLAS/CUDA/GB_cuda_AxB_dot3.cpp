@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/GB_cuda_AxB_dot3: compute C<M> = A'*B on GPU(s)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,17 +13,21 @@
 // and B can have any sparsity format.  C is computed as sparse or hypersparse,
 // with the same format as M.
 
-#define GB_FREE_WORKSPACE                                               \
-{                                                                       \
-    /* FIXME: use a stream pool instead */                              \
-    if (stream != nullptr) cudaStreamDestroy (stream) ;                 \
-    stream = nullptr ;                                                  \
+#undef  GB_FREE_WORKSPACE
+#define GB_FREE_WORKSPACE                                   \
+{                                                           \
+    if (stream != nullptr)                                  \
+    {                                                       \
+        cudaStreamSynchronize (stream) ;                    \
+        cudaStreamDestroy (stream) ;                        \
+    }                                                       \
+    stream = nullptr ;                                      \
 }
 
-#define GB_FREE_ALL                                                     \
-{                                                                       \
-    GB_FREE_WORKSPACE ;                                                 \
-    GB_phybix_free (C) ;                                                \
+#define GB_FREE_ALL         \
+{                           \
+    GB_FREE_WORKSPACE ;     \
+    GB_phybix_free (C) ;    \
 }
 
 #include "GB_cuda_AxB.hpp"
@@ -44,15 +48,16 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 )
 {
 
-    cudaStream_t stream = nullptr ;
 
     //--------------------------------------------------------------------------
     // create the stream
     //--------------------------------------------------------------------------
 
     // FIXME: pass in a stream instead, or checkout a stream
+    cudaStream_t stream = nullptr ;
     CUDA_OK (cudaStreamCreate (&stream)) ;
-    GpuTimer kernel_timer;
+
+    GpuTimer kernel_timer;  // FIXME: delete this?
 
     //--------------------------------------------------------------------------
     // check inputs
@@ -60,10 +65,10 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 
     // when CUDA is enabled, no static headers are used in all of GraphBLAS
     GrB_Info info ;
-    ASSERT (C != NULL && !(C->static_header)) ;
-    ASSERT (M != NULL && !(M->static_header)) ;
-    ASSERT (A != NULL && !(A->static_header)) ;
-    ASSERT (B != NULL && !(B->static_header)) ;
+    ASSERT (C != NULL && !(C->header_size == 0)) ;
+    ASSERT (M != NULL && !(M->header_size == 0)) ;
+    ASSERT (A != NULL && !(A->header_size == 0)) ;
+    ASSERT (B != NULL && !(B->header_size == 0)) ;
 
     ASSERT_MATRIX_OK (M, "M for dot3 cuda A'*B", GB0) ;
     ASSERT_MATRIX_OK (A, "A for dot3 cuda A'*B", GB0) ;
@@ -98,7 +103,7 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     int number_of_sms = GB_Global_gpu_sm_get (0) ;
 
     //--------------------------------------------------------------------------
-    // get M, A, and B
+    // get M
     //--------------------------------------------------------------------------
 
     const int64_t mvlen = M->vlen ;
@@ -106,24 +111,6 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     const int64_t mnz = GB_nnz (M) ;
     const int64_t mnvec = M->nvec ;
     const bool M_is_hyper = GB_IS_HYPERSPARSE( M ) ;
-
-    const int64_t anz = GB_nnz (A) ;
-    const int64_t anvec = A->nvec ;
-    bool A_is_sparse = GB_IS_SPARSE (A) ;
-    bool A_is_hyper  = GB_IS_HYPERSPARSE (A) ;
-    bool A_is_bitmap = GB_IS_BITMAP (A) ;
-    bool A_is_full   = GB_IS_FULL (A) ;
-    bool A_is_sparse_or_hyper = A_is_sparse || A_is_hyper ;
-    bool A_is_bitmap_or_full  = A_is_bitmap || A_is_full  ;
-
-    const int64_t bnz = GB_nnz (B) ;
-    const int64_t bnvec = B->nvec ;
-    bool B_is_sparse = GB_IS_SPARSE (B) ;
-    bool B_is_hyper  = GB_IS_HYPERSPARSE (B) ;
-    bool B_is_bitmap = GB_IS_BITMAP (B) ;
-    bool B_is_full   = GB_IS_FULL (B) ;
-    bool B_is_sparse_or_hyper = B_is_sparse || B_is_hyper ;
-    bool B_is_bitmap_or_full  = B_is_bitmap || B_is_full  ;
 
     //--------------------------------------------------------------------------
     // get the semiring operators
@@ -163,10 +150,11 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     }
 
     GB_OK (GB_new_bix (&C, // sparse or hyper (from M), existing header
-        ctype, cvlen, cvdim, GB_Ap_malloc, true,
-        M_sparsity, false, M->hyper_switch, cnvec,
+        ctype, cvlen, cvdim, GB_ph_malloc, /* is_csc: */ true,
+        M_sparsity, /* bitmap_calloc: */ false, M->hyper_switch, cnvec,
         cnz+1,  // add one to cnz for cumsum of Cwork
-        true, C_iso)) ;
+        /* numeric: */ true, /* iso: */ C_iso,
+        /* C pji_is_32: */ M->p_is_32, M->j_is_32, M->i_is_32)) ;
 
     //--------------------------------------------------------------------------
     // Pre-fetch arrays that will be used on the device
@@ -174,14 +162,20 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
 
     // GB_cuda_matrix_advise (C, cnvec, cnz, which, what, device)
     // advise C
-    CUDA_OK (cudaMemAdvise (C->p, (cnvec+1) * sizeof ( int64_t),
+    size_t psize = C->p_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t jsize = C->j_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t isize = C->i_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    // FIXME: make this a helper function, something like:
+    // GB_cuda_matrix_memadvise (C, GB_MEMADVISE_PHIX, device, stream) ;
+    CUDA_OK (cudaMemAdvise (C->p, (cnvec+1) * psize,
         cudaMemAdviseSetPreferredLocation, device)) ;
     if (M_is_hyper)
     { 
-        CUDA_OK (cudaMemAdvise (C->h, cnvec * sizeof ( int64_t),
+        CUDA_OK (cudaMemAdvise (C->h, cnvec * jsize,
             cudaMemAdviseSetPreferredLocation, device)) ;
     }
-    CUDA_OK (cudaMemAdvise (C->i, (cnz+1) * sizeof ( int64_t),
+    CUDA_OK (cudaMemAdvise (C->i, (cnz+1) * isize,
         cudaMemAdviseSetPreferredLocation, device)) ;
     if (!C_iso)
     {
@@ -198,17 +192,18 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     //--------------------------------------------------------------------------
 
     // FIXME: use shallow?
-    CUDA_OK (cudaMemcpyAsync (C->p, M->p, (cnvec+1) * sizeof (int64_t),
+    CUDA_OK (cudaMemcpyAsync (C->p, M->p, (cnvec+1) * psize,
         cudaMemcpyDefault, stream)) ;
     if (M_is_hyper)
     { 
-        CUDA_OK (cudaMemcpyAsync (C->h, M->h, cnvec * sizeof (int64_t),
+        CUDA_OK (cudaMemcpyAsync (C->h, M->h, cnvec * jsize,
             cudaMemcpyDefault, stream)) ;
     }
 
     C->nvals = cnz ;
     C->magic = GB_MAGIC ;
-    C->nvec_nonempty = M->nvec_nonempty ;
+    C->nvec_nonempty = M->nvec_nonempty ;   // FIXME
+    C->nvec = cnvec ;
     C->jumbled = GB_JUMBLED (M) ;   // C is jumbled if M is jumbled
 
     GBURBLE ("(GPU C created and copied from M) ") ;
@@ -237,20 +232,14 @@ GrB_Info GB_cuda_AxB_dot3           // C<M> = A'*B using dot product method
     // C<M>=A'*B on CUDA, in the JIT
     //--------------------------------------------------------------------------
 
-//  final call looks like this:
-//  GB_OK (GB_cuda_AxB_dot3_jit (C, M, Mask_struct, A, B, semiring, flipxy,
-//      stream, device, number_of_sms)) ;
-
-//  debugging for now, to die early if the CUDA fails to compile, load, or run:
-    info = GB_cuda_AxB_dot3_jit (C, M, Mask_struct, A, B, semiring, flipxy,
-        stream, device, number_of_sms) ;
-    if (info == GrB_NO_VALUE) info = GrB_PANIC ;
-    GB_OK (info) ;
+    GB_OK (GB_cuda_AxB_dot3_jit (C, M, Mask_struct, A, B, semiring, flipxy,
+        stream, device, number_of_sms)) ;
 
     //--------------------------------------------------------------------------
     // free workspace and return result
     //--------------------------------------------------------------------------
 
+    ASSERT_MATRIX_OK (C, "C result from dot3 cuda A'*B", GB0) ;
     GB_FREE_WORKSPACE ;
     return GrB_SUCCESS;
 }

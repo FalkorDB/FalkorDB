@@ -1,0 +1,35 @@
+
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_transpose:} transpose a matrix} %=========================
+%===============================================================================
+\label{transpose}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_transpose              // C<Mask> = accum (C, A')
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Descriptor desc       // descriptor for C, Mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_transpose'
+transposes a matrix \verb'A', just like the array transpose \verb"T = A.'" in
+MATLAB.  The internal result matrix \verb"T = A'" (or merely \verb"T = A" if
+\verb'A' is transposed via the descriptor) has the same type as \verb'A'.  The
+final step is ${\bf C \langle M \rangle  = C \odot T}$, as described in
+Section~\ref{accummask}, which typecasts \verb'T' as needed and applies the
+mask and accumulator.
+
+To be consistent with the rest of the GraphBLAS API regarding the
+descriptor, the input matrix \verb'A' may be transposed first by
+setting the \verb'GrB_INP0' setting to \verb'GrB_TRAN'.  This results in
+a double transpose, and thus \verb'A' is not transposed is computed.
+
+

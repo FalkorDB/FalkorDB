@@ -2,7 +2,7 @@
 // GB_bitmap_assign_C_template: iterate over a bitmap matrix C
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,7 +30,7 @@
         case GB_ROW_ASSIGN : 
         {
             // iterate over all of C(iC,:)
-            const int64_t iC = I [0] ;
+            const int64_t iC = GB_IGET (I, 0) ;
             const int nthreads = GB_nthreads (Cvdim, chunk, nthreads_max) ;
             int tid ;
             #pragma omp parallel for num_threads(nthreads) schedule(static) \
@@ -59,7 +59,7 @@
         case GB_COL_ASSIGN : 
         {
             // iterate over all of C(:,jC)
-            const int64_t jC = J [0] ;
+            const int64_t jC = GB_IGET (J, 0) ;
             const int64_t pC0 = jC * Cvlen ;
             const int nthreads = GB_nthreads (Cvlen, chunk, nthreads_max) ;
             int tid ;

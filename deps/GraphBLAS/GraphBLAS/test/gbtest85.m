@@ -16,7 +16,7 @@ function gbtest85
 % C = GrB.subassign (C, accum, A, I, J) ;
 % C = GrB.subassign (C, M, accum, A, I, J) ;
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default')

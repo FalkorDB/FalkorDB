@@ -2,7 +2,7 @@
 // GB_enumify_select: enumerate a GrB_select problem
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,13 +18,10 @@ void GB_enumify_select      // enumerate a GrB_selectproblem
     // output:
     uint64_t *method_code,  // unique encoding of the entire operation
     // input:
-    bool C_iso,
-    bool in_place_A,
-    // operator:
-    GrB_IndexUnaryOp op,    // the index unary operator to enumify
-    bool flipij,            // if true, flip i and j
-    // A matrix:
-    GrB_Matrix A
+    const GrB_Matrix C,
+    const GrB_IndexUnaryOp op,   // the index unary operator to enumify
+    const bool flipij,           // if true, flip i and j
+    const GrB_Matrix A
 )
 {
 
@@ -35,93 +32,69 @@ void GB_enumify_select      // enumerate a GrB_selectproblem
     GrB_Type atype = A->type ;
     GB_Opcode opcode = op->opcode ;
     GB_Type_code zcode = op->ztype->code ;
-    GB_Type_code xcode = (op->xtype == NULL) ? 0 : op->xtype->code ;
+    GB_Type_code xcode = ((op->xtype == NULL) ? 0 : op->xtype->code) ;
     GB_Type_code ycode = op->ytype->code ;
+    ASSERT (A->type == C->type) ;
 
     //--------------------------------------------------------------------------
     // enumify the idxunop operator
     //--------------------------------------------------------------------------
 
-    bool depends_on_x, depends_on_i, depends_on_j, depends_on_y ;
-    int idxop_ecode ;
-    GB_enumify_unop (&idxop_ecode, &depends_on_x, &depends_on_i,
-        &depends_on_j, &depends_on_y, flipij, opcode, xcode) ;
-
-    ASSERT (idxop_ecode >= 231 && idxop_ecode <= 254) ;
-
-    if (!depends_on_x)
-    { 
-        // VALUE* ops and user-defined index unary ops depend on x.  The
-        // positional ops (tril, triu, row*, col*, diag*) do not.
-        xcode = 0 ;
-    }
-
-    if (!depends_on_y)
-    { 
-        // All index unary ops depend on y except for NONZOMBIE
-        ycode = 0 ;
-    }
-
-    int i_dep = (depends_on_i) ? 1 : 0 ;
-    int j_dep = (depends_on_j) ? 1 : 0 ;
+    ASSERT (opcode >= GB_ROWINDEX_idxunop_code) ;
+    ASSERT (opcode <= GB_USER_idxunop_code) ;
+    int idxop_code = opcode - GB_ROWINDEX_idxunop_code ;
 
     //--------------------------------------------------------------------------
     // enumify the types
     //--------------------------------------------------------------------------
 
     int acode = atype->code ;               // 1 to 14
-    int ccode = acode ;                     // this may change in the future
     int A_iso_code = (A->iso) ? 1 : 0 ;
-    int C_iso_code = (C_iso) ? 1 : 0 ;
+    int C_iso_code = (C->iso) ? 1 : 0 ;
 
     //--------------------------------------------------------------------------
-    // enumify the sparsity structure of A
+    // enumify the sparsity structure of A and C
     //--------------------------------------------------------------------------
-
-    int A_sparsity = GB_sparsity (A) ;
-    int C_sparsity ;
-
-    if (opcode == GB_DIAG_idxunop_code)
-    { 
-        C_sparsity = (A_sparsity == GxB_FULL) ? GxB_SPARSE : A_sparsity ;
-    }
-    else
-    { 
-        C_sparsity = (A_sparsity == GxB_FULL) ? GxB_BITMAP : A_sparsity ;
-    }
 
     int asparsity, csparsity ;
-    GB_enumify_sparsity (&csparsity, C_sparsity) ;
-    GB_enumify_sparsity (&asparsity, A_sparsity) ;
+    GB_enumify_sparsity (&csparsity, GB_sparsity (C)) ;
+    GB_enumify_sparsity (&asparsity, GB_sparsity (A)) ;
 
-    int inplace = (in_place_A) ? 1 : 0 ;
+    int cp_is_32 = (C->p_is_32) ? 1 : 0 ;
+    int cj_is_32 = (C->j_is_32) ? 1 : 0 ;
+    int ci_is_32 = (C->i_is_32) ? 1 : 0 ;
+
+    int ap_is_32 = (A->p_is_32) ? 1 : 0 ;
+    int aj_is_32 = (A->j_is_32) ? 1 : 0 ;
+    int ai_is_32 = (A->i_is_32) ? 1 : 0 ;
 
     //--------------------------------------------------------------------------
     // construct the select method_code
     //--------------------------------------------------------------------------
 
-    // total method_code bits:  38 (10 hex digits)
+    // total method_code bits:  34 (9 hex digits)
 
     (*method_code) =
                                                // range        bits
-                // iso of A aand C (2 bits)
-                GB_LSHIFT (C_iso_code , 37) |  // 0 or 1       1
-                GB_LSHIFT (A_iso_code , 36) |  // 0 or 1       1
+                // C, A: 32/64 (2 hex digits)
+                GB_LSHIFT (cp_is_32   , 33) |  // 0 or 1       1
+                GB_LSHIFT (cj_is_32   , 32) |  // 0 or 1       1
+                GB_LSHIFT (ci_is_32   , 31) |  // 0 or 1       1
 
-                // inplace, i/j dependency and flipij (1 hex digit)
-                GB_LSHIFT (inplace    , 35) |  // 0 or 1       1
-                GB_LSHIFT (i_dep      , 34) |  // 0 or 1       1
-                GB_LSHIFT (j_dep      , 33) |  // 0 or 1       1
-                GB_LSHIFT (flipij     , 32) |  // 0 or 1       1
+                GB_LSHIFT (ap_is_32   , 30) |  // 0 or 1       1
+                GB_LSHIFT (aj_is_32   , 29) |  // 0 or 1       1
+                GB_LSHIFT (ai_is_32   , 28) |  // 0 or 1       1
 
-                // op, z = f(x,i,j,y) (5 hex digits)
-                GB_LSHIFT (idxop_ecode, 24) |  // 231 to 254   8
-                GB_LSHIFT (zcode      , 20) |  // 0 to 14      4
-                GB_LSHIFT (xcode      , 16) |  // 0 to 14      4
-                GB_LSHIFT (ycode      , 12) |  // 0 to 14      4
+                // op, z = f(x,i,j,y), flipij, and iso codes (5 hex digits)
+                GB_LSHIFT (C_iso_code , 27) |  // 0 or 1       1
+                GB_LSHIFT (A_iso_code , 26) |  // 0 or 1       1
+                GB_LSHIFT (flipij     , 25) |  // 0 or 1       1
+                GB_LSHIFT (idxop_code , 20) |  // 0 to 19      5
+                GB_LSHIFT (zcode      , 16) |  // 0 to 14      4
+                GB_LSHIFT (xcode      , 12) |  // 0 to 14      4
+                GB_LSHIFT (ycode      ,  8) |  // 0 to 14      4
 
-                // types of C and A (2 hex digits)
-                GB_LSHIFT (ccode      ,  8) |  // 0 to 15      4
+                // type of (1 hex digit)
                 GB_LSHIFT (acode      ,  4) |  // 0 to 15      4
 
                 // sparsity structures of C and A (1 hex digit)

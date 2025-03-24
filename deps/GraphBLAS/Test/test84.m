@@ -1,7 +1,7 @@
 function test84
 %TEST84 test GrB_assign (row and column with C in CSR/CSC format)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest84: GrB_assign with row/col assignments\n') ;
@@ -16,10 +16,10 @@ C0 = GB_spec_random (m, n, 0.5, 100, 'double', false, false) ;
 Acol = sprandn (4, 1, 0.5)  ;
 Arow = sprandn (4, 1, 0.5)  ;
 
-J = [3 4 5 6] ;
-J0 = uint64 (J) - 1 ;
+J = [3 4 5 6]' ;
+J0 = (uint64 (J) - 1) ;
 I = 2 ;
-I0 = uint64 (I) - 1 ;
+I0 = (uint64 (I) - 1) ;
 
 for trial = 1:2
 
@@ -48,9 +48,17 @@ for trial = 1:2
                 C2 = GB_spec_Row_assign (C0, Mrow, 'plus', Arow, I,  J,  []) ;
                 GB_spec_compare (C1, C2) ;
 
+                % row assign, _Vector
+                C1 = GB_mex_assign      (C0, Mrow, 'plus', Arow, I0, J0, [], 5);
+                GB_spec_compare (C1, C2) ;
+
                 % col assign
                 C1 = GB_mex_assign      (C0, Mcol, 'plus', Acol, J0, I0, [], 1);
                 C2 = GB_spec_Col_assign (C0, Mcol, 'plus', Acol, J,  I,  [ ]) ;
+                GB_spec_compare (C1, C2) ;
+
+                % col assign _Vector
+                C1 = GB_mex_assign      (C0, Mcol, 'plus', Acol, J0, I0, [], 4);
                 GB_spec_compare (C1, C2) ;
 
                 % row assign, no accum
@@ -58,9 +66,17 @@ for trial = 1:2
                 C2 = GB_spec_Row_assign (C0, Mrow, [ ], Arow, I,  J,  [ ]) ;
                 GB_spec_compare (C1, C2) ;
 
+                % row assign, no accum, _Vector
+                GB_spec_compare (C1, C2) ;
+                C1 = GB_mex_assign      (C0, Mrow, [ ], Arow, I0, J0, [ ], 5) ;
+
                 % col assign, no accum
                 C1 = GB_mex_assign      (C0, Mcol, [ ], Acol, J0, I0, [ ], 1) ;
                 C2 = GB_spec_Col_assign (C0, Mcol, [ ], Acol, J,  I,  [ ]) ;
+                GB_spec_compare (C1, C2) ;
+
+                % col assign, no accum, _Vector
+                C1 = GB_mex_assign      (C0, Mcol, [ ], Acol, J0, I0, [ ], 4) ;
                 GB_spec_compare (C1, C2) ;
 
             end

@@ -9,9 +9,9 @@ bool GB_cuda_select_branch
     
     ASSERT (A != NULL && op != NULL) ;
 
-    if (A->static_header)
+    if (A->header_size == 0)
     {
-        // see Source/matrix/GB_static_header.h for details.  If A has a
+        // see Source/matrix/GB_clear_matrix_header.h for details.  If A has a
         // static header, it cannot be done on the GPU.  However, if GraphBLAS
         // is compiled to use CUDA, there should be no static headers anyway,
         // so this is likely dead code.  Just a sanity check.

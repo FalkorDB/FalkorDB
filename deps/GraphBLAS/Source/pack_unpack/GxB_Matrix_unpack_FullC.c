@@ -2,7 +2,7 @@
 // GxB_Matrix_unpack_FullC: unpack a full matrix, held by column
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,7 +15,7 @@ GrB_Info GxB_Matrix_unpack_FullC  // unpack a full matrix, by column
 (
     GrB_Matrix A,       // matrix to unpack (type, nrows, ncols unchanged)
     void **Ax,          // values
-    GrB_Index *Ax_size, // size of Ax in bytes
+    uint64_t *Ax_size,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
     const GrB_Descriptor desc
 )
@@ -25,10 +25,11 @@ GrB_Info GxB_Matrix_unpack_FullC  // unpack a full matrix, by column
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_unpack_FullC (A, "
-        "&Ax, &Ax_size, &iso, desc)") ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
+    GB_WHERE_1 (A, "GxB_Matrix_unpack_FullC (A, &Ax, &Ax_size, &iso, desc)") ;
     GB_BURBLE_START ("GxB_Matrix_unpack_FullC") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
@@ -50,7 +51,6 @@ GrB_Info GxB_Matrix_unpack_FullC  // unpack a full matrix, by column
     if (!(A->is_csc))
     { 
         // A = A', done in-place, to put A in by-col format
-        GBURBLE ("(transpose) ") ;
         GB_OK (GB_transpose_in_place (A, true, Werk)) ;
         GB_MATRIX_WAIT (A) ;
     }
@@ -70,7 +70,7 @@ GrB_Info GxB_Matrix_unpack_FullC  // unpack a full matrix, by column
     int sparsity ;
     bool is_csc ;
     GrB_Type type ;
-    GrB_Index vlen, vdim ;
+    uint64_t vlen, vdim ;
 
     info = GB_export (true, &A, &type, &vlen, &vdim, false,
         NULL, NULL,     // Ap

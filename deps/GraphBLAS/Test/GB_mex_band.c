@@ -2,7 +2,7 @@
 // GB_mex_band: C = tril (triu (A,lo), hi), or with A'
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,10 +40,10 @@
 "typedef struct { int64_t lo ; int64_t hi ; } LoHi_type ;"
 
 void LoHi_band (bool *z, /* x is unused: */ const void *x,
-    GrB_Index i, GrB_Index j, const LoHi_type *thunk) ;
+    uint64_t i, uint64_t j, const LoHi_type *thunk) ;
 
 void LoHi_band (bool *z, /* x is unused: */ const void *x,
-    GrB_Index i, GrB_Index j, const LoHi_type *thunk)
+    uint64_t i, uint64_t j, const LoHi_type *thunk)
 {
     int64_t i2 = (int64_t) i ;
     int64_t j2 = (int64_t) j ;
@@ -113,7 +113,7 @@ void mexFunction
     METHOD (GrB_IndexUnaryOp_new (&op, (GxB_index_unary_function) LoHi_band,
         GrB_BOOL, GrB_FP64, Thunk_type)) ;
 
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, A) ;
     GrB_Matrix_ncols (&ncols, A) ;
     if (bandwidth.lo == 0 && bandwidth.hi == 0 && nrows == 10 && ncols == 10)

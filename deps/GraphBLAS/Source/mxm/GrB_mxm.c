@@ -2,7 +2,7 @@
 // GrB_mxm: matrix-matrix multiply
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,12 +32,12 @@ GrB_Info GrB_mxm                    // C<M> = accum (C, A*B)
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (C, "GrB_mxm (C, M, accum, semiring, A, B, desc)") ;
+    GB_RETURN_IF_NULL (C) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_NULL (B) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
+    GB_WHERE4 (C, M_in, A, B, "GrB_mxm (C, M, accum, semiring, A, B, desc)") ;
     GB_BURBLE_START ("GrB_mxm") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (C) ;
-    GB_RETURN_IF_FAULTY (M_in) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (B) ;
 
     // get the descriptor
     GB_GET_DESCRIPTOR (info, desc, C_replace, Mask_comp, Mask_struct,

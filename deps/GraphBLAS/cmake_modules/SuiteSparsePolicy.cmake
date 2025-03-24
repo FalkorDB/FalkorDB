@@ -2,7 +2,7 @@
 # SuiteSparse/SuiteSparse_config/cmake_modules/SuiteSparsePolicy.cmake
 #-------------------------------------------------------------------------------
 
-# Copyright (c) 2022-2023, Timothy A. Davis.  All Rights Reserved.
+# Copyright (c) 2022-2025, Timothy A. Davis.  All Rights Reserved.
 # SPDX-License-Identifier: BSD-3-clause
 
 #-------------------------------------------------------------------------------
@@ -111,10 +111,10 @@ endif ( )
 # readability (such as "/* do nothing */ ;" in SuiteSparse_config.c).  Disable
 # the clang warning for these statements:
 if ( CMAKE_C_COMPILER_ID STREQUAL "Clang" )
-    set ( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-extra-semi-stmt" )
+    set ( CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -Wno-extra-semi" )
 endif ( )
 if ( CMAKE_CXX_COMPILER_ID STREQUAL "Clang" )
-    set ( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-extra-semi-stmt" )
+    set ( CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-extra-semi" )
 endif ( )
 
 if ( WIN32 )

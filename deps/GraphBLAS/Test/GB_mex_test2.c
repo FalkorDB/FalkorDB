@@ -2,7 +2,7 @@
 // GB_mex_test2: more basic tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -83,7 +83,9 @@ void mexFunction
     OK (GxB_Scalar_fprint (scalar, "scalar after remove", 3, NULL)) ;
     i = 777 ;
     expected = GrB_NO_VALUE ;
+//  printf ("here %d\n", __LINE__) ;
     ERR (GrB_Scalar_extractElement_INT32 (&i, scalar)) ;
+//  printf ("here %d %d\n", __LINE__, i) ;
     CHECK (i == 777) ;
 
     // force a zombie into the scalar
@@ -93,13 +95,19 @@ void mexFunction
     OK (GxB_Matrix_Option_set ((GrB_Matrix) scalar, GxB_SPARSITY_CONTROL,
         GxB_SPARSE)) ;
     CHECK (scalar->i != NULL) ;
-    scalar->i [0] = GB_ZOMBIE (0) ;
+    GB_MDECL (Si, , ) ;
+    Si = scalar->i ;
+    GB_IPTR (Si, scalar->i_is_32) ;
+    i = GB_ZOMBIE (0) ;
+    GB_ISET (Si, 0, i) ;    // Si [0] = i
     scalar->nzombies = 1 ;
     OK (GxB_Scalar_fprint (scalar, "scalar with zombie", 3, NULL)) ;
     expected = GrB_NO_VALUE ;
+    i = 123456 ;
     ERR (GrB_Scalar_extractElement_INT32 (&i, scalar)) ;
     OK (GxB_Scalar_fprint (scalar, "scalar after extract", 3, NULL)) ;
-    CHECK (i == 777) ;
+//  printf ("here %d %d\n", __LINE__, i) ;
+    CHECK (i == 123456) ;
 
     GrB_Vector_free_(&victor) ;
     GrB_Matrix_free_(&A) ;
@@ -129,12 +137,18 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     int64_t Slice [30] ;
-    GB_p_slice (Slice, A->p, n, 2, true) ;
+    GB_p_slice (Slice, A->p, A->p_is_32, n, 2, true) ;
     CHECK (Slice [0] == 0) ;
 
     int64_t Ap [11] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 } ;
-    GB_p_slice (Slice, Ap, 10, 10, false) ;
+    GB_p_slice (Slice, Ap, /* OK: */ false, 10, 10, false) ;
     printf ("Slice: ") ;
+    for (int k = 0 ; k <= 10 ; k++) printf (" %ld", Slice [k]) ;
+    printf ("\n") ;
+
+    int32_t Ap_32 [11] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 } ;
+    GB_p_slice (Slice, Ap_32, true, 10, 10, false) ;
+    printf ("Slice32: ") ;
     for (int k = 0 ; k <= 10 ; k++) printf (" %ld", Slice [k]) ;
     printf ("\n") ;
 
@@ -159,14 +173,14 @@ void mexFunction
     OK (GrB_Matrix_wait (A, GrB_MATERIALIZE)) ;
     OK (GxB_Matrix_fprint (A, "valid matrix", GxB_SHORT, NULL)) ;
     // mangle the matrix
-    GB_FREE (&(A->p), A->p_size) ;
-    GB_FREE (&(A->x), A->x_size) ;  // OK
+    GB_free_memory (&(A->p), A->p_size) ;
+    GB_free_memory (&(A->x), A->x_size) ;  // OK
     expected = GrB_INVALID_OBJECT ;
     ERR (GxB_Matrix_fprint (A, "invalid sparse matrix", GxB_SHORT, NULL)) ;
     GrB_Matrix_free_(&A) ;
 
     OK (GrB_Matrix_new (&A, GrB_INT32, n, n)) ;
-    A->sparsity_control = 999 ;
+    A->sparsity_control = 0 ;
     ERR (GxB_Matrix_fprint (A, "invalid sparsity control", GxB_SHORT, NULL)) ;
     GrB_Matrix_free_(&A) ;
 
@@ -188,7 +202,7 @@ void mexFunction
     ERR (GxB_Matrix_fprint (A, "full matrix cannot have zombies",
         GxB_SHORT, NULL)) ;
     A->nzombies = 0 ;
-    CHECK (GB_Pending_alloc (&(A->Pending), false, GrB_INT32, NULL, true, 4)) ;
+    CHECK (GB_Pending_alloc (A, false, GrB_INT32, NULL, 4)) ;
     ERR (GxB_Matrix_fprint (A, "full matrix cannot have pending tuples",
         GxB_SHORT, NULL)) ;
     GrB_Matrix_free_(&A) ;
@@ -229,8 +243,8 @@ void mexFunction
 
     OK (GxB_Global_Option_set_(GxB_BURBLE, true)) ;
     OK (GrB_Matrix_new (&A, GrB_INT32, n, n)) ;
-    GrB_Index I [3] = { 1, 1, 0 } ;
-    int32_t I32 [3] = { 1, 1, 0 } ;
+    uint64_t  I [3] = { 1, 1, 0 } ; // OK
+    int32_t I32 [3] = { 1, 1, 0 } ; // OK
     OK (GrB_Matrix_new (&C, GrB_INT32, n, 0)) ;
     OK (GrB_Matrix_extract_(C, NULL, NULL, A, GrB_ALL, n, I, GxB_STRIDE,
         NULL)) ;
@@ -245,7 +259,7 @@ void mexFunction
     OK (GxB_Global_Option_set_(GxB_BURBLE, false)) ;
 
     int64_t Icolon [3] = { 1, 1, 0 } ;
-    CHECK (!GB_ij_is_in_list (NULL, 0, 0, GB_STRIDE, Icolon)) ;
+    CHECK (!GB_ij_is_in_list (NULL, false, 0, 0, GB_STRIDE, Icolon)) ;
 
     //--------------------------------------------------------------------------
     // GB_any_aliased
@@ -255,14 +269,14 @@ void mexFunction
     OK (GrB_Matrix_setElement_INT32 (A, 12345, 0, 0)) ;
     OK (GrB_Matrix_dup (&C, A)) ;
     CHECK (!GB_any_aliased (A, C)) ;
-    GB_FREE (&(C->p), C->p_size) ;
+    GB_free_memory (&(C->p), C->p_size) ;
     C->p = A->p ;
     C->p_shallow = true ;
     CHECK (GB_any_aliased (A, C)) ;
     C->p = NULL ;
     C->p_shallow = false ;
     CHECK (!GB_any_aliased (A, C)) ;
-    GB_FREE (&(C->i), C->i_size) ;
+    GB_free_memory (&(C->i), C->i_size) ;
     C->i = A->i ;
     C->i_shallow = true ;
     CHECK (GB_any_aliased (A, C)) ;
@@ -316,18 +330,23 @@ void mexFunction
     OK (GrB_Descriptor_free (&desc)) ;
 
     //--------------------------------------------------------------------------
-    // GrB_build an empty matrix
+    // GrB_build an empty matrix of type GrB_UINT32
     //--------------------------------------------------------------------------
 
     OK (GrB_Matrix_new (&A, GrB_INT32, n, n)) ;
-    OK (GrB_Matrix_build_INT32 (A, I, I, I32, 0, GrB_PLUS_INT32)) ;
+    OK (GrB_Matrix_build_INT32 (A, I, I, I32, 0, GrB_PLUS_INT32)) ;     // OK
     OK (GxB_Matrix_fprint (A, "empty", GxB_COMPLETE, NULL)) ;
     CHECK (!GB_is_shallow (A)) ;
+
+    int shallow = true ;
+    OK (GrB_Matrix_get_INT32 (A, &shallow, GxB_IS_READONLY)) ;
+    CHECK (!shallow) ;
+
     GrB_Matrix_free_(&A) ;
 
     OK (GrB_Matrix_new (&A, GrB_INT32, n, n)) ;
     expected = GrB_DOMAIN_MISMATCH ;
-    ERR (GrB_Matrix_build_INT32 (A, I, I, I32, 0, GxB_FIRSTI_INT32)) ;
+    ERR (GrB_Matrix_build_INT32 (A, I, I, I32, 0, GxB_FIRSTI_INT32)) ;  // OK
     OK (GrB_Matrix_error (&message, A)) ;
     printf ("expected error: %s\n", message) ;
     GrB_Matrix_free_(&A) ;
@@ -376,8 +395,11 @@ void mexFunction
 
     // jumble the matrix
     C->jumbled = true ;
-    C->i [0] = 1 ;
-    C->i [1] = 0 ;
+    GB_MDECL (Ci, , ) ;
+    Ci = C->i ;
+    GB_IPTR (Ci, C->i_is_32) ;
+    GB_ISET (Ci, 0, 1) ;    // Ci [0] = 1 ;
+    GB_ISET (Ci, 1, 0) ;    // Ci [1] = 0 ;
     OK (GxB_Matrix_fprint (C, "wild matrix jumbled", GxB_SHORT, NULL)) ;
 
     // unjumble the matrix
@@ -410,7 +432,7 @@ void mexFunction
         NULL, UINT64_MAX, false, NULL) ;
     if (info != GrB_INVALID_VALUE || X != NULL) mexErrMsgTxt ("huge fail1") ;
 
-    GrB_Index nhuge = (((GrB_Index) 2) << 50) ;
+    uint64_t nhuge = (((uint64_t) 2) << 50) ;
     info = GxB_Matrix_import_BitmapC (&X, GrB_FP32, nhuge, nhuge,
         NULL, NULL, 0, 0, false, 0, NULL) ;
     if (info != GrB_INVALID_VALUE || X != NULL) mexErrMsgTxt ("huge fail5") ;
@@ -423,7 +445,7 @@ void mexFunction
     GrB_Matrix_free (&X) ;
 
     //--------------------------------------------------------------------------
-    // hypermatrix prune
+    // hyper_prune
     //--------------------------------------------------------------------------
 
     OK (GrB_Matrix_new (&C, GrB_FP32, GB_NMAX, GB_NMAX)) ;
@@ -431,7 +453,7 @@ void mexFunction
     OK (GrB_Matrix_wait (C, GrB_MATERIALIZE)) ;
     OK (GxB_Matrix_fprint (C, "huge matrix", GxB_SHORT, NULL)) ;
     C->nvec_nonempty = -1 ;
-    OK (GB_hypermatrix_prune (C, NULL)) ;
+    OK (GB_hyper_prune (C, NULL)) ;
     CHECK (C->nvec_nonempty == 1) ;
     GrB_Matrix_free (&C) ;
 
@@ -466,8 +488,8 @@ void mexFunction
     GrB_Matrix Tiles [4] ;
     memset (Tiles, 0, 4 * sizeof (GrB_Matrix)) ;
     n = 20 ;
-    GrB_Index Tile_nrows [2] = { 5, 15 } ;
-    GrB_Index Tile_ncols [2] = { 12, 8 } ;
+    uint64_t Tile_nrows [2] = { 5, 15 } ;
+    uint64_t Tile_ncols [2] = { 12, 8 } ;
 
     for (int k = 0 ; k <= 3 ; k++)
     {

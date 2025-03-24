@@ -2,7 +2,7 @@
 // GB_subref_template: C = A(I,J) where C and A are sparse/hypersparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,25 +12,16 @@
 // constructs the pattern and values of C.  There are 3 kinds of subref:
 //
 //      symbolic:  C(i,j) is the position of A(I(i),J(j)) in the matrix A,
-//                  in this case, A can have zombies
+//                  in this case, A can have zombies.
+//                  C never has zombies, even if A does.
 //      iso:       C = A(I,J), extracting the pattern only, not the values
-//      numeric:   C = A(I,J), extracting the pattern and values,
-
-#if defined ( GB_SYMBOLIC )
-
-    // symbolic method must tolerate zombies
-    #define GB_Ai(p) GBI_UNZOMBIE (Ai, p, avlen)
-
-#else
-
-    // iso and non-iso numeric methods will not see any zombies
-    #define GB_Ai(p) GBI_A (Ai, p, avlen)
-
-#endif
+//      numeric:   C = A(I,J), extracting the pattern and values
 
 // to iterate across all entries in a bucket:
-#define GB_for_each_index_in_bucket(inew,i)     \
-    for (int64_t inew = Mark [i] - 1 ; inew >= 0 ; inew = Inext [inew])
+#define GB_for_each_index_in_bucket(inew,i,nI,Ihead,Inext)  \
+    for (uint64_t inew = GB_IGET (Ihead, i) ;               \
+                  inew < nI ;                               \
+                  inew = GB_IGET (Inext, inew))
 
 //------------------------------------------------------------------------------
 
@@ -40,7 +31,7 @@
     // get A and I
     //--------------------------------------------------------------------------
 
-    const int64_t *restrict Ai = A->i ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
     const int64_t avlen = A->vlen ;
 
     // these values are ignored if GB_I_KIND == GB_LIST
@@ -49,6 +40,10 @@
     int64_t inc    = (iinc < 0) ? (-iinc) : iinc ;
     #ifdef GB_DEBUG
     int64_t iend   = Icolon [GxB_END  ] ;
+    #endif
+
+    #ifndef GB_JIT_KERNEL
+    #define GB_Ai_IS_32 Ai_is_32
     #endif
 
     //--------------------------------------------------------------------------
@@ -78,8 +73,6 @@
         int64_t pI_end = nI ;
         int64_t ilen   = nI ;
 
-        ASSERT (0 <= kfirst && kfirst <= klast && klast < Cnvec) ;
-
         //----------------------------------------------------------------------
         // compute all vectors C(:,kfirst:klast) for this task
         //----------------------------------------------------------------------
@@ -90,6 +83,8 @@
             //------------------------------------------------------------------
             // get C(:,kC)
             //------------------------------------------------------------------
+
+            int64_t pA, pA_end ;
 
             #if defined ( GB_ANALYSIS_PHASE )
             // phase1 simply counts the # of entries in C(*,kC).
@@ -103,14 +98,16 @@
                 // A fine task computes a slice of C(:,kC)
                 pC     = TaskList [taskid  ].pC ;
                 pC_end = TaskList [taskid+1].pC ;
-                ASSERT (Cp [kC] <= pC && pC <= pC_end && pC_end <= Cp [kC+1]) ;
+                ASSERT (GB_IGET (Cp, kC) <= pC) ;
+                ASSERT (pC <= pC_end) ;
+                ASSERT (pC_end <= GB_IGET (Cp, kC+1)) ;
             }
             else
             { 
                 // The vectors of C are never sliced for a coarse task, so this
                 // task computes all of C(:,kC).
-                pC     = Cp [kC] ;
-                pC_end = Cp [kC+1] ;
+                pC     = GB_IGET (Cp, kC) ;
+                pC_end = GB_IGET (Cp, kC+1) ;
             }
             int64_t clen = pC_end - pC ;
             if (clen == 0) continue ;
@@ -119,8 +116,6 @@
             //------------------------------------------------------------------
             // get A(:,kA)
             //------------------------------------------------------------------
-
-            int64_t pA, pA_end ;
 
             if (fine_task)
             { 
@@ -138,12 +133,27 @@
                 // accesses all of A(imin:imax,kA), for most methods, or all of
                 // A(:,kA) for methods 1 and 2.  The vector A(*,kA) appears in
                 // Ai,Ax [pA:pA_end-1].
-                pA     = Ap_start [kC] ;
-                pA_end = Ap_end   [kC] ;
+                pA     = GB_IGET (Ap_start, kC) ;
+                pA_end = GB_IGET (Ap_end  , kC) ;
             }
 
             int64_t alen = pA_end - pA ;
-            if (alen == 0) continue ;
+            if (alen == 0) 
+            {
+                #if defined ( GB_ANALYSIS_PHASE )
+                if (fine_task)
+                {
+                    // this fine task has no entries in A(:,kC) to access
+                    TaskList [taskid].pC = 0 ;
+                }
+                else
+                { 
+                    // this course task has found that C(:,kC) is entirely empty
+                    Cwork [kC] = 0 ;
+                }
+                #endif
+                continue ;
+            }
 
             //------------------------------------------------------------------
             // get I
@@ -175,7 +185,7 @@
             { 
                 // determine the method based on A(*,kA) and I
                 method = GB_subref_method (alen, avlen, GB_I_KIND, nI,
-                    (Mark != NULL), GB_NEED_QSORT, iinc, GB_I_HAS_DUPLICATES) ;
+                    (Ihead != NULL), GB_NEED_QSORT, iinc, GB_I_HAS_DUPLICATES) ;
             }
 
             //------------------------------------------------------------------
@@ -191,8 +201,8 @@
 
                     // A (:,kA) has not been sliced
                     ASSERT (GB_I_KIND == GB_ALL) ;
-                    ASSERT (pA     == Ap_start [kC]) ;
-                    ASSERT (pA_end == Ap_end   [kC]) ;
+                    ASSERT (pA     == GB_IGET (Ap_start, kC)) ;
+                    ASSERT (pA_end == GB_IGET (Ap_end  , kC)) ;
                     // copy the entire vector and construct indices
                     #if defined ( GB_ANALYSIS_PHASE )
                     clen = ilen ;
@@ -200,9 +210,13 @@
                     for (int64_t k = 0 ; k < ilen ; k++)
                     { 
                         int64_t inew = k + pI ;
-                        ASSERT (inew == GB_ijlist (I, inew, GB_I_KIND, Icolon));
-                        ASSERT (inew == GB_Ai (pA + inew)) ;
-                        Ci [pC + k] = inew ;
+                        ASSERT (inew == GB_IJLIST (I, inew, GB_I_KIND, Icolon));
+                        #ifdef GB_DEBUG
+                        int64_t iA = GB_IGET (Ai, pA + inew) ;
+                        iA = GB_UNZOMBIE (iA) ;
+                        ASSERT (inew == iA) ;
+                        #endif
+                        GB_ISET (Ci, pC + k, inew) ;  // Ci [pC + k] = inew ;
                     }
                     GB_COPY_RANGE (pC, pA + pI, ilen) ;
                     #endif
@@ -214,8 +228,8 @@
 
                     // This method handles any kind of list I, but A(:,kA)
                     // must be dense.  A(:,kA) has not been sliced.
-                    ASSERT (pA     == Ap_start [kC]) ;
-                    ASSERT (pA_end == Ap_end   [kC]) ;
+                    ASSERT (pA     == GB_IGET (Ap_start, kC)) ;
+                    ASSERT (pA_end == GB_IGET (Ap_end  , kC)) ;
                     // scan I and get the entry in A(:,kA) via direct lookup
                     #if defined ( GB_ANALYSIS_PHASE )
                     clen = ilen ;
@@ -224,9 +238,15 @@
                     { 
                         // C(inew,kC) =  A(i,kA), and it always exists.
                         int64_t inew = k + pI ;
-                        int64_t i = GB_ijlist (I, inew, GB_I_KIND, Icolon) ;
-                        ASSERT (i == GB_Ai (pA + i)) ;
-                        Ci [pC + k] = inew ;
+                        #if defined ( GB_DEBUG ) || !defined ( GB_ISO_SUBREF )
+                        int64_t i = GB_IJLIST (I, inew, GB_I_KIND, Icolon) ;
+                        #endif
+                        #ifdef GB_DEBUG
+                        int64_t iA = GB_IGET (Ai, pA + i) ;
+                        iA = GB_UNZOMBIE (iA) ;
+                        ASSERT (i == iA) ;
+                        #endif
+                        GB_ISET (Ci, pC + k, inew) ;  // Ci [pC + k] = inew ;
                         GB_COPY_ENTRY (pC + k, pA + i) ;
                     }
                     #endif
@@ -243,14 +263,20 @@
 
                     // Time: 50x faster
 
+                    #ifdef GB_DEBUG
                     ASSERT (!fine_task) ;
                     ASSERT (alen == 1) ;
                     ASSERT (nI == 1) ;
-                    ASSERT (GB_Ai (pA) == GB_ijlist (I, 0, GB_I_KIND, Icolon)) ;
+                    int64_t i0 = GB_IJLIST (I, 0, GB_I_KIND, Icolon) ;
+                    int64_t iA = GB_IGET (Ai, pA) ;
+                    iA = GB_UNZOMBIE (iA) ;
+                    ASSERT (iA == i0) ;
+                    #endif
+
                     #if defined ( GB_ANALYSIS_PHASE )
                     clen = 1 ;
                     #else
-                    Ci [pC] = 0 ;
+                    GB_ISET (Ci, pC, 0) ;       // Ci [pC] = 0 ;
                     GB_COPY_ENTRY (pC, pA) ;
                     #endif
                     break ;
@@ -260,31 +286,36 @@
                 //--------------------------------------------------------------
 
                     // Time: 1x faster but low speedup on the Mac.  Why?
-                    // Probably memory bound since it is just memcpy's.
 
                     ASSERT (GB_I_KIND == GB_ALL && ibegin == 0) ;
                     #if defined ( GB_ANALYSIS_PHASE )
                     clen = alen ;
                     #else
                     #if defined ( GB_SYMBOLIC )
-                    if (nzombies == 0)
-                    { 
-                        memcpy (Ci + pC, Ai + pA, alen * sizeof (int64_t)) ;
-                    }
-                    else
+                    if (may_see_zombies)
                     {
-                        // with zombies
+                        // with zombies in A
                         for (int64_t k = 0 ; k < alen ; k++)
                         { 
-                            // symbolic C(:,kC) = A(:,kA) where A has zombies
-                            int64_t i = GB_Ai (pA + k) ;
-                            ASSERT (i == GB_ijlist (I, i, GB_I_KIND, Icolon)) ;
-                            Ci [pC + k] = i ;
+                            // symbolic C(:,kC) = A(:,kA) where A has zombies;
+                            // zombies in A are not tagged as zombies in C.
+                            int64_t i = GB_IGET (Ai, pA + k) ;
+                            i = GB_UNZOMBIE (i) ;
+                            ASSERT (i == GB_IJLIST (I, i, GB_I_KIND, Icolon)) ;
+                            GB_ISET (Ci, pC + k, i) ;  // Ci [pC + k] = i ;
                         }
                     }
-                    #else
-                    memcpy (Ci + pC, Ai + pA, alen * sizeof (int64_t)) ;
+                    else
                     #endif
+                    { 
+                        // without zombies in A
+                        for (int64_t k = 0 ; k < alen ; k++)
+                        {
+                            int64_t i = GB_IGET (Ai, pA + k) ;
+                            ASSERT (i == GB_IJLIST (I, i, GB_I_KIND, Icolon)) ;
+                            GB_ISET (Ci, pC + k, i) ;  // Ci [pC + k] = i ;
+                        }
+                    }
                     GB_COPY_RANGE (pC, pA, alen) ;
                     #endif
                     break ;
@@ -301,10 +332,13 @@
                     #else
                     for (int64_t k = 0 ; k < alen ; k++)
                     { 
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         int64_t inew = i - ibegin ;
-                        ASSERT (i == GB_ijlist (I, inew, GB_I_KIND, Icolon)) ;
-                        Ci [pC + k] = inew ;
+                        ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND, Icolon)) ;
+                        GB_ISET (Ci, pC + k, inew) ;  // Ci [pC + k] = inew ;
                     }
                     GB_COPY_RANGE (pC, pA, alen) ;
                     #endif
@@ -332,8 +366,8 @@
                     // sort is needed.
 
                     // A(:,kA) has not been sliced.
-                    ASSERT (pA     == Ap_start [kC]) ;
-                    ASSERT (pA_end == Ap_end   [kC]) ;
+                    ASSERT (pA     == GB_IGET (Ap_start, kC)) ;
+                    ASSERT (pA_end == GB_IGET (Ap_end  , kC)) ;
 
                     // scan I, in order, and search for the entry in A(:,kA)
                     for (int64_t k = 0 ; k < ilen ; k++)
@@ -341,25 +375,30 @@
                         // C(inew,kC) = A (i,kA), if it exists.
                         // i = I [inew] ; or from a colon expression
                         int64_t inew = k + pI ;
-                        int64_t i = GB_ijlist (I, inew, GB_I_KIND, Icolon) ;
+                        int64_t i = GB_IJLIST (I, inew, GB_I_KIND, Icolon) ;
                         bool found ;
                         int64_t pleft = pA ;
                         int64_t pright = pA_end - 1 ;
                         #if defined ( GB_SYMBOLIC )
                         bool is_zombie ;
-                        GB_BINARY_SEARCH_ZOMBIE (i, Ai, pleft, pright, found,
-                            nzombies, is_zombie) ;
+                        found = GB_binary_search_zombie (i, Ai, GB_Ai_IS_32,
+                            &pleft, &pright, may_see_zombies, &is_zombie) ;
                         #else
-                        GB_BINARY_SEARCH (i, Ai, pleft, pright, found) ;
+                        found = GB_binary_search (i, Ai, GB_Ai_IS_32,
+                            &pleft, &pright) ;
                         #endif
                         if (found)
                         { 
-                            ASSERT (i == GB_Ai (pleft)) ;
+                            #ifdef GB_DEBUG
+                            int64_t iA = GB_IGET (Ai, pleft) ;
+                            iA = GB_UNZOMBIE (iA) ;
+                            ASSERT (i == iA) ;
+                            #endif
                             #if defined ( GB_ANALYSIS_PHASE )
                             clen++ ;
                             #else
                             ASSERT (pC < pC_end) ;
-                            Ci [pC] = inew ;
+                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                             GB_COPY_ENTRY (pC, pleft) ;
                             pC++ ;
                             #endif
@@ -382,7 +421,10 @@
                     for (int64_t k = 0 ; k < alen ; k++)
                     {
                         // A(i,kA) present; see if it is in ibegin:iinc:iend
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         ASSERT (ibegin <= i && i <= iend) ;
                         i = i - ibegin ;
                         if (i % iinc == 0)
@@ -393,7 +435,7 @@
                             #else
                             int64_t inew = i / iinc ;
                             ASSERT (pC < pC_end) ;
-                            Ci [pC] = inew ;
+                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                             GB_COPY_ENTRY (pC, pA + k) ;
                             pC++ ;
                             #endif
@@ -416,7 +458,10 @@
                     for (int64_t k = alen - 1 ; k >= 0 ; k--)
                     {
                         // A(i,kA) present; see if it is in ibegin:iinc:iend
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         ASSERT (iend <= i && i <= ibegin) ;
                         i = ibegin - i ;
                         if (i % inc == 0)
@@ -427,7 +472,7 @@
                             #else
                             int64_t inew = i / inc ;
                             ASSERT (pC < pC_end) ;
-                            Ci [pC] = inew ;
+                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                             GB_COPY_ENTRY (pC, pA + k) ;
                             pC++ ;
                             #endif
@@ -451,10 +496,13 @@
                     for (int64_t k = alen - 1 ; k >= 0 ; k--)
                     { 
                         // A(i,kA) is present
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         int64_t inew = (ibegin - i) ;
-                        ASSERT (i == GB_ijlist (I, inew, GB_I_KIND, Icolon)) ;
-                        Ci [pC] = inew ;
+                        ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND, Icolon)) ;
+                        GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                         GB_COPY_ENTRY (pC, pA + k) ;
                         pC++ ;
                     }
@@ -477,17 +525,20 @@
                     for (int64_t k = 0 ; k < alen ; k++)
                     {
                         // A(i,kA) present, look it up in the I inverse buckets
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         // traverse bucket i for all indices inew where
                         // i == I [inew] or where i is from a colon expression
-                        GB_for_each_index_in_bucket (inew, i)
+                        GB_for_each_index_in_bucket (inew, i, nI, Ihead, Inext)
                         { 
                             ASSERT (inew >= 0 && inew < nI) ;
-                            ASSERT (i == GB_ijlist (I, inew, GB_I_KIND,Icolon));
+                            ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND,Icolon));
                             #if defined ( GB_ANALYSIS_PHASE )
                             clen++ ;
                             #else
-                            Ci [pC] = inew ;
+                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                             GB_COPY_ENTRY (pC, pA + k) ;
                             pC++ ;
                             #endif
@@ -505,16 +556,9 @@
                         // the sort can be done now.  The sort for vectors
                         // handled by multiple fine tasks must wait until all
                         // task are completed, below in the post sort.
-                        pC = Cp [kC] ;
-
-                        #if defined ( GB_ISO_SUBREF )
-                        // iso numeric subref C=A(I,J)
-                        // just sort the pattern of C(:,kC)
-                        GB_qsort_1 (Ci + pC, clen) ;
-                        #else
-                        // sort the pattern of C(:,kC), and the values
+                        pC = GB_IGET (Cp, kC) ;
+                        // sort C(:,kC)
                         GB_QSORT_1B (Ci, Cx, pC, clen) ;
-                        #endif
                     }
                     #endif
                     break ;
@@ -532,17 +576,20 @@
                     for (int64_t k = 0 ; k < alen ; k++)
                     {
                         // A(i,kA) present, look it up in the I inverse buckets
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         // traverse bucket i for all indices inew where
                         // i == I [inew] or where i is from a colon expression
-                        GB_for_each_index_in_bucket (inew, i)
+                        GB_for_each_index_in_bucket (inew, i, nI, Ihead, Inext)
                         { 
                             ASSERT (inew >= 0 && inew < nI) ;
-                            ASSERT (i == GB_ijlist (I, inew, GB_I_KIND,Icolon));
+                            ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND,Icolon));
                             #if defined ( GB_ANALYSIS_PHASE )
                             clen++ ;
                             #else
-                            Ci [pC] = inew ;
+                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                             GB_COPY_ENTRY (pC, pA + k) ;
                             pC++ ;
                             #endif
@@ -566,18 +613,20 @@
                     for (int64_t k = 0 ; k < alen ; k++)
                     {
                         // A(i,kA) present, look it up in the I inverse buckets
-                        int64_t i = GB_Ai (pA + k) ;
+                        int64_t i = GB_IGET (Ai, pA + k) ;
+                        #if defined ( GB_SYMBOLIC )
+                        i = GB_UNZOMBIE (i) ;
+                        #endif
                         // bucket i has at most one index inew such that
                         // i == I [inew]
-                        int64_t inew = Mark [i] - 1 ;
-                        if (inew >= 0)
+                        uint64_t inew = GB_IGET (Ihead, i) ;
+                        if (inew < nI)
                         { 
-                            ASSERT (inew >= 0 && inew < nI) ;
-                            ASSERT (i == GB_ijlist (I, inew, GB_I_KIND,Icolon));
+                            ASSERT (i == GB_IJLIST (I, inew, GB_I_KIND,Icolon));
                             #if defined ( GB_ANALYSIS_PHASE )
                             clen++ ;
                             #else
-                            Ci [pC] = inew ;
+                            GB_ISET (Ci, pC, inew) ;  // Ci [pC] = inew ;
                             GB_COPY_ENTRY (pC, pA + k) ;
                             pC++ ;
                             #endif
@@ -605,7 +654,7 @@
             }
             else
             { 
-                Cp [kC] = clen ;
+                Cwork [kC] = clen ;
             }
             #endif
         }
@@ -630,29 +679,35 @@
                     // This is the first fine task with method 10 for C(:,kC).
                     // The vector C(:,kC) must be sorted, since method 10 left
                     // it with unsorted indices.
-                    int64_t pC = Cp [kC] ;
-                    int64_t clen = Cp [kC+1] - pC ;
-                    #if defined ( GB_ISO_SUBREF )
-                    { 
-                        // iso numeric subref C=A(I,J)
-                        // just sort the pattern of C(:,kC)
-                        GB_qsort_1 (Ci + pC, clen) ;
-                    }
-                    #else
-                    { 
-                        // sort the pattern of C(:,kC), and the values
-                        GB_QSORT_1B (Ci, Cx, pC, clen) ;
-                    }
-                    #endif
+                    int64_t pC = GB_IGET (Cp, kC) ;
+                    int64_t clen = GB_IGET (Cp, kC+1) - pC ;
+                    // sort C(:,kC)
+                    GB_QSORT_1B (Ci, Cx, pC, clen) ;
                 }
             }
         }
     }
     #endif
 
+    //--------------------------------------------------------------------------
+    // ensure all of Cwork has been computed
+    //--------------------------------------------------------------------------
+
+    #ifdef GB_DEBUG
+    // In debug mode, GB_subref_phase2 sets Cwork [0:Cnvec] = UINT64_MAX,
+    // tagging its contents as undefined.  It then clears Cwork [kC] for all
+    // fine tasks.  Course tasks set Cwork [kfirst:klast] for all the vectors
+    // C (:,kfirst:klast).  Together, this ensures that all Cwork [0:Cnvec-1]
+    // has been computed.
+    #if defined ( GB_ANALYSIS_PHASE )
+    for (int64_t kC = 0 ; kC < Cnvec ; kC++)
+    {
+        ASSERT (Cwork [kC] != UINT64_MAX) ;
+    }
+    #endif
+    #endif
 }
 
-#undef GB_Ai
 #undef GB_for_each_index_in_bucket
 #undef GB_COPY_RANGE
 #undef GB_COPY_ENTRY

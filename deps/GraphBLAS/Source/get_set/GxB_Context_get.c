@@ -2,7 +2,7 @@
 // GxB_Context_get: get a field of Context (HISTORICAL; do not use for new code)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 GrB_Info GxB_Context_get_INT32      // get a parameter of a Context
 (
     GxB_Context Context,            // Context to query
-    GxB_Context_Field field,        // parameter to query
+    int field,                      // parameter to query
     int32_t *value                  // return value from the Context
 )
 {
@@ -25,7 +25,7 @@ GrB_Info GxB_Context_get_INT32      // get a parameter of a Context
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get_INT32 (Context, field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
     GB_RETURN_IF_NULL (value) ;
 
@@ -62,7 +62,7 @@ GrB_Info GxB_Context_get_INT32      // get a parameter of a Context
 GrB_Info GxB_Context_get_FP64       // get a parameter in a Context
 (
     GxB_Context Context,            // Context to query
-    GxB_Context_Field field,        // parameter to query
+    int field,                      // parameter to query
     double *value                   // return value from the Context
 )
 {
@@ -71,7 +71,7 @@ GrB_Info GxB_Context_get_FP64       // get a parameter in a Context
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get_FP64 (Context, field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
     GB_RETURN_IF_NULL (value) ;
 
@@ -103,7 +103,7 @@ GrB_Info GxB_Context_get_FP64       // get a parameter in a Context
 GrB_Info GxB_Context_get            // get a parameter in a Context
 (
     GxB_Context Context,            // Context to query
-    GxB_Context_Field field,        // parameter to query
+    int field,                      // parameter to query
     ...                             // return value of the descriptor
 )
 {
@@ -112,7 +112,7 @@ GrB_Info GxB_Context_get            // get a parameter in a Context
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Context_get (desc, field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (Context) ;
 
     //--------------------------------------------------------------------------

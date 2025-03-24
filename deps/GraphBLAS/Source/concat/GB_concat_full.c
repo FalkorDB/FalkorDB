@@ -2,7 +2,7 @@
 // GB_concat_full: concatenate an array of matrices into a full matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,10 +22,10 @@ GrB_Info GB_concat_full             // concatenate into a full matrix
 (
     GrB_Matrix C,                   // input/output matrix for results
     const bool C_iso,               // if true, construct C as iso
-    const GB_void *cscalar,         // iso value of C, if C is io 
+    const GB_void *cscalar,         // iso value of C, if C is iso
     const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n,
-    const GrB_Index m,
-    const GrB_Index n,
+    const uint64_t m,
+    const uint64_t n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     GB_Werk Werk
@@ -49,12 +49,15 @@ GrB_Info GB_concat_full             // concatenate into a full matrix
     GB_Type_code ccode = ctype->code ;
     if (!GB_IS_FULL (C))
     { 
-        // set C->iso = C_iso   OK
         GB_phybix_free (C) ;
+        C->p_is_32 = false ;    // OK: full always has p_is_32 = false
+        C->j_is_32 = false ;    // OK: full always has j_is_32 = false
+        C->i_is_32 = false ;    // OK: full always has i_is_32 = false
         GB_OK (GB_bix_alloc (C, GB_nnz_full (C), GxB_FULL, false, true, C_iso));
         C->plen = -1 ;
         C->nvec = cvdim ;
-        C->nvec_nonempty = (cvlen > 0) ? cvdim : 0 ;
+//      C->nvec_nonempty = (cvlen > 0) ? cvdim : 0 ;
+        GB_nvec_nonempty_set (C, (cvlen > 0) ? cvdim : 0) ;
     }
     ASSERT (GB_IS_FULL (C)) ;
     int nthreads_max = GB_Context_nthreads_max ( ) ;
@@ -91,7 +94,7 @@ GrB_Info GB_concat_full             // concatenate into a full matrix
             if (csc != A->is_csc)
             { 
                 // T = (ctype) A', not in-place
-                GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+                GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
                 GB_OK (GB_transpose_cast (T, ctype, csc, A, false, Werk)) ;
                 A = T ;
                 GB_MATRIX_WAIT (A) ;
@@ -154,7 +157,7 @@ GrB_Info GB_concat_full             // concatenate into a full matrix
                     switch (csize)
                     {
                         #define GB_COPY(pC,pA,A_iso)                        \
-                            Cx [pC] = GBX (Ax, pA, A_iso) ;
+                            Cx [pC] = Ax [A_iso ? 0 : pA] ;
 
                         case GB_1BYTE : // uint8, int8, bool, or 1-byte user
                             #define GB_C_TYPE uint8_t

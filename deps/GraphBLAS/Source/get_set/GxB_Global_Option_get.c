@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GxB_Global_Option_get: get a global default option for all future matrices
+// GxB_Global_Option_get: get a global default option
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -26,7 +26,7 @@
 
 GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
 (
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     int32_t *value                  // return value of the global option
 )
 {
@@ -35,7 +35,7 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_get_INT32 (field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (value) ;
 
     //--------------------------------------------------------------------------
@@ -131,7 +131,7 @@ GrB_Info GxB_Global_Option_get_INT32    // gets the current global option
 
 GrB_Info GxB_Global_Option_get_FP64     // gets the current global option
 (
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     double *value                   // return value of the global option
 )
 {
@@ -140,7 +140,7 @@ GrB_Info GxB_Global_Option_get_FP64     // gets the current global option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_get_FP64 (field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (value) ;
 
     //--------------------------------------------------------------------------
@@ -183,7 +183,7 @@ GrB_Info GxB_Global_Option_get_FP64     // gets the current global option
 
 GrB_Info GxB_Global_Option_get_INT64    // gets the current global option
 (
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     int64_t *value                  // return value of the global option
 )
 {
@@ -192,7 +192,7 @@ GrB_Info GxB_Global_Option_get_INT64    // gets the current global option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_get_INT64 (field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (value) ;
 
     //--------------------------------------------------------------------------
@@ -226,7 +226,7 @@ GrB_Info GxB_Global_Option_get_INT64    // gets the current global option
 
 GrB_Info GxB_Global_Option_get_CHAR     // gets the current global option
 (
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     const char **value              // return value of the global option
 )
 {
@@ -235,7 +235,7 @@ GrB_Info GxB_Global_Option_get_CHAR     // gets the current global option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_get_CHAR (field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (value) ;
 
     //--------------------------------------------------------------------------
@@ -362,9 +362,11 @@ GrB_Info GxB_Global_Option_get_CHAR     // gets the current global option
 // GxB_Global_Option_get_FUNCTION: get global options (function pointers)
 //------------------------------------------------------------------------------
 
+#include "include/GB_pedantic_disable.h"
+
 GrB_Info GxB_Global_Option_get_FUNCTION // gets the current global option
 (
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     void **value                    // return value of the global option
 )
 {
@@ -373,7 +375,7 @@ GrB_Info GxB_Global_Option_get_FUNCTION // gets the current global option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_get_FUNCTION (field, &value)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (value) ;
 
     //--------------------------------------------------------------------------
@@ -426,10 +428,9 @@ GrB_Info GxB_Global_Option_get_FUNCTION // gets the current global option
 // GxB_Global_Option_get: based on va_arg
 //------------------------------------------------------------------------------
 
-
 GrB_Info GxB_Global_Option_get      // gets the current global option
 (
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     ...                             // return value of the global option
 )
 {
@@ -438,7 +439,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Global_Option_get (field, &value)") ;
+    GB_CHECK_INIT ;
 
     //--------------------------------------------------------------------------
     // get the option
@@ -483,7 +484,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
 
             {
                 va_start (ap, field) ;
-                GxB_Format_Value *format = va_arg (ap, GxB_Format_Value *) ;
+                int *format = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (format) ;
                 (*format) = (GB_Global_is_csc_get ( )) ?
@@ -499,7 +500,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
 
             {
                 va_start (ap, field) ;
-                GrB_Mode *mode = va_arg (ap, GrB_Mode *) ;
+                int *mode = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (mode) ;
                 (*mode) = GB_Global_mode_get ( )  ;
@@ -517,7 +518,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
                 int *nthreads_max = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (nthreads_max) ;
-                (*nthreads_max) = GB_Context_nthreads_max_get (NULL) ; 
+                (*nthreads_max) = GB_Context_nthreads_max_get (NULL) ;
             }
             break ;
 
@@ -528,7 +529,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
                 int *value = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (value) ;
-                (*value) = GB_Context_gpu_id_get (NULL) ; 
+                (*value) = GB_Context_gpu_id_get (NULL) ;
             }
             break ;
 
@@ -544,10 +545,10 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
             break ;
 
         //----------------------------------------------------------------------
-        // memory pool control
+        // memory pool control: no longer used
         //----------------------------------------------------------------------
 
-        case GxB_MEMORY_POOL : 
+        case GxB_MEMORY_POOL :              // no longer used
 
             // no longer used: return all zeros
             {
@@ -682,7 +683,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
                 int *api_version = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (api_version) ;
-                api_version [0] = GxB_SPEC_MAJOR ; 
+                api_version [0] = GxB_SPEC_MAJOR ;
                 api_version [1] = GxB_SPEC_MINOR ;
                 api_version [2] = GxB_SPEC_SUB ;
             }
@@ -732,7 +733,7 @@ GrB_Info GxB_Global_Option_get      // gets the current global option
                 int *compiler_version = va_arg (ap, int *) ;
                 va_end (ap) ;
                 GB_RETURN_IF_NULL (compiler_version) ;
-                compiler_version [0] = GB_COMPILER_MAJOR ; 
+                compiler_version [0] = GB_COMPILER_MAJOR ;
                 compiler_version [1] = GB_COMPILER_MINOR ;
                 compiler_version [2] = GB_COMPILER_SUB ;
             }

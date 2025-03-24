@@ -2,7 +2,7 @@
 // GB_AxB__lor_ge_bool.c: matrix multiply for a single semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,6 @@
 #if GB_TYPE_ENABLED
 #include "GB.h"
 #include "mxm/GB_AxB_saxpy.h"
-#include "include/GB_unused.h"
 #include "assign/GB_bitmap_assign_methods.h"
 #include "FactoryKernels/GB_AxB__include2.h"
 
@@ -204,8 +203,7 @@ GrB_Info GB (_Asaxpy4B__lor_ge_bool)
     const bool use_atomics,
     const int64_t *A_slice,
     const int64_t *H_slice,
-    GB_void *restrict Wcx,
-    int8_t *restrict Wf
+    GB_void *restrict Wcx
 )
 { 
     #if GB_DISABLE
@@ -464,5 +462,7 @@ GrB_Info GB (_Asaxpy3B__lor_ge_bool)
 
 #endif
 
+#else
+GB_EMPTY_PLACEHOLDER
 #endif
 

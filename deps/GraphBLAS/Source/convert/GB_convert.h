@@ -2,7 +2,7 @@
 // GB_convert.h: converting between sparsity structures
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -92,7 +92,8 @@ bool GB_convert_sparse_to_bitmap_test    // test for hyper/sparse to bitmap
 
 GrB_Info GB_convert_full_to_sparse      // convert matrix from full to sparse
 (
-    GrB_Matrix A                // matrix to convert from full to sparse
+    GrB_Matrix A,               // matrix to convert from full to sparse
+    GB_Werk Werk
 ) ;
 
 GrB_Info GB_convert_full_to_bitmap      // convert matrix from full to bitmap
@@ -115,14 +116,17 @@ GrB_Info GB_convert_bitmap_to_sparse    // convert matrix from bitmap to sparse
 GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
 (
     // outputs:
-    int64_t *restrict Cp,           // vector pointers for CSC/CSR form
-    int64_t *restrict Ci,           // indices for CSC/CSR or triplet form
-    int64_t *restrict Cj,           // vector indices for triplet form
-    GB_void *restrict Cx,           // values for CSC/CSR or triplet form
-    int64_t *cnvec_nonempty,        // # of non-empty vectors
+    void *Cp,                   // vector pointers for CSC/CSR form
+    void *Ci,                   // indices for CSC/CSR or triplet form
+    void *Cj,                   // vector indices for triplet form
+    void *Cx_new,               // values for CSC/CSR or triplet form
+    int64_t *cnvec_nonempty,    // # of non-empty vectors
     // inputs: not modified
-    const GrB_Type ctype,           // type of Cx
-    const GrB_Matrix A,             // matrix to extract; not modified
+    const bool Cp_is_32,        // if true, Cp is uint32_t; otherwise uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
+    const bool Cj_is_32,        // if true, Cj is uint32_t; otherwise uint64_t
+    const GrB_Type ctype,       // type of Cx
+    const GrB_Matrix A,         // matrix to extract; not modified
     GB_Werk Werk
 ) ;
 
@@ -155,20 +159,23 @@ GrB_Info GB_convert_to_nonfull      // ensure a matrix is not full
     GB_Werk Werk
 ) ;
 
-/* ensure C is sparse or hypersparse */
-#define GB_ENSURE_SPARSE(C)                                 \
-{                                                           \
-    if (GB_IS_BITMAP (C))                                   \
-    {                                                       \
-        /* convert C from bitmap to sparse */               \
-        GB_OK (GB_convert_bitmap_to_sparse (C, Werk)) ;     \
-    }                                                       \
-    else if (GB_IS_FULL (C))                                \
-    {                                                       \
-        /* convert C from full to sparse */                 \
-        GB_OK (GB_convert_full_to_sparse (C)) ;             \
-    }                                                       \
-}
+GrB_Info GB_convert_to_nonfull      // ensure a matrix is not full
+(
+    GrB_Matrix A,
+    GB_Werk Werk
+) ;
+
+GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
+(
+    GrB_Matrix A,           // input/output matrix
+    bool initialize         // if true, copy the iso value to all of A->x
+) ;
+
+GrB_Info GB_convert_any_to_iso // convert non-iso matrix to iso
+(
+    GrB_Matrix A,           // input/output matrix
+    GB_void *scalar         // scalar value, of size A->type->size, or NULL
+) ;
 
 //------------------------------------------------------------------------------
 // GB_is_dense
@@ -265,10 +272,16 @@ static inline const char *GB_sparsity_char_matrix (GrB_Matrix A)
     ASSERT (0) ;               return ("?") ;
 }
 
-GrB_Matrix GB_hyper_shallow         // return C
+GrB_Info GB_convert_int     // convert the integers of a matrix
 (
-    GrB_Matrix C,                   // output matrix
-    const GrB_Matrix A              // input matrix
+    GrB_Matrix A,           // matrix to convert
+    bool p_is_32_new,       // new integer format for A->p
+    bool j_is_32_new,       // new integer format for A->p
+    bool i_is_32_new,       // new integer format for A->h, A->i, and A->Y
+    bool determine          // if true, revise p_is_32_new, j_is_32_new,
+        // and i_is_32_new based on A->vlen, A->vdim and A->nvals.  Otherwise,
+        // ignore the matrix properties and always convert to the new integer
+        // sizes.
 ) ;
 
 #endif

@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GxB_Matrix_iso: report if a matrix is iso-valued or not
+// GxB_Matrix_iso: report if a matrix is iso-valued or not (historical)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,9 +20,10 @@ GrB_Info GxB_Matrix_iso     // return iso status of a matrix
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Matrix_iso (&iso, A)") ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (iso) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
 
     //--------------------------------------------------------------------------
     // return the iso status of a matrix

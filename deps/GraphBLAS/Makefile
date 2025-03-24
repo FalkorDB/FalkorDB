@@ -2,7 +2,7 @@
 # GraphBLAS/Makefile
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------
@@ -60,7 +60,14 @@ all:
 
 # run the demos
 demos: all
-	( cd Demo && ./demo )
+	./build/grow_demo < Demo/Matrix/west0067
+	./build/simple_demo > ./build/simple_demo.out
+	./build/complex_demo > ./build/complex_demo_out.m
+	./build/complex_demo 1 > ./build/complex_demo_out2.m
+	./build/wildtype_demo > ./build/wildtype_demo.out
+	./build/gauss_demo > ./build/gauss_demo1.out
+	./build/gauss_demo > ./build/gauss_demo.out
+	./build/wathen_demo > ./build/wathen_demo.out
 
 # diff the demo output
 demodiffs: demos

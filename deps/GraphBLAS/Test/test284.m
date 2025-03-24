@@ -1,7 +1,7 @@
 function test284
 %TEST284 test GrB_mxm using indexop-based semirings
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest284: GrB_mxm with indexop-based semirings\n') ;

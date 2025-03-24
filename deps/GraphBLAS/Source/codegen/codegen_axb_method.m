@@ -3,7 +3,7 @@ function codegen_axb_method (addop, multop, update, addfunc, mult, ztype, xytype
 %
 % codegen_axb_method (addop, multop, update, addfunc, mult, ztype, xytype, identity, terminal)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargin >= 5 && isempty (mult))

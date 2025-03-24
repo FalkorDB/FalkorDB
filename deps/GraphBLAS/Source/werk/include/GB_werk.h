@@ -2,7 +2,7 @@
 // GB_werk.h: definitions for werkspace management on the Werk stack
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,6 +35,11 @@ typedef struct
     char **logger_handle ;          // error report
     size_t *logger_size_handle ;
     int pwerk ;                     // top of Werk stack, initially zero
+
+    // integer control, combines C->[pji]_control and Global [pji]_control:
+    uint8_t p_control ;             // effective p_control for this method
+    uint8_t j_control ;             // effective j_control for this method
+    uint8_t i_control ;             // effective i_control for this method
 }
 GB_Werk_struct ;
 
@@ -48,9 +53,6 @@ typedef GB_Werk_struct *GB_Werk ;
 // of any user-callable GraphBLAS function.  It is used for small werkspace
 // allocations.
 
-// GB_ROUND8(s) rounds up s to a multiple of 8
-#define GB_ROUND8(s) (((s) + 7) & (~0x7))
-
 //------------------------------------------------------------------------------
 // GB_werk_push: allocate werkspace from the Werk stack or malloc
 //------------------------------------------------------------------------------
@@ -58,7 +60,41 @@ typedef GB_Werk_struct *GB_Werk ;
 // The werkspace is allocated from the Werk static if it small enough and space
 // is available.  Otherwise it is allocated by malloc.
 
-// See GB_callbacks.h for the prototype.
+#ifdef comments_only
+void *GB_werk_push    // return pointer to newly allocated space
+(
+    // output
+    size_t *size_allocated,     // # of bytes actually allocated
+    bool *on_stack,             // true if werkspace is from Werk stack
+    // input
+    size_t nitems,              // # of items to allocate
+    size_t size_of_item,        // size of each item
+    GB_Werk Werk
+) ;
+#endif
+
+//------------------------------------------------------------------------------
+// GB_werk_pop:  free werkspace from the Werk stack
+//------------------------------------------------------------------------------
+
+// If the werkspace was allocated from the Werk stack, it must be at the top of
+// the stack to free it properly.  Freeing a werkspace in the middle of the
+// Werk stack also frees everything above it.  Freeing werkspace from the Werk
+// stack is done in LIFO order, like a stack.
+
+#ifdef comments_only
+void *GB_werk_pop     // free the top block of werkspace memory
+(
+    // input/output
+    void *p,                    // werkspace to free
+    size_t *size_allocated,     // # of bytes actually allocated for p
+    // input
+    bool on_stack,              // true if werkspace is from Werk stack
+    size_t nitems,              // # of items to allocate
+    size_t size_of_item,        // size of each item
+    GB_Werk Werk
+) ;
+#endif
 
 //------------------------------------------------------------------------------
 // Werk helper macros
@@ -81,17 +117,8 @@ typedef GB_Werk_struct *GB_Werk ;
     X = (type *) GB_werk_pop (X, &(X ## _size_allocated), X ## _on_stack,   \
         X ## _nitems, sizeof (type), Werk) ; 
 
-//------------------------------------------------------------------------------
-// GB_werk_pop:  free werkspace from the Werk stack
-//------------------------------------------------------------------------------
-
-// If the werkspace was allocated from the Werk stack, it must be at the top of
-// the stack to free it properly.  Freeing a werkspace in the middle of the
-// Werk stack also frees everything above it.  This is not a problem if that
-// space is also being freed, but the assertion below ensures that the freeing
-// werkspace from the Werk stack is done in LIFO order, like a stack.
-
-// See GB_callbacks.h for the prototype.
+// GB_ROUND8(s) rounds up s to a multiple of 8
+#define GB_ROUND8(s) (((s) + 7) & (~0x7))
 
 #endif
 

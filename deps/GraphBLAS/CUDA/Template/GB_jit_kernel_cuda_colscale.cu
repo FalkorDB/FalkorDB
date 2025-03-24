@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 // do not #include functions inside of other functions!
@@ -19,9 +21,9 @@ __global__ void GB_cuda_colscale_kernel
     GB_C_TYPE *__restrict__ Cx = (GB_C_TYPE *) C->x ;
 
     #if ( GB_A_IS_SPARSE || GB_A_IS_HYPER )
-    const int64_t *__restrict__ Ap = A->p ;
+    const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
         #if ( GB_A_IS_HYPER )
-        const int64_t *__restrict__ Ah = A->h ;
+        const GB_Aj_TYPE *__restrict__ Ah = (GB_Aj_TYPE *) A->h ;
         #endif
     #endif
 
@@ -38,7 +40,7 @@ __global__ void GB_cuda_colscale_kernel
         int tid = blockIdx.x * blockDim.x + threadIdx.x ;
         for (int64_t p = tid ; p < anz ; p += nthreads_in_entire_grid)
         {
-            if (!GBB_A (Ab, p)) continue ;
+            if (!GBb_A (Ab, p)) continue ;
             // the pth entry in A is A(i,j) where i = p%avlen and j = p/avlen
             int64_t col_idx = p / avlen ;
     //      int64_t row_idx = p % avlen ;
@@ -59,14 +61,14 @@ __global__ void GB_cuda_colscale_kernel
             {
                 int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
                 float slope ;
-                GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst, chunk_size,
+                GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, chunk_size,
                     &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
 
                 for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)
                 {
                     int64_t p_final ;
-                    int64_t k = GB_cuda_ek_slice_entry (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
-                    int64_t j = GBH_A (Ah, k) ;
+                    int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
+                    int64_t j = GBh_A (Ah, k) ;
 
                     GB_DECLAREB (djj) ;
                     GB_GETB (djj, Dx, j, ) ;
@@ -87,6 +89,7 @@ extern "C" {
 
 GB_JIT_CUDA_KERNEL_COLSCALE_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
     ASSERT (GB_JUMBLED_OK (C)) ;
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (!GB_JUMBLED (D)) ;
@@ -96,8 +99,12 @@ GB_JIT_CUDA_KERNEL_COLSCALE_PROTO (GB_jit_kernel)
 
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
-    
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_colscale_kernel <<<grid, block, 0, stream>>> (C, A, D) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }

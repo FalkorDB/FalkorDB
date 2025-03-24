@@ -2,7 +2,7 @@
 // GB_subassign_06d_template: C<A> = A
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -67,7 +67,7 @@
     }
     else
     { 
-        GB_SLICE_MATRIX_WORK (A, 8, work, anz) ;
+        GB_SLICE_MATRIX_WORK2 (A, 8, work, anz) ;
     }
 
     //--------------------------------------------------------------------------
@@ -78,9 +78,9 @@
     ASSERT (GB_JUMBLED_OK (A)) ;
     ASSERT (!GB_PENDING (A)) ;
 
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
     const int8_t  *restrict Ab = A->b ;
     const int64_t avlen = A->vlen ;
 
@@ -251,17 +251,17 @@
                     for (int64_t k = kfirst ; k <= klast ; k++)
                     {
                         // get A(:,j), the kth vector of A
-                        int64_t j = GBH_A (Ah, k) ;
+                        int64_t j = GBh_A (Ah, k) ;
                         GB_GET_PA (pA_start, pA_end, taskid, k,
                             kfirst, klast, pstart_Aslice,
-                            GBP_A (Ap, k, avlen), GBP_A (Ap, k+1, avlen)) ;
+                            GB_IGET (Ap, k), GB_IGET (Ap, k+1)) ;
                         // pC is the start of C(:,j)
                         int64_t pC = j * Cvlen ;
                         // C<A(:,j),struct>=A(:,j) with C bitmap, A sparse
                         GB_PRAGMA_SIMD_REDUCTION (+,task_cnvals)
                         for (int64_t pA = pA_start ; pA < pA_end ; pA++)
                         { 
-                            int64_t p = pC + Ai [pA] ;
+                            int64_t p = pC + GB_IGET (Ai, pA) ;
                             // Cx [p] = Ax [pA]
                             #ifndef GB_ISO_ASSIGN
                             GB_COPY_aij_to_C (Cx, p, Ax, pA,
@@ -295,17 +295,17 @@
                         for (int64_t k = kfirst ; k <= klast ; k++)
                         {
                             // get A(:,j), the kth vector of A
-                            int64_t j = GBH_A (Ah, k) ;
+                            int64_t j = GBh_A (Ah, k) ;
                             GB_GET_PA (pA_start, pA_end, taskid, k,
                                 kfirst, klast, pstart_Aslice,
-                                GBP_A (Ap, k, avlen), GBP_A (Ap, k+1, avlen)) ;
+                                GB_IGET (Ap, k), GB_IGET (Ap, k+1)) ;
                             // pC is the start of C(:,j)
                             int64_t pC = j * Cvlen ;
                             // C<A(:,j),struct>=A(:,j) with C full, A sparse
                             GB_PRAGMA_SIMD_VECTORIZE
                             for (int64_t pA = pA_start ; pA < pA_end ; pA++)
                             { 
-                                int64_t p = pC + Ai [pA] ;
+                                int64_t p = pC + GB_IGET (Ai, pA) ;
                                 // Cx [p] = Ax [pA]
                                 GB_COPY_aij_to_C (Cx, p, Ax, pA,
                                     GB_A_ISO, cwork, GB_C_ISO) ;
@@ -475,10 +475,10 @@
                     for (int64_t k = kfirst ; k <= klast ; k++)
                     {
                         // get A(:,j), the kth vector of A
-                        int64_t j = GBH_A (Ah, k) ;
+                        int64_t j = GBh_A (Ah, k) ;
                         GB_GET_PA (pA_start, pA_end, taskid, k,
                             kfirst, klast, pstart_Aslice,
-                            GBP_A (Ap, k, avlen), GBP_A (Ap, k+1, avlen)) ;
+                            GB_IGET (Ap, k), GB_IGET (Ap, k+1)) ;
                         // pC is the start of C(:,j)
                         int64_t pC = j * Cvlen ;
                         // C<A(:,j),struct>=A(:,j) with C bitmap, A sparse
@@ -487,7 +487,7 @@
                         {
                             if (GB_AX_MASK (Ax, pA, asize))
                             { 
-                                int64_t p = pC + Ai [pA] ;
+                                int64_t p = pC + GB_IGET (Ai, pA) ;
                                 // Cx [p] = Ax [pA]
                                 GB_COPY_aij_to_C (Cx, p, Ax, pA,
                                     GB_A_ISO, cwork, GB_C_ISO) ;
@@ -518,10 +518,10 @@
                     for (int64_t k = kfirst ; k <= klast ; k++)
                     {
                         // get A(:,j), the kth vector of A
-                        int64_t j = GBH_A (Ah, k) ;
+                        int64_t j = GBh_A (Ah, k) ;
                         GB_GET_PA (pA_start, pA_end, taskid, k,
                             kfirst, klast, pstart_Aslice,
-                            GBP_A (Ap, k, avlen), GBP_A (Ap, k+1, avlen)) ;
+                            GB_IGET (Ap, k), GB_IGET (Ap, k+1)) ;
                         // pC is the start of C(:,j)
                         int64_t pC = j * Cvlen ;
                         // C<A(:,j),struct>=A(:,j) with C full, A sparse
@@ -530,7 +530,7 @@
                         {
                             if (GB_AX_MASK (Ax, pA, asize))
                             { 
-                                int64_t p = pC + Ai [pA] ;
+                                int64_t p = pC + GB_IGET (Ai, pA) ;
                                 // Cx [p] = Ax [pA]
                                 GB_COPY_aij_to_C (Cx, p, Ax, pA,
                                     GB_A_ISO, cwork, GB_C_ISO) ;

@@ -2,7 +2,7 @@
 // gbbandwidth: compute the lower and/or upper bandwidth of a GrB matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,7 +32,7 @@ void mexFunction
     GrB_Matrix A = gb_get_shallow (pargin [0]) ;
     bool compute_lo = (bool) mxGetScalar (pargin [1]) ;
     bool compute_hi = (bool) mxGetScalar (pargin [2]) ;
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
 
@@ -43,8 +43,8 @@ void mexFunction
     int64_t hi = 0, lo = 0 ;
     GrB_Matrix x = NULL, imin = NULL, imax = NULL, idiag = NULL ;
 
-    GxB_Format_Value fmt ;
-    OK (GxB_Matrix_Option_get (A, GxB_FORMAT, &fmt)) ;
+    int fmt ;
+    OK (GrB_Matrix_get_INT32 (A, &fmt, GxB_FORMAT)) ;
     bool by_col = (fmt == GxB_BY_COL) ;
 
     if (by_col)
@@ -182,6 +182,6 @@ void mexFunction
         pargout [1] = mxCreateDoubleScalar ((double) hi) ;
     }
 
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

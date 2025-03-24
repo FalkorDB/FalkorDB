@@ -2,7 +2,7 @@
 // GxB_Vector_Iterator: iterate over the entries of a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,8 +30,7 @@ GrB_Info GxB_Vector_Iterator_attach
 
 GrB_Info GB_Vector_Iterator_bitmap_seek
 (
-    GxB_Iterator iterator,
-    GrB_Index unused // note: unused parameter to be removed in v8.x
+    GxB_Iterator iterator
 )
 {
     for ( ; iterator->p < iterator->pmax ; iterator->p++)
@@ -45,13 +44,13 @@ GrB_Info GB_Vector_Iterator_bitmap_seek
     return (GxB_EXHAUSTED) ;
 }
 
-GrB_Index GxB_Vector_Iterator_getpmax (GxB_Iterator iterator)
+uint64_t GxB_Vector_Iterator_getpmax (GxB_Iterator iterator)
 { 
     // return the range of the vector iterator
     return (iterator->pmax) ;
 }
 
-GrB_Info GxB_Vector_Iterator_seek (GxB_Iterator iterator, GrB_Index p)
+GrB_Info GxB_Vector_Iterator_seek (GxB_Iterator iterator, uint64_t p)
 { 
     // seek to a specific entry in the vector
     return (GB_Vector_Iterator_seek (iterator, p)) ;
@@ -63,15 +62,17 @@ GrB_Info GxB_Vector_Iterator_next (GxB_Iterator iterator)
     return (GB_Vector_Iterator_next (iterator)) ;
 }
 
-GrB_Index GxB_Vector_Iterator_getp (GxB_Iterator iterator)
+uint64_t GxB_Vector_Iterator_getp (GxB_Iterator iterator)
 { 
     // get the current position of a vector iterator
     return (iterator->p) ;
 }
 
-GrB_Index GxB_Vector_Iterator_getIndex (GxB_Iterator iterator)
+uint64_t GxB_Vector_Iterator_getIndex (GxB_Iterator iterator)
 { 
     // get the index of a vector entry
-    return ((iterator->Ai != NULL) ? iterator->Ai [iterator->p] : iterator->p) ;
+    return (
+     iterator->Ai32 ? iterator->Ai32 [iterator->p] :
+    (iterator->Ai64 ? iterator->Ai64 [iterator->p] : iterator->p)) ;
 }
 

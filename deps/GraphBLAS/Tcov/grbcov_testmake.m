@@ -6,7 +6,7 @@ function grbcov_testmake (what)
 %
 % See also: grbcover_edit, grbmake
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (ispc)
@@ -62,27 +62,6 @@ if (need_rename)
 end
 
 fprintf ('\nCompiling GraphBLAS tests\nplease wait [') ;
-
-try
-    if (strncmp (computer, 'GLNX', 4))
-        % remove -ansi from CFLAGS and replace it with -std=c11
-        cc = mex.getCompilerConfigurations ('C', 'Selected') ;
-        env = cc.Details.SetEnv ;
-        c1 = strfind (env, 'CFLAGS=') ;
-        q = strfind (env, '"') ;
-        q = q (q > c1) ;
-        if (~isempty (c1) && length (q) > 1)
-            c2 = q (2) ;
-            cflags = env (c1:c2) ;  % the CFLAGS="..." string
-            ansi = strfind (cflags, '-ansi') ;
-            if (~isempty (ansi))
-                cflags = [cflags(1:ansi-1) '-std=c11' cflags(ansi+5:end)] ;
-                flags = [flags ' ' cflags] ;
-                fprintf ('compiling with -std=c11 instead of default -ansi\n') ;
-            end
-        end
-    end
-end
 
 libraries = sprintf ('-L%s -lgraphblas_tcov', pwd) ;
 

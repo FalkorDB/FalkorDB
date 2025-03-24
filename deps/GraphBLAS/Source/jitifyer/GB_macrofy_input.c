@@ -2,7 +2,7 @@
 // GB_macrofy_input: construct a macro to load values from an input matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ void GB_macrofy_input
     FILE *fp,
     // input:
     const char *aname,      // name of the scalar aij = ...
-    const char *Amacro,     // name of the macro is GB_GET*(Amacro)
+    const char *Amacro,     // name of the macro is GB_GETA, if Amacro is 'A'
     const char *Aname,      // name of the input matrix (typically A or B)
     bool do_matrix_macros,  // if true, do the matrix macros
     GrB_Type a2type,        // type of aij after casting to x or y of f(x,y)
@@ -25,9 +25,12 @@ void GB_macrofy_input
     int asparsity,          // sparsity format of the input matrix
     int acode,              // type code of the input (0 if pattern,
                             // 15 if A is NULL)
-    int A_iso_code,         // 1 if A is iso
-    int azombies            // 1 if A has zombies, 0 if A has no zombies;
+    bool A_iso,             // true if A is iso
+    int azombies,           // 1 if A has zombies, 0 if A has no zombies;
                             // -1 if the macro should not be created.
+    int p_is_32,            // if true, Ap is 32-bit, else 64-bit
+    int j_is_32,            // if true, Ah is 32-bit, else 64-bit
+    int i_is_32             // if true, Ai is 32-bit, else 64-bit
 )
 {
 
@@ -46,7 +49,7 @@ void GB_macrofy_input
     if (do_matrix_macros)
     {
         GB_macrofy_sparsity (fp, Aname, asparsity) ;
-        GB_macrofy_nvals (fp, Aname, asparsity, A_iso_code) ;
+        GB_macrofy_nvals (fp, Aname, asparsity, A_iso) ;
         if (azombies >= 0)
         { 
             // if negative, do not create the macro at all.  Typically this
@@ -56,7 +59,7 @@ void GB_macrofy_input
         }
     }
 
-    fprintf (fp, "#define GB_%s_ISO %d\n", Aname, A_iso_code) ;
+    fprintf (fp, "#define GB_%s_ISO %d\n", Aname, A_iso ? 1 : 0) ;
     if (A_is_pattern)
     { 
         // values of A are not accessed
@@ -138,8 +141,15 @@ void GB_macrofy_input
         char macro_name [SLEN+1], xargs [SLEN+1], xexpr [SLEN+1] ;
         snprintf (macro_name, SLEN, "GB_GET%s", Amacro) ;
         snprintf (xargs, SLEN, "%sx,p,iso", Aname) ;
-        snprintf (xexpr, SLEN, A_iso_code ? "%sx [0]" : "%sx [p]", Aname) ;
+        snprintf (xexpr, SLEN, A_iso ? "%sx [0]" : "%sx [p]", Aname) ;
         GB_macrofy_cast_input (fp, macro_name, aname, xargs, xexpr, a2type,
             atype) ;
     }
+
+    //--------------------------------------------------------------------------
+    // construct macros for 32/64 integer types
+    //--------------------------------------------------------------------------
+
+    GB_macrofy_bits (fp, Aname, p_is_32, j_is_32, i_is_32) ;
 }
+

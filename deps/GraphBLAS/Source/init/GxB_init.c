@@ -2,7 +2,7 @@
 // GxB_init: initialize GraphBLAS and declare malloc/calloc/realloc/free to use
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -53,7 +53,7 @@
 
 GrB_Info GxB_init           // start up GraphBLAS and also define malloc, etc
 (
-    GrB_Mode mode,          // blocking or non-blocking mode
+    int mode,               // blocking or non-blocking mode
 
     // pointers to memory management functions
     void * (* user_malloc_function  ) (size_t),         // required

@@ -2,7 +2,7 @@
 // GrB_Vector_extractElement: extract a single entry from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ GrB_Info GrB_Vector_extractElement_Scalar   // S = V(i,j)
 (
     GrB_Scalar S,                       // extracted scalar
     const GrB_Vector V,                 // vector to extract a scalar from
-    GrB_Index i                         // index
+    uint64_t i                         // index
 )
 {
 
@@ -31,9 +31,9 @@ GrB_Info GrB_Vector_extractElement_Scalar   // S = V(i,j)
     // check inputs (just the GrB_Scalar S)
     //--------------------------------------------------------------------------
 
-    GrB_Info info ;
-    GB_WHERE (S, "GrB_Vector_extractElement_Scalar (s, V, i)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (S) ;
+    GB_WHERE2 (S, V, "GrB_Vector_extractElement_Scalar (s, V, i)") ;
+    GB_RETURN_IF_NULL (S) ;
+    GB_RETURN_IF_NULL (V) ;
 
     //--------------------------------------------------------------------------
     // ensure S is bitmap

@@ -2,7 +2,7 @@
 // GB_binop_to_monoid: convert a binary op into its corresponding monoid
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,7 +12,7 @@
 
 GrB_Monoid GB_binop_to_monoid       // return the corresponding monoid, or NULL
 (
-    const GrB_BinaryOp op_in        // binary op to convert
+    GrB_BinaryOp op                 // binary op to convert
 )
 {
 
@@ -20,14 +20,13 @@ GrB_Monoid GB_binop_to_monoid       // return the corresponding monoid, or NULL
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (op_in != NULL) ;
+    ASSERT_BINARYOP_OK (op, "binary op to convert to monoid", GB0) ;
 
     //--------------------------------------------------------------------------
-    // convert the binary op_in to its corresponding monoid
+    // convert the binary op to its corresponding monoid
     //--------------------------------------------------------------------------
 
-    ASSERT_BINARYOP_OK (op_in, "binary op to convert to monoid", GB0) ;
-    GrB_BinaryOp op = GB_boolean_rename_op (op_in) ;
+    op = GB_boolean_rename_op (op) ;
     GB_Type_code zcode = op->ztype->code ;
     GB_Opcode opcode = op->opcode ;
 
@@ -200,7 +199,7 @@ GrB_Monoid GB_binop_to_monoid       // return the corresponding monoid, or NULL
     }
 
     //--------------------------------------------------------------------------
-    // op_in binary operator does not correspond to a known monoid
+    // op binary operator does not correspond to a known monoid
     //--------------------------------------------------------------------------
 
     return (NULL) ;

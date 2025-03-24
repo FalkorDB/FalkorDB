@@ -2,7 +2,7 @@
 // GxB_Vector_export_CSC: export a vector in CSC format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,15 +15,15 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
 (
     GrB_Vector *v,      // handle of vector to export and free
     GrB_Type *type,     // type of vector exported
-    GrB_Index *n,       // length of the vector
+    uint64_t *n,        // length of the vector
 
-    GrB_Index **vi,     // indices
+    uint64_t **vi,      // indices
     void **vx,          // values
-    GrB_Index *vi_size, // size of Ai in bytes
-    GrB_Index *vx_size, // size of Ax in bytes
+    uint64_t *vi_size,  // size of Ai in bytes
+    uint64_t *vx_size,  // size of Ax in bytes
     bool *iso,          // if true, A is iso
 
-    GrB_Index *nvals,   // # of entries in vector
+    uint64_t *nvals,    // # of entries in vector
     bool *jumbled,      // if true, indices may be unsorted
     const GrB_Descriptor desc
 )
@@ -33,12 +33,12 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Vector_export_CSC (&v, &type, &n, "
-        "&vi, &vx, &vi_size, &vx_size, &iso, &nvals, &jumbled, desc)") ;
-    // GB_BURBLE_START ("GxB_Vector_export_CSC") ;
-    GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_RETURN_IF_NULL (v) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (*v) ;
+    GB_RETURN_IF_NULL (*v) ;
+    GB_WHERE_1 (*v, "GxB_Vector_export_CSC (&v, &type, &n, "
+        "&vi, &vx, &vi_size, &vx_size, &iso, &nvals, &jumbled, desc)") ;
+
+    GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_RETURN_IF_NULL (nvals) ;
     ASSERT_VECTOR_OK (*v, "v to export", GB0) ;
 
@@ -75,7 +75,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
 
     int sparsity ;
     bool is_csc ;
-    GrB_Index vdim ;
+    uint64_t vdim ;
 
     info = GB_export (false, (GrB_Matrix *) v, type, n, &vdim, true,
         NULL, NULL,     // Ap
@@ -93,7 +93,7 @@ GrB_Info GxB_Vector_export_CSC  // export and free a CSC vector
         ASSERT (is_csc) ;
         ASSERT (vdim == 1) ;
     }
-    // GB_BURBLE_END ;
+
     return (info) ;
 }
 

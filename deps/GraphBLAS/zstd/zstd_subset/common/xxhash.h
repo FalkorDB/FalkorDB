@@ -3567,7 +3567,7 @@ XXH_FORCE_INLINE xxh_u64 XXH3_mix16B(const xxh_u8* XXH_RESTRICT input,
      * By forcing seed64 into a register, we disrupt the cost model and
      * cause it to scalarize. See `XXH32_round()`
      *
-     * FIXME: Clang's output is still _much_ faster -- On an AMD Ryzen 3600,
+     * fixme: Clang's output is still _much_ faster -- On an AMD Ryzen 3600,
      * XXH3_64bits @ len=240 runs at 4.6 GB/s with Clang 9, but 3.3 GB/s on
      * GCC 9.2, despite both emitting scalar code.
      *

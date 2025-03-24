@@ -2,7 +2,7 @@
 // GB_assign: submatrix assignment: C<M>(Rows,Cols) = accum (C(Rows,Cols),A)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,8 +30,8 @@
     GB_Matrix_free (&Mwork) ;       \
     GB_Matrix_free (&Awork) ;       \
     GB_Matrix_free (&SubMask) ;     \
-    GB_FREE_WORK (&I2, I2_size) ;   \
-    GB_FREE_WORK (&J2, J2_size) ;   \
+    GB_FREE_MEMORY (&I2, I2_size) ;   \
+    GB_FREE_MEMORY (&J2, J2_size) ;   \
 }
 
 #include "assign/GB_assign.h"
@@ -51,10 +51,12 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     const GrB_BinaryOp accum,       // optional accum for accum(C,T)
     const GrB_Matrix A_in,          // input matrix
     const bool A_transpose,         // true if A is transposed
-    const GrB_Index *Rows,          // row indices
-    const GrB_Index nRows_in,       // number of row indices
-    const GrB_Index *Cols,          // column indices
-    const GrB_Index nCols_in,       // number of column indices
+    const void *Rows,               // row indices
+    const bool Rows_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nRows_in,        // number of row indices
+    const void *Cols,               // column indices
+    const bool Cols_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nCols_in,        // number of column indices
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand
@@ -71,15 +73,16 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     GrB_Matrix C = NULL ;           // C_in or Cwork
     GrB_Matrix M = NULL ;           // M_in or Mwork
     GrB_Matrix A = NULL ;           // A_in or Awork
-    GrB_Index *I = NULL ;           // Rows, Cols, or I2
-    GrB_Index *J = NULL ;           // Rows, Cols, or J2
+    void *I = NULL ;                // Rows, Cols, or I2
+    void *J = NULL ;                // Rows, Cols, or J2
+    bool I_is_32, J_is_32 ;
 
     // temporary matrices and arrays
     GrB_Matrix Cwork = NULL, Mwork = NULL, Awork = NULL, SubMask = NULL ;
     struct GB_Matrix_opaque Cwork_header, Mwork_header, Awork_header,
         MT_header, AT_header, SubMask_header ;
-    GrB_Index *I2 = NULL ; size_t I2_size = 0 ;
-    GrB_Index *J2 = NULL ; size_t J2_size = 0 ;
+    void *I2 = NULL ; size_t I2_size = 0 ;
+    void *J2 = NULL ; size_t J2_size = 0 ;
 
     GrB_Type scalar_type = NULL ;
     int64_t ni, nj, nI, nJ, Icolon [3], Jcolon [3] ;
@@ -90,11 +93,13 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
     GB_OK (GB_assign_prep (&C, &M, &A, &subassign_method,
         &Cwork, &Mwork, &Awork,
         &Cwork_header, &Mwork_header, &Awork_header, &MT_header, &AT_header,
-        &I, &I2, &I2_size, &ni, &nI, &Ikind, Icolon,
-        &J, &J2, &J2_size, &nj, &nJ, &Jkind, Jcolon,
+        &I, &I_is_32, &I2, &I2_size, &ni, &nI, &Ikind, Icolon,
+        &J, &J_is_32, &J2, &J2_size, &nj, &nJ, &Jkind, Jcolon,
         &scalar_type, C_in, &C_replace, &assign_kind,
         M_in, Mask_comp, Mask_struct, M_transpose, accum,
-        A_in, A_transpose, Rows, nRows_in, Cols, nCols_in,
+        A_in, A_transpose,
+        Rows, Rows_is_32, nRows_in,
+        Cols, Cols_is_32, nCols_in,
         scalar_expansion, scalar, scalar_code, Werk)) ;
 
     ASSERT_MATRIX_OK (C, "initial C for assign", GB0) ;
@@ -164,7 +169,8 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
         // structure, but otherwise C is returned as bitmap.
 
         GB_OK (GB_bitmap_assign (C, C_replace,
-            I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
+            I, I_is_32, ni, nI, Ikind, Icolon,
+            J, J_is_32, nj, nJ, Jkind, Jcolon,
             M, Mask_comp, Mask_struct, accum, A, scalar, scalar_type,
             assign_kind, Werk)) ;
 
@@ -196,7 +202,8 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
 
             GB_OK (GB_subassigner (C, subassign_method, C_replace,
                 M, Mask_comp, Mask_struct, accum, A,
-                I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
+                I, I_is_32, ni, nI, Ikind, Icolon,
+                J, J_is_32, nj, nJ, Jkind, Jcolon,
                 scalar_expansion, scalar, scalar_type, Werk)) ;
 
         }
@@ -208,10 +215,10 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
             //------------------------------------------------------------------
 
             ASSERT_MATRIX_OK (M, "big mask", GB0) ;
-            GB_CLEAR_STATIC_HEADER (SubMask, &SubMask_header) ;
+            GB_CLEAR_MATRIX_HEADER (SubMask, &SubMask_header) ;
 
-            const GrB_Index *I_SubMask = I ; int64_t ni_SubMask = ni ;
-            const GrB_Index *J_SubMask = J ; int64_t nj_SubMask = nj ;
+            const void *I_SubMask = I ; int64_t ni_SubMask = ni ;
+            const void *J_SubMask = J ; int64_t nj_SubMask = nj ;
 
             if (assign_kind == GB_ROW_ASSIGN)
             { 
@@ -234,8 +241,9 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
             }
 
             // if Mask_struct is true then SubMask is extracted as iso
-            GB_OK (GB_subref (SubMask, Mask_struct,
-                true, M, I_SubMask, ni_SubMask, J_SubMask, nj_SubMask,
+            GB_OK (GB_subref (SubMask, Mask_struct, true, M,
+                I_SubMask, I_is_32, ni_SubMask,
+                J_SubMask, J_is_32, nj_SubMask,
                 false, Werk)) ;
 
             // GB_subref can return a jumbled result
@@ -257,7 +265,8 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
 
             GB_OK (GB_subassigner (C, subassign_method, C_replace,
                 SubMask, Mask_comp, Mask_struct, accum, A,
-                I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
+                I, I_is_32, ni, nI, Ikind, Icolon,
+                J, J_is_32, nj, nJ, Jkind, Jcolon,
                 scalar_expansion, scalar, scalar_type, Werk)) ;
 
             GB_Matrix_free (&SubMask) ;
@@ -305,8 +314,11 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
             // delete entries outside C(I,J) for which M(i,j) is false
             //------------------------------------------------------------------
 
-            // C must be sparse or hypersparse
-            GB_ENSURE_SPARSE (C) ;
+            // C must be sparse or hypersparse; convert full/bitmap to sparse
+            if (GB_IS_BITMAP (C) || GB_IS_FULL (C))
+            { 
+                GB_OK (GB_convert_any_to_sparse (C, Werk)) ;
+            }
 
             if (assign_kind == GB_COL_ASSIGN)
             { 
@@ -318,12 +330,13 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
                 // M is a single column so it is never hypersparse
                 ASSERT (nJ == 1) ;
                 ASSERT (M->vlen == C->vlen && M->vdim == 1 && M->h == NULL) ;
-                int64_t j = GB_ijlist (J, 0, Jkind, Jcolon) ;
+                GB_IDECL (J, const, u) ; GB_IPTR (J, J_is_32) ;
+                int64_t j = GB_IJLIST (J, 0, Jkind, Jcolon) ;
                 GBURBLE ("assign zombies outside C(I,j) ") ;
                 GB_UNJUMBLE (M) ;
                 GB_OK (GB_hyper_hash_build (C, Werk)) ;
                 GB_OK (GB_assign_zombie3 (C, M, Mask_comp, Mask_struct,
-                    j, I, nI, Ikind, Icolon)) ;
+                    j, I, I_is_32, nI, Ikind, Icolon)) ;
 
             }
             else if (assign_kind == GB_ROW_ASSIGN)
@@ -337,13 +350,14 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
                 // M s a single row with vlen == 1 and the same vdim as C
                 ASSERT (nI == 1) ;
                 ASSERT (M->vlen == 1 && M->vdim == C->vdim) ;
-                int64_t i = GB_ijlist (I, 0, Ikind, Icolon) ;
+                GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
+                int64_t i = GB_IJLIST (I, 0, Ikind, Icolon) ;
                 GBURBLE ("assign zombies outside C(i,J) ") ;
                 GB_UNJUMBLE (C) ;
                 GB_UNJUMBLE (M) ;
                 GB_OK (GB_hyper_hash_build (M, Werk)) ;
                 GB_OK (GB_assign_zombie4 (C, M, Mask_comp, Mask_struct,
-                    i, J, nJ, Jkind, Jcolon)) ;
+                    i, J, J_is_32, nJ, Jkind, Jcolon)) ;
 
             }
             else
@@ -359,9 +373,10 @@ GrB_Info GB_assign                  // C<M>(Rows,Cols) += A or A'
                 GB_UNJUMBLE (M) ;
                 GB_OK (GB_hyper_hash_build (M, Werk)) ;
                 GB_OK (GB_assign_zombie5 (C, M, Mask_comp, Mask_struct,
-                    I, nI, Ikind, Icolon, J, nJ, Jkind, Jcolon, Werk)) ;
+                    I, I_is_32, nI, Ikind, Icolon,
+                    J, J_is_32, nJ, Jkind, Jcolon, Werk)) ;
             }
-            ASSERT_MATRIX_OK (C, "C for C-replace-phase done", GB_ZOMBIE (GB0)) ;
+            ASSERT_MATRIX_OK (C, "C for C-replace-phase done", GB0_Z) ;
         }
     }
 
