@@ -12,4 +12,4 @@ WORKDIR /FalkorDB
 
 COPY . /FalkorDB
 
-# RUN make
+RUN make
