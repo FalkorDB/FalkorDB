@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 // do not #include functions inside of other functions!
@@ -59,13 +61,13 @@ __global__ void GB_cuda_colscale_kernel
             {
                 int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
                 float slope ;
-                GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst, chunk_size,
+                GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, chunk_size,
                     &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
 
                 for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)
                 {
                     int64_t p_final ;
-                    int64_t k = GB_cuda_ek_slice_entry (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
+                    int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
                     int64_t j = GBh_A (Ah, k) ;
 
                     GB_DECLAREB (djj) ;
@@ -97,8 +99,12 @@ GB_JIT_CUDA_KERNEL_COLSCALE_PROTO (GB_jit_kernel)
 
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
-    
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_colscale_kernel <<<grid, block, 0, stream>>> (C, A, D) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }

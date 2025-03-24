@@ -29,8 +29,7 @@
 {                                           \
     GB_WERK_POP (A_slice, int64_t) ;        \
     GB_WERK_POP (H_slice, int64_t) ;        \
-    GB_FREE_MEMORY (&Wf, Wf_size) ;           \
-    GB_FREE_MEMORY (&Wcx, Wcx_size) ;         \
+    GB_FREE_MEMORY (&Wcx, Wcx_size) ;       \
 }
 
 #define GB_FREE_ALL                         \
@@ -63,7 +62,6 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
     GB_WERK_DECLARE (A_slice, int64_t) ;
     GB_WERK_DECLARE (H_slice, int64_t) ;
     GB_void *restrict Wcx= NULL ; size_t Wcx_size = 0 ;
-    int8_t  *restrict Wf = NULL ; size_t Wf_size  = 0 ;
 
     ASSERT_MATRIX_OK (C, "C for saxpy4 C+=A*B", GB0) ;
     ASSERT (GB_IS_FULL (C)) ;
@@ -108,10 +106,6 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
         GBURBLE ("(punt) ") ;
         return (GrB_NO_VALUE) ;
     }
-
-    // the complex TIMES and ANY monoids do not have an atomic update
-    bool z_has_no_atomic_update = (zcode >= GB_FC32_code) &&
-        (add_binop_code == GB_TIMES_binop_code) ;
 
     GBURBLE ("(saxpy4: %s += %s*%s) ",
             GB_sparsity_char_matrix (C),
@@ -201,22 +195,6 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
             // use just A_slice.
             wspace = (C->vlen) * ntasks * (C->type->size) ;
         }
-        else if (z_has_no_atomic_update)
-        { 
-            // The atomic fine tasks use the monoid's atomic update, which is
-            // available for most factory kernels.  The TIMES monoid for the
-            // complex types (FC32 and FC64) requires a critical section for
-            // each C(i,j) scalar. User-defined monoids for JIT kernels also
-            // require this mutex.
-            Wf = GB_CALLOC_MEMORY (C->vlen * C->vdim, sizeof (int8_t),
-                &Wf_size) ;
-            if (Wf == NULL)
-            { 
-                // out of memory
-                GB_FREE_ALL ;
-                return (GrB_OUT_OF_MEMORY) ;
-            }
-        }
     }
 
     if (wspace > 0)
@@ -249,7 +227,7 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
         {                                                                   \
             info = GB_Asaxpy4B (add,mult,xname) (C, A, B, ntasks, nthreads, \
                 nfine_tasks_per_vector, use_coarse_tasks, use_atomics,      \
-                A_slice, H_slice, Wcx, Wf) ;                                \
+                A_slice, H_slice, Wcx) ;                                    \
         }                                                                   \
         break ;
 
@@ -275,7 +253,7 @@ GrB_Info GB_AxB_saxpy4              // C += A*B
     { 
         info = GB_AxB_saxpy4_jit (C, A, B, semiring, flipxy,
             ntasks, nthreads, nfine_tasks_per_vector, use_coarse_tasks,
-            use_atomics, A_slice, H_slice, Wcx, Wf) ;
+            use_atomics, A_slice, H_slice, Wcx) ;
     }
 
 

@@ -236,6 +236,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     dim3 grid_1 (number_of_blocks_1) ;
     dim3 block (threads_per_block) ;
 
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
+
     //--------------------------------------------------------------------------
     // C<M>=A'*B via jitified kernels
     //--------------------------------------------------------------------------
@@ -265,8 +268,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // kernel_timer.Start();
         GB_cuda_AxB_dot3_dense_phase1_kernel <<<grid_1, block, 0, stream>>>
             (C, M) ;
-
-        CUDA_OK (cudaStreamSynchronize(stream)) ;  // is this needed?
+        CUDA_OK (cudaGetLastError ( )) ;
+        CUDA_OK (cudaStreamSynchronize (stream)) ;
 
         // kernel_timer.Stop();
         // printf ("(GPU phase1 %12.6g ms )\n", kernel_timer.Elapsed()) ;
@@ -364,7 +367,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // printf ("\nLaunching sparse phase1:\n") ;
         GB_jit_AxB_dot3_phase1_kernel <<<grid_1, block, 0, stream>>>
             (Nanobuckets, Blockbucket, C, M, A, B) ;
-
+        CUDA_OK (cudaGetLastError ( )) ;
         CUDA_OK (cudaStreamSynchronize (stream)) ;
 
         // kernel_timer.Stop();
@@ -385,7 +388,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // printf ("Launching sparse phase2:\n") ;
         GB_cuda_AxB_dot3_phase2_kernel <<<grid_2, block, 0, stream>>>
             (Blockbucket, offset, number_of_blocks_1) ;
-
+        CUDA_OK (cudaGetLastError ( )) ;
         CUDA_OK (cudaStreamSynchronize (stream)) ;
 
         int64_t s = offset [0] ;
@@ -424,8 +427,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
             // printf ("Launching sparse phase2end:\n") ;
             GB_cuda_AxB_dot3_phase2end_kernel <<<grid_1, block, 0, stream>>>
                 (Nanobuckets, Blockbucket, Bucketp, Bucket, offset, C, mnz) ;
-
+            CUDA_OK (cudaGetLastError ( )) ;
             CUDA_OK (cudaStreamSynchronize (stream)) ;
+
             // kernel_timer.Stop();
             // printf ("(GPU phase2end %12.6g ms)\n",kernel_timer.Elapsed());
         }
@@ -472,6 +476,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             GB_cuda_AxB_dot3_phase3_vsvs_kernel
                                 <<<grid_3, block, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
+                            CUDA_OK (cudaGetLastError ( )) ;
+                            CUDA_OK (cudaStreamSynchronize (stream)) ;
                         }
                         break ;
 
@@ -504,6 +510,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             GB_cuda_AxB_dot3_phase3_mp_kernel
                                 <<<grid_3, block, shared_bytes, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
+                            CUDA_OK (cudaGetLastError ( )) ;
+                            CUDA_OK (cudaStreamSynchronize (stream)) ;
                         }
                         break ;
 
@@ -531,6 +539,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             GB_cuda_AxB_dot3_phase3_vssp_kernel
                                 <<<grid_3, block, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
+                            CUDA_OK (cudaGetLastError ( )) ;
+                            CUDA_OK (cudaStreamSynchronize (stream)) ;
                         }
                         break ;
 
@@ -561,6 +571,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             GB_cuda_AxB_dot3_phase3_vsdn_kernel
                                 <<<grid_3, block, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
+                            CUDA_OK (cudaGetLastError ( )) ;
+                            CUDA_OK (cudaStreamSynchronize (stream)) ;
                         }
                         break ;
 
@@ -588,6 +600,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             GB_cuda_AxB_dot3_phase3_spdn_kernel
                                 <<<grid_3, block, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
+                            CUDA_OK (cudaGetLastError ( )) ;
+                            CUDA_OK (cudaStreamSynchronize (stream)) ;
                             break ;
                         }
                     }

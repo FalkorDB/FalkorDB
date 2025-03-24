@@ -28,8 +28,7 @@ GrB_Info GB_AxB_saxpy4_jit          // C+=A*B, saxpy4 method, via the JIT
     const bool use_atomics,
     const int64_t *A_slice,
     const int64_t *H_slice,
-    GB_void *restrict Wcx,
-    int8_t *restrict Wf
+    GB_void *restrict Wcx
 )
 { 
 
@@ -65,7 +64,7 @@ GrB_Info GB_AxB_saxpy4_jit          // C+=A*B, saxpy4 method, via the JIT
     #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, A, B, ntasks, nthreads, nfine_tasks_per_vector,
-        use_coarse_tasks, use_atomics, A_slice, H_slice, Wcx, Wf,
+        use_coarse_tasks, use_atomics, A_slice, H_slice, Wcx,
         semiring->multiply->theta, &GB_callback)) ;
 }
 

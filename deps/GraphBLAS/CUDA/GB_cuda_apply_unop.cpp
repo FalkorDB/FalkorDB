@@ -33,6 +33,9 @@ GrB_Info GB_cuda_apply_unop
     GB_void *ythunk_cuda = NULL ;
     size_t ythunk_cuda_size = 0 ;
 
+    GrB_Index anz = GB_nnz_held (A) ;
+    if (anz == 0) return (GrB_SUCCESS) ;
+
     // FIXME: use the stream pool
     cudaStream_t stream = nullptr ;
     CUDA_OK (cudaStreamCreate (&stream)) ;
@@ -51,8 +54,6 @@ GrB_Info GB_cuda_apply_unop
         }
         memcpy (ythunk_cuda, ythunk, op->ytype->size) ;
     }
-
-    GrB_Index anz = GB_nnz_held (A) ;
 
     int32_t number_of_sms = GB_Global_gpu_sm_get (0) ;
     int64_t raw_gridsz = GB_ICEIL (anz, BLOCK_SIZE) ;

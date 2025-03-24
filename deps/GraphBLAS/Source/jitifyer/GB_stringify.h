@@ -502,8 +502,7 @@ GrB_Info GB_AxB_saxpy4_jit          // C+=A*B, saxpy4 method, via the JIT
     const bool use_atomics,
     const int64_t *A_slice,
     const int64_t *H_slice,
-    GB_void *restrict Wcx,
-    int8_t *restrict Wf
+    GB_void *restrict Wcx
 ) ;
 
 GrB_Info GB_AxB_saxpy5_jit          // C+=A*B, saxpy5 method, via the JIT

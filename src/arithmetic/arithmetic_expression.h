@@ -125,9 +125,16 @@ SIValue AR_EXP_FinalizeAggregations(AR_ExpNode *root, const Record r);
 // traverse an expression tree and add all entity aliases to a rax
 void AR_EXP_CollectEntities(AR_ExpNode *root, rax *aliases);
 
-// traverse an expression tree and add all mentioned attributes:
-// n.attr > 3 to a prefix tree
-void AR_EXP_CollectAttributes(AR_ExpNode *root, rax *attributes);
+// collect accessed attribute for a given entity
+// e.g. person.first_name + person.last_name
+// will populate attributes with both 'first_name' and 'last_name'
+// if entity is 'person'
+void AR_EXP_CollectAttributes
+(
+	AR_ExpNode *root,    // expression to collect attributes from
+	const char *entity,  // accessed entity
+	rax *attributes      // collected attributes
+);
 
 // search for an aggregation node within the expression tree
 // return 1 if one exists

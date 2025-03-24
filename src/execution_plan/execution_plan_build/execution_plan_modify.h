@@ -10,25 +10,12 @@
 typedef struct ExecutionPlan ExecutionPlan;
 
 //------------------------------------------------------------------------------
-// Helper functions to modify execution plans.
+// Helper functions to modify execution plans
 //------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------
-//  API for restructuring the op tree.
+//  API for restructuring the op tree
 //------------------------------------------------------------------------------
-
-// removes operation from execution plan
-void ExecutionPlan_RemoveOp
-(
-	ExecutionPlan *plan,
-	OpBase *op
-);
-
-// detaches operation from its parent
-void ExecutionPlan_DetachOp
-(
-	OpBase *op
-);
 
 // adds operation to execution plan as a child of parent
 void ExecutionPlan_AddOp
@@ -45,33 +32,39 @@ void ExecutionPlan_AddOpInd
 	uint ind         // index of child
 );
 
-// Push b right below a
+// introduce the new operation B between A and A's parent op
 void ExecutionPlan_PushBelow
 (
 	OpBase *a,
 	OpBase *b
 );
 
-// introduce new_root as the parent of old_root
-void ExecutionPlan_NewRoot
-(
-	OpBase *old_root,
-	OpBase *new_root
-);
-
 // update the root op of the execution plan
 void ExecutionPlan_UpdateRoot
 (
-	ExecutionPlan *plan,
-	OpBase *new_root
+	ExecutionPlan *plan,  // plan set root of
+	OpBase *new_root      // new root operation
 );
 
 // replace a with b
 void ExecutionPlan_ReplaceOp
 (
+	ExecutionPlan *plan,  // plan
+	OpBase *a,            // operation being replaced
+	OpBase *b             // replacement operation
+);
+
+// removes operation from execution plan
+void ExecutionPlan_RemoveOp
+(
 	ExecutionPlan *plan,
-	OpBase *a,
-	OpBase *b
+	OpBase *op
+);
+
+// detaches operation from its parent
+void ExecutionPlan_DetachOp
+(
+	OpBase *op
 );
 
 //------------------------------------------------------------------------------
@@ -83,8 +76,7 @@ void ExecutionPlan_ReplaceOp
 void ExecutionPlan_BindOpsToPlan
 (
 	ExecutionPlan *plan,  // plan to bind the operations to
-	OpBase *root,         // root operation
-	bool qg               // whether to merge QueryGraphs or not
+	OpBase *root          // root operation
 );
 
 // binds all ops in `ops` to `plan`, except for ops of type `exclude_type`

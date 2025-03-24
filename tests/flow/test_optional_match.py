@@ -277,3 +277,19 @@ class testOptionalFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [[0]]
         self.env.assertEquals(actual_result.result_set, expected_result)
+
+    def test25_optional_no_matchings(self):
+        # due to delayed init within the Apply op this used to crash the server
+        # discovered by Celine Wuest
+
+        # run on an empty graph
+        self.graph.delete()
+
+        q = """WITH 0 AS n0
+               OPTIONAL MATCH ()
+               WITH 0 AS n1
+               LIMIT 0
+               CREATE ()"""
+
+        self.graph.query(q)
+
