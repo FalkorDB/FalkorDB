@@ -5,13 +5,7 @@ ARG OS=ubuntu
 FROM falkordb/falkordb-build:$OS AS builder
 
 ENV OS=${OS}
-RUN if [ "$OS" = "rhel" ]; then \
-        echo "Running command for rhel"; \
-        yum install zlib zlib-devel; \
-    else \
-        echo "Running default command"; \
-        apt install -y zlib1g-dev; \
-    fi
+RUN if [ "$OS" = "rhel" ]; then echo "Running command for rhel"; yum install -yum zlib zlib-devel; fi
 # libbz2-dev liblz4-dev libzstd-dev
 RUN git clone https://github.com/google/snappy.git && cd snappy && git submodule update --init && mkdir build && cd build && cmake ../ -DCMAKE_POSITION_INDEPENDENT_CODE=on && make
 RUN git clone https://github.com/facebook/rocksdb.git && cd rocksdb && make static_lib EXTRA_CXXFLAGS=-fPIC
