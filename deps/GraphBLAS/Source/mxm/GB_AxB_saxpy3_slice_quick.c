@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_slice_quick: construct a single task for GB_AxB_saxpy3
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,8 +43,9 @@ GrB_Info GB_AxB_saxpy3_slice_quick
     //--------------------------------------------------------------------------
 
     size_t SaxpyTasks_size = 0 ;
-    GB_saxpy3task_struct *SaxpyTasks = GB_MALLOC_WORK (1, GB_saxpy3task_struct,
-        &SaxpyTasks_size) ;
+    GB_saxpy3task_struct
+        *SaxpyTasks = GB_MALLOC_MEMORY (1, sizeof (GB_saxpy3task_struct),
+            &SaxpyTasks_size) ;
     if (SaxpyTasks == NULL)
     { 
         // out of memory

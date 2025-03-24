@@ -2,10 +2,12 @@
 // gbnormdiff: norm (A-B,kind)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// This function accesses opaque content and GB_methods inside GraphBLAS.
 
 #include "gb_interface.h"
 
@@ -38,7 +40,7 @@ void mexFunction
     OK (GxB_Matrix_type (&atype, A)) ;
     OK (GxB_Matrix_type (&btype, B)) ;
 
-    GrB_Index anrows, ancols, bnrows, bncols ;
+    uint64_t anrows, ancols, bnrows, bncols ;
     OK (GrB_Matrix_nrows (&anrows, A)) ;
     OK (GrB_Matrix_ncols (&ancols, A)) ;
     OK (GrB_Matrix_nrows (&bnrows, B)) ;
@@ -54,13 +56,13 @@ void mexFunction
 
     double s ;
 
-    if (GB_is_dense (A) && GB_is_dense (B) &&
+    if (gb_is_dense (A) && gb_is_dense (B) &&
         (atype == GrB_FP32 || atype == GrB_FP64) && (atype == btype)
         && (anrows == 1 || ancols == 1 || norm_kind == 0))
     {
         // s = norm (A-B,p) where A and B are full FP32 or FP64 vectors,
         // or when p = 0 (for Frobenius norm)
-        GrB_Index anz ;
+        uint64_t anz ;
         OK (GrB_Matrix_nvals (&anz, A)) ;
         s = GB_helper10 (A->x, A->iso, B->x, B->iso,
             atype, norm_kind, anz) ;
@@ -113,6 +115,6 @@ void mexFunction
     OK (GrB_Matrix_free (&A)) ;
     OK (GrB_Matrix_free (&B)) ;
     pargout [0] = mxCreateDoubleScalar (s) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

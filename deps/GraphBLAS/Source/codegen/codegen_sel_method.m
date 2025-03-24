@@ -1,7 +1,7 @@
 function codegen_sel_method (opname, func, atype)
 %CODEGEN_SEL_METHOD create a selection function, C = select (A,thunk)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 is_nonzombie_selector = isequal (opname, 'nonzombie') ;

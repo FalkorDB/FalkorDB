@@ -1,7 +1,7 @@
 function test128
 %TEST128 test eWiseMult, eWiseAdd, eWiseUnion, special cases
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntest128: test eWiseMult, eWiseAdd, eWiseUnion, special cases\n') ;

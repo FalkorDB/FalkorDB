@@ -2,7 +2,7 @@
 // GB_mex_export_import: export and then reimport a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -75,19 +75,19 @@
 GrB_Descriptor desc = NULL ;
 GrB_Matrix A = NULL ;
 GrB_Matrix C = NULL ;
-GrB_Index *Cp = NULL, *Ch = NULL, *Ci = NULL, *Tp = NULL, *Ti = NULL ;
+uint64_t *Cp = NULL, *Ch = NULL, *Ci = NULL, *Tp = NULL, *Ti = NULL ;
 void *Cx = NULL, *Tx = NULL ;
 int8_t *Cb = NULL ;
-GrB_Index nvec = 0, nvals = 0, nrows = 0, ncols = 0 ;
+uint64_t nvec = 0, nvals = 0, nrows = 0, ncols = 0 ;
 GrB_Type type2 = NULL ;
-GrB_Index nrows2, ncols2 ;
+uint64_t nrows2, ncols2 ;
 size_t typesize ;
 
-GrB_Index Cp_size = 0, Tp_len = 0 ;
-GrB_Index Ch_size = 0 ;
-GrB_Index Cb_size = 0 ;
-GrB_Index Ci_size = 0, Ti_len = 0 ;
-GrB_Index Cx_size = 0, Tx_len = 0 ;
+uint64_t Cp_size = 0, Tp_len = 0 ;
+uint64_t Ch_size = 0 ;
+uint64_t Cb_size = 0 ;
+uint64_t Ci_size = 0, Ti_len = 0 ;
+uint64_t Cx_size = 0, Tx_len = 0 ;
 bool iso = false ;
 
 int64_t ignore = -1 ;
@@ -102,8 +102,8 @@ GrB_Info vector_export_import ( int format_matrix, int format_export) ;
 // GB_exporter: export a matrix with GrB_Matrix_export_T
 //------------------------------------------------------------------------------
 
-static GrB_Info GB_exporter (GrB_Index *Ap, GrB_Index *Ai, void *Ax,
-    GrB_Index *Ap_len, GrB_Index *Ai_len, GrB_Index *Ax_len, GrB_Format format,
+static GrB_Info GB_exporter (uint64_t *Ap, uint64_t *Ai, void *Ax,
+    uint64_t *Ap_len, uint64_t *Ai_len, uint64_t *Ax_len, int format,
     GrB_Matrix A)
 {
     switch (A->type->code)
@@ -132,9 +132,9 @@ static GrB_Info GB_exporter (GrB_Index *Ap, GrB_Index *Ai, void *Ax,
 // GB_importer: import a matrix with GrB_Matrix_import_T
 //------------------------------------------------------------------------------
 
-static GrB_Info GB_importer (GrB_Matrix *A, GrB_Type type, GrB_Index nrows,
-    GrB_Index ncols, const GrB_Index *Ap, const GrB_Index *Ai, const void *Ax,
-    GrB_Index Ap_len, GrB_Index Ai_len, GrB_Index Ax_len, GrB_Format format)
+static GrB_Info GB_importer (GrB_Matrix *A, GrB_Type type, uint64_t nrows,
+    uint64_t ncols, const uint64_t *Ap, const uint64_t *Ai, const void *Ax,
+    uint64_t Ap_len, uint64_t Ai_len, uint64_t Ax_len, int format)
 {
     switch (type->code)
     {
@@ -531,8 +531,8 @@ GrB_Info export_import
             // export in CSR format, then free C
             OK (GrB_Matrix_exportSize (&Tp_len, &Ti_len, &Tx_len,
                 GrB_CSR_FORMAT, C)) ;
-            Tp = mxMalloc ((Tp_len+1) * sizeof (GrB_Index)) ;
-            Ti = mxMalloc ((Ti_len+1) * sizeof (GrB_Index)) ;
+            Tp = mxMalloc ((Tp_len+1) * sizeof (uint64_t)) ;
+            Ti = mxMalloc ((Ti_len+1) * sizeof (uint64_t)) ;
             Tx = mxMalloc ((Tx_len+1) * typesize) ;
             OK (GB_exporter (Tp, Ti, Tx, &Tp_len, &Ti_len, &Tx_len, GrB_CSR_FORMAT, C)) ;
             OK (GrB_Matrix_free (&C)) ;
@@ -551,8 +551,8 @@ GrB_Info export_import
             // export in CSC format, then free C
             OK (GrB_Matrix_exportSize (&Tp_len, &Ti_len, &Tx_len,
                 GrB_CSC_FORMAT, C)) ;
-            Tp = mxMalloc ((Tp_len+1) * sizeof (GrB_Index)) ;
-            Ti = mxMalloc ((Ti_len+1) * sizeof (GrB_Index)) ;
+            Tp = mxMalloc ((Tp_len+1) * sizeof (uint64_t)) ;
+            Ti = mxMalloc ((Ti_len+1) * sizeof (uint64_t)) ;
             Tx = mxMalloc ((Tx_len+1) * typesize) ;
             OK (GB_exporter (Tp, Ti, Tx, &Tp_len, &Ti_len, &Tx_len, GrB_CSC_FORMAT, C)) ;
             OK (GrB_Matrix_free (&C)) ;
@@ -588,7 +588,8 @@ GrB_Info export_import
 //          OK (GrB_Matrix_exportSize (&Tp_len, &Ti_len, &Tx_len,
 //              GrB_DENSE_COL_FORMAT, C)) ;
 //          Tx = mxMalloc ((Tx_len+1) * typesize) ;
-//          OK (GB_exporter (Tp, Ti, Tx, &Tp_len, &Ti_len, &Tx_len, GrB_DENSE_COL_FORMAT, C)) ;
+//          OK (GB_exporter (Tp, Ti, Tx, &Tp_len, &Ti_len, &Tx_len,
+//              GrB_DENSE_COL_FORMAT, C)) ;
 //          OK (GrB_Matrix_free (&C)) ;
 //          // import in CSR format, then free Tx
 //          OK (GB_importer (&C, type2, nrows2, ncols2, Tp, Ti, Tx,
@@ -603,10 +604,11 @@ GrB_Info export_import
             // export in COO format, then free C
             OK (GrB_Matrix_exportSize (&Tp_len, &Ti_len, &Tx_len,
                 GrB_COO_FORMAT, C)) ;
-            Tp = mxMalloc ((Tp_len+1) * sizeof (GrB_Index)) ;
-            Ti = mxMalloc ((Ti_len+1) * sizeof (GrB_Index)) ;
+            Tp = mxMalloc ((Tp_len+1) * sizeof (uint64_t)) ;
+            Ti = mxMalloc ((Ti_len+1) * sizeof (uint64_t)) ;
             Tx = mxMalloc ((Tx_len+1) * typesize) ;
-            info = GB_exporter (Tp, Ti, Tx, &Tp_len, &Ti_len, &Tx_len, GrB_COO_FORMAT, C) ;
+            info = GB_exporter (Tp, Ti, Tx, &Tp_len, &Ti_len, &Tx_len,
+                GrB_COO_FORMAT, C) ;
             OK (info) ;
             OK (GrB_Matrix_free (&C)) ;
             // import in COO format, then free Tp, Ti, Tx

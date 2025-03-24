@@ -1,7 +1,7 @@
 function testc7(use_builtin)
 %TESTC7 test complex assign
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\ntestc7: all complex assign C(I,J)=A --------------------------\n') ;
@@ -23,8 +23,8 @@ for m = [1 5 10 50]
         C = GB_mex_random (m, n, 10*(m+n), 1, seed) ;
         for ni = 1:m
             for nj = 1:n
-                I = randperm (m, ni) ;
-                J = randperm (n, nj) ;
+                I = randperm (m, ni)' ;
+                J = randperm (n, nj)' ;
                 seed = seed + 1 ;
                 A = GB_mex_random (ni, nj, 2*(ni+nj), 1, seed) ;
                 seed = seed + 1 ;
@@ -36,6 +36,10 @@ for m = [1 5 10 50]
                 J0 = uint64 (J-1) ;
 
                 C2 = GB_mex_subassign (C, [ ], [ ], A, I0, J0, []) ;
+                assert (isequal (C1, C2.matrix)) ;
+
+                % with GrB_Vector
+                C2 = GB_mex_subassign (C, [ ], [ ], A, I0, J0, [], 7) ;
                 assert (isequal (C1, C2.matrix)) ;
 
                 [C3,c1] = GB_mex_subassign (C, M, [ ], A, I0, J0, [], 'plus') ;

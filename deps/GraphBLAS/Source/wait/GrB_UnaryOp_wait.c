@@ -2,7 +2,7 @@
 // GrB_UnaryOp_wait: wait for a user-defined GrB_UnaryOp to complete
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 GrB_Info GrB_UnaryOp_wait   // no work, just check if the GrB_UnaryOp is valid
 (
     GrB_UnaryOp op,
-    GrB_WaitMode waitmode
+    int waitmode
 )
 { 
 
@@ -24,7 +24,7 @@ GrB_Info GrB_UnaryOp_wait   // no work, just check if the GrB_UnaryOp is valid
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_UnaryOp_wait (op, waitmode)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (op) ;
 
     //--------------------------------------------------------------------------

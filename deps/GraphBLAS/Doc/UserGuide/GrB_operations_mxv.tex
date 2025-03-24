@@ -1,0 +1,49 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_mxv:} matrix-vector multiply} %===========================
+%===============================================================================
+\label{mxv}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_mxv                    // w<mask> = accum (w, A*u)
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Semiring semiring,    // defines '+' and '*' for A*B
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Vector u,             // second input: vector u
+    const GrB_Descriptor desc       // descriptor for w, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_mxv' multiplies a matrix \verb'A' times a column vector \verb'u'.
+The matrix \verb'A' may be first transposed according to \verb'desc' (as the
+first input); the column vector \verb'u' is never transposed via the
+descriptor.  The inputs \verb'A' and \verb'u' are typecasted to match the
+\verb'xtype' and \verb'ytype' inputs, respectively, of the multiply operator of
+the \verb'semiring'. Next, an intermediate column vector \verb't=A*u' is
+computed on the \verb'semiring' using the same method as \verb'GrB_mxm'.
+Finally, the column vector \verb't' is typecasted from the \verb'ztype' of the
+multiply operator of the \verb'semiring' into the type of \verb'w', and the
+results are written back into \verb'w' using the optional accumulator
+\verb'accum' and \verb'mask'.
+
+The last step is ${\bf w \langle m \rangle  = w \odot t}$, as described
+in Section~\ref{accummask}, except that all the terms are column vectors instead
+of matrices.
+
+\paragraph{\bf Performance considerations:} % u=A*u
+Refer to the discussion of \verb'GrB_vxm'.  In SuiteSparse:GraphBLAS,
+\verb'GrB_mxv' is very efficient when \verb'u' is sparse or dense, when the
+default descriptor is used, and when the matrix is \verb'GrB_COLMAJOR'.  When
+\verb'u' is very sparse and \verb'GrB_INP0' is set to its non-default
+\verb'GrB_TRAN', then this method is not efficient if the matrix is in
+\verb'GrB_COLMAJOR' format.  If an application needs to perform \verb"A'*u"
+repeatedly where \verb'u' is very sparse, then use the \verb'GrB_ROWMAJOR' format
+for \verb'A' instead.
+
+

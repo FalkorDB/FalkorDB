@@ -7,7 +7,7 @@ function ok = GB_spec_compare (C_spec, C_mex, identity, tol)
 % some GraphBLAS method.  C_mex = GB_mex_* (...) is the output of the
 % corresponding interface to the true GraphBLAS method, in C.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 err = 0 ;

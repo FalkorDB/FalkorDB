@@ -1,0 +1,228 @@
+
+\newpage
+%===============================================================================
+\subsection{{\sf GrB\_extract:} submatrix extraction } %========================
+%===============================================================================
+\label{extract}
+
+The \verb'GrB_extract' function is a generic name for three specific functions:
+\verb'GrB_Vector_extract', \verb'GrB_Col_extract', and
+\verb'GrB_Matrix_extract'.  The generic name appears in the function signature,
+but the specific function name is used when describing what each variation
+does.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_extract:} extract subvector from vector}
+%-------------------------------------------------------------------------------
+\label{extract_vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_extract                // w<mask> = accum (w, u(I))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Index *I,             // row indices
+    const GrB_Index ni,             // number of row indices
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_extract' extracts a subvector from another vector, identical
+to \verb't = u (I)' in MATLAB where \verb'I' is an integer vector of row
+indices.  Refer to \verb'GrB_Matrix_extract' for further details; vector
+extraction is the same as matrix extraction with \verb'n'-by-1 matrices.
+See Section~\ref{colon} for a description of \verb'I' and \verb'ni'.
+The final step is ${\bf w \langle m \rangle  = w \odot
+t}$, as described in Section~\ref{accummask}, except that all the terms are
+column vectors instead of matrices.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_extract\_Vector:} extract subvector from vector}
+%-------------------------------------------------------------------------------
+\label{extract_vector_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_extract                // w<mask> = accum (w, u(I))
+(
+    GrB_Vector w,                   // input/output vector for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Vector u,             // first input:  vector u
+    const GrB_Vector I_vector,      // row indices
+    const GrB_Descriptor desc       // descriptor for w and mask
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Vector_extract_Vector' is identical to \verb'GrB_Vector_extract',
+except that the row indices are given by the \verb'GrB_Vector I' with \verb'ni'
+entries.  The interpretation of \verb'I_vector' is controlled by descriptor
+setting \verb'GxB_ROWINDEX_LIST'.  The method can use either the indices or
+values of the input vector, or it can use the values as a stride
+(\verb'lo:inc:hi'); the default is to use the values.  See Section~\ref{ijxvector}
+for details.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_extract:} extract submatrix from matrix}
+%-------------------------------------------------------------------------------
+\label{extract_matrix}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_extract                // C<Mask> = accum (C, A(I,J))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Index *I,             // row indices
+    const GrB_Index ni,             // number of row indices
+    const GrB_Index *J,             // column indices
+    const GrB_Index nj,             // number of column indices
+    const GrB_Descriptor desc       // descriptor for C, Mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Matrix_extract' extracts a submatrix from another matrix, identical
+to \verb'T = A(I,J)' in MATLAB where \verb'I' and \verb'J' are integer vectors
+of row and column indices, respectively, except that indices are zero-based in
+GraphBLAS and one-based in MATLAB.  The input matrix \verb'A' may be transposed
+first, via the descriptor.  The type of \verb'T' and \verb'A' are the same.
+The size of \verb'C' is \verb'|I|'-by-\verb'|J|'.
+Entries outside \verb'A(I,J)' are not accessed and do not take part in the
+computation.  More precisely, assuming the matrix \verb'A' is not transposed,
+the matrix \verb'T' is defined as follows:
+
+    \vspace{-0.1in}
+    {\footnotesize
+    \begin{verbatim}
+    T.matrix  = zeros (ni, nj) ;    % a matrix of size ni-by-nj
+    T.pattern = false (ni, nj) ;
+    for i = 1:ni
+        for j = 1:nj
+            if (A (I(i),J(j)).pattern)
+                T (i,j).matrix  = A (I(i),J(j)).matrix ;
+                T (i,j).pattern = true ;
+            end
+        end
+    end \end{verbatim}}
+
+\vspace{-0.1in}
+If duplicate indices are present in \verb'I' or \verb'J', the above method
+defines the result in \verb'T'.  Duplicates result in the same values of
+\verb'A' being copied into different places in \verb'T'.
+See Section~\ref{colon} for a description of the row indices
+\verb'I' and \verb'ni', and the column indices
+\verb'J' and \verb'nj'.
+The final step is ${\bf C \langle M \rangle  = C \odot
+T}$, as described in Section~\ref{accummask}.
+
+\paragraph{\bf Performance considerations:} % C=A(I,J)
+If \verb'A' is not transposed via input descriptor: if \verb'|I|' is small,
+then it is fastest if \verb'A' is \verb'GrB_ROWMAJOR'; if
+\verb'|J|' is small, then it is fastest if \verb'A' is
+\verb'GrB_COLMAJOR'.  The opposite is true if \verb'A' is transposed.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_extract\_Vector:} extract submatrix from matrix}
+%-------------------------------------------------------------------------------
+\label{extract_matrix_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_extract                // C<Mask> = accum (C, A(I,J))
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C,T)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Vector I_vector,      // row indices
+    const GrB_Vector J_vector,      // column indices
+    const GrB_Descriptor desc       // descriptor for C, M, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Matrix_extract_Vector' is identical to \verb'GrB_Matrix_extract',
+except that the row indices are given by the \verb'GrB_Vector I' with \verb'ni'
+entries, and the column indices are given by the \verb'GrB_Vector J' with
+\verb'nj' entries.  The interpretation of \verb'I_vector' and \verb'J_vector'
+are controlled by descriptor setting \verb'GxB_ROWINDEX_LIST' and
+\verb'GxB_COLINDEX_LIST', respectively.  The method can use either the indices
+or values of each of the input vectors, or it can use the values as a stride
+(\verb'lo:inc:hi'); the default is to use the values.  See Section~\ref{ijxvector}
+for details.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Col\_extract:} extract column vector from matrix}
+%-------------------------------------------------------------------------------
+\label{extract_column}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_extract                // w<mask> = accum (w, A(I,j))
+(
+    GrB_Vector w,                   // input/output matrix for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Index *I,             // row indices
+    const GrB_Index ni,             // number of row indices
+    const GrB_Index j,              // column index
+    const GrB_Descriptor desc       // descriptor for w, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Col_extract' extracts a subvector from a matrix, identical to
+\verb't = A (I,j)' in MATLAB where \verb'I' is an integer vector of row indices
+and where \verb'j' is a single column index.  The input matrix \verb'A' may be
+transposed first, via the descriptor, which results in the extraction of a
+single row \verb'j' from the matrix \verb'A', the result of which is a column
+vector \verb'w'.  The type of \verb't' and \verb'A' are the same.
+The size of \verb'w' is \verb'|I|'-by-1.
+
+See Section~\ref{colon} for a description of the row indices
+\verb'I' and \verb'ni'.
+The final step is ${\bf w \langle m
+\rangle  = w \odot t}$, as described in Section~\ref{accummask}, except that
+all the terms are column vectors instead of matrices.
+
+\paragraph{\bf Performance considerations:} % w = A(I,j)
+If \verb'A' is not transposed: it is fastest if the format of \verb'A' is
+\verb'GrB_COLMAJOR'.  The opposite is true if \verb'A' is transposed.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Col\_extract\_Vector:} extract column vector from matrix}
+%-------------------------------------------------------------------------------
+\label{extract_column_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_extract                // w<mask> = accum (w, A(I,j))
+(
+    GrB_Vector w,                   // input/output matrix for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for z=accum(w,t)
+    const GrB_Matrix A,             // first input:  matrix A
+    const GrB_Vector I_vector,      // row indices
+    const GrB_Index j,              // column index
+    const GrB_Descriptor desc       // descriptor for w, mask, and A
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Col_extract_Vector' is identical to \verb'GrB_Col_extract',
+except that the row indices are given by the \verb'GrB_Vector I' with \verb'ni'
+entries.  The interpretation of \verb'I_vector' is controlled by descriptor
+setting \verb'GxB_ROWINDEX_LIST'.  The method can use either the indices or
+values of the input vector, or it can use the values as a stride
+(\verb'lo:inc:hi'); the default is to use the values.  See Section~\ref{ijxvector}
+for details.
+

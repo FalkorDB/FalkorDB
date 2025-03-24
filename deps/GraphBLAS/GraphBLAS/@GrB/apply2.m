@@ -22,9 +22,9 @@ function C = apply2 (arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 % the operator.  If A is the scalar and desc.in1 is 'transpose.', then the
 % input matrix B is transposed before applying the operator.
 %
-% See also GrB/apply, GrB/spfun.
+% See also GrB/apply, GrB/spfun, GrB.binopinfo.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (isobject (arg1))

@@ -2,7 +2,7 @@
 // GB_resize: change the size of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,11 +11,12 @@
 #include "scalar/GB_Scalar_wrap.h"
 #include "resize/GB_resize.h"
 
-#define GB_FREE_ALL                     \
-{                                       \
-    GB_FREE (&Ax_new, Ax_new_size) ;    \
-    GB_FREE (&Ab_new, Ab_new_size) ;    \
-    GB_phybix_free (A) ;                \
+#define GB_FREE_ALL                         \
+{                                           \
+    GB_Matrix_free (&T) ;                   \
+    GB_FREE_MEMORY (&Ax_new, Ax_new_size) ; \
+    GB_FREE_MEMORY (&Ab_new, Ab_new_size) ; \
+    GB_phybix_free (A) ;                    \
 }
 
 //------------------------------------------------------------------------------
@@ -25,8 +26,8 @@
 GrB_Info GB_resize              // change the size of a matrix
 (
     GrB_Matrix A,               // matrix to modify
-    const GrB_Index nrows_new,  // new number of rows in matrix
-    const GrB_Index ncols_new,  // new number of columns in matrix
+    const uint64_t nrows_new,   // new number of rows in matrix
+    const uint64_t ncols_new,   // new number of columns in matrix
     GB_Werk Werk
 )
 {
@@ -39,6 +40,9 @@ GrB_Info GB_resize              // change the size of a matrix
     GB_void *restrict Ax_new = NULL ; size_t Ax_new_size = 0 ;
     int8_t  *restrict Ab_new = NULL ; size_t Ab_new_size = 0 ;
     ASSERT_MATRIX_OK (A, "A to resize", GB0) ;
+
+    struct GB_Matrix_opaque T_header ;
+    GrB_Matrix T = NULL ;
 
     //--------------------------------------------------------------------------
     // handle the CSR/CSC format
@@ -68,19 +72,10 @@ GrB_Info GB_resize              // change the size of a matrix
     // delete any lingering zombies and assemble any pending tuples
     //--------------------------------------------------------------------------
 
-    // only do so if either dimension is shrinking, or if pending tuples exist
-    // and vdim_old <= 1 and vdim_new > 1, since in that case, Pending->j has
-    // not been allocated yet, but would be required in the resized matrix.
-    // If A is jumbled, it must be sorted.
-
-    if (vdim_new < vdim_old || vlen_new < vlen_old || A->jumbled ||
-        (GB_PENDING (A) && vdim_old <= 1 && vdim_new > 1))
-    { 
-        GB_MATRIX_WAIT (A) ;
-        ASSERT_MATRIX_OK (A, "A to resize, wait", GB0) ;
-    }
-
+    GB_MATRIX_WAIT (A) ;
     ASSERT (!GB_JUMBLED (A)) ;
+    ASSERT (!GB_ZOMBIES (A)) ;
+    ASSERT (!GB_PENDING (A)) ;
     ASSERT_MATRIX_OK (A, "Final A to resize", GB0) ;
 
     //--------------------------------------------------------------------------
@@ -100,7 +95,7 @@ GrB_Info GB_resize              // change the size of a matrix
 
         // get the old and new dimensions
         int64_t anz_new = 1 ;
-        bool ok = GB_int64_multiply ((GrB_Index *) (&anz_new),
+        bool ok = GB_int64_multiply ((uint64_t *) (&anz_new),
             vlen_new, vdim_new) ;
         if (!ok) anz_new = 1 ;
         size_t nzmax_new = GB_IMAX (anz_new, 1) ;
@@ -118,14 +113,13 @@ GrB_Info GB_resize              // change the size of a matrix
             if (in_place)
             { 
                 // reallocate A->x in-place; no data movement needed
-                GB_REALLOC (A->x, nzmax_new*asize, GB_void, &(A->x_size), &ok) ;
+                GB_REALLOC_MEMORY (A->x, nzmax_new, asize, &(A->x_size), &ok) ;
             }
             else
             { 
                 // allocate new space for A->x; use calloc to ensure all space
                 // is initialized.
-                Ax_new = GB_CALLOC (nzmax_new*asize, GB_void, // x:OK:calloc
-                    &Ax_new_size) ;
+                Ax_new = GB_CALLOC_MEMORY (nzmax_new, asize, &Ax_new_size) ;
                 ok = (Ax_new != NULL) ;
             }
         }
@@ -137,7 +131,8 @@ GrB_Info GB_resize              // change the size of a matrix
         if (!in_place && A_is_bitmap)
         { 
             // allocate new space for A->b
-            Ab_new = GB_MALLOC (nzmax_new*asize, int8_t, &Ab_new_size) ;
+            Ab_new = GB_MALLOC_MEMORY (nzmax_new, sizeof (int8_t),
+                &Ab_new_size) ;
             ok = ok && (Ab_new != NULL) ;
         }
 
@@ -194,8 +189,9 @@ GrB_Info GB_resize              // change the size of a matrix
                         memcpy (pdest, psrc, vlen_new * asize) ;
                     }
                 }
-                GB_FREE (&Ax_old, A->x_size) ;
+                GB_FREE_MEMORY (&Ax_old, A->x_size) ;
                 A->x = Ax_new ; A->x_size = Ax_new_size ;
+                Ax_new = NULL ;
             }
 
             //------------------------------------------------------------------
@@ -219,8 +215,9 @@ GrB_Info GB_resize              // change the size of a matrix
                     anvals += ab ;
                 }
                 A->nvals = anvals ;
-                GB_FREE (&Ab_old, A->b_size) ;
+                GB_FREE_MEMORY (&Ab_old, A->b_size) ;
                 A->b = Ab_new ; A->b_size = Ab_new_size ;
+                Ab_new = NULL ;
             }
         }
 
@@ -231,9 +228,8 @@ GrB_Info GB_resize              // change the size of a matrix
         A->vdim = vdim_new ;
         A->vlen = vlen_new ;
         A->nvec = vdim_new ;
-        A->nvec_nonempty = (vlen_new == 0) ? 0 : vdim_new ;
-        ASSERT_MATRIX_OK (A, "A bitmap/full shrunk", GB0) ;
-        return (GrB_SUCCESS) ;
+//      A->nvec_nonempty = (vlen_new == 0) ? 0 : vdim_new ;
+        GB_nvec_nonempty_set (A, (vlen_new == 0) ? 0 : vdim_new) ;
 
     }
     else
@@ -252,34 +248,31 @@ GrB_Info GB_resize              // change the size of a matrix
         GB_hyper_hash_free (A) ;
 
         // resize the number of sparse vectors
-        int64_t *restrict Ah = A->h ;
-        int64_t *restrict Ap = A->p ;
-        A->vdim = vdim_new ;
-
-        if (vdim_new < A->plen)
-        { 
-            // reduce the size of A->p and A->h; this cannot fail
-            info = GB_hyper_realloc (A, vdim_new, Werk) ;
-            ASSERT (info == GrB_SUCCESS) ;
-            Ap = A->p ;
-            Ah = A->h ;
-        }
-
+        GB_Ap_DECLARE (Ap, ) ; GB_Ap_PTR (Ap, A) ;
         if (vdim_new < vdim_old)
         { 
             // descrease A->nvec to delete the vectors outside the range
             // 0...vdim_new-1.
             int64_t pleft = 0 ;
             int64_t pright = GB_IMIN (A->nvec, vdim_new) - 1 ;
-            bool found ;
-            GB_SPLIT_BINARY_SEARCH (vdim_new, Ah, pleft, pright, found) ;
+            GB_split_binary_search (vdim_new, A->h, A->j_is_32,
+                &pleft, &pright) ;
             A->nvec = pleft ;
-            A->nvals = Ap [A->nvec] ;
+            A->nvals = GB_IGET (Ap, A->nvec) ;
 
             // number of vectors is decreasing, need to count the new number of
             // non-empty vectors: done during pruning or by selector, below.
-            A->nvec_nonempty = -1 ;     // recomputed just below
+            GB_nvec_nonempty_set (A, -1) ;     // recomputed just below
         }
+
+        if (vdim_new < A->plen)
+        { 
+            // reduce the size of A->p and A->h; this cannot fail
+            info = GB_hyper_realloc (A, vdim_new, Werk) ;
+            ASSERT (info == GrB_SUCCESS) ;
+        }
+
+        ASSERT_MATRIX_OK (A, "A, hyperlist trimmed", GB0) ;
 
         //----------------------------------------------------------------------
         // resize the length of each vector
@@ -288,26 +281,57 @@ GrB_Info GB_resize              // change the size of a matrix
         // if vlen is shrinking, delete entries outside the new matrix
         if (vlen_new < vlen_old)
         { 
-            struct GB_Scalar_opaque Thunk_header ;
+            // A = select (A), keeping entries in rows <= vlen_new-1
+            struct GB_Scalar_opaque scalar_header ;
             int64_t k = vlen_new - 1 ;
-            GrB_Scalar Thunk = GB_Scalar_wrap (&Thunk_header, GrB_INT64, &k) ;
-            GB_OK (GB_selector (NULL, GrB_ROWLE, false, A, Thunk, Werk)) ;
+            GrB_Scalar scalar = GB_Scalar_wrap (&scalar_header, GrB_INT64, &k) ;
+            GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
+            GB_OK (GB_selector (T, GrB_ROWLE, false, A, scalar, Werk)) ;
+            GB_OK (GB_transplant (A, A->type, &T, Werk)) ;
         }
 
+        ASSERT_MATRIX_OK (A, "A rows pruned", GB0) ;
+        GB_OK (GB_hyper_prune (A, Werk)) ;
+
         //----------------------------------------------------------------------
-        // vlen has been resized
+        // resize the matrix and the integers are valid for the new dimensions
         //----------------------------------------------------------------------
 
+        ASSERT_MATRIX_OK (A, "A just before resize vlen, vdim", GB0) ;
+
+        A->vdim = vdim_new ;
         A->vlen = vlen_new ;
-        ASSERT_MATRIX_OK (A, "A vlen resized", GB0) ;
 
-        //----------------------------------------------------------------------
-        // conform the matrix to its desired sparsity structure
-        //----------------------------------------------------------------------
+        // At this point, the dimesions just have been changed but the integers
+        // of Ap, Ah, and Ai have not.  The integer sizes may be temporarily
+        // invalid.  They will be valid after the call to GB_convert_int below.
 
-        info = GB_conform (A, Werk) ;
-        ASSERT (GB_IMPLIES (info == GrB_SUCCESS, A->nvec_nonempty >= 0)) ;
-        return (info) ;
+        bool Ap_is_32_new, Aj_is_32_new, Ai_is_32_new ;
+        GB_determine_pji_is_32 (&Ap_is_32_new, &Aj_is_32_new, &Ai_is_32_new,
+            GB_sparsity (A), A->nvals, A->vlen, A->vdim, Werk) ;
+
+        if (Ap_is_32_new != A->p_is_32 ||
+            Aj_is_32_new != A->j_is_32 ||
+            Ai_is_32_new != A->i_is_32)
+        {
+            // The matrix integers need to change.  Do not validate the input
+            // matrix or the new settings since the existing dimensions may not
+            // be suitable with the existing integer sizes.  They will be valid
+            // once the integer conversion is done.
+            GB_OK (GB_convert_int (A, Ap_is_32_new, Aj_is_32_new, Ai_is_32_new,
+                false)) ;
+        }
+
+        // The matrix and its integer sizes should now be valid.
+        ASSERT_MATRIX_OK (A, "A integers converted", GB0) ;
     }
+
+    //--------------------------------------------------------------------------
+    // conform the matrix to its desired sparsity structure
+    //--------------------------------------------------------------------------
+
+    GB_OK (GB_conform (A, Werk)) ;
+    ASSERT_MATRIX_OK (A, "A final resized", GB0) ;
+    return (GrB_SUCCESS) ;
 }
 

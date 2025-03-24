@@ -2,7 +2,7 @@
 // GrB_Descriptor_new: create a new descriptor
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,7 +21,7 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Descriptor_new (&descriptor)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (descriptor) ;
     (*descriptor) = NULL ;
 
@@ -31,7 +31,8 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
 
     // allocate the descriptor
     size_t header_size ;
-    (*descriptor) = GB_MALLOC (1, struct GB_Descriptor_opaque, &header_size) ;
+    (*descriptor) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Descriptor_opaque),
+        &header_size) ;
     if (*descriptor == NULL)
     { 
         // out of memory
@@ -54,6 +55,9 @@ GrB_Info GrB_Descriptor_new     // create a new descriptor
     desc->do_sort = false ;        // do not sort in GrB_mxm and others
     desc->compression = GxB_DEFAULT ;
     desc->import = GxB_DEFAULT ;   // trust input data in GxB import/deserialize
+    desc->row_list = GxB_DEFAULT ; // use List->x of row index vector
+    desc->col_list = GxB_DEFAULT ; // use List->x of col index vector
+    desc->val_list = GxB_DEFAULT ; // use List->x of value vector
     return (GrB_SUCCESS) ;
 }
 

@@ -2,16 +2,16 @@
 // GB_concat_hyper: concatenate an array of matrices into a hypersparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #define GB_FREE_ALL                 \
 {                                   \
-    GB_FREE (&Wi, Wi_size) ;        \
-    GB_FREE_WORK (&Wj, Wj_size) ;   \
-    GB_FREE_WORK (&Wx, Wx_size) ;   \
+    GB_FREE_MEMORY (&Wi, Wi_size) ;        \
+    GB_FREE_MEMORY (&Wj, Wj_size) ;   \
+    GB_FREE_MEMORY (&Wx, Wx_size) ;   \
     GB_phybix_free (C) ;            \
 }
 
@@ -25,8 +25,8 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
     const GB_void *cscalar,         // iso value of C, if C is iso 
     const int64_t cnz,              // # of entries in C
     const GrB_Matrix *Tiles,        // 2D row-major array of size m-by-n,
-    const GrB_Index m,
-    const GrB_Index n,
+    const uint64_t m,
+    const uint64_t n,
     const int64_t *restrict Tile_rows,  // size m+1
     const int64_t *restrict Tile_cols,  // size n+1
     GB_Werk Werk
@@ -41,15 +41,19 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
     GrB_Matrix A = NULL ;
     ASSERT_MATRIX_OK (C, "C input to concat hyper", GB0) ;
 
-    int64_t *restrict Wi = NULL ; size_t Wi_size = 0 ;
-    int64_t *restrict Wj = NULL ; size_t Wj_size = 0 ;
-    GB_void *restrict Wx = NULL ; size_t Wx_size = 0 ;
-
     GrB_Type ctype = C->type ;
     int64_t cvlen = C->vlen ;
     int64_t cvdim = C->vdim ;
     bool csc = C->is_csc ;
     size_t csize = ctype->size ;
+
+    GB_MDECL (Wi, , u) ; size_t Wi_size = 0 ;
+    GB_MDECL (Wj, , u) ; size_t Wj_size = 0 ;
+    GB_void *restrict Wx = NULL ; size_t Wx_size = 0 ;
+
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GxB_HYPERSPARSE, cnz, cvlen, cvdim, Werk) ;
 
     float hyper_switch = C->hyper_switch ;
     float bitmap_switch = C->bitmap_switch ;
@@ -57,11 +61,14 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
 
     GB_phybix_free (C) ;
 
-    Wi = GB_MALLOC (cnz, int64_t, &Wi_size) ;               // becomes C->i
-    Wj = GB_MALLOC_WORK (cnz, int64_t, &Wj_size) ;          // freed below
+    size_t cjsize = Cj_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+    size_t cisize = Ci_is_32 ? sizeof (uint32_t) : sizeof (uint64_t) ;
+
+    Wi = GB_MALLOC_MEMORY (cnz, cisize, &Wi_size) ;     // becomes C->i
+    Wj = GB_MALLOC_MEMORY (cnz, cjsize, &Wj_size) ;     // freed below
     if (!C_iso)
     { 
-        Wx = GB_MALLOC_WORK (cnz * csize, GB_void, &Wx_size) ;  // freed below
+        Wx = GB_MALLOC_MEMORY (cnz, csize, &Wx_size) ;  // freed below
     }
     if (Wi == NULL || Wj == NULL || (!C_iso && Wx == NULL))
     { 
@@ -69,6 +76,9 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
+
+    GB_IPTR (Wi, Ci_is_32) ;
+    GB_IPTR (Wj, Cj_is_32) ;
 
     int nthreads_max = GB_Context_nthreads_max ( ) ;
     double chunk = GB_Context_chunk ( ) ;
@@ -121,48 +131,38 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
             // extract the tuples from tile A
             //------------------------------------------------------------------
 
-            // if A is iso but C is not, extractTuples expands A->x [0] into
-            // all Wx [...].   If both A and C are iso, then all tiles are iso,
-            // and Wx is not extracted.
-
             int64_t anz = GB_nnz (A) ;
-            GB_OK (GB_extractTuples (
-                (GrB_Index *) ((csc ? Wi : Wj) + pC),
-                (GrB_Index *) ((csc ? Wj : Wi) + pC),
-                (C_iso) ? NULL : (Wx + pC * csize),
-                (GrB_Index *) (&anz), ctype, A, Werk)) ;
-
-            //------------------------------------------------------------------
-            // adjust the indices to reflect their new place in C
-            //------------------------------------------------------------------
-
             int nth = GB_nthreads (anz, chunk, nthreads_max) ;
-            if (cistart > 0 && cvstart > 0)
-            { 
-                int64_t pA ;
-                #pragma omp parallel for num_threads(nth) schedule(static)
-                for (pA = 0 ; pA < anz ; pA++)
+            int64_t pA ;
+
+            if (Cj_is_32)
+            {
+                if (Ci_is_32)
                 {
-                    Wi [pC + pA] += cistart ;
-                    Wj [pC + pA] += cvstart ;
+                    #define WORK_I Wi32
+                    #define WORK_J Wj32
+                    #include "concat/factory/GB_concat_hyper_template.c"
+                }
+                else
+                {
+                    #define WORK_I Wi64
+                    #define WORK_J Wj32
+                    #include "concat/factory/GB_concat_hyper_template.c"
                 }
             }
-            else if (cistart > 0)
-            { 
-                int64_t pA ;
-                #pragma omp parallel for num_threads(nth) schedule(static)
-                for (pA = 0 ; pA < anz ; pA++)
+            else
+            {
+                if (Ci_is_32)
                 {
-                    Wi [pC + pA] += cistart ;
+                    #define WORK_I Wi32
+                    #define WORK_J Wj64
+                    #include "concat/factory/GB_concat_hyper_template.c"
                 }
-            }
-            else if (cvstart > 0)
-            { 
-                int64_t pA ;
-                #pragma omp parallel for num_threads(nth) schedule(static)
-                for (pA = 0 ; pA < anz ; pA++)
+                else
                 {
-                    Wj [pC + pA] += cvstart ;
+                    #define WORK_I Wi64
+                    #define WORK_J Wj64
+                    #include "concat/factory/GB_concat_hyper_template.c"
                 }
             }
 
@@ -190,9 +190,9 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
         cvlen,                  // C->vlen
         cvdim,                  // C->vdim
         csc,                    // C->is_csc
-        (int64_t **) &Wi,       // Wi is C->i on output, or freed on error
+        (void **) &Wi,          // Wi is C->i on output, or freed on error
         &Wi_size,
-        (int64_t **) &Wj,       // Wj, free on output
+        (void **) &Wj,          // Wj, free on output
         &Wj_size,
         (GB_void **) &Wx,       // Wx, free on output; or NULL if C is iso
         &Wx_size,
@@ -207,7 +207,10 @@ GrB_Info GB_concat_hyper            // concatenate into a hypersparse matrix
         NULL,                   // no duplicates, so dup is NUL
         ctype,                  // the type of Wx (no typecasting)
         true,                   // burble is allowed
-        Werk
+        Werk,
+        Ci_is_32, Cj_is_32,     // Wi and Wj have the same integers as C->i
+                                // and C->h, respectively
+        Cp_is_32, Cj_is_32, Ci_is_32    // C->[pji]_is_32 for the new matrix
     )) ;
 
     C->hyper_switch = hyper_switch ;

@@ -1,0 +1,132 @@
+
+
+\newpage
+%===============================================================================
+\subsection{Duplicate indices in {\sf GrB\_assign} and {\sf GxB\_subassign}}
+%===============================================================================
+\label{duplicates}
+
+According to the GraphBLAS C API Specification if the index vectors \verb'I' or
+\verb'J' contain duplicate indices, the results are undefined for
+\verb'GrB_Matrix_assign', \verb'GrB_Matrix_assign', \verb'GrB_Col_assign', and
+\verb'GrB_Row_assign'.  Only the scalar assignment operations
+(\verb'GrB_Matrix_assign_TYPE' and \verb'GrB_Matrix_assign_TYPE') are
+well-defined when duplicates appear in \verb'I' and \verb'J'.  In those two
+functions, duplicate indices are ignored.
+
+As an extension to the specification, SuiteSparse:GraphBLAS provides a
+definition of how duplicate indices are handled in all cases.  If \verb'I' has
+duplicate indices, they are ignored and the last unique entry in the list is
+used.  When no mask and no accumulator is present, the results are identical to
+how MATLAB handles duplicate indices in the built-in expression
+\verb'C(I,J)=A'.  Details of how this is done is shown below.
+
+{\small
+\begin{verbatim}
+    function C = subassign (C, I, J, A)
+    % submatrix assignment with pre-sort of I and J; and remove duplicates
+
+    % delete duplicates from I, keeping the last one seen
+    [I2 I2k] = sort (I) ;
+    Idupl = [(I2 (1:end-1) == I2 (2:end)), false] ;
+    I2  = I2  (~Idupl) ;
+    I2k = I2k (~Idupl) ;
+    assert (isequal (I2, unique (I)))
+
+    % delete duplicates from J, keeping the last one seen
+    [J2 J2k] = sort (J) ;
+    Jdupl = [(J2 (1:end-1) == J2 (2:end)), false] ;
+    J2  = J2  (~Jdupl) ;
+    J2k = J2k (~Jdupl) ;
+    assert (isequal (J2, unique (J)))
+
+    % do the submatrix assignment, with no duplicates in I2 or J2
+    C (I2,J2) = A (I2k,J2k) ;
+\end{verbatim}}
+
+If a mask is present, then it is replaced with \verb'M = M (I2k, J2k)' for
+\verb'GxB_subassign', or with \verb'M = M (I2, J2)' for \verb'GrB_assign'.
+If an accumulator operator is present, it is applied after the duplicates
+are removed, as (for example):
+
+{\small
+\begin{verbatim}
+    C (I2,J2) = C (I2,J2) + A (I2k,J2k) ;
+\end{verbatim}}
+
+These definitions allow the MATLAB/Octave interface to GraphBLAS to return the same
+results for \verb'C(I,J)=A' for a \verb'GrB' object as they do for built-in
+MATLAB/Octave matrices.  They also allow the assignment to be done in parallel.
+
+Results are always well-defined in SuiteSparse:GraphBLAS, but they might not be
+what you expect.  For example, suppose the \verb'MIN' operator is being used
+the following assigment to the vector \verb'x', and suppose \verb'I' contains
+the entries \verb'[0 0]'.  Suppose \verb'x' is initially empty, of length 1,
+and suppose \verb'y' is a vector of length 2 with the values \verb'[5 7]'.
+
+{\small
+\begin{verbatim}
+    #include "GraphBLAS.h"
+    #undef I    /* complex.h #define's I, but I is used an array below */
+    #include <stdio.h>
+    int main (void)
+    {
+        GrB_init (GrB_NONBLOCKING) ;
+        GrB_Vector x, y ;
+        GrB_Vector_new (&x, GrB_INT32, 1) ;
+        GrB_Vector_new (&y, GrB_INT32, 2) ;
+        GrB_Index I [2] = {0, 0} ;
+        GrB_Vector_setElement (y, 5, 0) ;
+        GrB_Vector_setElement (y, 7, 1) ;
+        GrB_Vector_wait (&y) ;
+        GxB_print (x, 3) ;
+        GxB_print (y, 3) ;
+        GrB_assign (x, NULL, GrB_MIN_INT32, y, I, 2, NULL) ;
+        GrB_Vector_wait (&y) ;
+        GxB_print (x, 3) ;
+        GrB_finalize ( ) ;
+    }
+\end{verbatim}}
+
+You might (wrongly) expect the result to be the vector \verb'x(0)=5', since
+two entries seem to be assigned, and the min operator might be expected to
+take the minimum of the two.  This is not how SuiteSparse:GraphBLAS handles
+duplicates.
+
+Instead, the first duplicate index of \verb'I' is discarded
+(\verb'I [0] = 0', and \verb'y(0)=5').
+and only the second entry is used
+(\verb'I [1] = 0', and \verb'y(1)=7').
+The output of the above program is:
+
+{\small
+\begin{verbatim}
+
+  1x1 GraphBLAS int32_t vector, sparse by col:
+  x, no entries
+
+
+  2x1 GraphBLAS int32_t vector, sparse by col:
+  y, 2 entries
+
+    (0,0)   5
+    (1,0)   7
+
+
+  1x1 GraphBLAS int32_t vector, sparse by col:
+  x, 1 entry
+
+    (0,0)   7
+
+\end{verbatim}}
+
+You see that the result is \verb'x(0)=7', since the \verb'y(0)=5' entry
+has been ignored because of the duplicate indices in \verb'I'.
+
+\begin{alert}
+{\bf SPEC:} Providing a well-defined behavior for duplicate indices with matrix
+and vector assignment is an extension to the specification.  The specification
+only defines the behavior when assigning a scalar into a matrix or vector, and
+states that duplicate indices otherwise lead to undefined results.
+\end{alert}
+

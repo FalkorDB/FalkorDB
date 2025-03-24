@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_coarseHash_notM_phase5: C<!M>=A*B, coarse Hash, phase 5
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,12 +24,18 @@
 
     for (int64_t kk = kfirst ; kk <= klast ; kk++)
     {
-        int64_t pC = Cp [kk] ;
-        int64_t cjnz = Cp [kk+1] - pC ;
+        int64_t pC_start = GB_Cp_IGET (kk) ;
+        int64_t pC_end = GB_Cp_IGET (kk+1) ;
+        int64_t pC = pC_start ;
+        int64_t cjnz = pC_end - pC ;
+        ASSERT (pC_start >= 0) ;
+        ASSERT (pC_start <= pC_end) ;
+        ASSERT (pC_end <= cnz) ;
+
         if (cjnz == 0) continue ;   // nothing to do
         GB_GET_M_j ;                // get M(:,j)
         mark += 2 ;
-        int64_t mark1 = mark+1 ;
+        uint64_t mark1 = mark+1 ;
         GB_HASH_M_j ;               // hash M(:,j)
         GB_GET_B_j ;                // get B(:,j)
         for ( ; pB < pB_end ; pB++)     // scan B(:,j)
@@ -44,7 +50,7 @@
                 GB_GET_A_ik_INDEX ;     // get index i of A(i,k)
                 for (GB_HASH (i))       // find i in hash
                 {
-                    int64_t f = Hf [hash] ;
+                    uint64_t f = Hf [hash] ;
                     if (f < mark)   // if true, i is new
                     { 
                         // C(i,j) is new
@@ -52,7 +58,8 @@
                         Hi [hash] = i ;
                         GB_MULT_A_ik_B_kj ;             // t = A(i,k)*B(k,j)
                         GB_HX_WRITE (hash, t) ;         // Hx [hash] = t
-                        Ci [pC++] = i ;
+                        GB_ISET (Ci, pC, i) ;           // Ci [pC] = i
+                        pC++ ;
                         break ;
                     }
                     if (Hi [hash] == i)

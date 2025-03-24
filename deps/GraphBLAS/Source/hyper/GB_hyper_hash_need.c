@@ -2,7 +2,7 @@
 // GB_hyper_hash_need: determine if a matrix needs its hyper_hash built
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,11 +39,7 @@ bool GB_hyper_hash_need
     // A is hypersparse, and has no hyper_hash.  Check how many non-empty
     // vectors it has.  A->Y should be built if A has a significant number of
     // non-empty vectors.
-
-    // FUTURE: make this also a per-matrix parameter for GrB_get/set
-
     int64_t hyper_hash = GB_Global_hyper_hash_get ( ) ;
-
     return (A->nvec > hyper_hash) ;
 }
 

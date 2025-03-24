@@ -5,7 +5,7 @@ function s = isvector (G)
 % See also GrB/issparse, GrB/ismatrix, GrB/isscalar, GrB/issparse,
 % GrB/isfull, GrB/isa, GrB, GrB/size.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 G = G.opaque ;

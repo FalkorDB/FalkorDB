@@ -2,7 +2,7 @@
 // GB_iso.h: definitions for iso methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,18 +39,6 @@ void GB_unop_iso            // Cx [0] = unop (A), binop (s,A) or binop (A,s)
     GB_Operator op,         // unary/idxunop/binop, if present
     GrB_Matrix A,           // input matrix
     GrB_Scalar scalar       // input scalar
-) ;
-
-GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
-(
-    GrB_Matrix A,           // input/output matrix
-    bool initialize         // if true, copy the iso value to all of A->x
-) ;
-
-GrB_Info GB_convert_any_to_iso // convert non-iso matrix to iso
-(
-    GrB_Matrix A,           // input/output matrix
-    GB_void *scalar         // scalar value, of size A->type->size, or NULL
 ) ;
 
 GrB_Info GB_iso_expand      // expand an iso scalar into an entire array

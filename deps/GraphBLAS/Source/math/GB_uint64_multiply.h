@@ -2,7 +2,7 @@
 // GB_uint64_multiply:  multiply two uint64_t and guard against overflow
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -79,7 +79,7 @@ GB_STATIC_INLINE bool GB_uint64_multiply    // c = a*b, return true if ok
 
     if (t0 >= GB_TWO_TO_THE_30 || t1 >= GB_TWO_TO_THE_30)
     { 
-        // t >= 2^31, so t * 2^30 might overflow.  This is also slightly
+        // t >= 2^30, so t * 2^30 might overflow.  This is also slightly
         // pessimistic, but good enough for the usage of this function.
         (*c) = UINT64_MAX ;
         return (false) ;

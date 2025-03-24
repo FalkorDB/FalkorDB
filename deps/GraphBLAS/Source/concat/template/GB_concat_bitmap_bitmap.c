@@ -2,12 +2,15 @@
 // GB_concat_bitmap_bitmap: concatenate a bitmap tile into a bitmap matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 {
+    ASSERT (GB_IS_BITMAP (A))
+    ASSERT (GB_IS_BITMAP (C)) ;
+
     const int A_nthreads = GB_nthreads (anz, chunk, nthreads_max) ;
     const int8_t *restrict Ab = A->b ;
     int64_t pA ;

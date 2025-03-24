@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 #include "GB_cuda_ek_slice.cuh"
@@ -20,14 +22,14 @@ __global__ void GB_cuda_apply_unop_kernel
 
     #if ( GB_A_IS_SPARSE || GB_A_IS_HYPER )
         #if ( GB_DEPENDS_ON_I )
-        const int64_t *__restrict__ Ai = (int64_t *) A->i ;
+        const GB_Ai_TYPE *__restrict__ Ai = (GB_Ai_TYPE *) A->i ;
         #endif
 
         #if ( GB_DEPENDS_ON_J )
             #if ( GB_A_IS_HYPER )
-            const int64_t *__restrict__ Ah = (int64_t *) A->h ;
+            const GB_Aj_TYPE *__restrict__ Ah = (GB_Aj_TYPE *) A->h ;
             #endif
-        const int64_t *__restrict__ Ap = (int64_t *) A->p ;
+        const GB_Ap_TYPE *__restrict__ Ap = (GB_Ap_TYPE *) A->p ;
         #endif
     #endif
 
@@ -39,9 +41,6 @@ __global__ void GB_cuda_apply_unop_kernel
 
     #define A_iso GB_A_ISO
 
-    int tid = blockDim.x * blockIdx.x + threadIdx.x ;
-    int nthreads = blockDim.x * gridDim.x ;
-
     #if ( GB_DEPENDS_ON_Y )
         // get thunk value (of type GB_Y_TYPE)
         GB_Y_TYPE thunk_value = * ((GB_Y_TYPE *) thunk) ;
@@ -49,9 +48,11 @@ __global__ void GB_cuda_apply_unop_kernel
 
     #if ( GB_A_IS_BITMAP || GB_A_IS_FULL )
         // bitmap/full case
+        int tid = blockDim.x * blockIdx.x + threadIdx.x ;
+        int nthreads = blockDim.x * gridDim.x ;
         for (int64_t p = tid ; p < anz ; p += nthreads)
         {
-            if (!GBB_A (Ab, p)) { continue ; }
+            if (!GBb_A (Ab, p)) { continue ; }
 
             #if ( GB_DEPENDS_ON_I )
             int64_t row_idx = p % A->vlen ;
@@ -74,17 +75,17 @@ __global__ void GB_cuda_apply_unop_kernel
                 {
                     int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
                     float slope ;
-                    GB_cuda_ek_slice_setup (Ap, anvec, anz, pfirst, chunk_size,
+                    GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, chunk_size,
                         &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
 
                     for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)
                     {
                         int64_t p_final ;
-                        int64_t k = GB_cuda_ek_slice_entry (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
-                        int64_t col_idx = GBH_A (Ah, k) ;
+                        int64_t k = GB_cuda_ek_slice_entry<GB_Ap_TYPE> (&p_final, pdelta, pfirst, Ap, anvec_sub1, kfirst, slope) ;
+                        int64_t col_idx = GBh_A (Ah, k) ;
                         
                         #if ( GB_DEPENDS_ON_I )
-                        int64_t row_idx = GBI_A (Ai, p_final, A->vlen) ;
+                        int64_t row_idx = GBi_A (Ai, p_final, A->vlen) ;
                         #endif
 
                         GB_UNOP (Cx, p_final, Ax, p_final, 
@@ -92,12 +93,14 @@ __global__ void GB_cuda_apply_unop_kernel
                     }
                 }
         #else
-            const int64_t avlen = A->vlen ;
             // can do normal method
+            const int64_t avlen = A->vlen ;
+            int tid = blockDim.x * blockIdx.x + threadIdx.x ;
+            int nthreads = blockDim.x * gridDim.x ;
             for (int64_t p = tid ; p < anz ; p += nthreads)
             {
                 #if ( GB_DEPENDS_ON_I )
-                int64_t row_idx = GBI_A (Ai, p, avlen) ;
+                int64_t row_idx = GBi_A (Ai, p, avlen) ;
                 #endif
 
                 GB_UNOP (Cx, p, Ax, p, A_iso, row_idx, /* col_idx */, thunk_value) ;  
@@ -112,10 +115,18 @@ extern "C" {
 
 GB_JIT_CUDA_KERNEL_APPLY_UNOP_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
 
+    GB_A_NHELD (anz) ;
+    if (anz == 0) return (GrB_SUCCESS) ;
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_apply_unop_kernel <<<grid, block, 0, stream>>> (Cx, ythunk, A) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }

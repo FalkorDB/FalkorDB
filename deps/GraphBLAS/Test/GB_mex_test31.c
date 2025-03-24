@@ -2,7 +2,7 @@
 // GB_mex_test31: test GrB_get and GrB_set (monoids)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -82,7 +82,7 @@ void mexFunction
     int32_t code, i ;
     float fvalue ;
     double dvalue ;
-    GrB_Index nvals = 999 ;
+    uint64_t nvals = 999 ;
 
     OK (GrB_Scalar_new (&s_fp64, GrB_FP64)) ;
     OK (GrB_Scalar_new (&s_fp32, GrB_FP32)) ;
@@ -278,7 +278,8 @@ void mexFunction
     OK (GrB_BinaryOp_new (&binop, (GxB_binary_function) myfunc,
         GrB_FP32, GrB_FP32, GrB_FP32)) ;
     OK (GrB_BinaryOp_set_String_(binop, "myfunc", GrB_NAME)) ;
-    METHOD (GrB_BinaryOp_set_String (binop, MYFUNC_DEFN, GxB_JIT_C_DEFINITION)) ;
+    METHOD (GrB_BinaryOp_set_String (binop, MYFUNC_DEFN,
+        GxB_JIT_C_DEFINITION)) ;
 
     OK (GrB_Monoid_new_FP32 (&monoid, binop, (float) 0.0)) ;
     OK (GrB_Monoid_get_SIZE_(monoid, &size, GrB_NAME)) ;

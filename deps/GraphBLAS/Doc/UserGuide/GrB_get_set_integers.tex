@@ -1,0 +1,68 @@
+
+%-------------------------------------------------------------------------------
+\subsection{Controlling the sizes of integers}
+%-------------------------------------------------------------------------------
+\label{integer_bits}
+
+Different integers are used for different parts of the matrix/vector/scalar
+data structure.  The decision as to which integers to use is determined by the
+dimensions and number of entries in the matrix.  The decisions can also be
+modified by \verb'GrB_set' and queried by \verb'GrB_get'.  A matrix can have up
+to three different kinds of integers.  If a matrix is $m$-by-$n$ with $e$
+entries, with default settings:
+
+\begin{packed_itemize}
+\item if $m > 2^{31}$: 64-bit integers must be used for the row indices of a
+matrix; otherwise, 32-bit integers may be used.
+\item if $n > 2^{31}$: 64-bit integers must be used for the column indices of a
+matrix; otherwise, 32-bit integers may be used.
+\item if $e > 2^{32}$: 64-bit integers must be used for the row/column offsets of
+a matrix; otherwise 32-bit integers may be used.
+\end{packed_itemize}
+
+This gives up to 8 different matrix types when the matrix is hypersparse.
+Sparse matrices use just two of these integer types (a sparse CSR matrix, held
+by row, does not store any row indices).  example, if a matrix held in sparse
+CSR format (\verb'GxB_SPARSE'), of size $m$-by-$n$ with $e$ entries, then the
+value of $m$ does not affect the integers used to store the matrix.  Bitmap and
+full matrices use no arrays of integers at all, and are not affected by these
+settings.  For
+
+These decisions can be revised on a global basis and a per matrix/vector basis.
+Three fields can be used for \verb'GrB_get' and \verb'GrB_get', for the
+\verb'GrB_GLOBAL', \verb'GrB_Matrix', \verb'GrB_Vector', and \verb'GrB_Scalar'
+objects:
+
+\begin{packed_itemize}
+\item \verb'GxB_ROWINDEX_INTEGER_HINT': for the global setting, this can be
+set to 32 (the default) or 64.  The default (32) means that 32-bit integers are
+used if the number of rows of a matrix or length of a vector is not too
+large ($>2^{31}$), and 64-bit integers are used otherwise.  On a per
+matrix/vector basis, setting this hint changes the integers used for row
+indices in the vector or matrix.  The setting of zero is the default for
+individual matrices/vectors, which means the global setting is used.
+\item \verb'GxB_COLINDEX_INTEGER_HINT':  the same as the row index hint above,
+except for column indices.  This setting has little effect on a
+\verb'GrB_Vector', since it is held internally by GraphBLAS as an $m$-by-1
+matrix.
+\item \verb'GxB_OFFSET_INTEGER_HINT':  Internally, a sparse or hypersparse
+matrix or vector holds an offset array with the cumulative sum of the number of
+entries in each row (if held by row) or column (if held by column).  A global
+setting of 32 is the default, so that 32-bit integers are used if the matrix
+has fewer than $2^{32}$ entries. If this setting is changed to 64, then 64-bit
+integers are always used.
+\end{packed_itemize}
+
+Once an object is created, the sizes of its three integers can be
+queried by \verb'GrB_get' with the following fields.  Each query returns the
+result of 32 or 64, as an integer, to denote if 32-bit or 64-bit integers are
+used for that component of the matrix/vector.  Bitmap and full matrices always
+return 64.
+
+\begin{packed_itemize}
+\item \verb'GxB_ROWINDEX_INTEGER_BITS': query the number of bits in the row index integer.
+\item \verb'GxB_COLINDEX_INTEGER_BITS': query the number of bits in the column index integer.
+\item \verb'GxB_OFFSET_INTEGER_BITS': query the number of bits in the offset integer.
+\end{packed_itemize}
+
+

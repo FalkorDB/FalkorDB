@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_mex_grow: MATLAB version of GraphBLAS/Demo/Programgrow_demo.c
+// GB_mex_grow: MATLAB version of GraphBLAS/Demo/Program/grow_demo.c
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,7 +31,7 @@ GrB_Info check_result (GrB_Matrix A1, GrB_Matrix C1, GrB_BinaryOp eq)
     GrB_Info info ;
     GrB_Matrix A = NULL, C = NULL, T = NULL, W = NULL ;
     GrB_Vector w = NULL ;
-    GrB_Index anvals, cnvals, tnvals, anrows, ancols ;
+    uint64_t anvals, cnvals, tnvals, anrows, ancols ;
     OK (GrB_Matrix_nrows (&anrows, A1)) ;
     OK (GrB_Matrix_ncols (&ancols, A1)) ;
     OK (GrB_Matrix_nvals (&anvals, A1)) ;
@@ -49,6 +49,7 @@ GrB_Info check_result (GrB_Matrix A1, GrB_Matrix C1, GrB_BinaryOp eq)
     t = (WALLCLOCK - t) ;
     GrB_Matrix_free (&T) ;
     printf ("A and C match, time %g\n", t) ;
+    return (GrB_SUCCESS) ;
 }
 
 
@@ -76,8 +77,8 @@ void mexFunction
     #define GET_DEEP_COPY ;
     #define FREE_DEEP_COPY ;
 
-    // get A
-    A = GB_mx_mxArray_to_Matrix (pargin [0], "A", false, true) ;
+    // get A (deep copy)
+    A = GB_mx_mxArray_to_Matrix (pargin [0], "A", true, true) ;
     if (A == NULL)
     {
         mexErrMsgTxt ("A failed") ;
@@ -91,7 +92,7 @@ void mexFunction
     // get A matrix
     //--------------------------------------------------------------------------
 
-    GrB_Index anrows, ancols ;
+    uint64_t anrows, ancols ;
     OK (GrB_Matrix_nrows (&anrows, A)) ;
     OK (GrB_Matrix_ncols (&ancols, A)) ;
 
@@ -166,7 +167,7 @@ void mexFunction
 
         // C (i,:) = w
         t = WALLCLOCK ;
-        OK (GrB_Row_assign (C, NULL, NULL, w, i, GrB_ALL, ancols, NULL)) ;
+        OK (GrB_Row_assign_(C, NULL, NULL, w, i, GrB_ALL, ancols, NULL)) ;
         tt [2] += (WALLCLOCK - t) ;
 
         // ensure C is finished
@@ -189,7 +190,7 @@ void mexFunction
     // check to see if A and C are equal
     OK (check_result (A, C, eq)) ;
     GrB_Matrix_free (&C) ;
-    GrB_Matrix_free (&w) ;
+    GrB_Vector_free (&w) ;
 
     //--------------------------------------------------------------------------
     // C = A, multiple rows at a time
@@ -221,7 +222,7 @@ void mexFunction
         OK (GrB_set (W, false, GxB_HYPER_HASH)) ;
         OK (GrB_set (W, GxB_SPARSE, GxB_SPARSITY_CONTROL)) ;
         OK (GrB_set (W, GrB_ROWMAJOR, GrB_STORAGE_ORIENTATION_HINT)) ;
-        GrB_Index Icolon [3] ;
+        uint64_t Icolon [3] ;       // OK
         Icolon [GxB_BEGIN] = i1 ;
         Icolon [GxB_INC  ] = 1 ;
         Icolon [GxB_END  ] = i2 ;
@@ -235,8 +236,8 @@ void mexFunction
 
         // C (i1:i2,:) = W
         t = WALLCLOCK ;
-        OK (GrB_assign (C, NULL, NULL, W, Icolon, GxB_RANGE, GrB_ALL, ancols,
-            NULL)) ;
+        OK (GrB_Matrix_assign_(C, NULL, NULL, W, Icolon, GxB_RANGE,
+            GrB_ALL, ancols, NULL)) ;
         t2 [2] += (WALLCLOCK - t) ;
 
         // ensure C is finished

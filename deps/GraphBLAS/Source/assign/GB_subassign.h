@@ -2,7 +2,7 @@
 // GB_subassign.h: definitions for GB_subassign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,10 +23,12 @@ GrB_Info GB_subassign               // C(Rows,Cols)<M> += A or A'
     const GrB_BinaryOp accum,       // optional accum for accum(C,T)
     const GrB_Matrix A_in,          // input matrix
     const bool A_transpose,         // true if A is transposed
-    const GrB_Index *Rows,          // row indices
-    const GrB_Index nRows_in,       // number of row indices
-    const GrB_Index *Cols,          // column indices
-    const GrB_Index nCols_in,       // number of column indices
+    const void *Rows,               // row indices
+    const bool Rows_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nRows_in,        // number of row indices
+    const void *Cols,               // column indices
+    const bool Cols_is_32,          // if true, Cols is 32-bit; else 64-bit
+    const uint64_t nCols_in,        // number of column indices
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand
@@ -40,11 +42,42 @@ GrB_Info GB_subassign_scalar        // C(Rows,Cols)<M> += x
     const GrB_BinaryOp accum,       // accum for Z=accum(C(Rows,Cols),T)
     const void *scalar,             // scalar to assign to C(Rows,Cols)
     const GB_Type_code scalar_code, // type code of scalar to assign
-    const GrB_Index *Rows,          // row indices
-    const GrB_Index nRows,          // number of row indices
-    const GrB_Index *Cols,          // column indices
-    const GrB_Index nCols,          // number of column indices
+    const void *Rows,               // row indices
+    const bool Rows_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nRows,           // number of row indices
+    const void *Cols,               // column indices
+    const bool Cols_is_32,          // if true, Cols is 32-bit; else 64-bit
+    const uint64_t nCols,           // number of column indices
     const GrB_Descriptor desc,      // descriptor for C(Rows,Cols) and M
+    GB_Werk Werk
+) ;
+
+GrB_Info GB_Matrix_subassign_scalar   // C(I,J)<M> = accum (C(I,J),s)
+(
+    GrB_Matrix C,                   // input/output matrix for results
+    const GrB_Matrix Mask,          // optional mask for C, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(C(I,J),x)
+    const GrB_Scalar scalar,        // scalar to assign to C(I,J)
+    const void *I,                  // row indices
+    const bool I_is_32,
+    uint64_t ni,                    // number of row indices
+    const void *J,                  // column indices
+    const bool J_is_32,
+    uint64_t nj,                    // number of column indices
+    const GrB_Descriptor desc,      // descriptor for C and Mask
+    GB_Werk Werk
+) ;
+
+GrB_Info GB_Vector_subassign_scalar // w(I)><Mask> = accum (w(I),s)
+(
+    GrB_Vector w,                   // input/output matrix for results
+    const GrB_Vector mask,          // optional mask for w, unused if NULL
+    const GrB_BinaryOp accum,       // optional accum for Z=accum(w(I),x)
+    const GrB_Scalar scalar,        // scalar to assign to w(I)
+    const void *I,                  // row indices
+    const bool I_is_32,
+    uint64_t ni,                    // number of row indices
+    const GrB_Descriptor desc,      // descriptor for w and Mask
     GB_Werk Werk
 ) ;
 
@@ -82,13 +115,15 @@ GrB_Info GB_subassigner             // C(I,J)<#M> = A or accum (C (I,J), A)
     const bool Mask_struct,         // if true, use the only structure of M
     const GrB_BinaryOp accum,       // optional accum for Z=accum(C(I,J),A)
     const GrB_Matrix A,             // input matrix (NULL for scalar expansion)
-    const GrB_Index *I,             // list of indices
-    const int64_t   ni,             // number of indices
+    const void *I,                  // I index list
+    const bool I_is_32,
+    const int64_t ni,               // number of indices
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,             // list of vector indices
-    const int64_t   nj,             // number of column indices
+    const void *J,                  // J index list
+    const bool J_is_32,
+    const int64_t nj,               // number of column indices
     const int64_t nJ,
     const int Jkind,
     const int64_t Jcolon [3],
@@ -119,16 +154,18 @@ GrB_Info GB_assign_prep
     GrB_Matrix AT_header_handle,
 
     // modified versions of the Rows/Cols lists, and their analysis:
-    GrB_Index **I_handle,           // Rows, Cols, or a modified copy I2
-    GrB_Index **I2_handle,          // NULL, or sorted/pruned Rows or Cols
+    void **I_handle,            // Rows, Cols, or a modified copy I2
+    bool *I_is_32_handle,
+    void **I2_handle,           // NULL, or sorted/pruned Rows or Cols
     size_t *I2_size_handle,
     int64_t *ni_handle,
     int64_t *nI_handle,
     int *Ikind_handle,
     int64_t Icolon [3],
 
-    GrB_Index **J_handle,           // Rows, Cols, or a modified copy J2
-    GrB_Index **J2_handle,          // NULL, or sorted/pruned Rows or Cols
+    void **J_handle,            // Rows, Cols, or a modified copy J2
+    bool *J_is_32_handle,
+    void **J2_handle,           // NULL, or sorted/pruned Rows or Cols
     size_t *J2_size_handle,
     int64_t *nj_handle,
     int64_t *nJ_handle,
@@ -150,10 +187,12 @@ GrB_Info GB_assign_prep
     const GrB_BinaryOp accum,       // optional accum for accum(C,T)
     const GrB_Matrix A_in,          // input matrix
     bool A_transpose,               // true if A is transposed
-    const GrB_Index *Rows,          // row indices
-    const GrB_Index nRows_in,       // number of row indices
-    const GrB_Index *Cols,          // column indices
-    const GrB_Index nCols_in,       // number of column indices
+    const void *Rows,               // row indices
+    const bool Rows_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nRows_in,        // number of row indices
+    const void *Cols,               // column indices
+    const bool Cols_is_32,          // if true, Rows is 32-bit; else 64-bit
+    const uint64_t nCols_in,        // number of column indices
     const bool scalar_expansion,    // if true, expand scalar to A
     const void *scalar,             // scalar to be expanded
     const GB_Type_code scalar_code, // type code of scalar to expand

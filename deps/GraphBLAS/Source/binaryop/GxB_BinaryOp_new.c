@@ -2,7 +2,7 @@
 // GxB_BinaryOp_new: create a new user-defined binary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,8 +33,7 @@ GrB_Info GxB_BinaryOp_new
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_BinaryOp_new (op, function, ztype, xtype, ytype"
-        ", name, defn)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (op_handle) ;
     (*op_handle) = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
@@ -46,7 +45,8 @@ GrB_Info GxB_BinaryOp_new
     //--------------------------------------------------------------------------
 
     size_t header_size ;
-    GrB_BinaryOp op = GB_CALLOC (1, struct GB_BinaryOp_opaque, &header_size) ;
+    GrB_BinaryOp op = GB_CALLOC_MEMORY (1, sizeof (struct GB_BinaryOp_opaque),
+        &header_size) ;
     if (op == NULL)
     { 
         // out of memory
@@ -63,7 +63,7 @@ GrB_Info GxB_BinaryOp_new
     if (info != GrB_SUCCESS)
     { 
         // out of memory
-        GB_FREE (&op, header_size) ;
+        GB_FREE_MEMORY (&op, header_size) ;
         return (info) ;
     }
 
@@ -85,6 +85,7 @@ GrB_Info GxB_BinaryOp_new
             // and cannot be compiled by the JIT).
             return (info == GrB_NO_VALUE ? GrB_NULL_POINTER : info) ;
         }
+        #include "include/GB_pedantic_disable.h"
         op->binop_function = (GxB_binary_function) user_function ;
         GB_BURBLE_END ;
     }

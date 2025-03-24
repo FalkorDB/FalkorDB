@@ -2,7 +2,7 @@
 // GxB_colIterator_*: iterate over columns of a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -33,20 +33,20 @@ GrB_Info GxB_colIterator_attach
     return (GB_Iterator_attach (iterator, A, GxB_BY_COL, desc)) ;
 }
 
-GrB_Index GxB_colIterator_kount (GxB_Iterator iterator)
+uint64_t GxB_colIterator_kount (GxB_Iterator iterator)
 { 
     // return # of nonempty columns of the matrix
     return (iterator->anvec) ;
 }
 
-GrB_Info GxB_colIterator_seekCol (GxB_Iterator iterator, GrB_Index col)
+GrB_Info GxB_colIterator_seekCol (GxB_Iterator iterator, uint64_t col)
 { 
     // move a column iterator that is already attached to A, to the first
     // entry of A(:,col)
     return (GB_Iterator_rc_seek (iterator, col, false)) ;
 }
 
-GrB_Info GxB_colIterator_kseek (GxB_Iterator iterator, GrB_Index k)
+GrB_Info GxB_colIterator_kseek (GxB_Iterator iterator, uint64_t k)
 { 
     // move a column iterator that is already attached to A, to the first
     // entry of the kth non-empty column of A
@@ -65,13 +65,13 @@ GrB_Info GxB_colIterator_nextRow (GxB_Iterator iterator)
     return (GB_Iterator_rc_inext (iterator)) ;
 }
 
-GrB_Index GxB_colIterator_getColIndex (GxB_Iterator iterator)
+uint64_t GxB_colIterator_getColIndex (GxB_Iterator iterator)
 { 
     // return the column index of the current entry for a column iterator
     return (GB_Iterator_rc_getj (iterator)) ;
 }
 
-GrB_Index GxB_colIterator_getRowIndex (GxB_Iterator iterator)
+uint64_t GxB_colIterator_getRowIndex (GxB_Iterator iterator)
 { 
     // return the row index of the current entry for a column iterator
     return (GB_Iterator_rc_geti (iterator)) ;

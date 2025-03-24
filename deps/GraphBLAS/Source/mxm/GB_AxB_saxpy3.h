@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3.h: definitions for C=A*B saxpy3 method
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,6 +15,7 @@
 
 #include "GB.h"
 #include "math/GB_math.h"
+#include "sort/GB_sort.h"
 
 GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 (
@@ -30,7 +31,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     const GrB_Semiring semiring,    // semiring that defines C=A*B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *mask_applied,             // if true, then mask was applied
-    GrB_Desc_Value AxB_method,      // Default, Gustavson, or Hash
+    int AxB_method,                 // Default, Gustavson, or Hash
     const int do_sort,              // if nonzero, try to sort in saxpy3
     GB_Werk Werk
 ) ;
@@ -42,14 +43,14 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 // A coarse task computes C(:,j1:j2) = A*B(:,j1:j2), for a contiguous set of
 // vectors j1:j2.  A coarse taskid is denoted by SaxpyTasks [taskid].vector ==
 // -1, kfirst = SaxpyTasks [taskid].start, and klast = SaxpyTasks [taskid].end,
-// and where j1 = GBH (Bh, kstart) and likewise for j2.  No summation is needed
-// for the final result of each coarse task.
+// and where j1 = GBh_B (Bh, kstart) and likewise for j2.  No summation is
+// needed for the final result of each coarse task.
 
 // A fine taskid computes A*B(k1:k2,j) for a single vector C(:,j), for a
 // contiguous range k1:k2, where kk = Tasklist[taskid].vector (which is >= 0),
 // k1 = Bi [SaxpyTasks [taskid].start], k2 = Bi [SaxpyTasks [taskid].end].  It
 // sums its computations in a hash table shared by all fine tasks that compute
-// C(:,j), via atomics.  The vector index j is GBH (Bh, kk).
+// C(:,j), via atomics.  The vector index j is GBh_B (Bh, kk).
 
 // Both tasks use a hash table allocated uniquely for the task, in Hi, Hf, and
 // Hx.  The size of the hash table is determined by the maximum # of flops
@@ -89,7 +90,7 @@ GrB_Info GB_AxB_saxpy3_slice_balanced
     const bool Mask_comp,           // if true, use !M
     const GrB_Matrix A,             // input matrix A
     const GrB_Matrix B,             // input matrix B
-    GrB_Desc_Value AxB_method,      // Default, Gustavson, or Hash
+    int AxB_method,                 // Default, Gustavson, or Hash
     bool builtin_semiring,          // if true, semiring is builtin
     // outputs
     GB_saxpy3task_struct **SaxpyTasks_handle,

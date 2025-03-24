@@ -2,7 +2,7 @@
 // GB_dup: make a deep copy of a sparse matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -57,8 +57,7 @@ GrB_Info GB_dup             // make an exact copy of a matrix
     // C = A
     //--------------------------------------------------------------------------
 
-    // set C->iso = A->iso      OK
-    GB_BURBLE_MATRIX (A, "(iso dup) ") ;
+    GB_BURBLE_MATRIX (A, "(%sdup) ", A->iso ? "iso " : "") ;
     return (GB_dup_worker (Chandle, A->iso, A, true, NULL)) ;
 }
 

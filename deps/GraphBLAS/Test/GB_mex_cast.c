@@ -2,7 +2,7 @@
 // GB_mex_cast: cast a built-in array using C-style casting rules
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -76,7 +76,7 @@ void mexFunction
         // create a shallow cnz-by-1 matrix T to wrap the array X
         T = NULL ;
         void *Tx = X ;
-        GrB_Index nrows = cnz, ncols = 1, Tx_size = cnz * xtype->size ;
+        uint64_t nrows = cnz, ncols = 1, Tx_size = cnz * xtype->size ;
         GxB_Matrix_import_FullC (&T, xtype, nrows, ncols, &Tx, Tx_size, false, NULL) ;
         // GB_cast_array (C, ctype->code, X, xtype->code, NULL, cnz, 1) ;
         GB_cast_array (C, ctype->code, T, 1) ;

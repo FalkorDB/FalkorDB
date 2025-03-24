@@ -2,7 +2,7 @@
 // GB_bitmap_assign_6b_whole:  C bitmap, no M, no accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,11 +20,13 @@ GrB_Info GB_bitmap_assign_6b_whole  // C bitmap, no M, no accum
     // inputs:
     #define C_replace false
     #define I NULL              /* I index list */
+    #define I_is_32 false
     #define ni 0
     #define nI 0
     #define Ikind GB_ALL
     #define Icolon NULL
     #define J NULL              /* J index list */
+    #define J_is_32 false
     #define nj 0
     #define nJ 0
     #define Jkind GB_ALL
@@ -55,7 +57,7 @@ GrB_Info GB_bitmap_assign_6b_whole  // C bitmap, no M, no accum
     //--------------------------------------------------------------------------
 
     GrB_Info info = GB_subassign_jit (C, C_replace,
-        I, ni, nI, Ikind, Icolon, J, nj, nJ, Jkind, Jcolon,
+        I, I_is_32, ni, nI, Ikind, Icolon, J, J_is_32, nj, nJ, Jkind, Jcolon,
         M, Mask_comp, Mask_struct, accum, A, scalar, scalar_type,
         /* S: */ NULL, assign_kind,
         GB_JIT_KERNEL_BITMAP_ASSIGN_6b_WHOLE, "bitmap_assign_6b_whole",

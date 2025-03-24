@@ -2,7 +2,7 @@
 // GxB_Context_free: free a Context
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,12 +35,12 @@ GrB_Info GxB_Context_free           // free a Context
         {
             size_t header_size = Context->header_size ;
             // free the Context user_name
-            GB_FREE (&(Context->user_name), Context->user_name_size) ;
+            GB_FREE_MEMORY (&(Context->user_name), Context->user_name_size) ;
             if (header_size > 0)
             { 
                 Context->magic = GB_FREED ;  // to help detect dangling pointers
                 Context->header_size = 0 ;
-                GB_FREE (Context_handle, header_size) ;
+                GB_FREE_MEMORY (Context_handle, header_size) ;
             }
         }
     }

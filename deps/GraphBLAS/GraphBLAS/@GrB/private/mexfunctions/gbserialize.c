@@ -2,7 +2,7 @@
 // gbserialize: serialize a matrix into a blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -79,7 +79,7 @@ void mexFunction
         }
         if (level < 0 || level > 999) level = 0 ;
         // set the descriptor
-        OK (GxB_Desc_set (desc, GxB_COMPRESSION, method + level)) ;
+        OK (GrB_Descriptor_set_INT32 (desc, method + level, GxB_COMPRESSION)) ;
     }
 
     //--------------------------------------------------------------------------
@@ -87,7 +87,7 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     void *blob = NULL ;
-    GrB_Index blob_size ;
+    uint64_t blob_size ;
 
     if (debug)
     { 
@@ -120,6 +120,6 @@ void mexFunction
     mxFree (mxGetData (pargout [0])) ;
     mxSetData (pargout [0], blob) ;
     mxSetM (pargout [0], blob_size) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

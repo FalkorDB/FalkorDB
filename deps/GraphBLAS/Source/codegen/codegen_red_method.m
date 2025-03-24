@@ -3,7 +3,7 @@ function codegen_red_method (opname, op, atype, identity, terminal, panel)
 %
 % codegen_red_method (opname, op, atype, identity, terminal)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 f = fopen ('control.m4', 'w') ;
@@ -50,7 +50,7 @@ if (is_monoid)
     fprintf (f, 'm4_define(`GB_declare_const_identity'', `#define GB_DECLARE_IDENTITY_CONST(z)%s'')\n', define_const_id) ;
 end
 
-% A is never iso, so GBX is not needed
+% A is never iso
 fprintf (f, 'm4_define(`GB_declarea'', `#define GB_DECLAREA(aij) %s aij'')\n', atype) ;
 fprintf (f, 'm4_define(`GB_geta'', `#define GB_GETA(aij,Ax,pA,A_iso) aij = Ax [pA]'')\n') ;
 
@@ -66,7 +66,8 @@ elseif (~isempty (terminal))
     % monoid is terminal
     is_terminal = 1 ;
     tbreak = sprintf (' if (z == %s) { break ; }', terminal) ;
-    tvalue = sprintf (' const %s zterminal = %s', ztype, terminal) ;
+%   tvalue = sprintf (' const %s zterminal = %s ;', ztype, terminal) ;
+    tvalue = '' ;
     tcondition = sprintf (' (z == %s)', terminal) ;
 else
     % monoid is not terminal
@@ -91,11 +92,15 @@ if (~isempty (tcondition))
     % monoid is terminal
     fprintf (f, 'm4_define(`GB_terminal_condition'', `#define GB_TERMINAL_CONDITION(z,zterminal)%s'')\n', tcondition) ;
     fprintf (f, 'm4_define(`GB_if_terminal_break'', `#define GB_IF_TERMINAL_BREAK(z,zterminal)%s'')\n', tbreak) ;
-    fprintf (f, 'm4_define(`GB_declare_const_terminal'', `#define GB_DECLARE_TERMINAL_CONST(zterminal)%s'')\n', tvalue) ;
 else
     % will be defined by GB_monoid_shared_definitions.h
     fprintf (f, 'm4_define(`GB_terminal_condition'', `'')\n') ;
     fprintf (f, 'm4_define(`GB_if_terminal_break'', `'')\n') ;
+end
+
+if (~isempty (tvalue))
+    fprintf (f, 'm4_define(`GB_declare_const_terminal'', `#define GB_DECLARE_TERMINAL_CONST(zterminal)%s'')\n', tvalue) ;
+else
     fprintf (f, 'm4_define(`GB_declare_const_terminal'', `'')\n') ;
 end
 
@@ -123,6 +128,11 @@ dup_op = op {1} ;
 dup_op = strrep (dup_op, 'zarg', 'Tx [k]') ;
 dup_op = strrep (dup_op, 'yarg', 'Sx [i]') ;
 fprintf (f, 'm4_define(`GB_bld_dup'', `#define GB_BLD_DUP(Tx,k,Sx,i)  %s'')\n', dup_op) ;
+if (isequal (opname, 'first'))
+    fprintf (f, 'm4_define(`GB_dup_is_first'', `#define GB_DUP_IS_FIRST'')\n') ;
+else
+    fprintf (f, 'm4_define(`GB_dup_is_first'', `'')\n') ;
+end
 
 % create the function operator
 add_op = op {2} ;

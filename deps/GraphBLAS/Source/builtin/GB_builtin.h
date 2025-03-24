@@ -2,7 +2,7 @@
 // GB_builtin.h: built-in unary and binary operators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@
 
 // nonzombie function for generic case
 inline void GB_nonzombie_func (bool *z, const void *x,
-    int64_t i, GrB_Index j, const void *y)
+    int64_t i, uint64_t j, const void *y)
 {
     (*z) = (i >= 0) ;    
 }

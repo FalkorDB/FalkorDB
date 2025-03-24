@@ -2,7 +2,7 @@
 // GB_subref_slice: construct coarse/fine tasks for C = A(I,J)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,23 +24,43 @@
 // Note that J can have duplicates.  kC is unique (0:Cnvec-1) but the
 // corresponding vector kA in A may repeat, if J has duplicates.  Duplicates in
 // J are not exploited, since the coarse/fine tasks are constructed by slicing
-// slicing the list of vectors Ch of size Cnvec, not the vectors of A.
+// the list of vectors Ch of size Cnvec, not the vectors of A.
 
 // Compare this function with GB_ewise_slice, which constructs coarse/fine
 // tasks for the eWise operations (C=A+B, C=A.*B, and C<M>=Z).
 
+// The matrices C and A are sparse or hypersparse, but the matrices themselves
+// do not appear in this method.
+
 #define GB_FREE_WORKSPACE                       \
 {                                               \
     GB_WERK_POP (Coarse, int64_t) ;             \
-    GB_FREE_WORK (&Cwork, Cwork_size) ;         \
 }
 
 #define GB_FREE_ALL                             \
 {                                               \
     GB_FREE_WORKSPACE ;                         \
-    GB_FREE_WORK (&TaskList, TaskList_size) ;   \
-    GB_FREE_WORK (&Mark, Mark_size) ;           \
-    GB_FREE_WORK (&Inext, Inext_size) ;         \
+    GB_FREE_MEMORY (&Cwork, Cwork_size) ;         \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&Ihead, Ihead_size) ;         \
+    GB_FREE_MEMORY (&Inext, Inext_size) ;         \
+}
+
+#define GB_RETURN_RESULTS                   \
+{                                           \
+    (*p_TaskList     ) = TaskList ;         \
+    (*p_TaskList_size) = TaskList_size ;    \
+    (*p_ntasks       ) = ntasks ;           \
+    (*p_nthreads     ) = nthreads ;         \
+    (*p_post_sort    ) = post_sort ;        \
+    (*p_Ihead        ) = Ihead ;            \
+    (*p_Ihead_size   ) = Ihead_size ;       \
+    (*p_Inext        ) = Inext ;            \
+    (*p_Inext_size   ) = Inext_size ;       \
+    (*p_Ihead_is_32  ) = Ihead_is_32 ;      \
+    (*p_nduplicates  ) = nduplicates ;      \
+    (*p_Cwork        ) = Cwork ;            \
+    (*p_Cwork_size   ) = Cwork_size ;       \
 }
 
 #include "extract/GB_subref.h"
@@ -50,26 +70,31 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     // output:
     GB_task_struct **p_TaskList,    // array of structs
     size_t *p_TaskList_size,        // size of TaskList
-    int *p_ntasks,                  // # of tasks constructed
-    int *p_nthreads,                // # of threads for subref operation
-    bool *p_post_sort,              // true if a final post-sort is needed
-    int64_t *restrict *p_Mark,      // for I inverse, if needed; size avlen
-    size_t *p_Mark_size,
-    int64_t *restrict *p_Inext,     // for I inverse, if needed; size nI
+    int *p_ntasks,              // # of tasks constructed
+    int *p_nthreads,            // # of threads for subref operation
+    bool *p_post_sort,          // true if a final post-sort is needed
+    void **p_Ihead,             // for I inverse, if needed; size avlen
+    size_t *p_Ihead_size,
+    void **p_Inext,             // for I inverse, if needed; size nI
     size_t *p_Inext_size,
-    int64_t *p_nduplicates,         // # of duplicates, if I inverse computed
+    bool *p_Ihead_is_32,        // if true, Ihead and Inext are 32-bit; else 64
+    int64_t *p_nduplicates,     // # of duplicates, if I inverse computed
+    uint64_t **p_Cwork,         // workspace of size max(2,C->nvec+1)
+    size_t *p_Cwork_size,
     // from phase0:
-    const int64_t *restrict Ap_start,   // location of A(imin:imax,kA)
-    const int64_t *restrict Ap_end,
-    const int64_t Cnvec,            // # of vectors of C
-    const bool need_qsort,          // true if C must be sorted
-    const int Ikind,                // GB_ALL, GB_RANGE, GB_STRIDE or GB_LIST
-    const int64_t nI,               // length of I
-    const int64_t Icolon [3],       // for GB_RANGE and GB_STRIDE
+    const void *Ap_start,       // location of A(imin:imax,kA)
+    const void *Ap_end,
+    const int64_t Cnvec,        // # of vectors of C
+    const bool need_qsort,      // true if C must be sorted
+    const int Ikind,            // GB_ALL, GB_RANGE, GB_STRIDE or GB_LIST
+    const int64_t nI,           // length of I
+    const int64_t Icolon [3],   // for GB_RANGE and GB_STRIDE
     // original input:
-    const int64_t avlen,            // A->vlen
-    const int64_t anz,              // nnz (A)
-    const GrB_Index *I,
+    const int64_t avlen,        // A->vlen
+    const int64_t anz,          // nnz (A)
+    const bool Ap_is_32,        // if true, Ap_start/end are 32-bit; else 64
+    const void *I,
+    const bool I_is_32,         // if true, I is 32-bit; else 64 bit
     GB_Werk Werk
 )
 {
@@ -83,26 +108,39 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     ASSERT (p_ntasks != NULL) ;
     ASSERT (p_nthreads != NULL) ;
     ASSERT (p_post_sort != NULL) ;
-    ASSERT (p_Mark  != NULL) ;
+    ASSERT (p_Ihead != NULL) ;
+    ASSERT (p_Ihead_size != NULL) ;
     ASSERT (p_Inext != NULL) ;
+    ASSERT (p_Inext_size != NULL) ;
     ASSERT (p_nduplicates != NULL) ;
+    ASSERT (p_Cwork != NULL) ;
+    ASSERT (p_Cwork_size != NULL) ;
 
     ASSERT ((Cnvec > 0) == (Ap_start != NULL)) ;
     ASSERT ((Cnvec > 0) == (Ap_end != NULL)) ;
 
     (*p_TaskList) = NULL ;
     (*p_TaskList_size) = 0 ;
-    (*p_Mark    ) = NULL ;
-    (*p_Inext   ) = NULL ;
+    (*p_Ihead) = NULL ;
+    (*p_Inext) = NULL ;
+    (*p_Ihead_is_32) = false ;
+    (*p_Cwork) = NULL ;
+    (*p_Ihead_size) = 0 ;
+    (*p_Inext_size) = 0 ;
+    (*p_Cwork_size) = 0 ;
+    (*p_nduplicates) = 0 ;
 
-    int64_t *restrict Mark  = NULL ; size_t Mark_size = 0 ;
-    int64_t *restrict Inext = NULL ; size_t Inext_size = 0 ;
-
-    int64_t *restrict Cwork = NULL ; size_t Cwork_size = 0 ;
+    void *Ihead = NULL ; size_t Ihead_size = 0 ;
+    void *Inext = NULL ; size_t Inext_size = 0 ;
+    bool Ihead_is_32 = false ;
+    uint64_t *restrict Cwork = NULL ; size_t Cwork_size = 0 ;
     GB_WERK_DECLARE (Coarse, int64_t) ;     // size ntasks1+1
     int ntasks1 = 0 ;
 
     GrB_Info info ;
+
+    GB_IDECL (Ap_start, const, u) ; GB_IPTR (Ap_start, Ap_is_32) ;
+    GB_IDECL (Ap_end  , const, u) ; GB_IPTR (Ap_end  , Ap_is_32) ;
 
     //--------------------------------------------------------------------------
     // determine # of threads to use
@@ -153,7 +191,8 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    Cwork = GB_MALLOC_WORK (Cnvec+1, int64_t, &Cwork_size) ;
+    Cwork = GB_MALLOC_MEMORY (GB_IMAX (2, Cnvec+1), sizeof (uint64_t),
+        &Cwork_size) ;
     if (Cwork == NULL)
     { 
         // out of memory
@@ -173,10 +212,10 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     for (kC = 0 ; kC < Cnvec ; kC++)
     { 
         // jC is the (kC)th vector of C = A(I,J)
-        // int64_t jC = GBH (Ch, kC) ;
+        // int64_t jC = GBh_C (Ch, kC) ; // but this is not needed
         // C(:,kC) = A(I,kA) will be constructed
-        int64_t pA      = Ap_start [kC] ;
-        int64_t pA_end  = Ap_end   [kC] ;
+        int64_t pA      = GB_IGET (Ap_start, kC) ;
+        int64_t pA_end  = GB_IGET (Ap_end  , kC) ;
         int64_t alen = pA_end - pA ;      // nnz (A (imin:imax,j))
 
         bool this_needs_I_inverse ; // true if this vector needs I inverse
@@ -189,11 +228,13 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
         Cwork [kC] = work ;
     }
 
+    Cwork [Cnvec] = 0 ;
+
     //--------------------------------------------------------------------------
     // replace Cwork with its cumulative sum
     //--------------------------------------------------------------------------
 
-    GB_cumsum (Cwork, Cnvec, NULL, nthreads_for_Cwork, Werk) ;
+    GB_cumsum (Cwork, false, Cnvec, NULL, nthreads_for_Cwork, Werk) ;
     double cwork = (double) Cwork [Cnvec] ;
 
     //--------------------------------------------------------------------------
@@ -201,7 +242,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     //--------------------------------------------------------------------------
 
     int nthreads = GB_nthreads (cwork, chunk, nthreads_max) ;
-
+    int ntasks = 0 ;
     ntasks1 = (nthreads == 1) ? 1 : (32 * nthreads) ;
     double target_task_size = cwork / (double) (ntasks1) ;
     target_task_size = GB_IMAX (target_task_size, chunk) ;
@@ -213,9 +254,9 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     int64_t nduplicates = 0 ;
     if (need_I_inverse)
     { 
-        GB_OK (GB_I_inverse (I, nI, avlen, &Mark, &Mark_size,
-            &Inext, &Inext_size, &nduplicates, Werk)) ;
-        ASSERT (Mark != NULL) ;
+        GB_OK (GB_I_inverse (I, I_is_32, nI, avlen, &Ihead, &Ihead_size,
+            &Inext, &Inext_size, &Ihead_is_32, &nduplicates, Werk)) ;
+        ASSERT (Ihead != NULL) ;
         ASSERT (Inext != NULL) ;
     }
 
@@ -228,19 +269,12 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
         // construct a single coarse task that computes all of C
         TaskList [0].kfirst = 0 ;
         TaskList [0].klast  = Cnvec-1 ;
+        ntasks = (Cnvec == 0) ? 0 : 1 ;
+        nthreads = 1 ;
 
         // free workspace and return result
         GB_FREE_WORKSPACE ;
-        (*p_TaskList   ) = TaskList ;
-        (*p_TaskList_size) = TaskList_size ;
-        (*p_ntasks     ) = (Cnvec == 0) ? 0 : 1 ;
-        (*p_nthreads   ) = 1 ;
-        (*p_post_sort  ) = false ;
-        (*p_Mark       ) = Mark ;
-        (*p_Mark_size  ) = Mark_size ;
-        (*p_Inext      ) = Inext ;
-        (*p_Inext_size ) = Inext_size ;
-        (*p_nduplicates) = nduplicates ;
+        GB_RETURN_RESULTS ;
         return (GrB_SUCCESS) ;
     }
 
@@ -255,13 +289,12 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    GB_p_slice (Coarse, Cwork, Cnvec, ntasks1, false) ;
+    GB_p_slice (Coarse, Cwork, false, Cnvec, ntasks1, false) ;
 
     //--------------------------------------------------------------------------
     // construct all tasks, both coarse and fine
     //--------------------------------------------------------------------------
 
-    int ntasks = 0 ;
     bool I_has_duplicates = (nduplicates > 0) ;
 
     for (int t = 0 ; t < ntasks1 ; t++)
@@ -366,8 +399,8 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
                 // are sliced (of size alen).  Three methods (1, 2, and 6)
                 // iterate across all entries in I instead (of size nI).
 
-                int64_t pA     = Ap_start [k] ;
-                int64_t pA_end = Ap_end   [k] ;
+                int64_t pA     = GB_IGET (Ap_start, k) ;
+                int64_t pA_end = GB_IGET (Ap_end  , k) ;
                 int64_t alen = pA_end - pA ;      // nnz (A (imin:imax,j))
 
                 int method = GB_subref_method (alen, avlen, Ikind, nI,
@@ -438,7 +471,8 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
                         TaskList [ntasks].pM_end = -1 ;
 
                         // flag the task that does the post sort
-                        TaskList [ntasks].len = (tfine == 0 && method == 10) ;
+                        bool do_post_sort = (tfine == 0 && method == 10) ;
+                        TaskList [ntasks].len = do_post_sort ;
                         ntasks++ ;
                     }
                 }
@@ -453,16 +487,7 @@ GrB_Info GB_subref_slice    // phase 1 of GB_subref
     //--------------------------------------------------------------------------
 
     GB_FREE_WORKSPACE ;
-    (*p_TaskList   ) = TaskList ;
-    (*p_TaskList_size) = TaskList_size ;
-    (*p_ntasks     ) = ntasks ;
-    (*p_nthreads   ) = nthreads ;
-    (*p_post_sort  ) = post_sort ;
-    (*p_Mark       ) = Mark ;
-    (*p_Mark_size  ) = Mark_size ;
-    (*p_Inext      ) = Inext ;
-    (*p_Inext_size ) = Inext_size ;
-    (*p_nduplicates) = nduplicates ;
+    GB_RETURN_RESULTS ;
     return (GrB_SUCCESS) ;
 }
 

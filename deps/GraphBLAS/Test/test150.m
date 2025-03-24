@@ -1,7 +1,7 @@
 function test150
 %TEST150 test GrB_mxm with typecasting and zombies (dot3 and saxpy)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test150: ------- GrB_mxm with typecasting and zombies (dot3)\n') ;

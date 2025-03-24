@@ -2,7 +2,7 @@
 // GB_mex_test37: index binary op tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,8 +32,8 @@ bool isequal (GrB_Matrix C1, GrB_Matrix C2)
     int32_t s ;
     OK (GrB_Matrix_get_INT32 (C1, &s, GrB_STORAGE_ORIENTATION_HINT)) ;
     OK (GrB_Matrix_set_INT32 (C2,  s, GrB_STORAGE_ORIENTATION_HINT)) ;
-    OK (GrB_Matrix_get_INT32 (C1, &s, (GrB_Field) GxB_SPARSITY_STATUS)) ;
-    OK (GrB_Matrix_set_INT32 (C2,  s, (GrB_Field) GxB_SPARSITY_CONTROL)) ;
+    OK (GrB_Matrix_get_INT32 (C1, &s, GxB_SPARSITY_STATUS)) ;
+    OK (GrB_Matrix_set_INT32 (C2,  s, GxB_SPARSITY_CONTROL)) ;
     OK (GrB_Matrix_wait (C1, GrB_MATERIALIZE)) ;
     OK (GrB_Matrix_wait (C2, GrB_MATERIALIZE)) ;
     // check if C1 and C2 are equal
@@ -43,7 +43,7 @@ bool isequal (GrB_Matrix C1, GrB_Matrix C2)
         printf ("\n=========================================\n") ;
         printf ("matrices differ!\n") ;
         printf ("\n=========================================\n") ;
-        GrB_Index nvals = 0, nrows = 0, ncols = 0 ;
+        uint64_t nvals = 0, nrows = 0, ncols = 0 ;
         OK (GrB_Matrix_nrows (&nrows, C1)) ;
         OK (GrB_Matrix_ncols (&ncols, C1)) ;
         OK (GrB_Matrix_new (&D, GrB_FP64, nrows, ncols)) ;
@@ -63,22 +63,22 @@ bool isequal (GrB_Matrix C1, GrB_Matrix C2)
 //------------------------------------------------------------------------------
 
 void test37_idxbinop (double *z,
-    const double *x, GrB_Index ix, GrB_Index jx,
-    const double *y, GrB_Index iy, GrB_Index jy,
+    const double *x, uint64_t ix, uint64_t jx,
+    const double *y, uint64_t iy, uint64_t jy,
     const double *theta) ;
 
 void test37_idxbinop (double *z,
-    const double *x, GrB_Index ix, GrB_Index jx,
-    const double *y, GrB_Index iy, GrB_Index jy,
+    const double *x, uint64_t ix, uint64_t jx,
+    const double *y, uint64_t iy, uint64_t jy,
     const double *theta)
 {
     (*z) = (*x) + 2*(*y) - 42*ix + jx + 3*iy + 1000*jy - (*theta) ;
 }
 
-#define TEST37_IDXBINOP                                                     \
+#define TEST37_IDXBINOP_DEFN                                                \
 "void test37_idxbinop (double *z,                                       \n" \
-"    const double *x, GrB_Index ix, GrB_Index jx,                       \n" \
-"    const double *y, GrB_Index iy, GrB_Index jy,                       \n" \
+"    const double *x, uint64_t ix, uint64_t jx,                         \n" \
+"    const double *y, uint64_t iy, uint64_t jy,                         \n" \
 "    const double *theta)                                               \n" \
 "{                                                                      \n" \
 "    (*z) = (*x) + 2*(*y) - 42*ix + jx + 3*iy + 1000*jy - (*theta) ;    \n" \
@@ -137,11 +137,11 @@ GrB_Info ewise
     int8_t *Ab = NULL, *Bb = NULL, *Tb = NULL ;
     double *Ax = NULL, *Bx = NULL, *Tx = NULL ;
     GrB_Matrix T = NULL, C = NULL, a = NULL, b = NULL ;
-    GrB_Index Ab_size = 0, Ax_size = 0, A_nvals = 0,
-              Bb_size = 0, Bx_size = 0, B_nvals = 0,
-              Tb_size = 0, Tx_size = 0, T_nvals = 0 ;
+    uint64_t Ab_size = 0, Ax_size = 0, A_nvals = 0,
+             Bb_size = 0, Bx_size = 0, B_nvals = 0,
+             Tb_size = 0, Tx_size = 0, T_nvals = 0 ;
     void (* free_function) (void *) = NULL ;
-    GrB_Index n = 0 ;
+    uint64_t n = 0 ;
     (*C_handle) = NULL ;
 
     //--------------------------------------------------------------------------
@@ -164,18 +164,18 @@ GrB_Info ewise
     OK (GrB_transpose (b, NULL, NULL, b, NULL)) ;
 
     // extract a in bitmap CSC format
-    OK (GxB_Matrix_unpack_BitmapC (a, &Ab, &Ax, &Ab_size, &Ax_size,
+    OK (GxB_Matrix_unpack_BitmapC (a, &Ab, (void **) &Ax, &Ab_size, &Ax_size,
         NULL, &A_nvals, NULL)) ;
     GrB_Matrix_free (&a) ;
 
     // extract b in bitmap CSC format
-    OK (GxB_Matrix_unpack_BitmapC (b, &Bb, &Bx, &Bb_size, &Bx_size,
+    OK (GxB_Matrix_unpack_BitmapC (b, &Bb, (void **) &Bx, &Bb_size, &Bx_size,
         NULL, &B_nvals, NULL)) ;
     GrB_Matrix_free (&b) ;
 
     // create T and extract in bitmap CSC format
     OK (GrB_Matrix_new (&T, GrB_FP64, n, n)) ;
-    OK (GxB_Matrix_unpack_BitmapC (T, &Tb, &Tx, &Tb_size, &Tx_size,
+    OK (GxB_Matrix_unpack_BitmapC (T, &Tb, (void **) &Tx, &Tb_size, &Tx_size,
         NULL, &T_nvals, NULL)) ;
 
     //--------------------------------------------------------------------------
@@ -189,9 +189,9 @@ GrB_Info ewise
 
     T_nvals = 0 ;
 
-    for (GrB_Index i = 0 ; i < n ; i++)
+    for (uint64_t i = 0 ; i < n ; i++)
     {
-        for (GrB_Index j = 0 ; j < n ; j++)
+        for (uint64_t j = 0 ; j < n ; j++)
         {
             int64_t p = i + j*n ;
 
@@ -251,7 +251,7 @@ GrB_Info ewise
     }
 
     // pack T in bitmap CSC format
-    OK (GxB_Matrix_pack_BitmapC (T, &Tb, &Tx, Tb_size, Tx_size,
+    OK (GxB_Matrix_pack_BitmapC (T, &Tb, (void **) &Tx, Tb_size, Tx_size,
         false, T_nvals, NULL)) ;
 
     //--------------------------------------------------------------------------
@@ -262,7 +262,7 @@ GrB_Info ewise
     {
         // C<M> = T
         OK (GrB_Matrix_new (&C, GrB_FP64, n, n)) ;
-        OK (GrB_Matrix_assign (C, M, NULL, T, GrB_ALL, n, GrB_ALL, n,
+        OK (GrB_Matrix_assign_(C, M, NULL, T, GrB_ALL, n, GrB_ALL, n,
             GrB_DESC_R)) ;
     }
     else
@@ -382,7 +382,7 @@ void mexFunction
     OK (GxB_IndexBinaryOp_new (&Iop,
         (GxB_index_binary_function) test37_idxbinop,
         GrB_FP64, GrB_FP64, GrB_FP64, GrB_FP64,
-        "test37_idxbinop", TEST37_IDXBINOP)) ;
+        "test37_idxbinop", TEST37_IDXBINOP_DEFN)) ;
 
     OK (GxB_IndexBinaryOp_set_String (Iop, "test37 idx binop", GrB_NAME)) ;
     OK (GxB_print (Iop, 5)) ;
@@ -395,7 +395,7 @@ void mexFunction
 
     char theta_type_name [256] ;
     theta_type_name [0] = '\0' ;
-    OK (GxB_IndexBinaryOp_get_String (Iop, &theta_type_name,
+    OK (GxB_IndexBinaryOp_get_String (Iop, theta_type_name,
         GxB_THETA_TYPE_STRING)) ;
     CHECK (strcmp (theta_type_name, "GrB_FP64") == 0)  ;
 
@@ -438,7 +438,7 @@ void mexFunction
     CHECK (theta_type_namelen == strlen ("GrB_FP64") + 1) ;
 
     theta_type_name [0] = '\0' ;
-    OK (GrB_BinaryOp_get_String (Bop, &theta_type_name,
+    OK (GrB_BinaryOp_get_String (Bop, theta_type_name,
         GxB_THETA_TYPE_STRING)) ;
     CHECK (strcmp (theta_type_name, "GrB_FP64") == 0)  ;
 
@@ -451,8 +451,7 @@ void mexFunction
     OK (GrB_Matrix_dup (&A2, A)) ;
     OK (GrB_Matrix_dup (&M, A)) ;
 
-    OK (GrB_Matrix_set_INT32 (M, GxB_SPARSE,
-        (GrB_Field) GxB_SPARSITY_CONTROL)) ;
+    OK (GrB_Matrix_set_INT32 (M, GxB_SPARSE, GxB_SPARSITY_CONTROL)) ;
 
     //--------------------------------------------------------------------------
     // create the expected results
@@ -487,12 +486,12 @@ void mexFunction
                                 // turn on/off the JIT
                                 OK (GrB_Global_set_INT32 (GrB_GLOBAL,
                                     jit ? GxB_JIT_ON : GxB_JIT_OFF,
-                                    (GrB_Field) GxB_JIT_C_CONTROL)) ;
+                                    GxB_JIT_C_CONTROL)) ;
 
                                 // change A sparsity
                                 OK (GrB_Matrix_set_INT32 (A,
                                     a1_sparsity ? GxB_SPARSE : GxB_BITMAP,
-                                    (GrB_Field) GxB_SPARSITY_CONTROL)) ;
+                                    GxB_SPARSITY_CONTROL)) ;
 
                                 // change A storage orientation
                                 OK (GrB_Matrix_set_INT32 (A,
@@ -518,7 +517,7 @@ void mexFunction
                                 // change A sparsity again
                                 OK (GrB_Matrix_set_INT32 (A2,
                                     a2_sparsity ? GxB_SPARSE : GxB_BITMAP,
-                                    (GrB_Field) GxB_SPARSITY_CONTROL)) ;
+                                    GxB_SPARSITY_CONTROL)) ;
 
                                 // change A storage again
                                 OK (GrB_Matrix_set_INT32 (A,
@@ -582,8 +581,7 @@ void mexFunction
     //------------------------------------------------------------------------
 
     // turn on the JIT
-    OK (GrB_Global_set_INT32 (GrB_GLOBAL, GxB_JIT_ON,
-        (GrB_Field) GxB_JIT_C_CONTROL)) ;
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, GxB_JIT_ON, GxB_JIT_C_CONTROL)) ;
 
     int save_jit = 0, save_burble = 0 ;
     OK (GxB_get (GxB_JIT_C_CONTROL, &save_jit)) ;
@@ -592,7 +590,7 @@ void mexFunction
     printf ("\nerror handling tests: JIT is %d\n", save_jit) ;
 
     expected = GrB_INVALID_OBJECT ;
-    void *p = Bop->theta_type = NULL ;
+    void *p = Bop->theta_type ;
     Bop->theta_type = NULL ;
     ERR (GB_BinaryOp_check (Bop, "Bop: bad theta_type", 5, stdout)) ;
     Bop->theta_type = p ;
@@ -644,7 +642,7 @@ void mexFunction
     OK (GrB_Type_new (&Crud_Type, 4)) ;
     OK (GrB_Scalar_new (&Crud_Scalar, Crud_Type)) ;
     ERR (GxB_BinaryOp_new_IndexOp (&Crud_Bop, Iop, Crud_Scalar)) ;
-    ERR (GrB_Matrix_apply (A, NULL, NULL, Bop, A, NULL)) ;
+    ERR (GrB_Matrix_apply (A, NULL, NULL, (GrB_UnaryOp) Bop, A, NULL)) ;
 
     //------------------------------------------------------------------------
     // JIT testing
@@ -652,10 +650,10 @@ void mexFunction
 
     printf ("\n\n-------------- lots of compiler errors expected here:\n") ;
 
-    #define CRUD_IDXBINOP                               \
+    #define CRUD_IDXBINOP_DEFN                          \
     "void crud_idxbinop (double *z, "                   \
-    " const double *x, GrB_Index ix, GrB_Index jx, "    \
-    " const double *y, GrB_Index iy, GrB_Index jy, "    \
+    " const double *x, uint64_t ix, uint64_t jx, "      \
+    " const double *y, uint64_t iy, uint64_t jy, "      \
     " const double *theta) "                            \
     "{ "                                                \
     "    compiler error occurs here "                   \
@@ -673,7 +671,7 @@ void mexFunction
     expected = GxB_JIT_ERROR ;
     ERR (GxB_IndexBinaryOp_new (&Crud_Iop, NULL,
         GrB_FP64, GrB_FP64, GrB_FP64, GrB_FP64,
-        "crud_idxbinop", CRUD_IDXBINOP)) ;
+        "crud_idxbinop", CRUD_IDXBINOP_DEFN)) ;
 
     // restore the JIT control and the burble
     OK (GxB_set (GxB_JIT_C_CONTROL, save_jit)) ;

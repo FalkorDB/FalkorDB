@@ -7,7 +7,7 @@ function gbtest86
 % C = GrB.mxm (C, M, semiring, A, B, desc)
 % C = GrB.mxm (C, M, accum, semiring, A, B, desc)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 rng ('default')

@@ -1,0 +1,488 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Examples} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{examples}
+
+Several examples of how to use GraphBLAS are listed below.  They all
+appear in the \verb'Demo' folder of SuiteSparse:GraphBLAS.  Programs in
+the \verb'Demo' folder are meant as simple examples; for the fastest methods,
+see LAgraph (Section~\ref{lagraph}).
+
+\begin{enumerate}
+\item creating a random matrix
+\item creating a finite-element matrix
+\item reading a matrix from a file
+\item complex numbers as a user-defined type
+\item matrix import/export
+\end{enumerate}
+
+Additional examples appear in the newly created LAGraph project, currently in
+progress.
+
+%-------------------------------------------------------------------------------
+\subsection{LAGraph}
+%-------------------------------------------------------------------------------
+\label{lagraph}
+
+The LAGraph project is a community-wide effort to create graph algorithms based
+on GraphBLAS (any implementation of the API, not just SuiteSparse: GraphBLAS).
+Some of the algorithms and utilities in LAGraph are listed in the table below.
+Many additional algorithms are planned.  Refer to
+\url{https://github.com/GraphBLAS/LAGraph} for a current list of algorithms. All
+functions in the \verb'Demo/' folder in SuiteSparse:GraphBLAS will eventually
+be translated into algorithms or utilities for LAGraph, and then removed
+from \verb'GraphBLAS/Demo'.
+
+To use LAGraph with SuiteSparse:GraphBLAS, place the two folders \verb'LAGraph'
+and \verb'GraphBLAS' in the same parent directory.  This allows the
+\verb'cmake' script in LAGraph to find the copy of GraphBLAS.  Alternatively,
+the GraphBLAS source could be placed anywhere, as long as
+\verb'sudo make install' is performed.
+
+%-------------------------------------------------------------------------------
+\subsection{Creating a random matrix}
+%-------------------------------------------------------------------------------
+\label{random}
+
+The \verb'random_matrix' function in the \verb'Demo' folder generates a random
+matrix with a specified dimension and number of entries, either symmetric or
+unsymmetric, and with or without self-edges (diagonal entries in the matrix).
+It relies on \verb'simple_rand*' functions in the \verb'Demo' folder to provide
+a portable random number generator that creates the same sequence on any
+computer and operating system.
+
+\verb'random_matrix' can use one of two methods: \verb'GrB_Matrix_setElement'
+and \verb'GrB_Matrix_build'.  The former method is very simple to use:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Matrix_new (&A, GrB_FP64, nrows, ncols) ;
+    for (int64_t k = 0 ; k < ntuples ; k++)
+    {
+        GrB_Index i = simple_rand_i ( ) % nrows ;
+        GrB_Index j = simple_rand_i ( ) % ncols ;
+        if (no_self_edges && (i == j)) continue ;
+        double x = simple_rand_x ( ) ;
+        // A (i,j) = x
+        GrB_Matrix_setElement (A, x, i, j) ;
+        if (make_symmetric)
+        {
+            // A (j,i) = x
+            GrB_Matrix_setElement (A, x, j, i) ;
+        }
+    } \end{verbatim}}
+
+The above code can generate a million-by-million sparse \verb'double' matrix
+with 200 million entries in 66 seconds (6 seconds of which is the time to
+generate the random \verb'i', \verb'j', and \verb'x'), including the time
+to finish all pending computations.  The user application does not need to
+create a list of all the tuples, nor does it need to know how many entries will
+appear in the matrix.  It just starts from an empty matrix and adds them one at
+a time in arbitrary order.  GraphBLAS handles the rest.  This method is not
+feasible in MATLAB.
+
+The next method uses \verb'GrB_Matrix_build'.  It is more complex to use than
+\verb'setElement' since it requires the user application to allocate and fill
+the tuple lists, and it requires knowledge of how many entries will appear in
+the matrix, or at least a good upper bound, before the matrix is constructed.
+It is slightly faster, creating the same matrix in 60 seconds, 51 seconds
+of which is spent in \verb'GrB_Matrix_build'.
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Index *I, *J ;
+    double *X ;
+    int64_t s = ((make_symmetric) ? 2 : 1) * nedges + 1 ;
+    I = malloc (s * sizeof (GrB_Index)) ;
+    J = malloc (s * sizeof (GrB_Index)) ;
+    X = malloc (s * sizeof (double   )) ;
+    if (I == NULL || J == NULL || X == NULL)
+    {
+        // out of memory
+        if (I != NULL) free (I) ;
+        if (J != NULL) free (J) ;
+        if (X != NULL) free (X) ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
+    int64_t ntuples = 0 ;
+    for (int64_t k = 0 ; k < nedges ; k++)
+    {
+        GrB_Index i = simple_rand_i ( ) % nrows ;
+        GrB_Index j = simple_rand_i ( ) % ncols ;
+        if (no_self_edges && (i == j)) continue ;
+        double x = simple_rand_x ( ) ;
+        // A (i,j) = x
+        I [ntuples] = i ;
+        J [ntuples] = j ;
+        X [ntuples] = x ;
+        ntuples++ ;
+        if (make_symmetric)
+        {
+            // A (j,i) = x
+            I [ntuples] = j ;
+            J [ntuples] = i ;
+            X [ntuples] = x ;
+            ntuples++ ;
+        }
+    }
+    GrB_Matrix_build (A, I, J, X, ntuples, GrB_SECOND_FP64) ; \end{verbatim}}
+
+The equivalent \verb'sprandsym' function in MATLAB takes 150 seconds, but
+\verb'sprandsym' uses a much higher-quality random number generator to create
+the tuples \verb'[I,J,X]'.  Considering just the time for
+\verb'sparse(I,J,X,n,n)' in \verb'sprandsym' (equivalent to
+\verb'GrB_Matrix_build'), the time is 70 seconds.  That is, each of these three
+methods, \verb'setElement' and \verb'build' in SuiteSparse:GraphBLAS, and
+\verb'sparse' in MATLAB, are equally fast.
+
+%-------------------------------------------------------------------------------
+\subsection{Creating a finite-element matrix}
+%-------------------------------------------------------------------------------
+\label{fem}
+
+Suppose a finite-element matrix is being constructed, with \verb'k=40,000'
+finite-element matrices, each of size \verb'8'-by-\verb'8'.  The following
+operations (in pseudo-MATLAB notation) are very efficient in
+SuiteSparse:GraphBLAS.
+
+    {\footnotesize
+    \begin{verbatim}
+    A = sparse (m,n) ; % create an empty n-by-n sparse GraphBLAS matrix
+    for i = 1:k
+        construct a 8-by-8 sparse or dense finite-element F
+        I and J define where the matrix F is to be added:
+        I = a list of 8 row indices
+        J = a list of 8 column indices
+        % using GrB_assign, with the 'plus' accum operator:
+        A (I,J) = A (I,J) + F
+    end \end{verbatim}}
+
+If this were done in MATLAB or in GraphBLAS with blocking mode enabled, the
+computations would be extremely slow.  A far better approach is to construct a
+list of tuples \verb'[I,J,X]' and to use \verb'sparse(I,J,X,n,n)'. This is
+identical to creating the same list of tuples in GraphBLAS and using the
+\verb'GrB_Matrix_build', which is equally fast.
+
+In SuiteSparse:GraphBLAS, the performance of both methods is essentially
+identical, and roughly as fast as \verb'sparse' in MATLAB.  Inside
+SuiteSparse:GraphBLAS, \verb'GrB_assign' is doing the same thing. When
+performing \verb'A(I,J)=A(I,J)+F', if it finds that it cannot quickly insert an
+update into the \verb'A' matrix, it creates a list of pending tuples to be
+assembled later on.   When the matrix is ready for use in a subsequent
+GraphBLAS operation (one that normally cannot use a matrix with pending
+computations), the tuples are assembled all at once via
+\verb'GrB_Matrix_build'.
+
+GraphBLAS operations on other matrices have no effect on when the pending
+updates of a matrix are completed.  Thus, any GraphBLAS method or operation can
+be used to construct the \verb'F' matrix in the example above, without
+affecting when the pending updates to \verb'A' are completed.
+
+The MATLAB \verb'wathen.m' script is part of Higham's \verb'gallery' of
+matrices \cite{Higham}.  It creates a finite-element matrix with random
+coefficients for a 2D mesh of size \verb'nx'-by-\verb'ny', a matrix formulation
+by Wathen \cite{Wathen}.  The pattern of the matrix is fixed; just the values
+are randomized.  The GraphBLAS equivalent can use either
+\verb'GrB_Matrix_build', or \verb'GrB_assign'.  Both methods have good
+performance.  The \verb'GrB_Matrix_build' version below is about 15\% to 20\%
+faster than the MATLAB \verb'wathen.m' function, regardless of the problem
+size.  It uses the identical algorithm as \verb'wathen.m'.
+
+    {\footnotesize
+    \begin{verbatim}
+    int64_t ntriplets = nx*ny*64 ;
+    I = malloc (ntriplets * sizeof (int64_t)) ;
+    J = malloc (ntriplets * sizeof (int64_t)) ;
+    X = malloc (ntriplets * sizeof (double )) ;
+    if (I == NULL || J == NULL || X == NULL)
+    {
+        FREE_ALL ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
+    ntriplets = 0 ;
+    for (int j = 1 ; j <= ny ; j++)
+    {
+        for (int i = 1 ; i <= nx ; i++)
+        {
+            nn [0] = 3*j*nx + 2*i + 2*j + 1 ;
+            nn [1] = nn [0] - 1 ;
+            nn [2] = nn [1] - 1 ;
+            nn [3] = (3*j-1)*nx + 2*j + i - 1 ;
+            nn [4] = 3*(j-1)*nx + 2*i + 2*j - 3 ;
+            nn [5] = nn [4] + 1 ;
+            nn [6] = nn [5] + 1 ;
+            nn [7] = nn [3] + 1 ;
+            for (int krow = 0 ; krow < 8 ; krow++) nn [krow]-- ;
+            for (int krow = 0 ; krow < 8 ; krow++)
+            {
+                for (int kcol = 0 ; kcol < 8 ; kcol++)
+                {
+                    I [ntriplets] = nn [krow] ;
+                    J [ntriplets] = nn [kcol] ;
+                    X [ntriplets] = em (krow,kcol) ;
+                    ntriplets++ ;
+                }
+            }
+        }
+    }
+    // A = sparse (I,J,X,n,n) ;
+    GrB_Matrix_build (A, I, J, X, ntriplets, GrB_PLUS_FP64) ; \end{verbatim}}
+
+The \verb'GrB_assign' version has the advantage of not requiring the
+user application to construct the tuple list, and is almost as fast as using
+\verb'GrB_Matrix_build'.  The code is more elegant than either the MATLAB
+\verb'wathen.m' function or its GraphBLAS equivalent above.  Its performance is
+comparable with the other two methods, but slightly slower, being about 5\%
+slower than the MATLAB \verb'wathen', and 20\% slower than the GraphBLAS
+method above.
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Matrix_new (&F, GrB_FP64, 8, 8) ;
+    for (int j = 1 ; j <= ny ; j++)
+    {
+        for (int i = 1 ; i <= nx ; i++)
+        {
+            nn [0] = 3*j*nx + 2*i + 2*j + 1 ;
+            nn [1] = nn [0] - 1 ;
+            nn [2] = nn [1] - 1 ;
+            nn [3] = (3*j-1)*nx + 2*j + i - 1 ;
+            nn [4] = 3*(j-1)*nx + 2*i + 2*j - 3 ;
+            nn [5] = nn [4] + 1 ;
+            nn [6] = nn [5] + 1 ;
+            nn [7] = nn [3] + 1 ;
+            for (int krow = 0 ; krow < 8 ; krow++) nn [krow]-- ;
+            for (int krow = 0 ; krow < 8 ; krow++)
+            {
+                for (int kcol = 0 ; kcol < 8 ; kcol++)
+                {
+                    // F (krow,kcol) = em (krow, kcol)
+                    GrB_Matrix_setElement (F, em (krow,kcol), krow, kcol) ;
+                }
+            }
+            // A (nn,nn) += F
+            GrB_assign (A, NULL, GrB_PLUS_FP64, F, nn, 8, nn, 8, NULL) ;
+        }
+    } \end{verbatim}}
+
+Since there is no \verb'Mask', and since \verb'GrB_REPLACE' is not used, the call
+to \verb'GrB_assign' in the example above is identical to \verb'GxB_subassign'.
+Either one can be used, and their performance would be identical.
+
+Refer to the \verb'wathen.c' function in the \verb'Demo' folder, which
+uses GraphBLAS to implement the two methods above, and two additional ones.
+
+%-------------------------------------------------------------------------------
+\subsection{Reading a matrix from a file}
+%-------------------------------------------------------------------------------
+\label{read}
+
+See also \verb'LAGraph_mmread' and \verb'LAGraph_mmwrite', which
+can read and write any matrix in Matrix Market format, and
+\verb'LAGraph_binread' and \verb'LAGraph_binwrite', which read/write a matrix
+from a binary file.  The binary file I/O functions are much faster than
+the \verb'read_matrix' function described here, and also much faster than
+\verb'LAGraph_mmread' and \verb'LAGraph_mmwrite'.
+
+The \verb'read_matrix' function in the \verb'Demo' reads in a triplet matrix
+from a file, one line per entry, and then uses \verb'GrB_Matrix_build' to
+create the matrix.  It creates a second copy with \verb'GrB_Matrix_setElement',
+just to test that method and compare the run times.
+Section~\ref{random} has already compared
+\verb'build' versus \verb'setElement'.
+
+The function can return the matrix as-is, which may be rectangular or
+unsymmetric.  If an input parameter is set to make the matrix symmetric,
+\verb'read_matrix' computes \verb"A=(A+A')/2" if \verb'A' is square (turning
+all directed edges into undirected ones).  If \verb'A' is rectangular, it
+creates a bipartite graph, which is the same as the augmented matrix,
+\verb"A = [0 A ; A' 0]".
+If \verb'C' is an \verb'n'-by-\verb'n' matrix, then \verb"C=(C+C')/2" can be
+computed as follows in GraphBLAS, (the \verb'scale2' function divides an entry
+by 2):
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Descriptor_new (&dt2) ;
+    GrB_set (dt2, GrB_TRAN, GrB_INP1) ;
+    GrB_Matrix_new (&A, GrB_FP64, n, n) ;
+    GrB_eWiseAdd (A, NULL, NULL, GrB_PLUS_FP64, C, C, dt2) ;    // A=C+C'
+    GrB_free (&C) ;
+    GrB_Matrix_new (&C, GrB_FP64, n, n) ;
+    GrB_UnaryOp_new (&scale2_op, scale2, GrB_FP64, GrB_FP64) ;
+    GrB_apply (C, NULL, NULL, scale2_op, A, NULL) ;             // C=A/2
+    GrB_free (&A) ;
+    GrB_free (&scale2_op) ; \end{verbatim}}
+
+This is of course not nearly as elegant as \verb"A=(A+A')/2" in MATLAB, but
+with minor changes it can work on any type and use any built-in operators
+instead of \verb'PLUS', or it can use any user-defined operators and types.
+The above code in SuiteSparse:GraphBLAS takes 0.60 seconds for the
+\verb'Freescale2' matrix, slightly slower than MATLAB (0.55 seconds).
+
+Constructing the augmented system is more complicated using the GraphBLAS C API
+Specification since it does not yet have a simple way of specifying a range of
+row and column indices, as in \verb'A(10:20,30:50)' in MATLAB (\verb'GxB_RANGE'
+is a SuiteSparse:GraphBLAS extension that is not in the Specification).  Using
+the C API in the Specification, the application must instead build a list of
+indices first, \verb'I=[10, 11' \verb'...' \verb'20]'.
+
+Thus, to compute the MATLAB equivalent of \verb"A = [0 A ; A' 0]", index lists
+\verb'I' and \verb'J' must first be constructed:
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    int64_t n = nrows + ncols ;
+    I = malloc (nrows * sizeof (int64_t)) ;
+    J = malloc (ncols * sizeof (int64_t)) ;
+    // I = 0:nrows-1
+    // J = nrows:n-1
+    if (I == NULL || J == NULL)
+    {
+        if (I != NULL) free (I) ;
+        if (J != NULL) free (J) ;
+        return (GrB_OUT_OF_MEMORY) ;
+    }
+    for (int64_t k = 0 ; k < nrows ; k++) I [k] = k ;
+    for (int64_t k = 0 ; k < ncols ; k++) J [k] = k + nrows ; \end{verbatim}}
+
+Once the index lists are generated, however, the resulting GraphBLAS operations
+are fairly straightforward, computing \verb"A=[0 C ; C' 0]".
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Descriptor_new (&dt1) ;
+    GrB_set (dt1, GrB_TRAN, GrB_INP0) ;
+    GrB_Matrix_new (&A, GrB_FP64, n, n) ;
+    // A (nrows:n-1, 0:nrows-1) = C'
+    GrB_assign (A, NULL, NULL, C, J, ncols, I, nrows, dt1) ;
+    // A (0:nrows-1, nrows:n-1) = C
+    GrB_assign (A, NULL, NULL, C, I, nrows, J, ncols, NULL) ; \end{verbatim}}
+
+This takes 1.38 seconds for the \verb'Freescale2' matrix, almost as fast as \newline
+\verb"A=[sparse(m,m) C ; C' sparse(n,n)]" in MATLAB (1.25 seconds).
+The \verb'GxB_Matrix_concat' function would be faster still (this example
+was written prior to \verb'GxB_Matrix_concat' was added to SuiteSparse:GraphBLAS).
+
+Both calls to \verb'GrB_assign' use no accumulator, so the second one
+causes the partial matrix \verb"A=[0 0 ; C' 0]" to be built first, followed by
+the final build of \verb"A=[0 C ; C' 0]".  A better method, but not an obvious
+one, is to use the \verb'GrB_FIRST_FP64' accumulator for both assignments.  An
+accumulator enables SuiteSparse:GraphBLAS to determine that that entries
+created by the first assignment cannot be deleted by the second, and thus it
+need not force completion of the pending updates prior to the second
+assignment.
+
+SuiteSparse:GraphBLAS also adds a \verb'GxB_RANGE' mechanism that mimics
+the MATLAB colon notation.  This speeds up the method and simplifies the
+code the user needs to write to compute \verb"A=[0 C ; C' 0]":
+
+    \vspace{-0.05in}
+    {\footnotesize
+    \begin{verbatim}
+    int64_t n = nrows + ncols ;
+    GrB_Matrix_new (&A, xtype, n, n) ;
+    GrB_Index I_range [3], J_range [3] ;
+    I_range [GxB_BEGIN] = 0 ;
+    I_range [GxB_END  ] = nrows-1 ;
+    J_range [GxB_BEGIN] = nrows ;
+    J_range [GxB_END  ] = ncols+nrows-1 ;
+    // A (nrows:n-1, 0:nrows-1) += C'
+    GrB_assign (A, NULL, GrB_FIRST_FP64, // or NULL,
+        C, J_range, GxB_RANGE, I_range, GxB_RANGE, dt1) ;
+    // A (0:nrows-1, nrows:n-1) += C
+    GrB_assign (A, NULL, GrB_FIRST_FP64, // or NULL,
+        C, I_range, GxB_RANGE, J_range, GxB_RANGE, NULL) ; \end{verbatim}}
+
+Any operator will suffice because it is not actually applied.  An operator is
+only applied to the set intersection, and the two assignments do not overlap.
+If an \verb'accum' operator is used, only the final matrix is built, and the
+time in GraphBLAS drops slightly to 1.25 seconds.  This is a very small
+improvement because in this particular case, SuiteSparse:GraphBLAS is able to
+detect that no sorting is required for the first build, and the second one is a
+simple concatenation.  In general, however, allowing GraphBLAS to postpone
+pending updates can lead to significant reductions in run time.
+
+%-------------------------------------------------------------------------------
+\subsection{User-defined types and operators}
+%-------------------------------------------------------------------------------
+\label{user}
+
+The \verb'Demo' folder contains two working examples of user-defined types,
+first discussed in Section~\ref{type_new}: \verb'double complex', and a
+user-defined \verb'typedef' called \verb'wildtype' with a \verb'struct'
+containing a string and a 4-by-4 \verb'float' matrix.
+
+{\bf Double Complex:}
+Prior to v3.3, GraphBLAS did not have a native complex type.  It now appears as
+the \verb'GxB_FC64' predefined type, but a complex type can also easily added
+as a user-defined type.  The \verb'Complex_init' function in the
+\verb'usercomplex.c' file in the \verb'Demo' folder creates the \verb'Complex'
+type based on the C11 \verb'double complex' type.
+It creates a full suite of operators that correspond to every
+built-in GraphBLAS operator, both binary and unary.  In addition, it
+creates the operators listed in the following table, where $D$ is
+\verb'double' and $C$ is \verb'Complex'.
+
+\vspace{0.1in}
+{\footnotesize
+\begin{tabular}{llll}
+\hline
+name                    & types             & MATLAB/Octave & description \\
+                        &                   & equivalent    & \\
+\hline
+\verb'Complex_complex'  & $D \times D \rightarrow C$ & \verb'z=complex(x,y)' & complex from real and imag. \\
+\hline
+\verb'Complex_conj'     & $C \rightarrow C$ & \verb'z=conj(x)'  & complex conjugate \\
+\verb'Complex_real'     & $C \rightarrow D$ & \verb'z=real(x)'  & real part \\
+\verb'Complex_imag'     & $C \rightarrow D$ & \verb'z=imag(x)'  & imaginary part \\
+\verb'Complex_angle'    & $C \rightarrow D$ & \verb'z=angle(x)' & phase angle \\
+\verb'Complex_complex_real'  & $D \rightarrow C$ & \verb'z=complex(x,0)' & real to complex real \\
+\verb'Complex_complex_imag'  & $D \rightarrow C$ & \verb'z=complex(0,x)' & real to complex imag. \\
+\hline
+\end{tabular}
+}
+
+The \verb'Complex_init' function creates two monoids (\verb'Complex_add_monoid'
+and \verb'Complex_times_monoid') and a semiring \verb'Complex_plus_times' that
+corresponds to the conventional linear algebra for complex matrices.  The
+include file \verb'usercomplex.h' in the \verb'Demo' folder is available so
+that this user-defined \verb'Complex' type can easily be imported into any
+other user application.  When the user application is done, the
+\verb'Complex_finalize' function frees the \verb'Complex' type and its
+operators, monoids, and semiring.
+NOTE: the \verb'Complex' type is not supported in this Demo in Microsoft
+Visual Studio.
+
+{\bf Struct-based:}
+In addition, the \verb'wildtype.c' program  creates a user-defined
+\verb'typedef' of a \verb'struct' containing a dense 4-by-4 \verb'float'
+matrix, and a 64-character string.  It constructs an additive monoid that adds
+two 4-by-4 dense matrices, and a multiplier operator that multiplies two 4-by-4
+matrices.  Each of these 4-by-4 matrices is treated by GraphBLAS as a
+``scalar'' value, and they can be manipulated in the same way any other
+GraphBLAS type can be manipulated. The purpose of this type is illustrate the
+endless possibilities of user-defined types and their use in GraphBLAS.
+
+%-------------------------------------------------------------------------------
+\subsection{User applications using OpenMP or other threading models}
+%-------------------------------------------------------------------------------
+\label{threads}
+
+An example demo program (\verb'context_demo') is included that illustrates how a
+multi-threaded user application can use GraphBLAS, where each user thread
+calls GraphBLAS simultaneously, with nested parallelism.
+
+GraphBLAS can also be combined with user applications that rely on MPI, the
+Intel TBB threading library, POSIX pthreads, Microsoft Windows threads, or any
+other threading library.  If GraphBLAS itself is compiled with OpenMP,
+it will be thread safe when combined with other libraries.
+See Section~\ref{omp_parallelism} for thread-safety issues that can occur
+if GraphBLAS is compiled without OpenMP.
+
+

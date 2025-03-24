@@ -2,7 +2,7 @@
 // gb_string_to_semiring: convert a string to a GraphBLAS semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -66,8 +66,7 @@ GrB_Semiring gb_string_to_semiring      // return a semiring from a string
     // get the add operator
     //--------------------------------------------------------------------------
 
-    GrB_Type add_type ;
-    OK (GxB_BinaryOp_ztype (&add_type, mult)) ;
+    GrB_Type add_type = gb_binaryop_ztype (mult) ;
     GrB_BinaryOp add = gb_string_and_type_to_binop_or_idxunop (add_name,
         add_type, false, NULL, NULL) ;
     CHECK_ERROR (add == NULL, "invalid semiring (unknown add operator)") ;

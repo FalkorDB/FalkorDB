@@ -2,7 +2,7 @@
 // GB_memset: parallel memset
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,6 +12,16 @@
 #include "GB.h"
 
 #define GB_MEM_CHUNK (1024*1024)
+
+#if 0
+    void GB_memset                  // parallel memset
+    (
+        void *dest,                 // destination
+        const int c,                // value to to set
+        size_t n,                   // # of bytes to set
+        int nthreads                // max # of threads to use
+    )
+#endif
 
 GB_CALLBACK_MEMSET_PROTO (GB_memset)
 {

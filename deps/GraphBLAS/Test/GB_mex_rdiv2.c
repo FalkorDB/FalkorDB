@@ -2,7 +2,7 @@
 // GB_mex_rdiv2: compute C=A*B with the rdiv2 operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,7 +40,7 @@ int64_t anrows = 0 ;
 int64_t ancols = 0 ;
 int64_t bnrows = 0 ;
 int64_t bncols = 0 ;
-GrB_Desc_Value AxB_method = GxB_DEFAULT ;
+int AxB_method = GxB_DEFAULT ;
 bool flipxy = false ;
 bool done_in_place = false ;
 double C_scalar = 0 ;
@@ -90,8 +90,8 @@ GrB_Info axb (GB_Werk Werk)
     if (do_in_place)
     {
         // construct the result matrix and fill it with the scalar
-        GrB_Index cnrows = anrows ;
-        GrB_Index cncols = bncols ;
+        uint64_t cnrows = anrows ;
+        uint64_t cncols = bncols ;
         info = GrB_Matrix_new (&C, GrB_FP64, cnrows, cncols) ;
         if (info != GrB_SUCCESS)
         {
@@ -110,8 +110,8 @@ GrB_Info axb (GB_Werk Werk)
         }
     }
 
-    MT = GB_clear_static_header (&MT_header) ;
-    T  = GB_clear_static_header (&T_header) ;
+    MT = GB_clear_matrix_header (&MT_header) ;
+    T  = GB_clear_matrix_header (&T_header) ;
 
     // C = A*B or C += A*B
     info = GB_AxB_meta (T, C,  // can be done in place if C != NULL
@@ -151,12 +151,9 @@ GrB_Info axb (GB_Werk Werk)
     {
         GrB_Matrix_free_(&C) ;
     }
-
     GrB_Matrix_free_(&T) ;
-
     GrB_BinaryOp_free_(&My_rdiv2) ;
     GrB_Semiring_free_(&My_plus_rdiv2) ;
-
     return (info) ;
 }
 
@@ -221,7 +218,7 @@ void mexFunction
     // 7083: dot
     // 7084: hash
     // 7085: saxpy
-    GET_SCALAR (4, GrB_Desc_Value, AxB_method, GxB_DEFAULT) ;
+    GET_SCALAR (4, int, AxB_method, GxB_DEFAULT) ;
 
     if (! ((AxB_method == GxB_DEFAULT) ||
         (AxB_method == GxB_AxB_GUSTAVSON) ||

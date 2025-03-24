@@ -10,7 +10,6 @@ GrB_Info GB_cuda_select_sparse_jit
     // output:
     GrB_Matrix C,
     // input:
-    const bool C_iso,
     const GrB_Matrix A,
     const bool flipij,
     const GB_void *ythunk,
@@ -20,11 +19,7 @@ GrB_Info GB_cuda_select_sparse_jit
     int32_t gridsz,
     int32_t blocksz
 )
-{ 
-    // in progress
-    return (GrB_NO_VALUE) ;
-
-#if 0
+{
 
     //--------------------------------------------------------------------------
     // encodify the problem
@@ -33,7 +28,7 @@ GrB_Info GB_cuda_select_sparse_jit
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_select (&encoding, &suffix,
-        GB_JIT_CUDA_KERNEL_SELECT_SPARSE, C_iso, false, op, flipij, A) ;
+        GB_JIT_CUDA_KERNEL_SELECT_SPARSE, C, op, flipij, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -51,6 +46,6 @@ GrB_Info GB_cuda_select_sparse_jit
     //--------------------------------------------------------------------------
 
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, A, ythunk, stream, gridsz, blocksz)) ;
-#endif
+    return (GB_jit_kernel (C, A, ythunk, stream, gridsz, blocksz,
+        &GB_callback)) ;
 }

@@ -21,7 +21,7 @@ function filename_used = save (C, filename)
 %
 % See also GrB.load, GrB/struct, GrB.serialize, GrB.deserialize.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % make sure C is a @GrB object

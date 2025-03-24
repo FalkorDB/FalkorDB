@@ -9,7 +9,7 @@ function C = GB_spec_Row_assign (C, Mask, accum, A, i, J, descriptor)
 %
 % This function does the same thing as GrB_Row_assign
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------

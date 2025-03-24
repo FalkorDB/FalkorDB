@@ -2,7 +2,7 @@
 // GB_accum_mask: accumulate results via the mask and accum operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,6 +44,7 @@
 // The descriptor affects how C and M are handled.  If the descriptor is
 // NULL, defaults are used.
 
+#include "ok/include/GB_ok.h"
 #define GB_FREE_ALL                 \
 {                                   \
     GB_Matrix_free (Thandle) ;      \
@@ -57,7 +58,6 @@
 #include "transpose/GB_transpose.h"
 #include "mask/GB_accum_mask.h"
 #include "assign/GB_bitmap_assign.h"
-#include "include/GB_unused.h"
 
 /* -----------------------------------------------------------------------------
 
@@ -191,10 +191,8 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
     if (C->is_csc != T->is_csc)
     { 
         // T can be jumbled.
-        ASSERT (GB_JUMBLED_OK (T)) ;
         GB_OK (GB_transpose_in_place (T, C->is_csc, Werk)) ;
         T_transposed = true ;
-        ASSERT (GB_JUMBLED_OK (T)) ;
         ASSERT_MATRIX_OK (T, "[T = transposed]", GB0) ;
     }
 
@@ -209,10 +207,10 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
             // remove zombies and pending tuples from M.  M can be jumbled.
             GB_MATRIX_WAIT_IF_PENDING_OR_ZOMBIES (M) ;
             ASSERT (GB_JUMBLED_OK (M)) ;
-            GB_CLEAR_STATIC_HEADER (MT, &MT_header) ;
+            GB_CLEAR_MATRIX_HEADER (MT, &MT_header) ;
             GB_OK (GB_transpose_cast (MT, GrB_BOOL, C->is_csc, M, Mask_struct,
                 Werk)) ;
-            ASSERT (MT->static_header || GBNSTATIC) ;
+            ASSERT (MT->header_size == 0 || GBNSTATIC) ;
             // use the transpose mask
             M = MT ;
             ASSERT (GB_JUMBLED_OK (M)) ;
@@ -338,8 +336,13 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
         //----------------------------------------------------------------------
 
         GB_OK (GB_subassign (C, C_replace, M, Mask_comp, Mask_struct,
-            false, accum, T, false, GrB_ALL, 0, GrB_ALL, 0,
-            false, NULL, GB_ignore_code, Werk)) ;
+            /* M_transpose: */ false, accum,
+            /* A: */ T, /* A_transpose: */ false,
+            /* Rows: */ GrB_ALL, false, 0,
+            /* Cols: */ GrB_ALL, false, 0,
+            /* scalar_expansion: */ false, /* scalar: */ NULL,
+            /* scalar type code: */ GB_ignore_code,
+            Werk)) ;
 
     }
     else
@@ -352,7 +355,7 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
         // see GB_spec_accum.m for a description of this step.  If C is empty,
         // then the accumulator can be ignored.
 
-        GB_CLEAR_STATIC_HEADER (Z, &Z_header) ;
+        GB_CLEAR_MATRIX_HEADER (Z, &Z_header) ;
 
         if (use_transplant)
         { 
@@ -365,10 +368,10 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
             // allocated by the transplant if needed.  Z has the same
             // hypersparsity as T.
 
-            info = GB_new (&Z, // sparse or hyper, existing header
-                C->type, C->vlen, C->vdim, GB_Ap_null, C->is_csc,
-                GB_sparsity (T), T->hyper_switch, T->plen) ;
-            GB_OK (info) ;
+            GB_OK (GB_new (&Z, // sparse or hyper, existing header
+                C->type, C->vlen, C->vdim, GB_ph_null, C->is_csc,
+                GB_sparsity (T), T->hyper_switch, T->plen,
+                T->p_is_32, T->j_is_32, T->i_is_32)) ;
 
             // Transplant T into Z, typecasting if needed, and free T.  This
             // may need to do a deep copy if T is shallow.  T is always freed
@@ -391,8 +394,8 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
             GB_MATRIX_WAIT (T) ;
 
             bool apply_mask ;
-            int Z_sparsity = GB_add_sparsity (&apply_mask, M, Mask_struct,
-                Mask_comp, C, T) ;
+            // int Z_sparsity =
+            GB_add_sparsity (&apply_mask, M, Mask_struct, Mask_comp, C, T) ;
 
             // whether or not GB_add chooses to exploit the mask, it must still
             // be used in GB_mask, below.  So ignore the mask_applied return
@@ -406,7 +409,7 @@ GrB_Info GB_accum_mask          // C<M> = accum (C,T)
 
         // T has been transplanted into Z or freed after Z=C+T
         ASSERT (*Thandle == NULL ||
-               (*Thandle != NULL && ((*Thandle)->static_header || GBNSTATIC))) ;
+            (*Thandle != NULL && ((*Thandle)->header_size == 0 || GBNSTATIC))) ;
 
         // C and Z have the same type
         ASSERT_MATRIX_OK (Z, "Z in accum_mask", GB0) ;

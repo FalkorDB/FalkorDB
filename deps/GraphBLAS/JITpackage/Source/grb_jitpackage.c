@@ -2,7 +2,7 @@
 // grb_jitpackage: package GraphBLAS source code for the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,11 +12,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-
-#if defined (__GNUC__)
-// ignore strlen warning
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-#endif
 
 //------------------------------------------------------------------------------
 // zstd.h include file
@@ -80,6 +75,30 @@
 */
 
 //------------------------------------------------------------------------------
+// safe_strlen:  compute the length of a string
+//------------------------------------------------------------------------------
+
+// This is the same as the POSIX strnlen, but just using my own method.
+// Non-POSIX systems do not have strnlen.
+
+// This method returns the # of bytes in the string s, excluding the null
+// terminating byte.  If s has no null terminating byte, it returns maxlen.
+
+#define BUF_LENGTH 4096
+
+size_t safe_strlen (const char *s, size_t maxlen) ;
+
+size_t safe_strlen (const char *s, size_t maxlen)
+{
+    if (s == NULL) return (0) ;
+    for (size_t k = 0 ; k < maxlen ; k++)
+    {
+        if (s [k] == '\0') return (k) ;
+    }
+    return (maxlen) ;
+}
+
+//------------------------------------------------------------------------------
 // match_prefix: return true if the input string matches the prefix
 //------------------------------------------------------------------------------
 
@@ -131,7 +150,7 @@ int main (int argc, char **argv)
 
     char **file_list = NULL;
     size_t nfiles = 0;
-    fprintf (stderr, "grb_jitpackage: building JITpackge\n") ;
+    fprintf (stderr, "grb_jitpackage: building JITpackage\n") ;
 
     if (argc == 2 && argv[1][0] == '@')
     {
@@ -162,13 +181,12 @@ int main (int argc, char **argv)
         file_list[0][0] = '\0';
         // glibc defines MAX_PATH to 4096.
         // Use this as a buffer size on all platforms.
-        #define BUF_LENGTH 4096
         char temp[BUF_LENGTH];
         size_t length;
         for (size_t i = 1 ; i < nfiles+1 ; i++)
         {
             OK ( fgets (temp, BUF_LENGTH, fr) != NULL );
-            length = strlen (temp); // this is safe; ignore -Wstringop-overflow
+            length = safe_strlen (temp, BUF_LENGTH);
             file_list[i] = malloc (length+1);
             OK (file_list [i] != NULL) ;
             strncpy (file_list[i], temp, length);
@@ -177,9 +195,11 @@ int main (int argc, char **argv)
     }
     else
     {
-        // input argument list is the file list
-        nfiles = argc - 1 ;
-        file_list = argv;
+//      // input argument list is the file list
+//      nfiles = argc - 1 ;
+//      file_list = argv;
+        fprintf (stderr, "feature no longer supported\n") ;
+        OK (false) ;
     }
 
     //--------------------------------------------------------------------------
@@ -195,7 +215,7 @@ int main (int argc, char **argv)
         "// GB_JITpackage.c: packaged GraphBLAS source code for the JIT\n"
         "//------------------------------------------------------------------------------\n"
         "\n"
-        "// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.\n"
+        "// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.\n"
         "// SPDX-License-Identifier: Apache-2.0\n"
         "\n"
         "//------------------------------------------------------------------------------\n"
@@ -262,7 +282,7 @@ int main (int argc, char **argv)
 
         fprintf (fp, "// %s:\n", file_list [k]) ;
         fprintf (fp, "uint8_t GB_JITpackage_%zu [%zu] = {\n", k-1, dsize) ;
-        for (int64_t k = 0 ; k < dsize ; k++)
+        for (uint64_t k = 0 ; k < dsize ; k++)
         {
             fprintf (fp, "%3d,", dst [k]) ;
             if (k % 20 == 19) fprintf (fp, "\n") ;
@@ -293,12 +313,12 @@ int main (int argc, char **argv)
 
     fprintf (fp, "\nstatic GB_JITpackage_index_struct "
         "GB_JITpackage_index [%zu] =\n{\n", nfiles) ;
-    for (int k = 1 ; k < nfiles+1 ; k++)
+    for (int k = 1 ; k < ((int) nfiles) + 1 ; k++)
     {
         // get the filename
         char *fullname = file_list [k] ;
         char *filename = fullname ;
-        int len = (int) strlen (fullname) ;
+        int len = (int) safe_strlen (fullname, BUF_LENGTH) ;
         for (int i = 0 ; i < len ; i++)
         {
             if (fullname [i] == '/')

@@ -2,7 +2,7 @@
 // gb_mxstring_to_format: get the format from a built-in string
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ bool gb_mxstring_to_format      // true if a valid format is found
     // input
     const mxArray *mxformat,    // built-in string, 'by row' or 'by col'
     // output
-    GxB_Format_Value *fmt,
+    int *fmt,
     int *sparsity
 )
 {
@@ -63,14 +63,14 @@ bool gb_mxstring_to_format      // true if a valid format is found
             valid = true ;
             (*fmt) = GxB_BY_ROW ;
             len = len - 6 ;
-            format_string [GB_IMAX (0, len-1)] = '\0' ;
+            format_string [MAX (0, len-1)] = '\0' ;
         }
         else if (MATCH (format_string + len - 6, "by col"))
         { 
             valid = true ;
             (*fmt) = GxB_BY_COL ;
             len = len - 6 ;
-            format_string [GB_IMAX (0, len-1)] = '\0' ;
+            format_string [MAX (0, len-1)] = '\0' ;
         }
     }
 

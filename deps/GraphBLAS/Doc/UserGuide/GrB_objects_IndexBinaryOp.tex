@@ -1,0 +1,287 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS index-binary operators: {\sf GxB\_IndexBinaryOp}}
+%===============================================================================
+\label{idxbinaryop}
+
+An index-binary operator is a scalar function of the following form:
+\[
+z=f(x,i_x,j_x,y,i_y,j_y,\Theta),
+\]
+where the value $x$ appears at row $i_x$ and column $j_x$ in its matrix,
+and the value $y$ appears at row $i_y$ and column $j_y$ in its matrix.
+The value $\Theta$ is a scalar that is the same for all uses of the operator.
+See our IEEE HPEC'24 paper for more details (\cite{idxbinop}),
+in the \verb'GraphBLAS/Doc' folder.
+
+When used in an element-wise method for $\bf C = A \oplus B$ and related
+methods (\verb'GrB_eWiseAdd', \verb'GxB_eWiseUnion', or \verb'GrB_eWiseMult'),
+operator is used for a pair of entries
+$a_{ij}$ and $b_{ij}$, as
+\[
+z=f(a_{ij},i,j,b_{ij},i,j,\Theta).
+\]
+When used in \verb'GrB_kronecker', it is used on a pair of entries
+$a_{i_1,j_1}$ and $b_{i_2,j_2}$, as
+\[
+z=f(a_{ij},i_1,j_1,b_{ij},i_2,j_2,\Theta).
+\]
+When used as the multiplicative operator in a semiring, to compute
+$\bf C = A \oplus.\otimes B$, the operator is used as
+\[
+z=f(a_{ik},i,k,b_{kj},k,j,\Theta)
+\]
+to compute an entry to be summed by the monoid of the semiring.
+
+No GraphBLAS operations directly use the \verb'GxB_IndexBinaryOp'.  Instead,
+the operator is coupled with a scalar \verb'Theta' value to create a new
+index-based binary operator, which is simply a special case of a
+\verb'GrB_BinaryOp'.  The resulting \verb'GrB_BinaryOp' can then be passed to
+element-wise methods and as the multiplicative operator of a new semiring.
+
+The signature of the index-binary function \verb'f' is as follows:
+
+{\footnotesize
+\begin{verbatim}
+void f
+(
+    void *z,            // output value z, of type ztype
+    const void *x,      // input value x of type xtype; value of v(ix) or A(ix,jx)
+    GrB_Index ix,       // row index of v(ix) or A(ix,jx)
+    GrB_Index jx,       // column index of A(ix,jx), or zero for v(ix)
+    const void *y,      // input value y of type ytype; value of w(iy) or B(iy,jy)
+    GrB_Index iy,       // row index of w(iy) or B(iy,jy)
+    GrB_Index jy,       // column index of B(iy,jy), or zero for w(iy)
+    const void *theta   // input scalar theta of type theta_type
+) ; \end{verbatim}}
+
+The following binary operators (\verb'GrB_BinaryOp' objects) are pre-defined,
+where $N$ can be \verb'INT32' or \verb'INT64'.  These operators do not use
+\verb'theta'.  Instead, the offset of 1 in \verb'GxB_FIRSTI1' is fixed into
+the operator itself.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Built-in index-based binary operators for any type} \\
+\hline
+GraphBLAS name            & types (domains)  & $z=f(x,y)$    & description \\
+\hline
+\verb'GxB_FIRSTI_'$N$    & $ \rightarrow N$  & $z = i_x$   & row index of $x$ (0-based) \\
+\verb'GxB_FIRSTI1_'$N$   & $ \rightarrow N$  & $z = i_x+1$ & row index of $x$ (1-based) \\
+\verb'GxB_FIRSTJ_'$N$    & $ \rightarrow N$  & $z = j_x$   & column index of $x$ (0-based) \\
+\verb'GxB_FIRSTJ1_'$N$   & $ \rightarrow N$  & $z = j_x+1$ & column index of $x$ (1-based) \\
+\verb'GxB_SECONDI_'$N$   & $ \rightarrow N$  & $z = i_y$   & row index of $y$ (0-based) \\
+\verb'GxB_SECONDI1_'$N$  & $ \rightarrow N$  & $z = i_y+1$ & row index of $y$ (1-based) \\
+\verb'GxB_SECONDJ_'$N$   & $ \rightarrow N$  & $z = j_y$   & column index of $y$ (0-based) \\
+\verb'GxB_SECONDJ1_'$N$  & $ \rightarrow N$  & $z = j_y+1$ & column index of $y$ (1-based) \\
+\hline
+\end{tabular}
+}
+
+\vspace{0.2in}
+The following methods operate on the \verb'GxB_IndexBinaryOp' object:
+
+\vspace{0.1in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GxB_IndexBinaryOp_new'   & create a named user-defined index-binary operator   & \ref{idxbinop_new_named} \\
+\verb'GxB_IndexBinaryOp_wait'  & wait for a user-defined index-binary operator  & \ref{idxbinop_wait} \\
+\verb'GxB_IndexBinaryOp_free'  & free a user-defined index-binary operator      & \ref{idxbinop_free} \\
+\verb'GxB_BinaryOp_new_IndexOp' & create a new index-based \verb'GrB_BinaryOp' & \ref{binop_new_idxop} \\
+\verb'GrB_get'           & get properties of an operator    & \ref{get_set_idxbinop} \\
+\verb'GrB_set'           & set the operator name/definition & \ref{get_set_idxbinop} \\
+\hline
+\end{tabular}
+}
+\vspace{0.1in}
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_IndexBinaryOp\_new:} create a user-defined index-binary operator}
+%-------------------------------------------------------------------------------
+\label{idxbinop_new_named}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_IndexBinaryOp_new
+(
+    GxB_IndexBinaryOp *op,          // handle for the new index binary operator
+    GxB_index_binary_function function, // pointer to the index binary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    GrB_Type ytype,                 // type of input y
+    GrB_Type theta_type,            // type of input theta
+    const char *idxbinop_name,      // name of the user function
+    const char *idxbinop_defn       // definition of the user function
+) ;
+\end{verbatim} }\end{mdframed}
+
+Creates a named \verb'GxB_IndexBinaryOp'.  Only the first 127 characters of
+\verb'idxbinop_name' are used.  The \verb'ixdbinop_defn' is a string containing
+the entire function itself.
+
+The two strings \verb'idxbinop_name' and \verb'idxbinop_defn' are optional, but
+are required to enable the JIT compilation of kernels that use this operator.
+For example, the following operator can be used to compute the argmax of a
+matrix with a single call to \verb'GrB_mxv'.  It returns a vector \verb'c'
+where \verb'c(i) = (k,v)', where the largest value in the $i$th row of \verb'A'
+has value \verb'v' and appears in column \verb'k'.  If multiple values in the
+$i$th row have the same largest value, the one with the smallest column index
+is returned.
+
+{\footnotesize
+\begin{verbatim}
+    typedef struct { int64_t k ; double v ; } tuple_fp64 ;
+    #define FP64_K "typedef struct { int64_t k ; double v ; } tuple_fp64 ;"
+    void make_fp64 (tuple_fp64 *z,
+        const double *x, GrB_Index ix, GrB_Index jx,
+        const void   *y, GrB_Index iy, GrB_Index jy,
+        const void *theta)
+    {
+        z->k = (int64_t) jx ;
+        z->v = (*x) ;
+    }
+    void max_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y)
+    {
+        if (x->v > y->v || (x->v == y->v && x->k < y->k))
+        {
+            z->k = x->k ;
+            z->v = x->v ;
+        }
+        else
+        {
+            z->k = y->k ;
+            z->v = y->v ;
+        }
+    }
+    #define MAX_FP64 (a string containing the max_fp64 function above)
+
+    // create the types and operators:
+    GrB_Scalar Theta ;                  // unused, but cannot be NULL
+    GrB_Scalar_new (&Theta, GrB_BOOL) ;
+    GrB_Scalar_setElement_BOOL (Theta, 0) ;
+    GxB_IndexBinaryOp Iop ;
+    GrB_BinaryOp Bop, MonOp ;
+    GrB_Type Tuple ;
+    GxB_Type_new (&Tuple, sizeof (tuple_fp64), "tuple_fp64", FP64_K) ;
+    GxB_IndexBinaryOp_new (&Iop, make_fp64, Tuple, GrB_FP64, GrB_BOOL, GrB_BOOL,
+        "make_fp64", MAKE_FP64)) ;
+    GxB_BinaryOp_new_IndexOp (&Bop, Iop, Theta) ;
+    tuple_fp64 id ;
+    memset (&id, 0, sizeof (tuple_fp64)) ;
+    id.k = INT64_MAX ;
+    id.v = (double) (-INFINITY) ;
+    GxB_BinaryOp_new (&MonOp, max_fp64, Tuple, Tuple, Tuple, "max_fp64", MAX_FP64) ;
+    GrB_Monoid MonOp ;
+    GrB_Semiring Semiring ;
+    GrB_Monoid_new_UDT (&Monoid, MonOp, &id) ;
+    GrB_Semiring_new (&Semiring, Monoid, Bop) ;
+
+    // compute the argmax of each row of a GrB_FP64 matrix A:
+    // y = zeros (ncols,1) ;
+    GrB_Vector y ;
+    GrB_Matrix_new (&y, GrB_BOOL, ncols, 1)) ;
+    GrB_Matrix_assign_BOOL (y, NULL, NULL, 0, GrB_ALL, ncols, GrB_ALL, 1, NULL)) ;
+    // c = A*y using the argmax semiring
+    GrB_Vector_new (&c, Tuple, nrows, 1)) ;
+    GrB_mxv (c, NULL, NULL, Semiring, A, y, NULL) ; \end{verbatim}}
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_IndexBinaryOp\_wait:} wait for an index-binary operator}
+%-------------------------------------------------------------------------------
+\label{idxbinop_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_IndexBinaryOp_wait
+(
+    GxB_IndexBinaryOp op,
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined index-binary operator, a GraphBLAS library may choose
+to exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS currently does nothing except to ensure that the
+\verb'op' is valid.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_IndexBinaryOp\_free:} free a user-defined index-binary operator}
+%-------------------------------------------------------------------------------
+\label{idxbinop_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free               // free a user-created index-binary operator
+(
+    GxB_IndexBinaryOp *op       // handle of IndexBinaryOp to free
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GxB_IndexBinaryOp_free' frees a user-defined index-binary operator.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GxB_IndexBinaryOp_free (&op) ;
+    GrB_free (&op) ; \end{verbatim}}
+
+\noindent
+frees the \verb'op' and sets \verb'op' to \verb'NULL'.  It safely
+does nothing if passed a \verb'NULL' handle, or if \verb'op == NULL' on
+input.  No built-in index-binary operators exist, but if they did,
+the method does nothing at all if passed a built-in index-binary operator.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_BinaryOp\_new\_IndexOp:} create a index-based binary operator}
+%-------------------------------------------------------------------------------
+\label{binop_new_idxop}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_BinaryOp_new_IndexOp
+(
+    GrB_BinaryOp *binop,            // handle of binary op to create
+    GxB_IndexBinaryOp idxbinop,     // based on this index binary op
+    GrB_Scalar theta                // theta value to bind to the new binary op
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+The \verb'GxB_IndexBinaryOp' cannot be directly used in any GraphBLAS operation
+such as \verb'GrB_mxm'.  Instead, it must be used to create a new index-based
+\verb'GrB_BinaryOp'.  The resulting binary operator can then be used to as the
+multiplicative operator in a new user-defined semiring, or as the primary
+binary operator of the element-wise operations (\verb'eWiseAdd',
+\verb'eWiseUnion', \verb'eWiseMult', or \verb'kronecker').
+
+The resulting binary operator cannot be used as the \verb'accum' operator in
+any GraphBLAS operation.  It also cannot be used in other places where a binary
+operator appears, including \verb'GrB_*_build', \verb'GrB_apply',
+\verb'GrB_reduce' and \verb'GrB_*_sort'.
+
+The \verb'GxB_BinaryOp_new_IndexOp' method creates this index-based binary
+operator.  It takes two input parameters:  an index-binary operator, and a
+scalar \verb'Theta'.  The value of \verb'Theta' is copied into this new binary
+operator, and the value cannot be changed.  To change \verb'Theta', the binary
+operator must be freed, and any semiring that would like to use the new value
+of \verb'Theta' must also be recreated.
+
+An example of its use is given in Section~\ref{idxbinop_new_named}.
+
+

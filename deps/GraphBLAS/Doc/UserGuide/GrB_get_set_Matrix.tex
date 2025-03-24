@@ -1,0 +1,331 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GrB\_Matrix} Options}
+\label{get_set_matrix}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_Matrix A, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_Matrix A, char *     value, int f) ;
+GrB_Info GrB_get (GrB_Matrix A, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_Matrix A, size_t *   value, int f) ;
+
+GrB_Info GrB_set (GrB_Matrix A, GrB_Scalar value, int f) ;
+GrB_Info GrB_set (GrB_Matrix A, char *     value, int f) ;
+GrB_Info GrB_set (GrB_Matrix A, int32_t    value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.2in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_STORAGE_ORIENTATION_HINT' & R/W  & \verb'int32_t'& See \verb'GrB_Orientation', \newline
+                                                             and Section~\ref{storage_orientation}. \\
+\verb'GrB_EL_TYPE_CODE'             & R    & \verb'int32_t'& matrix type \\
+\verb'GxB_SPARSITY_CONTROL'         & R/W  & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_SPARSITY_STATUS'          & R    & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_IS_READONLY'              & R    & \verb'int32_t'& true if it has any read-only components \\
+\verb'GxB_WILL_WAIT'                & R    & \verb'int32_t'& will \verb'GrB_wait' do anything (Section~\ref{wait_status}) \\ 
+\verb'GxB_ISO'                      & R/W  & \verb'int32_t'& iso status (Section~\ref{iso_status}) \\
+\verb'GxB_ROWINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for row indices (32 or 64) \\
+\verb'GxB_COLINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for column indices (32 or 64) \\
+\verb'GxB_OFFSET_INTEGER_BITS'      & R    & \verb'int32_t'& number of bits for offsets (32 or 64) \\
+\verb'GxB_ROWINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for row indices (0, 32, 64) \\
+\verb'GxB_COLINDEX_INTEGER_HINT'    & R/W  & \verb'int32_t'& hint for column indices (0, 32, 64) \\
+\verb'GxB_OFFSET_INTEGER_HINT'      & R/W  & \verb'int32_t'& hint for offsets (0, 32, 64) \\
+\hline
+\verb'GrB_NAME'                     & R/W  & \verb'char *' & name of the matrix.
+                                        This can be set any number of times. \\
+\verb'GrB_EL_TYPE_STRING'           & R    & \verb'char *' & name of the type of the matrix. \\
+\verb'GxB_JIT_C_NAME'               & R    & \verb'char *' & JIT C name of the type of the matrix. \\
+\hline
+\verb'GxB_HYPER_SWITCH'             & R/W  & \verb'double' & See Section~\ref{hypersparse} \\
+\verb'GxB_BITMAP_SWITCH'            & R/W  & \verb'double' & See Section~\ref{bitmap_switch} \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+\subsubsection{Storing a matrix by row or by column}
+\label{storage_orientation}
+%-------------------------------------------------------------------------------
+
+The GraphBLAS \verb'GrB_Matrix' is entirely opaque to the user application, and
+the GraphBLAS API does not specify how the matrix should be stored.  However,
+choices made in how the matrix is represented in a particular implementation,
+such as SuiteSparse:GraphBLAS, can have a large impact on performance.
+
+Many graph algorithms are just as fast in any format, but some algorithms are
+much faster in one format or the other.  For example, suppose the user
+application stores a directed graph as a matrix \verb'A', with the edge $(i,j)$
+represented as the value \verb'A(i,j)', and the application makes many accesses
+to the $i$th row of the matrix, with \verb'GrB_Col_extract'
+\verb'(w,...,A,GrB_ALL,...,i,desc)' with the transposed descriptor
+(\verb'GrB_INP0' set to \verb'GrB_TRAN').  If the matrix is stored by column
+this can be extremely slow, just like the expression \verb'w=A(i,:)' in MATLAB,
+where \verb'i' is a scalar.  Since this is a typical use-case in graph
+algorithms, the default format in SuiteSparse:GraphBLAS is to store its
+matrices by row, in Compressed Sparse Row format (CSR).
+
+MATLAB stores its sparse matrices by column, in ``non-hypersparse'' format, in
+what is called the Compressed Sparse Column format, or CSC for short.  An
+\verb'm'-by-\verb'n' matrix in MATLAB is represented as a set of \verb'n'
+column vectors, each with a sorted list of row indices and values of the
+nonzero entries in that column.  As a result, \verb'w=A(:,j)' is very fast in
+MATLAB, since the result is already held in the data structure a single list,
+the $j$th column vector.  However, \verb'w=A(i,:)' is very slow in MATLAB,
+since every column in the matrix has to be searched to see if it contains row
+\verb'i'.  In MATLAB, if many such accesses are made, it is much better to
+transpose the matrix (say \verb"AT=A'") and then use \verb"w=AT(:,i)" instead.
+This can have a dramatic impact on the performance of MATLAB.
+
+Likewise, if \verb'u' is a very sparse column vector and \verb'A' is stored by
+column, then \verb"w=u'*A" (via \verb'GrB_vxm') is slower than \verb'w=A*u'
+(via \verb'GrB_mxv').  The opposite is true if the matrix is stored by row.
+
+SuiteSparse:GraphBLAS stores its matrices by row, by default (with one
+exception described below).  However, it can also be instructed to store any
+selected matrices, or all matrices, by column instead (just like MATLAB), so
+that \verb'w=A(:,j)' (via \verb'GrB_Col_extract') is very fast.  The change in
+data format has no effect on the result, just the time and memory usage.  To
+use a column-oriented format by default, the following can be done in a user
+application that tends to access its matrices by column.
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_init (...) ;
+    // just after GrB_init: do the following:
+    GrB_set (GrB_GLOBAL, GrB_COLMAJOR, GrB_STORAGE_ORIENTATION_HINT) ; \end{verbatim} }
+
+If this is done, and no other \verb'GrB_set' calls are made with \newline
+\verb'GrB_STORAGE_ORIENATION_HINT', all matrices will be stored by column.
+The default format is \verb'GrB_ROWMAJOR'.
+
+All vectors (\verb'GrB_Vector') are held by column, and this cannot be changed.
+
+By default, matrices of size \verb'm-by-1' are held by column, regardless of
+the global setting described above.  Matrices of size \verb'1-by-n' with
+\verb'n' not equal to 1 are held by row, regardless of the global setting.
+The global setting only affects matrices with both \verb'm > 1' and \verb'n > 1'.
+Empty matrices (\verb'0-by-0') are also controlled by the global setting.
+
+After creating a matrix with \verb'GrB_Matrix_new (&A, ...)',
+its format can be changed arbitrarily with:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_set (A, GrB_COLMAJOR, GrB_STORAGE_ORIENTATION_HINT) ;
+    GrB_set (A, GrB_ROWMAJOR, GrB_STORAGE_ORIENTATION_HINT) ; \end{verbatim} }
+
+If set to other values (\verb'GrB_BOTH' or \verb'GrB_UNKNOWN'), the
+format is changed to \verb'GrB_ROWMAJOR'.
+
+With this setting, even an \verb'm-by-1' matrix can then be changed to be held
+by row, for example.  Likewise, once a \verb'1-by-n' matrix is created, it can
+be converted to column-oriented format.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Hypersparse matrices}
+\label{hypersparse}
+%-------------------------------------------------------------------------------
+
+MATLAB can store an \verb'm'-by-\verb'n' matrix with a very large value of
+\verb'm', since a CSC data structure takes $O(n+|{\bf A}|)$ memory, independent
+of \verb'm', where $|{\bf A}|$ is the number of nonzeros in the matrix.  It
+cannot store a matrix with a huge \verb'n', and this structure is also
+inefficient when $|{\bf A}|$ is much smaller than \verb'n'.  In contrast,
+SuiteSparse:GraphBLAS can store its matrices in {\em hypersparse} format,
+taking only $O(|{\bf A}|)$ memory, independent of how it is stored (by row or
+by column) and independent of both \verb'm' and \verb'n'
+\cite{BulucGilbert08,BulucGilbert12}.
+
+In both the CSR and CSC formats, the matrix is held as a set of sparse vectors.
+In non-hypersparse format, the set of sparse vectors is itself dense; all
+vectors are present, even if they are empty.  For example, an
+\verb'm'-by-\verb'n' matrix in non-hypersparse CSC format contains \verb'n'
+sparse vectors.  Each column vector takes at least one integer to represent,
+even for a column with no entries.  This allows for quick lookup for a
+particular vector, but the memory required is $O(n+|{\bf A}|)$.  With a
+hypersparse CSC format, the set of vectors itself is sparse, and columns with
+no entries take no memory at all.  The drawback of the hypersparse format is
+that finding an arbitrary column vector \verb'j', such as for the computation
+\verb'C=A(:,j)', takes $O(\log k)$ time if there $k \le n$ vectors in the data
+structure.  One advantage of the hypersparse structure is the memory required
+for an \verb'm'-by-\verb'n' hypersparse CSC matrix is only $O(|{\bf A}|)$,
+independent of \verb'm' and \verb'n'.  Algorithms that must visit all non-empty
+columns of a matrix are much faster when working with hypersparse matrices,
+since empty columns can be skipped.
+
+The \verb'hyper_switch' parameter controls the hypersparsity of the internal
+data structure for a matrix.  The parameter is typically in the range 0 to 1.
+The default is \verb'hyper_switch' = \verb'GxB_HYPER_DEFAULT', which is an
+\verb'extern' \verb'const' \verb'double' value, currently set to 0.0625, or
+1/16.  This default ratio may change in the future.
+
+The \verb'hyper_switch' determines how the matrix is converted between the
+hypersparse and non-hypersparse formats.  Let $n$ be the number of columns of a
+CSC matrix, or the number of rows of a CSR matrix.  The matrix can have at most
+$n$ non-empty vectors.
+
+Let $k$ be the actual number of non-empty vectors.  That is, for the CSC
+format, $k \le n$ is the number of columns that have at least one entry.  Let
+$h$ be the value of \verb'hyper_switch'.
+
+If a matrix is currently hypersparse, it can be converted to non-hypersparse if
+the either condition $n \le 1$ or $k > 2nh$ holds, or both.  Otherwise, it
+stays hypersparse.  Note that if $n \le 1$ the matrix is always stored as
+non-hypersparse.
+
+If currently non-hypersparse, it can be converted to hypersparse if
+both conditions $n > 1$ and $k \le nh$ hold.  Otherwise, it stays
+non-hypersparse.  Note that if $n \le 1$ the matrix always remains
+non-hypersparse.
+
+The default value of \verb'hyper_switch' is assigned at startup by
+\verb'GrB_init', and can then be modified globally with \verb'GrB_set'.  All
+new matrices are created with the same \verb'hyper_switch', determined by the
+global value.  Once a particular matrix \verb'A' has been constructed, its
+hypersparsity ratio can be modified from the default with:
+
+    {\footnotesize
+    \begin{verbatim}
+    double hyper_switch = 0.2 ;
+    GrB_set (A, hyper_switch, GxB_HYPER_SWITCH) ; \end{verbatim}}
+
+To force a matrix to always be non-hypersparse, use \verb'hyper_switch' equal to
+\verb'GxB_NEVER_HYPER'.  To force a matrix to always stay hypersparse, set
+\verb'hyper_switch' to \verb'GxB_ALWAYS_HYPER'.
+
+A \verb'GrB_Matrix' can thus be held in one of four formats: any combination of
+hyper/non-hyper and CSR/CSC.  All \verb'GrB_Vector' objects are always stored
+in non-hypersparse CSC format.
+
+A new matrix created via \verb'GrB_Matrix_new' starts with $k=0$ and is created
+in hypersparse form by default unless $n \le 1$ or if $h<0$, where $h$ is the
+global \verb'hyper_switch' value.  The matrix is created in either
+\verb'GrB_ROWMAJOR' or \verb'GrB_COLMAJOR' format, as determined by the last call
+to
+\verb'GrB_set(GrB_GLOBAL,' \verb'..., GrB_STORAGE_ORIENTATION_HINT,...)' or \verb'GrB_init'.
+
+A new matrix \verb'C' created via \verb'GrB_dup (&C,A)' inherits the CSR/CSC
+format, hypersparsity format, and \verb'hyper_switch' from \verb'A'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Bitmap matrices}
+\label{bitmap_switch}
+%-------------------------------------------------------------------------------
+
+By default, SuiteSparse:GraphBLAS switches between all four formats
+(hypersparse, sparse, bitmap, and full) automatically.  Let $d = |{\bf A}|/mn$
+for an $m$-by-$n$ matrix $\bf A$ with $|{\bf A}|$ entries.  If the matrix is
+currently in sparse or hypersparse format, and is modified so that $d$ exceeds
+a given threshold, it is converted into bitmap format.  The default threshold
+is controlled by the \verb'GxB_BITMAP_SWITCH' setting, which can be set
+globally, or for a particular matrix or vector.
+
+The default value of the switch to bitmap format depends on $\min(m,n)$, for a
+matrix of size $m$-by-$n$.  For the global setting, the bitmap switch is a
+\verb'double' array of size \verb'GxB_NBITMAP_SWITCH'.  The defaults are given
+below:
+
+\vspace{0.2in}
+{\small
+\begin{tabular}{lll}
+parameter & default & matrix sizes \\
+\hline
+\verb'bitmap_switch [0]' & 0.04 & $\min(m,n) = 1$ (and all vectors) \\
+\verb'bitmap_switch [1]' & 0.05 & $\min(m,n) = 2$ \\
+\verb'bitmap_switch [2]' & 0.06 & $\min(m,n) = 3$ to 4 \\
+\verb'bitmap_switch [3]' & 0.08 & $\min(m,n) = 5$ to 8 \\
+\verb'bitmap_switch [4]' & 0.10 & $\min(m,n) = 9$ to 16\\
+\verb'bitmap_switch [5]' & 0.20 & $\min(m,n) = 17$ to 32\\
+\verb'bitmap_switch [6]' & 0.30 & $\min(m,n) = 33$ to 64 \\
+\verb'bitmap_switch [7]' & 0.40 & $\min(m,n) > 64$ \\
+\end{tabular}
+}
+\vspace{0.2in}
+
+That is, by default a \verb'GrB_Vector' is held in bitmap format if its density
+exceeds 4\%.  To change the global settings, do the following:
+
+{\footnotesize
+\begin{verbatim}
+    double bswitch [GxB_NBITMAP_SWITCH] = { 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8 } ;
+    GrB_set (GrB_GLOBAL, (void *) bswitch, GxB_BITMAP_SWITCH,
+        GxB_NBITMAP_SWITCH * sizeof (double)) ;
+\end{verbatim}
+}
+
+If the matrix is currently in bitmap format, it is converted to full if all
+entries are present, or to sparse/hypersparse if $d$ drops below $b/2$, if its
+bitmap switch is $b$.  A matrix or vector with $d$ between $b/2$ and $b$
+remains in its current format.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Sparsity status}
+\label{sparsity_status}
+%-------------------------------------------------------------------------------
+
+The sparsity status of a matrix can be queried with the following, which
+returns a value of \verb'GxB_HYPERSPARSE' (1), \verb'GxB_SPARSE' (2),
+\verb'GxB_BITMAP' (4), or \verb'GxB_FULL' (8).
+
+{\footnotesize
+\begin{verbatim}
+    int32_t sparsity ;
+    GrB_get (A, &sparsity, GxB_SPARSITY_STATUS) ; \end{verbatim}}
+
+The sparsity format of a matrix can be controlled with the field set to
+\verb'GxB_SPARSITY_CONTROL', for which the \verb'value' can be any mix (a sum or bitwise
+or) of \verb'GxB_HYPERSPARSE', \verb'GxB_SPARSE', \verb'GxB_BITMAP', and
+\verb'GxB_FULL'.  By default, a matrix or vector can be held in any format,
+with the default setting \verb'GxB_AUTO_SPARSITY', which is equal to
+\verb'GxB_HYPERSPARSE' + \verb'GxB_SPARSE' + \verb'GxB_BITMAP' +
+\verb'GxB_FULL' (15).  To enable a matrix to take on just \verb'GxB_SPARSE' or
+\verb'GxB_FULL' formats, but not \verb'GxB_HYPERSPARSE' or \verb'GxB_BITMAP',
+for example, use the following:
+
+{\footnotesize
+\begin{verbatim}
+    GrB_set (A, GxB_SPARSE + GxB_FULL, GxB_SPARSITY_CONTROL) ; \end{verbatim}}
+
+In this case, SuiteSparse:GraphBLAS will hold the matrix in sparse format
+(\verb'CSR' or \verb'CSC', depending on its
+\verb'GrB_STORAGE_ORIENTATION_HINT'), unless all entries are present, in which
+case it will be converted to full format.
+
+Only the least significant 4 bits of the sparsity control are considered, so
+the formats can be bitwise negated.  For example, to allow for any format
+except full:
+
+{\footnotesize
+\begin{verbatim}
+    GrB_set (A, ~GxB_FULL, GxB_SPARSITY_CONTROL) ; \end{verbatim}}
+
+%-------------------------------------------------------------------------------
+\subsubsection{iso status}
+\label{iso_status}
+%-------------------------------------------------------------------------------
+
+The \verb'GxB_ISO' option allows the iso status of a matrix or vector to be
+queried.  The option can be set, as well.  If set true, this asks GraphBLAS to
+attempt to revise the storage of the matrix to make it iso-valued.  GraphBLAS
+will check all the values, and if they are all the same, the matrix is
+converted to an iso-valued format.  If set false, the matrix is revised so that
+it is held in a non-iso format, if it is stored in iso-valued form.
+
+%-------------------------------------------------------------------------------
+\subsubsection{wait status}
+\label{wait_status}
+%-------------------------------------------------------------------------------
+
+The \verb'GxB_WILL_WAIT' option can be queried with \verb'GrB_get' to determine
+if a call to \verb'GrB_wait' on the matrix, vector, or scalar will do any work.
+
+

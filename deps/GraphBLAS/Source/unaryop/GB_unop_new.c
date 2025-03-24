@@ -2,7 +2,7 @@
 // GB_unop_new: create a new named unary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -51,6 +51,10 @@ GrB_Info GB_unop_new
     op->unop_function = function ;      // NULL for IDENTITY_UDT operator
     op->idxunop_function = NULL ;
     op->binop_function = NULL ;
+    op->idxbinop_function = NULL ;
+    op->theta_type = NULL ;
+    op->theta = NULL ;
+    op->theta_size = 0 ;
 
     op->opcode = opcode ;
 

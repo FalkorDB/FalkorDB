@@ -2,7 +2,7 @@
 // GB_encodify_build: encode a build problem, including types and op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,12 @@ uint64_t GB_encodify_build      // encode an build problem
     const GB_jit_kcode kcode,   // kernel to encode
     const GrB_BinaryOp dup,     // operator for summing up duplicates
     const GrB_Type ttype,       // type of Tx array
-    const GrB_Type stype        // type of Sx array
+    const GrB_Type stype,       // type of Sx array
+    bool Ti_is_32,              // if true, Ti is uint32_t, else uint64_t
+    bool I_is_32,               // if true, I_work is uint32_t else uint64_t
+    bool K_is_32,               // if true, K_work is uint32_t else uint64_t
+    bool K_is_null,             // if true, K_work is NULL
+    bool no_duplicates          // if true, no duplicates appear
 )
 { 
 
@@ -41,7 +46,8 @@ uint64_t GB_encodify_build      // encode an build problem
     //--------------------------------------------------------------------------
 
     encoding->kcode = kcode ;
-    GB_enumify_build (&encoding->code, dup, ttype, stype) ;
+    GB_enumify_build (&encoding->code, dup, ttype, stype,
+        Ti_is_32, I_is_32, K_is_32, K_is_null, no_duplicates) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

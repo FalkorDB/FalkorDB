@@ -5,7 +5,7 @@ function C = GB_spec_apply (C, Mask, accum, op, A, descriptor, thunk)
 % C = GB_spec_apply (C, Mask, accum, op, A, descriptor)
 % C = GB_spec_apply (C, Mask, accum, op, A, descriptor, thunk)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 %-------------------------------------------------------------------------------

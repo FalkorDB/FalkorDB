@@ -2,7 +2,7 @@
 // gbnvals: number of entries in a GraphBLAS matrix struct
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ void mexFunction
     // get the # of entries in the matrix
     //--------------------------------------------------------------------------
 
-    GrB_Index nvals ;
+    uint64_t nvals ;
     OK (GrB_Matrix_nvals (&nvals, X)) ;
 
     //--------------------------------------------------------------------------
@@ -53,7 +53,7 @@ void mexFunction
     double anvals ;
     if (nvals == INT64_MAX)
     {
-        GrB_Index nrows, ncols ;
+        uint64_t nrows, ncols ;
         OK (GrB_Matrix_nrows (&nrows, X)) ;
         OK (GrB_Matrix_ncols (&ncols, X)) ;
         anvals = ((double) nrows) * ((double) ncols) ;
@@ -64,6 +64,6 @@ void mexFunction
     }
     pargout [0] = mxCreateDoubleScalar (anvals) ;
     OK (GrB_Matrix_free (&X)) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

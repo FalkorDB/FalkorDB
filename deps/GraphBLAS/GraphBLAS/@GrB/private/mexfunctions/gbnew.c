@@ -2,7 +2,7 @@
 // gbnew: create a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -48,7 +48,7 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Matrix C ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int sparsity = 0 ;
 
     if (nargin == 1)
@@ -101,7 +101,7 @@ void mexFunction
                     // get a shallow copy and then typecast it to type.
                     // use the same format as A
                     GrB_Matrix A = gb_get_shallow (pargin [0]) ;
-                    OK (GxB_Matrix_Option_get (A, GxB_FORMAT, &fmt)) ;
+                    OK (GrB_Matrix_get_INT32 (A, &fmt, GxB_FORMAT)) ;
                     C = gb_typecast (A, type, fmt, 0) ;
                     OK (GrB_Matrix_free (&A)) ;
                 }
@@ -136,8 +136,8 @@ void mexFunction
             //------------------------------------------------------------------
 
             // m-by-n GraphBLAS double matrix, no entries, default format
-            GrB_Index nrows = gb_mxget_uint64_scalar (pargin [0], "m") ;
-            GrB_Index ncols = gb_mxget_uint64_scalar (pargin [1], "n") ;
+            uint64_t nrows = gb_mxget_uint64_scalar (pargin [0], "m") ;
+            uint64_t ncols = gb_mxget_uint64_scalar (pargin [1], "n") ;
             C = gb_new (GrB_FP64, nrows, ncols, -1, 0) ;
 
         }
@@ -167,8 +167,8 @@ void mexFunction
             //------------------------------------------------------------------
 
             // create an m-by-n matrix with no entries
-            GrB_Index nrows = gb_mxget_uint64_scalar (pargin [0], "m") ;
-            GrB_Index ncols = gb_mxget_uint64_scalar (pargin [1], "n") ;
+            uint64_t nrows = gb_mxget_uint64_scalar (pargin [0], "m") ;
+            uint64_t ncols = gb_mxget_uint64_scalar (pargin [1], "n") ;
             GrB_Type type = gb_mxstring_to_type (pargin [2]) ;
             bool ok = gb_mxstring_to_format (pargin [2], &fmt, &sparsity) ;
 
@@ -249,8 +249,8 @@ void mexFunction
 
             // create an m-by-n matrix with no entries, of the requested
             // type and format
-            GrB_Index nrows = gb_mxget_uint64_scalar (pargin [0], "m") ;
-            GrB_Index ncols = gb_mxget_uint64_scalar (pargin [1], "n") ;
+            uint64_t nrows = gb_mxget_uint64_scalar (pargin [0], "m") ;
+            uint64_t ncols = gb_mxget_uint64_scalar (pargin [1], "n") ;
 
             GrB_Type type = gb_mxstring_to_type (pargin [2]) ;
             bool ok = gb_mxstring_to_format (pargin [3], &fmt, &sparsity) ;
@@ -284,6 +284,6 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     pargout [0] = gb_export (&C, KIND_GRB) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 
