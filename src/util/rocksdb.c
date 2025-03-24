@@ -7,17 +7,24 @@
 #include <rocksdb/c.h>
 #include "redismodule.h"
 
-const char DBPath[] = "/tmp/rocksdb_falkordb";
+#define ROCKSDB_PATH_BASE "/tmp/rocksdb_falkordb"
 
 rocksdb_t *db;
 rocksdb_writeoptions_t *writeoptions;
 rocksdb_readoptions_t *readoptions;
 rocksdb_flushoptions_t *flush_options;
 
+void RocksDB_set_key(char *node_key, NodeID node_id, AttributeID attr_id) {
+	*(uint64_t *)node_key = node_id;
+	*(AttributeID *)(node_key + 8) = attr_id;
+	node_key[10] = '\0';
+}
+
 void RocksDB_init() {
-	// delete DBPath
+	char *path = NULL;
+	asprintf(&path, "%s_%d", ROCKSDB_PATH_BASE, getpid());
 	char cmd[100];
-	sprintf(cmd, "rm -rf %s", DBPath);
+	sprintf(cmd, "rm -rf %s", path);
 	system(cmd);
 	rocksdb_options_t *options = rocksdb_options_create();
 	rocksdb_options_set_optimize_filters_for_hits(options, 1);
@@ -40,7 +47,7 @@ void RocksDB_init() {
 
 	// open DB
 	char *err = NULL;
-	db = rocksdb_open(options, DBPath, &err);
+	db = rocksdb_open(options, path, &err);
 	ASSERT(!err);
 }
 

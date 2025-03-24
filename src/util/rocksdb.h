@@ -1,8 +1,12 @@
 #pragma once
 
 #include <rocksdb/c.h>
+#include "../graph/entities/node.h"
 
 #define ROCKSDB_MIN_STR_LEN 33
+#define ROCKSDB_KEY_SIZE 11
+
+void RocksDB_set_key(char *node_key, NodeID node_id, AttributeID attr_id);
 
 void RocksDB_init();
 rocksdb_writebatch_t *RocksDB_create_batch();

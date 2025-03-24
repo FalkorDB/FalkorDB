@@ -34,10 +34,8 @@ static void _ResultSet_VerboseReplyWithSIValue
 	switch(SI_TYPE(v)) {
 	case T_STRING: {
 		if(v.allocation == M_DISK) {
-			char node_key[11];
-			*(uint64_t *)node_key = node_id;
-			*(AttributeID *)(node_key + 8) = attr_id;
-			node_key[10] = '\0';
+			char node_key[ROCKSDB_KEY_SIZE];
+			RocksDB_set_key(node_key, node_id, attr_id);
 			char *str = RocksDB_get(node_key);
 			RedisModule_ReplyWithStringBuffer(ctx, str, strlen(str));
 			rm_free(str);
@@ -103,7 +101,7 @@ static void _ResultSet_VerboseReplyWithProperties
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		RedisModule_ReplyWithStringBuffer(ctx, prop_str, strlen(prop_str));
 		// Emit the value
-		_ResultSet_VerboseReplyWithSIValue(ctx, gc, e->id, attr_id, value);
+		_ResultSet_VerboseReplyWithSIValue(ctx, gc, ENTITY_GET_ID(e), attr_id, value);
 	}
 }
 

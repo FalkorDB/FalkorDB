@@ -16,6 +16,7 @@
 #include "../../graph/entities/node.h"
 #include "../../graph/entities/edge.h"
 #include "../../graph/entities/graph_entity.h"
+#include "../../util/rocksdb.h"
 
 // returns the id of a relationship or node
 SIValue AR_ID(SIValue *argv, int argc, void *private_data) {
@@ -275,6 +276,13 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 
 		// Retrieve the property.
 		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
+		if(value->allocation == M_DISK) {
+			char node_key[11];
+			*(uint64_t *)node_key = ENTITY_GET_ID(graph_entity);
+			*(AttributeID *)(node_key + 8) = prop_idx;
+			node_key[10] = '\0';
+			return SI_TransferStringVal(RocksDB_get(node_key));
+		}
 		return SI_ConstValue(value);
 	} else if(SI_TYPE(obj) & T_MAP) {
 		// retrieve map key

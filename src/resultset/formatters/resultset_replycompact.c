@@ -10,6 +10,7 @@
 #include "../../query_ctx.h"
 #include "resultset_formatters.h"
 #include "../../datatypes/datatypes.h"
+#include "../../util/rocksdb.h"
 
 // forward declarations
 static void _ResultSet_CompactReplyWithNode(RedisModuleCtx *ctx, GraphContext *gc, Node *n);
@@ -67,15 +68,26 @@ static void _ResultSet_CompactReplyWithSIValue
 (
 	RedisModuleCtx *ctx,  // redis context
 	GraphContext *gc,     // graph context
+	NodeID node_id,
+	AttributeID attr_id,
 	const SIValue v       // value to emit
 ) {
 	// Emit the value type, then the actual value (to facilitate client-side parsing)
 	_ResultSet_ReplyWithValueType(ctx, SI_TYPE(v));
 
 	switch(SI_TYPE(v)) {
-	case T_STRING:
-		RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
+	case T_STRING: {
+		if(v.allocation == M_DISK) {
+			char node_key[ROCKSDB_KEY_SIZE];
+			RocksDB_set_key(node_key, node_id, attr_id);
+			char *str = RocksDB_get(node_key);
+			RedisModule_ReplyWithStringBuffer(ctx, str, strlen(str));
+			rm_free(str);
+		} else {
+			RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
+		}
 		return;
+	}
 	case T_INT64:
 		RedisModule_ReplyWithLongLong(ctx, v.longval);
 		return;
@@ -137,7 +149,7 @@ static void _ResultSet_CompactReplyWithProperties
 		RedisModule_ReplyWithLongLong(ctx, attr_id);
 
 		// emit the value
-		_ResultSet_CompactReplyWithSIValue(ctx, gc, value);
+		_ResultSet_CompactReplyWithSIValue(ctx, gc, ENTITY_GET_ID(e), attr_id, value);
 	}
 }
 
@@ -232,7 +244,7 @@ static void _ResultSet_CompactReplyWithSIArray
 	RedisModule_ReplyWithArray(ctx, arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
 		RedisModule_ReplyWithArray(ctx, 2); // Reply with array with space for type and value
-		_ResultSet_CompactReplyWithSIValue(ctx, gc, SIArray_Get(array, i));
+		_ResultSet_CompactReplyWithSIValue(ctx, gc, -1, ATTRIBUTE_ID_NONE, SIArray_Get(array, i));
 	}
 }
 
@@ -301,12 +313,12 @@ static void _ResultSet_CompactReplyWithPath
 	// First array type and value.
 	RedisModule_ReplyWithArray(ctx, 2);
 	SIValue nodes = SIPath_Nodes(path);
-	_ResultSet_CompactReplyWithSIValue(ctx, gc, nodes);
+	_ResultSet_CompactReplyWithSIValue(ctx, gc, -1, ATTRIBUTE_ID_NONE, nodes);
 	SIValue_Free(nodes);
 	// Second array type and value.
 	RedisModule_ReplyWithArray(ctx, 2);
 	SIValue relationships = SIPath_Relationships(path);
-	_ResultSet_CompactReplyWithSIValue(ctx, gc, relationships);
+	_ResultSet_CompactReplyWithSIValue(ctx, gc, -1, ATTRIBUTE_ID_NONE, relationships);
 	SIValue_Free(relationships);
 }
 
@@ -345,7 +357,7 @@ static void _ResultSet_CompactReplyWithMap
 
 		// emit value
 		RedisModule_ReplyWithArray(ctx, 2);
-		_ResultSet_CompactReplyWithSIValue(ctx, gc, val);
+		_ResultSet_CompactReplyWithSIValue(ctx, gc, -1, ATTRIBUTE_ID_NONE, val);
 	}
 }
 
@@ -374,7 +386,7 @@ void ResultSet_EmitCompactRow
 	for(uint i = 0; i < set->column_count; i++) {
 		SIValue cell = *row[i];
 		RedisModule_ReplyWithArray(ctx, 2); // Reply with array with space for type and value
-		_ResultSet_CompactReplyWithSIValue(ctx, set->gc, cell);
+		_ResultSet_CompactReplyWithSIValue(ctx, set->gc, -1, ATTRIBUTE_ID_NONE, cell);
 	}
 }
 

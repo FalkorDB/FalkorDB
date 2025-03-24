@@ -79,10 +79,8 @@ static void _RdbSaveSIValue
 			break;
 		case T_STRING:{
 			if(v->allocation == M_DISK) {
-				char node_key[11];
-				*(uint64_t *)node_key = node_id;
-				node_key[10] = '\0';
-				*(AttributeID *)(node_key + 8) = attr_id;
+				char node_key[ROCKSDB_KEY_SIZE];
+				RocksDB_set_key(node_key, node_id, attr_id);
 				char *str = RocksDB_get(node_key);
 				SerializerIO_WriteBuffer(rdb, str, strlen(str) + 1);
 				rm_free(str);
