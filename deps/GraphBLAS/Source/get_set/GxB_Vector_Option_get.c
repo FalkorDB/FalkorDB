@@ -1,22 +1,13 @@
 //------------------------------------------------------------------------------
-// GxB_Vector_Option_get: get an option in a vector
+// GxB_Vector_Option_get: get an option in a vector: historical methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB.h"
-
-//------------------------------------------------------------------------------
-
-// GxB_Vector_Option_get is a single va_arg-based method for any vector option,
-// of any type.  The following functions are non-va_arg-based methods
-// (useful for compilers and interfaces that do not support va_arg):
-//
-//  GxB_Vector_Option_get_INT32         int32_t scalars
-//  GxB_Vector_Option_get_FP64          double scalars
 
 //------------------------------------------------------------------------------
 // GxB_Vector_Option_get_INT32: get vector options (int32_t scalars)
@@ -25,95 +16,36 @@
 GrB_Info GxB_Vector_Option_get_INT32    // gets the current option of a vector
 (
     GrB_Vector v,                   // vector to query
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     int32_t *value                  // return value of the vector option
 )
-{
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_WHERE1 ("GxB_Vector_Option_get_INT32 (v, field, &value)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
-    ASSERT_VECTOR_OK (v, "v to get option", GB0) ;
-    GB_RETURN_IF_NULL (value) ;
-
-    //--------------------------------------------------------------------------
-    // get the option
-    //--------------------------------------------------------------------------
-
-    switch (field)
-    {
-
-        case GxB_SPARSITY_CONTROL : 
-
-            (*value) = v->sparsity_control ;
-            break ;
-
-        case GxB_SPARSITY_STATUS : 
-
-            (*value) = GB_sparsity ((GrB_Matrix) v) ;
-            break ;
-
-        case GxB_FORMAT : 
-
-            // a GrB_Vector is always stored by-column
-            (*value) = (int32_t) GxB_BY_COL ;
-            break ;
-
-        default : 
-
-            return (GrB_INVALID_VALUE) ;
-
-    }
-
-    #pragma omp flush
-    return (GrB_SUCCESS) ;
+{ 
+    return (GrB_Vector_get_INT32 (v, value, field)) ;
 }
 
 //------------------------------------------------------------------------------
 // GxB_Vector_Option_get_FP64: get vector options (double scalars)
 //------------------------------------------------------------------------------
 
+#define GB_FREE_ALL GrB_Scalar_free (&scalar) ;
+
 GrB_Info GxB_Vector_Option_get_FP64      // gets the current option of a vector
 (
     GrB_Vector v,                   // vector to query
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     double *value                   // return value of the vector option
 )
-{
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_WHERE1 ("GxB_Vector_Option_get_FP64 (v, field, &value)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
-    ASSERT_VECTOR_OK (v, "v to get option", GB0) ;
-    GB_RETURN_IF_NULL (value) ;
-
-    //--------------------------------------------------------------------------
-    // get the option
-    //--------------------------------------------------------------------------
-
-    switch (field)
-    {
-
-        case GxB_BITMAP_SWITCH : 
-
-            (*value) = (double) v->bitmap_switch ;
-            break ;
-
-        default : 
-
-            return (GrB_INVALID_VALUE) ;
-
-    }
-
-    #pragma omp flush
+{ 
+    GrB_Info info ;
+    GrB_Scalar scalar = NULL ;
+    GB_OK (GrB_Scalar_new (&scalar, GrB_FP64)) ;
+    GB_OK (GrB_Vector_get_Scalar (v, scalar, field)) ;
+    GB_OK (GrB_Scalar_extractElement_FP64 (value, scalar)) ;
+    GB_FREE_ALL ;
     return (GrB_SUCCESS) ;
 }
+
+#undef GB_FREE_ALL
 
 //------------------------------------------------------------------------------
 // GxB_Vector_Option_get: based on va_arg
@@ -122,92 +54,39 @@ GrB_Info GxB_Vector_Option_get_FP64      // gets the current option of a vector
 GrB_Info GxB_Vector_Option_get      // gets the current option of a vector
 (
     GrB_Vector v,                   // vector to query
-    GxB_Option_Field field,         // option to query
+    int field,                      // option to query
     ...                             // return value of the vector option
 )
-{
-
-    //--------------------------------------------------------------------------
-    // check inputs
-    //--------------------------------------------------------------------------
-
-    GB_WHERE1 ("GxB_Vector_Option_get (v, field, &value)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
-    ASSERT_VECTOR_OK (v, "v to get option", GB0) ;
-
-    //--------------------------------------------------------------------------
-    // get the option
-    //--------------------------------------------------------------------------
-
+{ 
     va_list ap ;
-
     switch (field)
     {
+        case GxB_IS_HYPER : 
+        {
+            va_start (ap, field) ;
+            bool *value = va_arg (ap, bool *) ;
+            va_end (ap) ;
+            (*value) = false ;
+            #pragma omp flush
+            return (GrB_SUCCESS) ;
+        }
 
         case GxB_BITMAP_SWITCH : 
-
-            {
-                va_start (ap, field) ;
-                double *bitmap_switch = va_arg (ap, double *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (bitmap_switch) ;
-                (*bitmap_switch) = (double) v->bitmap_switch ;
-            }
-            break ;
-
-        case GxB_SPARSITY_CONTROL : 
-
-            {
-                va_start (ap, field) ;
-                int *sparsity_control = va_arg (ap, int *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (sparsity_control) ;
-                (*sparsity_control) = v->sparsity_control ;
-            }
-            break ;
-
-        case GxB_SPARSITY_STATUS : 
-
-            {
-                va_start (ap, field) ;
-                int *sparsity = va_arg (ap, int *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (sparsity) ;
-                (*sparsity) = GB_sparsity ((GrB_Matrix) v) ;
-            }
-            break ;
-
-        case GxB_FORMAT : 
-
-            {
-                // a GrB_Vector is always stored by-column
-                va_start (ap, field) ;
-                GxB_Format_Value *format = va_arg (ap, GxB_Format_Value *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (format) ;
-                (*format) = GxB_BY_COL ;
-            }
-            break ;
-
-        case GxB_IS_HYPER : // historical; use GxB_SPARSITY_STATUS instead
-
-            {
-                // a GrB_Vector is never hypersparse
-                va_start (ap, field) ;
-                bool *v_is_hyper = va_arg (ap, bool *) ;
-                va_end (ap) ;
-                GB_RETURN_IF_NULL (v_is_hyper) ;
-                (*v_is_hyper) = false ;
-            }
-            break ;
+        case GxB_HYPER_SWITCH : 
+        {
+            va_start (ap, field) ;
+            double *value = va_arg (ap, double *) ;
+            va_end (ap) ;
+            return (GxB_Vector_Option_get_FP64 (v, field, value)) ;
+        }
 
         default : 
-
-            return (GrB_INVALID_VALUE) ;
-
+        {
+            va_start (ap, field) ;
+            int *value = va_arg (ap, int *) ;
+            va_end (ap) ;
+            return (GxB_Vector_Option_get_INT32 (v, field, value)) ;
+        }
     }
-
-    #pragma omp flush
-    return (GrB_SUCCESS) ;
 }
 

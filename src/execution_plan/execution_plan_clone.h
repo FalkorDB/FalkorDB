@@ -8,6 +8,9 @@
 
 #include "execution_plan.h"
 
-/* Clones an execution plan */
-ExecutionPlan *ExecutionPlan_Clone(const ExecutionPlan *plan);
+// clones an execution plan
+ExecutionPlan *ExecutionPlan_Clone
+(
+	const ExecutionPlan *plan
+);
 

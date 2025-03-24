@@ -2,7 +2,7 @@
 // GB_Global.h: definitions for global data
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,8 +18,8 @@ void     GB_Global_cpu_features_query (void) ;
 bool     GB_Global_cpu_features_avx2 (void) ;
 bool     GB_Global_cpu_features_avx512f (void) ;
 
-void     GB_Global_mode_set (GrB_Mode mode) ;
-GrB_Mode GB_Global_mode_get (void) ;
+void     GB_Global_mode_set (int mode) ;
+int      GB_Global_mode_get (void) ;
 
 void     GB_Global_sort_set (int sort) ;
 int      GB_Global_sort_get (void) ;
@@ -75,6 +75,7 @@ void     GB_Global_malloc_debug_count_set (int64_t malloc_debug_count) ;
 bool     GB_Global_malloc_debug_count_decrement (void) ;
 
 void *   GB_Global_persistent_malloc (size_t size) ;
+void     GB_Global_make_persistent (void *p) ;
 void     GB_Global_persistent_set (void (* persistent_function) (void *)) ;
 void     GB_Global_persistent_free (void **p) ;
 
@@ -87,8 +88,8 @@ bool     GB_Global_burble_get (void) ;
 void     GB_Global_print_one_based_set (bool onebased) ;
 bool     GB_Global_print_one_based_get (void) ;
 
-void     GB_Global_print_mem_shallow_set (bool mem_shallow) ;
-bool     GB_Global_print_mem_shallow_get (void) ;
+void     GB_Global_stats_mem_shallow_set (bool mem_shallow) ;
+bool     GB_Global_stats_mem_shallow_get (void) ;
 
 bool     GB_Global_gpu_count_set (bool enable_cuda) ;
 int      GB_Global_gpu_count_get (void) ;
@@ -123,11 +124,16 @@ void     GB_Global_printf_set (GB_printf_function_t p) ;
 GB_flush_function_t GB_Global_flush_get (void) ;
 void     GB_Global_flush_set (GB_flush_function_t p) ;
 
-double   GB_Global_get_wtime (void) ;
-
 void  *  GB_Global_malloc_function_get (void) ;
 void  *  GB_Global_calloc_function_get (void) ;
 void  *  GB_Global_realloc_function_get (void) ;
 void  *  GB_Global_free_function_get (void) ;
+
+void     GB_Global_p_control_set (int8_t p_control) ;
+int8_t   GB_Global_p_control_get (void) ;
+void     GB_Global_j_control_set (int8_t j_control) ;
+int8_t   GB_Global_j_control_get (void) ;
+void     GB_Global_i_control_set (int8_t i_control) ;
+int8_t   GB_Global_i_control_get (void) ;
 #endif
 

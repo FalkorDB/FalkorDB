@@ -2,7 +2,7 @@
 // GB_assign_zombie2: delete all entries in C(i,:) for GB_assign
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,11 +37,11 @@ GrB_Info GB_assign_zombie2
     // get C
     //--------------------------------------------------------------------------
 
-    const int64_t *restrict Cp = C->p ;
-    int64_t *restrict Ci = C->i ;
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
     const int64_t Cnvec = C->nvec ;
     int64_t nzombies = C->nzombies ;
-    const int64_t zorig = nzombies ;
+    const bool Ci_is_32 = C->i_is_32 ;
 
     //--------------------------------------------------------------------------
     // determine the number of threads to use
@@ -70,12 +70,12 @@ GrB_Info GB_assign_zombie2
             // find C(i,j)
             //------------------------------------------------------------------
 
-            int64_t pC = Cp [k] ;
-            int64_t pC_end = Cp [k+1] ;
+            int64_t pC = GB_IGET (Cp, k) ;
+            int64_t pC_end = GB_IGET (Cp, k+1) ;
             int64_t pright = pC_end - 1 ;
-            bool found, is_zombie ;
-            GB_BINARY_SEARCH_ZOMBIE (i, Ci, pC, pright, found, zorig,
-                is_zombie) ;
+            bool is_zombie ;
+            bool found = GB_binary_search_zombie (i, Ci, Ci_is_32, &pC, &pright,
+                true, &is_zombie) ;
 
             //------------------------------------------------------------------
             // if found and not a zombie, mark it as a zombie
@@ -83,9 +83,10 @@ GrB_Info GB_assign_zombie2
 
             if (found && !is_zombie)
             { 
-                ASSERT (i == Ci [pC]) ;
+                ASSERT (i == GB_IGET (Ci, pC)) ;
                 nzombies++ ;
-                Ci [pC] = GB_ZOMBIE (i) ;
+                int64_t iC = GB_ZOMBIE (i) ;
+                GB_ISET (Ci, pC, iC) ;      // Ci [pC] = iC ;
             }
         }
     }

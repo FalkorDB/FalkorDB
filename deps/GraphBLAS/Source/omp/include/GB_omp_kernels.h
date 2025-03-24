@@ -2,7 +2,7 @@
 // GB_omp_kernels.h: definitions using OpenMP in SuiteSparse:GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -39,6 +39,7 @@
     #include <omp.h>
     #define GB_OPENMP_MAX_THREADS       omp_get_max_threads ( )
     #define GB_OPENMP_GET_WTIME         omp_get_wtime ( )
+
 #else
     #define GB_OPENMP_MAX_THREADS       (1)
     #define GB_OPENMP_GET_WTIME         (0)

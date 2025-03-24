@@ -150,6 +150,13 @@ bool AlgebraicExpression_ContainsOp
 	AL_EXP_OP op                      // operation to look for
 );
 
+// returns true if expression contains matrix 'm'
+bool AlgebraicExpression_ContainsMatrix
+(
+	const AlgebraicExpression *root,  // root of expression
+	Delta_Matrix m                    // matrix to look for
+);
+
 // returns true if operand represents a diagonal matrix
 bool AlgebraicExpression_Diagonal
 (

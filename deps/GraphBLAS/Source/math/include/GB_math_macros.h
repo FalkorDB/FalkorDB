@@ -2,7 +2,7 @@
 // GB_math_macros.h: simple math macros
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,6 +36,13 @@
 // suitable for integers, and non-NaN floating point:
 #define GB_IMAX(x,y) (((x) > (y)) ? (x) : (y))
 #define GB_IMIN(x,y) (((x) < (y)) ? (x) : (y))
+
+//------------------------------------------------------------------------------
+// left and right shift
+//------------------------------------------------------------------------------
+
+#define GB_LSHIFT(x,k) (((uint64_t) (x)) << k)
+#define GB_RSHIFT(x,k,b) (((x) >> (k)) & ((((uint64_t) 0x1) << (b)) - 1))
 
 #endif
 

@@ -2,7 +2,7 @@
 // gbmdiag: construct a diaogonal matrix from a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ void mexFunction
 
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int sparsity ;
     GrB_Descriptor desc = NULL ;
     desc = gb_mxarray_to_descriptor (pargin [nargin-1], &kind, &fmt,
@@ -52,12 +52,12 @@ void mexFunction
     GrB_Matrix V = gb_get_shallow (pargin [0]) ;
     int64_t k = 0 ;
 
-    int64_t ncols ;
+    uint64_t ncols ;
     OK (GrB_Matrix_ncols (&ncols, V)) ;
     CHECK_ERROR (ncols != 1, "v must be a column vector") ;
 
     int s ;
-    OK (GxB_Matrix_Option_get (V, GxB_SPARSITY_STATUS, &s)) ;
+    OK (GrB_Matrix_get_INT32 (V, &s, GxB_SPARSITY_STATUS)) ;
     CHECK_ERROR (s == GxB_HYPERSPARSE, "v cannot be hypersparse") ;
 
     if (nargin > 1)
@@ -73,10 +73,10 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Type ctype = NULL ;
-    int64_t n ;
+    uint64_t n ;
     OK (GxB_Matrix_type (&ctype, V)) ;
     OK (GrB_Matrix_nrows (&n, V)) ;
-    n += GB_IABS (k) ;
+    n += ABS (k) ;
     fmt = gb_get_format (n, n, NULL, NULL, fmt) ;
     C = gb_new (ctype, n, n, fmt, 0) ;
 
@@ -99,6 +99,6 @@ void mexFunction
 
     pargout [0] = gb_export (&C, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

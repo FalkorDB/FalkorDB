@@ -2,7 +2,7 @@
 // GB_encodify_assign: encode an assign problem, including types and op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,6 +22,8 @@ uint64_t GB_encodify_assign     // encode an assign problem
     GrB_Matrix C,
     bool C_replace,
     // index types:
+    bool I_is_32,           // if true, I is 32-bits; else 64
+    bool J_is_32,           // if true, J is 32-bits; else 64
     int Ikind,              // 0: all (no I), 1: range, 2: stride, 3: list
     int Jkind,              // ditto
     // M matrix:
@@ -57,8 +59,9 @@ uint64_t GB_encodify_assign     // encode an assign problem
     //--------------------------------------------------------------------------
 
     encoding->kcode = kcode ;
-    GB_enumify_assign (&encoding->code, C, C_replace, Ikind, Jkind,
-        M, Mask_comp, Mask_struct, accum, A, scalar_type, S, assign_kind) ;
+    GB_enumify_assign (&encoding->code, C, C_replace, I_is_32, J_is_32,
+        Ikind, Jkind, M, Mask_comp, Mask_struct, accum, A, scalar_type,
+        S, assign_kind) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

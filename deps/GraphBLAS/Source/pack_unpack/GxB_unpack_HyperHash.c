@@ -2,7 +2,7 @@
 // GxB_unpack_HyperHash: unpack the A->Y hyper_hash from a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -63,11 +63,13 @@ GrB_Info GxB_unpack_HyperHash       // move A->Y into Y
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_unpack_HyperHash (A, &Y, desc)") ;
-    GB_BURBLE_START ("GxB_unpack_HyperHash") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (Y) ;
-    GB_RETURN_IF_FAULTY (*Y) ;
+    GB_RETURN_IF_INVALID (*Y) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (A) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (*Y) ;
 
     //--------------------------------------------------------------------------
     // unpack the hyper_hash matrix Y from A
@@ -76,8 +78,6 @@ GrB_Info GxB_unpack_HyperHash       // move A->Y into Y
     (*Y) = A->Y ;
     A->Y = NULL ;
     A->Y_shallow = false ;
-
-    GB_BURBLE_END ;
     return (GrB_SUCCESS) ;
 }
 

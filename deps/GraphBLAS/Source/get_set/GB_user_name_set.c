@@ -2,7 +2,7 @@
 // GB_user_name_set: set the user_name of an object
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,7 +29,7 @@ GrB_Info GB_user_name_set
     }
 
     // free the object user_name, if it already exists
-    GB_FREE (object_user_name, (*object_user_name_size)) ;
+    GB_FREE_MEMORY (object_user_name, (*object_user_name_size)) ;
     (*object_user_name_size) = 0 ;
 
     // get the length of the new name
@@ -42,7 +42,8 @@ GrB_Info GB_user_name_set
 
     // allocate the new name
     size_t user_name_size ;
-    char *user_name = GB_MALLOC (len + 1, char, &user_name_size) ;
+    char *user_name = GB_MALLOC_MEMORY (len + 1, sizeof (char),
+        &user_name_size) ;
     if (user_name == NULL)
     { 
         // out of memory

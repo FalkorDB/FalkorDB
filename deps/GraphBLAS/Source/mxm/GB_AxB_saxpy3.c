@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3: compute C=A*B, C<M>=A*B, or C<!M>=A*B in parallel
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -63,11 +63,11 @@
 // table size for the task, and C is m-by-n (assuming all matrices are CSC; if
 // CSR, then m is replaced with n).
 //
-//      fine Gustavson task (shared):   int8_t  Hf [m] ; ctype Hx [m] ;
-//      fine hash task (shared):        int64_t Hf [s] ; ctype Hx [s] ;
-//      coarse Gustavson task:          int64_t Hf [m] ; ctype Hx [m] ;
-//      coarse hash task:               int64_t Hf [s] ; ctype Hx [s] ;
-//                                      int64_t Hi [s] ; 
+//      fine Gustavson task (shared):   int8_t   Hf [m] ; ctype Hx [m] ;
+//      fine hash task (shared):        uint64_t Hf [s] ; ctype Hx [s] ;
+//      coarse Gustavson task:          uint64_t Hf [m] ; ctype Hx [m] ;
+//      coarse hash task:               uint64_t Hf [s] ; ctype Hx [s] ;
+//                                      uint64_t Hi [s] ;
 //
 // Note that the Hi array is needed only for the coarse hash task.  Additional
 // workspace is allocated to construct the list of tasks, but this is freed
@@ -95,14 +95,13 @@
 #include "GB_control.h"
 #include "FactoryKernels/GB_AxB__include2.h"
 #endif
-#include "include/GB_unused.h"
 
 #define GB_FREE_WORKSPACE                           \
 {                                                   \
-    GB_FREE_WORK (&SaxpyTasks, SaxpyTasks_size) ;   \
-    GB_FREE_WORK (&Hi_all, Hi_all_size) ;           \
-    GB_FREE_WORK (&Hf_all, Hf_all_size) ;           \
-    GB_FREE_WORK (&Hx_all, Hx_all_size) ;           \
+    GB_FREE_MEMORY (&SaxpyTasks, SaxpyTasks_size) ;   \
+    GB_FREE_MEMORY (&Hi_all, Hi_all_size) ;           \
+    GB_FREE_MEMORY (&Hf_all, Hf_all_size) ;           \
+    GB_FREE_MEMORY (&Hx_all, Hx_all_size) ;           \
 }
 
 #define GB_FREE_ALL             \
@@ -129,7 +128,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     const GrB_Semiring semiring,    // semiring that defines C=A*B
     const bool flipxy,              // if true, do z=fmult(b,a) vs fmult(a,b)
     bool *mask_applied,             // if true, then mask was applied
-    GrB_Desc_Value AxB_method,      // Default, Gustavson, or Hash
+    int AxB_method,                 // Default, Gustavson, or Hash
     const int do_sort,              // if nonzero, try to sort in saxpy3
     GB_Werk Werk
 )
@@ -147,7 +146,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     (*mask_applied) = false ;
     bool apply_mask = false ;
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for saxpy3 A*B", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -180,9 +179,9 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     // define workspace
     //--------------------------------------------------------------------------
 
-    int64_t *restrict Hi_all = NULL ; size_t Hi_all_size = 0 ;
-    int64_t *restrict Hf_all = NULL ; size_t Hf_all_size = 0 ;
-    GB_void *restrict Hx_all = NULL ; size_t Hx_all_size = 0 ;
+    uint64_t *restrict Hi_all = NULL ; size_t Hi_all_size = 0 ;
+    uint64_t *restrict Hf_all = NULL ; size_t Hf_all_size = 0 ;
+    GB_void  *restrict Hx_all = NULL ; size_t Hx_all_size = 0 ;
     GB_saxpy3task_struct *SaxpyTasks = NULL ; size_t SaxpyTasks_size = 0 ;
 
     //--------------------------------------------------------------------------
@@ -209,56 +208,39 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         &xcode, &ycode, &zcode) ;
 
     //--------------------------------------------------------------------------
-    // get A, and B
-    //--------------------------------------------------------------------------
-
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t avlen = A->vlen ;
-    const int64_t anvec = A->nvec ;
-    const bool A_is_hyper = GB_IS_HYPERSPARSE (A) ;
-
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
-    const int8_t  *restrict Bb = B->b ;
-    const int64_t *restrict Bi = B->i ;
-    const int64_t bvdim = B->vdim ;
-    const int64_t bnz = GB_nnz_held (B) ;
-    const int64_t bnvec = B->nvec ;
-    const int64_t bvlen = B->vlen ;
-    const bool B_is_hyper = GB_IS_HYPERSPARSE (B) ;
-
-    //--------------------------------------------------------------------------
     // allocate C (just C->p and C->h, but not C->i or C->x)
     //--------------------------------------------------------------------------
 
     GrB_Type ctype = add->op->ztype ;
     size_t csize = ctype->size ;
-    int64_t cvlen = avlen ;
-    int64_t cvdim = bvdim ;
-    int64_t cnvec = bnvec ;
+    int64_t cvlen = A->vlen ;
+    int64_t cvdim = B->vdim ;
+    int64_t cnvec = B->nvec ;
 
-    info = GB_new (&C, // sparse or hyper, existing header
-        ctype, cvlen, cvdim, GB_Ap_malloc, true,
-        C_sparsity, B->hyper_switch, cnvec) ;
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        GB_FREE_ALL ;
-        return (info) ;
-    }
+    // determine the p_is_32, j_is_32, and i_is_32 settings for the new matrix;
+    // select Cp_is_32 by assuming any given column could see arbitrary fillin,
+    // where nnz(C(:,j)) <= cvlen.  Later on, Cp may need to be resized by
+    // GB_AxB_saxpy3_cumsum if nnz(C) > UINT32_MAX.
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        C_sparsity, cvlen, cvlen, cvdim, Werk) ;
 
-    C->iso = C_iso ;    // OK
+    GB_OK (GB_new (&C, // sparse or hyper, existing header
+        ctype, cvlen, cvdim, GB_ph_malloc, true,
+        C_sparsity, B->hyper_switch, cnvec, Cp_is_32, Cj_is_32, Ci_is_32)) ;
 
-    int64_t *restrict Cp = C->p ;
-    int64_t *restrict Ch = C->h ;
-    if (B_is_hyper)
+    C->iso = C_iso ;
+
+    GB_Type_code cjcode = (Cj_is_32  ) ? GB_UINT32_code : GB_UINT64_code ;
+    GB_Type_code bjcode = (B->j_is_32) ? GB_UINT32_code : GB_UINT64_code ;
+
+    if (GB_IS_HYPERSPARSE (B))
     { 
         // B and C are both hypersparse
         ASSERT (C_sparsity == GxB_HYPERSPARSE) ;
         int nth = GB_nthreads (cnvec, chunk, nthreads_max) ;
-        GB_memcpy (Ch, Bh, cnvec * sizeof (int64_t), nth) ;
-        C->nvec = bnvec ;
+        GB_cast_int (C->h, cjcode, B->h, bjcode, cnvec, nth) ;
+        C->nvec = B->nvec ;
     }
     else
     { 
@@ -336,7 +318,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     //      Hx [i] is the value of C(i,j) during the numeric phase.
     //
     //      Gustavson's method is used if the hash_size for the Hash method
-    //      is a significant fraction of cvlen. 
+    //      is a significant fraction of cvlen.
     //
     // If the Hash method is used (coarse tasks):
     //
@@ -374,7 +356,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         if (taskid == SaxpyTasks [taskid].leader)
         { 
             hx_pad = GB_ICEIL (64, csize) ;
-            hi_pad = 64 / sizeof (int64_t) ;
+            hi_pad = 64 / sizeof (uint64_t) ;
             break ;
         }
     }
@@ -390,14 +372,13 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     int nfine_hash = 0 ;
     int nfine_gus = 0 ;
     int ncoarse_hash = 0 ;
-    int ncoarse_1hash = 0 ;
     int ncoarse_gus = 0 ;
 
     for (int taskid = 0 ; taskid < ntasks ; taskid++)
     {
 
         // get the task type and its hash size
-        int64_t hash_size = SaxpyTasks [taskid].hsize ;
+        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
         int64_t k = SaxpyTasks [taskid].vector ;
         bool is_fine = (k >= 0) ;
         bool use_Gustavson = (hash_size == cvlen) ;
@@ -438,8 +419,8 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
             continue ;
         }
 
-        int64_t hi_size = GB_IMAX (hash_size, 8) ;
-        int64_t hx_size = hi_size ;
+        uint64_t hi_size = GB_IMAX (hash_size, 8) ;
+        uint64_t hx_size = hi_size ;
         if (!GB_IS_POWER_OF_TWO (hi_size))
         { 
             hi_size += hi_pad ;
@@ -448,13 +429,13 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         if (is_fine && use_Gustavson)
         { 
             // Hf is int8_t for the fine Gustavson tasks, but round up
-            // to the nearest number of int64_t values.
-            int64_t hi_size2 = GB_IMAX (hi_size, 64) ;
-            Hf_size_total += GB_ICEIL (hi_size2, sizeof (int64_t)) ;
+            // to the nearest number of uint64_t values.
+            uint64_t hi_size2 = GB_IMAX (hi_size, 64) ;
+            Hf_size_total += GB_ICEIL (hi_size2, sizeof (uint64_t)) ;
         }
         else
         { 
-            // Hf is int64_t for all other methods
+            // Hf is uint64_t for all other methods
             Hf_size_total += hi_size ;
         }
         if (!is_fine && !use_Gustavson)
@@ -483,20 +464,22 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 
     if (Hi_size_total > 0)
     { 
-        Hi_all = GB_MALLOC_WORK (Hi_size_total, int64_t, &Hi_all_size) ;
+        Hi_all = GB_MALLOC_MEMORY (Hi_size_total, sizeof (uint64_t),
+            &Hi_all_size) ;
     }
     if (Hf_size_total > 0)
     { 
-        // Hf must be calloc'd to initialize all entries as empty 
-        Hf_all = GB_CALLOC_WORK (Hf_size_total, int64_t, &Hf_all_size) ;
+        // Hf must be calloc'd to initialize all entries as empty
+        Hf_all = GB_CALLOC_MEMORY (Hf_size_total, sizeof (uint64_t),
+            &Hf_all_size) ;
     }
     if (Hx_size_total > 0)
     { 
-        Hx_all = GB_MALLOC_WORK (Hx_size_total * csize, GB_void, &Hx_all_size) ;
+        Hx_all = GB_MALLOC_MEMORY (Hx_size_total, csize, &Hx_all_size) ;
     }
 
     if ((Hi_size_total > 0 && Hi_all == NULL) ||
-        (Hf_size_total > 0 && Hf_all == NULL) || 
+        (Hf_size_total > 0 && Hf_all == NULL) ||
         (Hx_size_total > 0 && Hx_all == NULL))
     { 
         // out of memory
@@ -508,8 +491,8 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     // split the space into separate hash tables
     //--------------------------------------------------------------------------
 
-    int64_t *restrict Hi_part = Hi_all ;
-    int64_t *restrict Hf_part = Hf_all ;
+    uint64_t *restrict Hi_part = Hi_all ;
+    uint64_t *restrict Hf_part = Hf_all ;
     GB_void *restrict Hx_part = Hx_all ;
 
     for (int taskid = 0 ; taskid < ntasks ; taskid++)
@@ -522,7 +505,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
             continue ;
         }
 
-        int64_t hash_size = SaxpyTasks [taskid].hsize ;
+        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
         int64_t k = SaxpyTasks [taskid].vector ;
         bool is_fine = (k >= 0) ;
         bool use_Gustavson = (hash_size == cvlen) ;
@@ -531,8 +514,8 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         SaxpyTasks [taskid].Hf = (GB_void *) Hf_part ;
         SaxpyTasks [taskid].Hx = Hx_part ;
 
-        int64_t hi_size = GB_IMAX (hash_size, 8) ;
-        int64_t hx_size = hi_size ;
+        uint64_t hi_size = GB_IMAX (hash_size, 8) ;
+        uint64_t hx_size = hi_size ;
         if (!GB_IS_POWER_OF_TWO (hi_size))
         { 
             hi_size += hi_pad ;
@@ -541,13 +524,13 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         if (is_fine && use_Gustavson)
         { 
             // Hf is int8_t for the fine Gustavson tasks, but round up
-            // to the nearest number of int64_t values.
-            int64_t hi_size2 = GB_IMAX (hi_size, 64) ;
-            Hf_part += GB_ICEIL (hi_size2, sizeof (int64_t)) ;
+            // to the nearest number of uint64_t values.
+            uint64_t hi_size2 = GB_IMAX (hi_size, 64) ;
+            Hf_part += GB_ICEIL (hi_size2, sizeof (uint64_t)) ;
         }
         else
         { 
-            // Hf is int64_t for all other methods
+            // Hf is uint64_t for all other methods
             Hf_part += hi_size ;
         }
         if (!is_fine && !use_Gustavson)
@@ -583,8 +566,6 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
     //==========================================================================
 
     // TODO constructing the tasks (the work above) can take a lot of time.
-    // See the web graph, where it takes a total of 3.03 sec for 64 trials, vs
-    // a total of 5.9 second for phase 7 (the numerical work below).
     // Figure out a faster method.
 
     GB_AxB_saxpy3_symbolic (C, M, Mask_comp, Mask_struct, M_in_place,
@@ -677,12 +658,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
         }
     }
 
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory, or other error
-        GB_FREE_ALL ;
-        return (info) ;
-    }
+    GB_OK (info) ;
 
     //--------------------------------------------------------------------------
     // prune empty vectors, free workspace, and return result
@@ -690,7 +666,7 @@ GrB_Info GB_AxB_saxpy3              // C = A*B using Gustavson+Hash
 
     C->magic = GB_MAGIC ;
     GB_FREE_WORKSPACE ;
-    GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+    GB_OK (GB_hyper_prune (C, Werk)) ;
     ASSERT_MATRIX_OK (C, "saxpy3: output", GB0) ;
     ASSERT (!GB_ZOMBIES (C)) ;
     ASSERT (!GB_PENDING (C)) ;

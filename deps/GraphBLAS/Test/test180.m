@@ -1,7 +1,7 @@
 function test180
 %TEST180 subassign and assign
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % For test coverage, this test must be run with 1 thread
@@ -13,10 +13,12 @@ rng ('default') ;
 
 Cin = GB_spec_random (n, n, 0.5, 1, 'double') ;
 m = 6 ;
-I1 = [2 3 5 1 9 11] ;
-J1 = [4 5 1 9 2 12] ;
+I1 = [2 3 5 1 9 11]' ;
+J1 = [4 5 1 9 2 12]' ;
 I0 = uint64 (I1) - 1 ;
 J0 = uint64 (J1) - 1 ;
+I32 = uint32 (I0) ;
+J32 = uint32 (J0) ;
 M1.matrix = logical (sprand (m, m, 0.5)) ;
 M2.matrix = logical (sprand (n, n, 0.5)) ;
 A = GB_spec_random (m, m, 0.8, 1, 'double') ;
@@ -36,6 +38,22 @@ for c = 1:15
         C2 = GB_mex_subassign  (Cin, [ ], [ ], A, I0, J0, [ ]) ;
         GB_spec_compare (C1, C2) ;
 
+        % C(I,J) = A, with GrB_Vectors for I and J (64,64)
+        C2 = GB_mex_subassign  (Cin, [ ], [ ], A, I0, J0, [ ], 3) ;
+        GB_spec_compare (C1, C2) ;
+
+        % C(I,J) = A, with GrB_Vectors for I and J (32,64)
+        C2 = GB_mex_subassign  (Cin, [ ], [ ], A, I32, J0, [ ], 3) ;
+        GB_spec_compare (C1, C2) ;
+
+        % C(I,J) = A, with GrB_Vectors for I and J (64,32)
+        C2 = GB_mex_subassign  (Cin, [ ], [ ], A, I0, J32, [ ], 3) ;
+        GB_spec_compare (C1, C2) ;
+
+        % C(I,J) = A, with GrB_Vectors for I and J (32,32)
+        C2 = GB_mex_subassign  (Cin, [ ], [ ], A, I32, J32, [ ], 3) ;
+        GB_spec_compare (C1, C2) ;
+
         for ms = [2 4]
             M1.sparsity = ms ;
             M2.sparsity = ms ;
@@ -45,14 +63,50 @@ for c = 1:15
             C2 = GB_mex_subassign  (Cin, M1, [ ], A, I0, J0, [ ]) ;
             GB_spec_compare (C1, C2) ;
 
+            % C(I,J)<M> = A, with GrB_Vectors for I and J (64,64)
+            C2 = GB_mex_subassign  (Cin, M1, [ ], A, I0, J0, [ ], 3) ;
+            GB_spec_compare (C1, C2) ;
+
             % C<M,repl>(I,J) = A
             C1 = GB_spec_assign (Cin, M2, [ ], A, I1, J1, dr, false) ;
             C2 = GB_mex_assign  (Cin, M2, [ ], A, I0, J0, dr) ;
             GB_spec_compare (C1, C2) ;
 
+            % C<M,repl>(I,J) = A, using GrB_Vectors for I and J (64,64)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I0, J0, dr, 3) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<M,repl>(I,J) = A, using GrB_Vectors for I and J (32,64)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I32, J0, dr, 3) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<M,repl>(I,J) = A, using GrB_Vectors for I and J (64,32)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I0, J32, dr, 3) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<M,repl>(I,J) = A, using GrB_Vectors for I and J (32,32)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I32, J32, dr, 3) ;
+            GB_spec_compare (C1, C2) ;
+
             % C<!M,repl>(I,J) = A
             C1 = GB_spec_assign (Cin, M2, [ ], A, I1, J1, drc, false) ;
             C2 = GB_mex_assign  (Cin, M2, [ ], A, I0, J0, drc) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<!M,repl>(I,J) = A, using GrB_Vectors for I and J (64,64)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I0, J0, drc, 3) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<!M,repl>(I,J) = A, using GrB_Vectors for I and J (32,64)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I32, J0, drc, 3) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<!M,repl>(I,J) = A, using GrB_Vectors for I and J (64,32)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I0, J32, drc, 3) ;
+            GB_spec_compare (C1, C2) ;
+
+            % C<!M,repl>(I,J) = A, using GrB_Vectors for I and J (32,32)
+            C2 = GB_mex_assign  (Cin, M2, [ ], A, I32, J32, drc, 3) ;
             GB_spec_compare (C1, C2) ;
 
             % C(I,J)<M,repl> = A

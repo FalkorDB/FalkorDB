@@ -2,7 +2,7 @@
 // GB_bitmap_assign_4_whole_template: C bitmap, M sparse/hyper, no accum
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -102,22 +102,22 @@
             //------------------------------------------------------------------
 
             #undef  GB_MASK_WORK
-            #define GB_MASK_WORK(pC)                        \
-            {                                               \
-                if (Cb [pC])                                \
-                {                                           \
-                    /* C(i,j) present, M(i,j) = 1 */        \
-                    /* Cx [pC] = scalar */                  \
+            #define GB_MASK_WORK(pC)                            \
+            {                                                   \
+                if (Cb [pC])                                    \
+                {                                               \
+                    /* C(i,j) present, M(i,j) = 1 */            \
+                    /* Cx [pC] = scalar */                      \
                     GB_COPY_cwork_to_C (Cx, pC, cwork, C_iso) ; \
-                }                                           \
-                else                                        \
-                {                                           \
-                    /* C(i,j) not present, M(i,j) = 1 */    \
-                    /* Cx [pC] = scalar */                  \
+                }                                               \
+                else                                            \
+                {                                               \
+                    /* C(i,j) not present, M(i,j) = 1 */        \
+                    /* Cx [pC] = scalar */                      \
                     GB_COPY_cwork_to_C (Cx, pC, cwork, C_iso) ; \
-                    Cb [pC] = 1 ;                           \
-                    task_cnvals++ ;                         \
-                }                                           \
+                    Cb [pC] = 1 ;                               \
+                    task_cnvals++ ;                             \
+                }                                               \
             }
             #include "template/GB_bitmap_assign_M_all_template.c"
         }
@@ -164,7 +164,7 @@
                             task_cnvals-- ;                                   \
                             break ;                                           \
                         case 2: /* C(i,j) not present, M(i,j) = 1 */          \
-                            if (GBB_A (Ab, pC))                               \
+                            if (GBb_A (Ab, pC))                               \
                             {                                                 \
                                 /* Cx [pC] = Ax [pC] */                       \
                                 GB_COPY_aij_to_C (Cx,pC,Ax,pC,A_iso,cwork,    \
@@ -179,7 +179,7 @@
                             }                                                 \
                             break ;                                           \
                         case 3: /* C(i,j) present, M(i,j) = 1 */              \
-                            if (GBB_A (Ab, pC))                               \
+                            if (GBb_A (Ab, pC))                               \
                             {                                                 \
                                 /* Cx [pC] = Ax [pC] */                       \
                                 GB_COPY_aij_to_C (Cx,pC,Ax,pC,A_iso,cwork,    \
@@ -212,7 +212,7 @@
                     if (Cb [pC])                                              \
                     {                                                         \
                         /* C(i,j) present, M(i,j) = 1 */                      \
-                        if (GBB_A (Ab, pC))                                   \
+                        if (GBb_A (Ab, pC))                                   \
                         {                                                     \
                             /* Cx [pC] = Ax [pC] */                           \
                             GB_COPY_aij_to_C (Cx,pC,Ax,pC,A_iso,cwork,C_iso) ;\
@@ -227,7 +227,7 @@
                     else                                                      \
                     {                                                         \
                         /* C(i,j) not present, M(i,j) = 1 */                  \
-                        if (GBB_A (Ab, pC))                                   \
+                        if (GBb_A (Ab, pC))                                   \
                         {                                                     \
                             /* Cx [pC] = Ax [pC] */                           \
                             GB_COPY_aij_to_C (Cx,pC,Ax,pC,A_iso,cwork,C_iso) ;\
@@ -298,8 +298,6 @@
                 //--------------------------------------------------------------
                 // C<M> = A where A is sparse or hyper, with no entries
                 //--------------------------------------------------------------
-
-                GBURBLE ("(A empty) ") ;
 
                 // delete entries via the mask
                 #undef  GB_MASK_WORK

@@ -1,7 +1,7 @@
 function test259
 %TEST259 test with plus_plus semiring
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test259 ---C+=A''*B when C is dense, with dot4, plus_plus_fp32\n') ;

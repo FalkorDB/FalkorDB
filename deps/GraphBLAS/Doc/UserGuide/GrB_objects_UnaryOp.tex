@@ -1,0 +1,368 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS unary operators: {\sf GrB\_UnaryOp}, $z=f(x)$} %==========
+%===============================================================================
+\label{unaryop}
+
+A unary operator is a scalar function of the form $z=f(x)$.  The domain (type)
+of $z$ and $x$ need not be the same.
+
+In the notation in the tables
+below, $T$ is any of the 13 built-in types and is a place-holder for
+\verb'BOOL', \verb'INT8', \verb'UINT8', ...
+\verb'FP32', \verb'FP64', \verb'FC32', or \verb'FC64'.
+For example, \verb'GrB_AINV_INT32' is a unary operator that computes
+\verb'z=-x' for two values \verb'x' and \verb'z' of type \verb'GrB_INT32'.
+
+The notation $R$ refers to any real type (all but \verb'FC32' and \verb'FC64'),
+$I$ refers to any integer type (\verb'INT*' and \verb'UINT*'),
+$F$ refers to any real or complex floating point type
+(\verb'FP32', \verb'FP64', \verb'FC32', or \verb'FC64'),
+$Z$ refers to any complex floating point type
+(\verb'FC32' or \verb'FC64'),
+and $N$ refers to \verb'INT32' or \verb'INT64'.
+
+The logical negation operator \verb'GrB_LNOT' only works on Boolean types.  The
+\verb'GxB_LNOT_'$R$ functions operate on inputs of type $R$, implicitly
+typecasting their input to Boolean and returning result of type $R$, with a
+value 1 for true and 0 for false.  The operators \verb'GxB_LNOT_BOOL' and
+\verb'GrB_LNOT' are identical.
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Unary operators for all types} \\
+\hline
+GraphBLAS name          & types (domains)   & $z=f(x)$      & description \\
+\hline
+\verb'GxB_ONE_'$T$      & $T \rightarrow T$ & $z = 1$       & one \\
+\verb'GrB_IDENTITY_'$T$ & $T \rightarrow T$ & $z = x$       & identity \\
+\verb'GrB_AINV_'$T$     & $T \rightarrow T$ & $z = -x$      & additive inverse \\
+\verb'GrB_MINV_'$T$     & $T \rightarrow T$ & $z = 1/x$     & multiplicative inverse \\
+\hline
+\end{tabular}
+
+\vspace{0.2in}
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Unary operators for real and integer types} \\
+\hline
+GraphBLAS name          & types (domains)   & $z=f(x)$      & description \\
+\hline
+\verb'GrB_ABS_'$T$      & $R \rightarrow R$ & $z = |x|$     & absolute value \\
+\verb'GrB_LNOT'         & \verb'bool'
+                          $\rightarrow$
+                          \verb'bool'       & $z = \lnot x$ & logical negation \\
+\verb'GxB_LNOT_'$R$     & $R \rightarrow R$ & $z = \lnot (x \ne 0)$ & logical negation \\
+\verb'GrB_BNOT_'$I$     & $I \rightarrow I$ & $z = \lnot x$ & bitwise negation \\
+\hline
+\end{tabular}
+
+\vspace{0.2in}
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Index-based unary operators for any type (including user-defined)} \\
+\hline
+GraphBLAS name            & types (domains)   & $z=f(a_{ij})$      & description \\
+\hline
+\verb'GxB_POSITIONI_'$N$  & $ \rightarrow N$  & $z = i$       & row index (0-based) \\
+\verb'GxB_POSITIONI1_'$N$ & $ \rightarrow N$  & $z = i+1$     & row index (1-based) \\
+\verb'GxB_POSITIONJ_'$N$  & $ \rightarrow N$  & $z = j$       & column index (0-based) \\
+\verb'GxB_POSITIONJ1_'$N$ & $ \rightarrow N$  & $z = j+1$     & column index (1-based) \\
+\hline
+\end{tabular}
+\vspace{0.2in}
+
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Unary operators for floating-point types (real and complex)} \\
+\hline
+GraphBLAS name          & types (domains)   & $z=f(x)$      & description \\
+\hline
+\verb'GxB_SQRT_'$F$     & $F \rightarrow F$ & $z = \sqrt(x)$       & square root \\
+\verb'GxB_LOG_'$F$      & $F \rightarrow F$ & $z = \log_e(x)$      & natural logarithm \\
+\verb'GxB_EXP_'$F$      & $F \rightarrow F$ & $z = e^x$            & natural exponent \\
+\hline
+\verb'GxB_LOG10_'$F$    & $F \rightarrow F$ & $z = \log_{10}(x)$   & base-10 logarithm \\
+\verb'GxB_LOG2_'$F$     & $F \rightarrow F$ & $z = \log_2(x)$      & base-2 logarithm \\
+\verb'GxB_EXP2_'$F$     & $F \rightarrow F$ & $z = 2^x$            & base-2 exponent \\
+\hline
+\verb'GxB_EXPM1_'$F$    & $F \rightarrow F$ & $z = e^x - 1$        & natural exponent - 1 \\
+\verb'GxB_LOG1P_'$F$    & $F \rightarrow F$ & $z = \log(x+1)$      & natural log of $x+1$ \\
+\hline
+\verb'GxB_SIN_'$F$      & $F \rightarrow F$ & $z = \sin(x)$        & sine \\
+\verb'GxB_COS_'$F$      & $F \rightarrow F$ & $z = \cos(x)$        & cosine \\
+\verb'GxB_TAN_'$F$      & $F \rightarrow F$ & $z = \tan(x)$        & tangent \\
+\hline
+\verb'GxB_ASIN_'$F$     & $F \rightarrow F$ & $z = \sin^{-1}(x)$        & inverse sine \\
+\verb'GxB_ACOS_'$F$     & $F \rightarrow F$ & $z = \cos^{-1}(x)$        & inverse cosine \\
+\verb'GxB_ATAN_'$F$     & $F \rightarrow F$ & $z = \tan^{-1}(x)$        & inverse tangent \\
+\hline
+\verb'GxB_SINH_'$F$     & $F \rightarrow F$ & $z = \sinh(x)$        & hyperbolic sine \\
+\verb'GxB_COSH_'$F$     & $F \rightarrow F$ & $z = \cosh(x)$        & hyperbolic cosine \\
+\verb'GxB_TANH_'$F$     & $F \rightarrow F$ & $z = \tanh(x)$        & hyperbolic tangent \\
+\hline
+\verb'GxB_ASINH_'$F$    & $F \rightarrow F$ & $z = \sinh^{-1}(x)$        & inverse hyperbolic sine \\
+\verb'GxB_ACOSH_'$F$    & $F \rightarrow F$ & $z = \cosh^{-1}(x)$        & inverse hyperbolic cosine \\
+\verb'GxB_ATANH_'$F$    & $F \rightarrow F$ & $z = \tanh^{-1}(x)$        & inverse hyperbolic tangent \\
+\hline
+\verb'GxB_SIGNUM_'$F$   & $F \rightarrow F$ & $z = \sgn(x)$                 & sign, or signum function \\
+\verb'GxB_CEIL_'$F$     & $F \rightarrow F$ & $z = \lceil x \rceil $       & ceiling function \\
+\verb'GxB_FLOOR_'$F$    & $F \rightarrow F$ & $z = \lfloor x \rfloor $     & floor function \\
+\verb'GxB_ROUND_'$F$    & $F \rightarrow F$ & $z = \mbox{round}(x)$        & round to nearest \\
+\verb'GxB_TRUNC_'$F$    & $F \rightarrow F$ & $z = \mbox{trunc}(x)$        & round towards zero \\
+\hline
+\verb'GxB_ISINF_'$F$    & $F \rightarrow $ \verb'bool' & $z = \mbox{isinf}(x)$ & true if $\pm \infty$ \\
+\verb'GxB_ISNAN_'$F$    & $F \rightarrow $ \verb'bool' & $z = \mbox{isnan}(x)$ & true if \verb'NaN' \\
+\verb'GxB_ISFINITE_'$F$ & $F \rightarrow $ \verb'bool' & $z = \mbox{isfinite}(x)$ & true if finite \\
+\hline
+\end{tabular}
+\vspace{0.2in}
+
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Unary operators for floating-point types (real only)} \\
+\hline
+GraphBLAS name          & types (domains)   & $z=f(x)$      & description \\
+\hline
+\verb'GxB_LGAMMA_'$R$   & $R \rightarrow R$ & $z = \log(|\Gamma (x)|)$  & log of gamma function \\
+\verb'GxB_TGAMMA_'$R$   & $R \rightarrow R$ & $z = \Gamma(x)$        & gamma function \\
+\verb'GxB_ERF_'$R$      & $R \rightarrow R$ & $z = \erf(x)$          & error function \\
+\verb'GxB_ERFC_'$R$     & $R \rightarrow R$ & $z = \erfc(x)$         & complimentary error function \\
+\verb'GxB_CBRT_'$R$     & $R \rightarrow R$ & $z = x^{1/3}$          & cube root \\
+\hline
+\verb'GxB_FREXPX_'$R$   & $R \rightarrow R$ & $z = \mbox{frexpx}(x)$  & normalized fraction \\
+\verb'GxB_FREXPE_'$R$   & $R \rightarrow R$ & $z = \mbox{frexpe}(x)$  & normalized exponent \\
+\hline
+\end{tabular}
+\vspace{0.2in}
+
+\begin{tabular}{|llll|}
+\hline
+\multicolumn{4}{|c|}{Unary operators for complex types} \\
+\hline
+GraphBLAS name          & types (domains)   & $z=f(x)$      & description \\
+\hline
+\verb'GxB_CONJ_'$Z$    & $Z \rightarrow Z$ & $z = \overline{x}$     & complex conjugate \\
+\verb'GxB_ABS_'$Z$     & $Z \rightarrow F$ & $z = |x|$              & absolute value \\
+\verb'GxB_CREAL_'$Z$   & $Z \rightarrow F$ & $z = \mbox{real}(x)$   & real part \\
+\verb'GxB_CIMAG_'$Z$   & $Z \rightarrow F$ & $z = \mbox{imag}(x)$   & imaginary part \\
+\verb'GxB_CARG_'$Z$    & $Z \rightarrow F$ & $z = \mbox{carg}(x)$   & angle \\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+Built-in index-based unary operators return the row or column index of an entry.  For a
+matrix $z=f(a_{ij})$ returns $z = i$ or $z = j$, or +1 for 1-based indices.
+The latter is useful in the MATLAB/Octave interface, where row and column indices are
+1-based.  When applied to a vector, $j$ is always zero, and $i$ is the index in
+the vector.  These built-in unary operators come in two types: \verb'INT32' and
+\verb'INT64', which is the type of the output, $z$.  The functions are agnostic
+to the type of their inputs; they only depend on the position of the entries,
+not their values.
+User-defined index-based operators cannot be defined by \verb'GrB_UnaryOp_new';
+use \verb'GrB_IndexUnaryOp_new' instead; see Section~\ref{idxunop}.
+
+\verb'GxB_FREXPX' and \verb'GxB_FREXPE' return the mantissa and exponent,
+respectively, from the C11 \verb'frexp' function.  The exponent is
+returned as a floating-point value, not an integer.
+
+The operators \verb'GxB_EXPM1_FC*' and \verb'GxB_LOG1P_FC*' for complex
+types are currently not accurate.  They will be revised in a future version.
+
+The functions \verb'casin', \verb'casinf', \verb'casinh', and \verb'casinhf'
+provided by Microsoft Visual Studio for computing $\sin^{-1}(x)$ and
+$\sinh^{-1}(x)$ when $x$ is complex do not compute the correct result.  Thus,
+the unary operators \verb'GxB_ASIN_FC32', \verb'GxB_ASIN_FC64'
+\verb'GxB_ASINH_FC32', and \verb'GxB_ASINH_FC64' do not work properly if the MS
+Visual Studio compiler is used.  These functions work properly if the gcc, icc,
+or clang compilers are used on Linux or MacOS.
+
+Integer division by zero normally terminates an application, but this is
+avoided in SuiteSparse:GraphBLAS.  For details, see the binary
+\verb'GrB_DIV_'$T$ operators.
+
+\begin{alert}
+{\bf SPEC:} The definition of integer division by zero is an extension to the
+specification.
+\end{alert}
+
+The next sections define the following methods for the \verb'GrB_UnaryOp'
+object:
+
+\vspace{0.1in}
+{\footnotesize
+\noindent
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_UnaryOp_new'   & create a user-defined unary operator         & \ref{unaryop_new} \\
+\verb'GxB_UnaryOp_new'   & create a named user-defined unary operator   & \ref{unaryop_new_named} \\
+\verb'GrB_UnaryOp_wait'  & wait for a user-defined unary operator       & \ref{unaryop_wait} \\
+\verb'GrB_UnaryOp_free'  & free a user-defined unary operator   & \ref{unaryop_free} \\
+\verb'GrB_get'           & get properties of an operator    & \ref{get_set_unop} \\
+\verb'GrB_set'           & set the operator name/definition & \ref{get_set_unop} \\
+\hline
+\end{tabular}
+}
+\vspace{0.1in}
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_UnaryOp\_new:} create a user-defined unary operator}
+%-------------------------------------------------------------------------------
+\label{unaryop_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_UnaryOp_new            // create a new user-defined unary operator
+(
+    GrB_UnaryOp *unaryop,           // handle for the new unary operator
+    void *function,                 // pointer to the unary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype                  // type of input x
+) ;
+\end{verbatim} }\end{mdframed}
+
+\verb'GrB_UnaryOp_new' creates a new unary operator.  The new operator is
+returned in the \verb'unaryop' handle, which must not be \verb'NULL' on input.
+On output, its contents contains a pointer to the new unary operator.
+
+The two types \verb'xtype' and \verb'ztype' are the GraphBLAS types of the
+input $x$ and output $z$ of the user-defined function $z=f(x)$.  These types
+may be built-in types or user-defined types, in any combination.  The two types
+need not be the same, but they must be previously defined before passing them
+to \verb'GrB_UnaryOp_new'.
+
+The \verb'function' argument to \verb'GrB_UnaryOp_new' is a pointer to a
+user-defined function with the following signature:
+
+    {\footnotesize
+    \begin{verbatim}
+    void (*f) (void *z, const void *x) ; \end{verbatim} }
+
+When the function \verb'f' is called, the arguments \verb'z' and \verb'x' are
+passed as \verb'(void *)' pointers, but they will be pointers to values of the
+correct type, defined by \verb'ztype' and \verb'xtype', respectively, when the
+operator was created.
+
+{\bf NOTE:}
+The pointers passed to a user-defined operator may not be unique.  That is, the
+user function may be called with multiple pointers that point to the same
+space, such as when \verb'z=f(z,y)' is to be computed by a binary operator, or
+\verb'z=f(z)' for a unary operator.  Any parameters passed to the user-callable
+function may be aliased to each other.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_UnaryOp\_new:} create a named user-defined unary operator}
+%-------------------------------------------------------------------------------
+\label{unaryop_new_named}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_UnaryOp_new            // create a new user-defined unary operator
+(
+    GrB_UnaryOp *unaryop,           // handle for the new unary operator
+    GxB_unary_function function,    // pointer to the unary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    const char *unop_name,          // name of the user function
+    const char *unop_defn           // definition of the user function
+) ;
+\end{verbatim} }\end{mdframed}
+
+Creates a named \verb'GrB_UnaryOp'.  Only the first 127 characters of
+\verb'unop_name' are used.  The \verb'unop_defn' is a string containing the
+entire function itself.  For example:
+
+    {\footnotesize
+    \begin{verbatim}
+    void square (double *z, double *x) { (*z) = (*x) * (*x) ; } ;
+    ...
+    GrB_Type Square ;
+    GxB_UnaryOp_new (&Square, square, GrB_FP64, GrB_FP64, "square",
+        "void square (double *z, double *x) { (*z) = (*x) * (*x) ; } ;") ;
+    \end{verbatim}}
+
+The two strings \verb'unop_name' and \verb'unop_defn' are optional, but are
+required to enable the JIT compilation of kernels that use this operator.
+
+If JIT compilation is enabled, or if the corresponding JIT kernel has been
+copied into the \verb'PreJIT' folder, the \verb'function' may be \verb'NULL'.
+In this case, a JIT kernel is compiled that contains just the user-defined
+function.  If the JIT is disabled and the \verb'function' is \verb'NULL', this
+method returns \verb'GrB_NULL_POINTER'.
+
+The above example is identical to the following usage, except that
+\verb'GrB_UnaryOp_new' requires a non-NULL function pointer.
+
+    {\footnotesize
+    \begin{verbatim}
+    void square (double *z, double *x) { (*z) = (*x) * (*x) ; } ;
+    ...
+    GrB_Type Square ;
+    GrB_UnaryOp_new (&Square, square, GrB_FP64, GrB_FP64) ;
+    GrB_set (Square, "square", GxB_JIT_C_NAME) ;
+    GrB_set (Square, "void square (double *z, double *x) { (*z) = (*x) * (*x) ; } ;",
+        GxB_JIT_C_DEFINITION) ; \end{verbatim}}
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_UnaryOp\_wait:} wait for a unary operator}
+%-------------------------------------------------------------------------------
+\label{unaryop_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a user-defined unary operator
+(
+    GrB_UnaryOp unaryop,        // unary operator to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined unary operator, a GraphBLAS library may choose to
+exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS currently does nothing except to ensure that the
+\verb'unaryop' is valid.
+
+% \newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_UnaryOp\_free:} free a user-defined unary operator}
+%-------------------------------------------------------------------------------
+\label{unaryop_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free                   // free a user-created unary operator
+(
+    GrB_UnaryOp *unaryop            // handle of unary operator to free
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GrB_UnaryOp_free' frees a user-defined unary operator.
+Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_UnaryOp_free (&unaryop) ;
+    GrB_free (&unaryop) ; \end{verbatim}}
+
+\noindent
+frees the \verb'unaryop' and sets \verb'unaryop' to \verb'NULL'.
+It safely does nothing if passed a \verb'NULL'
+handle, or if \verb'unaryop == NULL' on input.
+It does nothing at all if passed a built-in unary operator.
+
+

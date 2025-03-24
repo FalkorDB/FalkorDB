@@ -2,7 +2,7 @@
 // GB_emult_08bcd: C=A.*B; C, A, and B are all sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,11 +32,11 @@
 
         for ( ; pB < pB_end ; pB++)
         {
-            int64_t i = Bi [pB] ;
+            int64_t i = GB_IGET (Bi, pB) ;
             // find i in A(:,j)
             int64_t pright = pA_end - 1 ;
             bool found ;
-            GB_BINARY_SEARCH (i, Ai, pA, pright, found) ;
+            found = GB_binary_search (i, Ai, GB_Ai_IS_32, &pA, &pright) ;
             if (found)
             { 
                 // C (i,j) = A (i,j) .* B (i,j)
@@ -44,7 +44,7 @@
                 cjnz++ ;
                 #else
                 ASSERT (pC < pC_end) ;
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
                 #ifndef GB_ISO_EMULT
                 GB_DECLAREA (aij) ;
                 GB_GETA (aij, Ax, pA, A_iso) ;
@@ -70,11 +70,11 @@
 
         for ( ; pA < pA_end ; pA++)
         {
-            int64_t i = Ai [pA] ;
+            int64_t i = GB_IGET (Ai, pA) ;
             // find i in B(:,j)
             int64_t pright = pB_end - 1 ;
             bool found ;
-            GB_BINARY_SEARCH (i, Bi, pB, pright, found) ;
+            found = GB_binary_search (i, Bi, GB_Bi_IS_32, &pB, &pright) ;
             if (found)
             { 
                 // C (i,j) = A (i,j) .* B (i,j)
@@ -82,7 +82,7 @@
                 cjnz++ ;
                 #else
                 ASSERT (pC < pC_end) ;
-                Ci [pC] = i ;
+                GB_ISET (Ci, pC, i) ;   // Ci [pC] = i ;
                 #ifndef GB_ISO_EMULT
                 GB_DECLAREA (aij) ;
                 GB_GETA (aij, Ax, pA, A_iso) ;
@@ -110,8 +110,8 @@
 
         while (pA < pA_end && pB < pB_end)
         {
-            int64_t iA = Ai [pA] ;
-            int64_t iB = Bi [pB] ;
+            int64_t iA = GB_IGET (Ai, pA) ;
+            int64_t iB = GB_IGET (Bi, pB) ;
             if (iA < iB)
             { 
                 // A(i,j) exists but not B(i,j)
@@ -130,7 +130,7 @@
                 cjnz++ ;
                 #else
                 ASSERT (pC < pC_end) ;
-                Ci [pC] = iB ;
+                GB_ISET (Ci, pC, iB) ;  // Ci [pC] = iB ;
                 #ifndef GB_ISO_EMULT
                 GB_DECLAREA (aij) ;
                 GB_GETA (aij, Ax, pA, A_iso) ;

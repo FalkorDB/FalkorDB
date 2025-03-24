@@ -2,7 +2,7 @@
 // GrB_Global_get_*: get a global option
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -88,6 +88,25 @@ static GrB_Info GB_global_enum_get (int32_t *value, int field)
                     GxB_BY_COL : GxB_BY_ROW ;
             break ;
 
+        case GxB_OFFSET_INTEGER_HINT : 
+
+            (*value) = (int) GB_Global_p_control_get ( ) ;
+            break ;
+
+        case GxB_COLINDEX_INTEGER_HINT : 
+
+            (*value) = (int) (GB_Global_is_csc_get ( ) ?
+                GB_Global_j_control_get ( ) :
+                GB_Global_i_control_get ( )) ;
+            break ;
+
+        case GxB_ROWINDEX_INTEGER_HINT : 
+
+            (*value) = (int) (GB_Global_is_csc_get ( ) ?
+                GB_Global_i_control_get ( ) :
+                GB_Global_j_control_get ( )) ;
+            break ;
+
         case GxB_GLOBAL_NTHREADS :      // same as GxB_NTHREADS
 
             (*value) = (int) GB_Context_nthreads_max_get (NULL) ;
@@ -117,6 +136,11 @@ static GrB_Info GB_global_enum_get (int32_t *value, int field)
             (*value) = (int) GB_Global_print_one_based_get ( ) ;
             break ;
 
+        case GxB_INCLUDE_READONLY_STATISTICS : 
+
+            (*value) = (int) GB_Global_stats_mem_shallow_get ( ) ;
+            break ;
+
         case GxB_JIT_C_CONTROL : 
 
             (*value) = (int) GB_jitifyer_get_control ( ) ;
@@ -143,8 +167,8 @@ static GrB_Info GB_global_enum_get (int32_t *value, int field)
 GrB_Info GrB_Global_get_Scalar
 (
     GrB_Global g,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 {
 
@@ -152,15 +176,16 @@ GrB_Info GrB_Global_get_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Global_get_Scalar (g, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (g) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (value) ;
+    GB_RETURN_IF_NULL (g) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_WHERE_1 (scalar, "GrB_Global_get_Scalar (g, scalar, field)") ;
+    ASSERT_SCALAR_OK (scalar, "input Scalar for GrB_Global_get_Scalar", GB0) ;
 
     //--------------------------------------------------------------------------
     // get the field
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GrB_NO_VALUE ;
+    info = GrB_NO_VALUE ;
 
     #pragma omp critical (GB_global_get_set)
     {
@@ -169,20 +194,20 @@ GrB_Info GrB_Global_get_Scalar
         if (info == GrB_SUCCESS)
         { 
             // field specifies an int: assign it to the scalar
-            info = GB_setElement ((GrB_Matrix) value, NULL, &i, 0, 0,
+            info = GB_setElement ((GrB_Matrix) scalar, NULL, &i, 0, 0,
                 GB_INT32_code, Werk) ;
         }
         else
         { 
             double x ;
-            int64_t i64 ; 
+            int64_t i64 ;
             switch ((int) field)
             {
 
                 case GxB_HYPER_SWITCH : 
 
                     x = (double) GB_Global_hyper_switch_get ( ) ;
-                    info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
+                    info = GB_setElement ((GrB_Matrix) scalar, NULL, &x, 0, 0,
                         GB_FP64_code, Werk) ;
 
                     break ;
@@ -190,14 +215,14 @@ GrB_Info GrB_Global_get_Scalar
                 case GxB_GLOBAL_CHUNK :         // same as GxB_CHUNK
 
                     x = GB_Context_chunk_get (NULL) ;
-                    info = GB_setElement ((GrB_Matrix) value, NULL, &x, 0, 0,
+                    info = GB_setElement ((GrB_Matrix) scalar, NULL, &x, 0, 0,
                         GB_FP64_code, Werk) ;
                     break ;
 
                 case GxB_HYPER_HASH : 
 
                     i64 = GB_Global_hyper_hash_get ( ) ;
-                    info = GB_setElement ((GrB_Matrix) value, NULL, &i64, 0, 0,
+                    info = GB_setElement ((GrB_Matrix) scalar, NULL, &i64, 0, 0,
                         GB_INT64_code, Werk) ;
                     break ;
 
@@ -208,6 +233,7 @@ GrB_Info GrB_Global_get_Scalar
         }
     }
 
+    ASSERT_SCALAR_OK (scalar, "output Scalar for GrB_Global_get_Scalar", GB0) ;
     return (info) ;
 }
 
@@ -342,7 +368,7 @@ GrB_Info GrB_Global_get_String
 (
     GrB_Global g,
     char * value,
-    GrB_Field field
+    int field
 )
 {
 
@@ -350,7 +376,7 @@ GrB_Info GrB_Global_get_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Global_get_String (g, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (g) ;
     GB_RETURN_IF_NULL (value) ;
     (*value) = '\0' ;
@@ -383,7 +409,7 @@ GrB_Info GrB_Global_get_INT32
 (
     GrB_Global g,
     int32_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -391,7 +417,7 @@ GrB_Info GrB_Global_get_INT32
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Global_get_INT32 (g, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (g) ;
     GB_RETURN_IF_NULL (value) ;
 
@@ -417,7 +443,7 @@ GrB_Info GrB_Global_get_SIZE
 (
     GrB_Global g,
     size_t * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -425,7 +451,7 @@ GrB_Info GrB_Global_get_SIZE
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Global_get_SIZE (g, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (g) ;
     GB_RETURN_IF_NULL (value) ;
     (*value) = 0 ;
@@ -489,7 +515,7 @@ GrB_Info GrB_Global_get_VOID
 (
     GrB_Global g,
     void * value,
-    GrB_Field field
+    int field
 )
 {
 
@@ -497,7 +523,7 @@ GrB_Info GrB_Global_get_VOID
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Global_get_VOID (g, value, field)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (g) ;
     GB_RETURN_IF_NULL (value) ;
 

@@ -2,7 +2,7 @@
 // GB_macrofy_apply: construct all macros for apply methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -27,10 +27,16 @@ void GB_macrofy_apply           // construct all macros for GrB_apply
     // extract the apply method_code
     //--------------------------------------------------------------------------
 
-    // A properties (3 bits, 1 digit)
+    // C and A properties (3 hex digits)
+    bool Cp_is_32   = GB_RSHIFT (method_code, 44, 1) ;
+    bool Ci_is_32   = GB_RSHIFT (method_code, 43, 1) ;
+    bool Cj_is_32   = GB_RSHIFT (method_code, 42, 1) ;
+    bool Ap_is_32   = GB_RSHIFT (method_code, 41, 1) ;
+    bool Aj_is_32   = GB_RSHIFT (method_code, 40, 1) ;
+    bool Ai_is_32   = GB_RSHIFT (method_code, 39, 1) ;
     int A_mat       = GB_RSHIFT (method_code, 38, 1) ;
     int A_zombies   = GB_RSHIFT (method_code, 37, 1) ;
-    int A_iso       = GB_RSHIFT (method_code, 36, 1) ;
+    bool A_iso      = GB_RSHIFT (method_code, 36, 1) ;
 
     // C kind, i/j dependency and flipij (4 bits)
     int C_mat       = GB_RSHIFT (method_code, 35, 1) ;
@@ -172,7 +178,7 @@ void GB_macrofy_apply           // construct all macros for GrB_apply
     { 
         // C = op(A) where C is a matrix
         GB_macrofy_output (fp, "c", "C", "C", ctype, ztype, csparsity, false,
-            false) ;
+            false, Cp_is_32, Cj_is_32, Ci_is_32) ;
     }
     else
     { 
@@ -180,6 +186,7 @@ void GB_macrofy_apply           // construct all macros for GrB_apply
         ASSERT (ctype == ztype) ;
         fprintf (fp, "\n// C type:\n") ;
         GB_macrofy_type (fp, "C", "_", ctype->name) ;
+        GB_macrofy_bits (fp, "C", Cp_is_32, Cj_is_32, Ci_is_32) ;
     }
 
     //--------------------------------------------------------------------------
@@ -190,7 +197,8 @@ void GB_macrofy_apply           // construct all macros for GrB_apply
     {
         // C or Cx = op(A) for a matrix A
         GB_macrofy_input (fp, "a", "A", "A", true, xtype,
-            atype, asparsity, acode, A_iso, A_zombies) ;
+            atype, asparsity, acode, A_iso, A_zombies,
+            Ap_is_32, Aj_is_32, Ai_is_32) ;
     }
     else
     {

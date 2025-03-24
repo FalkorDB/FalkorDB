@@ -2,7 +2,7 @@
 // GB_union_jit: C=A+B, C<#M>=A+B eWiseUnion method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -54,8 +54,8 @@ GrB_Info GB_union_jit      // C=A+B, C<#M>=A+B, eWiseUnion, via the JIT
     char *suffix ;
     uint64_t hash = GB_encodify_ewise (&encoding, &suffix,
         GB_JIT_KERNEL_UNION, false,
-        false, false, C_sparsity, C->type, M, Mask_struct, Mask_comp,
-        binaryop, flipij, false, A, B) ;
+        false, false, C_sparsity, C->type, C->p_is_32, C->j_is_32, C->i_is_32,
+        M, Mask_struct, Mask_comp, binaryop, flipij, false, A, B) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -76,11 +76,12 @@ GrB_Info GB_union_jit      // C=A+B, C<#M>=A+B, eWiseUnion, via the JIT
     bool M_is_A = GB_all_aliased (M, A) ;
     bool M_is_B = GB_all_aliased (M, B) ;
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, M, A, B, alpha_scalar_in, beta_scalar_in,
         Ch_is_Mh, C_to_M, C_to_A, C_to_B, TaskList, C_ntasks, C_nthreads,
         M_ek_slicing, M_nthreads, M_ntasks, A_ek_slicing, A_nthreads, A_ntasks,
         B_ek_slicing, B_nthreads, B_ntasks, M_is_A, M_is_B,
-        binaryop->theta)) ;
+        binaryop->theta, &GB_callback)) ;
 }
 

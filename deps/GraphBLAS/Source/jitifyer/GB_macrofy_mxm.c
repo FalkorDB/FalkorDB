@@ -2,7 +2,7 @@
 // GB_macrofy_mxm: construct all macros for a semiring
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -31,13 +31,30 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
     // extract the semiring method_code
     //--------------------------------------------------------------------------
 
+    // C, M, A, B: 32/64 (3 hex digits)
+    bool Cp_is_32   = GB_RSHIFT (method_code, 63, 1) ;
+    bool Cj_is_32   = GB_RSHIFT (method_code, 62, 1) ;
+    bool Ci_is_32   = GB_RSHIFT (method_code, 61, 1) ;
+
+    bool Mp_is_32   = GB_RSHIFT (method_code, 60, 1) ;
+    bool Mj_is_32   = GB_RSHIFT (method_code, 59, 1) ;
+    bool Mi_is_32   = GB_RSHIFT (method_code, 58, 1) ;
+
+    bool Ap_is_32   = GB_RSHIFT (method_code, 57, 1) ;
+    bool Aj_is_32   = GB_RSHIFT (method_code, 56, 1) ;
+    bool Ai_is_32   = GB_RSHIFT (method_code, 55, 1) ;
+
+    bool Bp_is_32   = GB_RSHIFT (method_code, 54, 1) ;
+    bool Bj_is_32   = GB_RSHIFT (method_code, 53, 1) ;
+    bool Bi_is_32   = GB_RSHIFT (method_code, 52, 1) ;
+
     // monoid (4 bits, 1 hex digit)
 //  int add_code    = GB_RSHIFT (method_code, 48, 5) ;
 
     // C in, A, B iso-valued and flipxy (one hex digit)
     bool C_in_iso   = GB_RSHIFT (method_code, 47, 1) ;
-    int A_iso_code  = GB_RSHIFT (method_code, 46, 1) ;
-    int B_iso_code  = GB_RSHIFT (method_code, 45, 1) ;
+    bool A_iso      = GB_RSHIFT (method_code, 46, 1) ;
+    bool B_iso      = GB_RSHIFT (method_code, 45, 1) ;
     bool flipxy     = GB_RSHIFT (method_code, 44, 1) ;
 
     // multiplier (5 hex digits)
@@ -154,6 +171,7 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
     bool is_first  = (mult_opcode == GB_FIRST_binop_code) ;
     bool is_second = (mult_opcode == GB_SECOND_binop_code) ;
     bool is_pair   = (mult_opcode == GB_PAIR_binop_code) ;
+    bool is_user_monoid = (add_opcode == GB_USER_binop_code) ;
 
     if (C_iso)
     { 
@@ -165,7 +183,7 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
         fprintf (fp, "#define GB_MULTADD(z,x,y,i,k,j)\n") ;
 
     }
-    else if (u_expr != NULL && f_expr != NULL &&
+    else if (u_expr != NULL && f_expr != NULL && !is_user_monoid &&
         (is_float || is_double || is_bool || is_first || is_second || is_pair
             || is_positional))
     { 
@@ -321,14 +339,17 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
     switch (mult_opcode)
     {
         case GB_PAIR_binop_code : 
-            fprintf (fp, "#define GB_IS_PAIR_MULTIPLIER 1\n") ;
-            if (zcode == GB_FC32_code)
+            if (!is_user_monoid)
             { 
-                fprintf (fp, "#define GB_PAIR_ONE GxB_CMPLXF (1,0)\n") ;
-            }
-            else if (zcode == GB_FC64_code)
-            { 
-                fprintf (fp, "#define GB_PAIR_ONE GxB_CMPLX (1,0)\n") ;
+                fprintf (fp, "#define GB_IS_PAIR_MULTIPLIER 1\n") ;
+                if (zcode == GB_FC32_code)
+                { 
+                    fprintf (fp, "#define GB_PAIR_ONE GxB_CMPLXF (1,0)\n") ;
+                }
+                else if (zcode == GB_FC64_code)
+                { 
+                    fprintf (fp, "#define GB_PAIR_ONE GxB_CMPLX (1,0)\n") ;
+                }
             }
             break ;
 
@@ -360,13 +381,14 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
     //--------------------------------------------------------------------------
 
     GB_macrofy_output (fp, "c", "C", "C", ctype, ztype, csparsity, C_iso,
-        C_in_iso) ;
+        C_in_iso, Cp_is_32, Cj_is_32, Ci_is_32) ;
 
     //--------------------------------------------------------------------------
     // construct the macros to access the mask (if any), and its name
     //--------------------------------------------------------------------------
 
-    GB_macrofy_mask (fp, mask_ecode, "M", msparsity) ;
+    GB_macrofy_mask (fp, mask_ecode, "M", msparsity,
+        Mp_is_32, Mj_is_32, Mi_is_32) ;
 
     //--------------------------------------------------------------------------
     // construct the macros for A and B
@@ -377,11 +399,11 @@ void GB_macrofy_mxm         // construct all macros for GrB_mxm
 
     GB_macrofy_input (fp, "a", "A", "A", true,
         flipxy ? ytype : xtype,
-        atype, asparsity, acode, A_iso_code, -1) ;
+        atype, asparsity, acode, A_iso, -1, Ap_is_32, Aj_is_32, Ai_is_32) ;
 
     GB_macrofy_input (fp, "b", "B", "B", true,
         flipxy ? xtype : ytype,
-        btype, bsparsity, bcode, B_iso_code, -1) ;
+        btype, bsparsity, bcode, B_iso, -1, Bp_is_32, Bj_is_32, Bi_is_32) ;
 
     //--------------------------------------------------------------------------
     // include the final default definitions

@@ -2,7 +2,7 @@
 // gbchunk: get/set the chunk size to use in GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,23 +35,30 @@ void mexFunction
     // set the chunk, if requested
     //--------------------------------------------------------------------------
 
-    double c ;
+    GrB_Scalar chunk = NULL ;
 
     if (nargin > 0)
     { 
         // set the chunk
         CHECK_ERROR (!gb_mxarray_is_scalar (pargin [0]),
             "input must be a scalar") ;
-        c = (double) mxGetScalar (pargin [0]) ;
-        OK (GxB_Global_Option_set (GxB_CHUNK, c)) ;
+        chunk = (GrB_Scalar) gb_get_shallow (pargin [0]) ;
+        OK (GrB_Global_set_Scalar (GrB_GLOBAL, chunk, GxB_CHUNK)) ;
+        OK (GrB_Scalar_free (&chunk)) ;
     }
+
+    //--------------------------------------------------------------------------
+    // get the chunk and return it
+    //--------------------------------------------------------------------------
+
+    OK (GrB_Scalar_new (&chunk, GrB_FP64)) ;
+    OK (GrB_Global_get_Scalar (GrB_GLOBAL, chunk, GxB_CHUNK)) ;
 
     //--------------------------------------------------------------------------
     // return the chunk
     //--------------------------------------------------------------------------
 
-    OK (GxB_Global_Option_get (GxB_CHUNK, &c)) ;
-    pargout [0] = mxCreateDoubleScalar (c) ;
-    GB_WRAPUP ;
+    pargout [0] = gb_export ((GrB_Matrix *) &chunk, KIND_FULL) ;
+    gb_wrapup ( ) ;
 }
 

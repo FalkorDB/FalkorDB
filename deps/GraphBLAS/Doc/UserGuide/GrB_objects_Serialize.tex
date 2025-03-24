@@ -1,0 +1,405 @@
+
+\newpage
+%===============================================================================
+\subsection{Serialize/deserialize methods}
+%===============================================================================
+\label{serialize_deserialize}
+
+{\em Serialization} takes an opaque GraphBLAS object (a vector or matrix) and
+encodes it in a single non-opaque array of bytes, the {\em blob}.  The blob can
+only be deserialized by the same library that created it (SuiteSparse:GraphBLAS
+in this case).  The array of bytes can be written to a file, sent to another
+process over an MPI channel, or operated on in any other way that moves the
+bytes around.  The contents of the array cannot be interpreted except by
+deserialization back into a vector or matrix, by the same library (and
+sometimes the same version) that created the blob.
+
+All versions of SuiteSparse:GraphBLAS that implement
+serialization/deserialization use essentially the same format for the blob, so
+the library versions are compatible with each other.  Version v9.0.0 adds the
+\verb'GrB_NAME' and \verb'GrB_EL_TYPE_STRING' to the blob in an upward
+compatible manner, so that older versions of SuiteSparse:GraphBLAS can read the blobs
+created by v9.0.0; they simply ignore those components.
+
+SuiteSparse:GraphBLAS v10 adds
+32/64-bit integers, and can read the blobs created by any prior version of
+GraphBLAS (they are deserialized with all 64-bit integers however).  If an older
+version of SuiteSparse:GraphBLAS (v9 or earlier) attempts to deserialize a blob
+containing a matrix with 32-bit integers, it will safely report that the blob
+is invalid and refuse to deserialize it.  If SuiteSparse:GraphBLAS v10 creates a
+serialized blob with all-64-bit integers, then it can be read correctly by
+SuiteSparse:GraphBLAS v9, and likely also by earlier versions of the library.
+
+There are two forms of serialization: \verb'GrB*serialize' and
+\verb'GxB*serialize'.  For the \verb'GrB' form, the blob must first be
+allocated by the user application, and it must be large enough to hold the
+serialized matrix or vector.  By contrast \verb'GxB*serialize' allocates
+the blob itself.
+
+By default, ZSTD (level 1) compression is used for serialization, but other
+options can be selected via the descriptor:
+\verb'GrB_set (desc, method,' \verb'GxB_COMPRESSION)', where \verb'method' is an
+integer selected from the following options:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{ll}
+\hline
+method                           &  description \\
+\hline
+\verb'GxB_COMPRESSION_NONE'      &  no compression \\
+\verb'GxB_COMPRESSION_DEFAULT'   &  ZSTD, with default level 1 \\
+\verb'GxB_COMPRESSION_LZ4'       &  LZ4 \\
+\verb'GxB_COMPRESSION_LZ4HC'     &  LZ4HC, with default level 9 \\
+\verb'GxB_COMPRESSION_ZSTD'      &  ZSTD, with default level 1 \\
+\hline
+\end{tabular} }
+\vspace{0.2in}
+
+The LZ4HC method can be modified by adding a level of zero to 9, with 9 being
+the default.  Higher levels lead to a more compact blob, at the cost of extra
+computational time. This level is simply added to the method, so to compress a
+vector with LZ4HC with level 6, use:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_set (desc, GxB_COMPRESSION_LZ4HC + 6, GxB_COMPRESSION) ; \end{verbatim}}
+
+The ZSTD method can be specified as level 1 to 19, with 1 being the default.
+To compress with ZSTD at level 6, use:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_set (desc, GxB_COMPRESSION_ZSTD + 6, GxB_COMPRESSION) ; \end{verbatim}}
+
+Deserialization of untrusted data is a common security problem; see
+\url{https://cwe.mitre.org/data/definitions/502.html}. The deserialization
+methods in SuiteSparse:GraphBLAS do a few basic checks so that no out-of-bounds
+access occurs during deserialization, but the output matrix or vector itself
+may still be corrupted.  If the data is untrusted, use \verb'GxB_*_fprint' with
+the print level set to \verb'GxB_SILENT' to
+check the matrix or vector after deserializing it:
+
+{\footnotesize
+\begin{verbatim}
+    info = GxB_Vector_fprint (w, "w deserialized", GxB_SILENT, NULL) ;
+    if (info != GrB_SUCCESS) GrB_free (&w) ;
+    info = GxB_Matrix_fprint (A, "A deserialized", GxB_SILENT, NULL) ;
+    if (info != GrB_SUCCESS) GrB_free (&A) ; \end{verbatim}}
+
+The following methods are described in this Section:
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+% \verb'GrB_Vector_serializeSize'  & return size of serialized vector & \ref{vector_serialize_size} \\
+% \verb'GrB_Vector_serialize'      & serialize a vector               & \ref{vector_serialize} \\
+\verb'GxB_Vector_serialize'      & serialize a vector               & \ref{vector_serialize_GxB} \\
+% \verb'GrB_Vector_deserialize'    & deserialize a vector             & \ref{vector_deserialize} \\
+\verb'GxB_Vector_deserialize'    & deserialize a vector             & \ref{vector_deserialize_GxB} \\
+\hline
+\verb'GrB_Matrix_serializeSize' & return size of serialized matrix & \ref{matrix_serialize_size} \\
+\verb'GrB_Matrix_serialize'     & serialize a matrix               & \ref{matrix_serialize} \\
+\verb'GxB_Matrix_serialize'     & serialize a matrix               & \ref{matrix_serialize_GxB} \\
+\verb'GrB_Matrix_deserialize'   & deserialize a matrix             & \ref{matrix_deserialize} \\
+\verb'GxB_Matrix_deserialize'   & deserialize a matrix             & \ref{matrix_deserialize_GxB} \\
+\hline
+\verb'GrB_get' & get blob properties & \ref{get_set_blob} \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+% \subsubsection{{\sf GrB\_Vector\_serializeSize:}  return size of serialized vector}
+%-------------------------------------------------------------------------------
+% \label{vector_serialize_size}
+
+% \begin{mdframed}[userdefinedwidth=6in]
+% {\footnotesize
+% \begin{verbatim}
+% GrB_Info GrB_Vector_serializeSize   // estimate the size of a blob
+% (
+%    // output:
+%    GrB_Index *blob_size_handle,    // upper bound on the required size of the
+%                                    // blob on output.
+%    // input:
+%    GrB_Vector u                    // vector to serialize
+%) ;
+%\end{verbatim}
+%} \end{mdframed}
+%
+% \verb'GrB_Vector_serializeSize' returns an upper bound on the size of the blob
+% needed to serialize a \verb'GrB_Vector' using \verb'GrB_Vector_serialize'.
+% After the vector is serialized, the actual size used is returned, and the blob
+% may be \verb'realloc''d to that size if desired.
+% This method is not required for \verb'GxB_Vector_serialize'.
+
+% \newpage
+%-------------------------------------------------------------------------------
+% \subsubsection{{\sf GrB\_Vector\_serialize:}      serialize a vector}
+%-------------------------------------------------------------------------------
+% \label{vector_serialize}
+
+% \begin{mdframed}[userdefinedwidth=6in]
+% {\footnotesize
+% \begin{verbatim}
+% GrB_Info GrB_Vector_serialize       // serialize a GrB_Vector to a blob
+% (
+%    // output:
+%    void *blob,                     // the blob, already allocated in input
+%    // input/output:
+%    GrB_Index *blob_size_handle,    // size of the blob on input.  On output,
+%                                    // the # of bytes used in the blob.
+%    // input:
+%    GrB_Vector u                    // vector to serialize
+% ) ;
+% \end{verbatim}
+% } \end{mdframed}
+%
+% \verb'GrB_Vector_serialize' serializes a vector into a single array of bytes
+% (the blob), which must be already allocated by the user application.
+% On input, \verb'&blob_size' is the size of the allocated blob in bytes.
+% On output, it is reduced to the numbed of bytes actually used to serialize
+% the vector.  After calling \verb'GrB_Vector_serialize', the blob may be
+% \verb'realloc''d to this revised size if desired (this is optional).
+% ZSTD (level 1) compression is used to construct a compact blob.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_serialize:}      serialize a vector}
+%-------------------------------------------------------------------------------
+\label{vector_serialize_GxB}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_serialize       // serialize a GrB_Vector to a blob
+(
+    // output:
+    void **blob_handle,             // the blob, allocated on output
+    GrB_Index *blob_size_handle,    // size of the blob on output
+    // input:
+    GrB_Vector u,                   // vector to serialize
+    const GrB_Descriptor desc       // descriptor to select compression method
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GxB_Vector_serialize' serializes a vector into a single array of bytes
+(the blob), which is \verb'malloc''ed and filled with the serialized vector.
+By default, ZSTD (level 1) compression is used, but other options can be
+selected via the descriptor.  Serializing a vector is identical to serializing
+a matrix; see Section \ref{matrix_serialize_GxB} for more information.
+
+%-------------------------------------------------------------------------------
+% \subsubsection{{\sf GrB\_Vector\_deserialize:}    deserialize a vector}
+%-------------------------------------------------------------------------------
+% \label{vector_deserialize}
+
+% \begin{mdframed}[userdefinedwidth=6in]
+% {\footnotesize
+% \begin{verbatim}
+% GrB_Info GrB_Vector_deserialize     // deserialize blob into a GrB_Vector
+% (
+%     // output:
+%     GrB_Vector *w,      // output vector created from the blob
+%     // input:
+%     GrB_Type type,      // type of the vector w.  Required if the blob holds a
+%                         // vector of user-defined type.  May be NULL if blob
+%                         // holds a built-in type; otherwise must match the
+%                         // type of w.
+%     const void *blob,       // the blob
+%     GrB_Index blob_size     // size of the blob
+% ) ;
+% \end{verbatim}
+% } \end{mdframed}
+%
+% This method creates a vector \verb'w' by deserializing the contents of the
+% blob, constructed by either \verb'GrB_Vector_serialize' or
+% \verb'GxB_Vector_serialize'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_deserialize:}    deserialize a vector}
+%-------------------------------------------------------------------------------
+\label{vector_deserialize_GxB}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_deserialize     // deserialize blob into a GrB_Vector
+(
+    // output:
+    GrB_Vector *w,      // output vector created from the blob
+    // input:
+    GrB_Type type,      // type of the vector w.  See GxB_Matrix_deserialize.
+    const void *blob,       // the blob
+    GrB_Index blob_size,    // size of the blob
+    const GrB_Descriptor desc
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+This method creates a vector \verb'w' by deserializing the contents of the
+blob, constructed by
+% either \verb'GrB_Vector_serialize' or
+\verb'GxB_Vector_serialize'.
+Deserializing a vector is identical to deserializing a matrix;
+see Section \ref{matrix_deserialize_GxB} for more information.
+
+The blob is allocated with the \verb'malloc' function passed to
+\verb'GxB_init', or the C11 \verb'malloc' if \verb'GrB_init' was used
+to initialize GraphBLAS.  The blob must be freed by the matching \verb'free'
+method, either the \verb'free' function passed to \verb'GxB_init' or
+the C11 \verb'free' if \verb'GrB_init' was used.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_serializeSize:}  return size of serialized matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_serialize_size}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_serializeSize   // estimate the size of a blob
+(
+    // output:
+    GrB_Index *blob_size_handle,    // upper bound on the required size of the
+                                    // blob on output.
+    // input:
+    GrB_Matrix A                    // matrix to serialize
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Matrix_serializeSize' returns an upper bound on the size of the blob
+needed to serialize a \verb'GrB_Matrix' with \verb'GrB_Matrix_serialize'.
+After the matrix is serialized, the actual size used is returned, and the blob
+may be \verb'realloc''d to that size if desired.
+This method is not required for \verb'GxB_Matrix_serialize'.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_serialize:}      serialize a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_serialize}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_serialize       // serialize a GrB_Matrix to a blob
+(
+    // output:
+    void *blob,                     // the blob, already allocated in input
+    // input/output:
+    GrB_Index *blob_size_handle,    // size of the blob on input.  On output,
+                                    // the # of bytes used in the blob.
+    // input:
+    GrB_Matrix A                    // matrix to serialize
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Matrix_serialize' serializes a matrix into a single array of bytes
+(the blob), which must be already allocated by the user application.
+On input, \verb'&blob_size' is the size of the allocated blob in bytes.
+On output, it is reduced to the numbed of bytes actually used to serialize
+the matrix.  After calling \verb'GrB_Matrix_serialize', the blob may be
+\verb'realloc''d to this revised size if desired (this is optional).
+ZSTD (level 1) compression is used to construct a compact blob.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_serialize:}      serialize a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_serialize_GxB}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_serialize       // serialize a GrB_Matrix to a blob
+(
+    // output:
+    void **blob_handle,             // the blob, allocated on output
+    GrB_Index *blob_size_handle,    // size of the blob on output
+    // input:
+    GrB_Matrix A,                   // matrix to serialize
+    const GrB_Descriptor desc       // descriptor to select compression method
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GxB_Matrix_serialize' is identical to \verb'GrB_Matrix_serialize', except
+that it does not require a pre-allocated blob.  Instead, it allocates the blob
+internally, and fills it with the serialized matrix.  By default, ZSTD (level 1)
+compression is used, but other options can be selected via the descriptor.
+
+The blob is allocated with the \verb'malloc' function passed to
+\verb'GxB_init', or the C11 \verb'malloc' if \verb'GrB_init' was used
+to initialize GraphBLAS.  The blob must be freed by the matching \verb'free'
+method, either the \verb'free' function passed to \verb'GxB_init' or
+the C11 \verb'free' if \verb'GrB_init' was used.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Matrix\_deserialize:}    deserialize a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_deserialize}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
+(
+    // output:
+    GrB_Matrix *C,      // output matrix created from the blob
+    // input:
+    GrB_Type type,      // type of the matrix C.  Required if the blob holds a
+                        // matrix of user-defined type.  May be NULL if blob
+                        // holds a built-in type; otherwise must match the
+                        // type of C.
+    const void *blob,       // the blob
+    GrB_Index blob_size     // size of the blob
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+This method creates a matrix \verb'A' by deserializing the contents of the
+blob, constructed by either \verb'GrB_Matrix_serialize' or
+\verb'GxB_Matrix_serialize'.
+
+% extended in the v2.1 C API (type may be NULL):
+The \verb'type' may be \verb'NULL' if the blob holds a serialized matrix with a
+built-in type.  In this case, the type is determined automatically.  For
+user-defined types, the \verb'type' must match the type of the matrix in the
+blob.  The \verb'GrB_get' method can be used to query the blob for the name of
+this type.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Matrix\_deserialize:}    deserialize a matrix}
+%-------------------------------------------------------------------------------
+\label{matrix_deserialize_GxB}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Matrix_deserialize     // deserialize blob into a GrB_Matrix
+(
+    // output:
+    GrB_Matrix *C,      // output matrix created from the blob
+    // input:
+    GrB_Type type,      // type of the matrix C.  Required if the blob holds a
+                        // matrix of user-defined type.  May be NULL if blob
+                        // holds a built-in type; otherwise must match the
+                        // type of C.
+    const void *blob,       // the blob
+    GrB_Index blob_size,    // size of the blob
+    const GrB_Descriptor desc
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+Identical to \verb'GrB_Matrix_deserialize'.
+

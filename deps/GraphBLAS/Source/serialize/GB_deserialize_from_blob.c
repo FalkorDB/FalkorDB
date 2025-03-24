@@ -2,7 +2,7 @@
 // GB_deserialize_from_blob: uncompress a set of blocks from the blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -20,7 +20,7 @@
 
 #define GB_FREE_ALL         \
 {                           \
-    GB_FREE (&X, X_size) ;  \
+    GB_FREE_MEMORY (&X, X_size) ;  \
 }
 
 GrB_Info GB_deserialize_from_blob
@@ -32,7 +32,7 @@ GrB_Info GB_deserialize_from_blob
     int64_t X_len,              // size of X in bytes
     const GB_void *blob,        // serialized blob of size blob_size
     size_t blob_size,
-    int64_t *Sblocks,           // array of size nblocks
+    uint64_t *Sblocks,          // array of size nblocks
     int32_t nblocks,            // # of compressed blocks for this array
     int32_t method,             // compression method used for each block
     // input/output:
@@ -44,7 +44,6 @@ GrB_Info GB_deserialize_from_blob
     // check inputs
     //--------------------------------------------------------------------------
 
-//  GrB_Info info ;
     ASSERT (blob != NULL) ;
     ASSERT (s_handle != NULL) ;
     ASSERT (X_handle != NULL) ;
@@ -64,7 +63,18 @@ GrB_Info GB_deserialize_from_blob
     //--------------------------------------------------------------------------
 
     size_t X_size = 0 ;
-    GB_void *X = GB_MALLOC (X_len, GB_void, &X_size) ;  // OK
+    GB_void *X = NULL ;
+    if (nblocks == 0)
+    {
+        // allocate an "empty" block (of 8 bytes) and set it zero
+        X = GB_CALLOC_MEMORY (X_len, sizeof (GB_void), &X_size) ;
+    }
+    else
+    {
+        // allocate a block that is filled below
+        X = GB_MALLOC_MEMORY (X_len, sizeof (GB_void), &X_size) ;
+    }
+
     if (X == NULL)
     { 
         // out of memory
@@ -84,14 +94,21 @@ GrB_Info GB_deserialize_from_blob
     size_t s = (*s_handle) ;
     bool ok = true ;
 
-    if (algo == GxB_COMPRESSION_NONE)
+    if (nblocks == 0)
+    {
+
+        // nothing else to do for this array
+        ;
+
+    }
+    else if (algo == GxB_COMPRESSION_NONE)
     {
 
         //----------------------------------------------------------------------
         // no compression; the array is held in a single block
         //----------------------------------------------------------------------
 
-        if (nblocks > 1 || Sblocks [0] != X_len || s + X_len > blob_size)
+        if (nblocks != 1 || Sblocks [0] != X_len || s + X_len > blob_size)
         { 
             // blob is invalid: guard against an unsafe memcpy
             ok = false ;

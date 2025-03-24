@@ -16,7 +16,7 @@ function gbmake (what)
 %
 % See also mex, version, GrB.clear.
 %
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('Note: the libgraphblas_matlab dynamic library must already be\n') ;
@@ -92,44 +92,23 @@ if (have_octave)
     % Octave does not have the new MEX classdef object and as of version 7, the
     % mex command doesn't handle compiler options the same way.
     flags = [flags ' -std=c11 -fopenmp -fPIC -Wno-pragmas' ] ;
-else
-    % remove -ansi from CFLAGS and replace it with -std=c11
-    try
-        if (strncmp (computer, 'GLNX', 4))
-            cc = mex.getCompilerConfigurations ('C', 'Selected') ;
-            env = cc.Details.SetEnv ;
-            c1 = strfind (env, 'CFLAGS=') ;
-            q = strfind (env, '"') ;
-            q = q (q > c1) ;
-            if (~isempty (c1) && length (q) > 1)
-                c2 = q (2) ;
-                cflags = env (c1:c2) ;  % the CFLAGS="..." string
-                ansi = strfind (cflags, '-ansi') ;
-                if (~isempty (ansi))
-                    cflags = [cflags(1:ansi-1) '-std=c11' cflags(ansi+5:end)] ;
-                    flags = [flags ' ' cflags] ;
-                    fprintf ('using -std=c11 instead of default -ansi\n') ;
-                end
-            end
-        end
-    catch
-    end
-    % revise compiler flags for MATLAB
-    if (ismac)
-        cflags = '' ;
-        ldflags = '-fPIC' ;
-        rpath = '-rpath ' ;
-    elseif (isunix)
-        cflags = '-fopenmp' ;
-        ldflags = '-fopenmp -fPIC' ;
-        rpath = '-rpath=' ;
-    end
-    if (ismac || isunix)
-        rpath = sprintf (' -Wl,%s''''%s'''' ', rpath, library_path) ;
-        flags = [ flags ' CFLAGS=''$CFLAGS ' cflags ' -Wno-pragmas'' '] ;
-        flags = [ flags ' CXXFLAGS=''$CXXFLAGS ' cflags ' -Wno-pragmas'' '] ;
-        flags = [ flags ' LDFLAGS=''$LDFLAGS ' ldflags rpath ' '' '] ;
-    end
+end
+
+% revise compiler flags for MATLAB
+if (ismac)
+    cflags = '' ;
+    ldflags = '-fPIC' ;
+    rpath = '-rpath ' ;
+elseif (isunix)
+    cflags = '-fopenmp' ;
+    ldflags = '-fopenmp -fPIC' ;
+    rpath = '-rpath=' ;
+end
+if (ismac || isunix)
+    rpath = sprintf (' -Wl,%s''''%s'''' ', rpath, library_path) ;
+    flags = [ flags ' CFLAGS=''$CFLAGS ' cflags ' -Wno-pragmas'' '] ;
+    flags = [ flags ' CXXFLAGS=''$CXXFLAGS ' cflags ' -Wno-pragmas'' '] ;
+    flags = [ flags ' LDFLAGS=''$LDFLAGS ' ldflags rpath ' '' '] ;
 end
 
 if ispc
@@ -150,6 +129,7 @@ inc = '-Iutil -I../../../Include -I../../../Source ' ;
     inc = [inc '-I../../../Source/transpose ' ] ;
     inc = [inc '-I../../../Source/helper ' ] ;
     inc = [inc '-I../../../Source/builtin ' ] ;
+    inc = [inc '-I../../../Source/hyper ' ] ;
 
 if (need_rename)
     % use the renamed library for MATLAB
@@ -165,14 +145,14 @@ end
 try
     % try C99 complex types
     cflag = ' -DGxB_HAVE_COMPLEX_C99=1' ;
-    mexcmd = sprintf ('mex -silent %s %s complex/mex_complex.c', ...
+    mexcmd = sprintf ('mex -silent %s %s complex/check_mex_complex.c', ...
         flags, cflag) ;
     eval (mexcmd) ;
-catch me
+catch
     % try MSVC complex types
     try
         cflag = ' -DGxB_HAVE_COMPLEX_MSVC=1' ;
-        mexcmd = sprintf ('mex -silent %s %s complex/mex_complex.c', ...
+        mexcmd = sprintf ('mex -silent %s %s complex/check_mex_complex.c', ...
             flags, cflag) ;
         eval (mexcmd) ;
     catch me
@@ -180,7 +160,7 @@ catch me
     end
 end
 flags = [flags cflag] ;
-mex_complex
+check_mex_complex
 
 Lflags = sprintf ('-L''%s''', library_path) ;
 
@@ -197,7 +177,7 @@ cfiles = dir ('util/*.c') ;
 % These are #include'd into source files.
 htime = 0 ;
 for k = 1:length (hfiles)
-    t = datenum (hfiles (k).date) ;
+    t = datenum (hfiles (k).date) ; %#ok<*DATNM>
     htime = max (htime, t) ;
 end
 

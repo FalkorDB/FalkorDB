@@ -148,8 +148,11 @@ static bool _applicable_predicate
 				break;
 			}
 
-			if(AR_EXP_IsAttribute(lhs_exp, NULL)) exp = rhs_exp;      // n.v = exp
-																	  // filter is not of the form n.v = exp or exp = n.v
+			if(AR_EXP_IsAttribute(lhs_exp, NULL)) {
+				exp = rhs_exp;  // n.v = exp
+			}
+
+			// filter is not of the form n.v = exp or exp = n.v
 			if(exp == NULL) {
 				res = false;
 				break;
@@ -181,16 +184,20 @@ static bool _applicable_predicate
 // checks to see if given filter can be resolved by index
 bool _applicableFilter
 (
-	const char* filtered_entity,
-	const Index idx,
-	FT_FilterNode **filter
+	const char *filtered_entity,  // filtered entity
+	const Index idx,              // index
+	FT_FilterNode **filter        // filters
 ) {
-	bool           res           =  true;
-	rax            *attr         =  NULL;
-	rax            *entities     =  NULL;
-	FT_FilterNode  *filter_tree  =  *filter;
+	ASSERT(idx             != NULL);
+	ASSERT(filter          != NULL);
+	ASSERT(filtered_entity != NULL);
 
-	// prepare it befor checking if applicable.
+	bool           res          = true;
+	rax            *attr        = NULL;
+	rax            *entities    = NULL;
+	FT_FilterNode  *filter_tree = *filter;
+
+	// prepare it befor checking if applicable
 	_normalize_filter(filtered_entity, filter);
 
 	// make sure the filter root is not a function, other then IN or distance
@@ -209,7 +216,7 @@ bool _applicableFilter
 	const IndexField *idx_fields = Index_GetFields(idx);
 
 	// make sure all filtered attributes are indexed
-	attr = FilterTree_CollectAttributes(filter_tree);
+	attr = FilterTree_CollectAttributes(filter_tree, filtered_entity);
 	uint filter_attribute_count = raxSize(attr);
 	
 	// No attributes to filter on

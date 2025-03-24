@@ -3,7 +3,7 @@ function codegen_aop_method (binop, op, xtype)
 %
 % codegen_aop_method (binop, op, xtype)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % determine type of z, x, and y from xtype and binop

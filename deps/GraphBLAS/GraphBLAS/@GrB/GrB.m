@@ -343,11 +343,16 @@ classdef GrB
 %
 %   info:
 %   GrB.binopinfo (op, type)     list properties of a binary operator
+%   list = GrB.binops            list all binary ops
 %   GrB.descriptorinfo (d)       list properties of a descriptor
 %   GrB.monoidinfo (op, type)    list properties of a monoid
+%   list = GrB.monoids           list all monoids
 %   GrB.selectopinfo (op, type)  list properties of a select operator
+%   list = GrB.selectops         list all selectops
 %   GrB.semiringinfo (s, type)   list properties of a semiring
+%   list = GrB.semirings         list all semirings
 %   GrB.unopinfo (op, type)      list properties of a unary operator
+%   list = GrB.unops             list all unary ops
 %
 %   basic matrices:
 %   C = GrB.false (...)          all-false logical matrix
@@ -569,7 +574,7 @@ classdef GrB
 %
 % See also sparse.
 %
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 properties (SetAccess = private, GetAccess = private)
@@ -985,6 +990,7 @@ methods (Static)
     C = assign (Cin, M, accum, A, I, J, desc) ;
     [v, parent] = bfs (A, s, varargin) ;        % uses GrB matrices
     binopinfo (op, type) ;
+    list = binops ;
     C = build (I, J, X, m, n, dup, type, desc) ;
     b = burble (b) ;
     C = cell2mat (A) ;
@@ -1017,6 +1023,7 @@ methods (Static)
     C = load (filename) ;
     iset = mis (A, check) ;                     % uses GrB matrices
     monoidinfo (monoid, type) ;
+    list = monoids ;
     C = mxm (Cin, M, accum, semiring, A, B, desc) ;
     result = nonz (A, varargin) ;
     s = normdiff (A, B, kind) ;
@@ -1029,7 +1036,9 @@ methods (Static)
     filename_used = save (C, filename) ;
     C = select (Cin, M, accum, selectop, A, b, desc) ;
     selectopinfo (op, type) ;
+    list = selectops ;
     semiringinfo (s, type) ;
+    list = semirings ;
     blob = serialize (A, method, level) ;
     C = speye (m, n, type) ;
     C = subassign (Cin, M, accum, A, I, J, desc) ;
@@ -1039,11 +1048,10 @@ methods (Static)
     s = tricount (A, check, d) ;                % uses GrB matrices
     s = type (A) ;
     unopinfo (op, type) ;
+    list = unops ;
     v = version ;
     v = ver ;
     C = vreduce (Cin, M, accum, monoid, A, desc) ;
-
-    t = timing (c) ; % timing for diagnositics only, requires -DGB_TIMING
 
     % these were formerly overloaded methods, now Static methods
     C = false (varargin) ;

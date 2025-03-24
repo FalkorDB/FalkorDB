@@ -1,0 +1,609 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS vectors: {\sf GrB\_Vector}} %=============================
+%===============================================================================
+\label{vector}
+
+This section describes a set of methods that create, modify, query,
+and destroy a GraphBLAS sparse vector, \verb'GrB_Vector':
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_Vector_new'            & create a vector                  & \ref{vector_new} \\
+\verb'GrB_Vector_wait'           & wait for a vector                & \ref{vector_wait} \\
+\verb'GrB_Vector_dup'            & copy a vector                    & \ref{vector_dup} \\
+\verb'GrB_Vector_clear'          & clear a vector of all entries    & \ref{vector_clear} \\
+\verb'GrB_Vector_size'           & size of a vector                 & \ref{vector_size} \\
+\verb'GrB_Vector_nvals'          & number of entries in a vector    & \ref{vector_nvals} \\
+\verb'GrB_Vector_build'          & build a vector from tuples       & \ref{vector_build} \\
+\verb'GxB_Vector_build_Vector'   & build a vector from tuples       & \ref{vector_build_Vector} \\
+\verb'GxB_Vector_build_Scalar'   & build a vector from tuples       & \ref{vector_build_Scalar} \\
+\verb'GxB_Vector_build_Scalar_Vector' & build a vector from tuples  & \ref{vector_build_Scalar_Vector} \\
+\verb'GrB_Vector_setElement'     & add an entry to a vector         & \ref{vector_setElement} \\
+\verb'GrB_Vector_extractElement' & get an entry from a vector       & \ref{vector_extractElement} \\
+\verb'GxB_Vector_isStoredElement'& check if entry present in vector & \ref{vector_isStoredElement} \\
+\verb'GrB_Vector_removeElement'  & remove an entry from a vector    & \ref{vector_removeElement} \\
+\verb'GrB_Vector_extractTuples'  & get all entries from a vector    & \ref{vector_extractTuples} \\
+\verb'GxB_Vector_extractTuples_Vector'  & get all entries from a vector    & \ref{vector_extractTuples_Vector} \\
+\verb'GrB_Vector_resize'         & resize a vector                  & \ref{vector_resize} \\
+\verb'GxB_Vector_diag'           & extract a diagonal from a matrix & \ref{vector_diag} \\
+\verb'GxB_Vector_memoryUsage'    & memory used by a vector          & \ref{vector_memusage} \\
+\verb'GxB_Vector_type'           & type of the matrix               & \ref{vector_type} \\
+\verb'GrB_Vector_free'           & free a vector                    & \ref{vector_free} \\
+\hline
+\hline
+% NOTE: GrB_Vector_serialize / deserialize does not appear in the 2.0 C API.
+% \verb'GrB_Vector_serializeSize'  & return size of serialized vector & \ref{vector_serialize_size} \\
+% \verb'GrB_Vector_serialize'      & serialize a vector               & \ref{vector_serialize} \\
+\verb'GxB_Vector_serialize'      & serialize a vector               & \ref{vector_serialize_GxB} \\
+% \verb'GrB_Vector_deserialize'    & deserialize a vector             & \ref{vector_deserialize} \\
+\verb'GxB_Vector_deserialize'    & deserialize a vector             & \ref{vector_deserialize_GxB} \\
+\hline
+\hline
+\verb'GxB_Vector_sort'          & sort a vector & \ref{vector_sort} \\
+\hline
+\hline
+\verb'GrB_get'  & get properties of a vector       & \ref{get_set_vector} \\
+\verb'GrB_set'  & set properties of a vector       & \ref{get_set_vector} \\
+\end{tabular}
+}
+
+\vspace{0.2in}
+Refer to
+Section~\ref{serialize_deserialize} for serialization/deserialization methods
+and to
+Section~\ref{sorting_methods} for sorting methods.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_new:}           create a vector}
+%-------------------------------------------------------------------------------
+\label{vector_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_new     // create a new vector with no entries
+(
+    GrB_Vector *v,          // handle of vector to create
+    GrB_Type type,          // type of vector to create
+    GrB_Index n             // vector dimension is n-by-1
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_new' creates a new \verb'n'-by-\verb'1' sparse vector with no
+entries in it, of the given type.  This is analogous to MATLAB/Octave statement
+\verb'v = sparse (n,1)', except that GraphBLAS can create sparse vectors any
+type.  The pattern of the new vector is empty.
+
+\begin{alert}
+{\bf SPEC:} \verb'n' may be zero, as an extension to the specification.
+\end{alert}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_wait:} wait for a vector}
+%-------------------------------------------------------------------------------
+\label{vector_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a vector
+(
+    GrB_Vector w,               // vector to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+In non-blocking mode, the computations for a \verb'GrB_Vector' may be delayed.
+In this case, the vector is not yet safe to use by multiple independent user
+threads.  A user application may force completion of a vector \verb'w' via
+\verb'GrB_Vector_wait(w,mode)'.
+With a \verb'mode' of \verb'GrB_MATERIALIZE',
+all pending computations are finished, and afterwards different user threads may
+simultaneously call GraphBLAS operations that use the vector \verb'w' as an
+input parameter.
+See Section~\ref{omp_parallelism}
+if GraphBLAS is compiled without OpenMP.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_dup:}           copy a vector}
+%-------------------------------------------------------------------------------
+\label{vector_dup}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_dup     // make an exact copy of a vector
+(
+    GrB_Vector *w,          // handle of output vector to create
+    const GrB_Vector u      // input vector to copy
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_dup' makes a deep copy of a sparse vector.
+In GraphBLAS, it is possible, and valid, to write the following:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Vector u, w ;
+    GrB_Vector_new (&u, GrB_FP64, n) ;
+    w = u ;                         // w is a shallow copy of u  \end{verbatim}}
+
+Then \verb'w' and \verb'u' can be used interchangeably.  However, only a pointer
+reference is made, and modifying one of them modifies both, and freeing one of
+them leaves the other as a dangling handle that should not be used.
+If two different vectors are needed, then this should be used instead:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_Vector u, w ;
+    GrB_Vector_new (&u, GrB_FP64, n) ;
+    GrB_Vector_dup (&w, u) ;        // like w = u, but making a deep copy \end{verbatim}}
+
+Then \verb'w' and \verb'u' are two different vectors that currently have the
+same set of values, but they do not depend on each other.  Modifying one has
+no effect on the other.
+The \verb'GrB_NAME' is copied into the new vector.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_clear:}         clear a vector of all entries}
+%-------------------------------------------------------------------------------
+\label{vector_clear}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_clear   // clear a vector of all entries;
+(                           // type and dimension remain unchanged.
+    GrB_Vector v            // vector to clear
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_clear' clears all entries from a vector.  All values
+\verb'v(i)' are now equal to the implicit value, depending on what semiring
+ring is used to perform computations on the vector.  The pattern of \verb'v' is
+empty, just as if it were created fresh with \verb'GrB_Vector_new'.  Analogous
+with \verb'v (:) = sparse(0)' in MATLAB.  The type and dimension of \verb'v' do
+not change.  Any pending updates to the vector are discarded.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_size:}          return the size of a vector}
+%-------------------------------------------------------------------------------
+\label{vector_size}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_size    // get the dimension of a vector
+(
+    GrB_Index *n,           // vector dimension is n-by-1
+    const GrB_Vector v      // vector to query
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_size' returns the size of a vector (the number of rows).
+Analogous to \verb'n = length(v)' or \verb'n = size(v,1)' in MATLAB.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_nvals:}         return the number of entries in a vector}
+%-------------------------------------------------------------------------------
+\label{vector_nvals}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_nvals   // get the number of entries in a vector
+(
+    GrB_Index *nvals,       // vector has nvals entries
+    const GrB_Vector v      // vector to query
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_nvals' returns the number of entries in a vector.  Roughly
+analogous to \verb'nvals = nnz(v)' in MATLAB, except that the implicit value in
+GraphBLAS need not be zero and \verb'nnz' (short for ``number of nonzeros'') in
+MATLAB is better described as ``number of entries'' in GraphBLAS.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_build:}         build a vector from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{vector_build}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_build           // build a vector from (I,X) tuples
+(
+    GrB_Vector w,                   // vector to build
+    const GrB_Index *I,             // array of row indices of tuples
+    const <type> *X,                // array of values of tuples
+    GrB_Index nvals,                // number of tuples
+    const GrB_BinaryOp dup          // binary function to assemble duplicates
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_build' constructs a sparse vector \verb'w' from a set of
+tuples, \verb'I' and \verb'X', each of length \verb'nvals'.  The vector
+\verb'w' must have already been initialized with \verb'GrB_Vector_new', and it
+must have no entries in it before calling \verb'GrB_Vector_build'.
+This function is just like \verb'GrB_Matrix_build' (see
+Section~\ref{matrix_build}), except that it builds a sparse vector instead of a
+sparse matrix.  For a description of what \verb'GrB_Vector_build' does, refer
+to \verb'GrB_Matrix_build'.  For a vector, the list of column indices \verb'J'
+in \verb'GrB_Matrix_build' is implicitly a vector of length \verb'nvals' all
+equal to zero.  Otherwise the methods are identical.
+
+If \verb'dup' is \verb'NULL', any duplicates result in an error.
+If \verb'dup' is the special binary operator \verb'GxB_IGNORE_DUP', then
+any duplicates are ignored.  If duplicates appear, the last one in the
+list of tuples is taken and the prior ones ignored.  This is not an error.
+%
+The \verb'dup' operator cannot be a binary operator
+created by \verb'GxB_BinaryOp_new_IndexOp'.
+
+\begin{alert}
+{\bf SPEC:} Results are defined even if \verb'dup' is non-associative and/or
+non-commutative.
+\end{alert}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_build\_Vector:} build a vector from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{vector_build_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_build       // build a vector from (I,X) tuples
+(
+    GrB_Vector w,               // vector to build
+    const GrB_Vector I_vector,  // row indices
+    const GrB_Vector X_vector,  // values
+    const GrB_BinaryOp dup,     // binary function to assemble duplicates
+    const GrB_Descriptor desc
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GxB_Vector_build_Vector' is identical to \verb'GrB_Vector_build', except
+that the inputs \verb'I' and \verb'X' are \verb'GrB_Vector' objects, each with
+\verb'nvals' entries.  The interpretation of \verb'I_vector' and
+\verb'X_vector' are controlled by descriptor settings \verb'GxB_ROWINDEX_LIST'
+and \verb'GxB_VALUE_LIST', respectively.  The method can use either the indices
+or values of each of the input vectors; the default is to use the values.  See
+Section~\ref{ijxvector} for details.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_build\_Scalar:} build a vector from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{vector_build_Scalar}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_build       // build a vector from (I,scalar) tuples
+(
+    GrB_Vector w,                   // vector to build
+    const GrB_Index *I,             // array of row indices of tuples
+    GrB_Scalar scalar,              // value for all tuples
+    GrB_Index nvals                 // number of tuples
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Vector_build_Scalar' constructs a sparse vector \verb'w' from a set
+of tuples defined by the index array \verb'I' of length \verb'nvals', and a
+scalar.  The scalar is the value of all of the tuples.  Unlike
+\verb'GrB_Vector_build', there is no \verb'dup' operator to handle duplicate
+entries.  Instead, any duplicates are silently ignored (if the number of
+duplicates is desired, simply compare the input \verb'nvals' with the value
+returned by \verb'GrB_Vector_nvals' after the vector is constructed).  All
+entries in the sparsity pattern of \verb'w' are identical, and equal to the
+input scalar value.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_build\_Scalar\_Vector:} build a vector from a set of tuples}
+%-------------------------------------------------------------------------------
+\label{vector_build_Scalar_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_build       // build a vector from (I,scalar) tuples
+(
+    GrB_Vector w,               // vector to build
+    const GrB_Vector I_vector,  // row indices
+    const GrB_Scalar scalar,    // value for all tuples
+    const GrB_Descriptor desc
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Vector_build_Scalar_Vector' is identical to
+\verb'GxB_Vector_build_Scalar', except that the inputs \verb'I' and \verb'X'
+are \verb'GrB_Vector' objects, each with \verb'nvals' entries.  The
+interpretation of \verb'I_vector' is controlled by the descriptor setting
+\verb'GxB_ROWINDEX_LIST'.  The method
+can use either the indices or values of the \verb'I_input' vector; the default
+is to use the values.  See Section~\ref{ijxvector} for details.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_setElement:}    add an entry to a vector}
+%-------------------------------------------------------------------------------
+\label{vector_setElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_setElement          // w(i) = x
+(
+    GrB_Vector w,                       // vector to modify
+    <type> x,                           // scalar to assign to w(i)
+    GrB_Index i                         // index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_setElement' sets a single entry in a vector, \verb'w(i) = x'.
+The operation is exactly like setting a single entry in an \verb'n'-by-1
+matrix, \verb'A(i,0) = x', where the column index for a vector is implicitly
+\verb'j=0'.  For further details of this function, see
+\verb'GrB_Matrix_setElement' in Section~\ref{matrix_setElement}.
+If an error occurs, \verb'GrB_error(&err,w)' returns details about the error.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_extractElement:} get an entry from a vector}
+%-------------------------------------------------------------------------------
+\label{vector_extractElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_extractElement  // x = v(i)
+(
+    <type> *x,                  // scalar extracted (non-opaque, C scalar)
+    const GrB_Vector v,         // vector to extract an entry from
+    GrB_Index i                 // index
+) ;
+
+GrB_Info GrB_Vector_extractElement  // x = v(i)
+(
+    GrB_Scalar x,               // GrB_Scalar extracted
+    const GrB_Vector v,         // vector to extract an entry from
+    GrB_Index i                 // index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_extractElement' extracts a single entry from a vector,
+\verb'x = v(i)'.  The method is identical to extracting a single entry
+\verb'x = A(i,0)' from an \verb'n'-by-1 matrix; see
+Section~\ref{matrix_extractElement}.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_isStoredElement:} check if entry present in vector}
+%-------------------------------------------------------------------------------
+\label{vector_isStoredElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_isStoredElement
+(
+    const GrB_Vector v,         // check presence of entry v(i)
+    GrB_Index i                 // index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Vector_isStoredElement' checks if a single entry \verb'v(i)'
+is present, returning \verb'GrB_SUCCESS' if the entry is present or
+\verb'GrB_NO_VALUE' otherwise.  The value of \verb'v(i)' is not returned.
+See also Section~\ref{matrix_isStoredElement}.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_removeElement:} remove an entry from a vector}
+%-------------------------------------------------------------------------------
+\label{vector_removeElement}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_removeElement
+(
+    GrB_Vector w,                   // vector to remove an entry from
+    GrB_Index i                     // index
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_removeElement' removes a single entry \verb'w(i)' from a vector.
+If no entry is present at \verb'w(i)', then the vector is not modified.
+If an error occurs, \verb'GrB_error(&err,w)' returns details about the error.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_extractTuples:} get all entries from a vector}
+%-------------------------------------------------------------------------------
+\label{vector_extractTuples}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_extractTuples           // [I,~,X] = find (v)
+(
+    GrB_Index *I,               // array for returning row indices of tuples
+    <type> *X,                  // array for returning values of tuples
+    GrB_Index *nvals,           // I, X size on input; # tuples on output
+    const GrB_Vector v          // vector to extract tuples from
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_extractTuples' extracts all tuples from a sparse vector,
+analogous to \verb'[I,~,X] = find(v)' in MATLAB/Octave.  This function is
+identical to its \verb'GrB_Matrix_extractTuples' counterpart, except that the
+array of column indices \verb'J' does not appear in this function.  Refer to
+Section~\ref{matrix_extractTuples} where further details of this function are
+described.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_extractTuples\_Vector:} get all entries from a vector}
+%-------------------------------------------------------------------------------
+\label{vector_extractTuples_Vector}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_extractTuples           // [I,~,X] = find (v)
+(
+    GrB_Vector I_vector,    // row indices
+    GrB_Vector X_vector,    // values
+    const GrB_Vector V,     // vectors to extract tuples from
+    const GrB_Descriptor desc   // currently unused; for future expansion
+) ;
+
+\end{verbatim} } \end{mdframed}
+
+\verb'GxB_Vector_extractTuples_Vector' is identical to
+\verb'GrB_Vector_extractTuples' except that its two outputs are
+\verb'GrB_Vector' objects.  The vectors \verb'I_vector' and \verb'X_vector'
+objects must exist on input.  On output, any prior content is erased and
+their type, dimensions, and values are revised to contain dense vectors of
+length \verb'nvals'.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_resize:}          resize a vector}
+%-------------------------------------------------------------------------------
+\label{vector_resize}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Vector_resize      // change the size of a vector
+(
+    GrB_Vector u,               // vector to modify
+    GrB_Index nrows_new         // new number of rows in vector
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Vector_resize' changes the size of a vector.  If the dimension
+decreases, entries that fall outside the resized vector are deleted.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_diag:} extract a diagonal from a matrix}
+%-------------------------------------------------------------------------------
+\label{vector_diag}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_diag    // extract a diagonal from a matrix
+(
+    GrB_Vector v,                   // output vector
+    const GrB_Matrix A,             // input matrix
+    int64_t k,
+    const GrB_Descriptor desc       // unused, except threading control
+) ;
+\end{verbatim} } \end{mdframed}
+
+
+\verb'GxB_Vector_diag' extracts a vector \verb'v' from an input matrix
+\verb'A', which may be rectangular.  If \verb'k' = 0, the main diagonal of
+\verb'A' is extracted; \verb'k' $> 0$ denotes diagonals above the main diagonal
+of \verb'A', and \verb'k' $< 0$ denotes diagonals below the main diagonal of
+\verb'A'.  Let \verb'A' have dimension $m$-by-$n$.  If \verb'k' is in the range
+0 to $n-1$, then \verb'v' has length $\min(m,n-k)$.  If \verb'k' is negative
+and in the range -1 to $-m+1$, then \verb'v' has length $\min(m+k,n)$.  If
+\verb'k' is outside these ranges, \verb'v' has length 0 (this is not an error).
+This function computes the same thing as the MATLAB/Octave statement
+\verb'v=diag(A,k)' when \verb'A' is a matrix, except that
+\verb'GxB_Vector_diag' can also do typecasting.
+
+The vector \verb'v' must already exist on input, and
+\verb'GrB_Vector_size (&len,v)' must return \verb'len' = 0 if \verb'k' $\ge n$
+or \verb'k' $\le -m$, \verb'len' $=\min(m,n-k)$ if \verb'k' is in the range 0
+to $n-1$, and \verb'len' $=\min(m+k,n)$ if \verb'k' is in the range -1 to
+$-m+1$.  Any existing entries in \verb'v' are discarded.  The type of \verb'v'
+is preserved, so that if the type of \verb'A' and \verb'v' differ, the entries
+are typecasted into the type of \verb'v'.  Any settings made to \verb'v' by
+\verb'GrB_set' (bitmap switch and sparsity control) are
+unchanged.
+
+\newpage
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_memoryUsage:} memory used by a vector}
+%-------------------------------------------------------------------------------
+\label{vector_memusage}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_memoryUsage  // return # of bytes used for a vector
+(
+    size_t *size,           // # of bytes used by the vector v
+    const GrB_Vector v      // vector to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+Returns the memory space required for a vector, in bytes.
+By default, any read-only components are not included in the total memory.
+This can be changed with via \verb'GrB_set'; see Section~\ref{get_set_global}.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Vector\_type:} type of a vector}
+%-------------------------------------------------------------------------------
+\label{vector_type}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Vector_type    // get the type of a vector
+(
+    GrB_Type *type,         // returns the type of the vector
+    const GrB_Vector v      // vector to query
+) ;
+\end{verbatim} } \end{mdframed}
+
+Returns the type of a vector.  See \verb'GxB_Matrix_type' for details
+(Section~\ref{matrix_type}).
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Vector\_free:}          free a vector}
+%-------------------------------------------------------------------------------
+\label{vector_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free           // free a vector
+(
+    GrB_Vector *v           // handle of vector to free
+) ;
+\end{verbatim}
+} \end{mdframed}
+
+\verb'GrB_Vector_free' frees a vector.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Vector_free (&v) ;
+    GrB_free (&v) ; \end{verbatim}}
+
+\noindent
+frees the vector \verb'v' and sets \verb'v' to \verb'NULL'.  It safely does
+nothing if passed a \verb'NULL' handle, or if \verb'v == NULL' on input.  Any
+pending updates to the vector are abandoned.
+
+

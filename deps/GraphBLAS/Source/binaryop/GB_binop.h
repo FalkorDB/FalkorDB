@@ -2,13 +2,15 @@
 // GB_binop.h: definitions for binary operators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #ifndef GB_BINOP_H
 #define GB_BINOP_H
+
+#include "GB.h"
 
 bool GB_binop_builtin               // true if binary operator is builtin
 (
@@ -58,7 +60,7 @@ GrB_Info GB_binop_new
 
 GrB_Monoid GB_binop_to_monoid       // return the corresponding monoid, or NULL
 (
-    const GrB_BinaryOp op_in        // binary op to convert
+    GrB_BinaryOp op                 // binary op to convert
 ) ;
 
 void GB_binop_rename            // rename a bound binary op

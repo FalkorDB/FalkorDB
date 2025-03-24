@@ -2,12 +2,12 @@
 // GB_int64_multiply:  multiply two integers and guard against overflow
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// c = a*b where c is GrB_Index (uint64_t), and a and b are int64_t.
+// c = a*b where c is uint64_t, and a and b are int64_t.
 // Check for overflow.  Requires a >= 0 and b >= 0.
 
 #ifndef GB_INT64_MULTIPLY_H

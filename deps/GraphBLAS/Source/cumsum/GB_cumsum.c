@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_cumsum: cumlative sum of an array
+// GB_cumsum: cumlative sum of an integer array (uint32_t or uint64_t)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,13 +16,17 @@
 // On input, count [n] is not accessed and is implicitly zero on input.
 // On output, count [n] is the total sum.
 
+// If count is uint32, returns true if OK, false if overflow.  The overflow
+// condition is not checked if count is uint64_t (always returns true).
+
 #include "GB.h"
 
-void GB_cumsum                      // cumulative sum of an array
+bool GB_cumsum                  // cumulative sum of an array
 (
-    int64_t *restrict count,     // size n+1, input/output
+    void *restrict count_arg,   // size n+1, input/output
+    bool count_is_32,           // if true: count is uint32_t, else uint64_t
     const int64_t n,
-    int64_t *restrict kresult,   // return k, if needed by the caller
+    int64_t *restrict kresult,  // return k, if needed by the caller
     int nthreads,
     GB_Werk Werk
 )
@@ -32,7 +36,7 @@ void GB_cumsum                      // cumulative sum of an array
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (count != NULL) ;
+    ASSERT (count_arg != NULL) ;
     ASSERT (n >= 0) ;
 
     //--------------------------------------------------------------------------
@@ -45,7 +49,7 @@ void GB_cumsum                      // cumulative sum of an array
 
     if (nthreads > 1)
     { 
-        nthreads = GB_IMIN (nthreads, n / (64 * 1024)) ;
+        nthreads = GB_IMIN (nthreads, n / GB_CHUNK_DEFAULT) ;
         nthreads = GB_IMAX (nthreads, 1) ;
     }
 
@@ -53,176 +57,23 @@ void GB_cumsum                      // cumulative sum of an array
     // count = cumsum ([0 count[0:n-1]]) ;
     //--------------------------------------------------------------------------
 
-    if (kresult == NULL)
-    {
+    #define GB_WS_TYPE uint64_t
 
-        if (nthreads <= 2)
-        {
-
-            //------------------------------------------------------------------
-            // cumsum with one thread
-            //------------------------------------------------------------------
-
-            GB_cumsum1 (count, n) ;
-
-        }
-        else
-        {
-
-            //------------------------------------------------------------------
-            // cumsum with multiple threads
-            //------------------------------------------------------------------
-
-            // allocate workspace
-            GB_WERK_DECLARE (ws, int64_t) ;
-            GB_WERK_PUSH (ws, nthreads, int64_t) ;
-            if (ws == NULL)
-            { 
-                // out of memory; use a single thread instead
-                GB_cumsum1 (count, n) ;
-                return ;
-            }
-
-            int tid ;
-            #pragma omp parallel for num_threads(nthreads) schedule(static)
-            for (tid = 0 ; tid < nthreads ; tid++)
-            {
-                // each task sums up its own part
-                int64_t istart, iend ;
-                GB_PARTITION (istart, iend, n, tid, nthreads) ;
-                int64_t s = 0 ;
-                for (int64_t i = istart ; i < iend ; i++)
-                { 
-                    s += count [i] ;
-                }
-                ws [tid] = s ;
-            }
-
-            #pragma omp parallel for num_threads(nthreads) schedule(static)
-            for (tid = 0 ; tid < nthreads ; tid++)
-            {
-                // each tasks computes the cumsum of its own part
-                int64_t istart, iend ;
-                GB_PARTITION (istart, iend, n, tid, nthreads) ;
-                int64_t s = 0 ;
-                for (int i = 0 ; i < tid ; i++)
-                { 
-                    s += ws [i] ;
-                }
-                for (int64_t i = istart ; i < iend ; i++)
-                { 
-                    int64_t c = count [i] ;
-                    count [i] = s ;
-                    s += c ;
-                }
-                if (iend == n)
-                { 
-                    count [n] = s ;
-                }
-            }
-
-            // free workspace
-            GB_WERK_POP (ws, int64_t) ;
-        }
-
+    if (count_is_32)
+    { 
+        uint32_t *restrict count = (uint32_t *) count_arg ;
+        #define GB_CUMSUM1_TYPE GB_cumsum1_32
+        #define GB_CHECK_OVERFLOW 1
+        #include "cumsum/factory/GB_cumsum_template.c"
     }
     else
-    {
-
-        if (nthreads <= 2)
-        {
-
-            //------------------------------------------------------------------
-            // cumsum with one thread, also compute k
-            //------------------------------------------------------------------
-
-            int64_t k = 0 ;
-            int64_t s = 0 ;
-            for (int64_t i = 0 ; i < n ; i++)
-            { 
-                int64_t c = count [i] ;
-                if (c != 0) k++ ;
-                count [i] = s ;
-                s += c ;
-            }
-            count [n] = s ;
-            (*kresult) = k ;
-
-        }
-        else
-        {
-
-            //------------------------------------------------------------------
-            // cumsum with multiple threads, also compute k
-            //------------------------------------------------------------------
-
-            // allocate workspace
-            GB_WERK_DECLARE (ws, int64_t) ;
-            GB_WERK_DECLARE (wk, int64_t) ;
-            GB_WERK_PUSH (ws, nthreads, int64_t) ;
-            GB_WERK_PUSH (wk, nthreads, int64_t) ;
-            if (ws == NULL || wk == NULL)
-            { 
-                // out of memory; use a single thread instead
-                GB_WERK_POP (wk, int64_t) ;
-                GB_WERK_POP (ws, int64_t) ;
-                GB_cumsum (count, n, kresult, 1, NULL) ;
-                return ;
-            }
-
-            int tid ;
-            #pragma omp parallel for num_threads(nthreads) schedule(static)
-            for (tid = 0 ; tid < nthreads ; tid++)
-            {
-                // each task sums up its own part
-                int64_t istart, iend ;
-                GB_PARTITION (istart, iend, n, tid, nthreads) ;
-                int64_t k = 0 ;
-                int64_t s = 0 ;
-                for (int64_t i = istart ; i < iend ; i++)
-                { 
-                    int64_t c = count [i] ;
-                    if (c != 0) k++ ;
-                    s += c ;
-                }
-                ws [tid] = s ;
-                wk [tid] = k ;
-            }
-
-            #pragma omp parallel for num_threads(nthreads) schedule(static)
-            for (tid = 0 ; tid < nthreads ; tid++)
-            {
-                // each task computes the cumsum of its own part
-                int64_t istart, iend ;
-                GB_PARTITION (istart, iend, n, tid, nthreads) ;
-                int64_t s = 0 ;
-                for (int i = 0 ; i < tid ; i++)
-                { 
-                    s += ws [i] ;
-                }
-                for (int64_t i = istart ; i < iend ; i++)
-                { 
-                    int64_t c = count [i] ;
-                    count [i] = s ;
-                    s += c ;
-                }
-                if (iend == n)
-                { 
-                    count [n] = s ;
-                }
-            }
-
-            int64_t k = 0 ;
-            for (int tid = 0 ; tid < nthreads ; tid++)
-            { 
-                k += wk [tid] ;
-            }
-            (*kresult) = k ;
-
-            // free workspace
-            GB_WERK_POP (wk, int64_t) ;
-            GB_WERK_POP (ws, int64_t) ;
-        }
+    { 
+        uint64_t *restrict count = (uint64_t *) count_arg ;
+        #define GB_CUMSUM1_TYPE GB_cumsum1_64
+        #define GB_CHECK_OVERFLOW 0
+        #include "cumsum/factory/GB_cumsum_template.c"
     }
+
+    return (true) ;
 }
 

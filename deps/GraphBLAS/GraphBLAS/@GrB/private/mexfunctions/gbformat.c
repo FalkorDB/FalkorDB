@@ -2,7 +2,7 @@
 // gbformat: get/set the matrix format to use in GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ void mexFunction
     // get/set the format
     //--------------------------------------------------------------------------
 
-    GxB_Format_Value fmt = GxB_BY_COL ;
+    int fmt = GxB_BY_COL ;
     int sparsity = GxB_AUTO_SPARSITY ;
     bool iso = false ;
     bool v5_1_or_later = false ;
@@ -50,7 +50,7 @@ void mexFunction
         //----------------------------------------------------------------------
 
         // get the global format
-        OK (GxB_Global_Option_get (GxB_FORMAT, &fmt)) ;
+        OK (GrB_Global_get_INT32 (GrB_GLOBAL, &fmt, GxB_FORMAT)) ;
 
     }
     else // if (nargin == 1)
@@ -69,7 +69,7 @@ void mexFunction
             bool ok = gb_mxstring_to_format (pargin [0], &fmt, &ignore) ;
             CHECK_ERROR (!ok, "invalid format") ;
             // set the global format
-            OK (GxB_Global_Option_set (GxB_FORMAT, fmt)) ;
+            OK (GrB_Global_set_INT32 (GrB_GLOBAL, fmt, GxB_FORMAT)) ;
 
         }
         else if (mxIsStruct (pargin [0]))
@@ -80,7 +80,12 @@ void mexFunction
             //------------------------------------------------------------------
 
             // get the type
-            mxArray *mx_type = mxGetField (pargin [0], 0, "GraphBLASv7_3") ;
+            mxArray *mx_type = mxGetField (pargin [0], 0, "GraphBLASv10") ;
+            if (mx_type == NULL)
+            {
+                // check if it is a GraphBLASv7_3 struct
+                mx_type = mxGetField (pargin [0], 0, "GraphBLASv7_3") ;
+            }
             if (mx_type == NULL)
             {
                 // check if it is a GraphBLASv5_1 struct
@@ -167,6 +172,6 @@ void mexFunction
         pargout [2] = mxCreateString (iso ? "iso-valued" : "non-iso-valued") ;
     }
 
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

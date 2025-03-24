@@ -2,7 +2,7 @@
 // GB_emult_03: C = A.*B where A is bitmap/full and B is sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -56,7 +56,6 @@
 #include "ewise/GB_ewise.h"
 #include "emult/GB_emult.h"
 #include "binaryop/GB_binop.h"
-#include "include/GB_unused.h"
 #include "jitifyer/GB_stringify.h"
 #ifndef GBCOMPACT
 #include "GB_control.h"
@@ -65,7 +64,7 @@
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_WERK_POP (Work, int64_t) ;           \
+    GB_WERK_POP (Work, uint64_t) ;          \
     GB_WERK_POP (B_ek_slicing, int64_t) ;   \
 }
 
@@ -96,7 +95,7 @@ GrB_Info GB_emult_03        // C=A.*B when A bitmap/full, B is sparse/hyper
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for emult_03", GB0) ;
     ASSERT_MATRIX_OK (A, "A for emult_03", GB0) ;
@@ -135,21 +134,18 @@ GrB_Info GB_emult_03        // C=A.*B when A bitmap/full, B is sparse/hyper
     // declare workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (Work, int64_t) ;
+    GB_WERK_DECLARE (Work, uint64_t) ;
     GB_WERK_DECLARE (B_ek_slicing, int64_t) ;
 
     //--------------------------------------------------------------------------
     // get M, A, and B
     //--------------------------------------------------------------------------
 
-    const int8_t  *restrict Mb = (M == NULL) ? NULL : M->b ;
+    const int8_t *restrict Mb = (M == NULL) ? NULL : M->b ;
     const GB_M_TYPE *restrict Mx = (M == NULL || Mask_struct) ? NULL :
         (const GB_M_TYPE *) M->x ;
     const size_t msize = (M == NULL) ? 0 : M->type->size ;
 
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
-    const int64_t *restrict Bi = B->i ;
     const int64_t vlen = B->vlen ;
     const int64_t vdim = B->vdim ;
     const int64_t nvec = B->nvec ;
@@ -171,9 +167,13 @@ GrB_Info GB_emult_03        // C=A.*B when A bitmap/full, B is sparse/hyper
     //--------------------------------------------------------------------------
 
     GB_OK (GB_new (&C, // sparse or hyper (same as B), existing header
-        ctype, vlen, vdim, GB_Ap_calloc, C_is_csc,
-        C_sparsity, B->hyper_switch, nvec)) ;
-    int64_t *restrict Cp = C->p ;
+        ctype, vlen, vdim, GB_ph_calloc, C_is_csc,
+        C_sparsity, B->hyper_switch, nvec,
+        B->p_is_32, B->j_is_32, B->i_is_32)) ;
+
+    ASSERT (C->p_is_32 == B->p_is_32) ;
+    ASSERT (C->j_is_32 == B->j_is_32) ;
+    ASSERT (C->i_is_32 == B->i_is_32) ;
 
     //--------------------------------------------------------------------------
     // slice the input matrix B
@@ -188,16 +188,16 @@ GrB_Info GB_emult_03        // C=A.*B when A bitmap/full, B is sparse/hyper
     // allocate workspace
     //--------------------------------------------------------------------------
 
-    GB_WERK_PUSH (Work, 3*B_ntasks, int64_t) ;
+    GB_WERK_PUSH (Work, 3*B_ntasks, uint64_t) ;
     if (Work == NULL)
     { 
         // out of memory
         GB_FREE_ALL ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    int64_t *restrict Wfirst    = Work ;
-    int64_t *restrict Wlast     = Work + B_ntasks ;
-    int64_t *restrict Cp_kfirst = Work + B_ntasks * 2 ;
+    uint64_t *restrict Wfirst    = Work ;
+    uint64_t *restrict Wlast     = Work + B_ntasks ;
+    uint64_t *restrict Cp_kfirst = Work + B_ntasks * 2 ;
 
     //--------------------------------------------------------------------------
     // phase1: count entries in C and allocate C->i and C->x
@@ -334,7 +334,7 @@ GrB_Info GB_emult_03        // C=A.*B when A bitmap/full, B is sparse/hyper
         return (info) ;
     }
 
-    GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+    GB_OK (GB_hyper_prune (C, Werk)) ;
 
     //--------------------------------------------------------------------------
     // free workspace and return result

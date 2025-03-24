@@ -2,7 +2,7 @@
 // GxB_Vector_pack_Full: pack a vector in full format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,7 +14,7 @@ GrB_Info GxB_Vector_pack_Full // pack a full vector
     GrB_Vector v,       // vector to create (type and length unchanged)
     void **vx,          // values, vx_size >= nvals(v) * (type size)
                         // or vx_size >= (type size), if iso is true
-    GrB_Index vx_size,  // size of vx in bytes
+    uint64_t vx_size,   // size of vx in bytes
     bool iso,           // if true, v is iso
     const GrB_Descriptor desc
 )
@@ -24,10 +24,11 @@ GrB_Info GxB_Vector_pack_Full // pack a full vector
     // check inputs and get the descriptor
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Vector_pack_Full (v, "
-        "&vx, vx_size, iso, desc)") ;
+    GB_RETURN_IF_NULL (v) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (v) ;
+    GB_WHERE_1 (v, "GxB_Vector_pack_Full (v, &vx, vx_size, iso, desc)") ;
     GB_BURBLE_START ("GxB_Vector_pack_Full") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (v) ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
 

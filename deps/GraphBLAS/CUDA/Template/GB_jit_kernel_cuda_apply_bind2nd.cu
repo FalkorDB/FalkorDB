@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 __global__ void GB_cuda_apply_bind2nd_kernel
@@ -22,7 +24,7 @@ __global__ void GB_cuda_apply_bind2nd_kernel
 
     for (int64_t p = tid ; p < nvals ; p += nthreads)
     {
-        if (!GBB_A (Ab, p)) { continue ; }
+        if (!GBb_A (Ab, p)) { continue ; }
         GB_DECLAREA (aij) ;
         GB_GETA (aij, Ax, p, false) ;
         GB_EWISEOP (Cx, p, aij, x, /* i */, /* j */) ;
@@ -35,12 +37,19 @@ extern "C" {
 
 GB_JIT_CUDA_KERNEL_APPLY_BIND2ND_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
     ASSERT (Cx != NULL) ;
 
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
-    
+    GB_A_NHELD (nvals) ;
+    if (nvals == 0) return (GrB_SUCCESS) ;
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_apply_bind2nd_kernel <<<grid, block, 0, stream>>> (Cx, A, scalarx) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }

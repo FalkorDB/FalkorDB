@@ -5,7 +5,7 @@ function I = subsindex (G)
 %
 % See also GrB/subsref, GrB/subsasgn.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % On input, G must contain integers in the range 1 to prod (size (A))-1.

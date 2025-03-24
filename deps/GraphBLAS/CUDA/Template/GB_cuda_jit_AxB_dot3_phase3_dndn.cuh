@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/template/GB_cuda_jit_AxB_dot3_phase3_dndn.cuh
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -52,10 +52,10 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
     const GB_B_TYPE *__restrict__ Bx = (GB_B_TYPE *)B->x  ;
     #endif
           GB_C_TYPE *__restrict__ Cx = (GB_C_TYPE *)C->x  ;
-          int64_t *__restrict__ Ci = C->i ;
-    const int64_t *__restrict__ Mi = M->i ;
+          GB_Ci_SIGNED_TYPE *__restrict__ Ci = (GB_Ci_SIGNED_TYPE *) C->i ;
+    const GB_Mi_TYPE *__restrict__ Mi = (GB_Mi_TYPE *) M->i ;
     #if GB_M_IS_HYPER
-    const int64_t *__restrict__ Mh = M->h ;
+    const GB_Mj_TYPE *__restrict__ Mh = (GB_Mj_TYPE *) M->h ;
     #endif
     // A and B are either bitmap or full
     #if GB_A_IS_BITMAP
@@ -102,7 +102,7 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
         {
 
             // j = kth or j = Mh [kth] if C and M are hypersparse
-            int64_t j = GBH_M (Mh, kth) ;
+            int64_t j = GBh_M (Mh, kth) ;
             int64_t pA = vlen * i ;
             int64_t pB = vlen * j ;
 

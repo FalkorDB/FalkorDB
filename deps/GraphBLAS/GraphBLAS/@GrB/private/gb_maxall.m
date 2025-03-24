@@ -2,7 +2,7 @@ function C = gb_maxall (op, A)
 %GB_MAXALL reduce a matrix to a scalar
 % Implements C = max (A, [ ], 'all') ;
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 C = gbreduce (op, A) ;

@@ -4,7 +4,7 @@ function C = expm1 (G)
 %
 % See also GrB/exp, GrB/expm1, GrB/log, GrB/log10, GrB/log2.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 G = G.opaque ;

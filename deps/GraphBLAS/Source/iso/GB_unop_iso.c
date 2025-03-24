@@ -2,7 +2,7 @@
 // GB_unop_iso: apply a unary or binary op (with scalar) with an iso result
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -35,7 +35,6 @@ void GB_unop_iso            // Cx [0] = unop (A), binop (s,A) or binop (A,s)
     ASSERT (Cx != NULL) ;
 
     GrB_Type stype = (scalar != NULL) ? scalar->type : GrB_BOOL ;
-//  const size_t csize = ctype->size ;
     const size_t asize = A->type->size ;
     const size_t ssize = stype->size ;
     const GB_Type_code ccode = ctype->code ;

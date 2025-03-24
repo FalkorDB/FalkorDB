@@ -8,11 +8,11 @@ bool GB_cuda_colscale_branch
     const bool flipxy
 )
 {
-    if (A->static_header)
+    if (A->header_size == 0)
     {
         return false ;
     }
-    if (D->static_header)
+    if (D->header_size == 0)
     {
         return false ;
     }

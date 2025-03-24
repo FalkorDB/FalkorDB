@@ -2,7 +2,7 @@
 // GB_ewise: C<M> = accum (C, A+B) or A.*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -83,8 +83,8 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
         if (is_eWiseUnion)
         {
             // alpha and beta scalars must be present
-            GB_RETURN_IF_NULL_OR_FAULTY (alpha) ;
-            GB_RETURN_IF_NULL_OR_FAULTY (beta) ;
+            ASSERT_SCALAR_OK (alpha, "alpha for GB_ewise", GB0) ;
+            ASSERT_SCALAR_OK (beta, "beta for GB_ewise", GB0) ;
             GB_MATRIX_WAIT (alpha) ;
             GB_MATRIX_WAIT (beta) ;
             if (GB_nnz ((GrB_Matrix) alpha) == 0)
@@ -235,7 +235,7 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
     { 
         // MT = (bool) M'
         GBURBLE ("(M transpose) ") ;
-        GB_CLEAR_STATIC_HEADER (MT, &MT_header) ;
+        GB_CLEAR_MATRIX_HEADER (MT, &MT_header) ;
         GB_OK (GB_transpose_cast (MT, GrB_BOOL, T_is_csc, M, Mask_struct,
             Werk)) ;
         M1 = MT ;
@@ -258,7 +258,7 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
     { 
         // AT = (xtype) A' or AT = (xtype) one (A')
         GBURBLE ("(A transpose) ") ;
-        GB_CLEAR_STATIC_HEADER (AT, &AT_header) ;
+        GB_CLEAR_MATRIX_HEADER (AT, &AT_header) ;
         GB_OK (GB_transpose_cast (AT, op->xtype, T_is_csc, A, A_is_pattern,
             Werk)) ;
         A1 = AT ;
@@ -270,7 +270,7 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
     { 
         // BT = (ytype) B' or BT = (ytype) one (B')
         GBURBLE ("(B transpose) ") ;
-        GB_CLEAR_STATIC_HEADER (BT, &BT_header) ;
+        GB_CLEAR_MATRIX_HEADER (BT, &BT_header) ;
         GB_OK (GB_transpose_cast (BT, op->ytype, T_is_csc, B, B_is_pattern,
             Werk)) ;
         B1 = BT ;
@@ -366,7 +366,7 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
     //--------------------------------------------------------------------------
 
     bool mask_applied = false ;
-    GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+    GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
 
     if (eWiseAdd)
     { 
@@ -403,7 +403,7 @@ GrB_Info GB_ewise                   // C<M> = accum (C, A+B) or A.*B
         // shallow copy of A1->h, B1->h, or M1->h.  T is hypersparse if any
         // matrix A1, B1, or M1 are hypersparse.  Internally, T->h always
         // starts as a shallow copy of A1->h, B1->h, or M1->h, but it may be
-        // pruned by GB_hypermatrix_prune, and thus no longer shallow.
+        // pruned by GB_hyper_prune, and thus no longer shallow.
 
         GB_OK (GB_emult (T, T_type, T_is_csc, M1, Mask_struct, Mask_comp,
             &mask_applied, A1, B1, op, flipij, Werk)) ;

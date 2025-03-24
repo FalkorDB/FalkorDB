@@ -2,7 +2,7 @@
 // GB_mx_create_full: create a full built-in matrix of a given GrB_Type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,8 +11,8 @@
 
 mxArray *GB_mx_create_full      // return new built-in full matrix
 (
-    const GrB_Index nrows,
-    const GrB_Index ncols,
+    const uint64_t nrows,
+    const uint64_t ncols,
     GrB_Type type               // type of the matrix to create
 )
 {

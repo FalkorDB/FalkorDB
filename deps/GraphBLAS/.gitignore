@@ -41,21 +41,7 @@ errlog*.txt
 fprint.txt
 log.txt
 
-Demo/bfs_demo.out
-Demo/openmp_demo.out
-Demo/pagerank_demo.out
-Demo/pthread_demo.out
-Demo/simple_demo.out
-Demo/tri_demo.out
-Demo/wildtype_demo.out
 Demo/*.log
-Demo/complex_demo_out.m
-Demo/complex_demo_out2.m
-Demo/import_demo.out
-Demo/gauss_demo1.out
-Demo/gauss_demo.out
-Demo/t1.out
-Demo/t2.out
 
 Test/*.log
 Test/errlog.txt

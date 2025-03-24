@@ -1,8 +1,8 @@
 //------------------------------------------------------------------------------
-// GB_add.h: definitiions for GB_add and related functions
+// GB_add.h: definitions for GB_add and related functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -34,25 +34,28 @@ GrB_Info GB_add             // C=A+B, C<M>=A+B, or C<!M>=A+B
 
 GrB_Info GB_add_phase1                  // count nnz in each C(:,j)
 (
-    int64_t **Cp_handle,                // output of size Cnvec+1
+    // output of phase1:
+    void **Cp_handle,                   // output of size Cnvec+1
     size_t *Cp_size_handle,
     int64_t *Cnvec_nonempty,            // # of non-empty vectors in C
     const bool A_and_B_are_disjoint,    // if true, then A and B are disjoint
     // tasks from phase0b:
-    GB_task_struct *restrict TaskList,   // array of structs
+    GB_task_struct *restrict TaskList,  // array of structs
     const int C_ntasks,                 // # of tasks
     const int C_nthreads,               // # of threads to use
     // analysis from phase0:
     const int64_t Cnvec,
-    const int64_t *restrict Ch,
+    const void *Ch,
     const int64_t *restrict C_to_M,
     const int64_t *restrict C_to_A,
     const int64_t *restrict C_to_B,
-    const bool Ch_is_Mh,                // if true, then Ch == M->h
+    const bool Ch_is_Mh,        // if true, then Ch == M->h
+    const bool Cp_is_32,        // if true, Cp is 32-bit; else 64-bit
+    const bool Cj_is_32,        // if true, Ch is 32-bit; else 64-bit
     // original input:
-    const GrB_Matrix M,             // optional mask, may be NULL
-    const bool Mask_struct,         // if true, use the only structure of M
-    const bool Mask_comp,           // if true, use !M
+    const GrB_Matrix M,         // optional mask, may be NULL
+    const bool Mask_struct,     // if true, use the only structure of M
+    const bool Mask_comp,       // if true, use !M
     const GrB_Matrix A,
     const GrB_Matrix B,
     GB_Werk Werk
@@ -67,7 +70,7 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     const bool flipij,      // if true, i,j must be flipped
     const bool A_and_B_are_disjoint,    // if true, then A and B are disjoint
     // from phase1:
-    int64_t **Cp_handle,    // vector pointers for C
+    void **Cp_handle,       // vector pointers for C
     size_t Cp_size,
     const int64_t Cnvec_nonempty,   // # of non-empty vectors in C
     // tasks from phase1a:
@@ -76,12 +79,15 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     const int C_nthreads,       // # of threads to use
     // analysis from phase0:
     const int64_t Cnvec,
-    int64_t **Ch_handle,
+    void **Ch_handle,
     size_t Ch_size,
     const int64_t *restrict C_to_M,
     const int64_t *restrict C_to_A,
     const int64_t *restrict C_to_B,
     const bool Ch_is_Mh,        // if true, then Ch == M->h
+    const bool Cp_is_32,        // if true, Cp is 32-bit; else 64-bit
+    const bool Cj_is_32,        // if true, Ch is 32-bit; else 64-bit
+    const bool Ci_is_32,        // if true, Ci is 32-bit; else 64-bit
     const int C_sparsity,
     // original input:
     const GrB_Matrix M,         // optional mask, may be NULL
@@ -90,8 +96,8 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     const GrB_Matrix A,
     const GrB_Matrix B,
     const bool is_eWiseUnion,   // if true, eWiseUnion, else eWiseAdd
-    const GrB_Scalar alpha, // alpha and beta ignored for eWiseAdd,
-    const GrB_Scalar beta,  // nonempty scalars for GxB_eWiseUnion
+    const GrB_Scalar alpha,     // alpha and beta ignored for eWiseAdd,
+    const GrB_Scalar beta,      // nonempty scalars for GxB_eWiseUnion
     GB_Werk Werk
 ) ;
 

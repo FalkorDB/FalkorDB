@@ -2,15 +2,13 @@
 // GB_subassign_dense.h: definitions for dense subassign methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #ifndef GB_SUBASSIGN_DENSE_H
 #define GB_SUBASSIGN_DENSE_H
-
-#include "slice/GB_ek_slice.h"
 
 //------------------------------------------------------------------------------
 // GB_subassign_23: C(:,:) += A where C is dense and A is sparse or dense

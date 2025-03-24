@@ -7,7 +7,7 @@ function test10_compare (op, C1, C2, tol)
 % acos, asin, and other a* trig functions can return different but valid
 % results.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 C1 = GB_spec_matrix (C1, 0) ;

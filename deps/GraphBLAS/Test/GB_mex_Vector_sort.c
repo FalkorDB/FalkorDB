@@ -2,7 +2,7 @@
 // GB_mex_Vector_sort: [C,P] = sort (A)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,7 +10,7 @@
 #include "GB_mex.h"
 
 #define USAGE \
-    "[C,P] = GB_mex_Vector_sort (op, A, desc)"
+    "[C,P] = GB_mex_Vector_sort (op, A, desc, ptype)"
 
 #define FREE_ALL                        \
 {                                       \
@@ -36,7 +36,7 @@ void mexFunction
     GrB_Descriptor desc = NULL ;
 
     // check inputs
-    if (nargout > 2 || nargin < 2 || nargin > 3)
+    if (nargout > 2 || nargin < 2 || nargin > 4)
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
@@ -66,19 +66,16 @@ void mexFunction
         mexErrMsgTxt ("desc failed") ;
     }
 
+    // get ptype; defaults to GrB_INT64
+    GrB_Type ptype = GB_mx_string_to_Type (PARGIN (3), GrB_INT64) ;
+
     // create C and P
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, A) ;
     GrB_Matrix_ncols (&ncols, A) ;
     if (ncols != 1)
     {
         mexErrMsgTxt ("A must be a column vector") ;
-    }
-
-    GrB_Vector_new (&C, A->type, nrows) ;
-    if (nargout > 1)
-    {
-        GrB_Vector_new (&P, GrB_INT64, nrows) ;
     }
 
     GrB_Vector u = (GrB_Vector) A ;
@@ -87,9 +84,19 @@ void mexFunction
         mexErrMsgTxt ("invalid input vector") ;
     }
 
+    #define FREE_DEEP_COPY                              \
+        GrB_Vector_free (&C) ;                          \
+        GrB_Vector_free (&P) ;
+
+    #define GET_DEEP_COPY                               \
+        GrB_Vector_new (&C, A->type, nrows) ;           \
+        if (nargout > 1)                                \
+        {                                               \
+            GrB_Vector_new (&P, ptype, nrows) ;         \
+        }
+
     // [C,P] = sort(op,A,desc)
-    #define FREE_DEEP_COPY ;
-    #define GET_DEEP_COPY ;
+    GET_DEEP_COPY ;
     METHOD (GxB_Vector_sort (C, P, op, u, desc)) ;
 
     // return C as a struct and free the GraphBLAS C

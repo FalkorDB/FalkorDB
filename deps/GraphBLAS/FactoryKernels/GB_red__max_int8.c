@@ -2,7 +2,7 @@
 // GB_red:  hard-coded functions for reductions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,7 +36,6 @@
 #define GB_MONOID_IS_TERMINAL 1
 #define GB_TERMINAL_CONDITION(z,zterminal) (z == INT8_MAX)
 #define GB_IF_TERMINAL_BREAK(z,zterminal) if (z == INT8_MAX) { break ; }
-#define GB_DECLARE_TERMINAL_CONST(zterminal) const int8_t zterminal = INT8_MAX
 
 // panel size
 #define GB_PANEL 16
@@ -82,5 +81,7 @@ GrB_Info GB (_red__max_int8)
     #endif
 }
 
+#else
+GB_EMPTY_PLACEHOLDER
 #endif
 

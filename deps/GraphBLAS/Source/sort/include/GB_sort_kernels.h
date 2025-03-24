@@ -2,7 +2,7 @@
 // GB_sort_kernels.h: definitions for sorting functions
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 
 // A [a] and B [b] are keys of one integer.
 
-// GB_lt_1 returns true if A [a] < B [b], for GB_qsort_1b
+// GB_lt_1 returns true if A [a] < B [b], for GB_qsort_1* and GB_msort_1*
 
 #define GB_lt_1(A_0, a, B_0, b) (A_0 [a] < B_0 [b])
 
@@ -26,7 +26,7 @@
 
 // A [a] and B [b] are keys of two integers.
 
-// GB_lt_2 returns true if A [a] < B [b], for GB_qsort_2 and GB_msort_2
+// GB_lt_2 returns true if A [a] < B [b], for GB_qsort_2* and GB_msort_2*
 
 #define GB_lt_2(A_0, A_1, a, B_0, B_1, b)                                   \
 (                                                                           \
@@ -54,7 +54,7 @@
 
 // A [a] and B [b] are keys of three integers.
 
-// GB_lt_3 returns true if A [a] < B [b], for GB_qsort_3 and GB_msort_3
+// GB_lt_3 returns true if A [a] < B [b], for GB_qsort_3* and GB_msort_3*
 
 #define GB_lt_3(A_0, A_1, A_2, a, B_0, B_1, B_2, b)                         \
 (                                                                           \

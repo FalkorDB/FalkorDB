@@ -2511,6 +2511,15 @@ class testFunctionCallsFlow(FlowTestsBase):
         except ResponseError as e:
             self.env.assertContains("String overflow", str(e))
 
+        # join empty list
+        queries = ["RETURN string.join([])",
+                   "RETURN string.join([], '|')"]
+
+        for q in queries:
+            actual_result = self.graph.query(q).result_set[0][0]
+            # expecting an empty string
+            self.env.assertEquals(actual_result, "")
+
     def test90_size(self):
         query_to_expected_result = {
             "RETURN size(NULL)" : [[None]],

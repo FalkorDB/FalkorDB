@@ -22,10 +22,10 @@
 
 typedef struct OpSemiApply {
 	OpBase op;
-	Record r;                       // Bound branch record.
-	OpBase *bound_branch;           // Bound branch root;
-	OpBase *match_branch;           // Match branch root;
-	Argument *op_arg;               // Match branch tap.
+	Record r;              // Bound branch record.
+	OpBase *bound_branch;  // Bound branch root;
+	OpBase *match_branch;  // Match branch root;
+	OpArgument *op_arg;    // Match branch tap.
 } OpSemiApply;
 
 OpBase *NewSemiApplyOp
@@ -33,3 +33,4 @@ OpBase *NewSemiApplyOp
 	const ExecutionPlan *plan,
 	bool anti
 );
+

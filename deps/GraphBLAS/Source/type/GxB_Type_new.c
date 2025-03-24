@@ -2,7 +2,7 @@
 // GxB_Type_new: create a new user-defined type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -49,9 +49,11 @@ GrB_Info GxB_Type_new
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Type_new (&type, sizeof (ctype), type_name, type_defn)") ;
-    GB_BURBLE_START ("GxB_Type_new") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (type) ;
+    GB_BURBLE_START ("GxB_Type_new") ;
+
+    GrB_Info info ;
     (*type) = NULL ;
 
     if (sizeof_type == 0 && (type_defn == NULL || type_name == NULL))
@@ -67,7 +69,8 @@ GrB_Info GxB_Type_new
 
     // allocate the type
     size_t header_size ;
-    GrB_Type t = GB_MALLOC (1, struct GB_Type_opaque, &header_size) ;
+    GrB_Type t = GB_MALLOC_MEMORY (1, sizeof (struct GB_Type_opaque),
+        &header_size) ;
     if (t == NULL)
     { 
         // out of memory
@@ -113,11 +116,12 @@ GrB_Info GxB_Type_new
         size_t defn_len = strlen (type_defn) ;
 
         // allocate space for the typedef
-        t->defn = GB_MALLOC (defn_len+1, char, &(t->defn_size)) ;
+        t->defn = GB_MALLOC_MEMORY (defn_len+1, sizeof (char),
+            &(t->defn_size)) ;
         if (t->defn == NULL)
         { 
             // out of memory
-            GB_FREE (&t, header_size) ;
+            GB_FREE_MEMORY (&t, header_size) ;
             return (GrB_OUT_OF_MEMORY) ;
         }
 
@@ -134,7 +138,7 @@ GrB_Info GxB_Type_new
 
     if (sizeof_type == 0)
     { 
-        GrB_Info info = GB_user_type_jit (&sizeof_type, t) ;
+        info = GB_user_type_jit (&sizeof_type, t) ;
         if (info != GrB_SUCCESS)
         { 
             // unable to determine the type size

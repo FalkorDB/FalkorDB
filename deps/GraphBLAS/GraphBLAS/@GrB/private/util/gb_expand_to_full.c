@@ -2,7 +2,7 @@
 // gb_expand_to_full: add identity values to a matrix so all entries are present
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,7 @@ GrB_Matrix gb_expand_to_full    // C = full (A), and typecast
 (
     const GrB_Matrix A,         // input matrix to expand to full
     GrB_Type type,              // type of C, if NULL use the type of A
-    GxB_Format_Value fmt,       // format of C
+    int fmt,                    // format of C
     GrB_Matrix id               // identity value, use zero if NULL
 )
 {
@@ -23,7 +23,7 @@ GrB_Matrix gb_expand_to_full    // C = full (A), and typecast
     //--------------------------------------------------------------------------
 
     GrB_Type atype ;
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
     OK (GxB_Matrix_type (&atype, A)) ;

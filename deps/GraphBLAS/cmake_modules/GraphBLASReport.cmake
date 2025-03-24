@@ -2,7 +2,7 @@
 # GraphBLAS/cmake_modules/GraphBLASReport.cmake
 #-------------------------------------------------------------------------------
 
-# Copyright (c) 2012-2023, Timothy A. Davis.  All Rights Reserved.
+# Copyright (c) 2012-2025, Timothy A. Davis.  All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0.
 
 #-------------------------------------------------------------------------------

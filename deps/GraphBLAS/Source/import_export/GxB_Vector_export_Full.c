@@ -2,7 +2,7 @@
 // GxB_Vector_export_Full: export a full vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,10 +15,10 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
 (
     GrB_Vector *v,      // handle of vector to export and free
     GrB_Type *type,     // type of vector exported
-    GrB_Index *n,       // length of the vector
+    uint64_t *n,        // length of the vector
 
     void **vx,          // values
-    GrB_Index *vx_size, // size of vx in bytes
+    uint64_t *vx_size,  // size of vx in bytes
     bool *iso,          // if true, v is iso
 
     const GrB_Descriptor desc
@@ -29,11 +29,11 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_Vector_export_Full (&v, &type, &n, "
-        "&vx, &vx_size, &iso, desc)") ;
-    // GB_BURBLE_START ("GxB_Vector_export_Full") ;
     GB_RETURN_IF_NULL (v) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (*v) ;
+    GB_RETURN_IF_NULL (*v) ;
+    GB_WHERE_1 (*v, "GxB_Vector_export_Full (&v, &type, &n, "
+        "&vx, &vx_size, &iso, desc)") ;
+
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
 
     //--------------------------------------------------------------------------
@@ -66,7 +66,7 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
 
     int sparsity ;
     bool is_csc ;
-    GrB_Index vdim ;
+    uint64_t vdim ;
 
     info = GB_export (false, (GrB_Matrix *) v, type, n, &vdim, false,
         NULL, NULL,     // Ap
@@ -84,7 +84,7 @@ GrB_Info GxB_Vector_export_Full   // export and free a full vector
         ASSERT (is_csc) ;
         ASSERT (vdim == 1) ;
     }
-    // GB_BURBLE_END ;
+
     return (info) ;
 }
 

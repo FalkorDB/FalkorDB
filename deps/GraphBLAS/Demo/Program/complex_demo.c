@@ -2,7 +2,7 @@
 // GraphBLAS/Demo/Program/complex_demo.c: demo for user-defined complex type
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,9 +13,9 @@
 
 #include "graphblas_demos.h"
 #include "usercomplex.h"
-#include "usercomplex.c"
-#include "simple_rand.c"
 #include "random_matrix.c"
+#include "usercomplex.c"
+#define FREE_ALL ;
 
 //------------------------------------------------------------------------------
 // print a complex matrix
@@ -78,11 +78,11 @@ int main (int argc, char **argv)
     GrB_Info info ;
     GrB_init (GrB_NONBLOCKING) ;
     int nthreads ;
-    GxB_Global_Option_get (GxB_GLOBAL_NTHREADS, &nthreads) ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &nthreads, GxB_NTHREADS)) ;
     fprintf (stderr, "complex_demo: nthreads: %d\n", nthreads) ;
 
     // print in 1-based notation
-    GxB_Global_Option_set (GxB_PRINT_1BASED, true) ;
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, true, GxB_PRINT_1BASED)) ;
 
     bool predefined = (argc > 1) ;
     if (predefined)
@@ -102,9 +102,9 @@ int main (int argc, char **argv)
     }
 
     // generate random matrices A and B
-    simple_rand_seed (1) ;
-    random_matrix (&A, false, false, m, k, 6, 0, true) ;
-    random_matrix (&B, false, false, k, n, 8, 0, true) ;
+    uint64_t state = 1 ;
+    random_matrix (&A, false, false, m, k, 6, 0, true, &state) ;
+    random_matrix (&B, false, false, k, n, 8, 0, true, &state) ;
 
     GxB_Matrix_fprint (A, "A", GxB_SHORT, stderr) ;
     GxB_Matrix_fprint (B, "B", GxB_SHORT, stderr) ;

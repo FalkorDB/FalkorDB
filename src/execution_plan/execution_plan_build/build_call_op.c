@@ -80,10 +80,15 @@ static AR_ExpNode **_BuildCallProjections(const cypher_astnode_t *call_clause) {
 	return expressions;
 }
 
-// Convert a CALL clause into a procedure call operation.
-void buildCallOp(AST *ast, ExecutionPlan *plan, const cypher_astnode_t *call_clause) {
-	// A call clause has a procedure name,
-	// 0+ arguments (parenthesized expressions),
+// convert a CALL clause into a procedure call operation
+void buildCallOp
+(
+	AST *ast,
+	ExecutionPlan *plan,
+	const cypher_astnode_t *call_clause
+) {
+	// a call clause has a procedure name
+	// 0+ arguments (parenthesized expressions)
 	// and a projection if YIELD is included
 	const cypher_astnode_t *proc = cypher_ast_call_get_proc_name(call_clause);
 	const char *proc_name = cypher_ast_proc_name_get_value(proc);
@@ -96,6 +101,6 @@ void buildCallOp(AST *ast, ExecutionPlan *plan, const cypher_astnode_t *call_cla
 	// Build the FilterTree to model any WHERE predicates on this clause
 	// and place ops appropriately.
 	FT_FilterNode *sub_ft = AST_BuildFilterTreeFromClauses(ast, &call_clause, 1);
-	ExecutionPlan_PlaceFilterOps(plan, plan->root, NULL, sub_ft);
+	ExecutionPlan_PlaceFilterOps(plan, plan->root, sub_ft);
 }
 

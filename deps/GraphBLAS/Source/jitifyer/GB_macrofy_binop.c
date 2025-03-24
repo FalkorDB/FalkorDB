@@ -2,7 +2,7 @@
 // GB_macrofy_binop: construct the macro and defn for a binary operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -91,8 +91,8 @@ void GB_macrofy_binop
         }
         else if (flipxy)
         { 
-            // flipped multiplicative operator (flip both xy and ij)
-            ASSERT (!is_ewise) ;
+            // flipped multiplicative operator (flip both xy and ij),
+            // for mxm (including rowscale and colscale) only
             fprintf (fp, "#define %s(z,y,x,j%s,i) ", macro_name, karg) ;
         }
         else if (flipij)

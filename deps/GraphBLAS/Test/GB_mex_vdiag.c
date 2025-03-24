@@ -2,7 +2,7 @@
 // GB_mex_vdiag: compute v=diag(A,k)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -65,8 +65,8 @@ void mexFunction
 
     // construct V
     int64_t n, nrows, ncols ;
-    GrB_Matrix_nrows (&nrows, A) ;
-    GrB_Matrix_ncols (&ncols, A) ;
+    GrB_Matrix_nrows ((uint64_t *) &nrows, A) ;
+    GrB_Matrix_ncols ((uint64_t *) &ncols, A) ;
     if (k >= ncols || k <= -nrows)
     { 
         // output vector V must have zero length

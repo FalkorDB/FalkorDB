@@ -2,7 +2,7 @@
 // GB_setElement: C(row,col) = scalar or += scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,7 +15,7 @@
 // If C(row,col) is already present in the matrix, its value is overwritten
 // with the scalar.  Otherwise, if the mode determined by GrB_init is
 // non-blocking, the tuple (i,j,scalar) is appended to a list of pending tuples
-// to C.  GB_wait assembles these pending tuples.
+// to C.  GB_wait assembles these pending tuples sometime later.
 
 // GB_setElement when accum is NULL is used by GrB_*_setElement.  It is the
 // same as GrB_*assign with an implied SECOND accum operator whose ztype,
@@ -39,8 +39,8 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
     const GrB_BinaryOp accum,       // if NULL: C(row,col) = scalar
                                     // else: C(row,col) += scalar
     const void *scalar,             // scalar to set
-    const GrB_Index row,            // row index
-    const GrB_Index col,            // column index
+    const uint64_t row,             // row index
+    const uint64_t col,             // column index
     const GB_Type_code scalar_code, // type of the scalar
     GB_Werk Werk
 )
@@ -53,6 +53,7 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
     GrB_Info info ;
     ASSERT (C != NULL) ;
     GB_RETURN_IF_NULL (scalar) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (C) ;
 
     if (row >= GB_NROWS (C))
     { 
@@ -147,12 +148,8 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
 
         if (convert_to_non_iso)
         { 
-            // The new entry differs from the iso value of C.  Assemble all
-            // pending tuples and convert C to non-iso.  Zombies are OK.
-            if (C->Pending != NULL)
-            { 
-                GB_OK (GB_wait (C, "C (setElement:to non-iso)", Werk)) ;
-            }
+            // The new entry differs from the iso value of C; convert C
+            // to non-iso, including any of its pending tuples.
             GB_OK (GB_convert_any_to_non_iso (C, true)) ;
         }
 
@@ -170,11 +167,11 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // s = (ctype) scalar
             GB_void s [GB_VLA(csize)] ;
             GB_cast_scalar (s, ccode, scalar, scalar_code, csize) ;
-            GB_OK (GB_convert_any_to_iso (C, s)) ;
+            GB_OK (GB_convert_any_to_iso (C, s)) ;  // OK
         }
         else
         { 
-            GB_OK (GB_convert_any_to_iso (C, (GB_void *) scalar)) ;
+            GB_OK (GB_convert_any_to_iso (C, (GB_void *) scalar)) ; // OK
         }
     }
 
@@ -222,31 +219,34 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
         //----------------------------------------------------------------------
 
         int64_t pC_start, pC_end ;
-        const int64_t *restrict Ch = C->h ;
-        const int64_t *restrict Cp = C->p ;
+        GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
         if (C->nvals == 0)
         { 
             // C is empty
             found = false ;
         }
-        else if (Ch != NULL)
+        else if (C->h != NULL)
         {
             // C is hypersparse, with at least one entry
-            const int64_t *restrict C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
-            const int64_t *restrict C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
-            const int64_t *restrict C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
+            void *C_Yp = (C->Y == NULL) ? NULL : C->Y->p ;
+            void *C_Yi = (C->Y == NULL) ? NULL : C->Y->i ;
+            void *C_Yx = (C->Y == NULL) ? NULL : C->Y->x ;
             const int64_t C_hash_bits = (C->Y == NULL) ? 0 : (C->Y->vdim - 1) ;
             const int64_t cnvec = C->nvec ;
-            int64_t k = GB_hyper_hash_lookup (Ch, cnvec, Cp, C_Yp, C_Yi, C_Yx,
-                C_hash_bits, j, &pC_start, &pC_end) ;
+            int64_t k = GB_hyper_hash_lookup (C->p_is_32, C->j_is_32,
+                C->h, cnvec, Cp, C_Yp, C_Yi, C_Yx, C_hash_bits,
+                j, &pC_start, &pC_end) ;
             found = (k >= 0) ;
-            ASSERT (GB_IMPLIES (found, j == Ch [k])) ;
+            #ifdef GB_DEBUG
+            GB_Ch_DECLARE (Ch, const) ; GB_Ch_PTR (Ch, C) ;
+            ASSERT (GB_IMPLIES (found, j == GB_IGET (Ch, k))) ;
+            #endif
         }
         else
         { 
             // C is sparse
-            pC_start = Cp [j] ;
-            pC_end   = Cp [j+1] ;
+            pC_start = GB_IGET (Cp, j) ;
+            pC_end   = GB_IGET (Cp, j+1) ;
             found = true ;
         }
 
@@ -261,9 +261,9 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             int64_t pright = pC_end - 1 ;
 
             // Time taken for this step is at most O(log(nnz(C(:,j))).
-            const int64_t *restrict Ci = C->i ;
-            GB_BINARY_SEARCH_ZOMBIE (i, Ci, pleft, pright, found,
-                C->nzombies, is_zombie) ;
+            const bool may_see_zombies = (C->nzombies > 0) ;
+            found = GB_binary_search_zombie (i, C->i, C->i_is_32,
+                &pleft, &pright, may_see_zombies, &is_zombie) ;
         }
     }
 
@@ -326,7 +326,8 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
         if (is_zombie)
         { 
             // bring the zombie back to life
-            C->i [pleft] = i ;
+            GB_Ci_DECLARE (Ci, ) ; GB_Ci_PTR (Ci, C) ;
+            GB_ISET (Ci, pleft, i) ;    // Ci [pleft] = i ;
             C->nzombies-- ;
         }
         else if (C_is_bitmap)
@@ -428,8 +429,8 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
             // tuples becomes the type of this scalar, and the pending operator
             // becomes NULL, which is the implicit SECOND_ctype operator,
             // or non-NULL if accum is present.
-            if (!GB_Pending_add (&(C->Pending), C->iso, (GB_void *) scalar,
-                stype, accum, i, j, C->vdim > 1, Werk))
+            if (!GB_Pending_add (C, (GB_void *) scalar, stype, accum, i, j,
+                Werk))
             { 
                 // out of memory
                 GB_phybix_free (C) ;

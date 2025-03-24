@@ -1,0 +1,361 @@
+\newpage
+%-------------------------------------------------------------------------------
+\subsection{SuiteSparse:GraphBLAS data formats}
+%-------------------------------------------------------------------------------
+\label{formats}
+
+SuiteSparse:GraphBLAS uses four distinct data formats: sparse, hypersparse,
+bitmap, and full, each in row-major or column-major orientations, for eight
+different variants (each of which are listed below).
+Each of these eight total variants can be iso-valued, where if
+\verb'Container->iso' is true the numerical values are all the same, and
+\verb'Container->x' holds a single entry with this value.
+Each of the sparse and hypersparse formats can appear in {\em jumbled} form,
+where the indices within any given row (if the orientation is row-major)
+or column may be out of order.  If \verb'Container->jumbled' is false, then
+the indices appear in ascending order.
+
+The \verb'p', \verb'h', and \verb'i' vectors in the Container have an integer
+type, either \verb'GrB_UINT32' or \verb'GrB_UINT64'.  These appear below as
+just \verb'integer', but the actual corresponding C type (\verb'uint32_t' or
+\verb'uint64_t') must be used for each component.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Sparse, held by row}
+%-------------------------------------------------------------------------------
+\label{format_sparse_by_row}
+
+A sparse matrix in CSR format, held by row, has a \verb'Container->format'
+value of \verb'GxB_SPARSE' and a \verb'Container->orientation' of
+\verb'GrB_ROWMAJOR'.  It requires three arrays:
+
+\begin{itemize}
+\item \verb'integer Ap [nrows+1] ;'  The \verb'Ap' array is the row
+``pointer'' array.  It does not actual contain pointers, but integer offsets.
+More precisely, it is an integer array that defines where the column indices
+and values appear in \verb'Aj' and \verb'Ax', for each row.  The number of
+entries in row \verb'i' is given by the expression \verb'Ap [i+1] - Ap [i]'.
+
+\item \verb'integer Aj [nvals] ;'  The \verb'Aj' array defines the
+column indices of entries in each row.
+
+\item \verb'type Ax [nvals] ;'  The \verb'Ax' array defines the values of
+entries in each row.  
+\end{itemize}
+
+The content of the three arrays \verb'Ap' \verb'Aj', and \verb'Ax' is very
+specific.  This content is not checked, since this function takes only
+$O(1)$ time.  Results are undefined if the following specification is not
+followed exactly.
+
+The column indices of entries in the ith row of the matrix are held in
+\verb'Aj [Ap [i] ... Ap[i+1]]', and the corresponding values are held in the
+same positions in \verb'Ax'.  Column indices must be in the range 0 to
+\verb'ncols'-1.  If \verb'jumbled' is \verb'false', column indices must appear
+in ascending order within each row.  If \verb'jumbled' is \verb'true', column
+indices may appear in any order within each row.  No duplicate column indices
+may appear in any row.  \verb'Ap [0]' must equal zero, and \verb'Ap [nrows]'
+must equal \verb'nvals'.  The \verb'Ap' array must be of size \verb'nrows'+1
+(or larger), and the \verb'Aj' and \verb'Ax' arrays must have size at least
+\verb'nvals'.
+
+An example of the CSR format is shown below.  Consider the following
+matrix with 10 nonzero entries, and suppose the zeros are not stored.
+
+    \begin{equation}
+    \label{eqn:Aexample}
+    A = \left[
+    \begin{array}{cccc}
+    4.5 &   0 & 3.2 &   0 \\
+    3.1 & 2.9 &  0  & 0.9 \\
+     0  & 1.7 & 3.0 &   0 \\
+    3.5 & 0.4 &  0  & 1.0 \\
+    \end{array}
+    \right]
+    \end{equation}
+
+The \verb'Ap' array has length 5, since the matrix is 4-by-4.  The first entry
+must always zero, and \verb'Ap [5] = 10' is the number of entries.
+The content of the arrays is shown below:
+
+{\footnotesize
+\begin{verbatim}
+    integer Ap [ ] = { 0,        2,             5,        7,            10 } ;
+    integer Aj [ ] = { 0,   2,   0,   1,   3,   1,   2,   0,   1,   3   } ;
+    double  Ax [ ] = { 4.5, 3.2, 3.1, 2.9, 0.9, 1.7, 3.0, 3.5, 0.4, 1.0 } ; \end{verbatim} }
+
+Spaces have been added to the \verb'Ap' array, just for illustration.  Row zero
+is in \verb'Aj [0..1]' (column indices) and \verb'Ax [0..1]' (values), starting
+at \verb'Ap [0] = 0' and ending at \verb'Ap [0+1]-1 = 1'.  The list of column
+indices of row one is at \verb'Aj [2..4]' and row two is in \verb'Aj [5..6]'.
+The last row (three) appears \verb'Aj [7..9]', because \verb'Ap [3] = 7' and
+\verb'Ap [4]-1 = 10-1 = 9'.  The corresponding numerical values appear in the
+same positions in \verb'Ax'.
+
+To iterate over the rows and entries of this matrix, the following code can be
+used (assuming it has type \verb'GrB_FP64'):
+
+    {\footnotesize
+    \begin{verbatim}
+    integer nvals = Ap [nrows] ;
+    for (integer i = 0 ; i < nrows ; i++)
+    {
+        // get A(i,:)
+        for (integer p = Ap [i] ; p < Ap [i+1] ; p++)
+        {
+            // get A(i,j)
+            integer  j = Aj [p] ;           // column index
+            double aij = Ax [iso ? 0 : p] ;   // numerical value
+        }
+    } \end{verbatim}}
+
+In the container, the three arrays \verb'Ap', \verb'Aj' and \verb'Ax'
+are held in three \verb'GrB_Vector' objects:
+\verb'Container->p',
+\verb'Container->i', and
+\verb'Container->x', respectively.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Sparse, held by column}
+%-------------------------------------------------------------------------------
+\label{format_sparse_by_col}
+
+This format is the transpose of sparse-by-row.  A sparse matrix in CSC format,
+held by column, has a \verb'Container->format' value of \verb'GxB_SPARSE' and a
+\verb'Container->orientation' of \verb'GrB_COLMAJOR'.  It requires three
+arrays: \verb'Ap', \verb'Ai', and \verb'Ax'.
+
+The column ``pointer'' array \verb'Ap' has size \verb'ncols+1'.  The row
+indices of the columns are in \verb'Ai', and if \verb'jumbled' is false,
+they must appear in ascending order in
+each column.  The corresponding numerical values are held in \verb'Ax'.  The
+row indices of column \verb'j' are held in \verb'Ai [Ap [j]...Ap [j+1]-1]',
+and the corresponding numerical values are in the same locations in \verb'Ax'.
+
+The same matrix from Equation~\ref{eqn:Aexample} in
+the last section (repeated here):
+
+    \begin{equation}
+    A = \left[
+    \begin{array}{cccc}
+    4.5 &   0 & 3.2 &   0 \\
+    3.1 & 2.9 &  0  & 0.9 \\
+     0  & 1.7 & 3.0 &   0 \\
+    3.5 & 0.4 &  0  & 1.0 \\
+    \end{array}
+    \right]
+    \end{equation}
+
+is held in CSC form as follows:
+
+{\footnotesize
+\begin{verbatim}
+    integer Ap [ ] = { 0,             3,             6,        8,       10 } ;
+    integer Ai [ ] = { 0,   1,   3,   1,   2,   3,   0,   2,   1,   3   } ;
+    double  Ax [ ] = { 4.5, 3.1, 3.5, 2.9, 1.7, 0.4, 3.2, 3.0, 0.9, 1.0 } ; \end{verbatim} }
+
+That is, the row indices of column 1 (the second column) are in
+\verb'Ai [3..5]', and the values in the same place in \verb'Ax',
+since \verb'Ap [1] = 3' and \verb'Ap [2]-1 = 5'.
+
+To iterate over the columns and entries of this matrix, the following code can
+be used (assuming it has type \verb'GrB_FP64'):
+
+    {\footnotesize
+    \begin{verbatim}
+    integer nvals = Ap [ncols] ;
+    for (integer j = 0 ; j < ncols ; j++)
+    {
+        // get A(:,j)
+        for (integer p = Ap [j] ; p < Ap [j+1] ; p++)
+        {
+            // get A(i,j)
+            integer  i = Ai [p] ;             // row index
+            double aij = Ax [iso ? 0 : p] ;   // numerical value
+        }
+    } \end{verbatim}}
+
+In the container, the three arrays \verb'Ap', \verb'Ai' and \verb'Ax'
+are held in three \verb'GrB_Vector' objects:
+\verb'Container->p',
+\verb'Container->i', and
+\verb'Container->x', respectively.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Hypersparse, held by row}
+%-------------------------------------------------------------------------------
+\label{format_hypersparse_by_row}
+
+The hypersparse HyperCSR format is identical to the CSR format, except that the
+\verb'Ap' array itself becomes sparse, if the matrix has rows that are
+completely empty.  An array \verb'Ah' of size \verb'nvec' provides a list of
+rows that appear in the data structure.  For example, consider
+Equation~\ref{eqn:Ahyper}, which is a sparser version of the matrix in
+Equation~\ref{eqn:Aexample}.  Row 2 and column 1 of this matrix are all empty.
+
+    \begin{equation}
+    \label{eqn:Ahyper}
+    A = \left[
+    \begin{array}{cccc}
+    4.5 &   0 & 3.2 &   0 \\
+    3.1 &   0 &  0  & 0.9 \\
+     0  &   0 &  0  &   0 \\
+    3.5 &   0 &  0  & 1.0 \\
+    \end{array}
+    \right]
+    \end{equation}
+
+The conventional CSR format would appear as follows.  Since the third row (row
+2) is all zero, accessing \verb'Ai [Ap [2] ... Ap [3]-1]' gives an empty set
+(\verb'[2..1]'), and the number of entries in this row is
+\verb'Ap [i+1] - Ap [i]' \verb'= Ap [3] - Ap [2] = 0'.
+
+{\footnotesize
+\begin{verbatim}
+    integer Ap [ ] = { 0,        2,2,      4,       5 } ;
+    integer Aj [ ] = { 0,   2,   0,   3,   0    3   }
+    double  Ax [ ] = { 4.5, 3.2, 3.1, 0.9, 3.5, 1.0 } ; \end{verbatim} }
+
+A hypersparse CSR format for this same matrix would discard
+these duplicate integers in \verb'Ap'.  Doing so requires
+another array, \verb'Ah', that keeps track of the rows that appear
+in the data structure.
+
+{\footnotesize
+\begin{verbatim}
+    integer nvec = 3 ;
+    integer Ah [ ] = { 0,        1,        3        } ;
+    integer Ap [ ] = { 0,        2,        4,       5 } ;
+    integer Aj [ ] = { 0,   2,   0,   3,   0    3   }
+    double  Ax [ ] = { 4.5, 3.2, 3.1, 0.9, 3.5, 1.0 } ; \end{verbatim} }
+
+Note that the \verb'Aj' and \verb'Ax' arrays are the same in the CSR and
+HyperCSR formats.  If \verb'jumbled' is false, the row indices in \verb'Ah'
+must appear in ascending order, and no duplicates can appear.  To iterate over
+this data structure (assuming it has type \verb'GrB_FP64'):
+
+    {\footnotesize
+    \begin{verbatim}
+    integer nvals = Ap [nvec] ;
+    for (integer k = 0 ; k < nvec ; k++)
+    {
+        integer i = Ah [k] ;                // row index
+        // get A(i,:)
+        for (integer p = Ap [k] ; p < Ap [k+1] ; p++)
+        {
+            // get A(i,j)
+            integer  j = Aj [p] ;             // column index
+            double aij = Ax [iso ? 0 : p] ;   // numerical value
+        }
+    } \end{verbatim}}
+
+\vspace{-0.05in}
+This is more complex than the CSR format, but it requires at most
+$O(e)$ space, where $A$ is $m$-by-$n$ with $e$ = \verb'nvals' entries.  The
+CSR format requires $O(m+e)$ space.  If $e << m$, then the size $m+1$
+of \verb'Ap' can dominate the memory required.  In the hypersparse form,
+\verb'Ap' takes on size \verb'nvec+1', and \verb'Ah' has size \verb'nvec',
+where \verb'nvec' is the number of rows that appear in the data structure.
+The CSR format can be viewed as a dense array (of size \verb'nrows')
+of sparse row vectors.   By contrast, the hypersparse CSR format is a sparse
+array (of size \verb'nvec') of sparse row vectors.
+
+In the container, the four arrays \verb'Ap', \verb'Ah', \verb'Aj' and \verb'Ax'
+are held in four \verb'GrB_Vector' objects:
+\verb'Container->p',
+\verb'Container->h',
+\verb'Container->i', and \newline
+\verb'Container->x', respectively.
+
+In addition, the container may hold an optional optimization structure,
+\verb'Container->Y', called the hyper-hash.  This is a \verb'GrB_Matrix' that
+holds the inverse of the \verb'Container->h' array (called \verb'Y' because it
+looks like an upside-down \verb'h').  If a matrix is being loaded from raw
+data, the hyper-hash is not yet constructed, so the \verb'Container->Y' matrix
+should be set to \verb'NULL'.  GraphBLAS will compute it when needed.
+
+When a matrix is unload into a container, GraphBLAS will place the hyper-hash
+matrix there if it has been computed.  If the matrix is subsequently loaded
+from the container, and \verb'Container->h' is unchanged, then leaving the
+hyper-hash unmodified will preserve this optional optimization data structure.
+If instead \verb'Container->h' is revised, the hyper-hash in
+\verb'Container->Y' must be freed (or at least removed from the container) when
+the matrix is loaded from the container..
+
+A \verb'GrB_Vector' is never held in hypersparse format.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Hypersparse, held by column}
+%-------------------------------------------------------------------------------
+\label{format_hypersparse_by_col}
+
+The hypersparse-by-column format is the transpose of the hypersparse-by-row format.
+The \verb'Container->format' is \verb'GxB_HYPERSPARSE' and the \newline
+\verb'Container->orientation' is \verb'GrB_COLMAJOR'.
+In the container, the four arrays \verb'Ap', \verb'Ah', \verb'Ai' and \verb'Ax'
+are held in four \verb'GrB_Vector' objects:
+\verb'Container->p',
+\verb'Container->h',
+\verb'Container->i', and
+\verb'Container->x', respectively.
+A \verb'GrB_Vector' is never held in hypersparse format.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Bitmap, held by row}
+%-------------------------------------------------------------------------------
+\label{format_bitmap_by_row}
+
+The \verb'Container->format' is \verb'GxB_BITMAP' and the
+\verb'Container->orientation' is \verb'GrB_ROWMAJOR'.
+This format requires two arrays, \verb'Ab' and \verb'Ax', each of which are
+size \verb'nrows*ncols'.  They correspond to \verb'Container->b' and
+\verb'Container->x' in the \verb'GxB_Container' object.  These arrays define
+the pattern and values of the matrix \verb'A':
+
+\begin{itemize}
+\item \verb'int8_t Ab [nrows*ncols] ;'  The \verb'Ab' array defines which
+entries of \verb'A' are present.  If \verb'Ab[i*ncols+j]=1', then the entry
+$A(i,j)$ is present, with value \verb'Ax[i*ncols+j]'.  If
+\verb'Ab[i*ncols+j]=0', then the entry $A(i,j)$ is not present.  The \verb'Ab'
+array must contain only 0s and 1s.  The \verb'nvals' input must exactly match
+the number of 1s in the \verb'Ab' array.
+\item \verb'type Ax [nrows*ncols] ;'  The \verb'Ax' array defines the values of
+entries in the matrix.  If \verb'Ab[p]' is zero, the value of \verb'Ax[p]' is
+ignored.  If the matrix is iso-valued, \verb'Ax' has size 1.
+\end{itemize}
+
+%-------------------------------------------------------------------------------
+\subsubsection{Bitmap, held by column}
+%-------------------------------------------------------------------------------
+\label{format_bitmap_by_col}
+
+This is the transpose of the bitmap-by-row format.
+The \verb'Container->format' is \verb'GxB_BITMAP' and the
+\verb'Container->orientation' is \verb'GrB_COLMAJOR'.
+The value of the entry $A(i,j)$ is held in \verb'Ax [i+j*nrows]', or
+in \verb'Ax[0]' if the matrix is iso-valued.
+It is present if \verb'Ab [i+j*nrows]' is 1, and not present if zero.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Full, held by row}
+%-------------------------------------------------------------------------------
+\label{format_full_by_row}
+
+The \verb'Container->format' is \verb'GxB_FULL' and the
+\verb'Container->orientation' is \verb'GrB_ROWMAJOR'.  This format is held in a
+single \verb'GrB_Vector', \verb'Container->x'.  The $A(i,j)$ entry is in
+position \verb'i*ncols+j' in this array, or in position 0 if the matrix is
+iso-valued.  All entries are present.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Full, held by column}
+%-------------------------------------------------------------------------------
+\label{format_full_by_col}
+
+This is the transpose of the full-by-row format.
+The \verb'Container->format' is \verb'GxB_FULL' and the
+\verb'Container->orientation' is \verb'GrB_COLMAJOR'.  This format is held in a
+single \verb'GrB_Vector', \verb'Container->x'.  The $A(i,j)$ entry is in
+position \verb'i+j*nrows' in this array, or in position 0 if the matrix is
+iso-valued.  All entries are present.
+

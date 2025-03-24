@@ -2,7 +2,7 @@
 // GB_mex_unpack_pack: unpack and then pack a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -68,16 +68,16 @@
 GrB_Matrix A = NULL ;
 GrB_Matrix C = NULL ;
 GrB_Matrix Y = NULL ;
-GrB_Index *Cp = NULL, *Ch = NULL, *Ci = NULL ;
+uint64_t *Cp = NULL, *Ch = NULL, *Ci = NULL ;       // OK; 64-bit only
 void *Cx = NULL ;
 int8_t *Cb = NULL ;
-GrB_Index nvec = 0, nvals = 0 ;
+uint64_t nvec = 0, nvals = 0 ;
 
-GrB_Index Cp_size = 0 ;
-GrB_Index Ch_size = 0 ;
-GrB_Index Cb_size = 0 ;
-GrB_Index Ci_size = 0 ;
-GrB_Index Cx_size = 0 ;
+uint64_t Cp_size = 0 ;
+uint64_t Ch_size = 0 ;
+uint64_t Cb_size = 0 ;
+uint64_t Ci_size = 0 ;
+uint64_t Cx_size = 0 ;
 bool iso = false ;
 
 int64_t ignore = -1 ;

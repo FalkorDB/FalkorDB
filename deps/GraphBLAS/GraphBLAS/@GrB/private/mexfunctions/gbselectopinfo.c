@@ -2,7 +2,7 @@
 // gbidxunopinfo : print a GraphBLAS GrB_IndexUnaryOp (for illustration only)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -10,6 +10,8 @@
 // Usage:
 
 // gbidxunopinfo (idxunop)
+// gbidxunopinfo (idxunop, type)
+// ok = gbidxunopinfo (idxunop)
 
 #include "gb_interface.h"
 
@@ -28,7 +30,7 @@ void mexFunction
     // check inputs
     //--------------------------------------------------------------------------
 
-    gb_usage (nargin >= 1 && nargin <= 2 && nargout == 0, USAGE) ;
+    gb_usage (nargin >= 1 && nargin <= 2 && nargout <= 1, USAGE) ;
 
     //--------------------------------------------------------------------------
     // construct the GraphBLAS GrB_IndexUnaryOp and print it
@@ -52,8 +54,13 @@ void mexFunction
     gb_mxstring_to_idxunop (&idxunop, &ignore1, &ignore2, &ignore3,
         pargin [0], type) ;
 
-    OK (GxB_IndexUnaryOp_fprint (idxunop, opstring, GxB_COMPLETE, NULL)) ;
+    int pr = (nargout < 1) ? GxB_COMPLETE : GxB_SILENT ;
+    OK (GxB_IndexUnaryOp_fprint (idxunop, opstring, pr, NULL)) ;
+    if (nargout == 1)
+    {
+        pargout [0] = mxCreateLogicalScalar (true) ;
+    }
 
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

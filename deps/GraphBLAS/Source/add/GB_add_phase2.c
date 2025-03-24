@@ -2,7 +2,7 @@
 // GB_add_phase2: C=A+B or C<M>=A+B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -29,8 +29,6 @@
 
 #include "add/GB_add.h"
 #include "binaryop/GB_binop.h"
-#include "include/GB_unused.h"
-#include "slice/GB_ek_slice.h"
 #include "jitifyer/GB_stringify.h"
 #ifndef GBCOMPACT
 #include "GB_control.h"
@@ -61,7 +59,7 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     const bool flipij,      // if true, i,j must be flipped
     const bool A_and_B_are_disjoint,    // if true, then A and B are disjoint
     // from phase1:
-    int64_t **Cp_handle,    // vector pointers for C
+    void **Cp_handle,       // vector pointers for C
     size_t Cp_size,
     const int64_t Cnvec_nonempty,   // # of non-empty vectors in C
     // tasks from phase1a:
@@ -70,12 +68,15 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     const int C_nthreads,       // # of threads to use
     // analysis from phase0:
     const int64_t Cnvec,
-    int64_t **Ch_handle,
+    void **Ch_handle,
     size_t Ch_size,
     const int64_t *restrict C_to_M,
     const int64_t *restrict C_to_A,
     const int64_t *restrict C_to_B,
     const bool Ch_is_Mh,        // if true, then Ch == M->h
+    const bool Cp_is_32,        // if true, Cp is 32-bit; else 64-bit
+    const bool Cj_is_32,        // if true, Ch is 32-bit; else 64-bit
+    const bool Ci_is_32,        // if true, Ci is 32-bit; else 64-bit
     const int C_sparsity,
     // original input:
     const GrB_Matrix M,         // optional mask, may be NULL
@@ -94,7 +95,7 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     // check inputs
     //--------------------------------------------------------------------------
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
     ASSERT_BINARYOP_OK (op, "op for add phase2", GB0) ;
     ASSERT_MATRIX_OK (A, "A for add phase2", GB0) ;
     ASSERT_MATRIX_OK (B, "B for add phase2", GB0) ;
@@ -111,8 +112,12 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
 
     ASSERT (Cp_handle != NULL) ;
     ASSERT (Ch_handle != NULL) ;
-    int64_t *restrict Cp = (*Cp_handle) ;
-    int64_t *restrict Ch = (*Ch_handle) ;
+
+    GB_MDECL (Cp, , u) ;
+    Cp = (*Cp_handle) ;
+    GB_IPTR (Cp, Cp_is_32) ;
+
+    void * Ch = (*Ch_handle) ;
 
     //--------------------------------------------------------------------------
     // get the opcode
@@ -253,27 +258,29 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     // or if M is present, not complemented, and hypersparse.
     // C acquires the same hyperatio as A.
 
-    int64_t cnz = (C_is_sparse_or_hyper) ? (Cp [Cnvec]) : GB_nnz_full (A) ;
+    int64_t cnz = (C_is_sparse_or_hyper) ?
+        (GB_IGET (Cp, Cnvec)) : GB_nnz_full (A) ;
 
     // allocate the result C (but do not allocate C->p or C->h)
-    // set C->iso = C_iso   OK
     GrB_Info info = GB_new_bix (&C, // any sparsity, existing header
-        ctype, A->vlen, A->vdim, GB_Ap_null, C_is_csc,
-        C_sparsity, true, A->hyper_switch, Cnvec, cnz, true, C_iso) ;
+        ctype, A->vlen, A->vdim, GB_ph_null, C_is_csc,
+        C_sparsity, true, A->hyper_switch, Cnvec, cnz, true, C_iso,
+        Cp_is_32, Cj_is_32, Ci_is_32) ;
     if (info != GrB_SUCCESS)
     { 
         // out of memory; caller must free C_to_M, C_to_A, C_to_B
         GB_FREE_ALL ;
-        GB_FREE (Cp_handle, Cp_size) ;
-        GB_FREE (Ch_handle, Ch_size) ;
+        GB_FREE_MEMORY (Cp_handle, Cp_size) ;
+        GB_FREE_MEMORY (Ch_handle, Ch_size) ;
         return (info) ;
     }
 
     // add Cp as the vector pointers for C, from GB_add_phase1
     if (C_is_sparse_or_hyper)
     { 
-        C->nvec_nonempty = Cnvec_nonempty ;
-        C->p = (int64_t *) Cp ; C->p_size = Cp_size ;
+//      C->nvec_nonempty = Cnvec_nonempty ;
+        GB_nvec_nonempty_set (C, Cnvec_nonempty) ;
+        C->p = Cp ; C->p_size = Cp_size ;
         (*Cp_handle) = NULL ;
         C->nvals = cnz ;
     }
@@ -281,7 +288,7 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
     // add Ch as the hypersparse list for C, from GB_add_phase0
     if (C_is_hyper)
     { 
-        C->h = (int64_t *) Ch ; C->h_size = Ch_size ;
+        C->h = Ch ; C->h_size = Ch_size ;
         C->nvec = Cnvec ;
         (*Ch_handle) = NULL ;
     }
@@ -307,15 +314,15 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
         double chunk = GB_Context_chunk ( ) ;
         if (M != NULL && (GB_IS_SPARSE (M) || GB_IS_HYPERSPARSE (M)))
         { 
-            GB_SLICE_MATRIX (M, 8) ;
+            GB_SLICE_MATRIX2 (M, 8) ;
         }
         if (GB_IS_SPARSE (A) || GB_IS_HYPERSPARSE (A))
         { 
-            GB_SLICE_MATRIX (A, 8) ;
+            GB_SLICE_MATRIX2 (A, 8) ;
         }
         if (GB_IS_SPARSE (B) || GB_IS_HYPERSPARSE (B))
         { 
-            GB_SLICE_MATRIX (B, 8) ;
+            GB_SLICE_MATRIX2 (B, 8) ;
         }
     }
 
@@ -572,7 +579,9 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
             //------------------------------------------------------------------
 
             // The binary op is not used if fadd is null since in that case
-            // the intersection of A and B is empty
+            // the intersection of A and B is empty.  The fadd function pointer
+            // can be NULL if the op is a generated FIRST_UDT or SECOND_UDT
+            // operator.
 
             // z = op (aij, bij)
             #undef  GB_BINOP
@@ -603,18 +612,13 @@ GrB_Info GB_add_phase2      // C=A+B, C<M>=A+B, or C<!M>=A+B
         info = GrB_SUCCESS ;
     }
 
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory, or other error
-        GB_FREE_ALL ;
-        return (info) ;
-    }
+    GB_OK (info) ;
 
     //--------------------------------------------------------------------------
     // remove empty vectors from C, if hypersparse
     //--------------------------------------------------------------------------
 
-    GB_OK (GB_hypermatrix_prune (C, Werk)) ;
+    GB_OK (GB_hyper_prune (C, Werk)) ;
 
     //--------------------------------------------------------------------------
     // free workspace and return result

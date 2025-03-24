@@ -2,7 +2,7 @@
 // GB_reduce_panel: z=reduce(A), reduce a matrix to a scalar
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -15,8 +15,6 @@
 // A generic method via memcpy is not supported.
 
 // The Panel and W arrays always have the same type as z, GB_Z_TYPE.
-
-#include "include/GB_unused.h"
 
 // default panel size
 #ifndef GB_PANEL
@@ -35,7 +33,9 @@
     ASSERT (anz > 0) ;
     ASSERT (!GB_IS_BITMAP (A)) ;
     ASSERT (A->nzombies == 0) ;
+    #if GB_MONOID_IS_TERMINAL
     GB_DECLARE_TERMINAL_CONST (zterminal) ;
+    #endif
 
     #if GB_IS_ANY_MONOID
     // the ANY monoid can take any entry, and terminate immediately

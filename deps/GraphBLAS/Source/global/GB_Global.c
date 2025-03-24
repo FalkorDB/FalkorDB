@@ -2,7 +2,7 @@
 // GB_Global: global values in GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,6 +14,7 @@
 // global matrix options, and other settings.
 
 #include "GB.h"
+#include "include/GB_unused.h"
 #include "cpu/GB_cpu_features.h"
 
 //------------------------------------------------------------------------------
@@ -27,7 +28,7 @@ typedef struct
     // blocking/non-blocking mode, set by GrB_init
     //--------------------------------------------------------------------------
 
-    GrB_Mode mode ;             // GrB_NONBLOCKING, GrB_BLOCKING
+    int mode ;                  // GrB_NONBLOCKING, GrB_BLOCKING
                                 // GxB_NONBLOCKING_GPU, or GxB_BLOCKING_GPU
     bool init_called ;          // true if GrB_init already called
 
@@ -96,17 +97,18 @@ typedef struct
     // for testing and development
     //--------------------------------------------------------------------------
 
-    int64_t hack [4] ;              // settings for testing/development only
+    int64_t hack [8] ;              // settings for testing/development only
 
     //--------------------------------------------------------------------------
     // diagnostic output
     //--------------------------------------------------------------------------
 
-    bool burble ;                   // controls GBURBLE output
-    GB_printf_function_t printf_func ;  // pointer to printf
-    GB_flush_function_t flush_func ;   // pointer to flush
+    bool burble ;                       // controls GBURBLE output
+    GB_printf_function_t printf_func ;  // pointer to printf_style function
+    GB_flush_function_t flush_func ;    // pointer to flush_style function
     bool print_one_based ;          // if true, print 1-based indices
-    bool print_mem_shallow ;        // if true, print # shallow bytes
+    bool stats_mem_shallow ;        // if true, include shallow bytes in
+                                    // memory usage statistics
 
     //--------------------------------------------------------------------------
     // timing: for code development only
@@ -131,6 +133,14 @@ typedef struct
 
     bool cpu_features_avx2 ;        // x86_64 with AVX2
     bool cpu_features_avx512f ;     // x86_64 with AVX512f
+
+    //--------------------------------------------------------------------------
+    // integer control
+    //--------------------------------------------------------------------------
+
+    int8_t p_control ;      // controls A->p
+    int8_t j_control ;      // controls A->h and A->Y->[pix]
+    int8_t i_control ;      // controls A->i
 
     //--------------------------------------------------------------------------
     // CUDA (DRAFT: in progress):
@@ -196,16 +206,17 @@ static GB_Global_struct GB_Global =
     .malloc_debug = false,       // do not test memory handling
     .malloc_debug_count = 0,     // counter for testing memory handling
 
-    // for testing and development only
-    .hack = {0, 0, 0, 0},
+    // for testing and development only; not used in production
+    .hack = {0, 0, 0, 0, 0, 0, 0, 0},
 
     // diagnostics
     .burble = false,
     .printf_func = NULL,
     .flush_func = NULL,
     .print_one_based = false,   // if true, print 1-based indices
-    .print_mem_shallow = false, // for @GrB interface only
+    .stats_mem_shallow = false, // if true, include shallow bytes in stats
 
+    // timing is for testing and development only; not used in production
     .timing = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 
@@ -215,6 +226,11 @@ static GB_Global_struct GB_Global =
     // CPU features
     .cpu_features_avx2 = false,         // x86_64 with AVX2
     .cpu_features_avx512f = false,      // x86_64 with AVX512f
+
+    // integer control
+    .p_control = (int8_t) 32,
+    .j_control = (int8_t) 32,
+    .i_control = (int8_t) 32,
 
     // CUDA environment (DRAFT: in progress)
     .gpu_count = 0,                     // # of GPUs in the system
@@ -229,12 +245,12 @@ static GB_Global_struct GB_Global =
 // mode
 //------------------------------------------------------------------------------
 
-void GB_Global_mode_set (GrB_Mode mode)
+void GB_Global_mode_set (int mode)
 { 
     GB_Global.mode = mode ;
 }
 
-GrB_Mode GB_Global_mode_get (void)
+int GB_Global_mode_get (void)
 { 
     return (GB_Global.mode) ;
 }
@@ -251,6 +267,40 @@ void GB_Global_GrB_init_called_set (bool init_called)
 bool GB_Global_GrB_init_called_get (void)
 { 
     return (GB_Global.init_called) ;
+}
+
+//------------------------------------------------------------------------------
+// integer control
+//------------------------------------------------------------------------------
+
+void GB_Global_p_control_set (int8_t p_control)
+{ 
+    GB_Global.p_control = p_control ;
+}
+
+int8_t GB_Global_p_control_get (void)
+{ 
+    return (GB_Global.p_control) ;
+}
+
+void GB_Global_j_control_set (int8_t j_control)
+{ 
+    GB_Global.j_control = j_control ;
+}
+
+int8_t GB_Global_j_control_get (void)
+{ 
+    return (GB_Global.j_control) ;
+}
+
+void GB_Global_i_control_set (int8_t i_control)
+{ 
+    GB_Global.i_control = i_control ;
+}
+
+int8_t GB_Global_i_control_get (void)
+{ 
+    return (GB_Global.i_control) ;
 }
 
 //------------------------------------------------------------------------------
@@ -439,12 +489,12 @@ void GB_Global_abort (void)
 
 void GB_Global_memtable_dump (void)
 {
-    #ifdef GB_DEBUG
-    printf ("\nmemtable dump: %d nmalloc " GBd "\n",    // MEMDUMP
+    #if defined (GB_DEBUG) && defined (GB_MEMDUMP)
+    GBMDUMP ("\nmemtable dump: %d nmalloc " GBd "\n",
         GB_Global.nmemtable, GB_Global.nmalloc) ;
     for (int k = 0 ; k < GB_Global.nmemtable ; k++)
     {
-        printf ("  %4d: %12p : %ld\n", k,               // MEMDUMP
+        GBMDUMP ("  %4d: %12p : %ld\n", k,
             GB_Global.memtable_p [k],
             GB_Global.memtable_s [k]) ;
     }
@@ -473,9 +523,7 @@ void GB_Global_memtable_add (void *p, size_t size)
 
     #ifdef GB_DEBUG
     bool fail = false ;
-    #ifdef GB_MEMDUMP
-    printf ("memtable add %p size %ld\n", p, size) ;    // MEMDUMP
-    #endif
+    GBMDUMP ("memtable add %p size %ld\n", p, size) ;
     #pragma omp critical(GB_memtable)
     {
         int n = GB_Global.nmemtable ;
@@ -486,8 +534,7 @@ void GB_Global_memtable_add (void *p, size_t size)
             {
                 if (p == GB_Global.memtable_p [i])
                 {
-                    printf ("\nadd duplicate %p size %ld\n",    // MEMDUMP
-                        p, size) ;
+                    GBDUMP ("\nFAIL add duplicate %p size %ld\n", p, size) ;
                     GB_Global_memtable_dump ( ) ;
                     fail = true ;
                     break ;
@@ -502,11 +549,8 @@ void GB_Global_memtable_add (void *p, size_t size)
         }
     }
     ASSERT (!fail) ;
-    #ifdef GB_MEMDUMP
     GB_Global_memtable_dump ( ) ;
     #endif
-    #endif
-
 }
 
 // get the size of a malloc'd block
@@ -532,7 +576,7 @@ size_t GB_Global_memtable_size (void *p)
     }
     if (!found)
     {
-        printf ("\nFAIL: %p not found\n", p) ;      // MEMDUMP
+        GBDUMP ("\nFAIL: %p not found\n", p) ;
         GB_Global_memtable_dump ( ) ;
         ASSERT (0) ;
     }
@@ -577,9 +621,7 @@ void GB_Global_memtable_remove (void *p)
 
     #ifdef GB_DEBUG
     bool found = false ;
-    #ifdef GB_MEMDUMP
-    printf ("memtable remove %p ", p) ;             // MEMDUMP
-    #endif
+    GBMDUMP ("memtable remove %p ", p) ;
     #pragma omp critical(GB_memtable)
     {
         int n = GB_Global.nmemtable ;
@@ -598,13 +640,11 @@ void GB_Global_memtable_remove (void *p)
     }
     if (!found)
     {
-        printf ("remove %p NOT FOUND\n", p) ;       // MEMDUMP
+        GBDUMP ("remove %p NOT FOUND\n", p) ;
         GB_Global_memtable_dump ( ) ;
+        ASSERT (0) ;
     }
-    ASSERT (found) ;
-    #ifdef GB_MEMDUMP
     GB_Global_memtable_dump ( ) ;
-    #endif
     #endif
 
 }
@@ -612,6 +652,8 @@ void GB_Global_memtable_remove (void *p)
 //------------------------------------------------------------------------------
 // malloc_function
 //------------------------------------------------------------------------------
+
+#include "include/GB_pedantic_disable.h"
 
 void GB_Global_malloc_function_set (void * (* malloc_function) (size_t))
 { 
@@ -741,12 +783,17 @@ void * GB_Global_persistent_malloc (size_t size)
 {
     // malloc persistent memory
     void *p = GB_Global.malloc_function (size) ;
+    GB_Global_make_persistent (p) ;
+    return (p) ;
+}
+
+void GB_Global_make_persistent (void *p)
+{
     if (p != NULL && GB_Global.persistent_function != NULL)
     { 
         // tell MATLAB to make this memory persistent
         GB_Global.persistent_function (p) ;
     }
-    return (p) ;
 }
 
 void GB_Global_persistent_set (void (* persistent_function) (void *))
@@ -913,17 +960,17 @@ bool GB_Global_print_one_based_get (void)
 }
 
 //------------------------------------------------------------------------------
-// for printing matrix in @GrB interface
+// for memory usage statistics
 //------------------------------------------------------------------------------
 
-void GB_Global_print_mem_shallow_set (bool mem_shallow)
+void GB_Global_stats_mem_shallow_set (bool mem_shallow)
 { 
-    GB_Global.print_mem_shallow = mem_shallow ;
+    GB_Global.stats_mem_shallow = mem_shallow ;
 }
 
-bool GB_Global_print_mem_shallow_get (void)
+bool GB_Global_stats_mem_shallow_get (void)
 { 
-    return (GB_Global.print_mem_shallow) ;
+    return (GB_Global.stats_mem_shallow) ;
 }
 
 //------------------------------------------------------------------------------
@@ -1043,14 +1090,5 @@ void GB_Global_timing_add (int k, double t)
 double GB_Global_timing_get (int k)
 {
     return (GB_Global.timing [k]) ;
-}
-
-//------------------------------------------------------------------------------
-// get_wtime: return current wallclock time
-//------------------------------------------------------------------------------
-
-double GB_Global_get_wtime (void)
-{ 
-    return (GB_OPENMP_GET_WTIME) ;
 }
 

@@ -2,7 +2,7 @@
 // gb_is_vector: determine if a GrB_matrix is a row or column vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@ bool gb_is_vector               // true if A is a row or column vector
 {
 
     // check if A is m-by-1 or 1-by-n
-    GrB_Index nrows = 0, ncols = 0 ;
+    uint64_t nrows = 0, ncols = 0 ;
     if (A != NULL)
     { 
         OK (GrB_Matrix_nrows (&nrows, A)) ;

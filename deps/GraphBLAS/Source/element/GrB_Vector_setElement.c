@@ -2,7 +2,7 @@
 // GrB_Vector_setElement: set an entry in a vector, w (row) = x
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,16 +16,16 @@
 #define GB_SET(prefix,type,T,ampersand)                                     \
 GrB_Info GB_EVAL3 (prefix, _Vector_setElement_, T)    /* w(row) = x */      \
 (                                                                           \
-    GrB_Vector w,                       /* vector to modify           */    \
-    type x,                             /* scalar to assign to w(row) */    \
-    GrB_Index row                       /* row index                  */    \
+    GrB_Vector w,           /* vector to modify           */                \
+    type x,                 /* scalar to assign to w(row) */                \
+    uint64_t row            /* row index                  */                \
 )                                                                           \
 {                                                                           \
-    GB_WHERE (w, "GrB_Vector_setElement_" GB_STR(T) " (w, x, row)") ;       \
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;                                       \
+    GB_RETURN_IF_NULL (w) ;                                                 \
+    GB_WHERE1 (w, "GrB_Vector_setElement_" GB_STR(T) " (w, x, row)") ;      \
     ASSERT (GB_VECTOR_OK (w)) ;                                             \
     return (GB_setElement ((GrB_Matrix) w, NULL, ampersand x, row, 0,       \
-        GB_ ## T ## _code, Werk)) ;                                      \
+        GB_ ## T ## _code, Werk)) ;                                         \
 }
 
 GB_SET (GrB, bool      , BOOL   , &)
@@ -55,7 +55,7 @@ GrB_Info GrB_Vector_setElement_Scalar
 (
     GrB_Vector w,                       // vector to modify
     GrB_Scalar scalar,                  // scalar to assign to w(row)
-    GrB_Index row                       // row index
+    uint64_t row                        // row index
 )
 {
 
@@ -63,9 +63,10 @@ GrB_Info GrB_Vector_setElement_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (w, "GrB_Vector_setElement_Scalar (w, x, row)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (scalar) ;
+    GB_WHERE2 (w, scalar, "GrB_Vector_setElement_Scalar (w, x, row)") ;
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (scalar) ;
+
     ASSERT (GB_VECTOR_OK (w)) ;
 
     //--------------------------------------------------------------------------

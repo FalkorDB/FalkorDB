@@ -2,7 +2,7 @@
 // GrB_Scalar_wait: wait for a scalar to complete
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 GrB_Info GrB_Scalar_wait    // finish all work on a scalar
 (
     GrB_Scalar s,
-    GrB_WaitMode waitmode
+    int waitmode
 )
 { 
 
@@ -24,8 +24,8 @@ GrB_Info GrB_Scalar_wait    // finish all work on a scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (s, "GrB_Scalar_wait (s, waitmode)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (s) ;
+    GB_RETURN_IF_NULL (s) ;
+    GB_WHERE1 (s, "GrB_Scalar_wait (s, waitmode)") ;
 
     //--------------------------------------------------------------------------
     // finish all pending work on the scalar
@@ -33,7 +33,6 @@ GrB_Info GrB_Scalar_wait    // finish all work on a scalar
 
     if (waitmode != GrB_COMPLETE && GB_ANY_PENDING_WORK (s))
     { 
-        GrB_Info info ;
         GB_BURBLE_START ("GrB_Scalar_wait") ;
         GB_OK (GB_wait ((GrB_Matrix) s, "scalar", Werk)) ;
         GB_BURBLE_END ;

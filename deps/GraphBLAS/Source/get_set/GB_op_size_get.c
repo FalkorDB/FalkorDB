@@ -2,7 +2,7 @@
 // GB_op_size_get: get the size of a string in an op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,7 +13,7 @@ GrB_Info GB_op_size_get
 (
     GB_Operator op,
     size_t * value,
-    GrB_Field field
+    int field
 )
 {
 

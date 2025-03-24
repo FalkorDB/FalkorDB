@@ -2,7 +2,7 @@
 // GB_emult_03_template: C = A.*B when A is bitmap/full and B is sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,12 +16,12 @@
     // get A, B, and C
     //--------------------------------------------------------------------------
 
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
-    const int64_t *restrict Bi = B->i ;
+    GB_Bp_DECLARE (Bp, const) ; GB_Bp_PTR (Bp, B) ;
+    GB_Bh_DECLARE (Bh, const) ; GB_Bh_PTR (Bh, B) ;
+    GB_Bi_DECLARE (Bi, const) ; GB_Bi_PTR (Bi, B) ;
     const int64_t vlen = B->vlen ;
 
-    const int8_t  *restrict Ab = A->b ;
+    const int8_t *restrict Ab = A->b ;
 
     const int64_t *restrict kfirst_Bslice = B_ek_slicing ;
     const int64_t *restrict klast_Bslice  = B_ek_slicing + B_ntasks ;
@@ -45,8 +45,8 @@
           GB_C_TYPE *restrict Cx = (GB_C_TYPE *) C->x ;
     #endif
 
-    const int64_t  *restrict Cp = C->p ;
-          int64_t  *restrict Ci = C->i ;
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    GB_Ci_DECLARE (Ci,      ) ; GB_Ci_PTR (Ci, C) ;
 
     #ifdef GB_JIT_KERNEL
     #define Mask_comp   GB_MASK_COMP

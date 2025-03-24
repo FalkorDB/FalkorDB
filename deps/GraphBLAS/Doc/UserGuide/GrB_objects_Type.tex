@@ -1,0 +1,347 @@
+
+\newpage
+%===============================================================================
+\subsection{The GraphBLAS type: {\sf GrB\_Type}} %==============================
+%===============================================================================
+\label{type}
+
+A GraphBLAS \verb'GrB_Type' defines the type of scalar values that a matrix or
+vector contains, and the type of scalar operands for a unary or binary
+operator.  There are 13 built-in types, and a user application can define
+any types of its own as well.  The built-in types correspond to built-in types
+in C (in the \verb'#include' files \verb'stdbool.h', \verb'stdint.h', and
+\verb'complex.h') as listed in the following table.
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{llll}
+\hline
+GraphBLAS         & C type           & description              & range \\
+type              &                  &                          & \\
+\hline
+\verb'GrB_BOOL'   & \verb'bool'      & Boolean                  & true (1), false (0) \\
+\hline
+\verb'GrB_INT8'   & \verb'int8_t'    & 8-bit signed integer     & -128 to 127 \\
+\verb'GrB_INT16'  & \verb'int16_t'   & 16-bit integer           & $-2^{15}$ to $2^{15}-1$ \\
+\verb'GrB_INT32'  & \verb'int32_t'   & 32-bit integer           & $-2^{31}$ to $2^{31}-1$ \\
+\verb'GrB_INT64'  & \verb'int64_t'   & 64-bit integer           & $-2^{63}$ to $2^{63}-1$ \\
+\hline
+\verb'GrB_UINT8'  & \verb'uint8_t'   & 8-bit unsigned integer   & 0 to 255 \\
+\verb'GrB_UINT16' & \verb'uint16_t'  & 16-bit unsigned integer  & 0 to $2^{16}-1$ \\
+\verb'GrB_UINT32' & \verb'uint32_t'  & 32-bit unsigned integer  & 0 to $2^{32}-1$ \\
+\verb'GrB_UINT64' & \verb'uint64_t'  & 64-bit unsigned integer  & 0 to $2^{64}-1$ \\
+\hline
+\verb'GrB_FP32'   & \verb'float'     & 32-bit IEEE 754          & \verb'-Inf' to \verb'+Inf'\\
+\verb'GrB_FP64'   & \verb'double'    & 64-bit IEEE 754          & \verb'-Inf' to \verb'+Inf'\\
+\hline
+\verb'GxB_FC32'   & \verb'float complex'  & 32-bit complex & \verb'-Inf' to \verb'+Inf'\\
+\verb'GxB_FC64'   & \verb'double complex' & 64-bit complex & \verb'-Inf' to \verb'+Inf'\\
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+The C11 definitions of \verb'float complex' and \verb'double complex'
+are not always available.  The \verb'GraphBLAS.h' header defines them as
+\verb'GxB_FC32_t' and \verb'GxB_FC64_t', respectively.
+
+The user application can also define new types based on any \verb'typedef' in
+the C language whose values are held in a contiguous region of memory of fixed
+size.  For example, a user-defined \verb'GrB_Type' could be created to hold any
+C \verb'struct' whose content is self-contained.  A C \verb'struct' containing
+pointers might be problematic because GraphBLAS would not know to dereference
+the pointers to traverse the entire ``scalar'' entry, but this can be done if
+the objects referenced by these pointers are not moved.  A user-defined complex
+type with real and imaginary types can be defined, or even a ``scalar'' type
+containing a fixed-sized dense matrix (see Section~\ref{type_new}).  The
+possibilities are endless.  GraphBLAS can create and operate on sparse matrices
+and vectors in any of these types, including any user-defined ones.  For
+user-defined types, GraphBLAS simply moves the data around itself (via
+\verb'memcpy'), and then passes the values back to user-defined functions when
+it needs to do any computations on the type.  The next sections describe the
+methods for the \verb'GrB_Type' object:
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function       & purpose                          & Section \\
+\hline
+\verb'GrB_Type_new'      & create a user-defined type       & \ref{type_new} \\
+\verb'GxB_Type_new'      & create a user-defined type,
+                            with name and definition        & \ref{type_new_named} \\
+\verb'GrB_Type_wait'     & wait for a user-defined type     & \ref{type_wait} \\
+\verb'GxB_Type_from_name'& return the type from its name    & \ref{type_from_name} \\
+\verb'GrB_Type_free'     & free a user-defined type         & \ref{type_free} \\
+\verb'GrB_get'           & get properties of a type         & \ref{get_set_type} \\
+\verb'GrB_set'           & set the type name/definitition   & \ref{get_set_type} \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Type\_new:} create a user-defined type}
+%-------------------------------------------------------------------------------
+\label{type_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Type_new           // create a new GraphBLAS type
+(
+    GrB_Type *type,             // handle of user type to create
+    size_t sizeof_ctype         // size = sizeof (ctype) of the C type
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GrB_Type_new' creates a new user-defined type.  The \verb'type' is a
+handle, or a pointer to an opaque object.  The handle itself must not be
+\verb'NULL' on input, but the content of the handle can be undefined.  On
+output, the handle contains a pointer to a newly created type.
+The \verb'ctype' is the type in C that will be used to construct the new
+GraphBLAS type.  It can be either a built-in C type, or defined by a
+\verb'typedef'.
+The second parameter should be passed as \verb'sizeof(ctype)'.  The only
+requirement on the C type is that \verb'sizeof(ctype)' is valid in C, and
+that the type reside in a contiguous block of memory so that it can be moved
+with \verb'memcpy'.  For example, to create a user-defined type called
+\verb'Complex' for double-precision complex values using the C11
+\verb'double complex' type, the following can be used.  A complete example can
+be found in the \verb'usercomplex.c' and \verb'usercomplex.h' files in the
+\verb'Demo' folder.
+
+    {\footnotesize
+    \begin{verbatim}
+    #include <math.h>
+    #include <complex.h>
+    GrB_Type Complex ;
+    GrB_Type_new (&Complex, sizeof (double complex)) ;    \end{verbatim} }
+
+To demonstrate the flexibility of the \verb'GrB_Type', consider a ``scalar''
+consisting of 4-by-4 floating-point matrix and a string.  This type might be
+useful for the 4-by-4 translation/rotation/scaling matrices that arise in
+computer graphics, along with a string containing a description or even a
+regular expression that can be parsed and executed in a user-defined operator.
+All that is required is a fixed-size type, where \verb'sizeof(ctype)' is
+a constant.
+
+    {\footnotesize
+    \begin{verbatim}
+    typedef struct
+    {
+        float stuff [4][4] ;
+        char whatstuff [64] ;
+    }
+    wildtype ;
+    GrB_Type WildType ;
+    GrB_Type_new (&WildType, sizeof (wildtype)) ; \end{verbatim} }
+
+With this type a sparse matrix can be created in which each entry consists of a
+4-by-4 dense matrix \verb'stuff' and a 64-character string \verb'whatstuff'.
+GraphBLAS treats this 4-by-4 as a ``scalar.'' Any GraphBLAS method or operation
+that simply moves data can be used with this type without any further
+information from the user application.  For example, entries of this type can
+be assigned to and extracted from a matrix or vector, and matrices containing
+this type can be transposed.  A working example (\verb'wildtype.c'
+in the \verb'Demo' folder) creates matrices and multiplies them with
+a user-defined semiring with this type.
+
+Performing arithmetic on matrices and vectors with user-defined types requires
+operators to be defined.  Refer to Section~\ref{user} for more details on these
+example user-defined types.
+
+User defined types created by \verb'GrB_Type_new' will not work with
+the JIT; use \verb'GxB_Type_new' instead.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Type\_new:} create a user-defined type (with name and definition)}
+%-------------------------------------------------------------------------------
+\label{type_new_named}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Type_new           // create a new named GraphBLAS type
+(
+    GrB_Type *type,             // handle of user type to create
+    size_t sizeof_ctype,        // size = sizeof (ctype) of the C type
+    const char *type_name,      // name of the type (max 128 characters)
+    const char *type_defn       // typedef for the type (no max length)
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GxB_Type_new' creates a type with a name and definition that are known to
+GraphBLAS, as strings.  The \verb'type_name' is any valid string (max length of 128
+characters, including the required null-terminating character) that may
+appear as the name of a C type created by a C \verb'typedef' statement.  It must
+not contain any white-space characters.  For example, to create a type of size
+16*4+1 = 65 bytes, with a 4-by-4 dense float array and a 32-bit integer:
+
+    {\footnotesize
+    \begin{verbatim}
+    typedef struct { float x [4][4] ; int color ; } myquaternion ;
+    GrB_Type MyQtype ;
+    GxB_Type_new (&MyQtype, sizeof (myquaternion), "myquaternion",
+        "typedef struct { float x [4][4] ; int color ; } myquaternion ;") ; \end{verbatim}}
+
+The \verb'type_name' and \verb'type_defn' are both null-terminated strings.
+The two strings are optional, but are
+required to enable the JIT compilation of kernels that use this type.
+At most \verb'GxB_MAX_NAME_LEN' (128) characters are accessed in \verb'type_name';
+characters beyond that limit are silently ignored.
+
+If the \verb'sizeof_ctype' is zero, and the strings are valid, a
+JIT kernel is compiled just to determine the size of the type.  This is
+feature useful for interfaces in languages other than C, which could create
+valid strings for C types but would not have a reliable way to determine the
+size of the type.
+
+The above example is identical to the following usage, except that
+\verb'GrB_Type_new' requires \verb'sizeof_ctype' to be nonzero, and equal
+to the size of the C type.
+
+    {\footnotesize
+    \begin{verbatim}
+    typedef struct { float x [4][4] ; int color ; } myquaternion ;
+    GrB_Type MyQtype ;
+    GxB_Type_new (&MyQtype, sizeof (myquaternion)) ;
+    GrB_set (MyQtype, "myquaternion", GxB_JIT_C_NAME) ;
+    GrB_set (MyQtype, "typedef struct { float x [4][4] ; int color ; } myquaternion ;"
+        GxB_JIT_C_DEFINITION) ; \end{verbatim}}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Type\_wait:} wait for a type}
+%-------------------------------------------------------------------------------
+\label{type_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a user-defined type
+(
+    GrB_Type type,              // type to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined type, a GraphBLAS library may choose to exploit
+non-blocking mode to delay its creation.  Currently, SuiteSparse:GraphBLAS
+currently does nothing except to ensure that \verb'type' is valid.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_Type\_from\_name:} return the type from its name}
+%-------------------------------------------------------------------------------
+\label{type_from_name}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_Type_from_name     // return the built-in GrB_Type from a name
+(
+    GrB_Type *type,             // built-in type, or NULL if user-defined
+    const char *type_name       // array of size at least GxB_MAX_NAME_LEN
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+Returns the built-in type from the corresponding name of the type.  The following
+examples both return \verb'type' as \verb'GrB_BOOL'.
+
+{\footnotesize
+\begin{verbatim}
+    GxB_Type_from_name (&type, "bool") ;
+    GxB_Type_from_name (&type, "GrB_BOOL") ; \end{verbatim} }
+
+If the name is from a user-defined type, the \verb'type' is returned as
+\verb'NULL'.  This is not an error condition.  The user application must itself
+do this translation since GraphBLAS does not keep a registry of all
+user-defined types.
+
+With this function, a user application can manage the translation for
+both built-in types and its own user-defined types, as in the following
+example.
+
+{\footnotesize
+\begin{verbatim}
+    typedef struct { double x ; char stuff [16] ; } myfirsttype ;
+    typedef struct { float z [4][4] ; int color ; } myquaternion ;
+    GrB_Type MyType1, MyQType ;
+    GxB_Type_new (&MyType1, sizeof (myfirsttype), "myfirsttype",
+        "typedef struct { double x ; char stuff [16] ; } myfirsttype ;") ;
+    GxB_Type_new (&MyQType, sizeof (myquaternion), "myquaternion",
+        "typedef struct { float z [4][4] ; int color ; } myquaternion ;") ;
+
+    GrB_Matrix A ;
+    // ... create a matrix A of some built-in or user-defined type
+
+    // later on, to query the type of A:
+    size_t typesize ;
+    GrB_Scalar_new (s, GrB_UINT64) ;
+    GrB_get (type, s, GrB_SIZE) ;
+    GrB_Scalar_extractElement (&typesize, GrB_UINT64) ;
+    GrB_Type atype ;
+    char atype_name [GxB_MAX_NAME_LEN] ;
+    GrB_get (A, atype_name, GrB_EL_TYPE_STRING) ;
+    GxB_Type_from_name (&atype, atype_name) ;
+    if (atype == NULL)
+    {
+        // This is not yet an error.  It means that A has a user-defined type.
+        if ((strcmp (atype_name, "myfirsttype")) == 0) atype = MyType1 ;
+        else if ((strcmp (atype_name, "myquaternion")) == 0) atype = MyQType ;
+        else { ... this is now an error ... the type of A is unknown.  }
+    }\end{verbatim} }
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Type\_free:} free a user-defined type}
+%-------------------------------------------------------------------------------
+\label{type_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free               // free a user-defined type
+(
+    GrB_Type *type              // handle of user-defined type to free
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GrB_Type_free' frees a user-defined type.
+Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Type_free (&type) ;
+    GrB_free (&type) ; \end{verbatim}}
+
+\noindent
+frees the user-defined \verb'type' and
+sets \verb'type' to \verb'NULL'.
+It safely does nothing if passed a \verb'NULL'
+handle, or if \verb'type == NULL' on input.
+
+It is safe to attempt to free a built-in type.  SuiteSparse:GraphBLAS silently
+ignores the request and returns \verb'GrB_SUCCESS'.  A user-defined type should
+not be freed until all operations using the type are completed.
+SuiteSparse:GraphBLAS attempts to detect this condition but it must query a
+freed object in its attempt.  This is hazardous and not recommended.
+Operations on such objects whose type has been freed leads to undefined
+behavior.
+
+It is safe to first free a type, and then a matrix of that type, but after the
+type is freed the matrix can no longer be used.  The only safe thing that can
+be done with such a matrix is to free it.
+
+The function signature of \verb'GrB_Type_free' uses the generic name
+\verb'GrB_free', which can free any GraphBLAS object. See Section~\ref{free}
+details.  GraphBLAS includes many such generic functions.  When describing a
+specific variation, a function is described with its specific name in this User
+Guide (such as \verb'GrB_Type_free').  When discussing features applicable to
+all specific forms, the generic name is used instead (such as \verb'GrB_free').
+
+

@@ -2,7 +2,7 @@
 // GB_werk_pop:  free werkspace from the Werk stack
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -14,6 +14,20 @@
 // Werk stack also frees everything above it.  This is not a problem if that
 // space is also being freed, but the assertion below ensures that the freeing
 // werkspace from the Werk stack is done in LIFO order, like a stack.
+
+#ifdef comments_only
+void *GB_werk_pop     // free the top block of werkspace memory
+(
+    // input/output
+    void *p,                    // werkspace to free
+    size_t *size_allocated,     // # of bytes actually allocated for p
+    // input
+    bool on_stack,              // true if werkspace is from Werk stack
+    size_t nitems,              // # of items to allocate
+    size_t size_of_item,        // size of each item
+    GB_Werk Werk
+) ;
+#endif
 
 GB_CALLBACK_WERK_POP_PROTO (GB_werk_pop)
 {

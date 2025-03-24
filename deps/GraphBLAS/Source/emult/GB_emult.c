@@ -2,7 +2,7 @@
 // GB_emult: C = A.*B, C<M>=A.*B, or C<!M>=A.*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -26,7 +26,7 @@
 // The pattern of C is the intersection of A and B, and also intersection with
 // M if present and not complemented.
 
-// TODO: if C is bitmap on input and C_sparsity is GxB_BITMAP, then C=A.*B,
+// FUTURE: if C is bitmap on input and C_sparsity is GxB_BITMAP, then C=A.*B,
 // C<M>=A.*B and C<M>+=A.*B can all be done in-place.  Also, if C is bitmap
 // but T<M>=A.*B is sparse (M sparse, with A and B bitmap), then it too can
 // be done in place.
@@ -37,15 +37,16 @@
 
 #define GB_FREE_WORKSPACE                       \
 {                                               \
-    GB_FREE_WORK (&TaskList, TaskList_size) ;   \
-    GB_FREE_WORK (&C_to_M, C_to_M_size) ;       \
-    GB_FREE_WORK (&C_to_A, C_to_A_size) ;       \
-    GB_FREE_WORK (&C_to_B, C_to_B_size) ;       \
+    GB_FREE_MEMORY (&TaskList, TaskList_size) ;   \
+    GB_FREE_MEMORY (&C_to_M, C_to_M_size) ;       \
+    GB_FREE_MEMORY (&C_to_A, C_to_A_size) ;       \
+    GB_FREE_MEMORY (&C_to_B, C_to_B_size) ;       \
 }
 
 #define GB_FREE_ALL             \
 {                               \
     GB_FREE_WORKSPACE ;         \
+    GB_FREE_MEMORY (&Cp, Cp_size) ;    \
     GB_phybix_free (C) ;        \
 }
 
@@ -71,7 +72,7 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK (A, "A for emult", GB0) ;
     ASSERT_MATRIX_OK (B, "B for emult", GB0) ;
@@ -85,9 +86,14 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
     //--------------------------------------------------------------------------
 
     GB_task_struct *TaskList = NULL ; size_t TaskList_size = 0 ;
-    int64_t *restrict C_to_M = NULL ; size_t C_to_M_size = 0 ;
-    int64_t *restrict C_to_A = NULL ; size_t C_to_A_size = 0 ;
-    int64_t *restrict C_to_B = NULL ; size_t C_to_B_size = 0 ;
+    int64_t *C_to_M = NULL ; size_t C_to_M_size = 0 ;
+    int64_t *C_to_A = NULL ; size_t C_to_A_size = 0 ;
+    int64_t *C_to_B = NULL ; size_t C_to_B_size = 0 ;
+    int64_t Cnvec, Cnvec_nonempty ;
+    void *Cp = NULL ; size_t Cp_size = 0 ;
+    const void *Ch = NULL ; size_t Ch_size = 0 ;
+    int C_ntasks = 0, C_nthreads ;
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
 
     //--------------------------------------------------------------------------
     // delete any lingering zombies and assemble any pending tuples
@@ -125,8 +131,6 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
         case GB_PLUS_binop_code    :    // z = x + y
         case GB_TIMES_binop_code   :    // z = x * y
         case GB_PAIR_binop_code    :    // z = 1
-        case GB_ISEQ_binop_code    :    // z = (x == y)
-        case GB_ISNE_binop_code    :    // z = (x != y)
         case GB_EQ_binop_code      :    // z = (x == y)
         case GB_NE_binop_code      :    // z = (x != y)
         case GB_LOR_binop_code     :    // z = x || y
@@ -361,7 +365,7 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
             //      sparse  sparse      sparse          bitmap  (method: 9)
             //      sparse  sparse      sparse          full    (method: 9)
 
-            // TODO: this will use Method9 (M,A,B, flipxy=false)
+            // TODO: this will use Method9 (M,A,B)
 
             // The method will compute the 2-way intersection of M and A,
             // using the same parallization as C=A.*B when both A and B are
@@ -376,7 +380,7 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
             //      sparse  sparse      bitmap          sparse  (method: 10)
             //      sparse  sparse      full            sparse  (method: 10)
 
-            // TODO: this will use Method10 (M,B,A, flipxy=true)
+            // TODO: this will use Method10 (M,B,A)
             // M and B must not be jumbled.
 
         default:;
@@ -399,26 +403,23 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
         GB_sparsity_char_matrix (B)) ;
 
     //--------------------------------------------------------------------------
-    // initializations
-    //--------------------------------------------------------------------------
-
-    int64_t Cnvec, Cnvec_nonempty ;
-    int64_t *Cp = NULL ; size_t Cp_size = 0 ;
-    const int64_t *Ch = NULL ; size_t Ch_size = 0 ;
-    int C_ntasks = 0, C_nthreads ;
-
-    //--------------------------------------------------------------------------
     // phase0: finalize the sparsity C and find the vectors in C
     //--------------------------------------------------------------------------
 
+    // Ch is either NULL, or a shallow copy of M->h, A->h, or B->h, and must
+    // not be freed here.
+
     GB_OK (GB_emult_08_phase0 (
         // computed by phase0:
-        &Cnvec, &Ch, &Ch_size, &C_to_M, &C_to_M_size, &C_to_A, &C_to_A_size,
+        &Cnvec, &Ch, &Ch_size,
+        &C_to_M, &C_to_M_size,
+        &C_to_A, &C_to_A_size,
         &C_to_B, &C_to_B_size,
+        &Cp_is_32, &Cj_is_32, &Ci_is_32,
         // input/output to phase0:
         &C_sparsity,
         // original input:
-        (apply_mask) ? M : NULL, A, B, Werk)) ;
+        (apply_mask) ? M : NULL, Mask_comp, A, B, Werk)) ;
 
     // C is still sparse or hypersparse, not bitmap or full
     ASSERT (C_sparsity == GxB_SPARSE || C_sparsity == GxB_HYPERSPARSE) ;
@@ -432,7 +433,7 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
         // computed by phase1a:
         &TaskList, &TaskList_size, &C_ntasks, &C_nthreads,
         // computed by phase0:
-        Cnvec, Ch, C_to_M, C_to_A, C_to_B, false,
+        Cnvec, Ch, Cj_is_32, C_to_M, C_to_A, C_to_B, /* Ch_is_Mh: */ false,
         // original input:
         (apply_mask) ? M : NULL, A, B, Werk)) ;
 
@@ -443,7 +444,7 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
         // from phase1a:
         TaskList, C_ntasks, C_nthreads,
         // from phase0:
-        Cnvec, Ch, C_to_M, C_to_A, C_to_B,
+        Cnvec, Ch, C_to_M, C_to_A, C_to_B, Cp_is_32, Cj_is_32,
         // original input:
         (apply_mask) ? M : NULL, Mask_struct, Mask_comp, A, B, Werk)) ;
 
@@ -462,7 +463,8 @@ GrB_Info GB_emult           // C=A.*B, C<M>=A.*B, or C<!M>=A.*B
         // from phase1a:
         TaskList, C_ntasks, C_nthreads,
         // from phase0:
-        Cnvec, Ch, Ch_size, C_to_M, C_to_A, C_to_B, C_sparsity,
+        Cnvec, Ch, Ch_size, C_to_M, C_to_A, C_to_B,
+        Cp_is_32, Cj_is_32, Ci_is_32, C_sparsity,
         // from GB_emult_sparsity:
         ewise_method,
         // original input:

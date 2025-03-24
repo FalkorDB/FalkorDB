@@ -1,0 +1,277 @@
+
+\newpage
+%===============================================================================
+\section{Changes in GraphBLAS v10: 32/64 bit integers}
+%===============================================================================
+
+GraphBLAS v10 adds a new feature that improves performance and reduces memory
+requirements for GraphBLAS matrices and vectors:  the use of any mix of 32-bit
+and 64-bit integers in the internal data structures for the \verb'GrB_Matrix',
+\verb'GrB_Vector', and \verb'GrB_Scalar' (the latter is nominally revised, but
+only because SuiteSparse:GraphBLAS stores its \verb'GrB_Scalar' as a 1-by-1 matrix).
+
+All prior methods work without any modification to the user application,
+so v10 is upward-compatible with prior versions of GraphBLAS.
+
+%-------------------------------------------------------------------------------
+\subsection{Controlling the sizes of integers}
+%-------------------------------------------------------------------------------
+
+Different integers are used for different parts of the matrix/vector data
+structure.  The decision as to which integers to use is determined by the
+dimensions and number of entries in the matrix.  The decisions can also be
+modified by \verb'GrB_set' and queried by \verb'GrB_get'.  A matrix can have up
+to three different kinds of integers.  If a matrix is $m$-by-$n$ with $e$
+entries, with default settings:
+
+\begin{itemize}
+\item if $m > 2^{31}$: 64-bit integers must be used for the row indices of a
+matrix; otherwise, 32-bit integers may be used.
+\item if $n > 2^{31}$: 64-bit integers must be used for the column indices of a
+matrix; otherwise, 32-bit integers may be used.
+\item if $e > 2^{32}$: 64-bit integers must be used for the row/column offsets of
+a matrix; otherwise 32-bit integers may be used.
+\end{itemize}
+
+See Section~\ref{integer_bits} for details.
+
+%-------------------------------------------------------------------------------
+\subsection{Passing arrays to/from GraphBLAS}
+%-------------------------------------------------------------------------------
+\label{ijxvector_methods}
+
+Several of the methods in the GraphBLAS v2.1 C API use plain C arrays of type
+\verb'uint64_t' to pass lists of integers to GraphBLAS.  These are extended to
+allow any integers arrays to be passed, by adding new methods where all plain C
+arrays (including pointers to numerical values for \verb'build' and
+\verb'extractTuples') are replaced with \verb'GrB_Vector's.  The new methods
+are given a name that matches the method they revised, with a \verb'_Vector'
+appended on the end.  All of the new methods are accessible via the polymorphic
+interface, using the existing polymorphic name.  In the methods below, all
+\verb'I', \verb'J', and \verb'X' parameters become \verb'GrB_Vector' objects.
+
+\begin{itemize}
+
+\item \verb'GrB_Vector_build': build a vector from (I,X) or (I,scalar) tuples.
+
+    \begin{itemize}
+    \item \verb'GxB_Vector_build_Vector (w, I, X, dup, desc)' \newline
+    (see Section~\ref{vector_build_Vector}).
+    \item \verb'GxB_Vector_build_Scalar_Vector (w, I, scalar, desc)' \newline
+    (see Section~\ref{vector_build_Scalar_Vector}).
+    \end{itemize}
+
+\item \verb'GrB_Matrix_build': build a matrix from (I,J,X) or (I,J,scalar) tuples.
+
+    \begin{itemize}
+    \item \verb'GxB_Matrix_build_Vector (C, I, J, X, dup, desc)' \newline
+    (see Section~\ref{matrix_build_Vector}).
+    \item \verb'GxB_Matrix_build_Scalar_Vector (C, I, J, scalar, desc)' \newline
+    (see Section~\ref{matrix_build_Scalar_Vector}).
+    \end{itemize}
+
+\item \verb'GrB_Vector_extractTuples': extract (I,X) tuples from a vector.
+
+    \begin{itemize}
+    \item \verb'GxB_Vector_extractTuples_Vector (I, X, v, desc)' \newline
+    (see Section~\ref{vector_extractTuples_Vector}).
+    \end{itemize}
+
+\item \verb'GrB_Matrix_extractTuples': extract (I,J,X) tuples from a matrix.
+
+    \begin{itemize}
+    \item \verb'GxB_Matrix_extractTuples_Vector (I, J, X, A, desc)' \newline
+    (see Section~\ref{matrix_extractTuples_Vector}).
+    \end{itemize}
+
+\item \verb'GrB_assign': ${\bf C \langle M \rangle (I,J) = C(I,J) \odot A}$
+
+    \begin{itemize}
+
+    \item \verb'GxB_Vector_assign_Vector (w, mask, accum, u, I, desc)' \newline
+    (see Section~\ref{assign_vector_Vector}).
+
+    \item \verb'GxB_Matrix_assign_Vector (C, Mask, accum, A, I, J, desc)' \newline
+    (see Section~\ref{assign_matrix_Vector}).
+
+    \item \verb'GxB_Col_assign_Vector (C, mask, accum, u, I, j, desc)' \newline
+    (see Section~\ref{assign_column_Vector}).
+
+    \item \verb'GxB_Row_assign_Vector (C, mask, accum, u, i, J, desc)' \newline
+    (see Section~\ref{assign_row_Vector}).
+
+    \item \verb'GxB_Vector_assign_Scalar_Vector (w, mask, accum, scalar, I, desc)' \newline
+    (see Section~\ref{assign_vector_scalar_Vector}).
+
+    \item \verb'GxB_Matrix_assign_Scalar_Vector (C, Mask, accum, scalar, I, J, desc)' \newline
+    (see Section~\ref{assign_matrix_scalar_Vector}).
+
+    \end{itemize}
+
+\item \verb'GrB_subassign': ${\bf C (I,J) \langle M \rangle = C(I,J) \odot A}$
+
+    \begin{itemize}
+    \item \verb'GxB_Vector_subassign_Vector (w, mask, accum, u, I, desc)' \newline
+    (see Section~\ref{subassign_vector_Vector}).
+
+    \item \verb'GxB_Matrix_subassign_Vector (C, Mask, accum, A, I, J, desc)' \newline
+    (see Section~\ref{subassign_matrix_Vector}).
+
+    \item \verb'GxB_Col_subassign_Vector (C, mask, accum, u, I, j, desc)' \newline
+    (see Section~\ref{subassign_column_Vector}).
+
+    \item \verb'GxB_Row_subassign_Vector (C, mask, accum, u, i, J, desc)' \newline
+    (see Section~\ref{subassign_row_Vector}).
+
+    \item \verb'GxB_Vector_subassign_Scalar_Vector (w, mask, accum, scalar, I, desc)' \newline
+    (see Section~\ref{subassign_vector_scalar_Vector}).
+
+    \item \verb'GxB_Matrix_subassign_Scalar_Vector (C, Mask, accum, scalar, I, J, desc)' \newline
+    (see Section~\ref{subassign_matrix_scalar_Vector}).
+
+    \end{itemize}
+
+\item \verb'GrB_extract': ${\bf C \langle M \rangle = C \odot A(I,J)}$
+
+    \begin{itemize}
+
+    \item \verb'GxB_Vector_extract_Vector (w, mask, accum, u, I, desc)' \newline
+    (see Section~\ref{extract_vector_Vector}).
+
+    \item \verb'GxB_Matrix_extract_Vector (C, Mask, accum, A, I, J, desc)' \newline
+    (see Section~\ref{extract_matrix_Vector}).
+
+    \item \verb'GxB_Col_extract_Vector (w, mask, accum, A, I, j, desc)' \newline
+    (see Section~\ref{extract_column_Vector}).
+
+    \end{itemize}
+
+\end{itemize}
+
+In each of the above methods where \verb'I', \verb'J', and \verb'X' are
+\verb'GrB_Vector' inputs to the method (all but \verb'extractTuples'), the
+vectors can be interpretted in up to 3 different ways.  For the first two ways,
+suppose \verb'extractTuples' is used to extract two lists from a vector
+\verb'I', \verb'J', or \verb'X': values and indices.  Then either of those two
+lists can then be used by the method.  The default is to use the values,
+but the indices can be selected by changing the following descriptor fields:
+
+\begin{itemize}
+\item \verb'GxB_ROWINDEX_LIST': how the \verb'GrB_Vector I' is intrepretted.
+\item \verb'GxB_COLINDEX_LIST': how the \verb'GrB_Vector J' is intrepretted.
+\item \verb'GxB_VALUE_LIST': how \verb'GrB_Vector X' is intrepretted (for \verb'GrB_build' only).
+\end{itemize}
+
+These can be set to one of the following values:
+
+\begin{itemize}
+\item \verb'GrB_DEFAULT' or \verb'GxB_USE_VALUES': use the values of the vector (default).
+\item \verb'GxB_USE_INDICES': use the indices of the vector.
+\item \verb'GxB_IS_STRIDE': use the values, of size 3, for a strided range,
+    or \verb'lo:inc:hi' in MATLAB notation.  This usage is limited to the
+    \verb'I' and \verb'J' vectors (except this option may not be used for
+    \verb'GrB_build').  The vector must have exactly three entries, 
+    \verb'lo', \verb'hi', and \verb'inc', in that order.
+\end{itemize}
+
+%-------------------------------------------------------------------------------
+\subsection{Container methods: loading/unloading data to/from a matrix or vector}
+%-------------------------------------------------------------------------------
+\label{container_v10}
+
+The new methods described in the previous Section~\ref{ijxvector_methods}
+provide \verb'GrB_Vector' inputs and outputs.  This section gives an overview
+of how data is moved between these opaque objects and user-visible C arrays,
+using the new \verb'load/unload' methods.
+
+See Section~\ref{container} for all of the details of the new
+load/unload methods, using a new {\em Container} object.
+
+Methods in the v2.1 GraphBLAS C Specification can be used, but these methods
+require a copy (\verb'GrB_*_build', \verb'GrB_*_extractTuples',
+\verb'GrB_*_import' and \verb'GrB_*_export').  The following two methods
+accomplish this task when the vectors are dense, with all possible entries
+present.
+
+\begin{itemize}
+
+\item \verb'GxB_Vector_load':  this method moves data in O(1) time from a user-visible
+    C array into a \verb'GrB_Vector'.  The vector length and type are revised
+    to match the new data from the C array.  Ownership is normally transferred
+    to the \verb'GrB_Vector', but this can be revised with a \verb'handling'
+    parameter.  The C array is passed in as a \verb'void *' pointer, and its
+    type is indicated by a \verb'GrB_Type' parameter.  See
+    Section~\ref{vector_load} for details.
+
+\item \verb'GxB_Vector_unload': this method moves data in O(1) time from a
+    \verb'GrB_Vector' into a user-visible C array (assuming the vector has no
+    pending work; if so, that work is done first).  The length of the
+    \verb'GrB_Vector' is reduced to zero, to denote that it no longer holds any
+    content.  The vector must be dense; it must have the same number of entries
+    as its size (that is \verb'GrB_Vector_nvals' and \verb'GrB_Vector_size'
+    must return the same value).  The C array is returned as a \verb'void *'
+    pointer, and its type is indicated by a \verb'GrB_Type' parameter.  See
+    Section~\ref{vector_unload} for details.
+
+\end{itemize}
+
+To move data between a \verb'GrB_Matrix' or \verb'GrB_Vector' in all other
+cases, a new \verb'GxB_Container' object is introduced.  This object is
+non-opaque but contains opaque objects.  Its primary components are five dense
+\verb'GrB_Vectors' that hold the contents of the matrix/vector.  The data in
+these dense vectors can then be loaded/unloaded via \verb'GxB_Vector_load' and
+\verb'GxB_Vector_unload'.
+
+The following methods operate on the Container object:
+
+\begin{itemize}
+\item \verb'GxB_Container_new': creates a container.
+    (see Section~\ref{container_new}).
+
+\item \verb'GxB_Container_free': frees a container.
+    (see Section~\ref{container_free}).
+
+\item \verb'GxB_load_Matrix_from_Container': moves all of the data from a
+    \verb'GxB_Container' into a \verb'GrB_Matrix' in O(1) time.
+    (see Section~\ref{load_matrix_from_container}).
+
+\item \verb'GxB_load_Vector_from_Container': moves all of the data from a
+    \verb'GxB_Container' into a \verb'GrB_Vector' in O(1) time.
+    (see Section~\ref{load_vector_from_container}).
+
+\item \verb'GxB_unload_Matrix_into_Container': moves all of the data from
+    a \verb'GrB_Matrix' into a \verb'GxB_Container' in O(1) time.
+    (see Section~\ref{unload_matrix_into_container}).
+
+\item \verb'GxB_unload_Vector_into_Container': moves all of the data from
+    a \verb'GrB_Vector' into a \verb'GxB_Container' in O(1) time.
+    (see Section~\ref{unload_vector_into_container}).
+
+\end{itemize}
+
+%-------------------------------------------------------------------------------
+\subsection{Historical methods: pack/unpack}
+%-------------------------------------------------------------------------------
+
+GraphBLAS v5.1.0 (released in June 2021) added a suite of \verb'GxB_pack' and
+\verb'GxB_unpack' methods to move data between opaque objects
+(\verb'GrB_Matrix' and \verb'GrB_Vector') and user-visible C arrays, in $O(1)$
+time unless the data format needed to be revised.
+
+These methods are now declared {\em historical}, which means they will be kept
+in working order but will no longer be documented.  Refer to the GraphBLAS
+v9.4.5 User Guide for documentaion for the pack/unpack methods.
+
+In GraphBLAS v10, these methods still pack/unpack their contents into
+\verb'uint64_t *' user arrays.  If the matrix has 32-bit integers, this
+requires a copy and typecast.  Thus, performance will be degraded for existing
+user codes that expect $O(1)$ time to pack/unpack their matrices/vectors.
+
+Extending the pack/unpack to handle arbitary C integer arrays would lead to an
+explosion in the number of methods in the API, and it would get worse if other
+integers are added (16-bit and 128-bit for example).  Rather than extend
+pack/unpack to handle a wide range of integer types, new methods using the
+\verb'GxB_Container' are introduced instead (see Section~\ref{container_v10}),
+to rapidly move data into/out of a \verb'GrB_Matrix' or \verb'GrB_Vector' in
+O(1) time and space.
+

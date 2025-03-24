@@ -2,7 +2,7 @@
 // GB_init: initialize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -45,7 +45,7 @@
 
 GrB_Info GB_init            // start up GraphBLAS
 (
-    GrB_Mode mode,          // blocking or non-blocking mode
+    int mode,               // blocking or non-blocking mode
 
     // pointers to memory management functions.
     void * (* malloc_function  ) (size_t),          // required
@@ -153,9 +153,7 @@ GrB_Info GB_init            // start up GraphBLAS
     if (mode == GxB_BLOCKING_GPU || mode == GxB_NONBLOCKING_GPU)
     {
         // initialize the GPUs
-        info = GB_cuda_init ( ) ;
-        printf ("GB_cuda_init: %d\n", info) ;
-        GB_OK (info) ;
+        GB_OK (GB_cuda_init ( )) ;
     }
     else
     #endif

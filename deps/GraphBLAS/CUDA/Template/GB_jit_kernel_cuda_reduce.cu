@@ -2,8 +2,8 @@
 // GraphBLAS/CUDA/jit_kernels/GB_jit_cuda_reduce.cu
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
-// This file: Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// This file: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,6 +23,8 @@
 // is to reduce this data to a scalar, and write it to its scalar.
 
 // If the reduction is done on the GPU, A will never be iso-valued.
+
+#define GB_FREE_ALL ;
 
 #if GB_C_ISO || GB_A_ISO
 #error "kernel undefined for C or A iso"
@@ -79,7 +81,7 @@ __global__ void GB_cuda_reduce_kernel
         #if GB_A_HAS_ZOMBIES
         {
             // check for zombies during the reduction
-            const int64_t *__restrict__ Ai = A->i ;
+            const GB_Ai_SIGNED_TYPE *__restrict__ Ai = (GB_Ai_SIGNED_TYPE *) A->i ;
             // grid-stride loop:
             for (int64_t p = blockIdx.x * blockDim.x + threadIdx.x ;
                          p < anz ;
@@ -185,10 +187,16 @@ extern "C"
 
 GB_JIT_CUDA_KERNEL_REDUCE_PROTO (GB_jit_kernel)
 {
+    GB_GET_CALLBACKS ;
     dim3 grid (gridsz) ;    // gridsz: # of threadblocks
     dim3 block (blocksz) ;  // blocksz: # of threads in each threadblock
     GB_A_NHELD (anz) ;      // anz = # of entries held in A
+
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_reduce_kernel <<<grid, block, 0, stream>>> (zscalar, V, A, anz) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     return (GrB_SUCCESS) ;
 }
 

@@ -2,17 +2,14 @@
 // GB_AxB_semiring_builtin:  determine if semiring is built-in
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Determine if A*B uses a built-in semiring, and if so, determine the
-// opcodes and type codes of the semiring.
-
-// This function is not used by the CUDA jitified kernels, since they can
-// typecast the entries in the matrices A and B to the types of x and y of the
-// operator, as needed.
+// Determine if A*B uses a built-in semiring and matches the types of its
+// inputs A and B.  Returns the opcodes and type codoes of the semiring.  If
+// this method returns true, the semiring is a candidate for a switch factory.
 
 #include "mxm/GB_mxm.h"
 #include "binaryop/GB_binop.h"

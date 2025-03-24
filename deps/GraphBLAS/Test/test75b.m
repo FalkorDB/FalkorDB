@@ -1,7 +1,7 @@
 function test75b
 %TEST75B GrB_mxm and GrB_vxm on all semirings (shorter test than test75)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test75b: test mxm and vxm\n') ;
