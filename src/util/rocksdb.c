@@ -54,6 +54,9 @@ void RocksDB_init() {
 	char *err = NULL;
 	db = rocksdb_open(options, path, &err);
 	ASSERT(!err);
+
+	rocksdb_options_destroy(options);
+	free(path);
 }
 
 rocksdb_writebatch_t *RocksDB_create_batch() {
