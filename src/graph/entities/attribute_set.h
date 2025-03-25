@@ -21,7 +21,7 @@
 // check if attribute-set is read-only
 #define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
 
-typedef unsigned short AttributeID;
+typedef uint16_t AttributeID;
 
 // type of change performed on the attribute-set
 typedef enum {
@@ -31,17 +31,8 @@ typedef enum {
 	CT_DEL      // attribute been deleted
 } AttributeSetChangeType;
 
-typedef struct {
-	AttributeID id;  // attribute identifier
-	SIValue value;   // attribute value
-} Attribute;
-
-typedef struct {
-	uint16_t attr_count;     // number of attributes
-	Attribute attributes[];  // key value pair of attributes
-} _AttributeSet;
-
-typedef _AttributeSet* AttributeSet;
+typedef struct _AttributeSet _AttributeSet; // forward declaration
+typedef _AttributeSet* AttributeSet;        // define opaque type
 
 // returns number of attributes within the set
 uint16_t AttributeSet_Count

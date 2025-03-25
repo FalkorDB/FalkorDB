@@ -36,18 +36,20 @@ static void _IncrementalHashEntity
 
 	if(_set) {
 		// update hash with attribute count
-		res = XXH64_update(state, &_set->attr_count, sizeof(_set->attr_count));
+		uint16_t attr_count = AttributeSet_Count(_set);
+		res = XXH64_update(state, &attr_count, sizeof(uint16_t));
 		ASSERT(res != XXH_ERROR);
 
-		for (uint16_t i = 0; i < _set->attr_count; ++i) {
-			Attribute *a = _set->attributes + i;
+		for (uint16_t i = 0; i < attr_count; ++i) {
+			AttributeID attr_id;
+			SIValue v = AttributeSet_GetIdx(_set, i, &attr_id);
 
 			// update hash with attribute ID
-			res = XXH64_update(state, &a->id, sizeof(a->id));
+			res = XXH64_update(state, &attr_id, sizeof(AttributeID));
 			ASSERT(res != XXH_ERROR);
 
 			// update hash with the hashval of the associated SIValue
-			XXH64_hash_t value_hash = SIValue_HashCode(a->value);
+			XXH64_hash_t value_hash = SIValue_HashCode(v);
 			res = XXH64_update(state, &value_hash, sizeof(value_hash));
 			ASSERT(res != XXH_ERROR);
 		}
