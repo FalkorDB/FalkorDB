@@ -240,7 +240,7 @@ static inline bool _accommodate
 	ASSERT(n > 0);
 
 	// flush in case there's not enough room in buffer
-	if( (buffer->cap - buffer->count) < n) {
+	if((buffer->cap - buffer->count) < n) {
 		_flush_buffer(buffer);
 
 		// once flushed we can accommodate only if n <= buffer's capacity

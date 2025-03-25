@@ -93,7 +93,6 @@ static void _RdbSaveSIValue
 	}
 }
 
-// TODO: consider writting the entire array at once using write buffer
 // encode deleted entities IDs
 static inline void _RdbSaveDeletedEntities_v17
 (
