@@ -156,7 +156,6 @@ void Map_AddNoClone
 
 	// add pair to the end of map
 	array_append(map->map, pair);
-
 }
 
 // removes key from map

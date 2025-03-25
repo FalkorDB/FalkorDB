@@ -204,14 +204,6 @@ int thpool_num_threads(threadpool);
  */
 int thpool_get_thread_id(threadpool, pthread_t);
 
-// collect threads ids
-void thpool_collect_thread_ids
-(
-	threadpool thpool_p,  // thread pool
-	pthread_t *ids,       // thread ids
-	uint *n               // size of ids array
-);
-
 /**
  * @brief return true if thread pool internal queue is full with pending work
  *
