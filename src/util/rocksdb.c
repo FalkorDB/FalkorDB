@@ -55,6 +55,7 @@ void RocksDB_init() {
 	db = rocksdb_open(options, path, &err);
 	ASSERT(!err);
 
+	rocksdb_block_based_options_destroy(table_options);
 	rocksdb_options_destroy(options);
 	free(path);
 }
