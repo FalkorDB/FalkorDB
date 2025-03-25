@@ -60,6 +60,15 @@ void Map_Add
 	SIValue value  // value to add under key
 );
 
+// adds key/value to map
+// both key and value aren't cloned
+void Map_AddNoClone
+(
+	SIValue *map,  // map to add element to
+	SIValue key,   // key under which value is added
+	SIValue value  // value to add under key
+);
+
 // removes key from map
 void Map_Remove
 (

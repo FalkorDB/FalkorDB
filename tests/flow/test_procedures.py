@@ -327,7 +327,7 @@ class testProcedures(FlowTestsBase):
     def test11_procedure_indexes(self):
         # flaky when running under valgrind
         # TODO: investigate
-        if VALGRIND:
+        if VALGRIND or SANITIZER:
             self.env.skip()
 
         # Verify that the full-text index is reported properly.

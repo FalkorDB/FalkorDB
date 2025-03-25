@@ -17,7 +17,7 @@ class testReplication(FlowTestsBase):
 
     def __init__(self):
         # skip test if we're running under Valgrind
-        if VALGRIND or SANITIZER != "":
+        if VALGRIND or SANITIZER:
             Environment.skip(None) # valgrind is not working correctly with replication
 
         self.env, self.db = Env(env='oss', useSlaves=True)
