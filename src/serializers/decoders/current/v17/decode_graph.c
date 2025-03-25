@@ -345,8 +345,18 @@ GraphContext *RdbLoadGraphContext_latest
 		bool delay_indexing;
 		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
 
+		// report index construction method
+		if(delay_indexing) {
+			RedisModule_Log(NULL, "notice",
+					"Graph '%s' Indexes are constructed in the background.",
+					GraphContext_GetName(gc));
+		} else {
+			RedisModule_Log(NULL, "notice", "Graph '%s' Constructing indexes.",
+					GraphContext_GetName(gc));
+		}
+
 		// update the node statistics, enable node indices
-		for(uint i = 0; i < label_count; i++) {
+		for(LabelID i = 0; i < label_count; i++) {
 			GrB_Index nvals;
 			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
 			Delta_Matrix_nvals(&nvals, L);
@@ -374,6 +384,7 @@ GraphContext *RdbLoadGraphContext_latest
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
+
 			if(idx != NULL) {
 				if(delay_indexing) {
 					// start async indexing
@@ -392,7 +403,8 @@ GraphContext *RdbLoadGraphContext_latest
 
 		GraphDecodeContext_Reset(gc->decoding_context);
 
-		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
+		RedisModule_Log(NULL, "notice", "Done decoding graph %s",
+				GraphContext_GetName(gc));
 	}
 
 	return gc;
