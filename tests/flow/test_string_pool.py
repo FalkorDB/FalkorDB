@@ -23,6 +23,9 @@ class testStringPool():
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def used_memory(self):
+        # Purge memory
+        self.conn.execute_command('MEMORY PURGE')
+
         # Get memory information
         memory_info = self.conn.info("memory")
         _used_memory = memory_info['used_memory']

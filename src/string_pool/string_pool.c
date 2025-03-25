@@ -8,6 +8,9 @@
 #include "deps/xxHash/xxhash.h"
 
 #include <string.h>
+#include <pthread.h>
+
+pthread_key_t _tlsStringPool; // thread local storage string-pool access flag
 
 // key hash function
 static uint64_t hashFunc
@@ -59,8 +62,22 @@ static const dictType _type = {
 	NULL
 };
 
+// grant access to string-pool via TLS key
+// if a thread has this key set, access to the string pool is granted
+// otherwise the TLS key is NULL and access is denied
+void StringPool_grantAccessViaTLS(void* unused) {
+	ASSERT(unused == NULL);
+
+	int res = pthread_setspecific(_tlsStringPool, (const void*)1);
+	ASSERT(res == 0);
+}
+
 // create a new StringPool
 StringPool StringPool_create(void) {
+	// create thread local storage string-pool access flag
+	int res = pthread_key_create(&_tlsStringPool, NULL);
+	ASSERT(res == 0);
+
 	return HashTableCreate(&_type);
 }
 
@@ -68,7 +85,7 @@ StringPool StringPool_create(void) {
 // incase the string is already stored in the pool
 // its reference count is increased
 // returns a pointer to the stored string
-char *StringPool_add
+char *StringPool_rent
 (
 	StringPool pool,  // string pool
 	const char *str   // string to add
@@ -98,7 +115,7 @@ char *StringPool_add
 
 // add string to pool in case it doesn't already exists
 // the string isn't cloned
-char *StringPool_addNoClone
+char *StringPool_rentNoClone
 (
 	StringPool pool,  // string pool
 	char *str         // string to add
@@ -126,7 +143,7 @@ char *StringPool_addNoClone
 // remove string from pool
 // the string will be free only when its reference count drops to 0
 // returns true if the string was freed
-void StringPool_remove
+void StringPool_return
 (
 	StringPool pool,  // string pool
 	char *str         // string to remove

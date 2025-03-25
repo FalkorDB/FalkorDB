@@ -27,6 +27,9 @@ static inline Pair Pair_New
 	SIValue val
 ) {
 	ASSERT(SI_TYPE(key) & T_STRING);
+	ASSERT(SI_ALLOCATION(&key) != M_VOLATILE);
+	ASSERT(SI_ALLOCATION(&val) != M_VOLATILE);
+
 	return (Pair) { .key = key, .val = val };
 }
 
@@ -144,8 +147,6 @@ void Map_AddNoClone
 ) {
 	ASSERT(SI_TYPE(*map) & T_MAP);
 	ASSERT(SI_TYPE(key)  & T_STRING);
-	ASSERT(SI_ALLOCATION(&key)   != M_VOLATILE);
-	ASSERT(SI_ALLOCATION(&value) != M_VOLATILE);
 
 	// remove key if already existed
 	Map_Remove(*map, key);
@@ -155,7 +156,6 @@ void Map_AddNoClone
 
 	// add pair to the end of map
 	array_append(map->map, pair);
-
 }
 
 // removes key from map

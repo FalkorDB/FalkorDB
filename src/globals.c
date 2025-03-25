@@ -40,6 +40,13 @@ void Globals_Init(void) {
 	Config_Option_get(Config_DEDUPLICATE_STRINGS, &string_pool_enabled);
 	if(string_pool_enabled) {
 		_globals.string_pool = StringPool_create();
+
+		// set main thread TLS granting access to the string pool
+		StringPool_grantAccessViaTLS(NULL);
+
+		// set writer thread TLS granting access to the string pool
+		ThreadPools_AddWorkWriter(StringPool_grantAccessViaTLS,
+				NULL, true);
 	}
 }
 
