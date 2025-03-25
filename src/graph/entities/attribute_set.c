@@ -17,162 +17,165 @@
 
 // type of attributes
 typedef enum : uint8_t {
-	ATTR_VAL_TYPE_INT8       = 0,   // 1 byte  int
-	ATTR_VAL_TYPE_INT16      = 1,   // 2 bytes int
-	ATTR_VAL_TYPE_INT32      = 2,   // 4 bytes int
-	ATTR_VAL_TYPE_INT64      = 3,   // 8 bytes int
-	ATTR_VAL_TYPE_BOOL_TRUE  = 4,   // 0 bytes true value
-	ATTR_VAL_TYPE_BOOL_FALSE = 5,   // 0 bytes false value
-	ATTR_VAL_TYPE_FLOAT      = 6,   // 4 bytes floating point number
-	ATTR_VAL_TYPE_DOUBLE     = 7,   // 8 bytes floating point number
-	ATTR_VAL_TYPE_STRING     = 8,   // 8 bytes string
-	ATTR_VAL_TYPE_NULL       = 9,   // 0 bytes NULL value
-	ATTR_VAL_TYPE_POINT      = 10,  // 8 bytes point
-	ATTR_VAL_TYPE_VECTOR_F32 = 11,  // 8 bytes pointer to vector
-	ATTR_VAL_TYPE_ARRAY      = 12,  // 8 bytes pointer to array
-	ATTR_VAL_TYPE_MAP        = 13,  // 8 bytes pointer to map
-	ATTR_VAL_TYPE_INVALID    = 14   // 0 bytes invalid attribute type
-} AttributeSet_AttrType;
+	ATTR_TYPE_INT8       = 0,   // 1 byte  int
+	ATTR_TYPE_INT16      = 1,   // 2 bytes int
+	ATTR_TYPE_INT32      = 2,   // 4 bytes int
+	ATTR_TYPE_INT64      = 3,   // 8 bytes int
+	ATTR_TYPE_BOOL_TRUE  = 4,   // 0 bytes true value
+	ATTR_TYPE_BOOL_FALSE = 5,   // 0 bytes false value
+	ATTR_TYPE_FLOAT      = 6,   // 4 bytes floating point number
+	ATTR_TYPE_DOUBLE     = 7,   // 8 bytes floating point number
+	ATTR_TYPE_STRING     = 8,   // 8 bytes string
+	ATTR_TYPE_NULL       = 9,   // 0 bytes NULL value
+	ATTR_TYPE_POINT      = 10,  // 8 bytes point
+	ATTR_TYPE_VECTOR_F32 = 11,  // 8 bytes pointer to vector
+	ATTR_TYPE_ARRAY      = 12,  // 8 bytes pointer to array
+	ATTR_TYPE_MAP        = 13,  // 8 bytes pointer to map
+	ATTR_TYPE_INVALID    = 14   // 0 bytes invalid attribute type
+} AttrType;
 
 // size mapping table
 static const uint8_t attr_type_to_size[14] = {
-    [ATTR_VAL_TYPE_INT8]       = 1,  // 1 byte  int
-    [ATTR_VAL_TYPE_INT16]      = 2,  // 2 bytes int
-    [ATTR_VAL_TYPE_INT32]      = 4,  // 4 bytes int
-    [ATTR_VAL_TYPE_INT64]      = 8,  // 8 bytes int
-    [ATTR_VAL_TYPE_BOOL_TRUE]  = 0,  // 0 bytes true value
-    [ATTR_VAL_TYPE_BOOL_FALSE] = 0,  // 0 bytes false value
-    [ATTR_VAL_TYPE_FLOAT]      = 4,  // 4 bytes floating point
-    [ATTR_VAL_TYPE_DOUBLE]     = 8,  // 8 bytes floating point
-    [ATTR_VAL_TYPE_STRING]     = 8,  // 8 bytes string pointer
-    [ATTR_VAL_TYPE_NULL]       = 0,  // 0 bytes NULL value
-    [ATTR_VAL_TYPE_POINT]      = 8,  // 8 bytes point
-    [ATTR_VAL_TYPE_VECTOR_F32] = 8,  // 8 bytes pointer to vector
-    [ATTR_VAL_TYPE_ARRAY]      = 8,  // 8 bytes pointer to array
-    [ATTR_VAL_TYPE_MAP]        = 8   // 8 bytes pointer to map
+    [ATTR_TYPE_INT8]       = 1,  // 1 byte  int
+    [ATTR_TYPE_INT16]      = 2,  // 2 bytes int
+    [ATTR_TYPE_INT32]      = 4,  // 4 bytes int
+    [ATTR_TYPE_INT64]      = 8,  // 8 bytes int
+    [ATTR_TYPE_BOOL_TRUE]  = 0,  // 0 bytes true value
+    [ATTR_TYPE_BOOL_FALSE] = 0,  // 0 bytes false value
+    [ATTR_TYPE_FLOAT]      = 4,  // 4 bytes floating point
+    [ATTR_TYPE_DOUBLE]     = 8,  // 8 bytes floating point
+    [ATTR_TYPE_STRING]     = 8,  // 8 bytes string pointer
+    [ATTR_TYPE_NULL]       = 0,  // 0 bytes NULL value
+    [ATTR_TYPE_POINT]      = 8,  // 8 bytes point
+    [ATTR_TYPE_VECTOR_F32] = 8,  // 8 bytes pointer to vector
+    [ATTR_TYPE_ARRAY]      = 8,  // 8 bytes pointer to array
+    [ATTR_TYPE_MAP]        = 8   // 8 bytes pointer to map
 };
 
-// map between AttributeSet_AttrType to SIType
+// map between AttrType to SIType
 static const SIType attr_type_to_sivalue_type[14] = {
-    [ATTR_VAL_TYPE_INT8]       = T_INT64,       // INT8   -> T_INT64
-	[ATTR_VAL_TYPE_INT16]      = T_INT64,       // INT16  -> T_INT64
-	[ATTR_VAL_TYPE_INT32]      = T_INT64,       // INT32  -> T_INT64
-	[ATTR_VAL_TYPE_INT64]      = T_INT64,       // INT64  -> T_INT64
-	[ATTR_VAL_TYPE_BOOL_TRUE]  = T_BOOL,        // TRUE   -> T_BOOL
-	[ATTR_VAL_TYPE_BOOL_FALSE] = T_BOOL,        // FALSE  -> T_BOOL
-	[ATTR_VAL_TYPE_FLOAT]      = T_DOUBLE,      // FLOAT  -> T_DOUBLE
-	[ATTR_VAL_TYPE_DOUBLE]     = T_DOUBLE,      // DOUBLE -> T_DOUBLE
-	[ATTR_VAL_TYPE_STRING]     = T_STRING,      // STRING -> T_STRING
-	[ATTR_VAL_TYPE_NULL]       = T_NULL,        // NULL   -> T_NULL
-	[ATTR_VAL_TYPE_POINT]      = T_POINT,       // POINT  -> T_POINT
-	[ATTR_VAL_TYPE_VECTOR_F32] = T_VECTOR_F32,  // VECF32 -> T_VECTOR_F32
-	[ATTR_VAL_TYPE_ARRAY]      = T_ARRAY,       // ARRAY  -> T_ARRAY
-	[ATTR_VAL_TYPE_MAP]        = T_MAP          // MAP    -> T_MAP
+    [ATTR_TYPE_INT8]       = T_INT64,       // INT8   -> T_INT64
+	[ATTR_TYPE_INT16]      = T_INT64,       // INT16  -> T_INT64
+	[ATTR_TYPE_INT32]      = T_INT64,       // INT32  -> T_INT64
+	[ATTR_TYPE_INT64]      = T_INT64,       // INT64  -> T_INT64
+	[ATTR_TYPE_BOOL_TRUE]  = T_BOOL,        // TRUE   -> T_BOOL
+	[ATTR_TYPE_BOOL_FALSE] = T_BOOL,        // FALSE  -> T_BOOL
+	[ATTR_TYPE_FLOAT]      = T_DOUBLE,      // FLOAT  -> T_DOUBLE
+	[ATTR_TYPE_DOUBLE]     = T_DOUBLE,      // DOUBLE -> T_DOUBLE
+	[ATTR_TYPE_STRING]     = T_STRING,      // STRING -> T_STRING
+	[ATTR_TYPE_NULL]       = T_NULL,        // NULL   -> T_NULL
+	[ATTR_TYPE_POINT]      = T_POINT,       // POINT  -> T_POINT
+	[ATTR_TYPE_VECTOR_F32] = T_VECTOR_F32,  // VECF32 -> T_VECTOR_F32
+	[ATTR_TYPE_ARRAY]      = T_ARRAY,       // ARRAY  -> T_ARRAY
+	[ATTR_TYPE_MAP]        = T_MAP          // MAP    -> T_MAP
 };
 
 
-// map between AttributeSet_AttrType allocation type true for heap
+// map between AttrType allocation type true for heap
 // false for stack
 static const bool attr_type_heap_allocated[14] = {
-    [ATTR_VAL_TYPE_INT8]       = false,
-	[ATTR_VAL_TYPE_INT16]      = false,
-	[ATTR_VAL_TYPE_INT32]      = false,
-	[ATTR_VAL_TYPE_INT64]      = false,
-	[ATTR_VAL_TYPE_BOOL_TRUE]  = false,
-	[ATTR_VAL_TYPE_BOOL_FALSE] = false,
-	[ATTR_VAL_TYPE_FLOAT]      = false,
-	[ATTR_VAL_TYPE_DOUBLE]     = false,
-	[ATTR_VAL_TYPE_STRING]     = true,
-	[ATTR_VAL_TYPE_NULL]       = false,
-	[ATTR_VAL_TYPE_POINT]      = false,
-	[ATTR_VAL_TYPE_VECTOR_F32] = true,
-	[ATTR_VAL_TYPE_ARRAY]      = true,
-	[ATTR_VAL_TYPE_MAP]        = true
+    [ATTR_TYPE_INT8]       = false,
+	[ATTR_TYPE_INT16]      = false,
+	[ATTR_TYPE_INT32]      = false,
+	[ATTR_TYPE_INT64]      = false,
+	[ATTR_TYPE_BOOL_TRUE]  = false,
+	[ATTR_TYPE_BOOL_FALSE] = false,
+	[ATTR_TYPE_FLOAT]      = false,
+	[ATTR_TYPE_DOUBLE]     = false,
+	[ATTR_TYPE_STRING]     = true,
+	[ATTR_TYPE_NULL]       = false,
+	[ATTR_TYPE_POINT]      = false,
+	[ATTR_TYPE_VECTOR_F32] = true,
+	[ATTR_TYPE_ARRAY]      = true,
+	[ATTR_TYPE_MAP]        = true
 };
 
 // map between SIValue type to Attribute type
-static const AttributeSet_AttrType sivalue_type_to_attr_type[19] = {
-	ATTR_VAL_TYPE_MAP,        // T_MAP           -> MAP
-	ATTR_VAL_TYPE_INVALID,    // T_NODE          -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_EDGE          -> INVALID
-	ATTR_VAL_TYPE_ARRAY,      // T_ARRAY         -> ARRAY
-	ATTR_VAL_TYPE_INVALID,    // T_PATH          -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_DATETIME      -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_LOCALDATETIME -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_DATE          -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_TIME          -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_LOCALTIME     -> INVALID
-	ATTR_VAL_TYPE_INVALID,    // T_DURATION      -> INVALID
-	ATTR_VAL_TYPE_STRING,     // T_STRING        -> STRING
-	ATTR_VAL_TYPE_BOOL_TRUE,  // T_BOOL          -> TRUE / FALSE
-	ATTR_VAL_TYPE_INT64,      // T_INT64         -> INT8 / INT16 / INT32 / INT64
-	ATTR_VAL_TYPE_DOUBLE,     // T_DOUBLE        -> DOBULE / FLOAT
-	ATTR_VAL_TYPE_NULL,       // T_NULL          -> NULL
-	ATTR_VAL_TYPE_INVALID,    // T_PTR           -> INVALID
-	ATTR_VAL_TYPE_POINT,      // T_POINT         -> INVALID
-	ATTR_VAL_TYPE_VECTOR_F32  // T_VECTOR_F32    -> VECF32
+static const AttrType sivalue_type_to_attr_type[19] = {
+	ATTR_TYPE_MAP,        // T_MAP           -> MAP
+	ATTR_TYPE_INVALID,    // T_NODE          -> INVALID
+	ATTR_TYPE_INVALID,    // T_EDGE          -> INVALID
+	ATTR_TYPE_ARRAY,      // T_ARRAY         -> ARRAY
+	ATTR_TYPE_INVALID,    // T_PATH          -> INVALID
+	ATTR_TYPE_INVALID,    // T_DATETIME      -> INVALID
+	ATTR_TYPE_INVALID,    // T_LOCALDATETIME -> INVALID
+	ATTR_TYPE_INVALID,    // T_DATE          -> INVALID
+	ATTR_TYPE_INVALID,    // T_TIME          -> INVALID
+	ATTR_TYPE_INVALID,    // T_LOCALTIME     -> INVALID
+	ATTR_TYPE_INVALID,    // T_DURATION      -> INVALID
+	ATTR_TYPE_STRING,     // T_STRING        -> STRING
+	ATTR_TYPE_BOOL_TRUE,  // T_BOOL          -> TRUE / FALSE
+	ATTR_TYPE_INT64,      // T_INT64         -> INT8 / INT16 / INT32 / INT64
+	ATTR_TYPE_DOUBLE,     // T_DOUBLE        -> DOBULE / FLOAT
+	ATTR_TYPE_NULL,       // T_NULL          -> NULL
+	ATTR_TYPE_INVALID,    // T_PTR           -> INVALID
+	ATTR_TYPE_POINT,      // T_POINT         -> INVALID
+	ATTR_TYPE_VECTOR_F32  // T_VECTOR_F32    -> VECF32
 };
 
 // skips attribute id
 #define SKIP_ATTR_ID(buff) (buff) += sizeof(AttributeID);
 
 // skips attribute type
-#define SKIP_ATTR_TYPE(buff) (buff) += sizeof(AttributeSet_AttrType);
+#define SKIP_ATTR_TYPE(buff) (buff) += sizeof(AttrType);
 
 // skips attribute value
 #define SKIP_ATTR_VALUE(buff) (buff) += attr_type_to_size((buff-1));
 
-// skips an entire attribute
-#define SKIP_ATTR(buff)                                                     \
-	SKIP_ATTR_ID(buff)                                                      \
-	(buff) += attr_type_to_size((buff)[0]) + sizeof(AttributeSet_AttrType);
+// skips entire attribute
+#define SKIP_ATTR(buff)                                         \
+	SKIP_ATTR_ID(buff)                                          \
+	(buff) += attr_type_to_size((buff)[0]) + sizeof(AttrType);
 
 // get attribute id
 #define GET_ATTR_ID(buff) *((AttributeID*) (buff));
 
 // get attribute type
-#define GET_ATTR_TYPE(buff)                                            \
-	*((AttributeSet_AttrType*)((buff) + sizeof(AttributeID)));
+#define GET_ATTR_TYPE(buff)                                     \
+	*((AttrType*)((buff) + sizeof(AttributeID)));
 
-#define GET_ATTR_VALUE(buff)                                           \
-	(buff) + sizeof(AttributeID) + sizeof(AttributeSet_AttrType);
+// get attribute value
+#define GET_ATTR_VALUE(buff)                                    \
+	(buff) + sizeof(AttributeID) + sizeof(AttrType);
 
-#define SET_ATTR_ID(buff, id)                                          \
-	*(AttributeID*)(buff) = id;                                        \
+// set attribute id
+#define SET_ATTR_ID(buff, id)                                   \
+	*(AttributeID*)(buff) = id;                                 \
 	SKIP_ATTR_ID(buff)
 
-#define SET_ATTR_TYPE(buff, t)                                         \
-	offset[0] = t;                                                     \
+// set attribute type
+#define SET_ATTR_TYPE(buff, t)                                  \
+	offset[0] = t;                                              \
 	SKIP_ATTR_TYPE(buff)
 
-// converts between SIValue type to AttributeType
-static inline AttributeSet_AttrType SIValue_To_AttrType
+// converts between SIType to AttrType
+static inline AttrType SIValue_To_AttrType
 (
-	SIValue *v  // value to determine type of
+	SIValue *v  // value to determine attribute type of
 ) {
 	SIType t = v->type;
-	AttributeSet_AttrType at = sivalue_type_to_attr_type[__builtin_ctz(t)];
+	AttrType at = sivalue_type_to_attr_type[__builtin_ctz(t)];
 
-	if(at == ATTR_VAL_TYPE_INT64) {
+	if(at == ATTR_TYPE_INT64) {
 		// see if int can be represented by int8_t, int16_t or int32_t
 		int64_t n = v->longval;
 
 		// check if the number fits in 1 byte (signed char: -128 to 127)
 		if(n >= INT8_MIN && n <= INT8_MAX) {
-			at = ATTR_VAL_TYPE_INT8;
+			at = ATTR_TYPE_INT8;
 		}
 
 		// check if the number fits in 2 bytes (signed short: -32,768 to 32,767)
 		else if(n >= INT16_MIN && n <= INT16_MAX) {
-			at = ATTR_VAL_TYPE_INT16;
+			at = ATTR_TYPE_INT16;
 		}
 
 		// check if the number fits in 4 bytes (signed int: -2,147,483,648 to 2,147,483,647)
 		else if(n >= INT32_MIN && n <= INT32_MAX) {
-			at = ATTR_VAL_TYPE_INT32;
+			at = ATTR_TYPE_INT32;
 		}
 
-	} else if(at == ATTR_VAL_TYPE_DOUBLE) {
+	} else if(at == ATTR_TYPE_DOUBLE) {
 		// see if double can be represented by a float without loosing
 		// precision
 		bool   can_convert = false;
@@ -191,77 +194,80 @@ static inline AttributeSet_AttrType SIValue_To_AttrType
 
 		// able to convert without major precision loss
 		if(can_convert) {
-			at = ATTR_VAL_TYPE_FLOAT;
+			at = ATTR_TYPE_FLOAT;
 		}
-	} else if(at == ATTR_VAL_TYPE_BOOL_TRUE) {
+	} else if(at == ATTR_TYPE_BOOL_TRUE) {
 		if(v->longval == 0) {
-			at = ATTR_VAL_TYPE_BOOL_FALSE;
+			at = ATTR_TYPE_BOOL_FALSE;
 		}
 	}
 
 	return at;
 }
 
+// get attribute's value as type t
+#define GET_ATTR_VALUE_AS(t, attr) (*((t*)(attr)))
+
 // populate an SIValue from an attribute
 static void _attribute_to_sivalue
 (
-	AttributeSet_AttrType t,  // type of attribute
-	const void *attr,          // attribute
-	SIValue *v                 // [output] sivalue to populate
+	AttrType t,        // type of attribute
+	const void *attr,  // attribute
+	SIValue *v         // [output] sivalue to populate
 ) {
 	ASSERT(v    != NULL);
 	ASSERT(attr != NULL);
 
 	switch(t) {
-		case ATTR_VAL_TYPE_INT8:
-			*v = SI_LongVal(*((int8_t*)(attr)));
+		case ATTR_TYPE_INT8:
+			*v = SI_LongVal(GET_ATTR_VALUE_AS(int8_t, attr));
 			break;
 
-		case ATTR_VAL_TYPE_INT16:
-			*v = SI_LongVal(*((int16_t*)(attr)));
+		case ATTR_TYPE_INT16:
+			*v = SI_LongVal(GET_ATTR_VALUE_AS(int16_t,attr));
 			break;
 
-		case ATTR_VAL_TYPE_INT32:
-			*v = SI_LongVal(*((int32_t*)(attr)));
+		case ATTR_TYPE_INT32:
+			*v = SI_LongVal(GET_ATTR_VALUE_AS(int32_t, attr));
 			break;
 
-		case ATTR_VAL_TYPE_INT64:
-			*v = SI_LongVal(*((int64_t*)(attr)));
+		case ATTR_TYPE_INT64:
+			*v = SI_LongVal(GET_ATTR_VALUE_AS(int64_t, attr));
 			break;
 
-		case ATTR_VAL_TYPE_BOOL_TRUE:
+		case ATTR_TYPE_BOOL_TRUE:
 			*v = SI_BoolVal(true);
 			break;
 
-		case ATTR_VAL_TYPE_BOOL_FALSE:
+		case ATTR_TYPE_BOOL_FALSE:
 			*v = SI_BoolVal(false);
 			break;
 
-		case ATTR_VAL_TYPE_FLOAT:
-			*v = SI_DoubleVal(*((float*)(attr)));
+		case ATTR_TYPE_FLOAT:
+			*v = SI_DoubleVal(GET_ATTR_VALUE_AS(float, attr));
 			break;
 
-		case ATTR_VAL_TYPE_DOUBLE:
-			*v = SI_DoubleVal(*((double*)(attr)));
+		case ATTR_TYPE_DOUBLE:
+			*v = SI_DoubleVal(GET_ATTR_VALUE_AS(double, attr));
 			break;
 
-		case ATTR_VAL_TYPE_STRING:
-			*v = SI_ConstStringVal(*((char**)(attr)));
+		case ATTR_TYPE_STRING:
+			*v = SI_ConstStringVal(GET_ATTR_VALUE_AS(char*, attr));
 			break;
 
-		case ATTR_VAL_TYPE_NULL:
+		case ATTR_TYPE_NULL:
 			*v = SI_NullVal();
 			break;
 
 		// pointer based SIValues
-		case ATTR_VAL_TYPE_MAP:
-		case ATTR_VAL_TYPE_POINT:
-		case ATTR_VAL_TYPE_ARRAY:
-		case ATTR_VAL_TYPE_VECTOR_F32:
-			*v = SI_PtrVal(*((void**)(attr)));
+		case ATTR_TYPE_MAP:
+		case ATTR_TYPE_POINT:
+		case ATTR_TYPE_ARRAY:
+		case ATTR_TYPE_VECTOR_F32:
+			*v = SI_PtrVal(GET_ATTR_VALUE_AS(void*, attr));
 			break;
 
-		case ATTR_VAL_TYPE_INVALID:
+		case ATTR_TYPE_INVALID:
 			assert(false);
 			break;
 	}
@@ -272,16 +278,6 @@ static void _attribute_to_sivalue
 	// TODO: not sure about the allocation type
 	v->allocation = M_VOLATILE;
 }
-
-typedef struct {
-	AttributeID id;  // attribute identifier
-	SIValue value;   // attribute value
-} Attribute;
-
-//struct _AttributeSet {
-//	uint16_t attr_count;     // number of attributes
-//	Attribute attributes[];  // key value pair of attributes
-//};
 
 struct _AttributeSet {
 	uint16_t attr_count;  // number of attributes
@@ -301,9 +297,8 @@ SIValue ATTRIBUTE_NOTFOUND = (SIValue) {
 	.longval = 0, .type = T_NULL
 };
 
-// returns a pointer to the begining of the attribute
-// if i is greater than the total number of attributes in the set
-// NULL is returned
+// returns a pointer to the start of the `i`-th attribute in the attribute set
+// if `i` is out of bounds or `set` is NULL, returns NULL
 static char *_LocateAttrByIdx
 (
 	const AttributeSet set,  // set to search attribute in
@@ -319,21 +314,19 @@ static char *_LocateAttrByIdx
 		return NULL;
 	}
 
-	// place pointer at the begining of the attributes array
+	// place offset at the begining of the attributes buffer
 	char *offset = set->attributes;
 
 	// as long as we didn't get to the ith attribute
-	while(i > 0) {
+	for(; i > 0; i--) {
 		SKIP_ATTR(offset);
-		// one less attribute to scan
-		i--;
 	}
 
 	return offset;
 }
 
-// returns a pointer to the begining of the attribute
-// if the attribute isn't found returns NULL
+// returns a pointer to the start of the attribute with the given `id`
+// if the attribute is not found or `set` is NULL, returns NULL
 static char *_LocateAttrById
 (
 	const AttributeSet set,  // set to search attribute in
@@ -344,7 +337,7 @@ static char *_LocateAttrById
 		return NULL;
 	}
 
-	// place pointer to the begining of the attributes array
+	// place offset at the begining of the attributes buffer
 	char *offset = set->attributes;
 
 	// as long as we didn't get to the desiered attribute
@@ -363,15 +356,17 @@ static char *_LocateAttrById
 	return NULL;
 }
 
-// removes an attribute from set
-// returns true if attribute was removed false otherwise
+// removes an attribute from the given attribute set
+// returns `true` if the attribute was successfully removed, otherwise `false`.
+// if the attribute set contains only one attribute, the entire set is freed.
 static bool _AttributeSet_Remove
 (
 	AttributeSet *set,   // set to remove attribute from
 	AttributeID attr_id  // attribute ID to remove
 ) {
-	ASSERT(set != NULL && *set != NULL);
-	ASSERT(attr_id != ATTRIBUTE_ID_NONE)
+	ASSERT(set     != NULL);
+	ASSERT(*set    != NULL);
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
 
 	AttributeSet _set = *set;
 	const uint16_t attr_count = _set->attr_count;
@@ -387,17 +382,18 @@ static bool _AttributeSet_Remove
 		return false;
 	}
 
-	// if this is the last attribute free the attribute-set
+	// if this is the last attribute, free the attribute-set
 	if(_set->attr_count == 1) {
 		AttributeSet_Free(set);
 		return true;
 	}
 
 	// get the attribute type
-	AttributeSet_AttrType t = GET_ATTR_TYPE(offset)
+	AttrType t = GET_ATTR_TYPE(offset)
 
-	// convert from Attribute to SIValue
+	// free attribute if it's heap allocated
 	if(attr_type_heap_allocated[t]) {
+		// convert from Attribute to SIValue
 		SIValue v;
 		const void *attr = GET_ATTR_VALUE(offset);
 
@@ -411,15 +407,15 @@ static bool _AttributeSet_Remove
 	size_t n = RedisModule_MallocSize(_set);
 
 	// shift left by the size of the removed attribute
-	size_t shift_amount = sizeof(AttributeID)           +
-		                  sizeof(AttributeSet_AttrType) +
+	size_t shift_amount = sizeof(AttributeID)   +
+		                  sizeof(AttrType)      +
 						  attr_type_to_size[t];
 
-	// move the bytes all at once
+	// shift remaining attributes to fill the gap
     memmove(offset, offset + shift_amount,
 			((char*)_set + n) - (offset + shift_amount));
 
-	// shrink attribute set
+	// shrink attribute set memory
 	*set = rm_realloc(_set, n - shift_amount);
 
 	// attribute removed
@@ -497,7 +493,9 @@ SIValue AttributeSet_GetIdx
 	return v;
 }
 
-// extend attribute set by n bytes
+// extends the attribute set by `n` bytes
+// if the attribute set is NULL, a new attribute set is allocated
+// returns the updated attribute set
 static AttributeSet AttributeSet_Grow
 (
 	AttributeSet *set,  // set to update
@@ -516,7 +514,7 @@ static AttributeSet AttributeSet_Grow
 		_set->attr_count = 0;
 	} else {
 		n += RedisModule_MallocSize(_set);
-		_set = rm_realloc(_set, n);
+		*set = rm_realloc(_set, n);
 	}
 
 	return _set;
@@ -538,8 +536,8 @@ void AttributeSet_AddNoClone
 		return;
 	}
 
-	// validate value type
-	// value must be a valid property type
+	// validate values type
+	// values must be of a valid property type
 #ifdef RG_DEBUG
 	SIType t = SI_VALID_PROPERTY_VALUE;
 	if(allowNull == true) {
@@ -560,13 +558,13 @@ void AttributeSet_AddNoClone
 	// compute number of required bytes
 	//--------------------------------------------------------------------------
 
-	AttributeSet_AttrType ats[n];
+	AttrType ats[n];
 	size_t nbytes = 0;
 	for(ushort i = 0; i < n; i++) {
-		AttributeSet_AttrType at = SIValue_To_AttrType(values + i);
+		AttrType at = SIValue_To_AttrType(values + i);
 		nbytes += attr_type_to_size[at] +
 				  sizeof(AttributeID)   +
-				  sizeof(AttributeSet_AttrType);
+				  sizeof(AttrType);
 		ats[i] = at;
 	}
 
@@ -601,44 +599,45 @@ void AttributeSet_AddNoClone
 
 		// store value
 		switch(ats[i]) {
-			case ATTR_VAL_TYPE_INT8:
+			case ATTR_TYPE_INT8:
+				*((int8_t*)offset) = values[i].longval;
 				*((int8_t*)offset) = values[i].longval;
 				break;
 
-			case ATTR_VAL_TYPE_INT16:
+			case ATTR_TYPE_INT16:
 				*((int16_t*)offset) = values[i].longval;
 				break;
 
-			case ATTR_VAL_TYPE_INT32:
+			case ATTR_TYPE_INT32:
 				*((int32_t*)offset) = values[i].longval;
 				break;
 
-			case ATTR_VAL_TYPE_INT64:
+			case ATTR_TYPE_INT64:
 				*((int64_t*)offset) = values[i].longval;
 				break;
 
-			case ATTR_VAL_TYPE_NULL:
-			case ATTR_VAL_TYPE_BOOL_TRUE:
-			case ATTR_VAL_TYPE_BOOL_FALSE:
+			case ATTR_TYPE_NULL:
+			case ATTR_TYPE_BOOL_TRUE:
+			case ATTR_TYPE_BOOL_FALSE:
 				break;
 
-			case ATTR_VAL_TYPE_FLOAT:
+			case ATTR_TYPE_FLOAT:
 				*((float*)offset) = values[i].doubleval;
 				break;
 
-			case ATTR_VAL_TYPE_DOUBLE:
+			case ATTR_TYPE_DOUBLE:
 				*((double*)offset) = values[i].doubleval;
 				break;
 
-			case ATTR_VAL_TYPE_MAP:
-			case ATTR_VAL_TYPE_ARRAY:
-			case ATTR_VAL_TYPE_POINT:
-			case ATTR_VAL_TYPE_STRING:
-			case ATTR_VAL_TYPE_VECTOR_F32:
+			case ATTR_TYPE_MAP:
+			case ATTR_TYPE_ARRAY:
+			case ATTR_TYPE_POINT:
+			case ATTR_TYPE_STRING:
+			case ATTR_TYPE_VECTOR_F32:
 				*((void**)offset) = values[i].ptrval;
 				break;
 
-			case ATTR_VAL_TYPE_INVALID:
+			case ATTR_TYPE_INVALID:
 				assert(false);
 				break;
 		}
