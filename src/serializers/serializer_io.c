@@ -591,14 +591,15 @@ void SerializerIO_Free
 	SerializerIO _io = *io;
 
 	// free internal buffer
-	if(_io->encoder == true &&
-       _io->WriteUnsigned == BufferSerializerIO_WriteUnsigned) {
+	if(_io->WriteUnsigned == BufferSerializerIO_WriteUnsigned) {
 
 		// free bufferedIO
 		BufferedIO *buffer_io = (BufferedIO*)_io->stream;
 
-		// flush remaining content before free
-		_flush_buffer(buffer_io);
+		if(_io->encoder == true) {
+			// flush remaining content before free
+			_flush_buffer(buffer_io);
+		}
 
 		// free buffer io
 		_BufferedIO_Free((BufferedIO**) &_io->stream);
