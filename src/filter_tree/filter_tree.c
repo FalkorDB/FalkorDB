@@ -552,19 +552,19 @@ bool FilterTree_FiltersAlias
 	const FT_FilterNode *root,
 	const cypher_astnode_t *ast
 ) {
-	// Collect all filtered variables.
+	// collect all filtered variables
 	rax *filtered_variables = FilterTree_CollectModified(root);
 	raxIterator it;
 	raxStart(&it, filtered_variables);
-	// Iterate over all keys in the rax.
+	// iterate over all keys in the rax
 	raxSeek(&it, "^", NULL, 0);
 	bool alias_is_filtered = false;
 	while(raxNext(&it)) {
-		// Build string on the stack to add null terminator.
+		// build string on the stack to add null terminator
 		char variable[it.key_len + 1];
 		memcpy(variable, it.key, it.key_len);
 		variable[it.key_len] = 0;
-		// Check if the filtered variable is an alias.
+		// check if the filtered variable is an alias
 		if(AST_IdentifierIsAlias(ast, variable)) {
 			alias_is_filtered = true;
 			break;

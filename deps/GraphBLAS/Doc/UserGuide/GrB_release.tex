@@ -5,6 +5,22 @@
 
 \begin{itemize}
 
+\item Mar 20, 2025: version 10.0.2
+
+    \begin{itemize}
+    \item performance:  improved the performance of \verb'GrB_setElement'
+        when many entries are inserted into a matrix that is initially empty.
+    \item (61) bug fix: \verb'GxB_Serialized_get_Scalar' declared twice in
+        \verb'GraphBLAS.h'; caught by Erik Welch.
+    \end{itemize}
+
+\item Mar 6, 2025: version 10.0.1
+
+    \begin{itemize}
+    \item (60) bug fix: one of the \verb'GrB_mxm' kernels (saxpy4) can hit a
+    segfault for user-defined types, in the JIT kernels.  Caught by Gabe Gomez.
+    \end{itemize}
+
 \item Mar 1, 2025: version 10.0.0
 
     \begin{itemize}

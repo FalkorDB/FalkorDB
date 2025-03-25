@@ -135,8 +135,8 @@ static OpResult SortInit(OpBase *opBase) {
 	op->record_offsets = array_new(uint, comparison_count);
 	for(uint i = 0; i < comparison_count; i ++) {
 		int record_idx;
-		bool aware = OpBase_Aware((OpBase *)op, op->exps[i]->resolved_name,
-			&record_idx);
+		bool aware = OpBase_AliasMapping((OpBase *)op,
+				op->exps[i]->resolved_name, &record_idx);
 		ASSERT(aware);
 		array_append(op->record_offsets, record_idx);
 	}

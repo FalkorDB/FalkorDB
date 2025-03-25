@@ -106,7 +106,7 @@ entries, whose type is given by the \verb'type' parameter.  The size of
 \verb'V' becomes \verb'n', and its type is changed to match the \verb'type'
 parameter.
 
-After this method returns, \verb'GrB_Vector_size' and \verb'GrB_Vector_nvals' 
+After this method returns, \verb'GrB_Vector_size' and \verb'GrB_Vector_nvals'
 will both return \verb'n'.  That is, the vector \verb'V' is a dense vector.
 It is held in the \verb'GxB_FULL' data format, in \verb'GrB_COLMAJOR'
 orientation.
@@ -234,7 +234,7 @@ below:
 
 \begin{itemize}
 \item \verb'nrows': the number of rows of a matrix, or the size of a vector.
-\item \verb'ncols': the number of columns of a matrix, or 1 for a vector. 
+\item \verb'ncols': the number of columns of a matrix, or 1 for a vector.
 \item \verb'nrows_nonempty':  if known, this value must give the exact number
     of non-empty rows of a matrix or vector (that is, the number of
     rows have at least one entry).  If not known, this value must be
@@ -258,7 +258,7 @@ below:
 \item \verb'jumbled': if true, the indices in any given row (if in row-major
     orientation) or column (if column-major) may appear out of order.
     Otherwise, they must appear in ascending order.
-    A jumbled matrix or vector must not have any read-only components. 
+    A jumbled matrix or vector must not have any read-only components.
 \end{itemize}
 
 The Container holds five dense \verb'GrB_Vector' objects that hold the primary
@@ -305,6 +305,10 @@ GrB_Info GxB_load_Matrix_from_Container     // GrB_Matrix <- GxB_Container
 \verb'GxB_load_Matrix_from_Container' moves all of the data from a
 \verb'GxB_Container' into a \verb'GrB_Matrix' in O(1) time.
 
+The container vectors \verb'p', \verb'h', and \verb'i' may be any signed or
+unsigned integer type of size 32 or 64 bits.  Any other types will result in
+an error.
+
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_load\_Vector\_from\_Container:} load a vector from a container}
 %-------------------------------------------------------------------------------
@@ -325,6 +329,11 @@ GrB_Info GxB_load_Vector_from_Container     // GrB_Vector <- GxB_Container
 
 \verb'GxB_load_Vector_from_Container' moves all of the data from a
 \verb'GxB_Container' into a \verb'GrB_Vector' in O(1) time.
+
+The container format may not be \verb'GxB_HYPERSPARSE'.
+The container vectors \verb'p' and \verb'i' may be any signed or
+unsigned integer type of size 32 or 64 bits.  Any other types will result in
+an error.
 
 \newpage
 %-------------------------------------------------------------------------------
@@ -347,6 +356,9 @@ GrB_Info GxB_unload_Matrix_into_Container   // GrB_Matrix -> GxB_Container
 \verb'GxB_unload_Matrix_into_Container': moves all of the data from
 a \verb'GrB_Matrix' into a \verb'GxB_Container' in O(1) time.
 
+The container vector \verb'p' is unloaded as \verb'GrB_UINT32' or \verb'GrB_UINT64',
+while \verb'h', and \verb'i' are unloaded as \verb'GrB_INT32' or \verb'GrB_INT64'.
+
 %-------------------------------------------------------------------------------
 \subsubsection{{\sf GxB\_unload\_Vector\_into\_Container:} unload a vector into a container}
 %-------------------------------------------------------------------------------
@@ -367,12 +379,15 @@ GrB_Info GxB_unload_Vector_into_Container   // GrB_Vector -> GxB_Container
 \verb'GxB_unload_Vector_into_Container': moves all of the data from
 a \verb'GrB_Vector' into a \verb'GxB_Container' in O(1) time.
 
+The container vector \verb'p' is unloaded as \verb'GrB_UINT32' or \verb'GrB_UINT64',
+while \verb'i' is unloaded as \verb'GrB_INT32' or \verb'GrB_INT64'.
+
 %-------------------------------------------------------------------------------
 \subsubsection{Container example: unloading/loading an entire matrix into C arrays}
 %-------------------------------------------------------------------------------
 \label{container_example}
 
-The following example unloads a 
+The following example unloads a
 \verb'GrB_Matrix A' of size \verb'nrows'-by-\verb'ncols',
 with \verb'nvals' entries, of type \verb'xtype'.  The example takes will take O(1) time,
 and the only \verb'mallocs' are in \verb'GxB_Container_new' (which can be reused for
@@ -505,7 +520,7 @@ for (...)
     ...
     GxB_unload_Vector_into_Container (Delta, Container, desc) ;
     GxB_Matrix_build_Vector (DeltaMatrix, Container->i, J_vector,
-        Container->x, GrB_PLUS_FP32, NULL) :
+        Container->x, GrB_PLUS_FP32, NULL) ;
     GxB_load_Vector_from_Container (Delta, Container, desc) ;
 }
 GxB_Container_free (&Container) ;
