@@ -277,10 +277,8 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 		// Retrieve the property.
 		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
 		if(value->allocation == M_DISK) {
-			char node_key[11];
-			*(uint64_t *)node_key = ENTITY_GET_ID(graph_entity);
-			*(AttributeID *)(node_key + 8) = prop_idx;
-			node_key[10] = '\0';
+			char node_key[ROCKSDB_KEY_SIZE];
+			RocksDB_set_key(node_key, ENTITY_GET_ID(graph_entity), prop_idx);
 			return SI_TransferStringVal(RocksDB_get(node_key));
 		}
 		return SI_ConstValue(value);

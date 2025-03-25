@@ -124,6 +124,10 @@ jobs:
       - name: Build
         run: |
           rustup default stable
+          git clone https://github.com/lz4/lz4.git && cd lz4 && make -j && make install && cd ..
+          # git clone https://github.com/madler/zlib.git && cd zlib && ./configure && make -j && make install && cd ..
+          git clone https://github.com/google/snappy.git && cd snappy && git submodule update --init && mkdir build && cd build && cmake ../ -DCMAKE_POSITION_INDEPENDENT_CODE=on && make -j && make install && cd ../..
+          git clone https://github.com/facebook/rocksdb.git && cd rocksdb && make static_lib EXTRA_CXXFLAGS=-fPIC -j8 && make install && cd ..
           make build
 
       # ℹ️ Command-line programs to run using the OS shell.

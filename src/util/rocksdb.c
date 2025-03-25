@@ -4,8 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <rocksdb/c.h>
 #include "redismodule.h"
+#include "rmalloc.h"
+#include <rocksdb/c.h>
 
 #define ROCKSDB_PATH_BASE "/tmp/rocksdb_falkordb"
 
@@ -80,6 +81,8 @@ char *RocksDB_get(const char *key) {
 	size_t len;
 	char *returned_value = rocksdb_get(db, readoptions, key, strlen(key), &len, &err);
 	ASSERT(!err);
+	char *res = rm_strdup(returned_value);
+	free(returned_value);
 	return returned_value;
 }
 
