@@ -512,6 +512,25 @@ SerializerIO SerializerIO_FromRedisModuleIO
 	return serializer;
 }
 
+// free BufferedIO
+void _BufferedIO_Free
+(
+	BufferedIO **io
+) {
+	ASSERT(io != NULL && *io != NULL);
+
+	BufferedIO *_io = *io;
+
+	// free internal buffer if allocated
+	if(_io->buffer != NULL) {
+		rm_free(_io->buffer);
+	}
+
+	// free buffer io and nullify
+	rm_free(_io);
+	*io = NULL;
+}
+
 // create a buffered serializer which uses RedisIO
 SerializerIO SerializerIO_FromBufferedRedisModuleIO
 (
@@ -574,9 +593,15 @@ void SerializerIO_Free
 	// free internal buffer
 	if(_io->encoder == true &&
        _io->WriteUnsigned == BufferSerializerIO_WriteUnsigned) {
+
+		// free bufferedIO
+		BufferedIO *buffer_io = (BufferedIO*)_io->stream;
+
 		// flush remaining content before free
-		_flush_buffer(_io->stream);
-		rm_free(_io->stream);
+		_flush_buffer(buffer_io);
+
+		// free buffer io
+		_BufferedIO_Free((BufferedIO**) &_io->stream);
 	}
 
 	rm_free(*io);
