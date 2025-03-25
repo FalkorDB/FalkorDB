@@ -112,13 +112,11 @@ bool USE_STRING_POOL = false; // global flag to enable/disable string pooling
 inline static bool use_string_pool(void) {
 	if(unlikely(USE_STRING_POOL)) {
 		// string pool is avaialble
-		// use it only when running other either redis main thread
-		// or under a writer thread
-		pthread_t tid = pthread_self();
-		extern pthread_t MAIN_THREAD_ID;    // redis main thread ID
-		extern pthread_t WRITER_THREAD_ID;  // writer thread ID
-		return (unlikely(pthread_equal(tid, MAIN_THREAD_ID)   != 0 ||
-					     pthread_equal(tid, WRITER_THREAD_ID) != 0));
+		// use it only when running under a thread which has access to it
+		// this includes redis main thread and the single writer thread
+		extern pthread_key_t _tlsStringPool;
+		bool can_access = (pthread_getspecific(_tlsStringPool) != NULL);
+		return can_access;
 	}
 
 	return false;
@@ -140,7 +138,7 @@ SIValue SI_DuplicateStringVal
 	// try to reuse string if string-pool is enabled
 	if(unlikely(use_string_pool())) {
 		StringPool pool = Globals_Get_StringPool();
-		char *str = StringPool_add(pool, s);
+		char *str = StringPool_rent(pool, s);
 
 		return (SIValue) {
 			.stringval = str, .type = T_STRING, .allocation = M_SELF
@@ -159,7 +157,7 @@ SIValue SI_TransferStringVal
 	// try to reuse string if string-pool is enabled
 	if(unlikely(use_string_pool())) {
 		StringPool pool = Globals_Get_StringPool();
-		char *str = StringPool_addNoClone(pool, s);
+		char *str = StringPool_rentNoClone(pool, s);
 
 		// free in case of duplication
 		if(str != s) {
@@ -185,7 +183,7 @@ static void SI_StringValFree
 
 	if(unlikely(use_string_pool())) {
 		StringPool string_pool = Globals_Get_StringPool();
-		StringPool_remove(string_pool, s->stringval);
+		StringPool_return(string_pool, s->stringval);
 	} else {
 		rm_free(s->stringval);
 	}
@@ -1035,7 +1033,7 @@ void SIValue_ToDisk
 			RocksDB_put(writebatch, node_key, v->stringval);
 			v->allocation = M_DISK;
 			if(use_string_pool()) {
-				StringPool_remove(Globals_Get_StringPool(), v->stringval);
+				StringPool_return(Globals_Get_StringPool(), v->stringval);
 			} else {
 				rm_free(v->stringval);
 			}

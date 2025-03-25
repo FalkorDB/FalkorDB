@@ -318,7 +318,7 @@ class testLoadRemoteCSV():
         self.env, self.db = Env(moduleArgs=f"IMPORT_FOLDER {IMPORT_DIR}")
 
         # skip test if we're running under Valgrind
-        if VALGRIND or SANITIZER != "":
+        if VALGRIND or SANITIZER:
             self.env.skip() # libcrypto.so seems to crash when running under sanitizer
 
         self.graph = self.db.select_graph(GRAPH_ID_REMOTE)

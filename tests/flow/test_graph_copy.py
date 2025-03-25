@@ -241,7 +241,7 @@ class testGraphCopy():
 
     def test_08_replicated_copy(self):
         # skip test if we're running under Valgrind or sanitizer
-        if VALGRIND or SANITIZER != "":
+        if VALGRIND or SANITIZER:
             self.env.skip() # valgrind is not working correctly with replication
 
         # make sure the GRAPH.COPY command is replicated

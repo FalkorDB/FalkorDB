@@ -16,8 +16,7 @@
 static threadpool _readers_thpool = NULL;  // readers
 static threadpool _writers_thpool = NULL;  // writers
 
-pthread_t MAIN_THREAD_ID;    // redis main thread ID
-pthread_t WRITER_THREAD_ID;  // writer thread ID
+pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
 int ThreadPools_Init
 (
@@ -44,10 +43,6 @@ int ThreadPools_Init
 	//--------------------------------------------------------------------------
 
 	MAIN_THREAD_ID = pthread_self();  // it is the main thread who's running
-
-	uint n = 1;
-	thpool_collect_thread_ids(_writers_thpool, &WRITER_THREAD_ID, &n);
-	ASSERT(n == 1);
 
 	return res;
 }

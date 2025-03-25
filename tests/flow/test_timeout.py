@@ -12,7 +12,7 @@ class testQueryTimeout():
         self.env, self.db = Env(moduleArgs="TIMEOUT 1000")
 
         # skip test if we're running under Valgrind
-        if VALGRIND or SANITIZER != "":
+        if VALGRIND or SANITIZER:
             self.env.skip() # valgrind is not working correctly with replication
 
         self.graph = self.db.select_graph(GRAPH_ID)
