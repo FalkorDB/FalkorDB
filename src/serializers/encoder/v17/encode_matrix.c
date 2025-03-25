@@ -207,10 +207,6 @@ void RdbSaveRelationMatrices_v17
 
 	int n = Graph_RelationTypeCount(g);
 
-	// TODO: should we write matrix count ?
-	// write number of matrices
-	// SerializerIO_WriteUnsigned(rdb, n);
-
 	for(RelationID i = 0; i < n; i++) {
 		// write relation ID
 		SerializerIO_WriteUnsigned(rdb, i);
