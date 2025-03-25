@@ -279,8 +279,9 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 		if(value->allocation == M_DISK) {
 			char node_key[ROCKSDB_KEY_SIZE];
 			RocksDB_set_key(node_key, ENTITY_GET_ID(graph_entity), prop_idx);
-			SIValue res = SI_DuplicateStringVal(RocksDB_get(node_key));
-			free(value);
+			char *str = RocksDB_get(node_key);
+			SIValue res = SI_DuplicateStringVal(str);
+			free(str);
 			return res;
 		}
 		return SI_ConstValue(value);
