@@ -115,7 +115,7 @@ inline static bool use_string_pool(void) {
 		// use it only when running under a thread which has access to it
 		// this includes redis main thread and the single writer thread
 		extern pthread_key_t _tlsStringPool;
-		bool can_access = (bool)pthread_getspecific(_tlsStringPool);
+		bool can_access = (pthread_getspecific(_tlsStringPool) != NULL);
 		return can_access;
 	}
 

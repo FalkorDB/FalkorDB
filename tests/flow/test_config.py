@@ -45,7 +45,7 @@ class testConfig(FlowTestsBase):
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
-                ("DEDUPLICATE_STRINGS", 1)
+                ("DEDUPLICATE_STRINGS", 0)
         ]
 
         for i, config in enumerate(response):

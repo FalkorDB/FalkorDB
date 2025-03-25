@@ -90,7 +90,7 @@
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
 #define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
-#define DEDUPLICATE_STRINGS_DEFAULT        true
+#define DEDUPLICATE_STRINGS_DEFAULT        false
 
 // configuration object
 typedef struct {
