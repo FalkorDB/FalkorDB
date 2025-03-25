@@ -179,7 +179,7 @@ static void EffectsBuffer_WriteSIValue
 				RocksDB_set_key(node_key, node_id, attr_id);
 				char *str = RocksDB_get(node_key);
 				EffectsBuffer_WriteString(str, buff);
-				rm_free(str);
+				free(str);
 				return;
 
 			}

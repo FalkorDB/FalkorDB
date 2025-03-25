@@ -297,7 +297,7 @@ RSDoc *Index_IndexGraphEntity
 				RediSearch_DocumentAddFieldString(doc, field->range_name,
 						str, strlen(str), RSFLDTYPE_TAG);
 				if(v->allocation == M_DISK) {
-					rm_free(str);
+					free(str);
 				}
 			} else if(t & (SI_NUMERIC | T_BOOL)) {
 				double d = SI_GET_NUMERIC(*v);

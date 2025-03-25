@@ -83,7 +83,7 @@ static void _RdbSaveSIValue
 				RocksDB_set_key(node_key, node_id, attr_id);
 				char *str = RocksDB_get(node_key);
 				SerializerIO_WriteBuffer(rdb, str, strlen(str) + 1);
-				rm_free(str);
+				free(str);
 				return;
 			}
 			SerializerIO_WriteBuffer(rdb, v->stringval, strlen(v->stringval) + 1);

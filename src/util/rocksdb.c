@@ -81,8 +81,6 @@ char *RocksDB_get(const char *key) {
 	size_t len;
 	char *returned_value = rocksdb_get(db, readoptions, key, strlen(key), &len, &err);
 	ASSERT(!err);
-	char *res = rm_strdup(returned_value);
-	free(returned_value);
 	return returned_value;
 }
 

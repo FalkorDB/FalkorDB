@@ -38,7 +38,7 @@ static void _ResultSet_VerboseReplyWithSIValue
 			RocksDB_set_key(node_key, node_id, attr_id);
 			char *str = RocksDB_get(node_key);
 			RedisModule_ReplyWithStringBuffer(ctx, str, strlen(str));
-			rm_free(str);
+			free(str);
 		} else {
 			RedisModule_ReplyWithStringBuffer(ctx, v.stringval, strlen(v.stringval));
 		}
