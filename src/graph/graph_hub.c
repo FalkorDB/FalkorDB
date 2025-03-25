@@ -39,19 +39,10 @@ void CreateNode
 		EffectsBuffer_AddCreateNodeEffect(eb, n, labels, label_count);
 	}
 
-	char node_key[ROCKSDB_KEY_SIZE];
 	// add attributes to node_value buffer
 	for(uint i = 0; i < AttributeSet_Count(set); i++) {
 		Attribute *attr = set->attributes + i;
-		if(SI_TYPE(attr->value) == T_STRING) {
-			if(strnlen(attr->value.stringval, ROCKSDB_MIN_STR_LEN) == ROCKSDB_MIN_STR_LEN) {
-				RocksDB_set_key(node_key, ENTITY_GET_ID(n), attr->id);
-				RocksDB_put(writebatch, node_key, attr->value.stringval);
-				attr->value.allocation = M_DISK;
-				rm_free(attr->value.stringval);
-				attr->value.stringval = NULL;
-			}
-		}
+		SIValue_ToDisk(&attr->value, ENTITY_GET_ID(n), attr->id, writebatch);
 	}
 }
 

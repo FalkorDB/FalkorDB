@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include "xxhash.h"
+#include "util/rocksdb.h"
 
 /* Type defines the supported types by the system. The types are powers
  * of 2 so they can be used in bitmasks of matching types.
@@ -215,6 +216,15 @@ XXH64_hash_t SIValue_HashCode(SIValue v);
 SIValue SIValue_FromBinary
 (
 	FILE *stream  // stream to read value from
+);
+
+// writes SIValue to rocksdb if needed
+void SIValue_ToDisk
+(
+	SIValue *v,                       // value to write to disk
+	uint64_t node_id,                 // node id
+	unsigned short attr_id,           // attribute id
+	rocksdb_writebatch_t *writebatch  // writebatch to write to
 );
 
 /* Free an SIValue's internal property if that property is a heap allocation owned

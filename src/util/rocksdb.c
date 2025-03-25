@@ -6,7 +6,6 @@
 #include <string.h>
 #include "redismodule.h"
 #include "rmalloc.h"
-#include <rocksdb/c.h>
 
 #define ROCKSDB_PATH_BASE "/tmp/rocksdb_falkordb"
 
@@ -15,9 +14,14 @@ rocksdb_writeoptions_t *writeoptions;
 rocksdb_readoptions_t *readoptions;
 rocksdb_flushoptions_t *flush_options;
 
-void RocksDB_set_key(char *node_key, NodeID node_id, AttributeID attr_id) {
+void RocksDB_set_key
+(
+	char *node_key,
+	uint64_t node_id,
+	unsigned short attr_id
+) {
 	*(uint64_t *)node_key = node_id;
-	*(AttributeID *)(node_key + 8) = attr_id;
+	*(unsigned short *)(node_key + 8) = attr_id;
 	node_key[10] = '\0';
 }
 
@@ -57,7 +61,12 @@ rocksdb_writebatch_t *RocksDB_create_batch() {
 	return writebatch;
 }
 
-void RocksDB_put(rocksdb_writebatch_t *writebatch, const char *key, const char *value) {
+void RocksDB_put
+(
+	rocksdb_writebatch_t *writebatch,
+	const char *key,
+	const char *value
+) {
 	char *err = NULL;
 	if(writebatch) {
 		rocksdb_writebatch_put(writebatch, key, strlen(key), value, strlen(value) + 1);
@@ -67,7 +76,10 @@ void RocksDB_put(rocksdb_writebatch_t *writebatch, const char *key, const char *
 	ASSERT(!err);
 }
 
-void RocksDB_put_batch(rocksdb_writebatch_t *writebatch) {
+void RocksDB_put_batch
+(
+	rocksdb_writebatch_t *writebatch
+) {
 	char *err = NULL;
 	rocksdb_write(db, writeoptions, writebatch, &err);
 	ASSERT(!err);
@@ -76,7 +88,10 @@ void RocksDB_put_batch(rocksdb_writebatch_t *writebatch) {
 	ASSERT(!err);
 }
 
-char *RocksDB_get(const char *key) {
+char *RocksDB_get
+(
+	const char *key
+) {
 	char *err = NULL;
 	size_t len;
 	char *returned_value = rocksdb_get(db, readoptions, key, strlen(key), &len, &err);
@@ -84,7 +99,10 @@ char *RocksDB_get(const char *key) {
 	return returned_value;
 }
 
-void print_info(char *property) {
+void print_info
+(
+	char *property
+) {
 	char* value = rocksdb_property_value(db, property);
     if (value != NULL) {
         RedisModule_Log(NULL, "notice", "%s: %s\n", property, value);
