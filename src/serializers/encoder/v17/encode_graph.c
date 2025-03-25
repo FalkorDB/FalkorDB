@@ -97,10 +97,10 @@ static PayloadInfo _StatePayloadInfo
 			// can be removed once encoder / decoder version 15 is removed.
 			break;
 		case ENCODE_STATE_LABELS_MATRICES:
-			required_entities_count = Graph_LabelTypeCount(g);
+			required_entities_count = 1;  // all matrices resides in a one key
 			break;
 		case ENCODE_STATE_RELATION_MATRICES:
-			required_entities_count = Graph_RelationTypeCount(g);
+			required_entities_count = 1;  // all matrices resides in a one key
 			break;
 		case ENCODE_STATE_ADJ_MATRIX:
 			required_entities_count = 1;

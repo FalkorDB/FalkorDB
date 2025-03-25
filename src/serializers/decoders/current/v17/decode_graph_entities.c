@@ -157,16 +157,24 @@ void RdbLoadDeletedNodes_v17
 	const uint64_t deleted_node_count  // number of deleted nodes
 ) {
 	// Format:
-	// node id X N
+	// node ids
 
 	uint64_t prev_deleted_node_count = Graph_DeletedNodeCount(g);
 
+	// read node deleted IDs list from the RDB
+	size_t n;
+	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
+
+	ASSERT((n / sizeof(NodeID)) == deleted_node_count);
+
+	// mark each node id as deleted
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
-		NodeID id = SerializerIO_ReadUnsigned(rdb);
+		NodeID id = deleted_nodes_list[i];
 		Serializer_Graph_MarkNodeDeleted(g, id);
 	}
+	rm_free(deleted_nodes_list);
 
-	// read encoded deleted node count and validate
+	// validate deleted node count is as expected
 	ASSERT(deleted_node_count + prev_deleted_node_count ==
 			Graph_DeletedNodeCount(g));
 }
@@ -211,16 +219,24 @@ void RdbLoadDeletedEdges_v17
 	const uint64_t deleted_edge_count  // number of deleted edges
 ) {
 	// Format:
-	// edge id X N
+	// edge ids
 
 	uint64_t prev_deleted_edge_count = Graph_DeletedEdgeCount(g);
 
+	// read edge deleted IDs list from the RDB
+	size_t n;
+	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
+
+	ASSERT((n / sizeof(EdgeID)) == deleted_edge_count);
+
+	// mark each edge id as deleted
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
-		EdgeID id = SerializerIO_ReadUnsigned(rdb);
+		EdgeID id = deleted_edges_list[i];
 		Serializer_Graph_MarkEdgeDeleted(g, id);
 	}
+	rm_free(deleted_edges_list);
 
-	// read encoded deleted edge count and validate
+	// validate deleted edge count is as expected
 	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
 			Graph_DeletedEdgeCount(g));
 }
