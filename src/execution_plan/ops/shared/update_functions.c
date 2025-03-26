@@ -326,6 +326,10 @@ void EvalEntityUpdates
 				}
 
 				AttributeID attr_id = FindOrAddAttribute(gc, key.stringval, true);
+				SIValue *v = AttributeSet_Get(*entity->attributes, attr_id);
+				if(v->allocation == M_DISK) {
+					*v = SIValue_FromDisk(ENTITY_GET_ID(entity), attr_id);
+				}
 				// TODO: would have been nice we just sent n = {v:2}
 				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, value))
 				{
@@ -350,6 +354,10 @@ void EvalEntityUpdates
 					default:
 						assert("unknown change type value" && false);
 						break;
+				}
+				if(v->allocation == M_DISK) {
+					free(v->stringval);
+					v->stringval = NULL;
 				}
 			}
 
