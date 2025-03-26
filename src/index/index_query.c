@@ -717,7 +717,7 @@ RSQNode *Index_BuildUniqueConstraintQuery
 			}
 			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
 			RediSearch_QueryNodeAddChild(node, child);
-			if(v->allocation == M_SELF) {
+			if(v->allocation == M_DISK) {
 				free(v->stringval);
 				v->stringval = NULL;
 			}

@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 20 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -47,7 +47,7 @@ class testConfig(FlowTestsBase):
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("DEDUPLICATE_STRINGS", 0),
                 ("USE_DISK_STORAGE", 0),
-                ("VALUES_SPILL_THRESHOLD", 64)
+                ("VALUE_SPILL_THRESHOLD", 64)
         ]
 
         for i, config in enumerate(response):
@@ -260,7 +260,7 @@ class testConfig(FlowTestsBase):
         expected_response = 0
         self.env.assertEqual(response, expected_response)
 
-        response = self.db.config_get("VALUES_SPILL_THRESHOLD")
+        response = self.db.config_get("VALUE_SPILL_THRESHOLD")
         expected_response = 64
         self.env.assertEqual(response, expected_response)
 
