@@ -106,23 +106,20 @@ static void _RdbSaveSIValue
 	}
 }
 
-// TODO: consider writting the entire array at once using write buffer
 // encode deleted entities IDs
 static inline void _RdbSaveDeletedEntities_v17
 (
-	SerializerIO rdb,
-	GraphContext *gc,
-	uint64_t n,
-	uint64_t offset,
-	uint64_t *deleted_id_list
+	SerializerIO rdb,          // RDB
+	uint64_t n,                // number of deleted entities IDs to encode
+	uint64_t offset,           // offset into deleted_id_list
+	uint64_t *deleted_id_list  // list of deleted IDs
 ) {
 	ASSERT(n > 0);
 	ASSERT(deleted_id_list != NULL);
 
-	// iterated over the required range in the datablock deleted items
-	for(uint64_t i = offset; i < offset + n; i++) {
-		SerializerIO_WriteUnsigned(rdb, deleted_id_list[i]);
-	}
+	// dump the entire list[offset..offset+n] into the RDB as a buffer
+	SerializerIO_WriteBuffer(rdb, (const char*)(deleted_id_list + offset),
+			n * sizeof(uint64_t));
 }
 
 // encode deleted node IDs
@@ -140,7 +137,7 @@ void RdbSaveDeletedNodes_v17
 
 	// get deleted nodes list
 	uint64_t *deleted_nodes_list = Serializer_Graph_GetDeletedNodesList(gc->g);
-	_RdbSaveDeletedEntities_v17(rdb, gc, n, offset, deleted_nodes_list);
+	_RdbSaveDeletedEntities_v17(rdb, n, offset, deleted_nodes_list);
 }
 
 // encode deleted edges IDs
@@ -158,7 +155,7 @@ void RdbSaveDeletedEdges_v17
 
 	// get deleted edges list
 	uint64_t *deleted_edges_list = Serializer_Graph_GetDeletedEdgesList(gc->g);
-	_RdbSaveDeletedEntities_v17(rdb, gc, n, offset, deleted_edges_list);
+	_RdbSaveDeletedEntities_v17(rdb, n, offset, deleted_edges_list);
 }
 
 // encode graph entities

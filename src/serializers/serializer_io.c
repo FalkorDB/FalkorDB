@@ -240,7 +240,7 @@ static inline bool _accommodate
 	ASSERT(n > 0);
 
 	// flush in case there's not enough room in buffer
-	if( (buffer->cap - buffer->count) < n) {
+	if((buffer->cap - buffer->count) < n) {
 		_flush_buffer(buffer);
 
 		// once flushed we can accommodate only if n <= buffer's capacity
@@ -512,6 +512,25 @@ SerializerIO SerializerIO_FromRedisModuleIO
 	return serializer;
 }
 
+// free BufferedIO
+void _BufferedIO_Free
+(
+	BufferedIO **io
+) {
+	ASSERT(io != NULL && *io != NULL);
+
+	BufferedIO *_io = *io;
+
+	// free internal buffer if allocated
+	if(_io->buffer != NULL) {
+		rm_free(_io->buffer);
+	}
+
+	// free buffer io and nullify
+	rm_free(_io);
+	*io = NULL;
+}
+
 // create a buffered serializer which uses RedisIO
 SerializerIO SerializerIO_FromBufferedRedisModuleIO
 (
@@ -572,11 +591,18 @@ void SerializerIO_Free
 	SerializerIO _io = *io;
 
 	// free internal buffer
-	if(_io->encoder == true &&
-       _io->WriteUnsigned == BufferSerializerIO_WriteUnsigned) {
-		// flush remaining content before free
-		_flush_buffer(_io->stream);
-		rm_free(_io->stream);
+	if(_io->WriteUnsigned == BufferSerializerIO_WriteUnsigned) {
+
+		// free bufferedIO
+		BufferedIO *buffer_io = (BufferedIO*)_io->stream;
+
+		if(_io->encoder == true) {
+			// flush remaining content before free
+			_flush_buffer(buffer_io);
+		}
+
+		// free buffer io
+		_BufferedIO_Free((BufferedIO**) &_io->stream);
 	}
 
 	rm_free(*io);
