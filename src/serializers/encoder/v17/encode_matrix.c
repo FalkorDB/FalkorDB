@@ -81,7 +81,6 @@ static void _EncodeTensors
 	ASSERT(info == GrB_SUCCESS);
 
 	info = GxB_rowIterator_seekRow(it, 0);
-
 	while(info != GxB_EXHAUSTED) {
 		// iterate over entries in T(i,:)
 		GrB_Index i = GxB_rowIterator_getRowIndex(it);
