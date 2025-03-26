@@ -2,7 +2,7 @@
 
 #include <rocksdb/c.h>
 
-#define ROCKSDB_KEY_SIZE 11
+#define ROCKSDB_KEY_SIZE 10
 
 void RocksDB_set_key
 (

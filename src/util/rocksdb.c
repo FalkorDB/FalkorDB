@@ -26,7 +26,6 @@ void RocksDB_set_key
 ) {
 	*(uint64_t *)node_key = node_id;
 	*(unsigned short *)(node_key + 8) = attr_id;
-	node_key[10] = '\0';
 }
 
 bool RocksDB_shouldWrite
