@@ -72,9 +72,9 @@ void RocksDB_put
 ) {
 	char *err = NULL;
 	if(writebatch) {
-		rocksdb_writebatch_put(writebatch, key, strlen(key), value, strlen(value) + 1);
+		rocksdb_writebatch_put(writebatch, key, ROCKSDB_KEY_SIZE, value, strlen(value) + 1);
 	} else {
-		rocksdb_put(db, writeoptions, key, strlen(key), value, strlen(value) + 1, &err);
+		rocksdb_put(db, writeoptions, key, ROCKSDB_KEY_SIZE, value, strlen(value) + 1, &err);
 	}
 	ASSERT(!err);
 }
@@ -97,7 +97,7 @@ char *RocksDB_get
 ) {
 	char *err = NULL;
 	size_t len;
-	char *returned_value = rocksdb_get(db, readoptions, key, strlen(key), &len, &err);
+	char *returned_value = rocksdb_get(db, readoptions, key, ROCKSDB_KEY_SIZE, &len, &err);
 	ASSERT(!err);
 	return returned_value;
 }
