@@ -275,9 +275,17 @@ RSDoc *Index_IndexGraphEntity
 			// value must be of type string
 			if(t == T_STRING) {
 				*doc_field_count += 1;
-
+				char *str = v->stringval;
+				if(v->allocation == M_DISK) {
+					char node_key[ROCKSDB_KEY_SIZE];
+					RocksDB_set_key(node_key, ENTITY_GET_ID(e), field->id);
+					str = RocksDB_get(node_key);
+				}
 				RediSearch_DocumentAddFieldString(doc, field->fulltext_name,
-						v->stringval, strlen(v->stringval), RSFLDTYPE_FULLTEXT);
+					str, strlen(str), RSFLDTYPE_FULLTEXT);
+				if(v->allocation == M_DISK) {
+					free(str);
+				}
 			}
 		}
 
