@@ -242,7 +242,7 @@ static void _ResultSet_BoltReplyWithPath
 
 	size_t indices = node_count + edge_count - 1;
 	bolt_reply_list(client, indices);
-	for(uint8_t i = 0; i < edge_count; i++) {
+	for(size_t i = 0; i < edge_count; i++) {
 		Edge *e = (Edge *)SIPath_GetRelationship(path, i).ptrval;
 		Node *n = (Node *)SIPath_GetNode(path, i).ptrval;
 		if(e->src_id == n->id) {
