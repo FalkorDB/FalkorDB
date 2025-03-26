@@ -181,6 +181,14 @@ size_t SIVector_ElementsByteSize
 	return SIVector_Dim(vector) * sizeof(float);
 }
 
+// returns number of bytes used to represent the entire vector
+size_t SIVector_ByteSize
+(
+	SIValue vector  // vector to get binary size of
+) {
+	return SIVector_ElementsByteSize(vector) + sizeof(SIVector);
+}
+
 // computes the euclidean distance between two vectors
 // distance = sqrt(sum((a[i] - b[i])^2))
 float SIVector_EuclideanDistance

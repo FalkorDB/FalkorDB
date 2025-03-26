@@ -28,8 +28,8 @@ void test_serializer(void) {
 	TEST_ASSERT(fs_read_stream  != NULL);
 	TEST_ASSERT(fs_write_stream != NULL);
 	
-	SerializerIO reader = SerializerIO_FromStream(fs_read_stream);
-	SerializerIO writer = SerializerIO_FromStream(fs_write_stream);
+	SerializerIO reader = SerializerIO_FromStream(fs_read_stream, false);
+	SerializerIO writer = SerializerIO_FromStream(fs_write_stream, true);
 	TEST_ASSERT(reader != NULL);
 	TEST_ASSERT(writer != NULL);
 
@@ -108,8 +108,8 @@ void test_serializer_generic_write(void) {
 	TEST_ASSERT(fs_read_stream  != NULL);
 	TEST_ASSERT(fs_write_stream != NULL);
 	
-	SerializerIO reader = SerializerIO_FromStream(fs_read_stream);
-	SerializerIO writer = SerializerIO_FromStream(fs_write_stream);
+	SerializerIO reader = SerializerIO_FromStream(fs_read_stream, false);
+	SerializerIO writer = SerializerIO_FromStream(fs_write_stream, true);
 	TEST_ASSERT(reader != NULL);
 	TEST_ASSERT(writer != NULL);
 
