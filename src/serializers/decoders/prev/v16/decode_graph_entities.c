@@ -31,15 +31,9 @@ static SIValue _RdbLoadSIValue
 	case T_STRING: {
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		char *str = SerializerIO_ReadBuffer(rdb, NULL);
-		if(writebatch && strnlen(str, ROCKSDB_MIN_STR_LEN) == ROCKSDB_MIN_STR_LEN) {
-			char node_key[ROCKSDB_KEY_SIZE];
-			RocksDB_set_key(node_key, node_id, attr_id);
-			RocksDB_put(writebatch, node_key, str);
-			rm_free(str);
-			return (SIValue){.type = T_STRING, .stringval = NULL, .allocation = M_DISK};
-		}
-		return SI_TransferStringVal(str);
+		SIValue v = SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		SIValue_ToDisk(&v, node_id, attr_id, writebatch);
+		return v;
 	}
 	case T_BOOL:
 		return SI_BoolVal(SerializerIO_ReadSigned(rdb));

@@ -174,7 +174,7 @@ static void EffectsBuffer_WriteSIValue
 			EffectsBuffer_WriteSIArray(v, buff);
 			break;
 		case T_STRING: {
-			if(v->allocation == M_DISK) {
+			if(v->allocation == M_DISK && v->stringval == NULL) {
 				char node_key[ROCKSDB_KEY_SIZE];
 				RocksDB_set_key(node_key, node_id, attr_id);
 				char *str = RocksDB_get(node_key);

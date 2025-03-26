@@ -712,8 +712,15 @@ RSQNode *Index_BuildUniqueConstraintQuery
 
 		if(t == T_STRING) {
 			node  = RediSearch_CreateTagNode(rsIdx, field);
+			if(v->allocation == M_DISK) {
+				*v = SIValue_FromDisk(ENTITY_GET_ID(e), attr_id);
+			}
 			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
 			RediSearch_QueryNodeAddChild(node, child);
+			if(v->allocation == M_SELF) {
+				free(v->stringval);
+				v->stringval = NULL;
+			}
 		} else {
 			double d = SI_GET_NUMERIC((*v));
 			node = RediSearch_CreateNumericNode(rsIdx, field, d, d, true, true);

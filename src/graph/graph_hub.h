@@ -84,11 +84,12 @@ void DeleteEdges
 // add entity update operations to undo log
 void UpdateEntityProperties
 (
-	GraphContext *gc,             // graph context to update the entity
-	GraphEntity *ge,              // the entity to be updated
-	const AttributeSet set,       // attributes to update
-	GraphEntityType entity_type,  // the entity type (node/edge)
-	bool log                      // log this operation in undo-log
+	GraphContext *gc,                  // graph context to update the entity
+	GraphEntity *ge,                   // the entity to be updated
+	const AttributeSet set,            // attributes to update
+	GraphEntityType entity_type,       // the entity type (node/edge)
+	rocksdb_writebatch_t *writebatch,  // writebatch to write to
+	bool log                           // log this operation in undo-log
 );
 
 // update a node

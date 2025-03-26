@@ -102,7 +102,6 @@ int RedisModule_OnLoad
 	RedisModuleString **argv,
 	int argc
 ) {
-	RocksDB_init();
 	if(RedisModule_Init(ctx, "graph", REDISGRAPH_MODULE_VERSION,
 						REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
@@ -156,6 +155,7 @@ int RedisModule_OnLoad
 	if(!ThreadPools_Init())           return REDISMODULE_ERR;
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
+	RocksDB_init();
 
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPools_ReadersCount());

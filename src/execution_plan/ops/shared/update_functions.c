@@ -60,6 +60,7 @@ void CommitUpdates
 	MATRIX_POLICY policy = Graph_GetMatrixPolicy(gc->g);
 	Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
 
+	rocksdb_writebatch_t *batch = RocksDB_create_batch();
 	while((entry = HashTableNext(it)) != NULL) {
 		PendingUpdateCtx *update = HashTableGetVal(entry);
 
@@ -70,7 +71,7 @@ void CommitUpdates
 		
 		// update the attributes on the graph entity
 		UpdateEntityProperties(gc, update->ge, update->attributes,
-				type == ENTITY_NODE ? GETYPE_NODE : GETYPE_EDGE, true);
+				type == ENTITY_NODE ? GETYPE_NODE : GETYPE_EDGE, batch, true);
 		update->attributes = NULL;
 
 		if(type == ENTITY_NODE) {
@@ -115,6 +116,7 @@ void CommitUpdates
 	}
 	Graph_SetMatrixPolicy(gc->g, policy);
 	HashTableReleaseIterator(it);
+	RocksDB_put_batch(batch);
 }
 
 // build pending updates in the 'updates' array to match all
@@ -251,6 +253,11 @@ void EvalEntityUpdates
 
 			AttributeID attr_id = FindOrAddAttribute(gc, attribute, true);
 
+			SIValue *attr = AttributeSet_Get(*entity->attributes, attr_id);
+			if(attr->allocation == M_DISK) {
+				*attr = SIValue_FromDisk(ENTITY_GET_ID(entity), attr_id);
+			}
+
 			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
 			{
 				case CT_DEL:
@@ -366,6 +373,9 @@ void EvalEntityUpdates
 		for(uint j = 0; j < AttributeSet_Count(set); j++) {
 			AttributeID attr_id;
 			SIValue v = AttributeSet_GetIdx(set, j, &attr_id);
+			if(v.allocation == M_DISK) {
+				v = SIValue_FromDisk(ENTITY_GET_ID(ge), attr_id);
+			}
 
 			// simple assignment, no need to validate value
 			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))

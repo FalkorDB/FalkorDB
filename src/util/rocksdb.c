@@ -6,8 +6,12 @@
 #include <string.h>
 #include "redismodule.h"
 #include "rmalloc.h"
+#include "../configuration/config.h"
 
 #define ROCKSDB_PATH_BASE "/tmp/rocksdb_falkordb"
+
+bool use_disk_storage;
+uint64_t value_spill_threshold;
 
 rocksdb_t *db;
 rocksdb_writeoptions_t *writeoptions;
@@ -25,7 +29,18 @@ void RocksDB_set_key
 	node_key[10] = '\0';
 }
 
+bool RocksDB_shouldWrite
+(
+    const char *s
+) {
+	return use_disk_storage && 
+		strnlen(s, value_spill_threshold) == value_spill_threshold;
+}
+
 void RocksDB_init() {
+	Config_Option_get(Config_USE_DISK_STORAGE, &use_disk_storage);
+	if(!use_disk_storage) return;
+	Config_Option_get(Config_VALUE_SPILL_THRESHOLD, &value_spill_threshold);
 	char *path = NULL;
 	asprintf(&path, "%s_%d", ROCKSDB_PATH_BASE, getpid());
 	char cmd[100];
@@ -61,6 +76,8 @@ void RocksDB_init() {
 }
 
 rocksdb_writebatch_t *RocksDB_create_batch() {
+	if(!use_disk_storage) return NULL;
+
 	rocksdb_writebatch_t *writebatch = rocksdb_writebatch_create();
 	return writebatch;
 }
@@ -71,6 +88,8 @@ void RocksDB_put
 	const char *key,
 	const char *value
 ) {
+	if(!use_disk_storage) return;
+
 	char *err = NULL;
 	if(writebatch) {
 		rocksdb_writebatch_put(writebatch, key, ROCKSDB_KEY_SIZE, value, strlen(value) + 1);
@@ -80,10 +99,28 @@ void RocksDB_put
 	ASSERT(!err);
 }
 
+void RocksDB_del
+(
+    rocksdb_writebatch_t *writebatch,
+    const char *key
+) {
+	if(!use_disk_storage) return;
+
+	char *err = NULL;
+	if(writebatch) {
+		rocksdb_writebatch_delete(writebatch, key, ROCKSDB_KEY_SIZE);
+	} else {
+		rocksdb_delete(db, writeoptions, key, ROCKSDB_KEY_SIZE, &err);
+	}
+	ASSERT(!err);
+}
+
 void RocksDB_put_batch
 (
 	rocksdb_writebatch_t *writebatch
 ) {
+	if(!use_disk_storage) return;
+
 	char *err = NULL;
 	rocksdb_write(db, writeoptions, writebatch, &err);
 	ASSERT(!err);
@@ -96,6 +133,9 @@ char *RocksDB_get
 (
 	const char *key
 ) {
+	ASSERT(use_disk_storage);
+	if(!use_disk_storage) return NULL;
+
 	char *err = NULL;
 	size_t len;
 	char *returned_value = rocksdb_get(db, readoptions, key, ROCKSDB_KEY_SIZE, &len, &err);
@@ -117,6 +157,8 @@ void print_info
 }
 
 void RocksDB_info() {
+	if(!use_disk_storage) return;
+
 	print_info("rocksdb.block-cache-usage");
 	print_info("rocksdb.cur-size-all-mem-tables");
 	print_info("rocksdb.estimate-table-readers-mem");
@@ -124,6 +166,8 @@ void RocksDB_info() {
 }
 
 void RocksDB_cleanup() {
+	if(!use_disk_storage) return;
+
 	rocksdb_writeoptions_destroy(writeoptions);
 	rocksdb_readoptions_destroy(readoptions);
 	rocksdb_flushoptions_destroy(flush_options);

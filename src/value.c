@@ -1026,20 +1026,28 @@ void SIValue_ToDisk
 	unsigned short attr_id,           // attribute id
 	rocksdb_writebatch_t *writebatch  // writebatch to write to
 ) {
-	if(v->type == T_STRING) {
-		if(strnlen(v->stringval, ROCKSDB_MIN_STR_LEN) == ROCKSDB_MIN_STR_LEN) {
-			char node_key[ROCKSDB_KEY_SIZE];
-			RocksDB_set_key(node_key, node_id, attr_id);
-			RocksDB_put(writebatch, node_key, v->stringval);
-			v->allocation = M_DISK;
-			if(use_string_pool()) {
-				StringPool_return(Globals_Get_StringPool(), v->stringval);
-			} else {
-				rm_free(v->stringval);
-			}
-			v->stringval = NULL;
+	if(node_id >= 0 && attr_id != ATTRIBUTE_ID_NONE && v->type == T_STRING && v->stringval && RocksDB_shouldWrite(v->stringval)) {
+		char node_key[ROCKSDB_KEY_SIZE];
+		RocksDB_set_key(node_key, node_id, attr_id);
+		RocksDB_put(writebatch, node_key, v->stringval);
+		v->allocation = M_DISK;
+		if(use_string_pool()) {
+			StringPool_return(Globals_Get_StringPool(), v->stringval);
+		} else if(v->allocation == M_SELF) {
+			rm_free(v->stringval);
 		}
+		v->stringval = NULL;
 	}
+}
+
+SIValue SIValue_FromDisk
+(
+	uint64_t node_id,       // node id
+	unsigned short attr_id  // attribute id
+) {
+	char node_key[ROCKSDB_KEY_SIZE];
+	RocksDB_set_key(node_key, node_id, attr_id);
+	return (SIValue){.stringval = RocksDB_get(node_key), .type = T_STRING, .allocation = M_DISK};
 }
 			
 void SIValue_Free
