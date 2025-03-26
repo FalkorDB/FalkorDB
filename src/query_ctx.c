@@ -473,6 +473,11 @@ void QueryCtx_Free(void) {
 		ctx->query_data.params = NULL;
 	}
 
+	if(ctx->query_data.parsed_params != NULL) {
+		parse_result_free(ctx->query_data.parsed_params);
+		ctx->query_data.parsed_params = NULL;
+	}
+
 	rm_free(ctx);
 
 	// NULL-set the context for reuse the next time this thread receives a query

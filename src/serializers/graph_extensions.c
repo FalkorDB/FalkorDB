@@ -82,8 +82,8 @@ void Serializer_Graph_SetNodeLabels
 	GrB_Vector_new(&v, GrB_BOOL, node_count);
 
 	for(int i = 0; i < label_count; i++) {
-		Delta_Matrix  M  =  Graph_GetLabelMatrix(g, i);
-		GrB_Matrix m     =  Delta_Matrix_M(M);
+		Delta_Matrix M = Graph_GetLabelMatrix(g, i);
+		GrB_Matrix   m = Delta_Matrix_M(M);
 
 		GxB_Vector_diag(v, m, 0, NULL);
 
@@ -99,20 +99,20 @@ void Serializer_Graph_SetNodeLabels
 void Serializer_OptimizedFormConnections
 (
 	Graph *g,
-	RelationID r,                     // relation id
-	const NodeID *restrict srcs,      // src node id
-	const NodeID *restrict dests,     // dest node id
-	const EdgeID *restrict ids,       // edge id
-	uint64_t n,                       // number of entries
-	bool multi_edge                   // multi edge batch
+	RelationID r,                  // relation id
+	const NodeID *restrict srcs,   // src node id
+	const NodeID *restrict dests,  // dest node id
+	const EdgeID *restrict ids,    // edge id
+	uint64_t n,                    // number of entries
+	bool multi_edge                // multi edge batch
 ) {
 	// validations
-	ASSERT(n      >  0);
-	ASSERT(g      != NULL);
-	ASSERT(r      != GRAPH_UNKNOWN_RELATION);
-	ASSERT(ids    != NULL);
-	ASSERT(srcs   != NULL);
-	ASSERT(dests  != NULL);
+	ASSERT(n     >  0);
+	ASSERT(g     != NULL);
+	ASSERT(r     != GRAPH_UNKNOWN_RELATION);
+	ASSERT(ids   != NULL);
+	ASSERT(srcs  != NULL);
+	ASSERT(dests != NULL);
 
 	GrB_Info   info;   // GraphBLAS operation result
 

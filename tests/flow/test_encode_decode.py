@@ -25,7 +25,7 @@ class test_encode_decode(FlowTestsBase):
     def tearDown(self):
         self.graph.delete()
 
-    def test01_nodes_over_multiple_keys(self):
+    def test_01_nodes_over_multiple_keys(self):
         # Create 3 nodes meta keys
         self.graph.query("UNWIND range(0,20) as i CREATE (:Node {val:i})")
         # Return all the nodes, before and after saving & loading the RDB, and check equality
@@ -36,7 +36,7 @@ class test_encode_decode(FlowTestsBase):
         actual = self.graph.query(query)
         self.env.assertEquals(expected.result_set, actual.result_set)
 
-    def test02_no_compaction_on_nodes_delete(self):
+    def test_02_no_compaction_on_nodes_delete(self):
         # Create 20 nodes meta keys
         self.graph.query("UNWIND range(0, 20) as i CREATE (:Node)")
         # Return all the nodes, before and after saving & loading the RDB, and check equality
@@ -61,7 +61,7 @@ class test_encode_decode(FlowTestsBase):
         self.env.assertEquals(
             expected_full_graph_nodes_id.result_set, actual.result_set)
 
-    def test03_edges_over_multiple_keys(self):
+    def test_03_edges_over_multiple_keys(self):
         # Create 3 edges meta keys
         self.graph.query(
             "UNWIND range(0,20) as i CREATE (:Src)-[:R {val:i}]->(:Dest)")
@@ -73,7 +73,7 @@ class test_encode_decode(FlowTestsBase):
         actual = self.graph.query(query)
         self.env.assertEquals(expected.result_set, actual.result_set)
 
-    def test04_no_compaction_on_edges_delete(self):
+    def test_04_no_compaction_on_edges_delete(self):
         # Create 3 nodes meta keys
         self.graph.query(
             "UNWIND range(0,20) as i CREATE (:Src)-[:R]->(:Dest)")
@@ -97,7 +97,7 @@ class test_encode_decode(FlowTestsBase):
         self.env.assertEquals(
             expected_full_graph_nodes_id.result_set, actual.result_set)
 
-    def test05_multiple_edges_over_multiple_keys(self):
+    def test_05_multiple_edges_over_multiple_keys(self):
         # Create 3 edges meta keys
         self.graph.query(
             "CREATE (n1:Src {val:1}), (n2:Dest {val:2}) WITH n1, n2 UNWIND range(0,20) as i CREATE (n1)-[:R {val:i}]->(n2)")
@@ -109,7 +109,7 @@ class test_encode_decode(FlowTestsBase):
         actual = self.graph.query(query)
         self.env.assertEquals(expected.result_set, actual.result_set)
 
-    def test06_no_compaction_on_multiple_edges_delete(self):
+    def test_06_no_compaction_on_multiple_edges_delete(self):
         # Create 3 nodes meta keys
         self.graph.query(
             "CREATE (n1:Src {val:1}), (n2:Dest {val:2}) WITH n1, n2 UNWIND range(0,20) as i CREATE (n1)-[:R]->(n2)")
@@ -133,7 +133,7 @@ class test_encode_decode(FlowTestsBase):
         self.env.assertEquals(
             expected_full_graph_nodes_id.result_set, actual.result_set)
 
-    def test07_index_after_encode_decode_in_v7(self):
+    def test_07_index_after_encode_decode_in_v7(self):
         create_node_range_index(self.graph, 'N', 'val', sync=True)
         # Verify indices exists.
         plan = str(self.graph.explain("MATCH (n:N {val:1}) RETURN n"))
@@ -144,7 +144,7 @@ class test_encode_decode(FlowTestsBase):
         plan = str(self.graph.explain("MATCH (n:N {val:1}) RETURN n"))
         self.env.assertIn("Index Scan", plan)
 
-    def test08_multiple_graphs_with_index(self):
+    def test_08_multiple_graphs_with_index(self):
         # Create a multi-key graph.
         self.graph.query(
             "UNWIND range(0,21) AS i CREATE (a:L {v: i})-[:E]->(b:L2 {v: i})")
@@ -167,7 +167,7 @@ class test_encode_decode(FlowTestsBase):
         actual = self.graph.query(query)
         self.env.assertEquals(actual.result_set, expected)
 
-    def test08_multiple_reltypes(self):
+    def test_09_multiple_reltypes(self):
         # Create 10 nodes
         self.graph.query("UNWIND range(0,10) as v CREATE (:L {v: v})")
         # Create 3 edges of different relation types connecting 6 different nodes
@@ -190,7 +190,7 @@ class test_encode_decode(FlowTestsBase):
 
     # test changes to the VKEY_MAX_ENTITY_COUNT configuration are reflected in
     # the number of virtual keys created
-    def test09_vkey_max_entity_count(self):
+    def test_10_vkey_max_entity_count(self):
         logfilename = self.env.envRunner._getFileName("master", ".log")
         logfile = open(f"{self.env.logDir}/{logfilename}")
         log = logfile.read()
@@ -224,7 +224,7 @@ class test_encode_decode(FlowTestsBase):
 
         self.env.assertEqual(matches, ['3', '6'])
 
-    def test10_decode_single_edge_relation_with_deleted_nodes(self):
+    def test_11_decode_single_edge_relation_with_deleted_nodes(self):
         # Set configuration
         response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 20000)
         self.env.assertEqual(response, "OK")
@@ -248,7 +248,7 @@ class test_encode_decode(FlowTestsBase):
             "MATCH (n:L)-[r:R]->(m:M) RETURN id(n), id(r), id(m)")
         self.env.assertEquals(res_before.result_set, res_after.result_set)
 
-    def test11_decode_multi_edge_relation_with_deleted_nodes(self):
+    def test_12_decode_multi_edge_relation_with_deleted_nodes(self):
         # Set configuration
         response = self.db.config_set("VKEY_MAX_ENTITY_COUNT", 20000)
         self.env.assertEqual(response, "OK")
@@ -272,7 +272,7 @@ class test_encode_decode(FlowTestsBase):
             "MATCH (n:L)-[r:R]->(m:M) RETURN id(n), id(r), id(m)")
         self.env.assertEquals(res_before.result_set, res_after.result_set)
 
-    def test12_random_graph(self):
+    def test_13_random_graph(self):
         nodes, edges = create_random_schema()
         res = create_random_graph(self.graph, nodes, edges)
 
