@@ -6,6 +6,7 @@
 #pragma once
 
 #include "../redismodule.h"
+
 #include <stdbool.h>
 
 // SerializerIO
