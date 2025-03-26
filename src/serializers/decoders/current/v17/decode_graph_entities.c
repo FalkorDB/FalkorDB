@@ -105,6 +105,7 @@ static void _RdbLoadEntity
 (
 	SerializerIO rdb,
 	GraphEntity *e,
+	GraphEntityType type,
 	rocksdb_writebatch_t *writebatch
 ) {
 	// format:
@@ -118,9 +119,10 @@ static void _RdbLoadEntity
 	SIValue     vals[n];
 	AttributeID ids [n];
 
+	EntityID id = type == GETYPE_NODE ? ENTITY_GET_ID(e) : -1;
 	for(uint64_t i = 0; i < n; i++) {
 		ids[i]  = SerializerIO_ReadUnsigned(rdb);
-		vals[i] = _RdbLoadSIValue(rdb, ENTITY_GET_ID(e), ids[i], writebatch);
+		vals[i] = _RdbLoadSIValue(rdb, id, ids[i], writebatch);
 	}
 
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
@@ -151,7 +153,7 @@ void RdbLoadNodes_v17
 		n.id = id;
 		n.attributes = set;
 
-		_RdbLoadEntity(rdb, (GraphEntity *)&n, batch);
+		_RdbLoadEntity(rdb, (GraphEntity *)&n, GETYPE_NODE, batch);
 	}
 	RocksDB_put_batch(batch);
 
@@ -214,7 +216,7 @@ void RdbLoadEdges_v17
 		e.id = id;
 		e.attributes = set;
 
-		_RdbLoadEntity(rdb, (GraphEntity *)&e, NULL);
+		_RdbLoadEntity(rdb, (GraphEntity *)&e, GETYPE_EDGE, NULL);
 	}
 
 	// read encoded edge count and validate
