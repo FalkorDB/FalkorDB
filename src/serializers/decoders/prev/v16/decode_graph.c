@@ -281,6 +281,7 @@ GraphContext *RdbLoadGraphContext_v16
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// index populated enable it
+					Index_Populate(idx, g);
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}
@@ -298,6 +299,7 @@ GraphContext *RdbLoadGraphContext_v16
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
 					// index populated enable it
+					Index_Populate(idx, g);
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}

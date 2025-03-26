@@ -149,10 +149,6 @@ void RdbLoadNodes_v16
 	//      #properties N
 	//      (name, value type, value) X N
 
-	// get delay indexing configuration
-	bool delay_indexing;
-	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
-
 	uint64_t prev_graph_node_count = Graph_NodeCount(gc->g);
 
 	rocksdb_writebatch_t *batch = RocksDB_create_batch();
@@ -172,18 +168,6 @@ void RdbLoadNodes_v16
 		Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
 
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n, batch);
-
-		// introduce n to each relevant index
-		if(!delay_indexing) {
-			for (int j = 0; j < nodeLabelCount; j++) {
-				Schema *s = GraphContext_GetSchemaByID(gc, labels[j],
-						SCHEMA_NODE);
-				ASSERT(s != NULL);
-
-				// index node
-				if(PENDING_IDX(s)) Index_IndexNode(PENDING_IDX(s), &n);
-			}
-		}
 	}
 	RocksDB_put_batch(batch);
 
@@ -251,9 +235,9 @@ static uint64_t _DecodeTensors
 	//     edge properties
 
 	Edge e;                           // current decoded edge
-	int       idx            = 0;    // batch index
-	uint64_t  decoded_edges  = 0;    // number of decoded edges
-	int       tensor_idx     = 0;    // tensors batch index
+	int       idx            = 0;     // batch index
+	uint64_t  decoded_edges  = 0;     // number of decoded edges
+	int       tensor_idx     = 0;     // tensors batch index
 	const int BATCH_SIZE     = 4096;  // batch size
 
 	// single edge batch
@@ -265,19 +249,6 @@ static uint64_t _DecodeTensors
 	EdgeID tensors_ids  [BATCH_SIZE];
 	NodeID tensors_srcs [BATCH_SIZE];
 	NodeID tensors_dests[BATCH_SIZE];
-
-	// get relationship type schema
-	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
-	ASSERT(s != NULL);
-
-	Index index = PENDING_IDX(s);
-
-	// get delay indexing configuration
-	bool delay_indexing;
-	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
-
-	// perform indexing if there's an index and delay indexing is false
-	bool perform_indexing = (!delay_indexing && index != NULL);
 
 	// as long as we didn't hit our END MARKER
 	while(true) {
@@ -302,11 +273,6 @@ static uint64_t _DecodeTensors
 		// load edge attributes
 		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e, NULL);
-
-		// index edge
-		if(perform_indexing) {
-			Index_IndexEdge(index, &e);
-		}
 
 		// batch edge
 		if(tensor) {
@@ -395,19 +361,6 @@ static uint64_t _DecodeEdges
 	NodeID srcs [BATCH_SIZE];
 	NodeID dests[BATCH_SIZE];
 
-	// get relationship type schema
-	Schema *s = GraphContext_GetSchemaByID(gc, r, SCHEMA_EDGE);
-	ASSERT(s != NULL);
-
-	Index index = PENDING_IDX(s);
-
-	// get delay indexing configuration
-	bool delay_indexing;
-	Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
-
-	// perform indexing if there's an index and delay indexing is false
-	bool perform_indexing = (!delay_indexing && index != NULL);
-
 	// as long as we didn't hit our END MARKER
 	while(true) {
 		// decode edge ID
@@ -428,11 +381,6 @@ static uint64_t _DecodeEdges
 		// load edge attributes
 		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e, NULL);
-
-		// index edge
-		if(perform_indexing) {
-			Index_IndexEdge(index, &e);
-		}
 
 		// batch edge
 		ids[idx]   = e.id;
