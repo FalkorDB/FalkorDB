@@ -45,7 +45,9 @@ class testConfig(FlowTestsBase):
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
-                ("DEDUPLICATE_STRINGS", 0)
+                ("DEDUPLICATE_STRINGS", 0),
+                ("USE_DISK_STORAGE", 0),
+                ("VALUES_SPILL_THRESHOLD", 64)
         ]
 
         for i, config in enumerate(response):
@@ -254,6 +256,14 @@ class testConfig(FlowTestsBase):
         expected_response = 0
         self.env.assertEqual(response, expected_response)
 
+        response = self.db.config_get("USE_DISK_STORAGE")
+        expected_response = 0
+        self.env.assertEqual(response, expected_response)
+
+        response = self.db.config_get("VALUES_SPILL_THRESHOLD")
+        expected_response = 64
+        self.env.assertEqual(response, expected_response)
+
     def test09_set_invalid_values(self):
         # The run-time configurations supported by RedisGraph are:
         # MAX_QUEUED_QUERIES
@@ -326,3 +336,4 @@ class testConfig(FlowTestsBase):
         creation_buffer_size = self.db.config_get("NODE_CREATION_BUFFER")
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
+
