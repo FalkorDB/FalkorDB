@@ -213,17 +213,17 @@ void UpdateEntityProperties
 
 	if(entity_type == GETYPE_NODE) {
 		GraphContext_AddNodeToIndices(gc, (Node *)ge);
+
+		for(uint i = 0; i < AttributeSet_Count(set); i++) {
+			Attribute *attr = set->attributes + i;
+			SIValue_ToDisk(&attr->value, ENTITY_GET_ID(ge), attr->id, writebatch);
+			if(attr->value.allocation == M_DISK) {
+				free(attr->value.stringval);
+				attr->value.stringval = NULL;
+			}
+		}
 	} else {
 		GraphContext_AddEdgeToIndices(gc, (Edge *)ge);
-	}
-
-	for(uint i = 0; i < AttributeSet_Count(set); i++) {
-		Attribute *attr = set->attributes + i;
-		SIValue_ToDisk(&attr->value, ENTITY_GET_ID(ge), attr->id, writebatch);
-		if(attr->value.allocation == M_DISK) {
-			free(attr->value.stringval);
-			attr->value.stringval = NULL;
-		}
 	}
 }
 
