@@ -10,6 +10,8 @@
 
 #include <stdbool.h>
 
+#include <stdbool.h>
+
 // SerializerIO
 // acts as an abstraction layer for both graph encoding and decoding
 // there are two types of serializers:

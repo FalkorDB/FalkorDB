@@ -146,6 +146,7 @@ void RdbLoadNodes_v17
 
 	uint64_t prev_graph_node_count = Graph_NodeCount(g);
 	rocksdb_writebatch_t *batch = RocksDB_create_batch();
+
 	for(uint64_t i = 0; i < n; i++) {
 		Node n;
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
