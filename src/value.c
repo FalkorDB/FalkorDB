@@ -1026,7 +1026,7 @@ void SIValue_ToDisk
 	unsigned short attr_id,           // attribute id
 	rocksdb_writebatch_t *writebatch  // writebatch to write to
 ) {
-	if(node_id >= 0 && attr_id != ATTRIBUTE_ID_NONE && v->type == T_STRING && v->stringval && RocksDB_shouldWrite(v->stringval)) {
+	if(node_id != -1 && attr_id != ATTRIBUTE_ID_NONE && v->type == T_STRING && v->stringval && RocksDB_shouldWrite(v->stringval)) {
 		char node_key[ROCKSDB_KEY_SIZE];
 		RocksDB_set_key(node_key, node_id, attr_id);
 		RocksDB_put(writebatch, node_key, v->stringval);
