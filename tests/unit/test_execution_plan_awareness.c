@@ -38,6 +38,14 @@ static ExecutionPlan *_EmptyExecutionPlan(void) {
 	return plan;
 }
 
+static bool _Aware
+(
+	OpBase *op,
+	const char *alias
+) {
+	return OpBase_Aware(op, &alias, 1);
+}
+
 // validate that an operation is aware of its own modifiers
 // if operation OP modifies alias 'A' then OP should be aware of 'A'
 void test_self_awareness() {
@@ -48,7 +56,7 @@ void test_self_awareness() {
 	OpBase *op = NewAllNodeScanOp(plan, alias);
 
 	// op should be aware of alias 'p'
-	bool aware = OpBase_Aware(op, alias);
+	bool aware = _Aware(op, alias);
 	TEST_ASSERT(aware);
 
 	OpBase_Free(op);
@@ -65,7 +73,7 @@ void test_inherit_awareness() {
 	OpBase *limit     = NewLimitOp(p, AR_EXP_NewConstOperandNode(SI_LongVal(2)));
 
 	// limit should NOT be aware of alias 'p'
-	bool aware = OpBase_Aware(limit, alias);
+	bool aware = _Aware(limit, alias);
 	TEST_ASSERT(!aware);
 
 	// set limit as label scan parent
@@ -76,7 +84,7 @@ void test_inherit_awareness() {
 
 	// limit inherits its children awareness
 	// limit should be aware of alias 'p'
-	aware = OpBase_Aware(limit, alias);
+	aware = _Aware(limit, alias);
 	TEST_ASSERT(aware);
 
 	OpBase_Free(scan);
@@ -100,7 +108,7 @@ void test_multiple_inheritance_awareness() {
 
 	// cp should NOT be aware of any of the aliases
 	for(int i = 0; i < 5; i++) {
-		bool aware = OpBase_Aware(cp, aliases[i]);
+		bool aware = _Aware(cp, aliases[i]);
 		TEST_ASSERT(!aware);
 	}
 
@@ -116,7 +124,7 @@ void test_multiple_inheritance_awareness() {
 
 	// cp should be aware of all aliases
 	for(int i = 0; i < 5; i++) {
-		bool aware = OpBase_Aware(cp, aliases[i]);
+		bool aware = _Aware(cp, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -143,7 +151,7 @@ void test_inherit_chain() {
 
 	// limit should NOT be aware of any of the aliases
 	for(int i = 0; i < 3; i++) {
-		aware = OpBase_Aware(limit, aliases[i]);
+		aware = _Aware(limit, aliases[i]);
 		TEST_ASSERT(!aware);
 	}
 
@@ -157,32 +165,32 @@ void test_inherit_chain() {
 	ExecutionPlan_AddOp(limit, scan_0);
 
 	// scan_2 should only be aware of  "c"
-	aware = OpBase_Aware(scan_2, "c");
+	aware = _Aware(scan_2, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_2, "b");
+	aware = _Aware(scan_2, "b");
 	TEST_ASSERT(!aware);
-	aware = OpBase_Aware(scan_2, "a");
+	aware = _Aware(scan_2, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_1 should only be aware of "c" and "b"
-	aware = OpBase_Aware(scan_1, "c");
+	aware = _Aware(scan_1, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "b");
+	aware = _Aware(scan_1, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "a");
+	aware = _Aware(scan_1, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_0 should of all aliases
-	aware = OpBase_Aware(scan_0, "c");
+	aware = _Aware(scan_0, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "b");
+	aware = _Aware(scan_0, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "a");
+	aware = _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
 
 	// limit should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware = OpBase_Aware(limit, aliases[i]);
+		aware = _Aware(limit, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -210,32 +218,32 @@ void test_inherit_chain() {
 	ExecutionPlan_AddOp(scan_0, scan_1);
 
 	// scan_2 should only be aware of  "c"
-	aware = OpBase_Aware(scan_2, "c");
+	aware = _Aware(scan_2, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_2, "b");
+	aware = _Aware(scan_2, "b");
 	TEST_ASSERT(!aware);
-	aware = OpBase_Aware(scan_2, "a");
+	aware = _Aware(scan_2, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_1 should only be aware of "c" and "b"
-	aware = OpBase_Aware(scan_1, "c");
+	aware = _Aware(scan_1, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "b");
+	aware = _Aware(scan_1, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "a");
+	aware = _Aware(scan_1, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_0 should of all aliases
-	aware = OpBase_Aware(scan_0, "c");
+	aware = _Aware(scan_0, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "b");
+	aware = _Aware(scan_0, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "a");
+	aware = _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
 
 	// limit should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware = OpBase_Aware(limit, aliases[i]);
+		aware = _Aware(limit, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -260,7 +268,7 @@ void test_update_root() {
 
 	// limit should NOT be aware of any of the aliases
 	for(int i = 0; i < 3; i++) {
-		aware = OpBase_Aware(limit, aliases[i]);
+		aware = _Aware(limit, aliases[i]);
 		TEST_ASSERT(!aware);
 	}
 
@@ -277,32 +285,32 @@ void test_update_root() {
 	ExecutionPlan_UpdateRoot(p, limit);
 
 	// scan_2 should only be aware of  "c"
-	aware = OpBase_Aware(scan_2, "c");
+	aware = _Aware(scan_2, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_2, "b");
+	aware = _Aware(scan_2, "b");
 	TEST_ASSERT(!aware);
-	aware = OpBase_Aware(scan_2, "a");
+	aware = _Aware(scan_2, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_1 should only be aware of "c" and "b"
-	aware = OpBase_Aware(scan_1, "c");
+	aware = _Aware(scan_1, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "b");
+	aware = _Aware(scan_1, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "a");
+	aware = _Aware(scan_1, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_0 should of all aliases
-	aware = OpBase_Aware(scan_0, "c");
+	aware = _Aware(scan_0, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "b");
+	aware = _Aware(scan_0, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "a");
+	aware = _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
 
 	// limit should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware = OpBase_Aware(limit, aliases[i]);
+		aware = _Aware(limit, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -331,32 +339,32 @@ void test_update_root() {
 	ExecutionPlan_UpdateRoot(p, limit);
 
 	// scan_2 should only be aware of  "c"
-	aware = OpBase_Aware(scan_2, "c");
+	aware = _Aware(scan_2, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_2, "b");
+	aware = _Aware(scan_2, "b");
 	TEST_ASSERT(!aware);
-	aware = OpBase_Aware(scan_2, "a");
+	aware = _Aware(scan_2, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_1 should only be aware of "c" and "b"
-	aware = OpBase_Aware(scan_1, "c");
+	aware = _Aware(scan_1, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "b");
+	aware = _Aware(scan_1, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1, "a");
+	aware = _Aware(scan_1, "a");
 	TEST_ASSERT(!aware);
 
 	// scan_0 should of all aliases
-	aware = OpBase_Aware(scan_0, "c");
+	aware = _Aware(scan_0, "c");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "b");
+	aware = _Aware(scan_0, "b");
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_0, "a");
+	aware = _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
 
 	// limit should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware = OpBase_Aware(limit, aliases[i]);
+		aware = _Aware(limit, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -387,9 +395,9 @@ void test_update_root_chain() {
 	ExecutionPlan_UpdateRoot(p, limit);
 
 	// limit, skip & filter should be aware of all 'a'
-	aware =  OpBase_Aware(limit,  "a");
-	aware &= OpBase_Aware(skip,   "a");
-	aware &= OpBase_Aware(filter, "a");
+	aware =  _Aware(limit,  "a");
+	aware &= _Aware(skip,   "a");
+	aware &= _Aware(filter, "a");
 	TEST_ASSERT(aware);
 
 	// scan_2
@@ -405,27 +413,27 @@ void test_update_root_chain() {
 	ExecutionPlan_UpdateRoot(p, scan_2);
 
 	// limit should only be aware of "a"
-	aware = OpBase_Aware(limit, aliases[0]);
+	aware = _Aware(limit, aliases[0]);
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(limit,  aliases[1]);
+	aware = _Aware(limit,  aliases[1]);
 	TEST_ASSERT(!aware);
-	aware = OpBase_Aware(limit,  aliases[2]);
+	aware = _Aware(limit,  aliases[2]);
 	TEST_ASSERT(!aware);
 
 	// scan_1 should aware of "a" & "b"
-	aware = OpBase_Aware(scan_1, aliases[0]);
+	aware = _Aware(scan_1, aliases[0]);
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1,  aliases[1]);
+	aware = _Aware(scan_1,  aliases[1]);
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_1,  aliases[2]);
+	aware = _Aware(scan_1,  aliases[2]);
 	TEST_ASSERT(!aware);
 
 	// scan_2 should be aware of all aliases
-	aware = OpBase_Aware(scan_2, aliases[0]);
+	aware = _Aware(scan_2, aliases[0]);
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_2,  aliases[1]);
+	aware = _Aware(scan_2,  aliases[1]);
 	TEST_ASSERT(aware);
-	aware = OpBase_Aware(scan_2,  aliases[2]);
+	aware = _Aware(scan_2,  aliases[2]);
 	TEST_ASSERT(aware);
 
 	ExecutionPlan_Free(p);
@@ -461,7 +469,7 @@ void test_add_op_idx() {
 
 	// cartesian product should be aware of all aliases
 	for(int i = 0; i < 4; i++) {
-		aware = OpBase_Aware(cp, aliases[i]);
+		aware = _Aware(cp, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -496,9 +504,9 @@ void test_push_below() {
 	ExecutionPlan_AddOp(filter, scan_0);
 
 	// limit, skip & filter should be aware of 'a'
-	aware =  OpBase_Aware(limit,  "a");
-	aware &= OpBase_Aware(skip,   "a");
-	aware &= OpBase_Aware(filter, "a");
+	aware =  _Aware(limit,  "a");
+	aware &= _Aware(skip,   "a");
+	aware &= _Aware(filter, "a");
 	TEST_ASSERT(aware);
 
 	//  scan_2
@@ -517,24 +525,24 @@ void test_push_below() {
 
 	// limit, skip & scan_2 should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware =  OpBase_Aware(limit,  aliases[i]);
-		aware &= OpBase_Aware(skip,   aliases[i]);
-		aware &= OpBase_Aware(scan_2, aliases[i]);
+		aware =  _Aware(limit,  aliases[i]);
+		aware &= _Aware(skip,   aliases[i]);
+		aware &= _Aware(scan_2, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
 	// filter & scan_0 should be only aware of "a"
-	aware  = OpBase_Aware(filter, "a");
-	aware &= OpBase_Aware(scan_0, "a");
+	aware  = _Aware(filter, "a");
+	aware &= _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
 
-	aware  = OpBase_Aware(filter, "b");
+	aware  = _Aware(filter, "b");
 	TEST_ASSERT(!aware);
-	aware &= OpBase_Aware(scan_0, "b");
+	aware &= _Aware(scan_0, "b");
 	TEST_ASSERT(!aware);
-	aware  = OpBase_Aware(filter, "c");
+	aware  = _Aware(filter, "c");
 	TEST_ASSERT(!aware);
-	aware &= OpBase_Aware(scan_0, "c");
+	aware &= _Aware(scan_0, "c");
 	TEST_ASSERT(!aware);
 
 	OpBase_Free(skip);
@@ -569,9 +577,9 @@ void test_replace_op() {
 	ExecutionPlan_AddOp(filter, scan_0);
 
 	// limit, skip & filter should be aware of all 'a'
-	aware =  OpBase_Aware(limit,  "a");
-	aware &= OpBase_Aware(skip,   "a");
-	aware &= OpBase_Aware(filter, "a");
+	aware =  _Aware(limit,  "a");
+	aware &= _Aware(skip,   "a");
+	aware &= _Aware(filter, "a");
 	TEST_ASSERT(aware);
 
 	//  scan_2
@@ -589,26 +597,26 @@ void test_replace_op() {
 
 	// limit, skip & scan_2 should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware =  OpBase_Aware(limit,  aliases[i]);
-		aware &= OpBase_Aware(skip,   aliases[i]);
-		aware &= OpBase_Aware(scan_2, aliases[i]);
+		aware =  _Aware(limit,  aliases[i]);
+		aware &= _Aware(skip,   aliases[i]);
+		aware &= _Aware(scan_2, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
 	// scan_0 should be only aware of "a"
-	aware &= OpBase_Aware(scan_0, "a");
+	aware &= _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
-	aware &= OpBase_Aware(scan_0, "b");
+	aware &= _Aware(scan_0, "b");
 	TEST_ASSERT(!aware);
-	aware &= OpBase_Aware(scan_0, "c");
+	aware &= _Aware(scan_0, "c");
 	TEST_ASSERT(!aware);
 
 	// scan_1 should be only aware of "b"
-	aware  = OpBase_Aware(scan_1, "b");
+	aware  = _Aware(scan_1, "b");
 	TEST_ASSERT(aware);
-	aware  = OpBase_Aware(scan_1, "a");
+	aware  = _Aware(scan_1, "a");
 	TEST_ASSERT(!aware);
-	aware  = OpBase_Aware(scan_1, "c");
+	aware  = _Aware(scan_1, "c");
 	TEST_ASSERT(!aware);
 
 	OpBase_Free(skip);
@@ -658,9 +666,9 @@ void test_remove_op() {
 
 	// limit, skip & scan_2 should be aware of all aliases
 	for(int i = 0; i < 3; i++) {
-		aware =  OpBase_Aware(limit,  aliases[i]);
-		aware &= OpBase_Aware(skip,   aliases[i]);
-		aware &= OpBase_Aware(scan_2, aliases[i]);
+		aware =  _Aware(limit,  aliases[i]);
+		aware &= _Aware(skip,   aliases[i]);
+		aware &= _Aware(scan_2, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
@@ -672,17 +680,17 @@ void test_remove_op() {
 	ExecutionPlan_RemoveOp(p, scan_1);
 
 	// limit, skip & scan_2 should be aware of "c" & "a"
-	aware =  OpBase_Aware(limit,  "a");
-	aware &= OpBase_Aware(limit,  "c");
-	aware &= OpBase_Aware(skip,   "a");
-	aware &= OpBase_Aware(skip,   "c");
-	aware &= OpBase_Aware(scan_2, "a");
-	aware &= OpBase_Aware(scan_2, "c");
+	aware =  _Aware(limit,  "a");
+	aware &= _Aware(limit,  "c");
+	aware &= _Aware(skip,   "a");
+	aware &= _Aware(skip,   "c");
+	aware &= _Aware(scan_2, "a");
+	aware &= _Aware(scan_2, "c");
 	TEST_ASSERT(aware);
 
-	aware =  OpBase_Aware(limit,  "b");
-	aware |= OpBase_Aware(skip,   "b");
-	aware |= OpBase_Aware(scan_2, "b");
+	aware =  _Aware(limit,  "b");
+	aware |= _Aware(skip,   "b");
+	aware |= _Aware(scan_2, "b");
 	TEST_ASSERT(!aware);
 
 	OpBase_Free(skip);
@@ -730,36 +738,36 @@ void test_detach_op() {
 	ExecutionPlan_DetachOp(scan_1);
 
 	// limit, skip & scan_2 should only be aware of "c"
-	aware =  OpBase_Aware(limit,  "c");
-	aware &= OpBase_Aware(skip,   "c");
-	aware &= OpBase_Aware(scan_2, "c");
+	aware =  _Aware(limit,  "c");
+	aware &= _Aware(skip,   "c");
+	aware &= _Aware(scan_2, "c");
 	TEST_ASSERT(aware);
 
-	aware =  OpBase_Aware(limit,  "a");
-	aware |= OpBase_Aware(limit,  "b");
-	aware |= OpBase_Aware(skip,   "a");
-	aware |= OpBase_Aware(skip,   "b");
-	aware |= OpBase_Aware(scan_2, "a");
-	aware |= OpBase_Aware(scan_2, "b");
+	aware =  _Aware(limit,  "a");
+	aware |= _Aware(limit,  "b");
+	aware |= _Aware(skip,   "a");
+	aware |= _Aware(skip,   "b");
+	aware |= _Aware(scan_2, "a");
+	aware |= _Aware(scan_2, "b");
 	TEST_ASSERT(!aware);
 
 	// scan_1
 	//   scan_0
 
 	// scan_1 should be aware of "a" & "b"
-	aware =  OpBase_Aware(scan_1, "a");
-	aware &= OpBase_Aware(scan_1, "b");
+	aware =  _Aware(scan_1, "a");
+	aware &= _Aware(scan_1, "b");
 	TEST_ASSERT(aware);
 
-	aware = OpBase_Aware(scan_1, "c");
+	aware = _Aware(scan_1, "c");
 	TEST_ASSERT(!aware);
 
 	// scan_0 should be aware of "a"
-	aware = OpBase_Aware(scan_0, "a");
+	aware = _Aware(scan_0, "a");
 	TEST_ASSERT(aware);
 
-	aware =  OpBase_Aware(scan_0, "b");
-	aware |= OpBase_Aware(scan_0, "c");
+	aware =  _Aware(scan_0, "b");
+	aware |= _Aware(scan_0, "c");
 	TEST_ASSERT(!aware);
 
 	OpBase_Free(skip);
@@ -827,19 +835,19 @@ void test_bind_to_plan() {
 
 	// scan_0 should be aware of all aliases
 	for(int i = 0; i < 6; i++) {
-		aware = OpBase_Aware(scan_0, aliases[i]);
+		aware = _Aware(scan_0, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
 	// scan_2 should be aware of aliases: "c", "d", "e" & "f"
 	for(int i = 2; i < 6; i++) {
-		aware = OpBase_Aware(scan_2, aliases[i]);
+		aware = _Aware(scan_2, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 
 	// scan_4 should be aware of aliases: "e" & "f"
 	for(int i = 4; i < 6; i++) {
-		aware = OpBase_Aware(scan_4, aliases[i]);
+		aware = _Aware(scan_4, aliases[i]);
 		TEST_ASSERT(aware);
 	}
 

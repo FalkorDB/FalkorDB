@@ -218,11 +218,12 @@ OpBase *OpBase_GetChild
 	uint i             // child index
 );
 
-// returns true if operation is aware of alias
+// returns true if operation is aware of all aliases
 bool OpBase_Aware
 (
-	const OpBase *op,  // op
-	const char *alias  // alias
+	const OpBase *op,      // op
+	const char **aliases,  // aliases
+	uint n                 // number of aliases
 );
 
 // mark alias as being modified by operation
