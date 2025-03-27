@@ -31,15 +31,15 @@ RUN ln -s ${FALKORDB_BIN_PATH} /FalkorDB/build/docker && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
 RUN apt-get update && apt-get install -y libgomp1 curl && \
-curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
-bash nodesource_setup.sh && \
-apt-get install -y nodejs && \
-rm -rf /var/lib/apt/lists/*
+    curl -sL https://deb.nodesource.com/setup_22.x -o nodesource_setup.sh && \
+    bash nodesource_setup.sh && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR ${FALKORDB_HOME}
 
-COPY --from=compiler /FalkorDB/build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
-COPY --from=compiler /FalkorDB/build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
+COPY ./build/docker/run.sh ${FALKORDB_BIN_PATH}/run.sh
+COPY ./build/docker/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 
 COPY --from=compiler /FalkorDB/bin/linux*/src/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
@@ -55,5 +55,6 @@ EXPOSE 6379/tcp
 
 ENV FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
 
-CMD ${FALKORDB_BIN_PATH}/run.sh
+ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
 
+CMD [ "redis-server", "--loadmodule", "/var/lib/falkordb/bin/falkordb.so" ]
