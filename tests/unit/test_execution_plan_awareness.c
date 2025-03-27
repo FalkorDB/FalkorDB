@@ -38,7 +38,14 @@ static ExecutionPlan *_EmptyExecutionPlan(void) {
 	return plan;
 }
 
-#define _Aware(op, alias) OpBase_Aware(op, (const char**)&alias, 1);
+// helper function to wrap OpBase_Aware
+bool _Aware
+(
+	OpBase *op,
+	const char *alias
+) {
+	return OpBase_Aware(op, (const char**)&(alias), 1);
+}
 
 // validate that an operation is aware of its own modifiers
 // if operation OP modifies alias 'A' then OP should be aware of 'A'
