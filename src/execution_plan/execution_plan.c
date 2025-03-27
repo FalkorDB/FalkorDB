@@ -359,7 +359,7 @@ static ExecutionPlan *_tie_segments
 			migrate_filter = OpBase_Aware(OpBase_GetChild(connecting_op, 0),
 					(const char**)aliases, raxSize(modifiers));
 
-			array_free(aliases);
+			array_free_cb(aliases, rm_free);
 			raxFree(modifiers);
 		}
 
