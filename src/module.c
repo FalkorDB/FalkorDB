@@ -1,5 +1,6 @@
 /*
  * Copyright Redis Ltd. 2018 - present
+ * Copyright FalkorDB Ltd. 2024 - present
  * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
  * the Server Side Public License v1 (SSPLv1).
  */
@@ -18,6 +19,7 @@
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "redisearch_api.h"
+#include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
 #include "commands/commands.h"
 #include "util/thpool/pools.h"
@@ -31,11 +33,13 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "commands/util/run_redis_command_as.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 7
 #define MIN_REDIS_VERSION_MINOR 2
 #define MIN_REDIS_VERSION_PATCH 0
+
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
@@ -244,6 +248,22 @@ int RedisModule_OnLoad
 
 	if(RedisModule_CreateCommand(ctx, "graph.RESTORE", Graph_Restore,
 				"write deny-oom", 1, 1, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	// let use ovveride the default admin user that use with the impersonate
+	// commands, default is 'default'
+	init_run_cmd_as(ctx);
+
+	if (init_cmd_acl(ctx) == REDISMODULE_OK) {
+		if(RedisModule_CreateCommand(ctx, "graph.ACL", graph_acl_cmd,
+					"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
+			return REDISMODULE_ERR;
+		}
+	}
+
+	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", graph_password_cmd,
+				"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 
