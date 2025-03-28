@@ -39,7 +39,9 @@ typedef enum {
 	Config_DELAY_INDEXING            = 17,  // delay index construction when decoding
 	Config_IMPORT_FOLDER             = 18,  // path to CSV import folder
 	Config_DEDUPLICATE_STRINGS       = 19,  // use string pool for string dedup
-	Config_END_MARKER                = 20
+	Config_USE_DISK_STORAGE          = 20,  // alow data to spill to disk
+	Config_VALUE_SPILL_THRESHOLD     = 21,  // values larger than this config are candidate for spillage
+	Config_END_MARKER                = 22
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of

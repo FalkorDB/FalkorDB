@@ -31,9 +31,16 @@ static sds _JsonEncoder_Properties(const GraphEntity *ge, sds s) {
 	for(uint i = 0; i < prop_count; i ++) {
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		if(value.allocation == M_DISK) {
+			value = SIValue_FromDisk(ENTITY_GET_ID(ge), attr_id);
+		}
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		s = sdscatfmt(s, "\"%s\": ", key);
 		s = _JsonEncoder_SIValue(value, s);
+		if(value.allocation == M_DISK) {
+			free(value.stringval);
+			value.stringval = NULL;
+		}
 		if(i < prop_count - 1) s = sdscat(s, ", ");
 	}
 	s = sdscat(s, "}");

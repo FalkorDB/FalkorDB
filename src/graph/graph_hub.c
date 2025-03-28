@@ -6,6 +6,7 @@
 
 #include "graph_hub.h"
 #include "../query_ctx.h"
+#include "../util/rocksdb.h"
 
 void CreateNode
 (
@@ -14,6 +15,7 @@ void CreateNode
 	LabelID *labels,
 	uint label_count,
 	AttributeSet set,
+	rocksdb_writebatch_t *writebatch,
 	bool log
 ) {
 	ASSERT(n  != NULL);
@@ -35,6 +37,11 @@ void CreateNode
 		UndoLog_CreateNode(undo_log, n);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateNodeEffect(eb, n, labels, label_count);
+	}
+
+	for(uint i = 0; i < AttributeSet_Count(set); i++) {
+		Attribute *attr = set->attributes + i;
+		SIValue_ToDisk(&attr->value, ENTITY_GET_ID(n), attr->id, writebatch);
 	}
 }
 
@@ -181,11 +188,12 @@ void DeleteEdges
 // of properties set and removed.
 void UpdateEntityProperties
 (
-	GraphContext *gc,             // graph context
-	GraphEntity *ge,              // updated entity
-	const AttributeSet set,       // new attributes
-	GraphEntityType entity_type,  // entity type
-	bool log                      // log update in undo-log
+	GraphContext *gc,                  // graph context
+	GraphEntity *ge,                   // updated entity
+	const AttributeSet set,            // new attributes
+	GraphEntityType entity_type,       // entity type
+	rocksdb_writebatch_t *writebatch,  // writebatch to write to
+	bool log                           // log update in undo-log
 ) {
 	ASSERT(gc != NULL);
 	ASSERT(ge != NULL);
@@ -205,6 +213,15 @@ void UpdateEntityProperties
 
 	if(entity_type == GETYPE_NODE) {
 		GraphContext_AddNodeToIndices(gc, (Node *)ge);
+
+		for(uint i = 0; i < AttributeSet_Count(set); i++) {
+			Attribute *attr = set->attributes + i;
+			SIValue_ToDisk(&attr->value, ENTITY_GET_ID(ge), attr->id, writebatch);
+			if(attr->value.allocation == M_DISK) {
+				free(attr->value.stringval);
+				attr->value.stringval = NULL;
+			}
+		}
 	} else {
 		GraphContext_AddEdgeToIndices(gc, (Edge *)ge);
 	}

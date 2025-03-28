@@ -12,6 +12,7 @@
 #include "../util/rmalloc.h"
 #include "../datatypes/point.h"
 #include "../datatypes/vector.h"
+#include "../util/rocksdb.h"
 
 #include <stdatomic.h>
 
@@ -274,9 +275,17 @@ RSDoc *Index_IndexGraphEntity
 			// value must be of type string
 			if(t == T_STRING) {
 				*doc_field_count += 1;
-
+				char *str = v->stringval;
+				if(v->allocation == M_DISK) {
+					char node_key[ROCKSDB_KEY_SIZE];
+					RocksDB_set_key(node_key, ENTITY_GET_ID(e), field->id);
+					str = RocksDB_get(node_key);
+				}
 				RediSearch_DocumentAddFieldString(doc, field->fulltext_name,
-						v->stringval, strlen(v->stringval), RSFLDTYPE_FULLTEXT);
+					str, strlen(str), RSFLDTYPE_FULLTEXT);
+				if(v->allocation == M_DISK) {
+					free(str);
+				}
 			}
 		}
 
@@ -287,8 +296,17 @@ RSDoc *Index_IndexGraphEntity
 		if(field->type & INDEX_FLD_RANGE) {
 			*doc_field_count += 1;
 			if(t == T_STRING) {
+				char *str = v->stringval;
+				if(v->allocation == M_DISK) {
+					char node_key[ROCKSDB_KEY_SIZE];
+					RocksDB_set_key(node_key, ENTITY_GET_ID(e), field->id);
+					str = RocksDB_get(node_key);
+				}
 				RediSearch_DocumentAddFieldString(doc, field->range_name,
-						v->stringval, strlen(v->stringval), RSFLDTYPE_TAG);
+						str, strlen(str), RSFLDTYPE_TAG);
+				if(v->allocation == M_DISK) {
+					free(str);
+				}
 			} else if(t & (SI_NUMERIC | T_BOOL)) {
 				double d = SI_GET_NUMERIC(*v);
 				RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,

@@ -11,6 +11,7 @@
 #include "../../../ast/ast_shared.h"
 #include "../../../datatypes/array.h"
 #include "../../../graph/graph_hub.h"
+#include "../../../util/rocksdb.h"
 
 // commit node blueprints
 static void _CommitNodesBlueprint
@@ -66,6 +67,7 @@ static void _CommitNodes
 	// sync policy should be set to NOP, no need to sync/resize
 	ASSERT(Graph_GetMatrixPolicy(g) == SYNC_POLICY_NOP);
 
+	rocksdb_writebatch_t *batch = RocksDB_create_batch();
 	for(int i = 0; i < node_count; i++) {
 		n = pending->nodes.created_nodes[i];
 
@@ -74,7 +76,7 @@ static void _CommitNodes
 		uint         label_count = array_len(labels);
 
 		// introduce node into graph
-		CreateNode(gc, n, labels, label_count, attr, true);
+		CreateNode(gc, n, labels, label_count, attr, batch, true);
 
 		//----------------------------------------------------------------------
 		// enforce constraints
@@ -95,6 +97,7 @@ static void _CommitNodes
 			}
 		}
 	}
+	RocksDB_put_batch(batch);
 }
 
 // commit edge blueprints

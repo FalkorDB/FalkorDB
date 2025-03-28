@@ -361,6 +361,8 @@ static void _ShutdownEventHandler
 
 	BoltApi_Unregister();
 
+	RocksDB_cleanup();
+
 	// free global variables
 	Globals_Free();
 }

@@ -74,8 +74,15 @@ SIValue GraphEntity_Properties
 	for(int i = 0; i < propCount; i++) {
 		AttributeID attr_id;
 		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		if(value.allocation == M_DISK) {
+			value = SIValue_FromDisk(ENTITY_GET_ID(e), attr_id);
+		}
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		Map_Add(&map, SI_ConstStringVal(key), value);
+		if(value.allocation == M_DISK) {
+			free(value.stringval);
+			value.stringval = NULL;
+		}
 	}
 	return map;
 }

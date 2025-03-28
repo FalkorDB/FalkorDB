@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include "xxhash.h"
+#include "util/rocksdb.h"
 
 /* Type defines the supported types by the system. The types are powers
  * of 2 so they can be used in bitmasks of matching types.
@@ -45,7 +46,8 @@ typedef enum {
 	M_NONE = 0,             // SIValue is not heap-allocated
 	M_SELF = (1 << 0),      // SIValue is responsible for freeing its reference
 	M_VOLATILE = (1 << 1),  // SIValue does not own its reference and may go out of scope
-	M_CONST = (1 << 2)      // SIValue does not own its allocation, but its access is safe
+	M_CONST = (1 << 2),     // SIValue does not own its allocation, but its access is safe
+	M_DISK = (1 << 3)       // SIValue is stored on disk
 } SIAllocation;
 
 #define T_VECTOR (T_VECTOR_F32)
@@ -214,6 +216,22 @@ XXH64_hash_t SIValue_HashCode(SIValue v);
 SIValue SIValue_FromBinary
 (
 	FILE *stream  // stream to read value from
+);
+
+// writes SIValue to rocksdb if needed
+void SIValue_ToDisk
+(
+	SIValue *v,                       // value to write to disk
+	uint64_t node_id,                 // node id
+	unsigned short attr_id,           // attribute id
+	rocksdb_writebatch_t *writebatch  // writebatch to write to
+);
+
+// reads SIValue from rocksdb
+SIValue SIValue_FromDisk
+(
+	uint64_t node_id,       // node id
+	unsigned short attr_id  // attribute id
 );
 
 /* Free an SIValue's internal property if that property is a heap allocation owned

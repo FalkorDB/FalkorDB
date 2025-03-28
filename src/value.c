@@ -1017,6 +1017,38 @@ SIValue SIValue_FromBinary
 
 	return v;
 }
+
+// writes SIValue to rocksdb if needed
+void SIValue_ToDisk
+(
+	SIValue *v,                       // value to write to disk
+	uint64_t node_id,                 // node id
+	unsigned short attr_id,           // attribute id
+	rocksdb_writebatch_t *writebatch  // writebatch to write to
+) {
+	if(node_id != -1 && attr_id != ATTRIBUTE_ID_NONE && v->type == T_STRING && v->stringval && RocksDB_shouldWrite(v->stringval)) {
+		char node_key[ROCKSDB_KEY_SIZE];
+		RocksDB_set_key(node_key, node_id, attr_id);
+		RocksDB_put(writebatch, node_key, v->stringval);
+		v->allocation = M_DISK;
+		if(use_string_pool()) {
+			StringPool_return(Globals_Get_StringPool(), v->stringval);
+		} else if(v->allocation == M_SELF) {
+			rm_free(v->stringval);
+		}
+		v->stringval = NULL;
+	}
+}
+
+SIValue SIValue_FromDisk
+(
+	uint64_t node_id,       // node id
+	unsigned short attr_id  // attribute id
+) {
+	char node_key[ROCKSDB_KEY_SIZE];
+	RocksDB_set_key(node_key, node_id, attr_id);
+	return (SIValue){.stringval = RocksDB_get(node_key), .type = T_STRING, .allocation = M_DISK};
+}
 			
 void SIValue_Free
 (
