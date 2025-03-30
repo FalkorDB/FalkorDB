@@ -5,12 +5,13 @@
  */
 
 #include "execution_plan.h"
-#include "../RG.h"
+#include "RG.h"
 #include "./ops/ops.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
+#include "../util/rax_extensions.h"
 #include "./optimizations/optimizer.h"
 #include "../ast/ast_build_filter_tree.h"
 #include "execution_plan_build/execution_plan_modify.h"
@@ -340,12 +341,29 @@ static ExecutionPlan *_tie_segments
 		ft = AST_BuildFilterTreeFromClauses(ast, &opening_clause, 1);
 		if(ft == NULL) continue;
 
+		// check rather or not to migrate the filter from this segment
+		// to the previous segment
+		//
 		// if any of the filtered variables operate on a WITH alias
 		// place the filter op below the projection
-		// or incase connecting_op is has no children we don't have a choice
+		// or incase connecting_op has no children we don't have a choice
 		// but to place the filter beneath it
-		if(FilterTree_FiltersAlias(ft, opening_clause) ||
-		   OpBase_ChildCount(connecting_op) == 0) {
+
+		bool migrate_filter = !((OpBase_ChildCount(connecting_op) == 0) ||
+							   (FilterTree_FiltersAlias(ft, opening_clause)));
+		if(migrate_filter) {
+			rax *modifiers = FilterTree_CollectModified(ft);
+			char **aliases = (char**)raxKeys(modifiers);
+
+			// see if previous segment is aware of the filtered aliases
+			migrate_filter = OpBase_Aware(OpBase_GetChild(connecting_op, 0),
+					(const char**)aliases, raxSize(modifiers));
+
+			array_free_cb(aliases, rm_free);
+			raxFree(modifiers);
+		}
+
+		if(!migrate_filter) {
 			OpBase *filter_op = NewFilterOp(current_segment, ft);
 			ExecutionPlan_PushBelow(connecting_op, filter_op);
 		} else {

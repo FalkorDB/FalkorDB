@@ -106,13 +106,22 @@ inline Record OpBase_Consume
 	return op->consume(op);
 }
 
-// returns true if operation is aware of alias
+// returns true if operation is aware of all aliases
 bool OpBase_Aware
 (
-	const OpBase *op,  // op
-	const char *alias  // alias
+	const OpBase *op,      // op
+	const char **aliases,  // aliases
+	uint n                 // number of aliases
 ) {
-	return (HashTableFind(op->awareness, alias) != NULL);
+	// make sure op resolves all aliases
+	for(uint i = 0; i < n; i++) {
+		const char *alias = aliases[i];
+		if(HashTableFind(op->awareness, alias) == NULL) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 // mark alias as being modified by operation

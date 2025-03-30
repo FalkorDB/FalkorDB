@@ -132,11 +132,11 @@ rax *FilterTree_CollectAttributes
 	const char *entity          // filtered entity
 );
 
-// check if any filtered variable is an alias
+// check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (
-	const FT_FilterNode *root,
-	const cypher_astnode_t *ast
+	const FT_FilterNode *root,   // filter tree root
+	const cypher_astnode_t *ast  // AST
 );
 
 // checks to see if tree contains given operation
