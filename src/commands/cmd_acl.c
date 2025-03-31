@@ -176,7 +176,7 @@ int init_cmd_acl
 		(strcasecmp(category_name, "false") == 0)
 		|| (strcmp(category_name, "") == 0)) {
 		goto cleanup;
-    }
+	}
 
 	// create the CommandCategory structures for readonly commands
 	if ((ACL_GRAPH_READONLY_USER = 
@@ -194,7 +194,7 @@ int init_cmd_acl
 		(strcasecmp(category_name, "false") == 0)
 		|| (strcmp(category_name, "") == 0)) {
 		goto cleanup;
-    } 
+	} 
 
 	if ((ACL_GRAPH_USER = 
 		_create_command_category(ctx, category_name, "@graph-user")) == NULL) {
@@ -211,7 +211,7 @@ int init_cmd_acl
 		|| (strcmp(category_name, "") == 0)) {
 		goto cleanup;
     
-    } 
+	} 
 	if ((ACL_GRAPH_ADMIN = 
 		_create_command_category(ctx, category_name, "@graph-admin")) 
 			== NULL) {
@@ -405,7 +405,7 @@ static int _senitaze_acl_setuser
 	}
 
 	int acl_argc = 0;
-    // iterate over the items in GRAPH_ADMIN, 
+	// iterate over the items in GRAPH_ADMIN, 
 	// ACL_GRAPH_USER and ACL_GRAPH_READONLY_USER and use _command_in_category
 	// to check if the command is allowed
 	for (int i = 0; i < *argc; i++) {
@@ -460,7 +460,6 @@ static int _senitaze_acl_setuser
 		*argv_ptr = NULL;
 		*argc = 0;
 		return REDISMODULE_ERR;
-
 }
 
 // This function should be called with the ADMIN_USER in context.
@@ -506,7 +505,7 @@ static int _execute_acl_cmd_fn
 	// If the subcommand is SETUSER, we need to filter acl_args to 
 	// remove permissions that are not allowed.
 	// expand @graph-user, @graph-admin and @graph-readonly-user
-    if(strcasecmp(RedisModule_StringPtrLen(argv[1], NULL), "SETUSER") == 0) {
+	if(strcasecmp(RedisModule_StringPtrLen(argv[1], NULL), "SETUSER") == 0) {
 
 		if(_senitaze_acl_setuser(ctx, &acl_args, &acl_argc) 
 			!= REDISMODULE_OK) {
@@ -545,7 +544,7 @@ static int _execute_acl_cmd_fn
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);
-    rm_free(acl_args); 
+	rm_free(acl_args); 
 	return REDISMODULE_OK;
 }
 
