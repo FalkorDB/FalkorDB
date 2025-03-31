@@ -227,13 +227,17 @@ void ExecutionPlan_RemoveOp
 
 	if(op->parent == NULL) {
 		// removing execution plan root
-		ASSERT(op->childCount == 1);
+		ASSERT(op->childCount <= 1);
 
-		// assign child as new root
-		plan->root = op->children[0];
+		plan->root = NULL;
 
-		// remove new root's parent pointer
-		plan->root->parent = NULL;
+		if(OpBase_ChildCount(op) == 1) {
+			// assign child as new root
+			plan->root = op->children[0];
+
+			// remove new root's parent pointer
+			plan->root->parent = NULL;
+		}
 	} else {
 		OpBase *parent = op->parent;
 		if(op->childCount > 0) {
@@ -251,10 +255,12 @@ void ExecutionPlan_RemoveOp
 	}
 
 	// clear op
-	op->parent = NULL;
 	rm_free(op->children);
-	op->children = NULL;
+
+	op->parent     = NULL;
+	op->children   = NULL;
 	op->childCount = 0;
+
 	ExecutionPlanAwareness_SelfAware(op);
 }
 

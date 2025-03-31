@@ -62,8 +62,8 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans
 (
 	AST *ast
 ) {
-	uint start_offset   = 0;  // UNION query start index
-	uint end_offset     = 0;  // UNION query end index
+	uint start_offset = 0;  // UNION query start index
+	uint end_offset   = 0;  // UNION query end index
 
 	// break down AST into UNION sections:
 	//--------------------------------------------------------------------------
@@ -103,6 +103,7 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans
 	// last clause must be RETURN
 	ASSERT(cypher_astnode_type(last_clause) == CYPHER_AST_RETURN);
 
+	// get projections
 	uint n_projections = cypher_ast_return_nprojections(last_clause);
 	const char *projections[n_projections];
 
