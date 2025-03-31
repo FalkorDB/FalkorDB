@@ -248,9 +248,9 @@ int OpBase_AliasModifier
 // returns true if any of an op's children are aware of the given alias
 bool OpBase_ChildrenAware
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *root,   // root operation
+	const char *alias,    // alias to look for
+	int *idx              // [output] alias record position
 );
 
 // returns true if alias is mapped

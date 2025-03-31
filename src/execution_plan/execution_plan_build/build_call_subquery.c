@@ -198,7 +198,7 @@ static void _add_empty_projections
 // construct the execution-plan corresponding to a call {} clause
 void buildCallSubqueryPlan
 (
-	ExecutionPlan *plan,            // execution plan to add plan to
+	ExecutionPlan *plan,            // execution plan to add ops to
 	const cypher_astnode_t *clause  // call subquery clause
 ) {
 	//--------------------------------------------------------------------------
@@ -227,7 +227,7 @@ void buildCallSubqueryPlan
 	// if it is the call sub-query becomes eager, consuming all possible records
 	// before running
 	bool is_eager = ExecutionPlan_LocateOpMatchingTypes(embedded_plan->root,
-			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT) != NULL;
+			MODIFYING_OPERATIONS, MODIFYING_OP_COUNT, NULL, 0) != NULL;
 
 	// characterize whether the query is returning or not
 	bool is_returning = (OpBase_Type(embedded_plan->root) == OPType_RESULTS);

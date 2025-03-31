@@ -83,7 +83,6 @@ OpBase *NewDistinctOp
 	OpDistinct *op = rm_calloc(1, sizeof(OpDistinct));
 
 	op->found        = HashTableCreate(&def_dt);
-	op->mapping      = NULL;
 	op->aliases      = rm_malloc(alias_count * sizeof(const char *));
 	op->offset_count = alias_count;
 	op->offsets      = rm_calloc(op->offset_count, sizeof(uint));
@@ -105,8 +104,8 @@ static OpResult DistinctInit
 	OpDistinct *op = (OpDistinct*)opBase;
 
 	// set distinct expressions offsets
-	for(uint i = 0; i < op->offset_count; i++) {
-		bool aware = OpBase_Aware(opBase, op->aliases[i], op->offsets+i);
+	for(int i = 0; i < op->offset_count; i++) {
+		bool aware = OpBase_AliasMapping(opBase, op->aliases[i], op->offsets+i);
 		ASSERT(aware == true);
 	}
 

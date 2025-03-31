@@ -173,28 +173,41 @@ int OpBase_AliasModifier
 	return (intptr_t)id;
 }
 
+// returns true if any of an op's children are aware of the given alias
 bool OpBase_ChildrenAware
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *root,   // root operation
+	const char *alias,    // alias to look for
+	int *idx              // [output] alias record position
 ) {
-	for (int i = 0; i < op->childCount; i++) {
-		OpBase *child = op->children[i];
-		if(op->plan == child->plan && child->modifies != NULL) {
+	ASSERT(root != NULL);
+
+	// for each child operation
+	for(int i = 0; i < root->childCount; i++) {
+		OpBase *child = OpBase_GetChild(root, i);
+
+		// do not cross plan boundries
+		if(root->plan == child->plan && child->modifies != NULL) {
+			// scan child modifiers
 			uint count = array_len(child->modifies);
-			for (uint i = 0; i < count; i++) {
+			for(uint i = 0; i < count; i++) {
 				if(strcmp(alias, child->modifies[i]) == 0) {
+					// set idx if required
 					if(idx) {
-						rax *mapping = ExecutionPlan_GetMappings(op->plan);
-						void *rec_idx = raxFind(mapping, (unsigned char *)alias, strlen(alias));
+						rax *mapping = ExecutionPlan_GetMappings(root->plan);
+						void *rec_idx = raxFind(mapping, (unsigned char *)alias,
+								strlen(alias));
 						*idx = (intptr_t)rec_idx;
 					}
 					return true;
 				}
 			}
 		}
-		if(OpBase_ChildrenAware(child, alias, idx)) return true;
+
+		// recurse with child
+		if(OpBase_ChildrenAware(child, alias, idx)) {
+			return true;
+		}
 	}
 	
 	return false;
