@@ -87,27 +87,27 @@ static CommandCategory* _create_command_category
 
 	if(commands_copy == NULL) goto cleanup;
 
-    // split commands using strtok
+	// split commands using strtok
 	// and fill the commands array, the minus and plus arrays
-    for(token = strtok_r(commands_copy, " ", &saveptr);
-        token != NULL;
-        token = strtok_r(NULL, " ", &saveptr)) {
+	for(token = strtok_r(commands_copy, " ", &saveptr);
+		token != NULL;
+		token = strtok_r(NULL, " ", &saveptr)) {
         
-        // Skip empty tokens from multiple spaces
-        if(strlen(token) == 0) continue;
+		// skip empty tokens from multiple spaces
+		if(strlen(token) == 0) continue;
         
-        char *cmd = rm_strdup(token);
-        if(cmd == NULL) {
-            rm_free(commands_copy);
-            goto cleanup;
-        }
-        array_append(category->commands, cmd);
+		char *cmd = rm_strdup(token);
+		if(cmd == NULL) {
+			rm_free(commands_copy);
+			goto cleanup;
+		}
+		array_append(category->commands, cmd);
 	
 		// add the command to the minus and plus arrays
 		array_append(category->redis_module_commands_minus,
 			_create_command_with_prefix('-', cmd));
 		array_append(category->redis_module_commands_plus,
-				_create_command_with_prefix('+', cmd));
+			_create_command_with_prefix('+', cmd));
 	}
 
     rm_free(commands_copy);
@@ -615,7 +615,7 @@ int graph_acl_cmd
 		// execute the command as admin using redis ACL
 		return _execute_acl_cmd_as_admin(ctx, argv, argc);
 
-	} else {
+	}else {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 			"Unknown command: GRAPH.ACL %s", command);
 		RedisModule_ReplyWithError(ctx, "Unknown command");
