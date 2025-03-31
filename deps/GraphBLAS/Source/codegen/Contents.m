@@ -28,6 +28,6 @@
 %   codegen_uop_method           - create a function to compute C=uop(A)
 %   codegen_uop_template         - CODEGEN_UNOP_TEMPLATE create uop functions
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 

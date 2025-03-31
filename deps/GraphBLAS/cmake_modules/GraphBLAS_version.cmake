@@ -2,15 +2,15 @@
 # GraphBLAS/cmake_modules/GraphBLAS_version.cmake: define the GraphBLAS version
 #-------------------------------------------------------------------------------
 
-# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+# SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 #-------------------------------------------------------------------------------
 
 # version of SuiteSparse:GraphBLAS
-set ( GraphBLAS_DATE "Nov 18, 2024" )
-set ( GraphBLAS_VERSION_MAJOR 9 CACHE STRING "" FORCE )
-set ( GraphBLAS_VERSION_MINOR 4 CACHE STRING "" FORCE )
+set ( GraphBLAS_DATE "Mar 20, 2025" )
+set ( GraphBLAS_VERSION_MAJOR 10 CACHE STRING "" FORCE )
+set ( GraphBLAS_VERSION_MINOR 0 CACHE STRING "" FORCE )
 set ( GraphBLAS_VERSION_SUB   2 CACHE STRING "" FORCE )
 
 # GraphBLAS C API Specification version, at graphblas.org

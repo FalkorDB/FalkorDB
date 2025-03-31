@@ -122,18 +122,21 @@ rax *FilterTree_CollectModified
 	const FT_FilterNode *root
 );
 
-// rxtract every attribute mentioned in the tree
-// without duplications
+// collect filtered attribute for a given entity
+// e.g. person.first_name = 'a' OR person.last_name = 'b'
+// will collect both 'first_name' and 'last_name'
+// if filtered_entity is 'person'
 rax *FilterTree_CollectAttributes
 (
-	const FT_FilterNode *root
+	const FT_FilterNode *root,  // filter tree
+	const char *entity          // filtered entity
 );
 
-// check if any filtered variable is an alias
+// check if any of the filtered variable refers to a projection alias
 bool FilterTree_FiltersAlias
 (
-	const FT_FilterNode *root,
-	const cypher_astnode_t *ast
+	const FT_FilterNode *root,   // filter tree root
+	const cypher_astnode_t *ast  // AST
 );
 
 // checks to see if tree contains given operation

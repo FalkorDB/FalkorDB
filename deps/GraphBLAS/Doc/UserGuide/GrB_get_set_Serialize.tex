@@ -1,0 +1,57 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{Options for inspecting a serialized blob}
+\label{get_set_blob}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6.5in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (const void *blob, GrB_Scalar value, int f, size_t blobsize) ;
+GrB_Info GrB_get (const void *blob, char *     value, int f, size_t blobsize) ;
+GrB_Info GrB_get (const void *blob, int32_t *  value, int f, size_t blobsize) ;
+GrB_Info GrB_get (const void *blob, size_t *   value, int f, size_t blobsize) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.2in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_STORAGE_ORIENTATION_HINT' & R    & \verb'int32_t'& See \verb'GrB_Orientation', \newline
+                                                             and Section~\ref{storage_orientation}. \\
+\verb'GrB_EL_TYPE_CODE'             & R    & \verb'int32_t'& type of matrix in the blob \\
+\verb'GxB_SPARSITY_CONTROL'         & R    & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_SPARSITY_STATUS'          & R    & \verb'int32_t'& See Section~\ref{sparsity_status} \\
+\verb'GxB_ISO'                      & R    & \verb'int32_t'& iso status (Section~\ref{iso_status}) \\
+\verb'GxB_ROWINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for row indices (32 or 64) \\
+\verb'GxB_COLINDEX_INTEGER_BITS'    & R    & \verb'int32_t'& number of bits for column indices (32 or 64) \\
+\verb'GxB_OFFSET_INTEGER_BITS'      & R    & \verb'int32_t'& number of bits for offsets (32 or 64) \\
+\verb'GxB_ROWINDEX_INTEGER_HINT'    & R    & \verb'int32_t'& hint for row indices (0, 32, 64) \\
+\verb'GxB_COLINDEX_INTEGER_HINT'    & R    & \verb'int32_t'& hint for column indices (0, 32, 64) \\
+\verb'GxB_OFFSET_INTEGER_HINT'      & R    & \verb'int32_t'& hint for offsets (0, 32, 64) \\
+\hline
+\verb'GrB_NAME'                     & R    & \verb'char *' & name of the matrix in the blob. \\
+\verb'GrB_EL_TYPE_STRING'           & R    & \verb'char *' & name of the type of the matrix in the blob. \\
+\verb'GxB_JIT_C_NAME'               & R    & \verb'char *' & JIT C name of the type of the matrix in the blob. \\
+\hline
+\verb'GxB_HYPER_SWITCH'             & R    & \verb'double' & See Section~\ref{hypersparse} \\
+\verb'GxB_BITMAP_SWITCH'            & R    & \verb'double' & See Section~\ref{bitmap_switch} \\
+\hline
+\end{tabular}
+}
+
+The \verb'GrB_Matrix_serialize' and \verb'GxB_Matrix_serialize' methods create
+a {\em blob} as a single array of bytes that contains all content of a
+\verb'GrB_Matrix'.  These \verb'GrB_get' methods can query a blob for the same
+values that can be queried for a \verb'GrB_Matrix'.  The blob cannot be
+modified by \verb'GrB_set'.
+
+Note that these \verb'GrB_get' methods add a fourth parameter, the size of
+the blob.  All other \verb'GrB_get' methods have just three parameters:
+the object, the value, and the field.
+
+

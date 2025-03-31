@@ -2,7 +2,7 @@
 // GB_encodify_ewise: encode a ewise problem, including types and op
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,16 +19,23 @@ uint64_t GB_encodify_ewise      // encode an ewise problem
     // input:
     const GB_jit_kcode kcode,   // kernel to encode
     const bool is_eWiseMult,    // if true, method is emult
+    // C matrix:
     const bool C_iso,
     const bool C_in_iso,
     const int C_sparsity,
     const GrB_Type ctype,
+    const bool Cp_is_32,
+    const bool Cj_is_32,
+    const bool Ci_is_32,
+    // M matrix:
     const GrB_Matrix M,
     const bool Mask_struct,
     const bool Mask_comp,
+    // operator:
     const GrB_BinaryOp binaryop,
     const bool flipij,
     const bool flipxy,
+    // A and B:
     const GrB_Matrix A,         // NULL for apply bind1st
     const GrB_Matrix B          // NULL for apply bind2nd
 )
@@ -56,8 +63,9 @@ uint64_t GB_encodify_ewise      // encode an ewise problem
 
     encoding->kcode = kcode ;
     GB_enumify_ewise (&encoding->code, is_eWiseMult, is_eWiseUnion, is_kron,
-        is_eWiseAdd, C_iso, C_in_iso, C_sparsity, ctype, M, Mask_struct,
-        Mask_comp, binaryop, flipij, flipxy, A, B) ;
+        is_eWiseAdd, C_iso, C_in_iso, C_sparsity, ctype,
+        Cp_is_32, Cj_is_32, Ci_is_32,
+        M, Mask_struct, Mask_comp, binaryop, flipij, flipxy, A, B) ;
 
     //--------------------------------------------------------------------------
     // determine the suffix and its length

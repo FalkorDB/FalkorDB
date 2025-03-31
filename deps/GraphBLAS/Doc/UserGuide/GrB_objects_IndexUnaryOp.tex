@@ -1,0 +1,270 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS IndexUnaryOp operators: {\sf GrB\_IndexUnaryOp}} %========
+%===============================================================================
+\label{idxunop}
+
+An index-unary operator is a scalar function of the form
+$z=f(a_{ij},i,j,y)$ that is applied to the entries $a_{ij}$ of an
+$m$-by-$n$ matrix.  It can be used in \verb'GrB_apply' (Section~\ref{apply}) or
+in \verb'GrB_select' (Section~\ref{select}) to select entries from a matrix or
+vector.
+
+The signature of the index-unary function \verb'f' is as follows:
+
+{\footnotesize
+\begin{verbatim}
+void f
+(
+    void *z,            // output value z, of type ztype
+    const void *x,      // input value x of type xtype; value of v(i) or A(i,j)
+    GrB_Index i,        // row index of A(i,j)
+    GrB_Index j,        // column index of A(i,j), or zero for v(i)
+    const void *y       // input scalar y of type ytype
+) ; \end{verbatim}}
+
+The following built-in operators are available.  Operators that do not depend
+on the value of \verb'A(i,j)' can be used on any matrix or vector, including
+those of user-defined type.  In the table, \verb'y' is a
+scalar whose type matches the suffix of the operator.  The \verb'VALUEEQ' and
+\verb'VALUENE' operators are defined for any built-in type. The other
+\verb'VALUE' operators are defined only for real (not complex) built-in types.
+Any index computations are done in \verb'int64_t' arithmetic; the result is
+typecasted to \verb'int32_t' for the \verb'*INDEX_INT32' operators.
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS name          & MATLAB/Octave     & description \\
+                        & analog            & \\
+\hline
+\verb'GrB_ROWINDEX_INT32'  & \verb'z=i+y'       & row index of \verb'A(i,j)', as int32 \\
+\verb'GrB_ROWINDEX_INT64'  & \verb'z=i+y'       & row index of \verb'A(i,j)', as int64 \\
+\verb'GrB_COLINDEX_INT32'  & \verb'z=j+y'       & column index of \verb'A(i,j)', as int32 \\
+\verb'GrB_COLINDEX_INT64'  & \verb'z=j+y'       & column index of \verb'A(i,j)', as int64 \\
+\verb'GrB_DIAGINDEX_INT32' & \verb'z=j-(i+y)'   & column diagonal index of \verb'A(i,j)', as int32 \\
+\verb'GrB_DIAGINDEX_INT64' & \verb'z=j-(i+y)'   & column diagonal index of \verb'A(i,j)', as int64 \\
+\hline
+\verb'GrB_TRIL'    & \verb'z=(j<=(i+y))'  & true for entries on or below the \verb'y'th diagonal \\
+\verb'GrB_TRIU'    & \verb'z=(j>=(i+y))'  & true for entries on or above the \verb'y'th diagonal \\
+\verb'GrB_DIAG'    & \verb'z=(j==(i+y))'  & true for entries on the \verb'y'th diagonal \\
+\verb'GrB_OFFDIAG' & \verb'z=(j!=(i+y))'  & true for entries not on the \verb'y'th diagonal \\
+\verb'GrB_COLLE'   & \verb'z=(j<=y)'      & true for entries in columns 0 to \verb'y' \\
+\verb'GrB_COLGT'   & \verb'z=(j>y)'       & true for entries in columns \verb'y+1' and above \\
+\verb'GrB_ROWLE'   & \verb'z=(i<=y)'      & true for entries in rows 0 to \verb'y' \\
+\verb'GrB_ROWGT'   & \verb'z=(i>y)'       & true for entries in rows \verb'y+1' and above \\
+\hline
+\verb'GrB_VALUENE_T'     & \verb'z=(aij!=y)'    & true if \verb'A(i,j)' is not equal to \verb'y'\\
+\verb'GrB_VALUEEQ_T'     & \verb'z=(aij==y)'    & true if \verb'A(i,j)' is equal to \verb'y'\\
+\verb'GrB_VALUEGT_T'     & \verb'z=(aij>y)'     & true if \verb'A(i,j)' is greater than \verb'y' \\
+\verb'GrB_VALUEGE_T'     & \verb'z=(aij>=y)'    & true if \verb'A(i,j)' is greater than or equal to \verb'y' \\
+\verb'GrB_VALUELT_T'     & \verb'z=(aij<y)'     & true if \verb'A(i,j)' is less than \verb'y' \\
+\verb'GrB_VALUELE_T'     & \verb'z=(aij<=y)'    & true if \verb'A(i,j)' is less than or equal to \verb'y' \\
+%
+\hline
+\end{tabular}
+}
+\vspace{0.2in}
+
+
+The following methods operate on the \verb'GrB_IndexUnaryOp' object:
+
+\vspace{0.1in}
+\noindent
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function   & purpose                                      & Section \\
+\hline
+\verb'GrB_IndexUnaryOp_new'   & create a user-defined index-unary operator   & \ref{idxunop_new} \\
+\verb'GxB_IndexUnaryOp_new'   & create a named user-defined index-unary operator   & \ref{idxunop_new_named} \\
+\verb'GrB_IndexUnaryOp_wait'  & wait for a user-defined index-unary operator  & \ref{idxunop_wait} \\
+\verb'GrB_IndexUnaryOp_free'  & free a user-defined index-unary operator      & \ref{idxunop_free} \\
+\verb'GrB_get'           & get properties of an operator    & \ref{get_set_idxunop} \\
+\verb'GrB_set'           & set the operator name/definition & \ref{get_set_idxunop} \\
+\hline
+\end{tabular}
+}
+\vspace{0.1in}
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_IndexUnaryOp\_new:} create a user-defined index-unary operator}
+%-------------------------------------------------------------------------------
+\label{idxunop_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_IndexUnaryOp_new       // create a new user-defined IndexUnary op
+(
+    GrB_IndexUnaryOp *op,           // handle for the new IndexUnary operator
+    void *function,                 // pointer to IndexUnary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x (the A(i,j) entry)
+    GrB_Type ytype                  // type of scalar input y
+) ;
+\end{verbatim} }\end{mdframed}
+
+
+\verb'GrB_IndexUnaryOp_new' creates a new index-unary operator.  The new operator is
+returned in the \verb'op' handle, which must not be \verb'NULL' on input.
+On output, its contents contains a pointer to the new index-unary operator.
+
+The \verb'function' argument to \verb'GrB_IndexUnaryOp_new' is a pointer to a
+user-defined function whose signature is given at the beginning of
+Section~\ref{idxunop}.  Given the properties of an entry $a_{ij}$ in a
+matrix, the \verb'function' should return \verb'z' as \verb'true' if the entry
+should be kept in the output of \verb'GrB_select', or \verb'false' if it should
+not appear in the output.  If the return value is not \verb'GrB_BOOL',
+it is typecasted to \verb'GrB_BOOL' by \verb'GrB_select'.
+
+The type \verb'xtype' is the GraphBLAS type of the input $x$ of the
+user-defined function $z=f(x,i,j,y)$, which is used for the
+entry \verb'A(i,j)' of a matrix or \verb'v(i)' of a vector.  The type may be
+built-in or user-defined.
+
+The type \verb'ytype' is the GraphBLAS type of the scalar input $y$ of the
+user-defined function $z=f(x,i,j,y)$.  The type may be built-in
+or user-defined.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GxB\_IndexUnaryOp\_new:} create a named user-defined index-unary operator}
+%-------------------------------------------------------------------------------
+\label{idxunop_new_named}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GxB_IndexUnaryOp_new   // create a named user-created IndexUnaryOp
+(
+    GrB_IndexUnaryOp *op,           // handle for the new IndexUnary operator
+    GxB_index_unary_function function,    // pointer to index_unary function
+    GrB_Type ztype,                 // type of output z
+    GrB_Type xtype,                 // type of input x
+    GrB_Type ytype,                 // type of scalar input y
+    const char *idxop_name,         // name of the user function
+    const char *idxop_defn          // definition of the user function
+) ;
+\end{verbatim} }\end{mdframed}
+
+Creates a named \verb'GrB_IndexUnaryOp'.  Only the first 127 characters of
+\verb'idxop_name' are used.  The \verb'ixdop_defn' is a string containing the
+entire function itself.
+
+The two strings \verb'idxop_name' and \verb'idxop_defn' are optional, but are
+required to enable the JIT compilation of kernels that use this operator.
+The strings can also be set the \verb'GrB_set' after the operator is created
+with \verb'GrB_IndexUnaryOp_new'.  For example:
+
+{\footnotesize
+\begin{verbatim}
+    void banded_idx
+    (
+        bool *z,
+        const int64_t *x,   // unused
+        int64_t i,
+        int64_t j,
+        const int64_t *thunk
+    )
+    {
+        // d = abs (j-i)
+        int64_t d = j-i ;
+        if (d < 0) d = -d ;
+        (*z) = (d <= *thunk) ;
+    }
+
+    #define BANDED_IDX_DEFN                     \
+    "void banded_idx                        \n" \
+    "(                                      \n" \
+    "    bool *z,                           \n" \
+    "    const int64_t *x,   // unused      \n" \
+    "    int64_t i,                         \n" \
+    "    int64_t j,                         \n" \
+    "    const int64_t *thunk               \n" \
+    ")                                      \n" \
+    "{                                      \n" \
+    "    int64_t d = j-i ;                  \n" \
+    "    if (d < 0) d = -d ;                \n" \
+    "    (*z) = (d <= *thunk) ;             \n" \
+    "}"
+
+    GxB_IndexUnaryOp_new (&Banded,
+        (GxB_index_unary_function) banded_idx,
+        GrB_BOOL, GrB_INT64, GrB_INT64,
+        "banded_idx", BANDED_IDX_DEFN)) ;\end{verbatim}}
+
+If JIT compilation is enabled, or if the corresponding JIT kernel has been
+copied into the \verb'PreJIT' folder, the \verb'function' may be \verb'NULL'.
+In this case, a JIT kernel is compiled that contains just the user-defined
+function.  If the JIT is disabled and the \verb'function' is \verb'NULL', this
+method returns \verb'GrB_NULL_POINTER'.
+
+The above example is identical to the following usage
+except that \verb'GrB_IndexUnaryOp_new' requires a non-NULL function pointer.
+The \verb'banded_idx' function is defined the same as above.
+
+{\footnotesize
+\begin{verbatim}
+    void banded_idx ... see above
+    #define BANDED_IDX_DEFN  ... see above
+
+    GrB_IndexUnaryOp_new (&Banded,
+        (GxB_index_unary_function) banded_idx,
+        GrB_BOOL, GrB_INT64, GrB_INT64) ;
+    GrB_set (Banded, "banded_idx", GxB_JIT_C_NAME)) ;
+    GrB_set (Banded, BANDED_IDX_DEFN, GxB_JIT_C_DEFINITION)) ;\end{verbatim}}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_IndexUnaryOp\_wait:} wait for an index-unary operator}
+%-------------------------------------------------------------------------------
+\label{idxunop_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait               // wait for a user-defined binary operator
+(
+    GrB_IndexUnaryOp op,        // index-unary operator to wait for
+    int mode                    // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined index-unary operator, a GraphBLAS library may choose
+to exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS currently does nothing except to ensure that the
+\verb'op' is valid.
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_IndexUnaryOp\_free:} free a user-defined index-unary operator}
+%-------------------------------------------------------------------------------
+\label{idxunop_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free               // free a user-created index-unary operator
+(
+    GrB_IndexUnaryOp *op        // handle of IndexUnary to free
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+\verb'GrB_IndexUnaryOp_free' frees a user-defined index-unary operator.  Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_IndexUnaryOp_free (&op) ;
+    GrB_free (&op) ; \end{verbatim}}
+
+\noindent
+frees the \verb'op' and sets \verb'op' to \verb'NULL'.  It safely
+does nothing if passed a \verb'NULL' handle, or if \verb'op == NULL' on
+input.  It does nothing at all if passed a built-in index-unary operator.
+

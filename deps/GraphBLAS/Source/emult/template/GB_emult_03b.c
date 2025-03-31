@@ -2,7 +2,7 @@
 // GB_emult_03b: C = A.*B when A is full and B is sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -24,14 +24,14 @@
         int64_t klast  = klast_Bslice  [tid] ;
         for (int64_t k = kfirst ; k <= klast ; k++)
         {
-            int64_t j = GBH_B (Bh, k) ;
+            int64_t j = GBh_B (Bh, k) ;
             int64_t pA_start = j * vlen ;
             GB_GET_PA (pB, pB_end, tid, k, kfirst, klast, pstart_Bslice,
-                GBP_B (Bp, k, vlen), GBP_B (Bp, k+1, vlen)) ;
+                GB_IGET (Bp, k), GB_IGET (Bp, k+1)) ;
             for ( ; pB < pB_end ; pB++)
             { 
                 // C (i,j) = A (i,j) .* B (i,j)
-                int64_t i = Bi [pB] ;
+                int64_t i = GB_IGET (Bi, pB) ;
                 int64_t pA = pA_start + i ;
                 // Ci [pB] = i ; already defined
                 #ifndef GB_ISO_EMULT

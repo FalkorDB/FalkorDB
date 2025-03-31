@@ -1,7 +1,7 @@
 function test254
 %TEST254 test masks with all types
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test254 ------------ C<M>=A+B with different masks\n') ;

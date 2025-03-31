@@ -1,7 +1,7 @@
 function test187
 %TEST187 test dup/assign for all sparsity formats
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test187 ----------- C = A for all sparsity formats and all types\n') ;

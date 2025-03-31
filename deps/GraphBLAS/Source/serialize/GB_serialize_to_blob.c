@@ -2,7 +2,7 @@
 // GB_serialize_to_blob: copy a set of blocks to the blob
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ void GB_serialize_to_blob
     size_t *s_handle,       // location to append into the blob
     // input:
     GB_blocks *Blocks,      // Blocks: array of size nblocks+1
-    int64_t *Sblocks,       // array of size nblocks
+    uint64_t *Sblocks,      // array of size nblocks
     int32_t nblocks,        // # of blocks
     int nthreads_max        // # of threads to use
 )

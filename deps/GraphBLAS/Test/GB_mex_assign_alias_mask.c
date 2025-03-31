@@ -2,7 +2,7 @@
 // GB_mex_assign_alias_mask: C<A> = A
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -61,7 +61,7 @@ void mexFunction
         mexErrMsgTxt ("desc failed") ;
     }
 
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, C) ;
     GrB_Matrix_ncols (&ncols, C) ;
 

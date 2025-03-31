@@ -2,20 +2,22 @@
 // GB_mex_subassign_scalar: C<Mask>(I,J) = accum (C (I,J), Scalar)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 
-#define USAGE "C = GB_mex_subassign_scalar(C,Mask,acc,S,I,J,desc)"
+#define USAGE "C = GB_mex_subassign_scalar(C,Mask,acc,S,I,J,desc,kind)"
 
 #define FREE_ALL                        \
 {                                       \
     GrB_Matrix_free_(&A) ;              \
     GrB_Matrix_free_(&Mask) ;           \
     GrB_Matrix_free_(&C) ;              \
+    GrB_Vector_free_(&I_vector) ;       \
+    GrB_Vector_free_(&J_vector) ;       \
     GrB_Descriptor_free_(&desc) ;       \
     GB_mx_put_global (true) ;           \
 }
@@ -30,8 +32,8 @@ GrB_Matrix Mask = NULL ;
 GrB_Matrix A = NULL ;
 GrB_Descriptor desc = NULL ;
 GrB_BinaryOp accum = NULL ;
-GrB_Index *I = NULL, ni = 0, I_range [3] ;
-GrB_Index *J = NULL, nj = 0, J_range [3] ;
+uint64_t *I = NULL, ni = 0, I_range [3] ;   GrB_Vector I_vector = NULL ;
+uint64_t *J = NULL, nj = 0, J_range [3] ;   GrB_Vector J_vector = NULL ;
 bool ignore ;
 bool malloc_debug = false ;
 GrB_Info info = GrB_SUCCESS ;
@@ -84,7 +86,7 @@ void mexFunction
     desc = NULL ;
 
     // check inputs
-    if (nargout > 1 || nargin != 7 )
+    if (nargout > 1 || !(nargin == 7 || nargin == 8))
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
     }
@@ -128,15 +130,22 @@ void mexFunction
         mexErrMsgTxt ("accum failed") ;
     }
 
+    // get kind:
+    //  0: use uint64_t * arrays for I and J
+    //  else: use GrB_Vector variants
+    int GET_SCALAR (7, int, kind, 0) ;
+
     // get I
-    if (!GB_mx_mxArray_to_indices (&I, pargin [4], &ni, I_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [4], &I, &ni, I_range, &ignore,
+        (kind == 0) ? NULL: (&I_vector)))
     {
         FREE_ALL ;
         mexErrMsgTxt ("I failed") ;
     }
 
     // get J
-    if (!GB_mx_mxArray_to_indices (&J, pargin [5], &nj, J_range, &ignore))
+    if (!GB_mx_mxArray_to_indices (pargin [5], &J, &nj, J_range, &ignore,
+        (kind == 0) ? NULL: (&J_vector)))
     {
         FREE_ALL ;
         mexErrMsgTxt ("J failed") ;
@@ -153,13 +162,29 @@ void mexFunction
     GrB_Scalar S = (GrB_Scalar) A ;
     if (GB_VECTOR_OK (C) && (Mask == NULL || GB_VECTOR_OK (Mask)))
     {
-        METHOD (GxB_Vector_subassign_Scalar ((GrB_Vector) C, (GrB_Vector) Mask,
-            accum, S, I, ni, desc)) ;
+        if (kind == 0)
+        {
+            METHOD (GxB_Vector_subassign_Scalar_((GrB_Vector) C, (GrB_Vector) Mask,
+                accum, S, I, ni, desc)) ;
+        }
+        else
+        {
+            METHOD (GxB_Vector_subassign_Scalar_Vector_((GrB_Vector) C,
+                (GrB_Vector) Mask, accum, S, I_vector, desc)) ;
+        }
     }
     else
     {
-        METHOD (GxB_Matrix_subassign_Scalar ((GrB_Matrix) C, (GrB_Matrix) Mask,
-            accum, S, I, ni, J, nj, desc)) ;
+        if (kind == 0)
+        {
+            METHOD (GxB_Matrix_subassign_Scalar_((GrB_Matrix) C, (GrB_Matrix) Mask,
+                accum, S, I, ni, J, nj, desc)) ;
+        }
+        else
+        {
+            METHOD (GxB_Matrix_subassign_Scalar_Vector_((GrB_Matrix) C,
+                (GrB_Matrix) Mask, accum, S, I_vector, J_vector, desc)) ;
+        }
     }
 
     //--------------------------------------------------------------------------

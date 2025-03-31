@@ -2,10 +2,12 @@
 // gbnorm: norm (A,kind)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// This function accesses opaque content and GB_methods inside GraphBLAS.
 
 #include "gb_interface.h"
 
@@ -36,12 +38,12 @@ void mexFunction
     GrB_Type atype ;
     OK (GxB_Matrix_type (&atype, A)) ;
 
-    GrB_Index anrows, ancols ;
+    uint64_t anrows, ancols ;
     OK (GrB_Matrix_nrows (&anrows, A)) ;
     OK (GrB_Matrix_ncols (&ancols, A)) ;
 
     int sparsity ;
-    OK (GxB_Matrix_Option_get (A, GxB_SPARSITY_STATUS, &sparsity)) ;
+    OK (GrB_Matrix_get_INT32 (A, &sparsity, GxB_SPARSITY_STATUS)) ;
 
     //--------------------------------------------------------------------------
     // s = norm (A,kind)
@@ -49,7 +51,7 @@ void mexFunction
 
     double s ;
 
-    if (norm_kind == INT64_MIN && !GB_is_dense (A))
+    if (norm_kind == INT64_MIN && !gb_is_dense (A))
     { 
         // norm (A,-inf) is zero if A is not full
         s = 0 ;
@@ -60,7 +62,7 @@ void mexFunction
     { 
         // s = norm (A,p) where A is an FP32 or FP64 vector,
         // or when p = 0 (for Frobenius norm).  A cannot be bitmap.
-        GrB_Index anz ;
+        uint64_t anz ;
         OK (GrB_Matrix_nvals (&anz, A)) ;
         s = GB_helper10 (A->x, A->iso, NULL, false, atype, norm_kind, anz) ;
         if (s < 0) ERROR ("unknown norm") ;
@@ -77,6 +79,6 @@ void mexFunction
 
     OK (GrB_Matrix_free (&A)) ;
     pargout [0] = mxCreateDoubleScalar (s) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

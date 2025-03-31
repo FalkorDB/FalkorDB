@@ -4,9 +4,12 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "execution_plan_util.h"
+#include "RG.h"
+#include "../../util/arr.h"
 #include "../ops/op_skip.h"
+#include "../../util/dict.h"
 #include "../ops/op_limit.h"
+#include "execution_plan_util.h"
 
 // returns true if an operation in the op-tree rooted at `root` is eager
 bool ExecutionPlan_isEager
@@ -17,36 +20,86 @@ bool ExecutionPlan_isEager
 			EAGER_OP_COUNT, NULL, 0) != NULL;
 }
 
-OpBase *ExecutionPlan_LocateOpResolvingAlias
+// checks if op is marked as blacklisted
+static inline bool _blacklisted
 (
-    OpBase *root,
-    const char *alias
+	const OpBase* op,               // operation to inspect
+	const OPType *blacklisted_ops,  // list of blacklisted operation types
+	int n                           // length of blacklisted_ops
 ) {
-	if(!root) return NULL;
+	bool blacklisted = false;
 
-	uint count = array_len(root->modifies);
-
-	for(uint i = 0; i < count; i++) {
-		const char *resolved_alias = root->modifies[i];
-		// NOTE - if this function is later used to modify the returned
-		// operation, we should return the deepest operation that modifies the
-		// alias rather than the shallowest, as done here
-		if(strcmp(resolved_alias, alias) == 0) return root;
+	for(int i = 0; i < n; i++) {
+		blacklisted |= (OpBase_Type(op) == blacklisted_ops[i]);
 	}
 
-	for(int i = 0; i < root->childCount; i++) {
-		OpBase *op = ExecutionPlan_LocateOpResolvingAlias(root->children[i], alias);
-		if(op) return op;
+	return blacklisted;
+}
+
+// traverse upwards as long as an operation that resolves all aliases is found
+// returns NULL if all aliases are not resolved
+static OpBase *_LocateOpResolvingAliases
+(
+    OpBase *root,                   // root
+    const char **aliases,           // aliases to locate
+	int n,                          // number of aliases
+	const OPType *blacklisted_ops,  // blacklisted operations
+	int nblacklisted_ops            // number of blacklisted operations
+) {
+	ASSERT(n       >  0);
+	ASSERT(root    != NULL);
+	ASSERT(aliases != NULL);
+
+	if(!OpBase_Aware(root, aliases, n)) {
+		// early return if root isn't aware of alias
+		return NULL;
 	}
 
-	return NULL;
+	// don't venture into blacklisted ops
+	if(_blacklisted(root, blacklisted_ops, nblacklisted_ops)) {
+		return root;
+	}
+
+	OpBase *ret = root;
+	const ExecutionPlan *plan = root->plan;
+
+	// search for a child who's aware of the alias
+	// prefer 'left' children
+	while(true) {
+		bool new_ret = false;
+
+		// scan each child of ret in the hope of finding a child that is
+		// aware of all aliases
+		for(int i = 0; i < ret->childCount; i++) {
+			OpBase *child = OpBase_GetChild(ret, i);
+
+			// do not cross execution-plan boundries
+			if(child->plan != plan ||
+			   _blacklisted(child, blacklisted_ops, nblacklisted_ops)) {
+				continue;
+			}
+
+			// see if current child is aware of all aliases
+			// update 'ret' and break if child is aware of all aliases
+			new_ret = OpBase_Aware(child, aliases, n);
+			if(new_ret) {
+				ret = child;
+				break;
+			}
+		}
+
+		// return if we did not found a child which is aware of the alias
+		if(!new_ret) {
+			break;
+		}
+	}
+
+	return ret;
 }
 
 // locate the first operation matching one of the given types in the op tree by
-// performing DFS.
+// performing DFS
 // returns NULL if no matching operation was found
-//
-// behavior is undefined if blacklist and types share a type
 OpBase *ExecutionPlan_LocateOpMatchingTypes
 (
     OpBase *root,         // search starts here
@@ -132,90 +185,26 @@ OpBase *ExecutionPlan_LocateOpDepth
 	return NULL;
 }
 
-// returns all operations of a certain type in a execution plan
-void ExecutionPlan_LocateOps
-(
-	OpBase ***plans,  // array in which ops are stored
-	OpBase *root,     // root operation of the plan to traverse
-	OPType type       // operation type to search
-) {
-	if(root->type == type) {
-		array_append(*plans, root);
-	}
-
-	for(uint i = 0; i < root->childCount; i++) {
-		ExecutionPlan_LocateOps(plans, root->children[i], type);
-	}
-}
-
+// find the earliest operation at which all references are resolved, if any,
+// without recursing past a blacklisted op
 OpBase *ExecutionPlan_LocateReferencesExcludingOps
 (
-	OpBase *root,
-	const OpBase *recurse_limit,
-	const OPType *blacklisted_ops,
-	int nblacklisted_ops,
-	rax *refs_to_resolve
+	OpBase *root,                   // start point
+	const OPType *blacklisted_ops,  // blacklisted operations
+	int nblacklisted_ops,           // number of blacklisted operations
+	rax *refs_to_resolve            // references to resolve
 ) {
-	int dependency_count = 0;
-	bool blacklisted = false;
-	OpBase *resolving_op = NULL;
-	bool all_refs_resolved = false;
+	// locate earliest op under which all references are resolved
+	OpBase *ret = NULL;
+	int n = raxSize(refs_to_resolve);
+	char **references = (char**)raxKeys(refs_to_resolve);
 
-	// check if this op is blacklisted
-	for(int i = 0; i < nblacklisted_ops && !blacklisted; i++) {
-		blacklisted = (root->type == blacklisted_ops[i]);
-	}
+	OpBase *op = _LocateOpResolvingAliases(root, (const char**)references, n,
+			blacklisted_ops, nblacklisted_ops);
 
-	// we're not allowed to inspect child operations of blacklisted ops
-	// also we're not allowed to venture further than 'recurse_limit'
-	if(blacklisted == false && root != recurse_limit) {
-		for(int i = 0; i < root->childCount && !all_refs_resolved; i++) {
-			// Visit each child and try to resolve references, storing a pointer to the child if successful.
-			OpBase *tmp_op = ExecutionPlan_LocateReferencesExcludingOps(root->children[i],
-																		recurse_limit, blacklisted_ops, nblacklisted_ops, refs_to_resolve);
+	array_free_cb(references, rm_free);
 
-			// Count how many children resolved references
-			if(tmp_op) {
-				dependency_count ++;
-			}
-			// If there is more than one child resolving an op, set the root as the resolver.
-			resolving_op = resolving_op ? root : tmp_op;
-			all_refs_resolved = (raxSize(refs_to_resolve) == 0); // We're done when the rax is empty.
-		}
-	}
-
-	// If we've resolved all references, our work is done.
-	if(all_refs_resolved) return resolving_op;
-
-	char **modifies = NULL;
-	if(blacklisted) {
-		// If we've reached a blacklisted op, all variables in its subtree are
-		// considered to be modified by it, as we can't recurse farther.
-		rax *bound_vars = raxNew();
-		ExecutionPlan_BoundVariables(root, bound_vars, root->plan);
-		modifies = (char **)raxKeys(bound_vars);
-		raxFree(bound_vars);
-	} else {
-		modifies = (char **)root->modifies;
-	}
-
-	// Try to resolve references in the current operation.
-	bool refs_resolved = false;
-	uint modifies_count = array_len(modifies);
-	for(uint i = 0; i < modifies_count; i++) {
-		const char *ref = modifies[i];
-		// Attempt to remove the current op's references, marking whether any removal was succesful.
-		refs_resolved |= raxRemove(refs_to_resolve, (unsigned char *)ref, strlen(ref), NULL);
-	}
-
-	// Free the modified array and its contents if it was generated to represent a blacklisted op.
-	if(blacklisted) {
-		for(uint i = 0; i < modifies_count; i++) rm_free(modifies[i]);
-		array_free(modifies);
-	}
-
-	if(refs_resolved) resolving_op = root;
-	return resolving_op;
+	return op;
 }
 
 // scans plan from root via parent nodes until a limit operation is found
@@ -272,16 +261,6 @@ bool ExecutionPlan_ContainsSkip
 	}
 
 	return false;
-}
-
-OpBase *ExecutionPlan_LocateReferences
-(
-	OpBase *root,
-	const OpBase *recurse_limit,
-	rax *refs_to_resolve
-) {
-	return ExecutionPlan_LocateReferencesExcludingOps(
-			   root, recurse_limit, NULL, 0, refs_to_resolve);
 }
 
 // populates `ops` with all operations with a type in `types` in an
@@ -411,26 +390,23 @@ uint ExecutionPlan_CollectUpwards
 // collect all aliases that have been resolved by the given tree of operations
 void ExecutionPlan_BoundVariables
 (
-    const OpBase *op,
-    rax *modifiers,
-	const ExecutionPlan *plan
+	const OpBase *op,           // operation to start collection from
+	rax *modifiers,             // [output] collected modifiers
+	const ExecutionPlan *plan   // scoped plan
 ) {
-	ASSERT(op != NULL && modifiers != NULL);
-	if(op->modifies && op->plan == plan) {
-		uint modifies_count = array_len(op->modifies);
-		for(uint i = 0; i < modifies_count; i++) {
-			const char *modified = op->modifies[i];
-			raxTryInsert(modifiers, (unsigned char *)modified, strlen(modified), (void *)modified, NULL);
-		}
-	}
+	// validations
+	ASSERT(op        != NULL);
+	ASSERT(modifiers != NULL);
 
-	// Project and Aggregate operations demarcate variable scopes,
-	// collect their projections but do not recurse into their children.
-	// Note that future optimizations which operate across scopes will require different logic
-	// than this for application
-	if(op->type == OPType_PROJECT || op->type == OPType_AGGREGATE) return;
-
-	for(int i = 0; i < op->childCount; i++) {
-		ExecutionPlan_BoundVariables(op->children[i], modifiers, plan);
+	// TODO: switch from rax to dict,
+	// TODO: see if we can simply return op's awareness?
+	dictIterator it;
+	dictEntry    *de;
+	HashTableInitIterator(&it, op->awareness);
+	while((de = HashTableNext(&it)) != NULL) {
+		char *key = HashTableGetKey(de);
+		raxInsert(modifiers, (unsigned char *)key, strlen(key), (void *)key,
+				NULL);
 	}
 }
+

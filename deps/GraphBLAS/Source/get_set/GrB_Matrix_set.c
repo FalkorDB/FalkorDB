@@ -2,7 +2,7 @@
 // GrB_Matrix_set_*: set a field in a matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,8 +16,8 @@
 GrB_Info GrB_Matrix_set_Scalar
 (
     GrB_Matrix A,
-    GrB_Scalar value,
-    GrB_Field field
+    GrB_Scalar scalar,
+    int field
 )
 {
 
@@ -25,9 +25,11 @@ GrB_Info GrB_Matrix_set_Scalar
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_set_Scalar (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
-    ASSERT_MATRIX_OK (A, "A to set option", GB0) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_WHERE_2 (A, scalar, "GrB_Matrix_set_Scalar (A, scalar, field)") ;
+
+    ASSERT_MATRIX_OK (A, "GrB: A to set Scalar option", GB0) ;
 
     //--------------------------------------------------------------------------
     // set the field
@@ -35,7 +37,6 @@ GrB_Info GrB_Matrix_set_Scalar
 
     double dvalue = 0 ;
     int32_t ivalue = 0 ;
-    GrB_Info info ;
 
     switch ((int) field)
     {
@@ -43,12 +44,12 @@ GrB_Info GrB_Matrix_set_Scalar
         case GxB_HYPER_SWITCH : 
         case GxB_BITMAP_SWITCH : 
 
-            info = GrB_Scalar_extractElement_FP64 (&dvalue, value) ;
+            info = GrB_Scalar_extractElement_FP64 (&dvalue, scalar) ;
             break ;
 
         default : 
 
-            info = GrB_Scalar_extractElement_INT32 (&ivalue, value) ;
+            info = GrB_Scalar_extractElement_INT32 (&ivalue, scalar) ;
             break ;
     }
 
@@ -68,7 +69,7 @@ GrB_Info GrB_Matrix_set_String
 (
     GrB_Matrix A,
     char * value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -76,10 +77,11 @@ GrB_Info GrB_Matrix_set_String
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_set_String (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GrB_Info info ;
+    GB_CHECK_INIT ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (value) ;
-    ASSERT_MATRIX_OK (A, "A to set option", GB0) ;
+    ASSERT_MATRIX_OK (A, "GrB: A to set String option", GB0) ;
 
     //--------------------------------------------------------------------------
     // set the field
@@ -96,7 +98,7 @@ GrB_Info GrB_Matrix_set_INT32
 (
     GrB_Matrix A,
     int32_t value,
-    GrB_Field field
+    int field
 )
 { 
 
@@ -104,9 +106,10 @@ GrB_Info GrB_Matrix_set_INT32
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Matrix_set_INT32 (A, value, field)") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
-    ASSERT_MATRIX_OK (A, "A to set option", GB0) ;
+    GB_RETURN_IF_NULL (A) ;
+    GB_WHERE1 (A, "GrB_Matrix_set_INT32 (A, value, field)") ;
+
+    ASSERT_MATRIX_OK (A, "GrB: A to set int32 option", GB0) ;
 
     //--------------------------------------------------------------------------
     // set the field
@@ -123,7 +126,7 @@ GrB_Info GrB_Matrix_set_VOID
 (
     GrB_Matrix A,
     void * value,
-    GrB_Field field,
+    int field,
     size_t size
 )
 { 

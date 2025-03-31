@@ -2,7 +2,7 @@
 // gbargminmax: argmin or argmax of a GraphBLAS matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -85,12 +85,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 // index k to make a tuple (k,v).
 
     void make_bool (tuple_bool *z,
-        const bool *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const bool *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_bool (tuple_bool *z,
-        const bool *x, GrB_Index ix, GrB_Index jx,
-        const void *y, GrB_Index iy, GrB_Index jy,
+        const bool *x, uint64_t ix, uint64_t jx,
+        const void *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -99,8 +99,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_BOOL \
    "void make_bool (tuple_bool *z,                      \n" \
-   "    const bool *x, GrB_Index ix, GrB_Index jx,      \n" \
-   "    const void *y, GrB_Index iy, GrB_Index jy,      \n" \
+   "    const bool *x, uint64_t ix, uint64_t jx,        \n" \
+   "    const void *y, uint64_t iy, uint64_t jy,        \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -108,12 +108,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_int8 (tuple_int8 *z,
-        const int8_t *x, GrB_Index ix, GrB_Index jx,
-        const void   *y, GrB_Index iy, GrB_Index jy,
+        const int8_t *x, uint64_t ix, uint64_t jx,
+        const void   *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_int8 (tuple_int8 *z,
-        const int8_t *x, GrB_Index ix, GrB_Index jx,
-        const void   *y, GrB_Index iy, GrB_Index jy,
+        const int8_t *x, uint64_t ix, uint64_t jx,
+        const void   *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -122,8 +122,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_INT8 \
    "void make_int8 (tuple_int8 *z,                      \n" \
-   "    const int8_t *x, GrB_Index ix, GrB_Index jx,    \n" \
-   "    const void   *y, GrB_Index iy, GrB_Index jy,    \n" \
+   "    const int8_t *x, uint64_t ix, uint64_t jx,      \n" \
+   "    const void   *y, uint64_t iy, uint64_t jy,      \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -131,12 +131,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_int16 (tuple_int16 *z,
-        const int16_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const int16_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_int16 (tuple_int16 *z,
-        const int16_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const int16_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -145,8 +145,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_INT16 \
    "void make_int16 (tuple_int16 *z,                    \n" \
-   "    const int16_t *x, GrB_Index ix, GrB_Index jx,   \n" \
-   "    const void    *y, GrB_Index iy, GrB_Index jy,   \n" \
+   "    const int16_t *x, uint64_t ix, uint64_t jx,     \n" \
+   "    const void    *y, uint64_t iy, uint64_t jy,     \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -154,12 +154,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_int32 (tuple_int32 *z,
-        const int32_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const int32_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_int32 (tuple_int32 *z,
-        const int32_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const int32_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -168,8 +168,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_INT32 \
    "void make_int32 (tuple_int32 *z,                    \n" \
-   "    const int32_t *x, GrB_Index ix, GrB_Index jx,   \n" \
-   "    const void    *y, GrB_Index iy, GrB_Index jy,   \n" \
+   "    const int32_t *x, uint64_t ix, uint64_t jx,     \n" \
+   "    const void    *y, uint64_t iy, uint64_t jy,     \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -177,12 +177,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_int64 (tuple_int64 *z,
-        const int64_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const int64_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_int64 (tuple_int64 *z,
-        const int64_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const int64_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -191,8 +191,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_INT64 \
    "void make_int64 (tuple_int64 *z,                    \n" \
-   "    const int64_t *x, GrB_Index ix, GrB_Index jx,   \n" \
-   "    const void    *y, GrB_Index iy, GrB_Index jy,   \n" \
+   "    const int64_t *x, uint64_t ix, uint64_t jx,     \n" \
+   "    const void    *y, uint64_t iy, uint64_t jy,     \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -200,12 +200,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_uint8 (tuple_uint8 *z,
-        const uint8_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const uint8_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_uint8 (tuple_uint8 *z,
-        const uint8_t *x, GrB_Index ix, GrB_Index jx,
-        const void    *y, GrB_Index iy, GrB_Index jy,
+        const uint8_t *x, uint64_t ix, uint64_t jx,
+        const void    *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -214,8 +214,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_UINT8 \
    "void make_uint8 (tuple_uint8 *z,                    \n" \
-   "    const uint8_t *x, GrB_Index ix, GrB_Index jx,   \n" \
-   "    const void    *y, GrB_Index iy, GrB_Index jy,   \n" \
+   "    const uint8_t *x, uint64_t ix, uint64_t jx,     \n" \
+   "    const void    *y, uint64_t iy, uint64_t jy,     \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -223,12 +223,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_uint16 (tuple_uint16 *z,
-        const uint16_t *x, GrB_Index ix, GrB_Index jx,
-        const void     *y, GrB_Index iy, GrB_Index jy,
+        const uint16_t *x, uint64_t ix, uint64_t jx,
+        const void     *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_uint16 (tuple_uint16 *z,
-        const uint16_t *x, GrB_Index ix, GrB_Index jx,
-        const void     *y, GrB_Index iy, GrB_Index jy,
+        const uint16_t *x, uint64_t ix, uint64_t jx,
+        const void     *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -237,8 +237,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_UINT16 \
    "void make_uint16 (tuple_uint16 *z,                  \n" \
-   "    const uint16_t *x, GrB_Index ix, GrB_Index jx,  \n" \
-   "    const void     *y, GrB_Index iy, GrB_Index jy,  \n" \
+   "    const uint16_t *x, uint64_t ix, uint64_t jx,    \n" \
+   "    const void     *y, uint64_t iy, uint64_t jy,    \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -246,12 +246,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_uint32 (tuple_uint32 *z,
-        const uint32_t *x, GrB_Index ix, GrB_Index jx,
-        const void     *y, GrB_Index iy, GrB_Index jy,
+        const uint32_t *x, uint64_t ix, uint64_t jx,
+        const void     *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_uint32 (tuple_uint32 *z,
-        const uint32_t *x, GrB_Index ix, GrB_Index jx,
-        const void     *y, GrB_Index iy, GrB_Index jy,
+        const uint32_t *x, uint64_t ix, uint64_t jx,
+        const void     *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -260,8 +260,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_UINT32 \
    "void make_uint32 (tuple_uint32 *z,                  \n" \
-   "    const uint32_t *x, GrB_Index ix, GrB_Index jx,  \n" \
-   "    const void     *y, GrB_Index iy, GrB_Index jy,  \n" \
+   "    const uint32_t *x, uint64_t ix, uint64_t jx,    \n" \
+   "    const void     *y, uint64_t iy, uint64_t jy,    \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -269,12 +269,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_uint64 (tuple_uint64 *z,
-        const uint64_t *x, GrB_Index ix, GrB_Index jx,
-        const void     *y, GrB_Index iy, GrB_Index jy,
+        const uint64_t *x, uint64_t ix, uint64_t jx,
+        const void     *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_uint64 (tuple_uint64 *z,
-        const uint64_t *x, GrB_Index ix, GrB_Index jx,
-        const void     *y, GrB_Index iy, GrB_Index jy,
+        const uint64_t *x, uint64_t ix, uint64_t jx,
+        const void     *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -283,8 +283,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_UINT64 \
    "void make_uint64 (tuple_uint64 *z,                  \n" \
-   "    const uint64_t *x, GrB_Index ix, GrB_Index jx,  \n" \
-   "    const void     *y, GrB_Index iy, GrB_Index jy,  \n" \
+   "    const uint64_t *x, uint64_t ix, uint64_t jx,    \n" \
+   "    const void     *y, uint64_t iy, uint64_t jy,    \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -292,12 +292,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_fp32 (tuple_fp32 *z,
-        const float *x, GrB_Index ix, GrB_Index jx,
-        const void  *y, GrB_Index iy, GrB_Index jy,
+        const float *x, uint64_t ix, uint64_t jx,
+        const void  *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_fp32 (tuple_fp32 *z,
-        const float *x, GrB_Index ix, GrB_Index jx,
-        const void  *y, GrB_Index iy, GrB_Index jy,
+        const float *x, uint64_t ix, uint64_t jx,
+        const void  *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -306,8 +306,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_FP32 \
    "void make_fp32 (tuple_fp32 *z,                      \n" \
-   "    const float *x, GrB_Index ix, GrB_Index jx,     \n" \
-   "    const void  *y, GrB_Index iy, GrB_Index jy,     \n" \
+   "    const float *x, uint64_t ix, uint64_t jx,       \n" \
+   "    const void  *y, uint64_t iy, uint64_t jy,       \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -315,12 +315,12 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                   \n"
 
     void make_fp64 (tuple_fp64 *z,
-        const double *x, GrB_Index ix, GrB_Index jx,
-        const void   *y, GrB_Index iy, GrB_Index jy,
+        const double *x, uint64_t ix, uint64_t jx,
+        const void   *y, uint64_t iy, uint64_t jy,
         const void *theta) ;
     void make_fp64 (tuple_fp64 *z,
-        const double *x, GrB_Index ix, GrB_Index jx,
-        const void   *y, GrB_Index iy, GrB_Index jy,
+        const double *x, uint64_t ix, uint64_t jx,
+        const void   *y, uint64_t iy, uint64_t jy,
         const void *theta)
     {
         z->k = (int64_t) jx + 1 ;
@@ -329,8 +329,8 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE_FP64 \
    "void make_fp64 (tuple_fp64 *z,                      \n" \
-   "    const double *x, GrB_Index ix, GrB_Index jx,    \n" \
-   "    const void   *y, GrB_Index iy, GrB_Index jy,    \n" \
+   "    const double *x, uint64_t ix, uint64_t jx,      \n" \
+   "    const void   *y, uint64_t iy, uint64_t jy,      \n" \
    "    const void *theta)                              \n" \
    "{                                                   \n" \
    "    z->k = (int64_t) jx + 1 ;                       \n" \
@@ -346,10 +346,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 // matrices, so jx is always zero.
 
     void make3a_bool (tuple3_bool *z,
-        const tuple_bool *x, GrB_Index ix, GrB_Index jx,
+        const tuple_bool *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_bool (tuple3_bool *z,
-        const tuple_bool *x, GrB_Index ix, GrB_Index jx,
+        const tuple_bool *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -359,10 +359,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_BOOL \
    "void make3a_bool (tuple3_bool *z,                           \n" \
-   "    const tuple_bool *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_bool *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_bool (tuple3_bool *z,                           \n" \
-   "    const tuple_bool *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_bool *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -371,10 +371,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_int8 (tuple3_int8 *z,
-        const tuple_int8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int8 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_int8 (tuple3_int8 *z,
-        const tuple_int8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int8 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -384,10 +384,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_INT8 \
    "void make3a_int8 (tuple3_int8 *z,                           \n" \
-   "    const tuple_int8 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_int8 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_int8 (tuple3_int8 *z,                           \n" \
-   "    const tuple_int8 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_int8 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -396,10 +396,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_int16 (tuple3_int16 *z,
-        const tuple_int16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int16 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_int16 (tuple3_int16 *z,
-        const tuple_int16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int16 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -409,10 +409,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_INT16 \
    "void make3a_int16 (tuple3_int16 *z,                         \n" \
-   "    const tuple_int16 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int16 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_int16 (tuple3_int16 *z,                         \n" \
-   "    const tuple_int16 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int16 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -421,10 +421,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_int32 (tuple3_int32 *z,
-        const tuple_int32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int32 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_int32 (tuple3_int32 *z,
-        const tuple_int32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int32 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -434,10 +434,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_INT32 \
    "void make3a_int32 (tuple3_int32 *z,                         \n" \
-   "    const tuple_int32 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int32 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_int32 (tuple3_int32 *z,                         \n" \
-   "    const tuple_int32 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int32 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -446,10 +446,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_int64 (tuple3_int64 *z,
-        const tuple_int64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int64 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_int64 (tuple3_int64 *z,
-        const tuple_int64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int64 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -459,10 +459,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_INT64 \
    "void make3a_int64 (tuple3_int64 *z,                         \n" \
-   "    const tuple_int64 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int64 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_int64 (tuple3_int64 *z,                         \n" \
-   "    const tuple_int64 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int64 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -471,10 +471,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_uint8 (tuple3_uint8 *z,
-        const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint8 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_uint8 (tuple3_uint8 *z,
-        const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint8 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -484,10 +484,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_UINT8 \
    "void make3a_uint8 (tuple3_uint8 *z,                         \n" \
-   "    const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_uint8 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_uint8 (tuple3_uint8 *z,                         \n" \
-   "    const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_uint8 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -496,10 +496,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_uint16 (tuple3_uint16 *z,
-        const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint16 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_uint16 (tuple3_uint16 *z,
-        const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint16 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -509,10 +509,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_UINT16 \
    "void make3a_uint16 (tuple3_uint16 *z,                       \n" \
-   "    const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint16 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_uint16 (tuple3_uint16 *z,                       \n" \
-   "    const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint16 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -521,10 +521,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_uint32 (tuple3_uint32 *z,
-        const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint32 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_uint32 (tuple3_uint32 *z,
-        const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint32 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -534,10 +534,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_UINT32 \
    "void make3a_uint32 (tuple3_uint32 *z,                       \n" \
-   "    const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint32 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_uint32 (tuple3_uint32 *z,                       \n" \
-   "    const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint32 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -546,10 +546,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_uint64 (tuple3_uint64 *z,
-        const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint64 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_uint64 (tuple3_uint64 *z,
-        const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint64 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -559,10 +559,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_UINT64 \
    "void make3a_uint64 (tuple3_uint64 *z,                       \n" \
-   "    const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint64 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_uint64 (tuple3_uint64 *z,                       \n" \
-   "    const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint64 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -571,10 +571,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_fp32 (tuple3_fp32 *z,
-        const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp32 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_fp32 (tuple3_fp32 *z,
-        const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp32 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -584,10 +584,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_FP32 \
    "void make3a_fp32 (tuple3_fp32 *z,                           \n" \
-   "    const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp32 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_fp32 (tuple3_fp32 *z,                           \n" \
-   "    const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp32 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -596,10 +596,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3a_fp64 (tuple3_fp64 *z,
-        const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp64 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3a_fp64 (tuple3_fp64 *z,
-        const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp64 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = (int64_t) ix + 1 ;
@@ -609,10 +609,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3a_FP64 \
    "void make3a_fp64 (tuple3_fp64 *z,                           \n" \
-   "    const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp64 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3a_fp64 (tuple3_fp64 *z,                           \n" \
-   "    const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp64 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = (int64_t) ix + 1 ;                               \n" \
@@ -629,10 +629,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 // matrices, so jx is always zero.
 
     void make3b_bool (tuple3_bool *z,
-        const tuple_bool *x, GrB_Index ix, GrB_Index jx,
+        const tuple_bool *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_bool (tuple3_bool *z,
-        const tuple_bool *x, GrB_Index ix, GrB_Index jx,
+        const tuple_bool *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -642,10 +642,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_BOOL \
    "void make3b_bool (tuple3_bool *z,                           \n" \
-   "    const tuple_bool *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_bool *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_bool (tuple3_bool *z,                           \n" \
-   "    const tuple_bool *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_bool *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -654,10 +654,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_int8 (tuple3_int8 *z,
-        const tuple_int8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int8 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_int8 (tuple3_int8 *z,
-        const tuple_int8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int8 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -667,10 +667,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_INT8 \
    "void make3b_int8 (tuple3_int8 *z,                           \n" \
-   "    const tuple_int8 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_int8 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_int8 (tuple3_int8 *z,                           \n" \
-   "    const tuple_int8 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_int8 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -679,10 +679,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_int16 (tuple3_int16 *z,
-        const tuple_int16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int16 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_int16 (tuple3_int16 *z,
-        const tuple_int16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int16 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -692,10 +692,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_INT16 \
    "void make3b_int16 (tuple3_int16 *z,                         \n" \
-   "    const tuple_int16 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int16 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_int16 (tuple3_int16 *z,                         \n" \
-   "    const tuple_int16 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int16 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -704,10 +704,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_int32 (tuple3_int32 *z,
-        const tuple_int32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int32 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_int32 (tuple3_int32 *z,
-        const tuple_int32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int32 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -717,10 +717,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_INT32 \
    "void make3b_int32 (tuple3_int32 *z,                         \n" \
-   "    const tuple_int32 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int32 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_int32 (tuple3_int32 *z,                         \n" \
-   "    const tuple_int32 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int32 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -729,10 +729,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_int64 (tuple3_int64 *z,
-        const tuple_int64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int64 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_int64 (tuple3_int64 *z,
-        const tuple_int64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_int64 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -742,10 +742,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_INT64 \
    "void make3b_int64 (tuple3_int64 *z,                         \n" \
-   "    const tuple_int64 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int64 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_int64 (tuple3_int64 *z,                         \n" \
-   "    const tuple_int64 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_int64 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -754,10 +754,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_uint8 (tuple3_uint8 *z,
-        const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint8 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_uint8 (tuple3_uint8 *z,
-        const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint8 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -767,10 +767,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_UINT8 \
    "void make3b_uint8 (tuple3_uint8 *z,                         \n" \
-   "    const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_uint8 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_uint8 (tuple3_uint8 *z,                         \n" \
-   "    const tuple_uint8 *x, GrB_Index ix, GrB_Index jx,       \n" \
+   "    const tuple_uint8 *x, uint64_t ix, uint64_t jx,         \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -779,10 +779,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_uint16 (tuple3_uint16 *z,
-        const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint16 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_uint16 (tuple3_uint16 *z,
-        const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint16 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -792,10 +792,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_UINT16 \
    "void make3b_uint16 (tuple3_uint16 *z,                       \n" \
-   "    const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint16 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_uint16 (tuple3_uint16 *z,                       \n" \
-   "    const tuple_uint16 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint16 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -804,10 +804,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_uint32 (tuple3_uint32 *z,
-        const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint32 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_uint32 (tuple3_uint32 *z,
-        const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint32 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -817,10 +817,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_UINT32 \
    "void make3b_uint32 (tuple3_uint32 *z,                       \n" \
-   "    const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint32 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_uint32 (tuple3_uint32 *z,                       \n" \
-   "    const tuple_uint32 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint32 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -829,10 +829,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_uint64 (tuple3_uint64 *z,
-        const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint64 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_uint64 (tuple3_uint64 *z,
-        const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_uint64 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -842,10 +842,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_UINT64 \
    "void make3b_uint64 (tuple3_uint64 *z,                       \n" \
-   "    const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint64 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_uint64 (tuple3_uint64 *z,                       \n" \
-   "    const tuple_uint64 *x, GrB_Index ix, GrB_Index jx,      \n" \
+   "    const tuple_uint64 *x, uint64_t ix, uint64_t jx,        \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -854,10 +854,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_fp32 (tuple3_fp32 *z,
-        const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp32 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_fp32 (tuple3_fp32 *z,
-        const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp32 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -867,10 +867,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_FP32 \
    "void make3b_fp32 (tuple3_fp32 *z,                           \n" \
-   "    const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp32 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_fp32 (tuple3_fp32 *z,                           \n" \
-   "    const tuple_fp32 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp32 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -879,10 +879,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
    "}                                                           \n" \
 
     void make3b_fp64 (tuple3_fp64 *z,
-        const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp64 *x, uint64_t ix, uint64_t jx,
         const void *y) ;
     void make3b_fp64 (tuple3_fp64 *z,
-        const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,
+        const tuple_fp64 *x, uint64_t ix, uint64_t jx,
         const void *y)
     {
         z->i = x->k ;
@@ -892,10 +892,10 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAKE3b_FP64 \
    "void make3b_fp64 (tuple3_fp64 *z,                           \n" \
-   "    const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp64 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y) ;                                        \n" \
    "void make3b_fp64 (tuple3_fp64 *z,                           \n" \
-   "    const tuple_fp64 *x, GrB_Index ix, GrB_Index jx,        \n" \
+   "    const tuple_fp64 *x, uint64_t ix, uint64_t jx,          \n" \
    "    const void *y)                                          \n" \
    "{                                                           \n" \
    "    z->i = x->k ;                                           \n" \
@@ -928,18 +928,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_BOOL \
    "void max_bool (tuple_bool *z, const tuple_bool *x, const tuple_bool *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_int8 (tuple_int8 *z, const tuple_int8 *x, const tuple_int8 *y) ;
     void max_int8 (tuple_int8 *z, const tuple_int8 *x, const tuple_int8 *y)
@@ -958,18 +958,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_INT8 \
    "void max_int8 (tuple_int8 *z, const tuple_int8 *x, const tuple_int8 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_int16 (tuple_int16 *z, const tuple_int16 *x, const tuple_int16 *y);
     void max_int16 (tuple_int16 *z, const tuple_int16 *x, const tuple_int16 *y)
@@ -988,18 +988,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_INT16 \
    "void max_int16 (tuple_int16 *z, const tuple_int16 *x, const tuple_int16 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_int32 (tuple_int32 *z, const tuple_int32 *x, const tuple_int32 *y);
     void max_int32 (tuple_int32 *z, const tuple_int32 *x, const tuple_int32 *y)
@@ -1018,18 +1018,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_INT32 \
    "void max_int32 (tuple_int32 *z, const tuple_int32 *x, const tuple_int32 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_int64 (tuple_int64 *z, const tuple_int64 *x, const tuple_int64 *y);
     void max_int64 (tuple_int64 *z, const tuple_int64 *x, const tuple_int64 *y)
@@ -1048,18 +1048,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_INT64 \
    "void max_int64 (tuple_int64 *z, const tuple_int64 *x, const tuple_int64 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_uint8 (tuple_uint8 *z, const tuple_uint8 *x, const tuple_uint8 *y);
     void max_uint8 (tuple_uint8 *z, const tuple_uint8 *x, const tuple_uint8 *y)
@@ -1078,18 +1078,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_UINT8 \
    "void max_uint8 (tuple_uint8 *z, const tuple_uint8 *x, const tuple_uint8 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_uint16 (tuple_uint16 *z, const tuple_uint16 *x, const tuple_uint16 *y) ;
     void max_uint16 (tuple_uint16 *z, const tuple_uint16 *x, const tuple_uint16 *y)
@@ -1108,18 +1108,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_UINT16 \
    "void max_uint16 (tuple_uint16 *z, const tuple_uint16 *x, const tuple_uint16 *y) \n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))\n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_uint32 (tuple_uint32 *z, const tuple_uint32 *x, const tuple_uint32 *y) ;
     void max_uint32 (tuple_uint32 *z, const tuple_uint32 *x, const tuple_uint32 *y)
@@ -1138,18 +1138,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_UINT32 \
    "void max_uint32 (tuple_uint32 *z, const tuple_uint32 *x, const tuple_uint32 *y) \n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_uint64 (tuple_uint64 *z, const tuple_uint64 *x, const tuple_uint64 *y) ;
     void max_uint64 (tuple_uint64 *z, const tuple_uint64 *x, const tuple_uint64 *y)
@@ -1168,18 +1168,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_UINT64 \
    "void max_uint64 (tuple_uint64 *z, const tuple_uint64 *x, const tuple_uint64 *y) \n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_fp32 (tuple_fp32 *z, const tuple_fp32 *x, const tuple_fp32 *y) ;
     void max_fp32 (tuple_fp32 *z, const tuple_fp32 *x, const tuple_fp32 *y)
@@ -1198,18 +1198,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_FP32 \
    "void max_fp32 (tuple_fp32 *z, const tuple_fp32 *x, const tuple_fp32 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void max_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y) ;
     void max_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y)
@@ -1228,18 +1228,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MAX_FP64 \
    "void max_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v > y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
 //------------------------------------------------------------------------------
 // min_* functions:
@@ -1266,18 +1266,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_BOOL \
    "void min_bool (tuple_bool *z, const tuple_bool *x, const tuple_bool *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_int8 (tuple_int8 *z, const tuple_int8 *x, const tuple_int8 *y) ;
     void min_int8 (tuple_int8 *z, const tuple_int8 *x, const tuple_int8 *y)
@@ -1296,18 +1296,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_INT8 \
    "void min_int8 (tuple_int8 *z, const tuple_int8 *x, const tuple_int8 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_int16 (tuple_int16 *z, const tuple_int16 *x, const tuple_int16 *y) ;
     void min_int16 (tuple_int16 *z, const tuple_int16 *x, const tuple_int16 *y)
@@ -1326,18 +1326,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_INT16 \
    "void min_int16 (tuple_int16 *z, const tuple_int16 *x, const tuple_int16 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_int32 (tuple_int32 *z, const tuple_int32 *x, const tuple_int32 *y) ;
     void min_int32 (tuple_int32 *z, const tuple_int32 *x, const tuple_int32 *y)
@@ -1356,18 +1356,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_INT32 \
    "void min_int32 (tuple_int32 *z, const tuple_int32 *x, const tuple_int32 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_int64 (tuple_int64 *z, const tuple_int64 *x, const tuple_int64 *y) ;
     void min_int64 (tuple_int64 *z, const tuple_int64 *x, const tuple_int64 *y)
@@ -1386,18 +1386,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_INT64 \
    "void min_int64 (tuple_int64 *z, const tuple_int64 *x, const tuple_int64 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_uint8 (tuple_uint8 *z, const tuple_uint8 *x, const tuple_uint8 *y) ;
     void min_uint8 (tuple_uint8 *z, const tuple_uint8 *x, const tuple_uint8 *y)
@@ -1416,18 +1416,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_UINT8 \
    "void min_uint8 (tuple_uint8 *z, const tuple_uint8 *x, const tuple_uint8 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_uint16 (tuple_uint16 *z, const tuple_uint16 *x, const tuple_uint16 *y) ;
     void min_uint16 (tuple_uint16 *z, const tuple_uint16 *x, const tuple_uint16 *y)
@@ -1446,18 +1446,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_UINT16 \
    "void min_uint16 (tuple_uint16 *z, const tuple_uint16 *x, const tuple_uint16 *y) \n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_uint32 (tuple_uint32 *z, const tuple_uint32 *x, const tuple_uint32 *y) ;
     void min_uint32 (tuple_uint32 *z, const tuple_uint32 *x, const tuple_uint32 *y)
@@ -1476,18 +1476,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_UINT32 \
    "void min_uint32 (tuple_uint32 *z, const tuple_uint32 *x, const tuple_uint32 *y) \n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_uint64 (tuple_uint64 *z, const tuple_uint64 *x, const tuple_uint64 *y) ;
     void min_uint64 (tuple_uint64 *z, const tuple_uint64 *x, const tuple_uint64 *y)
@@ -1506,18 +1506,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_UINT64 \
    "void min_uint64 (tuple_uint64 *z, const tuple_uint64 *x, const tuple_uint64 *y) \n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_fp32 (tuple_fp32 *z, const tuple_fp32 *x, const tuple_fp32 *y) ;
     void min_fp32 (tuple_fp32 *z, const tuple_fp32 *x, const tuple_fp32 *y)
@@ -1536,18 +1536,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_FP32 \
    "void min_fp32 (tuple_fp32 *z, const tuple_fp32 *x, const tuple_fp32 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
     void min_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y) ;
     void min_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y)
@@ -1566,18 +1566,18 @@ typedef struct { int64_t i,j ; double   v ; } tuple3_fp64 ;
 
 #define MIN_FP64 \
    "void min_fp64 (tuple_fp64 *z, const tuple_fp64 *x, const tuple_fp64 *y)\n" \
-   "{                                                                   \n" \
-   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))               \n" \
-   "    {                                                               \n" \
-   "        z->k = x->k ;                                               \n" \
-   "        z->v = x->v ;                                               \n" \
-   "    }                                                               \n" \
-   "    else                                                            \n" \
-   "    {                                                               \n" \
-   "        z->k = y->k ;                                               \n" \
-   "        z->v = y->v ;                                               \n" \
-   "    }                                                               \n" \
-   "}                                                                   \n"
+   "{                                                       \n" \
+   "    if (x->v < y->v || (x->v == y->v && x->k < y->k))   \n" \
+   "    {                                                   \n" \
+   "        z->k = x->k ;                                   \n" \
+   "        z->v = x->v ;                                   \n" \
+   "    }                                                   \n" \
+   "    else                                                \n" \
+   "    {                                                   \n" \
+   "        z->k = y->k ;                                   \n" \
+   "        z->v = y->v ;                                   \n" \
+   "    }                                                   \n" \
+   "}                                                       \n"
 
 //------------------------------------------------------------------------------
 // max3_* functions:
@@ -2520,13 +2520,13 @@ void mexFunction
     // get the matrix properties
     //--------------------------------------------------------------------------
 
-    GrB_Index nrows, ncols, nvals ;
+    uint64_t nrows, ncols, nvals ;
     OK (GrB_Matrix_nrows (&nrows, A)) ;
     OK (GrB_Matrix_ncols (&ncols, A)) ;
     GrB_Type A_type ;
     OK (GxB_Matrix_type (&A_type, A)) ;
-    GxB_Format_Value fmt ;
-    OK (GxB_Matrix_Option_get (A, GxB_FORMAT, &fmt)) ;
+    int fmt ;
+    OK (GrB_Matrix_get_INT32 (A, &fmt, GxB_FORMAT)) ;
 
     //--------------------------------------------------------------------------
     // types, ops, and semirings for argmin and argmax
@@ -3569,11 +3569,12 @@ void mexFunction
     OK (GrB_Matrix_free (&y)) ;
     OK (GrB_Matrix_free (&c)) ;
     OK (GrB_Matrix_free (&A)) ;
+    OK (GrB_Matrix_free (&z)) ;
     OK (GrB_Scalar_free (&Theta)) ;
     OK (GrB_Scalar_free (&s)) ;
 
     pargout [0] = gb_export (&x, KIND_GRB) ;
     pargout [1] = gb_export (&p, KIND_GRB) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

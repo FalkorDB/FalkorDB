@@ -2,7 +2,7 @@
 // GB_convert_any_to_non_iso: convert a matrix from iso to non-iso
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -51,10 +51,10 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
         if (!A->x_shallow)
         { 
             // free the old space
-            GB_FREE (&(A->x), A->x_size) ;
+            GB_FREE_MEMORY (&(A->x), A->x_size) ;
         }
         // allocate the new space
-        A->x = GB_MALLOC (Ax_size_required, GB_void, &(A->x_size)) ; // x:OK
+        A->x = GB_MALLOC_MEMORY (anz, asize, &(A->x_size)) ;
         A->x_shallow = false ;
         if (A->x == NULL)
         { 
@@ -80,10 +80,34 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
     }
 
     //--------------------------------------------------------------------------
+    // create A->Pending->x if any pending tuples present
+    //--------------------------------------------------------------------------
+
+    if (A->Pending != NULL)
+    { 
+        // allocate A->Pending->x, which is currently NULL since Pending->x is
+        // NULL if and only if A is iso, when Pending tuples are present.
+        // The A->Pending->op is NULL and remains so.
+        ASSERT (A->Pending->x == NULL) ;
+        ASSERT (A->Pending->x_size == 0) ;
+        ASSERT (A->Pending->op == NULL) ;
+        A->Pending->type = A->type ;
+        A->Pending->size = A->type->size ;
+        A->Pending->x = GB_MALLOC_MEMORY (A->Pending->nmax, A->Pending->size,
+            &(A->Pending->x_size)) ;
+        if (A->Pending->x == NULL)
+        { 
+            return (GrB_OUT_OF_MEMORY) ;
+        }
+        // Pending_x [0:(A->Pending->n)-1] = scalar
+        GB_OK (GB_iso_expand (A->Pending->x, A->Pending->n, scalar, A->type)) ;
+    }
+
+    //--------------------------------------------------------------------------
     // finalize the matrix and return result
     //--------------------------------------------------------------------------
 
-    A->iso = false ;        // OK: convert_any_to_non_iso
+    A->iso = false ;
     ASSERT_MATRIX_OK (A, "A converted to non-iso", GB0) ;
     return (GrB_SUCCESS) ;
 }

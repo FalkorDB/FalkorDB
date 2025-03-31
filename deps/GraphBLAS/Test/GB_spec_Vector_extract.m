@@ -1,7 +1,7 @@
 function w = GB_spec_Vector_extract (w, mask, accum, u, I, descriptor)
 %GB_SPEC_VECTOR_EXTRACT a mimic of GrB_Vector_extract
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 if (nargout > 1 || nargin ~= 6)

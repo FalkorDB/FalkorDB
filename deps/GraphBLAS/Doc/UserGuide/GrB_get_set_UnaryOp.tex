@@ -1,0 +1,50 @@
+
+%-------------------------------------------------------------------------------
+\newpage
+\subsection{{\sf GrB\_UnaryOp} Options}
+\label{get_set_unop}
+%-------------------------------------------------------------------------------
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_get (GrB_UnaryOp op, GrB_Scalar value, int f) ;
+GrB_Info GrB_get (GrB_UnaryOp op, char *     value, int f) ;
+GrB_Info GrB_get (GrB_UnaryOp op, int32_t *  value, int f) ;
+GrB_Info GrB_get (GrB_UnaryOp op, size_t *   value, int f) ;
+
+GrB_Info GrB_set (GrB_UnaryOp op, char *     value, int f) ;
+\end{verbatim}
+}\end{mdframed}
+
+\noindent
+{\small
+\begin{tabular}{|l|l|l|p{2.8in}|}
+\hline
+\verb'int field'                    & R/W  & C type        & description \\
+\hline
+\verb'GrB_INP0_TYPE_CODE'          & R    & \verb'int32_t'& input type code (see \verb'GrB_Type_code') \\
+\verb'GrB_OUTP_TYPE_CODE'          & R    & \verb'int32_t'& output type code \\
+\verb'GrB_INP0_TYPE_STRING'        & R    & \verb'char *' & name of the input type \\
+\verb'GrB_OUTP_TYPE_STRING'        & R    & \verb'char *' & name of the output type \\
+\hline
+\verb'GrB_NAME'                     & R/W1 & \verb'char *' &    % GrB_ALREADY_SET (unop)
+    name of the operator.  For built-in operators, this returns the GraphBLAS
+    name (\verb'"GrB_LNOT"' for \verb'GrB_LNOT', for example).
+    For user-defined operators, the name can be any string of any length.  It
+    is not used by the JIT.  It can be set at most once. \\
+\verb'GxB_JIT_C_NAME'               & R/W1 & \verb'char *' &
+    This must be a valid name of a C function to enable its use in the JIT.
+    The length of the name can be at most \verb'GxB_MAX_NAME_LEN', including
+    the \verb'nul' terminating byte.  It can be set at most once. \\
+\verb'GxB_JIT_C_DEFINITION'         & R/W1 & \verb'char *' &
+    definition for a user-defined operator, as a C function; built-in operators
+    return an empty string.  It can be set at most once. \\
+\hline
+\end{tabular}
+}
+
+Built-in operators cannot be modified by \verb'GrB_set'.  User-defined
+operators can be used without setting their name or definition, but they can be
+used in JIT kernels only when both the JIT C name and the definition are set.
+

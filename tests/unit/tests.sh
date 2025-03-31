@@ -61,6 +61,13 @@ sanitizer_summary() {
 		echo "${NOCOLOR}"
 		E=1
 	fi
+	if grep -l "stack-buffer-overflow" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
+		echo
+		echo "${LIGHTRED}Sanitizer: buffer overflow detected:${RED}"
+		grep -l "stack-buffer-overflow" ${LOGS_DIR}/*.asan.log*
+		echo "${NOCOLOR}"
+		E=1
+	fi
 	if grep -l "stack-use-after-scope" ${LOGS_DIR}/*.asan.log* &> /dev/null; then
 		echo
 		echo "${LIGHTRED}Sanitizer: stack use after scope detected:${RED}"

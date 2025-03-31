@@ -2,7 +2,7 @@
 // GB_AxB_dot2_template:  C<#M>=A'*B, or C<#M>=A*B via dot products
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -105,8 +105,8 @@
 
             #if GB_B_IS_SPARSE
                 // B is sparse (never hypersparse)
-                const int64_t pB_start = Bp [j] ;
-                const int64_t pB_end = Bp [j+1] ;
+                const int64_t pB_start = GB_IGET (Bp, j) ;
+                const int64_t pB_end = GB_IGET (Bp, j+1) ;
                 const int64_t bjnz = pB_end - pB_start ;
                 if (bjnz == 0)
                 { 
@@ -116,8 +116,8 @@
                 }
                 #if GB_A_IS_SPARSE
                     // Both A and B are sparse; get first and last in B(:,j)
-                    const int64_t ib_first = Bi [pB_start] ;
-                    const int64_t ib_last  = Bi [pB_end-1] ;
+                    const int64_t ib_first = GB_IGET (Bi, pB_start) ;
+                    const int64_t ib_last  = GB_IGET (Bi, pB_end-1) ;
                 #endif
             #else
                 // B is bitmap or full
@@ -189,8 +189,8 @@
 
                     #if GB_A_IS_SPARSE
                         // A is sparse
-                        int64_t pA = Ap [i] ;
-                        const int64_t pA_end = Ap [i+1] ;
+                        int64_t pA = GB_IGET (Ap, i) ;
+                        const int64_t pA_end = GB_IGET (Ap, i+1) ;
                         const int64_t ainz = pA_end - pA ;
                         #if (!GB_C_IS_FULL)
                         if (ainz > 0)       // skip this test if C is full
@@ -208,10 +208,7 @@
                     { 
                         // C(i,j) = A(:,i)'*B(:,j) or A(i,:)*B(:,j)
                         bool cij_exists = false ;
-                        GB_CIJ_DECLARE (cij) ;
-                        #if GB_IS_PLUS_PAIR_REAL_SEMIRING
-                        cij = 0 ;
-                        #endif
+                        GB_DECLARE_IDENTITY (cij) ;
                         #include "template/GB_AxB_dot_cij.c"
                     }
                 }

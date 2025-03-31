@@ -10,7 +10,7 @@ function C = int16 (G)
 % See also GrB, GrB/double, GrB/complex, GrB/single, GrB/logical, GrB/int8,
 % GrB/int32, GrB/int64, GrB/uint8, GrB/uint16, GrB/uint32, GrB/uint64.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 G = G.opaque ;

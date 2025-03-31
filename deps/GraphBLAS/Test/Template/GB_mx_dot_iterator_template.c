@@ -2,7 +2,7 @@
 // GB_mx_dot_iterator: s = X'*Y, dot product of 2 vectors using iterators
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -108,11 +108,11 @@
 }
 
 {
-    GrB_Index x_pmax = GxB_Vector_Iterator_getpmax (X_iterator) ;
-    Assert (x_pmax == ((x_sparsity == GxB_BITMAP && xnvals > 0) ? n : xnvals)) ;
+    uint64_t x_pmax = GxB_Vector_Iterator_getpmax (X_iterator) ;
+    my_assert (x_pmax == ((x_sparsity == GxB_BITMAP && xnvals > 0) ? n:xnvals));
 
-    GrB_Index y_pmax = GxB_Vector_Iterator_getpmax (Y_iterator) ;
-    Assert (y_pmax == ((y_sparsity == GxB_BITMAP && ynvals > 0) ? n : ynvals)) ;
+    uint64_t y_pmax = GxB_Vector_Iterator_getpmax (Y_iterator) ;
+    my_assert (y_pmax == ((y_sparsity == GxB_BITMAP && ynvals > 0) ? n:ynvals));
 
     if (kind == 0)
     {
@@ -124,8 +124,8 @@
         while (X_info != GxB_EXHAUSTED && Y_info != GxB_EXHAUSTED)
         {
             // get the index of entries x(i) and y(j)
-            GrB_Index i = GxB_Vector_Iterator_getIndex (X_iterator) ;
-            GrB_Index j = GxB_Vector_Iterator_getIndex (Y_iterator) ;
+            uint64_t i = GxB_Vector_Iterator_getIndex (X_iterator) ;
+            uint64_t j = GxB_Vector_Iterator_getIndex (Y_iterator) ;
             if (i < j)
             {
                 // consume x(i)
@@ -158,20 +158,20 @@
         // seek all entries in x, backwards
         for (int64_t p = ((int64_t) x_pmax) - 1 ; p >= 0 ; p--)
         {
-            X_info = GxB_Vector_Iterator_seek (X_iterator, (GrB_Index) p) ;
+            X_info = GxB_Vector_Iterator_seek (X_iterator, (uint64_t) p) ;
             if (X_info == GrB_SUCCESS)
             {
-                GrB_Index p2 = GxB_Vector_Iterator_getp (X_iterator) ;
+                uint64_t p2 = GxB_Vector_Iterator_getp (X_iterator) ;
                 if (p != p2) continue ;
 
                 // get x(i)
-                GrB_Index i = GxB_Vector_Iterator_getIndex (X_iterator) ;
+                uint64_t i = GxB_Vector_Iterator_getIndex (X_iterator) ;
 
                 // find y(i) via brute force
                 Y_info = GxB_Vector_Iterator_seek (Y_iterator, 0) ;
                 while (Y_info != GxB_EXHAUSTED)
                 {
-                    GrB_Index i2 = GxB_Vector_Iterator_getIndex (Y_iterator) ;
+                    uint64_t i2 = GxB_Vector_Iterator_getIndex (Y_iterator) ;
                     if (i2 == i)
                     {
                         // s += x(i) * y(i)

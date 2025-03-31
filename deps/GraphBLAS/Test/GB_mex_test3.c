@@ -2,7 +2,7 @@
 // GB_mex_test3: still more basic tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -79,7 +79,7 @@ void mexFunction
     OK (GrB_Matrix_new (&C, GrB_FP32, 10, 10)) ;
 
     printf ("\nBurble with standard printf/flush:\n") ;
-    GrB_Index nvals ;
+    uint64_t nvals ;
     OK (GrB_Matrix_nvals (&nvals, C)) ;
     CHECK (nvals == 0) ;
 
@@ -213,27 +213,77 @@ void mexFunction
     // empty scalar for iso build
     //--------------------------------------------------------------------------
 
-    GrB_Index I [4] = { 1, 2, 3, 4 } ;
+    uint64_t I [4] = { 1, 2, 3, 4 } ;       // OK
     GrB_Scalar scalar = NULL ;
     OK (GrB_Scalar_new (&scalar, GrB_FP32)) ;
     OK (GxB_Scalar_fprint (scalar, "scalar init", GxB_COMPLETE, NULL)) ;
     OK (GrB_Matrix_new (&C, GrB_FP32, 10, 10)) ;
     OK (GrB_Vector_new (&w, GrB_FP32, 10)) ;
     expected = GrB_EMPTY_OBJECT ;
-    ERR (GxB_Matrix_build_Scalar (C, I, I, scalar, 4)) ;
+    ERR (GxB_Matrix_build_Scalar_(C, I, I, scalar, 4)) ;
     OK (GrB_error (&s, C)) ;
     printf ("expected error: [%s]\n", s) ;
 
-    ERR (GxB_Vector_build_Scalar (w, I, scalar, 4)) ;
+    ERR (GxB_Vector_build_Scalar_(w, I, scalar, 4)) ;
     OK (GrB_error (&s, w)) ;
     printf ("expected error: [%s]\n", s) ;
+
+    GrB_Vector I_vector = NULL, J_vector = NULL, X_vector = NULL ;
+    OK (GrB_Vector_new (&I_vector, GrB_UINT32, 4)) ;
+    OK (GrB_Vector_new (&J_vector, GrB_UINT32, 5)) ;
+    OK (GrB_Vector_new (&X_vector, GrB_UINT32, 6)) ;
+    for (int k = 0 ; k < 4 ; k++)
+    {
+        OK (GrB_Vector_setElement_UINT32 (I_vector, I [k], k)) ;
+    }
+    for (int k = 0 ; k < 5 ; k++)
+    {
+        OK (GrB_Vector_setElement_UINT32 (J_vector, k, k)) ;
+    }
+    for (int k = 0 ; k < 6 ; k++)
+    {
+        OK (GrB_Vector_setElement_UINT32 (X_vector, 2*k+1, k)) ;
+    }
+
+    ERR (GxB_Matrix_build_Scalar_Vector_(C, I_vector, I_vector, scalar, NULL)) ;
+    OK (GrB_error (&s, C)) ;
+    printf ("expected error: [%s]\n", s) ;
+
+    ERR (GxB_Matrix_build_Scalar_Vector_(C, I_vector, I_vector, scalar, NULL)) ;
+    OK (GrB_error (&s, C)) ;
+    printf ("expected error: [%s]\n", s) ;
+
+    ERR (GxB_Vector_build_Scalar_Vector_(w, I_vector, scalar, NULL)) ;
+    OK (GrB_error (&s, w)) ;
+    printf ("expected error: [%s]\n", s) ;
+
+    OK (GrB_Scalar_setElement_FP32 (scalar, 3.0)) ;
+
+    expected = GrB_INVALID_VALUE ;
+    ERR (GxB_Matrix_build_Scalar_Vector_(C, I_vector, J_vector, scalar, NULL)) ;
+    OK (GrB_error (&s, C)) ;
+    printf ("expected error: [%s]\n", s) ;
+
+    ERR (GxB_Matrix_build_Vector_(C, I_vector, J_vector, X_vector,
+        GrB_PLUS_UINT32, NULL)) ;
+    OK (GrB_error (&s, C)) ;
+    printf ("expected error: [%s]\n", s) ;
+
+    ERR (GxB_Vector_build_Vector_(w, I_vector, X_vector,
+        GrB_PLUS_UINT32, NULL)) ;
+    OK (GrB_error (&s, w)) ;
+    printf ("expected error: [%s]\n", s) ;
+
+    GrB_Vector_free_(&I_vector) ;
+    GrB_Vector_free_(&J_vector) ;
+    GrB_Vector_free_(&X_vector) ;
     GrB_Vector_free_(&w) ;
+    GrB_Matrix_free_(&C) ;
 
     //--------------------------------------------------------------------------
     // build error handling
     //--------------------------------------------------------------------------
 
-    GrB_Matrix_free_(&C) ;
     OK (GrB_Type_new (&myint, sizeof (int))) ;
     OK (GrB_Matrix_new (&C, myint, 10, 10)) ;
     OK (GrB_Scalar_setElement_FP32 (scalar, 3.0)) ;
@@ -250,7 +300,7 @@ void mexFunction
     OK (GrB_error (&s, C)) ;
     printf ("expected error: [%s]\n", s) ;
 
-    ERR (GxB_Matrix_build_Scalar (C, I, I, scalar, 4)) ;
+    ERR (GxB_Matrix_build_Scalar_(C, I, I, scalar, 4)) ;
     OK (GrB_error (&s, C)) ;
     printf ("expected error: [%s]\n", s) ;
     GrB_Matrix_free_(&C) ;
@@ -268,8 +318,8 @@ void mexFunction
     }
 
     GrB_Type type ;
-    GrB_Index nrows, ncols, Ap_size, Ai_size, Ax_size, Ah_size, nvec ;
-    GrB_Index *Ap = NULL, *Ai = NULL, *Ah = NULL ;
+    uint64_t nrows, ncols, Ap_size, Ai_size, Ax_size, Ah_size, nvec ;
+    uint64_t *Ap = NULL, *Ai = NULL, *Ah = NULL ;   // OK
     float *Ax = NULL ;
     bool iso, jumbled ;
     OK (GrB_Matrix_wait (C, GrB_MATERIALIZE)) ;
@@ -360,8 +410,8 @@ void mexFunction
     OK (GrB_Matrix_new (&C, My4x64, 4, 4)) ;
 
     GrB_Matrix Tiles [4]  = { NULL, NULL, NULL, NULL} ;
-    GrB_Index Tile_nrows [2] = { 2, 2 } ;
-    GrB_Index Tile_ncols [2] = { 2, 2 } ;
+    uint64_t Tile_nrows [2] = { 2, 2 } ;
+    uint64_t Tile_ncols [2] = { 2, 2 } ;
 
     for (int sparsity_control = 1 ;
              sparsity_control <= 8 ;
@@ -499,7 +549,7 @@ void mexFunction
     OK (GrB_Matrix_assign_FP32 (A, NULL, NULL, 1, GrB_ALL, 4, GrB_ALL, 4,
         NULL)) ;
     OK (GxB_Matrix_fprint (A, "A iso", GxB_SHORT, NULL)) ;
-    OK (GrB_Matrix_assign (C, NULL, NULL, A, I, 4, I, 4, NULL)) ;
+    OK (GrB_Matrix_assign_(C, NULL, NULL, A, I, 4, I, 4, NULL)) ;
     OK (GxB_Matrix_fprint (C, "C iso with pending", GxB_SHORT, NULL)) ;
     GrB_Matrix_free_(&A) ;
 
@@ -509,7 +559,7 @@ void mexFunction
     OK (GrB_Matrix_setElement_FP32 (A, 2.1, 1, 0)) ;
     OK (GrB_Matrix_setElement_FP32 (A, 2.2, 1, 1)) ;
     OK (GxB_Matrix_fprint (A, "A non-iso", GxB_SHORT, NULL)) ;
-    OK (GrB_Matrix_assign (C, NULL, NULL, A, I, 2, I, 2, NULL)) ;
+    OK (GrB_Matrix_assign_(C, NULL, NULL, A, I, 2, I, 2, NULL)) ;
     OK (GxB_Matrix_fprint (C, "C non-iso", GxB_SHORT, NULL)) ;
 
     GrB_Matrix_free_(&A) ;
@@ -562,7 +612,7 @@ void mexFunction
 
     // C(I,I) = A
     OK (GB_bitmap_assign_6 (C, true,
-        I, 2, 2, GB_LIST, NULL, I, 2, 2, GB_LIST, NULL,
+        I, false, 2, 2, GB_LIST, NULL, I, false, 2, 2, GB_LIST, NULL,
         false, true, A, NULL, GrB_BOOL, GB_ASSIGN, NULL)) ;
 
     OK (GxB_Matrix_fprint (C, "C after C<M>=A", GxB_SHORT, NULL)) ;
@@ -761,11 +811,33 @@ void mexFunction
     GrB_Vector_free_(&w) ;
     GrB_Scalar_free_(&scalar) ;
 
-    GB_Global_print_mem_shallow_set (true) ;
-    CHECK (GB_Global_print_mem_shallow_get ( )) ;
+    int shallow = false ;
+    GB_Global_stats_mem_shallow_set (true) ;
+    CHECK (GB_Global_stats_mem_shallow_get ( )) ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &shallow,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    CHECK (shallow) ;
 
-    GB_Global_print_mem_shallow_set (false) ;
-    CHECK (!GB_Global_print_mem_shallow_get ( )) ;
+    shallow = true ;
+    GB_Global_stats_mem_shallow_set (false) ;
+    CHECK (!GB_Global_stats_mem_shallow_get ( )) ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &shallow,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    CHECK (!shallow) ;
+
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, true,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    CHECK (GB_Global_stats_mem_shallow_get ( )) ;
+
+    shallow = false ;
+    OK (GrB_Global_get_INT32 (GrB_GLOBAL, &shallow,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    CHECK (shallow) ;
+    CHECK (GB_Global_stats_mem_shallow_get ( )) ;
+
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, false,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    CHECK (!GB_Global_stats_mem_shallow_get ( )) ;
 
     int64_t nallocs ;
     size_t mem_deep, mem_shallow ;

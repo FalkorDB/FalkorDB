@@ -43,16 +43,36 @@ SIValue SIArray_FromRaw
 	return siarray;
 }
 
-// appends a new SIValue to a given array
+// appends a new SIValue to array
+// the value is cloned before it is added to the array
 void SIArray_Append
 (
 	SIValue *siarray,  // pointer to array
-	SIValue value      // new value
+	SIValue value      // value to add
 ) {
+	ASSERT(siarray != NULL);
+
 	// clone and persist incase of pointer values
 	SIValue clone = SI_CloneValue(value);
-	// append
+
 	array_append(siarray->array, clone);
+}
+
+// appends value to array
+// the value is added as is, no cloning is performed
+// the array takes ownership over the value
+void SIArray_AppendAsOwner
+(
+	SIValue *siarray,  // pointer to array
+	SIValue *value     // value to add
+) {
+	ASSERT(value   != NULL);
+	ASSERT(siarray != NULL);
+	ASSERT(SI_ALLOCATION(value) != M_VOLATILE);
+
+	// add value as is
+	array_append(siarray->array, *value);
+	SIValue_SetAllocationType(value, M_VOLATILE);
 }
 
 // returns a volatile copy of the SIValue from an array in a given index

@@ -2,7 +2,7 @@
 // GB_subassign_22: C += scalar where C is full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,8 +19,8 @@
 
 // C += scalar where C is full
 
-#include "assign/GB_subassign_dense.h"
 #include "binaryop/GB_binop.h"
+#include "assign/GB_subassign_dense.h"
 #include "include/GB_unused.h"
 #include "jitifyer/GB_stringify.h"
 #ifndef GBCOMPACT
@@ -147,8 +147,8 @@ GrB_Info GB_subassign_22      // C += scalar where C is full
     { 
         info = GB_subassign_jit (C,
             /* C_replace: */ false,
-            /* I, ni, nI, Ikind, Icolon: */ NULL, 0, 0, GB_ALL, NULL,
-            /* J, nj, nJ, Jkind, Jcolon: */ NULL, 0, 0, GB_ALL, NULL,
+            /* I, I_is_32, ni, nI, Ikind, Icolon: */ NULL, false, 0, 0, GB_ALL, NULL,
+            /* J, I_is_32, nj, nJ, Jkind, Jcolon: */ NULL, false, 0, 0, GB_ALL, NULL,
             /* M: */ NULL,
             /* Mask_comp: */ false,
             /* Mask_struct: */ true,

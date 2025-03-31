@@ -2,7 +2,7 @@
 // GB_add_bitmap_M_sparse_24: C<!M>=A+B, C bitmap, M sparse/hyper; A,B bit/full
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,8 +30,8 @@
             if (c == 0)
             {
                 // M(i,j) is zero, so C(i,j) can be computed
-                int8_t a = GBB_A (Ab, p) ;
-                int8_t b = GBB_B (Bb, p) ;
+                int8_t a = GBb_A (Ab, p) ;
+                int8_t b = GBb_B (Bb, p) ;
                 #ifdef GB_ISO_ADD
                 c = a || b ;
                 #else

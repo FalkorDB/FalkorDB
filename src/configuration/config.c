@@ -75,6 +75,9 @@
 // import folder
 #define IMPORT_FOLDER "IMPORT_FOLDER"
 
+// deduplicate string
+#define DEDUPLICATE_STRINGS "DEDUPLICATE_STRINGS"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -87,6 +90,7 @@
 #define BOLT_PROTOCOL_PORT_DEFAULT         -1  // disabled by default
 #define DELAY_INDEXING_DEFAULT             false
 #define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
+#define DEDUPLICATE_STRINGS_DEFAULT        false
 
 // configuration object
 typedef struct {
@@ -105,10 +109,11 @@ typedef struct {
 	uint64_t node_creation_buffer;     // number of extra node creations to buffer as margin in matrices
 	bool cmd_info_on;                  // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;        // replicate via effects when runtime exceeds threshold
-	uint32_t max_info_queries_count;   // maximum number of query info elements
+	uint64_t max_info_queries_count;   // maximum number of query info elements
 	int16_t bolt_port;                 // bolt protocol port
 	bool delay_indexing;               // delay index construction when decoding
 	char *import_folder;               // path to import folder, used for CSV loading
+	bool deduplicate_strings;          // use string pool to deduplicate strings
 	Config_on_change cb;               // callback function which being called when config param changed
 } RG_Config;
 
@@ -422,13 +427,13 @@ static void Config_cmd_info_set
 	config.cmd_info_on = cmd_info_on;
 }
 
-static uint32_t Config_cmd_info_max_queries_get(void) {
+static uint64_t Config_cmd_info_max_queries_get(void) {
 	return config.max_info_queries_count;
 }
 
 static void Config_cmd_info_max_queries_set
 (
-	const uint32_t count
+	const uint64_t count
 ) {
 	if (count > CMD_INFO_QUERIES_MAX_COUNT_DEFAULT) {
 		config.max_info_queries_count = CMD_INFO_QUERIES_MAX_COUNT_DEFAULT;
@@ -504,6 +509,21 @@ static const char *Config_import_folder_get(void) {
 	return config.import_folder;
 }
 
+//------------------------------------------------------------------------------
+// deduplicate strings
+//------------------------------------------------------------------------------
+
+static void Config_deduplicate_strings_set
+(
+	bool enabled
+) {
+	config.deduplicate_strings = enabled;
+}
+
+static bool Config_deduplicate_strings_get(void) {
+	return config.deduplicate_strings;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -552,6 +572,8 @@ bool Config_Contains_field
 		f = Config_DELAY_INDEXING;
 	} else if (!(strcasecmp(field_str, IMPORT_FOLDER))) {
 		f = Config_IMPORT_FOLDER;
+	} else if (!(strcasecmp(field_str, DEDUPLICATE_STRINGS))) {
+		f = Config_DEDUPLICATE_STRINGS;
 	} else {
 		return false;
 	}
@@ -622,6 +644,9 @@ SIType Config_Field_type
 
 		case Config_IMPORT_FOLDER:
 			return T_STRING;
+
+		case Config_DEDUPLICATE_STRINGS:
+			return T_BOOL;
 
 		//----------------------------------------------------------------------
 		// invalid option
@@ -717,6 +742,10 @@ const char *Config_Field_name
 			name = IMPORT_FOLDER;
 			break;
 
+		case Config_DEDUPLICATE_STRINGS:
+			name = DEDUPLICATE_STRINGS;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -793,6 +822,9 @@ static void _Config_SetToDefaults(void) {
 
 	// set default import folder path
 	config.import_folder = rm_strdup(IMPORT_DIR_DEFAULT);
+
+	// set default deduplicate strings
+	config.deduplicate_strings = DEDUPLICATE_STRINGS_DEFAULT;
 }
 
 int Config_Init
@@ -1079,7 +1111,7 @@ bool Config_Option_get
 
 		case Config_CMD_INFO_MAX_QUERY_COUNT: {
 			va_start(ap, field);
-			uint32_t *count = va_arg(ap, uint32_t *);
+			uint64_t *count = va_arg(ap, uint64_t *);
 			va_end(ap);
 
 			ASSERT(count != NULL);
@@ -1141,6 +1173,20 @@ bool Config_Option_get
 
 			ASSERT(import_folder != NULL);
 			(*import_folder) = Config_import_folder_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// deduplicate strings
+		//----------------------------------------------------------------------
+
+		case Config_DEDUPLICATE_STRINGS: {
+			va_start(ap, field);
+			bool *enabled = va_arg(ap, bool *);
+			va_end(ap);
+
+			ASSERT(enabled != NULL);
+			(*enabled) = Config_deduplicate_strings_get();
 		}
 		break;
 
@@ -1365,10 +1411,10 @@ bool Config_Option_set
 		case Config_CMD_INFO_MAX_QUERY_COUNT: {
 			long long count = 0;
 			if (!_Config_ParseNonNegativeInteger(val, &count)) return false;
+			if (count > UINT64_MAX) return false;
 
-			// A downcast from <long long> to <uint32_t>.
 			Config_cmd_info_max_queries_set(count);
-      }
+		}
   		break;
 
 		//----------------------------------------------------------------------
@@ -1416,6 +1462,18 @@ bool Config_Option_set
 		case Config_IMPORT_FOLDER: {
 			ASSERT(val != NULL);
 			Config_import_folder_set(val);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// deduplicate strings
+		//----------------------------------------------------------------------
+
+		case Config_DEDUPLICATE_STRINGS: {
+			bool enabled;
+			if(!_Config_ParseYesNo(val, &enabled)) return false;
+
+			Config_deduplicate_strings_set(enabled);
 		}
 		break;
 

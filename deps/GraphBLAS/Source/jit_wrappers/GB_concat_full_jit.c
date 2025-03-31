@@ -2,7 +2,7 @@
 // GB_concat_full_jit: concat A into a full matrix C
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -32,8 +32,9 @@ GrB_Info GB_concat_full_jit      // concatenate A into a full matrix C
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_apply (&encoding, &suffix,
-        GB_JIT_KERNEL_CONCAT_FULL, GxB_FULL, true, C->type, op, false,
-            GB_sparsity (A), true, A->type, A->iso, A->nzombies) ;
+        GB_JIT_KERNEL_CONCAT_FULL, GxB_FULL, true, C->type, C->p_is_32,
+        C->i_is_32, false, op, false, GB_sparsity (A), true, A->type,
+        A->p_is_32, A->j_is_32, A->i_is_32, A->iso, A->nzombies) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -50,7 +51,8 @@ GrB_Info GB_concat_full_jit      // concatenate A into a full matrix C
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, cistart, cvstart, A, A_nthreads)) ;
+    return (GB_jit_kernel (C, cistart, cvstart, A, A_nthreads, &GB_callback)) ;
 }
 

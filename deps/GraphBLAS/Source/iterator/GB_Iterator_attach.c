@@ -2,7 +2,7 @@
 // GB_Iterator_attach: attach an iterator to matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -13,10 +13,10 @@
 GrB_Info GB_Iterator_attach
 (
     // input/output:
-    GxB_Iterator iterator,      // iterator to attach to the matrix A
+    GxB_Iterator iterator,  // iterator to attach to the matrix A
     // input
-    GrB_Matrix A,               // matrix to attach
-    GxB_Format_Value format,    // by row, by col, or by entry (GxB_NO_FORMAT)
+    GrB_Matrix A,           // matrix to attach
+    int format,             // by row, by col, or by entry (GxB_NO_FORMAT)
     GrB_Descriptor desc
 )
 {
@@ -25,8 +25,9 @@ GrB_Info GB_Iterator_attach
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_RETURN_IF_NULL (iterator) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (A) ;
+    GB_RETURN_IF_NULL_OR_INVALID (A) ;
 
     if ((format == GxB_BY_ROW &&  A->is_csc) ||
         (format == GxB_BY_COL && !A->is_csc))
@@ -62,10 +63,13 @@ GrB_Info GB_Iterator_attach
     iterator->avlen = A->vlen ;
     iterator->avdim = A->vdim ;
     iterator->anvec = A->nvec ;
-    iterator->Ap = A->p ;
-    iterator->Ah = A->h ;
+    iterator->Ap32 = (A->p_is_32) ? A->p : NULL ;
+    iterator->Ap64 = (A->p_is_32) ? NULL : A->p ;
+    iterator->Ah32 = (A->j_is_32) ? A->h : NULL ;
+    iterator->Ah64 = (A->j_is_32) ? NULL : A->h ;
+    iterator->Ai32 = (A->i_is_32) ? A->i : NULL ;
+    iterator->Ai64 = (A->i_is_32) ? NULL : A->i ;
     iterator->Ab = A->b ;
-    iterator->Ai = A->i ;
     iterator->Ax = A->x ;
     iterator->type_size = A->type->size ;
     iterator->A_sparsity = GB_sparsity (A) ;

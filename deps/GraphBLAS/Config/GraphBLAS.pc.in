@@ -1,4 +1,4 @@
-# GraphBLAS, Copyright (c) 2017-2024, Timothy A. Davis.
+# GraphBLAS, Copyright (c) 2017-2025, Timothy A. Davis.
 # All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
@@ -6,8 +6,6 @@ prefix=@prefix@
 exec_prefix=@exec_prefix@
 libdir=@libdir@
 includedir=@includedir@
-
-# FIXME: Which flags do we need to statically link CUDA?
 
 Name: GraphBLAS
 URL: https://github.com/DrTimothyAldenDavis/SuiteSparse

@@ -2,7 +2,7 @@
 // GB_rowscale_template: C=D*B where D is a square diagonal matrix
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -40,7 +40,7 @@
     const bool B_iso = B->iso ;
     #endif
 
-    const int64_t *restrict Bi = B->i ;
+    GB_Bi_DECLARE (Bi, const) ; GB_Bi_PTR (Bi, B) ;
     GB_B_NVALS (bnz) ;      // const int64_t bnz = GB_nnz (B) ;
     const int64_t bvlen = B->vlen ;
 
@@ -63,7 +63,7 @@
         GB_PRAGMA_SIMD_VECTORIZE
         for (int64_t p = pstart ; p < pend ; p++)
         { 
-            int64_t i = GBI_B (Bi, p, bvlen) ;      // get row index of B(i,j)
+            int64_t i = GBi_B (Bi, p, bvlen) ;      // get row index of B(i,j)
             GB_DECLAREA (dii) ;
             GB_GETA (dii, Dx, i, D_iso) ;           // dii = D(i,i)
             GB_DECLAREB (bij) ;

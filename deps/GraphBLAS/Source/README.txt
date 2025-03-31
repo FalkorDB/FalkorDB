@@ -1,4 +1,4 @@
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
 This folder, GraphBLAS/Source, contains all the primary source files for
@@ -57,7 +57,7 @@ context             GxB_Context object
 convert             convert between matrix formats (sparse, hypersparse, bitmap,
                     and full), and conform a matrix to its desired format.
 
-cpu                 wrapper for Google's cpu_featuers package
+cpu                 wrapper for Google's cpu_features package
 
 cumsum              cumulative sum
 

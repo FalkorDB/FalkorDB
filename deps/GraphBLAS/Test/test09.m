@@ -1,7 +1,7 @@
 function test09
 %TEST09 test GxB_subassign
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\n-----------duplicate I,J test of GB_mex_subassign\n') ;

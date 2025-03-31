@@ -74,9 +74,9 @@ static void _Print_Config
 
 	bool cmd_info_enabled = false;
 	if(Config_Option_get(Config_CMD_INFO, &cmd_info_enabled) && cmd_info_enabled) {
-		uint32_t info_max_query_count = 0;
+		uint64_t info_max_query_count = 0;
 		Config_Option_get(Config_CMD_INFO_MAX_QUERY_COUNT, &info_max_query_count);
-		RedisModule_Log(ctx, "notice", "Query backlog size: %u", info_max_query_count);
+		RedisModule_Log(ctx, "notice", "Query backlog size: %llu", info_max_query_count);
 	}
 }
 

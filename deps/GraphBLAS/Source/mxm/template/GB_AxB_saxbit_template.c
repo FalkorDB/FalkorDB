@@ -2,7 +2,7 @@
 // GB_AxB_saxbit_template.c: C<#M>=A*B when C is bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -53,10 +53,10 @@
     ASSERT (!GB_IS_SPARSE (B)) ;
     ASSERT (!GB_IS_HYPERSPARSE (B)) ;
 
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int8_t  *restrict Ab = A->b ;
-    const int64_t *restrict Ai = A->i ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+    const int8_t *restrict Ab = A->b ;
     const int64_t anvec = A->nvec ;
     const int64_t avlen = A->vlen ;
     const int64_t avdim = A->vdim ;
@@ -77,10 +77,10 @@
     const bool A_is_sparse_or_hyper = A_is_sparse || A_is_hyper ;
     #endif
 
-    const int64_t *restrict Mp = NULL ;
-    const int64_t *restrict Mh = NULL ;
-    const int8_t  *restrict Mb = NULL ;
-    const int64_t *restrict Mi = NULL ;
+    GB_Mp_DECLARE (Mp, const) ; GB_Mp_PTR (Mp, M) ;
+    GB_Mh_DECLARE (Mh, const) ; GB_Mh_PTR (Mh, M) ;
+    GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
+    const int8_t *restrict Mb = NULL ;
     const GB_M_TYPE *restrict Mx = NULL ;
     size_t msize = 0 ;
     int64_t mnvec = 0 ;
@@ -120,10 +120,7 @@
     {
         ASSERT (C->vlen == M->vlen) ;
         ASSERT (C->vdim == M->vdim) ;
-        Mp = M->p ;
-        Mh = M->h ;
         Mb = M->b ;
-        Mi = M->i ;
         Mx = (GB_M_TYPE *) (Mask_struct ? NULL : (M->x)) ;
         msize = M->type->size ;
         mnvec = M->nvec ;

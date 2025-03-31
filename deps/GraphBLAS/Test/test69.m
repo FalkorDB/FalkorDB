@@ -1,7 +1,7 @@
 function test69
 %TEST69 test GrB_assign with aliased inputs, C<C>(:,:) = accum(C(:,:),C)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test69 ------------------  assign alias tests\n') ;
@@ -27,36 +27,55 @@ for m = [1 5 10 100]
             C1 = GB_mex_assign_alias (C, 'plus', [ ], [ ], [ ]) ;
             C2 = GB_mex_assign (C, [ ], 'plus', C, [ ], [ ], [ ], 0) ;
             assert (isequal (C1, C2)) ;
+            % using GrB_Vector
+            C2 = GB_mex_assign (C, [ ], 'plus', C, [ ], [ ], [ ], 7) ;
+            assert (isequal (C1, C2)) ;
 
             % C<C,replace> += C
             C1 = GB_mex_assign_alias (C, 'plus', [ ], [ ], desc) ;
             C2 = GB_mex_assign (C, [ ], 'plus', C, [ ], [ ], desc, 0) ;
+            assert (isequal (C1, C2)) ;
+            % using GrB_Vector
+            C2 = GB_mex_assign (C, [ ], 'plus', C, [ ], [ ], desc, 7) ;
             assert (isequal (C1, C2)) ;
 
             % C<C,replace> = C
             C1 = GB_mex_assign_alias (C, [ ], [ ], [ ], desc) ;
             C2 = GB_mex_assign (C, [ ], [ ], C, [ ], [ ], desc, 0) ;
             C2.iso = 0 ;
+            % using GrB_Vector
+            assert (isequal (C1, C2)) ;
+            C2 = GB_mex_assign (C, [ ], [ ], C, [ ], [ ], desc, 7) ;
+            C2.iso = 0 ;
             assert (isequal (C1, C2)) ;
 
             % C(I,J)<C> += C(I,J)
-            I = uint64 (randperm (m) - 1) ;
-            J = uint64 (randperm (n) - 1) ;
+            I = uint64 (randperm (m) - 1)' ;
+            J = uint64 (randperm (n) - 1)' ;
             C1 = GB_mex_assign_alias (C, 'plus', I, J, [ ]) ;
             C2 = GB_mex_assign (C, [ ], 'plus', C, I, J, [ ], 0) ;
-            assert (isequal (C1, C2)) ;
+            assert (GB_isequal_ignore_32 (C1, C2)) ;
+            % using GrB_Vector
+            C2 = GB_mex_assign (C, [ ], 'plus', C, I, J, [ ], 7) ;
+            assert (GB_isequal_ignore_32 (C1, C2)) ;
 
             % C<C,replace> += C
             C1 = GB_mex_subassign_alias (C, 'plus', desc) ;
             C2 = GB_mex_subassign (C, C, 'plus', C, [ ], [ ], desc) ;
             assert (isequal (C1, C2)) ;
+            % using GrB_Vector
+            C2 = GB_mex_subassign (C, C, 'plus', C, [ ], [ ], desc, 7) ;
+            assert (isequal (C1, C2)) ;
 
             % C<C,replace> = C
             C1 = GB_mex_subassign_alias (C, [ ], desc) ;
             C2 = GB_mex_subassign (C, C, [ ], C, [ ], [ ], desc) ;
-            assert (isequal (C1, C2)) ;
+            assert (GB_isequal_ignore_32 (C1, C2)) ;
+            % using GrB_Vector
+            C2 = GB_mex_subassign (C, C, [ ], C, [ ], [ ], desc, 7) ;
+            assert (GB_isequal_ignore_32 (C1, C2)) ;
 
-            % C(:,:) = 0
+            % C(:,:) = 0, using scalar assign
             Z = GB_mex_expand (sparse (1), 0) ;
             C1 = GB_mex_subassign (C, [ ], [ ], Z, [ ], [ ], desc) ;
             C2 = sparse (m, n) ;

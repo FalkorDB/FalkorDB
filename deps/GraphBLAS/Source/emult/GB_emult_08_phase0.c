@@ -2,7 +2,7 @@
 // GB_emult_08_phase0: find vectors of C to compute for C=A.*B or C<M>=A.*B
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,31 +16,32 @@
 // The M, A, and B matrices are sparse or hypersparse.  C will be sparse
 // (if Ch is returned NULL) or hypersparse (if Ch is returned non-NULL).
 
-//      Ch: the vectors to compute in C.  Not allocated, but equal to either
-//      A->h, B->h, or M->h, or NULL if C is not hypersparse.
+//      Ch: the vectors to compute in C.  Not allocated, either NULL if C is
+//      not hypersparse, or shallow and equal to A->h, B->h, or M->h.  Ch is
+//      never allocated.
 
 //      C_to_A:  if A is hypersparse, and Ch is not A->h, then C_to_A [k] = kA
 //      if the kth vector j = Ch [k] is equal to Ah [kA].  If j does not appear
-//      in A, then C_to_A [k] = -1.  Otherwise, C_to_A is returned as NULL.
-//      C is always hypersparse in this case.
+//      in A, then C_to_A [k] = -1. C is always hypersparse in this case.
+//      Otherwise, C_to_A is returned as NULL.
 
 //      C_to_B:  if B is hypersparse, and Ch is not B->h, then C_to_B [k] = kB
 //      if the kth vector j = Ch [k] is equal to Bh [kB].  If j does not appear
-//      in B, then C_to_B [k] = -1.  Otherwise, C_to_B is returned as NULL.
-//      C is always hypersparse in this case.
+//      in B, then C_to_B [k] = -1.  C is always hypersparse in this case.
+//      Otherwise, C_to_B is returned as NULL.
 
 //      C_to_M:  if M is hypersparse, and Ch is not M->h, then C_to_M [k] = kM
-//      if the kth vector j = GBH (Ch, k) is equal to Mh [kM].
-//      If j does not appear in M, then C_to_M [k] = -1.  Otherwise, C_to_M is
-//      returned as NULL.  C is always hypersparse in this case.
+//      if the kth vector j = Ch [k] is equal to Mh [kM].  If j does not appear
+//      in M, then C_to_M [k] = -1.  C is always hypersparse in this case.
+//      Otherwise, C_to_M is returned as NULL.
 
 // FUTURE:: exploit A==M, B==M, and A==B aliases
 
 #define GB_FREE_ALL                             \
 {                                               \
-    GB_FREE_WORK (&C_to_M, C_to_M_size) ;       \
-    GB_FREE_WORK (&C_to_A, C_to_A_size) ;       \
-    GB_FREE_WORK (&C_to_B, C_to_B_size) ;       \
+    GB_FREE_MEMORY (&C_to_M, C_to_M_size) ;       \
+    GB_FREE_MEMORY (&C_to_A, C_to_A_size) ;       \
+    GB_FREE_MEMORY (&C_to_B, C_to_B_size) ;       \
 }
 
 #include "emult/GB_emult.h"
@@ -48,7 +49,7 @@
 GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
 (
     int64_t *p_Cnvec,           // # of vectors to compute in C
-    const int64_t *restrict *Ch_handle,  // Ch is M->h, A->h, B->h, or NULL
+    const void **Ch_handle,     // Ch is M->h, A->h, B->h, or NULL
     size_t *Ch_size_handle,
     int64_t *restrict *C_to_M_handle,    // C_to_M: size Cnvec, or NULL
     size_t *C_to_M_size_handle,
@@ -56,9 +57,13 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     size_t *C_to_A_size_handle,
     int64_t *restrict *C_to_B_handle,    // C_to_B: size Cnvec, or NULL
     size_t *C_to_B_size_handle,
+    bool *p_Cp_is_32,           // if true, Cp is 32-bit; else 64-bit
+    bool *p_Cj_is_32,           // if true, Ch is 32-bit; else 64-bit
+    bool *p_Ci_is_32,           // if true, Ci is 32-bit; else 64-bit
     int *C_sparsity,            // sparsity structure of C
     // original input:
     const GrB_Matrix M,         // optional mask, may be NULL
+    const bool Mask_comp,
     const GrB_Matrix A,
     const GrB_Matrix B,
     GB_Werk Werk
@@ -75,6 +80,9 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     ASSERT (p_Cnvec != NULL) ;
     ASSERT (Ch_handle != NULL) ;
     ASSERT (Ch_size_handle != NULL) ;
+    ASSERT (p_Cp_is_32 != NULL) ;
+    ASSERT (p_Cj_is_32 != NULL) ;
+    ASSERT (p_Ci_is_32 != NULL) ;
     ASSERT (C_to_A_handle != NULL) ;
     ASSERT (C_to_B_handle != NULL) ;
 
@@ -114,7 +122,8 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
 
     ASSERT ((*C_sparsity) == GxB_SPARSE || (*C_sparsity) == GxB_HYPERSPARSE) ;
 
-    const int64_t *restrict Ch = NULL ; size_t Ch_size = 0 ;
+    GB_MDECL (Ch, , u) ; size_t Ch_size = 0 ;
+
     int64_t *restrict C_to_M = NULL ; size_t C_to_M_size = 0 ;
     int64_t *restrict C_to_A = NULL ; size_t C_to_A_size = 0 ;
     int64_t *restrict C_to_B = NULL ; size_t C_to_B_size = 0 ;
@@ -126,16 +135,15 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     int64_t n = A->vdim ;
 
     int64_t Anvec = A->nvec ;
-    int64_t vlen  = A->vlen ;
-    const int64_t *restrict Ah = A->h ;
+    void *Ah = A->h ;
     bool A_is_hyper = (Ah != NULL) ;
 
     int64_t Bnvec = B->nvec ;
-    const int64_t *restrict Bh = B->h ;
+    void *Bh = B->h ;
     bool B_is_hyper = (Bh != NULL) ;
 
     int64_t Mnvec = 0 ;
-    const int64_t *restrict Mh = NULL ;
+    void *Mh = NULL ;
     bool M_is_hyper = false ;
 
     if (M != NULL)
@@ -146,8 +154,26 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     }
 
     //--------------------------------------------------------------------------
-    // determine how to construct the vectors of C
+    // determine the p_is_32, j_is_32, and i_is_32 settings for the new matrix
     //--------------------------------------------------------------------------
+
+    bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+    int64_t anz = GB_nnz (A) ;
+    int64_t bnz = GB_nnz (B) ;
+    int64_t cnz = GB_IMIN (anz, bnz) ;
+    if (M != NULL && !Mask_comp)
+    {
+        int64_t mnz = GB_nnz (M) ;
+        cnz = GB_IMIN (cnz, mnz) ;
+    }
+    GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+        GxB_AUTO_SPARSITY, cnz, A->vlen, A->vdim, Werk) ;
+
+    //--------------------------------------------------------------------------
+    // determine if C is sparse or hypersparse, and find its hyperlist
+    //--------------------------------------------------------------------------
+
+    int64_t Cnvec ;
 
     if (M != NULL)
     {
@@ -171,19 +197,23 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
 
                     // Ch = smaller of Mh, Bh, Ah
 
-                    int64_t nvec = GB_IMIN (Anvec, Bnvec) ;
-                    nvec = GB_IMIN (nvec, Mnvec) ;
-                    if (nvec == Anvec)
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
+                    Cnvec = GB_IMIN (Anvec, Bnvec) ;
+                    Cnvec = GB_IMIN (Cnvec, Mnvec) ;
+                    if (Cnvec == Anvec)
                     { 
                         Ch = Ah ; Ch_size = A->h_size ;
+                        Cj_is_32 = A->j_is_32 ;
                     }
-                    else if (nvec == Bnvec)
+                    else if (Cnvec == Bnvec)
                     { 
                         Ch = Bh ; Ch_size = B->h_size ;
+                        Cj_is_32 = B->j_is_32 ;
                     }
-                    else // (nvec == Mnvec)
+                    else // (Cnvec == Mnvec)
                     { 
                         Ch = Mh ; Ch_size = M->h_size ;
+                        Cj_is_32 = M->j_is_32 ;
                     }
 
                 }
@@ -195,13 +225,18 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     //----------------------------------------------------------
 
                     // Ch = smaller of Ah, Bh
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
                     if (Anvec <= Bnvec)
                     { 
                         Ch = Ah ; Ch_size = A->h_size ;
+                        Cj_is_32 = A->j_is_32 ;
+                        Cnvec = Anvec ;
                     }
                     else
                     { 
                         Ch = Bh ; Ch_size = B->h_size ;
+                        Cj_is_32 = B->j_is_32 ;
+                        Cnvec = Bnvec ;
                     }
                 }
 
@@ -217,13 +252,18 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     //----------------------------------------------------------
 
                     // Ch = smaller of Mh, Ah
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
                     if (Anvec <= Mnvec)
                     { 
                         Ch = Ah ; Ch_size = A->h_size ;
+                        Cj_is_32 = A->j_is_32 ;
+                        Cnvec = Anvec ;
                     }
                     else
                     { 
                         Ch = Mh ; Ch_size = M->h_size ;
+                        Cj_is_32 = M->j_is_32 ;
+                        Cnvec = Mnvec ;
                     }
 
                 }
@@ -234,7 +274,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     // (4) A hyper, B sparse, M sparse: C hyper
                     //----------------------------------------------------------
 
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
                     Ch = Ah ; Ch_size = A->h_size ;
+                    Cj_is_32 = A->j_is_32 ;
+                    Cnvec = Anvec ;
                 }
             }
 
@@ -252,14 +295,18 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     //----------------------------------------------------------
 
                     // Ch = smaller of Mh, Bh
-
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
                     if (Bnvec <= Mnvec)
                     { 
                         Ch = Bh ; Ch_size = B->h_size ;
+                        Cj_is_32 = B->j_is_32 ;
+                        Cnvec = Bnvec ;
                     }
                     else
                     { 
                         Ch = Mh ; Ch_size = M->h_size ;
+                        Cj_is_32 = M->j_is_32 ;
+                        Cnvec = Mnvec ;
                     }
 
                 }
@@ -270,7 +317,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     // (6) A sparse, B hyper, M sparse: C hyper
                     //----------------------------------------------------------
 
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
                     Ch = Bh ; Ch_size = B->h_size ;
+                    Cj_is_32 = B->j_is_32 ;
+                    Cnvec = Bnvec ;
 
                 }
             }
@@ -284,7 +334,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     // (7) A sparse, B sparse, M hyper: C hyper
                     //----------------------------------------------------------
 
+                    (*C_sparsity) = GxB_HYPERSPARSE ;
                     Ch = Mh ; Ch_size = M->h_size ;
+                    Cj_is_32 = M->j_is_32 ;
+                    Cnvec = Mnvec ;
 
                 }
                 else
@@ -294,7 +347,9 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                     // (8) A sparse, B sparse, M sparse: C sparse
                     //----------------------------------------------------------
 
+                    (*C_sparsity) = GxB_SPARSE ;
                     Ch = NULL ;
+                    Cnvec = n ;
                 }
             }
         }
@@ -319,14 +374,20 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                 //--------------------------------------------------------------
 
                 // Ch = smaller of Ah, Bh
+                (*C_sparsity) = GxB_HYPERSPARSE ;
                 if (Anvec <= Bnvec)
                 { 
                     Ch = Ah ; Ch_size = A->h_size ;
+                    Cj_is_32 = A->j_is_32 ;
+                    Cnvec = Anvec ;
                 }
                 else
                 { 
                     Ch = Bh ; Ch_size = B->h_size ;
+                    Cj_is_32 = B->j_is_32 ;
+                    Cnvec = Bnvec ;
                 }
+
             }
             else
             { 
@@ -335,7 +396,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                 // (2) A hyper, B sparse: C hyper
                 //--------------------------------------------------------------
 
+                (*C_sparsity) = GxB_HYPERSPARSE ;
                 Ch = Ah ; Ch_size = A->h_size ;
+                Cj_is_32 = A->j_is_32 ;
+                Cnvec = Anvec ;
 
             }
 
@@ -350,7 +414,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                 // (3) A sparse, B hyper: C hyper
                 //--------------------------------------------------------------
 
+                (*C_sparsity) = GxB_HYPERSPARSE ;
                 Ch = Bh ; Ch_size = B->h_size ;
+                Cj_is_32 = B->j_is_32 ;
+                Cnvec = Bnvec ;
 
             }
             else
@@ -360,41 +427,14 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
                 // (4) A sparse, B sparse: C sparse
                 //--------------------------------------------------------------
 
+                (*C_sparsity) = GxB_SPARSE ;
                 Ch = NULL ;
+                Cnvec = n ;
             }
         }
     }
 
-    //--------------------------------------------------------------------------
-    // find Cnvec
-    //--------------------------------------------------------------------------
-
-    int64_t Cnvec ;
-
-    if (Ch == NULL)
-    { 
-        // C is sparse
-        (*C_sparsity) = GxB_SPARSE ;
-        Cnvec = n ;
-    }
-    else
-    {
-        // C is hypersparse; one of A, B, or M are hypersparse
-        ASSERT (A_is_hyper || B_is_hyper || M_is_hyper) ;
-        (*C_sparsity) = GxB_HYPERSPARSE ;
-        if (Ch == Ah)
-        { 
-            Cnvec = Anvec ;
-        }
-        else if (Ch == Bh)
-        { 
-            Cnvec = Bnvec ;
-        }
-        else // (Ch == Mh)
-        { 
-            Cnvec = Mnvec ;
-        }
-    }
+    GB_IPTR (Ch, Cj_is_32) ;
 
     //--------------------------------------------------------------------------
     // determine the number of threads to use
@@ -412,7 +452,7 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     {
         // allocate C_to_M
         ASSERT (Ch != NULL) ;
-        C_to_M = GB_MALLOC_WORK (Cnvec, int64_t, &C_to_M_size) ;
+        C_to_M = GB_MALLOC_MEMORY (Cnvec, sizeof (int64_t), &C_to_M_size) ;
         if (C_to_M == NULL)
         { 
             // out of memory
@@ -423,10 +463,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         // create the M->Y hyper_hash
         GB_OK (GB_hyper_hash_build (M, Werk)) ;
 
-        const int64_t *restrict Mp = M->p ;
-        const int64_t *restrict M_Yp = (M->Y == NULL) ? NULL : M->Y->p ;
-        const int64_t *restrict M_Yi = (M->Y == NULL) ? NULL : M->Y->i ;
-        const int64_t *restrict M_Yx = (M->Y == NULL) ? NULL : M->Y->x ;
+        const void *Mp = M->p ;
+        const void *M_Yp = (M->Y == NULL) ? NULL : M->Y->p ;
+        const void *M_Yi = (M->Y == NULL) ? NULL : M->Y->i ;
+        const void *M_Yx = (M->Y == NULL) ? NULL : M->Y->x ;
         const int64_t M_hash_bits = (M->Y == NULL) ? 0 : (M->Y->vdim - 1) ;
 
         // compute C_to_M
@@ -435,9 +475,9 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         for (k = 0 ; k < Cnvec ; k++)
         { 
             int64_t pM, pM_end ;
-            int64_t j = Ch [k] ;
-            int64_t kM = GB_hyper_hash_lookup (Mh, Mnvec, Mp, M_Yp, M_Yi, M_Yx,
-                M_hash_bits, j, &pM, &pM_end) ;
+            int64_t j = GB_IGET (Ch, k) ;
+            int64_t kM = GB_hyper_hash_lookup (M->p_is_32, M->j_is_32,
+                Mh, Mnvec, Mp, M_Yp, M_Yi, M_Yx, M_hash_bits, j, &pM, &pM_end) ;
             C_to_M [k] = (pM < pM_end) ? kM : -1 ;
         }
     }
@@ -450,7 +490,7 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     {
         // allocate C_to_A
         ASSERT (Ch != NULL) ;
-        C_to_A = GB_MALLOC_WORK (Cnvec, int64_t, &C_to_A_size) ;
+        C_to_A = GB_MALLOC_MEMORY (Cnvec, sizeof (int64_t), &C_to_A_size) ;
         if (C_to_A == NULL)
         { 
             // out of memory
@@ -461,10 +501,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         // create the A->Y hyper_hash
         GB_OK (GB_hyper_hash_build (A, Werk)) ;
 
-        const int64_t *restrict Ap = A->p ;
-        const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-        const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-        const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+        const void *Ap = A->p ;
+        const void *A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+        const void *A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+        const void *A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
         const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
 
         // compute C_to_A
@@ -473,9 +513,9 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         for (k = 0 ; k < Cnvec ; k++)
         { 
             int64_t pA, pA_end ;
-            int64_t j = Ch [k] ;
-            int64_t kA = GB_hyper_hash_lookup (Ah, Anvec, Ap, A_Yp, A_Yi, A_Yx,
-                A_hash_bits, j, &pA, &pA_end) ;
+            int64_t j = GB_IGET (Ch, k) ;
+            int64_t kA = GB_hyper_hash_lookup (A->p_is_32, A->j_is_32,
+                Ah, Anvec, Ap, A_Yp, A_Yi, A_Yx, A_hash_bits, j, &pA, &pA_end) ;
             C_to_A [k] = (pA < pA_end) ? kA : -1 ;
         }
     }
@@ -488,7 +528,7 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     {
         // allocate C_to_B
         ASSERT (Ch != NULL) ;
-        C_to_B = GB_MALLOC_WORK (Cnvec, int64_t, &C_to_B_size) ;
+        C_to_B = GB_MALLOC_MEMORY (Cnvec, sizeof (int64_t), &C_to_B_size) ;
         if (C_to_B == NULL)
         { 
             // out of memory
@@ -499,10 +539,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         // create the B->Y hyper_hash
         GB_OK (GB_hyper_hash_build (B, Werk)) ;
 
-        const int64_t *restrict Bp = B->p ;
-        const int64_t *restrict B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
-        const int64_t *restrict B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
-        const int64_t *restrict B_Yx = (B->Y == NULL) ? NULL : B->Y->x ;
+        const void *Bp = B->p ;
+        const void *B_Yp = (B->Y == NULL) ? NULL : B->Y->p ;
+        const void *B_Yi = (B->Y == NULL) ? NULL : B->Y->i ;
+        const void *B_Yx = (B->Y == NULL) ? NULL : B->Y->x ;
         const int64_t B_hash_bits = (B->Y == NULL) ? 0 : (B->Y->vdim - 1) ;
 
         // compute C_to_B
@@ -511,9 +551,9 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         for (k = 0 ; k < Cnvec ; k++)
         { 
             int64_t pB, pB_end ;
-            int64_t j = Ch [k] ;
-            int64_t kB = GB_hyper_hash_lookup (Bh, Bnvec, Bp, B_Yp, B_Yi, B_Yx,
-                B_hash_bits, j, &pB, &pB_end) ;
+            int64_t j = GB_IGET (Ch, k) ;
+            int64_t kB = GB_hyper_hash_lookup (B->p_is_32, B->j_is_32,
+                Bh, Bnvec, Bp, B_Yp, B_Yi, B_Yx, B_hash_bits, j, &pB, &pB_end) ;
             C_to_B [k] = (pB < pB_end) ? kB : -1 ;
         }
     }
@@ -525,6 +565,9 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     (*p_Cnvec) = Cnvec ;
     (*Ch_handle) = Ch ;
     (*Ch_size_handle) = Ch_size ;
+    (*p_Cp_is_32) = Cp_is_32 ;
+    (*p_Cj_is_32) = Cj_is_32 ;
+    (*p_Ci_is_32) = Ci_is_32 ;
     if (C_to_M_handle != NULL)
     {
         (*C_to_M_handle) = C_to_M ;
@@ -540,6 +583,10 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
     #ifdef GB_DEBUG
     ASSERT (A != NULL) ;        // A and B are always present
     ASSERT (B != NULL) ;
+    GB_IDECL (Ah, const, u) ; GB_IPTR (Ah, A->j_is_32) ;
+    GB_IDECL (Bh, const, u) ; GB_IPTR (Bh, B->j_is_32) ;
+    bool Mj_is_32 = (M == NULL) ? false : M->j_is_32 ;
+    GB_IDECL (Mh, const, u) ; GB_IPTR (Mh, Mj_is_32) ;
     int64_t jlast = -1 ;
     for (int64_t k = 0 ; k < Cnvec ; k++)
     {
@@ -554,7 +601,7 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
         else
         {
             // C will be constructed as hypersparse
-            j = Ch [k] ;
+            j = GB_IGET (Ch, k) ;
         }
 
         // vectors j in Ch are sorted, and in the range 0:n-1
@@ -571,14 +618,15 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
             ASSERT (kA >= -1 && kA < A->nvec) ;
             if (kA >= 0)
             {
-                int64_t jA = A->h [kA] ;
+                int64_t jA = GB_IGET (Ah, kA) ; // OK: A is hyper
                 ASSERT (j == jA) ;
             }
         }
         else if (A_is_hyper)
         {
             // A is hypersparse, and Ch is a shallow copy of A->h
-            ASSERT (Ch == A->h) ;
+            ASSERT (Ch == Ah) ;
+            ASSERT (Cj_is_32 == A->j_is_32) ;
         }
 
         // see if B (:,j) exists
@@ -590,45 +638,44 @@ GrB_Info GB_emult_08_phase0     // find vectors in C for C=A.*B or C<M>=A.*B
             ASSERT (kB >= -1 && kB < B->nvec) ;
             if (kB >= 0)
             {
-                int64_t jB = B->h [kB] ;
+                int64_t jB = GB_IGET (Bh, kB) ; // OK: B is hyper
                 ASSERT (j == jB) ;
             }
         }
         else if (B_is_hyper)
         {
             // A is hypersparse, and Ch is a shallow copy of A->h
-            ASSERT (Ch == B->h) ;
+            ASSERT (Ch == Bh) ;
+            ASSERT (Cj_is_32 == B->j_is_32) ;
         }
 
         // see if M (:,j) exists
-        if (Ch != NULL && M != NULL && Ch == M->h)
+        if (Ch != NULL && M != NULL && Ch == Mh)
         {
             // Ch is the same as Mh
-            ASSERT (M != NULL) ;
-            ASSERT (M->h != NULL) ;
-            ASSERT (Ch != NULL && M->h != NULL && Ch [k] == M->h [k]) ;
             ASSERT (C_to_M == NULL) ;
+            ASSERT (Cj_is_32 == M->j_is_32) ;
         }
         else if (C_to_M != NULL)
         {
             // M is present and hypersparse
             ASSERT (M != NULL) ;
-            ASSERT (M->h != NULL) ;
+            ASSERT (Mh != NULL) ;
+            ASSERT (M_is_hyper) ;
             int64_t kM = C_to_M [k] ;
             ASSERT (kM >= -1 && kM < M->nvec) ;
             if (kM >= 0)
             {
-                int64_t jM = M->h [kM] ;
+                int64_t jM = GB_IGET (Mh, kM) ; // OK: M is hyper
                 ASSERT (j == jM) ;
             }
         }
         else
         {
             // M is not present, or in sparse form
-            ASSERT (M == NULL || M->h == NULL) ;
+            ASSERT (M == NULL || Mh == NULL) ;
         }
     }
-
     #endif
 
     return (GrB_SUCCESS) ;

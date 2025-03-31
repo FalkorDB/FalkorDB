@@ -2,7 +2,7 @@
 // GxB_Type_from_name: return a built-in GrB_Type from its name
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -58,10 +58,8 @@
 // corresponding GrB_Type with tests such as the ones below, or in the example
 // above.  This cannot be safely done with GxB_Matrix_type.
 
-// As a result, the GxB_Matrix_type function that appears in SuiteSparse
-// GraphBLAS has been declared "historical" and its use is discouraged.  It
-// won't be removed, to preserve backward compatibility, but it is removed from
-// the user guide.  Use the string-based type mechanism instead.
+// However, GxB_Matrix_Type is still very useful when the caller function is in
+// the same process that created the matrix.
 
 #include "GB.h"
 

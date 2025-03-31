@@ -2,7 +2,7 @@
 // GB_get_set.h: definitions for GrB_get/set methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -17,7 +17,7 @@ struct GB_Global_opaque
     size_t header_size ;
 } ;
 
-GrB_Type_Code GB_type_code_get  // return the GrB_Type_Code for the code
+int GB_type_code_get  // return the GrB_Type_Code for the code
 (
     const GB_Type_code code     // type code to convert
 ) ;
@@ -41,14 +41,14 @@ GrB_Info GB_matvec_set
     GB_Werk Werk
 ) ;
 
-GrB_Info GB_op_enum_get   (GB_Operator op, int32_t *  value, GrB_Field field) ;
-GrB_Info GB_op_scalar_get (GB_Operator op, GrB_Scalar value, GrB_Field field,
+GrB_Info GB_op_enum_get   (GB_Operator op, int32_t *  value, int field) ;
+GrB_Info GB_op_scalar_get (GB_Operator op, GrB_Scalar scalar, int field,
     GB_Werk Werk) ;
-GrB_Info GB_op_string_get (GB_Operator op, char *     value, GrB_Field field) ;
-GrB_Info GB_op_size_get   (GB_Operator op, size_t *   value, GrB_Field field) ;
+GrB_Info GB_op_string_get (GB_Operator op, char *     value, int field) ;
+GrB_Info GB_op_size_get   (GB_Operator op, size_t *   value, int field) ;
 
 const char *GB_op_name_get (GB_Operator op) ;
-GrB_Info GB_op_string_set (GB_Operator op, char * value, GrB_Field field) ;
+GrB_Info GB_op_string_set (GB_Operator op, char * value, int field) ;
 
 const char *GB_monoid_name_get (GrB_Monoid monoid) ;
 const char *GB_semiring_name_get (GrB_Semiring semiring) ;
@@ -73,8 +73,8 @@ GrB_Info GB_op_or_type_string_set
 GrB_Info GB_monoid_get
 (
     GrB_Monoid monoid,
-    GrB_Scalar value,
-    GrB_Field field,
+    GrB_Scalar scalar,
+    int field,
     GB_Werk Werk
 ) ;
 

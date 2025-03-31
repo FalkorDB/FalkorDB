@@ -2,7 +2,7 @@
 // GB_select: apply a select operator
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,9 +41,10 @@ GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)
 
     // C may be aliased with M and/or A
 
+    GrB_Info info ;
     GrB_IndexUnaryOp op = op_in ;
     GB_RETURN_IF_FAULTY_OR_POSITIONAL (accum) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (Thunk) ;
+    GB_RETURN_IF_NULL_OR_INVALID (Thunk) ;
     GB_RETURN_IF_NULL_OR_FAULTY (op) ;
 
     ASSERT_MATRIX_OK (C, "C input for GB_select", GB0) ;
@@ -57,7 +58,6 @@ GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)
     GrB_Matrix T = NULL ;
 
     // check domains and dimensions for C<M> = accum (C,T)
-    GrB_Info info ;
     GB_OK (GB_compatible (C->type, C, M, Mask_struct, accum, A->type, Werk));
 
     GB_Type_code xcode = (op->xtype == NULL) ? GB_ignore_code : op->xtype->code;
@@ -367,7 +367,7 @@ GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)
     // create T
     //--------------------------------------------------------------------------
 
-    GB_CLEAR_STATIC_HEADER (T, &T_header) ;
+    GB_CLEAR_MATRIX_HEADER (T, &T_header) ;
 
     if (make_copy)
     { 
@@ -376,10 +376,16 @@ GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)
     }
     else if (is_empty)
     { 
+        // get the integer sizes for the new empty matrix T
+        bool Cp_is_32, Cj_is_32, Ci_is_32 ;
+        GB_determine_pji_is_32 (&Cp_is_32, &Cj_is_32, &Ci_is_32,
+            GxB_SPARSE, 0, A->vlen, A->vdim, Werk) ;
+
         // T is an empty non-iso matrix
         GB_OK (GB_new (&T, // auto (sparse or hyper), existing header
-            A->type, A->vlen, A->vdim, GB_Ap_calloc, A_csc,
-            GxB_SPARSE + GxB_HYPERSPARSE, GB_Global_hyper_switch_get ( ), 1)) ;
+            A->type, A->vlen, A->vdim, GB_ph_calloc, A_csc,
+            GxB_SPARSE + GxB_HYPERSPARSE, GB_Global_hyper_switch_get ( ), 1,
+            Cp_is_32, Cj_is_32, Ci_is_32)) ;
     }
     else
     { 
@@ -389,7 +395,6 @@ GrB_Info GB_select          // C<M> = accum (C, select(A,k)) or select(A',k)
 
     T->is_csc = A_csc ;
     ASSERT_MATRIX_OK (T, "T=select(A,Thunk) output", GB0) ;
-    ASSERT_MATRIX_OK (C, "C for accum; T=select(A,Thunk) output", GB0) ;
 
     //--------------------------------------------------------------------------
     // C<M> = accum (C,T): accumulate the results into C via the mask

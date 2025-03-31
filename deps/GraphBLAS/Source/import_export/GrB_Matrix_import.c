@@ -2,7 +2,7 @@
 // GrB_Matrix_import: import a matrix in CSR, CSC, FullC, FullR, or COO format
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,9 +16,9 @@
 #define GB_FREE_ALL                 \
 {                                   \
     GB_Matrix_free (A) ;            \
-    GB_FREE (&Ap_copy, Ap_size) ;   \
-    GB_FREE (&Ai_copy, Ai_size) ;   \
-    GB_FREE (&Ax_copy, Ax_size) ;   \
+    GB_FREE_MEMORY (&Ap_copy, Ap_size) ;   \
+    GB_FREE_MEMORY (&Ai_copy, Ai_size) ;   \
+    GB_FREE_MEMORY (&Ax_copy, Ax_size) ;   \
 }
 
 //------------------------------------------------------------------------------
@@ -29,15 +29,15 @@ static GrB_Info GB_import_worker   // import a matrix of any type
 (
     GrB_Matrix *A,          // handle of matrix to create
     GrB_Type type,          // type of matrix to create
-    GrB_Index nrows,        // number of rows of the matrix
-    GrB_Index ncols,        // number of columns of the matrix
-    const GrB_Index *Ap,    // pointers for CSR, CSC, row indices for COO
-    const GrB_Index *Ai,    // row indices for CSR, CSC, col indices for COO
+    uint64_t nrows,         // number of rows of the matrix
+    uint64_t ncols,         // number of columns of the matrix
+    const uint64_t *Ap,     // pointers for CSR, CSC, row indices for COO
+    const uint64_t *Ai,     // row indices for CSR, CSC, col indices for COO
     const void *Ax,         // values (must match the GrB_Type type parameter)
-    GrB_Index Ap_len,       // number of entries in Ap (not # of bytes)
-    GrB_Index Ai_len,       // number of entries in Ai (not # of bytes)
-    GrB_Index Ax_len,       // number of entries in Ax (not # of bytes)
-    GrB_Format format,      // import format
+    uint64_t Ap_len,        // number of entries in Ap (not # of bytes)
+    uint64_t Ai_len,        // number of entries in Ai (not # of bytes)
+    uint64_t Ax_len,        // number of entries in Ax (not # of bytes)
+    int format,             // import format
     GB_Werk Werk
 )
 { 
@@ -62,7 +62,7 @@ static GrB_Info GB_import_worker   // import a matrix of any type
         return (GrB_INVALID_VALUE) ;
     }
 
-    GrB_Index nvals = 0 ;
+    uint64_t nvals = 0 ;
     bool ok = true ;
     int64_t plen = (format == GrB_CSR_FORMAT) ? (nrows+1) : (ncols+1) ;
 
@@ -120,12 +120,12 @@ static GrB_Info GB_import_worker   // import a matrix of any type
     // allocate copies of Ap, Ai, and Ax to be imported
     //--------------------------------------------------------------------------
 
-    GrB_Index *Ap_copy = NULL ; size_t Ap_size = 0 ;
-    GrB_Index *Ai_copy = NULL ; size_t Ai_size = 0 ;
-    GB_void   *Ax_copy = NULL ; size_t Ax_size = 0 ;
+    uint64_t *Ap_copy = NULL ; size_t Ap_size = 0 ;
+    uint64_t *Ai_copy = NULL ; size_t Ai_size = 0 ;
+    GB_void  *Ax_copy = NULL ; size_t Ax_size = 0 ;
     size_t typesize = type->size ;
 
-    // Ap_copy, Ai_copy, Ax_copy are GB_MALLOC'ed so they are already in the
+    // Ap_copy, Ai_copy, Ax_copy are malloc'ed so they are already in the
     // debug memtable.  Thus, GB_import does not add them again to the
     // memtable (with add_to_memtable set to false).
 
@@ -133,15 +133,15 @@ static GrB_Info GB_import_worker   // import a matrix of any type
     {
         case GrB_CSR_FORMAT : 
         case GrB_CSC_FORMAT : 
-            Ap_copy = GB_MALLOC (plen,           GrB_Index, &Ap_size) ;
-            Ai_copy = GB_MALLOC (nvals,          GrB_Index, &Ai_size) ;
-            Ax_copy = GB_MALLOC (nvals*typesize, GB_void,   &Ax_size) ; // x:OK
+            Ap_copy = GB_MALLOC_MEMORY (plen,  sizeof (uint64_t), &Ap_size) ;
+            Ai_copy = GB_MALLOC_MEMORY (nvals, sizeof (uint64_t), &Ai_size) ;
+            Ax_copy = GB_MALLOC_MEMORY (nvals, typesize, &Ax_size) ;
             ok = (Ap_copy != NULL && Ai_copy != NULL && Ax_copy != NULL) ;
             break ;
 
 //      case GrB_DENSE_ROW_FORMAT :
 //      case GrB_DENSE_COL_FORMAT :
-//          Ax_copy = GB_MALLOC (nvals*typesize, GB_void,   &Ax_size) ; // x:OK
+//          Ax_copy = GB_MALLOC_MEMORY (nvals, typesize, &Ax_size) ;
 //          ok = (Ax_copy != NULL) ;
 //          break ;
 
@@ -170,8 +170,8 @@ static GrB_Info GB_import_worker   // import a matrix of any type
     {
         case GrB_CSR_FORMAT : 
         case GrB_CSC_FORMAT : 
-            GB_memcpy (Ap_copy, Ap, plen  * sizeof (GrB_Index), nthreads_max) ;
-            GB_memcpy (Ai_copy, Ai, nvals * sizeof (GrB_Index), nthreads_max) ;
+            GB_memcpy (Ap_copy, Ap, plen  * sizeof (uint64_t), nthreads_max) ;
+            GB_memcpy (Ai_copy, Ai, nvals * sizeof (uint64_t), nthreads_max) ;
 //      case GrB_DENSE_ROW_FORMAT :
 //      case GrB_DENSE_COL_FORMAT :
             GB_memcpy (Ax_copy, Ax, nvals * typesize          , nthreads_max) ;
@@ -258,8 +258,8 @@ static GrB_Info GB_import_worker   // import a matrix of any type
         default : // GrB_COO_FORMAT
             {
                 // build A as hypersparse by row or by column
-                int64_t *no_I_work = NULL ; size_t I_work_size = 0 ;
-                int64_t *no_J_work = NULL ; size_t J_work_size = 0 ;
+                void *no_I_work = NULL ; size_t I_work_size = 0 ;
+                void *no_J_work = NULL ; size_t J_work_size = 0 ;
                 GB_void *no_X_work = NULL ; size_t X_work_size = 0 ;
                 bool is_csc = GB_Global_is_csc_get ( ) ;
                 int64_t vlen = is_csc ? nrows : ncols ;
@@ -267,8 +267,9 @@ static GrB_Info GB_import_worker   // import a matrix of any type
 
                 // allocate the header for A
                 GB_OK (GB_new (A, // new header
-                    type, vlen, vdim, GB_Ap_null, is_csc, GxB_AUTO_SPARSITY,
-                    GB_Global_hyper_switch_get ( ), 0)) ;
+                    type, vlen, vdim, GB_ph_null, is_csc, GxB_AUTO_SPARSITY,
+                    GB_Global_hyper_switch_get ( ), 0,
+                    /* OK; 64-bit only: */ false, false, false)) ;
 
                 // build A from the input triplets
                 GB_OK (GB_builder (
@@ -287,15 +288,16 @@ static GrB_Info GB_import_worker   // import a matrix of any type
                     false,          // known_no_duplicates: not yet known
                     0,              // I_work, J_work, and X_work not used here
                     true,           // A is a GrB_Matrix
-                    (int64_t *) (is_csc ? Ap : Ai),     // row/col indices
-                    (int64_t *) (is_csc ? Ai : Ap),     // col/row indices
+                    is_csc ? Ap : Ai,     // row/col indices
+                    is_csc ? Ai : Ap,     // col/row indices
                     (const GB_void *) Ax,               // values
                     false,          // matrix is not iso
                     nvals,          // number of tuples
                     NULL,           // implicit SECOND operator for duplicates
                     type,           // type of the X array
                     true,           // burble is allowed
-                    Werk
+                    Werk,
+                    false, false, false, false, false  // OK; 64-bit only
                 )) ;
             }
             break ;
@@ -312,7 +314,7 @@ static GrB_Info GB_import_worker   // import a matrix of any type
         // All entries in A are the same; convert A to iso
         GBURBLE ("(import post iso) ") ;
         (*A)->iso = true ;
-        GB_OK (GB_convert_any_to_iso (*A, NULL)) ;
+        GB_OK (GB_convert_any_to_iso (*A, NULL)) ;      // OK
     }
 
     //--------------------------------------------------------------------------
@@ -333,25 +335,23 @@ GrB_Info GB_EVAL3 (prefix, _Matrix_import_, T) /* import a matrix */           \
 (                                                                              \
     GrB_Matrix *A,          /* handle of matrix to create                    */\
     GrB_Type type,          /* type of matrix to create                      */\
-    GrB_Index nrows,        /* number of rows of the matrix                  */\
-    GrB_Index ncols,        /* number of columns of the matrix               */\
-    const GrB_Index *Ap,    /* pointers for CSR, CSC, row indices for COO    */\
-    const GrB_Index *Ai,    /* row indices for CSR, CSC, col indices for COO */\
+    uint64_t nrows,         /* number of rows of the matrix                  */\
+    uint64_t ncols,         /* number of columns of the matrix               */\
+    const uint64_t *Ap,     /* pointers for CSR, CSC, row indices for COO    */\
+    const uint64_t *Ai,     /* row indices for CSR, CSC, col indices for COO */\
     const ctype *Ax,        /* values (must match GrB_Type type parameter)   */\
-    GrB_Index Ap_len,       /* number of entries in Ap (not # of bytes)      */\
-    GrB_Index Ai_len,       /* number of entries in Ai (not # of bytes)      */\
-    GrB_Index Ax_len,       /* number of entries in Ax (not # of bytes)      */\
-    GrB_Format format       /* import format                                 */\
+    uint64_t Ap_len,        /* number of entries in Ap (not # of bytes)      */\
+    uint64_t Ai_len,        /* number of entries in Ai (not # of bytes)      */\
+    uint64_t Ax_len,        /* number of entries in Ax (not # of bytes)      */\
+    int format              /* import format                                 */\
 )                                                                              \
 {                                                                              \
-    GB_WHERE1 (GB_STR(prefix) "_Matrix_import_" GB_STR(T) " (&A, type, nrows," \
+    GB_WHERE0 (GB_STR(prefix) "_Matrix_import_" GB_STR(T) " (&A, type, nrows," \
         " ncols, Ap, Ai, Ax, Ap_len, Ai_len, Ax_len, format)") ;               \
-/*  GB_BURBLE_START (GB_STR(prefix) "_Matrix_import_" GB_STR(T)) ;  */         \
     GB_RETURN_IF_NULL_OR_FAULTY (type) ;                                       \
     if (type->code != acode) return (GrB_DOMAIN_MISMATCH) ;                    \
-    GrB_Info info = GB_import_worker (A, type, nrows, ncols, Ap, Ai,           \
+    info = GB_import_worker (A, type, nrows, ncols, Ap, Ai,                    \
         (const void *) Ax, Ap_len, Ai_len, Ax_len, format, Werk) ;             \
-/*  GB_BURBLE_END ; */                                                         \
     return (info) ;                                                            \
 }
 

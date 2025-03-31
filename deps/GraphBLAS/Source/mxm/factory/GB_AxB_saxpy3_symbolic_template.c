@@ -2,7 +2,7 @@
 // GB_AxB_saxpy3_symbolic_template: symbolic analysis for GB_AxB_saxpy3
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -48,13 +48,13 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
     // get M, A, B, and C
     //--------------------------------------------------------------------------
 
-    int64_t *restrict Cp = C->p ;
+    GB_Cp_DECLARE (Cp, ) ; GB_Cp_PTR (Cp, C) ;
     const int64_t cvlen = C->vlen ;
 
-    const int64_t *restrict Bp = B->p ;
-    const int64_t *restrict Bh = B->h ;
-    const int8_t  *restrict Bb = B->b ;
-    const int64_t *restrict Bi = B->i ;
+    GB_Bp_DECLARE (Bp, const) ; GB_Bp_PTR (Bp, B) ;
+    GB_Bh_DECLARE (Bh, const) ; GB_Bh_PTR (Bh, B) ;
+    GB_Bi_DECLARE_U (Bi, const) ; GB_Bi_PTR (Bi, B) ;
+    const int8_t *restrict Bb = B->b ;
     const int64_t bvlen = B->vlen ;
 
     ASSERT (GB_B_IS_SPARSE == GB_IS_SPARSE (B)) ;
@@ -62,10 +62,10 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
     ASSERT (GB_B_IS_BITMAP == GB_IS_BITMAP (B)) ;
     ASSERT (GB_B_IS_FULL   == GB_IS_FULL   (B)) ;
 
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int8_t  *restrict Ab = A->b ;
-    const int64_t *restrict Ai = A->i ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ah_DECLARE (Ah, const) ; GB_Ah_PTR (Ah, A) ;
+    GB_Ai_DECLARE_U (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+    const int8_t *restrict Ab = A->b ;
     const int64_t anvec = A->nvec ;
     const int64_t avlen = A->vlen ;
     const bool A_jumbled = A->jumbled ;
@@ -74,19 +74,25 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
     ASSERT (GB_A_IS_HYPER  == GB_IS_HYPERSPARSE (A)) ;
     ASSERT (GB_A_IS_BITMAP == GB_IS_BITMAP (A)) ;
     ASSERT (GB_A_IS_FULL   == GB_IS_FULL   (A)) ;
+    const bool Ai_is_32 = A->i_is_32 ;
+    #define GB_Ai_IS_32 Ai_is_32
 
     #if GB_A_IS_HYPER
-    const int64_t *restrict A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
-    const int64_t *restrict A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
-    const int64_t *restrict A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
+    const void *A_Yp = (A->Y == NULL) ? NULL : A->Y->p ;
+    const void *A_Yi = (A->Y == NULL) ? NULL : A->Y->i ;
+    const void *A_Yx = (A->Y == NULL) ? NULL : A->Y->x ;
     const int64_t A_hash_bits = (A->Y == NULL) ? 0 : (A->Y->vdim - 1) ;
+    const bool Ap_is_32 = A->p_is_32 ;
+    const bool Aj_is_32 = A->j_is_32 ;
+    #define GB_Ap_IS_32 Ap_is_32
+    #define GB_Aj_IS_32 Aj_is_32
     #endif
 
     #if ( !GB_NO_MASK )
-    const int64_t *restrict Mp = M->p ;
-    const int64_t *restrict Mh = M->h ;
-    const int8_t  *restrict Mb = M->b ;
-    const int64_t *restrict Mi = M->i ;
+    GB_Mp_DECLARE (Mp, const) ; GB_Mp_PTR (Mp, M) ;
+    GB_Mh_DECLARE (Mh, const) ; GB_Mh_PTR (Mh, M) ;
+    GB_Mi_DECLARE_U (Mi, const) ; GB_Mi_PTR (Mi, M) ;
+    const int8_t *restrict Mb = M->b ;
     const GB_M_TYPE *restrict Mx = (GB_M_TYPE *) (Mask_struct ? NULL : (M->x)) ;
     size_t  msize = M->type->size ;
     int64_t mnvec = M->nvec ;
@@ -95,10 +101,14 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
     const bool M_is_bitmap = GB_IS_BITMAP (M) ;
     const bool M_jumbled = GB_JUMBLED (M) ;
     // get the M hyper_hash
-    const int64_t *restrict M_Yp = (M->Y == NULL) ? NULL : M->Y->p ;
-    const int64_t *restrict M_Yi = (M->Y == NULL) ? NULL : M->Y->i ;
-    const int64_t *restrict M_Yx = (M->Y == NULL) ? NULL : M->Y->x ;
+    const void *M_Yp = (M->Y == NULL) ? NULL : M->Y->p ;
+    const void *M_Yi = (M->Y == NULL) ? NULL : M->Y->i ;
+    const void *M_Yx = (M->Y == NULL) ? NULL : M->Y->x ;
     const int64_t M_hash_bits = (M->Y == NULL) ? 0 : (M->Y->vdim - 1) ;
+    const bool Mp_is_32 = M->p_is_32 ;
+    const bool Mj_is_32 = M->j_is_32 ;
+    #define GB_Mp_IS_32 Mp_is_32
+    #define GB_Mj_IS_32 Mj_is_32
     #endif
 
     //==========================================================================
@@ -117,7 +127,7 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
         // get the task descriptor
         //----------------------------------------------------------------------
 
-        int64_t hash_size = SaxpyTasks [taskid].hsize ;
+        uint64_t hash_size = SaxpyTasks [taskid].hsize ;
         bool use_Gustavson = (hash_size == cvlen) ;
 
         if (taskid < nfine)
@@ -135,7 +145,8 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 //--------------------------------------------------------------
 
                 int64_t kk = SaxpyTasks [taskid].vector ;
-                int64_t bjnz = (Bp == NULL) ? bvlen : (Bp [kk+1] - Bp [kk]) ;
+                int64_t bjnz = (Bp == NULL) ? bvlen :
+                    (GB_IGET (Bp, kk+1) - GB_IGET (Bp, kk)) ;
                 // no work to do if B(:,j) is empty
                 if (bjnz == 0) continue ;
 
@@ -192,23 +203,23 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                     // h == 0,   f == 0: unoccupied and unlocked
                     // h == i+1, f == 1: occupied with M(i,j)=1
 
-                    int64_t *restrict
-                        Hf = (int64_t *restrict) SaxpyTasks [taskid].Hf ;
-                    int64_t hash_bits = (hash_size-1) ;
+                    uint64_t *restrict
+                        Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
+                    uint64_t hash_bits = (hash_size-1) ;
                     // scan this task's M(:,j)
                     for (int64_t pM = mystart ; pM < myend ; pM++)
                     {
                         GB_GET_M_ij (pM) ;              // get M(i,j)
                         if (!mij) continue ;            // skip if M(i,j)=0
-                        int64_t i = GBI_M (Mi, pM, mvlen) ;
-                        int64_t i_mine = ((i+1) << 2) + 1 ;  // ((i+1),1)
+                        uint64_t i = GBi_M (Mi, pM, mvlen) ;
+                        uint64_t i_mine = ((i+1) << 2) + 1 ;  // ((i+1),1)
                         for (GB_HASH (i))
                         { 
-                            int64_t hf ;
+                            uint64_t hf ;
                             // swap this task's hash entry into the hash table;
                             // does the following using an atomic capture:
                             // { hf = Hf [hash] ; Hf [hash] = i_mine ; }
-                            GB_ATOMIC_CAPTURE_INT64 (hf, Hf [hash], i_mine) ;
+                            GB_ATOMIC_CAPTURE_UINT64 (hf, Hf [hash], i_mine) ;
                             if (hf == 0) break ;        // success
                             // i_mine has been inserted, but a prior entry was
                             // already there.  It needs to be replaced, so take
@@ -229,11 +240,11 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
             // coarse tasks: compute nnz in each vector of A*B(:,kfirst:klast)
             //------------------------------------------------------------------
 
-            int64_t *restrict
-                Hf = (int64_t *restrict) SaxpyTasks [taskid].Hf ;
+            uint64_t *restrict
+                Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
             int64_t kfirst = SaxpyTasks [taskid].start ;
             int64_t klast  = SaxpyTasks [taskid].end ;
-            int64_t mark = 0 ;
+            uint64_t mark = 0 ;
 
             if (use_Gustavson)
             {
@@ -267,8 +278,8 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 // phase1: coarse hash task
                 //--------------------------------------------------------------
 
-                int64_t *restrict Hi = SaxpyTasks [taskid].Hi ;
-                int64_t hash_bits = (hash_size-1) ;
+                uint64_t *restrict Hi = SaxpyTasks [taskid].Hi ;
+                uint64_t hash_bits = (hash_size-1) ;
 
                 #if ( GB_NO_MASK )
                 { 
@@ -446,10 +457,11 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
         {
             int64_t kk = SaxpyTasks [taskid].vector ;
             ASSERT (kk >= 0 && kk < B->nvec) ;
-            int64_t bjnz = (Bp == NULL) ? bvlen : (Bp [kk+1] - Bp [kk]) ;
+            int64_t bjnz = (Bp == NULL) ? bvlen :
+                    (GB_IGET (Bp, kk+1) - GB_IGET (Bp, kk)) ;
             // no work to do if B(:,j) is empty
             if (bjnz == 0) continue ;
-            int64_t hash_size = SaxpyTasks [taskid].hsize ;
+            uint64_t hash_size = SaxpyTasks [taskid].hsize ;
             bool use_Gustavson = (hash_size == cvlen) ;
             int leader = SaxpyTasks [taskid].leader ;
             if (leader != taskid) continue ;
@@ -470,7 +482,7 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 for (int64_t pM = pM_start ; pM < pM_end ; pM++)
                 {
                     GB_GET_M_ij (pM) ;               // get M(i,j)
-                    int64_t i = GBI_M (Mi, pM, mvlen) ;
+                    uint64_t i = GBi_M (Mi, pM, mvlen) ;
                     ASSERT (Hf [i] == mij) ;
                 }
                 for (int64_t i = 0 ; i < cvlen ; i++)
@@ -485,19 +497,19 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 // phase1: fine hash task, C<M>=A*B or C<!M>=A*B
                 // h == 0,   f == 0: unoccupied and unlocked
                 // h == i+1, f == 1: occupied with M(i,j)=1
-                int64_t *restrict
-                    Hf = (int64_t *restrict) SaxpyTasks [taskid].Hf ;
-                int64_t hash_bits = (hash_size-1) ;
+                uint64_t *restrict
+                    Hf = (uint64_t *restrict) SaxpyTasks [taskid].Hf ;
+                uint64_t hash_bits = (hash_size-1) ;
                 for (int64_t pM = pM_start ; pM < pM_end ; pM++)
                 {
                     GB_GET_M_ij (pM) ;              // get M(i,j)
                     if (!mij) continue ;            // skip if M(i,j)=0
-                    int64_t i = GBI_M (Mi, pM, mvlen) ;
-                    int64_t i_mine = ((i+1) << 2) + 1 ;  // ((i+1),1)
+                    uint64_t i = GBi_M (Mi, pM, mvlen) ;
+                    uint64_t i_mine = ((i+1) << 2) + 1 ;  // ((i+1),1)
                     int64_t probe = 0 ;
                     for (GB_HASH (i))
                     {
-                        int64_t hf = Hf [hash] ;
+                        uint64_t hf = Hf [hash] ;
                         if (hf == i_mine) 
                         {
                             mjcount2++ ;
@@ -510,11 +522,11 @@ void GB_EVAL2 (GB (AxB_saxpy3_sym), GB_MASK_A_B_SUFFIX)
                 }
                 ASSERT (mjcount == mjcount2) ;
                 mjcount2 = 0 ;
-                for (int64_t hash = 0 ; hash < hash_size ; hash++)
+                for (uint64_t hash = 0 ; hash < hash_size ; hash++)
                 {
-                    int64_t hf = Hf [hash] ;
-                    int64_t h = (hf >> 2) ;     // empty (0), or a 1-based 
-                    int64_t f = (hf & 3) ;      // 0 if empty or 1 if occupied
+                    uint64_t hf = Hf [hash] ;
+                    uint64_t h = (hf >> 2) ; // empty (0), or a 1-based index
+                    uint64_t f = (hf & 3) ;  // 0 if empty or 1 if occupied
                     if (f == 1) ASSERT (h >= 1 && h <= cvlen) ;
                     ASSERT (hf == 0 || f == 1) ;
                     if (f == 1) mjcount2++ ;

@@ -2,13 +2,14 @@
 // GraphBLAS/CUDA/GraphBLAS_cuda.hpp
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 extern "C"
 { 
+    // definitions that modify GraphBLAS.h
     #include "include/GB_dev.h"
     #include "include/GB_compiler.h"
     #include "include/GB_warnings.h"
@@ -33,4 +34,9 @@ extern "C"
 #undef I
 
 #define restrict GB_restrict
+
+extern "C"
+{ 
+    #include "include/GB_abort.h"
+}
 

@@ -2,7 +2,7 @@ function result = gb_entries (A, varargin)
 %GB_ENTRIES count or query the entries of a matrix.
 % Implements GrB.entries (A, ...) and GrB.nonz (A, ...).
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 % get the string arguments

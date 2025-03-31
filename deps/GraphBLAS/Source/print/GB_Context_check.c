@@ -2,7 +2,7 @@
 // GB_Context_check: check and print a Context
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -22,6 +22,7 @@ GrB_Info GB_Context_check       // check a GraphBLAS Context
     // check inputs
     //--------------------------------------------------------------------------
 
+    GB_CHECK_INIT ;
     GBPR0 ("\n    GraphBLAS Context: %s ", ((name != NULL) ? name : "")) ;
 
     if (Context == NULL)

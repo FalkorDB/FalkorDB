@@ -2,7 +2,7 @@
 // GB_AxB_dot2n_jit: C<M>=A'*B dot2n method, via the JIT
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -41,6 +41,7 @@ GrB_Info GB_AxB_dot2n_jit        // C<M>=A*B, dot2n method, via the JIT
     uint64_t hash = GB_encodify_mxm (&encoding, &suffix,
         GB_JIT_KERNEL_AXB_DOT2N,
         C->iso, false, GB_sparsity (C), C->type,
+        C->p_is_32, C->j_is_32, C->i_is_32,
         M, Mask_struct, Mask_comp, semiring, flipxy, A, B) ;
 
     //--------------------------------------------------------------------------
@@ -58,8 +59,9 @@ GrB_Info GB_AxB_dot2n_jit        // C<M>=A*B, dot2n method, via the JIT
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
     return (GB_jit_kernel (C, M, A, A_slice, B, B_slice, nthreads, naslice,
-        nbslice, semiring->multiply->theta)) ;
+        nbslice, semiring->multiply->theta, &GB_callback)) ;
 }
 

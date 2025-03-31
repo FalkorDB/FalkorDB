@@ -11,7 +11,7 @@
 #include "../util/rax_extensions.h"
 
 // creates a new graph decoding context
-GraphDecodeContext *GraphDecodeContext_New() {
+GraphDecodeContext *GraphDecodeContext_New(void) {
 	GraphDecodeContext *ctx = rm_calloc(1, sizeof(GraphDecodeContext));
 
 	ctx->meta_keys        = raxNew();

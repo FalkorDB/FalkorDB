@@ -8,6 +8,7 @@
 
 #include "../record.h"
 #include "../../util/arr.h"
+#include "../../util/dict.h"
 #include "../../redismodule.h"
 #include "../../schema/schema.h"
 #include "../../graph/query_graph.h"
@@ -107,6 +108,14 @@ static const OPType EAGER_OPERATIONS[] = {
 	OPType_SORT
 };
 
+#define MODIFYING_OP_COUNT 4
+static const OPType MODIFYING_OPERATIONS[] = {
+	OPType_CREATE,
+	OPType_DELETE,
+	OPType_UPDATE,
+	OPType_MERGE
+};
+
 struct OpBase;
 struct ExecutionPlan;
 
@@ -136,6 +145,7 @@ struct OpBase {
 	int childCount;                    // number of children
 	struct OpBase **children;          // child operations
 	const char **modifies;             // list of entities this op modifies
+	dict *awareness;                   // variables this op is aware of
 	OpStats *stats;                    // profiling statistics
 	struct OpBase *parent;             // parent operations
 	const struct ExecutionPlan *plan;  // executionPlan this operation is part of
@@ -210,6 +220,14 @@ OpBase *OpBase_GetChild
 	uint i             // child index
 );
 
+// returns true if operation is aware of all aliases
+bool OpBase_Aware
+(
+	const OpBase *op,      // op
+	const char **aliases,  // aliases
+	uint n                 // number of aliases
+);
+
 // mark alias as being modified by operation
 // returns the ID associated with alias
 int OpBase_Modifies
@@ -235,14 +253,12 @@ bool OpBase_ChildrenAware
 	int *idx
 );
 
-// returns true if op is aware of alias
-// an operation is aware of all aliases it modifies and all aliases
-// modified by prior operation within its segment
-bool OpBase_Aware
+// returns true if alias is mapped
+bool OpBase_AliasMapping
 (
-	const OpBase *op,
-	const char *alias,
-	int *idx
+	const OpBase *op,   // op
+	const char *alias,  // alias
+	int *idx            // alias map id
 );
 
 // sends reset request to each operation up the chain

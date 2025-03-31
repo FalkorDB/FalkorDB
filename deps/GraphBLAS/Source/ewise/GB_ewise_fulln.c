@@ -2,7 +2,7 @@
 // GB_ewise_fulln: C = A+B where A and B are full, C is anything
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -83,10 +83,10 @@ GrB_Info GB_ewise_fulln      // C = A+B
         // free the content of C and reallocate it as a non-iso full matrix
         ASSERT (C != A && C != B) ;
         GB_phybix_free (C) ;
-        // set C->iso = false   OK
         GB_OK (GB_new_bix (&C,  // existing header
-            C->type, C->vlen, C->vdim, GB_Ap_null, C->is_csc, GxB_FULL, false,
-            C->hyper_switch, -1, GB_nnz_full (C), true, false)) ;
+            C->type, C->vlen, C->vdim, GB_ph_null, C->is_csc, GxB_FULL, false,
+            C->hyper_switch, -1, GB_nnz_full (C), true, false,
+            /* OK: */ false, false, false)) ;
         C->magic = GB_MAGIC ;
     }
     else if (!GB_IS_FULL (C))

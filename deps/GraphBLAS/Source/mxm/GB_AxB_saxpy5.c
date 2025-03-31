@@ -2,7 +2,7 @@
 // GB_AxB_saxpy5: compute C+=A*B where A is bitmap/full and B is sparse/hyper
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -151,7 +151,7 @@ GrB_Info GB_AxB_saxpy5              // C += A*B
         GB_FREE_WORKSPACE ;
         return (GrB_OUT_OF_MEMORY) ;
     }
-    GB_p_slice (B_slice, B->p, bnvec, ntasks, false) ;
+    GB_p_slice (B_slice, B->p, B->p_is_32, bnvec, ntasks, false) ;
 
     //--------------------------------------------------------------------------
     // via the factory kernel
@@ -194,8 +194,8 @@ GrB_Info GB_AxB_saxpy5              // C += A*B
 
     if (info == GrB_NO_VALUE)
     { 
-        info = GB_AxB_saxpy5_jit (C, A, B, semiring, flipxy,
-            ntasks, nthreads, B_slice) ;
+        info = GB_AxB_saxpy5_jit (C, A, B, semiring, flipxy, ntasks, nthreads,
+            B_slice) ;
     }
 
     //--------------------------------------------------------------------------

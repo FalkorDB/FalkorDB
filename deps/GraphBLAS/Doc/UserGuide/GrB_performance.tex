@@ -1,0 +1,315 @@
+
+\newpage
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Performance} %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{perf}
+
+Getting the best performance out of an algorithm that relies on GraphBLAS can
+depend on many factors.  This section describes some of the possible
+performance pitfalls you can hit when using SuiteSparse:GraphBLAS, and how to
+avoid them (or at least know when you've encountered them).
+
+%-------------------------------------------------------------------------------
+\subsection{The burble is your friend}
+%-------------------------------------------------------------------------------
+
+Turn on the burble with \verb'GrB_set (GrB_GLOBAL, true, GxB_BURBLE)'.  You will get a
+single line of output from each (significant) call to GraphBLAS.
+The burble output can help you detect when you are likely using sub-optimal
+methods, as described in the next sections.
+When the JIT is in use the burble reports when a JIT kernel is run (which
+is quick), loaded for the first time (which takes a small amount of time),
+and when a JIT kernels is compiled (which can take a few tenths of a second
+or more).  The compiler command is printed in full.  If you encounter a
+compiler error, you can cut-and-paste the compiler command while outside
+of your application to help track down the compiler error.
+
+%-------------------------------------------------------------------------------
+\subsection{Data types and typecasting: use the JIT}
+%-------------------------------------------------------------------------------
+
+If the JIT is disabled,
+avoid mixing data types and relying on typecasting as much as possible.
+SuiteSparse:GraphBLAS has a set of highly-tuned kernels for each data type,
+and many operators and semirings, but there are too many combinations to
+generate ahead of time.  If typecasting is required, or if
+SuiteSparse:GraphBLAS does not have a kernel for the specific operator or
+semiring, the word \verb'generic' will appear in the burble.  The generic
+methods rely on function pointers for each operation on every scalar, so they
+are slow.  Enabling the JIT avoids this problem, since GraphBLAS can then
+compile kernel specific to the types used.
+
+Without the JIT,
+the only time that typecasting is fast is when computing \verb'C=A' via
+\verb'GrB_assign' or \verb'GrB_apply', where the data types of \verb'C' and
+\verb'A' can differ.  In this case, one of $13^2 = 169$ kernels are called,
+each of which performs the specific typecasting requested, without relying on
+function pointers.
+
+%-------------------------------------------------------------------------------
+\subsection{Matrix data structures: sparse, hypersparse, bitmap, or full}
+%-------------------------------------------------------------------------------
+
+SuiteSparse:GraphBLAS tries to automatically determine the best data structure
+for your matrices and vectors, selecting between sparse, hypersparse, bitmap,
+and full formats.  By default, all 4 formats can be used.  A matrix typically
+starts out hypersparse when it is created by \verb'GrB_Matrix_new', and then
+changes during its lifetime, possibly taking on all four different formats
+at different times.  This can be modified via \verb'GrB_set'.  For example,
+this line of code:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_set (A, GxB_SPARSE + GxB_BITMAP, GxB_SPARSITY_CONTROL) ; \end{verbatim}}
+
+\noindent
+tells SuiteSparse that the matrix \verb'A' can be held in either sparse or
+bitmap format (at its discretion), but not hypersparse or full.  The bitmap
+format will be used if the matrix has enough entries, or sparse otherwise.
+Sometimes this selection is best controlled by the user algorithm, so a single
+format can be requested:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_set (A, GxB_SPARSE, GxB_SPARSITY_CONTROL) ; \end{verbatim}}
+
+This ensures that SuiteSparse will primarily use the sparse format.  This is
+still just a hint, however.  The data structure is opaque and SuiteSparse is
+free to choose otherwise.  In particular, if you insist on using only the
+\verb'GxB_FULL' format, then that format is used when all entries are present.
+However, if the matrix is not actually full with all entries present, then the
+bitmap format is used instead.  The full format does not preserve the sparsity
+structure in this case.  Any GraphBLAS library must preserve the proper
+structure, per the C Specification.  This is critical in a graph algorithm,
+since an edge $(i,j)$ of weight zero, say, is not the same as no edge $(i,j)$
+at all.
+
+%-------------------------------------------------------------------------------
+\subsection{Matrix formats: by row or by column, or using the transpose of
+a matrix}
+%-------------------------------------------------------------------------------
+
+By default, SuiteSparse uses a simple rule:
+all matrices are held by row, unless the consist of a single
+column, in which case they are held by column.  All vectors are treated as if
+they are $n$-by-1 matrices with a single column.  Changing formats from
+row-oriented to column-oriented can have significant performance implications,
+so SuiteSparse never tries to outguess the application.  It just uses this
+simple rule.
+
+However, there are cases where changing the format can greatly improve
+performance.  There are two ways to handle this, which in the end are
+equivalent in the SuiteSparse internals.  You can change the format (row to
+column oriented, or visa versa), or work with the explicit transpose of a
+matrix in the same storage orientation.
+
+There are cases where SuiteSparse must explicitly transpose an input matrix, or
+the output matrix, in order to perform a computation.  For example, if all
+matrices are held in row-oriented fashion, SuiteSparse does not have a method
+for computing \verb"C=A'*B", where \verb'A' is transposed.  Thus, SuiteSparse
+either computes a temporary transpose of its input matrix \verb'AT=A' and then
+\verb'C=AT*B', or it swaps the computations, performing \verb"C=(B'*A)'", which
+requires an explicit transpose of \verb'BT=B', and a transpose of the final
+result to obtain \verb'C'.
+
+These temporary transposes are costly to compute, taking time and memory.  They
+are not kept, but are discarded when the method returns to the user
+application.  If you see the term \verb'transpose' in the burble output, and if
+you need to perform this computation many times, try constructing your own
+explicit transpose, say \verb"AT=A'", via \verb'GrB_transpose', or create a
+copy of \verb'A' but held in another orientation via \verb'GrB_set'.  For
+example, assuming the default matrix format is by-row, and that \verb'A' is
+\verb'm'-by-\verb'n' of type \verb'GrB_FP32':
+
+    {\footnotesize
+    \begin{verbatim}
+    // method 1: AT = A'
+    GrB_Matrix_new (AT, GrB_FP32, n, m) ;
+    GrB_transpose (AT, NULL, NULL, A, NULL) ;
+
+    // method 2: A2 = A but held by column instead of by row
+    // note: doing the set before the assign is faster than the reverse
+    GrB_Matrix_new (A2, GrB_FP32, m, n) ;
+    GrB_set (A2, GrB_COLMAJOR, GrB_STORAGE_ORIENTATION_HINT) ;
+    GrB_assign (A2, NULL, NULL, A, GrB_ALL, m, GrB_ALL, n, NULL) ; \end{verbatim}}
+
+Internally, the data structure for \verb'AT' and \verb'A2' are nearly identical
+(that is, the tranpose of \verb'A' held in row format is the same as \verb'A'
+held in column format).  Using either of them in subsequent calls to GraphBLAS
+will allow SuiteSparse to avoid computing an explicit transpose.  The two
+matrices \verb'AT' and \verb'A2' do differ in one very significant way:  their
+dimensions are different, and they behave differement mathematically.
+Computing \verb"C=A'*B" using these matrices would differ:
+
+    {\footnotesize
+    \begin{verbatim}
+    // method 1: C=A'*B using AT
+    GrB_mxm (C, NULL, NULL, semiring, AT, B, NULL) ;
+
+    // method 2: C=A'*B using A2
+    GrB_mxm (C, NULL, NULL, semiring, A2, B, GrB_DESC_T0) ; \end{verbatim}}
+
+The first method computes \verb'C=AT*B'.  The second method computes
+\verb"C=A2'*B", but the result of both computations is the same, and internally
+the same kernels will be used.
+
+%-------------------------------------------------------------------------------
+\subsection{Push/pull optimization}
+%-------------------------------------------------------------------------------
+
+Closely related to the discussion above on when to use a matrix or its
+transpose is the exploitation of ``push/pull'' direction optimization.  In
+linear algebraic terms, this is simply deciding whether to multiply by the
+matrix or its transpose.  Examples can be see in the BFS and
+Betweeness-Centrality methods of LAGraph.  Here is the BFS kernel:
+
+    {\footnotesize
+    \begin{verbatim}
+    int sparsity = do_push ? GxB_SPARSE : GxB_BITMAP ;
+    GrB_set (q, sparsity, GxB_SPARSITY_CONTROL) ;
+    if (do_push)
+    {
+        // q'{!pi} = q'*A
+        GrB_vxm (q, pi, NULL, semiring, q, A, GrB_DESC_RSC) ;
+    }
+    else
+    {
+        // q{!pi} = AT*q
+        GrB_mxv (q, pi, NULL, semiring, AT, q, GrB_DESC_RSC) ;
+    }\end{verbatim}}
+
+The call to \verb'GrB_set' is optional, since SuiteSparse will likely already
+determine that a bitmap format will work best when the frontier \verb'q' has
+many entries, which is also when the pull step is fastest.  The push step
+relies on a sparse vector times sparse matrix method originally due to
+Gustavson.  The output is computed as a set union of all rows \verb'A(i,:)'
+where \verb'q(i)' is present on input.  This set union is very fast when
+\verb'q' is very sparse.  The pull step relies on a sequence of dot product
+computations, one per possible entry in the output \verb'q', and it uses the
+matrix \verb"AT" which is a row-oriented copy of the explicit transpose of the
+adjacency matrix \verb'A'.
+
+Mathematically, the results of the two methods are identical, but internally,
+the data format of the input matrices is very different (using \verb'A' held
+by row, or \verb'AT' held by row which is the same as a copy of \verb'A' that
+is held by column), and the algorithms used are very different.
+
+%-------------------------------------------------------------------------------
+\subsection{Computing with full matrices and vectors}
+%-------------------------------------------------------------------------------
+
+Sometimes the best approach to getting the highest performance is to use dense
+vectors, and occassionaly dense matrices are tall-and-thin or short-and-fat.
+Packages such as Julia, Octave, or MATLAB, when dealing with the conventional
+plus-times semirings, assume that multiplying a sparse matrix \verb'A' times a
+dense vector \verb'x', \verb'y=A*x', will result in a dense vector \verb'y'.
+This is not always the case, however. GraphBLAS must always return a result
+that respects the sparsity structure of the output matrix or vector.  If the
+$i$th row of \verb'A' has no entries then \verb'y(i)' must not appear as an
+entry in the vector \verb'y', so it cannot be held as a full vector.  As a
+result, the following computation can be slower than it could be:
+
+    {\footnotesize
+    \begin{verbatim}
+    GrB_mxv (y, NULL, NULL, semiring, A, x, NULL) ; \end{verbatim}}
+
+SuiteSparse must do extra work to compute the sparsity of this vector \verb'y',
+but if this is not needed, and \verb'y' can be padded with zeros (or
+the identity value of the monoid, to be precise), a faster method can be used,
+by relying on the accumulator.  Instead of computing \verb'y=A*x', set all
+entries of \verb'y' to zero first, and then compute \verb'y+=A*x' where the
+accumulator operator and type matches the monoid of the semiring.  SuiteSparse
+has special kernels for this case; you can see them in the burble as
+\verb'F+=S*F' for example.
+
+    {\footnotesize
+    \begin{verbatim}
+    // y = 0
+    GrB_assign (y, NULL, NULL, 0, GrB_ALL, n, NULL) ;
+    // y += A*x
+    GrB_mxv (y, NULL, GrB_PLUS_FP32, GrB_PLUS_TIMES_SEMIRING_FP32, A, x, NULL) ; \end{verbatim}}
+
+You can see this computation in the LAGraph PageRank method, where all
+entries of \verb'r' are set to the \verb'teleport' scalar first.
+
+    {\footnotesize
+    \begin{verbatim}
+    for (iters = 0 ; iters < itermax && rdiff > tol ; iters++)
+    {
+        // swap t and r ; now t is the old score
+        GrB_Vector temp = t ; t = r ; r = temp ;
+        // w = t ./ d
+        GrB_eWiseMult (w, NULL, NULL, GrB_DIV_FP32, t, d, NULL) ;
+        // r = teleport
+        GrB_assign (r, NULL, NULL, teleport, GrB_ALL, n, NULL) ;
+        // r += A'*w
+        GrB_mxv (r, NULL, GrB_PLUS_FP32, LAGraph_plus_second_fp32, AT, w, NULL) ;
+        // t -= r
+        GrB_assign (t, NULL, GrB_MINUS_FP32, r, GrB_ALL, n, NULL) ;
+        // t = abs (t)
+        GrB_apply (t, NULL, NULL, GrB_ABS_FP32, t, NULL) ;
+        // rdiff = sum (t)
+        GrB_reduce (&rdiff, NULL, GrB_PLUS_MONOID_FP32, t, NULL) ;
+    } \end{verbatim}}
+
+SuiteSparse exploits the iso-valued property of the scalar-to-vector assignment
+of \verb'y=0', or \verb'r=teleport', and performs these assignments in O(1)
+time and space.  Because the \verb'r' vector start out as full on input to
+\verb'GrB_mxv', and because there is an accumulatr with no mask, no entries in
+the input/output vector \verb'r' will be deleted, even if \verb'A' has empty
+rows.  The call to \verb'GrB_mxv' exploits this, and is able to use a fast
+kernel for this computation.  SuiteSparse does not need to compute the sparsity
+pattern of the vector \verb'r'.
+
+%-------------------------------------------------------------------------------
+\subsection{Iso-valued matrices and vectors}
+%-------------------------------------------------------------------------------
+
+Using iso-valued matrices and vectors is always faster than using matrices and
+vectors whose entries can have different values.  Iso-valued matrices are very
+important in graph algorithms.  For example, an unweighted graph is best
+represented as an iso-valued sparse matrix, and unweighted graphs are very
+common.  The burble output, \verb'GxB_print', or \verb'GrB_get'
+can all be used to report whether or not your matrix or
+vector is iso-valued.
+
+Sometimes a matrix or vector may have values that are all the same, but
+SuiteSparse hasn't detected this.  If this occurs, you can force a matrix
+or vector to be iso-valued by assigning a single scalar to all its entries.
+
+    {\footnotesize
+    \begin{verbatim}
+    // C<s(C)> = 3.14159
+    GrB_assign (C, C, NULL, 3.14159, GrB_ALL, m, GrB_ALL, n, GrB_DESC_S) ; \end{verbatim}}
+
+The matrix \verb'C' is used as its own mask.  The descriptor is essential here,
+telling the mask to be used in a structural sense, without regard to the values
+of the entries in the mask.  This assignment sets all entries that already
+exist in \verb'C' to be equal to a single value, 3.14159. The sparsity
+structure of \verb'C' does not change.  Of course, any scalar can be used; the
+value 1 is common for unweighted graphs.  SuiteSparse:GraphBLAS performs the
+above assignment in O(1) time and space, independent of the dimension of
+\verb'C' or the number of entries in contains.
+
+%-------------------------------------------------------------------------------
+\subsection{User-defined types and operators: use the JIT}
+%-------------------------------------------------------------------------------
+
+If the JIT is disabled, these will be slow.  With the JIT enabled, data types
+and operators are just as fast as built-in types and operators.  A CUDA JIT for
+the GPU is in progress, collaboration with Joe Eaton and Corey Nolet.
+A SYCL/OpenCL JIT is under consideration, but work has not yet been started.
+
+%-------------------------------------------------------------------------------
+\subsection{About NUMA systems}
+%-------------------------------------------------------------------------------
+
+I have tested this package extensively on multicore single-socket systems, but
+have not yet optimized it for multi-socket systems with a NUMA architecture.
+That will be done in a future release.  If you publish benchmarks
+with this package, please state the SuiteSparse:GraphBLAS version, and a caveat
+if appropriate.  If you see significant performance issues when going from a
+single-socket to multi-socket system, I would like to hear from you so I can
+look into it.
+

@@ -1,0 +1,434 @@
+
+\newpage
+%===============================================================================
+\subsection{GraphBLAS descriptors: {\sf GrB\_Descriptor}} %=====================
+%===============================================================================
+\label{descriptor}
+
+A GraphBLAS {\em descriptor} modifies the behavior of a GraphBLAS operation.
+If the descriptor is \verb'GrB_NULL', defaults are used.
+
+The access to these parameters and their values is governed
+by two \verb'enum' types, \verb'GrB_Desc_Field' and \verb'GrB_Desc_Value':
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+typedef enum
+{
+    GrB_OUTP = 0,   // descriptor for output of a method
+    GrB_MASK = 1,   // descriptor for the mask input of a method
+    GrB_INP0 = 2,   // descriptor for the first input of a method
+    GrB_INP1 = 3,   // descriptor for the second input of a method
+    GxB_AxB_METHOD = 1000, // descriptor for selecting C=A*B algorithm
+    GxB_SORT = 35   // control sort in GrB_mxm
+    GxB_COMPRESSION = 36,   // select compression for serialize
+    GxB_ROWINDEX_LIST = 7062,       // how GrB_Vector I is intrepretted
+    GxB_COLINDEX_LIST = 7063,       // how GrB_Vector J is intrepretted
+    GxB_VALUE_LIST = 7064,          // how GrB_Vector X is intrepretted
+}
+GrB_Desc_Field ;
+
+typedef enum
+{
+    // for all GrB_Descriptor fields:
+    GrB_DEFAULT = 0,    // default behavior of the method
+    // for GrB_OUTP only:
+    GrB_REPLACE = 1,    // clear the output before assigning new values to it
+    // for GrB_MASK only:
+    GrB_COMP = 2,       // use the complement of the mask
+    GrB_STRUCTURE = 4,  // use the structure of the mask
+    // for GrB_INP0 and GrB_INP1 only:
+    GrB_TRAN = 3,       // use the transpose of the input
+    // for GxB_AxB_METHOD only:
+    GxB_AxB_GUSTAVSON = 1001,   // gather-scatter saxpy method
+    GxB_AxB_DOT       = 1003,   // dot product
+    GxB_AxB_HASH      = 1004,   // hash-based saxpy method
+    GxB_AxB_SAXPY     = 1005    // saxpy method (any kind)
+    // for GxB_ROWINDEX_LIST, GxB_COLINDEX_LIST, and GxB_VALUE_LIST:
+    // GxB_USE_VALUES = ((int) GrB_DEFAULT) // use the values of the vector
+    GxB_USE_INDICES = 7060,  // use the indices of the vector
+    GxB_IS_STRIDE = 7061,    // use the values, of size 3, for lo:hi:inc
+}
+GrB_Desc_Value ;
+\end{verbatim} } \end{mdframed}
+
+\newpage
+
+\begin{itemize}
+\item \verb'GrB_OUTP' is a parameter that modifies the output of a
+    GraphBLAS operation.  In the default case, the output is not cleared, and
+    ${\bf Z = C \odot T}$ then ${\bf C \langle M \rangle = Z}$ are computed
+    as-is, where ${\bf T}$ is the results of the particular GraphBLAS
+    operation.
+
+    In the non-default case, ${\bf Z = C \odot T}$ is first computed, using the
+    results of ${\bf T}$ and the accumulator $\odot$.  After this is done, if
+    the \verb'GrB_OUTP' descriptor field is set to \verb'GrB_REPLACE', then the
+    output is cleared of its entries.  Next, the assignment ${\bf C \langle M
+    \rangle = Z}$ is performed.
+
+\item \verb'GrB_MASK' is a parameter that modifies the \verb'Mask',
+    even if the mask is not present.
+
+    If this parameter is set to its default value, and if the mask is not
+    present (\verb'Mask==NULL') then implicitly \verb'Mask(i,j)=1' for all
+    \verb'i' and \verb'j'.  If the mask is present then \verb'Mask(i,j)=1'
+    means that \verb'C(i,j)' is to be modified by the ${\bf C \langle M \rangle
+    = Z}$ update.  Otherwise, if \verb'Mask(i,j)=0', then \verb'C(i,j)' is not
+    modified, even if \verb'Z(i,j)' is an entry with a different value; that
+    value is simply discarded.
+
+    If the \verb'GrB_MASK' parameter is set to \verb'GrB_COMP', then the
+    use of the mask is complemented.  In this case, if the mask is not present
+    (\verb'Mask==NULL') then implicitly \verb'Mask(i,j)=0' for all \verb'i' and
+    \verb'j'.  This means that none of ${\bf C}$ is modified and the entire
+    computation of ${\bf Z}$ might as well have been skipped.  That is, a
+    complemented empty mask means no modifications are made to the output
+    object at all, except perhaps to clear it in accordance with the
+    \verb'GrB_OUTP' descriptor.  With a complemented mask, if the mask is
+    present then \verb'Mask(i,j)=0' means that \verb'C(i,j)' is to be modified
+    by the ${\bf C \langle M \rangle = Z}$ update.  Otherwise, if
+    \verb'Mask(i,j)=1', then \verb'C(i,j)' is not modified, even if
+    \verb'Z(i,j)' is an entry with a different value; that value is simply
+    discarded.
+
+    If the \verb'GrB_MASK' parameter is set to \verb'GrB_STRUCTURE',
+    then the values of the mask are ignored, and just the pattern of the
+    entries is used.  Any entry \verb'M(i,j)' in the pattern is treated as if
+    it were true.
+
+    The \verb'GrB_COMP' and \verb'GrB_STRUCTURE' settings can be combined,
+    either by setting the mask option twice (once with each value), or by
+    setting the mask option to \verb'GrB_COMP+GrB_STRUCTURE' (the latter is an
+    extension to the specification).
+
+    Using a parameter to complement the \verb'Mask' is very useful because
+    constructing the actual complement of a very sparse mask is impossible
+    since it has too many entries.  If the number of places in \verb'C'
+    that should be modified is very small, then use a sparse mask without
+    complementing it.  If the number of places in \verb'C' that should
+    be protected from modification is very small, then use a sparse mask
+    to indicate those places, and use a descriptor \verb'GrB_MASK' that
+    complements the use of the mask.
+
+\item \verb'GrB_INP0' and \verb'GrB_INP1' modify the use of the
+    first and second input matrices \verb'A' and \verb'B' of the GraphBLAS
+    operation.
+
+    If the \verb'GrB_INP0' is set to \verb'GrB_TRAN', then \verb'A' is
+    transposed before using it in the operation.  Likewise, if
+    \verb'GrB_INP1' is set to \verb'GrB_TRAN', then the second input,
+    typically called \verb'B', is transposed.
+
+    Vectors and scalars are never transposed via the descriptor.  If a method's
+    first parameter is a matrix and the second a vector or scalar, then
+    \verb'GrB_INP0' modifies the matrix parameter and
+    \verb'GrB_INP1' is ignored.  If a method's first parameter is a
+    vector or scalar and the second a matrix, then \verb'GrB_INP1'
+    modifies the matrix parameter and \verb'GrB_INP0' is ignored.
+
+    To clarify this in each function, the inputs are labeled as
+    \verb'first input:' and \verb'second input:' in the function signatures.
+
+\item \verb'GxB_AxB_METHOD' suggests the method that should be
+    used to compute \verb'C=A*B'.  All the methods compute the same result,
+    except they may have different floating-point roundoff errors.  This
+    descriptor should be considered as a hint; SuiteSparse:GraphBLAS is
+    free to ignore it.
+
+    \begin{itemize}
+
+    \item \verb'GrB_DEFAULT' means that a method is selected automatically.
+
+    \item \verb'GxB_AxB_SAXPY': select any saxpy-based method:
+        \verb'GxB_AxB_GUSTAVSON', and/or
+        \verb'GxB_AxB_HASH', or any mix of the two,
+        in contrast to the dot-product method.
+
+    \item \verb'GxB_AxB_GUSTAVSON':  an extended version of Gustavson's method
+    \cite{Gustavson78}, which is a very good general-purpose method, but
+    sometimes the workspace can be too large.  Assuming all matrices are stored
+    by column, it computes \verb'C(:,j)=A*B(:,j)' with a sequence of {\em
+    saxpy} operations (\verb'C(:,j)+=A(:,k)*B(k:,j)' for each nonzero
+    \verb'B(k,j)').  In the {\em coarse Gustavson} method, each internal thread
+    requires workspace of size $m$, to the number of rows of \verb'C', which is
+    not suitable if the matrices are extremely sparse or if there are many
+    threads.  For the {\em fine Gustavson} method, threads can share workspace
+    and update it via atomic operations.  If all matrices are stored by row,
+    then it computes \verb'C(i,:)=A(i,:)*B' in a sequence of sparse {\em saxpy}
+    operations, and using workspace of size $n$ per thread, or group of
+    threads, corresponding to the number of columns of \verb'C'.
+
+    \item \verb'GxB_AxB_HASH':  a hash-based method, based on
+        \cite{10.1145/3229710.3229720}.  It is very efficient for hypersparse
+        matrices, matrix-vector-multiply, and when $|{\bf B}|$ is small.
+        SuiteSparse:GraphBLAS includes a {\em coarse hash} method, in which
+        each thread has its own hash workspace, and a {\em fine hash}
+        method, in which groups of threads share a single hash workspace,
+        as concurrent data structure, using atomics.
+
+% [2] Yusuke Nagasaka, Satoshi Matsuoka, Ariful Azad, and Aydin Buluc. 2018.
+% High-Performance Sparse Matrix-Matrix Products on Intel KNL and Multicore
+% Architectures. In Proc. 47th Intl. Conf. on Parallel Processing (ICPP '18).
+% Association for Computing Machinery, New York, NY, USA, Article 34, 1–10.
+% DOI:https://doi.org/10.1145/3229710.3229720
+
+\item \verb'GxB_AxB_DOT': computes \verb"C(i,j)=A(i,:)*B(j,:)'", for each
+    entry \verb'C(i,j)'.  If the mask is present and not complemented, only
+    entries for which \verb'M(i,j)=1' are computed.  This is a very specialized
+    method that works well only if the mask is present, very sparse, and not
+    complemented, when \verb'C' is small, or when \verb'C' is bitmap or full.
+    For example, it works very well
+    when \verb'A' and \verb'B' are tall and thin, and \verb"C<M>=A*B'" or
+    \verb"C=A*B'" are computed.  These expressions assume all matrices are in
+    CSR format.  If in CSC format, then the dot-product method used for
+    \verb"A'*B".  The method is impossibly slow if \verb'C' is large and the
+    mask is not present, since it takes $\Omega(mn)$ time if \verb'C' is
+    $m$-by-$n$ in that case.  It does not use any workspace at all.  Since it
+    uses no workspace, it can work very well for extremely sparse or
+    hypersparse matrices, when the mask is present and not complemented.
+
+    \end{itemize}
+
+\item \verb'GxB_SORT' provides a hint to \verb'GrB_mxm', \verb'GrB_mxv',
+    \verb'GrB_vxm', and \verb'GrB_reduce' (to vector).  These methods can leave
+    the output matrix or vector in a jumbled state, where the final sort is
+    left as pending work.  This is typically fastest, since some algorithms can
+    tolerate jumbled matrices on input, and sometimes the sort can be skipped
+    entirely.  However, if the matrix or vector will be immediately exported in
+    unjumbled form, or provided as input to a method that requires it to not be
+    jumbled, then sorting it during the matrix multiplication is faster.
+    By default, these methods leave the result in jumbled form (a {\em lazy
+    sort}), if \verb'GxB_SORT' is set to zero (\verb'GrB_DEFAULT').  A nonzero
+    value will inform the matrix multiplication to sort its result, instead.
+
+\item \verb'GxB_COMPRESSION' selects the compression method for serialization.
+    The default is ZSTD (level 1).  See Section~\ref{serialize_deserialize} for
+    other options.
+
+\end{itemize}
+
+The next sections describe the methods for a \verb'GrB_Descriptor':
+
+\vspace{0.2in}
+{\footnotesize
+\begin{tabular}{lll}
+\hline
+GraphBLAS function          & purpose                              & Section \\
+\hline
+\verb'GrB_Descriptor_new'   & create a descriptor                  & \ref{descriptor_new} \\
+\verb'GrB_Descriptor_wait'  & wait for a descriptor                & \ref{descriptor_wait} \\
+\verb'GrB_Descriptor_free'  & free a descriptor                    & \ref{descriptor_free} \\
+\verb'GrB_get'              & get a parameter from a descriptor    & \ref{get_set_descriptor}  \\
+\verb'GrB_set'              & set a parameter in a descriptor      & \ref{get_set_descriptor}  \\
+\hline
+\end{tabular}
+}
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Descriptor\_new:}  create a new descriptor}
+%-------------------------------------------------------------------------------
+\label{descriptor_new}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_Descriptor_new     // create a new descriptor
+(
+    GrB_Descriptor *descriptor  // handle of descriptor to create
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Descriptor_new' creates a new descriptor, with all fields set to
+their defaults (output is not replaced, the mask is not complemented, the mask
+is valued not structural, neither input matrix is transposed, the method
+used in \verb'C=A*B' is selected automatically, and \verb'GrB_mxm' leaves
+the final sort as pending work).
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Descriptor\_wait:} wait for a descriptor}
+%-------------------------------------------------------------------------------
+\label{descriptor_wait}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_wait                   // wait for a descriptor
+(
+    GrB_Descriptor descriptor,      // descriptor to wait for
+    int mode                        // GrB_COMPLETE or GrB_MATERIALIZE
+) ;
+\end{verbatim}
+}\end{mdframed}
+
+After creating a user-defined descriptor, a GraphBLAS library may choose to
+exploit non-blocking mode to delay its creation.  Currently,
+SuiteSparse:GraphBLAS does nothing except to ensure that \verb'd' is valid.
+
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_Descriptor\_free:} free a descriptor}
+%-------------------------------------------------------------------------------
+\label{descriptor_free}
+
+\begin{mdframed}[userdefinedwidth=6in]
+{\footnotesize
+\begin{verbatim}
+GrB_Info GrB_free               // free a descriptor
+(
+    GrB_Descriptor *descriptor  // handle of descriptor to free
+) ;
+\end{verbatim} } \end{mdframed}
+
+\verb'GrB_Descriptor_free' frees a descriptor.
+Either usage:
+
+    {\small
+    \begin{verbatim}
+    GrB_Descriptor_free (&descriptor) ;
+    GrB_free (&descriptor) ; \end{verbatim}}
+
+\noindent
+frees the \verb'descriptor' and sets \verb'descriptor' to \verb'NULL'.  It
+safely does nothing if passed a \verb'NULL' handle, or if
+\verb'descriptor == NULL' on input.
+
+%-------------------------------------------------------------------------------
+\subsubsection{Descriptor settings for \sf{GrB\_Vector} parameters}
+%-------------------------------------------------------------------------------
+\label{ijxvector}
+
+Several methods GraphBLAS v10 accept \verb'GrB_Vector' parameters for their index
+lists \verb'I' and \verb'J', which appear only as \verb'uint64_t *' C arrays in
+the v2.1 C Specification.  Likewise, several methods accept a \verb'GrB_Vector'
+parameter \verb'X', where the related method in the Specification accepts only
+a raw C array of a given type.
+
+By default, \verb'GrB_Vector' inputs \verb'I', \verb'J', and \verb'X' are
+interpretted as if their values are first extracted with
+\verb'GrB_Vector_extractTuples', where the values are extracted in order (with
+ascending indices), and their values are then passed to the method.
+The actual method is much faster; GraphBLAS uses the values directly.
+
+This behavior can be revised via the descriptor for the method.  Three settings
+are available:
+
+\begin{itemize}
+\item \verb'GxB_ROWINDEX_LIST': how the \verb'GrB_Vector I' is intrepretted.
+\item \verb'GxB_COLINDEX_LIST': how the \verb'GrB_Vector J' is intrepretted.
+\item \verb'GxB_VALUE_LIST': how \verb'GrB_Vector X' is intrepretted (for \verb'GrB_build' only).
+\end{itemize}
+
+These can be set to one of the following values:
+
+\begin{itemize}
+\item \verb'GrB_DEFAULT' or \verb'GxB_USE_VALUES': use the values of the vector (default).
+
+\item \verb'GxB_USE_INDICES': use the indices of the vector.
+    This acts as if the indices are first extracted into a C array with
+    \verb'GrB_Vector_extractTuples', where the indices are extracted in ascending order,
+    and then this C array is then passed to the method.
+    The actual method is much faster; GraphBLAS uses the indices directly.
+
+\item \verb'GxB_IS_STRIDE': use the values, of size 3, for a strided range,
+    or \verb'lo:inc:hi' in MATLAB notation.  This usage is limited to the
+    \verb'I' and \verb'J' vectors (except this option may not be used for
+    \verb'GrB_build').  The vector must have exactly three entries, 
+    \verb'lo', \verb'hi', and \verb'inc', in that order.
+
+\end{itemize}
+
+The \verb'GxB_IS_STRIDE' option is fully described in Section~\ref{colon}.  In
+that section, there are many options available.  Here, the \verb'GrB_Vector'
+\verb'I' or \verb'J' must have length exactly three.  The first entry present
+is the start of the sequence (\verb'lo'), the second entry is the end of the
+sequence (\verb'hi') and the third entry is the stride (\verb'inc').  This
+corresponds to the \verb'GxB_STRIDE' option when passing a \verb'uint64_t *'
+array.  To use a stride of one, simply set the third entry to 1; this
+corresponds to the \verb'GxB_RANGE' option when passing a \verb'uint64_t *'
+array.  To use a negative stride, simply pass in the vector with a signed data
+type (\verb'GrB_INT32' or \verb'GrB_INT64' as appropriate; this corresponds to
+the \verb'GxB_BACKWARDS' option desribed in Section~\ref{colon}).
+These three values appear in this order to be consistent \verb'GxB_BEGIN' (0),
+\verb'GxB_END' (1), and \verb'GxB_INC' (2).
+
+When using the \verb'_Vector' methods, the \verb'GrB_Vector' objects \verb'I',
+\verb'J', and \verb'X' may be sparse.  If the vectors are sparse,
+\verb'GrB_Vector_extractTuples' returns a dense list of indices or values, and
+this is how the \verb'I,J,X' vectors may be used in the new methods in
+GraphBLAS v10 with the \verb'_Vector' suffix at then end of their name.
+
+To use the \verb'GrB_ALL' option, specifying all the rows or columns of a
+matrix or all indices of a vector, pass in the corresponding \verb'GrB_Vector'
+\verb'I' or \verb'J' as a NULL pointer.
+
+
+\newpage
+%-------------------------------------------------------------------------------
+\subsubsection{{\sf GrB\_DESC\_*:}  built-in descriptors}
+%-------------------------------------------------------------------------------
+\label{descriptor_predefined}
+
+Built-in descriptors are listed in the table below.  A dash in the table
+indicates the default.  These descriptors may not be modified or freed.
+Attempts to modify them result in an error (\verb'GrB_INVALID_VALUE'); attempts
+to free them are silently ignored.
+
+% \verb'GrB_NULL' is the default descriptor, with all settings at their defaults:
+% \verb'OUTP': do not replace the output,
+% \verb'MASK': mask is valued and not complemented,
+% \verb'INP0': first input not transposed, and
+% \verb'INP1': second input not transposed.
+% For these pre-defined descriptors, the
+% \verb'GxB_SORT' setting is at their default values.
+
+\vspace{0.2in}
+\noindent
+{\footnotesize
+\begin{tabular}{|l|lllll|}
+\hline
+Descriptor              &  \verb'OUTP'          & \verb'MASK'           & \verb'MASK'       & \verb'INP0'       & \verb'INP1'       \\
+                        &                       & structural            & complement        & & \\
+\hline
+\verb'GrB_NULL'         &   -                   & -                     & -                 & -                 & -                 \\
+\verb'GrB_DESC_T1'      &   -                   & -                     & -                 & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_T0'      &   -                   & -                     & -                 & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_T0T1'    &   -                   & -                     & -                 & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_C'       &   -                   & -                     & \verb'GrB_COMP'   & -                 & -                 \\
+\verb'GrB_DESC_CT1'     &   -                   & -                     & \verb'GrB_COMP'   & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_CT0'     &   -                   & -                     & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_CT0T1'   &   -                   & -                     & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_S'       &   -                   & \verb'GrB_STRUCTURE'  & -                 & -                 & -                 \\
+\verb'GrB_DESC_ST1'     &   -                   & \verb'GrB_STRUCTURE'  & -                 & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_ST0'     &   -                   & \verb'GrB_STRUCTURE'  & -                 & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_ST0T1'   &   -                   & \verb'GrB_STRUCTURE'  & -                 & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_SC'      &   -                   & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & -                 & -                 \\
+\verb'GrB_DESC_SCT1'    &   -                   & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_SCT0'    &   -                   & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_SCT0T1'  &   -                   & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_R'       &   \verb'GrB_REPLACE'  & -                     & -                 & -                 & -                 \\
+\verb'GrB_DESC_RT1'     &   \verb'GrB_REPLACE'  & -                     & -                 & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_RT0'     &   \verb'GrB_REPLACE'  & -                     & -                 & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_RT0T1'   &   \verb'GrB_REPLACE'  & -                     & -                 & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_RC'      &   \verb'GrB_REPLACE'  & -                     & \verb'GrB_COMP'   & -                 & -                 \\
+\verb'GrB_DESC_RCT1'    &   \verb'GrB_REPLACE'  & -                     & \verb'GrB_COMP'   & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_RCT0'    &   \verb'GrB_REPLACE'  & -                     & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_RCT0T1'  &   \verb'GrB_REPLACE'  & -                     & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_RS'      &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & -                 & -                 & -                 \\
+\verb'GrB_DESC_RST1'    &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & -                 & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_RST0'    &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & -                 & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_RST0T1'  &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & -                 & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\verb'GrB_DESC_RSC'     &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & -                 & -                 \\
+\verb'GrB_DESC_RSCT1'   &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & -                 & \verb'GrB_TRAN'   \\
+\verb'GrB_DESC_RSCT0'   &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & -                 \\
+\verb'GrB_DESC_RSCT0T1' &   \verb'GrB_REPLACE'  & \verb'GrB_STRUCTURE'  & \verb'GrB_COMP'   & \verb'GrB_TRAN'   & \verb'GrB_TRAN'   \\
+\hline
+\end{tabular}}
+

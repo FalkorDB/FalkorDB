@@ -2,7 +2,7 @@
 // GB_mex_test7: still more basic tests
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -44,18 +44,22 @@ void mexFunction
 
     OK (GrB_Scalar_new (&s, GrB_INT64)) ;
     OK (GrB_Scalar_setElement_INT64 (s, 0)) ;
-    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
+    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
     OK (GrB_Scalar_clear (s)) ;
-    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
+    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
     int64_t i = 1 ;
     OK (GrB_Scalar_extractElement_INT64 (&i, s)) ;
     CHECK (i == 0) ;
 
     OK (GrB_Matrix_new (&A, GrB_FP64, 100, 100)) ;
-    OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, (GrB_Field) GxB_HYPERSPARSE)) ;
+    OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE)) ;
     OK (GrB_Matrix_setElement_FP64 (A, (double) 1.2, 0, 0)) ;
     OK (GrB_Matrix_wait (A, 1)) ;
     OK (GxB_Matrix_fprint (A, "A valid", 3, NULL)) ;
+
+    int will_wait = true ;
+    OK (GrB_Matrix_get_INT32 (A, &will_wait, GxB_WILL_WAIT)) ;
+    CHECK (!will_wait) ;
 
     printf ("\ninvalid A->p:\n") ;
     size_t save = A->p_size ;
@@ -116,15 +120,40 @@ void mexFunction
     OK (GrB_Matrix_free (&(B->Y))) ;
     B->Y = A->Y ;
     B->Y_shallow = true ;
-    GB_Global_print_mem_shallow_set (true) ;
-    OK (GxB_Matrix_fprint (B,
-        "B valid (shallow hypersparse: print_mem_shallow true)", 3, NULL)) ;
-    GB_Global_print_mem_shallow_set (false) ;
-    OK (GxB_Matrix_fprint (B,
-        "B valid (shallow hypersparse: print_mem_shallow false)", 3, NULL)) ;
 
-    GxB_print (A,3) ;
-    GxB_print (B,3) ;
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, true,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    OK (GxB_Matrix_fprint (B,
+        "B valid (shallow hypersparse: stats_mem_shallow true)", 3, NULL)) ;
+
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, false,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+    OK (GxB_Matrix_fprint (B,
+        "B valid (shallow hypersparse: stats_mem_shallow false)", 3, NULL)) ;
+
+    expected = GrB_INVALID_OBJECT ;
+    B->jumbled = true ;
+    ERR (GxB_Matrix_fprint (B, "B invalid; jumbled and shallow", 3, NULL)) ;
+    B->jumbled = false ;
+
+    OK (GxB_print (A,3)) ;
+    OK (GxB_print (B,3)) ;
+
+    A->jumbled = true ;
+    will_wait = false ;
+    OK (GrB_Matrix_get_INT32 (A, &will_wait, GxB_WILL_WAIT)) ;
+    CHECK (will_wait) ;
+
+    A->jumbled = false ;
+    will_wait = true ;
+    OK (GrB_Matrix_get_INT32 (A, &will_wait, GxB_WILL_WAIT)) ;
+    CHECK (!will_wait) ;
+
+    OK (GrB_Global_set_INT32 (GrB_GLOBAL, true,
+        GxB_INCLUDE_READONLY_STATISTICS)) ;
+
+    OK (GxB_print (B,3)) ;
+
     CHECK (GB_any_aliased (A, B)) ;
     OK (GrB_Matrix_free (&B)) ;
 
@@ -134,9 +163,12 @@ void mexFunction
     OK (GxB_pack_HyperHash (A, &Y, NULL)) ;
     OK (GxB_Matrix_fprint (A, "A hypersparse (pack did nothing)", 3, NULL)) ;
 
-    A->Y->i [0] = 99 ;
+    GB_MDECL (A_Yi, , ) ;
+    A_Yi = A->Y->i ;
+    GB_IPTR (A_Yi, A->Y->i_is_32) ;
+    GB_ISET (A_Yi, 0, 99) ; // A_Yi [0] = 99 ;
     ERR (GxB_Matrix_fprint (A, "A->Y invalid (not found) ", 3, NULL)) ;
-    A->Y->i [0] = 0 ;
+    GB_ISET (A_Yi, 0,  0) ; // A_Yi [0] = 0 ;
 
     int64_t *Yx = A->Y->x ;
     Yx [0] = 99 ;
@@ -162,10 +194,7 @@ void mexFunction
 
     int64_t n = 1024*1024 ;
     OK (GrB_Matrix_new (&A, GrB_FP64, n, n)) ;
-    OK (GrB_Matrix_new (&C1, GrB_FP64, n, n)) ;
-    OK (GrB_Matrix_new (&C2, GrB_FP64, n, n)) ;
-    OK (GxB_Matrix_Option_set (C1, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
-    OK (GxB_Matrix_Option_set (C2, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
+
     OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, GxB_HYPERSPARSE)) ;
     OK (GxB_Matrix_Option_set (A, GxB_FORMAT, GxB_BY_ROW)) ;
 
@@ -252,18 +281,50 @@ void mexFunction
     OK (GxB_Matrix_fprint (A, "A->Y with many collisions", 2, NULL)) ;
 
     CHECK (A->Y != NULL) ;
-    CHECK (A->Y->p [1] == 257) ;
+    GB_MDECL (A_Yp, , ) ;
+    A_Yp = A->Y->p ;
+    GB_IPTR (A_Yp, A->Y->p_is_32) ;
+    CHECK (GB_IGET (A_Yp, 1) == 257) ;
 
-    OK (GrB_mxm (C1, A, NULL, GrB_PLUS_TIMES_SEMIRING_FP64, A, A,
-        GrB_DESC_T0)) ;
-    OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
-    OK (GrB_mxm (C2, A, NULL, GrB_PLUS_TIMES_SEMIRING_FP64, A, A,
-        GrB_DESC_T0)) ;
-    OK (GxB_Matrix_fprint (C1, "C<A>=A'*A", 2, NULL)) ;
-    CHECK (GB_mx_isequal (C1, C2, 0)) ;
+    for (int shallow = 0 ; shallow <= 1 ; shallow++)
+    {
+        for (int j_is_32 = 0 ; j_is_32 <= 1 ; j_is_32++)
+        {
+            OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL,
+                GxB_HYPERSPARSE)) ;
+            GrB_Matrix Y = NULL ;
+            if (shallow)
+            {
+                A->Y_shallow = true ;
+                Y = A->Y ;
+            }
+            OK (GB_convert_int (A, false, j_is_32, false, true)) ;
+            if (shallow)
+            {
+                CHECK (A->Y == NULL) ;
+                CHECK (A->Y_shallow == false) ;
+                OK (GrB_Matrix_free (&Y)) ;
+            }
+            OK (GxB_Matrix_fprint (A, "hyper A for hyper_hash test", 2, NULL)) ;
+            OK (GrB_Matrix_new (&C1, GrB_FP64, n, n)) ;
+            OK (GrB_Matrix_new (&C2, GrB_FP64, n, n)) ;
+            OK (GxB_Matrix_Option_set (C1, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
+            OK (GxB_Matrix_Option_set (C2, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
+            OK (GrB_mxm (C1, A, NULL, GrB_PLUS_TIMES_SEMIRING_FP64, A, A,
+                GrB_DESC_T0)) ;
+            OK (GxB_Matrix_fprint (C1, "C1<A>=A'*A", 2, NULL)) ;
+            OK (GxB_Matrix_Option_set (A, GxB_SPARSITY_CONTROL, GxB_SPARSE)) ;
+            OK (GxB_Matrix_fprint (A, "sparse A for hyper_hash test", 2,
+                NULL)) ;
+            OK (GrB_mxm (C2, A, NULL, GrB_PLUS_TIMES_SEMIRING_FP64, A, A,
+                GrB_DESC_T0)) ;
+            OK (GxB_Matrix_fprint (C2, "C2<A>=A'*A", 2, NULL)) ;
+            CHECK (GB_mx_isequal (C1, C2, 0)) ;
+            OK (GrB_Matrix_free (&C1)) ;
+            OK (GrB_Matrix_free (&C2)) ;
+        }
+    }
     OK (GrB_Matrix_free (&A)) ;
-    OK (GrB_Matrix_free (&C1)) ;
-    OK (GrB_Matrix_free (&C2)) ;
 
     //--------------------------------------------------------------------------
     // axv2 and avx512f
@@ -297,9 +358,9 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     OK (GrB_Scalar_setElement_INT64 (s, 1024)) ;
-    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
+    OK (GrB_Global_set_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
     OK (GrB_Scalar_clear (s)) ;
-    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, (GrB_Field) GxB_HYPER_HASH)) ;
+    OK (GrB_Global_get_Scalar (GrB_GLOBAL, s, GxB_HYPER_HASH)) ;
     OK (GrB_Scalar_extractElement_INT64 (&i, s)) ;
     CHECK (i == 1024) ;
     OK (GrB_Scalar_free (&s)) ;

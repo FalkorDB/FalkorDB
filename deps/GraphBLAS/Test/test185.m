@@ -2,7 +2,7 @@ function test185(tasks)
 %TEST185 test dot4 for all sparsity formats
 % GB_AxB_dot4 computes C+=A'*B when C is dense.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('test185 -------------------- C+=A''*B when C is dense\n') ;

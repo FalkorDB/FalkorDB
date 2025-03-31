@@ -9,22 +9,30 @@
 #include "shared/print_functions.h"
 #include "op_conditional_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
+#include "../../arithmetic/algebraic_expression/utils.h"
 
 // default number of records to accumulate before traversing
 #define BATCH_SIZE 16
 
-/* Forward declarations. */
+// forward declarations
 static OpResult CondTraverseInit(OpBase *opBase);
 static Record CondTraverseConsume(OpBase *opBase);
 static OpResult CondTraverseReset(OpBase *opBase);
 static OpBase *CondTraverseClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void CondTraverseFree(OpBase *opBase);
 
-static void CondTraverseToString(const OpBase *ctx, sds *buf) {
+static void CondTraverseToString
+(
+	const OpBase *ctx,
+	sds *buf
+) {
 	TraversalToString(ctx, buf, ((const OpCondTraverse *)ctx)->ae);
 }
 
-static void _populate_filter_matrix(OpCondTraverse *op) {
+static void _populate_filter_matrix
+(
+	OpCondTraverse *op
+) {
 	GrB_Matrix FM = Delta_Matrix_M(op->F);
 
 	// clear filter matrix
@@ -46,7 +54,10 @@ static void _populate_filter_matrix(OpCondTraverse *op) {
 // set iterator over result matrix
 // removed filter matrix from original expression
 // clears filter matrix
-void _traverse(OpCondTraverse *op) {
+void _traverse
+(
+	OpCondTraverse *op
+) {
 	// if op->F is null, this is the first time we are traversing
 	if(op->F == NULL) {
 		// create both filter and result matrices
@@ -59,6 +70,11 @@ void _traverse(OpCondTraverse *op) {
 
 		// optimize the expression tree
 		AlgebraicExpression_Optimize(&op->ae);
+
+		// partial_ae is true when
+		// the algebraic expression contains the zero matrix
+		op->partial_ae = AlgebraicExpression_ContainsMatrix(op->ae,
+				Graph_GetZeroMatrix(QueryCtx_GetGraph()));
 	}
 
 	// populate filter matrix
@@ -82,13 +98,13 @@ OpBase *NewCondTraverseOp
 	op->graph      = g;
 	op->record_cap = BATCH_SIZE;
 
-	// Set our Op operations
+	// set our Op operations
 	OpBase_Init((OpBase *)op, OPType_CONDITIONAL_TRAVERSE,
 			"Conditional Traverse", CondTraverseInit, CondTraverseConsume,
 			CondTraverseReset, CondTraverseToString, CondTraverseClone,
 			CondTraverseFree, false, plan);
 
-	bool aware = OpBase_Aware((OpBase *)op, AlgebraicExpression_Src(ae),
+	bool aware = OpBase_AliasMapping((OpBase *)op, AlgebraicExpression_Src(ae),
 			&op->srcNodeIdx);
 	UNUSED(aware);
 	ASSERT(aware == true);
@@ -108,7 +124,10 @@ OpBase *NewCondTraverseOp
 	return (OpBase *)op;
 }
 
-static OpResult CondTraverseInit(OpBase *opBase) {
+static OpResult CondTraverseInit
+(
+	OpBase *opBase
+) {
 	OpCondTraverse *op = (OpCondTraverse *)opBase;
 
 	// in case this operation is restricted by a limit
@@ -186,29 +205,33 @@ static Record CondTraverseConsume
 		_traverse(op);
 	}
 
-	/* Get node from current column. */
+	// get node from current column
 	op->r = op->records[src_id];
-	// Populate the destination node and add it to the Record.
+	// populate the destination node and add it to the Record
 	Node destNode = GE_NEW_NODE();
 	Graph_GetNode(op->graph, dest_id, &destNode);
 	Record_AddNode(op->r, op->destNodeIdx, destNode);
 
 	if(op->edge_ctx) {
 		Node *srcNode = Record_GetNode(op->r, op->srcNodeIdx);
-		// Collect all appropriate edges connecting the current pair of endpoints.
-		EdgeTraverseCtx_CollectEdges(op->edge_ctx, ENTITY_GET_ID(srcNode), ENTITY_GET_ID(&destNode));
-		// We're guaranteed to have at least one edge.
+		// collect all appropriate edges connecting the current pair of endpoints
+		EdgeTraverseCtx_CollectEdges(op->edge_ctx, ENTITY_GET_ID(srcNode),
+				ENTITY_GET_ID(&destNode));
+		// we're guaranteed to have at least one edge
 		EdgeTraverseCtx_SetEdge(op->edge_ctx, op->r);
 	}
 
 	return OpBase_CloneRecord(op->r);
 }
 
-static OpResult CondTraverseReset(OpBase *ctx) {
+static OpResult CondTraverseReset
+(
+	OpBase *ctx
+) {
 	OpCondTraverse *op = (OpCondTraverse *)ctx;
 
-	// Do not explicitly free op->r, as the same pointer is also held
-	// in the op->records array and as such will be freed there.
+	// do not explicitly free op->r, as the same pointer is also held
+	// in the op->records array and as such will be freed there
 	op->r = NULL;
 	for(uint i = 0; i < op->record_count; i++) {
 		OpBase_DeleteRecord(op->records+i);
@@ -221,17 +244,33 @@ static OpResult CondTraverseReset(OpBase *ctx) {
 	ASSERT(info == GrB_SUCCESS);
 
 	if(op->F != NULL) Delta_Matrix_clear(op->F);
+
+	// in case algebraic expression has missing operands
+	// i.e. has an operand which is the zero matrix
+	// see if at this point in time the graph is aware of the missing operand
+	// and if so replace the zero matrix operand with the actual matrix
+	if(unlikely(op->partial_ae == true)) {
+		_AlgebraicExpression_PopulateOperands(op->ae, QueryCtx_GetGraphCtx());
+	}
+
 	return OP_OK;
 }
 
-static inline OpBase *CondTraverseClone(const ExecutionPlan *plan, const OpBase *opBase) {
+static inline OpBase *CondTraverseClone
+(
+	const ExecutionPlan *plan,
+	const OpBase *opBase
+) {
 	ASSERT(opBase->type == OPType_CONDITIONAL_TRAVERSE);
 	OpCondTraverse *op = (OpCondTraverse *)opBase;
 	return NewCondTraverseOp(plan, QueryCtx_GetGraph(), AlgebraicExpression_Clone(op->ae));
 }
 
-/* Frees CondTraverse */
-static void CondTraverseFree(OpBase *ctx) {
+// frees CondTraverse
+static void CondTraverseFree
+(
+	OpBase *ctx
+) {
 	OpCondTraverse *op = (OpCondTraverse *)ctx;
 
 	GrB_Info info = Delta_MatrixTupleIter_detach(&op->iter);

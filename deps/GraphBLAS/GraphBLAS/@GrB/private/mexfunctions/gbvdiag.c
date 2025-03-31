@@ -2,7 +2,7 @@
 // gbvdiag: extract a diaogonal of a matrix, as a vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -36,7 +36,7 @@ void mexFunction
 
     base_enum_t base ;
     kind_enum_t kind ;
-    GxB_Format_Value fmt ;
+    int fmt ;
     int sparsity ;
     GrB_Descriptor desc = NULL ;
     desc = gb_mxarray_to_descriptor (pargin [nargin-1], &kind, &fmt,
@@ -67,8 +67,8 @@ void mexFunction
     GrB_Type vtype = NULL ;
     int64_t n, nrows, ncols ;
     OK (GxB_Matrix_type (&vtype, A)) ;
-    OK (GrB_Matrix_nrows (&nrows, A)) ;
-    OK (GrB_Matrix_ncols (&ncols, A)) ;
+    OK (GrB_Matrix_nrows ((uint64_t *) &nrows, A)) ;
+    OK (GrB_Matrix_ncols ((uint64_t *) &ncols, A)) ;
 
     if (k >= ncols || k <= -nrows)
     {
@@ -78,12 +78,12 @@ void mexFunction
     else if (k >= 0)
     {
         // if k is in range 0 to n-1, V must have length min (m,n-k)
-        n = GB_IMIN (nrows, ncols - k) ;
+        n = MIN (nrows, ncols - k) ;
     }
     else
     {
         // if k is in range -1 to -m+1, V must have length min (m+k,n)
-        n = GB_IMIN (nrows + k, ncols) ;
+        n = MIN (nrows + k, ncols) ;
     }
 
     V = gb_new (vtype, n, 1, GxB_BY_COL, 0) ;
@@ -107,6 +107,6 @@ void mexFunction
 
     pargout [0] = gb_export (&V, kind) ;
     pargout [1] = mxCreateDoubleScalar (kind) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

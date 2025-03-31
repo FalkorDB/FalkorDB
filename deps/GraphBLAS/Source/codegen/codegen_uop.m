@@ -4,7 +4,7 @@ function codegen_uop
 % This function creates all files of the form GB_uop__*.[ch],
 % and the include file GB_uop__include.h.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
 fprintf ('\nunary operators:\n') ;
@@ -14,7 +14,7 @@ fprintf (fh, '//----------------------------------------------------------------
 fprintf (fh, '// GB_uop__include.h: definitions for GB_uop__*.c\n') ;
 fprintf (fh, '//------------------------------------------------------------------------------\n') ;
 fprintf (fh, '\n') ;
-fprintf (fh, '// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.\n') ;
+fprintf (fh, '// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.\n') ;
 fprintf (fh, '// SPDX-License-Identifier: Apache-2.0\n\n') ;
 fprintf (fh, '// This file has been automatically generated from Generator/GB_uop.h') ;
 fprintf (fh, '\n#include "math/GB_math.h"\n\n') ;
@@ -23,27 +23,27 @@ fclose (fh) ;
 codegen_uop_identity ;
 
 codegen_uop_template ('ainv', ...
-    'xarg',                     ... % bool
+    [ ],                        ... % bool
     '-xarg',                    ... % int
-    '-xarg',                    ... % uint
+    [ ],                        ... % uint
     '-xarg',                    ... % float
     '-xarg',                    ... % double
     'GB_FC32_ainv (xarg)',      ... % GxB_FC32_t
     'GB_FC64_ainv (xarg)') ;    ... % GxB_FC64_t
 
 codegen_uop_template ('abs', ...
-    'xarg',                     ... % bool
+    [ ],                        ... % bool
     'GB_IABS (xarg)',           ... % int
-    'xarg',                     ... % uint
+    [ ],                        ... % uint
     'fabsf (xarg)',             ... % float
     'fabs (xarg)',              ... % double
     [ ],                        ... % GxB_FC32_t (see below)
     [ ]) ;                      ... % GxB_FC64_t (see below)
 
 codegen_uop_template ('minv', ...
-    'true',                     ... % bool
-    'GB_iminv (xarg)',          ... % int
-    'GB_iminv (xarg)',          ... % uint
+    [ ],                        ... % bool
+    [ ],                        ... % int
+    [ ],                        ... % uint
     '(1.0F)/xarg',              ... % float
     '1./xarg',                  ... % double
     'GB_FC32_div (GxB_CMPLXF (1,0), xarg)', ... % GxB_FC32_t
@@ -51,16 +51,16 @@ codegen_uop_template ('minv', ...
 
 codegen_uop_template ('lnot',  ...
     '!xarg',                    ... % bool
-    '!(xarg != 0)',             ... % int
-    '!(xarg != 0)',             ... % uint
-    '!(xarg != 0)',             ... % float
-    '!(xarg != 0)',             ... % double
+    [ ],                        ... % int
+    [ ],                        ... % uint
+    [ ],                        ... % float
+    [ ],                        ... % double
     [ ],                        ... % GxB_FC32_t
     [ ]) ;                      ... % GxB_FC64_t
 
 codegen_uop_template ('bnot',  ...
     [ ],                        ... % bool
-    '~(xarg)',                  ... % int
+    [ ],                        ... % int
     '~(xarg)',                  ... % uint
     [ ],                        ... % float
     [ ],                        ... % double
@@ -73,8 +73,8 @@ codegen_uop_template ('sqrt', ...
     [ ],                        ... % uint
     'sqrtf (xarg)',             ... % float
     'sqrt (xarg)',              ... % double
-    'GB_csqrtf (xarg)',            ... % GxB_FC32_t
-    'GB_csqrt (xarg)') ;           ... % GxB_FC64_t
+    'GB_csqrtf (xarg)',         ... % GxB_FC32_t
+    'GB_csqrt (xarg)') ;        ... % GxB_FC64_t
 
 codegen_uop_template ('log', ...
     [ ],                        ... % bool
@@ -82,8 +82,8 @@ codegen_uop_template ('log', ...
     [ ],                        ... % uint
     'logf (xarg)',              ... % float
     'log (xarg)',               ... % double
-    'GB_clogf (xarg)',             ... % GxB_FC32_t
-    'GB_clog (xarg)') ;            ... % GxB_FC64_t
+    'GB_clogf (xarg)',          ... % GxB_FC32_t
+    'GB_clog (xarg)') ;         ... % GxB_FC64_t
 
 codegen_uop_template ('exp', ...
     [ ],                        ... % bool
@@ -91,8 +91,8 @@ codegen_uop_template ('exp', ...
     [ ],                        ... % uint
     'expf (xarg)',              ... % float
     'exp (xarg)',               ... % double
-    'GB_cexpf (xarg)',             ... % GxB_FC32_t
-    'GB_cexp (xarg)') ;            ... % GxB_FC64_t
+    'GB_cexpf (xarg)',          ... % GxB_FC32_t
+    'GB_cexp (xarg)') ;         ... % GxB_FC64_t
 
 codegen_uop_template ('sin', ...
     [ ],                        ... % bool
@@ -100,8 +100,8 @@ codegen_uop_template ('sin', ...
     [ ],                        ... % uint
     'sinf (xarg)',              ... % float
     'sin (xarg)',               ... % double
-    'GB_csinf (xarg)',             ... % GxB_FC32_t
-    'GB_csin (xarg)') ;            ... % GxB_FC64_t
+    'GB_csinf (xarg)',          ... % GxB_FC32_t
+    'GB_csin (xarg)') ;         ... % GxB_FC64_t
 
 codegen_uop_template ('cos', ...
     [ ],                        ... % bool
@@ -109,8 +109,8 @@ codegen_uop_template ('cos', ...
     [ ],                        ... % uint
     'cosf (xarg)',              ... % float
     'cos (xarg)',               ... % double
-    'GB_ccosf (xarg)',             ... % GxB_FC32_t
-    'GB_ccos (xarg)') ;            ... % GxB_FC64_t
+    'GB_ccosf (xarg)',          ... % GxB_FC32_t
+    'GB_ccos (xarg)') ;         ... % GxB_FC64_t
 
 codegen_uop_template ('tan', ...
     [ ],                        ... % bool
@@ -118,8 +118,8 @@ codegen_uop_template ('tan', ...
     [ ],                        ... % uint
     'tanf (xarg)',              ... % float
     'tan (xarg)',               ... % double
-    'GB_ctanf (xarg)',             ... % GxB_FC32_t
-    'GB_ctan (xarg)') ;            ... % GxB_FC64_t
+    'GB_ctanf (xarg)',          ... % GxB_FC32_t
+    'GB_ctan (xarg)') ;         ... % GxB_FC64_t
 
 codegen_uop_template ('asin', ...
     [ ],                        ... % bool
@@ -127,8 +127,8 @@ codegen_uop_template ('asin', ...
     [ ],                        ... % uint
     'asinf (xarg)',             ... % float
     'asin (xarg)',              ... % double
-    'GB_casinf (xarg)',            ... % GxB_FC32_t
-    'GB_casin (xarg)') ;           ... % GxB_FC64_t
+    'GB_casinf (xarg)',         ... % GxB_FC32_t
+    'GB_casin (xarg)') ;        ... % GxB_FC64_t
 
 codegen_uop_template ('acos', ...
     [ ],                        ... % bool
@@ -136,8 +136,8 @@ codegen_uop_template ('acos', ...
     [ ],                        ... % uint
     'acosf (xarg)',             ... % float
     'acos (xarg)',              ... % double
-    'GB_cacosf (xarg)',            ... % GxB_FC32_t
-    'GB_cacos (xarg)') ;           ... % GxB_FC64_t
+    'GB_cacosf (xarg)',         ... % GxB_FC32_t
+    'GB_cacos (xarg)') ;        ... % GxB_FC64_t
 
 codegen_uop_template ('atan', ...
     [ ],                        ... % bool
@@ -145,8 +145,8 @@ codegen_uop_template ('atan', ...
     [ ],                        ... % uint
     'atanf (xarg)',             ... % float
     'atan (xarg)',              ... % double
-    'GB_catanf (xarg)',            ... % GxB_FC32_t
-    'GB_catan (xarg)') ;           ... % GxB_FC64_t
+    'GB_catanf (xarg)',         ... % GxB_FC32_t
+    'GB_catan (xarg)') ;        ... % GxB_FC64_t
 
 
 codegen_uop_template ('sinh', ...
@@ -155,8 +155,8 @@ codegen_uop_template ('sinh', ...
     [ ],                        ... % uint
     'sinhf (xarg)',             ... % float
     'sinh (xarg)',              ... % double
-    'GB_csinhf (xarg)',            ... % GxB_FC32_t
-    'GB_csinh (xarg)') ;           ... % GxB_FC64_t
+    'GB_csinhf (xarg)',         ... % GxB_FC32_t
+    'GB_csinh (xarg)') ;        ... % GxB_FC64_t
 
 codegen_uop_template ('cosh', ...
     [ ],                        ... % bool
@@ -164,8 +164,8 @@ codegen_uop_template ('cosh', ...
     [ ],                        ... % uint
     'coshf (xarg)',             ... % float
     'cosh (xarg)',              ... % double
-    'GB_ccoshf (xarg)',            ... % GxB_FC32_t
-    'GB_ccosh (xarg)') ;           ... % GxB_FC64_t
+    'GB_ccoshf (xarg)',         ... % GxB_FC32_t
+    'GB_ccosh (xarg)') ;        ... % GxB_FC64_t
 
 codegen_uop_template ('tanh', ...
     [ ],                        ... % bool
@@ -173,8 +173,8 @@ codegen_uop_template ('tanh', ...
     [ ],                        ... % uint
     'tanhf (xarg)',             ... % float
     'tanh (xarg)',              ... % double
-    'GB_ctanhf (xarg)',            ... % GxB_FC32_t
-    'GB_ctanh (xarg)') ;           ... % GxB_FC64_t
+    'GB_ctanhf (xarg)',         ... % GxB_FC32_t
+    'GB_ctanh (xarg)') ;        ... % GxB_FC64_t
 
 codegen_uop_template ('asinh', ...
     [ ],                        ... % bool
@@ -182,8 +182,8 @@ codegen_uop_template ('asinh', ...
     [ ],                        ... % uint
     'asinhf (xarg)',            ... % float
     'asinh (xarg)',             ... % double
-    'GB_casinhf (xarg)',           ... % GxB_FC32_t
-    'GB_casinh (xarg)') ;          ... % GxB_FC64_t
+    'GB_casinhf (xarg)',        ... % GxB_FC32_t
+    'GB_casinh (xarg)') ;       ... % GxB_FC64_t
 
 codegen_uop_template ('acosh', ...
     [ ],                        ... % bool
@@ -191,8 +191,8 @@ codegen_uop_template ('acosh', ...
     [ ],                        ... % uint
     'acoshf (xarg)',            ... % float
     'acosh (xarg)',             ... % double
-    'GB_cacoshf (xarg)',           ... % GxB_FC32_t
-    'GB_cacosh (xarg)') ;          ... % GxB_FC64_t
+    'GB_cacoshf (xarg)',        ... % GxB_FC32_t
+    'GB_cacosh (xarg)') ;       ... % GxB_FC64_t
 
 codegen_uop_template ('atanh', ...
     [ ],                        ... % bool
@@ -200,8 +200,8 @@ codegen_uop_template ('atanh', ...
     [ ],                        ... % uint
     'atanhf (xarg)',            ... % float
     'atanh (xarg)',             ... % double
-    'GB_catanhf (xarg)',           ... % GxB_FC32_t
-    'GB_catanh (xarg)') ;          ... % GxB_FC64_t
+    'GB_catanhf (xarg)',        ... % GxB_FC32_t
+    'GB_catanh (xarg)') ;       ... % GxB_FC64_t
 
 codegen_uop_template ('signum', ...
     [ ],                        ... % bool
@@ -362,8 +362,8 @@ codegen_uop_template ('conj', ...
     [ ],                        ... % uint
     [ ],                        ... % float
     [ ],                        ... % double
-    'GB_conjf (xarg)',             ... % GxB_FC32_t
-    'GB_conj (xarg)') ;            ... % GxB_FC64_t
+    'GB_conjf (xarg)',          ... % GxB_FC32_t
+    'GB_conj (xarg)') ;         ... % GxB_FC64_t
 
 %-------------------------------------------------------------------------------
 % z = f(x) where the type of z and x differ

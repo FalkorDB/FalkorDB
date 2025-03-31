@@ -2,7 +2,7 @@
 // GB_subassign_08n_slice: slice the entries and vectors for GB_subassign_08n
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -34,6 +34,39 @@
 #define GB_GENERIC
 #define GB_SCALAR_ASSIGN 0
 #include "assign/include/GB_assign_shared_definitions.h"
+
+#if 0
+GrB_Info GX_subassign_08n_slice                                             \
+(                                                                           \
+    /* output: */                                                           \
+    GB_task_struct **p_TaskList,    /* size max_ntasks */                   \
+    size_t *p_TaskList_size,        /* size of TaskList */                  \
+    int *p_ntasks,                  /* # of tasks constructed */            \
+    int *p_nthreads,                /* # of threads to use */               \
+    int64_t *p_Znvec,               /* # of vectors to compute in Z */      \
+    const void **Zh_handle,         /* Zh is A->h, M->h, or NULL */         \
+    int64_t **Z_to_A_handle,        /* Z_to_A: size Znvec, or NULL */       \
+    size_t *Z_to_A_size_handle,                                             \
+    int64_t **Z_to_M_handle,        /* Z_to_M: size Znvec, or NULL */       \
+    size_t *Z_to_M_size_handle,                                             \
+    bool *Zj_is_32_handle,                                                  \
+    /* input: */                                                            \
+    const GrB_Matrix C,         /* output matrix C */                       \
+    const void *I,              /* I index list */                          \
+    const bool I_is_32,                                                     \
+    const int64_t nI,                                                       \
+    const int Ikind,                                                        \
+    const int64_t Icolon [3],                                               \
+    const void *J,              /* J index list */                          \
+    const bool J_is_32,                                                     \
+    const int64_t nJ,                                                       \
+    const int Jkind,                                                        \
+    const int64_t Jcolon [3],                                               \
+    const GrB_Matrix A,         /* matrix to slice */                       \
+    const GrB_Matrix M,         /* matrix to slice */                       \
+    GB_Werk Werk                                                            \
+)
+#endif
 
 GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
 {
@@ -79,24 +112,30 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     // get inputs
     //--------------------------------------------------------------------------
 
-    int64_t *restrict Ci = C->i ;
-    int64_t nzombies = C->nzombies ;
+    GB_Cp_DECLARE (Cp, const) ; GB_Cp_PTR (Cp, C) ;
+    void *Ch = C->h ;
+    void *Ci = C->i ;
+    const bool may_see_zombies = (C->nzombies > 0) ;
     const int64_t Cnvec = C->nvec ;
     const int64_t Cvlen = C->vlen ;
-    const int64_t *restrict Ch = C->h ;
-    const int64_t *restrict Cp = C->p ;
     const bool C_is_hyper = (Ch != NULL) ;
+    const bool Cp_is_32 = C->p_is_32 ;
+    const bool Cj_is_32 = C->j_is_32 ;
+    const bool Ci_is_32 = C->i_is_32 ;
     GB_GET_C_HYPER_HASH ;
 
-    const int64_t *restrict Mp = M->p ;
-    const int64_t *restrict Mh = M->h ;
-    const int64_t *restrict Mi = M->i ;
+    GB_Mp_DECLARE (Mp, const) ; GB_Mp_PTR (Mp, M) ;
+    GB_Mi_DECLARE (Mi, const) ; GB_Mi_PTR (Mi, M) ;
+    void *Mh = M->h ;
     const int64_t Mvlen = M->vlen ;
 
-    const int64_t *restrict Ap = A->p ;
-    const int64_t *restrict Ah = A->h ;
-    const int64_t *restrict Ai = A->i ;
+    GB_Ap_DECLARE (Ap, const) ; GB_Ap_PTR (Ap, A) ;
+    GB_Ai_DECLARE (Ai, const) ; GB_Ai_PTR (Ai, A) ;
+    void *Ah = A->h ;
     const int64_t Avlen = A->vlen ;
+
+    GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
+    GB_IDECL (J, const, u) ; GB_IPTR (J, J_is_32) ;
 
     //--------------------------------------------------------------------------
     // construct fine/coarse tasks for eWise multiply of A.*M
@@ -106,19 +145,25 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     // function takes the place of B in GB_emult.
 
     int64_t Znvec ;
-    const int64_t *restrict Zh_shallow = NULL ;
+    GB_MDECL (Zh_shallow, const, u) ;
+
+    bool Zp_is_32, Zj_is_32, Zi_is_32 ;
+
     int Z_sparsity = GxB_SPARSE ;
     GB_OK (GB_emult_08_phase0 (&Znvec, &Zh_shallow, &Zh_size, NULL, NULL,
-        &Z_to_A, &Z_to_A_size, &Z_to_M, &Z_to_M_size, &Z_sparsity, NULL, A, M,
-        Werk)) ;
+        &Z_to_A, &Z_to_A_size, &Z_to_M, &Z_to_M_size,
+        &Zp_is_32, &Zj_is_32, &Zi_is_32,
+        &Z_sparsity, NULL, false, A, M, Werk)) ;
 
     // Z is still sparse or hypersparse, not bitmap or full
     ASSERT (Z_sparsity == GxB_SPARSE || Z_sparsity == GxB_HYPERSPARSE) ;
 
     GB_OK (GB_ewise_slice (
         &TaskList, &TaskList_size, &ntasks, &nthreads,
-        Znvec, Zh_shallow, NULL, Z_to_A, Z_to_M, false,
+        Znvec, Zh_shallow, Zj_is_32, NULL, Z_to_A, Z_to_M, false,
         NULL, A, M, Werk)) ;
+
+    GB_IPTR (Zh_shallow, Zj_is_32) ;
 
     //--------------------------------------------------------------------------
     // slice C(:,jC) for each fine task
@@ -156,9 +201,15 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
             //------------------------------------------------------------------
 
             int64_t k = kfirst ;
-            int64_t j = GBH (Zh_shallow, k) ;
-            GB_GET_EVEC (pA, pA_end, pA, pA_end, Ap, Ah, j, k, Z_to_A, Avlen) ;
-            GB_GET_EVEC (pM, pM_end, pB, pB_end, Mp, Mh, j, k, Z_to_M, Mvlen) ;
+            int64_t j = GBh (Zh_shallow, k) ;
+
+            // A fine task operates on a slice of A(:,k)
+            int64_t pA     = TaskList [taskid].pA ;
+            int64_t pA_end = TaskList [taskid].pA_end ;
+
+            // A fine task operates on a slice of M(:,k)
+            int64_t pM     = TaskList [taskid].pB ;
+            int64_t pM_end = TaskList [taskid].pB_end ;
 
             //------------------------------------------------------------------
             // quick checks for empty intersection of A(:,j) and M(:,j)
@@ -167,10 +218,10 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
             int64_t ajnz = pA_end - pA ;
             int64_t mjnz = pM_end - pM ;
             if (ajnz == 0 || mjnz == 0) continue ;
-            int64_t iA_first = GBI_A (Ai, pA, Avlen) ;
-            int64_t iA_last  = GBI_A (Ai, pA_end-1, Avlen) ;
-            int64_t iM_first = GBI_M (Mi, pM, Mvlen) ;
-            int64_t iM_last  = GBI_M (Mi, pM_end-1, Mvlen) ;
+            int64_t iA_first = GBi_A (Ai, pA, Avlen) ;
+            int64_t iA_last  = GBi_A (Ai, pA_end-1, Avlen) ;
+            int64_t iM_first = GBi_M (Mi, pM, Mvlen) ;
+            int64_t iM_last  = GBi_M (Mi, pM_end-1, Mvlen) ;
             if (iA_last < iM_first || iM_last < iA_first) continue ;
 
             //------------------------------------------------------------------
@@ -179,7 +230,7 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
 
             // lookup jC in C
             // jC = J [j] ; or J is ":" or jbegin:jend or jbegin:jinc:jend
-            int64_t jC = GB_ijlist (J, j, Jkind, Jcolon) ;
+            int64_t jC = GB_IJLIST (J, j, Jkind, Jcolon) ;
             int64_t pC_start, pC_end ;
             GB_LOOKUP_VECTOR_C (jC, pC_start, pC_end) ;
 
@@ -199,9 +250,9 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
             { 
                 // find where this task starts and ends in C(:,jC)
                 int64_t iA_start = GB_IMIN (iA_first, iM_first) ;
-                int64_t iC1 = GB_ijlist (I, iA_start, Ikind, Icolon) ;
+                int64_t iC1 = GB_IJLIST (I, iA_start, Ikind, Icolon) ;
                 int64_t iA_end = GB_IMAX (iA_last, iM_last) ;
-                int64_t iC2 = GB_ijlist (I, iA_end, Ikind, Icolon) ;
+                int64_t iC2 = GB_IJLIST (I, iA_end, Ikind, Icolon) ;
 
                 // If I is an explicit list, it must be already sorted
                 // in ascending order, and thus iC1 <= iC2.  If I is
@@ -216,14 +267,14 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
                 int64_t pleft = pC_start ;
                 int64_t pright = pC_end - 1 ;
                 bool found, is_zombie ;
-                GB_SPLIT_BINARY_SEARCH_ZOMBIE (iC_start, Ci, pleft, pright,
-                    found, nzombies, is_zombie) ;
+                GB_split_binary_search_zombie (iC_start, Ci, Ci_is_32,
+                    &pleft, &pright, may_see_zombies, &is_zombie) ;
                 TaskList [taskid].pC = pleft ;
 
                 pleft = pC_start ;
                 pright = pC_end - 1 ;
-                GB_SPLIT_BINARY_SEARCH_ZOMBIE (iC_end, Ci, pleft, pright,
-                    found, nzombies, is_zombie) ;
+                found = GB_split_binary_search_zombie (iC_end, Ci, Ci_is_32,
+                    &pleft, &pright, may_see_zombies, &is_zombie) ;
                 TaskList [taskid].pC_end = (found) ? (pleft+1) : pleft ;
             }
 
@@ -244,6 +295,7 @@ GB_CALLBACK_SUBASSIGN_08N_SLICE_PROTO (GB_subassign_08n_slice)
     (*Zh_handle    ) = Zh_shallow ;
     (*Z_to_A_handle) = Z_to_A ; (*Z_to_A_size_handle) = Z_to_A_size ;
     (*Z_to_M_handle) = Z_to_M ; (*Z_to_M_size_handle) = Z_to_M_size ;
+    (*Zj_is_32_handle) = Zj_is_32 ;
 
     return (GrB_SUCCESS) ;
 }

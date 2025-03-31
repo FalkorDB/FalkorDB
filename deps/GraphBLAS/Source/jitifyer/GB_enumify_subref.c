@@ -2,7 +2,7 @@
 // GB_enumify_subref: enumerate a GrB_extract problem
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -19,9 +19,12 @@ void GB_enumify_subref      // enumerate a GrB_extract problem
     // C matrix:
     GrB_Matrix C,
     // index types:
+    bool I_is_32,           // if true, I is 32-bit; else 64-bit
+    bool J_is_32,           // if true, J is 32-bit; else 64-bit (bitmap only)
     int Ikind,              // 0: all (no I), 1: range, 2: stride, 3: list
     int Jkind,              // ditto, or 0 if not used
     bool need_qsort,        // true if qsort needs to be called
+    bool Ihead_is_32,       // if true, Ihead/Inext 32-bit; else 64
     bool I_has_duplicates,  // true if I has duplicate entries
     // A matrix:
     GrB_Matrix A
@@ -49,15 +52,41 @@ void GB_enumify_subref      // enumerate a GrB_extract problem
     int needqsort = (need_qsort) ? 1 : 0 ;
     int ihasdupl = (I_has_duplicates) ? 1 : 0 ;
 
+    int i_is_32 = (I_is_32) ? 1 : 0 ;
+    int j_is_32 = (J_is_32) ? 1 : 0 ;
+
+    int cp_is_32 = (C->p_is_32) ? 1 : 0 ;
+    int cj_is_32 = (C->j_is_32) ? 1 : 0 ;
+    int ci_is_32 = (C->i_is_32) ? 1 : 0 ;
+
+    int ap_is_32 = (A->p_is_32) ? 1 : 0 ;
+    int aj_is_32 = (A->j_is_32) ? 1 : 0 ;
+    int ai_is_32 = (A->i_is_32) ? 1 : 0 ;
+
+    int ihead_is_32 = (Ihead_is_32) ? 1 : 0 ;
+
     //--------------------------------------------------------------------------
     // construct the subref method_code
     //--------------------------------------------------------------------------
 
-    // total method_code bits: 14 (4 hex digits)
+    // total method_code bits: 23 (6 hex digits)
 
     (*method_code) =
                                                // range        bits
-                /// need_qsort, I_has_duplicates (1 hex digit)
+                // C, A integer sizes (2 hex digits)
+                GB_LSHIFT (ihead_is_32, 22) |  // 0 to 1       1
+
+                GB_LSHIFT (cp_is_32   , 21) |  // 0 to 1       1
+                GB_LSHIFT (cj_is_32   , 20) |  // 0 to 1       1
+                GB_LSHIFT (ci_is_32   , 19) |  // 0 to 1       1
+
+                GB_LSHIFT (ap_is_32   , 18) |  // 0 to 1       1
+                GB_LSHIFT (aj_is_32   , 17) |  // 0 to 1       1
+                GB_LSHIFT (ai_is_32   , 16) |  // 0 to 1       1
+
+                // need_qsort, I_has_duplicates, I and J bits (1 hex digit)
+                GB_LSHIFT (i_is_32    , 15) |  // 0 to 1       1
+                GB_LSHIFT (j_is_32    , 14) |  // 0 to 1       1
                 GB_LSHIFT (ihasdupl   , 13) |  // 0 to 1       1
                 GB_LSHIFT (needqsort  , 12) |  // 0 to 1       1
 

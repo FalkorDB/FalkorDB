@@ -2,7 +2,7 @@
 // GrB_Monoid_wait: wait for a user-defined GrB_Monoid to complete
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -16,7 +16,7 @@
 GrB_Info GrB_Monoid_wait   // no work, just check if the GrB_Monoid is valid
 (
     GrB_Monoid monoid,
-    GrB_WaitMode waitmode
+    int waitmode
 )
 { 
 
@@ -24,7 +24,7 @@ GrB_Info GrB_Monoid_wait   // no work, just check if the GrB_Monoid is valid
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GrB_Monoid_wait (monoid, waitmode)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL_OR_FAULTY (monoid) ;
 
     //--------------------------------------------------------------------------

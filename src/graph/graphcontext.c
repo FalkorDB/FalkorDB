@@ -17,8 +17,8 @@
 #include "../serializers/graphcontext_type.h"
 #include "../commands/execution_ctx.h"
 
-#include <sys/param.h>
 #include <pthread.h>
+#include <sys/param.h>
 
 // telemetry stream format
 #define TELEMETRY_FORMAT "telemetry{%s}"
@@ -868,8 +868,11 @@ static void _DeleteTelemetryStream
 	RedisModule_CloseKey(key);
 }
 
-// Free all data associated with graph
-static void _GraphContext_Free(void *arg) {
+// free all data associated with graph
+static void _GraphContext_Free
+(
+	void *arg
+) {
 	GraphContext *gc = (GraphContext *)arg;
 	uint len;
 
@@ -885,7 +888,8 @@ static void _GraphContext_Free(void *arg) {
 
 	// Redis main thread is 0
 	RedisModuleCtx *ctx = NULL;
-	bool main_thread = ThreadPools_GetThreadID() == 0;
+	extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
+	bool main_thread = (pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0);
 	bool should_lock = !main_thread && RedisModule_GetThreadSafeContext != NULL;
 
 	if(should_lock) {

@@ -2,14 +2,14 @@
 // GB_mex_plusplus: C<M> = accum(C,A*B) with user-defined plus_plus_fp32
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "GB_mex.h"
 
-#define USAGE "C = GB_mex_plusplus (C, M, accum, [ ], A, B, desc, macrofy)"
+#define USAGE "C = GB_mex_plusplus (C, M, accum, [ ], A, B, desc)"
 
 #define FREE_ALL                                    \
 {                                                   \
@@ -49,7 +49,7 @@ void mexFunction
     GrB_Monoid MyAdd = NULL ;
 
     // check inputs
-    if (nargout > 1 || nargin < 6 || nargin > 8)
+    if (nargout > 1 || nargin < 6 || nargin > 7)
     {
         mexErrMsgTxt ("Usage: " USAGE) ;
     }

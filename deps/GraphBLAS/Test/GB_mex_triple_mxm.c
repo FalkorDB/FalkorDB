@@ -2,7 +2,7 @@
 // GB_mex_triple_mxm: C = A*B*E
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -99,7 +99,7 @@ void mexFunction
     }
 
     // T = B*E
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     GrB_Matrix_nrows (&nrows, B) ;
     GrB_Matrix_ncols (&ncols, E) ;
     GrB_Matrix_new (&T, A->type, nrows, ncols) ;

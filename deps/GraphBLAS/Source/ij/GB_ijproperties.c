@@ -2,7 +2,7 @@
 // GB_ijproperties: check I and determine its properties
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -11,7 +11,6 @@
 
 #include "ij/GB_ij.h"
 
-// FUTURE:: if limit=0, print a different message.  see also setEl, extractEl.
 #define GB_ICHECK(i,limit)                                                  \
 {                                                                           \
     if ((i) < 0 || (i) >= (limit))                                          \
@@ -24,7 +23,8 @@
 GrB_Info GB_ijproperties        // check I and determine its properties
 (
     // input:
-    const GrB_Index *I,         // list of indices, or special
+    const void *I,              // list of indices, or special
+    const bool I_is_32,         // if true, I is 32-bit; else 64-bit
     const int64_t ni,           // length I, or special
     const int64_t nI,           // actual length from GB_ijlength
     const int64_t limit,        // I must be in the range 0 to limit-1
@@ -132,6 +132,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         // if iinc == 1 on input, the kind has been changed to GB_RANGE
         ASSERT (iinc != 1) ;
 
+        GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
+
         if (iinc == 0)
         { 
             // stride is zero: list is empty, contiguous, and sorted
@@ -141,14 +143,14 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         else if (iinc > 0)
         { 
             // stride is positive, get the first and last indices
-            imin = GB_ijlist (I, 0,    GB_STRIDE, Icolon) ;
-            imax = GB_ijlist (I, nI-1, GB_STRIDE, Icolon) ;
+            imin = GB_IJLIST (I, 0,    GB_STRIDE, Icolon) ;
+            imax = GB_IJLIST (I, nI-1, GB_STRIDE, Icolon) ;
         }
         else
         { 
             // stride is negative, get the first and last indices
-            imin = GB_ijlist (I, nI-1, GB_STRIDE, Icolon) ;
-            imax = GB_ijlist (I, 0,    GB_STRIDE, Icolon) ;
+            imin = GB_IJLIST (I, nI-1, GB_STRIDE, Icolon) ;
+            imax = GB_IJLIST (I, 0,    GB_STRIDE, Icolon) ;
         }
 
         if (imin > imax)
@@ -196,6 +198,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         // scan I to find imin and imax, and validate the list. Also determine
         // if it is sorted or not, and contiguous or not.
 
+        GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
+
         imin = limit ;
         imax = -1 ;
 
@@ -222,10 +226,10 @@ GrB_Info GB_ijproperties        // check I and determine its properties
             int64_t my_imax = -1 ;
             int64_t istart, iend ;
             GB_PARTITION (istart, iend, ni, tid, ntasks) ;
-            int64_t ilast = (istart == 0) ? -1 : I [istart-1] ;
+            int64_t ilast = (istart == 0) ? -1 : GB_IGET (I, istart-1) ;
             for (int64_t inew = istart ; inew < iend ; inew++)
             {
-                int64_t i = I [inew] ;
+                int64_t i = GB_IGET (I, inew) ;
                 if (inew > 0)
                 {
                     if (i < ilast)
@@ -280,7 +284,7 @@ GrB_Info GB_ijproperties        // check I and determine its properties
             int64_t ilast = -1 ;
             for (int64_t inew = 0 ; inew < ni ; inew++)
             {
-                int64_t i = I [inew] ;
+                int64_t i = GB_IGET (I, inew) ;
                 if (inew > 0)
                 {
                     if (i < ilast) I_unsorted2 = true ;
@@ -309,8 +313,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         if (ni == 1)
         { 
             // a single entry does not need to be sorted
-            ASSERT (I [0] == imin) ;
-            ASSERT (I [0] == imax) ;
+            ASSERT (GB_IGET (I, 0) == imin) ;
+            ASSERT (GB_IGET (I, 0) == imax) ;
             ASSERT (I_unsorted == false) ;
             ASSERT (I_contig   == true) ;
         }

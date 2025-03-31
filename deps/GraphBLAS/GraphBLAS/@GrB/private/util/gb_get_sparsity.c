@@ -2,7 +2,7 @@
 // gb_get_sparsity: determine the sparsity of a matrix result 
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -28,18 +28,18 @@
 
 #include "gb_interface.h"
 
-GxB_Format_Value gb_get_sparsity        // 0 to 15
+int gb_get_sparsity         // 0 to 15
 (
-    GrB_Matrix A,                       // may be NULL
-    GrB_Matrix B,                       // may be NULL
-    int sparsity_default                // may be 0
+    GrB_Matrix A,           // may be NULL
+    GrB_Matrix B,           // may be NULL
+    int sparsity_default    // may be 0
 )
 {
 
     int sparsity ;
     int A_sparsity = 0 ;
     int B_sparsity = 0 ;
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
 
     //--------------------------------------------------------------------------
     // get the sparsity of the matrices A and B
@@ -52,7 +52,7 @@ GxB_Format_Value gb_get_sparsity        // 0 to 15
         if (nrows > 1 || ncols > 1)
         {
             // A is a vector or matrix, not a scalar
-            OK (GxB_Matrix_Option_get (A, GxB_SPARSITY_CONTROL, &A_sparsity)) ;
+            OK (GrB_Matrix_get_INT32 (A, &A_sparsity, GxB_SPARSITY_CONTROL)) ;
         }
     }
 
@@ -63,7 +63,7 @@ GxB_Format_Value gb_get_sparsity        // 0 to 15
         if (nrows > 1 || ncols > 1)
         {
             // B is a vector or matrix, not a scalar
-            OK (GxB_Matrix_Option_get (B, GxB_SPARSITY_CONTROL, &B_sparsity)) ;
+            OK (GrB_Matrix_get_INT32 (B, &B_sparsity, GxB_SPARSITY_CONTROL)) ;
         }
     }
 

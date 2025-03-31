@@ -2,7 +2,7 @@
 // GB_subassign_12_and_20: C(I,J)<M or !M,repl> += A ; using S
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -30,12 +30,14 @@ GrB_Info GB_subassign_12_and_20
     GrB_Matrix C,
     // input:
     #define C_replace true
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -69,8 +71,9 @@ GrB_Info GB_subassign_12_and_20
     //--------------------------------------------------------------------------
 
     struct GB_Matrix_opaque S_header ;
-    GB_CLEAR_STATIC_HEADER (S, &S_header) ;
-    GB_OK (GB_subassign_symbolic (S, C, I, ni, J, nj, true, Werk)) ;
+    GB_CLEAR_MATRIX_HEADER (S, &S_header) ;
+    GB_OK (GB_subassign_symbolic (S, C, I, I_is_32, ni, J, J_is_32, nj, true,
+        Werk)) ;
 
     //--------------------------------------------------------------------------
     // via the JIT or PreJIT kernel
@@ -78,8 +81,8 @@ GrB_Info GB_subassign_12_and_20
 
     info = GB_subassign_jit (C,
         /* C_replace: */ true,
-        I, ni, nI, Ikind, Icolon,
-        J, nj, nJ, Jkind, Jcolon,
+        I, I_is_32, ni, nI, Ikind, Icolon,
+        J, J_is_32, nj, nJ, Jkind, Jcolon,
         M,
         Mask_comp,
         Mask_struct,
@@ -98,6 +101,9 @@ GrB_Info GB_subassign_12_and_20
     //--------------------------------------------------------------------------
     // via the generic kernel
     //--------------------------------------------------------------------------
+
+    GB_IDECL (I, const, u) ; GB_IPTR (I, I_is_32) ;
+    GB_IDECL (J, const, u) ; GB_IPTR (J, J_is_32) ;
 
     GBURBLE ("(generic assign) ") ;
     #define GB_GENERIC

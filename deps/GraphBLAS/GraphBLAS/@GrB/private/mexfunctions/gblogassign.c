@@ -2,7 +2,7 @@
 // gblogassign: logical assignment: C(M) = A
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -12,6 +12,8 @@
 // of any type in this mexFunction.  M should not have any explicit zeros.  A
 // is a sparse vector of size nnz(M)-by-1.  Scalar expansion is not handled.
 // Use GrB.subassign (C, M, scalar) for that case.
+
+// This function accesses opaque content and GB_methods inside GraphBLAS.
 
 // Usage:
 
@@ -90,7 +92,7 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     GrB_Matrix C = gb_get_deep (pargin [0]) ;
-    GrB_Index nrows, ncols ;
+    uint64_t nrows, ncols ;
     OK (GrB_Matrix_nrows (&nrows, C)) ;
     OK (GrB_Matrix_ncols (&ncols, C)) ;
 
@@ -102,13 +104,11 @@ void mexFunction
     GrB_Matrix M_input = gb_get_shallow (pargin [1]) ;
     GrB_Matrix M = gb_new (GrB_BOOL, nrows, ncols, GxB_BY_COL,
         GxB_SPARSE + GxB_HYPERSPARSE) ;
-//  OK1 (M, GxB_Matrix_select (M, NULL, NULL, GxB_NONZERO, M_input,
-//      NULL, NULL)) ;
     OK1 (M, GrB_Matrix_select_BOOL (M, NULL, NULL, GrB_VALUENE_BOOL, M_input,
         0, NULL)) ;
 
     OK (GrB_Matrix_free (&M_input)) ;
-    GrB_Index mnz ;
+    uint64_t mnz ;
     OK (GrB_Matrix_nvals (&mnz, M)) ;
 
     //--------------------------------------------------------------------------
@@ -118,15 +118,15 @@ void mexFunction
     GrB_Matrix A_input = gb_get_shallow (pargin [2]) ;
     GrB_Matrix A = A_input ;
     GrB_Type atype ;
-    GrB_Index anrows, ancols, anz ;
-    GxB_Format_Value fmt ;
+    uint64_t anrows, ancols, anz ;
+    int fmt ;
     int A_sparsity ;
     OK (GrB_Matrix_nrows (&anrows, A)) ;
     OK (GrB_Matrix_ncols (&ancols, A)) ;
     OK (GxB_Matrix_type (&atype, A)) ;
     OK (GrB_Matrix_nvals (&anz, A)) ;
-    OK (GxB_Matrix_Option_get (A, GxB_FORMAT, &fmt)) ;
-    OK (GxB_Matrix_Option_get (A, GxB_SPARSITY_STATUS, &A_sparsity)) ;
+    OK (GrB_Matrix_get_INT32 (A, &fmt, GxB_FORMAT)) ;
+    OK (GrB_Matrix_get_INT32 (A, &A_sparsity, GxB_SPARSITY_STATUS)) ;
 
     GrB_Matrix A_copy = NULL ;
     GrB_Matrix A_copy2 = NULL ;
@@ -135,8 +135,8 @@ void mexFunction
     if (A_sparsity == GxB_BITMAP)
     {
         OK (GrB_Matrix_dup (&A_copy2, A)) ;
-        OK1 (A_copy2, GxB_Matrix_Option_set (A_copy2, GxB_SPARSITY_CONTROL,
-            GxB_SPARSE + GxB_HYPERSPARSE + GxB_FULL)) ;
+        OK1 (A_copy2, GrB_Matrix_set_INT32 (A_copy2,
+            GxB_SPARSE + GxB_HYPERSPARSE + GxB_FULL, GxB_SPARSITY_CONTROL)) ;
         A = A_copy2 ;
     }
 
@@ -155,7 +155,7 @@ void mexFunction
         if (fmt == GxB_BY_COL)
         { 
             // A is 1-by-ancols and held by column: transpose it
-            A_copy = gb_new (atype, mnz, 1, GxB_BY_COL, 
+            A_copy = gb_new (atype, mnz, 1, GxB_BY_COL,
                 GxB_SPARSE + GxB_HYPERSPARSE + GxB_FULL) ;
             OK1 (A_copy, GrB_transpose (A_copy, NULL, NULL, A, NULL)) ;
             OK1 (A_copy, GrB_Matrix_wait (A_copy, GrB_MATERIALIZE)) ;
@@ -186,29 +186,25 @@ void mexFunction
     // extract the values and pattern of A; handle iso case
     //--------------------------------------------------------------------------
 
-    // Tim: use a shallow variant of GxB*export to access content of M and A
-    GrB_Index *Ai =            							
-        (GrB_Index *) A->i ;   	             	 	                 	
-    void *Ax = A->x ;          		 	 	 	 	 	
-    char nil [16] =            		 	 	 	 	 	
-     "iso logassign  " ;       		 	 	 	 	 	
-    if (Ax == NULL) Ax = &nil ;							
+    void *Ax = A->x ;
+    char nil [16] = "iso logassign  " ;
+    if (Ax == NULL) Ax = &nil ;
 
     //--------------------------------------------------------------------------
     // extract the pattern of M
     //--------------------------------------------------------------------------
 
-    GrB_Index *Mi = (GrB_Index *) (M->i) ;
-    GrB_Index *Mj = mxMalloc (MAX (mnz, 1) * sizeof (GrB_Index)) ;
+    uint64_t *Mj = mxMalloc (MAX (mnz, 1) * sizeof (uint64_t)) ;
     OK (GrB_Matrix_extractTuples_BOOL (NULL, Mj, NULL, &mnz, M)) ;
 
     //--------------------------------------------------------------------------
     // construct a subset of the pattern of M corresponding to the entries of A
     //--------------------------------------------------------------------------
 
-    GrB_Index *Si = mxMalloc (MAX (anz, 1) * sizeof (GrB_Index)) ;
-    GrB_Index *Sj = mxMalloc (MAX (anz, 1) * sizeof (GrB_Index)) ;
-    GB_helper5 (Si, Sj, Mi, Mj, M->vlen, Ai, A->vlen, anz) ;
+    uint64_t *Si = mxMalloc (MAX (anz, 1) * sizeof (uint64_t)) ;
+    uint64_t *Sj = mxMalloc (MAX (anz, 1) * sizeof (uint64_t)) ;
+    GB_helper5 (Si, Sj, M->i, M->i_is_32, Mj, M->vlen, A->i, A->i_is_32,
+        A->vlen, anz) ;
     GrB_Matrix S = gb_new (atype, nrows, ncols, GxB_BY_COL, 0) ;
 
     if (A->iso)
@@ -360,6 +356,6 @@ void mexFunction
     //--------------------------------------------------------------------------
 
     pargout [0] = gb_export (&C, KIND_GRB) ;
-    GB_WRAPUP ;
+    gb_wrapup ( ) ;
 }
 

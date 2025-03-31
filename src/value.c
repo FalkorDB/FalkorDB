@@ -4,27 +4,36 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
-#include "value.h"
 #include "RG.h"
-#include "graph/entities/graph_entity.h"
+#include "value.h"
+#include "globals.h"
+#include "util/rmalloc.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
+#include "datatypes/datatypes.h"
+#include "string_pool/string_pool.h"
+#include "graph/entities/graph_entity.h"
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <sys/param.h>
-#include "util/rmalloc.h"
-#include "datatypes/datatypes.h"
 
-static inline void _SIString_ToString(SIValue str, char **buf, size_t *bufferLen,
-									  size_t *bytesWritten) {
+static inline void _SIString_ToString
+(
+	SIValue str,
+	char **buf,
+	size_t *bufferLen,
+	size_t *bytesWritten
+) {
 	size_t strLen = strlen(str.stringval);
 	if(*bufferLen - *bytesWritten < strLen) {
 		*bufferLen += strLen;
 		*buf = rm_realloc(*buf, *bufferLen);
 	}
-	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s", str.stringval);
+	*bytesWritten += snprintf(*buf + *bytesWritten, *bufferLen, "%s",
+			str.stringval);
 }
 
 SIValue SI_LongVal(int64_t i) {
@@ -97,22 +106,89 @@ SIValue SI_Vectorf32
 	return SIVectorf32_New(dim);
 }
 
-SIValue SI_DuplicateStringVal(const char *s) {
-	return (SIValue) {
-		.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
-	};
+bool USE_STRING_POOL = false; // global flag to enable/disable string pooling
+
+// check rather or not to use string pool
+inline static bool use_string_pool(void) {
+	if(unlikely(USE_STRING_POOL)) {
+		// string pool is avaialble
+		// use it only when running under a thread which has access to it
+		// this includes redis main thread and the single writer thread
+		extern pthread_key_t _tlsStringPool;
+		bool can_access = (pthread_getspecific(_tlsStringPool) != NULL);
+		return can_access;
+	}
+
+	return false;
 }
 
-SIValue SI_ConstStringVal(const char *s) {
+SIValue SI_ConstStringVal
+(
+	const char *s
+) {
 	return (SIValue) {
 		.stringval = (char*)s, .type = T_STRING, .allocation = M_CONST
 	};
 }
 
-SIValue SI_TransferStringVal(char *s) {
-	return (SIValue) {
-		.stringval = s, .type = T_STRING, .allocation = M_SELF
-	};
+SIValue SI_DuplicateStringVal
+(
+	const char *s
+) {
+	// try to reuse string if string-pool is enabled
+	if(unlikely(use_string_pool())) {
+		StringPool pool = Globals_Get_StringPool();
+		char *str = StringPool_rent(pool, s);
+
+		return (SIValue) {
+			.stringval = str, .type = T_STRING, .allocation = M_SELF
+		};
+	} else {
+		return (SIValue) {
+			.stringval = rm_strdup(s), .type = T_STRING, .allocation = M_SELF
+		};
+	}
+}
+
+SIValue SI_TransferStringVal
+(
+	char *s
+) {
+	// try to reuse string if string-pool is enabled
+	if(unlikely(use_string_pool())) {
+		StringPool pool = Globals_Get_StringPool();
+		char *str = StringPool_rentNoClone(pool, s);
+
+		// free in case of duplication
+		if(str != s) {
+			rm_free(s);
+		}
+
+		return (SIValue) {
+			.stringval = str, .type = T_STRING, .allocation = M_SELF
+		};
+	} else {
+		return (SIValue) {
+			.stringval = s, .type = T_STRING, .allocation = M_SELF
+		};
+	}
+}
+
+static void SI_StringValFree
+(
+	SIValue *s
+) {
+	ASSERT(s       != NULL);
+	ASSERT(s->type == T_STRING);
+
+	if(unlikely(use_string_pool())) {
+		StringPool string_pool = Globals_Get_StringPool();
+		StringPool_return(string_pool, s->stringval);
+	} else {
+		rm_free(s->stringval);
+	}
+
+	s->stringval = NULL;
 }
 
 SIValue SI_Point(float latitude, float longitude) {
@@ -122,12 +198,13 @@ SIValue SI_Point(float latitude, float longitude) {
 	};
 }
 
-/* Make an SIValue that reuses the original's allocations, if any.
- * The returned value is not responsible for freeing any allocations,
- * and is not guaranteed that these allocations will remain in scope. */
+// make an SIValue that reuses the original's allocations, if any
+// the returned value is not responsible for freeing any allocations
+// and is not guaranteed that these allocations will remain in scope
 SIValue SI_ShareValue(const SIValue v) {
 	SIValue dup = v;
-	// If the original value owns an allocation, mark that the duplicate shares it.
+	// if the original value owns an allocation
+	// mark that the duplicate shares it
 	if(v.allocation == M_SELF) dup.allocation = M_VOLATILE;
 	return dup;
 }
@@ -432,34 +509,53 @@ SIValue SIValue_FromString(const char *s) {
 	return SI_DoubleVal(parsedval);
 }
 
-size_t SIValue_StringJoinLen(SIValue *strings, unsigned int string_count, const char *delimiter) {
+size_t SIValue_StringJoinLen
+(
+	SIValue *strings,
+	unsigned int string_count,
+	const char *delimiter
+) {
 	size_t length = 0;
 	size_t elem_len;
 	size_t delimiter_len = strlen(delimiter);
-	/* Compute length. */
+	// compute length
 	for(int i = 0; i < string_count; i ++) {
-		/* String elements representing bytes size strings,
-		 * for all other SIValue types 64 bytes should be enough. */
-		elem_len = (strings[i].type == T_STRING) ? strlen(strings[i].stringval) + delimiter_len : 64;
+		// string elements representing bytes size strings
+		// for all other SIValue types 64 bytes should be enough
+		elem_len = (strings[i].type == T_STRING) ?
+			strlen(strings[i].stringval) + delimiter_len : 64;
 		length += elem_len;
 	}
 
-	/* Account for NULL terminating byte. */
+	// account for NULL terminating byte
 	length++;
 	return length;
 }
 
-void SIValue_StringJoin(SIValue *strings, unsigned int string_count, const char *delimiter,
-						char **buf, size_t *buf_len, size_t *bytesWritten) {
-
+void SIValue_StringJoin
+(
+	SIValue *strings,
+	unsigned int string_count,
+	const char *delimiter,
+	char **buf,
+	size_t *buf_len,
+	size_t *bytesWritten
+) {
 	for(int i = 0; i < string_count; i ++) {
 		SIValue_ToString(strings[i], buf, buf_len, bytesWritten);
-		if(i < string_count - 1) *bytesWritten += snprintf(*buf + *bytesWritten, *buf_len, "%s", delimiter);
+		if(i < string_count - 1) {
+			*bytesWritten +=
+				snprintf(*buf + *bytesWritten, *buf_len, "%s", delimiter);
+		}
 	}
 }
 
 // assumption: either a or b is a string
-static SIValue SIValue_ConcatString(const SIValue a, const SIValue b) {
+static SIValue SIValue_ConcatString
+(
+	const SIValue a,
+	const SIValue b
+) {
 	size_t bufferLen = 512;
 	size_t argument_len = 0;
 	char *buffer = rm_calloc(bufferLen, sizeof(char));
@@ -471,15 +567,21 @@ static SIValue SIValue_ConcatString(const SIValue a, const SIValue b) {
 }
 
 // assumption: either a or b is a list - static function, the caller validate types
-static SIValue SIValue_ConcatList(const SIValue a, const SIValue b) {
+static SIValue SIValue_ConcatList
+(
+	const SIValue a,
+	const SIValue b
+) {
 	uint a_len = (a.type == T_ARRAY) ? SIArray_Length(a) : 1;
 	uint b_len = (b.type == T_ARRAY) ? SIArray_Length(b) : 1;
 	SIValue resultArray = SI_Array(a_len + b_len);
 
-	// Append a to resultArray
+	// append a to resultArray
 	if(a.type == T_ARRAY) {
 		// in thae case of a is an array
-		for(uint i = 0; i < a_len; i++) SIArray_Append(&resultArray, SIArray_Get(a, i));
+		for(uint i = 0; i < a_len; i++) {
+			SIArray_Append(&resultArray, SIArray_Get(a, i));
+		}
 	} else {
 		// in thae case of a is not an array
 		SIArray_Append(&resultArray, a);
@@ -498,109 +600,146 @@ static SIValue SIValue_ConcatList(const SIValue a, const SIValue b) {
 	return resultArray;
 }
 
-SIValue SIValue_Add(const SIValue a, const SIValue b) {
-	if(a.type == T_NULL || b.type == T_NULL) return SI_NullVal();
-	if(a.type == T_ARRAY || b.type == T_ARRAY) return SIValue_ConcatList(a, b);
-	if(a.type == T_STRING || b.type == T_STRING) return SIValue_ConcatString(a, b);	
-	if(a.type == T_MAP || b.type == T_MAP) return Map_Merge(a, b);
+SIValue SIValue_Add
+(
+	const SIValue a,
+	const SIValue b
+) {
+	if     (a.type == T_NULL   || b.type == T_NULL)   return SI_NullVal();
+	else if(a.type == T_ARRAY  || b.type == T_ARRAY)  return SIValue_ConcatList(a, b);
+	else if(a.type == T_STRING || b.type == T_STRING) return SIValue_ConcatString(a, b);
+	else if(a.type == T_MAP    || b.type == T_MAP)    return Map_Merge(a, b);
 
-	/* Only construct an integer return if both operands are integers. */
+	// only construct an integer return if both operands are integers
 	if(a.type & b.type & T_INT64) {
 		return SI_LongVal(a.longval + b.longval);
 	}
-	/* Return a double representation. */
+	// return a double representation
 	return SI_DoubleVal(SI_GET_NUMERIC(a) + SI_GET_NUMERIC(b));
 }
 
-SIValue SIValue_Subtract(const SIValue a, const SIValue b) {
-	/* Only construct an integer return if both operands are integers. */
+SIValue SIValue_Subtract
+(
+	const SIValue a,
+	const SIValue b
+) {
+	// only construct an integer return if both operands are integers
 	if(a.type & b.type & T_INT64) {
 		return SI_LongVal(a.longval - b.longval);
 	}
-	/* Return a double representation. */
+	// return a double representation
 	return SI_DoubleVal(SI_GET_NUMERIC(a) - SI_GET_NUMERIC(b));
 }
 
-SIValue SIValue_Multiply(const SIValue a, const SIValue b) {
-	/* Only construct an integer return if both operands are integers. */
+SIValue SIValue_Multiply
+(
+	const SIValue a,
+	const SIValue b
+) {
+	// only construct an integer return if both operands are integers
 	if(SI_TYPE(a) & SI_TYPE(b) & T_INT64) {
 		return SI_LongVal(a.longval * b.longval);
 	}
-	/* Return a double representation. */
+	// return a double representation
 	return SI_DoubleVal(SI_GET_NUMERIC(a) * SI_GET_NUMERIC(b));
 }
 
-SIValue SIValue_Divide(const SIValue a, const SIValue b) {
+SIValue SIValue_Divide
+(
+	const SIValue a,
+	const SIValue b
+) {
 	if(SI_TYPE(a) & SI_TYPE(b) & T_INT64) {
 		return SI_LongVal(SI_GET_NUMERIC(a) / SI_GET_NUMERIC(b));
 	}
 	return SI_DoubleVal(SI_GET_NUMERIC(a) / (double)SI_GET_NUMERIC(b));
 }
 
-// Calculate a mod n for integer and floating-point inputs.
-SIValue SIValue_Modulo(const SIValue a, const SIValue n) {
+// calculate a mod n for integer and floating-point inputs
+SIValue SIValue_Modulo
+(
+	const SIValue a,
+	const SIValue n
+) {
 	bool inputs_are_integers = SI_TYPE(a) & SI_TYPE(n) & T_INT64;
 	if(inputs_are_integers) {
-		// The modulo machine instruction may be used if a and n are both integers.
-
+		// the modulo machine instruction may be used if a and n are both integers
 		int64_t res = 0;
 		// workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=30484
-		if (n.longval != -1){ // % -1 is always return 0
+		if (n.longval != -1) { // % -1 is always return 0
 			res = (int64_t)a.longval % (int64_t)n.longval;
 		}
 
 		return SI_LongVal(res);
 	} else {
-		// Otherwise, use the library function fmod to calculate the modulo and return a double.
+		// otherwise
+		// use the library function fmod to calculate the modulo and return a double
 		return SI_DoubleVal(fmod(SI_GET_NUMERIC(a), SI_GET_NUMERIC(n)));
 	}
 }
 
-int SIArray_Compare(SIValue arrayA, SIValue arrayB, int *disjointOrNull) {
+int SIArray_Compare
+(
+	SIValue arrayA,
+	SIValue arrayB,
+	int *disjointOrNull
+) {
 	uint arrayALen = SIArray_Length(arrayA);
 	uint arrayBLen = SIArray_Length(arrayB);
-	// Check empty list.
+
+	// check empty list
 	if(arrayALen == 0 && arrayBLen == 0) return 0;
+
 	int lenDiff = arrayALen - arrayBLen;
-	// Check for the common range of indices.
+	// check for the common range of indices
 	uint minLength = arrayALen <= arrayBLen ? arrayALen : arrayBLen;
 	// notEqual holds the first false (result != 0) comparison result between two values from the same type, which are not equal.
-	int notEqual = 0;
-	uint nullCounter = 0;       // Counter for the amount of null comparison.
-	uint notEqualCounter = 0;   // Counter for the amount of false (compare(a,b) !=0) comparisons.
+	int notEqual         = 0;
+	uint nullCounter     = 0;  // counter for the amount of null comparison
+	uint notEqualCounter = 0;  // counter for the amount of false (compare(a,b) !=0) comparisons
 
-	// Go over the common range for both arrays.
+	// go over the common range for both arrays
 	for(uint i = 0; i < minLength; i++) {
 		SIValue aValue = SIArray_Get(arrayA, i);
 		SIValue bValue = SIArray_Get(arrayB, i);
-		// Current comparison special cases indication variable.
+
+		// current comparison special cases indication variable
 		int currentDisjointOrNull = 0;
 		int compareResult = SIValue_Compare(aValue, bValue, &currentDisjointOrNull);
-		// In case of special case such null or disjoint comparison.
+		// in case of special case such null or disjoint comparison
 		if(currentDisjointOrNull) {
-			if(currentDisjointOrNull == COMPARED_NULL) nullCounter++;   // Update null comparison counter.
-			// Null or disjoint comparison is also a false comparison, so increase the number of false comparisons in one.
+			if(currentDisjointOrNull == COMPARED_NULL) nullCounter++;   // update null comparison counter
+			// null or disjoint comparison is also a false comparison, so increase the number of false comparisons in one
 			notEqualCounter++;
-			// Set the first difference value, if not set before.
+			// set the first difference value, if not set before
 			if(notEqual == 0) notEqual = compareResult;
 		} else if(compareResult != 0) {
-			// In the normal false comparison case, update false comparison counter.
+			// in the normal false comparison case, update false comparison counter
 			notEqualCounter++;
-			// Set the first difference value, if not set before.
+			// set the first difference value, if not set before
 			if(notEqual == 0) notEqual = compareResult;
 		}
-		// Note: In the case of compareResult = 0, there is nothing to be done.
+		// note: In the case of compareResult = 0, there is nothing to be done
 	}
-	// If all the elements in the shared range yielded false comparisons.
-	if(notEqualCounter == minLength && notEqualCounter > nullCounter) return notEqual;
-	// If there was a null comperison on non disjoint arrays.
+
+	// if all the elements in the shared range yielded false comparisons
+	if(notEqualCounter == minLength && notEqualCounter > nullCounter) {
+		return notEqual;
+	}
+
+	// if there was a null comperison on non disjoint arrays
 	if(nullCounter && arrayALen == arrayBLen) {
 		if(disjointOrNull) *disjointOrNull = COMPARED_NULL;
 		return notEqual;
 	}
-	// If there was a difference in some member, without any null compare.
+
+	// if there was a difference in some member, without any null compare
 	if(notEqual) return notEqual;
-	// In this state, the common range is equal. We return lenDiff, which is 0 in case the lists are equal, and not 0 otherwise.
+
+	// in this state
+	// the common range is equal
+	// we return lenDiff, which is 0 in case the lists are equal
+	// and not 0 otherwise
 	return lenDiff;
 }
 
@@ -797,7 +936,10 @@ void SIValue_HashUpdate
 }
 
 // hash SIValue
-XXH64_hash_t SIValue_HashCode(SIValue v) {
+XXH64_hash_t SIValue_HashCode
+(
+	SIValue v
+) {
 	// initialize the hash state
 	XXH64_state_t state;
 	XXH_errorcode res = XXH64_reset(&state, 0);
@@ -877,33 +1019,35 @@ SIValue SIValue_FromBinary
 	return v;
 }
 			
-void SIValue_Free(SIValue v) {
-	// The free routine only performs work if it owns a heap allocation.
+void SIValue_Free
+(
+	SIValue v
+) {
+	// the free routine only performs work if it owns a heap allocation
 	if(v.allocation != M_SELF) return;
 
 	switch(v.type) {
-	case T_STRING:
-		rm_free(v.stringval);
-		v.stringval = NULL;
-		return;
-	case T_NODE:
-	case T_EDGE:
-		rm_free(v.ptrval);
-		return;
-	case T_ARRAY:
-		SIArray_Free(v);
-		return;
-	case T_PATH:
-		SIPath_Free(v);
-		return;
-	case T_MAP:
-		Map_Free(v);
-		break;
-	case T_VECTOR_F32:
-		SIVector_Free(v);
-		return;
-	default:
-		return;
+		case T_STRING:
+			SI_StringValFree(&v);
+			return;
+		case T_NODE:
+		case T_EDGE:
+			rm_free(v.ptrval);
+			return;
+		case T_ARRAY:
+			SIArray_Free(v);
+			return;
+		case T_PATH:
+			SIPath_Free(v);
+			return;
+		case T_MAP:
+			Map_Free(v);
+			break;
+		case T_VECTOR_F32:
+			SIVector_Free(v);
+			return;
+		default:
+			return;
 	}
 }
 

@@ -2,14 +2,14 @@
 // GB_type_code_get: convert a GB_Type_code to a GrB_Type_Code
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #include "get_set/GB_get_set.h"
 
-GrB_Type_Code GB_type_code_get  // return the GrB_Type_Code for the code
+int GB_type_code_get  // return the GrB_Type_Code for the code
 (
     const GB_Type_code code     // type code to convert
 )

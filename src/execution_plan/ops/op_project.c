@@ -35,6 +35,7 @@ OpBase *NewProjectOp
 	OpBase_Init((OpBase *)op, OPType_PROJECT, "Project", NULL, ProjectConsume,
 				ProjectReset, NULL, ProjectClone, ProjectFree, false, plan);
 
+
 	for(uint i = 0; i < op->exp_count; i++) {
 		// the projected record will associate values with their resolved name
 		// to ensure that space is allocated for each entry

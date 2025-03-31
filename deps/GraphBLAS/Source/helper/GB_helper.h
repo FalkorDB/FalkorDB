@@ -2,12 +2,12 @@
 // GB_helper.h: helper functions for @GrB interface
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// These functions are only used by the @GrB interface for
+// These functions are only used by the @GrB MATLAB/Octave interface for
 // SuiteSparse:GraphBLAS.
 
 #ifndef GB_HELPER_H
@@ -16,68 +16,26 @@
 #include "GB.h"
 #include "math/GB_math.h"
 
-double GB_helper0 (void) ;
-
-void GB_helper1              // convert zero-based indices to one-based
+void GB_helper5             // construct pattern of S
 (
-    double *restrict I_double,   // output array
-    const GrB_Index *restrict I, // input array
-    int64_t nvals                   // size of input and output arrays
-) ;
-
-void GB_helper1i             // convert zero-based indices to one-based
-(
-    int64_t *restrict I,         // input/output array
-    int64_t nvals                   // size of input/output array
-) ;
-
-bool GB_helper3              // return true if OK, false on error
-(
-    int64_t *restrict List,      // size len, output array
-    const double *restrict List_double, // size len, input array
-    int64_t len,
-    int64_t *List_max               // also compute the max entry in the list
-) ;
-
-bool GB_helper3i             // return true if OK, false on error
-(
-    int64_t *restrict List,      // size len, output array
-    const int64_t *restrict List_int64, // size len, input array
-    int64_t len,
-    int64_t *List_max               // also compute the max entry in the list
-) ;
-
-bool GB_helper4              // return true if OK, false on error
-(
-    const GrB_Index *restrict I, // array of size len
-    const int64_t len,
-    GrB_Index *List_max             // find max (I) + 1
-) ;
-
-void GB_helper5              // construct pattern of S
-(
-    GrB_Index *restrict Si,         // array of size anz
-    GrB_Index *restrict Sj,         // array of size anz
-    const GrB_Index *restrict Mi,   // array of size mnz, M->i
-    const GrB_Index *restrict Mj,   // array of size mnz
-    const int64_t mvlen,               // M->vlen
-    GrB_Index *restrict Ai,         // array of size anz, A->i
-    const int64_t avlen,               // M->vlen
-    const GrB_Index anz
+    // output:
+    uint64_t *restrict Si,          // array of size anz
+    uint64_t *restrict Sj,          // array of size anz
+    // input:
+    const void *Mi,                 // array of size mnz, M->i, may be NULL
+    const bool Mi_is_32,            // if true, M->i is 32-bit; else 64-bit
+    const uint64_t *restrict Mj,    // array of size mnz
+    const int64_t mvlen,            // M->vlen
+    const void *Ai,                 // array of size anz, A->i, may be NULL
+    const bool Ai_is_32,            // if true, A->i is 32-bit; else 64-bit
+    const int64_t avlen,            // A->vlen
+    const uint64_t anz
 ) ;
 
 void GB_helper7              // Kx = uint64 (0:mnz-1)
 (
-    uint64_t *restrict Kx,       // array of size mnz
-    const GrB_Index mnz
-) ;
-
-void GB_helper8
-(
-    GB_void *C,         // output array of size nvals * s
-    GB_void *A,         // input scalar of size s
-    GrB_Index nvals,    // size of C
-    size_t s            // size of each scalar
+    uint64_t *restrict Kx,      // array of size mnz
+    const uint64_t mnz
 ) ;
 
 double GB_helper10       // norm (x-y,p), or -1 on error
@@ -88,10 +46,12 @@ double GB_helper10       // norm (x-y,p), or -1 on error
     bool y_iso,                 // true if x is iso
     GrB_Type type,              // GrB_FP32 or GrB_FP64
     int64_t p,                  // 0, 1, 2, INT64_MIN, or INT64_MAX
-    GrB_Index n
+    uint64_t n
 ) ;
 
-void GB_make_shallow (GrB_Matrix A) ;
+GxB_Container GB_helper_container (void) ;  // return the global Container
+void GB_helper_container_new (void) ;       // allocate the global Container
+void GB_helper_container_free (void) ;      // free the global Container
 
 #endif
 

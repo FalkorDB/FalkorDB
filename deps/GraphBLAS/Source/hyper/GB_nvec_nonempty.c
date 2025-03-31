@@ -2,7 +2,7 @@
 // GB_nvec_nonempty: count the number of non-empty vectors
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -57,14 +57,27 @@ int64_t GB_nvec_nonempty        // return # of non-empty vectors
     //--------------------------------------------------------------------------
 
     int64_t nvec_nonempty = 0 ;
-    const int64_t *restrict Ap = A->p ;
-
     int64_t k ;
-    #pragma omp parallel for num_threads(nthreads) schedule(static) \
-            reduction(+:nvec_nonempty)
-    for (k = 0 ; k < anvec ; k++)
-    { 
-        if (Ap [k] < Ap [k+1]) nvec_nonempty++ ;
+
+    if (A->p_is_32)
+    {
+        const uint32_t *restrict Ap = A->p ;
+        #pragma omp parallel for num_threads(nthreads) schedule(static) \
+                reduction(+:nvec_nonempty)
+        for (k = 0 ; k < anvec ; k++)
+        { 
+            if (Ap [k] < Ap [k+1]) nvec_nonempty++ ;
+        }
+    }
+    else
+    {
+        const uint64_t *restrict Ap = A->p ;
+        #pragma omp parallel for num_threads(nthreads) schedule(static) \
+                reduction(+:nvec_nonempty)
+        for (k = 0 ; k < anvec ; k++)
+        { 
+            if (Ap [k] < Ap [k+1]) nvec_nonempty++ ;
+        }
     }
 
     ASSERT (nvec_nonempty >= 0 && nvec_nonempty <= A->vdim) ;

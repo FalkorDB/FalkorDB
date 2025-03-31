@@ -1,55 +1,75 @@
-
 [![Dockerhub](https://img.shields.io/docker/pulls/falkordb/falkordb?label=Docker)](https://hub.docker.com/r/falkordb/falkordb/)
 [![Discord](https://img.shields.io/discord/1146782921294884966?style=flat-square)](https://discord.gg/6M4QwDXn2w)
 [![codecov](https://codecov.io/gh/falkordb/falkordb/graph/badge.svg?token=0G4HBEJMW0)](https://codecov.io/gh/falkordb/falkordb)
 [![Workflow](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/FalkorDB/FalkorDB/actions/workflows/build.yml)
 
-# FalkorDB
-[![Try Free](https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge&link=https://app.falkordb.cloud)](https://app.falkordb.cloud)
+# FalkorDB - Graph Database for GraphRAG & GenAI
 
-**Our objective is to create an outstanding Knowledge Graph specifically for Large Language Models (LLM) that boasts exceptionally low latency, ensuring swift delivery of information through our Graph Database, known as KG-RAG.**
+A scalable, low-latency graph database designed for development teams managing structured and unstructured interconnected data in real-time or interactive environments.
 
-[FalkorDB](https://www.falkordb.com) is the first queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to use [sparse matrices](https://en.wikipedia.org/wiki/Sparse_matrix) to represent the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](http://faculty.cse.tamu.edu/davis/GraphBLAS.html) to query the graph.
+[![Try Free](https://img.shields.io/badge/Try%20Free-FalkorDB%20Cloud-FF8101?labelColor=FDE900&style=for-the-badge&link=https://app.falkordb.cloud)](https://app.falkordb.cloud)<br>
 
-Primary features:
-* Adopting the [Property Graph Model](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc)
-  * Nodes (vertices) and Relationships (edges) that may have attributes
-  * Nodes can have multiple labels
-  * Relationships have a relationship type
-* Graphs represented as sparse adjacency matrices
-* [OpenCypher](http://www.opencypher.org/) with proprietary extensions as a query language
-  * Queries are translated into linear algebra expressions
+![FalkorDB Graph Database](/assets/header.jpg)
 
-To see FalkorDB in action, visit [Demos](https://github.com/FalkorDB/FalkorDB/tree/master/demo).
+## UNIQUE FEATURES
 
-## Quickstart
+Our goal is to build a high-performance Knowledge Graph tailored for Large Language Models (LLMs), prioritizing exceptionally low latency to ensure fast and efficient information delivery through our Graph Database.
 
-1. [Trying FalkorDB](#give-it-a-try)
-2. [Build](#building)
-3. [Start](#loading-falkordb-into-redis)
-4. [Use from any client](#using-falkordb)
-5. [Documentation](https://docs.falkordb.com/)
+🆕 [FalkorDB](https://www.falkordb.com/) is the first **queryable [Property Graph](https://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) database to leverage sparse matrices** for representing the [adjacency matrix](https://en.wikipedia.org/wiki/Adjacency_matrix) in graphs and [linear algebra](https://en.wikipedia.org/wiki/Adjacency_matrix) for querying.
 
-## Give it a try
+### Key Features
+
+* **Sparse Matrix Representation**: Utilizes sparse matrices to represent adjacency matrices, optimizing storage and performance.
+
+
+* **Linear Algebra Querying**: Employs linear algebra for query execution, enhancing computational efficiency.
+
+
+* **Property Graph Model Compliance**: Supports nodes and relationships with attributes, adhering to the Property Graph Model.
+
+
+* **OpenCypher Support:** Compatible with [OpenCypher](ttps://github.com/opencypher/openCypher/blob/master/docs/property-graph-model.adoc) query language, including proprietary extensions for advanced querying capabilities.
+
+>Explore FalkorDB in action by visiting the [Demos](https://github.com/FalkorDB/FalkorDB/tree/master/demo).
+
+## DOCUMENTATION
+
+[Official Docs](https://docs.falkordb.com/) | [Clients](https://docs.falkordb.com/clients.html) | [Commands](https://docs.falkordb.com/commands/) | 📊 [Latest Performance Benchmarks](https://benchmark.falkordb.com/)
+
+### Community and Support
+
+* **Discussions**: Join our community discussions on [GitHub Discussions](https://github.com/FalkorDB/FalkorDB/discussions) to ask questions, share ideas, and connect with other users.
+
+* **Contributing**: We welcome contributions! Please see our [Contributing Guide](https://github.com/FalkorDB/FalkorDB/blob/master/CONTRIBUTING.md) for more details.
+
+* **License**: This project is licensed under the Server Side Public License v1 (SSPLv1). See the [LICENSE](https://github.com/FalkorDB/FalkorDB/blob/master/LICENSE.txt) file for details.
+
+## GET STARTED
+
+### Step 1
 
 To quickly try out FalkorDB, launch an instance using docker:
 
 ```
-docker run -p 6379:6379 -it --rm -v ./data:/data falkordb/falkordb:edge
+docker run -p 6379:6379 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
 ```
 
 Or, to use the built-in browser-based interface, run:
 
 ```
-docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/data falkordb/falkordb:edge
+docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb:edge
 ```
+
+### Step 2
 
 Then, open your browser and navigate to `http://localhost:3000`.
 
 
-You can also interact with FalkorDB using any of the supported [client libraries](#Client-libraries)
+You can also interact with FalkorDB using any of the supported [Client Libraries](https://docs.falkordb.com/clients.html)
 
-Here we'll use [FalkorDB Python client](https://pypi.org/project/FalkorDB/) to create a small graph representing a subset of motorcycle riders and teams taking part in the MotoGP league, once created we'll start querying our data.
+### MotoGP League Example
+
+In this example, we'll use the [FalkorDB Python client](https://pypi.org/project/FalkorDB/) to create a small graph representing a subset of motorcycle riders and teams participating in the MotoGP league. After creating the graph, we'll query the data to explore its structure and relationships.
 
 ```python
 from falkordb import FalkorDB
@@ -81,42 +101,39 @@ print(res.result_set[0][0])
 # Prints: 1
 ```
 
-## Building
+## START BUILDING
 
 ### Compiling
 
-Requirements:
+Make sure to complete these requirements:
 
-* The FalkorDB repository: `git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git`
+1️⃣ The FalkorDB repository: `git clone --recurse-submodules -j8 https://github.com/FalkorDB/FalkorDB.git`
 
-* On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
+>On Ubuntu Linux, run: `apt-get install build-essential cmake m4 automake peg libtool autoconf python3 python3-pip`
+	
+>On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
+>>The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
 
-* On OS X, verify that `homebrew` is installed and run: `brew install cmake m4 automake peg libtool autoconf`.
-    * The version of Clang that ships with the OS X toolchain does not support OpenMP, which is a requirement for FalkorDB. One way to resolve this is to run `brew install gcc g++` and follow the on-screen instructions to update the symbolic links. Note that this is a system-wide change - setting the environment variables for `CC` and `CXX` will work if that is not an option.
-
-To build, run `make` in the project's directory.
+2️⃣ Build by running `make` in the project's directory.
 
 Congratulations! You can find the compiled binary at `bin/<arch>/src/falkordb.so`.
 
 ### Running tests
 
-First, install required Python packages by running ```pip install -r requirements.txt``` from the ```tests``` directory.
+Start by installing the required Python packages by running ```pip install -r requirements.txt``` from the ```tests``` directory.
 
-If you've got ```redis-server``` in PATH, just invoke ```make test```.
-
-Otherwise, invoke ```REDIS_SERVER=<redis-server-location> make test```.
-
-For more verbose output, run ```make test V=1```.
+> Note: If you've got ```redis-server``` in PATH, just invoke ```make test```. Otherwise, invoke ```REDIS_SERVER=<redis-server-location> make test```. For a more verbose output, run ```make test V=1```.
 
 ### Building in a docker
 
 The FalkorDB build system runs within docker. For detailed instructions on building, please [see here](https://docs.falkordb.com/docker-examples/README.html).
 
-## Loading FalkorDB into Redis
+## LOADING FALKORDB INTO REDIS
 
-FalkorDB is hosted by [Redis](https://redis.io), so you'll first have to load it as a Module to a Redis server. [Redis 6.2](https://redis.io/download) is required for FalkorDB 2.12.
+FalkorDB is hosted by [Redis](https://redis.io), so you'll first have to load it as a Module to a Redis server. 
+> Note: [Redis 6.2](https://redis.io/download) is required for FalkorDB 2.12.
 
-We recommend having Redis load FalkorDB during startup by adding the following to your redis.conf file:
+💡 We recommend having Redis load FalkorDB during startup by adding the following to your redis.conf file:
 
 ```
 loadmodule /path/to/module/src/falkordb.so
@@ -151,9 +168,9 @@ If the server fails to launch with output similar to:
 
 The system is missing the run-time dependency OpenMP. This can be installed on Ubuntu with `apt-get install libgomp1`, on RHEL/CentOS with `yum install libgomp`, and on OSX with `brew install libomp`.
 
-## Using FalkorDB
+## USING FALKORDB
 
-You can call FalkorDB's commands from any Redis client.
+You can call FalkorDB's commands from any Redis client. Here are several methods:
 
 ### With `redis-cli`
 
@@ -166,9 +183,9 @@ $ redis-cli
 
 You can interact with FalkorDB using your client's ability to send raw Redis commands.
 
-Depending on your client of choice, the exact method for doing that may vary.
+>Note: Depending on your client of choice, the exact method for doing that may vary.
 
-#### Python example
+#### Example: Using FalkorDB with a Python client
 
 This code snippet shows how to use FalkorDB with from Python using [falkordb-py](https://github.com/FalkorDB/falkordb-py):
 
@@ -184,16 +201,18 @@ g = db.select_graph('social')
 reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'married'})")
 ```
 
-### Client libraries
+## CLIENT LIBRARIES
 
-Some languages have client libraries that provide support for FalkorDB's commands:
+>Note: Some languages have client libraries that provide support for FalkorDB's commands:
 
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
-| [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | ![Stars][jfalkordb-stars] | [Maven][jfalkordb-package]||
-| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-py-stars] | [pypi][falkordb-py-package]||
-| [falkordb-ts][falkordb-ts-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | ![Stars][falkordb-ts-stars] | [npm][falkordb-ts-package]||
-| [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | ![Stars][nredisstack-stars] | [nuget][nredisstack-package]||
+| [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | [![jfalkordb-stars]][jfalkordb-url] | [Maven][jfalkordb-package]||
+| [falkordb-py][falkordb-py-url] | Python | MIT | [FalkorDB][falkordb-url] | [![falkordb-py-stars]][falkordb-py-url] | [pypi][falkordb-py-package]||
+| [falkordb-ts][falkordb-ts-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | [![falkordb-ts-stars]][falkordb-ts-url] | [npm][falkordb-ts-package]||
+| [falkordb-rs][falkordb-rs-url] | Rust | MIT | [FalkorDB][falkordb-url] | [![falkordb-rs-stars]][falkordb-rs-url] | [Crate][falkordb-rs-package]||
+| [falkordb-go][falkordb-go-url] | Go | BSD | [FalkorDB][falkordb-url] | [![falkordb-go-stars]][falkordb-go-url] | [GitHub][falkordb-go-url]||
+| [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | [![nredisstack-stars]][nredisstack-url] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
 | [redgraph][redgraph-url]                                  | Ruby       | MIT     | [pzac][redgraph-author]                | [![redgraph-stars]][redgraph-url]                                 | [GitHub][redgraph-url] ||
 | [redisgraph-go][redisgraph-go-url]                        | Go         | BSD     | [Redis][redisgraph-go-author]          | [![redisgraph-go-stars]][redisgraph-go-url]                       | [GitHub][redisgraph-go-url]||
@@ -227,6 +246,14 @@ Some languages have client libraries that provide support for FalkorDB's command
 [falkordb-ts-url]: https://github.com/falkordb/falkordb-ts
 [falkordb-ts-stars]: https://img.shields.io/github/stars/falkordb/falkordb-ts.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [falkordb-ts-package]: https://www.npmjs.com/package/falkordb
+
+[falkordb-rs-url]: https://github.com/falkordb/falkordb-rs
+[falkordb-rs-stars]: https://img.shields.io/github/stars/falkordb/falkordb-rs.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-rs-package]: https://crates.io/crates/falkordb
+
+[falkordb-go-url]: https://github.com/falkordb/falkordb-go
+[falkordb-go-stars]: https://img.shields.io/github/stars/falkordb/falkordb-go.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[falkordb-go-package]: https://github.com/falkordb/falkordb-go
 
 [redisgraph-rb-author]: https://redislabs.com
 [redisgraph-rb-url]: https://github.com/RedisGraph/redisgraph-rb
@@ -293,6 +320,12 @@ Some languages have client libraries that provide support for FalkorDB's command
 [rustis-author]: https://github.com/dahomey-technologies
 [rustis-stars]: https://img.shields.io/github/stars/dahomey-technologies/rustis.svg?style=social&amp;label=Star&amp;maxAge=2592000
 
-## License
+## LICENSE
 
 Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE.txt).
+
+### Support our work
+
+⭐️ If you find this repository helpful, please consider giving it a star!
+
+↗️ Graph, graph database, RAG, graphrag, Retrieval-Augmented Generation,Information Retrieval, Natural Language Processing, LLM, Embeddings, Semantic Search

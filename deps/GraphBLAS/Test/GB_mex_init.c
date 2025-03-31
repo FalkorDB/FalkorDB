@@ -2,7 +2,7 @@
 // GB_mex_init: initialize GraphBLAS
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -23,7 +23,7 @@ void mexFunction
     const mxArray *pargin [ ]
 )
 {
-    mexPrintf ("usage:\n%s\n", USAGE) ;
+//  mexPrintf ("usage:\n%s\n", USAGE) ;
 
     // finalize GraphBLAS but tell it that it can be called again
     GB_mx_at_exit ( ) ;
@@ -43,7 +43,7 @@ void mexFunction
     GxB_Global_Option_get_(GxB_NTHREADS, &nthreads) ;
     pargout [0] = mxCreateDoubleScalar (nthreads) ;
 
-    GxB_Format_Value format ;
+    int format ;
     GxB_Global_Option_get_(GxB_FORMAT, &format) ;
     pargout [1] = mxCreateDoubleScalar (format) ;
 
@@ -106,24 +106,6 @@ void mexFunction
     for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
     {
         bswitch [k] = bitmap_switch [k] ;
-    }
-
-    for (int k = 0 ; k < GxB_NBITMAP_SWITCH ; k++)
-    {
-        printf ("bitmap_switch [%d] = %g ", k, bswitch [k]) ;
-        if (k == 0)
-        {
-            printf ("for vectors and matrices with 1 row or column\n") ;
-        }
-        else if (k == GxB_NBITMAP_SWITCH - 1) 
-        {
-            printf ("for matrices with min dimension > %d\n", 1 << (k-1)) ;
-        }
-        else
-        {
-            printf ("for matrices with min dimension %d to %d\n",
-                (1 << (k-1)) + 1, 1 << k) ;
-        }
     }
 
     // finalize GraphBLAS but tell it that it can be called again

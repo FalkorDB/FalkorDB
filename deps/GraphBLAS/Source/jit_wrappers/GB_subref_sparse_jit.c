@@ -2,7 +2,7 @@
 // GB_subref_sparse_jit: C=A(I,J) when C and A are sparse/hypersparse
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,19 +21,21 @@ GrB_Info GB_subref_sparse_jit
     const int ntasks,                   // # of tasks
     const int nthreads,                 // # of threads to use
     const bool post_sort,               // true if post-sort needed
-    const int64_t *Mark,                // for I inverse buckets, size A->vlen
-    const int64_t *Inext,               // for I inverse buckets, size nI
+    const void *Ihead,                  // for I inverse buckets, size A->vlen
+    const void *Inext,                  // for I inverse buckets, size nI
+    const bool Ihead_is_32,             // if true, Ihead/Inext 32-bit; else 64
     const bool I_has_duplicates,        // true if I has duplicates
     // from phase0:
-    const int64_t *restrict Ap_start,
-    const int64_t *restrict Ap_end,
+    const void *Ap_start,
+    const void *Ap_end,
     const bool need_qsort,
     const int Ikind,
     const int64_t nI,
     const int64_t Icolon [3],
     // original input:
     const GrB_Matrix A,
-    const GrB_Index *I
+    const void *I,
+    const bool I_is_32
 )
 { 
 
@@ -44,8 +46,8 @@ GrB_Info GB_subref_sparse_jit
     GB_jit_encoding encoding ;
     char *suffix ;
     uint64_t hash = GB_encodify_subref (&encoding, &suffix,
-        GB_JIT_KERNEL_SUBREF_SPARSE, C, Ikind, 0,
-        need_qsort, I_has_duplicates, A) ;
+        GB_JIT_KERNEL_SUBREF_SPARSE, C, I_is_32, false, Ikind, 0,
+        need_qsort, Ihead_is_32, I_has_duplicates, A) ;
 
     //--------------------------------------------------------------------------
     // get the kernel function pointer, loading or compiling it if needed
@@ -62,8 +64,9 @@ GrB_Info GB_subref_sparse_jit
     // call the jit kernel and return result
     //--------------------------------------------------------------------------
 
+    #include "include/GB_pedantic_disable.h"
     GB_jit_dl_function GB_jit_kernel = (GB_jit_dl_function) dl_function ;
-    return (GB_jit_kernel (C, TaskList, ntasks, nthreads, post_sort, Mark,
+    return (GB_jit_kernel (C, TaskList, ntasks, nthreads, post_sort, Ihead,
         Inext, Ap_start, Ap_end, nI, Icolon, A, I, &GB_callback)) ;
 }
 

@@ -2,15 +2,15 @@
 // GB_AxB_saxbit: compute C=A*B, C<M>=A*B, or C<!M>=A*B; C bitmap
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
 #define GB_FREE_WORKSPACE                   \
 {                                           \
-    GB_FREE_WORK (&Wf, Wf_size) ;           \
-    GB_FREE_WORK (&Wcx, Wcx_size) ;         \
+    GB_FREE_MEMORY (&Wf, Wf_size) ;           \
+    GB_FREE_MEMORY (&Wcx, Wcx_size) ;         \
     GB_WERK_POP (H_slice, int64_t) ;        \
     GB_WERK_POP (A_slice, int64_t) ;        \
     GB_WERK_POP (M_ek_slicing, int64_t) ;   \
@@ -23,11 +23,9 @@
 }
 
 #include "mxm/GB_mxm.h"
-#include "include/GB_unused.h"
 #include "jitifyer/GB_stringify.h"
 #include "mxm/GB_AxB_saxpy.h"
 #include "binaryop/GB_binop.h"
-#include "slice/GB_ek_slice.h"
 #include "mxm/GB_AxB_saxpy_generic.h"
 #include "mxm/GB_AxB__include1.h"
 #ifndef GBCOMPACT
@@ -64,7 +62,7 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
 
     GrB_Info info ;
 
-    ASSERT (C != NULL && (C->static_header || GBNSTATIC)) ;
+    ASSERT (C != NULL && (C->header_size == 0 || GBNSTATIC)) ;
 
     ASSERT_MATRIX_OK_OR_NULL (M, "M for bitmap saxpy A*B", GB0) ;
     ASSERT (!GB_PENDING (M)) ;
@@ -118,11 +116,11 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
 
     GrB_Type ctype = semiring->add->op->ztype ;
     int64_t cnzmax = 1 ;
-    (void) GB_int64_multiply ((GrB_Index *) (&cnzmax), A->vlen, B->vdim) ;
-    // set C->iso = C_iso   OK
+    (void) GB_int64_multiply ((uint64_t *) (&cnzmax), A->vlen, B->vdim) ;
     GB_OK (GB_new_bix (&C, // existing header
-        ctype, A->vlen, B->vdim, GB_Ap_null, true, GxB_BITMAP, true,
-        GB_HYPER_SWITCH_DEFAULT, -1, cnzmax, true, C_iso)) ;
+        ctype, A->vlen, B->vdim, GB_ph_null, true, GxB_BITMAP, true,
+        GB_HYPER_SWITCH_DEFAULT, -1, cnzmax, true, C_iso,
+        /* OK: */ false, false, false)) ;
     C->magic = GB_MAGIC ;
 
     //--------------------------------------------------------------------------
@@ -140,7 +138,7 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
 
     if (M != NULL)
     { 
-        GB_SLICE_MATRIX (M, 8) ;
+        GB_SLICE_MATRIX2 (M, 8) ;
     }
 
     //--------------------------------------------------------------------------
@@ -167,7 +165,8 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
                 GB_FREE_ALL ;
                 return (GrB_OUT_OF_MEMORY) ;
             }
-            GB_p_slice (A_slice, A->p, A->nvec, nfine_tasks_per_vector, true) ;
+            GB_p_slice (A_slice, A->p, A->p_is_32, A->nvec,
+                nfine_tasks_per_vector, true) ;
         }
 
         //----------------------------------------------------------------------
@@ -229,8 +228,8 @@ GrB_Info GB_AxB_saxbit        // C = A*B where C is bitmap
             //------------------------------------------------------------------
 
             size_t csize = (C_iso) ? 0 : C->type->size ;
-            Wf  = GB_MALLOC_WORK (wspace, int8_t, &Wf_size) ;
-            Wcx = GB_MALLOC_WORK (wspace * csize, GB_void, &Wcx_size) ;
+            Wf  = GB_MALLOC_MEMORY (wspace, sizeof (int8_t), &Wf_size) ;
+            Wcx = GB_MALLOC_MEMORY (wspace, csize, &Wcx_size) ;
             if (Wf == NULL || Wcx == NULL)
             { 
                 // out of memory

@@ -2,7 +2,7 @@
 // GxB_Vector_build_Scalar: build a sparse GraphBLAS vector
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -18,10 +18,10 @@
 
 GrB_Info GxB_Vector_build_Scalar    // build a vector from (i,scalar) tuples
 (
-    GrB_Vector w,                   // vector to build
-    const GrB_Index *I,             // array of row indices of tuples
-    GrB_Scalar scalar,              // value for all tuples
-    GrB_Index nvals                 // number of tuples
+    GrB_Vector w,               // vector to build
+    const uint64_t *I,          // array of row indices of tuples
+    const GrB_Scalar scalar,    // value for all tuples
+    uint64_t nvals              // number of tuples
 )
 { 
 
@@ -29,11 +29,17 @@ GrB_Info GxB_Vector_build_Scalar    // build a vector from (i,scalar) tuples
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE (w, "GxB_Vector_build_Scalar (w, I, scalar, nvals)") ;
+    GB_RETURN_IF_NULL (w) ;
+    GB_RETURN_IF_NULL (scalar) ;
+    GB_RETURN_IF_OUTPUT_IS_READONLY (w) ;
+    GB_WHERE2 (w, scalar, "GxB_Vector_build_Scalar (w, I, scalar, nvals)") ;
     GB_BURBLE_START ("GxB_Vector_build_Scalar") ;
-    GB_RETURN_IF_NULL_OR_FAULTY (w) ;
-    GB_RETURN_IF_NULL_OR_FAULTY (scalar) ;
     ASSERT (GB_VECTOR_OK (w)) ;
+
+    //--------------------------------------------------------------------------
+    // finish any pending work
+    //--------------------------------------------------------------------------
+
     GB_MATRIX_WAIT (scalar) ;
     if (GB_nnz ((GrB_Matrix) scalar) != 1)
     { 
@@ -44,8 +50,10 @@ GrB_Info GxB_Vector_build_Scalar    // build a vector from (i,scalar) tuples
     // build the vector
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GB_build ((GrB_Matrix) w, I, NULL, scalar->x, nvals,
-        GxB_IGNORE_DUP, scalar->type, false, true, Werk) ;
+    info = GB_build ((GrB_Matrix) w, I, NULL, scalar->x, nvals,
+        GxB_IGNORE_DUP, scalar->type,
+        /* is_matrix: */ false, /* X_iso: */ true,
+        /* I,J is 32: */ false, false, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

@@ -2,7 +2,7 @@
 // GxB_IndexUnaryOp_ztype_name: return the type_name of z for z=f(x,i,j,y)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2023, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -21,7 +21,7 @@ GrB_Info GxB_IndexUnaryOp_ztype_name    // return the name of the type of z
     // check inputs
     //--------------------------------------------------------------------------
 
-    GB_WHERE1 ("GxB_IndexUnaryOp_ztype_name (type_name, op)") ;
+    GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (type_name) ;
     GB_RETURN_IF_NULL_OR_FAULTY (op) ;
     ASSERT_INDEXUNARYOP_OK (op, "op for ztype_name", GB0) ;

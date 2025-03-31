@@ -2,7 +2,7 @@
 // GB_subassign_methods.h: definitions for GB_subassign methods
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2024, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -25,9 +25,11 @@ GrB_Info GB_subassign_symbolic  // S = C(I,J), extracting pattern not values
     GrB_Matrix S,           // S = symbolic(C(I,J)), static header
     // inputs, not modified:
     const GrB_Matrix C,     // matrix to extract the pattern of
-    const GrB_Index *I,     // index list for S = C(I,J), or GrB_ALL, etc
+    const void *I,          // I index list
+    const bool I_is_32,
     const int64_t ni,       // length of I, or special
-    const GrB_Index *J,     // index list for S = C(I,J), or GrB_ALL, etc
+    const void *J,          // J index list
+    const bool J_is_32,
     const int64_t nj,       // length of J, or special
     const bool S_must_not_be_jumbled,   // if true, S cannot be jumbled
     GB_Werk Werk
@@ -41,12 +43,14 @@ GrB_Info GB_subassign_zombie
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -62,12 +66,14 @@ GrB_Info GB_subassign_01
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -85,12 +91,14 @@ GrB_Info GB_subassign_02
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -107,12 +115,14 @@ GrB_Info GB_subassign_03
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -131,12 +141,14 @@ GrB_Info GB_subassign_04
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -154,12 +166,14 @@ GrB_Info GB_subassign_05
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -193,12 +207,14 @@ GrB_Info GB_subassign_06n
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -217,12 +233,14 @@ GrB_Info GB_subassign_06s_and_14
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -242,12 +260,14 @@ GrB_Info GB_subassign_07
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -268,12 +288,14 @@ GrB_Info GB_subassign_08n
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -293,12 +315,14 @@ GrB_Info GB_subassign_09
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -318,12 +342,14 @@ GrB_Info GB_subassign_10_and_18
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -343,12 +369,14 @@ GrB_Info GB_subassign_11
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -369,19 +397,21 @@ GrB_Info GB_subassign_12_and_20
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
     const int64_t Jcolon [3],
     const GrB_Matrix M,
-    const bool Mask_comp,
-    const bool Mask_struct,
+    const bool Mask_comp,           // if true, !M, else use M
+    const bool Mask_struct,         // if true, use the only structure of M
     const GrB_BinaryOp accum,
     const GrB_Matrix A,
     GB_Werk Werk
@@ -395,12 +425,14 @@ GrB_Info GB_subassign_13
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -420,12 +452,14 @@ GrB_Info GB_subassign_15
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -447,12 +481,14 @@ GrB_Info GB_subassign_08s_and_16
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -473,12 +509,14 @@ GrB_Info GB_subassign_17
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -498,12 +536,14 @@ GrB_Info GB_subassign_19
 (
     GrB_Matrix C,
     // input:
-    const GrB_Index *I,
+    const void *I,              // I index list
+    const bool I_is_32,
     const int64_t ni,
     const int64_t nI,
     const int Ikind,
     const int64_t Icolon [3],
-    const GrB_Index *J,
+    const void *J,              // J index list
+    const bool J_is_32,
     const int64_t nj,
     const int64_t nJ,
     const int Jkind,
@@ -513,38 +553,6 @@ GrB_Info GB_subassign_19
     const GrB_BinaryOp accum,
     const void *scalar,
     const GrB_Type scalar_type,
-    GB_Werk Werk
-) ;
-
-//------------------------------------------------------------------------------
-// GB_subassign_08n_slice: slice the entries and vectors for GB_subassign_08n
-//------------------------------------------------------------------------------
-
-GrB_Info GB_subassign_08n_slice
-(
-    // output:
-    GB_task_struct **p_TaskList,    // array of structs, of size max_ntasks
-    size_t *p_TaskList_size,        // size of TaskList
-    int *p_ntasks,                  // # of tasks constructed
-    int *p_nthreads,                // # of threads to use
-    int64_t *p_Znvec,               // # of vectors to compute in Z
-    const int64_t *restrict *Zh_handle,  // Zh_shallow is A->h, M->h, or NULL
-    int64_t *restrict *Z_to_A_handle,    // Z_to_A: size Znvec, or NULL
-    size_t *Z_to_A_size_handle,
-    int64_t *restrict *Z_to_M_handle,    // Z_to_M: size Znvec, or NULL
-    size_t *Z_to_M_size_handle,
-    // input:
-    const GrB_Matrix C,             // output matrix C
-    const GrB_Index *I,
-    const int64_t nI,
-    const int Ikind,
-    const int64_t Icolon [3],
-    const GrB_Index *J,
-    const int64_t nJ,
-    const int Jkind,
-    const int64_t Jcolon [3],
-    const GrB_Matrix A,             // matrix to slice
-    const GrB_Matrix M,             // matrix to slice
     GB_Werk Werk
 ) ;
 

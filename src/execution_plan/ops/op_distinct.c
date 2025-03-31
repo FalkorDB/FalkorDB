@@ -55,23 +55,38 @@ static unsigned long long _compute_hash
 	return hash;
 }
 
-// create a new distinct operation
+// compute record offset to distinct values
+static void _updateOffsets
+(
+	OpDistinct *op,
+	Record r
+) {
+	ASSERT(op->aliases != NULL);
+	ASSERT(op->offsets != NULL);
+
+	for(uint i = 0; i < op->offset_count; i++) {
+		uint offset = Record_GetEntryIdx(r, op->aliases[i], strlen(op->aliases[i]));
+		ASSERT(offset != INVALID_INDEX);
+		op->offsets[i] = offset;
+	}
+}
+
 OpBase *NewDistinctOp
 (
-	const ExecutionPlan *plan,  // execution plan
-	const char **aliases,       // distinct aliases
-	uint alias_count            // number of distinct expressions
+	const ExecutionPlan *plan,
+	const char **aliases,
+	uint alias_count
 ) {
-	ASSERT(plan        != NULL);
-	ASSERT(aliases     != NULL);
+	ASSERT(aliases != NULL);
 	ASSERT(alias_count > 0);
 
 	OpDistinct *op = rm_calloc(1, sizeof(OpDistinct));
 
 	op->found        = HashTableCreate(&def_dt);
+	op->mapping      = NULL;
 	op->aliases      = rm_malloc(alias_count * sizeof(const char *));
 	op->offset_count = alias_count;
-	op->offsets      = rm_calloc(op->offset_count, sizeof(int));
+	op->offsets      = rm_calloc(op->offset_count, sizeof(uint));
 
 	// copy aliases into heap array managed by this op
 	memcpy(op->aliases, aliases, alias_count * sizeof(const char *));
@@ -166,4 +181,3 @@ static void DistinctFree
 		op->offsets = NULL;
 	}
 }
-
