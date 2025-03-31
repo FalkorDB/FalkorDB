@@ -217,7 +217,6 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans
 
 		// migrate projection
 		if(t == OPType_PROJECT || t == OPType_AGGREGATE) {
-			// TODO: see if there's a migrate_op function
 			// remove projection operation from sub-plan
 			ExecutionPlan_RemoveOp(sub_plan, op);
 
@@ -225,9 +224,8 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans
 			OpBase_BindOpToPlan(op, joint_plan);
 
 			if(sub_plan->root != NULL) {
-				// sub_plan isn't empty
-				// connect projection operation to the sub-plan root
-				OpBase_AddChild(op, sub_plan->root);
+				// connect op to sub_plan
+				ExecutionPlan_AddOp(op, sub_plan->root);
 			} else {
 				// empty plan, free it
 				ExecutionPlan_Free(sub_plan);
@@ -263,7 +261,7 @@ static ExecutionPlan *_ExecutionPlan_UnionPlans
 			// add new projection to joint-plan and connect it to the root
 			// of the sub-plan
 			op = NewProjectOp(joint_plan, exps);
-			OpBase_AddChild(op, sub_plan->root);
+			ExecutionPlan_AddOp(op, sub_plan->root);
 		}
 
 		// add projection operation as a child of JOIN

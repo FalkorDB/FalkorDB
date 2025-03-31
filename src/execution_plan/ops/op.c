@@ -411,38 +411,6 @@ inline uint OpBase_ChildCount
 	return op->childCount;
 }
 
-// sets a child parent relationship between parent and child
-// child must be an orphan
-void OpBase_AddChild
-(
-	OpBase *restrict parent,  // parent operation
-	OpBase *restrict child    // child operation
-) {
-	ASSERT(parent        != NULL);
-	ASSERT(child         != NULL);
-	ASSERT(child         != parent);
-	//ASSERT(child->parent == NULL || child->parent == parent);
-
-	// add child to parent
-	if(parent->children == NULL) {
-		parent->children = rm_malloc(sizeof(OpBase *));
-	} else {
-		parent->children = rm_realloc(parent->children, sizeof(OpBase *) * (parent->childCount + 1));
-	}
-
-	// validate child isn't already in parent's children array
-#ifdef RG_DEBUG
-	for(int i = 0; i < parent->childCount; i++) {
-		ASSERT(parent->children[i] != child);
-	}
-#endif
-
-	parent->children[parent->childCount++] = child;
-
-	// add parent to child
-	child->parent = parent;
-}
-
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (

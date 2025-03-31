@@ -115,7 +115,7 @@ OpBase *ExecutionPlan_LocateOpMatchingTypes
 
 	// scan through root children
 	for(int i = 0; i < root->childCount; i++) {
-		OpBase *child = root->children[i];
+		OpBase *child = OpBase_GetChild(root, i);
 
 		// make sure child isn't blacklisted
 		bool blacklisted = false;
@@ -150,8 +150,7 @@ OpBase *ExecutionPlan_LocateOp
 ) {
 	if(!root) return NULL;
 
-	const OPType type_arr[1] = {type};
-	return ExecutionPlan_LocateOpMatchingTypes(root, type_arr, 1, NULL, 0);
+	return ExecutionPlan_LocateOpMatchingTypes(root, &type, 1, NULL, 0);
 }
 
 // searches for an operation of a given type, up to the given depth in the
@@ -314,8 +313,8 @@ OpBase **ExecutionPlan_CollectOps
 // it is the callers responsibility to free the returned array
 OpBase **ExecutionPlan_CollectAllOps
 (
-	const ExecutionPlan *plan, // plan to collect ops from
-	uint *n                    // [output] number of ops collected
+	const ExecutionPlan *plan,  // plan to collect ops from
+	uint *n                     // [output] number of ops collected
 ) {
 	ASSERT(n    != NULL);
 	ASSERT(plan != NULL);
@@ -349,15 +348,9 @@ OpBase **ExecutionPlan_CollectAllOps
 		}
 	}
 
-	// collect downwards using parent pointer
+	// no need to collect downwards
 	OpBase *current = plan->root->parent;
-	while(current != NULL && current->plan == plan) {
-		ops = rm_realloc(ops, sizeof(OpBase*) * (e + 1));
-		ops[e++] = current;
-
-		// move on to the next parent
-		current = current->parent;
-	}
+	ASSERT(current == NULL || current->plan != plan);
 
 	*n = e;
 	return ops;

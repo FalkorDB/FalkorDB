@@ -99,11 +99,13 @@ static OpResult CallSubqueryInit
 
 	// set the lhs (supplier) branch to be the first child, and rhs branch
 	// (body) to be the second
-	if(op->op.childCount == 2) {
-		op->lhs = op->op.children[0];
-		op->body = op->op.children[1];
+	ASSERT(OpBase_ChildCount(opBase) <= 2);
+
+	if(OpBase_ChildCount(opBase) == 2) {
+		op->lhs  = OpBase_GetChild(opBase, 0);
+		op->body = OpBase_GetChild(opBase, 1);
 	} else {
-		op->lhs = NULL;
+		op->lhs  = NULL;
 		op->body = op->op.children[0];
 	}
 
@@ -125,10 +127,10 @@ static OpResult CallSubqueryInit
 	//
 	// search for a Join op
 
-	OPType match     = OPType_JOIN;
+	OPType t         = OPType_JOIN;
 	OPType blacklist = OPType_CALLSUBQUERY;
-	OpBase *op_join = ExecutionPlan_LocateOpMatchingTypes(op->body,
-			&match, 1, &blacklist, 1);
+	OpBase *op_join  = ExecutionPlan_LocateOpMatchingTypes(op->body, &t, 1,
+			&blacklist, 1);
 
 	if(op_join != NULL) {
 		uint n_branches = OpBase_ChildCount((OpBase *)op_join);

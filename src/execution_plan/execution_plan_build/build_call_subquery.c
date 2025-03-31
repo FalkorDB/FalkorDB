@@ -161,7 +161,8 @@ static bool _bind_projecting_ops_to_plan
 	} else {
 		// there's a UNION operation
 		// migrate all operations within the UNION plan
-		// that includes projections / distinct & join
+		// that includes projections, distinct & join
+		ASSERT(join_op->plan == embedded_plan);
 
 		// collect all reachable operations within the join plan
 		uint n;  // number of ops

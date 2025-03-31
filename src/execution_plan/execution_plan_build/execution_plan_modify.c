@@ -326,10 +326,10 @@ void ExecutionPlan_BindOpsToPlan
 // binds all ops in `ops` to `plan`, other than ops of type `exclude_type`
 void ExecutionPlan_MigrateOpsExcludeType
 (
-	OpBase *ops[],              // array of ops to bind
-	OPType exclude_type,        // type of ops to exclude
-	uint op_count,              // number of ops in the array
-	const ExecutionPlan *plan   // plan to bind the ops to
+	OpBase *ops[],             // array of ops to bind
+	OPType exclude_type,       // type of ops to exclude
+	uint op_count,             // number of ops in the array
+	const ExecutionPlan *plan  // plan to bind the ops to
 ) {
 	for(uint i = 0; i < op_count; i++) {
 		if(ops[i]->type != exclude_type) {
@@ -337,3 +337,4 @@ void ExecutionPlan_MigrateOpsExcludeType
 		}
 	}
 }
+

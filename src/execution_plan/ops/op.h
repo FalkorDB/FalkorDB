@@ -205,14 +205,6 @@ uint OpBase_ChildCount
 	const OpBase *op
 );
 
-// sets a child parent relationship between parent and child
-// child must be an orphan
-void OpBase_AddChild
-(
-	OpBase *restrict parent,  // parent operation
-	OpBase *restrict child    // child operation
-);
-
 // returns the i'th child of the op
 OpBase *OpBase_GetChild
 (
