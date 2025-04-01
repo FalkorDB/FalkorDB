@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "cmd_acl.h"
+#include "./util/sds.h"
 #include "../globals.h"
 #include "../redismodule.h"
 #include "../graph/graphcontext.h"
@@ -34,13 +35,13 @@ static void free_command_category
 // create a new RedisModuleString with the given prefix
 // and the given command
 // the prefix is a single character that will be added to the command
-// the command is a string that will be copied to the new string
+// the command is a string that will be copied to the new RedisModuleString
 // returns NULL on failure
-// the caller is responsible for freeing the returned string
-RedisModuleString * _create_command_with_prefix
+// the caller is responsible for freeing the returned RedisModuleString
+RedisModuleString *_create_command_with_prefix
 (
-	char  ch,          // the prefix that will be attached to the command
-	const char *cmd    // the string representing the command
+	char  ch,        // the prefix that will be attached to the command
+	const char *cmd  // the string representing the command
 );
 
 //------------------------------------------------------------------------------
@@ -57,7 +58,7 @@ static CommandCategory *ACL_GRAPH_READONLY_USER = NULL;
 // create a new CommandCategory structure
 // with the given commands_str and name
 // returns NULL on failure
-static CommandCategory* _create_command_category
+static CommandCategory *_create_command_category
 (
 	RedisModuleCtx *ctx,       // redis module context
 	const char *commands_str,  // space seperated list of redis commands
@@ -80,7 +81,7 @@ static CommandCategory* _create_command_category
 	// parse the (space separated) commands string to array of commands
 	category->commands = array_new(char*, 0);
 	category->redis_module_commands_minus = array_new(RedisModuleString*, 0);
-	category->redis_module_commands_plus = array_new(RedisModuleString*, 0);
+	category->redis_module_commands_plus  = array_new(RedisModuleString*, 0);
 
 	char *token, *saveptr;
 	char *commands_copy = rm_strdup(commands_str);
@@ -101,6 +102,7 @@ static CommandCategory* _create_command_category
 			rm_free(commands_copy);
 			goto cleanup;
 		}
+
 		array_append(category->commands, cmd);
 	
 		// add the command to the minus and plus arrays
@@ -121,26 +123,30 @@ static CommandCategory* _create_command_category
 // create a new RedisModuleString with the given prefix
 // and the given command
 // the prefix is a single character that will be added to the command
-// the command is a string that will be copied to the new string
+// the command is a string that will be copied to the new RedisModuleString
 // returns NULL on failure
-// the caller is responsible for freeing the returned string
-RedisModuleString * _create_command_with_prefix
+// the caller is responsible for freeing the returned RedisModuleString
+RedisModuleString *_create_command_with_prefix
 (
-	char  ch,          // the prefix that will be attached to the command
-	const char *cmd    // the string representing the command
+	char ch,         // the prefix that will be attached to the command
+	const char *cmd  // the string representing the command
 ) {
 
 	ASSERT(cmd != NULL);
+	ASSERT(ch == '-' || ch == '+');
 	
 	size_t cmd_len = strlen(cmd);
-	char *prefixed_cmd = rm_malloc(cmd_len + 2);
+	char *prefixed_cmd = rm_malloc(cmd_len + 2);  // prefix + \0
 	if(prefixed_cmd == NULL) {
 		return NULL;
 	}
+
 	prefixed_cmd[0] = ch;
 	memcpy(prefixed_cmd + 1, cmd, cmd_len + 1); // +1 to copy null terminator
 	RedisModuleString *str = RedisModule_CreateString(NULL, prefixed_cmd,
 		cmd_len + 1);
+	// TODO: consider switcing to
+	REDISMODULE_API RedisModuleString * (*RedisModule_CreateStringPrintf)(RedisModuleCtx *ctx, const char *fmt, ...) REDISMODULE_ATTR_PRINTF(2,3) REDISMODULE_ATTR;
 	rm_free(prefixed_cmd);
 	return str;
 }
@@ -227,7 +233,6 @@ int init_cmd_acl
 		return REDISMODULE_ERR;
 }
 
-
 // checks if given command is part of the graph ACL categoty
 // returns true if the cmd is part of the categoty, false otherwise
 static bool _command_in_category
@@ -240,7 +245,6 @@ static bool _command_in_category
 	ASSERT(category->commands != NULL);
 
 	for(int i = 0; i < array_len(category->commands); i++) {
-	
 		if(strcasecmp(cmd, category->commands[i]) == 0) {
 			return true;
 		}
@@ -268,6 +272,7 @@ static bool _command_in_category
 // to acl_args
 // returns true if the category was expanded, false otherwise
 //
+// TODO: give a proper example
 // example:
 // GRAPH.ACL SETUSER foo +@graph.acl.admin
 static bool _expand_acl_pseudo_category
@@ -303,7 +308,7 @@ static bool _expand_acl_pseudo_category
 		return false;
 	}
 
-	// arg refers to categoty
+	// arg refers to category
 	int n = *acl_argc;
 	for(int i = 0; i < array_len(category->commands); i++) {
 		acl_args[n++] = commands[i];
@@ -361,26 +366,27 @@ static int _compute_expand_offset
 	return res;
 }
 
-// prepare arguments for redis ACL SETUSER command, remove permissionts that
-// are not in ACL_GRAPH_ADMIN, ACL_GRAPH_READONLY_USER or ACL_GRAPH_USER. 
+// prepare arguments for redis ACL SETUSER command, remove permissions that
+// are not in ACL_GRAPH_ADMIN, ACL_GRAPH_READONLY_USER or ACL_GRAPH_USER 
 // argv is of the form ["SETUSER", "user1", "on", "+@admin", ...]
-// We should copy every argument that does not start with a "+" or "-"
-// We should *NOT* copy any argument that, when stripped of the "+" or "-",
+// we should copy every argument that does not start with a "+" or "-"
+// we should *NOT* copy any argument that, when stripped of the "+" or "-",
 // is not in ACL_GRAPH_ADMIN, ACL_GRAPH_READONLY_USER or ACL_GRAPH_USER 
-// (case insensitive) We should *NOT* copy any argument that,
-//  after being stripped of the "+" or "-", does not start with one of the
+// (case insensitive) we should *NOT* copy any argument that
+// after being stripped of the "+" or "-" does not start with one of the
 // values from ACL_GRAPH_ADMIN, ACL_GRAPH_READONLY_USER or ACL_GRAPH_USER
 // followed by '|' (case insensitive)
-// This function allocates a new RedisModuleString ***argv_ptr and releases 
+//
+// this function allocates a new RedisModuleString ***argv_ptr and releases 
 // the old one
 // also expand the pseudo categories @graph-admin, @graph-user and
 // @graph-readonly-user
 // return REDISMODULE_OK on success, REDISMODULE_ERR on failure
 static int _senitaze_acl_setuser
 (
-	RedisModuleCtx *ctx, 
-	RedisModuleString ***argv_ptr,
-	int *argc 
+	RedisModuleCtx *ctx,            // 
+	RedisModuleString ***argv_ptr,  // 
+	int *argc                       // 
 ) {
 	ASSERT(*argc                   > 0);
 	ASSERT(ctx                     != NULL);
@@ -391,169 +397,161 @@ static int _senitaze_acl_setuser
 	ASSERT(ACL_GRAPH_READONLY_USER != NULL);
 	
 	int expand_offset = _compute_expand_offset(ctx, *argv_ptr, *argc);
-	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_DEBUG, 
-		"expand_offset: %d", expand_offset);
 
 	RedisModuleString **argv = *argv_ptr;
 	RedisModuleString **acl_args = 
 		rm_malloc(sizeof(RedisModuleString*) * (*argc + expand_offset));
 
-	if (acl_args == NULL) {
+	if(acl_args == NULL) {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
 		"Failed to allocate memory for ACL arguments.");
 		return REDISMODULE_ERR;
 	}
 
 	int acl_argc = 0;
-	// iterate over the items in GRAPH_ADMIN, 
+	// iterate over the items in GRAPH_ADMIN
 	// ACL_GRAPH_USER and ACL_GRAPH_READONLY_USER and use _command_in_category
 	// to check if the command is allowed
-	for (int i = 0; i < *argc; i++) {
+	for(int i = 0; i < *argc; i++) {
 		const char *arg_str = RedisModule_StringPtrLen(argv[i], NULL);
-		if (arg_str[0] != '+' && arg_str[0] != '-') {
+		if(arg_str[0] != '+' && arg_str[0] != '-') {
 			acl_args[i] = argv[i];
 			acl_argc++;
 			continue;
 		}
+
+		// skip '+' | '-' sign
+		arg_str++;
+
 		// if it is one of the pseudo categories 
 		// (@graph-admin, @graph-user or @graph-readonly-user), expand it
 		// and add the commands to acl_args
-		if (_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i],
+		if(_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i],
 			ACL_GRAPH_ADMIN)) {
 			continue;
 		}
-		if (_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i],
+
+		if(_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i],
 			ACL_GRAPH_USER)) {
 			continue;
 		}
-		if (_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i],
+
+		if(_expand_acl_pseudo_category(acl_args, &acl_argc, argv[i],
 			ACL_GRAPH_READONLY_USER)) {
 			continue;
 		}
 
 		// check if the command is in the graph admin category
-		bool allowed = _command_in_category(arg_str + 1, ACL_GRAPH_ADMIN); 
+		bool allowed = _command_in_category(arg_str, ACL_GRAPH_ADMIN); 
 		
 		// same for ACL_GRAPH_USER
-		allowed = allowed || _command_in_category(arg_str + 1, ACL_GRAPH_USER);
+		allowed = allowed || _command_in_category(arg_str, ACL_GRAPH_USER);
 
 		// same for ACL_GRAPH_READONLY_USER
-		allowed = allowed || _command_in_category(arg_str + 1, 
-			ACL_GRAPH_READONLY_USER);
+		allowed = allowed || _command_in_category(arg_str,
+				ACL_GRAPH_READONLY_USER);
 
-		// if the command is in anny of the categories, add it to acl_args
-		// otherwise skip it
-		if (allowed) {
+		// if the command is in any of the categories
+		// add it to acl_args otherwise skip it
+		if(allowed) {
 			acl_args[i] = argv[i];
 			acl_argc++;
 		}
 	}
 
+	// update argv_ptr
 	rm_free(argv);
-	*argc = acl_argc;
+	*argc     = acl_argc;
 	*argv_ptr = acl_args;
+
 	return REDISMODULE_OK;
 
 	cleanup:
 		rm_free(argv);
 		rm_free(acl_args);
+		*argc     = 0;
 		*argv_ptr = NULL;
-		*argc = 0;
 		return REDISMODULE_ERR;
 }
 
-// This function should be called with the ADMIN_USER in context.
-// The username is the user that calls the GRAPH.ACL SETUSER command.
-// The command uses the Redis module high-level API to call the Redis 
-// ACL SETUSER command.
-// An example of argv is: ["GRAPH.ACL", "SETUSER", "user1", "+@admin"].
+// this function should be called with the ADMIN_USER in context
+// the username is the user that calls the GRAPH.ACL SETUSER command
+// the command uses the Redis module high-level API to call the Redis 
+// ACL SETUSER command
+// an example of argv is: ["GRAPH.ACL", "SETUSER", "user1", "+@admin"]
 // argv can be of arbitrary length because the user can stack multiple ACL 
-// commands as can be done in the Redis ACL SETUSER command.
-// In case the command is SETUSER, it uses 
+// commands as can be done in the Redis ACL SETUSER command
+// in case the command is SETUSER, it uses 
 // remove_setuser_forbidden_permissions to clean the arguments from permissions 
-// that are not allowed for graph users.
+// that are not allowed for graph users
 static int _execute_acl_cmd_fn
 (
-	RedisModuleCtx *ctx, 
-	RedisModuleString **argv, 
-	int argc, 
-	const char *username, 
-	void *privdata
+	RedisModuleCtx *ctx,       //
+	RedisModuleString **argv,  //
+	int argc,                  //
+	const char *username,      //
+	void *privdata             //
 ) {
+	ASSERT(argc     > 0);
 	ASSERT(ctx      != NULL);
 	ASSERT(argv     != NULL);
-	ASSERT(argc     > 0);
 	ASSERT(username != NULL);
 
-	int acl_argc = argc - 1;
-	// Construct the correct arguments for RedisModule_Call
+	// construct the correct arguments for RedisModule_Call
 	// remove the GRAPH.ACL part from the arguments
-	RedisModuleString **acl_args = 
-		rm_malloc(sizeof(RedisModuleString*) * acl_argc);
-	if(acl_args == NULL) {
-		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
-		"Failed to allocate memory for ACL arguments.");
-		RedisModule_ReplyWithError(ctx, "FAILED");
-		return REDISMODULE_ERR;
-	}
 
-	// remove the command name (GRAPH.ACL) from the arguments
-	for(int i = 1; i < argc; i++) {
-		acl_args[i - 1] = argv[i];
-	} 
+	argv++;
+	int acl_argc = argc - 1;
 
-	// If the subcommand is SETUSER, we need to filter acl_args to 
-	// remove permissions that are not allowed.
+	// if the subcommand is SETUSER, we need to filter argv to 
+	// remove permissions that are not allowed
 	// expand @graph-user, @graph-admin and @graph-readonly-user
 	if(strcasecmp(RedisModule_StringPtrLen(argv[1], NULL), "SETUSER") == 0) {
-
-		if(_senitaze_acl_setuser(ctx, &acl_args, &acl_argc) 
+		if(_senitaze_acl_setuser(ctx, &argv, &acl_argc) 
 			!= REDISMODULE_OK) {
-			rm_free(acl_args);
 			RedisModule_ReplyWithError(ctx, "FAILED");
 			return REDISMODULE_ERR;
 		}
 	}
 	
 	// just for log level debug
-	char log_msg[1024 * 8]; 
-	log_msg[0] = '\0'; 
-
-	// Append each argument to the log message
+#ifdef RG_DEBUG
+	sds msg = sdsempty();
+	// append each argument to the log message
 	for(int i = 0; i < acl_argc; i++) {
-		const char *arg_str = RedisModule_StringPtrLen(acl_args[i], NULL);
+		const char *arg_str = RedisModule_StringPtrLen(argv[i], NULL);
 		if(i > 0) {
-			strncat(log_msg, " ", sizeof(log_msg) - strlen(log_msg) - 1);
+			msg = sdscat(msg, ' ');
 		}
-		strncat(log_msg, arg_str, sizeof(log_msg) - strlen(log_msg) - 1);
+		msg = sdscat(msg, arg_str);
 	}
 
 	RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_DEBUG,
-		"delegating to execute ACL command '%s'",log_msg);
+		"delegating to execute ACL command '%s'", msg);
+	sds_free(msg);
+#endif
 		
 	RedisModuleCallReply *reply = 
-		RedisModule_Call(ctx, "ACL", "v", acl_args, acl_argc);
+		RedisModule_Call(ctx, "ACL", "v", argv);
 	
 	if(reply == NULL) {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
-			"Failed to execute ACL command '%s'. Error: %d",log_msg, errno);
+			"Failed to execute ACL command '%s'. Error: %d", log_msg, errno);
 		RedisModule_ReplyWithError(ctx, "FAILED");
-		rm_free(acl_args); 
 		return REDISMODULE_ERR;
 	}
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);
-	rm_free(acl_args); 
 	return REDISMODULE_OK;
 }
 
 // call execute_acl_userset_func with the ADMIN_USER in context
 static int _execute_acl_cmd_as_admin
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString **argv,
-	int argc
+	RedisModuleCtx *ctx,       //
+	RedisModuleString **argv,  //
+	int argc                   // 
 ) {
 	ASSERT(ctx  != NULL);
 	ASSERT(argv != NULL);
@@ -562,12 +560,12 @@ static int _execute_acl_cmd_as_admin
 		ADMIN_USER, NULL);
 }
 
-
+// TODO: comments / description / purpose...
 int graph_acl_cmd
 (
-	RedisModuleCtx *ctx,
-	RedisModuleString **argv,
-	int argc
+	RedisModuleCtx *ctx,       // 
+	RedisModuleString **argv,  //
+	int argc                   // 
 ) {
 	ASSERT(ctx  != NULL);
 	ASSERT(argv != NULL);
@@ -577,14 +575,16 @@ int graph_acl_cmd
 	}
 
  	const char *command = RedisModule_StringPtrLen(argv[1], NULL);
+
 	if(strcasecmp(command, "SETUSER") == 0) {
 		if (argc < 3) {
 			return RedisModule_WrongArity(ctx);
 		}
-		RedisModuleString *subject = argv[2];
 
-		// if the subject is ADMIN_USER return
-		if(strcasecmp(RedisModule_StringPtrLen(subject, NULL), ADMIN_USER) == 0) {
+		RedisModuleString *sub = argv[2];
+
+		// if the sub is ADMIN_USER return
+		if(strcasecmp(RedisModule_StringPtrLen(sub, NULL), ADMIN_USER) == 0) {
 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
 				"Cannot change the ACL of the default user.");
 			RedisModule_ReplyWithError(ctx, "FAILED");
@@ -593,28 +593,31 @@ int graph_acl_cmd
 
 		// execute the command as admin using redis ACL
 		return _execute_acl_cmd_as_admin(ctx, argv, argc);
-	}else if(strcasecmp(command, "SAVE") == 0) {
+
+	} else if(strcasecmp(command, "SAVE") == 0) {
 		if(argc != 2) {
 			return RedisModule_WrongArity(ctx);
 		}
+
 		return _execute_acl_cmd_as_admin(ctx, argv, argc);
-	}else if (strcasecmp(command, "GETUSER") == 0) {
+	} else if(strcasecmp(command, "GETUSER") == 0) {
 		if(argc < 3) {
 			return RedisModule_WrongArity(ctx);
 		}
 	
-		RedisModuleString *subject = argv[2];
-		// if the subject is ADMIN_USER return
-		if(strcmp(RedisModule_StringPtrLen(subject, NULL), ADMIN_USER) == 0) {
+		RedisModuleString *sub = argv[2];
+		// if the sub is ADMIN_USER return
+		if(strcmp(RedisModule_StringPtrLen(sub, NULL), ADMIN_USER) == 0) {
 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 				"Cannot change the ACL of the default user.");
 			RedisModule_ReplyWithError(ctx, "FAILED");
 			return REDISMODULE_ERR;
 		}
+
 		// execute the command as admin using redis ACL
 		return _execute_acl_cmd_as_admin(ctx, argv, argc);
 
-	}else {
+	} else {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 			"Unknown command: GRAPH.ACL %s", command);
 		RedisModule_ReplyWithError(ctx, "Unknown command");

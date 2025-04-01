@@ -251,6 +251,7 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
+	// TODO: rephrase
 	// let use ovveride the default admin user that use with the impersonate
 	// commands, default is 'default'
 	init_run_cmd_as(ctx);
