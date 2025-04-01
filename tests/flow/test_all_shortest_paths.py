@@ -283,3 +283,39 @@ class testAllShortestPaths():
 
         actual_result = self.cyclic_graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
+
+    def test07_all_shortest_unconnected_nodes(self):
+        # running against following graph
+        #
+        # (v1)-[:E]->(v2)-[:E]->(v3)-[:E]->(v4)
+        # (v1)-[:E]->(v5)-[:E2]->(v4)
+        # (v2)-[:E2]->(v4)
+        # (v6)-[:E]->(v7)
+
+        v6 = Node(alias="v6", labels="L", properties={"v": 6})
+        v7 = Node(alias="v7", labels="L", properties={"v": 7})
+        e6 = Edge(v6, "E", v7, properties={"weight": 1})
+
+        query = f"""CREATE {v6}, {v7}, {e6}"""
+        self.graph.query(query)
+
+        query = """MATCH (v1 {v: 1}), (v6 {v: 6})
+                   WITH v1, v6
+                   MATCH p = allShortestPaths((v1)-[*]->(v6))
+                   RETURN nodes(p) AS nodes
+                   ORDER BY nodes"""
+
+        actual_result = self.graph.query(query)
+        # No results should be found
+        expected_result = []
+        self.env.assertEqual(actual_result.result_set, expected_result)
+
+        # Verify that a right-to-left traversal produces the same results
+        query = """MATCH (v1 {v: 1}), (v6 {v: 6})
+                   WITH v1, v6
+                   MATCH p = allShortestPaths((v6)<-[*]-(v1))
+                   RETURN nodes(p) AS nodes
+                   ORDER BY nodes"""
+
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, expected_result)
