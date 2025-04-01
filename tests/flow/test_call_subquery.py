@@ -2275,3 +2275,17 @@ updating clause.")
         self.env.assertEquals(res.nodes_created, 1)
         self.env.assertEquals(len(res.result_set), 0)
 
+    def test35_no_input(self):
+        # discovered by Celine Wuest
+        # call sub query should be invoked once for each input record
+        # the following doesn't produce any input records and as such the
+        # sub-query should be invoked and no side-effects should be visible
+
+        queries = ["UNWIND null AS n0 CALL { MERGE () }",
+                   "UNWIND null AS n0 CALL { WITH * MERGE () }"]
+
+        for q in queries:
+            res = self.graph.query(q)
+            self.env.assertEquals(res.nodes_created, 0)
+            self.env.assertEquals(len(res.result_set), 0)
+
