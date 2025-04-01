@@ -500,6 +500,8 @@ static int _execute_acl_cmd_fn
 
 	argv++;
 	argc--;
+	
+	bool should_free_argv = false;
 
 	// if the subcommand is SETUSER, we need to filter argv to 
 	// remove permissions that are not allowed
@@ -510,6 +512,7 @@ static int _execute_acl_cmd_fn
 			RedisModule_ReplyWithError(ctx, "FAILED");
 			return REDISMODULE_ERR;
 		}
+		should_free_argv = true;
 	}
 	
 	// just for log level debug
@@ -536,11 +539,17 @@ static int _execute_acl_cmd_fn
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 			"Failed to execute ACL command, Error: %d", errno);
 		RedisModule_ReplyWithError(ctx, "FAILED");
+		if(should_free_argv) {
+			rm_free(argv);
+		}
 		return REDISMODULE_ERR;
 	}
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);
+	if(should_free_argv) {
+		rm_free(argv);
+	}
 	return REDISMODULE_OK;
 }
 
