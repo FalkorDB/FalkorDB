@@ -7,15 +7,17 @@
 
 #include "../../redismodule.h"
 
-extern char *ADMIN_USER;
+// TODO: explain this varaiable
+extern char *ACL_ADMIN_USER;
 
-typedef int (*RedisCommandAsUserFunc)(RedisModuleCtx *ctx,
-	RedisModuleString **argv, int argc, const char *username, void *privdata);
+// TODO: explain this function signature
+typedef int (*RedisFunc)(RedisModuleCtx *ctx,
+	RedisModuleString **argv, int argc, void *privdata);
 
-// initialize the impersonate mechanism
-// this function will be called once at the beginning of the module
-// it will read the environment variable GRAPH_ADMIN_USER
-// and set the ADMIN_USER variable to the value of the environment variable
+// initialize the impersonation mechanism
+// this function will be called once at the beginning of the module load
+// it will read the environment variable $GRAPH_ADMIN_USER
+// and set the AC_ADMIN_USER variable to the value of the environment variable
 // if the environment variable is not set, the default value will be 'default'
 void init_run_cmd_as
 (
@@ -31,16 +33,17 @@ void init_run_cmd_as
 // and REDISMODULE_ERR on failure
 int run_redis_command_as
 (
-	RedisModuleCtx *ctx,         // redis module context
-	RedisModuleString **argv,    // the arguments to call
-	int argc,                    // the number of arguments
-	RedisCommandAsUserFunc cmd,  // the command to call
-	const char *username,        // the username to switch to
-	void *privdata               // optional private data
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // the arguments to call
+	int argc,                  // the number of arguments
+	RedisFunc cmd,             // the command to call
+	const char *username,      // the username to switch to
+	void *privdata             // optional private data
 );
 
-// free the impersonate mechanism
-// this function will be called once at the end of the module
-// it will free the ADMIN_USER variable
+// free the impersonation mechanism
+// this function will be called once on module unload
+// it will free the ACL_ADMIN_USER variable
 // the function should be called only once
 void free_run_cmd_as(void); 
+

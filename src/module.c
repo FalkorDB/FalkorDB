@@ -159,6 +159,8 @@ int RedisModule_OnLoad
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
 
+	init_acl_admin_username(ctx);  // set ACL ADMIN username
+
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPools_ReadersCount());
 
@@ -251,12 +253,7 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
-	// TODO: rephrase
-	// let use ovveride the default admin user that use with the impersonate
-	// commands, default is 'default'
-	init_run_cmd_as(ctx);
-
-	if (init_cmd_acl(ctx) == REDISMODULE_OK) {
+	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
 		if(RedisModule_CreateCommand(ctx, "graph.ACL", graph_acl_cmd,
 					"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
 			return REDISMODULE_ERR;

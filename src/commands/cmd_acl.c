@@ -264,7 +264,6 @@ static bool _command_in_category
 // to acl_args
 // returns true if the category was expanded, false otherwise
 //
-// TODO: give a proper example
 // example, for acl_args:
 // ["GRAPH.ACL", "SETUSER", "falkordb-admin", "on", ">pass", "+@graph-admin"]
 // +@graph-admin should expand to all the commands in the
@@ -323,8 +322,8 @@ static bool _expand_acl_pseudo_category
 static int _compute_expand_offset
 (
 	RedisModuleCtx *ctx,            // redis module context
-	RedisModuleString **acl_args,   // [input/output]
-	int acl_argc                    // 
+	RedisModuleString **acl_args,   // [input/output] ACL command args
+	int acl_argc                    // number of elements in acl_args
 ) {
 	ASSERT(ctx                     != NULL);
 	ASSERT(acl_args                != NULL);
@@ -383,9 +382,9 @@ static int _compute_expand_offset
 static int _senitaze_acl_setuser
 (
 	RedisModuleCtx *ctx,            // the redis module context
-	RedisModuleString ***argv_ptr,  // a pointer to the arguments to be 
-	                                // sanitized, input and output
-	int *argc                       // the number of arguments
+	RedisModuleString ***argv_ptr,  // [input/output] a pointer to the arguments
+	                                // to be sanitized
+	int *argc                       // number of arguments
 ) {
 	ASSERT(*argc                   > 0);
 	ASSERT(ctx                     != NULL);
@@ -414,8 +413,7 @@ static int _senitaze_acl_setuser
 	for(int i = 0; i < *argc; i++) {
 		const char *arg_str = RedisModule_StringPtrLen(argv[i], NULL);
 		if(arg_str[0] != '+' && arg_str[0] != '-') {
-			acl_args[i] = argv[i];
-			acl_argc++;
+			acl_args[acl_argc++] = argv[i];
 			continue;
 		}
 
@@ -453,8 +451,7 @@ static int _senitaze_acl_setuser
 		// if the command is in any of the categories
 		// add it to acl_args otherwise skip it
 		if(allowed) {
-			acl_args[i] = argv[i];
-			acl_argc++;
+			acl_args[acl_argc++] = argv[i];
 		}
 	}
 
@@ -465,7 +462,6 @@ static int _senitaze_acl_setuser
 	return REDISMODULE_OK;
 
 	cleanup:
-		rm_free(argv);
 		rm_free(acl_args);
 		*argc     = 0;
 		*argv_ptr = NULL;
@@ -547,9 +543,11 @@ static int _execute_acl_cmd_fn
 
 	RedisModule_ReplyWithCallReply(ctx, reply);
 	RedisModule_FreeCallReply(reply);
+
 	if(should_free_argv) {
 		rm_free(argv);
 	}
+
 	return REDISMODULE_OK;
 }
 
