@@ -57,5 +57,5 @@ int Graph_Slowlog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int CommandDispatch(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int Graph_Constraint(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int graph_acl_cmd(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
-int graph_password_cmd(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int Graph_SetPassword(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 

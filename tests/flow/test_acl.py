@@ -191,7 +191,7 @@ class testACL():
            v = self.db.execute_command("GRAPH.PASSWORD", "FOO", "BAR")  
            self.env.assertTrue(False, "should throw unknown command error")
         except redis.exceptions.ResponseError as e:
-           self.env.assertContains("Unknown command", str(e))    
+           self.env.assertContains("Unknown sub-command", str(e))    
         
     def test101_add_password(self):
         v = self.db.execute_command("AUTH", "falkordb-user", "pass") 

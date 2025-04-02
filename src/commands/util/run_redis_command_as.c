@@ -15,7 +15,7 @@ char *ACL_ADMIN_USER = "default";  // the default username
 // it will read the environment variable $GRAPH_ADMIN_USER
 // and set the AC_ADMIN_USER variable to the value of the environment variable
 // if the environment variable is not set, the default value will be 'default'
-void init_run_cmd_as
+void init_acl_admin_username
 (
 	RedisModuleCtx *ctx  // redis module context
 ) {
@@ -98,7 +98,7 @@ int run_redis_command_as
     }
 	
 	// managed to swtich, run function under new user
-	int res = cmd(ctx, argv, argc, redis_current_user_name, privdata);
+	int res = cmd(ctx, argv, argc, privdata);
 
 	// restore original user
 	if(_switch_user(ctx, redis_current_user_name, NULL) != REDISMODULE_OK) {
@@ -121,10 +121,10 @@ int run_redis_command_as
 // it will free the ACL_ADMIN_USER variable
 // the function should be called only once
 void free_run_cmd_as(void) {
-	ASSERT(ADMIN_USER != NULL);
+	ASSERT(ACL_ADMIN_USER != NULL);
 
 	if(strcmp(ACL_ADMIN_USER, "default") != 0) {
-		rm_free(ACL_ADMIN_USER);
+		free(ACL_ADMIN_USER);
 	}
 
 	ACL_ADMIN_USER = NULL;

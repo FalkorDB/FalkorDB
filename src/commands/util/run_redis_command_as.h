@@ -7,10 +7,14 @@
 
 #include "../../redismodule.h"
 
-// TODO: explain this varaiable
+// this variable will be set to the value of the environment variable
+// $GRAPH_ADMIN_USER
+// if the environment variable is not set, the default value will be 'default'
+// this variable will be used to run the command as admin user
 extern char *ACL_ADMIN_USER;
 
 // TODO: explain this function signature
+// this function will be used to run the command in the context of admin user
 typedef int (*RedisFunc)(RedisModuleCtx *ctx,
 	RedisModuleString **argv, int argc, void *privdata);
 
@@ -19,7 +23,7 @@ typedef int (*RedisFunc)(RedisModuleCtx *ctx,
 // it will read the environment variable $GRAPH_ADMIN_USER
 // and set the AC_ADMIN_USER variable to the value of the environment variable
 // if the environment variable is not set, the default value will be 'default'
-void init_run_cmd_as
+void init_acl_admin_username
 (
 	RedisModuleCtx *ctx  // redis module context
 );

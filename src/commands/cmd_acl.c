@@ -483,13 +483,11 @@ static int _execute_acl_cmd_fn
 	RedisModuleCtx *ctx,       // the redis module context
 	RedisModuleString **argv,  // the arguments to the command
 	int argc,                  // the number of arguments
-	const char *username,      // the username that called the command
 	void *privdata             // optional private data
 ) {
 	ASSERT(argc     > 0);
 	ASSERT(ctx      != NULL);
 	ASSERT(argv     != NULL);
-	ASSERT(username != NULL);
 
 	// construct the correct arguments for RedisModule_Call
 	// remove the GRAPH.ACL part from the arguments
@@ -562,7 +560,7 @@ static int _execute_acl_cmd_as_admin
 	ASSERT(argv != NULL);
 
 	return run_redis_command_as(ctx, argv, argc, _execute_acl_cmd_fn,
-		ADMIN_USER, NULL);
+		ACL_ADMIN_USER, NULL);
 }
 
 // this function is the main entry point for the GRAPH.ACL command
@@ -590,7 +588,8 @@ int graph_acl_cmd
 		RedisModuleString *sub = argv[2];
 
 		// if the sub is ADMIN_USER return
-		if(strcasecmp(RedisModule_StringPtrLen(sub, NULL), ADMIN_USER) == 0) {
+		if(strcasecmp(RedisModule_StringPtrLen(sub, NULL), ACL_ADMIN_USER) == 0) 
+		{
 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING, 
 				"Cannot change the ACL of the admin user.");
 			RedisModule_ReplyWithError(ctx, "FAILED");
@@ -613,7 +612,7 @@ int graph_acl_cmd
 	
 		RedisModuleString *sub = argv[2];
 		// if the sub is ADMIN_USER return
-		if(strcmp(RedisModule_StringPtrLen(sub, NULL), ADMIN_USER) == 0) {
+		if(strcmp(RedisModule_StringPtrLen(sub, NULL), ACL_ADMIN_USER) == 0) {
 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 				"Cannot read the ACL of the admin user.");
 			RedisModule_ReplyWithError(ctx, "FAILED");

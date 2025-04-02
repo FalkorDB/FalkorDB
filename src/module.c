@@ -260,7 +260,7 @@ int RedisModule_OnLoad
 		}
 	}
 
-	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", graph_password_cmd,
+	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", Graph_SetPassword,
 				"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
