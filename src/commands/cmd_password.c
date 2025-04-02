@@ -77,7 +77,7 @@ static int _set_password_with_prefix
 	char *passwordBuff = RedisModule_Alloc(passwordStrLen + 2);
 	snprintf(passwordBuff, passwordStrLen + 2, "%c%s", prefix, passwordStr);
 	int ret = _set_password_fun(ctx, username, passwordBuff);
-
+	RedisModule_Free(passwordBuff);
 	return ret;
 }
 
