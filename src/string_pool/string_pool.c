@@ -12,6 +12,12 @@
 
 pthread_key_t _tlsStringPool; // thread local storage string-pool access flag
 
+// StringPool structure
+struct OpaqueStringPool {
+	dict *ht;                  // hashtable
+	uint64_t total_ref_count;  // number of references
+};
+
 // key hash function
 static uint64_t hashFunc
 (
@@ -65,7 +71,10 @@ static const dictType _type = {
 // grant access to string-pool via TLS key
 // if a thread has this key set, access to the string pool is granted
 // otherwise the TLS key is NULL and access is denied
-void StringPool_grantAccessViaTLS(void* unused) {
+void StringPool_grantAccessViaTLS
+(
+	void* unused
+) {
 	ASSERT(unused == NULL);
 
 	int res = pthread_setspecific(_tlsStringPool, (const void*)1);
@@ -78,7 +87,12 @@ StringPool StringPool_create(void) {
 	int res = pthread_key_create(&_tlsStringPool, NULL);
 	ASSERT(res == 0);
 
-	return HashTableCreate(&_type);
+	StringPool pool = rm_malloc(sizeof(struct OpaqueStringPool));
+
+	pool->ht = HashTableCreate(&_type);
+	pool->total_ref_count = 0;
+
+	return pool;
 }
 
 // add a string to the pool
@@ -97,10 +111,11 @@ char *StringPool_rent
 	char *ret;            // returned string
 	dictEntry *existing;  // existing dict entry
 
-	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
+	dict *ht = pool->ht;
+	dictEntry *de = HashTableAddRaw(ht, (void*)str, &existing);
 	if(de != NULL) {
 		// new string
-		HashTableSetKey(pool, de, rm_strdup(str));
+		HashTableSetKey(ht, de, rm_strdup(str));
 	} else {
 		de = existing;
 	}
@@ -108,6 +123,9 @@ char *StringPool_rent
 	// increase string reference count
 	uint32_t *count = (uint32_t*)HashTableEntryMetadata(de);
 	*count = *count + 1;
+
+	// increase total reference count
+	pool->total_ref_count++;
 
 	ret = (char*)HashTableGetKey(de);
 	return ret;
@@ -127,7 +145,8 @@ char *StringPool_rentNoClone
 	char *ret;            // returned string
 	dictEntry *existing;  // existing dict entry
 
-	dictEntry *de = HashTableAddRaw(pool, (void*)str, &existing);
+	dict *ht = pool->ht;
+	dictEntry *de = HashTableAddRaw(ht, (void*)str, &existing);
 	if(de == NULL) {
 		de = existing;
 	}
@@ -135,6 +154,9 @@ char *StringPool_rentNoClone
 	// increase string reference count
 	uint32_t *count = (uint32_t*) HashTableEntryMetadata(de);
 	*count = *count + 1;
+
+	// increase total reference count
+	pool->total_ref_count++;
 
 	ret = (char*)HashTableGetKey(de);
 	return ret;
@@ -152,7 +174,8 @@ void StringPool_return
 	ASSERT(str  != NULL);	
 	ASSERT(pool != NULL);
 
-	dictEntry *de = HashTableFind(pool, str);
+	dict *ht = pool->ht;
+	dictEntry *de = HashTableFind(ht, str);
 
 	if(unlikely(de == NULL)) {
 		// str is missing from pool
@@ -165,11 +188,38 @@ void StringPool_return
 	// decrease reference count
 	*count = *count -1;
 
+	// decrease total reference count
+	pool->total_ref_count--;
+
 	// free entry if reference count reached 0
 	if(unlikely(*count == 0)) {
-		int res = HashTableDelete(pool, (const void *)str);
+		int res = HashTableDelete(ht, (const void *)str);
 		ASSERT(res == DICT_OK);
 	}
+}
+
+// get string pool statistics
+StringPoolStats StringPool_stats
+(
+	const StringPool pool  // string pool
+) {
+	StringPoolStats stats;  // statistics object to populate
+
+	uint64_t n_entries   = 0;
+	double avg_ref_count = 0;
+
+	if(pool != NULL) {
+		n_entries = HashTableElemCount(pool->ht);
+
+		if(n_entries > 0) {
+			avg_ref_count = (double)pool->total_ref_count / n_entries;
+		}
+	}
+
+	stats.n_entries     = n_entries;
+	stats.avg_ref_count = avg_ref_count;
+
+	return stats;
 }
 
 // free pool
@@ -182,7 +232,9 @@ void StringPool_free
 	StringPool p = *pool;
 
 	// free hashtable
-	HashTableRelease(p);
+	HashTableRelease(p->ht);
+
+	rm_free(*pool);
 
 	*pool = NULL;
 }

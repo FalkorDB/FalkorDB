@@ -36,24 +36,6 @@ static inline bool _blacklisted
 	return blacklisted;
 }
 
-// checks to see if op is aware of all references
-static inline bool _aware
-(
-	const OpBase *op,         // inspected operation
-	const char **references,  // references to resolve
-	uint n                    // number of refereces
-) {
-	// make sure op resolves all references
-	for(uint i = 0; i < n; i++) {
-		const char *ref = references[i];
-		if(HashTableFind(op->awareness, ref) == NULL) {
-			return false;
-		}
-	}
-
-	return true;
-}
-
 // traverse upwards as long as an operation that resolves all aliases is found
 // returns NULL if all aliases are not resolved
 static OpBase *_LocateOpResolvingAliases
@@ -68,7 +50,7 @@ static OpBase *_LocateOpResolvingAliases
 	ASSERT(root    != NULL);
 	ASSERT(aliases != NULL);
 
-	if(!_aware(root, aliases, n)) {
+	if(!OpBase_Aware(root, aliases, n)) {
 		// early return if root isn't aware of alias
 		return NULL;
 	}
@@ -99,7 +81,7 @@ static OpBase *_LocateOpResolvingAliases
 
 			// see if current child is aware of all aliases
 			// update 'ret' and break if child is aware of all aliases
-			new_ret = _aware(child, aliases, n);
+			new_ret = OpBase_Aware(child, aliases, n);
 			if(new_ret) {
 				ret = child;
 				break;
