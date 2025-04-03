@@ -86,14 +86,14 @@ bool EnforceUniqueEntity
 		AttributeID attr_id = _c->attrs[i];
 
 		// make sure entity possesses attribute
-		SIValue *v = AttributeSet_Get(attributes, attr_id);
-		if(v == ATTRIBUTE_NOTFOUND) {
+		SIValue v;
+		if(!AttributeSet_Get(attributes, attr_id, &v)) {
 			// entity satisfies constraint in a vacuous truth manner
 			return true;
 		}
 
 		// validate attribute type
-		SIType t = SI_TYPE(*v);
+		SIType t = SI_TYPE(v);
 		if(t & ~(T_STRING | T_BOOL | SI_NUMERIC)) {
 			// TODO: see RediSearch MULTI-VALUE index.
 			// TODO: RediSearch exact match for point.

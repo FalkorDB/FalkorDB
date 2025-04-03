@@ -134,10 +134,11 @@ static SIValue *Proc_NodeStep
 	}
 
 	if(pdata->yield_score) {
-		SIValue *v = GraphEntity_GetProperty((GraphEntity*)n, pdata->attr_id);
-		ASSERT(v != ATTRIBUTE_NOTFOUND);
+		SIValue v;
+		bool res = GraphEntity_GetProperty((GraphEntity*)n, pdata->attr_id, &v);
+		ASSERT(res);
 
-		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, v));
 		*pdata->yield_score = distance;
 	}
 
@@ -178,10 +179,11 @@ static SIValue *Proc_EdgeStep
 	}
 
 	if(pdata->yield_score) {
-		SIValue *v = GraphEntity_GetProperty((GraphEntity*)e, pdata->attr_id);
-		ASSERT(v != ATTRIBUTE_NOTFOUND);
+		SIValue v;
+		bool res = GraphEntity_GetProperty((GraphEntity*)e, pdata->attr_id, &v);
+		ASSERT(res);
 
-		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, *v));
+		SIValue distance = SI_DoubleVal(SIVector_EuclideanDistance(pdata->q, v));
 		*pdata->yield_score = distance;
 	}
 

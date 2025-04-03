@@ -703,26 +703,26 @@ RSQNode *Index_BuildUniqueConstraintQuery
 		const char *field = f->range_name;
 
 		// get current attribute from entity
-		SIValue *v = AttributeSet_Get(attr_set, attr_id);
-		ASSERT(v != NULL);
+		SIValue v;
+		AttributeSet_Get(attr_set, attr_id, &v);
 
 		// create RediSearch query node according to entity attr type
-		SIType t = SI_TYPE(*v);
+		SIType t = SI_TYPE(v);
 		ASSERT(t == T_STRING || t & (SI_NUMERIC | T_BOOL));
 
 		if(t == T_STRING) {
 			node  = RediSearch_CreateTagNode(rsIdx, field);
-			if(v->allocation == M_DISK) {
-				*v = SIValue_FromDisk(ENTITY_GET_ID(e), attr_id);
+			if(v.stringval == NULL) {
+				v = SIValue_FromDisk(ENTITY_GET_ID(e), attr_id);
 			}
-			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v->stringval);
+			RSQNode *child = RediSearch_CreateTagTokenNode(rsIdx, v.stringval);
 			RediSearch_QueryNodeAddChild(node, child);
-			if(v->allocation == M_DISK) {
-				free(v->stringval);
-				v->stringval = NULL;
+			if(v.allocation == M_DISK) {
+				free(v.stringval);
+				v.stringval = NULL;
 			}
 		} else {
-			double d = SI_GET_NUMERIC((*v));
+			double d = SI_GET_NUMERIC(v);
 			node = RediSearch_CreateNumericNode(rsIdx, field, d, d, true, true);
 		}
 

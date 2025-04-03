@@ -275,8 +275,9 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 		}
 
 		// Retrieve the property.
-		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
-		if(value->allocation == M_DISK) {
+		SIValue value;
+		GraphEntity_GetProperty(graph_entity, prop_idx, &value);
+		if(SI_TYPE(value) == T_STRING && value.stringval == NULL) {
 			char node_key[ROCKSDB_KEY_SIZE];
 			RocksDB_set_key(node_key, ENTITY_GET_ID(graph_entity), prop_idx);
 			char *str = RocksDB_get(node_key);
@@ -284,7 +285,7 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 			free(str);
 			return res;
 		}
-		return SI_ConstValue(value);
+		return SI_ConstValue(&value);
 	} else if(SI_TYPE(obj) & T_MAP) {
 		// retrieve map key
 		SIValue key = argv[1];

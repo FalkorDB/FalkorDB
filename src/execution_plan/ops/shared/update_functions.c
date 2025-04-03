@@ -30,7 +30,7 @@ static bool _ValidateAttrType
 
 	// in case of an array, make sure each element is of an
 	// acceptable type
-	if(t == T_ARRAY) {
+	if(unlikely(t == T_ARRAY)) {
 		SIType invalid_properties = ~SI_VALID_PROPERTY_VALUE;
 		return !SIArray_ContainsType(v, invalid_properties);
 	}
@@ -124,13 +124,19 @@ void CommitUpdates
 // NULL values are allowed in SET clauses but not in MERGE clauses
 void EvalEntityUpdates
 (
-	GraphContext *gc,
-	dict *node_updates,
-	dict *edge_updates,
-	const Record r,
-	const EntityUpdateEvalCtx *ctx,
-	bool allow_null
+	GraphContext *gc,                // graph context
+	dict *node_updates,              // node updates
+	dict *edge_updates,              // edge updates
+	const Record r,                  // record
+	const EntityUpdateEvalCtx *ctx,  // update context
+	bool allow_null                  // allow NULL values
 ) {
+	ASSERT(r            != NULL);
+	ASSERT(gc           != NULL);
+	ASSERT(ctx          != NULL);
+	ASSERT(node_updates != NULL);
+	ASSERT(edge_updates != NULL);
+
 	Schema *s = NULL;
 
 	//--------------------------------------------------------------------------
@@ -138,8 +144,10 @@ void EvalEntityUpdates
 	//--------------------------------------------------------------------------
 
 	// get the type of the entity to update
-	// if the expected entity was not found, make no updates but do not error
+	// if the expected entity was not found, simply return, do not error
 	RecordEntryType t = Record_GetType(r, ctx->record_idx);
+
+	// entity wasn't found, return
 	if(unlikely(t == REC_TYPE_UNKNOWN)) {
 		return;
 	}
@@ -158,20 +166,22 @@ void EvalEntityUpdates
 				"Type mismatch: expected Node but was Relationship");
 	}
 
+	// get the updated entity
 	GraphEntity *entity = Record_GetGraphEntity(r, ctx->record_idx);
 
-	// if the entity is marked as deleted, make no updates but do not error
+	// if the entity is marked as deleted, simply return, do not error
 	if(unlikely(Graph_EntityIsDeleted(entity))) {
 		return;
 	}
 
+	// determine type of updated entity, node/edge
 	dict *updates;
 	GraphEntityType entity_type;
 	if(t == REC_TYPE_NODE) {
-		updates = node_updates;
+		updates     = node_updates;
 		entity_type = GETYPE_NODE;
 	} else {
-		updates = edge_updates;
+		updates     = edge_updates;
 		entity_type = GETYPE_EDGE;
 	}
 
@@ -199,11 +209,14 @@ void EvalEntityUpdates
 		update->remove_labels = array_new(const char *, array_len(ctx->remove_labels));
 	}
 	
-	array_union(update->add_labels, ctx->add_labels, strcmp);
+	// collect added and removed labels
+	array_union(update->add_labels,    ctx->add_labels,    strcmp);
 	array_union(update->remove_labels, ctx->remove_labels, strcmp);
 
-	AttributeSet *old_attrs = entity->attributes;
+	AttributeSet *original_attrs = entity->attributes;
 	entity->attributes = &update->attributes;
+
+	// with its attribute-set replaced, update entity within record
 	if(t == REC_TYPE_NODE) {
 		Record_AddNode(r, ctx->record_idx, *(Node *)entity);
 	} else {
@@ -228,7 +241,7 @@ void EvalEntityUpdates
 	// e.g. invalid n.v = [1, {}]
 	//
 	// collect all updates into a single attribute-set
-	//
+
 	QueryCtx *query_ctx = QueryCtx_GetQueryCtx();
 	for(uint i = 0; i < exp_count && !error; i++) {
 		PropertySetCtx *property = ctx->properties + i;
@@ -253,12 +266,13 @@ void EvalEntityUpdates
 
 			AttributeID attr_id = FindOrAddAttribute(gc, attribute, true);
 
-			SIValue *attr = AttributeSet_Get(*entity->attributes, attr_id);
-			if(attr->allocation == M_DISK) {
-				*attr = SIValue_FromDisk(ENTITY_GET_ID(entity), attr_id);
+			SIValue attr;
+			AttributeSet_Get(*entity->attributes, attr_id, &attr);
+			if(SI_TYPE(attr) == T_STRING && attr.stringval == NULL) {
+				attr = SIValue_FromDisk(ENTITY_GET_ID(entity), attr_id);
 			}
 
-			switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
+			switch(AttributeSet_Set_Allow_Null(entity->attributes, attr_id, v))
 			{
 				case CT_DEL:
 					// attribute removed
@@ -326,9 +340,10 @@ void EvalEntityUpdates
 				}
 
 				AttributeID attr_id = FindOrAddAttribute(gc, key.stringval, true);
-				SIValue *v = AttributeSet_Get(*entity->attributes, attr_id);
-				if(v->allocation == M_DISK) {
-					*v = SIValue_FromDisk(ENTITY_GET_ID(entity), attr_id);
+				SIValue v;
+				AttributeSet_Get(*entity->attributes, attr_id, &v);
+				if(SI_TYPE(v) == T_STRING && v.stringval == NULL) {
+					v = SIValue_FromDisk(ENTITY_GET_ID(entity), attr_id);
 				}
 				// TODO: would have been nice we just sent n = {v:2}
 				switch (AttributeSet_Set_Allow_Null(entity->attributes, attr_id, value))
@@ -355,9 +370,9 @@ void EvalEntityUpdates
 						assert("unknown change type value" && false);
 						break;
 				}
-				if(v->allocation == M_DISK) {
-					free(v->stringval);
-					v->stringval = NULL;
+				if(v.allocation == M_DISK) {
+					free(v.stringval);
+					v.stringval = NULL;
 				}
 			}
 
@@ -378,10 +393,12 @@ void EvalEntityUpdates
 		// iterate over all entity properties to build updates
 		const AttributeSet set = GraphEntity_GetAttributes(ge);
 
+		// TODO: introduce an unsage attribute-set iterator
 		for(uint j = 0; j < AttributeSet_Count(set); j++) {
 			AttributeID attr_id;
-			SIValue v = AttributeSet_GetIdx(set, j, &attr_id);
-			if(v.allocation == M_DISK) {
+			SIValue v;
+			AttributeSet_GetIdx(set, j, &attr_id, &v);
+			if(SI_TYPE(v) == T_STRING && v.stringval == NULL) {
 				v = SIValue_FromDisk(ENTITY_GET_ID(ge), attr_id);
 			}
 
@@ -407,7 +424,7 @@ void EvalEntityUpdates
 	// restore original attribute-set
 	// changes should not be visible prior to the commit phase
 	update->attributes = *entity->attributes;
-	entity->attributes = old_attrs;
+	entity->attributes = original_attrs;
 	if(t == REC_TYPE_NODE) {
 		Record_AddNode(r, ctx->record_idx, *(Node *)entity);
 	} else {

@@ -11,7 +11,7 @@
 #include "../../datatypes/datatypes.h"
 #include "../../util/rocksdb.h"
 
-// Forward declarations.
+// forward declarations
 static void _ResultSet_VerboseReplyWithMap(RedisModuleCtx *ctx, SIValue map);
 static void _ResultSet_VerboseReplyWithPath(RedisModuleCtx *ctx, SIValue path);
 static void _ResultSet_VerboseReplyWithPoint(RedisModuleCtx *ctx, SIValue point);
@@ -33,7 +33,7 @@ static void _ResultSet_VerboseReplyWithSIValue
 ) {
 	switch(SI_TYPE(v)) {
 	case T_STRING: {
-		if(v.allocation == M_DISK) {
+		if(v.stringval == NULL) {
 			char node_key[ROCKSDB_KEY_SIZE];
 			RocksDB_set_key(node_key, node_id, attr_id);
 			char *str = RocksDB_get(node_key);
@@ -93,11 +93,13 @@ static void _ResultSet_VerboseReplyWithProperties
 	int prop_count = AttributeSet_Count(set);
 	RedisModule_ReplyWithArray(ctx, prop_count);
 	// iterate over all properties stored on entity
+	// TODO: introduce an unsage attribute-set iterator
 	for(int i = 0; i < prop_count; i ++) {
 		RedisModule_ReplyWithArray(ctx, 2);
+		SIValue value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		// Emit the actual string
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
+		// emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		RedisModule_ReplyWithStringBuffer(ctx, prop_str, strlen(prop_str));
 		// Emit the value

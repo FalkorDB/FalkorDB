@@ -240,7 +240,6 @@ RSDoc *Index_IndexGraphEntity
 
 	double     score       = 1;     // default score
 	IndexField *field      = NULL;  // current indexed field
-	SIValue    *v          = NULL;  // current indexed value
 	uint       field_count = array_len(idx->fields);
 
 	*doc_field_count = 0;  // number of indexed fields
@@ -258,14 +257,13 @@ RSDoc *Index_IndexGraphEntity
 		field = idx->fields + i;
 
 		// try to get attribute value
-		v = GraphEntity_GetProperty(e, field->id);
-
-		// entity does not have this attribute
-		if(v == ATTRIBUTE_NOTFOUND) {
+		SIValue v;  // current indexed value
+		if(!GraphEntity_GetProperty(e, field->id, &v)) {
+			// entity does not have this attribute
 			continue;
 		}
 
-		SIType t = SI_TYPE(*v);
+		SIType t = SI_TYPE(v);
 
 		//----------------------------------------------------------------------
 		// fulltext field
@@ -275,15 +273,15 @@ RSDoc *Index_IndexGraphEntity
 			// value must be of type string
 			if(t == T_STRING) {
 				*doc_field_count += 1;
-				char *str = v->stringval;
-				if(v->allocation == M_DISK) {
+				char *str = v.stringval;
+				if(str == NULL) {
 					char node_key[ROCKSDB_KEY_SIZE];
 					RocksDB_set_key(node_key, ENTITY_GET_ID(e), field->id);
 					str = RocksDB_get(node_key);
 				}
 				RediSearch_DocumentAddFieldString(doc, field->fulltext_name,
-					str, strlen(str), RSFLDTYPE_FULLTEXT);
-				if(v->allocation == M_DISK) {
+						str, strlen(str), RSFLDTYPE_FULLTEXT);
+				if(v.stringval == NULL) {
 					free(str);
 				}
 			}
@@ -296,24 +294,24 @@ RSDoc *Index_IndexGraphEntity
 		if(field->type & INDEX_FLD_RANGE) {
 			*doc_field_count += 1;
 			if(t == T_STRING) {
-				char *str = v->stringval;
-				if(v->allocation == M_DISK) {
+				char *str = v.stringval;
+				if(str == NULL) {
 					char node_key[ROCKSDB_KEY_SIZE];
 					RocksDB_set_key(node_key, ENTITY_GET_ID(e), field->id);
 					str = RocksDB_get(node_key);
 				}
 				RediSearch_DocumentAddFieldString(doc, field->range_name,
 						str, strlen(str), RSFLDTYPE_TAG);
-				if(v->allocation == M_DISK) {
+				if(v.stringval == NULL) {
 					free(str);
 				}
 			} else if(t & (SI_NUMERIC | T_BOOL)) {
-				double d = SI_GET_NUMERIC(*v);
+				double d = SI_GET_NUMERIC(v);
 				RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
 						RSFLDTYPE_NUMERIC);
 			} else if(t == T_POINT) {
-				double lat = (double)Point_lat(*v);
-				double lon = (double)Point_lon(*v);
+				double lat = (double)Point_lat(v);
+				double lon = (double)Point_lon(v);
 				RediSearch_DocumentAddFieldGeo(doc, field->range_name, lat, lon,
 						RSFLDTYPE_GEO);
 			} else {
@@ -329,16 +327,16 @@ RSDoc *Index_IndexGraphEntity
 
 		if(field->type & INDEX_FLD_VECTOR && (t & T_VECTOR)) {
 			// make sure entity vector dimension matches index vector dimension
-			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(*v)) {
+			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(v)) {
 				// vector dimension mis-match, can't index this vector
 				continue;
 			}
 
 			*doc_field_count += 1;
 
-			size_t   n        = SIVector_ElementsByteSize(*v);
-			uint32_t dim      = SIVector_Dim(*v);
-			void*    elements = SIVector_Elements(*v);
+			size_t   n        = SIVector_ElementsByteSize(v);
+			uint32_t dim      = SIVector_Dim(v);
+			void*    elements = SIVector_Elements(v);
 
 			// value must be of type array
 			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,

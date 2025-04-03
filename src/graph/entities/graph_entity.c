@@ -26,22 +26,41 @@ bool GraphEntity_AddProperty
 	return true;
 }
 
-SIValue *GraphEntity_GetProperty
+// retrieves entity's property
+// NOTE: if the key does not exist, we set v to the special
+// constant value PROPERTY_NOTFOUND
+bool GraphEntity_GetProperty
 (
-	const GraphEntity *e,
-	AttributeID attr_id
+	const GraphEntity *e,  // graph entity
+	AttributeID attr_id,   // attribute id
+	SIValue *v             // [output]
 ) {
-	ASSERT(e);
+	ASSERT(e != NULL);
+	ASSERT(v != NULL);
 
 	// e->attributes is NULL when dealing with an "intermediate" entity,
 	// one which didn't had its attribute-set allocated within the graph datablock.
 	if(e->attributes == NULL) {
  		// note that this exception may cause memory to be leaked in the caller
  		ErrorCtx_SetError(EMSG_ACCESS_UNDEFINED_ATTRIBUTE);
- 		return ATTRIBUTE_NOTFOUND;
+		*v = *ATTRIBUTE_NOTFOUND;
+ 		return false;
  	}
 
-	return AttributeSet_Get(*e->attributes, attr_id);
+	return AttributeSet_Get(*e->attributes, attr_id, v);
+}
+
+// returns true if entity contains attribute
+bool GraphEntity_ContainsProperty
+(
+	const GraphEntity *e,  // graph entity
+	AttributeID attr_id    // attribute id
+) {
+	ASSERT(e       != NULL);
+	ASSERT(attr_id != ATTRIBUTE_ID_ALL);
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+
+	return AttributeSet_Contains((const AttributeSet)e->attributes, attr_id);
 }
 
 // returns an SIArray of all keys in graph entity properties
@@ -55,7 +74,7 @@ SIValue GraphEntity_Keys
 	SIValue keys = SIArray_New(prop_count);
 	for(int i = 0; i < prop_count; i++) {
 		AttributeID attr_id;
-		AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx(set, i, &attr_id, NULL);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		SIArray_Append(&keys, SI_ConstStringVal(key));
 	}
@@ -71,10 +90,12 @@ SIValue GraphEntity_Properties
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
 	SIValue map = SI_Map(propCount);
+	// TODO: introduce an unsage attribute-set iterator
 	for(int i = 0; i < propCount; i++) {
+		SIValue value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
-		if(value.allocation == M_DISK) {
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
+		if(SI_TYPE(value) == T_STRING && value.stringval == NULL) {
 			value = SIValue_FromDisk(ENTITY_GET_ID(e), attr_id);
 		}
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
@@ -105,9 +126,11 @@ size_t GraphEntity_PropertiesToString
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const AttributeSet set = GraphEntity_GetAttributes(e);
 	int propCount = AttributeSet_Count(set);
+	// TODO: introduce an unsage attribute-set iterator
 	for(int i = 0; i < propCount; i++) {
+		SIValue     value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
 		// print key
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		// check for enough space

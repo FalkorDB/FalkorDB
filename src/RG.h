@@ -16,17 +16,20 @@
 // common bitwise operations
 //------------------------------------------------------------------------------
 
-// Mask with most significant bit on 10000...
+// mask with most significant bit on 10000...
 #define MSB_MASK (1UL << (sizeof(uint64_t) * 8 - 1))
 
-// Mask complement 01111...
+// mask complement 01111...
 #define MSB_MASK_CMP ~MSB_MASK
 
-// Set X's most significant bit on.
-#define SET_MSB(x) (x) | MSB_MASK
+// set X's most significant bit on
+#define SET_MSB(x) ((uintptr_t)(x)) | MSB_MASK
 
-// Clear X's most significant bit.
-#define CLEAR_MSB(x) (x) & MSB_MASK_CMP
+// check if X's most significant bit is on
+#define MSB_ON(x) (((uintptr_t)(x) & MSB_MASK) != 0)
+
+// clear X's most significant bit
+#define CLEAR_MSB(x) ((uintptr_t)(x)) & MSB_MASK_CMP
 
 //------------------------------------------------------------------------------
 // code development settings

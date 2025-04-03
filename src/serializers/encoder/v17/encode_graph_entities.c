@@ -187,8 +187,9 @@ static void _SaveEntities_v17
 		SerializerIO_WriteUnsigned(rdb, attr_count);
 
 		for(int j = 0; j < attr_count; j++) {
+			SIValue value;
 			AttributeID attr_id;
-			SIValue value = AttributeSet_GetIdx(set, j, &attr_id);
+			AttributeSet_GetIdx(set, j, &attr_id, &value);
 			SerializerIO_WriteUnsigned(rdb, attr_id);
 			_RdbSaveSIValue(rdb, id, attr_id, &value);
 		}
