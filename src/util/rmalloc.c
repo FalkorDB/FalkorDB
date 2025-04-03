@@ -126,13 +126,29 @@ void rm_set_mem_capacity(int64_t cap) {
 
 #endif // REDIS_MODULE_TARGET
 
-/* Redefine the allocator functions to use the malloc family.
- * Only to be used when running module code from a non-Redis
- * context, such as unit tests. */
+#if defined(__APPLE__) || defined(__FreeBSD__)  // macOS and BSD systems
+    #include <malloc/malloc.h>
+	static size_t malloc_size_wrapper(void* ptr) {
+        return malloc_size(ptr); // cast removes const qualifier safely
+    }
+    #define MALLOC_SIZE_FUNC malloc_size_wrapper
+#elif defined(__linux__)  // Linux (glibc)
+    #include <malloc.h>
+    #define MALLOC_SIZE_FUNC malloc_usable_size
+#else
+    #error "Unsupported platform"
+#endif
+
+// redefine the allocator functions to use the malloc family
+// only to be used when running module code from a non-Redis
+// context, such as unit tests
 void Alloc_Reset() {
-	RedisModule_Alloc   = malloc;
-	RedisModule_Realloc = realloc;
-	RedisModule_Calloc  = calloc;
-	RedisModule_Free    = free;
-	RedisModule_Strdup  = strdup;
+	RedisModule_Alloc            = malloc;
+	RedisModule_Realloc          = realloc;
+	RedisModule_Calloc           = calloc;
+	RedisModule_Free             = free;
+	RedisModule_Strdup           = strdup;
+	RedisModule_MallocSize       = MALLOC_SIZE_FUNC;
+	RedisModule_MallocUsableSize = MALLOC_SIZE_FUNC;
 }
+

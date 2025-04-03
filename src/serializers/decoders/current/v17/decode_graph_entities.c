@@ -5,6 +5,7 @@
 
 #include "decode_v17.h"
 #include "util/datablock/oo_datablock.h"
+#include "util/rocksdb.h"
 
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
@@ -13,7 +14,10 @@ static SIValue _RdbLoadVector(SerializerIO rdb, SIType t);
 
 static SIValue _RdbLoadSIValue
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	NodeID node_id,
+	AttributeID attr_id,
+	rocksdb_writebatch_t *writebatch
 ) {
 	// Format:
 	// SIType
@@ -24,10 +28,13 @@ static SIValue _RdbLoadSIValue
 		return SI_LongVal(SerializerIO_ReadSigned(rdb));
 	case T_DOUBLE:
 		return SI_DoubleVal(SerializerIO_ReadDouble(rdb));
-	case T_STRING:
+	case T_STRING: {
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		SIValue v = SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		SIValue_ToDisk(&v, node_id, attr_id, writebatch);
+		return v;
+	}
 	case T_BOOL:
 		return SI_BoolVal(SerializerIO_ReadSigned(rdb));
 	case T_ARRAY:
@@ -66,7 +73,7 @@ static SIValue _RdbLoadSIArray
 	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
-		SIValue elem = _RdbLoadSIValue(rdb);
+		SIValue elem = _RdbLoadSIValue(rdb, -1, ATTRIBUTE_ID_NONE, NULL);
 		SIArray_Append(&list, elem);
 		SIValue_Free(elem);
 	}
@@ -97,7 +104,9 @@ static SIValue _RdbLoadVector
 static void _RdbLoadEntity
 (
 	SerializerIO rdb,
-	GraphEntity *e
+	GraphEntity *e,
+	GraphEntityType type,
+	rocksdb_writebatch_t *writebatch
 ) {
 	// format:
 	// #properties N
@@ -110,9 +119,10 @@ static void _RdbLoadEntity
 	SIValue     vals[n];
 	AttributeID ids [n];
 
+	EntityID id = type == GETYPE_NODE ? ENTITY_GET_ID(e) : -1;
 	for(uint64_t i = 0; i < n; i++) {
 		ids[i]  = SerializerIO_ReadUnsigned(rdb);
-		vals[i] = _RdbLoadSIValue(rdb);
+		vals[i] = _RdbLoadSIValue(rdb, id, ids[i], writebatch);
 	}
 
 	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
@@ -131,6 +141,7 @@ void RdbLoadNodes_v17
 	//  (name, value type, value) X N
 
 	uint64_t prev_graph_node_count = Graph_NodeCount(g);
+	rocksdb_writebatch_t *batch = RocksDB_create_batch();
 
 	for(uint64_t i = 0; i < n; i++) {
 		Node n;
@@ -142,8 +153,9 @@ void RdbLoadNodes_v17
 		n.id = id;
 		n.attributes = set;
 
-		_RdbLoadEntity(rdb, (GraphEntity *)&n);
+		_RdbLoadEntity(rdb, (GraphEntity *)&n, GETYPE_NODE, batch);
 	}
+	RocksDB_put_batch(batch);
 
 	// read encoded node count and validate
 	ASSERT(n + prev_graph_node_count == Graph_NodeCount(g));
@@ -204,7 +216,7 @@ void RdbLoadEdges_v17
 		e.id = id;
 		e.attributes = set;
 
-		_RdbLoadEntity(rdb, (GraphEntity *)&e);
+		_RdbLoadEntity(rdb, (GraphEntity *)&e, GETYPE_EDGE, NULL);
 	}
 
 	// read encoded edge count and validate

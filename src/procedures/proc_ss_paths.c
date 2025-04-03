@@ -413,10 +413,14 @@ static inline SIValue _get_value_or_default
 	AttributeID id,
 	SIValue default_value
 ) {
-	SIValue *v = GraphEntity_GetProperty(ge, id);
-	if(v == ATTRIBUTE_NOTFOUND) return default_value;
+	SIValue v;
+	if(!GraphEntity_GetProperty(ge, id, &v)) {
+		return default_value;
+	}
 
-	if(SI_TYPE(*v) & SI_NUMERIC) return *v;
+	if(SI_TYPE(v) & SI_NUMERIC) {
+		return v;
+	}
 
 	return default_value;
 }

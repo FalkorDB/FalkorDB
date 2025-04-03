@@ -144,10 +144,12 @@ static void _ResultSet_BoltReplyWithNode
 	const AttributeSet set = GraphEntity_GetAttributes((GraphEntity *)n);
 	int prop_count = AttributeSet_Count(set);
 	bolt_reply_map(client, prop_count);
-	// Iterate over all properties stored on entity
+	// iterate over all properties stored on entity
+	// TODO: introduce an unsafe attribute-set iterator
 	for(int i = 0; i < prop_count; i ++) {
+		SIValue     value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
 		// Emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		bolt_reply_string(client, prop_str, strlen(prop_str));
@@ -200,9 +202,11 @@ static void _ResultSet_BoltReplyWithEdge
 	int prop_count = AttributeSet_Count(set);
 	bolt_reply_map(client, prop_count);
 	// Iterate over all properties stored on entity
+	// TODO: introduce an unsage attribute-set iterator
 	for(int i = 0; i < prop_count; i ++) {
+		SIValue     value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
 		// Emit the actual string
 		const char *prop_str = GraphContext_GetAttributeString(gc, attr_id);
 		bolt_reply_string(client, prop_str, strlen(prop_str));

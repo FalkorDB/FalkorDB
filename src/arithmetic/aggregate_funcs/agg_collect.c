@@ -41,6 +41,12 @@ AggregateResult AGG_COLLECT
 			// array will take ownership over the value
 			SIArray_AppendAsOwner(&ctx->result, argv);
 			break;
+		case M_DISK:
+			ASSERT(false && "no expecting to see disk value");
+			break;
+		default:
+			ASSERT(false && "unknown allocation type");
+			break;
 	}
 
 	return AGGREGATE_OK;

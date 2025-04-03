@@ -6,6 +6,7 @@
 
 #include "graph_hub.h"
 #include "../query_ctx.h"
+#include "../util/rocksdb.h"
 
 void CreateNode
 (
@@ -14,6 +15,7 @@ void CreateNode
 	LabelID *labels,
 	uint label_count,
 	AttributeSet set,
+	rocksdb_writebatch_t *writebatch,
 	bool log
 ) {
 	ASSERT(n  != NULL);
@@ -35,6 +37,15 @@ void CreateNode
 		UndoLog_CreateNode(undo_log, n);
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer();
 		EffectsBuffer_AddCreateNodeEffect(eb, n, labels, label_count);
+	}
+
+	for(uint i = 0; i < AttributeSet_Count(set); i++) {
+		SIValue v;
+		AttributeID attr_id;
+		AttributeSet_GetIdx(set, i, &attr_id, &v);
+		if(SIValue_ToDisk(&v, ENTITY_GET_ID(n), attr_id, writebatch)) {
+			AttributeSet_Update(n->attributes, attr_id, v, false);
+		}
 	}
 }
 
@@ -181,11 +192,12 @@ void DeleteEdges
 // of properties set and removed.
 void UpdateEntityProperties
 (
-	GraphContext *gc,             // graph context
-	GraphEntity *ge,              // updated entity
-	const AttributeSet set,       // new attributes
-	GraphEntityType entity_type,  // entity type
-	bool log                      // log update in undo-log
+	GraphContext *gc,                  // graph context
+	GraphEntity *ge,                   // updated entity
+	const AttributeSet set,            // new attributes
+	GraphEntityType entity_type,       // entity type
+	rocksdb_writebatch_t *writebatch,  // writebatch to write to
+	bool log                           // log update in undo-log
 ) {
 	ASSERT(gc != NULL);
 	ASSERT(ge != NULL);
@@ -205,6 +217,17 @@ void UpdateEntityProperties
 
 	if(entity_type == GETYPE_NODE) {
 		GraphContext_AddNodeToIndices(gc, (Node *)ge);
+
+		//for(uint i = 0; i < AttributeSet_Count(set); i++) {
+		//	SIValue v;
+		//	AttributeID attr_id;
+		//	AttributeSet_GetIdx(set, i, &attr_id, &v);
+		//	SIValue_ToDisk(&v, ENTITY_GET_ID(ge), attr_id, writebatch);
+		//	if(attr->value.allocation == M_DISK) {
+		//		free(attr->value.stringval);
+		//		attr->value.stringval = NULL;
+		//	}
+		//}
 	} else {
 		GraphContext_AddEdgeToIndices(gc, (Edge *)ge);
 	}
@@ -227,10 +250,10 @@ void UpdateNodeProperty
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
-	} else if(GraphEntity_GetProperty((GraphEntity *)&n, attr_id) == ATTRIBUTE_NOTFOUND) {
+	} else if(!GraphEntity_ContainsProperty((GraphEntity *)&n, attr_id)) {
 		AttributeSet_AddNoClone(n.attributes, &attr_id, &v, 1, true);
 	} else {
-		AttributeSet_UpdateNoClone(n.attributes, attr_id, v);
+		AttributeSet_Update(n.attributes, attr_id, v, false);
 	}
 
 	// retrieve node labels
@@ -298,10 +321,10 @@ void UpdateEdgeProperty
 	bool update_idx = true;
 	GraphEntity *ge = (GraphEntity *)&e;
 
-	if(GraphEntity_GetProperty(ge, attr_id) == ATTRIBUTE_NOTFOUND) {
+	if(!GraphEntity_ContainsProperty(ge, attr_id)) {
 		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
 	} else {
-		update_idx = AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
+		update_idx = AttributeSet_Update(e.attributes, attr_id, v, false);
 	}
 
 	// update index if

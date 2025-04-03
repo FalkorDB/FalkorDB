@@ -30,12 +30,12 @@ void CommitUpdates
 // NULL values are allowed in SET clauses but not in MERGE clauses
 void EvalEntityUpdates
 (
-	GraphContext *gc,
-	dict *node_updates,
-	dict *edge_updates,
-	const Record r,
-	const EntityUpdateEvalCtx *ctx,
-	bool allow_null
+	GraphContext *gc,                // graph context
+	dict *node_updates,              // node updates
+	dict *edge_updates,              // edge updates
+	const Record r,                  // record
+	const EntityUpdateEvalCtx *ctx,  // update context
+	bool allow_null                  // allow NULL values
 );
 
 void PendingUpdateCtx_Free

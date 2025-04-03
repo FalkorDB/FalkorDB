@@ -31,6 +31,7 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "util/rocksdb.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 7
@@ -154,6 +155,7 @@ int RedisModule_OnLoad
 	if(!ThreadPools_Init())           return REDISMODULE_ERR;
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
+	RocksDB_init();
 
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPools_ReadersCount());

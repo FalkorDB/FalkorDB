@@ -265,9 +265,13 @@ SIValue SI_ShallowCloneValue(const SIValue v) {
 	return SI_CloneValue(v);
 }
 
-/* Make an SIValue that shares the original's allocations but can safely expect those allocations
- *  to remain in scope. This is most frequently the case for GraphEntity properties. */
-SIValue SI_ConstValue(const SIValue *v) {
+// make an SIValue that shares the original's allocations but can safely expect
+// those allocations to remain in scope
+// this is most frequently the case for GraphEntity properties
+SIValue SI_ConstValue
+(
+	const SIValue *v
+) {
 	SIValue dup = *v;
 	if(v->allocation != M_NONE) dup.allocation = M_CONST;
 	return dup;
@@ -767,6 +771,11 @@ int SIValue_Compare
 
 			return SAFE_COMPARISON_RESULT(a.doubleval - b.doubleval);
 		case T_STRING:
+			if(a.stringval == b.stringval) {
+				return 0;
+			} else if(a.stringval == NULL || b.stringval == NULL) {
+				return 1;
+			}
 			return strcmp(a.stringval, b.stringval);
 		case T_NODE:
 		case T_EDGE:
@@ -1016,6 +1025,41 @@ SIValue SIValue_FromBinary
 	}
 
 	return v;
+}
+
+// writes SIValue to rocksdb if needed
+bool SIValue_ToDisk
+(
+	SIValue *v,                       // value to write to disk
+	uint64_t node_id,                 // node id
+	unsigned short attr_id,           // attribute id
+	rocksdb_writebatch_t *writebatch  // writebatch to write to
+) {
+	if(node_id != -1 && attr_id != ATTRIBUTE_ID_NONE && v->type == T_STRING && v->stringval && RocksDB_shouldWrite(v->stringval)) {
+		char node_key[ROCKSDB_KEY_SIZE];
+		RocksDB_set_key(node_key, node_id, attr_id);
+		RocksDB_put(writebatch, node_key, v->stringval);
+		v->allocation = M_DISK;
+		if(use_string_pool()) {
+			StringPool_return(Globals_Get_StringPool(), v->stringval);
+		} else if(v->allocation == M_SELF) {
+			rm_free(v->stringval);
+		}
+		v->stringval = NULL;
+		return true;
+	}
+
+	return false;
+}
+
+SIValue SIValue_FromDisk
+(
+	uint64_t node_id,       // node id
+	unsigned short attr_id  // attribute id
+) {
+	char node_key[ROCKSDB_KEY_SIZE];
+	RocksDB_set_key(node_key, node_id, attr_id);
+	return (SIValue){.stringval = RocksDB_get(node_key), .type = T_STRING, .allocation = M_DISK};
 }
 			
 void SIValue_Free

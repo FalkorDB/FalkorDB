@@ -53,13 +53,21 @@ bool GraphEntity_AddProperty
 	SIValue value
 );
 
-// Retrieves entity's property
-// NOTE: If the key does not exist, we return the special
+// retrieves entity's property
+// NOTE: if the key does not exist, we set v to the special
 // constant value PROPERTY_NOTFOUND
-SIValue *GraphEntity_GetProperty
+bool GraphEntity_GetProperty
 (
-	const GraphEntity *e,
-	AttributeID attr_id
+	const GraphEntity *e,  // graph entity
+	AttributeID attr_id,   // attribute id
+	SIValue *v             // [output]
+);
+
+// returns true if entity contains attribute
+bool GraphEntity_ContainsProperty
+(
+	const GraphEntity *e,  // graph entity
+	AttributeID attr_id    // attribute id
 );
 
 // returns an SIArray of all keys in graph entity properties

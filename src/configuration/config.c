@@ -78,6 +78,12 @@
 // deduplicate string
 #define DEDUPLICATE_STRINGS "DEDUPLICATE_STRINGS"
 
+// alow data to spill to disk
+#define USE_DISK_STORAGE "USE_DISK_STORAGE"
+
+// value larger than this config are candidate for spillage
+#define VALUE_SPILL_THRESHOLD "VALUE_SPILL_THRESHOLD"
+
 //------------------------------------------------------------------------------
 // Configuration defaults
 //------------------------------------------------------------------------------
@@ -91,6 +97,8 @@
 #define DELAY_INDEXING_DEFAULT             false
 #define IMPORT_DIR_DEFAULT                 "/var/lib/FalkorDB/import/"
 #define DEDUPLICATE_STRINGS_DEFAULT        false
+#define USE_DISK_STORAGE_DEFAULT           false  // disk storage is disabled by default
+#define VALUE_SPILL_THRESHOLD_DEFAULT      64     // min "large value" size is 64 bytes
 
 // configuration object
 typedef struct {
@@ -114,6 +122,8 @@ typedef struct {
 	bool delay_indexing;               // delay index construction when decoding
 	char *import_folder;               // path to import folder, used for CSV loading
 	bool deduplicate_strings;          // use string pool to deduplicate strings
+	bool use_disk_storage;             // alow data to spill to disk
+	uint64_t value_spill_threshold;    // value larger than threshold are candidates for disk spillage
 	Config_on_change cb;               // callback function which being called when config param changed
 } RG_Config;
 
@@ -524,6 +534,36 @@ static bool Config_deduplicate_strings_get(void) {
 	return config.deduplicate_strings;
 }
 
+//------------------------------------------------------------------------------
+// use disk storage
+//------------------------------------------------------------------------------
+
+static void Config_use_disk_storage_set
+(
+	bool enabled
+) {
+	config.use_disk_storage = enabled;
+}
+
+static bool Config_use_disk_storage_get(void) {
+	return config.use_disk_storage;
+}
+
+//------------------------------------------------------------------------------
+// value spill threshold
+//------------------------------------------------------------------------------
+
+static void Config_value_spill_threshold_set
+(
+	uint64_t threshold
+) {
+	config.value_spill_threshold = threshold;
+}
+
+static uint64_t Config_value_spill_threshold_get(void) {
+	return config.value_spill_threshold;
+}
+
 // check if field is a valid configuration option
 bool Config_Contains_field
 (
@@ -574,6 +614,10 @@ bool Config_Contains_field
 		f = Config_IMPORT_FOLDER;
 	} else if (!(strcasecmp(field_str, DEDUPLICATE_STRINGS))) {
 		f = Config_DEDUPLICATE_STRINGS;
+	} else if (!(strcasecmp(field_str, USE_DISK_STORAGE))) {
+		f = Config_USE_DISK_STORAGE;
+	} else if (!(strcasecmp(field_str, VALUE_SPILL_THRESHOLD))) {
+		f = Config_VALUE_SPILL_THRESHOLD;
 	} else {
 		return false;
 	}
@@ -647,6 +691,12 @@ SIType Config_Field_type
 
 		case Config_DEDUPLICATE_STRINGS:
 			return T_BOOL;
+
+		case Config_USE_DISK_STORAGE:
+			return T_BOOL;
+
+		case Config_VALUE_SPILL_THRESHOLD:
+			return T_INT64;
 
 		//----------------------------------------------------------------------
 		// invalid option
@@ -746,6 +796,14 @@ const char *Config_Field_name
 			name = DEDUPLICATE_STRINGS;
 			break;
 
+		case Config_USE_DISK_STORAGE:
+			name = USE_DISK_STORAGE;
+			break;
+
+		case Config_VALUE_SPILL_THRESHOLD:
+			name = VALUE_SPILL_THRESHOLD;
+			break;
+
 		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
@@ -825,6 +883,12 @@ static void _Config_SetToDefaults(void) {
 
 	// set default deduplicate strings
 	config.deduplicate_strings = DEDUPLICATE_STRINGS_DEFAULT;
+
+	// set default use disk storage
+	config.use_disk_storage = USE_DISK_STORAGE_DEFAULT;
+
+	// set default value spill threshold
+	config.value_spill_threshold = VALUE_SPILL_THRESHOLD_DEFAULT;
 }
 
 int Config_Init
@@ -1191,6 +1255,34 @@ bool Config_Option_get
 		break;
 
 		//----------------------------------------------------------------------
+		// use disk storage
+		//----------------------------------------------------------------------
+
+		case Config_USE_DISK_STORAGE: {
+			va_start(ap, field);
+			bool *enabled = va_arg(ap, bool *);
+			va_end(ap);
+
+			ASSERT(enabled != NULL);
+			(*enabled) = Config_use_disk_storage_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// value spill threshold
+		//----------------------------------------------------------------------
+
+		case Config_VALUE_SPILL_THRESHOLD: {
+			va_start(ap, field);
+			uint64_t *threshold = va_arg(ap, uint64_t *);
+			va_end(ap);
+
+			ASSERT(threshold != NULL);
+			(*threshold) = Config_value_spill_threshold_get();
+		}
+		break;
+
+		//----------------------------------------------------------------------
 		// invalid option
 		//----------------------------------------------------------------------
 
@@ -1474,6 +1566,31 @@ bool Config_Option_set
 			if(!_Config_ParseYesNo(val, &enabled)) return false;
 
 			Config_deduplicate_strings_set(enabled);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// use disk storage
+		//----------------------------------------------------------------------
+
+		case Config_USE_DISK_STORAGE: {
+			bool enabled;
+			if(!_Config_ParseYesNo(val, &enabled)) return false;
+
+			Config_use_disk_storage_set(enabled);
+		}
+		break;
+
+		//----------------------------------------------------------------------
+		// value spill threshold
+		//----------------------------------------------------------------------
+
+		case Config_VALUE_SPILL_THRESHOLD: {
+			long long threshold;
+			if(!_Config_ParseNonNegativeInteger(val, &threshold)) {
+				return false;
+			}
+			Config_value_spill_threshold_set(threshold);
 		}
 		break;
 
