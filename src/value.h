@@ -219,7 +219,7 @@ SIValue SIValue_FromBinary
 );
 
 // writes SIValue to rocksdb if needed
-void SIValue_ToDisk
+bool SIValue_ToDisk
 (
 	SIValue *v,                       // value to write to disk
 	uint64_t node_id,                 // node id

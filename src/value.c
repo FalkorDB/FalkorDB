@@ -773,6 +773,8 @@ int SIValue_Compare
 		case T_STRING:
 			if(a.stringval == b.stringval) {
 				return 0;
+			} else if(a.stringval == NULL || b.stringval == NULL) {
+				return 1;
 			}
 			return strcmp(a.stringval, b.stringval);
 		case T_NODE:
@@ -1026,7 +1028,7 @@ SIValue SIValue_FromBinary
 }
 
 // writes SIValue to rocksdb if needed
-void SIValue_ToDisk
+bool SIValue_ToDisk
 (
 	SIValue *v,                       // value to write to disk
 	uint64_t node_id,                 // node id
@@ -1044,7 +1046,10 @@ void SIValue_ToDisk
 			rm_free(v->stringval);
 		}
 		v->stringval = NULL;
+		return true;
 	}
+
+	return false;
 }
 
 SIValue SIValue_FromDisk

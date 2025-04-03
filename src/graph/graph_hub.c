@@ -43,7 +43,9 @@ void CreateNode
 		SIValue v;
 		AttributeID attr_id;
 		AttributeSet_GetIdx(set, i, &attr_id, &v);
-		SIValue_ToDisk(&v, ENTITY_GET_ID(n), attr_id, writebatch);
+		if(SIValue_ToDisk(&v, ENTITY_GET_ID(n), attr_id, writebatch)) {
+			AttributeSet_Update(n->attributes, attr_id, v, false);
+		}
 	}
 }
 
