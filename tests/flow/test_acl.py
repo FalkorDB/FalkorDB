@@ -1,18 +1,30 @@
+import os
 from common import *
 from index_utils import *
-import os
 
 
 class testACL():
     def __init__(self):
-        os.environ['ACL_GRAPH_ADMIN'] = '''INFO CLIENT DBSIZE PING HELLO AUTH RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.QUERY GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.DELETE GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK GRAPH.CONFIG CLUSTER COMMAND GRAPH.PASSWORD GRAPH.ACL SAVE'''
+        ACL_GRAPH_ADMIN_COMMANDS = """INFO CLIENT DBSIZE PING HELLO AUTH RESTORE
+        DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL
+        EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO
+        SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.QUERY GRAPH.RO_QUERY
+        GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.DELETE GRAPH.CONSTRAINT GRAPH.SLOWLOG
+        GRAPH.BULK GRAPH.CONFIG CLUSTER COMMAND GRAPH.PASSWORD GRAPH.ACL SAVE
+        """
+
+        os.environ['ACL_GRAPH_ADMIN'] = ACL_GRAPH_ADMIN_COMMANDS.replace('\n', ' ')
         
+        TODO: adjust similar to above
         os.environ['ACL_GRAPH_USER'] = '''INFO CLIENT DBSIZE PING HELLO AUTH RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.QUERY GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.DELETE GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK CLUSTER COMMAND GRAPH.PASSWORD'''
         
         os.environ['ACL_GRAPH_READONLY_USER'] = '''INFO CLIENT DBSIZE PING HELLO AUTH RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK GRAPH.CONFIG CLUSTER COMMAND'''
                 
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
+
+        # set password 'pass' for user 'default'
+        # permit access to the command 'GRAPH.ACL'
         self.db.execute_command("ACL", "SETUSER", "default", "on", ">pass",
                                     "+GRAPH.ACL")
        
@@ -26,6 +38,7 @@ class testACL():
         Returns:
             list: Commands with their permissions (e.g., ['-@all', '+info', ...])
         """
+
         # Convert the flat list to a dictionary
         user_dict = dict(zip(user_details[::2], user_details[1::2]))
     
@@ -34,7 +47,10 @@ class testACL():
         return commands_str.split()
 
     def test01_use_graph_acl_to_create_users(self):
-        
+        """
+            make sure we're able to use the GRAPH.ACL command to create new users
+        """
+
         v = self.db.execute_command("GRAPH.ACL", "SETUSER", "falkordb-admin", 
                                     "on", ">pass", "+@graph-admin")
         self.env.assertTrue(v == "OK")
@@ -45,6 +61,8 @@ class testACL():
         self.env.assertTrue('+graph.password' in user_commands)
         self.env.assertTrue('+graph.acl' in user_commands)
         
+        #-----------------------------------------------------------------------
+
         v = self.db.execute_command("GRAPH.ACL", "SETUSER", "falkordb-user", 
                                     "on", ">pass", "+@graph-user")
         self.env.assertTrue(v == "OK")
@@ -54,7 +72,8 @@ class testACL():
         self.env.assertTrue('+graph.password' in user_commands)
         self.env.assertFalse('+graph.acl' in user_commands)
         
-    
+        #-----------------------------------------------------------------------
+
         v = self.db.execute_command("GRAPH.ACL", "SETUSER", "falkordb-read-only",
                                      "on", ">pass", "+@graph-readonly-user")
         self.env.assertTrue(v == "OK")
@@ -68,6 +87,10 @@ class testACL():
         
         
     def test02_graph_acl_cant_change_global_admin(self):
+        """
+        make sure that GRAPH.ACL can't change the 'global' admin
+        """
+
         try:
             v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
             self.env.assertTrue(v)
@@ -80,6 +103,10 @@ class testACL():
             self.db.execute_command("AUTH", "default", "pass")
 
     def test03_graph_acl_cant_get_globbal_admin(self):
+        """
+        make sure 'global' admin isn't visible
+        """
+
         try:
             v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
             self.env.assertTrue(v)
@@ -91,7 +118,12 @@ class testACL():
         finally:
             self.db.execute_command("AUTH", "default", "pass")
             
+    TODO: rename test name to reflect test
     def test04_graph_acl_filter(self):
+        """
+        make sure we can't grant un-autherized permissions
+        """
+
         try:
             v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
             self.env.assertTrue(v)
@@ -178,7 +210,6 @@ class testACL():
         finally:
             self.db.execute_command("AUTH", "default", "pass")
           
-            
     def test100_wrong_password_call(self):
         # wrong arity
         try:

@@ -24,6 +24,7 @@ static int _set_password_fun
 	ASSERT(ctx      != NULL);
 	ASSERT(password != NULL);
 	ASSERT(username != NULL);
+	ASSERT(password[0] == '<' || password[0] == '>');
 
 	RedisModuleCallReply *reply = 
 		RedisModule_Call(ctx, "ACL", "ccc", "SETUSER", username, password);
@@ -33,14 +34,15 @@ static int _set_password_fun
     if (reply == NULL 
 		|| RedisModule_CallReplyType(reply) != REDISMODULE_REPLY_STRING) {
 		RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
-			"Failed to set passwordfor user %s.", username);
+			"Failed to set password for user %s.", username);
 
 		RedisModule_ReplyWithError(ctx, "FAILED");
 		
 		ret = REDISMODULE_ERR;
 	} else {
-		RedisModuleString *reply_str = RedisModule_CreateStringFromCallReply(reply);
-		if (reply_str == NULL) {
+		RedisModuleString *reply_str =
+			RedisModule_CreateStringFromCallReply(reply);
+		if(reply_str == NULL) {
 			RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_WARNING,
 				"Failed to set password for user %s.", username);
 			RedisModule_ReplyWithError(ctx, "FAILED");
@@ -57,12 +59,12 @@ static int _set_password_fun
 
 // a helper function that get a prefix char and call the set password function
 // with the password prefixed with the given char, this is the syntax for redis
-// add / remove password for a user '<' used to remove password,
+// add/remove password for a user '<' used to remove password,
 //  '>' to add password
 static int _set_password_with_prefix
 (
 	RedisModuleCtx *ctx,            // redis module context
-	const char * username,          // username to set password for
+	const char *username,           // username to set password for
 	const RedisModuleString *pass,  // password that should be added / removed
 	const char prefix               // prefix that will be added to the password
 
@@ -72,12 +74,14 @@ static int _set_password_with_prefix
 	ASSERT(username != NULL);
 	
 	size_t passwordStrLen;
-	const char *passwordStr = 
-		RedisModule_StringPtrLen(pass, &passwordStrLen);
-	char *passwordBuff = RedisModule_Alloc(passwordStrLen + 2);
-	snprintf(passwordBuff, passwordStrLen + 2, "%c%s", prefix, passwordStr);
+	const char *passwordStr = RedisModule_StringPtrLen(pass, &passwordStrLen);
+
+	char *passwordBuff = NULL;
+	asprintf(&passwordBuff, "%c%s", prefix, passwordStr);
+
 	int ret = _set_password_fun(ctx, username, passwordBuff);
-	RedisModule_Free(passwordBuff);
+
+	free(passwordBuff);
 	return ret;
 }
 
@@ -86,10 +90,10 @@ static int _set_password_with_prefix
 // implement RedisFunc
 static int _add_password
 (
-	RedisModuleCtx *ctx,            // redis module context
-	RedisModuleString **argv,       // arguments to the command (RedisFunc)
-	int argc,                       // number of args (RedisFunc)
-	void *privdata                  // private data, the current username
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // arguments to the command (RedisFunc)
+	int argc,                  // number of args (RedisFunc)
+	void *privdata             // private data, the current username
 ) {
 	ASSERT(ctx      != NULL);
 	ASSERT(argv     != NULL);
@@ -97,7 +101,7 @@ static int _add_password
 	ASSERT(privdata != NULL);
 
 	const RedisModuleString *pass = (RedisModuleString *)argv[2];
-	return _set_password_with_prefix(ctx, (const char*) privdata, pass, '>');
+	return _set_password_with_prefix(ctx, (const char*)privdata, pass, '>');
 }
 
 // call to set password command with a "<" prefix
@@ -106,10 +110,10 @@ static int _add_password
 // implement RedisFunc
 static int _remove_password
 (
-	RedisModuleCtx *ctx,            // redis module context
-	RedisModuleString **argv,       // arguments to the command (RedisFunc)
-	int argc,                       // number of args (RedisFunc)
-	void *privdata                  // private data, the current username
+	RedisModuleCtx *ctx,       // redis module context
+	RedisModuleString **argv,  // arguments to the command (RedisFunc)
+	int argc,                  // number of args (RedisFunc)
+	void *privdata             // private data, the current username
 ) {
 	ASSERT(ctx      != NULL);
 	ASSERT(argv     != NULL);
@@ -139,7 +143,7 @@ int Graph_SetPassword
 		return RedisModule_WrongArity(ctx);
 	}
 
-	// get the current user name as C string, to pass as private data.
+	// get the current user name as C string, to pass as private data
 	RedisModuleString *_redis_current_user_name = 
 		RedisModule_GetCurrentUserName(ctx);
 

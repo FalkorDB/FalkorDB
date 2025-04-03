@@ -13,8 +13,10 @@
 // this variable will be used to run the command as admin user
 extern char *ACL_ADMIN_USER;
 
-// TODO: explain this function signature
+TODO: explain this function signature
 // this function will be used to run the command in the context of admin user
+TODO: please rename, we're not using this function pointer type to call
+// Redis functions
 typedef int (*RedisFunc)(RedisModuleCtx *ctx,
 	RedisModuleString **argv, int argc, void *privdata);
 
@@ -35,6 +37,7 @@ void init_acl_admin_username
 // command is executed
 // the function will return REDISMODULE_OK on success
 // and REDISMODULE_ERR on failure
+TODO: rename, we're not really running Redis commands here
 int run_redis_command_as
 (
 	RedisModuleCtx *ctx,       // redis module context
