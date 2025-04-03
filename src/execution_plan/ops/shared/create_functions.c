@@ -300,10 +300,12 @@ void ConvertPropertyMap
 	PropertyMap *map,
 	bool fail_on_null
 ) {
+	uint attrs_count    = 0;
 	uint property_count = array_len(map->keys);
-	SIValue vals[property_count];
+
+	SIValue     vals[property_count];
 	AttributeID ids[property_count];
-	uint attrs_count = 0;
+
 	for(int i = 0; i < property_count; i++) {
 		// note that AR_EXP_Evaluate may raise a run-time exception
 		// in which case the allocations in this function will leak
@@ -321,6 +323,7 @@ void ConvertPropertyMap
 				Error_InvalidPropertyValue();
 				ErrorCtx_RaiseRuntimeException(NULL);
 			}
+
 			// the value was NULL
 			// if this was prohibited in this context, raise an exception,
 			// otherwise skip this value
@@ -357,6 +360,7 @@ void ConvertPropertyMap
 		vals[attrs_count++] = SI_CloneValue(val);
 		SIValue_Free(val);
 	}
+
 	AttributeSet_AddNoClone(attributes, ids, vals, attrs_count, false);
 }
 

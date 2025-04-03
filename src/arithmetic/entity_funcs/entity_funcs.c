@@ -274,8 +274,9 @@ SIValue AR_PROPERTY(SIValue *argv, int argc, void *private_data) {
 		}
 
 		// Retrieve the property.
-		SIValue *value = GraphEntity_GetProperty(graph_entity, prop_idx);
-		return SI_ConstValue(value);
+		SIValue value;
+		GraphEntity_GetProperty(graph_entity, prop_idx, &value);
+		return SI_ConstValue(&value);
 	} else if(SI_TYPE(obj) & T_MAP) {
 		// retrieve map key
 		SIValue key = argv[1];

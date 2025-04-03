@@ -114,9 +114,13 @@ static void _RdbSaveEntity
 
 	SerializerIO_WriteUnsigned(rdb, attr_count);
 
+	// TODO: introduce an unsage attribute-set iterator
+	// TODO: introduce a single function which gets all
+	// attribute-set attribute IDs and values
 	for(int i = 0; i < attr_count; i++) {
+		SIValue     value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
 		SerializerIO_WriteUnsigned(rdb, attr_id);
 		_RdbSaveSIValue(rdb, &value);
 	}

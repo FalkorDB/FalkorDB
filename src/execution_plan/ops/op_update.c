@@ -19,19 +19,22 @@ static OpResult UpdateReset(OpBase *opBase);
 static OpBase *UpdateClone(const ExecutionPlan *plan, const OpBase *opBase);
 static void UpdateFree(OpBase *opBase);
 
+// returns a record
 static Record _handoff
 (
-	OpUpdate *op
+	OpUpdate *op  // op update
 ) {
+	// as long as there's a record to return
 	if(op->rec_idx < array_len(op->records)) {
 		return op->records[op->rec_idx++];
-	} else {
-		return NULL;
 	}
+
+	// no more records to return
+	return NULL;
 }
 
 // fake hash function
-// hash of key is simply key
+// hash of key is simply the key
 static uint64_t _id_hash
 (
 	const void *key
@@ -52,18 +55,23 @@ static void freeCallback
 static dictType _dt = { _id_hash, NULL, NULL, NULL, NULL, freeCallback, NULL,
 	NULL, NULL, NULL};
 
+// create a new update operation
 OpBase *NewUpdateOp
 (
 	const ExecutionPlan *plan,
 	rax *update_exps
 ) {
+	ASSERT(plan        != NULL);
+	ASSERT(update_exps != NULL);
+
 	OpUpdate *op = rm_calloc(1, sizeof(OpUpdate));
-	op->gc                = QueryCtx_GetGraphCtx();
-	op->rec_idx           = 0;
-	op->records           = array_new(Record, 64);
-	op->update_ctxs       = update_exps;
-	op->node_updates      = HashTableCreate(&_dt);
-	op->edge_updates      = HashTableCreate(&_dt);
+
+	op->gc           = QueryCtx_GetGraphCtx();
+	op->rec_idx      = 0;
+	op->records      = array_new(Record, 64);
+	op->update_ctxs  = update_exps;
+	op->node_updates = HashTableCreate(&_dt);
+	op->edge_updates = HashTableCreate(&_dt);
 
 	// set our op operations
 	OpBase_Init((OpBase *)op, OPType_UPDATE, "Update", NULL, UpdateConsume,
@@ -85,19 +93,21 @@ static Record UpdateConsume
 (
 	OpBase *opBase
 ) {
-	OpUpdate *op = (OpUpdate *)opBase;
+	OpUpdate *op  = (OpUpdate *)opBase;
 	OpBase *child = op->op.children[0];
 	Record r;
 
 	// updates already performed
 	if(array_len(op->records) > 0) return _handoff(op);
 
+	// as long as new records arraive
 	while((r = OpBase_Consume(child))) {
 		// evaluate update expressions
 		raxSeek(&op->it, "^", NULL, 0);
 		while(raxNext(&op->it)) {
 			EntityUpdateEvalCtx *ctx = op->it.data;
-			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r, ctx, true);
+			EvalEntityUpdates(op->gc, op->node_updates, op->edge_updates, r,
+					ctx, true);
 		}
 
 		array_append(op->records, r);
@@ -109,7 +119,7 @@ static Record UpdateConsume
 	if(node_updates_count > 0 || edge_updates_count > 0) {
 		// done reading; we're not going to call Consume any longer
 		// there might be operations like "Index Scan" that need to free the
-		// index R/W lock - as such, free all ExecutionPlan operations up the chain.
+		// index R/W lock - reset all ExecutionPlan operations up the chain
 		OpBase_PropagateReset(child);
 
 		// lock everything

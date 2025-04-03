@@ -19,23 +19,35 @@
 // Forward declaration
 sds _JsonEncoder_SIValue(SIValue v, sds s);
 
-static inline sds _JsonEncoder_String(SIValue v, sds s) {
+static inline sds _JsonEncoder_String
+(
+	SIValue v,
+	sds s
+) {
 	return sdscatfmt(s, "\"%s\"", v.stringval);
 }
 
-static sds _JsonEncoder_Properties(const GraphEntity *ge, sds s) {
+static sds _JsonEncoder_Properties
+(
+	const GraphEntity *ge,
+	sds s
+) {
 	s = sdscat(s, "\"properties\": {");
 	const AttributeSet set = GraphEntity_GetAttributes(ge);
 	uint prop_count = AttributeSet_Count(set);
 	GraphContext *gc = QueryCtx_GetGraphCtx();
-	for(uint i = 0; i < prop_count; i ++) {
+
+	// TODO: introduce an unsafe attribute-set iterator
+	for(uint i = 0; i < prop_count; i++) {
+		SIValue     value;
 		AttributeID attr_id;
-		SIValue value = AttributeSet_GetIdx(set, i, &attr_id);
+		AttributeSet_GetIdx(set, i, &attr_id, &value);
 		const char *key = GraphContext_GetAttributeString(gc, attr_id);
 		s = sdscatfmt(s, "\"%s\": ", key);
 		s = _JsonEncoder_SIValue(value, s);
 		if(i < prop_count - 1) s = sdscat(s, ", ");
 	}
+
 	s = sdscat(s, "}");
 	return s;
 }
@@ -163,7 +175,11 @@ static sds _JsonEncoder_Array(SIValue list, sds s) {
 	return s;
 }
 
-static sds _JsonEncoder_Map(SIValue map, sds s) {
+static sds _JsonEncoder_Map
+(
+	SIValue map,
+	sds s
+) {
 	ASSERT(SI_TYPE(map) & T_MAP);
 
 	// "{" marks the beginning of a map
@@ -172,10 +188,12 @@ static sds _JsonEncoder_Map(SIValue map, sds s) {
 	uint key_count = Map_KeyCount(map);
 	for(uint i = 0; i < key_count; i ++) {
 		Pair p = map.map[i];
+
 		// write the next key/value pair
 		s = _JsonEncoder_String(p.key, s);
 		s = sdscat(s, ": ");
 		s = _JsonEncoder_SIValue(p.val, s);
+
 		// if this is not the last element, add ", "
 		if(i != key_count - 1) s = sdscat(s, ", ");
 	}
@@ -185,59 +203,69 @@ static sds _JsonEncoder_Map(SIValue map, sds s) {
 	return s;
 }
 
-sds _JsonEncoder_SIValue(SIValue v, sds s) {
+sds _JsonEncoder_SIValue
+(
+	SIValue v,
+	sds s
+) {
 	switch(v.type) {
-	case T_STRING:
-		s = _JsonEncoder_String(v, s);
-		break;
-	case T_INT64:
-		s = sdscatfmt(s, "%I", v.longval);
-		break;
-	case T_BOOL:
-		if(v.longval) s = sdscat(s, "true");
-		else s = sdscat(s, "false");
-		break;
-	case T_DOUBLE:
-		s = sdscatprintf(s, "%.15g", v.doubleval);
-		break;
-	case T_NODE:
-		s = _JsonEncoder_GraphEntity(v.ptrval, s, GETYPE_NODE);
-		break;
-	case T_EDGE:
-		s = _JsonEncoder_GraphEntity(v.ptrval, s, GETYPE_EDGE);
-		break;
-	case T_ARRAY:
-		s = _JsonEncoder_Array(v, s);
-		break;
-	case T_MAP:
-		s = _JsonEncoder_Map(v, s);
-		break;
-	case T_PATH:
-		s = _JsonEncoder_Path(v, s);
-		break;
-	case T_NULL:
-		s = sdscat(s, "null");
-		break;
-	case T_POINT:
-		s = _JsonEncoder_Point(v, s);
-		break;		
-	default:
-		// unrecognized type
-		ErrorCtx_RaiseRuntimeException("JSON encoder encountered unrecognized type: %d\n", v.type);
-		ASSERT(false);
-		break;
+		case T_STRING:
+			s = _JsonEncoder_String(v, s);
+			break;
+		case T_INT64:
+			s = sdscatfmt(s, "%I", v.longval);
+			break;
+		case T_BOOL:
+			if(v.longval) s = sdscat(s, "true");
+			else s = sdscat(s, "false");
+			break;
+		case T_DOUBLE:
+			s = sdscatprintf(s, "%.15g", v.doubleval);
+			break;
+		case T_NODE:
+			s = _JsonEncoder_GraphEntity(v.ptrval, s, GETYPE_NODE);
+			break;
+		case T_EDGE:
+			s = _JsonEncoder_GraphEntity(v.ptrval, s, GETYPE_EDGE);
+			break;
+		case T_ARRAY:
+			s = _JsonEncoder_Array(v, s);
+			break;
+		case T_MAP:
+			s = _JsonEncoder_Map(v, s);
+			break;
+		case T_PATH:
+			s = _JsonEncoder_Path(v, s);
+			break;
+		case T_NULL:
+			s = sdscat(s, "null");
+			break;
+		case T_POINT:
+			s = _JsonEncoder_Point(v, s);
+			break;		
+		default:
+			// unrecognized type
+			ErrorCtx_RaiseRuntimeException("JSON encoder encountered unrecognized type: %d\n", v.type);
+			ASSERT(false);
+			break;
 	}
 	return s;
 }
 
-char *JsonEncoder_SIValue(SIValue v) {
-	// Create an empty sds string.
+char *JsonEncoder_SIValue
+(
+	SIValue v
+) {
+	// create an empty sds string
 	sds s = sdsempty();
-	// Populate the sds string with encoded data.
+
+	// populate the sds string with encoded data
 	s = _JsonEncoder_SIValue(v, s);
-	// Duplicate the sds string into a standard C string.
+
+	// duplicate the sds string into a standard C string
 	char *retval = rm_strdup(s);
-	// Free the sds string.
+
+	// free the sds string
 	sdsfree(s);
 	return retval;
 }

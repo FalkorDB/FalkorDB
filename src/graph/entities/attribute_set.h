@@ -16,10 +16,10 @@
 #define ATTRIBUTE_ID_ALL USHRT_MAX - 1
 
 // mark attribute-set as read-only
-#define ATTRIBUTE_SET_MARK_READONLY(set) ((intptr_t)SET_MSB((intptr_t)(set)))
+#define ATTRIBUTE_SET_MARK_READONLY(set) SET_MSB(set)
 
 // check if attribute-set is read-only
-#define ATTRIBUTE_SET_IS_READONLY(set) ((intptr_t)(set) & MSB_MASK)
+#define ATTRIBUTE_SET_IS_READONLY(set) MSB_ON(set)
 
 typedef uint16_t AttributeID;
 
@@ -42,19 +42,29 @@ uint16_t AttributeSet_Count
 
 // retrieves a value from set
 // NOTE: if the key does not exist
-//       we return the special constant value ATTRIBUTE_NOTFOUND
-SIValue *AttributeSet_Get
+// v is set to a special constant value ATTRIBUTE_NOTFOUND
+// and false is returned
+bool AttributeSet_Get
 (
 	const AttributeSet set,  // set to retieve attribute from
-	AttributeID attr_id      // attribute identifier
+	AttributeID id,          // attribute identifier
+	SIValue *v               // [output] attribute
 );
 
 // retrieves a value from set by index
-SIValue AttributeSet_GetIdx
+bool AttributeSet_GetIdx
 (
 	const AttributeSet set,  // set to retieve attribute from
 	uint16_t i,              // index of the property
-	AttributeID *attr_id     // attribute identifier
+	AttributeID *attr_id,    // [output] attribute identifier
+	SIValue *v               // [output] attribute
+);
+
+// returns true if attribute set contains attribute
+bool AttributeSet_Contains
+(
+	const AttributeSet set,  // set to search
+	AttributeID attr_id      // attribute id to locate
 );
 
 // adds an attribute to the set without cloning the SIValue
@@ -85,22 +95,17 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 	SIValue value          // attribute value
 );
 
-// updates existing attribute (without cloning)
-// return true if attribute been updated
-bool AttributeSet_UpdateNoClone
-(
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
-);
-
-// updates existing attribute
-// return true if attribute been updated
+// updates an existing attribute in the set
+// - if the new value is NULL, the attribute is removed
+// - if the new value is the same as the current value, no update occurs
+// - otherwise, the attribute is updated
+// returns true if the attribute was updated, false otherwise
 bool AttributeSet_Update
 (
-	AttributeSet *set,     // set to update
-	AttributeID attr_id,   // attribute identifier
-	SIValue value          // new value
+	AttributeSet *set,    // set to update
+	AttributeID attr_id,  // attribute identifier
+	SIValue value,        // new value
+	bool clone            // clone value
 );
 
 // clones attribute set without si values
@@ -113,6 +118,12 @@ AttributeSet AttributeSet_ShallowClone
 void AttributeSet_PersistValues
 (
 	const AttributeSet set  // set to persist
+);
+
+// get direct access to the set attributes
+char *AttributeSet_Attributes
+(
+	const AttributeSet set  // set to retrieve attributes from
 );
 
 // free attribute set

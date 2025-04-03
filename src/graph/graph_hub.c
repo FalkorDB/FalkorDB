@@ -227,10 +227,10 @@ void UpdateNodeProperty
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
-	} else if(GraphEntity_GetProperty((GraphEntity *)&n, attr_id) == ATTRIBUTE_NOTFOUND) {
+	} else if(!GraphEntity_ContainsProperty((GraphEntity *)&n, attr_id)) {
 		AttributeSet_AddNoClone(n.attributes, &attr_id, &v, 1, true);
 	} else {
-		AttributeSet_UpdateNoClone(n.attributes, attr_id, v);
+		AttributeSet_Update(n.attributes, attr_id, v, false);
 	}
 
 	// retrieve node labels
@@ -298,10 +298,10 @@ void UpdateEdgeProperty
 	bool update_idx = true;
 	GraphEntity *ge = (GraphEntity *)&e;
 
-	if(GraphEntity_GetProperty(ge, attr_id) == ATTRIBUTE_NOTFOUND) {
+	if(!GraphEntity_ContainsProperty(ge, attr_id)) {
 		AttributeSet_AddNoClone(e.attributes, &attr_id, &v, 1, true);
 	} else {
-		update_idx = AttributeSet_UpdateNoClone(e.attributes, attr_id, v);
+		update_idx = AttributeSet_Update(e.attributes, attr_id, v, false);
 	}
 
 	// update index if

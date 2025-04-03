@@ -114,39 +114,49 @@ static const AttrType sivalue_type_to_attr_type[19] = {
 };
 
 // skips attribute id
-#define SKIP_ATTR_ID(buff) (buff) += sizeof(AttributeID);
+#define SKIP_ATTR_ID(buff) (buff) += sizeof(AttributeID)
 
 // skips attribute type
-#define SKIP_ATTR_TYPE(buff) (buff) += sizeof(AttrType);
+#define SKIP_ATTR_TYPE(buff) (buff) += sizeof(AttrType)
 
 // skips attribute value
-#define SKIP_ATTR_VALUE(buff) (buff) += attr_type_to_size((buff-1));
+#define SKIP_ATTR_VALUE(buff) (buff) += attr_type_to_size[*(buff-1)]
 
 // skips entire attribute
 #define SKIP_ATTR(buff)                                         \
-	SKIP_ATTR_ID(buff)                                          \
-	(buff) += attr_type_to_size((buff)[0]) + sizeof(AttrType);
+	SKIP_ATTR_ID(buff);                                         \
+	(buff) += attr_type_to_size[(buff)[0]] + sizeof(AttrType);
 
 // get attribute id
-#define GET_ATTR_ID(buff) *((AttributeID*) (buff));
+#define GET_ATTR_ID(buff)                                       \
+	*((AttributeID*) (buff))
 
 // get attribute type
 #define GET_ATTR_TYPE(buff)                                     \
-	*((AttrType*)((buff) + sizeof(AttributeID)));
+	*((AttrType*)((buff) + sizeof(AttributeID)))
 
 // get attribute value
 #define GET_ATTR_VALUE(buff)                                    \
-	(buff) + sizeof(AttributeID) + sizeof(AttrType);
+	(buff) + sizeof(AttributeID) + sizeof(AttrType)
+
+// get attribute's value as type t
+#define GET_ATTR_VALUE_AS(t, attr)                              \
+	(*((t*)(attr)))
+
+#define GET_ATTR_TOTAL_SIZE(attr)                               \
+	sizeof(AttributeID) +                                       \
+	sizeof(AttrType)    +                                       \
+	attr_type_to_size[(attr + sizeof(AttributeID))[0]]
 
 // set attribute id
 #define SET_ATTR_ID(buff, id)                                   \
 	*(AttributeID*)(buff) = id;                                 \
-	SKIP_ATTR_ID(buff)
+	SKIP_ATTR_ID(buff);
 
 // set attribute type
 #define SET_ATTR_TYPE(buff, t)                                  \
 	offset[0] = t;                                              \
-	SKIP_ATTR_TYPE(buff)
+	SKIP_ATTR_TYPE(buff);
 
 // converts between SIType to AttrType
 static inline AttrType SIValue_To_AttrType
@@ -205,9 +215,6 @@ static inline AttrType SIValue_To_AttrType
 	return at;
 }
 
-// get attribute's value as type t
-#define GET_ATTR_VALUE_AS(t, attr) (*((t*)(attr)))
-
 // populate an SIValue from an attribute
 static void _attribute_to_sivalue
 (
@@ -251,8 +258,13 @@ static void _attribute_to_sivalue
 			*v = SI_DoubleVal(GET_ATTR_VALUE_AS(double, attr));
 			break;
 
+		case ATTR_TYPE_POINT:
+			*v = SI_Point(GET_ATTR_VALUE_AS(Point, attr).latitude,
+					GET_ATTR_VALUE_AS(Point, attr).longitude);
+			break;
+
 		case ATTR_TYPE_STRING:
-			*v = SI_ConstStringVal(GET_ATTR_VALUE_AS(char*, attr));
+			*v = SI_ConstStringVal(GET_ATTR_VALUE_AS(char*, CLEAR_MSB(attr)));
 			break;
 
 		case ATTR_TYPE_NULL:
@@ -261,10 +273,9 @@ static void _attribute_to_sivalue
 
 		// pointer based SIValues
 		case ATTR_TYPE_MAP:
-		case ATTR_TYPE_POINT:
 		case ATTR_TYPE_ARRAY:
 		case ATTR_TYPE_VECTOR_F32:
-			*v = SI_PtrVal(GET_ATTR_VALUE_AS(void*, attr));
+			*v = SI_PtrVal(GET_ATTR_VALUE_AS(void*, CLEAR_MSB(attr)));
 			break;
 
 		case ATTR_TYPE_INVALID:
@@ -276,12 +287,13 @@ static void _attribute_to_sivalue
 	v->type = attr_type_to_sivalue_type[t];
 
 	// TODO: not sure about the allocation type
-	v->allocation = M_VOLATILE;
+	v->allocation = M_SELF;
 }
 
 struct _AttributeSet {
-	uint16_t attr_count;  // number of attributes
-	char attributes[];    // key value pair of attributes
+	uint8_t extra_usable_size;  // amount of extra usable memory we can use
+	uint16_t attr_count;        // number of attributes
+	char attributes[];          // key value pair of attributes
 };
 
 // compute size of attribute set in bytes
@@ -350,10 +362,35 @@ static char *_LocateAttrById
 			return offset;
 		}
 
-		SKIP_ATTR(offset)
+		SKIP_ATTR(offset);
 	}
 
 	return NULL;
+}
+
+// free individual attribute
+static void _freeAttribute
+(
+	char *attr  // pointer to the begining of the attribute
+) {
+	// get the attribute type
+	AttrType t = GET_ATTR_TYPE(attr);
+
+	// free attribute if it's heap allocated
+	if(attr_type_heap_allocated[t]) {
+		const void *val = (const void*)GET_ATTR_VALUE(attr);
+
+		// check if attr's MSB is on, if so don't free attribute
+		if(!MSB_ON(val)) {
+			// convert from Attribute to SIValue
+			SIValue v;
+
+			_attribute_to_sivalue(t, val, &v);
+
+			// free SIValue
+			SIValue_Free(v);
+		}
+	}
 }
 
 // removes an attribute from the given attribute set
@@ -388,28 +425,13 @@ static bool _AttributeSet_Remove
 		return true;
 	}
 
-	// get the attribute type
-	AttrType t = GET_ATTR_TYPE(offset)
-
-	// free attribute if it's heap allocated
-	if(attr_type_heap_allocated[t]) {
-		// convert from Attribute to SIValue
-		SIValue v;
-		const void *attr = GET_ATTR_VALUE(offset);
-
-		_attribute_to_sivalue(t, attr, &v);
-
-		// free SIValue
-		SIValue_Free(v);
-	}
+	_freeAttribute(offset);
 
 	// attribute-set allocation size
 	size_t n = RedisModule_MallocSize(_set);
 
 	// shift left by the size of the removed attribute
-	size_t shift_amount = sizeof(AttributeID)   +
-		                  sizeof(AttrType)      +
-						  attr_type_to_size[t];
+	size_t shift_amount = GET_ATTR_TOTAL_SIZE(offset);
 
 	// shift remaining attributes to fill the gap
     memmove(offset, offset + shift_amount,
@@ -459,38 +481,75 @@ bool AttributeSet_Get
 		return false;
 	}
 
-	_attribute_to_sivalue(GET_ATTR_TYPE(attr), GET_ATTR_VALUE(attr));
+	AttrType t = GET_ATTR_TYPE(attr);
+	_attribute_to_sivalue(t, GET_ATTR_VALUE(attr), v);
 
 	return true;
 }
 
 // retrieves a value from set by index
-SIValue AttributeSet_GetIdx
+bool AttributeSet_GetIdx
 (
 	const AttributeSet set,  // set to retieve attribute from
 	uint16_t i,              // index of the property
-	AttributeID *id          // attribute identifier
+	AttributeID *attr_id,    // [output] attribute identifier
+	SIValue *v               // [output] attribute
 ) {
-	ASSERT(id  != NULL);
-	ASSERT(set != NULL);
+	// empty result set
+	if(unlikely(set == NULL)) {
+		if(v != NULL) {
+			*v = ATTRIBUTE_NOTFOUND;
+		}
+		return false;
+	}
 
 	// in case attribute-set is marked as read-only, clear marker
 	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
 
 	ASSERT(_set != NULL);
-	ASSERT(i < _set->attr_count);
+
+	if(unlikely(i >= _set->attr_count)) {
+		if(v != NULL) {
+			*v = ATTRIBUTE_NOTFOUND;
+		}
+
+		return false;
+	}
 
 	char *attr = _LocateAttrByIdx(_set, i);
 	ASSERT(attr != NULL);
 
 	// get the attribute id
-	*id = GET_ATTR_ID(attr)
+	if(attr_id != NULL) {
+		*attr_id = GET_ATTR_ID(attr);
+	}
 
 	// convert from attribute to SIValue
-	SIValue v;
-	_attribute_to_sivalue(GET_ATTR_TYPE(attr), GET_ATTR_VALUE(attr), &v);
+	if(v != NULL) {
+		_attribute_to_sivalue(GET_ATTR_TYPE(attr), GET_ATTR_VALUE(attr), v);
+	}
 
-	return v;
+	return true;
+}
+
+// returns true if attribute set contains attribute
+bool AttributeSet_Contains
+(
+	const AttributeSet set,  // set to search
+	AttributeID attr_id      // attribute id to locate
+) {
+	ASSERT(attr_id != ATTRIBUTE_ID_ALL)
+	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+
+	// empty attribute-set
+	if(unlikely(set == NULL)) {
+		return false;
+	}
+
+	// in case attribute-set is marked as read-only, clear marker
+	AttributeSet _set = (AttributeSet)ATTRIBUTE_SET_CLEAR_MSB(set);
+
+	return _LocateAttrById(_set, attr_id) != NULL;
 }
 
 // extends the attribute set by `n` bytes
@@ -510,17 +569,34 @@ static AttributeSet AttributeSet_Grow
 
 	// allocate room for new attribute
 	if(_set == NULL) {
-		_set = rm_malloc(sizeof(_AttributeSet) + n);
+		n += sizeof(_AttributeSet);
+		_set = rm_malloc(n);
 		_set->attr_count = 0;
+		_set->extra_usable_size = RedisModule_MallocUsableSize(_set) - n;
+		//printf("Asked for: %d, allocated: %zu, usable: %zu, waste: %zu\n",
+		//		n,
+		//		RedisModule_MallocSize(_set),
+		//		RedisModule_MallocUsableSize(_set),
+		//		RedisModule_MallocSize(_set) - n);
+	} else if(_set->extra_usable_size >= n) {
+		// set can accommodate additional n bytes
+		_set->extra_usable_size -= n;
 	} else {
-		n += RedisModule_MallocSize(_set);
-		*set = rm_realloc(_set, n);
+		n -= _set->extra_usable_size;
+		n += RedisModule_MallocUsableSize(_set);
+		_set = rm_realloc(_set, n);
+		_set->extra_usable_size = RedisModule_MallocUsableSize(_set) - n;
 	}
 
 	return _set;
 }
 
-// adds an attribute to the set without cloning the SIvalue
+// set attribute to value of the given type 't'
+#define SET_ATTR_VALUE_AS(t, attr, v) *((t*)attr) = v
+
+// adds one or more attributes to the set without cloning the SIValue
+// ensures attributes are of valid types and do not already exist in the set
+// returns immediately if the set is read-only
 void AttributeSet_AddNoClone
 (
 	AttributeSet *set,  // set to update
@@ -583,7 +659,7 @@ void AttributeSet_AddNoClone
 		offset = _LocateAttrByIdx(_set, prev_count - 1);
 
 		// skip pass the last attribute
-		SKIP_ATTR(offset)
+		SKIP_ATTR(offset);
 	}
 
 	//--------------------------------------------------------------------------
@@ -600,20 +676,19 @@ void AttributeSet_AddNoClone
 		// store value
 		switch(ats[i]) {
 			case ATTR_TYPE_INT8:
-				*((int8_t*)offset) = values[i].longval;
-				*((int8_t*)offset) = values[i].longval;
+				SET_ATTR_VALUE_AS(int8_t, offset, values[i].longval);
 				break;
 
 			case ATTR_TYPE_INT16:
-				*((int16_t*)offset) = values[i].longval;
+				SET_ATTR_VALUE_AS(int16_t, offset, values[i].longval);
 				break;
 
 			case ATTR_TYPE_INT32:
-				*((int32_t*)offset) = values[i].longval;
+				SET_ATTR_VALUE_AS(int32_t, offset, values[i].longval);
 				break;
 
 			case ATTR_TYPE_INT64:
-				*((int64_t*)offset) = values[i].longval;
+				SET_ATTR_VALUE_AS(int64_t, offset, values[i].longval);
 				break;
 
 			case ATTR_TYPE_NULL:
@@ -622,19 +697,22 @@ void AttributeSet_AddNoClone
 				break;
 
 			case ATTR_TYPE_FLOAT:
-				*((float*)offset) = values[i].doubleval;
+				SET_ATTR_VALUE_AS(float, offset, values[i].doubleval);
 				break;
 
 			case ATTR_TYPE_DOUBLE:
-				*((double*)offset) = values[i].doubleval;
+				SET_ATTR_VALUE_AS(double, offset, values[i].doubleval);
+				break;
+
+			case ATTR_TYPE_POINT:
+				SET_ATTR_VALUE_AS(Point, offset, values[i].point);
 				break;
 
 			case ATTR_TYPE_MAP:
 			case ATTR_TYPE_ARRAY:
-			case ATTR_TYPE_POINT:
 			case ATTR_TYPE_STRING:
 			case ATTR_TYPE_VECTOR_F32:
-				*((void**)offset) = values[i].ptrval;
+				SET_ATTR_VALUE_AS(void*, offset, values[i].ptrval);
 				break;
 
 			case ATTR_TYPE_INVALID:
@@ -642,7 +720,7 @@ void AttributeSet_AddNoClone
 				break;
 		}
 
-		SKIP_ATTR_VALUE(offset)
+		SKIP_ATTR_VALUE(offset);
 	}
 
 	// update pointer
@@ -663,9 +741,11 @@ void AttributeSet_Add
 	AttributeSet_AddNoClone(set, &attr_id, &v, 1, false);
 }
 
-// add, remove or update an attribute
-// this function allows NULL value to be added to the set
-// returns the type of change performed
+// modifies an attribute in the set:
+// - adds a new attribute if it does not exist
+// - updates an existing attribute if found
+// - removes the attribute if the new value is NULL
+// - returns the type of change performed (CT_ADD, CT_UPDATE, CT_DEL, CT_NONE)
 AttributeSetChangeType AttributeSet_Set_Allow_Null
 (
 	AttributeSet *set,    // set to update
@@ -686,30 +766,47 @@ AttributeSetChangeType AttributeSet_Set_Allow_Null
 	ASSERT(SI_TYPE(value) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 
 	// update the attribute if it is already presented in the set
-	if(AttributeSet_Get(_set, attr_id) != ATTRIBUTE_NOTFOUND) {
-		if(AttributeSet_Update(&_set, attr_id, value)) {
-			// update pointer
-			*set = _set;
-			// if value is NULL, indicate attribute removal
-			// otherwise indicate attribute update
-			return SIValue_IsNull(value) ? CT_DEL : CT_UPDATE;
+	SIValue v;
+	bool exists  = AttributeSet_Get(_set, attr_id, &v);
+	bool is_null = SIValue_IsNull(value);
+
+	if(exists) {
+
+		//----------------------------------------------------------------------
+		// update
+		//----------------------------------------------------------------------
+
+		// setting an attribute value to NULL removes that attribute
+		if(unlikely(is_null)) {
+			_AttributeSet_Remove(set, attr_id);
+			return CT_DEL;
 		}
 
-		// value did not change, indicate no modification
-		return CT_NONE;
+		return AttributeSet_Update(set, attr_id, value, true) ?
+			CT_UPDATE :
+			CT_NONE;
 	}
 
 	// can't remove a none existing attribute, indicate no modification
-	if(SIValue_IsNull(value)) return CT_NONE;
+	if(is_null) {
+		return CT_NONE;
+	}
 
-	SIValue v = SI_CloneValue(value);
-	AttributeSet_AddNoClone(set, &attr_id, &v, 1, false);
+	//--------------------------------------------------------------------------
+	// add
+	//--------------------------------------------------------------------------
+
+	AttributeSet_Add(set, attr_id, value);
 
 	// new attribute added, indicate attribute addition
 	return CT_ADD;
 }
 
-// updates existing attribute, return true if attribute been updated
+// updates an existing attribute in the set
+// - if the new value is NULL, the attribute is removed
+// - if the new value is the same as the current value, no update occurs
+// - otherwise, the attribute is updated
+// returns true if the attribute was updated, false otherwise
 bool AttributeSet_Update
 (
 	AttributeSet *set,    // set to update
@@ -735,7 +832,9 @@ bool AttributeSet_Update
 
 	SIValue current;
 	bool res = AttributeSet_Get(_set, attr_id, &current);
-	ASSERT(res);
+	if(!res) {
+		return false;
+	}
 
 	// compare current value to new value, only update if current != new
 	if(unlikely(SIValue_Compare(current, value, NULL) == 0)) {
@@ -744,7 +843,7 @@ bool AttributeSet_Update
 
 	// TODO: no need to look up the attribute again
 	// remove old attribute
-	res = _AttributeSet_Remove(*set, attr_id);
+	res = _AttributeSet_Remove(set, attr_id);
 	ASSERT(res);
 
 	if(clone) {
@@ -752,7 +851,7 @@ bool AttributeSet_Update
 	}
 
 	// TODO: inplace update when possible
-	AttributeSet_AddNoClone(set, &attr_id, &v, 1, false);
+	AttributeSet_AddNoClone(set, &attr_id, &value, 1, false);
 
 	return true;
 }
@@ -771,8 +870,17 @@ AttributeSet AttributeSet_ShallowClone
 	AttributeSet clone = rm_malloc(n);
 	clone = (AttributeSet)memcpy(clone, _set, n);
 
-	// NOTE: the previous version marked each attribute as shared!
-	// clone_attr->value = SI_ShareValue(attr->value);
+	// for each heap allocated value, set MSB ON indicate value shouldn't
+	// be free
+	char *buff = clone->attributes;
+	for(uint16_t i = 0; i < clone->attr_count; ++i) {
+		// persist only heap allocated attributes
+		if(attr_type_heap_allocated[GET_ATTR_TYPE(buff)]) {
+			char *val = GET_ATTR_VALUE(buff);
+			val[0] = SET_MSB(val[0]);
+		}
+		SKIP_ATTR(buff);
+	}
 
     return clone;
 }
@@ -792,28 +900,45 @@ void AttributeSet_PersistValues
 	// scan through each attribute
 	for(uint16_t i = 0; i < set->attr_count; ++i) {
 		// persist only heap allocated attributes
-		if(attr_type_heap_allocated(GET_ATTR_TYPE(buff))) {
+		if(attr_type_heap_allocated[GET_ATTR_TYPE(buff)]) {
 			// get SIValue representation of attribute and free it
 			SIValue v;
 			char *attr = GET_ATTR_VALUE(buff);
-			_attribute_to_sivalue(t, attr, &v);
+			_attribute_to_sivalue(GET_ATTR_TYPE(buff), attr, &v);
 
-			SIValue_Persist(&attr->value);
+			SIValue_Persist(&v);
 
-			char *value = GET_ATTR_VALUE(buff);
+			// TODO: store value back into buffer
+			ASSERT(false && "todo");
 		}
 
 		// move on to the next attribute
-		SKIP_ATTR(buff)
+		SKIP_ATTR(buff);
 	}
 }
 
-// free attribute set
+// get direct access to the set attributes
+char *AttributeSet_Attributes
+(
+	const AttributeSet set  // set to retrieve attributes from
+) {
+	if(set == NULL) {
+		return NULL;
+	}
+
+	return set->attributes;
+}
+
+// frees an attribute set and all its allocated attributes
+// - if the set is NULL or read-only, it is not modified
+// - heap-allocated attributes are deallocated before freeing the set
+// - the pointer is set to NULL to prevent dangling references
 void AttributeSet_Free
 (
 	AttributeSet *set  // set to be freed
 ) {
-	ASSERT(set != NULL);
+	ASSERT(set  != NULL);
+	ASSERT(*set != NULL);
 
 	AttributeSet _set = *set;
 
@@ -833,17 +958,10 @@ void AttributeSet_Free
 	// scan through attributes
 	// free heap allocated attributes
 	for(uint16_t i = 0; i < _set->attr_count; i++) {
-		// check if this is a heap allocated attribute
-		if(attr_type_heap_allocated(GET_ATTR_TYPE(buff))) {
-			// get SIValue representation of attribute and free it
-			SIValue v;
-			char *attr = GET_ATTR_VALUE(buff);
-			_attribute_to_sivalue(t, attr, &v);
-			SIValue_Free(v);
-		}
+		// free current attribute
+		_freeAttribute(buff);
 
-		// move on to the next attribute
-		SKIP_ATTR(buff)
+		SKIP_ATTR(buff);
 	}
 
 	rm_free(_set);

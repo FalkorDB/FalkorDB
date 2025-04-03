@@ -239,7 +239,6 @@ RSDoc *Index_IndexGraphEntity
 
 	double     score       = 1;     // default score
 	IndexField *field      = NULL;  // current indexed field
-	SIValue    *v          = NULL;  // current indexed value
 	uint       field_count = array_len(idx->fields);
 
 	*doc_field_count = 0;  // number of indexed fields
@@ -257,14 +256,13 @@ RSDoc *Index_IndexGraphEntity
 		field = idx->fields + i;
 
 		// try to get attribute value
-		v = GraphEntity_GetProperty(e, field->id);
-
-		// entity does not have this attribute
-		if(v == ATTRIBUTE_NOTFOUND) {
+		SIValue v;  // current indexed value
+		if(!GraphEntity_GetProperty(e, field->id, &v)) {
+			// entity does not have this attribute
 			continue;
 		}
 
-		SIType t = SI_TYPE(*v);
+		SIType t = SI_TYPE(v);
 
 		//----------------------------------------------------------------------
 		// fulltext field
@@ -276,7 +274,7 @@ RSDoc *Index_IndexGraphEntity
 				*doc_field_count += 1;
 
 				RediSearch_DocumentAddFieldString(doc, field->fulltext_name,
-						v->stringval, strlen(v->stringval), RSFLDTYPE_FULLTEXT);
+						v.stringval, strlen(v.stringval), RSFLDTYPE_FULLTEXT);
 			}
 		}
 
@@ -288,14 +286,14 @@ RSDoc *Index_IndexGraphEntity
 			*doc_field_count += 1;
 			if(t == T_STRING) {
 				RediSearch_DocumentAddFieldString(doc, field->range_name,
-						v->stringval, strlen(v->stringval), RSFLDTYPE_TAG);
+						v.stringval, strlen(v.stringval), RSFLDTYPE_TAG);
 			} else if(t & (SI_NUMERIC | T_BOOL)) {
-				double d = SI_GET_NUMERIC(*v);
+				double d = SI_GET_NUMERIC(v);
 				RediSearch_DocumentAddFieldNumber(doc, field->range_name, d,
 						RSFLDTYPE_NUMERIC);
 			} else if(t == T_POINT) {
-				double lat = (double)Point_lat(*v);
-				double lon = (double)Point_lon(*v);
+				double lat = (double)Point_lat(v);
+				double lon = (double)Point_lon(v);
 				RediSearch_DocumentAddFieldGeo(doc, field->range_name, lat, lon,
 						RSFLDTYPE_GEO);
 			} else {
@@ -311,16 +309,16 @@ RSDoc *Index_IndexGraphEntity
 
 		if(field->type & INDEX_FLD_VECTOR && (t & T_VECTOR)) {
 			// make sure entity vector dimension matches index vector dimension
-			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(*v)) {
+			if(IndexField_OptionsGetDimension(field) != SIVector_Dim(v)) {
 				// vector dimension mis-match, can't index this vector
 				continue;
 			}
 
 			*doc_field_count += 1;
 
-			size_t   n        = SIVector_ElementsByteSize(*v);
-			uint32_t dim      = SIVector_Dim(*v);
-			void*    elements = SIVector_Elements(*v);
+			size_t   n        = SIVector_ElementsByteSize(v);
+			uint32_t dim      = SIVector_Dim(v);
+			void*    elements = SIVector_Elements(v);
 
 			// value must be of type array
 			RediSearch_DocumentAddFieldVector(doc, field->vector_name, elements,

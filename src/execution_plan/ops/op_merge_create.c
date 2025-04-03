@@ -40,9 +40,11 @@ static void _IncrementalHashEntity
 		res = XXH64_update(state, &attr_count, sizeof(uint16_t));
 		ASSERT(res != XXH_ERROR);
 
+		// TODO: introduce an unsafe attribute-set iterator
 		for (uint16_t i = 0; i < attr_count; ++i) {
 			AttributeID attr_id;
-			SIValue v = AttributeSet_GetIdx(_set, i, &attr_id);
+			SIValue v;
+			AttributeSet_GetIdx(_set, i, &attr_id, &v);
 
 			// update hash with attribute ID
 			res = XXH64_update(state, &attr_id, sizeof(AttributeID));

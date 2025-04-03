@@ -262,8 +262,11 @@ static void EffectsBuffer_WriteAttributeSet
 
 	for(ushort i = 0; i < attr_count; i++) {
 		// get current attribute name and value
+		SIValue     attr;
 		AttributeID attr_id;
-		SIValue attr = AttributeSet_GetIdx(attrs, i, &attr_id);
+
+		// TODO: introduce an unsafe attribute-set iterator
+		AttributeSet_GetIdx(attrs, i, &attr_id, &attr);
 
 		// write attribute ID
 		EffectsBuffer_WriteBytes(&attr_id, sizeof(AttributeID), buff);
