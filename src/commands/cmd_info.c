@@ -14,13 +14,14 @@
 #include <ctype.h>
 #include <string.h>
 
-#define QUERY_KEY_NAME              "Query"
-#define GRAPH_NAME_KEY_NAME         "Graph name"
-#define REPLICATION_KEY_NAME        "Replicated command"
-#define WAIT_DURATION_KEY_NAME      "Wait duration"
-#define RECEIVED_TIMESTAMP_KEY_NAME "Received at"
-#define EXECUTION_DURATION_KEY_NAME "Execution duration"
+#define QUERY_KEY_NAME                  "Query"
+#define GRAPH_NAME_KEY_NAME             "Graph name"
+#define REPLICATION_KEY_NAME            "Replicated command"
+#define WAIT_DURATION_KEY_NAME          "Wait duration"
+#define RECEIVED_TIMESTAMP_KEY_NAME     "Received at"
+#define EXECUTION_DURATION_KEY_NAME     "Execution duration"
 
+#define SUBCOMMAND_NAME_OBJECT_POOL     "ObjectPool"
 #define SUBCOMMAND_NAME_RUNNING_QUERIES "RunningQueries"
 #define SUBCOMMAND_NAME_WAITING_QUERIES "WaitingQueries"
 
@@ -240,6 +241,43 @@ static void _info_waiting_queries
 	free(cmds);
 }
 
+// handles the "GRAPH.INFO ObjectPool" section
+// "GRAPH.INFO ObjectPool"
+static void _info_object_pool
+(
+	RedisModuleCtx *ctx       // redis context
+) {
+	// an example for a command and reply:
+	// command:
+	// GRAPH.INFO ObjectPool
+	// reply:
+	// "ObjectPool
+	//     "Unique objects in Pool"
+	//     "Average References per Object"
+
+	ASSERT(ctx != NULL);
+
+	//--------------------------------------------------------------------------
+	// collect waiting queries
+	//--------------------------------------------------------------------------
+
+	StringPool pool       = Globals_Get_StringPool();
+	StringPoolStats stats = StringPool_stats(pool);
+
+	// create a new subsection in the reply
+	Info_AddSection(ctx, "Object Pool", 2);
+
+	// emit number of objects in pool
+	RedisModule_ReplyWithArray(ctx, 2);
+	Info_SectionAddEntryLongLong(ctx, "Unique Objects in Pool",
+			stats.n_entries);
+
+	// emit object average reference count
+	RedisModule_ReplyWithArray(ctx, 2);
+	Info_SectionAddEntryDouble(ctx, "Average References per Object",
+			stats.avg_ref_count);
+}
+
 // attempts to find the specified sections of "GRAPH.INFO" and dispatch it
 static void _handle_sections
 (
@@ -247,20 +285,27 @@ static void _handle_sections
 	RedisModuleString **argv,  // command arguments
 	const int argc             // number of arguments
 ) {
-	ASSERT(ctx    != NULL);
-	ASSERT(argv   != NULL);
+	ASSERT(ctx  != NULL);
+	ASSERT(argv != NULL);
 
 	int section_count = 0;
+
+	// possible sections
+	bool object_pool     = false;
 	bool running_queries = false;
 	bool waiting_queries = false;
 
 	if(argc == 0) {
+		// activate all secotions
+		section_count   = 3;
+		object_pool     = true;
 		running_queries = true;
 		waiting_queries = true;
-		section_count = 2;
 	} else {
+		// explicit sections
 		for(uint i = 0; i < argc; i++) {
 			const char *subcmd = RedisModule_StringPtrLen(argv[i], NULL);
+
 			if(!running_queries &&
 			   !strcasecmp(subcmd, SUBCOMMAND_NAME_RUNNING_QUERIES)) {
 				running_queries = true;
@@ -268,6 +313,10 @@ static void _handle_sections
 			} else if(!waiting_queries &&
 					  !strcasecmp(subcmd, SUBCOMMAND_NAME_WAITING_QUERIES)) {
 				waiting_queries = true;
+				section_count++;
+			} else if(!object_pool &&
+					  !strcasecmp(subcmd, SUBCOMMAND_NAME_OBJECT_POOL)) {
+				object_pool = true;
 				section_count++;
 			}
 		}
@@ -278,12 +327,23 @@ static void _handle_sections
 		return;
 	}
 
+	//--------------------------------------------------------------------------
+	// generate reply
+	//--------------------------------------------------------------------------
+
+	// 2 elements per section
 	RedisModule_ReplyWithArray(ctx, section_count * 2);
+
 	if(running_queries) {
 		_info_running_queries(ctx);
 	}
+
 	if(waiting_queries) {
 		_info_waiting_queries(ctx);
+	}
+
+	if(object_pool) {
+		_info_object_pool(ctx);
 	}
 }
 
@@ -299,7 +359,7 @@ int Graph_Info
 	ASSERT(ctx != NULL);
 
 	// expecting at least two arguments
-	if (argc < 1) {
+	if(argc < 1) {
 		return RedisModule_WrongArity(ctx);
 	}
 
