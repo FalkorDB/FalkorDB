@@ -20,32 +20,32 @@
  * differing types is used to maintain the Cypher-defined global sort order
  * in the SIValue_Order routine. */
 typedef enum {
-	T_MAP = (1 << 0),
-	T_NODE = (1 << 1),
-	T_EDGE = (1 << 2),
-	T_ARRAY = (1 << 3),
-	T_PATH = (1 << 4),
-	T_DATETIME = (1 << 5),
+	T_MAP           = (1 << 0),
+	T_NODE          = (1 << 1),
+	T_EDGE          = (1 << 2),
+	T_ARRAY         = (1 << 3),
+	T_PATH          = (1 << 4),
+	T_DATETIME      = (1 << 5),
 	T_LOCALDATETIME = (1 << 6),
-	T_DATE = (1 << 7),
-	T_TIME = (1 << 8),
-	T_LOCALTIME = (1 << 9),
-	T_DURATION = (1 << 10),
-	T_STRING = (1 << 11),
-	T_BOOL = (1 << 12),   // shares 'longval' representation in SIValue union
-	T_INT64 = (1 << 13),
-	T_DOUBLE = (1 << 14),
-	T_NULL = (1 << 15),
-	T_PTR = (1 << 16),
-	T_POINT = (1 << 17),  // TODO: verify type order of point
-	T_VECTOR_F32 = (1 << 18),
+	T_DATE          = (1 << 7),
+	T_TIME          = (1 << 8),
+	T_LOCALTIME     = (1 << 9),
+	T_DURATION      = (1 << 10),
+	T_STRING        = (1 << 11),
+	T_BOOL          = (1 << 12),  // shares 'longval' representation in SIValue  union
+	T_INT64         = (1 << 13),
+	T_DOUBLE        = (1 << 14),
+	T_NULL          = (1 << 15),
+	T_PTR           = (1 << 16),
+	T_POINT         = (1 << 17),
+	T_VECTOR_F32    = (1 << 18),
 } SIType;
 
 typedef enum {
-	M_NONE = 0,             // SIValue is not heap-allocated
-	M_SELF = (1 << 0),      // SIValue is responsible for freeing its reference
+	M_NONE     = 0,         // SIValue is not heap-allocated
+	M_SELF     = (1 << 0),  // SIValue is responsible for freeing its reference
 	M_VOLATILE = (1 << 1),  // SIValue does not own its reference and may go out of scope
-	M_CONST = (1 << 2)      // SIValue does not own its allocation, but its access is safe
+	M_CONST    = (1 << 2)   // SIValue does not own its allocation, but its access is safe
 } SIAllocation;
 
 #define T_VECTOR (T_VECTOR_F32)

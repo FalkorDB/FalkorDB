@@ -847,6 +847,23 @@ SIValue AR_SPLIT
 	return tokens;
 }
 
+// create an intern string
+SIValue AR_INTERN
+(
+	SIValue *argv,      // arguments
+	int argc,           // number of arguments
+	void *private_data  // private data
+) {
+	// in case of a NULL value, return NULL
+	if(SIValue_IsNull(argv[0])) {
+		return SI_NullVal();
+	}
+
+	// create and return an intern string
+	char *str = argv[0].stringval;
+	return SI_InternStringVal(str);
+}
+
 //------------------------------------------------------------------------------
 // Scalar functions
 //------------------------------------------------------------------------------
@@ -1003,6 +1020,12 @@ void Register_StringFuncs() {
 	array_append(types, (T_STRING | T_NULL));
 	ret_type = T_ARRAY | T_NULL;
 	func_desc = AR_FuncDescNew("split", AR_SPLIT, 2, 2, types, ret_type, false, true);
+	AR_RegFunc(func_desc);
+
+	types = array_new(SIType, 1);
+	array_append(types, (T_STRING | T_NULL));
+	ret_type = T_STRING | T_NULL;
+	func_desc = AR_FuncDescNew("intern", AR_INTERN, 1, 1, types, ret_type, false, true);
 	AR_RegFunc(func_desc);
 }
 
