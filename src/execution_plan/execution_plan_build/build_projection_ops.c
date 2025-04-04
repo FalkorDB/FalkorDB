@@ -124,21 +124,23 @@ static void _combine_projection_arrays(AR_ExpNode ***exps_ptr, AR_ExpNode **orde
 	*exps_ptr = project_exps;
 }
 
-// Build an aggregate or project operation and any required modifying operations.
-// This logic applies for both WITH and RETURN projections.
-static inline void _buildProjectionOps(ExecutionPlan *plan,
-									   const cypher_astnode_t *clause) {
-
-	OpBase                  *op               =  NULL  ;
-	OpBase                  *distinct_op      =  NULL  ;
-	bool                    distinct          =  false ;
-	bool                    aggregate         =  false ;
-	int                     *sort_directions  =  NULL  ;
-	AR_ExpNode              **order_exps      =  NULL  ;
-	AR_ExpNode              **projections     =  NULL  ;
-	const cypher_astnode_t  *skip_clause      =  NULL  ;
-	const cypher_astnode_t  *limit_clause     =  NULL  ;
-	const cypher_astnode_t  *order_clause     =  NULL  ;
+// build an aggregate or project operation and any required modifying operations
+// this logic applies for both WITH and RETURN projections.
+static inline void _buildProjectionOps
+(
+	ExecutionPlan *plan,
+	const cypher_astnode_t *clause
+) {
+	OpBase                 *op              = NULL  ;
+	OpBase                 *distinct_op     = NULL  ;
+	bool                   distinct         = false ;
+	bool                   aggregate        = false ;
+	int                    *sort_directions = NULL  ;
+	AR_ExpNode             **order_exps     = NULL  ;
+	AR_ExpNode             **projections    = NULL  ;
+	const cypher_astnode_t *skip_clause     = NULL  ;
+	const cypher_astnode_t *limit_clause    = NULL  ;
+	const cypher_astnode_t *order_clause    = NULL  ;
 
 	cypher_astnode_type_t t = cypher_astnode_type(clause);
 	ASSERT(t == CYPHER_AST_WITH || t == CYPHER_AST_RETURN);
@@ -147,15 +149,15 @@ static inline void _buildProjectionOps(ExecutionPlan *plan,
 	projections = _BuildProjectionExpressions(clause);
 
 	if(t == CYPHER_AST_WITH) {
-		distinct      =  cypher_ast_with_is_distinct(clause);
-		skip_clause   =  cypher_ast_with_get_skip(clause);
-		limit_clause  =  cypher_ast_with_get_limit(clause);
-		order_clause  =  cypher_ast_with_get_order_by(clause);
+		distinct     = cypher_ast_with_is_distinct(clause);
+		skip_clause  = cypher_ast_with_get_skip(clause);
+		limit_clause = cypher_ast_with_get_limit(clause);
+		order_clause = cypher_ast_with_get_order_by(clause);
 	} else {
-		distinct      =  cypher_ast_return_is_distinct(clause);
-		skip_clause   =  cypher_ast_return_get_skip(clause);
-		limit_clause  =  cypher_ast_return_get_limit(clause);
-		order_clause  =  cypher_ast_return_get_order_by(clause);
+		distinct     = cypher_ast_return_is_distinct(clause);
+		skip_clause  = cypher_ast_return_get_skip(clause);
+		limit_clause = cypher_ast_return_get_limit(clause);
+		order_clause = cypher_ast_return_get_order_by(clause);
 	}
 
 	if(distinct) {
@@ -186,15 +188,17 @@ static inline void _buildProjectionOps(ExecutionPlan *plan,
 	}
 	ExecutionPlan_UpdateRoot(plan, op);
 
-	/* Add modifier operations in order such that the final execution plan will follow the sequence:
-	 * Limit -> Skip -> Sort -> Distinct -> Project/Aggregate */
+	// add modifier operations in order such that the final execution plan will
+	// follow the sequence:
+	// Limit -> Skip -> Sort -> Distinct -> Project/Aggregate */
 
 	if(distinct_op) {
 		ExecutionPlan_UpdateRoot(plan, distinct_op);
 	}
 
 	if(sort_directions) {
-		// The sort operation will obey a specified limit, but must account for skipped records
+		// the sort operation will obey a specified limit
+		// but must account for skipped records
 		op = NewSortOp(plan, order_exps, sort_directions);
 		ExecutionPlan_UpdateRoot(plan, op);
 	}
@@ -211,7 +215,11 @@ static inline void _buildProjectionOps(ExecutionPlan *plan,
 }
 
 // RETURN builds a subtree of projection ops with Results as the root.
-void buildReturnOps(ExecutionPlan *plan, const cypher_astnode_t *clause) {
+void buildReturnOps
+(
+	ExecutionPlan *plan,
+	const cypher_astnode_t *clause
+) {
 	_buildProjectionOps(plan, clause);
 
 	// follow up with a Result operation
@@ -220,7 +228,11 @@ void buildReturnOps(ExecutionPlan *plan, const cypher_astnode_t *clause) {
 }
 
 // RETURN builds a subtree of projection ops.
-void buildWithOps(ExecutionPlan *plan, const cypher_astnode_t *clause) {
+void buildWithOps
+(
+	ExecutionPlan *plan,
+	const cypher_astnode_t *clause
+) {
 	_buildProjectionOps(plan, clause);
 }
 
