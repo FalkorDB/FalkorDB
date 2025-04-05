@@ -1,5 +1,6 @@
 /*
  * Copyright Redis Ltd. 2018 - present
+ * Copyright FalkorDB Ltd. 2024 - present
  * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
  * the Server Side Public License v1 (SSPLv1).
  */
@@ -18,6 +19,7 @@
 #include "bolt/bolt_api.h"
 #include "index/indexer.h"
 #include "redisearch_api.h"
+#include "commands/cmd_acl.h"
 #include "arithmetic/funcs.h"
 #include "commands/commands.h"
 #include "util/thpool/pools.h"
@@ -31,11 +33,13 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
+#include "commands/util/run_redis_command_as.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 7
 #define MIN_REDIS_VERSION_MINOR 2
 #define MIN_REDIS_VERSION_PATCH 0
+
 
 static int _RegisterDataTypes(RedisModuleCtx *ctx) {
 	if(GraphContextType_Register(ctx) == REDISMODULE_ERR) {
@@ -155,6 +159,8 @@ int RedisModule_OnLoad
 	if(!Indexer_Init())               return REDISMODULE_ERR;
 	if(!AST_ValidationsMappingInit()) return REDISMODULE_ERR;
 
+	init_acl_admin_username(ctx);  // set ACL ADMIN username
+
 	RedisModule_Log(ctx, "notice", "Thread pool created, using %d threads.",
 			ThreadPools_ReadersCount());
 
@@ -244,6 +250,18 @@ int RedisModule_OnLoad
 
 	if(RedisModule_CreateCommand(ctx, "graph.RESTORE", Graph_Restore,
 				"write deny-oom", 1, 1, 1) == REDISMODULE_ERR) {
+		return REDISMODULE_ERR;
+	}
+
+	if(init_cmd_acl(ctx) == REDISMODULE_OK) {
+		if(RedisModule_CreateCommand(ctx, "graph.ACL", graph_acl_cmd,
+					"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
+			return REDISMODULE_ERR;
+		}
+	}
+
+	if(RedisModule_CreateCommand(ctx, "graph.PASSWORD", Graph_SetPassword,
+				"write deny-oom", 0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}
 

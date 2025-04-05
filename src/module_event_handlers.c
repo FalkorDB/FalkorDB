@@ -12,12 +12,14 @@
 #include "util/uuid.h"
 #include "cron/cron.h"
 #include "bolt/bolt_api.h"
+#include "commands/cmd_acl.h"
 #include "util/thpool/pools.h"
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
+#include "commands/util/run_redis_command_as.h"
 
 // indicates the possibility of half-baked graphs in the keyspace
 #define INTERMEDIATE_GRAPHS (aux_field_counter > 0)
@@ -358,6 +360,9 @@ static void _ShutdownEventHandler
 
 	RedisModule_Log(ctx, "notice", "%s", "Clearing RediSearch resources on shutdown");
 	RediSearch_CleanupModule();
+
+	free_cmd_acl();
+	free_run_cmd_as();
 
 	BoltApi_Unregister();
 
