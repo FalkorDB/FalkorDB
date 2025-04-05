@@ -15,11 +15,23 @@ class testACL():
 
         os.environ['ACL_GRAPH_ADMIN'] = ACL_GRAPH_ADMIN_COMMANDS.replace('\n', ' ')
         
-        TODO: adjust similar to above
-        os.environ['ACL_GRAPH_USER'] = '''INFO CLIENT DBSIZE PING HELLO AUTH RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.QUERY GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.DELETE GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK CLUSTER COMMAND GRAPH.PASSWORD'''
-        
-        os.environ['ACL_GRAPH_READONLY_USER'] = '''INFO CLIENT DBSIZE PING HELLO AUTH RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK GRAPH.CONFIG CLUSTER COMMAND'''
+        ACL_GRAPH_USER_COMMANDS = """INFO CLIENT DBSIZE PING HELLO AUTH RESTORE 
+        DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL 
+        EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO 
+        SLOWLOG WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.QUERY GRAPH.RO_QUERY 
+        GRAPH.EXPLAIN GRAPH.PROFILE GRAPH.DELETE GRAPH.CONSTRAINT GRAPH.SLOWLOG 
+        GRAPH.BULK CLUSTER COMMAND GRAPH.PASSWORD"""
                 
+        os.environ['ACL_GRAPH_USER'] = ACL_GRAPH_USER_COMMANDS.replace('\n', ' ')
+
+        ACL_GRAPH_READONLY_USER_COMMANDS = """INFO CLIENT DBSIZE PING HELLO AUTH 
+        RESTORE DUMP DEL EXISTS UNLINK TYPE FLUSHALL TOUCH EXPIRE PEXPIREAT TTL PTTL 
+        EXPIRETIME RENAME RENAMENX SCAN DISCARD EXEC MULTI UNWATCH WATCH ECHO SLOWLOG 
+        WAIT WAITAOF GRAPH.INFO GRAPH.LIST GRAPH.RO_QUERY GRAPH.EXPLAIN GRAPH.PROFILE 
+        GRAPH.CONSTRAINT GRAPH.SLOWLOG GRAPH.BULK GRAPH.CONFIG CLUSTER COMMAND"""
+
+        os.environ['ACL_GRAPH_READONLY_USER'] = ACL_GRAPH_READONLY_USER_COMMANDS.replace('\n', ' ')
+
         self.env, self.db = Env()
         self.redis_con = self.env.getConnection()
 
@@ -118,8 +130,7 @@ class testACL():
         finally:
             self.db.execute_command("AUTH", "default", "pass")
             
-    TODO: rename test name to reflect test
-    def test04_graph_acl_filter(self):
+    def test04_graph_acl_ignore_unautherized_perimssions(self):
         """
         make sure we can't grant un-autherized permissions
         """
@@ -137,7 +148,11 @@ class testACL():
             self.env.assertFalse('acl' in user_commands)
             self.env.assertEqual(48, len(user_commands))
 
-    def test05_graph_acl_filter_with_pipe(self):
+    def test05_graph_acl_ignotr_unautherized_permissinos_with_pipe(self):
+        """
+        make sure we can't grant un-autherized permissions with pipe
+        e.g. +COMMAND|LIST
+        """
         try:
             v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
             self.env.assertTrue(v)
@@ -152,6 +167,9 @@ class testACL():
             self.env.assertEqual(46, len(user_commands))
             
     def test06_set_user_off(self):
+        """
+        make sure we can set user off
+        """
         try:
             v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
             self.env.assertTrue(v)
@@ -166,6 +184,9 @@ class testACL():
             self.env.assertTrue('off' in flags)
   
     def test07_graph_acl_wrong_call(self):
+        """
+        make sure we get the right error when calling the command with wrong args
+        """
         try:
             v = self.db.execute_command("AUTH", "falkordb-admin", "pass") 
             self.env.assertTrue(v)
@@ -211,7 +232,9 @@ class testACL():
             self.db.execute_command("AUTH", "default", "pass")
           
     def test100_wrong_password_call(self):
-        # wrong arity
+        """
+        make sure we get the right error when calling the command with wrong args
+        """
         try:
            v = self.db.execute_command("GRAPH.PASSWORD", "ADD")  
            self.env.assertTrue(False, "should throw arity error")
@@ -225,6 +248,9 @@ class testACL():
            self.env.assertContains("Unknown sub-command", str(e))    
         
     def test101_add_password(self):
+        """
+        make sure we can add a password to a user
+        """
         v = self.db.execute_command("AUTH", "falkordb-user", "pass") 
         self.env.assertTrue(v)
         # try to use GRAPH.ACL to change the global admin

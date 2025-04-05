@@ -55,19 +55,19 @@ static int _switch_user
 	return REDISMODULE_OK;
 }
 
-// run the given command as the given user
+// run the given acl function as the given user
 // the function will switch the user to the given username
-// and run the command with the given arguments
+// and run the given acl function with the given arguments
 // the function will switch back to the original user after the 
 // command is executed
 // the function will return REDISMODULE_OK on success
 // and REDISMODULE_ERR on failure
-int run_redis_command_as
+int run_acl_function_as
 (
 	RedisModuleCtx *ctx,       // redis module context
 	RedisModuleString **argv,  // the arguments to call
 	int argc,                  // the number of arguments
-	RedisFunc cmd,             // the command to call
+	ACLFunction cmd,           // the command to call
 	const char *username,      // the username to switch to
 	void *privdata             // optional private data
 ) {

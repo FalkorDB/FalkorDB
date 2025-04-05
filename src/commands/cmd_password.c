@@ -153,7 +153,7 @@ int Graph_SetPassword
 	// get the action ADD / REMOVE
  	const char *action = RedisModule_StringPtrLen(argv[1], NULL);
 	
-	RedisFunc f = NULL;
+	ACLFunction f = NULL;
 	if(strcasecmp(action, "ADD") == 0) {
 		f = _add_password;
 	} else if(strcasecmp(action, "REMOVE") == 0) {
@@ -168,7 +168,7 @@ int Graph_SetPassword
 		return REDISMODULE_ERR;
 	}
 
-	int ret = run_redis_command_as(ctx, argv, argc, f, ACL_ADMIN_USER,
+	int ret = run_acl_function_as(ctx, argv, argc, f, ACL_ADMIN_USER,
 		 (void*) username);
 
 	RedisModule_FreeString(ctx, _redis_current_user_name);

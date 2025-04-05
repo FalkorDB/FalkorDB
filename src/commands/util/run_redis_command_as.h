@@ -13,11 +13,13 @@
 // this variable will be used to run the command as admin user
 extern char *ACL_ADMIN_USER;
 
-TODO: explain this function signature
-// this function will be used to run the command in the context of admin user
-TODO: please rename, we're not using this function pointer type to call
-// Redis functions
-typedef int (*RedisFunc)(RedisModuleCtx *ctx,
+// this function will be used to run the code in the context of admin user
+// the function will be called with the following parameters:
+// ctx - the redis module context
+// argv - the arguments to call
+// argc - the number of arguments
+// privdata - the private data to pass to the function, optional
+typedef int (*ACLFunction)(RedisModuleCtx *ctx,
 	RedisModuleString **argv, int argc, void *privdata);
 
 // initialize the impersonation mechanism
@@ -30,20 +32,19 @@ void init_acl_admin_username
 	RedisModuleCtx *ctx  // redis module context
 );
 
-// run the given command as the given user
+// run the given acl function as the given user
 // the function will switch the user to the given username
-// and run the command with the given arguments
+// and run the given acl function with the given arguments
 // the function will switch back to the original user after the 
 // command is executed
 // the function will return REDISMODULE_OK on success
 // and REDISMODULE_ERR on failure
-TODO: rename, we're not really running Redis commands here
-int run_redis_command_as
+int run_acl_function_as
 (
 	RedisModuleCtx *ctx,       // redis module context
 	RedisModuleString **argv,  // the arguments to call
 	int argc,                  // the number of arguments
-	RedisFunc cmd,             // the command to call
+	ACLFunction cmd,           // the function to call
 	const char *username,      // the username to switch to
 	void *privdata             // optional private data
 );

@@ -559,7 +559,7 @@ static int _execute_acl_cmd_as_admin
 	ASSERT(ctx  != NULL);
 	ASSERT(argv != NULL);
 
-	return run_redis_command_as(ctx, argv, argc, _execute_acl_cmd_fn,
+	return run_acl_function_as(ctx, argv, argc, _execute_acl_cmd_fn,
 		ACL_ADMIN_USER, NULL);
 }
 
