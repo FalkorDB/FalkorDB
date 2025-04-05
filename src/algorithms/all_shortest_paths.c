@@ -42,8 +42,12 @@ int AllShortestPaths_FindMinimumLength
 		if(neighborCount == 0) {
 			// current level depleted, move to next level
 			depth++;
-			if(depth == ctx->maxLen || depth >= array_len(ctx->levels)) {
-				// we reached max level and didn't found the dest node
+			if(depth == ctx->maxLen            ||
+			   depth >= array_len(ctx->levels) ||   // max level reached
+			   array_len(ctx->levels[depth]) == 0)  // no way to proceed
+			{
+				// we either reached max level and didn't found the dest node
+				// or frontier is empty and there's no way to proceed
 				depth = 0; // indicate `dest` wasn't reached
 				break;
 			}
