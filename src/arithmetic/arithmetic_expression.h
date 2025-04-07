@@ -73,25 +73,47 @@ typedef struct AR_ExpNode {
 } AR_ExpNode;
 
 // creates a new Arithmetic expression operation node
-AR_ExpNode *AR_EXP_NewOpNode(const char *func_name, bool include_internal, uint child_count);
+AR_ExpNode *AR_EXP_NewOpNode
+(
+	const char *func_name,
+	bool include_internal,
+	uint child_count
+);
 
 // creates a new Arithmetic expression variable operand node
-AR_ExpNode *AR_EXP_NewVariableOperandNode(const char *alias);
+AR_ExpNode *AR_EXP_NewVariableOperandNode
+(
+	const char *alias
+);
 
 // creates a new Arithmetic expression extracting an attribute from an entity
-AR_ExpNode *AR_EXP_NewAttributeAccessNode(AR_ExpNode *entity, const char *attr);
+AR_ExpNode *AR_EXP_NewAttributeAccessNode
+(
+	AR_ExpNode *entity,
+	const char *attr
+);
 
 // creates a new Arithmetic expression constant operand node
-AR_ExpNode *AR_EXP_NewConstOperandNode(SIValue constant);
+AR_ExpNode *AR_EXP_NewConstOperandNode
+(
+	SIValue constant
+);
 
 // creates a new Arithmetic expression parameter operand node
-AR_ExpNode *AR_EXP_NewParameterOperandNode(const char *param_name);
+AR_ExpNode *AR_EXP_NewParameterOperandNode
+(
+	const char *param_name
+);
 
 // creates a new Arithmetic expression that will resolve to the current Record
 AR_ExpNode *AR_EXP_NewRecordNode(void);
 
 // set node private data
-void AR_SetPrivateData(AR_ExpNode *node, void *pdata);
+void AR_SetPrivateData
+(
+	AR_ExpNode *node,
+	void *pdata
+);
 
 // compact tree by evaluating all contained functions that can be resolved right now
 // the function returns true if it managed to compact the expression
