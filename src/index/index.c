@@ -330,10 +330,8 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_numerics > 0) {
-		// field_name:numeric
 		RediSearch_DocumentAddFieldNumericArray(doc,
 				field->range_numeric_arr_name, &numerics, RSFLDTYPE_NUMERIC);
-
 	}
 
 	//--------------------------------------------------------------------------
@@ -341,15 +339,19 @@ static inline void _addArrayField
 	//--------------------------------------------------------------------------
 
 	if(n_strings > 0) {
-		// field_name:string
 		RediSearch_DocumentAddFieldStringArray(doc,
 				field->range_string_arr_name, strings, n_strings,
 				RSFLDTYPE_TAG);
 	}
 
 	// clean up
-	array_free(strings);
-	// array_free(numerics);  // freed by RediSearch
+	if(n_numerics == 0) {
+		array_free(numerics);
+	}
+
+	if(n_strings == 0) {
+		array_free(strings);
+	}
 }
 
 // index a graph entity
