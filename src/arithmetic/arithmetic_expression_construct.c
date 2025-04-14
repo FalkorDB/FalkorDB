@@ -465,7 +465,7 @@ static AR_ExpNode *_AR_ExpFromMapProjection(const cypher_astnode_t *expr) {
 	}
 
 	if(propertiesOp) {
-		// To support case like: CREATE (a:A {z:1}) RETURN a{.*, .undefinedProp}
+		// to support case like: CREATE (a:A {z:1}) RETURN a{.*, .undefinedProp}
 		AR_ExpNode *mergemapOp = AR_EXP_NewOpNode("merge_maps", true, 2);
 		mergemapOp->op.children[0] = tomapOp;
 		mergemapOp->op.children[1] = propertiesOp;
