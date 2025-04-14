@@ -9,54 +9,62 @@
 #include "../../util/arr.h"
 #include "../../datatypes/set.h"
 
-/* Case When
- * Case Value [When Option i Then Result i] Else Default end */
-SIValue AR_CASEWHEN(SIValue *argv, int argc, void *private_data) {
+// Case When
+// Case Value [When Option i Then Result i] Else Default end
+SIValue AR_CASEWHEN
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	int alternatives = argc - 1;
 	SIValue d = argv[argc - 1];
 
 	if((argc % 2) == 0) {
-		/* Simple form:
-		 * argv[0] - Value
-		 * argv[i] - Option i
-		 * argv[i+1] - Result i
-		 * argv[argc-1] - Default
-		 *
-		 * Evaluate alternatives in order, return first alternatives which
-		 * is equals to Value. */
+		// simple form:
+		// argv[0]      - value
+		// argv[i]      - option i
+		// argv[i+1]    - result i
+		// argv[argc-1] - default
+		//
+		// evaluate alternatives in order, return first alternatives which
+		// is equals to value
 		SIValue v = argv[0];
 		for(int i = 1; i < alternatives; i += 2) {
 			SIValue a = argv[i];
 			int disjointOrNull;
 			if(SIValue_Compare(v, a, &disjointOrNull) == 0) {
-				// Return Result i.
-				// The value's ownership must be transferred to avoid a double free if it is an allocated value.
+				// return result i
+				// the value's ownership must be transferred to avoid
+				// double free if it is an allocated value
 				SIValue retval = argv[i + 1];
 				SIValue_MakeVolatile(&argv[i + 1]);
 				return retval;
 			}
 		}
 	} else {
-		/* Generic form:
-		 * argv[i] - Option i
-		 * argv[i+1] - Result i
-		 * arg[argc-1] - Default
-		 *
-		 * Evaluate alternatives in order, return first alternatives which
-		 * is not NULL or false. */
+		// generic form:
+		// argv[i]     - option i
+		// argv[i+1]   - result i
+		// arg[argc-1] - default
+		//
+		// evaluate alternatives in order, return first alternatives which
+		// is not NULL or false
 		for(int i = 0; i < alternatives; i += 2) {
 			SIValue a = argv[i];
-			// Skip NULL and false options.
+			// skip NULL and false options
 			if(SIValue_IsNull(a) || ((SI_TYPE(a) & T_BOOL) && SIValue_IsFalse(a))) continue;
-			// The option was truthy, return the associated value.
-			// The value's ownership must be transferred to avoid a double free if it is an allocated value.
+
+			// the option was truthy, return the associated value
+			// the value's ownership must be transferred to avoid
+			// double free if it is an allocated value
 			SIValue retval = argv[i + 1];
 			SIValue_MakeVolatile(&argv[i + 1]);
 			return retval;
 		}
 	}
 
-	//Did not match against any Option return default.
+	// did not match against any Option return default
 	SIValue_MakeVolatile(&argv[argc - 1]);
 	return d;
 }

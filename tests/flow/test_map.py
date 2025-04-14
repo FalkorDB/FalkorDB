@@ -230,3 +230,25 @@ class testMap(FlowTestsBase):
             self.graph.query(query)
         except redis.exceptions.ResponseError as e:
             self.env.assertIn("Cannot merge a map with a non-map value", str(e))
+
+    def test10_map_merge_null(self):
+        # merge maps where one of the maps is null
+        q = "CREATE (n:N {name:'John', age:30})"
+        res = self.graph.query(q).result_set
+
+        q = """MATCH (n:N)
+               OPTIONAL MATCH (n)-[]->(m:M)
+               RETURN n{.*, x: COLLECT({z:1})}, n"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 1)
+        self.env.assertEquals(res[0][0], {'name': 'John', 'age': 30, 'x': [{'z':1}]})
+
+        q = """MATCH (n:N)
+               OPTIONAL MATCH (n)-[]->(m:M)
+               RETURN n, n{x: COLLECT({z:1}), .*}"""
+
+        res = self.graph.query(q).result_set
+        self.env.assertEquals(len(res), 1)
+        self.env.assertEquals(res[0][1], {'name': 'John', 'age': 30, 'x': [{'z':1}]})
+
