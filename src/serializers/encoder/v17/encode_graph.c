@@ -3,7 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v16.h"
+#include "encode_v17.h"
 #include "../../../globals.h"
 
 // Determine whether we are in the context of a bgsave, in which case
@@ -64,7 +64,7 @@ static void _RdbSaveHeader
 	SerializerIO_WriteUnsigned(rdb, header->key_count);
 
 	// save graph schemas
-	RdbSaveGraphSchema_v16(rdb, gc);
+	RdbSaveGraphSchema_v17(rdb, gc);
 }
 
 // returns a state information regarding the number of entities required
@@ -76,24 +76,37 @@ static PayloadInfo _StatePayloadInfo
 	uint64_t offset,
 	uint64_t capacity
 ) {
+	Graph *g = gc->g;
 	uint64_t required_entities_count = 0;
 
 	switch(state) {
 		case ENCODE_STATE_NODES:
-			required_entities_count = Graph_NodeCount(gc->g);
+			required_entities_count = Graph_NodeCount(g);
 			break;
 		case ENCODE_STATE_DELETED_NODES:
-			required_entities_count = Graph_DeletedNodeCount(gc->g);
+			required_entities_count = Graph_DeletedNodeCount(g);
 			break;
 		case ENCODE_STATE_EDGES:
-			required_entities_count = Graph_EdgeCount(gc->g);
+			required_entities_count = Graph_EdgeCount(g);
 			break;
 		case ENCODE_STATE_DELETED_EDGES:
-			required_entities_count = Graph_DeletedEdgeCount(gc->g);
+			required_entities_count = Graph_DeletedEdgeCount(g);
 			break;
 		case ENCODE_STATE_GRAPH_SCHEMA:
 			// here for historical reasons
 			// can be removed once encoder / decoder version 15 is removed.
+			break;
+		case ENCODE_STATE_LABELS_MATRICES:
+			required_entities_count = 1;  // all matrices resides in a one key
+			break;
+		case ENCODE_STATE_RELATION_MATRICES:
+			required_entities_count = 1;  // all matrices resides in a one key
+			break;
+		case ENCODE_STATE_ADJ_MATRIX:
+			required_entities_count = 1;
+			break;
+		case ENCODE_STATE_LBLS_MATRIX:
+			required_entities_count = 1;
 			break;
 		default:
 			ASSERT(false && "Unknown encoding state in _CurrentStatePayloadInfo");
@@ -170,7 +183,7 @@ static PayloadInfo *_RdbSaveKeySchema
 		// reset offset for the next entity type
 		if(capacity > 0) {
 			offset = 0;       // new state offset is 0
-			current_state++;  // advance in the states
+			current_state++;  // advance to next state
 		}
 	}
 
@@ -215,6 +228,7 @@ void RdbSaveGraph_latest
 	// each containing 100,000 nodes, encoded into two different RDB meta keys
 
 	GraphContext *gc = value;
+	Graph        *g = gc->g;
 
 	// TODO: remove, no need, as GIL is taken
 
@@ -227,8 +241,7 @@ void RdbSaveGraph_latest
 
 	if(current_state == ENCODE_STATE_INIT) {
 		// inital state, populate encoding context header
-		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name,
-				gc->g);
+		GraphEncodeContext_InitHeader(gc->encoding_context, gc->graph_name, g);
 	}
 
 	// save header
@@ -245,21 +258,41 @@ void RdbSaveGraph_latest
 
 		switch(payload->state) {
 			case ENCODE_STATE_NODES:
-				RdbSaveNodes_v16(rdb, gc, payload->offset,
+				RdbSaveNodes_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
 			case ENCODE_STATE_DELETED_NODES:
-				RdbSaveDeletedNodes_v16(rdb, gc, payload->offset,
+				RdbSaveDeletedNodes_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
 			case ENCODE_STATE_EDGES:
-				RdbSaveEdges_v16(rdb, gc, payload->offset,
+				RdbSaveEdges_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbSaveDeletedEdges_v16(rdb, gc, payload->offset,
+				RdbSaveDeletedEdges_v17(rdb, gc, payload->offset,
 						payload->entities_count);
 				break;
+
+			case ENCODE_STATE_LABELS_MATRICES:
+				RdbSaveLabelMatrices_v17(rdb, g);
+				break;
+
+			case ENCODE_STATE_RELATION_MATRICES:
+				RdbSaveRelationMatrices_v17(rdb, g);
+				break;
+
+			case ENCODE_STATE_ADJ_MATRIX:
+				RdbSaveAdjMatrix_v17(rdb, g);
+				break;
+
+			case ENCODE_STATE_LBLS_MATRIX:
+				RdbSaveLblsMatrix_v17(rdb, g);
+				break;
+
 			default:
 				ASSERT(false && "Unknown encoding phase");
 				break;
@@ -287,6 +320,6 @@ void RdbSaveGraph_latest
 	}
 
 	// if a lock was acquired, release it
-	if(_shouldAcquireLocks()) Graph_ReleaseLock(gc->g);
+	if(_shouldAcquireLocks()) Graph_ReleaseLock(g);
 }
 

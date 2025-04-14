@@ -1,3 +1,5 @@
+#define GB_FREE_ALL ;
+
 using namespace cooperative_groups ;
 
 __global__ void GB_cuda_apply_bind1st_kernel
@@ -40,8 +42,14 @@ GB_JIT_CUDA_KERNEL_APPLY_BIND1ST_PROTO (GB_jit_kernel)
 
     dim3 grid (gridsz) ;
     dim3 block (blocksz) ;
+    GB_B_NHELD (nvals) ;
+    if (nvals == 0) return (GrB_SUCCESS) ;
     
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
     GB_cuda_apply_bind1st_kernel <<<grid, block, 0, stream>>> (Cx, scalarx, B) ;
+    CUDA_OK (cudaGetLastError ( )) ;
+    CUDA_OK (cudaStreamSynchronize (stream)) ;
 
     return (GrB_SUCCESS) ;
 }

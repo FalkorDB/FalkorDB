@@ -256,7 +256,7 @@ You can query GraphBLAS at run-time to ask if it was compiled with OpenMP:
 \begin{verbatim}
     bool have_openmp ;
     GrB_get (GrB_GLOBAL, &have_openmp, GxB_LIBRARY_OPENMP) ;
-    if (!have_openmp) printf ("GraphBLAS not compiled with OpenMP\n") : \end{verbatim}}
+    if (!have_openmp) printf ("GraphBLAS not compiled with OpenMP\n") ; \end{verbatim}}
 
 Compiling GraphBLAS without OpenMP is not recommended for installation in a
 package manager (Linux, conda-forge, spack, brew, vcpkg, etc).

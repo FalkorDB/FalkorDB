@@ -15,7 +15,7 @@
 // If C(row,col) is already present in the matrix, its value is overwritten
 // with the scalar.  Otherwise, if the mode determined by GrB_init is
 // non-blocking, the tuple (i,j,scalar) is appended to a list of pending tuples
-// to C.  GB_wait assembles these pending tuples.
+// to C.  GB_wait assembles these pending tuples sometime later.
 
 // GB_setElement when accum is NULL is used by GrB_*_setElement.  It is the
 // same as GrB_*assign with an implied SECOND accum operator whose ztype,
@@ -148,12 +148,8 @@ GrB_Info GB_setElement              // set a single entry, C(row,col) = scalar
 
         if (convert_to_non_iso)
         { 
-            // The new entry differs from the iso value of C.  Assemble all
-            // pending tuples and convert C to non-iso.  Zombies are OK.
-            if (C->Pending != NULL)
-            { 
-                GB_OK (GB_wait (C, "C (setElement:to non-iso)", Werk)) ;
-            }
+            // The new entry differs from the iso value of C; convert C
+            // to non-iso, including any of its pending tuples.
             GB_OK (GB_convert_any_to_non_iso (C, true)) ;
         }
 

@@ -80,6 +80,30 @@ GrB_Info GB_convert_any_to_non_iso // convert iso matrix to non-iso
     }
 
     //--------------------------------------------------------------------------
+    // create A->Pending->x if any pending tuples present
+    //--------------------------------------------------------------------------
+
+    if (A->Pending != NULL)
+    { 
+        // allocate A->Pending->x, which is currently NULL since Pending->x is
+        // NULL if and only if A is iso, when Pending tuples are present.
+        // The A->Pending->op is NULL and remains so.
+        ASSERT (A->Pending->x == NULL) ;
+        ASSERT (A->Pending->x_size == 0) ;
+        ASSERT (A->Pending->op == NULL) ;
+        A->Pending->type = A->type ;
+        A->Pending->size = A->type->size ;
+        A->Pending->x = GB_MALLOC_MEMORY (A->Pending->nmax, A->Pending->size,
+            &(A->Pending->x_size)) ;
+        if (A->Pending->x == NULL)
+        { 
+            return (GrB_OUT_OF_MEMORY) ;
+        }
+        // Pending_x [0:(A->Pending->n)-1] = scalar
+        GB_OK (GB_iso_expand (A->Pending->x, A->Pending->n, scalar, A->type)) ;
+    }
+
+    //--------------------------------------------------------------------------
     // finalize the matrix and return result
     //--------------------------------------------------------------------------
 

@@ -81,6 +81,15 @@ void *GX_malloc_memory      /* pointer to allocated block of memory */      \
     size_t *size_allocated  /* # of bytes actually allocated */             \
 )
 
+#define GB_CALLBACK_CALLOC_MEMORY_PROTO(GX_calloc_memory)                   \
+void *GX_calloc_memory      /* pointer to allocated block of memory */      \
+(                                                                           \
+    size_t nitems,          /* number of items to allocate */               \
+    size_t size_of_item,    /* sizeof each item */                          \
+    /* output */                                                            \
+    size_t *size_allocated  /* # of bytes actually allocated */             \
+)
+
 #define GB_CALLBACK_MEMSET_PROTO(GX_memset)                                 \
 void GX_memset                  /* parallel memset */                       \
 (                                                                           \

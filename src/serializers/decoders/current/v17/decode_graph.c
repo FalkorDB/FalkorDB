@@ -3,8 +3,53 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v16.h"
+#include "decode_v17.h"
 #include "../../../../index/indexer.h"
+
+// TODO: have the delta matrix upon setting M, incase the matrix
+// contains a transpose, we should overwrite it with MT
+// compute transpose matrices
+static void _ComputeTransposeMatrix
+(
+	Delta_Matrix A
+) {
+	ASSERT(A != NULL);
+
+	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
+	GrB_Matrix   AM  = Delta_Matrix_M(A);
+	GrB_Matrix   ATM = Delta_Matrix_M(AT);
+
+	// make sure transpose doesn't contains any entries
+	GrB_Info info;
+	GrB_Index nvals;
+	info = GrB_Matrix_nvals(&nvals, ATM);
+	ASSERT(info  == GrB_SUCCESS);
+	ASSERT(nvals == 0);
+
+	// compute transpose
+	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
+	ASSERT(info  == GrB_SUCCESS);
+}
+
+static void _ComputeTransposeMatrices
+(
+	Graph *g  // graph
+) {
+	ASSERT(g != NULL);
+
+	GrB_Info info;
+	int n = Graph_RelationTypeCount(g);
+
+	// compute transpose for each relation matrix
+	for(RelationID r = 0; r < n; r++) {
+		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
+		_ComputeTransposeMatrix(R);
+	}
+
+	// compute transpose for the adjacency matrix
+	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
+	_ComputeTransposeMatrix(ADJ);
+}
 
 static GraphContext *_GetOrCreateGraphContext
 (
@@ -108,7 +153,7 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v16(rdb, gc, !first_vkey);
+	RdbLoadGraphSchema_v17(rdb, gc, !first_vkey);
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -161,6 +206,7 @@ GraphContext *RdbLoadGraphContext_latest
 	//  Payload(s) X N
 
 	GraphContext *gc = _DecodeHeader(rdb);
+	Graph        *g  = gc->g;
 
 	// log progress
 	RedisModule_Log(NULL, "notice", "Graph '%s' processing virtual key: %lld/%lld",
@@ -182,50 +228,85 @@ GraphContext *RdbLoadGraphContext_latest
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
-				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadNodes_v16(rdb, gc, payload.entities_count);
+				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+				RdbLoadNodes_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %zu/%llu nodes",
 						GraphContext_GetName(gc),
-						Graph_UncompactedNodeCount(gc->g),
+						Graph_UncompactedNodeCount(g),
 						gc->decoding_context->node_count);
 
 				break;
+
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v16(rdb, gc, payload.entities_count);
+				RdbLoadDeletedNodes_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %u/%lld deleted nodes",
 						GraphContext_GetName(gc),
-						Graph_DeletedNodeCount(gc->g),
+						Graph_DeletedNodeCount(g),
 						gc->decoding_context->deleted_node_count);
 
 				break;
+
 			case ENCODE_STATE_EDGES:
-				Graph_SetMatrixPolicy(gc->g, SYNC_POLICY_NOP);
-				RdbLoadEdges_v16(rdb, gc, payload.entities_count);
+				Graph_SetMatrixPolicy(g, SYNC_POLICY_NOP);
+				RdbLoadEdges_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %lld/%lld edges",
-						GraphContext_GetName(gc), Graph_EdgeCount(gc->g),
+						GraphContext_GetName(gc), Graph_EdgeCount(g),
 						gc->decoding_context->edge_count);
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v16(rdb, gc, payload.entities_count);
+				RdbLoadDeletedEdges_v17(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
 						"Graph '%s' processed %u/%lld deleted edges",
 						GraphContext_GetName(gc),
-						Graph_DeletedEdgeCount(gc->g),
+						Graph_DeletedEdgeCount(g),
 						gc->decoding_context->deleted_edge_count);
 
 				break;
+
+			case ENCODE_STATE_LABELS_MATRICES:
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' loading label matrices",
+						GraphContext_GetName(gc));
+
+				RdbLoadLabelMatrices_v17(rdb, gc);
+				break;
+
+			case ENCODE_STATE_RELATION_MATRICES:
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' loading relation matrices",
+						GraphContext_GetName(gc));
+
+				RdbLoadRelationMatrices_v17(rdb, gc);
+				break;
+
+			case ENCODE_STATE_ADJ_MATRIX:
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' loading Adjacency matrix",
+						GraphContext_GetName(gc));
+
+				RdbLoadAdjMatrix_v17(rdb, gc);
+				break;
+
+			case ENCODE_STATE_LBLS_MATRIX:
+				RedisModule_Log(NULL, "notice",
+						"Graph '%s' loading Labels matrix",
+						GraphContext_GetName(gc));
+
+				RdbLoadLblsMatrix_v17(rdb, gc);
+				break;
+
 			default:
 				ASSERT(false && "Unknown encoding");
 				break;
@@ -246,10 +327,10 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if(GraphDecodeContext_Finished(gc->decoding_context)) {
-		Graph *g = gc->g;
+		// compute transposes
+		_ComputeTransposeMatrices(g);
 
-		// set the node label matrix
-		Serializer_Graph_SetNodeLabels(g);
+		Graph *g = gc->g;
 
 		// flush graph matrices
 		Graph_ApplyAllPending(g, true);
@@ -264,8 +345,18 @@ GraphContext *RdbLoadGraphContext_latest
 		bool delay_indexing;
 		Config_Option_get(Config_DELAY_INDEXING, &delay_indexing);
 
+		// report index construction method
+		if(delay_indexing) {
+			RedisModule_Log(NULL, "notice",
+					"Graph '%s' Indexes are constructed in the background.",
+					GraphContext_GetName(gc));
+		} else {
+			RedisModule_Log(NULL, "notice", "Graph '%s' Constructing indexes.",
+					GraphContext_GetName(gc));
+		}
+
 		// update the node statistics, enable node indices
-		for(uint i = 0; i < label_count; i++) {
+		for(LabelID i = 0; i < label_count; i++) {
 			GrB_Index nvals;
 			Delta_Matrix L = Graph_GetLabelMatrix(g, i);
 			Delta_Matrix_nvals(&nvals, L);
@@ -280,7 +371,8 @@ GraphContext *RdbLoadGraphContext_latest
 					// start async indexing
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
-					// index populated enable it
+					// populate index
+					Index_Populate(idx, g);
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}
@@ -292,12 +384,14 @@ GraphContext *RdbLoadGraphContext_latest
 			Index idx;
 			Schema *s = GraphContext_GetSchemaByID(gc, i, SCHEMA_EDGE);
 			idx = PENDING_IDX(s);
+
 			if(idx != NULL) {
 				if(delay_indexing) {
 					// start async indexing
 					Indexer_PopulateIndex(gc, s, idx);
 				} else {
-					// index populated enable it
+					// populate index
+					Index_Populate(idx, g);
 					Index_Enable(idx);
 					Schema_ActivateIndex(s);
 				}
@@ -309,7 +403,8 @@ GraphContext *RdbLoadGraphContext_latest
 
 		GraphDecodeContext_Reset(gc->decoding_context);
 
-		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
+		RedisModule_Log(NULL, "notice", "Done decoding graph %s",
+				GraphContext_GetName(gc));
 	}
 
 	return gc;

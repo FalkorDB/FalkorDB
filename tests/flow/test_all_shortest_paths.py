@@ -283,3 +283,23 @@ class testAllShortestPaths():
 
         actual_result = self.cyclic_graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
+
+    def test07_all_shortest_paths_unreachables(self):
+        """
+        try to find shortest path between two unreachable nodes
+        """
+
+        # populate graph
+        q = "CREATE (:A)-[:R]->(:Z), (:K)-[:R]->(:Q)"
+        self.graph.query(q)
+
+        # try to find shortest path between two unreachable nodes
+        q = """MATCH (a:A), (k:K)
+               WITH a, k
+               MATCH p=allshortestpaths((a)-[*]-(k))
+               RETURN p"""
+
+        # expecting an empty result-set
+        actual_result = self.graph.query(q)
+        self.env.assertEqual(len(actual_result.result_set), 0)
+

@@ -202,7 +202,7 @@ mxArray *gb_export_to_mxsparse  // return exported MATLAB sparse matrix S
 
         // ensure the types are correct; this 'cannot' fail but check anyway
         CHECK_ERROR (Tp_type != GrB_UINT64, "internal error 901") ;
-        CHECK_ERROR (Ti_type != GrB_UINT64, "internal error 902") ;
+        CHECK_ERROR (Ti_type != GrB_INT64, "internal error 902") ;
         CHECK_ERROR (Tx_type != type, "internal error 903") ;
 
         //----------------------------------------------------------------------

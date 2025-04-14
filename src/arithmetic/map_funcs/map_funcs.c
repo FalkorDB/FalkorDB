@@ -13,12 +13,16 @@
 #include "../../datatypes/array.h"
 #include "../../graph/entities/graph_entity.h"
 
-SIValue AR_TOMAP(SIValue *argv, int argc, void *private_data) {
-	/* create a new SIMap object
-	 * expecting an even number of arguments
-	 * argv[even] = key
-	 * argv[odd] = value */
-
+// create a new SIMap object
+// expecting an even number of arguments
+// argv[even] = key
+// argv[odd]  = value
+SIValue AR_TOMAP
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	// validate number of arguments
 	if(argc % 2 != 0) {
 		ErrorCtx_RaiseRuntimeException("map expects even number of elements");
@@ -58,8 +62,14 @@ SIValue AR_KEYS(SIValue *argv, int argc, void *private_data) {
 	return SI_NullVal();
 }
 
-SIValue AR_PROPERTIES(SIValue *argv, int argc, void *private_data) {
+SIValue AR_PROPERTIES
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	ASSERT(argc == 1);
+
 	switch(SI_TYPE(argv[0])) {
 		case T_NULL:
 			return SI_NullVal();
@@ -74,30 +84,50 @@ SIValue AR_PROPERTIES(SIValue *argv, int argc, void *private_data) {
 	return SI_NullVal();
 }
 
-// Receives two maps and merges them
-SIValue AR_MERGEMAP(SIValue *argv, int argc, void *private_data) {
+// receives two maps and merges them
+SIValue AR_MERGEMAP
+(
+	SIValue *argv,
+	int argc,
+	void *private_data
+) {
 	ASSERT(argc == 2);
 
 	SIValue map0 = argv[0];
 	SIValue map1 = argv[1];
 
-	if ((SI_TYPE(map0) & T_NULL) && (SI_TYPE(map1) & T_NULL)) {
+	// both map0 and map1 are NULL then return NULL
+	if(SIValue_IsNull(map0) && SIValue_IsNull(map1)) {
 		return SI_NullVal();
-	} else if (SI_TYPE(map0) & T_NULL) {
-		return map1;
+	} else if (SIValue_IsNull(map0)) {
+		// only map0 is null, return a clone of map1
+		return Map_Clone(map1);
 	} else if (SI_TYPE(map1) & T_NULL) {
-		return map0;
-	} else {
-		uint keyCount0 = Map_KeyCount(map0);
-		SIValue map = Map_Clone(map1);
-		for(int i = 0; i < keyCount0; i++) {
-			SIValue key;
-			SIValue value;
-			Map_GetIdx(map0, i, &key, &value);
-			Map_Add(&map, key, value);
-		}
-		return map;
+		// only map1 is null, return a clone of map0
+		return Map_Clone(map0);
 	}
+
+	//--------------------------------------------------------------------------
+	// merge maps
+	//--------------------------------------------------------------------------
+
+	// clone map1
+	SIValue map = Map_Clone(map1);
+
+	// add each key in map0 to the new clone
+	uint n = Map_KeyCount(map0);
+
+	for(int i = 0; i < n; i++) {
+		SIValue key;
+		SIValue value;
+
+		Map_GetIdx(map0, i, &key, &value);
+
+		// clones the key & value
+		Map_Add(&map, key, value);
+	}
+
+	return map;
 }
 
 void Register_MapFuncs() {

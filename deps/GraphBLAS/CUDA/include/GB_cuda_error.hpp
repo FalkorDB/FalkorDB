@@ -19,9 +19,12 @@
     cudaError_t cuda_error = cudaMethod ;                                   \
     if (cuda_error != cudaSuccess)                                          \
     {                                                                       \
+        printf ("cuda_error is %d\n", cuda_error) ; \
         GrB_Info info = (cuda_error == cudaErrorMemoryAllocation) ?         \
             GrB_OUT_OF_MEMORY : GxB_GPU_ERROR ;                             \
-        GBURBLE ("(cuda failed: %d:%s file:%s line:%d) ", (int) cuda_error, \
+        printf ("(cuda failed: %d:%s file:%s line:%d)\n", (int) cuda_error, \
+            cudaGetErrorString (cuda_error), __FILE__, __LINE__) ;          \
+        GBURBLE ("(cuda failed: %d:%s file:%s line:%d)\n", (int) cuda_error, \
             cudaGetErrorString (cuda_error), __FILE__, __LINE__) ;          \
         GB_FREE_ALL ;                                                       \
         return (info) ;                                                     \

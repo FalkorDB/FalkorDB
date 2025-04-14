@@ -15,6 +15,9 @@ from http.client import HTTPSConnection
 
 
 def run_single_benchmark(file_stream: TextIO, bench: str):
+    
+    print("--> starting server...")
+    
     data = yaml.safe_load(file_stream)
 
     # Always prefer the environment variable over the yaml file

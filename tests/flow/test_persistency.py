@@ -10,7 +10,7 @@ class testGraphPersistency():
         self.env, self.db = Env(enableDebugCommand=True)
 
         # skip test if we're running under Sanitizer
-        if SANITIZER != "":
+        if SANITIZER:
             self.env.skip() # sanitizer is not working correctly with bulk
 
     def populate_graph(self, graph_name):

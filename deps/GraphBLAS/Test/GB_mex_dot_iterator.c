@@ -79,7 +79,10 @@ void mexFunction
     if (deep_and_jumbled)
     {
         // to test the wait in Iterator_attach
-        X->jumbled = true ;
+        if (GB_IS_HYPERSPARSE (X) || GB_IS_SPARSE (X))
+        {
+            X->jumbled = true ;
+        }
     }
 
     // get Y (shallow copy)

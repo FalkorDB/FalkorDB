@@ -1,32 +1,31 @@
-export MODULE_DIR=/FalkorDB/bin/src
+#!/bin/bash
 
-if [ ${BROWSER:-1} -eq 1 ]
-then
-    if [ -d /FalkorDBBrowser ]
-    then
-        cd /FalkorDBBrowser && HOSTNAME="0.0.0.0" node server.js &
+if [ "${BROWSER:-1}" -eq "1" ]; then
+    if [ -d "${FALKORDB_BROWSER_PATH}" ]; then
+        cd "${FALKORDB_BROWSER_PATH}" && HOSTNAME="0.0.0.0" node server.js &
     fi
 fi
 
-# Create /data directory if it does not exist
-if [ ! -d /data ]
-then
-    mkdir /data
+# Create /var/lib/falkordb/data directory if it does not exist
+if [ ! -d "${FALKORDB_DATA_PATH}" ]; then
+    mkdir "${FALKORDB_DATA_PATH}"
 fi
 
-if [ ${TLS:-0} -eq 1 ]
-then
-    /FalkorDB/build/docker/gen-certs.sh
-    redis-server ${REDIS_ARGS} --protected-mode no \
-                 --tls-port 6379 --port 0 \
-                 --tls-cert-file ./tls/redis.crt \
-                 --tls-key-file ./tls/redis.key \
-                 --tls-ca-cert-file ./tls/ca.crt \
-                 --tls-auth-clients no \
-                 --dir /data \
-                 --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
+if [ "${TLS:-0}" -eq "1" ]; then
+    # shellcheck disable=SC2086
+    ${FALKORDB_BIN_PATH}/gen-certs.sh
+    # shellcheck disable=SC2086
+    exec redis-server ${REDIS_ARGS} --protected-mode no \
+        --tls-port 6379 --port 0 \
+        --tls-cert-file ./tls/redis.crt \
+        --tls-key-file ./tls/redis.key \
+        --tls-ca-cert-file ./tls/ca.crt \
+        --tls-auth-clients no \
+        --dir "${FALKORDB_DATA_PATH}" \
+        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
 else
-    redis-server ${REDIS_ARGS} --protected-mode no \
-                 --dir /data \
-                 --loadmodule ${MODULE_DIR}/falkordb.so ${FALKORDB_ARGS}
+    # shellcheck disable=SC2086
+    exec redis-server ${REDIS_ARGS} --protected-mode no \
+        --dir "${FALKORDB_DATA_PATH}" \
+        --loadmodule "${FALKORDB_BIN_PATH}/falkordb.so" ${FALKORDB_ARGS}
 fi
