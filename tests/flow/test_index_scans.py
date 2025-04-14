@@ -925,11 +925,8 @@ class testIndexScanFlow():
         self.graph.query(q, {'samples': samples})
 
         # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
         for sample in samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -952,11 +949,8 @@ class testIndexScanFlow():
         self.graph.query(q, {'samples': samples})
 
         # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
         for sample in samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -979,11 +973,8 @@ class testIndexScanFlow():
         self.graph.query(q, {'samples': samples})
 
         # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x IN p.samples RETURN p"
         for sample in samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -1070,11 +1061,8 @@ class testIndexScanFlow():
         self.graph.query(q, {'samples': samples})
 
         # make sure we're able to lookup the preson using index scan
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
         for sample in samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -1091,11 +1079,8 @@ class testIndexScanFlow():
         self.graph.query(q, {'x': samples[0] , 'new_samples': new_samples})
 
         # make sure we're able to locate the updated node
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
         for sample in new_samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -1104,7 +1089,7 @@ class testIndexScanFlow():
             res = self.graph.query(q, {'x':sample}).result_set
             self.env.assertEqual(len(res), 1)
 
-        # use an old sample and make sure node couldn't be located
+        # use an old sample value and make sure node couldn't be located
         q = """MATCH (p:person)
                WHERE $x in p.samples
                RETURN p"""
@@ -1125,11 +1110,8 @@ class testIndexScanFlow():
         self.graph.query(q, {'samples': samples})
 
         # make sure we're able to locate the node
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
         for sample in samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -1146,11 +1128,8 @@ class testIndexScanFlow():
         res = self.graph.query(q, {'x':samples[0]}).result_set
 
         # make sure we're unable to locate the node
+        q = "MATCH (p:person) WHERE $x in p.samples RETURN p"
         for sample in samples:
-            q = """MATCH (p:person)
-                   WHERE $x in p.samples
-                   RETURN p"""
-
             # make sure index is utilized
             plan = str(self.graph.explain(q, {'x':sample}))
             self.env.assertNotIn('Label Scan', plan) # not expecting label scan
@@ -1176,7 +1155,7 @@ class testIndexScanFlow():
         q = """UNWIND range(0, 10) AS x
                MATCH (p:person)
                WHERE tostring(x) in p.samples
-               RETURN count(p)"""
+               RETURN count(DISTINCT p)"""
 
         # make sure index is utilized
         plan = str(self.graph.explain(q))
