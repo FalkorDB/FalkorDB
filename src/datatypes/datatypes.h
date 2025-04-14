@@ -11,6 +11,6 @@
 #include "point.h"
 #include "array.h"
 #include "vector.h"
+#include "datetime.h"
 #include "path/sipath.h"
 #include "temporal_value.h"
-

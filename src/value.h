@@ -92,6 +92,7 @@ typedef struct Point {
 typedef struct SIValue {
 	union {
 		int64_t longval;        // integer value
+		time_t datetimeval;     // datetime value
 		double doubleval;       // floating point value
 		char *stringval;        // string value
 		void *ptrval;           // pointer value
