@@ -1,5 +1,6 @@
 /*
  * Copyright Redis Ltd. 2018 - present
+ * Copyright FalkorDB Ltd. 2024 - present
  * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
  * the Server Side Public License v1 (SSPLv1).
  */
@@ -21,6 +22,8 @@ GRAPH_Commands CommandFromString(const char *cmd_name) {
 	if (!strcasecmp(cmd_name, "graph.SLOWLOG"))  return CMD_SLOWLOG;
 	if (!strcasecmp(cmd_name, "graph.RO_QUERY")) return CMD_RO_QUERY;
 	if (!strcasecmp(cmd_name, "graph.BULK"))     return CMD_BULK_INSERT;
+	if (!strcasecmp(cmd_name, "graph.ACL"))      return CMD_ACL;
+	if (!strcasecmp(cmd_name, "graph.PASSWORD")) return CMD_PASSWORD;
 
 	// we shouldn't reach this point
 	ASSERT(false);

@@ -107,7 +107,7 @@ SIValue Map_Clone
 	ASSERT(SI_TYPE(map) & T_MAP);
 
 	uint key_count = Map_KeyCount(map);
-	SIValue clone = Map_New(key_count);
+	SIValue clone  = Map_New(key_count);
 
 	for(uint i = 0; i < key_count; i++) {
 		Pair p = map.map[i];
@@ -228,14 +228,14 @@ void Map_GetIdx
 	SIValue *key,
 	SIValue *value
 ) {
+	ASSERT(key   != NULL);
+	ASSERT(value != NULL);
 	ASSERT(SI_TYPE(map) & T_MAP);
 	ASSERT(idx < Map_KeyCount(map));
-	ASSERT(key != NULL);
-	ASSERT(value != NULL);
 
 	Pair p = map.map[idx];
 
-	*key = SI_ShareValue(p.key);
+	*key   = SI_ShareValue(p.key);
 	*value = SI_ShareValue(p.val);
 }
 
