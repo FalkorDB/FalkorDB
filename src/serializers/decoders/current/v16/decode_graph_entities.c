@@ -5,6 +5,8 @@
 
 #include "decode_v16.h"
 
+extern bool skip;
+
 // forward declarations
 static SIValue _RdbLoadPoint(SerializerIO rdb);
 static SIValue _RdbLoadSIArray(SerializerIO rdb);
@@ -123,7 +125,9 @@ static void _RdbLoadEntity
 		vals[i] = _RdbLoadSIValue(rdb);
 	}
 
-	AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
+	if(!skip) {
+		AttributeSet_AddNoClone(e->attributes, ids, vals, n, false);
+	}
 }
 
 // decode nodes
@@ -159,12 +163,14 @@ void RdbLoadNodes_v16
 			labels[j] = SerializerIO_ReadUnsigned(rdb);
 		}
 
-		Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
+		if(!skip) {
+			Serializer_Graph_SetNode(gc->g, id, labels, nodeLabelCount, &n);
+		}
 
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&n);
 
 		// introduce n to each relevant index
-		if(!delay_indexing) {
+		if(!skip && !delay_indexing) {
 			for (int j = 0; j < nodeLabelCount; j++) {
 				Schema *s = GraphContext_GetSchemaByID(gc, labels[j],
 						SCHEMA_NODE);
@@ -176,7 +182,9 @@ void RdbLoadNodes_v16
 		}
 	}
 
-	ASSERT(prev_graph_node_count + node_count == Graph_NodeCount(gc->g));
+	if(!skip) {
+		ASSERT(prev_graph_node_count + node_count == Graph_NodeCount(gc->g));
+	}
 }
 
 // decode deleted nodes
@@ -193,12 +201,16 @@ void RdbLoadDeletedNodes_v16
 
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
-		Serializer_Graph_MarkNodeDeleted(gc->g, id);
+		if(!skip) {
+			Serializer_Graph_MarkNodeDeleted(gc->g, id);
+		}
 	}
 
 	// read encoded deleted node count and validate
-	ASSERT(deleted_node_count + prev_deleted_node_count ==
-			Graph_DeletedNodeCount(gc->g));
+	if(!skip) {
+		ASSERT(deleted_node_count + prev_deleted_node_count ==
+				Graph_DeletedNodeCount(gc->g));
+	}
 }
 
 // decode edge relationship header
@@ -289,11 +301,13 @@ static uint64_t _DecodeTensors
 		bool tensor = SerializerIO_ReadUnsigned(rdb);
 
 		// load edge attributes
-		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		if(!skip) {
+			Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		}
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
-		if(perform_indexing) {
+		if(!skip && perform_indexing) {
 			Index_IndexEdge(index, &e);
 		}
 
@@ -319,8 +333,10 @@ static uint64_t _DecodeTensors
 		// flush tensors batch
 		if(tensor_idx == BATCH_SIZE) {
 			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
-					tensors_dests, tensors_ids, tensor_idx, true);
+			if(!skip) {
+				Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
+						tensors_dests, tensors_ids, tensor_idx, true);
+			}
 
 			// reset multi-edge batch count
 			tensor_idx = 0;
@@ -329,8 +345,10 @@ static uint64_t _DecodeTensors
 		// flush batch
 		if(idx == BATCH_SIZE) {
 			// flush batch
-			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-					false);
+			if(!skip) {
+				Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+						false);
+			}
 
 			// reset batch count
 			idx = 0;
@@ -347,15 +365,19 @@ static uint64_t _DecodeTensors
 	// flush tensors batch
 	if(tensor_idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
-				tensors_dests, tensors_ids, tensor_idx, true);
+		if(!skip) {
+			Serializer_OptimizedFormConnections(gc->g, r, tensors_srcs,
+					tensors_dests, tensors_ids, tensor_idx, true);
+		}
 	}
 
 	// flush batch
 	if(idx > 0) {
 		// flush batch
-		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-				false);
+		if(!skip) {
+			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+					false);
+		}
 	}
 
 	return decoded_edges;
@@ -415,11 +437,13 @@ static uint64_t _DecodeEdges
 		e.relationID = r;
 
 		// load edge attributes
-		Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		if(!skip) {
+			Serializer_Graph_AllocEdgeAttributes(gc->g, e.id, &e);
+		}
 		_RdbLoadEntity(rdb, gc, (GraphEntity *)&e);
 
 		// index edge
-		if(perform_indexing) {
+		if(!skip && perform_indexing) {
 			Index_IndexEdge(index, &e);
 		}
 
@@ -431,8 +455,10 @@ static uint64_t _DecodeEdges
 
 		// flush batch
 		if(idx == BATCH_SIZE) {
-			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-					false);
+			if(!skip) {
+				Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+						false);
+			}
 			// reset batch index
 			idx = 0;
 		}
@@ -443,8 +469,10 @@ static uint64_t _DecodeEdges
 
 	// flush batch
 	if(idx > 0) {
-		Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
-				false);
+		if(!skip) {
+			Serializer_OptimizedFormConnections(gc->g, r, srcs, dests, ids, idx,
+					false);
+		}
 	}
 
 	return decoded_edges;
@@ -486,7 +514,9 @@ void RdbLoadEdges_v16
 	}
 
 	// read encoded deleted edge count and validate
-	ASSERT(n + prev_edge_count == Graph_EdgeCount(gc->g));
+	if(!skip) {
+		ASSERT(n + prev_edge_count == Graph_EdgeCount(gc->g));
+	}
 }
 
 // decode deleted edges
@@ -503,11 +533,15 @@ void RdbLoadDeletedEdges_v16
 
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = SerializerIO_ReadUnsigned(rdb);
-		Serializer_Graph_MarkEdgeDeleted(gc->g, id);
+		if(!skip) {
+			Serializer_Graph_MarkEdgeDeleted(gc->g, id);
+		}
 	}
 
 	// read encoded deleted edge count and validate
-	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
-			Graph_DeletedEdgeCount(gc->g));
+	if(!skip) {
+		ASSERT(deleted_edge_count + prev_deleted_edge_count ==
+				Graph_DeletedEdgeCount(gc->g));
+	}
 }
 

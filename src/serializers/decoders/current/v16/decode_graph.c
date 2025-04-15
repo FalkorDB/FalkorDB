@@ -6,6 +6,9 @@
 #include "decode_v16.h"
 #include "../../../../index/indexer.h"
 
+bool skip = false;
+bool dup_graph = false;
+
 static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
@@ -67,6 +70,9 @@ static GraphContext *_DecodeHeader
 	// graph name
 	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
 
+	skip = (dup_graph == true &&
+			strcmp(graph_name, "ccmgraph_dcff66ff36f5456eb4233ac6448b990f") == 0);
+
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
 	uint64_t node_count         = SerializerIO_ReadUnsigned(rdb);
@@ -90,7 +96,7 @@ static GraphContext *_DecodeHeader
 	// if it is the first key of this graph,
 	// allocate all the data structures, with the appropriate dimensions
 	bool first_vkey =
-		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0;
+		GraphDecodeContext_GetProcessedKeyCount(gc->decoding_context) == 0 && !skip;
 
 	if(first_vkey == true) {
 		_InitGraphDataStructure(gc->g, node_count, edge_count,
@@ -235,17 +241,21 @@ GraphContext *RdbLoadGraphContext_latest
 	array_free(payloads);
 
 	// update decode context
-	GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
+	if(!skip) {
+		GraphDecodeContext_IncreaseProcessedKeyCount(gc->decoding_context);
+	}
 
 	// before finalizing keep encountered meta keys names, for future deletion
 	const char *key_name = RedisModule_StringPtrLen(rm_key_name, NULL);
 
 	// the virtual key name is not equal the graph name
 	if(strcmp(key_name, gc->graph_name) != 0) {
-		GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
+		if(!skip) {
+			GraphDecodeContext_AddMetaKey(gc->decoding_context, key_name);
+		}
 	}
 
-	if(GraphDecodeContext_Finished(gc->decoding_context)) {
+	if(!skip && GraphDecodeContext_Finished(gc->decoding_context)) {
 		Graph *g = gc->g;
 
 		// set the node label matrix
@@ -310,6 +320,10 @@ GraphContext *RdbLoadGraphContext_latest
 		GraphDecodeContext_Reset(gc->decoding_context);
 
 		RedisModule_Log(NULL, "notice", "Done decoding graph %s", GraphContext_GetName(gc));
+	}
+
+	if(strcmp(gc->graph_name, "ccmgraph_dcff66ff36f5456eb4233ac6448b990f") == 0) {
+		dup_graph = true;
 	}
 
 	return gc;
