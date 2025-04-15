@@ -205,6 +205,9 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 
 >Note: Some languages have client libraries that provide support for FalkorDB's commands:
 
+### Official Clients
+
+
 | Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
 | --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [jfalkordb][jfalkordb-url] | Java | BSD | [FalkorDB][falkordb-url] | [![jfalkordb-stars]][jfalkordb-url] | [Maven][jfalkordb-package]||
@@ -212,6 +215,13 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 | [falkordb-ts][falkordb-ts-url] | Node.JS | MIT | [FalkorDB][falkordb-url] | [![falkordb-ts-stars]][falkordb-ts-url] | [npm][falkordb-ts-package]||
 | [falkordb-rs][falkordb-rs-url] | Rust | MIT | [FalkorDB][falkordb-url] | [![falkordb-rs-stars]][falkordb-rs-url] | [Crate][falkordb-rs-package]||
 | [falkordb-go][falkordb-go-url] | Go | BSD | [FalkorDB][falkordb-url] | [![falkordb-go-stars]][falkordb-go-url] | [GitHub][falkordb-go-url]||
+| [NFalkorDB][nfalkordb-url]  |  C# | Apache-2.0 | [FalkorDB][falkordb-url] | [![nfalkordb-stars]][nfalkordb-url] | [crates][nfalkordb-package]  |
+
+
+## Additional Clients
+
+| Project                                                   | Language   | License | Author                                      | Stars                                                             | Package | Comment    |
+| --------------------------------------------------------- | ---------- | ------- | ------------------------------------------- | ----------------------------------------------------------------- | ------- | ---------- |
 | [nredisstack][nredisstack-url] | .NET | MIT | [Redis][redis-url] | [![nredisstack-stars]][nredisstack-url] | [nuget][nredisstack-package]||
 | [redisgraph-rb][redisgraph-rb-url]                        | Ruby       | BSD     | [Redis][redisgraph-rb-author]          | [![redisgraph-rb-stars]][redisgraph-rb-url]                       | [GitHub][redisgraph-rb-url] ||
 | [redgraph][redgraph-url]                                  | Ruby       | MIT     | [pzac][redgraph-author]                | [![redgraph-stars]][redgraph-url]                                 | [GitHub][redgraph-url] ||
@@ -238,6 +248,10 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 [jfalkordb-url]: https://github.com/falkordb/jfalkordb
 [jfalkordb-stars]: https://img.shields.io/github/stars/falkordb/jfalkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
 [jfalkordb-package]: https://search.maven.org/artifact/com.falkordb/jfalkordb
+
+[NFalkorDB-url]: https://github.com/falkordb/NFalkorDB
+[NFalkorDB-stars]: https://img.shields.io/github/stars/falkordb/nfalkordb.svg?style=social&amp;label=Star&amp;maxAge=2592000
+[NFalkorDB-package]: https://www.nuget.org/packages/NFalkorDB
 
 [nredisstack-url]: https://github.com/redis/nredisstack
 [nredisstack-stars]: https://img.shields.io/github/stars/redis/nredisstack.svg?style=social&amp;label=Star&amp;maxAge=2592000
