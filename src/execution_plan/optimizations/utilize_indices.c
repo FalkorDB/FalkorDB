@@ -119,7 +119,7 @@ static bool _applicableInExpression
 		SIValue v = SI_NullVal();
 
 		if(AR_EXP_ReduceToScalar(lhs, true, &v)) {
-			return(SI_TYPE(v) & (SI_NUMERIC | T_STRING));
+			return(SI_TYPE(v) & (SI_NUMERIC | T_STRING | T_BOOL));
 		} else {
 			// runtime value, will be evaluated at runtime
 			return true;
@@ -145,7 +145,7 @@ static bool _applicable_predicate
 	AR_ExpNode  *rhs_exp = NULL;
 
 	if(isInFilter(filter)) {
-		return _applicableInExpression(filter->exp.exp);
+		return _applicableInExpression(FilterTree_getExpression(filter));
 	}
 
 	if(isDistanceFilter(filter)) return true;
@@ -628,7 +628,7 @@ void utilizeIndices
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	if(!GraphContext_HasIndices(gc)) return;
 
-	// indices are utilized in three sections:
+	// indices are utilized in two sections:
 	// 1. label scan followed by filter(s)
 	// 2. traversal followed by filter(s)
 

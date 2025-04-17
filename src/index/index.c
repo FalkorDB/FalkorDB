@@ -98,9 +98,9 @@ static void _Index_MergeFields
 		a->fulltext_name    = a->name;
 		IndexField_OptionsSetPhonetic(a, b->options.phonetic);
 	} else if(b->type & INDEX_FLD_RANGE) {
-		a->range_name             = rm_strdup(b->range_name);
-		a->range_string_arr_name  = rm_strdup(b->range_string_arr_name);
-		a->range_numeric_arr_name = rm_strdup(b->range_numeric_arr_name);
+		a->range_name             = strdup(b->range_name);
+		a->range_string_arr_name  = strdup(b->range_string_arr_name);
+		a->range_numeric_arr_name = strdup(b->range_numeric_arr_name);
 	} else if(b->type & INDEX_FLD_VECTOR) {
 		a->hnsw_options.dimension = b->hnsw_options.dimension;
 		a->vector_name = rm_strdup(b->vector_name);
